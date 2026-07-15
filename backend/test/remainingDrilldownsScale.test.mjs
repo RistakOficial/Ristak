@@ -16,6 +16,15 @@ import {
   buildReportTransactionSummaryCacheKey,
   getReportTransactionSummary
 } from '../src/services/reportTransactionSummaryCacheService.js'
+import { runContactPersonIdentityProjectionBackfill } from '../src/services/contactPersonIdentityProjectionService.js'
+
+function decodeCursor(value) {
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+}
+
+function encodeCursor(payload) {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+}
 
 async function ensureReportTransactionSummaryMigration() {
   if (databaseDialect !== 'sqlite') return
@@ -64,6 +73,8 @@ test('contactos de Campañas pagina/deduplica/busca en SQL y sólo entrega DTOs 
   try {
     if (databaseDialect === 'sqlite') {
       await db.exec(await readFile(new URL('../migrations/versioned/054_campaign_performance_indexes.sqlite.sql', import.meta.url), 'utf8'))
+      await db.exec(await readFile(new URL('../migrations/versioned/110_contact_person_identity.sqlite.sql', import.meta.url), 'utf8'))
+      await runContactPersonIdentityProjectionBackfill({ batchSize: 500, yieldMs: 0 })
     }
     await db.run(`
       INSERT INTO meta_ads (
@@ -74,7 +85,8 @@ test('contactos de Campañas pagina/deduplica/busca en SQL y sólo entrega DTOs 
 
     for (let index = 0; index < 105; index += 1) {
       const id = `campaign-contact-${suffix}-${String(index).padStart(3, '0')}`
-      const createdAt = `${date}T${String(10 + Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:00.000Z`
+      const fractionalSeconds = index === 55 ? '00.123456Z' : '00.000Z'
+      const createdAt = `${date}T${String(10 + Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:${fractionalSeconds}`
       contactIds.push(id)
       await db.run(`
         INSERT INTO contacts (
@@ -124,6 +136,11 @@ test('contactos de Campañas pagina/deduplica/busca en SQL y sólo entrega DTOs 
     assert.equal(first.pagination.hasNext, true)
     assert.ok(first.pagination.nextCursor)
     assert.equal(first.summary.pageCount, 50)
+    const scopedCursor = decodeCursor(first.pagination.nextCursor)
+    assert.equal(scopedCursor.v, 2)
+    assert.equal(scopedCursor.kind, 'campaign-contacts')
+    assert.match(scopedCursor.scope, /^[A-Za-z0-9_-]{40,}$/)
+    assert.equal(scopedCursor.createdAt, `${date}T10:55:00.123456Z`)
     assert.equal('payments' in first.contacts[0], false)
     assert.equal('appointments' in first.contacts[0], false)
     assert.equal('firstSession' in first.contacts[0], false)
@@ -138,6 +155,45 @@ test('contactos de Campañas pagina/deduplica/busca en SQL y sólo entrega DTOs 
     })
     assert.equal(second.contacts.length, 50)
     assert.equal(second.contacts.some(contact => first.contacts.some(item => item.id === contact.id)), false)
+
+    const legacySecond = await listCampaignContactsPage({
+      type: 'interesados',
+      startDate: date,
+      endDate: date,
+      campaignId,
+      cursor: encodeCursor({
+        v: 1,
+        kind: 'campaign-contacts',
+        createdAt: scopedCursor.createdAt,
+        id: scopedCursor.id
+      }),
+      limit: 50
+    })
+    assert.deepEqual(
+      legacySecond.contacts.map(contact => contact.id),
+      second.contacts.map(contact => contact.id),
+      'el cursor v1 de Campañas debe seguir funcionando'
+    )
+
+    for (const changedScope of [
+      { endDate: '2099-10-20' },
+      { type: 'sales' },
+      { campaignId: `${campaignId}-otro` },
+      { search: 'otro alcance' }
+    ]) {
+      await assert.rejects(
+        listCampaignContactsPage({
+          type: 'interesados',
+          startDate: date,
+          endDate: date,
+          campaignId,
+          cursor: first.pagination.nextCursor,
+          limit: 50,
+          ...changedScope
+        }),
+        error => error?.status === 400 && /ya no corresponde/.test(error.message)
+      )
+    }
 
     const third = await listCampaignContactsPage({
       type: 'interesados',
@@ -260,7 +316,8 @@ test('transacciones de Reportes usa cursor estable, búsqueda remota y summary g
 
     for (let index = 0; index < 125; index += 1) {
       const id = `report-transaction-${suffix}-${String(index).padStart(3, '0')}`
-      const occurredAt = `${date}T${String(10 + Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:00.000Z`
+      const fractionalSeconds = index === 75 ? '00.123456Z' : '00.000Z'
+      const occurredAt = `${date}T${String(10 + Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}:${fractionalSeconds}`
       paymentIds.push(id)
       await db.run(`
         INSERT INTO payments (
@@ -285,6 +342,11 @@ test('transacciones de Reportes usa cursor estable, búsqueda remota y summary g
     assert.ok(first.pagination.nextCursor)
     assert.equal(first.summary.count, 125)
     assert.equal(first.summary.totalAmount, 7_875)
+    const scopedCursor = decodeCursor(first.pagination.nextCursor)
+    assert.equal(scopedCursor.v, 2)
+    assert.equal(scopedCursor.kind, 'report-transactions')
+    assert.match(scopedCursor.scope, /^[A-Za-z0-9_-]{40,}$/)
+    assert.equal(scopedCursor.occurredAt, `${date}T11:15:00.123456Z`)
 
     const second = await listReportTransactionsPage({
       startDate: date,
@@ -294,6 +356,39 @@ test('transacciones de Reportes usa cursor estable, búsqueda remota y summary g
     })
     assert.equal(second.transactions.length, 50)
     assert.equal(second.transactions.some(transaction => first.transactions.some(item => item.id === transaction.id)), false)
+
+    const legacySecond = await listReportTransactionsPage({
+      startDate: date,
+      endDate: date,
+      cursor: encodeCursor({
+        v: 1,
+        kind: 'report-transactions',
+        occurredAt: scopedCursor.occurredAt,
+        id: scopedCursor.id
+      }),
+      limit: 50
+    })
+    assert.deepEqual(
+      legacySecond.transactions.map(transaction => transaction.id),
+      second.transactions.map(transaction => transaction.id),
+      'el cursor v1 de transacciones debe seguir funcionando'
+    )
+
+    for (const changedScope of [
+      { endDate: '2099-11-24' },
+      { search: 'otro alcance' }
+    ]) {
+      await assert.rejects(
+        listReportTransactionsPage({
+          startDate: date,
+          endDate: date,
+          cursor: first.pagination.nextCursor,
+          limit: 50,
+          ...changedScope
+        }),
+        error => error?.status === 400 && /ya no corresponde/.test(error.message)
+      )
+    }
 
     const search = await listReportTransactionsPage({
       startDate: date,
@@ -329,6 +424,56 @@ test('transacciones de Reportes usa cursor estable, búsqueda remota y summary g
       LIMIT 51
     `, [`${date}T00:00:00.000Z`, `${date}T23:59:59.999Z`])
     assert.match(explain.map(row => row.detail).join('\n'), /idx_report_transactions_live_date_id/)
+  } finally {
+    for (const id of paymentIds) await db.run('DELETE FROM payments WHERE id = ?', [id]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('transacciones recorre timestamps efectivos nulos con cursor total y DTO intacto', async () => {
+  if (databaseDialect !== 'sqlite') return
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const contactId = `transaction-null-cursor-contact-${suffix}`
+  const paymentIds = ['a', 'b', 'c'].map(letter => `transaction-null-cursor-${suffix}-${letter}`)
+
+  try {
+    await ensureReportTransactionSummaryMigration()
+    await db.run(`
+      INSERT INTO contacts (id, full_name, email, source, created_at, updated_at)
+      VALUES (?, ?, ?, 'cursor_precision_test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, `Transacción cursor nulo ${suffix}`, `${contactId}@example.test`])
+    for (const id of paymentIds) {
+      await db.run(`
+        INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_mode, payment_provider,
+          payment_method, description, date, created_at, updated_at
+        ) VALUES (?, ?, 1, 'MXN', 'paid', 'live', 'manual', 'card', ?, NULL, NULL, NULL)
+      `, [id, contactId, `Cursor nulo ${suffix}`])
+    }
+
+    const collected = []
+    let cursor
+    let pageCount = 0
+    do {
+      pageCount += 1
+      assert.ok(pageCount <= paymentIds.length, 'el cursor debe avanzar en cada página')
+      const page = await listReportTransactionsPage({
+        startDate: '1969-12-30',
+        endDate: '1970-01-02',
+        search: suffix,
+        cursor,
+        limit: 1
+      })
+      assert.ok(page.transactions.every(transaction => (
+        transaction.date === null &&
+        !Object.prototype.hasOwnProperty.call(transaction, 'created_at') &&
+        !Object.prototype.hasOwnProperty.call(transaction, 'cursor_at')
+      )))
+      collected.push(...page.transactions.map(transaction => transaction.id))
+      cursor = page.pagination.nextCursor || undefined
+    } while (cursor)
+
+    assert.deepEqual(collected, [...paymentIds].sort().reverse())
   } finally {
     for (const id of paymentIds) await db.run('DELETE FROM payments WHERE id = ?', [id]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)

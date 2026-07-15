@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
   cancelStripeRecurringSubscription,
@@ -1155,7 +1155,8 @@ function decodeSubscriptionCursor(value, cursorContext) {
     const parsed = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
     if (
       parsed?.v !== 1 || parsed?.scope !== subscriptionCursorScope(cursorContext) ||
-      ![0, 1].includes(Number(parsed?.nullRank)) || !cleanString(parsed?.tieValue) || !cleanString(parsed?.id)
+      ![0, 1].includes(Number(parsed?.nullRank)) ||
+      parsed?.tieValue === null || parsed?.tieValue === undefined || !cleanString(parsed?.id)
     ) throw new Error('invalid cursor payload')
     return {
       nullRank: Number(parsed.nullRank),
@@ -1227,14 +1228,35 @@ const SUBSCRIPTION_SORT_COLUMNS = Object.freeze({
   updatedAt: 'updated_at'
 })
 
-function appendSubscriptionCursorCondition(where, params, cursor, sortColumn, sortOrder) {
+const SUBSCRIPTION_TIMESTAMP_SORT_COLUMNS = new Set([
+  SUBSCRIPTION_SORT_COLUMNS.nextRunAt,
+  SUBSCRIPTION_SORT_COLUMNS.createdAt,
+  SUBSCRIPTION_SORT_COLUMNS.updatedAt
+])
+
+function subscriptionTimestampFallbackExpression() {
+  return databaseDialect === 'postgres'
+    ? "TIMESTAMP '1970-01-01 00:00:00'"
+    : "''"
+}
+
+function subscriptionTieSortExpression() {
+  return `COALESCE(updated_at, created_at, ${subscriptionTimestampFallbackExpression()})`
+}
+
+function subscriptionCursorProjectionExpression(sortExpression, { timestamp = false } = {}) {
+  return databaseDialect === 'postgres' && timestamp
+    ? `(${sortExpression})::text`
+    : sortExpression
+}
+
+function appendSubscriptionCursorCondition(where, params, cursor, sortExpression, tieSortExpression, sortOrder) {
   if (!cursor) return
-  const nullRank = `CASE WHEN ${sortColumn} IS NULL THEN 1 ELSE 0 END`
-  const tieValue = 'COALESCE(updated_at, created_at)'
+  const nullRank = `CASE WHEN ${sortExpression} IS NULL THEN 1 ELSE 0 END`
   const operator = sortOrder === 'ASC' ? '>' : '<'
 
   if (cursor.nullRank === 0) {
-    where.push(`(${nullRank}, ${sortColumn}, ${tieValue}, id) ${operator} (?, ?, ?, ?)`)
+    where.push(`(${nullRank}, ${sortExpression}, ${tieSortExpression}, id) ${operator} (?, ?, ?, ?)`)
     params.push(
       cursor.nullRank,
       cursor.sortValue,
@@ -1244,7 +1266,7 @@ function appendSubscriptionCursorCondition(where, params, cursor, sortColumn, so
     return
   }
 
-  where.push(`(${nullRank}, ${tieValue}, id) ${operator} (?, ?, ?)`)
+  where.push(`(${nullRank}, ${tieSortExpression}, id) ${operator} (?, ?, ?)`)
   params.push(
     cursor.nullRank,
     cursor.tieValue,
@@ -1329,22 +1351,33 @@ export async function listSubscriptions({
     sortOrder: requestedSortOrder
   }
   const decodedCursor = decodeSubscriptionCursor(cursor, cursorContext)
-  appendSubscriptionCursorCondition(where, params, decodedCursor, requestedSortColumn, requestedSortOrder)
+  const tieSortExpression = subscriptionTieSortExpression()
+  appendSubscriptionCursorCondition(
+    where,
+    params,
+    decodedCursor,
+    requestedSortColumn,
+    tieSortExpression,
+    requestedSortOrder
+  )
   const nullRank = `CASE WHEN ${requestedSortColumn} IS NULL THEN 1 ELSE 0 END`
-  const tieValue = 'COALESCE(updated_at, created_at)'
+  const sortCursorProjection = subscriptionCursorProjectionExpression(requestedSortColumn, {
+    timestamp: SUBSCRIPTION_TIMESTAMP_SORT_COLUMNS.has(requestedSortColumn)
+  })
+  const tieCursorProjection = subscriptionCursorProjectionExpression(tieSortExpression, { timestamp: true })
 
   const [candidateRows, summary] = await Promise.all([
     db.all(
       `SELECT *,
          ${nullRank} AS cursor_null_rank,
-         ${requestedSortColumn} AS cursor_sort_value,
-         ${tieValue} AS cursor_tie_value
+         ${sortCursorProjection} AS cursor_sort_value,
+         ${tieCursorProjection} AS cursor_tie_value
        FROM subscriptions
        WHERE ${where.join(' AND ')}
        ORDER BY
          ${nullRank} ${requestedSortOrder},
          ${requestedSortColumn} ${requestedSortOrder},
-         ${tieValue} ${requestedSortOrder},
+         ${tieSortExpression} ${requestedSortOrder},
          id ${requestedSortOrder}
        LIMIT ?`,
       [...params, limitNumber + 1]

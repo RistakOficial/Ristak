@@ -3396,6 +3396,12 @@ function paymentPlanTimestampSortExpression(...columns) {
   return `COALESCE(${[...columns, fallback].join(', ')})`;
 }
 
+function paymentPlanCursorProjectionExpression(sortExpression, { timestamp = false } = {}) {
+  return databaseDialect === 'postgres' && timestamp
+    ? `(${sortExpression})::text`
+    : sortExpression;
+}
+
 function normalizePaymentPlanListQuery(query = {}) {
   const requestedLimit = Number(query.limit);
   const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
@@ -3462,7 +3468,7 @@ function decodePaymentPlanCursor(value, normalized) {
     const nullRank = Number(parsed?.nullRank);
     if (
       parsed?.v !== 1 || parsed?.scope !== paymentPlanCursorScope(normalized) ||
-      ![0, 1].includes(nullRank) || !String(parsed?.fallbackValue ?? '').trim() ||
+      ![0, 1].includes(nullRank) || parsed?.fallbackValue === null || parsed?.fallbackValue === undefined ||
       !String(parsed?.id || '').trim() || (nullRank === 0 && parsed?.sortValue === undefined)
     ) throw new Error('invalid cursor payload');
     return {
@@ -3583,17 +3589,24 @@ async function listLocalInvoiceSchedules(query = {}) {
   const nextRunSortExpression = paymentPlanTimestampSortExpression('payment_plans.next_run_at');
   const fallbackSortExpression = paymentPlanTimestampSortExpression('payment_plans.next_run_at', 'payment_plans.updated_at', 'payment_plans.created_at');
   const sortableMap = {
-    startDate: startSortExpression,
-    nextRunAt: nextRunSortExpression,
-    sortDate: fallbackSortExpression,
-    status: normalizedStatus,
-    total: 'payment_plans.total',
-    name: "LOWER(COALESCE(payment_plans.name, payment_plans.title, ''))",
-    contactName: "LOWER(COALESCE(payment_plans.contact_name, ''))",
-    recurrenceLabel: "LOWER(COALESCE(payment_plans.recurrence_label, ''))",
-    email: "LOWER(COALESCE(payment_plans.email, ''))"
+    startDate: { expression: startSortExpression, timestamp: true },
+    nextRunAt: { expression: nextRunSortExpression, timestamp: true },
+    sortDate: { expression: fallbackSortExpression, timestamp: true },
+    status: { expression: normalizedStatus, timestamp: false },
+    total: { expression: 'payment_plans.total', timestamp: false },
+    name: { expression: "LOWER(COALESCE(payment_plans.name, payment_plans.title, ''))", timestamp: false },
+    contactName: { expression: "LOWER(COALESCE(payment_plans.contact_name, ''))", timestamp: false },
+    recurrenceLabel: { expression: "LOWER(COALESCE(payment_plans.recurrence_label, ''))", timestamp: false },
+    email: { expression: "LOWER(COALESCE(payment_plans.email, ''))", timestamp: false }
   };
-  const sortExpression = sortableMap[normalized.sortBy] || startSortExpression;
+  const requestedSort = sortableMap[normalized.sortBy] || sortableMap.startDate;
+  const sortExpression = requestedSort.expression;
+  const sortCursorProjection = paymentPlanCursorProjectionExpression(sortExpression, {
+    timestamp: requestedSort.timestamp
+  });
+  const fallbackCursorProjection = paymentPlanCursorProjectionExpression(fallbackSortExpression, {
+    timestamp: true
+  });
   const decodedCursor = decodePaymentPlanCursor(normalized.cursor, normalized);
   appendPaymentPlanCursorCondition(
     listWhere.filters,
@@ -3632,8 +3645,8 @@ async function listLocalInvoiceSchedules(query = {}) {
          payment_plans.created_at,
          payment_plans.updated_at,
          ${nullRankExpression} AS cursor_null_rank,
-         ${sortExpression} AS cursor_sort_value,
-         ${fallbackSortExpression} AS cursor_fallback_value,
+         ${sortCursorProjection} AS cursor_sort_value,
+         ${fallbackCursorProjection} AS cursor_fallback_value,
          CASE
            WHEN LOWER(COALESCE(payment_plans.source, 'ghl')) IN ('stripe', 'conekta', 'rebill', 'mercadopago')
              THEN CASE

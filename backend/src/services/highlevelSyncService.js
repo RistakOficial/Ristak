@@ -8,7 +8,6 @@ import { db, setAppConfig, getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { formatDate } from '../utils/dateUtils.js'
 import { getMetaConfig, saveMetaConfig, syncMetaAds } from './metaAdsService.js'
-import { updateContactsStats } from '../utils/updateContactsStats.js'
 import {
   fetchHighLevelContactCustomFieldDefinitions,
   resolveHighLevelContactCustomFields
@@ -1867,6 +1866,7 @@ export async function saveMetaCustomValues(locationId, apiToken, metaCredentials
  */
 export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, options = {}) {
   const prefer = options.prefer === 'highlevel' ? 'highlevel' : 'local'
+  const fromHighLevelOnly = options.direction === 'from_highlevel'
   const result = {
     success: true,
     action: 'none',
@@ -1909,6 +1909,20 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
     result.localConfigured = localComplete
     result.highLevelConfigured = highLevelComplete
     result.highLevelHasAnyMetaValue = hasAnyMetaCredential(highLevelCredentials)
+
+    // Una importación explícita desde HighLevel nunca debe convertirse en una
+    // exportación silenciosa si el proveedor no trae el contrato completo. Este
+    // guard permite que /sync-from-highlevel haga exactamente una lectura remota
+    // y corte sin escribir en ninguno de los dos lados.
+    if (fromHighLevelOnly && !highLevelComplete) {
+      result.action = result.highLevelHasAnyMetaValue
+        ? 'skipped_incomplete_highlevel'
+        : 'missing_highlevel_config'
+      result.message = result.highLevelHasAnyMetaValue
+        ? 'HighLevel tiene datos de Meta incompletos; no se alteró la configuración local'
+        : 'HighLevel no tiene configuración de Meta para importar'
+      return result
+    }
 
     if (!localComplete && !highLevelComplete) {
       result.action = result.highLevelHasAnyMetaValue ? 'skipped_incomplete_highlevel' : 'none'
@@ -1967,7 +1981,7 @@ export async function reconcileMetaBusinessWithHighLevel(locationId, apiToken, o
 
     if (sameCore) {
       const localNeedsUpdate = credentialsMissingValues(localCredentials, highLevelCredentials)
-      const highLevelNeedsUpdate = credentialsMissingValues(highLevelCredentials, localCredentials)
+      const highLevelNeedsUpdate = !fromHighLevelOnly && credentialsMissingValues(highLevelCredentials, localCredentials)
 
       if (localNeedsUpdate) {
         // GHL-009: mergeMetaCredentials(local, highLevel) prioriza SIEMPRE los
@@ -2330,10 +2344,10 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
       updateConversations(0, 0, 'error', `Error sincronizando chats: ${error.message}`)
     }
 
-    // 4.5. Actualizar estadísticas de contactos (total_paid, purchases_count, etc.)
-    syncProgress.step = 'Actualizando estadísticas de contactos...'
-    logger.info('Actualizando estadísticas de contactos basadas en pagos y citas...')
-    await updateContactsStats()
+    // 4.5. Las estadísticas de pagos se actualizan por contacto dentro de
+    // syncAllInvoices(). Evitar un barrido global aquí mantiene la sync rápida
+    // aunque la cuenta ya tenga cientos de miles de contactos.
+    syncProgress.step = 'Estadísticas de contactos actualizadas'
 
     // 5. Completado
     syncProgress.status = 'completed'

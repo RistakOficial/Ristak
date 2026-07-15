@@ -33,7 +33,11 @@ import automationsService, {
   type ContactAutomationActivity,
   type ContactAutomationActivityItem
 } from '@/services/automationsService'
-import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import {
+  contactsService,
+  getOldestJourneyMessageCursor,
+  type JourneyEvent
+} from '@/services/contactsService'
 import { conversationalAgentService, type ConversationalAgentCompletionEvent } from '@/services/conversationalAgentService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
@@ -115,7 +119,14 @@ interface ContactDetail {
   ltv?: number
   purchases?: number
   payments?: ContactPaymentDetail[]
+  paymentsTotal?: number
+  hasPaymentRecords?: boolean
+  paymentsTruncated?: boolean
+  paymentsNextCursor?: string | null
   appointments?: ContactAppointmentDetail[]
+  appointmentsTotal?: number
+  appointmentsTruncated?: boolean
+  appointmentsNextCursor?: string | null
   firstAppointmentDate?: string | null
   nextAppointmentDate?: string | null
   source?: string | null
@@ -165,6 +176,8 @@ type ContactChatComposerChannel = 'whatsapp' | 'email' | 'messenger' | 'instagra
 
 interface ContactChatMessage {
   id: string
+  cursorDate?: string
+  cursorKey?: string
   optimisticId?: string
   text: string
   subject?: string
@@ -189,6 +202,7 @@ const CONTACT_PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending'
 const CONTACT_FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const CONTACT_OPTIMISTIC_MESSAGE_ID_PREFIXES = ['contact-modal-chat-']
 const CONTACT_OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
+const CONTACT_CHAT_PAGE_LIMIT = 50
 
 interface ContactDetailsModalProps {
   isOpen: boolean
@@ -548,6 +562,8 @@ const getJourneyChatMessage = (event: JourneyEvent, index: number): ContactChatM
       data.id ||
       `${event.type}-${event.date}-${index}`
     ),
+    cursorDate: event.cursorDate || event.date,
+    cursorKey: event.cursorKey,
     text: effectiveText || getChatMessageTypeLabel(messageType),
     subject,
     date: pickChatTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date,
@@ -738,10 +754,16 @@ export function ContactDetailsModal({
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
   const selectedContactLoadRevisionRef = useRef(0)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
+  const preserveChatScrollRef = useRef(false)
+  const chatAbortRef = useRef<AbortController | null>(null)
+  const paymentsAbortRef = useRef<AbortController | null>(null)
+  const appointmentsAbortRef = useRef<AbortController | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [chatMessages, setChatMessages] = useState<ContactChatMessage[]>([])
   const [agentCompletionEvents, setAgentCompletionEvents] = useState<ConversationalAgentCompletionEvent[]>([])
   const [chatLoading, setChatLoading] = useState(false)
+  const [chatOlderLoading, setChatOlderLoading] = useState(false)
+  const [chatHasOlder, setChatHasOlder] = useState(false)
   const [chatError, setChatError] = useState('')
   const [chatDraft, setChatDraft] = useState('')
   const [chatSubject, setChatSubject] = useState('')
@@ -758,8 +780,18 @@ export function ContactDetailsModal({
   const [metaInstagramConnected, setMetaInstagramConnected] = useState(false)
   const [highLevelStatusLoading, setHighLevelStatusLoading] = useState(false)
   const [paymentsExpanded, setPaymentsExpanded] = useState(false)
+  const [paymentsLoading, setPaymentsLoading] = useState(false)
+  const [paymentsHydrated, setPaymentsHydrated] = useState(false)
+  const [paymentsHasMore, setPaymentsHasMore] = useState(false)
+  const [paymentsCursor, setPaymentsCursor] = useState<string | null>(null)
+  const [paymentsError, setPaymentsError] = useState('')
   const [refundsExpanded, setRefundsExpanded] = useState(false)
   const [appointmentsExpanded, setAppointmentsExpanded] = useState(false)
+  const [appointmentsLoading, setAppointmentsLoading] = useState(false)
+  const [appointmentsHydrated, setAppointmentsHydrated] = useState(false)
+  const [appointmentsHasMore, setAppointmentsHasMore] = useState(false)
+  const [appointmentsCursor, setAppointmentsCursor] = useState<string | null>(null)
+  const [appointmentsError, setAppointmentsError] = useState('')
   const [agentHistoryExpanded, setAgentHistoryExpanded] = useState(false)
   const [automationsExpanded, setAutomationsExpanded] = useState(false)
   const [automationActivity, setAutomationActivity] = useState<ContactAutomationActivity | null>(null)
@@ -793,6 +825,8 @@ export function ContactDetailsModal({
       setChatMessages([])
       setAgentCompletionEvents([])
       setChatLoading(false)
+      setChatOlderLoading(false)
+      setChatHasOlder(false)
       setChatError('')
       setChatDraft('')
       setChatSubject('')
@@ -809,8 +843,18 @@ export function ContactDetailsModal({
       setMetaInstagramConnected(false)
       setHighLevelStatusLoading(false)
       setPaymentsExpanded(false)
+      setPaymentsLoading(false)
+      setPaymentsHydrated(false)
+      setPaymentsHasMore(false)
+      setPaymentsCursor(null)
+      setPaymentsError('')
       setRefundsExpanded(false)
       setAppointmentsExpanded(false)
+      setAppointmentsLoading(false)
+      setAppointmentsHydrated(false)
+      setAppointmentsHasMore(false)
+      setAppointmentsCursor(null)
+      setAppointmentsError('')
       setAgentHistoryExpanded(false)
       setAutomationsExpanded(false)
       setAutomationActivity(null)
@@ -848,7 +892,18 @@ export function ContactDetailsModal({
     void onSelectContact(selectedContact)
       .then((detail) => {
         if (!detail || selectedContactLoadRevisionRef.current !== revision) return
-        setSelectedContact((current) => current?.id === contactId ? { ...current, ...detail } : current)
+        setSelectedContact((current) => {
+          if (current?.id !== contactId) return current
+          const hydrated = { ...current, ...detail }
+          // Los endpoints ligeros mandan cinco citas + metadata. Si la
+          // hidratacion entrega la coleccion completa, esa metadata anterior ya
+          // no aplica y no debe afirmar que diez filas siguen siendo solo cinco.
+          if (Array.isArray(detail.appointments) && detail.appointmentsTotal === undefined) {
+            hydrated.appointmentsTotal = detail.appointments.length
+            hydrated.appointmentsTruncated = false
+          }
+          return hydrated
+        })
       })
       .catch(() => {
         // El DTO ligero sigue siendo utilizable aunque el detalle falle.
@@ -862,14 +917,29 @@ export function ContactDetailsModal({
   }, [isOpen, onSelectContact, selectedContact?.id])
 
   useEffect(() => {
+    chatAbortRef.current?.abort()
+    paymentsAbortRef.current?.abort()
+    appointmentsAbortRef.current?.abort()
     setPaymentsExpanded(false)
+    setPaymentsLoading(false)
+    setPaymentsHydrated(false)
+    setPaymentsHasMore(false)
+    setPaymentsCursor(null)
+    setPaymentsError('')
     setRefundsExpanded(false)
     setAppointmentsExpanded(false)
+    setAppointmentsLoading(false)
+    setAppointmentsHydrated(false)
+    setAppointmentsHasMore(false)
+    setAppointmentsCursor(null)
+    setAppointmentsError('')
     setAgentHistoryExpanded(false)
     setAutomationsExpanded(false)
     setChatMessages([])
     setAgentCompletionEvents([])
     setChatLoading(false)
+    setChatOlderLoading(false)
+    setChatHasOlder(false)
     setChatError('')
     setChatDraft('')
     setChatSubject('')
@@ -896,15 +966,108 @@ export function ContactDetailsModal({
     setSavingPrimaryPhone(null)
   }, [selectedContact?.id])
 
+  const loadContactPayments = useCallback(async (contactId: string, append = false) => {
+    if (!contactId || paymentsLoading) return
+    paymentsAbortRef.current?.abort()
+    const controller = new AbortController()
+    paymentsAbortRef.current = controller
+    setPaymentsLoading(true)
+    setPaymentsError('')
+    try {
+      const page = await contactsService.getContactPaymentsPage(contactId, {
+        cursor: append ? paymentsCursor : null,
+        limit: 20,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
+      setSelectedContact(current => {
+        if (current?.id !== contactId) return current
+        const existing = append && Array.isArray(current.payments) ? current.payments : []
+        const byId = new Map(existing.map(payment => [payment.id, payment]))
+        page.payments.forEach(payment => byId.set(payment.id, payment))
+        return {
+          ...current,
+          payments: [...byId.values()],
+          paymentsTruncated: page.pagination.hasNext,
+          paymentsNextCursor: page.pagination.nextCursor
+        }
+      })
+      setPaymentsHydrated(true)
+      setPaymentsHasMore(page.pagination.hasNext)
+      setPaymentsCursor(page.pagination.nextCursor)
+    } catch (error) {
+      if (!controller.signal.aborted) setPaymentsError(error instanceof Error ? error.message : 'No se pudieron cargar los pagos.')
+    } finally {
+      if (!controller.signal.aborted) setPaymentsLoading(false)
+      if (paymentsAbortRef.current === controller) paymentsAbortRef.current = null
+    }
+  }, [paymentsCursor, paymentsLoading])
+
+  const loadContactAppointments = useCallback(async (contactId: string, append = false) => {
+    if (!contactId || appointmentsLoading) return
+    appointmentsAbortRef.current?.abort()
+    const controller = new AbortController()
+    appointmentsAbortRef.current = controller
+    setAppointmentsLoading(true)
+    setAppointmentsError('')
+    try {
+      const page = await contactsService.getContactAppointmentsPage(contactId, {
+        cursor: append ? appointmentsCursor : null,
+        limit: 20,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
+      setSelectedContact(current => {
+        if (current?.id !== contactId) return current
+        const existing = append && Array.isArray(current.appointments) ? current.appointments : []
+        const byId = new Map(existing.map(appointment => [appointment.id, appointment]))
+        page.appointments.forEach(appointment => byId.set(appointment.id, appointment))
+        return {
+          ...current,
+          appointments: [...byId.values()],
+          appointmentsTruncated: page.pagination.hasNext,
+          appointmentsNextCursor: page.pagination.nextCursor
+        }
+      })
+      setAppointmentsHydrated(true)
+      setAppointmentsHasMore(page.pagination.hasNext)
+      setAppointmentsCursor(page.pagination.nextCursor)
+    } catch (error) {
+      if (!controller.signal.aborted) setAppointmentsError(error instanceof Error ? error.message : 'No se pudieron cargar las citas.')
+    } finally {
+      if (!controller.signal.aborted) setAppointmentsLoading(false)
+      if (appointmentsAbortRef.current === controller) appointmentsAbortRef.current = null
+    }
+  }, [appointmentsCursor, appointmentsLoading])
+
+  useEffect(() => {
+    const contactId = selectedContact?.id
+    if (!isOpen || !contactId || !paymentsExpanded || paymentsHydrated) return
+    void loadContactPayments(contactId)
+  }, [isOpen, loadContactPayments, paymentsExpanded, paymentsHydrated, selectedContact?.id])
+
+  useEffect(() => {
+    const contactId = selectedContact?.id
+    if (!isOpen || !contactId || !appointmentsExpanded || appointmentsHydrated) return
+    void loadContactAppointments(contactId)
+  }, [appointmentsExpanded, appointmentsHydrated, isOpen, loadContactAppointments, selectedContact?.id])
+
   const loadContactChat = useCallback(async (contactId: string, options: { silent?: boolean } = {}) => {
     if (!contactId) return
+    chatAbortRef.current?.abort()
+    const controller = new AbortController()
+    chatAbortRef.current = controller
     const silent = options.silent === true
     if (!silent) setChatLoading(true)
     setChatError('')
 
     try {
       const [journey, scheduledMessages, agentCompletions] = await Promise.all([
-        contactsService.getContactConversation(contactId),
+        contactsService.getContactConversation(contactId, {
+          messageLimit: CONTACT_CHAT_PAGE_LIMIT,
+          signal: controller.signal,
+          throwOnError: true
+        }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => [] as ScheduledChatMessage[]),
         conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])
@@ -917,18 +1080,71 @@ export function ContactDetailsModal({
 
       const loadedMessages = [...journeyMessages, ...scheduledBubbles]
         .sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date))
+      if (controller.signal.aborted) return
+      setChatHasOlder(journeyMessages.length >= CONTACT_CHAT_PAGE_LIMIT)
       setAgentCompletionEvents(agentCompletions)
       setChatMessages((current) => mergeContactChatMessagesWithOptimistic(loadedMessages, current))
     } catch {
-      if (!silent) {
+      if (!silent && !controller.signal.aborted) {
         setChatMessages([])
         setAgentCompletionEvents([])
         setChatError('No se pudo cargar la conversacion.')
       }
     } finally {
-      if (!silent) setChatLoading(false)
+      if (!silent && !controller.signal.aborted) setChatLoading(false)
+      if (chatAbortRef.current === controller) chatAbortRef.current = null
     }
   }, [])
+
+  const loadOlderContactChat = useCallback(async () => {
+    const contactId = selectedContact?.id
+    if (!contactId || chatOlderLoading || !chatHasOlder) return
+    const oldestCursor = getOldestJourneyMessageCursor(chatMessages.map(message => ({
+      type: 'whatsapp_message' as const,
+      date: message.date,
+      cursorDate: message.cursorDate,
+      cursorKey: message.cursorKey,
+      data: {}
+    })))
+    if (!oldestCursor) {
+      setChatHasOlder(false)
+      return
+    }
+
+    const pane = chatMessagesRef.current
+    const previousHeight = pane?.scrollHeight || 0
+    const previousTop = pane?.scrollTop || 0
+    const controller = new AbortController()
+    chatAbortRef.current?.abort()
+    chatAbortRef.current = controller
+    setChatOlderLoading(true)
+    try {
+      const journey = await contactsService.getContactConversation(contactId, {
+        messageLimit: CONTACT_CHAT_PAGE_LIMIT,
+        beforeMessageDate: oldestCursor.beforeMessageDate,
+        beforeMessageCursor: oldestCursor.beforeMessageCursor,
+        signal: controller.signal,
+        throwOnError: true
+      })
+      if (controller.signal.aborted) return
+      const olderMessages = journey.map(getJourneyChatMessage).filter((message): message is ContactChatMessage => Boolean(message))
+      setChatHasOlder(olderMessages.length >= CONTACT_CHAT_PAGE_LIMIT)
+      preserveChatScrollRef.current = true
+      setChatMessages(current => mergeContactChatMessagesWithOptimistic(olderMessages, current))
+      window.requestAnimationFrame(() => {
+        const currentPane = chatMessagesRef.current
+        if (currentPane && previousHeight > 0) {
+          currentPane.scrollTop = previousTop + currentPane.scrollHeight - previousHeight
+        }
+        preserveChatScrollRef.current = false
+      })
+    } catch {
+      if (!controller.signal.aborted) setChatError('No se pudieron cargar mensajes anteriores.')
+    } finally {
+      if (!controller.signal.aborted) setChatOlderLoading(false)
+      if (chatAbortRef.current === controller) chatAbortRef.current = null
+    }
+  }, [chatHasOlder, chatMessages, chatOlderLoading, selectedContact?.id])
 
   useEffect(() => {
     if (!isOpen) return
@@ -989,7 +1205,7 @@ export function ContactDetailsModal({
 
   useEffect(() => {
     const messagesSurface = chatMessagesRef.current
-    if (!messagesSurface) return
+    if (!messagesSurface || preserveChatScrollRef.current) return
 
     messagesSurface.scrollTop = messagesSurface.scrollHeight
   }, [agentCompletionEvents, chatLoading, chatMessages])
@@ -1272,6 +1488,8 @@ export function ContactDetailsModal({
       !isTestPayment(p) && (p.amount < 0 || p.status?.toLowerCase() === 'refunded' || p.status?.toLowerCase() === 'cancelled')
     ) || []
   }, [selectedContact])
+  const paymentsTotalCount = selectedContact?.paymentsTotal ?? (payments.length + refunds.length)
+  const appointmentsTotalCount = selectedContact?.appointmentsTotal ?? selectedContact?.appointments?.length ?? 0
   const resolvedAttribution = useMemo(
     () => getResolvedAttributionDisplay(selectedContact),
     [selectedContact]
@@ -1851,6 +2069,14 @@ export function ContactDetailsModal({
         </header>
 
         <ChatMessageSurface ref={chatMessagesRef} className={styles.contactChatMessages}>
+          {!chatLoading && chatHasOlder ? (
+            <div className={styles.contactChatState}>
+              <Button variant="secondary" size="sm" disabled={chatOlderLoading} onClick={() => { void loadOlderContactChat() }}>
+                {chatOlderLoading ? <Loader2 size={14} className={styles.spinIcon} aria-hidden="true" /> : null}
+                Cargar mensajes anteriores
+              </Button>
+            </div>
+          ) : null}
           {chatLoading ? (
             <div className={styles.contactChatState} role="status" aria-live="polite">
               <Loader2 size={18} className={styles.spinIcon} aria-hidden="true" />
@@ -2624,7 +2850,7 @@ export function ContactDetailsModal({
                 {/* Grid de 2 columnas: Citas y Pagos */}
                 <div className={styles.twoColumnGrid}>
                   {/* COLUMNA IZQUIERDA: Citas */}
-                  {selectedContact.appointments && selectedContact.appointments.length > 0 && (
+                  {appointmentsTotalCount > 0 && (
                     <div className={styles.detailSection}>
                       <button
                         type="button"
@@ -2636,7 +2862,9 @@ export function ContactDetailsModal({
                         <div className={styles.summaryCardContent}>
                           <div>
                             <h5 className={styles.summaryTitle}>Citas</h5>
-                            <p className={styles.summaryCount}>{selectedContact.appointments.length}</p>
+                            <p className={styles.summaryCount}>
+                              {appointmentsTotalCount}
+                            </p>
                           </div>
                           <Icon
                             name={appointmentsExpanded ? 'chevron-down' : 'chevron-right'}
@@ -2648,7 +2876,7 @@ export function ContactDetailsModal({
 
                       {appointmentsExpanded && (
                         <ul className={styles.paymentList} data-contact-summary-list="appointments">
-                          {selectedContact.appointments.map(appointment => {
+                          {(selectedContact.appointments || []).map(appointment => {
                             const statusInfo = getAppointmentStatusLabel(appointment.status)
                             const timeStr = new Date(appointment.start_time).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: timezone })
 
@@ -2679,13 +2907,32 @@ export function ContactDetailsModal({
                               </li>
                             )
                           })}
+                          {appointmentsLoading && (
+                            <li className={styles.paymentItem}>
+                              <span className={styles.paymentDetailItem}>
+                                <Loader2 size={14} className={styles.spinIcon} aria-hidden="true" /> Cargando citas…
+                              </span>
+                            </li>
+                          )}
+                          {appointmentsError && !appointmentsLoading ? (
+                            <li className={styles.paymentItem}>
+                              <span className={styles.paymentDetailItem}>{appointmentsError}</span>
+                            </li>
+                          ) : null}
+                          {appointmentsHasMore && appointmentsHydrated && !appointmentsLoading ? (
+                            <li className={styles.paymentItem}>
+                              <Button variant="secondary" size="sm" onClick={() => { void loadContactAppointments(selectedContact.id, true) }}>
+                                Cargar más citas
+                              </Button>
+                            </li>
+                          ) : null}
                         </ul>
                       )}
                     </div>
                   )}
 
                   {/* COLUMNA DERECHA: Pagos */}
-                  {payments.length > 0 && (
+                      {(selectedContact.hasPaymentRecords || paymentsTotalCount > 0) && (
                     <div className={styles.detailSection}>
                       <button
                         type="button"
@@ -2697,7 +2944,7 @@ export function ContactDetailsModal({
                         <div className={styles.summaryCardContent}>
                           <div>
                             <h5 className={styles.summaryTitle}>Pagos</h5>
-                            <p className={styles.summaryAmount}>{formatCurrency(payments.reduce((sum, payment) => sum + payment.amount, 0))}</p>
+                            <p className={styles.summaryAmount}>{formatCurrency(selectedContact.ltv || payments.reduce((sum, payment) => sum + payment.amount, 0))}</p>
                           </div>
                           <Icon
                             name={paymentsExpanded ? 'chevron-down' : 'chevron-right'}
@@ -2736,6 +2983,25 @@ export function ContactDetailsModal({
                               </li>
                             )
                           })}
+                          {paymentsLoading ? (
+                            <li className={styles.paymentItem}>
+                              <span className={styles.paymentDetailItem}>
+                                <Loader2 size={14} className={styles.spinIcon} aria-hidden="true" /> Cargando pagos…
+                              </span>
+                            </li>
+                          ) : null}
+                          {paymentsError && !paymentsLoading ? (
+                            <li className={styles.paymentItem}>
+                              <span className={styles.paymentDetailItem}>{paymentsError}</span>
+                            </li>
+                          ) : null}
+                          {paymentsHasMore && paymentsHydrated && !paymentsLoading ? (
+                            <li className={styles.paymentItem}>
+                              <Button variant="secondary" size="sm" onClick={() => { void loadContactPayments(selectedContact.id, true) }}>
+                                Cargar más pagos
+                              </Button>
+                            </li>
+                          ) : null}
                         </ul>
                       )}
                     </div>

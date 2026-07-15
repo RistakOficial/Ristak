@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, CheckCircle2, FormInput, Globe2, LayoutTemplate, Monitor, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Loading, Modal } from '@/components/common'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -83,6 +83,13 @@ export const Domains: React.FC = () => {
   const [editingDomain, setEditingDomain] = useState<PublicSiteDomain | null>(null)
   const [domainDialogOpen, setDomainDialogOpen] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadingSites, setLoadingSites] = useState(false)
+  const [sitesHasMore, setSitesHasMore] = useState(false)
+  const [sitesNextCursor, setSitesNextCursor] = useState('')
+  const sitesRequestRef = useRef<AbortController | null>(null)
+  const sitesSearchTimerRef = useRef<number | null>(null)
+  const sitesSelectOpenRef = useRef(false)
+  const sitesSearchRef = useRef('')
   const [savingDomain, setSavingDomain] = useState(false)
   const [verifyingDomainId, setVerifyingDomainId] = useState('')
   const [verifyingApp, setVerifyingApp] = useState(false)
@@ -101,6 +108,10 @@ export const Domains: React.FC = () => {
 
   useEffect(() => {
     void loadDomain()
+    return () => {
+      sitesRequestRef.current?.abort()
+      if (sitesSearchTimerRef.current !== null) window.clearTimeout(sitesSearchTimerRef.current)
+    }
   }, [])
 
   const applyConfig = (config: SitesDomainConfig) => {
@@ -115,25 +126,7 @@ export const Domains: React.FC = () => {
   const loadDomain = async () => {
     setLoading(true)
     try {
-      const [configResult, sitesResult] = await Promise.allSettled([
-        sitesService.getDomain(),
-        sitesService.listAllSiteSelectors({ kind: 'domain' })
-      ])
-
-      if (configResult.status === 'rejected') {
-        throw configResult.reason
-      }
-
-      applyConfig(configResult.value)
-      if (sitesResult.status === 'fulfilled') {
-        setSites(sitesResult.value.items)
-        if (sitesResult.value.truncated) {
-          showToast('warning', 'Demasiados sitios', 'Se muestran los 2,000 sitios más recientes. Usa el módulo de Sitios para administrar el resto.')
-        }
-      } else {
-        setSites([])
-        showToast('warning', 'Lista no disponible', 'No se pudieron cargar páginas y formularios para elegir la ruta principal.')
-      }
+      applyConfig(await sitesService.getDomain())
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo cargar el dominio')
     } finally {
@@ -141,11 +134,64 @@ export const Domains: React.FC = () => {
     }
   }
 
+  const mergeSites = (current: PublicSite[], incoming: PublicSite[]) => {
+    const byId = new Map(current.map(site => [site.id, site]))
+    incoming.forEach(site => byId.set(site.id, site))
+    return [...byId.values()]
+  }
+
+  const loadDomainSites = async ({
+    reset = false,
+    search = '',
+    selectedIds = []
+  }: { reset?: boolean; search?: string; selectedIds?: string[] } = {}) => {
+    if (reset) sitesSearchRef.current = search
+    sitesRequestRef.current?.abort()
+    const controller = new AbortController()
+    sitesRequestRef.current = controller
+    setLoadingSites(true)
+    try {
+      const page = await sitesService.listSiteSelectorsPage({
+        kind: 'domain',
+        limit: 30,
+        cursor: reset ? '' : sitesNextCursor,
+        search,
+        selectedIds,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
+      const incoming = [...(page.selectedItems || []), ...page.items]
+      setSites(current => mergeSites(reset ? current.filter(site => selectedIds.includes(site.id)) : current, incoming))
+      setSitesHasMore(page.hasMore)
+      setSitesNextCursor(page.nextCursor || '')
+    } catch (error) {
+      if ((error as Error)?.name !== 'AbortError') {
+        showToast('warning', 'Lista no disponible', 'No se pudieron cargar páginas y formularios para elegir la ruta principal.')
+      }
+    } finally {
+      if (sitesRequestRef.current === controller) {
+        sitesRequestRef.current = null
+        setLoadingSites(false)
+      }
+    }
+  }
+
+  const handleSitesSearch = (search: string) => {
+    sitesSearchRef.current = search
+    if (sitesSearchTimerRef.current !== null) window.clearTimeout(sitesSearchTimerRef.current)
+    if (!sitesSelectOpenRef.current) return
+    sitesSearchTimerRef.current = window.setTimeout(() => {
+      const selectedId = decodeDomainRouteValue(routeDraft).siteId
+      void loadDomainSites({ reset: true, search, selectedIds: selectedId ? [selectedId] : [] })
+    }, 250)
+  }
+
   const openAddDomainDialog = () => {
     setEditingDomain(null)
     setDomainDraft('')
     setRouteDraft('')
     setDomainDialogOpen(true)
+    void loadDomainSites({ reset: true })
   }
 
   const openEditDomainDialog = (domain: PublicSiteDomain) => {
@@ -153,6 +199,10 @@ export const Domains: React.FC = () => {
     setDomainDraft(domain.domain)
     setRouteDraft(encodeDomainRouteValue(domain.defaultRoute?.siteId, domain.defaultRoute?.pageId))
     setDomainDialogOpen(true)
+    void loadDomainSites({
+      reset: true,
+      selectedIds: domain.defaultRoute?.siteId ? [domain.defaultRoute.siteId] : []
+    })
   }
 
   const closeDomainDialog = () => {
@@ -360,12 +410,26 @@ export const Domains: React.FC = () => {
           <span>Root del dominio</span>
           <CustomSelect
             value={routeDraft}
-            disabled={savingDomain || sortedSites.length === 0}
+            disabled={savingDomain}
             size="large"
             dropdownMinHeight={300}
             onChange={(event) => setRouteDraft(event.target.value)}
+            searchable
+            searchPlaceholder="Buscar página o formulario…"
+            onSearchChange={handleSitesSearch}
+            onOpenChange={(open) => {
+              sitesSelectOpenRef.current = open
+              if (open && !loadingSites) {
+                const selectedId = decodeDomainRouteValue(routeDraft).siteId
+                void loadDomainSites({ reset: true, selectedIds: selectedId ? [selectedId] : [] })
+              }
+            }}
+            onLoadMore={() => void loadDomainSites({ search: sitesSearchRef.current })}
+            hasMore={sitesHasMore}
+            loading={loadingSites}
+            emptyMessage="No hay páginas ni formularios para esta búsqueda"
           >
-            {sortedSites.length > 0 ? renderDomainRouteOptions() : <option value="">No hay páginas ni formularios</option>}
+            {renderDomainRouteOptions()}
           </CustomSelect>
           <small>Si eliges una página, esa página abre directo en la raíz del dominio. Si lo dejas automático, Ristak usa una página publicada.</small>
         </label>

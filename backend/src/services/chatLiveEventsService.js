@@ -111,6 +111,30 @@ export function publishChatMessageEvent(input = {}) {
   }
 }
 
+export function publishChatDataChangedEvent(input = {}) {
+  const contactId = cleanString(input.contactId)
+  const domains = [...new Set((Array.isArray(input.domains) ? input.domains : [])
+    .map(cleanString)
+    .filter(domain => domain === 'appointments'))]
+  if (!contactId || domains.length === 0 || clients.size === 0) return
+
+  const payload = {
+    type: 'chat_data_changed',
+    contactId,
+    domains,
+    entityId: cleanString(input.entityId),
+    changedAt: new Date().toISOString()
+  }
+
+  for (const [clientId, client] of clients.entries()) {
+    try {
+      writeSseEvent(client.res, 'chat_data_changed', payload)
+    } catch {
+      cleanupClient(clientId)
+    }
+  }
+}
+
 export function getChatLiveClientCount() {
   return clients.size
 }

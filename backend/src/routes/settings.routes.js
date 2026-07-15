@@ -37,6 +37,7 @@ import {
   getMessageTemplatesView,
   getMessageTemplateVariablesView,
   previewMessageTemplateView,
+  repairDefaultMessageTemplatesView,
   sendMessageTemplateTestView,
   submitMessageTemplateToActiveProviderView,
   syncAllMessageTemplatesWithActiveProviderView,
@@ -103,6 +104,7 @@ router.get('/message-templates', requireWhatsAppAccess, requireFeature('whatsapp
 router.get('/message-templates/variables', requireWhatsAppAccess, requireFeature('whatsapp_templates'), getMessageTemplateVariablesView);
 router.post('/message-templates/preview', requireWhatsAppAccess, requireFeature('whatsapp_templates'), previewMessageTemplateView);
 router.post('/message-templates/sync', requireWhatsAppAccess, requireFeature('whatsapp_templates'), syncAllMessageTemplatesWithActiveProviderView);
+router.post('/message-templates/repair-defaults', requireWhatsAppAccess, requireFeature('whatsapp_templates'), repairDefaultMessageTemplatesView);
 
 router.post('/message-templates/folders', requireWhatsAppAccess, requireFeature('whatsapp_templates'), createTemplateFolderView);
 router.put('/message-templates/folders/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), updateTemplateFolderView);

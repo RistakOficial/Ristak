@@ -2744,7 +2744,7 @@ export async function warmWhatsAppQrProfilePictures(contacts = [], {
   return results
 }
 
-export async function getWhatsAppQrSessions() {
+export async function getWhatsAppQrSessions({ repairMissingAuthState = true } = {}) {
   const rows = await db.all(`
     SELECT *
     FROM whatsapp_qr_sessions
@@ -2753,7 +2753,11 @@ export async function getWhatsAppQrSessions() {
 
   const repairedRows = []
   for (const row of rows) {
-    if (cleanString(row.status).toLowerCase() === 'connected' && !liveSessions.get(row.phone_number_id)?.connected) {
+    if (
+      repairMissingAuthState &&
+      cleanString(row.status).toLowerCase() === 'connected' &&
+      !liveSessions.get(row.phone_number_id)?.connected
+    ) {
       const phone = await getPhoneRow(row.phone_number_id).catch(() => null)
       if (phone && await markMissingAuthStateIfNeeded(phone)) {
         repairedRows.push(await getSessionRow(row.phone_number_id))

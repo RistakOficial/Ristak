@@ -18,6 +18,10 @@ import {
   isConversationalAgentSafetyReferenceTable,
   mergeConversationalAgentSafetyContactReferences
 } from '../utils/conversationalAgentSafetyMerge.js'
+import {
+  createDatabaseAbortError,
+  runCancelablePostgresQuery
+} from '../utils/postgresCancelableQuery.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -102,6 +106,10 @@ const POSTGRES_CLIENT_ERROR_LISTENER = Symbol('ristakPostgresClientErrorListener
 const POSTGRES_CLIENT_CONNECTION_ERROR = Symbol('ristakPostgresClientConnectionError')
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+function throwIfDatabaseOperationAborted(options) {
+  if (options?.signal?.aborted) throw createDatabaseAbortError()
+}
 
 async function updateRowsInBatches({ table, setSql, whereSql, label, batchSize = STARTUP_DATA_BATCH_SIZE }) {
   let lastId = ''
@@ -373,7 +381,7 @@ if (usePostgres) {
   const pg = await import('pg')
   const postgresTypes = new pg.default.TypeOverrides()
   postgresTypes.setTypeParser(1114, parsePostgresTimestampWithoutTimezoneAsUtc)
-  const pool = new pg.default.Pool({
+  const postgresPoolConfig = {
     connectionString: DATABASE_URL,
     options: '-c timezone=UTC',
     types: postgresTypes,
@@ -382,10 +390,22 @@ if (usePostgres) {
     ssl: {
       rejectUnauthorized: false
     }
+  }
+  const pool = new pg.default.Pool(postgresPoolConfig)
+  // Canal reservado: si las diez conexiones de trabajo estan ocupadas en
+  // scans abandonados, la orden de cancelacion nunca debe esperar una de ellas.
+  const cancellationPool = new pg.default.Pool({
+    ...postgresPoolConfig,
+    max: 2,
+    idleTimeoutMillis: 1_000,
+    connectionTimeoutMillis: 5_000
   })
 
   pool.on('error', (error) => {
     logger.warn(`PostgreSQL cerró una conexión idle del pool: ${describePostgresConnectionError(error)}. Se descartará y se abrirá otra cuando haga falta.`)
+  })
+  cancellationPool.on('error', (error) => {
+    logger.warn(`PostgreSQL cerró una conexión idle del canal de cancelación: ${describePostgresConnectionError(error)}.`)
   })
 
   function attachPostgresClientErrorHandler(client) {
@@ -463,37 +483,90 @@ if (usePostgres) {
       : params
   )
 
+  const queryPostgres = async (client, sql, params = [], options = {}) => {
+    throwIfDatabaseOperationAborted(options)
+    return runCancelablePostgresQuery({
+      client,
+      sql,
+      params: toPostgresParams(params),
+      signal: options?.signal,
+      cancelBackend: (processId) => cancellationPool.query(
+        'SELECT pg_cancel_backend($1) AS cancelled',
+        [processId]
+      ),
+      onCancelError: (error) => logger.warn(
+        `No se pudo cancelar una consulta PostgreSQL desconectada: ${describePostgresConnectionError(error)}`
+      )
+    })
+  }
+
   const createPostgresAdapter = (client) => ({
-    run: async (sql, params = []) => {
+    run: async (sql, params = [], options = {}) => {
       sql = normalizePostgresSql(sql)
       sql = convertPlaceholders(sql)
 
-      const result = await client.query(sql, toPostgresParams(params))
+      const result = await queryPostgres(client, sql, params, options)
       return {
         lastID: result.rows[0]?.id || null,
         changes: result.rowCount
       }
     },
 
-    get: async (sql, params = []) => {
+    get: async (sql, params = [], options = {}) => {
       sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
       sql = convertPlaceholders(sql)
 
-      const result = await client.query(sql, toPostgresParams(params))
+      const result = await queryPostgres(client, sql, params, options)
       return result.rows[0] || null
     },
 
-    all: async (sql, params = []) => {
+    all: async (sql, params = [], options = {}) => {
       sql = sql.replace(/DATETIME/g, 'TIMESTAMP')
       sql = convertPlaceholders(sql)
 
-      const result = await client.query(sql, toPostgresParams(params))
+      const result = await queryPostgres(client, sql, params, options)
       return result.rows
     },
 
     exec: async (sql) => {
       sql = normalizePostgresSql(sql)
       await client.query(sql)
+    },
+
+    // Las migraciones DDL largas usan la misma sesion que sostiene el advisory
+    // lock. Configurar aqui (y no mediante una conexion suelta del pool) hace
+    // efectivos lock_timeout/statement_timeout tambien para INDEX CONCURRENTLY.
+    configureVersionedMigrationSession: async ({ lockTimeoutMs, statementTimeoutMs }) => {
+      await client.query(`
+        SELECT
+          set_config('lock_timeout', $1, false),
+          set_config('statement_timeout', $2, false)
+      `, [`${lockTimeoutMs}ms`, `${statementTimeoutMs}ms`])
+    },
+
+    resetVersionedMigrationSession: async () => {
+      await client.query('RESET lock_timeout; RESET statement_timeout')
+    },
+
+    // El adapter fijado por un advisory lock tambien necesita transacciones.
+    // Asi un archivo DDL no concurrente y su fila de schema_migrations hacen
+    // commit juntos en exactamente la misma sesion.
+    transaction: async (callback) => {
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return callback(activeTransaction)
+      const transactionDb = createPostgresAdapter(client)
+      await client.query('BEGIN')
+      try {
+        const result = await databaseTransactionContext.run(
+          transactionDb,
+          () => callback(transactionDb)
+        )
+        await client.query('COMMIT')
+        return result
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        throw error
+      }
     }
   })
 
@@ -616,33 +689,33 @@ if (usePostgres) {
   }
 
   db = {
-    run: async (sql, params = []) => {
+    run: async (sql, params = [], options = {}) => {
       const activeTransaction = databaseTransactionContext.getStore()
-      if (activeTransaction) return activeTransaction.run(sql, params)
+      if (activeTransaction) return activeTransaction.run(sql, params, options)
       const pinnedConnection = databaseConnectionContext.getStore()
-      if (pinnedConnection) return pinnedConnection.db.run(sql, params)
-      return withPostgresClient((clientDb) => clientDb.run(sql, params), {
+      if (pinnedConnection) return pinnedConnection.db.run(sql, params, options)
+      return withPostgresClient((clientDb) => clientDb.run(sql, params, options), {
         label: 'escritura'
       })
     },
 
-    get: async (sql, params = []) => {
+    get: async (sql, params = [], options = {}) => {
       const activeTransaction = databaseTransactionContext.getStore()
-      if (activeTransaction) return activeTransaction.get(sql, params)
+      if (activeTransaction) return activeTransaction.get(sql, params, options)
       const pinnedConnection = databaseConnectionContext.getStore()
-      if (pinnedConnection) return pinnedConnection.db.get(sql, params)
-      return withPostgresClient((clientDb) => clientDb.get(sql, params), {
+      if (pinnedConnection) return pinnedConnection.db.get(sql, params, options)
+      return withPostgresClient((clientDb) => clientDb.get(sql, params, options), {
         retryTransientRead: true,
         label: 'lectura get'
       })
     },
 
-    all: async (sql, params = []) => {
+    all: async (sql, params = [], options = {}) => {
       const activeTransaction = databaseTransactionContext.getStore()
-      if (activeTransaction) return activeTransaction.all(sql, params)
+      if (activeTransaction) return activeTransaction.all(sql, params, options)
       const pinnedConnection = databaseConnectionContext.getStore()
-      if (pinnedConnection) return pinnedConnection.db.all(sql, params)
-      return withPostgresClient((clientDb) => clientDb.all(sql, params), {
+      if (pinnedConnection) return pinnedConnection.db.all(sql, params, options)
+      return withPostgresClient((clientDb) => clientDb.all(sql, params, options), {
         retryTransientRead: true,
         label: 'lectura all'
       })
@@ -716,28 +789,34 @@ if (usePostgres) {
   logger.success('Conectado a SQLite:', dbPath)
 
   const createSqliteAdapter = (connection) => ({
-    run: (sql, params = []) => {
+    run: (sql, params = [], options = {}) => {
+      throwIfDatabaseOperationAborted(options)
       return new Promise((resolve, reject) => {
         connection.run(sql, params, function(err) {
           if (err) reject(err)
+          else if (options?.signal?.aborted) reject(createDatabaseAbortError())
           else resolve({ lastID: this.lastID, changes: this.changes })
         })
       })
     },
 
-    get: (sql, params = []) => {
+    get: (sql, params = [], options = {}) => {
+      throwIfDatabaseOperationAborted(options)
       return new Promise((resolve, reject) => {
         connection.get(sql, params, (err, row) => {
           if (err) reject(err)
+          else if (options?.signal?.aborted) reject(createDatabaseAbortError())
           else resolve(row || null)
         })
       })
     },
 
-    all: (sql, params = []) => {
+    all: (sql, params = [], options = {}) => {
+      throwIfDatabaseOperationAborted(options)
       return new Promise((resolve, reject) => {
         connection.all(sql, params, (err, rows) => {
           if (err) reject(err)
+          else if (options?.signal?.aborted) reject(createDatabaseAbortError())
           else resolve(rows)
         })
       })
@@ -3425,6 +3504,13 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_stripe_customer ON contacts(stripe_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_conekta_customer ON contacts(conekta_customer_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_created_at ON contacts(created_at)')
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_contacts_cursor_effective_created_at_id
+      ON contacts(
+        COALESCE(created_at, '1970-01-01 00:00:00') DESC,
+        id DESC
+      )
+    `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_ad_id ON contacts(attribution_ad_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_contacts_preferred_whatsapp_phone ON contacts(preferred_whatsapp_phone_number_id)')
     try {
@@ -4491,6 +4577,25 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_date ON meta_ads(date)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign ON meta_ads(campaign_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_meta_ads_ad ON meta_ads(ad_id)')
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_campaign_contacts_cursor_created_at_id
+      ON contacts(
+        COALESCE(
+          NULLIF(
+            COALESCE(
+              COALESCE(
+                julianday(created_at),
+                julianday(REPLACE(REPLACE(created_at, 'T', ' '), 'Z', ''))
+              ),
+              0
+            ),
+            0
+          ),
+          julianday('1970-01-01 00:00:00')
+        ) DESC,
+        id DESC
+      )
+    `)
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS meta_campaign_templates (

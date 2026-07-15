@@ -215,9 +215,10 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
 }
 
 export const paymentSettingsService = {
-  async getSettings(): Promise<PaymentSettings> {
+  async getSettings(signal?: AbortSignal): Promise<PaymentSettings> {
     const response = await fetch(apiUrl('/api/settings/payments'), {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      signal
     })
     return parseApiResponse<PaymentSettings>(response)
   },

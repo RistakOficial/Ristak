@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { Image as ImageIcon, MessageCircle } from 'lucide-react'
 import { FaFacebook, FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
 import { Icon } from '../Icon/Icon'
-import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import { Button } from '../Button/Button'
+import { contactsService, getOldestJourneyMessageCursor, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { getFloatingLayerZIndex } from '@/utils/layering'
@@ -1211,6 +1212,20 @@ const getTooltipTransform = (placement: TooltipPosition['placement']): string =>
   placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)'
 
 const SNAKE_ROW_SIZE = 4
+const JOURNEY_PAGE_LIMIT = 100
+
+const mergeJourneyPages = (older: JourneyEvent[], current: JourneyEvent[]) => {
+  const byKey = new Map<string, JourneyEvent>()
+  ;[...older, ...current].forEach((event, index) => {
+    const key = event.cursorKey || `${event.type}:${event.date}:${String(event.data?.id || index)}`
+    byKey.set(key, event)
+  })
+  return [...byKey.values()].sort((left, right) => {
+    const dateDifference = parseSortableDateValue(left.cursorDate || left.date) - parseSortableDateValue(right.cursorDate || right.date)
+    if (dateDifference !== 0) return dateDifference
+    return String(left.cursorKey || '').localeCompare(String(right.cursorKey || ''))
+  })
+}
 
 const chunkJourneyRows = (events: JourneyEvent[], rowSize = SNAKE_ROW_SIZE): JourneyEvent[][] => {
   const rows: JourneyEvent[][] = []
@@ -1225,22 +1240,66 @@ export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourney
   const { labels } = useLabels()
   const journeyRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
+  const olderRequestRef = useRef<AbortController | null>(null)
   const [journey, setJourney] = useState<JourneyEvent[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [hasOlder, setHasOlder] = useState(false)
   const [activeEventIndex, setActiveEventIndex] = useState<number | null>(null)
   const [hoveredEventIndex, setHoveredEventIndex] = useState<number | null>(null)
   const [tooltipPosition, setTooltipPosition] = useState<TooltipPosition | null>(null)
 
   useEffect(() => {
+    const controller = new AbortController()
     const loadJourney = async () => {
       setLoading(true)
-      const data = await contactsService.getContactJourney(contactId)
+      const data = await contactsService.getContactJourney(contactId, {
+        limit: JOURNEY_PAGE_LIMIT,
+        signal: controller.signal,
+        throwOnError: true
+      }).catch(() => [])
+      if (controller.signal.aborted) return
       setJourney(data)
+      setHasOlder(data.length >= JOURNEY_PAGE_LIMIT)
       setLoading(false)
     }
 
-    loadJourney()
+    void loadJourney()
+    return () => {
+      controller.abort()
+      olderRequestRef.current?.abort()
+    }
   }, [contactId])
+
+  const loadOlderJourney = async () => {
+    if (loadingOlder || !hasOlder) return
+    const cursor = getOldestJourneyMessageCursor(journey)
+    if (!cursor) {
+      setHasOlder(false)
+      return
+    }
+    const controller = new AbortController()
+    olderRequestRef.current?.abort()
+    olderRequestRef.current = controller
+    setLoadingOlder(true)
+    try {
+      const data = await contactsService.getContactJourney(contactId, {
+        limit: JOURNEY_PAGE_LIMIT,
+        beforeEventDate: cursor.beforeMessageDate,
+        beforeEventCursor: cursor.beforeMessageCursor,
+        signal: controller.signal,
+        throwOnError: true
+      })
+      if (controller.signal.aborted) return
+      setJourney(current => mergeJourneyPages(data, current))
+      setHasOlder(data.length >= JOURNEY_PAGE_LIMIT)
+    } catch {
+      // Conserva el botón para que el usuario pueda reintentar una página fallida.
+    } finally {
+      if (!controller.signal.aborted) setLoadingOlder(false)
+      if (olderRequestRef.current === controller) olderRequestRef.current = null
+    }
+  }
 
   useEffect(() => {
     setActiveEventIndex(null)
@@ -1503,6 +1562,11 @@ export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourney
   return (
     <div className={styles.journey} data-layout={layout} ref={journeyRef}>
       <h4 className={styles.title}>Viaje {customerJourneyLabel}</h4>
+      {hasOlder ? (
+        <Button variant="secondary" size="sm" disabled={loadingOlder} onClick={() => { void loadOlderJourney() }}>
+          {loadingOlder ? 'Cargando…' : 'Cargar historial anterior'}
+        </Button>
+      ) : null}
       {timelineContent}
     </div>
   )

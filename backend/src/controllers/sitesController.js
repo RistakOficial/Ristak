@@ -33,6 +33,7 @@ import {
   createSiteFolder,
   listSiteFolders,
   listSites,
+  listSiteSelectors,
   listSitesVideoAssets,
   listSiteContentAssets,
   refreshSitesAppDomain,
@@ -249,17 +250,52 @@ export async function sitesFontFileHandler(req, res) {
 
 export async function getSitesHandler(req, res) {
   try {
-    const wantsPage = req.query?.paginated === '1' || req.query?.paginated === 'true' || Boolean(req.query?.cursor)
+    const view = String(req.query?.view || '').trim() || 'library'
+    const hasFolderFilter = Object.prototype.hasOwnProperty.call(req.query || {}, 'folderId') ||
+      Object.prototype.hasOwnProperty.call(req.query || {}, 'folder_id')
+    const wantsPage = req.query?.paginated === '1' ||
+      req.query?.paginated === 'true' ||
+      Boolean(req.query?.cursor) ||
+      Boolean(req.query?.search) ||
+      hasFolderFilter ||
+      view === 'landing_library' ||
+      view === 'form_library' ||
+      view === 'analytics_selector'
     const data = await listSites({
       limit: req.query?.limit,
       cursor: req.query?.cursor,
       paginated: wantsPage,
-      view: req.query?.view
+      view,
+      search: req.query?.search,
+      siteType: req.query?.siteType ?? req.query?.site_type,
+      landingMode: req.query?.landingMode ?? req.query?.landing_mode,
+      folderId: hasFolderFilter ? (req.query?.folderId ?? req.query?.folder_id) : undefined,
+      includeFacets: req.query?.includeFacets ?? req.query?.include_facets
     })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error listando sites: ${error.message}`)
     sendError(res, error, 'Error listando sites')
+  }
+}
+
+export async function getSiteSelectorsHandler(req, res) {
+  try {
+    const rawSelectedIds = req.query?.selectedIds ?? req.query?.selected_ids ?? ''
+    const selectedIds = Array.isArray(rawSelectedIds)
+      ? rawSelectedIds
+      : String(rawSelectedIds || '').split(',')
+    const data = await listSiteSelectors({
+      kind: req.query?.kind,
+      limit: req.query?.limit,
+      cursor: req.query?.cursor,
+      search: req.query?.search,
+      selectedIds
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error listando selectores de Sites: ${error.message}`)
+    sendError(res, error, 'Error listando opciones de Sites')
   }
 }
 
@@ -304,7 +340,11 @@ export async function getSitesVideoAssetsHandler(req, res) {
       const asset = await getSitesVideoAsset({
         businessId,
         streamVideoId,
-        assetId: requestedAssetId
+        assetId: requestedAssetId,
+        analyticsScope: req.query.analyticsScope ?? req.query.analytics_scope,
+        siteType: req.query.siteType ?? req.query.site_type,
+        landingMode: req.query.landingMode ?? req.query.landing_mode,
+        siteId: req.query.siteId ?? req.query.site_id
       })
       if (!asset) {
         return res.status(404).json({ success: false, error: 'Video no encontrado' })
@@ -334,12 +374,22 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
     const body = req.body || {}
     const dateFrom = body.dateFrom || body.date_from
     const dateTo = body.dateTo || body.date_to
+    const siteTrackingInput = {
+      siteIds: body.siteIds || body.site_ids || [],
+      dateFrom,
+      dateTo
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'siteScope') || Object.prototype.hasOwnProperty.call(body, 'site_scope')) {
+      siteTrackingInput.siteScope = body.siteScope ?? body.site_scope
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'breakdownSiteIds') || Object.prototype.hasOwnProperty.call(body, 'breakdown_site_ids')) {
+      siteTrackingInput.breakdownSiteIds = body.breakdownSiteIds ?? body.breakdown_site_ids
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'formFunnelSiteId') || Object.prototype.hasOwnProperty.call(body, 'form_funnel_site_id')) {
+      siteTrackingInput.formFunnelSiteId = body.formFunnelSiteId ?? body.form_funnel_site_id
+    }
     const [siteTracking, videoTracking] = await Promise.all([
-      getSitesTrackingSummary({
-        siteIds: body.siteIds || body.site_ids || [],
-        dateFrom,
-        dateTo
-      }),
+      getSitesTrackingSummary(siteTrackingInput),
       getVideoPlaybackAggregate({
         assetIds: body.videoAssetIds || body.video_asset_ids || [],
         breakdownAssetIds: body.videoBreakdownAssetIds || body.video_breakdown_asset_ids || [],
@@ -357,6 +407,7 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
       data: {
         dateFrom: siteTracking.dateFrom || videoTracking.dateFrom || '',
         dateTo: siteTracking.dateTo || videoTracking.dateTo || '',
+        aggregate: siteTracking.aggregate,
         sites: siteTracking.bySiteId,
         formFunnels: siteTracking.formFunnels || {},
         videos: videoTracking
@@ -631,6 +682,9 @@ export async function getSiteHandler(req, res) {
     const site = await getSite(req.params.siteId, {
       includeBlocks: true,
       includeSubmissions: req.query?.includeSubmissions === '1' || req.query?.includeSubmissions === 'true',
+      // El API directo conserva compatibilidad; los clientes de edicion nuevos
+      // envian 0 y cargan Analytics por su endpoint agregado independiente.
+      includeTrackingStats: req.query?.includeTrackingStats !== '0' && req.query?.includeTrackingStats !== 'false',
       submissionLimit: req.query?.submissionLimit
     })
 

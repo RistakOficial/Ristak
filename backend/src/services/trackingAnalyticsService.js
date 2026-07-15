@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { databaseDialect, db } from '../config/database.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
@@ -103,6 +104,13 @@ const ADS_HIERARCHY_GLOBAL_LIMIT = 750
 const STAGE_SEARCH_CHUNK_SIZE = 500
 const STAGE_SEARCH_MAX_SCAN = 10_000
 const SUMMARY_CACHE_TTL_MS = 30_000
+// Un stream de tracking activo puede incrementar la revision varias veces por
+// segundo. Con la revision dentro de la llave, cada visita convertia la cache
+// en un miss y dejaba snapshots viejos ocupando el LRU. Conservamos el ultimo
+// snapshot por consulta durante una ventana acotada y lo revalidamos una sola
+// vez en segundo plano; el cliente pinta ese snapshot y espera la misma promesa
+// cuando necesita el resultado fresco.
+const SUMMARY_CACHE_STALE_WHILE_REVALIDATE_MS = 5 * 60_000
 const SUMMARY_CACHE_MAX_ENTRIES = 100
 const summaryCache = new Map()
 const summaryInflight = new Map()
@@ -1316,10 +1324,11 @@ function stableFilterCacheKey(filters) {
     .map(field => [field, [...filters[field]].sort()])
 }
 
-function readSummaryCache(key) {
+function readSummaryCache(key, revision) {
   const cached = summaryCache.get(key)
   if (!cached) return null
-  if (Date.now() - cached.fetchedAt >= SUMMARY_CACHE_TTL_MS) {
+  const age = Date.now() - cached.fetchedAt
+  if (age >= SUMMARY_CACHE_STALE_WHILE_REVALIDATE_MS) {
     summaryCache.delete(key)
     return null
   }
@@ -1327,11 +1336,14 @@ function readSummaryCache(key) {
   // Map conserva orden de inserción: mover al final implementa un LRU pequeño.
   summaryCache.delete(key)
   summaryCache.set(key, cached)
-  return cached.data
+  return {
+    data: cached.data,
+    stale: cached.revision !== revision || age >= SUMMARY_CACHE_TTL_MS
+  }
 }
 
-function writeSummaryCache(key, data) {
-  summaryCache.set(key, { data, fetchedAt: Date.now() })
+function writeSummaryCache(key, data, revision) {
+  summaryCache.set(key, { data, fetchedAt: Date.now(), revision })
   while (summaryCache.size > SUMMARY_CACHE_MAX_ENTRIES) {
     summaryCache.delete(summaryCache.keys().next().value)
   }
@@ -1343,40 +1355,76 @@ export function clearTrackingAnalyticsSummaryCache() {
   invalidateTrackingAnalyticsCache()
 }
 
-export async function getTrackingAnalyticsSummary({ start, end, groupBy = 'day', filters = {} } = {}) {
+function withTrackingSnapshotState(data, { stale, revision }) {
+  return {
+    ...data,
+    snapshot: {
+      stale: Boolean(stale),
+      revision: Number(revision || 0)
+    }
+  }
+}
+
+export async function getTrackingAnalyticsSummary({
+  start,
+  end,
+  groupBy = 'day',
+  filters = {},
+  allowStale = false
+} = {}) {
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
   const range = await resolveAnalyticsRange(start, end)
   const requestedGroupBy = ALLOWED_GROUPS.has(groupBy) ? groupBy : 'day'
   const appliedGroupBy = effectiveGroupBy(requestedGroupBy, range)
+  const revision = getTrackingAnalyticsCacheRevision()
   const cacheKey = JSON.stringify({
-    revision: getTrackingAnalyticsCacheRevision(),
     start,
     end,
     timezone: range.timezone,
     groupBy: appliedGroupBy,
     filters: stableFilterCacheKey(normalizedFilters)
   })
-  const cached = readSummaryCache(cacheKey)
-  if (cached) return cached
-  if (summaryInflight.has(cacheKey)) return summaryInflight.get(cacheKey)
-
-  const pending = computeTrackingAnalyticsSummary({
-    start,
-    end,
-    requestedGroupBy,
-    normalizedFilters,
-    range,
-    appliedGroupBy
-  })
-  summaryInflight.set(cacheKey, pending)
-
-  try {
-    const data = await pending
-    writeSummaryCache(cacheKey, data)
-    return data
-  } finally {
-    summaryInflight.delete(cacheKey)
+  const cached = readSummaryCache(cacheKey, revision)
+  if (cached && !cached.stale) {
+    return cached.data
   }
+
+  let pending = summaryInflight.get(cacheKey)
+  if (!pending) {
+    pending = computeTrackingAnalyticsSummary({
+      start,
+      end,
+      requestedGroupBy,
+      normalizedFilters,
+      range,
+      appliedGroupBy
+    }).then((data) => {
+      // Una cuenta activa puede recibir tracking mientras el agregado corre.
+      // Sellar el snapshot con la revision de inicio lo convertia en stale de
+      // inmediato y provocaba otra consulta en cada apertura. La revision de
+      // termino representa el punto de frescura SWR: cualquier escritura
+      // posterior volvera a invalidarlo, sin perseguir un stream infinito.
+      const completedRevision = getTrackingAnalyticsCacheRevision()
+      const freshData = withTrackingSnapshotState(data, {
+        stale: false,
+        revision: completedRevision
+      })
+      writeSummaryCache(cacheKey, freshData, completedRevision)
+      return freshData
+    }).finally(() => {
+      if (summaryInflight.get(cacheKey) === pending) summaryInflight.delete(cacheKey)
+    })
+    summaryInflight.set(cacheKey, pending)
+  }
+
+  if (cached && allowStale) {
+    // Evita un rechazo no observado cuando el navegador ya recibio el snapshot
+    // anterior. La siguiente lectura volvera a intentar si la revalidacion falla.
+    void pending.catch(() => undefined)
+    return withTrackingSnapshotState(cached.data, { stale: true, revision })
+  }
+
+  return pending
 }
 
 function normalizeSearchColumn(column) {
@@ -1413,22 +1461,48 @@ function buildSearchCondition(q, column, alias, params) {
   return `(${conditions.join(' OR ')})`
 }
 
-function decodeCursor(cursor) {
+function trackingSearchCursorScope({ range, filters, q, column }) {
+  const canonicalFilters = Object.fromEntries(Object.entries(filters || {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([field, values]) => [field, [...(values || [])].map(String).sort()]))
+
+  return createHash('sha256').update(JSON.stringify({
+    kind: 'tracking-sessions',
+    startUtc: range.startUtc,
+    endExclusiveUtc: range.endExclusiveUtc,
+    filters: canonicalFilters,
+    q: normalizeText(q, MAX_SEARCH_LENGTH).toLowerCase(),
+    column
+  })).digest('base64url')
+}
+
+function decodeCursor(cursor, expectedScope) {
   if (!cursor) return null
   if (typeof cursor === 'object' && !Array.isArray(cursor)) {
     const startedAt = normalizeText(cursor.startedAt || cursor.started_at, 100)
     const id = normalizeText(cursor.id, 100)
     if (!startedAt || !id) throw requestError('Cursor de sesiones inválido')
+    if (cursor.v !== undefined && cursor.v !== 2) throw requestError('Cursor de sesiones inválido')
+    if (cursor.v === 2 && (cursor.kind !== 'tracking-sessions' || cursor.scope !== expectedScope)) {
+      throw requestError('El cursor de sesiones no corresponde a esta búsqueda')
+    }
     return { startedAt, id }
   }
 
+  const cleanCursor = String(cursor).trim()
+  if (cleanCursor.length > 2048) throw requestError('Cursor de sesiones inválido')
   try {
-    const payload = JSON.parse(Buffer.from(String(cursor), 'base64url').toString('utf8'))
+    const payload = JSON.parse(Buffer.from(cleanCursor, 'base64url').toString('utf8'))
+    if (payload.v !== undefined && payload.v !== 2) throw requestError('Cursor de sesiones inválido')
+    if (payload.v === 2 && (payload.kind !== 'tracking-sessions' || payload.scope !== expectedScope)) {
+      throw requestError('El cursor de sesiones no corresponde a esta búsqueda')
+    }
     const startedAt = normalizeText(payload.startedAt, 100)
     const id = normalizeText(payload.id, 100)
     if (!startedAt || !id) throw new Error('missing cursor fields')
     return { startedAt, id }
-  } catch {
+  } catch (error) {
+    if (error?.status === 400) throw error
     throw requestError('Cursor de sesiones inválido')
   }
 }
@@ -1438,16 +1512,24 @@ function cursorTimestamp(value) {
   return normalizeText(value, 100)
 }
 
-function encodeCursor(row) {
+function encodeCursor(row, scope) {
   return Buffer.from(JSON.stringify({
-    startedAt: cursorTimestamp(row.started_at),
+    v: 2,
+    kind: 'tracking-sessions',
+    scope,
+    startedAt: cursorTimestamp(row.cursor_started_at ?? row.started_at),
     id: String(row.id)
   })).toString('base64url')
+}
+
+function trackingCursorProjection(expression) {
+  return databaseDialect === 'postgres' ? `CAST(${expression} AS TEXT)` : expression
 }
 
 function boundedSearchRow(row) {
   const result = {}
   for (const [key, value] of Object.entries(row || {})) {
+    if (key === 'cursor_started_at') continue
     if (typeof value !== 'string') {
       result[key] = value
       continue
@@ -1498,7 +1580,8 @@ const sessionSearchProjection = (alias = 's') => `
   ${alias}.site_type,
   ${alias}.form_site_id,
   ${alias}.form_site_name,
-  ${alias}.conversion_type
+  ${alias}.conversion_type,
+  ${trackingCursorProjection(`${alias}.started_at`)} AS cursor_started_at
 `
 
 function searchResultProjection(sessionAlias, contactAlias = 'cf') {
@@ -1586,7 +1669,8 @@ async function searchTrackingSessionsByStage({
   q,
   column,
   cursor,
-  limit
+  limit,
+  cursorScope
 }) {
   const conversionStages = filters.conversion_stage || []
   const matches = []
@@ -1622,7 +1706,7 @@ async function searchTrackingSessionsByStage({
           items: formatSearchItems(matches),
           limit,
           hasMore: true,
-          nextCursor: lastConsumedCandidate ? encodeCursor(lastConsumedCandidate) : null
+          nextCursor: lastConsumedCandidate ? encodeCursor(lastConsumedCandidate, cursorScope) : null
         }
       }
 
@@ -1632,7 +1716,10 @@ async function searchTrackingSessionsByStage({
     }
 
     scanCursor = {
-      startedAt: cursorTimestamp(candidates[candidates.length - 1].started_at),
+      startedAt: cursorTimestamp(
+        candidates[candidates.length - 1].cursor_started_at
+          ?? candidates[candidates.length - 1].started_at
+      ),
       id: String(candidates[candidates.length - 1].id)
     }
     if (candidates.length < chunkLimit) {
@@ -1647,7 +1734,7 @@ async function searchTrackingSessionsByStage({
     limit,
     hasMore: scanLimitReached,
     nextCursor: scanLimitReached && lastConsumedCandidate
-      ? encodeCursor(lastConsumedCandidate)
+      ? encodeCursor(lastConsumedCandidate, cursorScope)
       : null
   }
 }
@@ -1656,7 +1743,13 @@ export async function searchTrackingSessions({ start, end, filters = {}, q = '',
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
   const range = await resolveAnalyticsRange(start, end)
   const normalizedColumn = normalizeSearchColumn(column)
-  const decodedCursor = decodeCursor(cursor)
+  const cursorScope = trackingSearchCursorScope({
+    range,
+    filters: normalizedFilters,
+    q,
+    column: normalizedColumn
+  })
+  const decodedCursor = decodeCursor(cursor, cursorScope)
   const normalizedLimit = Math.min(100, Math.max(20, Math.trunc(numberValue(limit)) || 50))
   const queryLimit = normalizedLimit + 1
   const conversionStages = normalizedFilters.conversion_stage || []
@@ -1668,7 +1761,8 @@ export async function searchTrackingSessions({ start, end, filters = {}, q = '',
       q,
       column: normalizedColumn,
       cursor: decodedCursor,
-      limit: normalizedLimit
+      limit: normalizedLimit,
+      cursorScope
     })
   }
 
@@ -1713,6 +1807,8 @@ export async function searchTrackingSessions({ start, end, filters = {}, q = '',
     items,
     limit: normalizedLimit,
     hasMore,
-    nextCursor: hasMore && items.length > 0 ? encodeCursor(items[items.length - 1]) : null
+    nextCursor: hasMore && items.length > 0
+      ? encodeCursor(rows[normalizedLimit - 1], cursorScope)
+      : null
   }
 }

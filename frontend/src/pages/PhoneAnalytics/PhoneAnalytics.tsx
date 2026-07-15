@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   Banknote,
@@ -24,11 +24,12 @@ import { useAccountCurrency, usePhoneElasticScroll } from '@/hooks'
 import {
   dashboardService,
   type DashboardMetrics,
+  type DashboardMobileAnalyticsSnapshot,
   type OriginDistributionData,
   type SourceDatum,
   type WhatsAppNumberOriginDatum
 } from '@/services/dashboardService'
-import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
+import type { WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { formatDate } from '@/utils/format'
 import { formatCurrency, formatNumber, formatRoas } from '@/utils/format'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -318,10 +319,21 @@ export const PhoneAnalytics: React.FC = () => {
   const [chartLoading, setChartLoading] = useState(true)
   const [funnelLoading, setFunnelLoading] = useState(true)
   const [originLoading, setOriginLoading] = useState(true)
+  const [snapshotVersion, setSnapshotVersion] = useState(0)
 
   const range = useMemo(() => getAnalyticsRange(period, timezone), [period, timezone])
   const groupBy = useMemo(() => getGroupBy(period), [period])
+  const rangeKey = useMemo(() => `${range.start.getTime()}:${range.end.getTime()}:${hasWebAnalyticsAccess ? 1 : 0}`, [hasWebAnalyticsAccess, range.end, range.start])
   const activePeriod = PERIOD_OPTIONS.find((option) => option.id === period) || PERIOD_OPTIONS[0]
+  const snapshotRequestIdRef = useRef(0)
+  const snapshotReadyRangeRef = useRef('')
+  const mobileSnapshotRef = useRef<DashboardMobileAnalyticsSnapshot | null>(null)
+  const funnelScopeRef = useRef(funnelScope)
+  const financialScopeRef = useRef(financialScope)
+  const chartViewRef = useRef(chartView)
+  funnelScopeRef.current = funnelScope
+  financialScopeRef.current = financialScope
+  chartViewRef.current = chartView
 
   useEffect(() => {
     document.title = 'Analíticas móviles | Ristak'
@@ -341,54 +353,112 @@ export const PhoneAnalytics: React.FC = () => {
 
   useEffect(() => {
     let active = true
+    const controller = new AbortController()
+    const requestId = ++snapshotRequestIdRef.current
+    const requestedFunnelScope = funnelScopeRef.current
+    const requestedFinancialScope = financialScopeRef.current
+    const snapshotParams = {
+      start: range.start,
+      end: range.end,
+      includeWeb: hasWebAnalyticsAccess,
+      funnelScope: requestedFunnelScope,
+      financialScope: requestedFinancialScope
+    }
+    const cachedSnapshot = dashboardService.peekMobileAnalyticsSnapshot(snapshotParams)
 
-    setLoading(true)
-    setOriginLoading(true)
-
-    Promise.all([
-      dashboardService.getDashboardMetrics({ start: range.start, end: range.end }),
-      dashboardService.getOriginDistribution({ start: range.start, end: range.end, includeWeb: hasWebAnalyticsAccess }),
-      whatsappApiService.getStatus().catch(() => null)
-    ])
-      .then(([metricsResponse, originResponse, whatsappStatus]) => {
-        if (!active) return
-
-        setMetrics(metricsResponse)
-        setOriginData({
-          ...EMPTY_ORIGIN_DATA,
-          ...originResponse,
-          traffic: {
-            ...EMPTY_ORIGIN_DATA.traffic,
-            ...(originResponse?.traffic || {})
-          },
-          whatsappNumbers: originResponse?.whatsappNumbers || []
-        })
-        setDetectedPhones((whatsappStatus?.phoneNumbers || []).filter((phone) => (
-          Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
-        )))
+    const applySnapshot = (snapshot: DashboardMobileAnalyticsSnapshot) => {
+      if (!active || requestId !== snapshotRequestIdRef.current) return
+      const becameReady = snapshotReadyRangeRef.current !== rangeKey
+      mobileSnapshotRef.current = snapshot
+      snapshotReadyRangeRef.current = rangeKey
+      setMetrics(snapshot.metrics)
+      setOriginData({
+        ...EMPTY_ORIGIN_DATA,
+        ...snapshot.origin,
+        traffic: {
+          ...EMPTY_ORIGIN_DATA.traffic,
+          ...(snapshot.origin?.traffic || {})
+        },
+        whatsappNumbers: snapshot.origin?.whatsappNumbers || []
       })
+      setDetectedPhones((snapshot.whatsappPhoneNumbers || []).filter((phone) => (
+        Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
+      )))
+
+      if (funnelScopeRef.current === snapshot.scopes.funnel) {
+        setFunnelData(snapshot.funnel)
+        setFunnelLoading(false)
+      }
+      if (
+        chartViewRef.current === 'revenue-spend' &&
+        financialScopeRef.current === snapshot.scopes.financial
+      ) {
+        setChartData(snapshot.financialChart.map(item => ({
+          label: item.label,
+          value: item.value || 0,
+          value2: item.value2 || 0
+        })))
+        setChartLoading(false)
+      }
+      setLoading(false)
+      setOriginLoading(false)
+      if (becameReady) setSnapshotVersion(version => version + 1)
+    }
+
+    if (cachedSnapshot) {
+      applySnapshot(cachedSnapshot)
+    } else {
+      mobileSnapshotRef.current = null
+      snapshotReadyRangeRef.current = ''
+      setLoading(true)
+      setOriginLoading(true)
+      setFunnelLoading(true)
+      setChartLoading(true)
+    }
+
+    dashboardService.getMobileAnalyticsSnapshot(snapshotParams, {
+      forceRefresh: Boolean(cachedSnapshot),
+      signal: controller.signal
+    })
+      .then(applySnapshot)
       .catch(() => {
-        if (!active) return
-        setMetrics(null)
-        setOriginData(EMPTY_ORIGIN_DATA)
-        setDetectedPhones([])
-      })
-      .finally(() => {
-        if (!active) return
-        setLoading(false)
-        setOriginLoading(false)
+        if (!active || controller.signal.aborted || requestId !== snapshotRequestIdRef.current) return
+        if (!cachedSnapshot) {
+          setMetrics(null)
+          setOriginData(EMPTY_ORIGIN_DATA)
+          setDetectedPhones([])
+          setFunnelData([])
+          setChartData([])
+          setLoading(false)
+          setOriginLoading(false)
+          setFunnelLoading(false)
+          setChartLoading(false)
+        }
       })
 
     return () => {
       active = false
+      controller.abort()
     }
-  }, [hasWebAnalyticsAccess, range.end, range.start])
+  }, [hasWebAnalyticsAccess, range.end, range.start, rangeKey])
 
   useEffect(() => {
+    if (snapshotReadyRangeRef.current !== rangeKey) return
+    const snapshot = mobileSnapshotRef.current
+    if (snapshot?.scopes.funnel === funnelScope) {
+      setFunnelData(snapshot.funnel)
+      setFunnelLoading(false)
+      return
+    }
+
     let active = true
+    const controller = new AbortController()
 
     setFunnelLoading(true)
-    dashboardService.getFunnelData({ start: range.start, end: range.end, scope: funnelScope, includeWeb: hasWebAnalyticsAccess })
+    dashboardService.getFunnelData(
+      { start: range.start, end: range.end, scope: funnelScope, includeWeb: hasWebAnalyticsAccess },
+      controller.signal
+    )
       .then((response) => {
         if (active) setFunnelData(response)
       })
@@ -401,11 +471,25 @@ export const PhoneAnalytics: React.FC = () => {
 
     return () => {
       active = false
+      controller.abort()
     }
-  }, [funnelScope, hasWebAnalyticsAccess, range.end, range.start])
+  }, [funnelScope, hasWebAnalyticsAccess, range.end, range.start, rangeKey, snapshotVersion])
 
   useEffect(() => {
+    if (snapshotReadyRangeRef.current !== rangeKey) return
+    const snapshot = mobileSnapshotRef.current
+    if (chartView === 'revenue-spend' && snapshot?.scopes.financial === financialScope) {
+      setChartData(snapshot.financialChart.map(item => ({
+        label: item.label,
+        value: item.value || 0,
+        value2: item.value2 || 0
+      })))
+      setChartLoading(false)
+      return
+    }
+
     let active = true
+    const controller = new AbortController()
 
     const loadChart = async () => {
       setChartLoading(true)
@@ -416,7 +500,7 @@ export const PhoneAnalytics: React.FC = () => {
             start: range.start,
             end: range.end,
             scope: financialScope
-          })
+          }, controller.signal)
 
           if (!active) return
           setChartData(response.map((item) => ({
@@ -427,7 +511,7 @@ export const PhoneAnalytics: React.FC = () => {
           return
         }
 
-        const commonParams = { start: range.start, end: range.end, groupBy }
+        const commonParams = { start: range.start, end: range.end, groupBy, signal: controller.signal }
         let response: ChartPoint[] = []
 
         if (chartView === 'visitors-leads') {
@@ -472,8 +556,9 @@ export const PhoneAnalytics: React.FC = () => {
 
     return () => {
       active = false
+      controller.abort()
     }
-  }, [chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.end, range.start])
+  }, [chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.end, range.start, rangeKey, snapshotVersion])
 
   const chartOptions = useMemo<Array<{ id: ChartView; label: string }>>(() => {
     const options: Array<{ id: ChartView; label: string }> = [

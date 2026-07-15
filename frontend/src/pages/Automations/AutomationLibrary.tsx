@@ -38,6 +38,7 @@ import automationsService, {
   AUTOMATION_STATUS_LABELS,
   automationToSummary,
   automationsCache,
+  subscribeAutomationsOverview,
   type AutomationFolder,
   type AutomationSummary
 } from '@/services/automationsService'
@@ -147,7 +148,10 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         search: debouncedQuery || undefined,
         folderId: debouncedQuery ? undefined : (folderId || 'root'),
         includeReview: false,
-        force: options.force
+        force: options.force,
+        // El store compartido fusiona únicamente páginas de esta misma
+        // consulta. Así una mutación conserva todo lo que ya se cargó.
+        publishSnapshot: true
       })
       if (requestId !== listRequestRef.current) return null
 
@@ -205,6 +209,35 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250)
     return () => window.clearTimeout(timer)
   }, [query])
+
+  useEffect(() => subscribeAutomationsOverview((applyMutation) => {
+    const normalizedQuery = debouncedQuery.trim().toLowerCase()
+    const emptyPageInfo = {
+      limit: AUTOMATIONS_LIBRARY_PAGE_SIZE,
+      hasMore: false,
+      nextCursor: null
+    }
+    setFolders(current => applyMutation({
+      folders: current,
+      automations: [],
+      pageInfo: emptyPageInfo
+    }).folders)
+    setAutomations(current => {
+      const next = applyMutation({
+        folders: [],
+        automations: current,
+        pageInfo: emptyPageInfo
+      })
+      return next.automations.filter((automation) => {
+        if (normalizedQuery) {
+          return `${automation.id} ${automation.name} ${automation.description || ''}`
+            .toLowerCase()
+            .includes(normalizedQuery)
+        }
+        return folderId ? automation.folderId === folderId : !automation.folderId
+      })
+    })
+  }), [debouncedQuery, folderId])
 
   useEffect(() => {
     setSelected(new Set())

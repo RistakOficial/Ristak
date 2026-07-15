@@ -1555,6 +1555,20 @@ const Analytics: React.FC = () => {
 
         if (summary) {
           applyTrackingSummary(summary, trackingConfig)
+          if (summary.snapshot?.stale) {
+            setLoading(false)
+            setHasLoadedAnalytics(true)
+            // El servidor devuelve de inmediato el ultimo snapshot aunque el
+            // stream de tracking este escribiendo sin parar. Esta segunda
+            // lectura comparte la revalidacion en curso y repinta al terminar.
+            const freshSummary = await getTrackingAnalyticsSummary(analyticsSummaryInput, {
+              signal: controller.signal,
+              forceRefresh: true,
+              waitForFresh: true
+            })
+            if (!isCurrentRequest()) return
+            applyTrackingSummary(freshSummary, trackingConfig)
+          }
         } else if (!hasWebAnalyticsAccess) {
           const fallbackSeries = completeConversionTrendPeriods(
             aggregateContactConversionsByPeriod(fallbackConversions, viewType),
@@ -1627,6 +1641,7 @@ const Analytics: React.FC = () => {
   // Mensajes se resuelve en paralelo y nunca frena las métricas web.
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
     const requestId = ++messageAnalyticsRequestIdRef.current
     setMessageLoading(true)
 
@@ -1636,7 +1651,8 @@ const Analytics: React.FC = () => {
           apiRange.from,
           apiRange.to,
           viewType,
-          messageSummaryFilters
+          messageSummaryFilters,
+          controller.signal
         )
 
         if (cancelled || messageAnalyticsRequestIdRef.current !== requestId) return
@@ -1659,6 +1675,7 @@ const Analytics: React.FC = () => {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [
     apiRange.from,

@@ -176,9 +176,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export const clipPaymentsService = {
-  async getConfig(): Promise<ClipPaymentConfig> {
+  async getConfig(signal?: AbortSignal): Promise<ClipPaymentConfig> {
     const response = await fetch(apiUrl('/api/clip/config'), {
-      credentials: 'include'
+      credentials: 'include',
+      signal
     })
     return parseResponse<ClipPaymentConfig>(response)
   },

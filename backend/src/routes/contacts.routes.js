@@ -2,6 +2,8 @@ import express from 'express'
 import {
   getContacts,
   getContactById,
+  getContactAppointments,
+  getContactPayments,
   createContact,
   createContactCustomFieldDefinition,
   getContactCustomFieldDefinitions,
@@ -32,6 +34,7 @@ import {
   getContactConversation,
   getContactJourney,
   getContactWhatsAppRoutingEvents,
+  refreshContactExternalData,
   bulkUpdateContactCustomFields
 } from '../controllers/contactsController.js'
 import {
@@ -81,9 +84,12 @@ router.post('/bulk-actions/:actionId/reschedule', rescheduleBulkContactAction)
 router.post('/bulk-actions/:actionId/cancel', cancelBulkContactAction)
 router.delete('/bulk-actions/:actionId', deleteBulkContactAction)
 router.get('/:id/payment-link-delivery-options', getContactPaymentLinkDeliveryOptions)
+router.get('/:id/payments', getContactPayments)
+router.get('/:id/appointments', getContactAppointments)
 router.get('/:id/conversation', requireModuleAccess('chat'), getContactConversation)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
+router.post('/:id/refresh', refreshContactExternalData)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)
 router.get('/:id/assignment', getContactAssignment)
 // (ACL-001) Datos de chat: el perfil social + enlace DM↔comentario solo los

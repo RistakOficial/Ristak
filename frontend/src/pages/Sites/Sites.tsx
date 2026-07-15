@@ -137,7 +137,7 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useUrlDateRangeSync } from '@/hooks'
+import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useIntegrationsStatus, useUrlDateRangeSync } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -169,6 +169,7 @@ import {
   type SiteBlock,
   type SiteBlockOption,
   type SiteBlockType,
+  type SitesLibraryFacets,
   type SiteLibraryFolder,
   type SiteMetaCustomParameter,
   type SiteMetaEventParameters,
@@ -262,6 +263,31 @@ type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
 type SitesAnalyticsLandingMode = 'all' | 'website' | 'funnel'
 type LibraryViewMode = 'gallery' | 'list' | 'table'
 type LibraryViewSection = 'landings' | 'forms'
+type SitesLibraryPageState = {
+  items: PublicSite[]
+  nextCursor: string
+  loaded: boolean
+  loading: boolean
+  loadingMore: boolean
+  queryKey: string
+  validatedAt: number
+  facetsValidatedAt: number
+  facets: SitesLibraryFacets
+}
+type SitesLibraryPagesState = Record<LibraryViewSection, SitesLibraryPageState>
+type SitesLibraryFilter = {
+  search: string
+  folderId: string
+}
+type SitesLibraryFiltersState = Record<LibraryViewSection, SitesLibraryFilter>
+type SitesAnalyticsCatalogState = {
+  items: PublicSite[]
+  defaultItems: PublicSite[]
+  loading: boolean
+  queryKey: string
+  scopeKey: string
+  defaultScopeReadyKey: string
+}
 type LibraryFolderSource = 'site_embed' | 'html' | 'video_gate' | 'calendar' | 'manual'
 type LibraryFolderDefinition = SiteLibraryFolder & {
   system?: boolean
@@ -1293,6 +1319,73 @@ const SITES_EDITOR_ACTIVE_EVENT = 'ristak-sites-editor-active'
 const BLOCK_ORDER_ALL_PAGES_KEY = '__all_pages__'
 const DEFAULT_FUNNEL_PAGE_ID = 'page-1'
 const SITES_LIBRARY_PAGE_SIZE = 120
+const SITES_LIBRARY_CACHE_TTL_MS = 30_000
+const SITES_LIBRARY_FACETS_TTL_MS = 300_000
+const normalizeSitesSearchQuery = (value: unknown) => {
+  const normalized = String(value || '').trim()
+  const searchableCharacters = normalized.match(/[\p{L}\p{N}]/gu)?.length || 0
+  return searchableCharacters >= 3 ? normalized : ''
+}
+const createEmptySitesLibraryFacets = (): SitesLibraryFacets => ({
+  total: 0,
+  folderCounts: { [SITE_LIBRARY_ROOT_ID]: 0 }
+})
+const createDefaultSitesLibraryFilter = (): SitesLibraryFilter => ({
+  search: '',
+  folderId: SITE_LIBRARY_ROOT_ID
+})
+const createInitialSitesLibraryFilters = (): SitesLibraryFiltersState => ({
+  landings: createDefaultSitesLibraryFilter(),
+  forms: createDefaultSitesLibraryFilter()
+})
+const getSitesLibraryQueryKey = (filter: { search?: string; folderId?: string | null }) => {
+  const search = normalizeSitesSearchQuery(filter.search)
+  return JSON.stringify({
+    search,
+    folderId: search ? null : (filter.folderId === undefined ? null : filter.folderId || SITE_LIBRARY_ROOT_ID)
+  })
+}
+const createEmptySitesLibraryPage = (): SitesLibraryPageState => ({
+  items: [],
+  nextCursor: '',
+  loaded: false,
+  loading: false,
+  loadingMore: false,
+  queryKey: '',
+  validatedAt: 0,
+  facetsValidatedAt: 0,
+  facets: createEmptySitesLibraryFacets()
+})
+const createInitialSitesLibraryPages = (): SitesLibraryPagesState => ({
+  landings: createEmptySitesLibraryPage(),
+  forms: createEmptySitesLibraryPage()
+})
+const mergeSiteCollectionRecord = (current: PublicSite | undefined, incoming: PublicSite): PublicSite => {
+  if (!current) return incoming
+  if (incoming.summary && !current.summary) {
+    return {
+      ...incoming,
+      ...current,
+      blocks: current.blocks,
+      submissions: current.submissions,
+      summary: current.summary,
+      trackingStats: incoming.trackingStats || current.trackingStats,
+      submissionsCount: incoming.submissionsCount ?? current.submissionsCount
+    }
+  }
+  return { ...current, ...incoming, summary: incoming.summary }
+}
+const mergeSiteCollection = (current: PublicSite[], incoming: PublicSite[], prependNew = false): PublicSite[] => {
+  const incomingById = new Map(incoming.map(site => [site.id, site]))
+  const mergedCurrent = current.map(site => {
+    const next = incomingById.get(site.id)
+    if (!next) return site
+    incomingById.delete(site.id)
+    return mergeSiteCollectionRecord(site, next)
+  })
+  const newItems = [...incomingById.values()]
+  return prependNew ? [...newItems, ...mergedCurrent] : [...mergedCurrent, ...newItems]
+}
 const FORM_THANK_YOU_PAGE_ID = 'page-2'
 const FORM_DISQUALIFIED_PAGE_ID = 'page-3'
 const FORM_FINAL_PAGE_IDS = new Set([FORM_THANK_YOU_PAGE_ID, FORM_DISQUALIFIED_PAGE_ID])
@@ -3476,7 +3569,7 @@ const normalizeLibraryFolderId = (value: unknown) =>
   typeof value === 'string' ? value.trim() : ''
 
 const getSiteLibrarySource = (site: PublicSite): LibraryFolderSource => {
-  const source = normalizeLibraryFolderId(site.theme?.librarySource)
+  const source = normalizeLibraryFolderId(site.theme?.librarySource).toLowerCase()
   if (source === 'site_embed' || source === 'html' || source === 'video_gate' || source === 'calendar' || source === 'manual') return source
   if (site.theme?.importedHtmlSource || site.theme?.importedHtml) return 'html'
   return 'manual'
@@ -8664,16 +8757,22 @@ export const Sites: React.FC = () => {
   const routeAnalyticsVideoId = searchParams.get('videoId') || ''
   const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
   const { configured: aiAgentConfigured } = useAIAgentAvailability()
+  const {
+    status: integrationsStatus,
+    refresh: refreshIntegrationsStatus
+  } = useIntegrationsStatus()
   const hasFormsAccess = hasLicenseFeature(user, ['forms'])
   const hasAppointmentsAccess = hasLicenseFeature(user, ['appointments'])
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const [storedLandingsViewMode, saveStoredLandingsViewMode] = useAppConfig<string>(
     SITES_LANDINGS_VIEW_MODE_CONFIG_KEY,
-    getLibraryDefaultView('landings')
+    getLibraryDefaultView('landings'),
+    { syncOnMount: routeState.section === 'landings' }
   )
   const [storedFormsViewMode, saveStoredFormsViewMode] = useAppConfig<string>(
     SITES_FORMS_VIEW_MODE_CONFIG_KEY,
-    getLibraryDefaultView('forms')
+    getLibraryDefaultView('forms'),
+    { syncOnMount: routeState.section === 'forms' }
   )
   const savedLibraryViewMode = useMemo<Record<LibraryViewSection, LibraryViewMode>>(() => ({
     landings: normalizeLibraryViewMode(storedLandingsViewMode, getLibraryDefaultView('landings')),
@@ -8683,8 +8782,11 @@ export const Sites: React.FC = () => {
   const [sites, setSites] = useState<PublicSite[]>([])
   const [formCatalog, setFormCatalog] = useState<PublicSite[]>([])
   const [hydratedFormDetails, setHydratedFormDetails] = useState<Record<string, PublicSite>>({})
-  const [sitesNextCursor, setSitesNextCursor] = useState('')
-  const [loadingMoreSites, setLoadingMoreSites] = useState(false)
+  const [libraryPages, setLibraryPages] = useState<SitesLibraryPagesState>(createInitialSitesLibraryPages)
+  const [libraryFilters, setLibraryFilters] = useState<SitesLibraryFiltersState>(createInitialSitesLibraryFilters)
+  const [domainSites, setDomainSites] = useState<PublicSite[]>([])
+  const [domainSitesLoading, setDomainSitesLoading] = useState(false)
+  const [domainSitesTruncated, setDomainSitesTruncated] = useState(false)
   const [siteFolders, setSiteFolders] = useState<SiteLibraryFolder[]>([])
   const [libraryViewMode, setLibraryViewMode] = useState<Record<LibraryViewSection, LibraryViewMode>>({
     landings: 'gallery',
@@ -8733,11 +8835,24 @@ export const Sites: React.FC = () => {
   const [siteVideoCurrentCursor, setSiteVideoCurrentCursor] = useState<string | null>(null)
   const [siteVideoCursorHistory, setSiteVideoCursorHistory] = useState<string[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
+  const [siteVideoResolvedScopeKey, setSiteVideoResolvedScopeKey] = useState('')
   const siteVideoRequestRef = useRef(0)
+  const sitesAnalyticsCatalogRequestRef = useRef(0)
+  const sitesAnalyticsDefaultScopeReadyRef = useRef('')
   const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>(routeAnalyticsSiteType)
   const [sitesAnalyticsLandingMode, setSitesAnalyticsLandingMode] = useState<SitesAnalyticsLandingMode>(routeAnalyticsLandingMode)
   const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState(routeAnalyticsSiteId)
+  const sitesAnalyticsSiteIdRef = useRef(routeAnalyticsSiteId)
   const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState(routeAnalyticsVideoId)
+  const [sitesAnalyticsSiteSearch, setSitesAnalyticsSiteSearch] = useState('')
+  const [sitesAnalyticsCatalog, setSitesAnalyticsCatalog] = useState<SitesAnalyticsCatalogState>({
+    items: [],
+    defaultItems: [],
+    loading: false,
+    queryKey: '',
+    scopeKey: '',
+    defaultScopeReadyKey: ''
+  })
   const [sitesAnalyticsSummary, setSitesAnalyticsSummary] = useState<SitesAnalyticsSummary | null>(null)
   const [sitesAnalyticsSummaryLoading, setSitesAnalyticsSummaryLoading] = useState(false)
   const [sitesAnalyticsSummaryError, setSitesAnalyticsSummaryError] = useState('')
@@ -8767,8 +8882,32 @@ export const Sites: React.FC = () => {
   const [editorHistoryState, setEditorHistoryState] = useState({ undo: 0, redo: 0, busy: false })
   const selectedSiteRef = useRef<PublicSite | null>(null)
   const siteDetailRequestsRef = useRef(new Map<string, Promise<PublicSite>>())
+  const libraryPagesRef = useRef(libraryPages)
+  const libraryFiltersRef = useRef(libraryFilters)
+  const libraryPageRequestRef = useRef<Record<LibraryViewSection, number>>({ landings: 0, forms: 0 })
+  const libraryPagePromiseRef = useRef<Record<LibraryViewSection, Promise<void> | null>>({ landings: null, forms: null })
+  const domainSitesRef = useRef<PublicSite[]>([])
+  const domainSitesRequestRef = useRef(0)
+  const domainSitesPromiseRef = useRef<Promise<void> | null>(null)
+  const domainSitesLoadedRef = useRef(false)
+  const domainSitesNextCursorRef = useRef('')
   const formCatalogRequestRef = useRef(0)
+  const formCatalogPromiseRef = useRef<Promise<void> | null>(null)
+  const formCatalogLoadedRef = useRef(false)
   const formCatalogTruncationWarnedRef = useRef(false)
+  const calendarsRequestRef = useRef(0)
+  const calendarsPromiseRef = useRef<Promise<void> | null>(null)
+  const calendarsLoadedRef = useRef(false)
+  const customFieldsRequestRef = useRef(0)
+  const customFieldsPromiseRef = useRef<Promise<void> | null>(null)
+  const customFieldsLoadedRef = useRef(false)
+  const metaConfigRequestRef = useRef<Promise<boolean> | null>(null)
+  const metaConfigLoadedRef = useRef(false)
+  const metaPixelConnectedRef = useRef(false)
+  const socialProfilesRequestRef = useRef<Promise<ConnectedSocialProfile[]> | null>(null)
+  const socialProfilesLoadedRef = useRef(false)
+  const connectedSocialProfilesRef = useRef<ConnectedSocialProfile[]>([])
+  const builderResourcesMountedRef = useRef(true)
   const librarySettingsSiteRef = useRef<PublicSite | null>(null)
   const pendingAIGenerationSiteRef = useRef<PublicSite | null>(null)
   const completedAIGenerationRedirectRef = useRef<CompletedAIGenerationRedirect>(null)
@@ -8820,7 +8959,71 @@ export const Sites: React.FC = () => {
   }
 
   useEffect(() => {
-    ensureSitesFontStylesheet()
+    builderResourcesMountedRef.current = true
+    return () => {
+      builderResourcesMountedRef.current = false
+      libraryPageRequestRef.current.landings += 1
+      libraryPageRequestRef.current.forms += 1
+      libraryPagePromiseRef.current = { landings: null, forms: null }
+      domainSitesRequestRef.current += 1
+      domainSitesPromiseRef.current = null
+      domainSitesNextCursorRef.current = ''
+      formCatalogRequestRef.current += 1
+      formCatalogPromiseRef.current = null
+      calendarsRequestRef.current += 1
+      calendarsPromiseRef.current = null
+      customFieldsRequestRef.current += 1
+      customFieldsPromiseRef.current = null
+    }
+  }, [])
+
+  const commitLibraryPages = useCallback((update: (current: SitesLibraryPagesState) => SitesLibraryPagesState) => {
+    const next = update(libraryPagesRef.current)
+    libraryPagesRef.current = next
+    setLibraryPages(next)
+  }, [])
+
+  const commitLibraryFilters = useCallback((update: (current: SitesLibraryFiltersState) => SitesLibraryFiltersState) => {
+    const next = update(libraryFiltersRef.current)
+    libraryFiltersRef.current = next
+    setLibraryFilters(next)
+  }, [])
+
+  const updateLibraryFilter = useCallback((kind: LibraryViewSection, patch: Partial<SitesLibraryFilter>) => {
+    const currentFilter = libraryFiltersRef.current[kind]
+    const nextFilter: SitesLibraryFilter = {
+      search: patch.search === undefined ? currentFilter.search : String(patch.search).slice(0, 160),
+      folderId: patch.folderId === undefined
+        ? currentFilter.folderId
+        : String(patch.folderId || SITE_LIBRARY_ROOT_ID).slice(0, 180)
+    }
+    const currentQueryKey = getSitesLibraryQueryKey(currentFilter)
+    const nextQueryKey = getSitesLibraryQueryKey(nextFilter)
+    commitLibraryFilters(current => ({ ...current, [kind]: nextFilter }))
+    if (currentQueryKey === nextQueryKey) return
+
+    // Invalida de inmediato la respuesta anterior. El debounce sólo retrasa el
+    // siguiente request, no permite que una búsqueda vieja repinte la biblioteca.
+    libraryPageRequestRef.current[kind] += 1
+    libraryPagePromiseRef.current[kind] = null
+    commitLibraryPages(current => ({
+      ...current,
+      [kind]: {
+        ...current[kind],
+        items: [],
+        nextCursor: '',
+        loaded: false,
+        loading: true,
+        loadingMore: false,
+        queryKey: nextQueryKey,
+        validatedAt: 0
+      }
+    }))
+  }, [commitLibraryFilters, commitLibraryPages])
+
+  const commitDomainSites = useCallback((items: PublicSite[]) => {
+    domainSitesRef.current = items
+    setDomainSites(items)
   }, [])
 
   useEffect(() => {
@@ -8857,6 +9060,14 @@ export const Sites: React.FC = () => {
     setSitesAnalyticsVideoId(current => current === routeAnalyticsVideoId ? current : routeAnalyticsVideoId)
   }, [routeAnalyticsLandingMode, routeAnalyticsSiteId, routeAnalyticsSiteType, routeAnalyticsVideoId, section])
 
+  useEffect(() => {
+    sitesAnalyticsSiteIdRef.current = sitesAnalyticsSiteId
+  }, [sitesAnalyticsSiteId])
+
+  useEffect(() => {
+    setSitesAnalyticsSiteSearch('')
+  }, [sitesAnalyticsLandingMode, sitesAnalyticsSiteType])
+
   useUrlDateRangeSync({
     dateRange,
     setDateRange,
@@ -8869,6 +9080,7 @@ export const Sites: React.FC = () => {
     setSitesAnalyticsLandingMode(nextLandingMode)
     setSitesAnalyticsSiteId('')
     setSitesAnalyticsVideoId('')
+    setSitesAnalyticsSiteSearch('')
     setSitesVideoAnalytics(null)
     setSitesVideoAnalyticsError('')
     updateSitesAnalyticsQuery({ type: value, landingMode: nextLandingMode, siteId: '', videoId: '' })
@@ -8878,6 +9090,7 @@ export const Sites: React.FC = () => {
     setSitesAnalyticsLandingMode(value)
     setSitesAnalyticsSiteId('')
     setSitesAnalyticsVideoId('')
+    setSitesAnalyticsSiteSearch('')
     setSitesVideoAnalytics(null)
     setSitesVideoAnalyticsError('')
     updateSitesAnalyticsQuery({ landingMode: value, siteId: '', videoId: '' })
@@ -8892,6 +9105,89 @@ export const Sites: React.FC = () => {
     setSitesAnalyticsVideoId(value)
     updateSitesAnalyticsQuery({ videoId: value })
   }, [updateSitesAnalyticsQuery])
+
+  const sitesAnalyticsEffectiveSearch = useMemo(
+    () => normalizeSitesSearchQuery(sitesAnalyticsSiteSearch),
+    [sitesAnalyticsSiteSearch]
+  )
+
+  useEffect(() => {
+    const requestId = sitesAnalyticsCatalogRequestRef.current + 1
+    sitesAnalyticsCatalogRequestRef.current = requestId
+
+    if (section !== 'analytics') {
+      setSitesAnalyticsSiteSearch(current => current ? '' : current)
+      setSitesAnalyticsCatalog(current => current.loading ? { ...current, loading: false } : current)
+      return
+    }
+
+    const search = sitesAnalyticsEffectiveSearch
+    const landingMode = sitesAnalyticsSiteType === 'sites' ? sitesAnalyticsLandingMode : 'all'
+    const scopeKey = JSON.stringify([sitesAnalyticsSiteType, landingMode])
+    const queryKey = JSON.stringify([scopeKey, search])
+    setSitesAnalyticsCatalog(current => {
+      if (current.queryKey === queryKey) return { ...current, loading: true }
+      const sameScope = current.scopeKey === scopeKey
+      const selected = current.items.find(site => site.id === sitesAnalyticsSiteIdRef.current)
+      const canRestoreDefault = !search && sameScope && current.defaultScopeReadyKey === scopeKey
+      return {
+        items: canRestoreDefault
+          ? mergeSiteCollection(selected ? [selected] : [], current.defaultItems)
+          : sameScope
+            ? current.items
+            : [],
+        defaultItems: sameScope ? current.defaultItems : [],
+        loading: true,
+        queryKey,
+        scopeKey,
+        defaultScopeReadyKey: sameScope ? current.defaultScopeReadyKey : ''
+      }
+    })
+
+    const timeout = window.setTimeout(() => {
+      const pageRequest = sitesService.listAnalyticsSiteOptionsPage({
+        limit: 100,
+        search,
+        siteType: sitesAnalyticsSiteType,
+        landingMode
+      })
+      const needsDefaultPage = sitesAnalyticsDefaultScopeReadyRef.current !== scopeKey
+      const defaultPageRequest = search && needsDefaultPage
+        ? sitesService.listAnalyticsSiteOptionsPage({
+            limit: 100,
+            search: '',
+            siteType: sitesAnalyticsSiteType,
+            landingMode
+          })
+        : Promise.resolve(null)
+
+      void Promise.allSettled([pageRequest, defaultPageRequest])
+        .then(([pageResult, defaultPageResult]) => {
+          if (!builderResourcesMountedRef.current || sitesAnalyticsCatalogRequestRef.current !== requestId) return
+          const page = pageResult.status === 'fulfilled' ? pageResult.value : null
+          const explicitDefaultPage = defaultPageResult.status === 'fulfilled' ? defaultPageResult.value : null
+          const defaultPage = search ? explicitDefaultPage : page
+          const defaultScopeResolved = !search || needsDefaultPage
+          if (defaultScopeResolved) sitesAnalyticsDefaultScopeReadyRef.current = scopeKey
+          setSitesAnalyticsCatalog(current => {
+            if (current.queryKey !== queryKey) return current
+            const selected = current.items.find(site => site.id === sitesAnalyticsSiteIdRef.current)
+            return {
+              items: page
+                ? mergeSiteCollection(selected ? [selected] : [], page.items)
+                : current.items,
+              defaultItems: defaultPage ? defaultPage.items : current.defaultItems,
+              loading: false,
+              queryKey,
+              scopeKey,
+              defaultScopeReadyKey: defaultScopeResolved ? scopeKey : current.defaultScopeReadyKey
+            }
+          })
+        })
+    }, search ? 250 : 0)
+
+    return () => window.clearTimeout(timeout)
+  }, [section, sitesAnalyticsEffectiveSearch, sitesAnalyticsLandingMode, sitesAnalyticsSiteType])
 
   const markEditorExitInProgress = () => {
     suppressEditorRouteRestoreRef.current = true
@@ -8970,18 +9266,11 @@ export const Sites: React.FC = () => {
     })
   }, [])
 
-  const landings = useMemo(
-    () => sites.filter(site => site.siteType === 'landing_page'),
-    [sites]
-  )
-  const libraryForms = useMemo(
-    // El formulario de sistema del calendario (librarySource 'calendar') NO es un
-    // formulario del usuario: se oculta de la biblioteca de Formularios y de TODOS los
-    // selectores de embed/respuestas/video-gate. Las citas siguen guardando contacto por
-    // su propio camino, así que ocultarlo no afecta el funcionamiento.
-    () => sites.filter(site => (site.siteType === 'standard_form' || site.siteType === 'interactive_form') && getSiteLibrarySource(site) !== 'calendar'),
-    [sites]
-  )
+  // El formulario de sistema del calendario (librarySource 'calendar') NO es un
+  // formulario del usuario: se oculta de la biblioteca de Formularios y de TODOS los
+  // selectores de embed/respuestas/video-gate. Las citas siguen guardando contacto por
+  // su propio camino, así que ocultarlo no afecta el funcionamiento.
+  const libraryForms = libraryPages.forms.items
   const forms = useMemo(() => {
     const byId = new Map<string, PublicSite>()
     formCatalog.forEach((site) => {
@@ -8997,50 +9286,70 @@ export const Sites: React.FC = () => {
     return [...byId.values()]
   }, [formCatalog, hydratedFormDetails, libraryForms])
 
-  const loadFormsCatalog = useCallback(async () => {
+  const loadFormsCatalog = useCallback((): Promise<void> => {
+    if (formCatalogLoadedRef.current) return Promise.resolve()
+    if (formCatalogPromiseRef.current) return formCatalogPromiseRef.current
+
     const requestId = formCatalogRequestRef.current + 1
     formCatalogRequestRef.current = requestId
-    try {
-      const collection = await sitesService.listAllSiteSelectors({ kind: 'forms' })
-      if (formCatalogRequestRef.current !== requestId) return
-      setFormCatalog(collection.items.filter(site => (
-        isFormSite(site) && getSiteLibrarySource(site) !== 'calendar'
-      )))
-      if (collection.truncated && !formCatalogTruncationWarnedRef.current) {
-        formCatalogTruncationWarnedRef.current = true
-        showToast(
-          'warning',
-          'Catálogo de formularios acotado',
-          'Los formularios ya vinculados seguirán cargando bajo demanda. Para elegir otro, usa uno de los 2,000 más recientes.'
-        )
+    const request = (async () => {
+      try {
+        const collection = await sitesService.listAllSiteSelectors({ kind: 'forms' })
+        if (!builderResourcesMountedRef.current || formCatalogRequestRef.current !== requestId) return
+        setFormCatalog(collection.items.filter(site => (
+          isFormSite(site) && getSiteLibrarySource(site) !== 'calendar'
+        )))
+        formCatalogLoadedRef.current = true
+        if (collection.truncated && !formCatalogTruncationWarnedRef.current) {
+          formCatalogTruncationWarnedRef.current = true
+          showToast(
+            'warning',
+            'Catálogo de formularios acotado',
+            'Los formularios ya vinculados seguirán cargando bajo demanda. Para elegir otro, usa uno de los 2,000 más recientes.'
+          )
+        }
+      } catch {
+        if (!builderResourcesMountedRef.current || formCatalogRequestRef.current !== requestId) return
+        // La biblioteca principal sigue utilizable; los formularios referenciados
+        // se hidratan directamente por id al abrir un site.
+        setFormCatalog([])
       }
-    } catch {
-      if (formCatalogRequestRef.current !== requestId) return
-      // La biblioteca principal sigue utilizable; los formularios referenciados
-      // se hidratan directamente por id al abrir un site.
-      setFormCatalog([])
-    }
+    })().finally(() => {
+      if (formCatalogRequestRef.current === requestId) formCatalogPromiseRef.current = null
+    })
+    formCatalogPromiseRef.current = request
+    return request
   }, [showToast])
-  const sitesById = useMemo(
-    () => new Map(sites.map(site => [site.id, site])),
-    [sites]
-  )
-  const liveAnalyticsSites = useMemo(
-    () => sites.filter(site => site.status === 'published'),
-    [sites]
-  )
-  const baseAnalyticsSites = useMemo(
-    () => liveAnalyticsSites.filter(site => getSiteTypeFilterMatch(site, sitesAnalyticsSiteType)),
-    [liveAnalyticsSites, sitesAnalyticsSiteType]
+  const analyticsCatalogSites = useMemo(
+    () => sitesAnalyticsCatalog.items.filter(site => (
+      site.status === 'published' &&
+      getSiteTypeFilterMatch(site, sitesAnalyticsSiteType) &&
+      (
+        sitesAnalyticsSiteType !== 'sites' ||
+        sitesAnalyticsLandingMode === 'all' ||
+        getSitePageMode(site) === sitesAnalyticsLandingMode
+      )
+    )),
+    [sitesAnalyticsCatalog.items, sitesAnalyticsLandingMode, sitesAnalyticsSiteType]
   )
   const analyticsSites = useMemo(
-    () => baseAnalyticsSites.filter(site => (
-      sitesAnalyticsSiteType !== 'sites' ||
-      sitesAnalyticsLandingMode === 'all' ||
-      getSitePageMode(site) === sitesAnalyticsLandingMode
+    () => sitesAnalyticsCatalog.defaultItems.filter(site => (
+      site.status === 'published' &&
+      getSiteTypeFilterMatch(site, sitesAnalyticsSiteType) &&
+      (
+        sitesAnalyticsSiteType !== 'sites' ||
+        sitesAnalyticsLandingMode === 'all' ||
+        getSitePageMode(site) === sitesAnalyticsLandingMode
+      )
     )),
-    [baseAnalyticsSites, sitesAnalyticsLandingMode, sitesAnalyticsSiteType]
+    [sitesAnalyticsCatalog.defaultItems, sitesAnalyticsLandingMode, sitesAnalyticsSiteType]
   )
+  const sitesById = useMemo(() => {
+    const byId = new Map(sites.map(site => [site.id, site]))
+    analyticsSites.forEach(site => byId.set(site.id, site))
+    analyticsCatalogSites.forEach(site => byId.set(site.id, site))
+    return byId
+  }, [analyticsCatalogSites, analyticsSites, sites])
   const analyticsVideoOriginOptions = useMemo(() => {
     const origins = new Map<string, { id: string; name: string }>()
     siteVideoAssets.forEach((asset) => {
@@ -9051,11 +9360,13 @@ export const Sites: React.FC = () => {
     return [...origins.values()]
   }, [siteVideoAssets, sitesById])
   const analyticsSiteOptions = useMemo(() => {
-    if (sitesAnalyticsSiteType !== 'videos') return analyticsSites
-    const options = new Map(analyticsSites.map(site => [site.id, { id: site.id, name: site.name }]))
+    if (sitesAnalyticsSiteType !== 'videos') return analyticsCatalogSites
+    const options = new Map(analyticsCatalogSites.map(site => [site.id, { id: site.id, name: site.name }]))
     analyticsVideoOriginOptions.forEach(origin => options.set(origin.id, origin))
     return [...options.values()]
-  }, [analyticsSites, analyticsVideoOriginOptions, sitesAnalyticsSiteType])
+  }, [analyticsCatalogSites, analyticsVideoOriginOptions, sitesAnalyticsSiteType])
+  const analyticsSelectedSiteReady = !sitesAnalyticsSiteId ||
+    analyticsCatalogSites.some(site => site.id === sitesAnalyticsSiteId)
   const filteredAnalyticsVideos = useMemo(() => (
     siteVideoAssets.filter((asset) => {
       const sourceSiteId = getMediaSourceSiteId(asset)
@@ -9064,11 +9375,23 @@ export const Sites: React.FC = () => {
       return true
     })
   ), [siteVideoAssets, sitesAnalyticsSiteId])
+  const siteVideoScopeKey = useMemo(() => JSON.stringify([
+    sitesAnalyticsSiteType,
+    sitesAnalyticsLandingMode,
+    sitesAnalyticsSiteId
+  ]), [sitesAnalyticsLandingMode, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
+  const analyticsCatalogScopeKey = useMemo(() => JSON.stringify([
+    sitesAnalyticsSiteType,
+    sitesAnalyticsSiteType === 'sites' ? sitesAnalyticsLandingMode : 'all'
+  ]), [sitesAnalyticsLandingMode, sitesAnalyticsSiteType])
   const scopedAnalyticsSites = useMemo(
-    () => sitesAnalyticsSiteId
-      ? analyticsSites.filter(site => site.id === sitesAnalyticsSiteId)
-      : analyticsSites,
-    [analyticsSites, sitesAnalyticsSiteId]
+    () => {
+      if (!sitesAnalyticsSiteId) return analyticsSites
+      const selected = analyticsCatalogSites.find(site => site.id === sitesAnalyticsSiteId) ||
+        analyticsSites.find(site => site.id === sitesAnalyticsSiteId)
+      return selected ? [selected] : []
+    },
+    [analyticsCatalogSites, analyticsSites, sitesAnalyticsSiteId]
   )
   const scopedAnalyticsVideos = useMemo(
     () => sitesAnalyticsVideoId
@@ -9076,13 +9399,13 @@ export const Sites: React.FC = () => {
       : filteredAnalyticsVideos,
     [filteredAnalyticsVideos, sitesAnalyticsVideoId]
   )
-  const analyticsSummarySiteIds = useMemo(
-    () => scopedAnalyticsSites.map(site => site.id),
+  const analyticsBreakdownSiteIds = useMemo(
+    () => scopedAnalyticsSites.slice(0, 100).map(site => site.id),
     [scopedAnalyticsSites]
   )
-  const analyticsSummarySiteKey = useMemo(
-    () => analyticsSummarySiteIds.join('|'),
-    [analyticsSummarySiteIds]
+  const analyticsBreakdownSiteKey = useMemo(
+    () => analyticsBreakdownSiteIds.join('|'),
+    [analyticsBreakdownSiteIds]
   )
   const analyticsVideoBreakdownIds = useMemo(
     () => scopedAnalyticsVideos.slice(0, 100).map(asset => asset.id),
@@ -9097,14 +9420,6 @@ export const Sites: React.FC = () => {
       ? filteredAnalyticsVideos.find(asset => asset.id === sitesAnalyticsVideoId) || null
       : null
   ), [filteredAnalyticsVideos, sitesAnalyticsVideoId])
-  useEffect(() => {
-    if (!sitesAnalyticsSiteId) return
-    if (sitesAnalyticsSiteType === 'videos') return
-    if (!analyticsSites.some(site => site.id === sitesAnalyticsSiteId)) {
-      setSitesAnalyticsSiteId('')
-      updateSitesAnalyticsQuery({ siteId: '' })
-    }
-  }, [analyticsSites, sitesAnalyticsSiteId, sitesAnalyticsSiteType, updateSitesAnalyticsQuery])
   useEffect(() => {
     if (section !== 'analytics') return
     if (sitesAnalyticsSiteType !== 'videos') {
@@ -9123,7 +9438,12 @@ export const Sites: React.FC = () => {
     }
 
     let cancelled = false
-    sitesService.getVideoAssetById(sitesAnalyticsVideoId)
+    sitesService.getVideoAssetById(sitesAnalyticsVideoId, {
+      analyticsScope: true,
+      siteType: sitesAnalyticsSiteType,
+      landingMode: sitesAnalyticsLandingMode,
+      ...(sitesAnalyticsSiteId ? { siteId: sitesAnalyticsSiteId } : {})
+    })
       .then(asset => {
         if (cancelled) return
         setSiteVideoAssets(current => current.some(item => item.id === asset.id) ? current : [asset, ...current])
@@ -9136,7 +9456,16 @@ export const Sites: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [filteredAnalyticsVideos, section, siteVideoAssets, sitesAnalyticsSiteType, sitesAnalyticsVideoId, updateSitesAnalyticsQuery])
+  }, [
+    filteredAnalyticsVideos,
+    section,
+    siteVideoAssets,
+    sitesAnalyticsLandingMode,
+    sitesAnalyticsSiteId,
+    sitesAnalyticsSiteType,
+    sitesAnalyticsVideoId,
+    updateSitesAnalyticsQuery
+  ])
   const blocks = useMemo(
     () => [...(selectedSite?.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder),
     [selectedSite?.blocks]
@@ -9624,12 +9953,78 @@ export const Sites: React.FC = () => {
         : [normalizedSite, ...current]
       )
     }
-    setSites(current => {
-      const exists = current.some(item => item.id === normalizedSite.id)
-      if (!exists) return [normalizedSite, ...current]
-      return current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item)
-    })
+    setSites(current => mergeSiteCollection(current, [normalizedSite], true))
+    if (domainSitesLoadedRef.current) {
+      commitDomainSites(normalizedSite.siteType === 'landing_page'
+        ? mergeSiteCollection(domainSitesRef.current, [normalizedSite], true)
+        : domainSitesRef.current.filter(item => item.id !== normalizedSite.id)
+      )
+    }
+    const targetSection: LibraryViewSection = normalizedSite.siteType === 'landing_page' ? 'landings' : 'forms'
+    const belongsInLibrary = targetSection === 'landings' || getSiteLibrarySource(normalizedSite) !== 'calendar'
+    commitLibraryPages(current => ({
+      landings: {
+        ...current.landings,
+        items: targetSection === 'landings' && belongsInLibrary
+          ? mergeSiteCollection(current.landings.items, [normalizedSite], true)
+          : current.landings.items.filter(item => item.id !== normalizedSite.id)
+      },
+      forms: {
+        ...current.forms,
+        items: targetSection === 'forms' && belongsInLibrary
+          ? mergeSiteCollection(current.forms.items, [normalizedSite], true)
+          : current.forms.items.filter(item => item.id !== normalizedSite.id)
+      }
+    }))
     return normalizedSite
+  }
+
+  function removeSitesFromCollections(siteIds: Iterable<string>) {
+    const ids = new Set(siteIds)
+    if (!ids.size) return
+    setSites(current => current.filter(site => !ids.has(site.id)))
+    setHydratedFormDetails(current => Object.fromEntries(
+      Object.entries(current).filter(([siteId]) => !ids.has(siteId))
+    ))
+    setFormCatalog(current => current.filter(site => !ids.has(site.id)))
+    if (domainSitesLoadedRef.current) {
+      commitDomainSites(domainSitesRef.current.filter(site => !ids.has(site.id)))
+    }
+    commitLibraryPages(current => ({
+      landings: {
+        ...current.landings,
+        items: current.landings.items.filter(site => !ids.has(site.id))
+      },
+      forms: {
+        ...current.forms,
+        items: current.forms.items.filter(site => !ids.has(site.id))
+      }
+    }))
+  }
+
+  function patchSiteCollections(siteId: string, patch: Partial<PublicSite>) {
+    setSites(current => current.map(site => site.id === siteId ? { ...site, ...patch } : site))
+    setFormCatalog(current => current.map(site => site.id === siteId ? { ...site, ...patch } : site))
+    if (domainSitesLoadedRef.current) {
+      commitDomainSites(domainSitesRef.current
+        .map(site => site.id === siteId ? { ...site, ...patch } : site)
+        .filter(site => site.siteType === 'landing_page')
+      )
+    }
+    setHydratedFormDetails(current => current[siteId]
+      ? { ...current, [siteId]: { ...current[siteId], ...patch } }
+      : current
+    )
+    commitLibraryPages(current => ({
+      landings: {
+        ...current.landings,
+        items: current.landings.items.map(site => site.id === siteId ? { ...site, ...patch } : site)
+      },
+      forms: {
+        ...current.forms,
+        items: current.forms.items.map(site => site.id === siteId ? { ...site, ...patch } : site)
+      }
+    }))
   }
 
   function normalizeEmbeddedFormSourceBlocks(formId: string, fields: SiteBlock[]) {
@@ -10076,44 +10471,6 @@ export const Sites: React.FC = () => {
 
   useEffect(() => {
     loadSites(routeState.siteId || new URLSearchParams(window.location.search).get('siteEditor') || undefined, routeState.pageId || undefined)
-    void loadFormsCatalog()
-    loadCalendarsForBuilder()
-    loadCustomFieldsForBuilder()
-  }, [])
-
-  useEffect(() => {
-    let mounted = true
-
-    setLoadingSocialProfiles(true)
-    campaignsService.getMetaConfig()
-      .then(response => {
-        if (!mounted) return
-        setMetaPixelConnected(Boolean(
-          response.configured &&
-          response.config?.adAccountId &&
-          response.config?.accessToken &&
-          response.config?.pixelId
-        ))
-      })
-      .catch(() => {
-        if (mounted) setMetaPixelConnected(false)
-      })
-
-    campaignsService.getConnectedSocialProfiles()
-      .then(response => {
-        if (!mounted) return
-        setConnectedSocialProfiles(response.profiles)
-      })
-      .catch(() => {
-        if (mounted) setConnectedSocialProfiles([])
-      })
-      .finally(() => {
-        if (mounted) setLoadingSocialProfiles(false)
-      })
-
-    return () => {
-      mounted = false
-    }
   }, [])
 
   useEffect(() => {
@@ -10153,7 +10510,7 @@ export const Sites: React.FC = () => {
       const importData = wrappedDetail ? (detail as { import?: ImportedSiteImport }).import : null
       const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
 
-      setSites(current => [site, ...current.filter(item => item.id !== site.id)])
+      upsertSiteInEditorList(site)
       setSelectedSite(site)
       setActivePageId(nextPageId)
       setSelectedBlockId('')
@@ -10286,6 +10643,59 @@ export const Sites: React.FC = () => {
     return request
   }, [])
 
+  useEffect(() => {
+    if (!sitesAnalyticsSiteId || sitesAnalyticsCatalog.loading || !sitesAnalyticsCatalog.queryKey) return
+    if (analyticsCatalogSites.some(site => site.id === sitesAnalyticsSiteId)) return
+
+    let cancelled = false
+    const clearInvalidSelection = () => {
+      if (cancelled) return
+      setSitesAnalyticsSiteId('')
+      updateSitesAnalyticsQuery({ siteId: '' })
+    }
+
+    void sitesService.listAnalyticsSiteOptionsPage({
+      limit: 100,
+      search: sitesAnalyticsSiteId,
+      siteType: sitesAnalyticsSiteType,
+      landingMode: sitesAnalyticsSiteType === 'sites' ? sitesAnalyticsLandingMode : 'all'
+    })
+      .then(page => {
+        if (cancelled) return
+        const site = page.items.find(item => item.id === sitesAnalyticsSiteId)
+        if (!site) {
+          clearInvalidSelection()
+          return
+        }
+        const matchesType = getSiteTypeFilterMatch(site, sitesAnalyticsSiteType)
+        const matchesLandingMode = sitesAnalyticsSiteType !== 'sites' ||
+          sitesAnalyticsLandingMode === 'all' ||
+          getSitePageMode(site) === sitesAnalyticsLandingMode
+        const isSelectableForm = sitesAnalyticsSiteType !== 'forms' || getSiteLibrarySource(site) !== 'calendar'
+        if (site.status !== 'published' || !matchesType || !matchesLandingMode || !isSelectableForm) {
+          clearInvalidSelection()
+          return
+        }
+        setSitesAnalyticsCatalog(current => ({
+          ...current,
+          items: mergeSiteCollection([site], current.items)
+        }))
+      })
+      .catch(() => undefined)
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    analyticsCatalogSites,
+    sitesAnalyticsCatalog.loading,
+    sitesAnalyticsCatalog.queryKey,
+    sitesAnalyticsLandingMode,
+    sitesAnalyticsSiteId,
+    sitesAnalyticsSiteType,
+    updateSitesAnalyticsQuery
+  ])
+
   const linkedFormIds = useMemo(() => {
     const ids = new Set<string>()
     const visitedSiteIds = new Set<string>()
@@ -10324,26 +10734,219 @@ export const Sites: React.FC = () => {
     }
   }, [hydratedFormDetails, linkedFormIdsKey, loadSiteDetail])
 
+  const loadLibraryPage = useCallback((kind: LibraryViewSection, options: { append?: boolean; force?: boolean } = {}): Promise<void> => {
+    const append = Boolean(options.append)
+    const force = Boolean(options.force)
+    const currentPage = libraryPagesRef.current[kind]
+    const filter = libraryFiltersRef.current[kind]
+    const search = normalizeSitesSearchQuery(filter.search)
+    const folderId = search ? null : (filter.folderId || SITE_LIBRARY_ROOT_ID)
+    const queryKey = getSitesLibraryQueryKey({ search, folderId })
+    const sameQuery = currentPage.queryKey === queryKey
+    const cacheFresh = sameQuery && currentPage.validatedAt > 0 &&
+      Date.now() - currentPage.validatedAt < SITES_LIBRARY_CACHE_TTL_MS
+    const backgroundRefresh = !append && !force && currentPage.loaded && sameQuery && !cacheFresh
+    if (append && (
+      !currentPage.loaded ||
+      !currentPage.nextCursor ||
+      currentPage.queryKey !== queryKey
+    )) return Promise.resolve()
+    if (!append && !force && currentPage.loaded && !currentPage.loading && cacheFresh) {
+      return Promise.resolve()
+    }
+    if (force && libraryPagePromiseRef.current[kind]) {
+      libraryPageRequestRef.current[kind] += 1
+      libraryPagePromiseRef.current[kind] = null
+    }
+    if (append && libraryPagePromiseRef.current[kind]) {
+      // Un refresh SWR nunca debe tragarse la intención explícita de cargar la
+      // siguiente página. Su respuesta queda obsoleta y el append toma control.
+      libraryPageRequestRef.current[kind] += 1
+      libraryPagePromiseRef.current[kind] = null
+    }
+    if (libraryPagePromiseRef.current[kind]) return libraryPagePromiseRef.current[kind]!
+
+    const cursor = append ? currentPage.nextCursor : ''
+    const requestId = libraryPageRequestRef.current[kind] + 1
+    libraryPageRequestRef.current[kind] = requestId
+    commitLibraryPages(current => ({
+      ...current,
+      [kind]: {
+        ...current[kind],
+        items: append && current[kind].queryKey === queryKey
+          ? current[kind].items
+          : backgroundRefresh
+            ? current[kind].items
+            : [],
+        nextCursor: append && current[kind].queryKey === queryKey
+          ? current[kind].nextCursor
+          : backgroundRefresh
+            ? current[kind].nextCursor
+            : '',
+        loading: backgroundRefresh ? false : append ? current[kind].loading : true,
+        loadingMore: append,
+        queryKey
+      }
+    }))
+
+    let request: Promise<void>
+    request = sitesService.listSitesPage({
+      limit: SITES_LIBRARY_PAGE_SIZE,
+      ...(cursor ? { cursor } : {}),
+      kind,
+      search,
+      folderId,
+      // Los conteos son globales por biblioteca: cambiar carpeta o escribir una
+      // búsqueda no los modifica. Recalcular ese GROUP BY en cada tecla vuelve
+      // O(N) una interacción que debe costar sólo una página por cursor.
+      includeFacets: !append && (
+        currentPage.facetsValidatedAt <= 0 ||
+        force ||
+        Date.now() - currentPage.facetsValidatedAt >= SITES_LIBRARY_FACETS_TTL_MS
+      )
+    })
+      .then(page => {
+        if (
+          !builderResourcesMountedRef.current ||
+          libraryPageRequestRef.current[kind] !== requestId ||
+          libraryPagesRef.current[kind].queryKey !== queryKey
+        ) return
+        const scopedItems = page.items.filter(site => kind === 'landings'
+          ? site.siteType === 'landing_page'
+          : isFormSite(site) && getSiteLibrarySource(site) !== 'calendar'
+        )
+        commitLibraryPages(current => ({
+          ...current,
+          [kind]: {
+            ...current[kind],
+            items: append ? mergeSiteCollection(current[kind].items, scopedItems) : scopedItems,
+            nextCursor: page.nextCursor,
+            loaded: true,
+            loading: false,
+            loadingMore: false,
+            queryKey,
+            validatedAt: append ? current[kind].validatedAt : Date.now(),
+            facetsValidatedAt: page.facets ? Date.now() : current[kind].facetsValidatedAt,
+            facets: page.facets || current[kind].facets
+          }
+        }))
+        setSites(current => mergeSiteCollection(current, scopedItems))
+      })
+      .catch(error => {
+        if (
+          !builderResourcesMountedRef.current ||
+          libraryPageRequestRef.current[kind] !== requestId ||
+          libraryPagesRef.current[kind].queryKey !== queryKey
+        ) return
+        commitLibraryPages(current => ({
+          ...current,
+          [kind]: {
+            ...current[kind],
+            loading: false,
+            loadingMore: false
+          }
+        }))
+        showToast(
+          'error',
+          'Error',
+          error instanceof Error ? error.message : `No se pudieron cargar ${kind === 'landings' ? 'los sitios web' : 'los formularios'}`
+        )
+      })
+      .finally(() => {
+        if (libraryPageRequestRef.current[kind] === requestId && libraryPagePromiseRef.current[kind] === request) {
+          libraryPagePromiseRef.current[kind] = null
+        }
+      })
+    libraryPagePromiseRef.current[kind] = request
+    return request
+  }, [commitLibraryPages, showToast])
+
+  const loadDomainSelector = useCallback((options: {
+    cursor?: string
+    append?: boolean
+  } = {}): Promise<void> => {
+    const append = options.append === true
+    if (!append && domainSitesLoadedRef.current) return Promise.resolve()
+    if (domainSitesPromiseRef.current) return domainSitesPromiseRef.current
+
+    const requestId = domainSitesRequestRef.current + 1
+    domainSitesRequestRef.current = requestId
+    setDomainSitesLoading(true)
+    let request: Promise<void>
+    request = sitesService.listSiteSelectorsPage({
+      kind: 'landings',
+      limit: 200,
+      cursor: options.cursor || ''
+    })
+      .then(page => {
+        if (!builderResourcesMountedRef.current || domainSitesRequestRef.current !== requestId) return
+        const items = page.items.filter(site => site.siteType === 'landing_page')
+        commitDomainSites(append
+          ? mergeSiteCollection(domainSitesRef.current, items)
+          : items
+        )
+        domainSitesNextCursorRef.current = page.nextCursor || ''
+        setDomainSitesTruncated(page.hasMore)
+        domainSitesLoadedRef.current = true
+      })
+      .finally(() => {
+        if (domainSitesRequestRef.current === requestId) {
+          setDomainSitesLoading(false)
+          if (domainSitesPromiseRef.current === request) domainSitesPromiseRef.current = null
+        }
+      })
+    domainSitesPromiseRef.current = request
+    return request
+  }, [commitDomainSites])
+
+  const ensureDomainSites = useCallback(async (requiredSiteId = '') => {
+    await loadDomainSelector()
+    if (!requiredSiteId || domainSitesRef.current.some(site => site.id === requiredSiteId)) return
+    const requiredSite = await loadSiteDetail(requiredSiteId)
+    if (requiredSite.siteType !== 'landing_page') return
+    commitDomainSites(mergeSiteCollection(domainSitesRef.current, [requiredSite]))
+  }, [commitDomainSites, loadDomainSelector, loadSiteDetail])
+
   const loadSites = async (selectId?: string, selectPageId?: string) => {
     setLoading(true)
     try {
-      const [page, nextDomainConfig, folders] = await Promise.all([
-        sitesService.listSitesPage({ limit: SITES_LIBRARY_PAGE_SIZE }),
+      const initialLibraryKind: LibraryViewSection | null = selectId
+        ? null
+        : routeState.section === 'forms'
+          ? 'forms'
+          : routeState.section === 'landings'
+            ? 'landings'
+            : null
+      if (initialLibraryKind) void loadLibraryPage(initialLibraryKind)
+
+      // Dominio y carpetas enriquecen la biblioteca, pero no son requisito para
+      // pintar su primera pagina ni para abrir un editor por id. Resolverlos en
+      // segundo plano evita que una lectura auxiliar lenta congele toda Sites.
+      void Promise.allSettled([
         sitesService.getDomain(),
         sitesService.listFolders()
-      ])
-      setSites(page.items)
-      setSitesNextCursor(page.nextCursor)
-      setSiteFolders(folders)
-      setDomainConfig(nextDomainConfig)
-      setDomainInput(nextDomainConfig.domain)
-      const nextId = selectId || (selectedSite?.id && page.items.some(site => site.id === selectedSite.id) ? selectedSite.id : '')
-      if (nextId) {
-        const site = await loadSiteDetail(nextId)
-        setSites(current => current.some(item => item.id === site.id)
-          ? current.map(item => item.id === site.id ? site : item)
-          : [site, ...current]
-        )
+      ]).then(([domainResult, foldersResult]) => {
+        if (!builderResourcesMountedRef.current) return
+        if (domainResult.status === 'fulfilled') {
+          setDomainConfig(domainResult.value)
+          setDomainInput(domainResult.value.domain)
+        }
+        if (foldersResult.status === 'fulfilled') {
+          setSiteFolders(foldersResult.value)
+        }
+        if (domainResult.status === 'rejected' || foldersResult.status === 'rejected') {
+          showToast(
+            'warning',
+            'Sites abrió con datos parciales',
+            'La biblioteca sigue disponible; dominio o carpetas se revalidarán al volver a entrar.'
+          )
+        }
+      })
+
+      const selectedDetail = selectId ? await loadSiteDetail(selectId) : null
+      if (!builderResourcesMountedRef.current) return
+      if (selectedDetail) {
+        const site = upsertSiteInEditorList(selectedDetail)
         const nextPages = normalizeFunnelPages(site)
         setSelectedSite(site)
         setSection(getSiteSection(site))
@@ -10354,53 +10957,201 @@ export const Sites: React.FC = () => {
         setSelectedBlockId('')
       }
     } catch (error) {
+      if (!builderResourcesMountedRef.current) return
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar los sites')
     } finally {
-      setLoading(false)
+      if (builderResourcesMountedRef.current) setLoading(false)
     }
   }
 
-  const loadMoreSites = async () => {
-    if (!sitesNextCursor || loadingMoreSites) return
-    setLoadingMoreSites(true)
-    try {
-      const page = await sitesService.listSitesPage({
-        limit: SITES_LIBRARY_PAGE_SIZE,
-        cursor: sitesNextCursor
+  useEffect(() => {
+    if (section !== 'landings' && section !== 'forms') return
+    const delay = normalizeSitesSearchQuery(libraryFilters[section].search) ? 250 : 0
+    const timeout = window.setTimeout(() => {
+      void loadLibraryPage(section)
+    }, delay)
+    return () => window.clearTimeout(timeout)
+  }, [
+    libraryFilters.forms.folderId,
+    libraryFilters.forms.search,
+    libraryFilters.landings.folderId,
+    libraryFilters.landings.search,
+    loadLibraryPage,
+    section
+  ])
+
+  useEffect(() => {
+    if (section !== 'domains') return
+    void ensureDomainSites(domainConfig.defaultRoute?.siteId || '').catch(error => {
+      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar las páginas del dominio')
+    })
+  }, [domainConfig.defaultRoute?.siteId, ensureDomainSites, section, showToast])
+
+  const loadCalendarsForBuilder = useCallback((): Promise<void> => {
+    if (calendarsLoadedRef.current) return Promise.resolve()
+    if (calendarsPromiseRef.current) return calendarsPromiseRef.current
+
+    const requestId = calendarsRequestRef.current + 1
+    calendarsRequestRef.current = requestId
+    const request = calendarsService.getCalendars(undefined, undefined, undefined, { throwOnError: true })
+      .then(items => {
+        if (!builderResourcesMountedRef.current || calendarsRequestRef.current !== requestId) return
+        setCalendars(items)
+        calendarsLoadedRef.current = true
       })
-      setSites(current => {
-        const byId = new Map(current.map(site => [site.id, site]))
-        page.items.forEach(site => {
-          if (!byId.has(site.id)) byId.set(site.id, site)
-        })
-        return [...byId.values()]
+      .catch(() => {
+        if (!builderResourcesMountedRef.current || calendarsRequestRef.current !== requestId) return
+        setCalendars([])
       })
-      setSitesNextCursor(page.nextCursor)
-    } catch (error) {
-      showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar más sites')
-    } finally {
-      setLoadingMoreSites(false)
-    }
-  }
+      .finally(() => {
+        if (calendarsRequestRef.current === requestId) calendarsPromiseRef.current = null
+      })
+    calendarsPromiseRef.current = request
+    return request
+  }, [])
 
-  const loadCalendarsForBuilder = async () => {
-    try {
-      setCalendars(await calendarsService.getCalendars())
-    } catch {
-      setCalendars([])
-    }
-  }
+  const loadCustomFieldsForBuilder = useCallback((): Promise<void> => {
+    if (customFieldsLoadedRef.current) return Promise.resolve()
+    if (customFieldsPromiseRef.current) return customFieldsPromiseRef.current
 
-  const loadCustomFieldsForBuilder = async () => {
-    try {
-      const catalog = await customFieldsService.listCatalog()
-      setCustomFieldFolders(catalog.folders || [])
-      setCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
-    } catch {
-      setCustomFieldFolders([])
-      setCustomFields([])
-    }
-  }
+    const requestId = customFieldsRequestRef.current + 1
+    customFieldsRequestRef.current = requestId
+    const request = customFieldsService.listCatalog()
+      .then(catalog => {
+        if (!builderResourcesMountedRef.current || customFieldsRequestRef.current !== requestId) return
+        setCustomFieldFolders(catalog.folders || [])
+        setCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
+        customFieldsLoadedRef.current = true
+      })
+      .catch(() => {
+        if (!builderResourcesMountedRef.current || customFieldsRequestRef.current !== requestId) return
+        setCustomFieldFolders([])
+        setCustomFields([])
+      })
+      .finally(() => {
+        if (customFieldsRequestRef.current === requestId) customFieldsPromiseRef.current = null
+      })
+    customFieldsPromiseRef.current = request
+    return request
+  }, [])
+
+  const loadMetaConfiguration = useCallback((): Promise<boolean> => {
+    if (metaConfigLoadedRef.current) return Promise.resolve(metaPixelConnectedRef.current)
+    if (metaConfigRequestRef.current) return metaConfigRequestRef.current
+
+    const request = Promise.resolve(integrationsStatus || refreshIntegrationsStatus())
+      .then(status => {
+        const connected = Boolean(
+          status.meta?.connected &&
+          status.meta.adAccountId &&
+          status.meta.pixelId
+        )
+        metaPixelConnectedRef.current = connected
+        metaConfigLoadedRef.current = true
+        if (builderResourcesMountedRef.current) setMetaPixelConnected(connected)
+        return connected
+      })
+      .catch(() => {
+        // La disponibilidad de Meta es opcional para Sites. Un 403 por plan o
+        // un fallo transitorio no debe bloquear crear/importar una página ni
+        // borrar el último estado conocido.
+        return metaPixelConnectedRef.current
+      })
+      .finally(() => {
+        metaConfigRequestRef.current = null
+      })
+    metaConfigRequestRef.current = request
+    return request
+  }, [integrationsStatus, refreshIntegrationsStatus])
+
+  useEffect(() => {
+    if (!integrationsStatus?.meta) return
+    const connected = Boolean(
+      integrationsStatus.meta.connected &&
+      integrationsStatus.meta.adAccountId &&
+      integrationsStatus.meta.pixelId
+    )
+    metaPixelConnectedRef.current = connected
+    metaConfigLoadedRef.current = true
+    setMetaPixelConnected(connected)
+  }, [integrationsStatus])
+
+  const loadConnectedSocialProfiles = useCallback((): Promise<ConnectedSocialProfile[]> => {
+    if (socialProfilesLoadedRef.current) return Promise.resolve(connectedSocialProfilesRef.current)
+    if (socialProfilesRequestRef.current) return socialProfilesRequestRef.current
+
+    if (builderResourcesMountedRef.current) setLoadingSocialProfiles(true)
+    const request = campaignsService.getConnectedSocialProfiles()
+      .then(response => {
+        if (!response.success) throw new Error('No se pudieron consultar los perfiles sociales')
+        const profiles = response.profiles || []
+        socialProfilesLoadedRef.current = true
+        connectedSocialProfilesRef.current = profiles
+        if (builderResourcesMountedRef.current) setConnectedSocialProfiles(profiles)
+        return profiles
+      })
+      .catch(() => {
+        // Mantener la callback estable evita un loop cuando Meta no forma parte
+        // del plan. La siguiente entrada/interacción podrá reintentar.
+        return connectedSocialProfilesRef.current
+      })
+      .finally(() => {
+        socialProfilesRequestRef.current = null
+        if (builderResourcesMountedRef.current) setLoadingSocialProfiles(false)
+      })
+    socialProfilesRequestRef.current = request
+    return request
+  }, [])
+
+  const requestFormsCatalog = useCallback(() => {
+    void loadFormsCatalog()
+  }, [loadFormsCatalog])
+
+  const requestCalendarsCatalog = useCallback(() => {
+    void loadCalendarsForBuilder()
+  }, [loadCalendarsForBuilder])
+
+  useEffect(() => {
+    // La biblioteca usa tarjetas resumen y no renderiza tipografías del sitio.
+    // El CSS dinámico de fuentes sólo hace falta al entrar al constructor, al
+    // abrir ajustes de un sitio o al empezar un flujo que enseña plantillas.
+    if (!editorSite && !librarySettingsSite && createFlow === 'closed') return
+    ensureSitesFontStylesheet()
+  }, [createFlow, editorSite?.id, librarySettingsSite?.id])
+
+  useEffect(() => {
+    if (!editorSite) return
+    void loadCalendarsForBuilder()
+    void loadCustomFieldsForBuilder()
+    void loadMetaConfiguration().catch(() => {})
+    void loadConnectedSocialProfiles()
+  }, [
+    editorSite?.id,
+    loadCalendarsForBuilder,
+    loadConnectedSocialProfiles,
+    loadCustomFieldsForBuilder,
+    loadMetaConfiguration
+  ])
+
+  useEffect(() => {
+    if (!editorSite || !selectedBlock || !['form_embed', 'video'].includes(selectedBlock.blockType)) return
+    void loadFormsCatalog()
+  }, [editorSite?.id, loadFormsCatalog, selectedBlock?.blockType, selectedBlock?.id])
+
+  useEffect(() => {
+    if (!editorSite || selectedBlock?.blockType !== 'calendar_embed') return
+    void loadCalendarsForBuilder()
+  }, [editorSite?.id, loadCalendarsForBuilder, selectedBlock?.id, selectedBlock?.blockType])
+
+  useEffect(() => {
+    if (!formResponsesOpen) return
+    void loadFormsCatalog()
+  }, [formResponsesOpen, loadFormsCatalog])
+
+  useEffect(() => {
+    if (createFlow === 'closed' && !aiCreationModal) return
+    void loadMetaConfiguration().catch(() => {})
+  }, [aiCreationModal, createFlow, loadMetaConfiguration])
 
   const handleCustomFieldCreated = useCallback((field: CustomFieldDefinition) => {
     setCustomFields(current => {
@@ -10440,10 +11191,10 @@ export const Sites: React.FC = () => {
 
       setSelectedResponsesSite(site)
       setFormResponseRows(rows)
-      setSites(current => current.map(item => item.id === site.id
-        ? { ...item, submissionsCount: site.submissionsCount, updatedAt: site.updatedAt }
-        : item
-      ))
+      patchSiteCollections(site.id, {
+        submissionsCount: site.submissionsCount,
+        updatedAt: site.updatedAt
+      })
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar las respuestas')
     } finally {
@@ -10479,6 +11230,7 @@ export const Sites: React.FC = () => {
 
   const loadSiteVideos = async (cursor: string | null = null, cursorHistory: string[] = []) => {
     const requestId = siteVideoRequestRef.current + 1
+    const requestScopeKey = siteVideoScopeKey
     siteVideoRequestRef.current = requestId
     setLoadingSiteVideos(true)
     try {
@@ -10504,7 +11256,10 @@ export const Sites: React.FC = () => {
       }
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar los videos de sitios')
     } finally {
-      if (siteVideoRequestRef.current === requestId) setLoadingSiteVideos(false)
+      if (siteVideoRequestRef.current === requestId) {
+        setLoadingSiteVideos(false)
+        if (!cursor) setSiteVideoResolvedScopeKey(requestScopeKey)
+      }
     }
   }
 
@@ -10522,13 +11277,34 @@ export const Sites: React.FC = () => {
       return
     }
 
+    const catalogReady = sitesAnalyticsCatalog.defaultScopeReadyKey === analyticsCatalogScopeKey
+    const videoWindowReady = siteVideoResolvedScopeKey === siteVideoScopeKey
+    if (!catalogReady || !analyticsSelectedSiteReady || !videoWindowReady) {
+      setSitesAnalyticsSummary(null)
+      setSitesAnalyticsSummaryError('')
+      setSitesAnalyticsSummaryLoading(true)
+      return
+    }
+
     let cancelled = false
+    const controller = new AbortController()
     setSitesAnalyticsSummaryLoading(true)
     setSitesAnalyticsSummary(null)
     setSitesAnalyticsSummaryError('')
 
     sitesService.getAnalyticsSummary({
-      siteIds: analyticsSummarySiteIds,
+      ...(sitesAnalyticsSiteType === 'videos' ? {} : {
+        siteScope: {
+          siteType: sitesAnalyticsSiteType,
+          ...(sitesAnalyticsSiteType === 'sites' ? { landingMode: sitesAnalyticsLandingMode } : {}),
+          status: 'published' as const,
+          ...(sitesAnalyticsSiteId ? { siteId: sitesAnalyticsSiteId } : {})
+        },
+        breakdownSiteIds: analyticsBreakdownSiteIds,
+        ...(sitesAnalyticsSiteType === 'forms' && sitesAnalyticsSiteId
+          ? { formFunnelSiteId: sitesAnalyticsSiteId }
+          : {})
+      }),
       videoBreakdownAssetIds: analyticsVideoBreakdownIds,
       videoSiteIds: sitesAnalyticsSiteId ? [sitesAnalyticsSiteId] : [],
       videoScope: {
@@ -10536,11 +11312,12 @@ export const Sites: React.FC = () => {
         landingMode: sitesAnalyticsLandingMode
       },
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end)
-    })
+    }, { signal: controller.signal })
       .then((summary) => {
         if (!cancelled) setSitesAnalyticsSummary(summary)
       })
       .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
         if (!cancelled) {
           setSitesAnalyticsSummary(null)
           setSitesAnalyticsSummaryError(error instanceof Error ? error.message : 'No se pudieron cargar las analíticas')
@@ -10552,13 +11329,19 @@ export const Sites: React.FC = () => {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [
-    analyticsSummarySiteKey,
+    analyticsCatalogScopeKey,
+    analyticsBreakdownSiteKey,
+    analyticsSelectedSiteReady,
     analyticsVideoBreakdownKey,
     dateRange.end,
     dateRange.start,
     section,
+    siteVideoResolvedScopeKey,
+    siteVideoScopeKey,
+    sitesAnalyticsCatalog.defaultScopeReadyKey,
     sitesAnalyticsLandingMode,
     sitesAnalyticsSiteId,
     sitesAnalyticsSiteType
@@ -10609,10 +11392,7 @@ export const Sites: React.FC = () => {
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     try {
       const site = await loadSiteDetail(siteId)
-      setSites(current => current.some(item => item.id === site.id)
-        ? current.map(item => item.id === site.id ? site : item)
-        : [site, ...current]
-      )
+      upsertSiteInEditorList(site)
       const nextPages = normalizeFunnelPages(site)
       const nextPageId = nextPages.some(page => page.id === pageId) ? pageId! : nextPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
       setSelectedSite(site)
@@ -10807,11 +11587,12 @@ export const Sites: React.FC = () => {
       const updated = normalizeSiteForEditor(await sitesService.updateSite(site.id, {
         theme: draft.theme
       }))
-      setSites(current => current.map(item => item.id === updated.id ? { ...item, ...updated } : item))
+      upsertSiteInEditorList(updated)
       if (selectedSiteRef.current?.id === updated.id) {
         selectedSiteRef.current = updated
         setSelectedSite(updated)
       }
+      void loadLibraryPage(updated.siteType === 'landing_page' ? 'landings' : 'forms', { force: true })
       showToast('success', 'Elemento movido', `${site.name} quedó guardado en la carpeta seleccionada.`)
     } catch (error) {
       showToast('error', 'No se pudo mover', error instanceof Error ? error.message : 'Inténtalo otra vez.')
@@ -10888,7 +11669,7 @@ export const Sites: React.FC = () => {
     selectedSiteRef.current = normalizedSite
     setSelectedSite(normalizedSite)
     setSelectedBlockId(current => normalizedSite.blocks?.some(block => block.id === current) || isEditorSurfaceSelection(current) ? current : '')
-    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    upsertSiteInEditorList(normalizedSite)
   }
 
   function syncSavedSiteBlocks(site: PublicSite) {
@@ -10903,14 +11684,14 @@ export const Sites: React.FC = () => {
     selectedSiteRef.current = nextSite
     setSelectedSite(nextSite)
     setSelectedBlockId(current => nextSite.blocks?.some(block => block.id === current) || isEditorSurfaceSelection(current) ? current : '')
-    setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+    upsertSiteInEditorList(nextSite)
   }
 
   const syncLibrarySettingsSite = (site: PublicSite) => {
     const normalizedSite = normalizeSiteForEditor(site)
     librarySettingsSiteRef.current = normalizedSite
     setLibrarySettingsSite(normalizedSite)
-    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    upsertSiteInEditorList(normalizedSite)
     if (selectedSiteRef.current?.id === normalizedSite.id) {
       selectedSiteRef.current = normalizedSite
       setSelectedSite(normalizedSite)
@@ -11133,7 +11914,7 @@ export const Sites: React.FC = () => {
       const normalizedSite = normalizeSiteForEditor(site)
       selectedSiteRef.current = normalizedSite
       setSelectedSite(normalizedSite)
-      setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+      upsertSiteInEditorList(normalizedSite)
       if (targetPageId) setActivePageId(targetPageId)
       setSelectedBlockId(targetSelectedBlockId)
       if (targetPageId) {
@@ -11268,7 +12049,7 @@ export const Sites: React.FC = () => {
     const normalizedSite = normalizeSiteForEditor(site)
     selectedSiteRef.current = normalizedSite
     setSelectedSite(normalizedSite)
-    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    upsertSiteInEditorList(normalizedSite)
     if (options.activePageId !== undefined) setActivePageId(options.activePageId)
     if (options.selectedBlockId !== undefined) setSelectedBlockId(options.selectedBlockId)
     markEditorDirty({ site: true })
@@ -11757,6 +12538,7 @@ export const Sites: React.FC = () => {
     }
     setCreating(true)
     try {
+      const metaConnected = await loadMetaConfiguration()
       const isBlank = mode === 'blank'
       const template: SiteTemplateId = templateId
         || (siteType === 'interactive_form' ? 'interactive' : siteType === 'landing_page' ? 'ristak' : 'ristak')
@@ -11804,7 +12586,7 @@ export const Sites: React.FC = () => {
                 }
             : {})
         },
-        metaCapiEnabled: metaPixelConnected,
+        metaCapiEnabled: metaConnected,
         metaEventName: 'none'
       })
 
@@ -11816,7 +12598,8 @@ export const Sites: React.FC = () => {
 
       site = normalizeSiteForEditor(site)
       const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-      setSites(current => [site, ...current])
+      upsertSiteInEditorList(site)
+      void loadLibraryPage(site.siteType === 'landing_page' ? 'landings' : 'forms', { force: true })
       setSelectedSite(site)
       setActivePageId(nextPageId)
       setSelectedBlockId('')
@@ -11855,6 +12638,19 @@ export const Sites: React.FC = () => {
     editSite,
     visualContext
   }: SitesAICreationModalSubmit): Promise<string | null> => {
+    let metaConnected = metaPixelConnectedRef.current
+    if (!editSite) {
+      try {
+        metaConnected = await loadMetaConfiguration()
+      } catch (error) {
+        showToast(
+          'error',
+          'No pudimos validar Meta',
+          error instanceof Error ? error.message : 'Inténtalo otra vez antes de crear la página.'
+        )
+        return null
+      }
+    }
     const selectedStructure = getSiteStructureOption(structureKind)
     const selectedFunnelStyle = getFunnelStyleOption(funnelStyle)
     const selectedWebsiteStyle = getWebsiteStyleOption(websiteStyle)
@@ -11910,7 +12706,7 @@ export const Sites: React.FC = () => {
           device
         }), { replace: true })
       } else {
-        setSites(current => current.filter(item => item.id !== pendingSiteId))
+        removeSitesFromCollections([pendingSiteId])
         if (selectedSiteRef.current?.id === pendingSiteId) {
           setSelectedSite(null)
           selectedSiteRef.current = null
@@ -11935,12 +12731,8 @@ export const Sites: React.FC = () => {
     setCreateFlow('closed')
     clearEditorDirtyState()
     setAiEditorGeneration({ siteId: pendingSiteId, siteKind, editMode: Boolean(editSite) })
-    setSites(current => {
-      const withoutPending = current.filter(item => item.id !== pendingSiteId)
-      const exists = withoutPending.some(item => item.id === pendingSite.id)
-      if (exists) return withoutPending.map(item => item.id === pendingSite.id ? { ...item, ...pendingSite } : item)
-      return [pendingSite, ...withoutPending]
-    })
+    removeSitesFromCollections([pendingSiteId])
+    upsertSiteInEditorList(pendingSite)
     setSelectedSite(pendingSite)
     selectedSiteRef.current = pendingSite
     navigate(buildSitesEditorPath({
@@ -11953,7 +12745,7 @@ export const Sites: React.FC = () => {
     try {
       const result = editSite
         ? await sitesService.editImportedHtmlWithAI(editSite.id, { siteKind, messages, model: chatgptModel, visualContext: editVisualContext })
-        : await sitesService.createWithAIHtml({ siteKind, messages, metaCapiEnabled: metaPixelConnected, model: chatgptModel })
+        : await sitesService.createWithAIHtml({ siteKind, messages, metaCapiEnabled: metaConnected, model: chatgptModel })
 
       if (result.status === 'needs_more_info' || !result.site || !result.import) {
         restoreAfterGenerationProblem(
@@ -11979,12 +12771,8 @@ export const Sites: React.FC = () => {
           siteId: normalizedSite.id,
           editorPath: finalEditorPath
         }
-      setSites(current => {
-        const withoutPending = current.filter(item => item.id !== pendingSiteId)
-        const exists = withoutPending.some(item => item.id === normalizedSite.id)
-        if (exists) return withoutPending.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item)
-        return [normalizedSite, ...withoutPending]
-      })
+      removeSitesFromCollections([pendingSiteId])
+      upsertSiteInEditorList(normalizedSite)
       setSelectedSite(normalizedSite)
       selectedSiteRef.current = normalizedSite
       setSelectedBlockId('')
@@ -12031,15 +12819,16 @@ export const Sites: React.FC = () => {
   const handleCreateBlankHtmlSite = async (siteType: SiteType) => {
     setCreating(true)
     try {
+      const metaConnected = await loadMetaConfiguration()
       const result = await sitesService.importHtmlSite({
         siteType,
         filename: 'sitio-html-en-blanco.html',
         fileBase64: textToFileDataUrl(BLANK_IMPORTED_HTML, 'text/html'),
-        metaCapiEnabled: metaPixelConnected
+        metaCapiEnabled: metaConnected
       })
       const site = normalizeSiteForEditor(result.site)
       const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-      setSites(current => [site, ...current])
+      upsertSiteInEditorList(site)
       setSelectedSite(site)
       selectedSiteRef.current = site
       setSelectedBlockId('')
@@ -12075,17 +12864,18 @@ export const Sites: React.FC = () => {
 
     setCreating(true)
     try {
+      const metaConnected = await loadMetaConfiguration()
       const siteType = pendingImportSiteTypeRef.current || pendingImportSiteType
       const fileBase64 = await fileToBase64(file)
       const result = await sitesService.importHtmlSite({
         siteType,
         filename: file.name,
         fileBase64,
-        metaCapiEnabled: metaPixelConnected
+        metaCapiEnabled: metaConnected
       })
       const site = normalizeSiteForEditor(result.site)
       const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-      setSites(current => [site, ...current])
+      upsertSiteInEditorList(site)
       setSelectedSite(site)
       selectedSiteRef.current = site
       setSelectedBlockId('')
@@ -12122,9 +12912,8 @@ export const Sites: React.FC = () => {
     try {
       const importData = await sitesService.updateImportMapping(importReview.site.id, formMappings)
       setSelectedImportData(importData)
-      const refreshedPage = await sitesService.listSitesPage({ limit: SITES_LIBRARY_PAGE_SIZE })
-      setSites(refreshedPage.items)
-      setSitesNextCursor(refreshedPage.nextCursor)
+      const refreshedSite = await loadSiteDetail(importReview.site.id)
+      upsertSiteInEditorList(refreshedSite)
       setImportReview(null)
       showToast('success', 'Ruta de datos guardada', 'Ristak ya sabe donde guardar cada dato de este HTML.')
     } catch (error) {
@@ -12155,7 +12944,7 @@ export const Sites: React.FC = () => {
 
   const handleImportedContentUpdated = (result: ImportedSiteCreateResult) => {
     const normalizedSite = normalizeSiteForEditor(result.site)
-    setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+    upsertSiteInEditorList(normalizedSite)
     selectedSiteRef.current = normalizedSite
     setSelectedSite(normalizedSite)
     setSelectedImportData(result.import)
@@ -12272,7 +13061,7 @@ export const Sites: React.FC = () => {
       })
       const normalizedSite = normalizeSiteForEditor(site)
 
-      setSites(current => current.map(item => item.id === normalizedSite.id ? { ...item, ...normalizedSite } : item))
+      upsertSiteInEditorList(normalizedSite)
       if (selectedSiteRef.current?.id === normalizedSite.id) {
         selectedSiteRef.current = normalizedSite
         setSelectedSite(normalizedSite)
@@ -12416,8 +13205,8 @@ export const Sites: React.FC = () => {
         const deleteSite = async () => {
           try {
             await sitesService.deleteSite(siteToDelete.id)
-            const nextSites = sites.filter(site => site.id !== siteToDelete.id)
-            setSites(nextSites)
+            removeSitesFromCollections([siteToDelete.id])
+            void loadLibraryPage(isLanding(siteToDelete) ? 'landings' : 'forms', { force: true })
             if (selectedSite?.id === siteToDelete.id) {
               markEditorExitInProgress()
               setSelectedSite(null)
@@ -12477,7 +13266,9 @@ export const Sites: React.FC = () => {
 
           if (deletedIds.length > 0) {
             const deletedIdSet = new Set(deletedIds)
-            setSites(current => current.filter(site => !deletedIdSet.has(site.id)))
+            removeSitesFromCollections(deletedIdSet)
+            if (uniqueSites.some(isLanding)) void loadLibraryPage('landings', { force: true })
+            if (uniqueSites.some(site => !isLanding(site))) void loadLibraryPage('forms', { force: true })
             const currentSelectedSite = selectedSiteRef.current || selectedSite
             if (currentSelectedSite && deletedIdSet.has(currentSelectedSite.id)) {
               markEditorExitInProgress()
@@ -12530,10 +13321,15 @@ export const Sites: React.FC = () => {
     }
     try {
       const options = typeof addOptions === 'number' ? { insertIndex: addOptions } : addOptions
+      if (blockType === 'form_embed') await loadFormsCatalog()
+      if (blockType === 'calendar_embed') await loadCalendarsForBuilder()
+      const socialProfiles = blockType === 'social_profile'
+        ? await loadConnectedSocialProfiles()
+        : connectedSocialProfiles
       const initialSettings = socialProfileAutoPresetForNewBlock(
         blockType,
         options.initialSettings || {},
-        connectedSocialProfiles
+        socialProfiles
       )
       const payload = applySystemFormFieldPreset(
         defaultBlockPayload(blockType, siteForAdd, undefined, hasEditablePages(siteForAdd) ? activePage?.id : undefined),
@@ -12738,7 +13534,7 @@ export const Sites: React.FC = () => {
 
       selectedSiteRef.current = nextSite
       setSelectedSite(nextSite)
-      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      upsertSiteInEditorList(nextSite)
       markBlocksCreatedLocal(blocksToAdd)
       markBlockOrderDirty(orderPageId)
       setHasUnsavedChanges(true)
@@ -12897,13 +13693,16 @@ export const Sites: React.FC = () => {
     setActiveEmbeddedFormPageId(fallbackPage.id)
   }
 
-  const handleAddEmbeddedFormField = (blockType: SiteBlockType, insertIndex?: number, initialSettings: Record<string, unknown> = {}) => {
+  const handleAddEmbeddedFormField = async (blockType: SiteBlockType, insertIndex?: number, initialSettings: Record<string, unknown> = {}) => {
     if (!embeddedFormBlockTypeSet.has(blockType)) return
     const context = getCurrentEmbeddedFormContext()
     if (!context) return
     // Igual que el alta en el formulario standalone: el perfil de red social se
     // autollena desde el perfil social conectado cuando existe.
-    const seededSettings = socialProfileAutoPresetForNewBlock(blockType, initialSettings, connectedSocialProfiles)
+    const socialProfiles = blockType === 'social_profile'
+      ? await loadConnectedSocialProfiles()
+      : connectedSocialProfiles
+    const seededSettings = socialProfileAutoPresetForNewBlock(blockType, initialSettings, socialProfiles)
     const payload = applySystemFormFieldPreset(defaultBlockPayload(blockType, context.sourceSite), seededSettings)
     const duplicateSystemPreset = getDuplicateSystemFormFieldPreset(payload, context.fields)
     if (duplicateSystemPreset) {
@@ -13257,7 +14056,7 @@ export const Sites: React.FC = () => {
       }
       selectedSiteRef.current = nextSite
       setSelectedSite(nextSite)
-      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      upsertSiteInEditorList(nextSite)
       markBlocksDeletedLocal(deletedBlockIds)
       markBlockOrderDirty(pageId)
       setHasUnsavedChanges(true)
@@ -13372,7 +14171,7 @@ export const Sites: React.FC = () => {
 
       selectedSiteRef.current = nextSite
       setSelectedSite(nextSite)
-      setSites(current => current.map(item => item.id === nextSite.id ? { ...item, ...nextSite } : item))
+      upsertSiteInEditorList(nextSite)
       markBlocksCreatedLocal(clonedBlocks)
       markBlockOrderDirty(orderPageId)
       setHasUnsavedChanges(true)
@@ -13420,7 +14219,7 @@ export const Sites: React.FC = () => {
     setHasUnsavedChanges(true)
     selectedSiteRef.current = optimisticSite
     setSelectedSite(optimisticSite)
-    setSites(current => current.map(item => item.id === optimisticSite.id ? { ...item, ...optimisticSite } : item))
+    upsertSiteInEditorList(optimisticSite)
     markBlockOrderDirty(pageId)
     pushEditorHistory({
       action: 'reorder',
@@ -13769,7 +14568,7 @@ export const Sites: React.FC = () => {
     const payload = getPalettePayloadForDrag(event.dataTransfer)
     resetPaletteDrag()
     if (!isEmbeddedFormPalettePayload(payload)) return
-    handleAddEmbeddedFormField(payload!.blockType, insertIndex, payload!.initialSettings || {})
+    void handleAddEmbeddedFormField(payload!.blockType, insertIndex, payload!.initialSettings || {})
   }
 
   const handleEmbeddedFormFieldDragLeave = (event: React.DragEvent<HTMLElement>) => {
@@ -14005,6 +14804,8 @@ export const Sites: React.FC = () => {
     />
   ) : null
   const editorToolbarSettingsSite = editorSite
+  const activeLibraryPage = section === 'landings' || section === 'forms' ? libraryPages[section] : null
+  const activeLibraryFilter = section === 'landings' || section === 'forms' ? libraryFilters[section] : null
   const editorToolbarSettingsPages = pages
   const editorToolbarSettingsActivePage = activePage
   const editorToolbarSettingsSeoIssues = editorToolbarSettingsSite ? getSeoValidationState(editorToolbarSettingsSite).totalIssues : 0
@@ -14434,6 +15235,7 @@ export const Sites: React.FC = () => {
                 selectedLandingMode={sitesAnalyticsLandingMode}
                 selectedSiteId={sitesAnalyticsSiteId}
                 selectedVideoId={sitesAnalyticsVideoId}
+                loadingSiteOptions={sitesAnalyticsCatalog.loading}
                 selectedVideo={selectedAnalyticsVideo}
                 analyticsSummary={sitesAnalyticsSummary}
                 analytics={sitesVideoAnalytics}
@@ -14448,6 +15250,7 @@ export const Sites: React.FC = () => {
                 onSiteTypeChange={handleSitesAnalyticsTypeChange}
                 onLandingModeChange={handleSitesAnalyticsLandingModeChange}
                 onSiteChange={handleSitesAnalyticsSiteChange}
+                onSiteSearchChange={setSitesAnalyticsSiteSearch}
                 onVideoChange={handleSitesAnalyticsVideoChange}
                 onNextVideos={() => {
                   if (!siteVideoPageInfo.nextCursor) return
@@ -14471,7 +15274,9 @@ export const Sites: React.FC = () => {
               <DomainsPanel
                 domainConfig={domainConfig}
                 domainInput={domainInput}
-                sites={landings}
+                sites={domainSites}
+                loadingSites={domainSitesLoading}
+                sitesTruncated={domainSitesTruncated}
                 verifying={verifying}
                 onDomainChange={(value) => {
                   setDomainInput(value)
@@ -14484,6 +15289,13 @@ export const Sites: React.FC = () => {
                 }}
                 onVerifyDomain={handleVerifyDomain}
                 onDefaultPageRouteChange={(siteId, pageId) => { void handleSetDefaultDomainPageRouteFromDomain(siteId, pageId) }}
+                onLoadMoreSites={() => {
+                  const cursor = domainSitesNextCursorRef.current
+                  if (!cursor) return
+                  void loadDomainSelector({ cursor, append: true }).catch(error => {
+                    showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron cargar más sitios')
+                  })
+                }}
               />
             ) : editorRouteLoading ? (
               <EditorRouteLoadingWorkspace
@@ -14499,11 +15311,16 @@ export const Sites: React.FC = () => {
                 onPaletteDragMove={setPaletteDragPosition}
                 onPaletteDragEnd={resetPaletteDrag}
               />
+            ) : (section === 'landings' || section === 'forms') && !editorSite && activeLibraryPage?.loading && !activeLibraryPage.loaded && activeLibraryPage.items.length === 0 ? (
+              <Loading page="sites" />
             ) : (section === 'landings' || section === 'forms') && !editorSite ? (
               <SitesLibraryPanel
                 section={section}
-                sites={section === 'landings' ? landings : libraryForms}
+                sites={activeLibraryPage?.items || []}
                 folders={siteFolders}
+                activeFolderId={activeLibraryFilter?.folderId || SITE_LIBRARY_ROOT_ID}
+                searchQuery={activeLibraryFilter?.search || ''}
+                folderCounts={activeLibraryPage?.facets.folderCounts || { [SITE_LIBRARY_ROOT_ID]: 0 }}
                 viewMode={libraryViewMode[section === 'forms' ? 'forms' : 'landings'] || getLibraryDefaultView(section)}
                 forms={forms}
                 calendars={calendars}
@@ -14513,6 +15330,8 @@ export const Sites: React.FC = () => {
                 onEdit={selectSite}
                 onPreview={(site) => void handlePreviewLibrarySite(site)}
                 onMoveToFolder={(site, folderId) => void handleMoveLibrarySite(site, folderId)}
+                onActiveFolderChange={(folderId) => updateLibraryFilter(section, { folderId })}
+                onSearchQueryChange={(search) => updateLibraryFilter(section, { search })}
                 onViewModeChange={handleLibraryViewChange}
                 responsesOpen={formResponsesOpen}
                 responseRows={formResponseRows}
@@ -14528,9 +15347,9 @@ export const Sites: React.FC = () => {
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
                 onBulkDelete={handleBulkDeleteSites}
-                hasMore={Boolean(sitesNextCursor)}
-                loadingMore={loadingMoreSites}
-                onLoadMore={() => { void loadMoreSites() }}
+                hasMore={Boolean(activeLibraryPage?.nextCursor)}
+                loadingMore={Boolean(activeLibraryPage?.loadingMore)}
+                onLoadMore={() => { void loadLibraryPage(section, { append: true }) }}
                 domainConfig={domainConfig}
               />
             ) : editorSite ? (
@@ -14575,6 +15394,8 @@ export const Sites: React.FC = () => {
                   onSaveCodeDrafts={handleSaveImportedCodeDrafts}
                   onNativeSaveQueue={registerImportedNativeSaveQueue}
                   onNativeSaveFlusher={registerImportedNativeSaveFlusher}
+                  onRequestForms={requestFormsCatalog}
+                  onRequestCalendars={requestCalendarsCatalog}
                   isGlobalSaveActive={isGlobalEditorSaveActive}
                   onDelete={() => void handleDeleteSite(editorSite)}
                 />
@@ -14589,7 +15410,7 @@ export const Sites: React.FC = () => {
                       systemScopeBlocks={formEditFields}
                       elements={formEditVisibleFields}
                       selectedElementId={activeEmbeddedFormSubmitSelected ? '' : activeEmbeddedFormFieldId}
-                      onAdd={(blockType, options) => handleAddEmbeddedFormField(blockType, undefined, options?.initialSettings || {})}
+                      onAdd={(blockType, options) => { void handleAddEmbeddedFormField(blockType, undefined, options?.initialSettings || {}) }}
                       onSelectElement={(blockId) => {
                         const nextField = formEditFields.find(field => field.id === blockId)
                         setActiveEmbeddedFormSubmitSelected(false)
@@ -19863,6 +20684,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   onSaveCodeDrafts: (options?: ImportedCodeSaveOptions) => Promise<boolean>
   onNativeSaveQueue: (siteId: string, queue: Promise<boolean>) => void
   onNativeSaveFlusher: (siteId: string, flusher: ImportedNativeElementSaveFlusher | null) => void
+  onRequestForms: () => void
+  onRequestCalendars: () => void
   isGlobalSaveActive: () => boolean
   onDelete: () => void
 }> = ({
@@ -19893,6 +20716,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   onSaveCodeDrafts,
   onNativeSaveQueue,
   onNativeSaveFlusher,
+  onRequestForms,
+  onRequestCalendars,
   isGlobalSaveActive,
 }) => {
   const { showToast, showConfirm } = useNotification()
@@ -20077,6 +20902,14 @@ const ImportedHtmlEditorPanel: React.FC<{
   )
   const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
   const selectedContentAssetSlot = importedContentAssetSlots.find(slot => slot.key === selectedContentAssetSlotKey) || null
+
+  useEffect(() => {
+    if (selectedImportedNativeElementSlot?.type === 'form') onRequestForms()
+  }, [onRequestForms, selectedImportedNativeElementSlot?.key, selectedImportedNativeElementSlot?.type])
+
+  useEffect(() => {
+    if (selectedImportedNativeElementSlot?.type === 'calendar') onRequestCalendars()
+  }, [onRequestCalendars, selectedImportedNativeElementSlot?.key, selectedImportedNativeElementSlot?.type])
   const loadContentAssets = useCallback(async () => {
     setContentAssetsLoading(true)
     setContentAssetsError('')
@@ -25926,6 +26759,9 @@ interface SitesLibraryPanelProps {
   section: SitesSection
   sites: PublicSite[]
   folders: SiteLibraryFolder[]
+  activeFolderId: string
+  searchQuery: string
+  folderCounts: Record<string, number>
   viewMode: LibraryViewMode
   forms: PublicSite[]
   calendars: CalendarType[]
@@ -25936,6 +26772,8 @@ interface SitesLibraryPanelProps {
   onEdit: (siteId: string) => void
   onPreview: (site: PublicSite) => void
   onMoveToFolder: (site: PublicSite, folderId: string) => void
+  onActiveFolderChange: (folderId: string) => void
+  onSearchQueryChange: (search: string) => void
   onViewModeChange: (section: 'landings' | 'forms', viewMode: LibraryViewMode) => void
   responsesOpen: boolean
   responseRows: LeadRow[]
@@ -26137,6 +26975,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   section,
   sites,
   folders,
+  activeFolderId,
+  searchQuery,
+  folderCounts: folderCountValues,
   viewMode,
   forms,
   calendars,
@@ -26147,6 +26988,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onEdit,
   onPreview,
   onMoveToFolder,
+  onActiveFolderChange,
+  onSearchQueryChange,
   onViewModeChange,
   responsesOpen,
   responseRows,
@@ -26171,8 +27014,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   const [routeEditingId, setRouteEditingId] = useState<string | null>(null)
   const [routeDraft, setRouteDraft] = useState('')
   const [routeSavingId, setRouteSavingId] = useState<string | null>(null)
-  const [activeFolderId, setActiveFolderId] = useState(SITE_LIBRARY_ROOT_ID)
-  const [searchQuery, setSearchQuery] = useState('')
   const [folderDraft, setFolderDraft] = useState('')
   const [folderCreateOpen, setFolderCreateOpen] = useState(false)
   const [folderSaving, setFolderSaving] = useState(false)
@@ -26192,21 +27033,27 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   }, [folders, librarySection])
   const folderCounts = useMemo(() => {
     const counts = new Map<string, number>()
-    counts.set(SITE_LIBRARY_ROOT_ID, 0)
+    counts.set(SITE_LIBRARY_ROOT_ID, Number(folderCountValues[SITE_LIBRARY_ROOT_ID] || 0))
     sectionFolders.forEach(folder => counts.set(folder.id, 0))
-    sites.forEach(site => {
-      const folderId = getSiteLibraryFolderId(site)
-      counts.set(folderId, (counts.get(folderId) || 0) + 1)
+    Object.entries(folderCountValues).forEach(([folderId, count]) => {
+      counts.set(folderId, Number(count || 0))
     })
     return counts
-  }, [sectionFolders, sites])
+  }, [folderCountValues, sectionFolders])
   const activeFolder = sectionFolders.find(folder => folder.id === activeFolderId) || null
-  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const normalizedQuery = normalizeSitesSearchQuery(searchQuery).toLowerCase()
   const visibleSites = useMemo(() => (
     sites.filter(site => {
       const folderId = getSiteLibraryFolderId(site)
       const matchesQuery = !normalizedQuery || [
+        site.id,
         site.name,
+        site.title,
+        site.description,
+        site.slug,
+        site.domain,
+        site.siteType,
+        site.status,
         getSiteTypeLabel(site),
         getPublicRouteLabel(site, domainConfig),
         getStatusLabel(site, domainConfig)
@@ -26228,8 +27075,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   const selectedCount = selectedSites.length
 
   useEffect(() => {
-    setActiveFolderId(SITE_LIBRARY_ROOT_ID)
-    setSearchQuery('')
     setFolderCreateOpen(false)
     setFolderDraft('')
     setSelectedSiteIds([])
@@ -26238,9 +27083,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   useEffect(() => {
     if (activeFolderId === SITE_LIBRARY_ROOT_ID) return
     if (!sectionFolders.some(folder => folder.id === activeFolderId)) {
-      setActiveFolderId(SITE_LIBRARY_ROOT_ID)
+      onActiveFolderChange(SITE_LIBRARY_ROOT_ID)
     }
-  }, [activeFolderId, sectionFolders])
+  }, [activeFolderId, onActiveFolderChange, sectionFolders])
 
   useEffect(() => {
     const existingIds = new Set(sites.map(site => site.id))
@@ -26321,7 +27166,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       if (folder) {
         setFolderDraft('')
         setFolderCreateOpen(false)
-        setActiveFolderId(folder.id)
+        onActiveFolderChange(folder.id)
       }
     } finally {
       setFolderSaving(false)
@@ -26630,7 +27475,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           key={folder.id}
           type="button"
           className={`${styles.explorerFolderCard} ${dragOverFolderId === folder.id ? styles.explorerFolderDropActive : ''}`}
-          onClick={() => setActiveFolderId(folder.id)}
+          onClick={() => onActiveFolderChange(folder.id)}
           onDragOver={(event) => handleFolderDragOver(event, folder.id)}
           onDragLeave={() => setDragOverFolderId('')}
           onDrop={(event) => handleFolderDrop(event, folder.id)}
@@ -26692,7 +27537,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
 
       {!isLandingLibrary && responsesOpen && (
         <FormResponsesQuickPanel
-          forms={sites}
+          forms={forms}
           selectedFormId={responseFormId}
           selectedSite={responseSite}
           rows={responseRows}
@@ -26710,7 +27555,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           onDragLeave={() => setDragOverFolderId('')}
           onDrop={(event) => handleFolderDrop(event, SITE_LIBRARY_ROOT_ID)}
         >
-          <button type="button" onClick={() => setActiveFolderId(SITE_LIBRARY_ROOT_ID)}>
+          <button type="button" onClick={() => onActiveFolderChange(SITE_LIBRARY_ROOT_ID)}>
             <FolderOpen size={16} />
             Todos
           </button>
@@ -26724,10 +27569,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         <SearchField
           className={styles.explorerSearch}
           size="sm"
-          placeholder={isLandingLibrary ? 'Buscar sitios...' : 'Buscar formularios...'}
+          placeholder={isLandingLibrary ? 'Buscar sitios (mín. 3 caracteres)...' : 'Buscar formularios (mín. 3 caracteres)...'}
           value={searchQuery}
-          onChange={setSearchQuery}
-          onClear={() => setSearchQuery('')}
+          onChange={onSearchQueryChange}
+          onClear={() => onSearchQueryChange('')}
         />
         <div className={styles.explorerViewSwitch} aria-label="Cambiar vista">
           {([
@@ -43338,6 +44183,7 @@ interface SitesAnalyticsPanelProps {
   selectedLandingMode: SitesAnalyticsLandingMode
   selectedSiteId: string
   selectedVideoId: string
+  loadingSiteOptions: boolean
   selectedVideo: MediaAsset | null
   analyticsSummary: SitesAnalyticsSummary | null
   analytics: MediaStreamAnalytics | null
@@ -43352,6 +44198,7 @@ interface SitesAnalyticsPanelProps {
   onSiteTypeChange: (value: SitesAnalyticsSiteType) => void
   onLandingModeChange: (value: SitesAnalyticsLandingMode) => void
   onSiteChange: (value: string) => void
+  onSiteSearchChange: (value: string) => void
   onVideoChange: (value: string) => void
   onNextVideos: () => void
   onPreviousVideos: () => void
@@ -43368,6 +44215,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   selectedLandingMode,
   selectedSiteId,
   selectedVideoId,
+  loadingSiteOptions,
   selectedVideo,
   analyticsSummary,
   analytics,
@@ -43382,6 +44230,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   onSiteTypeChange,
   onLandingModeChange,
   onSiteChange,
+  onSiteSearchChange,
   onVideoChange,
   onNextVideos,
   onPreviousVideos,
@@ -43544,13 +44393,23 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const selectedFormFunnel = selectedSiteId
     ? analyticsSummary?.formFunnels?.[selectedSiteId] || null
     : null
-  const totalSiteViews = siteRows.reduce((total, row) => total + row.stats.views, 0)
-  const totalVisitors = siteRows.reduce((total, row) => total + row.stats.visitors, 0)
-  const totalSessions = siteRows.reduce((total, row) => total + row.stats.sessions, 0)
-  const totalConversions = siteRows.reduce((total, row) => total + row.stats.conversions, 0)
-  const conversionRate = totalVisitors > 0 ? Number(((totalConversions / totalVisitors) * 100).toFixed(1)) : 0
-  const averageConversions = sites.length > 0 ? totalConversions / sites.length : 0
-  const publishedCount = sites.filter(site => site.status === 'published').length
+  const pageTrackingAggregate = {
+    views: siteRows.reduce((total, row) => total + row.stats.views, 0),
+    visitors: siteRows.reduce((total, row) => total + row.stats.visitors, 0),
+    sessions: siteRows.reduce((total, row) => total + row.stats.sessions, 0),
+    conversions: siteRows.reduce((total, row) => total + row.stats.conversions, 0)
+  }
+  const trackingAggregate = analyticsSummary?.aggregate || null
+  const totalSiteViews = trackingAggregate?.views ?? pageTrackingAggregate.views
+  const totalVisitors = trackingAggregate?.visitors ?? pageTrackingAggregate.visitors
+  const totalSessions = trackingAggregate?.sessions ?? pageTrackingAggregate.sessions
+  const totalConversions = trackingAggregate?.conversions ?? pageTrackingAggregate.conversions
+  const conversionRate = trackingAggregate?.conversionRate ?? (
+    totalVisitors > 0 ? Number(((totalConversions / totalVisitors) * 100).toFixed(1)) : 0
+  )
+  const aggregateEntityCount = trackingAggregate?.entityCount ?? sites.length
+  const averageConversions = aggregateEntityCount > 0 ? totalConversions / aggregateEntityCount : 0
+  const publishedCount = aggregateEntityCount
   const latestUpdatedSite = [...siteRows]
     .sort((a, b) => parseSortableDateValue(b.site.updatedAt) - parseSortableDateValue(a.site.updatedAt))[0]?.site || null
   const rowsByViews = [...siteRows].sort((a, b) => b.stats.views - a.stats.views)
@@ -43646,8 +44505,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const scopeSiteLabel = selectedSiteId
     ? sitesById.get(selectedSiteId)?.name || siteOptions.find(site => site.id === selectedSiteId)?.name || 'Sitio seleccionado'
     : typeLabel
-  const availableEntityText = `${siteOptions.length} ${siteOptions.length === 1 ? entityLabel : entityPluralLabel} disponible${siteOptions.length === 1 ? '' : 's'}`
-  const dashboardEntityText = `${sites.length} ${sites.length === 1 ? entityLabel : entityPluralLabel} en el dashboard`
+  const availableEntityText = `${siteOptions.length} ${siteOptions.length === 1 ? entityLabel : entityPluralLabel} visible${siteOptions.length === 1 ? '' : 's'} para elegir`
+  const dashboardEntityText = `${formatSitesCompactNumber(aggregateEntityCount)} ${aggregateEntityCount === 1 ? entityLabel : entityPluralLabel} en el alcance · ${sites.length} en la muestra visible`
   const scopeDescription = isVideosView
     ? `${videos.length} video${videos.length === 1 ? '' : 's'} cargado${videos.length === 1 ? '' : 's'}${hasPreviousVideos || hasMoreVideos ? ' · hay más disponibles' : ''}${selectedVideoMode ? ` · ${currentVideoLabel}` : ' · vista agregada'}`
     : `${availableEntityText} · ${dashboardEntityText} · ${videos.length} video${videos.length === 1 ? '' : 's'} dentro`
@@ -43671,7 +44530,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         ]
     : isFormsView
       ? [
-          { key: 'forms', icon: <FormInput size={16} />, label: 'Formularios', value: formatSitesCompactNumber(sites.length) },
+          { key: 'forms', icon: <FormInput size={16} />, label: 'Formularios', value: formatSitesCompactNumber(aggregateEntityCount) },
           { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
           { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
           { key: 'submissions', icon: <ListChecks size={16} />, label: 'Envíos', value: formatSitesCompactNumber(totalConversions) },
@@ -43679,7 +44538,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           { key: 'average', icon: <MousePointerClick size={16} />, label: 'Envíos/form', value: formatSitesDecimal(averageConversions) }
         ]
       : [
-          { key: 'sites', icon: <LayoutTemplate size={16} />, label: landingModeLabel, value: formatSitesCompactNumber(sites.length) },
+          { key: 'sites', icon: <LayoutTemplate size={16} />, label: landingModeLabel, value: formatSitesCompactNumber(aggregateEntityCount) },
           { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
           { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
           { key: 'sessions', icon: <MousePointerClick size={16} />, label: 'Sesiones', value: formatSitesCompactNumber(totalSessions) },
@@ -43821,7 +44680,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       )
     }
 
-    if (!sites.length) {
+    if (!sites.length && aggregateEntityCount === 0) {
       return (
         <div className={styles.sitesAnalyticsEmpty}>
           {isFormsView ? <FormInput size={24} /> : <LayoutTemplate size={24} />}
@@ -43838,7 +44697,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         <div className={styles.sitesAnalyticsGrid}>
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>{isFormsView ? 'Formularios con más envíos' : `${entityPluralTitle} con más vistas`}</span>
+              <span>{isFormsView ? 'Formularios con más envíos (muestra visible)' : `${entityPluralTitle} con más vistas (muestra visible)`}</span>
               <strong>{formatSitesCompactNumber(isFormsView ? totalConversions : totalSiteViews)}</strong>
             </div>
             {renderDetailRows(
@@ -43856,7 +44715,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Conversión por {entityLabel}</span>
+              <span>Conversión por {entityLabel} (muestra visible)</span>
               <strong>{formatSitesPercent(conversionRate)}</strong>
             </div>
             {renderDetailRows(
@@ -43872,7 +44731,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Videos dentro de {entityPluralLabel}</span>
+              <span>Videos dentro de {entityPluralLabel} (muestra visible)</span>
               <strong>{formatSitesCompactNumber(videos.length)}</strong>
             </div>
             {renderDetailRows(
@@ -43889,14 +44748,14 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
               <span>Elementos en vivo</span>
-              <strong>{formatSitesCompactNumber(sites.length)} {entityPluralLabel}</strong>
+              <strong>{formatSitesCompactNumber(aggregateEntityCount)} {entityPluralLabel}</strong>
             </div>
             {renderDetailRows([
               { key: 'published', icon: <CheckCircle2 size={15} />, label: 'En vivo', value: formatSitesCompactNumber(publishedCount) },
               ...(latestUpdatedSite ? [{
                 key: 'latest',
                 icon: <CalendarDays size={15} />,
-                label: `Último cambio: ${latestUpdatedSite.name}`,
+                label: `Último cambio visible: ${latestUpdatedSite.name}`,
                 value: 'En vivo'
               }] : [])
             ], `Sin elementos en vivo para estos ${entityPluralLabel}.`)}
@@ -44334,7 +45193,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   }
 
   return (
-    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingVideos || (isVideosView && loadingAnalytics)}>
+    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingSiteOptions || loadingVideos || (isVideosView && loadingAnalytics)}>
       <div className={`${styles.builderHeader} ${styles.sitesAnalyticsHeader}`}>
         <div className={styles.sitesAnalyticsTitleBlock}>
           <h2>Analíticas</h2>
@@ -44381,8 +45240,15 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           )}
           <label className={styles.field}>
             <span>{siteFilterLabel}</span>
-            <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={siteOptions.length === 0} portal>
-              <option value="">{siteFilterEmptyLabel}</option>
+            <CustomSelect
+              value={selectedSiteId}
+              onChange={(event) => onSiteChange(event.target.value)}
+              onSearchChange={onSiteSearchChange}
+              searchable
+              searchPlaceholder="Buscar con mínimo 3 caracteres..."
+              portal
+            >
+              <option value="">{loadingSiteOptions && siteOptions.length === 0 ? 'Cargando opciones...' : siteFilterEmptyLabel}</option>
               {siteOptions.map(site => (
                 <option key={site.id} value={site.id}>{site.name}</option>
               ))}
@@ -44452,20 +45318,26 @@ interface DomainsPanelProps {
   domainConfig: SitesDomainConfig
   domainInput: string
   sites: PublicSite[]
+  loadingSites: boolean
+  sitesTruncated: boolean
   verifying: boolean
   onDomainChange: (value: string) => void
   onVerifyDomain: () => void
   onDefaultPageRouteChange: (siteId: string, pageId: string) => void
+  onLoadMoreSites: () => void
 }
 
 const DomainsPanel: React.FC<DomainsPanelProps> = ({
   domainConfig,
   domainInput,
   sites,
+  loadingSites,
+  sitesTruncated,
   verifying,
   onDomainChange,
   onVerifyDomain,
-  onDefaultPageRouteChange
+  onDefaultPageRouteChange,
+  onLoadMoreSites
 }) => {
   const domainStatus: { label: string; variant: BadgeVariant } = !domainConfig.domain
     ? { label: 'Sin dominio', variant: 'neutral' }
@@ -44505,7 +45377,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
               const { siteId, pageId } = decodeDomainRootPageValue(event.target.value)
               if (siteId && pageId) onDefaultPageRouteChange(siteId, pageId)
             }}
-            disabled={!domainInput.trim() || routableSites.length === 0}
+            disabled={!domainInput.trim() || loadingSites || routableSites.length === 0}
             portal
           >
             <option value="">Selecciona una página</option>
@@ -44527,6 +45399,19 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
           La página elegida abre directo en <code>{rootUrl || 'https://www.tudominio.com/'}</code>.
           Las demás páginas siguen usando rutas raíz como <code>/pricing</code>, <code>/us</code> o <code>/home</code>.
         </p>
+        {loadingSites && (
+          <p className={styles.customFieldHint} role="status">Cargando páginas disponibles…</p>
+        )}
+        {sitesTruncated && (
+          <div className={styles.editorActions}>
+            <Button variant="secondary" loading={loadingSites} onClick={onLoadMoreSites}>
+              Cargar más sitios
+            </Button>
+            <p className={styles.customFieldHint} role="status">
+              Los sitios se cargan por páginas. La página oficial actual se conserva aunque todavía no aparezca en la lista.
+            </p>
+          </div>
+        )}
         {domainConfig.renderDomainError && <p className={styles.domainError}>{domainConfig.renderDomainError}</p>}
         <div className={styles.editorActions}>
           <Button onClick={onVerifyDomain} loading={verifying} disabled={!domainInput.trim()}>

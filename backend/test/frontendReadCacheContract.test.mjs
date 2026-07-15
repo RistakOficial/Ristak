@@ -32,7 +32,7 @@ test('las lecturas autenticadas comparten petición y snapshot corto con límite
   assert.match(source, /\(\?:file\|thumbnail\|voice\\\.ogg\)\$/)
 })
 
-test('mutaciones y eventos vivos invalidan cache sin castigar consultas POST de solo lectura', async () => {
+test('mutaciones invalidan globalmente y eventos vivos solo enfrían sus modulos', async () => {
   const [authFetch, paymentsLive, chatLive] = await Promise.all([
     repoFile('frontend/src/services/authFetch.ts'),
     repoFile('frontend/src/services/paymentLiveEventsService.ts'),
@@ -43,6 +43,21 @@ test('mutaciones y eventos vivos invalidan cache sin castigar consultas POST de 
   assert.match(authFetch, /'\/api\/tracking\/analytics\/summary'/)
   assert.match(authFetch, /'\/api\/tracking\/sessions\/search'/)
   assert.match(authFetch, /shouldInvalidateApiReadCache\(method, requestUrl\.pathname\)/)
-  assert.match(paymentsLive, /invalidateRistakApiReadCache\(\)[\s\S]*options\.onEvent/)
-  assert.match(chatLive, /invalidateRistakApiReadCache\(\)[\s\S]*options\.onMessage/)
+  assert.match(authFetch, /pathPrefixes\?: string\[\]/)
+  assert.match(authFetch, /cacheKeyMatchesPathPrefixes/)
+  assert.match(authFetch, /apiReadInFlight\.delete\(key\)/)
+  assert.match(paymentsLive, /PAYMENT_LIVE_CACHE_PATHS[\s\S]*invalidateRistakApiReadCache\(\{ pathPrefixes: PAYMENT_LIVE_CACHE_PATHS \}\)[\s\S]*options\.onEvent/)
+  assert.match(chatLive, /CHAT_LIVE_CACHE_PATHS[\s\S]*invalidateRistakApiReadCache\(\{ pathPrefixes: CHAT_LIVE_CACHE_PATHS \}\)[\s\S]*options\.onMessage/)
+  assert.match(chatLive, /CHAT_APPOINTMENT_CACHE_PATHS[\s\S]*parsed\.event === 'chat_data_changed'[\s\S]*payload\.domains\.includes\('appointments'\)[\s\S]*invalidateRistakApiReadCache\(\{ pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS \}\)/)
+  assert.match(chatLive, /CHAT_APPOINTMENT_CACHE_PATHS = \[[\s\S]*?'\/api\/calendars'/)
+  assert.doesNotMatch(paymentsLive, /PAYMENT_LIVE_CACHE_PATHS = \[[\s\S]*?'\/api\/sites'/)
+  assert.doesNotMatch(chatLive, /CHAT_LIVE_CACHE_PATHS = \[[\s\S]*?'\/api\/sites'/)
+})
+
+test('el GET compartido sigue registrado hasta terminar de materializar su snapshot', async () => {
+  const source = await repoFile('frontend/src/services/authFetch.ts')
+
+  assert.match(source, /const cacheLifecycle = sharedRequest\.then\(async response/)
+  assert.match(source, /await cacheApiResponse\(/)
+  assert.match(source, /cacheLifecycle[\s\S]*\.finally\(\(\) => \{[\s\S]*apiReadInFlight\.delete/)
 })

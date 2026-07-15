@@ -58,6 +58,32 @@ Crons de integración actuales:
 
 No cambies nombres ni URLs en esta guía. Si necesitas renombrar servicios o base, hazlo directamente en `render.yaml` con cuidado porque el nombre de `fromDatabase.name` debe coincidir con la DB declarada.
 
+### Contrato de migraciones durante un deploy
+
+El backend escucha el puerto para que Render pueda observar el proceso, pero no
+publica readiness hasta completar las migraciones versionadas. PostgreSQL
+serializa la cadena completa con el advisory lock `versioned-migrations`; los
+índices concurrentes permanecen fuera de una transacción y cada archivo se
+registra en `schema_migrations` únicamente después de terminar correctamente.
+
+Para impedir un deploy colgado indefinidamente, el tren `091*` en adelante y todos los
+`CREATE INDEX CONCURRENTLY` usan por sesión:
+
+- `lock_timeout`: 10 segundos.
+- `statement_timeout`: 15 minutos.
+- máximo tres intentos para timeouts, deadlocks o fallos de serialización
+  transitorios.
+
+Esos valores son internos, se restauran tras cada intento y no requieren nuevos
+secrets ni variables de entorno. Si una creación concurrente fue cancelada y
+dejó un índice homónimo inválido/no listo, el siguiente intento consulta
+`pg_index`, elimina únicamente ese artifact con `DROP INDEX CONCURRENTLY` y lo
+reconstruye. Un error persistente deja la nueva instancia fuera de readiness y
+termina el proceso; nunca se marca el archivo a medias ni se habilita tráfico con
+un índice inválido. Durante el primer rollout de índices sobre tablas grandes es
+normal ver trabajo de I/O en PostgreSQL; la instancia anterior debe seguir
+sirviendo hasta que la nueva quede saludable.
+
 ## Dominio Y Frontend
 
 Durante el build se crea:

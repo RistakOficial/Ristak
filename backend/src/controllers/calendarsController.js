@@ -59,10 +59,30 @@ import { INTERNAL_CONTROLLER_CONTEXT } from '../agents/invokeController.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CALENDAR_EVENTS_MAX_RANGE_DAYS = 370;
+const CALENDAR_MONTH_PREVIEW_MAX_RANGE_DAYS = 45;
 const CALENDAR_AVAILABILITY_MAX_RANGE_DAYS = 45;
 const CALENDAR_BLOCKED_SLOTS_MAX_RANGE_DAYS = 45;
 const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email']);
 const HIGHLEVEL_REMOTE_OUTCOME_UNKNOWN_MARKER = '[remote_outcome_unknown]';
+
+function createCalendarRequestAbortScope(res) {
+  const controller = new AbortController();
+  const onClose = () => {
+    if (!res?.writableEnded && !res?.finished) controller.abort();
+  };
+  const observable = typeof res?.once === 'function';
+  if (observable) res.once('close', onClose);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      if (observable && typeof res?.off === 'function') res.off('close', onClose);
+    }
+  };
+}
+
+function isCalendarRequestAbort(error, signal) {
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR');
+}
 
 async function lockCalendarAppointmentCreation(calendarId) {
   // SQLite ya entra con BEGIN IMMEDIATE en db.transaction. En PostgreSQL este
@@ -1485,55 +1505,16 @@ async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl,
   return contactId;
 }
 
-async function mirrorHighLevelCalendars(locationId, accessToken) {
-  if (!locationId || !accessToken) return;
-
-  const calendars = await calendarService.getCalendars(locationId, accessToken);
-  for (const calendar of calendars) {
-    await localCalendarService.upsertLocalCalendar(calendar, {
-      source: 'ghl',
-      ghlCalendarId: calendar.id,
-      locationId,
-      syncStatus: 'synced',
-      rawJson: calendar
-    });
-  }
-}
-
 /**
  * GET /api/calendars
  * Obtener todos los calendarios de la ubicación
  */
 export async function getCalendars(req, res) {
   try {
-    const { locationId, accessToken } = await getHighLevelContext(req);
-
-    // LOCAL PRIMERO: si ya hay calendarios de GHL espejados en la base de
-    // datos, responder con lo local y refrescar desde HighLevel en segundo
-    // plano. Solo se espera a HighLevel cuando todavía no hay espejo local.
-    const hasMirroredGhlCalendars = locationId && accessToken
-      ? Boolean(await db.get("SELECT id FROM calendars WHERE source = 'ghl' AND COALESCE(ghl_calendar_id, '') != '' LIMIT 1").catch(() => null))
-      : false;
-
-    if (locationId && accessToken) {
-      if (hasMirroredGhlCalendars) {
-        mirrorHighLevelCalendars(locationId, accessToken).catch(error => {
-          logger.warn(`[Calendars Controller] No se pudieron espejear calendarios GHL en segundo plano: ${error.message}`);
-        });
-      } else {
-        try {
-          await mirrorHighLevelCalendars(locationId, accessToken);
-        } catch (error) {
-          logger.warn(`[Calendars Controller] No se pudieron espejear calendarios GHL: ${error.message}`);
-        }
-      }
-    }
-
+    // La navegación siempre lee el espejo local. Los webhooks, crons
+    // condicionales y acciones explícitas de sincronización mantienen ese
+    // espejo; un GET nunca dispara tráfico ni escrituras a proveedores.
     const sourcePreference = await getCalendarSourcePreference(req.query?.sourcePreference);
-    await localCalendarService.reconcileCalendarDefaults({ sourcePreference }).catch(error => {
-      logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado: ${error.message}`);
-    });
-    await localCalendarService.ensureDefaultLocalCalendar();
     const calendars = await localCalendarService.listLocalCalendars({ sourcePreference });
     const calendarsWithPublicUrls = await localCalendarService.attachPublicCalendarUrls(calendars);
 
@@ -1657,6 +1638,7 @@ export async function getCalendar(req, res) {
  * Obtener eventos (citas) de un rango de fechas
  */
 export async function getEvents(req, res) {
+  const requestScope = createCalendarRequestAbortScope(res);
   try {
     const { startTime, endTime, calendarId } = req.query;
 
@@ -1673,92 +1655,257 @@ export async function getEvents(req, res) {
       maxDays: CALENDAR_EVENTS_MAX_RANGE_DAYS,
       label: 'El calendario'
     });
-    const { locationId, accessToken } = await getHighLevelContext(req);
-
-    // Refresca desde HighLevel y persiste todo en la tabla appointments.
-    const refreshFromHighLevel = async () => {
-      if (!locationId || !accessToken) return;
-      const localCalendar = calendarId ? await localCalendarService.getLocalCalendar(calendarId) : null;
-      const remoteCalendarId = localCalendar?.ghlCalendarId || calendarId || null;
-      const remoteEvents = await calendarService.getCalendarEvents(
-        locationId,
-        range.start,
-        range.end,
-        accessToken,
-        remoteCalendarId
-      );
-
-      for (const event of remoteEvents) {
-        const eventCalendar = event.calendarId
-          ? await localCalendarService.getLocalCalendar(event.calendarId)
-          : null;
-        const remoteContactId = event.contactId || event.contact_id || null;
-        const localContactId = remoteContactId
-          ? await resolveContactIdByGhlId(remoteContactId)
-          : null;
-        await localCalendarService.reconcileInboundHighLevelAppointment(event, {
-          observedRaw: event,
-          ghlAppointmentId: event.id,
-          calendarId: eventCalendar?.id || localCalendar?.id || event.calendarId,
-          contactId: localContactId,
-          locationId,
-          lastWriteWins: true
-        });
-      }
-    };
-
-    const refreshFromGoogle = () => googleCalendarService.syncGoogleEventsToLocal({
-      startTime,
-      endTime,
-      calendarId
-    });
-
-    // LOCAL PRIMERO: la base de datos es la fuente de verdad de la app.
-    // Si ya hay citas guardadas para este rango, responder de inmediato y
-    // refrescar desde HighLevel/Google en segundo plano (sin bloquear la UI).
-    // Solo se espera a HighLevel cuando la BD todavía está vacía (primera carga).
-    let events = await localCalendarService.listLocalAppointments({
+    // La agenda visible es una lectura local pura. La sincronización externa
+    // vive en webhooks, crons registrados por integración y acciones manuales;
+    // no se multiplica con cada navegación o cambio de vista.
+    const events = await localCalendarService.listLocalAppointments({
       startTime: range.start,
       endTime: range.end,
-      calendarId
+      calendarId,
+      signal: requestScope.signal
     });
 
-    if (events.length > 0) {
-      refreshFromHighLevel().catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo refrescar eventos GHL en segundo plano: ${error.message}`);
-      });
-      refreshFromGoogle().catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo refrescar eventos Google en segundo plano: ${error.message}`);
-      });
-    } else {
-      try {
-        await refreshFromHighLevel();
-      } catch (error) {
-        logger.warn(`[Calendars Controller] No se pudo refrescar eventos GHL, usando DB local: ${error.message}`);
-      }
-
-      await refreshFromGoogle().catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo refrescar eventos Google, usando DB local: ${error.message}`);
-      });
-
-      events = await localCalendarService.listLocalAppointments({
-        startTime: range.start,
-        endTime: range.end,
-        calendarId
-      });
-    }
-
+    if (requestScope.signal.aborted) return;
     res.json({
       success: true,
       data: events
     });
   } catch (error) {
+    if (isCalendarRequestAbort(error, requestScope.signal)) return;
     const log = error.status && error.status < 500 ? logger.warn : logger.error;
     log(`[Calendars Controller] Error en getEvents: ${error.message}`);
     res.status(error.status || 500).json({
       success: false,
       error: error.message
     });
+  } finally {
+    requestScope.cleanup();
+  }
+}
+
+/** GET /api/calendars/events/month-preview - previews acotados + conteos exactos por día. */
+export async function getEventsMonthPreview(req, res) {
+  const requestScope = createCalendarRequestAbortScope(res);
+  try {
+    const { startTime, endTime, calendarId } = req.query;
+    if (!calendarId || !startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere calendarId, startTime y endTime'
+      });
+    }
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_MONTH_PREVIEW_MAX_RANGE_DAYS,
+      label: 'La vista mensual'
+    });
+    const data = await localCalendarService.listLocalAppointmentMonthPreview({
+      calendarId,
+      startTime: range.start,
+      endTime: range.end,
+      previewLimit: req.query?.previewLimit,
+      signal: requestScope.signal
+    });
+    if (requestScope.signal.aborted) return;
+    res.json({ success: true, data });
+  } catch (error) {
+    if (isCalendarRequestAbort(error, requestScope.signal)) return;
+    const status = error.status || 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getEventsMonthPreview: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      ...(error.code ? { code: error.code } : {}),
+      error: status < 500 ? error.message : 'Error obteniendo vista mensual de citas'
+    });
+  } finally {
+    requestScope.cleanup();
+  }
+}
+
+/** GET /api/calendars/events/page - página keyset exacta para día/semana. */
+export async function getEventsPage(req, res) {
+  const requestScope = createCalendarRequestAbortScope(res);
+  try {
+    const { startTime, endTime, calendarId } = req.query;
+    if (!calendarId || !startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere calendarId, startTime y endTime'
+      });
+    }
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_EVENTS_MAX_RANGE_DAYS,
+      label: 'La página del calendario'
+    });
+    const includeCounts = !['0', 'false', 'no'].includes(String(req.query?.includeCounts || '').toLowerCase());
+    const data = await localCalendarService.listVisibleLocalAppointmentsPage({
+      calendarId,
+      startTime: range.start,
+      endTime: range.end,
+      cursor: req.query?.cursor,
+      limit: req.query?.limit,
+      includeCounts,
+      signal: requestScope.signal
+    });
+    if (requestScope.signal.aborted) return;
+    res.json({ success: true, data });
+  } catch (error) {
+    if (isCalendarRequestAbort(error, requestScope.signal)) return;
+    const status = error.status || 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getEventsPage: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      ...(error.code ? { code: error.code } : {}),
+      error: status < 500 ? error.message : 'Error obteniendo página de citas'
+    });
+  } finally {
+    requestScope.cleanup();
+  }
+}
+
+/** GET /api/calendars/events/day-counts - conteos exactos, cero filas de cita. */
+export async function getEventDayCounts(req, res) {
+  const requestScope = createCalendarRequestAbortScope(res);
+  try {
+    const { startTime, endTime, calendarId } = req.query;
+    if (!calendarId || !startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere calendarId, startTime y endTime'
+      });
+    }
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_EVENTS_MAX_RANGE_DAYS,
+      label: 'Los conteos del calendario'
+    });
+    const data = await localCalendarService.getLocalAppointmentDayCounts({
+      calendarId,
+      startTime: range.start,
+      endTime: range.end,
+      signal: requestScope.signal
+    });
+    if (requestScope.signal.aborted) return;
+    res.json({ success: true, data });
+  } catch (error) {
+    if (isCalendarRequestAbort(error, requestScope.signal)) return;
+    const status = error.status || 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getEventDayCounts: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      error: status < 500 ? error.message : 'Error obteniendo conteos diarios de citas'
+    });
+  } finally {
+    requestScope.cleanup();
+  }
+}
+
+/** GET /api/calendars/events/overview - KPIs multi-calendario + próximas filas acotadas. */
+export async function getEventsOverview(req, res) {
+  const requestScope = createCalendarRequestAbortScope(res);
+  try {
+    const { startTime, endTime } = req.query;
+    if (!startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere startTime y endTime'
+      });
+    }
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_EVENTS_MAX_RANGE_DAYS,
+      label: 'El resumen móvil del calendario'
+    });
+    const data = await localCalendarService.getLocalAppointmentsOverview({
+      startTime: range.start,
+      endTime: range.end,
+      limit: req.query?.limit,
+      signal: requestScope.signal
+    });
+    if (requestScope.signal.aborted) return;
+    res.json({ success: true, data });
+  } catch (error) {
+    if (isCalendarRequestAbort(error, requestScope.signal)) return;
+    const status = error.status || 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getEventsOverview: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      error: status < 500 ? error.message : 'Error obteniendo resumen móvil de citas'
+    });
+  } finally {
+    requestScope.cleanup();
+  }
+}
+
+/** GET /api/calendars/upcoming - página local, acotada y con cursor. */
+export async function getUpcomingAppointments(req, res) {
+  try {
+    const page = await localCalendarService.listUpcomingLocalAppointmentsPage({
+      calendarId: req.query?.calendarId,
+      cursor: req.query?.cursor,
+      limit: req.query?.limit
+    });
+
+    res.json({ success: true, data: page });
+  } catch (error) {
+    const status = error.status || 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getUpcomingAppointments: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      ...(error.code ? { code: error.code } : {}),
+      error: status < 500 ? error.message : 'Error obteniendo próximas citas'
+    });
+  }
+}
+
+/** GET /api/calendars/events/summary - KPIs locales del rango sin descargar filas. */
+export async function getAppointmentStats(req, res) {
+  const requestScope = createCalendarRequestAbortScope(res);
+  try {
+    const { startTime, endTime, calendarId } = req.query;
+    if (!calendarId || !startTime || !endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requiere calendarId, startTime y endTime'
+      });
+    }
+
+    const range = assertEpochRangeLimit({
+      startTime,
+      endTime,
+      maxDays: CALENDAR_EVENTS_MAX_RANGE_DAYS,
+      label: 'El resumen del calendario'
+    });
+    const stats = await localCalendarService.getLocalAppointmentStats({
+      calendarId,
+      startTime: range.start,
+      endTime: range.end,
+      signal: requestScope.signal
+    });
+
+    if (requestScope.signal.aborted) return;
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    if (isCalendarRequestAbort(error, requestScope.signal)) return;
+    const status = error.status || 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en getAppointmentStats: ${error.message}`);
+    res.status(status).json({
+      success: false,
+      error: status < 500 ? error.message : 'Error obteniendo resumen de citas'
+    });
+  } finally {
+    requestScope.cleanup();
   }
 }
 

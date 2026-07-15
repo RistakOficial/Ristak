@@ -19,21 +19,29 @@ import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { serializePaymentAmount, serializePaymentRowAmount } from '../utils/paymentAmountSerialization.js'
 import { buildContactSearchClause, buildContactSearchRank, isPhoneSearchText, normalizePhoneDigits } from '../utils/searchText.js'
-import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
+import {
+  hashPaginationCursorScope,
+  paginationCursorHiddenFiltersScope,
+  paginationCursorListScope
+} from '../utils/paginationCursorScope.js'
+import { parseSortableTimestamp, timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, markLatestInboundWhatsAppApiMessageReadForContact, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
 import { markLatestInboundWhatsAppQrMessageReadForContact, warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
 import {
   isMetaSocialMessagingEnabled,
-  markLatestMetaSocialMessageReadForContact,
-  refreshMetaSocialPostPreviewsForChat
+  markLatestMetaSocialMessageReadForContact
 } from '../services/metaSocialMessagingService.js'
 import {
   getChatUnreadCountsForUser,
   markChatContactReadForUser,
   markChatContactsReadForUser
 } from '../services/chatReadStateService.js'
+import {
+  buildChatActivityScopeKeys,
+  getChatActivityProjectionStatus
+} from '../services/chatActivityProjectionService.js'
 import {
   listContactCustomFieldDefinitions,
   prepareContactCustomFieldsForStorage,
@@ -44,11 +52,19 @@ import {
   buildContactListPaymentStatsCte,
   buildContactListWhere,
   getContactAdvancedSort,
+  getContactListSortType,
   getContactListSortExpression,
+  getProjectedContactListSortExpression,
+  isProjectedContactListSort,
   normalizeContactAdvancedFilters,
   normalizeContactListQuickFilter,
   normalizeContactListTrackingFilters
 } from '../services/contactListFilterService.js'
+import {
+  getContactListProjectionStatus,
+  isContactListProjectionReady,
+  loadFirstSessionsForContactPage
+} from '../services/crmListProjectionService.js'
 import {
   buildHighLevelCustomFieldsPayload,
   mergeContactCustomFields,
@@ -92,6 +108,10 @@ import { hasFeature } from '../services/licenseService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
 import { extractConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
+import {
+  listContactAppointmentsPage,
+  listContactPaymentsPage
+} from '../services/contactDetailPaginationService.js'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
@@ -130,13 +150,6 @@ async function assertContactAdvancedFilterFeatureAccess(res, advancedFilterConfi
 const isProviderReadReceiptsEnabled = (value) => {
   const normalizedValue = String(value ?? '').trim().toLowerCase()
   return !DISABLED_CONFIG_VALUES.has(normalizedValue)
-}
-
-const normalizePhone = (phone) => {
-  if (!phone) return null
-  const digits = String(phone).replace(/\D/g, '')
-  if (digits.length < 7) return null
-  return digits.slice(-10)
 }
 
 function withProviderReadReceiptTimeout(key, task) {
@@ -250,6 +263,7 @@ const collectBusinessPhoneMatchCandidates = (...values) => {
 
 const resolveRelatedBusinessPhoneFilters = async ({ phoneNumberId, businessPhone } = {}) => {
   const phoneIds = new Set()
+  const catalogPhoneIds = new Set()
   const phoneCandidates = new Set(collectBusinessPhoneMatchCandidates(businessPhone))
   const cleanPhoneNumberId = cleanString(phoneNumberId)
   if (cleanPhoneNumberId) phoneIds.add(cleanPhoneNumberId)
@@ -268,6 +282,7 @@ const resolveRelatedBusinessPhoneFilters = async ({ phoneNumberId, businessPhone
     : []
 
   for (const row of seedRows) {
+    catalogPhoneIds.add(cleanString(row.id))
     collectBusinessPhoneMatchCandidates(row.phone_number, row.display_phone_number, row.qr_connected_phone)
       .forEach((candidate) => phoneCandidates.add(candidate))
   }
@@ -278,11 +293,13 @@ const resolveRelatedBusinessPhoneFilters = async ({ phoneNumberId, businessPhone
     if (!matchesFilter) continue
 
     phoneIds.add(cleanString(row.id))
+    catalogPhoneIds.add(cleanString(row.id))
     rowCandidates.forEach((candidate) => phoneCandidates.add(candidate))
   }
 
   return {
     phoneIds: [...phoneIds].filter(Boolean),
+    catalogPhoneIds: [...catalogPhoneIds].filter(Boolean),
     phoneCandidates: [...phoneCandidates].filter(Boolean)
   }
 }
@@ -440,9 +457,10 @@ const CONTACT_META_MESSAGE_FLAGS_SELECT = `
 const cleanString = (value) => String(value || '').trim()
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key)
 const isTruthyQueryValue = (value) => ['1', 'true', 'yes', 'si', 'sí'].includes(cleanString(value).toLowerCase())
-const isExplicitFalseQueryValue = (value) => ['0', 'false', 'no', 'off'].includes(cleanString(value).toLowerCase())
 const hasTextValue = (value) => cleanString(value).length > 0
 const JOURNEY_MESSAGE_MAX_LIMIT = 500
+const JOURNEY_DEFAULT_PAGE_LIMIT = 100
+const CONVERSATION_DEFAULT_PAGE_LIMIT = 50
 const META_COMMENT_DELETED_TEXT = 'Comentario eliminado'
 const META_COMMENT_EMPTY_TEXT = 'Comentario sin texto'
 const META_COMMENT_PUBLIC_REPLY_TEXT = 'Respuesta pública al comentario'
@@ -505,6 +523,41 @@ const parseJourneyMessageCursor = (value) => {
   return raw
 }
 
+const parseNumericCursor = (value) => {
+  const raw = cleanString(value)
+  if (!raw || raw.length > 128 || !/^[+-]?\d+(?:\.\d+)?$/.test(raw)) return null
+  return raw
+}
+
+const numericCursorParameterExpression = () => (
+  isPostgresDatabase ? 'CAST(? AS NUMERIC)' : 'CAST(? AS REAL)'
+)
+
+const chatContactsCursorRequestError = (message) => {
+  const error = new Error(message)
+  error.status = 400
+  return error
+}
+
+const buildChatContactsCursorScope = ({
+  searchTerm,
+  hiddenFilters,
+  phoneNumberIdFilter,
+  businessPhoneFilter,
+  relatedBusinessPhoneFilters,
+  includeMetaSocialMessages
+}) => hashPaginationCursorScope('chat-contacts', {
+  v: 1,
+  search: cleanString(searchTerm).toLowerCase(),
+  hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters),
+  requestedBusinessPhoneNumberId: cleanString(phoneNumberIdFilter),
+  requestedBusinessPhone: cleanString(businessPhoneFilter),
+  resolvedBusinessPhoneNumberIds: paginationCursorListScope(relatedBusinessPhoneFilters?.phoneIds),
+  resolvedBusinessPhones: paginationCursorListScope(relatedBusinessPhoneFilters?.phoneCandidates),
+  includeMetaSocialMessages: Boolean(includeMetaSocialMessages),
+  sort: 'last_message_sort:desc,contact_id:desc'
+})
+
 const buildJourneyMessageCursorKey = (prefix, value) => {
   const cleanValue = cleanString(value)
   return cleanValue ? `${prefix}:${cleanValue}` : ''
@@ -516,6 +569,13 @@ const journeyMessageCursorSqlExpression = (prefix, valueExpression) => {
     ? `(${identity} COLLATE "C")`
     : `(${identity} COLLATE BINARY)`
 }
+
+// node-postgres convierte TIMESTAMP a Date y recorta los microsegundos. Esta
+// proyección vive sólo en la metadata del cursor; el campo visible `date`
+// conserva el DTO histórico de cada mensaje.
+const losslessTimestampCursorProjection = (timestampExpression) => (
+  isPostgresDatabase ? `(${timestampExpression})::text` : timestampExpression
+)
 
 const appendJourneyMessageBeforeParams = (params, beforeDate, beforeCursor) => {
   if (!beforeDate) return params
@@ -539,9 +599,19 @@ const journeyMessageBeforeClause = (
   return `AND (${timestampSort}, ${cursorIdentityExpression}) < (${cursorTimestampSort}, ?)`
 }
 
+const getJourneyCursorSubMillisecond = (value) => {
+  const match = cleanString(value).match(/\.(\d{1,9})/)
+  if (!match) return 0
+  return Number(`${match[1]}000000`.slice(3, 6)) || 0
+}
+
 const compareJourneyMessagesByCursor = (left, right) => {
-  const timestampDifference = parseSortableTimestamp(left?.date) - parseSortableTimestamp(right?.date)
+  const leftCursorDate = left?.cursorDate || left?.date
+  const rightCursorDate = right?.cursorDate || right?.date
+  const timestampDifference = parseSortableTimestamp(leftCursorDate) - parseSortableTimestamp(rightCursorDate)
   if (timestampDifference !== 0) return timestampDifference
+  const subMillisecondDifference = getJourneyCursorSubMillisecond(leftCursorDate) - getJourneyCursorSubMillisecond(rightCursorDate)
+  if (subMillisecondDifference !== 0) return subMillisecondDifference
   const leftCursor = cleanString(left?.cursorKey)
   const rightCursor = cleanString(right?.cursorKey)
   if (leftCursor === rightCursor) return 0
@@ -1021,92 +1091,100 @@ const findVideoSessionEntry = (video, sessionEntries) => {
   return null
 }
 
-const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => ({
-  type: 'page_visit',
-  date: session.started_at,
-  data: {
-    id: session.id,
-    event_name: session.event_name,
-    session_id: session.session_id,
-    tracking_session_id: session.id,
-    visitor_id: session.visitor_id,
-    contact_id: session.contact_id,
-    page_url: session.page_url,
-    landing_page: session.landing_page,
-    referrer_url: session.referrer_url,
-    utm_source: session.utm_source,
-    utm_medium: session.utm_medium,
-    utm_campaign: session.utm_campaign,
-    utm_term: session.utm_term,
-    utm_content: session.utm_content,
-    gclid: session.gclid,
-    fbclid: session.fbclid,
-    fbc: session.fbc,
-    fbp: session.fbp,
-    wbraid: session.wbraid,
-    gbraid: session.gbraid,
-    msclkid: session.msclkid,
-    ttclid: session.ttclid,
-    channel: session.channel,
-    source_platform: session.source_platform,
-    site_source_name: session.site_source_name,
-    campaign_id: session.campaign_id,
-    adset_id: session.adset_id,
-    ad_group_id: session.ad_group_id,
-    ad_group_name: session.ad_group_name,
-    campaign_name: session.campaign_name,
-    adset_name: session.adset_name,
-    ad_name: session.ad_name,
-    ad_id: session.ad_id,
-    placement: session.placement,
-    network: session.network,
-    match_type: session.match_type,
-    keyword: session.keyword,
-    search_query: session.search_query,
-    creative_id: session.creative_id,
-    ad_position: session.ad_position,
-    device_type: session.device_type,
-    os: session.os,
-    browser: session.browser,
-    browser_version: session.browser_version,
-    language: session.language,
-    timezone: session.timezone,
-    geo_city: session.geo_city,
-    geo_region: session.geo_region,
-    geo_country: session.geo_country,
-    tracking_source: session.tracking_source,
-    site_id: session.site_id,
-    site_slug: session.site_slug,
-    site_name: session.site_name,
-    site_type: session.site_type,
-    form_site_id: session.form_site_id,
-    form_site_name: session.form_site_name,
-    public_page_id: session.public_page_id,
-    public_page_title: session.public_page_title,
-    conversion_type: session.conversion_type,
-    submission_id: session.submission_id,
-    match_method: session.match_method,
-    match_confidence: toFiniteNumber(session.match_confidence),
-    identity_evidence: parseJourneyJsonObject(session.identity_evidence_json),
-    session_event_count: toFiniteNumber(session.session_event_count),
-    session_page_view_count: toFiniteNumber(session.session_page_view_count),
-    session_conversion_count: toFiniteNumber(session.session_conversion_count),
-    session_started_at: session.session_started_at,
-    session_ended_at: session.session_ended_at,
-    session_duration_seconds: toFiniteNumber(session.session_duration_seconds),
-    pages_visited: toFiniteNumber(session.pages_visited),
-    first_page_url: session.first_page_url,
-    last_page_url: session.last_page_url,
-    event_names: Array.isArray(session.event_names) ? session.event_names : [],
-    session_ids: Array.isArray(session.session_ids) ? session.session_ids : [],
-    visitor_ids: Array.isArray(session.visitor_ids) ? session.visitor_ids : [],
-    visible_session_count: toFiniteNumber(session.visible_session_count),
-    tracking_session_ids: Array.isArray(session.tracking_session_ids) ? session.tracking_session_ids : [],
-    tracking_identity_untrusted: Boolean(session.tracking_identity_untrusted),
-    identity_warning: session.identity_warning || null,
-    ...buildPreRegistrationJourneyMeta(session.started_at, contactCreatedAt)
+const buildPageVisitJourneyEvent = (session, { contactCreatedAt } = {}) => {
+  const logicalSessionKey = cleanString(
+    session.journey_session_key || session.session_id || session.id
+  )
+
+  return {
+    type: 'page_visit',
+    date: session.started_at,
+    cursorDate: session.journey_session_cursor_date || session.started_at,
+    cursorKey: buildJourneyMessageCursorKey('page_visit', logicalSessionKey),
+    data: {
+      id: session.id,
+      event_name: session.event_name,
+      session_id: session.session_id,
+      tracking_session_id: session.id,
+      visitor_id: session.visitor_id,
+      contact_id: session.contact_id,
+      page_url: session.page_url,
+      landing_page: session.landing_page,
+      referrer_url: session.referrer_url,
+      utm_source: session.utm_source,
+      utm_medium: session.utm_medium,
+      utm_campaign: session.utm_campaign,
+      utm_term: session.utm_term,
+      utm_content: session.utm_content,
+      gclid: session.gclid,
+      fbclid: session.fbclid,
+      fbc: session.fbc,
+      fbp: session.fbp,
+      wbraid: session.wbraid,
+      gbraid: session.gbraid,
+      msclkid: session.msclkid,
+      ttclid: session.ttclid,
+      channel: session.channel,
+      source_platform: session.source_platform,
+      site_source_name: session.site_source_name,
+      campaign_id: session.campaign_id,
+      adset_id: session.adset_id,
+      ad_group_id: session.ad_group_id,
+      ad_group_name: session.ad_group_name,
+      campaign_name: session.campaign_name,
+      adset_name: session.adset_name,
+      ad_name: session.ad_name,
+      ad_id: session.ad_id,
+      placement: session.placement,
+      network: session.network,
+      match_type: session.match_type,
+      keyword: session.keyword,
+      search_query: session.search_query,
+      creative_id: session.creative_id,
+      ad_position: session.ad_position,
+      device_type: session.device_type,
+      os: session.os,
+      browser: session.browser,
+      browser_version: session.browser_version,
+      language: session.language,
+      timezone: session.timezone,
+      geo_city: session.geo_city,
+      geo_region: session.geo_region,
+      geo_country: session.geo_country,
+      tracking_source: session.tracking_source,
+      site_id: session.site_id,
+      site_slug: session.site_slug,
+      site_name: session.site_name,
+      site_type: session.site_type,
+      form_site_id: session.form_site_id,
+      form_site_name: session.form_site_name,
+      public_page_id: session.public_page_id,
+      public_page_title: session.public_page_title,
+      conversion_type: session.conversion_type,
+      submission_id: session.submission_id,
+      match_method: session.match_method,
+      match_confidence: toFiniteNumber(session.match_confidence),
+      identity_evidence: parseJourneyJsonObject(session.identity_evidence_json),
+      session_event_count: toFiniteNumber(session.session_event_count),
+      session_page_view_count: toFiniteNumber(session.session_page_view_count),
+      session_conversion_count: toFiniteNumber(session.session_conversion_count),
+      session_started_at: session.session_started_at,
+      session_ended_at: session.session_ended_at,
+      session_duration_seconds: toFiniteNumber(session.session_duration_seconds),
+      pages_visited: toFiniteNumber(session.pages_visited),
+      first_page_url: session.first_page_url,
+      last_page_url: session.last_page_url,
+      event_names: Array.isArray(session.event_names) ? session.event_names : [],
+      session_ids: Array.isArray(session.session_ids) ? session.session_ids : [],
+      visitor_ids: Array.isArray(session.visitor_ids) ? session.visitor_ids : [],
+      visible_session_count: toFiniteNumber(session.visible_session_count),
+      tracking_session_ids: Array.isArray(session.tracking_session_ids) ? session.tracking_session_ids : [],
+      tracking_identity_untrusted: Boolean(session.tracking_identity_untrusted),
+      identity_warning: session.identity_warning || null,
+      ...buildPreRegistrationJourneyMeta(session.started_at, contactCreatedAt)
+    }
   }
-})
+}
 
 const JOURNEY_SESSION_VIEW_EVENTS = new Set(['session_start', 'page_view', 'native_site_view'])
 
@@ -1152,38 +1230,6 @@ const getJourneySessionMergeScore = (session = {}) => {
 
 const getJourneySessionPageKey = (session = {}) =>
   normalizeJourneyPageUrl(session.page_url || session.landing_page)
-
-const getJourneyVisitDayKey = (session = {}) => {
-  const value = cleanString(session.started_at || session.created_at)
-  return value.split(/[T\s]/)[0] || ''
-}
-
-const getJourneyVisitSourceKey = (session = {}) =>
-  cleanString(
-    getSessionSourceLabel(session) ||
-    session.source_platform ||
-    session.site_source_name ||
-    session.utm_source ||
-    session.channel ||
-    'unknown'
-  ).toLowerCase()
-
-const getJourneyVisitSurfaceKey = (session = {}) =>
-  cleanString(
-    session.public_page_id ||
-    session.form_site_id ||
-    session.site_id ||
-    normalizeJourneyPagePath(session.page_url || session.landing_page) ||
-    getJourneySessionPageKey(session) ||
-    'unknown'
-  ).toLowerCase()
-
-const getJourneyVisitGroupKey = (session = {}) =>
-  [
-    getJourneyVisitDayKey(session),
-    getJourneyVisitSourceKey(session),
-    getJourneyVisitSurfaceKey(session)
-  ].join(':')
 
 const pickJourneySessionBaseRow = (rows = []) => {
   const sorted = [...rows].sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
@@ -1290,7 +1336,7 @@ const summarizeJourneySessionRows = (rows = []) => {
 
   const groups = new Map()
   rows.forEach((row) => {
-    const key = cleanString(row.session_id) || cleanString(row.id)
+    const key = cleanString(row.journey_session_key) || cleanString(row.session_id) || cleanString(row.id)
     if (!key) return
     const bucket = groups.get(key)
     if (bucket) {
@@ -1300,24 +1346,141 @@ const summarizeJourneySessionRows = (rows = []) => {
     }
   })
 
-  const sessionSummaries = [...groups.values()]
-    .map(mergeJourneySessionSummaries)
+  return [...groups.entries()]
+    .map(([journeySessionKey, group]) => ({
+      ...mergeJourneySessionSummaries(group),
+      journey_session_key: journeySessionKey,
+      journey_session_cursor_date: group[0]?.journey_session_cursor_date || group[0]?.started_at
+    }))
     .sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
+}
 
-  const visibleGroups = new Map()
-  sessionSummaries.forEach((summary) => {
-    const key = getJourneyVisitGroupKey(summary)
-    const bucket = visibleGroups.get(key)
-    if (bucket) {
-      bucket.push(summary)
-    } else {
-      visibleGroups.set(key, [summary])
-    }
+const journeySessionLogicalKeySqlExpression = (alias = 'sessions') => (
+  `COALESCE(NULLIF(TRIM(CAST(${alias}.session_id AS TEXT)), ''), CAST(${alias}.id AS TEXT))`
+)
+
+const loadJourneySessionRowsForIdentity = async ({
+  matchCondition,
+  matchParams,
+  limit,
+  beforeDate,
+  beforeCursor
+}) => {
+  const logicalKeyExpression = journeySessionLogicalKeySqlExpression('sessions')
+  const groupedTimestampExpression = 'journey_session_groups.journey_session_started_at'
+  const groupedKeyExpression = 'journey_session_groups.journey_session_key'
+  const groupedCursorExpression = journeyMessageCursorSqlExpression('page_visit', groupedKeyExpression)
+  const normalizedLimit = Math.max(
+    1,
+    Math.min(Number(limit) || JOURNEY_DEFAULT_PAGE_LIMIT, JOURNEY_MESSAGE_MAX_LIMIT)
+  )
+
+  // Primero pagina sesiones lógicas, no filas crudas. Así una sesión con miles
+  // de page_view ocupa exactamente un lugar y su cursor nunca apunta a media sesión.
+  const sessionGroups = await db.all(`
+    WITH candidate_session_rows AS (
+      SELECT
+        ${logicalKeyExpression} AS journey_session_key,
+        sessions.started_at AS journey_session_started_at,
+        ROW_NUMBER() OVER (
+          PARTITION BY ${logicalKeyExpression}
+          ORDER BY ${timestampSortExpression('sessions.started_at')} ASC, sessions.id ASC
+        ) AS journey_session_row_rank
+      FROM sessions
+      WHERE ${matchCondition}
+    ),
+    journey_session_groups AS (
+      SELECT journey_session_key, journey_session_started_at
+      FROM candidate_session_rows
+      WHERE journey_session_row_rank = 1
+    )
+    SELECT
+      ${groupedKeyExpression} AS journey_session_key,
+      ${groupedTimestampExpression} AS journey_session_started_at,
+      ${losslessTimestampCursorProjection(groupedTimestampExpression)} AS journey_session_cursor_date
+    FROM journey_session_groups
+    WHERE 1 = 1
+      ${journeyMessageBeforeClause(
+        groupedTimestampExpression,
+        groupedCursorExpression,
+        beforeDate,
+        beforeCursor
+      )}
+    ORDER BY
+      ${timestampSortExpression(groupedTimestampExpression)} DESC,
+      ${groupedCursorExpression} DESC
+    LIMIT ?
+  `, [
+    ...appendJourneyMessageBeforeParams(matchParams, beforeDate, beforeCursor),
+    normalizedLimit
+  ])
+
+  const logicalSessionKeys = [...new Set(
+    sessionGroups.map(group => cleanString(group.journey_session_key)).filter(Boolean)
+  )]
+  if (!logicalSessionKeys.length) return []
+
+  const cursorDateBySessionKey = new Map(sessionGroups.map(group => [
+    cleanString(group.journey_session_key),
+    group.journey_session_cursor_date || group.journey_session_started_at
+  ]))
+  const sessionKeyPlaceholders = logicalSessionKeys.map(() => '?').join(', ')
+
+  // Ya seleccionadas las sesiones de esta página, hidrata todas sus filas. El
+  // límite pertenece a los grupos; aplicarlo aquí volvería a truncar el resumen.
+  const rows = await db.all(`
+    SELECT
+      sessions.*,
+      ${logicalKeyExpression} AS journey_session_key
+    FROM sessions
+    WHERE (${matchCondition})
+      AND ${logicalKeyExpression} IN (${sessionKeyPlaceholders})
+    ORDER BY
+      ${logicalKeyExpression} ASC,
+      ${timestampSortExpression('sessions.started_at')} ASC,
+      sessions.id ASC
+  `, [...matchParams, ...logicalSessionKeys])
+
+  return rows.map(row => ({
+    ...row,
+    journey_session_cursor_date: cursorDateBySessionKey.get(cleanString(row.journey_session_key)) || row.started_at
+  }))
+}
+
+const loadContactJourneySessionRows = async (contact, {
+  limit,
+  beforeDate,
+  beforeCursor
+}) => {
+  const contactVisitorId = cleanString(contact.visitor_id)
+  const trustedVisitorId = isTrustedTrackingVisitorId(contactVisitorId)
+  const matchCondition = trustedVisitorId
+    ? '(sessions.contact_id = ? OR sessions.visitor_id = ?)'
+    : 'sessions.contact_id = ?'
+  const matchParams = trustedVisitorId
+    ? [contact.id, contactVisitorId]
+    : [contact.id]
+  let rows = await loadJourneySessionRowsForIdentity({
+    matchCondition,
+    matchParams,
+    limit,
+    beforeDate,
+    beforeCursor
   })
+  let matchedByEmail = false
 
-  return [...visibleGroups.values()]
-    .map(group => mergeJourneySessionSummaries(group, { useBestMatch: group.length === 1 }))
-    .sort((left, right) => getJourneySessionTime(left) - getJourneySessionTime(right))
+  if (!rows.length && cleanString(contact.email)) {
+    rows = await loadJourneySessionRowsForIdentity({
+      matchCondition: 'sessions.email = ?',
+      matchParams: [cleanString(contact.email)],
+      limit,
+      beforeDate,
+      beforeCursor
+    })
+    matchedByEmail = rows.length > 0
+  }
+
+  return { rows, matchedByEmail, ignoredVisitorId: contactVisitorId && !trustedVisitorId ? contactVisitorId : '' }
 }
 
 const attachVideoEngagementsToPageVisits = (sessionEntries, videoEngagements) => {
@@ -1338,7 +1501,7 @@ const attachVideoEngagementsToPageVisits = (sessionEntries, videoEngagements) =>
   return attached
 }
 
-const loadContactVideoEngagements = async (contact = {}) => {
+const loadContactVideoEngagements = async (contact = {}, { limit = JOURNEY_DEFAULT_PAGE_LIMIT, beforeDate = null, beforeCursor = null } = {}) => {
   const conditions = ['vps.contact_id = ?']
   const params = [contact.id]
 
@@ -1351,6 +1514,19 @@ const loadContactVideoEngagements = async (contact = {}) => {
     conditions.push('vps.email = ?')
     params.push(cleanString(contact.email))
   }
+
+  const videoTimestamp = 'COALESCE(vps.first_event_at, vps.started_at, vps.last_event_at)'
+  const videoCursorKey = "('video_playback:' || COALESCE(vps.playback_id, vps.id))"
+  const cursorCondition = beforeDate
+    ? `AND (
+        ${timestampSortExpression(videoTimestamp)} < ${timestampSortParameterExpression()}
+        OR (
+          ${timestampSortExpression(videoTimestamp)} = ${timestampSortParameterExpression()}
+          AND ${videoCursorKey} < ?
+        )
+      )`
+    : ''
+  if (beforeDate) params.push(beforeDate, beforeDate, beforeCursor || '')
 
   const rows = await db.all(`
     SELECT
@@ -1378,10 +1554,12 @@ const loadContactVideoEngagements = async (contact = {}) => {
         OR COALESCE(vps.max_progress_percent, 0) > 0
         OR COALESCE(vps.ended, 0) = 1
       )
-    ORDER BY COALESCE(vps.first_event_at, vps.started_at, vps.last_event_at) ASC
-  `, params)
+      ${cursorCondition}
+    ORDER BY ${timestampSortExpression(videoTimestamp)} DESC, ${videoCursorKey} DESC
+    LIMIT ?
+  `, [...params, Math.max(1, Math.min(Number(limit) || JOURNEY_DEFAULT_PAGE_LIMIT, JOURNEY_MESSAGE_MAX_LIMIT))])
 
-  return rows.map(row => buildVideoEngagementJourneyData(row, contact))
+  return rows.reverse().map(row => buildVideoEngagementJourneyData(row, contact))
 }
 
 const HIGHLEVEL_MESSAGE_REFRESH_LIMIT = 12
@@ -1985,6 +2163,8 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   lastMessageType: contact.last_message_type || '',
   lastMessageChannel: contact.last_message_channel || '',
   lastMessageDate: contact.last_message_date || contact.created_at,
+  lastMessageCursorSort: cleanString(contact.last_message_cursor_sort),
+  lastMessageCursorScope: cleanString(contact.last_message_cursor_scope),
   lastMessageDirection: contact.last_message_direction || '',
   lastBusinessPhone: contact.last_business_phone || '',
   lastBusinessPhoneNumberId: contact.last_business_phone_number_id || '',
@@ -2670,14 +2850,18 @@ export const getChatContacts = async (req, res) => {
       businessPhoneNumberId = '',
       businessPhone = '',
       beforeMessageDate = '',
+      beforeMessageSort = '',
+      beforeMessageScope = '',
       beforeContactId = ''
     } = req.query
     const limitNumber = Math.min(Math.max(Number(limit) || CHAT_CONTACTS_DEFAULT_LIMIT, 1), CHAT_CONTACTS_MAX_LIMIT)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const searchTerm = cleanString(q)
     const cursorMessageDate = cleanString(beforeMessageDate)
+    const cursorMessageSort = parseNumericCursor(beforeMessageSort)
+    const requestedMessageScope = cleanString(beforeMessageScope)
     const cursorContactId = cleanString(beforeContactId)
-    const cursorEnabled = Boolean(cursorMessageDate && cursorContactId)
+    const cursorEnabled = Boolean((cursorMessageSort || cursorMessageDate) && cursorContactId)
     const offsetNumber = cursorEnabled ? 0 : Math.max(Math.floor(Number(offset) || 0), 0)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
@@ -2685,19 +2869,12 @@ export const getChatContacts = async (req, res) => {
       phoneNumberId: phoneNumberIdFilter,
       businessPhone: businessPhoneFilter || businessPhone
     })
-    const directWhatsAppContactIdSql = 'COALESCE(msg.contact_id, api_profile.contact_id)'
-    const whatsappMessageConditions = ["LOWER(COALESCE(msg.message_type, '')) <> 'status'"]
-    const whatsappMessageParams = []
     const conditions = []
     const params = []
     const includeMetaSocialMessages = !phoneNumberIdFilter && !businessPhoneFilter
-
-    if (phoneNumberIdFilter || businessPhoneFilter) {
-      const phoneClauses = []
-      appendSqlInClause(phoneClauses, whatsappMessageParams, 'msg.business_phone_number_id', relatedBusinessPhoneFilters.phoneIds)
-      appendSqlInClause(phoneClauses, whatsappMessageParams, 'msg.business_phone', relatedBusinessPhoneFilters.phoneCandidates)
-      whatsappMessageConditions.push(`(${phoneClauses.join(' OR ')})`)
-    }
+    const requestedBusinessScope = Boolean(phoneNumberIdFilter || businessPhoneFilter)
+    const chatActivityScopeKeys = buildChatActivityScopeKeys(relatedBusinessPhoneFilters)
+    const chatActivityProjection = await getChatActivityProjectionStatus()
 
     if (searchTerm) {
       const searchClause = buildContactSearchClause('c', searchTerm)
@@ -2711,102 +2888,267 @@ export const getChatContacts = async (req, res) => {
       conditions.push(hiddenCondition)
     }
 
-    if (cursorEnabled) {
+    const chatContactsCursorScope = buildChatContactsCursorScope({
+      searchTerm,
+      hiddenFilters,
+      phoneNumberIdFilter,
+      businessPhoneFilter,
+      relatedBusinessPhoneFilters,
+      includeMetaSocialMessages
+    })
+    if (requestedMessageScope.length > 512) {
+      throw chatContactsCursorRequestError('Cursor de chats inválido')
+    }
+    if (requestedMessageScope && requestedMessageScope !== chatContactsCursorScope) {
+      throw chatContactsCursorRequestError('El cursor de chats ya no corresponde a esta vista; vuelve a la primera página')
+    }
+
+    const chatProjectionMetadata = {
+      activityProjection: chatActivityProjection.status,
+      complete: chatActivityProjection.ready
+    }
+    if (!chatActivityProjection.available) {
+      const fallbackConditions = [...conditions]
+      const fallbackParams = [...params]
+      if (phoneNumberIdFilter) {
+        fallbackConditions.push('msg.business_phone_number_id = ?')
+        fallbackParams.push(phoneNumberIdFilter)
+      }
+      if (businessPhoneFilter) {
+        fallbackConditions.push('(msg.business_phone = ? OR msg.business_phone = ?)')
+        fallbackParams.push(businessPhoneFilter, businessPhone)
+      }
+      const fallbackWhere = fallbackConditions.length ? `WHERE ${fallbackConditions.join(' AND ')}` : ''
+      const fallbackRows = await db.all(`
+        WITH latest_whatsapp AS (
+          SELECT
+            COALESCE(NULLIF(msg.contact_id, ''), NULLIF(api_profile.contact_id, '')) AS contact_id,
+            msg.message_text,
+            msg.message_type,
+            msg.direction,
+            msg.business_phone,
+            msg.business_phone_number_id,
+            msg.transport,
+            COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
+            msg.created_at,
+            ${timestampSortExpression('COALESCE(msg.message_timestamp, msg.created_at)')} AS message_sort,
+            COUNT(*) OVER (PARTITION BY COALESCE(NULLIF(msg.contact_id, ''), NULLIF(api_profile.contact_id, ''))) AS message_count,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(NULLIF(msg.contact_id, ''), NULLIF(api_profile.contact_id, ''))
+              ORDER BY ${timestampSortExpression('COALESCE(msg.message_timestamp, msg.created_at)')} DESC,
+                       ${timestampSortExpression('msg.created_at')} DESC,
+                       msg.id DESC
+            ) AS row_rank
+          FROM whatsapp_api_messages msg
+          LEFT JOIN whatsapp_api_contacts api_profile
+            ON api_profile.id = msg.whatsapp_api_contact_id
+          JOIN contacts c
+            ON c.id = COALESCE(NULLIF(msg.contact_id, ''), NULLIF(api_profile.contact_id, ''))
+          ${fallbackWhere}
+        )
+        SELECT
+          c.id,
+          c.phone,
+          c.email,
+          c.full_name,
+          c.first_name,
+          c.last_name,
+          c.source,
+          c.attribution_ad_name,
+          c.attribution_ad_id,
+          c.preferred_whatsapp_phone_number_id,
+          c.custom_fields,
+          c.tags,
+          0 AS total_paid,
+          0 AS purchases_count,
+          0 AS customer_payments_count,
+          0 AS payment_records_count,
+          c.appointment_date,
+          c.created_at,
+          0 AS has_appointments,
+          0 AS has_showed_appointment,
+          0 AS has_confirmation_badge,
+          latest_whatsapp.message_count,
+          latest_whatsapp.message_date AS last_message_date,
+          latest_whatsapp.message_sort AS last_message_cursor_sort,
+          latest_whatsapp.message_text AS last_message_text,
+          latest_whatsapp.message_type AS last_message_type,
+          'whatsapp' AS last_message_channel,
+          latest_whatsapp.direction AS last_message_direction,
+          latest_whatsapp.business_phone AS last_business_phone,
+          latest_whatsapp.business_phone_number_id AS last_business_phone_number_id,
+          CASE WHEN latest_whatsapp.direction = 'inbound' THEN latest_whatsapp.business_phone ELSE NULL END AS last_inbound_business_phone,
+          CASE WHEN latest_whatsapp.direction = 'inbound' THEN latest_whatsapp.business_phone_number_id ELSE NULL END AS last_inbound_business_phone_number_id,
+          CASE WHEN latest_whatsapp.direction = 'inbound' THEN latest_whatsapp.business_phone ELSE NULL END AS first_inbound_business_phone,
+          CASE WHEN latest_whatsapp.direction = 'inbound' THEN latest_whatsapp.business_phone_number_id ELSE NULL END AS first_inbound_business_phone_number_id,
+          latest_whatsapp.transport AS last_message_transport,
+          0 AS unread_count
+        FROM latest_whatsapp
+        JOIN contacts c ON c.id = latest_whatsapp.contact_id
+        WHERE latest_whatsapp.row_rank = 1
+        ORDER BY latest_whatsapp.message_sort DESC, c.id DESC
+        LIMIT ? OFFSET ?
+      `, [...fallbackParams, limitNumber, offsetNumber])
+      const responseRowsWithPhones = await attachContactPhoneNumbers(fallbackRows)
+      return res.json({
+        success: true,
+        data: responseRowsWithPhones.map(row => mapChatContactRowForResponse({
+          ...row,
+          last_message_cursor_scope: chatContactsCursorScope
+        })),
+        performance: {
+          ...chatProjectionMetadata,
+          fallback: 'bounded-whatsapp'
+        }
+      })
+    }
+
+    if (requestedBusinessScope && chatActivityScopeKeys.length === 0) {
+      return res.json({ success: true, data: [], performance: chatProjectionMetadata })
+    }
+
+    if (cursorMessageSort && cursorContactId) {
+      conditions.push(`(chat_stats.last_message_sort, chat_stats.contact_id) < (${numericCursorParameterExpression()}, ?)`)
+      params.push(cursorMessageSort, cursorContactId)
+    } else if (cursorMessageDate && cursorContactId) {
       const cursorTimestampSort = timestampSortParameterExpression()
       conditions.push(`(chat_stats.last_message_sort, chat_stats.contact_id) < (${cursorTimestampSort}, ?)`)
       params.push(cursorMessageDate, cursorContactId)
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-    const buildWhatsAppWhereClause = (extraConditions = []) => {
-      const clauses = [...whatsappMessageConditions, ...extraConditions].filter(Boolean)
-      return clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
-    }
-    const whatsappMessageContactWhereClause = buildWhatsAppWhereClause(['msg.contact_id IS NOT NULL'])
-    const whatsappProfileContactWhereClause = buildWhatsAppWhereClause([
-      'msg.contact_id IS NULL',
-      'api_profile.contact_id IS NOT NULL'
-    ])
-    const whatsappDirectWhereClause = buildWhatsAppWhereClause([`${directWhatsAppContactIdSql} IS NOT NULL`])
-    const whatsappPhoneLookupWhereClause = buildWhatsAppWhereClause([
-      'msg.contact_id IS NULL',
-      'api_profile.contact_id IS NULL'
-    ])
-    const whatsappStatsSourceRowsSql = `
+    const projectedScopePlaceholders = chatActivityScopeKeys.map(() => '?').join(', ')
+    const projectedScopeCandidateLimit = Math.max(limitNumber + offsetNumber, limitNumber)
+    const projectedScopeCandidateCondition = conditions.length
+      ? `AND ${conditions.join(' AND ')}`
+      : ''
+    const projectedScopeCandidateBranchesSql = chatActivityScopeKeys.map((_, index) => `
+      SELECT * FROM (
         SELECT
-          msg.id AS message_id,
-          ${directWhatsAppContactIdSql} AS direct_contact_id,
-          msg.phone,
-          msg.from_phone,
-          msg.to_phone,
-          api_profile.phone AS api_profile_phone,
-          COALESCE(msg.message_timestamp, msg.created_at) AS message_date
-        FROM whatsapp_api_messages msg
-        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
-        ${whatsappPhoneLookupWhereClause}
-    `
-    const messageStatsRowsSql = `
-        SELECT
-          msg.contact_id AS contact_id,
-          COUNT(*) AS message_count,
-          MAX(COALESCE(msg.message_timestamp, msg.created_at)) AS last_message_date,
-          MAX(${timestampSortExpression('COALESCE(msg.message_timestamp, msg.created_at)')}) AS last_message_sort
-        FROM whatsapp_api_messages msg
-        ${whatsappMessageContactWhereClause}
-        GROUP BY msg.contact_id
-        UNION ALL
-        SELECT
-          api_profile.contact_id AS contact_id,
-          COUNT(*) AS message_count,
-          MAX(COALESCE(msg.message_timestamp, msg.created_at)) AS last_message_date,
-          MAX(${timestampSortExpression('COALESCE(msg.message_timestamp, msg.created_at)')}) AS last_message_sort
-        FROM whatsapp_api_messages msg
-        JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
-        ${whatsappProfileContactWhereClause}
-        GROUP BY api_profile.contact_id
-        UNION ALL
-        SELECT
-          contact_id,
-          COUNT(*) AS message_count,
-          MAX(message_date) AS last_message_date,
-          MAX(${timestampSortExpression('message_date')}) AS last_message_sort
-        FROM (
-          SELECT
-            message_id,
-            MIN(contact_id) AS contact_id,
-            MAX(message_date) AS message_date
-          FROM whatsapp_stats_phone_matches
-          GROUP BY message_id
-        ) resolved_phone_stats
-        WHERE contact_id IS NOT NULL
-        GROUP BY contact_id
-        ${includeMetaSocialMessages ? `
-        UNION ALL
-        SELECT
-          contact_id,
-          COUNT(*) AS message_count,
-          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date,
-          MAX(${timestampSortExpression('COALESCE(message_timestamp, created_at)')}) AS last_message_sort
-        FROM meta_social_messages
-        WHERE contact_id IS NOT NULL
-        GROUP BY contact_id
-        ` : ''}
-        ${includeMetaSocialMessages ? `
-        UNION ALL
-        SELECT
-          contact_id,
-          COUNT(*) AS message_count,
-          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date,
-          MAX(${timestampSortExpression('COALESCE(message_timestamp, created_at)')}) AS last_message_sort
-        FROM email_messages
-        WHERE contact_id IS NOT NULL
-        GROUP BY contact_id
-        ` : ''}
-    `
+          chat_stats.contact_id,
+          chat_stats.last_message_sort
+        FROM chat_contact_scope_activity chat_stats
+        JOIN contacts c ON c.id = chat_stats.contact_id
+        WHERE chat_stats.scope_key = ?
+          ${projectedScopeCandidateCondition}
+        ORDER BY chat_stats.last_message_sort DESC, chat_stats.contact_id DESC
+        LIMIT ?
+      ) projected_scope_${index}
+    `).join(' UNION ALL ')
 
-    const selectedMessageRowsSql = `
+    const chatStatsCtesSql = requestedBusinessScope
+      ? `
+        projected_scope_candidates AS (
+          ${projectedScopeCandidateBranchesSql}
+        ),
+        projected_candidate_contacts AS (
+          SELECT DISTINCT contact_id FROM projected_scope_candidates
+        ),
+        projected_stats_rows AS (
+          SELECT scoped.*
+          FROM chat_contact_scope_activity scoped
+          JOIN projected_candidate_contacts candidates
+            ON candidates.contact_id = scoped.contact_id
+          WHERE scoped.scope_key IN (${projectedScopePlaceholders})
+        ),
+        projected_chat_stats_ranked AS (
+          SELECT
+            contact_id,
+            SUM(message_count) OVER (PARTITION BY contact_id) AS message_count,
+            last_message_sort,
+            last_created_sort,
+            last_source_kind,
+            last_source_message_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY contact_id
+              ORDER BY last_message_sort DESC, last_created_sort DESC,
+                       last_source_kind DESC, last_source_message_id DESC
+            ) AS projection_row_rank
+          FROM projected_stats_rows
+        ),
+        chat_stats AS (
+          SELECT
+            contact_id,
+            message_count,
+            NULL AS last_message_date,
+            last_message_sort,
+            last_created_sort,
+            last_source_kind,
+            last_source_message_id
+          FROM projected_chat_stats_ranked
+          WHERE projection_row_rank = 1
+        )
+      `
+      : `
+        chat_stats AS (
+          SELECT
+            contact_id,
+            message_count,
+            NULL AS last_message_date,
+            last_message_sort,
+            last_created_sort,
+            last_source_kind,
+            last_source_message_id
+          FROM chat_contact_activity
+        )
+      `
+    // En scoped, el cursor se aplica primero a cada índice para obtener
+    // candidatos y se vuelve a aplicar sobre el MAX consolidado. Sin la segunda
+    // compuerta, un contacto con un scope nuevo y otro viejo podría reaparecer.
+    const rankedChatsWhereClause = whereClause
+
+    const projectedActivityScopeClause = requestedBusinessScope
+      ? `AND activity.scope_key IN (${projectedScopePlaceholders})`
+      : ''
+    const projectedActivityKeysCteSql = `
+        selected_activity_keys AS (
+          SELECT
+            ranked_chats.contact_id,
+            ranked_chats.last_source_kind AS source_kind,
+            ranked_chats.last_source_message_id AS source_message_id
+          FROM ranked_chats
+          UNION
+          SELECT
+            ranked_chats.contact_id,
+            'whatsapp' AS source_kind,
+            (
+              SELECT activity.source_message_id
+              FROM chat_message_activity activity
+              WHERE activity.included = 1
+                AND activity.source_kind = 'whatsapp'
+                AND activity.contact_id = ranked_chats.contact_id
+                AND activity.direction = 'inbound'
+                AND activity.scope_key IS NOT NULL
+                ${projectedActivityScopeClause}
+              ORDER BY activity.message_sort DESC, activity.created_sort DESC,
+                       activity.source_message_id DESC
+              LIMIT 1
+            ) AS source_message_id
+          FROM ranked_chats
+          UNION
+          SELECT
+            ranked_chats.contact_id,
+            'whatsapp' AS source_kind,
+            (
+              SELECT activity.source_message_id
+              FROM chat_message_activity activity
+              WHERE activity.included = 1
+                AND activity.source_kind = 'whatsapp'
+                AND activity.contact_id = ranked_chats.contact_id
+                AND activity.direction = 'inbound'
+                AND activity.scope_key IS NOT NULL
+                ${projectedActivityScopeClause}
+              ORDER BY activity.message_sort ASC, activity.created_sort ASC,
+                       activity.source_message_id ASC
+              LIMIT 1
+            ) AS source_message_id
+          FROM ranked_chats
+        )
+      `
+
+    const projectedSelectedMessageRowsSql = `
         SELECT
-          ${directWhatsAppContactIdSql} AS contact_id,
+          selected_activity_keys.contact_id,
           'whatsapp:' || msg.id AS message_row_id,
           msg.message_text,
           msg.message_type,
@@ -2817,41 +3159,14 @@ export const getChatContacts = async (req, res) => {
           COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
           msg.created_at,
           'whatsapp' AS message_channel
-        FROM whatsapp_api_messages msg
-        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
-        JOIN ranked_chats ON ranked_chats.contact_id = ${directWhatsAppContactIdSql}
-        ${whatsappDirectWhereClause}
+        FROM selected_activity_keys
+        JOIN whatsapp_api_messages msg
+          ON selected_activity_keys.source_kind = 'whatsapp'
+         AND msg.id = selected_activity_keys.source_message_id
+        WHERE selected_activity_keys.source_message_id IS NOT NULL
         UNION ALL
         SELECT
-          MIN(ranked_contact_phones.contact_id) AS contact_id,
-          'whatsapp:' || msg.id AS message_row_id,
-          msg.message_text,
-          msg.message_type,
-          msg.direction,
-          msg.business_phone,
-          msg.business_phone_number_id,
-          msg.transport,
-          COALESCE(msg.message_timestamp, msg.created_at) AS message_date,
-          msg.created_at,
-          'whatsapp' AS message_channel
-        FROM whatsapp_api_messages msg
-        LEFT JOIN whatsapp_api_contacts api_profile ON api_profile.id = msg.whatsapp_api_contact_id
-        JOIN ranked_contact_phones ON ranked_contact_phones.phone IN (msg.phone, msg.from_phone, msg.to_phone, api_profile.phone)
-        ${whatsappPhoneLookupWhereClause}
-        GROUP BY
-          msg.id,
-          msg.message_text,
-          msg.message_type,
-          msg.direction,
-          msg.business_phone,
-          msg.business_phone_number_id,
-          msg.transport,
-          COALESCE(msg.message_timestamp, msg.created_at),
-          msg.created_at
-        ${includeMetaSocialMessages ? `
-        UNION ALL
-        SELECT
-          meta_social_messages.contact_id,
+          selected_activity_keys.contact_id,
           'meta:' || meta_social_messages.id AS message_row_id,
           CASE
             WHEN LOWER(COALESCE(meta_social_messages.message_type, '')) NOT IN ('comment', 'comment_reply_public', 'comment_reply_private')
@@ -2882,16 +3197,16 @@ export const getChatContacts = async (req, res) => {
           COALESCE(meta_social_messages.message_timestamp, meta_social_messages.created_at) AS message_date,
           meta_social_messages.created_at,
           meta_social_messages.platform AS message_channel
-        FROM meta_social_messages
-        JOIN ranked_chats ON ranked_chats.contact_id = meta_social_messages.contact_id
+        FROM selected_activity_keys
+        JOIN meta_social_messages
+          ON selected_activity_keys.source_kind = 'meta'
+         AND meta_social_messages.id = selected_activity_keys.source_message_id
         LEFT JOIN meta_social_posts latest_meta_post
           ON latest_meta_post.id = COALESCE(NULLIF(meta_social_messages.post_id, ''), meta_social_messages.media_id)
-        WHERE meta_social_messages.contact_id IS NOT NULL
-        ` : ''}
-        ${includeMetaSocialMessages ? `
+        WHERE selected_activity_keys.source_message_id IS NOT NULL
         UNION ALL
         SELECT
-          email_messages.contact_id,
+          selected_activity_keys.contact_id,
           'email:' || email_messages.id AS message_row_id,
           CASE
             WHEN COALESCE(email_messages.subject, '') != '' AND COALESCE(email_messages.message_text, '') != '' THEN email_messages.subject || ' · ' || email_messages.message_text
@@ -2909,87 +3224,34 @@ export const getChatContacts = async (req, res) => {
           COALESCE(email_messages.message_timestamp, email_messages.created_at) AS message_date,
           email_messages.created_at,
           'email' AS message_channel
-        FROM email_messages
-        JOIN ranked_chats ON ranked_chats.contact_id = email_messages.contact_id
-        WHERE email_messages.contact_id IS NOT NULL
-        ` : ''}
+        FROM selected_activity_keys
+        JOIN email_messages
+          ON selected_activity_keys.source_kind = 'email'
+         AND email_messages.id = selected_activity_keys.source_message_id
+        WHERE selected_activity_keys.source_message_id IS NOT NULL
     `
 
     const rows = await db.all(`
-      WITH contact_phone_lookup AS (
-        SELECT id AS contact_id, phone
-        FROM contacts
-        WHERE TRIM(COALESCE(phone, '')) != ''
-        UNION ALL
-        SELECT contact_id, phone
-        FROM contact_phone_numbers
-        WHERE TRIM(COALESCE(phone, '')) != ''
-      ),
-      whatsapp_stats_source_rows AS (
-        ${whatsappStatsSourceRowsSql}
-      ),
-      whatsapp_stats_phone_matches AS (
-        SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
-        FROM whatsapp_stats_source_rows
-        JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.phone
-        WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
-          AND TRIM(COALESCE(whatsapp_stats_source_rows.phone, '')) != ''
-        UNION ALL
-        SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
-        FROM whatsapp_stats_source_rows
-        JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.from_phone
-        WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
-          AND TRIM(COALESCE(whatsapp_stats_source_rows.from_phone, '')) != ''
-        UNION ALL
-        SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
-        FROM whatsapp_stats_source_rows
-        JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.to_phone
-        WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
-          AND TRIM(COALESCE(whatsapp_stats_source_rows.to_phone, '')) != ''
-        UNION ALL
-        SELECT whatsapp_stats_source_rows.message_id, whatsapp_stats_source_rows.message_date, contact_phone_lookup.contact_id
-        FROM whatsapp_stats_source_rows
-        JOIN contact_phone_lookup ON contact_phone_lookup.phone = whatsapp_stats_source_rows.api_profile_phone
-        WHERE whatsapp_stats_source_rows.direct_contact_id IS NULL
-          AND TRIM(COALESCE(whatsapp_stats_source_rows.api_profile_phone, '')) != ''
-      ),
-      message_stats_rows AS (
-        ${messageStatsRowsSql}
-      ),
-      chat_stats AS (
-        SELECT
-          contact_id,
-          SUM(message_count) AS message_count,
-          MAX(last_message_date) AS last_message_date,
-          MAX(last_message_sort) AS last_message_sort
-        FROM message_stats_rows
-        GROUP BY contact_id
-      ),
+      WITH
+      ${chatStatsCtesSql},
       ranked_chats AS (
         SELECT
           chat_stats.contact_id,
           chat_stats.message_count,
           chat_stats.last_message_date,
-          chat_stats.last_message_sort
+          chat_stats.last_message_sort,
+          chat_stats.last_created_sort,
+          chat_stats.last_source_kind,
+          chat_stats.last_source_message_id
         FROM chat_stats
         JOIN contacts c ON c.id = chat_stats.contact_id
-        ${whereClause}
+        ${rankedChatsWhereClause}
         ORDER BY chat_stats.last_message_sort DESC, chat_stats.contact_id DESC
         LIMIT ? OFFSET ?
       ),
-      ranked_contact_phones AS (
-        SELECT ranked_chats.contact_id, contacts.phone
-        FROM ranked_chats
-        JOIN contacts ON contacts.id = ranked_chats.contact_id
-        WHERE TRIM(COALESCE(contacts.phone, '')) != ''
-        UNION ALL
-        SELECT ranked_chats.contact_id, contact_phone_numbers.phone
-        FROM ranked_chats
-        JOIN contact_phone_numbers ON contact_phone_numbers.contact_id = ranked_chats.contact_id
-        WHERE TRIM(COALESCE(contact_phone_numbers.phone, '')) != ''
-      ),
+      ${projectedActivityKeysCteSql},
       selected_message_rows AS (
-        ${selectedMessageRowsSql}
+        ${projectedSelectedMessageRowsSql}
       ),
       latest_messages AS (
         SELECT
@@ -3043,6 +3305,7 @@ export const getChatContacts = async (req, res) => {
           MAX(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
+          ,SUM(CASE WHEN LOWER(COALESCE(status, '')) != 'deleted' THEN 1 ELSE 0 END) AS payment_records_count
         FROM payments
         JOIN ranked_chats ON ranked_chats.contact_id = payments.contact_id
         GROUP BY payments.contact_id
@@ -3068,6 +3331,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
         COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
         ps.last_purchase_date AS last_purchase_date,
         ps.last_customer_payment_date AS last_customer_payment_date,
+        COALESCE(ps.payment_records_count, 0) AS payment_records_count,
         c.appointment_date,
         c.created_at,
         (
@@ -3098,6 +3362,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
         ) AS has_confirmation_badge,
         ranked_chats.message_count,
         lm.message_date AS last_message_date,
+        ranked_chats.last_message_sort AS last_message_cursor_sort,
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
         lm.message_channel AS last_message_channel,
@@ -3117,16 +3382,25 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
       ORDER BY ranked_chats.last_message_sort DESC, ranked_chats.contact_id DESC
-    `, [
-      ...whatsappMessageParams,
-      ...whatsappMessageParams,
-      ...whatsappMessageParams,
-      ...params,
-      limitNumber,
-      offsetNumber,
-      ...whatsappMessageParams,
-      ...whatsappMessageParams
-    ])
+    `, requestedBusinessScope
+      ? [
+            ...chatActivityScopeKeys.flatMap(scopeKey => [
+              scopeKey,
+              ...params,
+              projectedScopeCandidateLimit
+            ]),
+            ...chatActivityScopeKeys,
+            ...params,
+            limitNumber,
+            offsetNumber,
+            ...chatActivityScopeKeys,
+            ...chatActivityScopeKeys
+          ]
+      : [
+          ...params,
+          limitNumber,
+          offsetNumber
+        ])
 
     if (shouldWarmProfilePictures) {
       queueWhatsAppProfilePictureWarmup(rows, { limit: Math.min(limitNumber, 60) })
@@ -3141,14 +3415,17 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
       success: true,
       data: responseRowsWithPhones.map(row => mapChatContactRowForResponse({
         ...row,
+        last_message_cursor_scope: chatContactsCursorScope,
         unread_count: unreadCounts.get(String(row.id)) || 0
-      }))
+      })),
+      performance: chatProjectionMetadata
     })
   } catch (error) {
     logger.error(`Error obteniendo chats: ${error.message}`)
-    res.status(500).json({
+    const status = error?.status === 400 ? 400 : 500
+    res.status(status).json({
       success: false,
-      error: 'Error obteniendo chats'
+      error: status === 400 ? error.message : 'Error obteniendo chats'
     })
   }
 }
@@ -3249,9 +3526,71 @@ export const markChatContactsRead = async (req, res) => {
   }
 }
 
-/**
- * Obtiene todos los contactos con paginación y filtros
- */
+const CONTACT_LIST_CURSOR_KIND = 'contacts-list'
+const CONTACT_LIST_LEGACY_SCAN_CAP = 10_000
+const CONTACT_ACTIVITY_SORT_INDEXES = Object.freeze({
+  priority: 'idx_contact_list_activity_priority',
+  total_paid: 'idx_contact_list_activity_total',
+  purchases_count: 'idx_contact_list_activity_purchases',
+  payments_count: 'idx_contact_list_activity_payments',
+  failed_payments_count: 'idx_contact_list_activity_failed',
+  appointments_count: 'idx_contact_list_activity_appointments',
+  active_appointments_count: 'idx_contact_list_activity_active_appointments',
+  attended_appointments_count: 'idx_contact_list_activity_attended_appointments'
+})
+const CONTACT_NATIVE_SORT_INDEXES = Object.freeze({
+  created_at: 'idx_contacts_cursor_created',
+  updated_at: 'idx_contacts_cursor_updated',
+  full_name: 'idx_contacts_cursor_name',
+  email: 'idx_contacts_cursor_email',
+  phone: 'idx_contacts_cursor_phone'
+})
+
+function contactListCursorError(message) {
+  return Object.assign(new Error(message), { status: 400 })
+}
+
+function encodeContactListCursor(row, scope, hasSearchRank) {
+  if (!row?.id || row.cursor_sort_value === undefined || row.cursor_sort_value === null) return null
+  const sortValue = row.cursor_sort_value instanceof Date && !Number.isNaN(row.cursor_sort_value.getTime())
+    ? row.cursor_sort_value.toISOString()
+    : String(row.cursor_sort_value)
+  return Buffer.from(JSON.stringify({
+    v: 2,
+    kind: CONTACT_LIST_CURSOR_KIND,
+    scope,
+    rank: hasSearchRank ? String(row.cursor_rank ?? 0) : null,
+    sort: sortValue,
+    id: String(row.id)
+  }), 'utf8').toString('base64url')
+}
+
+function decodeContactListCursor(value, expectedScope, hasSearchRank) {
+  const clean = String(value || '').trim()
+  if (!clean) return null
+  if (clean.length > 4096) throw contactListCursorError('Cursor inválido')
+  try {
+    const decoded = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
+    if (decoded?.v !== 2 || decoded?.kind !== CONTACT_LIST_CURSOR_KIND || decoded?.scope !== expectedScope) {
+      if (decoded?.scope && decoded.scope !== expectedScope) {
+        throw contactListCursorError('El cursor ya no corresponde a esta vista; vuelve a la primera página')
+      }
+      throw new Error('invalid cursor payload')
+    }
+    const sort = String(decoded.sort ?? '').trim()
+    const id = String(decoded.id || '').trim()
+    const rank = decoded.rank === null ? null : String(decoded.rank ?? '').trim()
+    if (!sort || !id || sort.length > 500 || id.length > 500 || (hasSearchRank && !rank)) {
+      throw new Error('invalid cursor values')
+    }
+    return { sort, id, rank }
+  } catch (error) {
+    if (error?.status === 400) throw error
+    throw contactListCursorError('Cursor inválido')
+  }
+}
+
+/** Obtiene contactos con keyset estable; page/offset queda como contrato legacy. */
 export const getContacts = async (req, res) => {
   try {
     const {
@@ -3268,6 +3607,8 @@ export const getContacts = async (req, res) => {
     const pageNumber = Number(page) || 1
     const limitNumber = Math.min(Number(limit) || 50, 500)
     const offset = Math.max((pageNumber - 1) * limitNumber, 0)
+    const cursorMode = String(req.query.pagination || '').toLowerCase() === 'cursor' ||
+      isTruthyQueryValue(req.query.cursorMode) || Boolean(req.query.cursor)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const quickFilter = normalizeContactListQuickFilter(filter)
     const trackingFilters = normalizeContactListTrackingFilters(req.query.trackingFilters || req.query.filters)
@@ -3282,25 +3623,19 @@ export const getContacts = async (req, res) => {
 
     logger.info(`Obteniendo contactos - página ${pageNumber}, límite ${limitNumber}, rango: ${rangeLabel}`)
 
-    // Aplicar filtro de contactos ocultos (para COUNT - sin alias)
     const hiddenFilters = await getHiddenContactFilters()
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
-    const countWhere = buildContactListWhere({
-      alias: 'contacts',
-      search,
-      range,
-      hiddenCondition,
-      quickFilter,
-      trackingFilters,
-      advancedFilters: advancedFilterConfig
-    })
+    const requestedSort = advancedSort?.by || sortBy
+    const orderDirection = String(advancedSort?.order || sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
+    const projectionStatus = await getContactListProjectionStatus()
+    const useProjectedActivity = projectionStatus.available
+    const useProjectedSort = useProjectedActivity && isProjectedContactListSort(requestedSort)
+    if (!useProjectedSort && pageNumber * limitNumber > CONTACT_LIST_LEGACY_SCAN_CAP) {
+      return res.status(422).json({
+        success: false,
+        error: 'Este orden o filtro avanzado requiere acotar la búsqueda. Agrega un rango o vuelve a una columna indexada.'
+      })
+    }
 
-    // Obtener el total de contactos
-    const countQuery = `SELECT COUNT(*) as total FROM contacts ${countWhere.whereClause}`
-    const countResult = await db.get(countQuery, countWhere.params)
-    const totalContacts = countResult.total
-
-    // Construir WHERE clause para query principal (con alias 'c')
     const hiddenConditionAlias = buildHiddenContactsCondition(hiddenFilters, 'c', false)
     const mainWhere = buildContactListWhere({
       alias: 'c',
@@ -3309,21 +3644,114 @@ export const getContacts = async (req, res) => {
       hiddenCondition: hiddenConditionAlias,
       quickFilter,
       trackingFilters,
-      advancedFilters: advancedFilterConfig
+      advancedFilters: advancedFilterConfig,
+      activityAlias: useProjectedActivity ? 'cla' : ''
     })
-
-    // Obtener los contactos
-    const safeSortBy = getContactListSortExpression(advancedSort?.by || sortBy, 'c', 'ps')
-    const orderDirection = String(advancedSort?.order || sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
-
+    const safeSortBy = useProjectedSort
+      ? getProjectedContactListSortExpression(requestedSort, 'c', 'cla', {
+          completeCoverage: projectionStatus.coverageReady
+        })
+      : getContactListSortExpression(requestedSort, 'c', 'ps')
+    const sortType = getContactListSortType(requestedSort)
     const searchRank = search ? buildContactSearchRank('c', search) : null
-    const orderBy = searchRank
-      ? `${searchRank.expression} DESC, ${safeSortBy} ${orderDirection}, c.id ${orderDirection}`
-      : `${safeSortBy} ${orderDirection}, c.id ${orderDirection}`
+    const cursorScope = hashPaginationCursorScope(CONTACT_LIST_CURSOR_KIND, {
+      startUtc: range.startUtc || null,
+      endUtc: range.endUtc || null,
+      timezone: range.appliedTimezone || null,
+      search: String(search || '').trim().toLowerCase(),
+      quickFilter,
+      trackingFilters,
+      advancedFilters: advancedFilterConfig,
+      hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters),
+      sortBy: requestedSort,
+      sortOrder: orderDirection,
+      projection: useProjectedActivity
+        ? `contact-list-activity-v2:${projectionStatus.ready ? 'ready' : 'warming'}`
+        : 'legacy-exact-v1'
+    })
+    const decodedCursor = cursorMode
+      ? decodeContactListCursor(req.query.cursor, cursorScope, Boolean(searchRank))
+      : null
+    const sortCursorPlaceholder = sortType === 'text'
+      ? 'CAST(? AS TEXT)'
+      : sortType === 'timestamp'
+        ? (isPostgresDatabase ? 'CAST(? AS TIMESTAMP)' : '?')
+        : 'CAST(? AS NUMERIC)'
+    const cursorConditions = []
+    const cursorParams = []
+    const sortComparator = orderDirection === 'ASC' ? '>' : '<'
+    const idComparator = orderDirection === 'ASC' ? '>' : '<'
+    if (decodedCursor) {
+      if (searchRank) {
+        cursorConditions.push(`(
+          cursor_rank < CAST(? AS NUMERIC)
+          OR (cursor_rank = CAST(? AS NUMERIC) AND (
+            cursor_sort_value ${sortComparator} ${sortCursorPlaceholder}
+            OR (cursor_sort_value = ${sortCursorPlaceholder} AND id ${idComparator} ?)
+          ))
+        )`)
+        cursorParams.push(decodedCursor.rank, decodedCursor.rank, decodedCursor.sort, decodedCursor.sort, decodedCursor.id)
+      } else {
+        cursorConditions.push(`(
+          cursor_sort_value ${sortComparator} ${sortCursorPlaceholder}
+          OR (cursor_sort_value = ${sortCursorPlaceholder} AND id ${idComparator} ?)
+        )`)
+        cursorParams.push(decodedCursor.sort, decodedCursor.sort, decodedCursor.id)
+      }
+    }
+    const rankedOrderBy = searchRank
+      ? `cursor_rank DESC, cursor_sort_value ${orderDirection}, id ${orderDirection}`
+      : `cursor_sort_value ${orderDirection}, id ${orderDirection}`
+    const hydratedOrderBy = searchRank
+      ? `page_contacts.cursor_rank DESC, page_contacts.cursor_sort_value ${orderDirection}, page_contacts.id ${orderDirection}`
+      : `page_contacts.cursor_sort_value ${orderDirection}, page_contacts.id ${orderDirection}`
+    const legacyPaymentCte = useProjectedActivity ? '' : `${buildContactListPaymentStatsCte()},`
+    const activityJoin = useProjectedActivity
+      ? `${projectionStatus.coverageReady ? 'INNER' : 'LEFT'} JOIN contact_list_activity cla ON cla.contact_id = c.id`
+      : 'LEFT JOIN payment_stats ps ON ps.contact_id = c.id'
+    const activityAlias = useProjectedActivity ? 'cla' : 'ps'
+    const activityLeadIndex = CONTACT_ACTIVITY_SORT_INDEXES[String(requestedSort || '')] || ''
+    const contactLeadIndex = CONTACT_NATIVE_SORT_INDEXES[String(requestedSort || '')] || ''
+    const canLeadWithActivityIndex = Boolean(
+      projectionStatus.coverageReady &&
+      useProjectedSort &&
+      activityLeadIndex &&
+      !searchRank
+    )
+    const canForceContactIndex = Boolean(
+      !isPostgresDatabase &&
+      projectionStatus.coverageReady &&
+      useProjectedSort &&
+      contactLeadIndex &&
+      !searchRank
+    )
+    const rankedFromClause = canLeadWithActivityIndex
+      ? `contact_list_activity cla${isPostgresDatabase ? '' : ` INDEXED BY ${activityLeadIndex}`}
+         ${isPostgresDatabase ? 'INNER JOIN' : 'CROSS JOIN'} contacts c ON c.id = cla.contact_id`
+      : canForceContactIndex
+        ? `contacts c INDEXED BY ${contactLeadIndex}
+           CROSS JOIN contact_list_activity cla ON cla.contact_id = c.id`
+        : `contacts c\n        ${activityJoin}`
 
     const contactsQuery = `
-      WITH ${buildContactListPaymentStatsCte()}
+      WITH ${legacyPaymentCte}
+      ranked_contacts AS (
+        SELECT
+          c.id,
+          ${searchRank ? searchRank.expression : '0'} AS cursor_rank,
+          ${safeSortBy} AS cursor_sort_value
+        FROM ${rankedFromClause}
+        ${mainWhere.whereClause}
+      ), page_contacts AS (
+        SELECT id, cursor_rank, cursor_sort_value
+        FROM ranked_contacts
+        ${cursorConditions.length ? `WHERE ${cursorConditions.join(' AND ')}` : ''}
+        ORDER BY ${rankedOrderBy}
+        LIMIT ?${cursorMode ? '' : ' OFFSET ?'}
+      )
       SELECT
+        page_contacts.cursor_rank,
+        page_contacts.cursor_sort_value,
         c.id,
         c.phone,
         c.email,
@@ -3343,135 +3771,58 @@ export const getContacts = async (req, res) => {
         c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
-        COALESCE(ps.total_paid, 0) AS total_paid,
-        COALESCE(ps.payments_count, 0) AS payments_count,
-        COALESCE(ps.purchases_count, 0) AS purchases_count,
-        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
-        COALESCE(ps.failed_payments_count, 0) AS failed_payments_count,
-        ps.last_purchase_date AS last_purchase_date,
-        ps.last_customer_payment_date AS last_customer_payment_date,
+        COALESCE(${activityAlias}.total_paid, 0) AS total_paid,
+        COALESCE(${activityAlias}.payments_count, 0) AS payments_count,
+        COALESCE(${activityAlias}.purchases_count, 0) AS purchases_count,
+        COALESCE(${activityAlias}.customer_payments_count, ${activityAlias}.purchases_count, 0) AS customer_payments_count,
+        COALESCE(${activityAlias}.failed_payments_count, 0) AS failed_payments_count,
+        ${activityAlias}.last_purchase_date AS last_purchase_date,
+        ${activityAlias}.last_customer_payment_date AS last_customer_payment_date,
         c.appointment_date,
         c.created_at,
-        (
-          SELECT COUNT(*) > 0
-          FROM appointments
-          WHERE contact_id = c.id
-            AND ${ACTIVE_APPOINTMENT_CONDITION}
-        ) AS has_appointments,
-        (
-          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
-          OR EXISTS (
-            SELECT 1
-            FROM appointment_attendance_signals aas
-            WHERE aas.contact_id = c.id
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM appointments
-            WHERE contact_id = c.id
-              AND ${ATTENDED_APPOINTMENT_CONDITION}
-          )
-        ) AS has_showed_appointment,
+        ${useProjectedActivity
+          ? 'COALESCE(cla.active_appointments_count, 0) > 0'
+          : `(SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id AND ${ACTIVE_APPOINTMENT_CONDITION})`
+        } AS has_appointments,
+        ${useProjectedActivity
+          ? '(COALESCE(cla.customer_payments_count, 0) > 0 OR COALESCE(cla.attendance_signals_count, 0) > 0 OR COALESCE(cla.attended_appointments_count, 0) > 0)'
+          : `(COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0 OR EXISTS (SELECT 1 FROM appointment_attendance_signals aas WHERE aas.contact_id = c.id) OR EXISTS (SELECT 1 FROM appointments WHERE contact_id = c.id AND ${ATTENDED_APPOINTMENT_CONDITION}))`
+        } AS has_showed_appointment,
         (
           SELECT COUNT(*) > 0
           FROM appointments
           WHERE contact_id = c.id
             AND ${CONFIRMATION_BADGE_CONDITION}
         ) AS has_confirmation_badge
-      FROM contacts c
-      LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      ${mainWhere.whereClause}
-      ORDER BY ${orderBy}
-      LIMIT ? OFFSET ?
+        ,(
+          SELECT COUNT(*)
+          FROM appointments
+          WHERE contact_id = c.id
+        ) AS appointments_total
+      FROM page_contacts
+      JOIN contacts c ON c.id = page_contacts.id
+      ${activityJoin}
+      ORDER BY ${hydratedOrderBy}
     `
 
-    const contactsParams = [...mainWhere.params, ...(searchRank?.params ?? []), limitNumber, offset]
-    const contacts = await db.all(contactsQuery, contactsParams)
+    const contactsParams = [
+      ...(searchRank?.params ?? []),
+      ...mainWhere.params,
+      ...cursorParams,
+      limitNumber + (cursorMode ? 1 : 0),
+      ...(!cursorMode ? [offset] : [])
+    ]
+    const queriedContacts = await db.all(contactsQuery, contactsParams)
+    const hasNextCursorPage = cursorMode && queriedContacts.length > limitNumber
+    const contacts = hasNextCursorPage ? queriedContacts.slice(0, limitNumber) : queriedContacts
     if (shouldWarmProfilePictures) {
       queueWhatsAppProfilePictureWarmup(contacts, { limit: Math.min(limitNumber, 80) })
     }
     const contactsWithPhones = await attachContactPhoneNumbers(contacts)
 
-    const firstSessionsByContact = new Map()
-    const firstSessionsByVisitor = new Map()
-    const firstSessionsByEmail = new Map()
     const contactIds = Array.from(new Set(contactsWithPhones.map(c => c.id).filter(Boolean)))
-    const visitorIds = Array.from(new Set(contactsWithPhones.map(c => c.visitor_id).filter(Boolean)))
-    const emails = Array.from(new Set(
-      contactsWithPhones
-        .map(c => c.email)
-        .filter(Boolean)
-        .map(email => String(email).toLowerCase())
-    ))
-
-    if (contactIds.length > 0 || visitorIds.length > 0 || emails.length > 0) {
-      const sessionConditions = []
-      const sessionParams = []
-
-      const addInCondition = (field, values) => {
-        if (!values.length) return
-        sessionConditions.push(`${field} IN (${values.map(() => '?').join(', ')})`)
-        sessionParams.push(...values)
-      }
-
-      addInCondition('contact_id', contactIds)
-      addInCondition('visitor_id', visitorIds)
-      addInCondition('LOWER(email)', emails)
-
-      const firstSessions = await db.all(`
-        SELECT
-          id,
-          contact_id,
-          visitor_id,
-          email,
-          started_at,
-          created_at,
-          page_url,
-          referrer_url,
-          utm_source,
-          utm_medium,
-          utm_campaign,
-          utm_content,
-          utm_term,
-          source_platform,
-          site_source_name,
-          campaign_name,
-          adset_name,
-          ad_name,
-          ad_id,
-          device_type,
-          browser,
-          os,
-          placement,
-          geo_city,
-          geo_region,
-          geo_country
-        FROM sessions
-        WHERE ${sessionConditions.join(' OR ')}
-        ORDER BY started_at ASC, created_at ASC, id ASC
-      `, sessionParams)
-
-      firstSessions.forEach(session => {
-        if (session.contact_id && !firstSessionsByContact.has(session.contact_id)) {
-          firstSessionsByContact.set(session.contact_id, session)
-        }
-        if (session.visitor_id && !firstSessionsByVisitor.has(session.visitor_id)) {
-          firstSessionsByVisitor.set(session.visitor_id, session)
-        }
-        if (session.email) {
-          const emailKey = String(session.email).toLowerCase()
-          if (!firstSessionsByEmail.has(emailKey)) {
-            firstSessionsByEmail.set(emailKey, session)
-          }
-        }
-      })
-    }
-
-    const getFirstSessionForContact = (contact) =>
-      firstSessionsByContact.get(contact.id) ||
-      (contact.visitor_id ? firstSessionsByVisitor.get(contact.visitor_id) : null) ||
-      (contact.email ? firstSessionsByEmail.get(String(contact.email).toLowerCase()) : null) ||
-      null
+    const firstSessionsByContact = await loadFirstSessionsForContactPage(contactsWithPhones)
+    const getFirstSessionForContact = contact => firstSessionsByContact.get(String(contact.id)) || null
 
     const whatsappAttributionsByContact = await loadFirstWhatsAppAttributions(contactIds)
 
@@ -3556,11 +3907,24 @@ ${CONTACT_META_PROFILE_SELECT},
       }
     })
 
-    // Calcular información de paginación
-    const totalPages = Math.ceil(totalContacts / limitNumber)
+    let totalContacts = null
+    if (!cursorMode) {
+      const countRow = await db.get(`
+        ${useProjectedActivity ? '' : `WITH ${buildContactListPaymentStatsCte()}`}
+        SELECT COUNT(*) AS total
+        FROM contacts c
+        ${activityJoin}
+        ${mainWhere.whereClause}
+      `, mainWhere.params)
+      totalContacts = Number(countRow?.total || 0)
+    }
+    const totalPages = totalContacts === null ? null : Math.max(Math.ceil(totalContacts / limitNumber), 1)
+    const nextCursor = hasNextCursorPage
+      ? encodeContactListCursor(contacts[contacts.length - 1], cursorScope, Boolean(searchRank))
+      : null
 
     logger.debug(
-      `Contactos obtenidos (${rangeLabel}) -> ${contactsWithPhones.length} registros en esta página, ${totalContacts} total`
+      `Contactos obtenidos (${rangeLabel}) -> ${contactsWithPhones.length} registros, modo ${cursorMode ? 'cursor' : 'legacy'}`
     )
 
     res.json({
@@ -3571,16 +3935,25 @@ ${CONTACT_META_PROFILE_SELECT},
         limit: limitNumber,
         total: totalContacts,
         totalPages,
-        hasNext: pageNumber < totalPages,
-        hasPrev: pageNumber > 1
+        hasNext: cursorMode ? hasNextCursorPage : pageNumber < totalPages,
+        hasPrev: pageNumber > 1,
+        nextCursor
+      },
+      performance: {
+        pagination: cursorMode ? 'keyset' : 'legacy-offset',
+        activityProjection: useProjectedActivity
+          ? (projectionStatus.ready ? 'ready' : 'warming')
+          : 'unavailable',
+        complete: projectionStatus.ready
       }
     })
 
   } catch (error) {
     logger.error(`Error obteniendo contactos: ${error.message}`)
-    res.status(500).json({
+    const status = error?.status === 400 ? 400 : 500
+    res.status(status).json({
       success: false,
-      error: 'Error obteniendo contactos'
+      error: status === 400 ? error.message : 'Error obteniendo contactos'
     })
   }
 }
@@ -3591,20 +3964,17 @@ ${CONTACT_META_PROFILE_SELECT},
 export const getContactById = async (req, res) => {
   try {
     const { id } = req.params
-    const shouldWarmProfilePictures = !isExplicitFalseQueryValue(
-      req.query?.warmProfilePictures ?? req.query?.warmProfiles ?? req.query?.hydrateProfilePictures
-    )
-    const shouldRefreshExternalAppointments = !isExplicitFalseQueryValue(
-      req.query?.refreshExternalAppointments ?? req.query?.refreshAppointments
-    )
+    // La navegación consulta únicamente el snapshot local. Fotos, citas y estados
+    // de proveedores se refrescan por POST explícito; un GET nunca debe escribir.
+    const includeChildren = isTruthyQueryValue(req.query?.includeChildren)
 
     // (SEC-005 / ACL-002) Aplicar filtro de contactos ocultos también al detalle por ID:
     // si el contacto cae bajo un filtro de ocultos, responder 404 (no exponerlo por ID).
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
-    let contact = await db.get(
-      `WITH payment_stats AS (
+    const useProjectedDetailActivity = Boolean(await isContactListProjectionReady({ schedule: false }))
+    const detailPaymentStatsCte = useProjectedDetailActivity ? '' : `WITH payment_stats AS (
         SELECT
           contact_id,
           SUM(CASE
@@ -3625,10 +3995,42 @@ export const getContactById = async (req, res) => {
           MAX(CASE
                 WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
+          ,COUNT(*) AS payment_records_count
         FROM payments
         WHERE contact_id = ?
         GROUP BY contact_id
-      )
+      )`
+    const detailActivityAlias = useProjectedDetailActivity ? 'cla' : 'ps'
+    const detailActivityJoin = useProjectedDetailActivity
+      ? 'LEFT JOIN contact_list_activity cla ON cla.contact_id = c.id'
+      : 'LEFT JOIN payment_stats ps ON ps.contact_id = c.id'
+    const detailPaymentRecordsCount = useProjectedDetailActivity
+      ? `CASE
+          WHEN COALESCE(cla.payments_count, 0) >= COALESCE(cla.customer_payments_count, 0)
+            THEN COALESCE(cla.payments_count, 0)
+          ELSE COALESCE(cla.customer_payments_count, 0)
+        END`
+      : 'COALESCE(ps.payment_records_count, 0)'
+    const detailHasPaymentRecords = useProjectedDetailActivity
+      ? `(COALESCE(cla.payments_count, 0) > 0
+          OR COALESCE(cla.customer_payments_count, 0) > 0
+          OR COALESCE(cla.failed_payments_count, 0) > 0
+          OR EXISTS (SELECT 1 FROM payments detail_payment WHERE detail_payment.contact_id = c.id LIMIT 1))`
+      : 'COALESCE(ps.payment_records_count, 0) > 0'
+    const detailAppointmentSummary = useProjectedDetailActivity
+      ? {
+          hasAppointments: 'COALESCE(cla.active_appointments_count, 0) > 0',
+          hasShowed: '(COALESCE(cla.customer_payments_count, 0) > 0 OR COALESCE(cla.attendance_signals_count, 0) > 0 OR COALESCE(cla.attended_appointments_count, 0) > 0)',
+          total: 'COALESCE(cla.appointments_count, 0)'
+        }
+      : {
+          hasAppointments: `(SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id AND ${ACTIVE_APPOINTMENT_CONDITION})`,
+          hasShowed: `(COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0 OR EXISTS (SELECT 1 FROM appointment_attendance_signals aas WHERE aas.contact_id = c.id) OR EXISTS (SELECT 1 FROM appointments WHERE contact_id = c.id AND ${ATTENDED_APPOINTMENT_CONDITION}))`,
+          total: '(SELECT COUNT(*) FROM appointments WHERE contact_id = c.id)'
+        }
+
+    const contact = await db.get(
+      `${detailPaymentStatsCte}
       SELECT
         c.id,
         c.phone,
@@ -3649,43 +4051,28 @@ export const getContactById = async (req, res) => {
         c.tags,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
-        COALESCE(ps.total_paid, 0) AS total_paid,
-        COALESCE(ps.purchases_count, 0) AS purchases_count,
-        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
-        ps.last_purchase_date AS last_purchase_date,
-        ps.last_customer_payment_date AS last_customer_payment_date,
+        COALESCE(${detailActivityAlias}.total_paid, 0) AS total_paid,
+        ${detailPaymentRecordsCount} AS payment_records_count,
+        ${detailHasPaymentRecords} AS has_payment_records,
+        COALESCE(${detailActivityAlias}.purchases_count, 0) AS purchases_count,
+        COALESCE(${detailActivityAlias}.customer_payments_count, ${detailActivityAlias}.purchases_count, 0) AS customer_payments_count,
+        ${detailActivityAlias}.last_purchase_date AS last_purchase_date,
+        ${detailActivityAlias}.last_customer_payment_date AS last_customer_payment_date,
         c.appointment_date,
         c.created_at,
-        (
-          SELECT COUNT(*) > 0
-          FROM appointments
-          WHERE contact_id = c.id
-            AND ${ACTIVE_APPOINTMENT_CONDITION}
-        ) AS has_appointments,
-        (
-          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
-          OR EXISTS (
-            SELECT 1
-            FROM appointment_attendance_signals aas
-            WHERE aas.contact_id = c.id
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM appointments
-            WHERE contact_id = c.id
-              AND ${ATTENDED_APPOINTMENT_CONDITION}
-          )
-        ) AS has_showed_appointment,
+        ${detailAppointmentSummary.hasAppointments} AS has_appointments,
+        ${detailAppointmentSummary.hasShowed} AS has_showed_appointment,
         (
           SELECT COUNT(*) > 0
           FROM appointments
           WHERE contact_id = c.id
             AND ${CONFIRMATION_BADGE_CONDITION}
-        ) AS has_confirmation_badge
+        ) AS has_confirmation_badge,
+        ${detailAppointmentSummary.total} AS appointments_total
       FROM contacts c
-      LEFT JOIN payment_stats ps ON ps.contact_id = c.id
+      ${detailActivityJoin}
       WHERE c.id = ? AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}`,
-      [id, id]
+      useProjectedDetailActivity ? [id] : [id, id]
     )
 
     if (!contact) {
@@ -3695,18 +4082,11 @@ ${CONTACT_META_PROFILE_SELECT},
       })
     }
 
-    if (shouldWarmProfilePictures) {
-      const [hydratedContact] = await warmWhatsAppProfilePicturesForRows([contact], {
-        apiLimit: 1,
-        qrLimit: 1
-      })
-      contact = hydratedContact || contact
-    }
-
-    // Obtener pagos del contacto
+    // Las colecciones pesadas se solicitan por sus endpoints keyset. El flag
+    // legacy conserva compatibilidad acotada para consumidores antiguos.
     const paymentDateSort = timestampSortExpression('date')
     const paymentCreatedSort = timestampSortExpression('created_at')
-    const payments = await db.all(
+    const payments = includeChildren ? await db.all(
       `SELECT * FROM payments
        WHERE contact_id = ?
        AND LOWER(COALESCE(status, '')) != 'deleted'
@@ -3715,177 +4095,49 @@ ${CONTACT_META_PROFILE_SELECT},
          (COALESCE(metadata_json, '') LIKE '%site_checkout%' OR COALESCE(metadata_json, '') LIKE '%site_form%')
          AND LOWER(COALESCE(status, '')) IN ('sent', 'pending', 'processing', 'requires_action', 'requires_payment_method', 'incomplete', 'draft', 'initiated')
        )
-       ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, id DESC`,
+       ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, id DESC
+       LIMIT 20`,
       [id]
-    )
+    ) : []
 
-    // IMPORTANTE: Estrategia de obtención de citas (DB first, API as fallback)
-    // 1. Primero consultamos la DB local (tabla appointments) - respuesta inmediata
-    // 2. Si hay configuración de HighLevel, hacemos fallback a API en tiempo real
-    // 3. Las citas nuevas de la API se guardan en DB para cache futuro
-    // Esto garantiza mejor performance y resiliencia (funciona offline)
+    // Este GET es DB-only. El refresh contra HighLevel vive exclusivamente en
+    // POST /contacts/:id/refresh y nunca bloquea la apertura del contacto.
     const appointmentStartSort = timestampSortExpression('start_time')
-    let appointments = await db.all(
+    const appointments = includeChildren ? await db.all(
       `SELECT * FROM appointments
        WHERE contact_id = ?
-       ORDER BY ${appointmentStartSort} DESC, id DESC`,
+       ORDER BY ${appointmentStartSort} DESC, id DESC
+       LIMIT 20`,
       [id]
-    )
-
-    // Fallback: Intentar obtener citas de HighLevel API en tiempo real.
-    // Chat puede pedir refreshExternalAppointments=false para pintar mensajes sin esperar APIs externas.
-    if (shouldRefreshExternalAppointments) {
-      try {
-        // Obtener configuración de HighLevel
-        const config = await db.get(
-          'SELECT location_id, api_token FROM highlevel_config LIMIT 1'
-        )
-
-        if (config && config.api_token) {
-          logger.info(`Obteniendo citas de HighLevel para contacto ${id}`)
-
-          // Usar el endpoint correcto: /contacts/{contactId}/appointments
-          const eventsResponse = await fetch(
-            `https://services.leadconnectorhq.com/contacts/${id}/appointments`,
-            {
-              headers: {
-                'Authorization': `Bearer ${config.api_token}`,
-                'Version': '2021-07-28'
-              }
-            }
-          )
-
-          if (eventsResponse.ok) {
-            const eventsData = await eventsResponse.json()
-
-            if (eventsData.events && eventsData.events.length > 0) {
-              logger.info(`Encontradas ${eventsData.events.length} citas en HighLevel para contacto ${id}`)
-
-              // Guardar las citas en la DB para cache
-              for (const appointment of eventsData.events) {
-                await db.run(`
-                  INSERT INTO appointments (
-                    id, calendar_id, contact_id, location_id, title,
-                    status, appointment_status, assigned_user_id, notes,
-                    address, start_time, end_time, date_added, date_updated
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT (id) DO UPDATE SET
-                    title = excluded.title,
-                    status = excluded.status,
-                    appointment_status = excluded.appointment_status,
-                    start_time = excluded.start_time,
-                    end_time = excluded.end_time,
-                    date_updated = excluded.date_updated
-                `, [
-                  appointment.id,
-                  appointment.calendarId,
-                  appointment.contactId,
-                  appointment.locationId || config.location_id,
-                  appointment.title || '(Sin título)',
-                  appointment.status,
-                  appointment.appointmentStatus,
-                  appointment.assignedUserId,
-                  appointment.notes,
-                  appointment.address,
-                  appointment.startTime ? new Date(appointment.startTime) : null,
-                  appointment.endTime ? new Date(appointment.endTime) : null,
-                  appointment.dateAdded ? new Date(appointment.dateAdded) : new Date(),
-                  new Date()
-                ])
-              }
-
-              // Combinar con las citas locales (evitando duplicados)
-              const appointmentIds = new Set(appointments.map(a => a.id))
-              for (const appointment of eventsData.events) {
-                if (!appointmentIds.has(appointment.id)) {
-                  appointments.push({
-                    id: appointment.id,
-                    calendar_id: appointment.calendarId,
-                    contact_id: appointment.contactId,
-                    title: appointment.title,
-                    status: appointment.status,
-                    appointment_status: appointment.appointmentStatus,
-                    assigned_user_id: appointment.assignedUserId,
-                    notes: appointment.notes,
-                    address: appointment.address,
-                    start_time: appointment.startTime,
-                    end_time: appointment.endTime
-                  })
-                }
-              }
-
-              logger.info(`Total de citas después de combinar: ${appointments.length}`)
-            } else {
-              logger.info(`No se encontraron citas en HighLevel para contacto ${id}`)
-            }
-          } else {
-            const errorText = await eventsResponse.text()
-            logger.warn(`Error obteniendo citas de HighLevel: ${eventsResponse.status} - ${errorText.substring(0, 100)}`)
-          }
-        }
-      } catch (error) {
-        logger.warn(`No se pudieron obtener citas de HighLevel para contacto ${id}: ${error.message}`)
-        // Continuar con las citas locales si falla HighLevel
-      }
-    }
-
-    const normalizedPhone = normalizePhone(contact.phone)
-    let relatedContactIds = []
-
-    if (normalizedPhone) {
-      const relatedContacts = await db.all(
-        `SELECT id, phone
-         FROM contacts
-         WHERE id != ?
-           AND phone IS NOT NULL
-           AND phone != ''
-           AND phone LIKE ?`,
-        [id, `%${normalizedPhone}`]
-      )
-
-      relatedContactIds = relatedContacts
-        .filter(row => normalizePhone(row.phone) === normalizedPhone)
-        .map(row => row.id)
-    }
-
-    if (relatedContactIds.length > 0) {
-      const placeholders = relatedContactIds.map(() => '?').join(', ')
-      const relatedAppointments = await db.all(
-        `SELECT *
-         FROM appointments
-         WHERE contact_id IN (${placeholders})
-         ORDER BY ${appointmentStartSort} DESC, id DESC`,
-        relatedContactIds
-      )
-      appointments = appointments.concat(relatedAppointments)
-    }
+    ) : []
 
     const dedupedAppointments = dedupeAppointments(appointments)
-    const sortedAppointmentsAsc = [...dedupedAppointments].sort((a, b) =>
-      parseSortableTimestamp(a.start_time) - parseSortableTimestamp(b.start_time)
-    )
 
-    // Calcular primera cita y próxima cita
     let firstAppointmentDate = null
     let nextAppointmentDate = null
-
-    if (sortedAppointmentsAsc.length > 0) {
-      firstAppointmentDate = sortedAppointmentsAsc[0].start_time
-
-      const now = new Date()
-      const futureAppointments = sortedAppointmentsAsc.filter(apt => {
-        if (!apt?.start_time) return false
-        const aptDate = new Date(apt.start_time)
-        if (Number.isNaN(aptDate.getTime()) || aptDate <= now) {
-          return false
-        }
-        const statusValue = String(apt.appointment_status || apt.status || '').toLowerCase()
-        return !APPOINTMENT_CANCELED_STATUSES.has(statusValue)
-      })
-
-      if (futureAppointments.length > 0) {
-        nextAppointmentDate = futureAppointments[0].start_time
-      }
+    if (Number(contact.appointments_total || 0) > 0) {
+      const [firstAppointment, nextAppointment] = await Promise.all([
+        db.get(
+          `SELECT start_time
+           FROM appointments
+           WHERE contact_id = ? AND start_time IS NOT NULL
+           ORDER BY start_time ASC, id ASC
+           LIMIT 1`,
+          [id]
+        ),
+        db.get(
+          `SELECT start_time
+           FROM appointments
+           WHERE contact_id = ?
+             AND start_time > CURRENT_TIMESTAMP
+             AND LOWER(COALESCE(appointment_status, status, '')) NOT IN (${Array.from(APPOINTMENT_CANCELED_STATUSES).map(() => '?').join(', ')})
+           ORDER BY start_time ASC, id ASC
+           LIMIT 1`,
+          [id, ...APPOINTMENT_CANCELED_STATUSES]
+        )
+      ])
+      firstAppointmentDate = firstAppointment?.start_time || null
+      nextAppointmentDate = nextAppointment?.start_time || null
     }
 
     const appointmentsOrdered = dedupedAppointments.sort((a, b) =>
@@ -3967,6 +4219,8 @@ ${CONTACT_META_PROFILE_SELECT},
       lastPurchase: contact.last_customer_payment_date || contact.last_purchase_date,
       purchases: customerPaymentsCount,
       successfulPaymentsCount: customerPaymentsCount,
+      paymentsTotal: Number(contact.payment_records_count || 0),
+      hasPaymentRecords: Boolean(contact.has_payment_records),
       source: contact.source,
       ad_name: resolvedAdFields.ad_name,
       ad_id: resolvedAdFields.ad_id,
@@ -3984,6 +4238,8 @@ ${CONTACT_META_PROFILE_SELECT},
       notes: '',
       payments: payments.map(serializePaymentRowAmount),
       appointments: appointmentsOrdered,
+      appointmentsTotal: Number(contact.appointments_total || appointmentsOrdered.length),
+      appointmentsTruncated: Number(contact.appointments_total || 0) > appointmentsOrdered.length,
       firstAppointmentDate,
       nextAppointmentDate,
       hasAppointments: Boolean(contact.has_appointments),
@@ -4033,6 +4289,182 @@ ${CONTACT_META_PROFILE_SELECT},
       success: false,
       error: 'Error obteniendo contacto'
     })
+  }
+}
+
+async function assertVisibleContact(contactId) {
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
+  return db.get(
+    `SELECT id FROM contacts
+     WHERE id = ? AND deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
+     LIMIT 1`,
+    [contactId]
+  )
+}
+
+function createContactRequestAbortScope(res) {
+  const controller = new AbortController()
+  const abort = () => {
+    if (!res?.writableEnded && !controller.signal.aborted) controller.abort()
+  }
+  if (typeof res?.once === 'function') res.once('close', abort)
+  return {
+    signal: controller.signal,
+    cleanup() {
+      if (typeof res?.off === 'function') res.off('close', abort)
+      else if (typeof res?.removeListener === 'function') res.removeListener('close', abort)
+    }
+  }
+}
+
+export const getContactPayments = async (req, res) => {
+  const requestScope = createContactRequestAbortScope(res)
+  try {
+    const contactId = cleanString(req.params?.id)
+    if (!contactId || !(await assertVisibleContact(contactId))) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
+    }
+    const page = await listContactPaymentsPage({
+      contactId,
+      cursor: req.query?.cursor,
+      limit: req.query?.limit,
+      signal: requestScope.signal
+    })
+    if (requestScope.signal.aborted || res?.writableEnded) return undefined
+    return res.json({ success: true, data: page })
+  } catch (error) {
+    if (requestScope.signal.aborted) return undefined
+    const status = error?.status === 400 ? 400 : 500
+    logger.error(`Error obteniendo pagos del contacto ${req.params?.id}: ${error.message}`)
+    return res.status(status).json({
+      success: false,
+      error: status === 400 ? error.message : 'Error obteniendo pagos del contacto'
+    })
+  } finally {
+    requestScope.cleanup()
+  }
+}
+
+export const getContactAppointments = async (req, res) => {
+  const requestScope = createContactRequestAbortScope(res)
+  try {
+    const contactId = cleanString(req.params?.id)
+    if (!contactId || !(await assertVisibleContact(contactId))) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
+    }
+    const page = await listContactAppointmentsPage({
+      contactId,
+      cursor: req.query?.cursor,
+      limit: req.query?.limit,
+      signal: requestScope.signal
+    })
+    if (requestScope.signal.aborted || res?.writableEnded) return undefined
+    return res.json({ success: true, data: page })
+  } catch (error) {
+    if (requestScope.signal.aborted) return undefined
+    const status = error?.status === 400 ? 400 : 500
+    logger.error(`Error obteniendo citas del contacto ${req.params?.id}: ${error.message}`)
+    return res.status(status).json({
+      success: false,
+      error: status === 400 ? error.message : 'Error obteniendo citas del contacto'
+    })
+  } finally {
+    requestScope.cleanup()
+  }
+}
+
+async function refreshContactHighLevelAppointments(contactId) {
+  const ghlContactId = await getGhlContactIdForLocalContact(contactId)
+  if (!ghlContactId) return { refreshed: 0, reason: 'not_linked' }
+  const config = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1')
+  if (!config?.api_token) return { refreshed: 0, reason: 'not_connected' }
+
+  const response = await fetch(
+    `https://services.leadconnectorhq.com/contacts/${encodeURIComponent(ghlContactId)}/appointments`,
+    {
+      headers: {
+        Authorization: `Bearer ${config.api_token}`,
+        Version: '2021-07-28'
+      }
+    }
+  )
+  if (!response.ok) throw new Error(`HighLevel respondió ${response.status}`)
+  const payload = await response.json()
+  const appointments = Array.isArray(payload?.events) ? payload.events.slice(0, 500) : []
+  const refreshedAt = new Date().toISOString()
+
+  for (const appointment of appointments) {
+    if (!cleanString(appointment?.id)) continue
+    await db.run(`
+      INSERT INTO appointments (
+        id, calendar_id, contact_id, location_id, title, status,
+        appointment_status, assigned_user_id, notes, address,
+        start_time, end_time, date_added, date_updated
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET
+        calendar_id = excluded.calendar_id,
+        contact_id = excluded.contact_id,
+        title = excluded.title,
+        status = excluded.status,
+        appointment_status = excluded.appointment_status,
+        start_time = excluded.start_time,
+        end_time = excluded.end_time,
+        date_updated = excluded.date_updated
+    `, [
+      appointment.id,
+      appointment.calendarId || null,
+      contactId,
+      appointment.locationId || config.location_id || null,
+      appointment.title || '(Sin título)',
+      appointment.status || null,
+      appointment.appointmentStatus || null,
+      appointment.assignedUserId || null,
+      appointment.notes || null,
+      appointment.address || null,
+      appointment.startTime || null,
+      appointment.endTime || null,
+      appointment.dateAdded || refreshedAt,
+      appointment.dateUpdated || refreshedAt
+    ])
+  }
+  return { refreshed: appointments.length }
+}
+
+export const refreshContactExternalData = async (req, res) => {
+  try {
+    const contactId = cleanString(req.params?.id)
+    if (!contactId || !(await assertVisibleContact(contactId))) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
+    }
+    const requested = Array.isArray(req.body?.sections)
+      ? req.body.sections.map(value => cleanString(value)).filter(Boolean)
+      : ['profile', 'appointments', 'conversationStatuses']
+    const sections = new Set(requested)
+
+    const run = async () => {
+      const tasks = []
+      if (sections.has('profile')) {
+        tasks.push(
+          db.get('SELECT * FROM contacts WHERE id = ? LIMIT 1', [contactId])
+            .then(contact => contact ? warmWhatsAppProfilePicturesForRows([contact], { apiLimit: 1, qrLimit: 1 }) : null)
+        )
+      }
+      if (sections.has('appointments')) tasks.push(refreshContactHighLevelAppointments(contactId))
+      if (sections.has('conversationStatuses')) tasks.push(refreshHighLevelConversationMessageStatuses(contactId))
+      await Promise.allSettled(tasks)
+    }
+
+    if (typeof setImmediate === 'function') setImmediate(() => void run())
+    else setTimeout(() => void run(), 0)
+
+    return res.status(202).json({
+      success: true,
+      data: { queued: true, contactId, sections: [...sections] }
+    })
+  } catch (error) {
+    logger.error(`Error programando refresh del contacto ${req.params?.id}: ${error.message}`)
+    return res.status(500).json({ success: false, error: 'No se pudo programar el refresh del contacto' })
   }
 }
 
@@ -4206,67 +4638,73 @@ ${CONTACT_META_PROFILE_SELECT}
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
-    const contacts = await db.all(
-      `WITH payment_stats AS (
+    const useProjectedActivity = await isContactListProjectionReady()
+    const pagePaymentStatsCte = useProjectedActivity ? '' : `,
+      payment_stats AS (
         SELECT
-          contact_id,
-          SUM(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                AND ${nonTestPaymentCondition()}
-                THEN amount ELSE 0 END) AS total_paid,
-          SUM(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                AND ${nonTestPaymentCondition()}
+          p.contact_id,
+          SUM(CASE WHEN p.amount > 0
+                AND LOWER(p.status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                AND ${nonTestPaymentCondition('p')}
+                THEN p.amount ELSE 0 END) AS total_paid,
+          SUM(CASE WHEN p.amount > 0
+                AND LOWER(p.status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                AND ${nonTestPaymentCondition('p')}
                 THEN 1 ELSE 0 END) AS purchases_count,
-          SUM(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+          SUM(CASE WHEN p.amount > 0
+                AND LOWER(p.status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
                 THEN 1 ELSE 0 END) AS customer_payments_count,
-          MAX(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                AND ${nonTestPaymentCondition()}
-                THEN date ELSE NULL END) AS last_purchase_date,
-          MAX(CASE
-                WHEN amount > 0 AND LOWER(status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
-                THEN COALESCE(paid_at, date, created_at) ELSE NULL END) AS last_customer_payment_date
-        FROM payments
-        GROUP BY contact_id
-      )
+          MAX(CASE WHEN p.amount > 0
+                AND LOWER(p.status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                AND ${nonTestPaymentCondition('p')}
+                THEN p.date ELSE NULL END) AS last_purchase_date,
+          MAX(CASE WHEN p.amount > 0
+                AND LOWER(p.status) IN ('succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success')
+                THEN COALESCE(p.paid_at, p.date, p.created_at) ELSE NULL END) AS last_customer_payment_date
+        FROM payments p
+        JOIN ranked_contacts ranked ON ranked.id = p.contact_id
+        GROUP BY p.contact_id
+      )`
+    const activityAlias = useProjectedActivity ? 'cla' : 'ps'
+    const activityJoin = useProjectedActivity
+      ? 'LEFT JOIN contact_list_activity cla ON cla.contact_id = c.id'
+      : 'LEFT JOIN payment_stats ps ON ps.contact_id = c.id'
+    const contacts = await db.all(
+      `WITH ranked_contacts AS (
+        SELECT c.id, ${searchRank.expression} AS search_rank
+        FROM contacts c
+        WHERE ${searchClause.condition} AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
+        ORDER BY search_rank DESC, ${timestampSortExpression('c.created_at')} DESC, c.id DESC
+        LIMIT 20
+      )${pagePaymentStatsCte}
       SELECT
         c.id,
         c.full_name,
         c.email,
         c.phone,
-        COALESCE(ps.total_paid, 0) AS total_paid,
-        COALESCE(ps.purchases_count, 0) AS purchases_count,
-        COALESCE(ps.customer_payments_count, ps.purchases_count, 0) AS customer_payments_count,
+        COALESCE(${activityAlias}.total_paid, 0) AS total_paid,
+        COALESCE(${activityAlias}.purchases_count, 0) AS purchases_count,
+        COALESCE(${activityAlias}.customer_payments_count, ${activityAlias}.purchases_count, 0) AS customer_payments_count,
         c.appointment_date,
-        ps.last_purchase_date AS last_purchase_date,
-        ps.last_customer_payment_date AS last_customer_payment_date,
+        ${activityAlias}.last_purchase_date AS last_purchase_date,
+        ${activityAlias}.last_customer_payment_date AS last_customer_payment_date,
         c.created_at,
         c.source,
         c.attribution_ad_name,
         c.attribution_ad_id,
 ${CONTACT_WHATSAPP_PROFILE_SELECTS},
 ${CONTACT_META_PROFILE_SELECT},
+        ${useProjectedActivity
+          ? 'COALESCE(cla.active_appointments_count, 0) > 0'
+          : `(SELECT COUNT(*) > 0 FROM appointments WHERE contact_id = c.id AND ${ACTIVE_APPOINTMENT_CONDITION})`
+        } AS has_appointments,
         (
-          SELECT COUNT(*) > 0
-          FROM appointments
-          WHERE contact_id = c.id
-            AND ${ACTIVE_APPOINTMENT_CONDITION}
-        ) AS has_appointments,
-        (
-          COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
-          OR EXISTS (
-            SELECT 1
-            FROM appointment_attendance_signals aas
-            WHERE aas.contact_id = c.id
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM appointments
-            WHERE contact_id = c.id
-              AND ${ATTENDED_APPOINTMENT_CONDITION}
-          )
+          ${useProjectedActivity
+            ? 'COALESCE(cla.customer_payments_count, 0) > 0 OR COALESCE(cla.attendance_signals_count, 0) > 0 OR COALESCE(cla.attended_appointments_count, 0) > 0'
+            : `COALESCE(ps.customer_payments_count, ps.purchases_count, 0) > 0
+              OR EXISTS (SELECT 1 FROM appointment_attendance_signals aas WHERE aas.contact_id = c.id)
+              OR EXISTS (SELECT 1 FROM appointments WHERE contact_id = c.id AND ${ATTENDED_APPOINTMENT_CONDITION})`
+          }
         ) AS has_showed_appointment,
         (
           SELECT COUNT(*) > 0
@@ -4274,11 +4712,10 @@ ${CONTACT_META_PROFILE_SELECT},
           WHERE contact_id = c.id
             AND ${CONFIRMATION_BADGE_CONDITION}
         ) AS has_confirmation_badge
-      FROM contacts c
-      LEFT JOIN payment_stats ps ON ps.contact_id = c.id
-      WHERE ${searchClause.condition} AND c.deleted_at IS NULL${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
-      ORDER BY ${searchRank.expression} DESC, ${timestampSortExpression('c.created_at')} DESC, c.id DESC
-      LIMIT 20`,
+      FROM ranked_contacts ranked
+      JOIN contacts c ON c.id = ranked.id
+      ${activityJoin}
+      ORDER BY ranked.search_rank DESC, ${timestampSortExpression('c.created_at')} DESC, c.id DESC`,
       [...searchClause.params, ...searchRank.params]
     )
     queueWhatsAppProfilePictureWarmup(contacts, { limit: 20 })
@@ -4660,11 +5097,10 @@ export const getContactStats = async (req, res) => {
 /**
  * Actualiza las estadísticas de todos los contactos (total_paid, purchases_count, last_purchase_date)
  */
-// CNT-010: `updateContactsStats()` hace un UPDATE full-table con subconsultas y es
-// caro en memoria (riesgo de OOM en el proceso de 512MB). El endpoint /sync-stats lo
-// dispara a demanda, así que ráfagas o doble-click podían encadenar varias pasadas
-// full-table simultáneas. Coalescemos en una sola ejecución en curso por proceso:
-// las peticiones concurrentes esperan/reusan el mismo resultado en vez de lanzar más.
+// CNT-010: aunque `updateContactsStats()` ya trabaja por lotes, sigue siendo una
+// reparación histórica costosa. Coalescemos ráfagas o doble-clicks en una sola
+// ejecución por proceso: las peticiones concurrentes esperan/reusan el mismo
+// resultado en vez de lanzar más recorridos del CRM.
 let inFlightStatsSync = null
 
 export const syncContactsStats = async (req, res) => {
@@ -5589,7 +6025,6 @@ export const getContactJourney = async (req, res) => {
   try {
     const { id } = req.params
     const includeBusinessMessages = String(req.query?.includeBusinessMessages || '').toLowerCase() === 'true'
-    const refreshExternalStatuses = String(req.query?.refreshExternalStatuses ?? 'true').toLowerCase() !== 'false'
     const chatMessagesOnly = isTruthyQueryValue(
       req.query?.chatMessagesOnly ?? req.query?.chatOnly ?? req.query?.messagesOnly
     )
@@ -5597,14 +6032,23 @@ export const getContactJourney = async (req, res) => {
       req.query?.chatActivityOnly ?? req.query?.activityOnly
     )
     const journeyMessageLimit = parseJourneyMessageLimit(
-      req.query?.messageLimit ?? req.query?.messagesLimit ?? req.query?.conversationMessageLimit
-    )
+      req.query?.messageLimit ??
+      req.query?.messagesLimit ??
+      req.query?.conversationMessageLimit ??
+      req.query?.limit
+    ) || (chatMessagesOnly ? CONVERSATION_DEFAULT_PAGE_LIMIT : JOURNEY_DEFAULT_PAGE_LIMIT)
     const journeyMessageBefore = parseJourneyMessageBefore(
-      req.query?.beforeMessageDate ?? req.query?.messageBeforeDate ?? req.query?.beforeMessage
+      req.query?.beforeMessageDate ??
+      req.query?.messageBeforeDate ??
+      req.query?.beforeMessage ??
+      req.query?.beforeEventDate
     )
     const journeyMessageBeforeCursor = journeyMessageBefore
       ? parseJourneyMessageCursor(
-        req.query?.beforeMessageCursor ?? req.query?.messageBeforeCursor ?? req.query?.beforeCursor
+        req.query?.beforeMessageCursor ??
+        req.query?.messageBeforeCursor ??
+        req.query?.beforeCursor ??
+        req.query?.beforeEventCursor
       )
       : null
     const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
@@ -5653,15 +6097,17 @@ export const getContactJourney = async (req, res) => {
           `SELECT id, title, appointment_status, status, start_time, end_time, address, notes, date_added
            FROM appointments
            WHERE contact_id = ?
-           ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
-          [id]
+           ORDER BY ${timestampSortExpression('date_added')} DESC, id DESC
+           LIMIT ?`,
+          [id, journeyMessageLimit]
         ),
         db.all(
           `SELECT id, amount, currency, status, title, description, payment_method AS type, payment_provider, date, created_at
            FROM payments
            WHERE ${successfulPaymentsCondition}
-           ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC`,
-          [id]
+           ORDER BY ${timestampSortExpression('date')} DESC, ${timestampSortExpression('created_at')} DESC, id DESC
+           LIMIT ?`,
+          [id, journeyMessageLimit]
         ),
         db.all(
           `SELECT
@@ -5680,8 +6126,9 @@ export const getContactJourney = async (req, res) => {
              AND w.status = 'done'
              AND w.result = 'confirmed'
              AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
-           ORDER BY ${timestampSortExpression(confirmationTimestampExpression)} ASC, w.id ASC`,
-          [id]
+           ORDER BY ${timestampSortExpression(confirmationTimestampExpression)} DESC, w.id DESC
+           LIMIT ?`,
+          [id, journeyMessageLimit]
         ).catch(() => [])
       ])
 
@@ -5774,9 +6221,6 @@ export const getContactJourney = async (req, res) => {
     const metaContactIdPlaceholders = metaPersonContactIds.map(() => '?').join(', ')
 
     const journey = []
-    if (refreshExternalStatuses) {
-      await refreshHighLevelConversationMessageStatuses(id)
-    }
 
     const successfulPaymentsCondition = `
       contact_id = ?
@@ -5833,38 +6277,24 @@ export const getContactJourney = async (req, res) => {
     let sessions = []
 
     if (!chatMessagesOnly) {
-      const contactVisitorId = cleanString(contact.visitor_id)
-      if (isTrustedTrackingVisitorId(contactVisitorId)) {
-        sessions = await db.all(
-          `SELECT * FROM sessions
-           WHERE contact_id = ? OR visitor_id = ?
-           ORDER BY started_at ASC`,
-          [id, contactVisitorId]
-        )
-      } else {
-        if (contactVisitorId) {
-          logger.warn(`Journey ignoró visitor_id no confiable para contacto ${id}: ${contactVisitorId}`)
-        }
-        sessions = await db.all(
-          `SELECT * FROM sessions
-           WHERE contact_id = ?
-           ORDER BY started_at ASC`,
-          [id]
-        )
+      const sessionPage = await loadContactJourneySessionRows(contact, {
+        limit: journeyMessageLimit,
+        beforeDate: journeyMessageBefore,
+        beforeCursor: journeyMessageBeforeCursor
+      })
+      sessions = sessionPage.rows
+      if (sessionPage.ignoredVisitorId) {
+        logger.warn(`Journey ignoró visitor_id no confiable para contacto ${id}: ${sessionPage.ignoredVisitorId}`)
+      }
+      if (sessionPage.matchedByEmail) {
+        logger.info(`📍 ${sessions.length} eventos de sessions encontrados por email para contacto ${id}`)
       }
 
-      // Fallback por email si no encontró sesiones
-      if (sessions.length === 0 && contact.email) {
-        sessions = await db.all(
-          `SELECT * FROM sessions WHERE email = ? ORDER BY started_at ASC`,
-          [contact.email]
-        )
-        if (sessions.length > 0) {
-          logger.info(`📍 ${sessions.length} sessions encontradas por email para contacto ${id}`)
-        }
-      }
-
-      const videoEngagements = await loadContactVideoEngagements(contact)
+      const videoEngagements = await loadContactVideoEngagements(contact, {
+        limit: journeyMessageLimit,
+        beforeDate: journeyMessageBefore,
+        beforeCursor: journeyMessageBeforeCursor
+      })
       const sessionSummaries = summarizeJourneySessionRows(sessions)
       const sessionJourneyEntries = sessionSummaries.map(session => ({
         session,
@@ -5887,6 +6317,8 @@ export const getContactJourney = async (req, res) => {
         journey.push({
           type: 'video_playback',
           date: video.first_event_at || video.last_event_at || contact.created_at,
+          cursorDate: video.first_event_at || video.last_event_at || contact.created_at,
+          cursorKey: `video_playback:${getVideoEngagementKey(video)}`,
           data: {
             ...video,
             standalone: true
@@ -5897,19 +6329,21 @@ export const getContactJourney = async (req, res) => {
 
     // 2. Movimientos de WhatsApp del cliente: diario antes del pago, atribuidos despues.
     const whatsappJourneyEvents = []
+    const whatsappAttributionMessageTimestamp = 'created_at'
     const whatsappMessages = await db.all(
       `SELECT *
        FROM (
-         SELECT *
+         SELECT whatsapp_attribution.*,
+                ${losslessTimestampCursorProjection(whatsappAttributionMessageTimestamp)} AS journey_message_cursor_date
          FROM whatsapp_attribution
          WHERE contact_id = ?
          ${journeyMessageBeforeClause(
-           'created_at',
+           whatsappAttributionMessageTimestamp,
            journeyMessageCursorSqlExpression('whatsapp_attribution', 'id'),
            journeyMessageBefore,
            journeyMessageBeforeCursor
          )}
-         ORDER BY ${timestampSortExpression('created_at')} DESC,
+         ORDER BY ${timestampSortExpression(whatsappAttributionMessageTimestamp)} DESC,
                   ${journeyMessageCursorSqlExpression('whatsapp_attribution', 'id')} DESC
          ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_attribution
@@ -5953,6 +6387,7 @@ export const getContactJourney = async (req, res) => {
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.created_at,
+        cursorDate: msg.journey_message_cursor_date,
         cursorKey: buildJourneyMessageCursorKey('whatsapp_attribution', msg.id),
         data: {
           ...data,
@@ -5962,6 +6397,7 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
+    const whatsappApiMessageTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
     const whatsappApiMessages = await db.all(
       `SELECT *
        FROM (
@@ -5995,7 +6431,8 @@ export const getContactJourney = async (req, res) => {
           msg.raw_payload_json,
           msg.context_json,
           COALESCE(NULLIF(attr.referral_json, 'null'), msg.referral_json) as referral_json,
-          COALESCE(msg.message_timestamp, msg.created_at) as journey_message_date,
+          ${whatsappApiMessageTimestamp} as journey_message_date,
+          ${losslessTimestampCursorProjection(whatsappApiMessageTimestamp)} AS journey_message_cursor_date,
           COALESCE(attr.id, '') as attribution_id,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
           COALESCE(attr.detected_source_id, msg.detected_source_id) as detected_source_id,
@@ -6017,12 +6454,12 @@ export const getContactJourney = async (req, res) => {
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
          ${journeyMessageBeforeClause(
-           'COALESCE(msg.message_timestamp, msg.created_at)',
+           whatsappApiMessageTimestamp,
            journeyMessageCursorSqlExpression('whatsapp_api', 'msg.id'),
            journeyMessageBefore,
            journeyMessageBeforeCursor
          )}
-       ORDER BY ${coalescedTimestampSortExpression('msg.message_timestamp', 'msg.created_at')} DESC,
+       ORDER BY ${timestampSortExpression(whatsappApiMessageTimestamp)} DESC,
                 ${journeyMessageCursorSqlExpression('whatsapp_api', 'msg.id')} DESC
        ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_api_messages
@@ -6107,6 +6544,7 @@ export const getContactJourney = async (req, res) => {
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.message_timestamp || msg.created_at,
+        cursorDate: msg.journey_message_cursor_date,
         cursorKey: buildJourneyMessageCursorKey('whatsapp_api', msg.whatsapp_api_message_id),
         data: {
           ...data,
@@ -6119,6 +6557,7 @@ export const getContactJourney = async (req, res) => {
     const enrichedWhatsAppJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(whatsappJourneyEvents)
     addWhatsAppJourneyEvents(enrichedWhatsAppJourneyEvents)
 
+    const metaSocialMessageTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
     const metaSocialMessages = await db.all(
       `SELECT *
        FROM (
@@ -6150,7 +6589,8 @@ export const getContactJourney = async (req, res) => {
           post.image_url AS post_image_url,
           post.permalink AS post_permalink,
           post.post_type AS post_type,
-          COALESCE(msg.message_timestamp, msg.created_at) as journey_message_date,
+          ${metaSocialMessageTimestamp} as journey_message_date,
+          ${losslessTimestampCursorProjection(metaSocialMessageTimestamp)} AS journey_message_cursor_date,
           profile.profile_name,
           profile.username,
           profile.meta_user_id
@@ -6163,12 +6603,12 @@ export const getContactJourney = async (req, res) => {
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
          ${journeyMessageBeforeClause(
-           'COALESCE(msg.message_timestamp, msg.created_at)',
+           metaSocialMessageTimestamp,
            journeyMessageCursorSqlExpression('meta_social', 'msg.id'),
            journeyMessageBefore,
            journeyMessageBeforeCursor
          )}
-       ORDER BY ${coalescedTimestampSortExpression('msg.message_timestamp', 'msg.created_at')} DESC,
+       ORDER BY ${timestampSortExpression(metaSocialMessageTimestamp)} DESC,
                 ${journeyMessageCursorSqlExpression('meta_social', 'msg.id')} DESC
        ${optionalLimitClause(journeyMessageLimit)}
        ) recent_meta_social_messages
@@ -6184,10 +6624,9 @@ export const getContactJourney = async (req, res) => {
       )
     )
 
-    const refreshedPostPreviews = await refreshMetaSocialPostPreviewsForChat(metaSocialMessages).catch(error => {
-      logger.warn(`[Chat] No se pudieron renovar previews de publicaciones Meta para ${id}: ${error.message}`)
-      return new Map()
-    })
+    // El GET usa únicamente previews persistidos. Renovarlos implica una llamada
+    // a Meta y queda reservado al POST explícito de refresh.
+    const refreshedPostPreviews = new Map()
     const metaSocialJourneyEvents = []
 
     metaSocialMessages.forEach(msg => {
@@ -6210,6 +6649,7 @@ export const getContactJourney = async (req, res) => {
       metaSocialJourneyEvents.push({
         type: 'meta_message',
         date: msg.message_timestamp || msg.created_at,
+        cursorDate: msg.journey_message_cursor_date,
         cursorKey: buildJourneyMessageCursorKey('meta_social', msg.meta_social_message_id),
         data: {
           source,
@@ -6268,6 +6708,7 @@ export const getContactJourney = async (req, res) => {
     const enrichedMetaSocialJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(metaSocialJourneyEvents)
     journey.push(...enrichedMetaSocialJourneyEvents)
 
+	    const emailMessageTimestamp = 'COALESCE(message_timestamp, created_at)'
 	    const emailMessages = await db.all(
 	      `SELECT *
 	       FROM (
@@ -6287,7 +6728,8 @@ export const getContactJourney = async (req, res) => {
 	          raw_payload_json,
 	          message_timestamp,
 	          created_at,
-	          COALESCE(message_timestamp, created_at) as journey_message_date
+	          ${emailMessageTimestamp} as journey_message_date,
+	          ${losslessTimestampCursorProjection(emailMessageTimestamp)} AS journey_message_cursor_date
 	       FROM email_messages
 	       WHERE contact_id = ?
 	         AND (
@@ -6295,12 +6737,12 @@ export const getContactJourney = async (req, res) => {
 	           OR LOWER(COALESCE(direction, 'outbound')) NOT IN (${outboundMessageDirectionPlaceholders})
 	         )
 	         ${journeyMessageBeforeClause(
-	           'COALESCE(message_timestamp, created_at)',
+	           emailMessageTimestamp,
 	           journeyMessageCursorSqlExpression('email', 'id'),
 	           journeyMessageBefore,
 	           journeyMessageBeforeCursor
 	         )}
-	       ORDER BY ${coalescedTimestampSortExpression('message_timestamp', 'created_at')} DESC,
+	       ORDER BY ${timestampSortExpression(emailMessageTimestamp)} DESC,
 	                ${journeyMessageCursorSqlExpression('email', 'id')} DESC
 	       ${optionalLimitClause(journeyMessageLimit)}
 	       ) recent_email_messages
@@ -6323,6 +6765,7 @@ export const getContactJourney = async (req, res) => {
       journey.push({
         type: 'email_message',
         date: msg.message_timestamp || msg.created_at,
+        cursorDate: msg.journey_message_cursor_date,
         cursorKey: buildJourneyMessageCursorKey('email', msg.email_message_id),
         data: {
           source: 'Correo',
@@ -6347,41 +6790,53 @@ export const getContactJourney = async (req, res) => {
 
     const appointmentConfirmationTimestampExpression = 'COALESCE(w.processed_at, w.updated_at, w.created_at)'
     const appointmentConfirmationCards = await db.all(
-      `SELECT
-         w.id,
-         w.appointment_id,
-         w.result_detail,
-         w.processed_at,
-         w.updated_at,
-         w.created_at,
-         a.title,
-         a.start_time,
-         a.end_time
-       FROM appointment_confirmation_windows w
-       LEFT JOIN appointments a ON a.id = w.appointment_id
-       WHERE w.contact_id = ?
-         AND w.status = 'done'
-         AND w.result = 'confirmed'
-         AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
-         ${journeyMessageBeforeClause(
-           appointmentConfirmationTimestampExpression,
-           journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id'),
-           journeyMessageBefore,
-           journeyMessageBeforeCursor
-         )}
-       ORDER BY ${coalescedTimestampSortExpression('w.processed_at', 'w.updated_at', 'w.created_at')} ASC,
-                ${journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id')} ASC`,
-      appendJourneyMessageBeforeParams(
-        [id],
-        journeyMessageBefore,
-        journeyMessageBeforeCursor
+      `SELECT *
+       FROM (
+         SELECT
+           w.id,
+           w.appointment_id,
+           w.result_detail,
+           w.processed_at,
+           w.updated_at,
+           w.created_at,
+           ${appointmentConfirmationTimestampExpression} AS journey_message_date,
+           ${losslessTimestampCursorProjection(appointmentConfirmationTimestampExpression)} AS journey_message_cursor_date,
+           a.title,
+           a.start_time,
+           a.end_time
+         FROM appointment_confirmation_windows w
+         LEFT JOIN appointments a ON a.id = w.appointment_id
+         WHERE w.contact_id = ?
+           AND w.status = 'done'
+           AND w.result = 'confirmed'
+           AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
+           ${journeyMessageBeforeClause(
+             appointmentConfirmationTimestampExpression,
+             journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id'),
+             journeyMessageBefore,
+             journeyMessageBeforeCursor
+           )}
+         ORDER BY ${timestampSortExpression(appointmentConfirmationTimestampExpression)} DESC,
+                  ${journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id')} DESC
+         ${optionalLimitClause(journeyMessageLimit)}
+       ) recent_appointment_confirmations
+       ORDER BY ${timestampSortExpression('journey_message_date')} ASC,
+                ${journeyMessageCursorSqlExpression('appointment_confirmation', 'id')} ASC`,
+      appendOptionalLimitParam(
+        appendJourneyMessageBeforeParams(
+          [id],
+          journeyMessageBefore,
+          journeyMessageBeforeCursor
+        ),
+        journeyMessageLimit
       )
     ).catch(() => [])
 
     appointmentConfirmationCards.forEach(card => {
       journey.push({
         type: 'appointment_confirmation',
-        date: card.processed_at || card.updated_at || card.created_at,
+        date: card.journey_message_date || card.processed_at || card.updated_at || card.created_at,
+        cursorDate: card.journey_message_cursor_date,
         cursorKey: buildJourneyMessageCursorKey('appointment_confirmation', card.id),
         data: {
           id: card.id,
@@ -6416,6 +6871,8 @@ export const getContactJourney = async (req, res) => {
     journey.push({
       type: 'contact_created',
       date: contact.created_at,
+      cursorDate: contact.created_at,
+      cursorKey: `contact_created:${contact.id}`,
       data: {
         name: contact.full_name,
         email: contact.email,
@@ -6433,59 +6890,53 @@ export const getContactJourney = async (req, res) => {
       }
     })
 
-    // 4. TODAS las citas agendadas (filtradas por calendarios de atribución)
-    // Obtener calendarios de atribución configurados
+    // 4. Citas agendadas: página keyset acotada, filtrada por calendarios de atribución.
     const attributionConfig = await db.get(
       'SELECT config_value FROM app_config WHERE config_key = ?',
       ['attribution_calendar_ids']
     )
 
-    let appointments
-    if (attributionConfig && attributionConfig.config_value) {
-      try {
-        const calendarIds = JSON.parse(attributionConfig.config_value)
-        if (calendarIds.length > 0) {
-          const placeholders = calendarIds.map(() => '?').join(',')
-          appointments = await db.all(
-            `SELECT * FROM appointments
-             WHERE contact_id = ?
-               AND calendar_id IN (${placeholders})
-             ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
-            [id, ...calendarIds]
-          )
-        } else {
-          // Sin calendarios configurados, usar todos
-          appointments = await db.all(
-            `SELECT * FROM appointments
-             WHERE contact_id = ?
-             ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
-            [id]
-          )
-        }
-      } catch (error) {
-        logger.warn(`Error parseando calendarios de atribución: ${error.message}`)
-        // Fallback: usar todos los calendarios
-        appointments = await db.all(
-          `SELECT * FROM appointments
-           WHERE contact_id = ?
-           ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
-          [id]
-        )
-      }
-    } else {
-      // Sin configuración, usar todos los calendarios
-      appointments = await db.all(
-        `SELECT * FROM appointments
-         WHERE contact_id = ?
-         ORDER BY ${timestampSortExpression('date_added')} ASC, id ASC`,
-        [id]
-      )
+    let calendarIds = []
+    try {
+      const parsedCalendarIds = JSON.parse(attributionConfig?.config_value || '[]')
+      calendarIds = Array.isArray(parsedCalendarIds)
+        ? [...new Set(parsedCalendarIds.map(value => cleanString(value)).filter(Boolean))]
+        : []
+    } catch (error) {
+      logger.warn(`Error parseando calendarios de atribución: ${error.message}`)
     }
+    const appointmentTimestamp = 'date_added'
+    const appointmentCursorIdentity = journeyMessageCursorSqlExpression('appointment', 'id')
+    const appointmentParams = [id, ...calendarIds]
+    const appointments = await db.all(
+      `SELECT * FROM (
+         SELECT *,
+           ${losslessTimestampCursorProjection(appointmentTimestamp)} AS journey_event_cursor_date
+         FROM appointments
+         WHERE contact_id = ?
+           ${calendarIds.length ? `AND calendar_id IN (${calendarIds.map(() => '?').join(', ')})` : ''}
+           ${journeyMessageBeforeClause(
+             appointmentTimestamp,
+             appointmentCursorIdentity,
+             journeyMessageBefore,
+             journeyMessageBeforeCursor
+           )}
+         ORDER BY ${timestampSortExpression(appointmentTimestamp)} DESC, ${appointmentCursorIdentity} DESC
+         LIMIT ?
+       ) recent_appointments
+       ORDER BY ${timestampSortExpression('date_added')} ASC, ${journeyMessageCursorSqlExpression('appointment', 'id')} ASC`,
+      appendOptionalLimitParam(
+        appendJourneyMessageBeforeParams(appointmentParams, journeyMessageBefore, journeyMessageBeforeCursor),
+        journeyMessageLimit
+      )
+    )
 
     appointments.forEach(appointment => {
       journey.push({
         type: 'appointment',
         date: appointment.date_added,
+        cursorDate: appointment.journey_event_cursor_date,
+        cursorKey: buildJourneyMessageCursorKey('appointment', appointment.id),
         data: {
           title: appointment.title,
           status: appointment.appointment_status || appointment.status,
@@ -6497,18 +6948,37 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    // 5. TODOS los pagos exitosos
+    // 5. Pagos exitosos: página keyset acotada.
+    const paymentTimestamp = 'COALESCE(date, created_at)'
+    const paymentCursorIdentity = journeyMessageCursorSqlExpression('payment', 'id')
     const payments = await db.all(
-      `SELECT * FROM payments
-       WHERE ${successfulPaymentsCondition}
-       ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC`,
-      [id]
+      `SELECT * FROM (
+         SELECT *,
+           ${losslessTimestampCursorProjection(paymentTimestamp)} AS journey_event_cursor_date
+         FROM payments
+         WHERE ${successfulPaymentsCondition}
+           ${journeyMessageBeforeClause(
+             paymentTimestamp,
+             paymentCursorIdentity,
+             journeyMessageBefore,
+             journeyMessageBeforeCursor
+           )}
+         ORDER BY ${timestampSortExpression(paymentTimestamp)} DESC, ${paymentCursorIdentity} DESC
+         LIMIT ?
+       ) recent_payments
+       ORDER BY ${timestampSortExpression('COALESCE(date, created_at)')} ASC, ${journeyMessageCursorSqlExpression('payment', 'id')} ASC`,
+      appendOptionalLimitParam(
+        appendJourneyMessageBeforeParams([id], journeyMessageBefore, journeyMessageBeforeCursor),
+        journeyMessageLimit
+      )
     )
 
     payments.forEach(payment => {
       journey.push({
         type: 'payment',
-        date: payment.date,
+        date: payment.date || payment.created_at,
+        cursorDate: payment.journey_event_cursor_date,
+        cursorKey: buildJourneyMessageCursorKey('payment', payment.id),
         data: {
           id: payment.id,
           amount: serializePaymentAmount(payment.amount),
@@ -6522,14 +6992,25 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    // Ordenar TODOS los eventos por fecha cronológica
-    journey.sort((a, b) => parseSortableTimestamp(a.date) - parseSortableTimestamp(b.date))
+    // La última defensa global conserva una página estable aunque varias fuentes
+    // aporten hasta `limit` filas cada una.
+    const limitedJourney = journey
+      .filter(event => {
+        if (!journeyMessageBefore) return true
+        return compareJourneyMessagesByCursor(event, {
+          date: journeyMessageBefore,
+          cursorDate: journeyMessageBefore,
+          cursorKey: journeyMessageBeforeCursor || ''
+        }) < 0
+      })
+      .sort(compareJourneyMessagesByCursor)
+      .slice(-journeyMessageLimit)
 
-    logger.info(`Journey obtenido para contacto ${id}: ${journey.length} eventos`)
+    logger.info(`Journey obtenido para contacto ${id}: ${limitedJourney.length} eventos`)
 
     res.json({
       success: true,
-      data: journey
+      data: limitedJourney
     })
 
   } catch (error) {

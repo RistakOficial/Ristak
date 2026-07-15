@@ -49,6 +49,32 @@ test('mutaciones de proveedores revalidan el estado global', async () => {
   assert.match(highLevel, /disconnect[\s\S]*?refreshIntegrationsStatusAfter/)
 })
 
+test('la disponibilidad del agente AI no reutiliza snapshots de otra cuenta', async () => {
+  const source = await readSource('frontend/src/hooks/useAIAgentAvailability.ts')
+
+  assert.match(source, /getAuthScopedCachePrincipalFingerprint/)
+  assert.match(source, /principalFingerprint !== getAuthScopedCachePrincipalFingerprint\(\)/)
+  assert.match(source, /AUTH_PRINCIPAL_CHANGED_EVENT/)
+  assert.match(source, /currentRequestVersion === requestVersion/)
+  assert.match(source, /requestVersion \+= 1/)
+})
+
+test('el tema privado espera login y descarta respuestas de una cuenta anterior', async () => {
+  const [theme, principalCache] = await Promise.all([
+    readSource('frontend/src/contexts/ThemeContext.tsx'),
+    readSource('frontend/src/services/authPrincipalCache.ts')
+  ])
+
+  assert.match(theme, /localStorage\.getItem\('auth_token'\)/)
+  assert.match(theme, /AUTH_PRINCIPAL_CHANGED_EVENT/)
+  assert.match(theme, /requestVersion !== syncRequestVersion/)
+  assert.match(theme, /response\.status === 401/)
+  assert.match(theme, /setThemeDirState\(configuredDir \|\| DEFAULT_THEME_DIR\)/)
+  assert.match(theme, /handleAuthPrincipalChanged[\s\S]*?setThemeDirState\(DEFAULT_THEME_DIR\)/)
+  assert.match(theme, /handleAuthPrincipalChanged[\s\S]*?if \(authenticated\) void syncThemeConfig\(\)/)
+  assert.match(principalCache, /dispatchEvent\(new CustomEvent\(AUTH_PRINCIPAL_CHANGED_EVENT/)
+})
+
 test('inicializacion conecta Meta, Google Calendar y OpenAI sin mandar a Configuracion', async () => {
   const [page, context, metaService, calendarsService] = await Promise.all([
     readSource('frontend/src/pages/Initialization/Initialization.tsx'),
@@ -79,6 +105,9 @@ test('libreria de automatizaciones actualiza inmediatamente y revierte si falla'
   const deleteStart = service.indexOf('async deleteAutomation(automationId: string)')
   const deleteEnd = service.indexOf('async createFolder', deleteStart)
   const deleteSource = service.slice(deleteStart, deleteEnd)
+  const subscriptionStart = library.indexOf('useEffect(() => subscribeAutomationsOverview')
+  const subscriptionEnd = library.indexOf('\n  useEffect(', subscriptionStart + 20)
+  const subscriptionSource = library.slice(subscriptionStart, subscriptionEnd)
 
   assert.ok(deleteStart >= 0 && deleteEnd > deleteStart)
   assert.ok(
@@ -86,9 +115,25 @@ test('libreria de automatizaciones actualiza inmediatamente y revierte si falla'
     'la fila debe desaparecer antes de esperar otra descarga'
   )
   assert.match(deleteSource, /catch \(error\)[\s\S]*?deletedAutomationIds\.delete[\s\S]*?automations\.splice/)
-  assert.match(service, /startingRevision === overviewRevision/)
-  assert.match(service, /overviewListeners\.forEach\(listener => listener/)
+  assert.doesNotMatch(service, /startingRevision === overviewRevision/)
+  assert.match(service, /function applyOverviewMutationsSince/)
+  assert.match(service, /entry\.revision > startingRevision \? entry\.mutation\(current\)/)
+  assert.match(service, /function scopeOverviewToQuery/)
+  assert.match(service, /if \(options\.folderId === 'root'\) return !automation\.folderId/)
+  assert.match(service, /scopeOverviewToQuery\([\s\S]*?applyOverviewMutationsSince/)
+  assert.match(service, /overviewListeners\.forEach\(listener => listener\(mutation\)\)/)
+  assert.match(service, /publishSnapshot\?: boolean/)
+  assert.match(library, /publishSnapshot: true/)
+  assert.match(service, /function overviewSnapshotKey/)
+  assert.match(service, /request\.queryKey !== overviewSnapshotQueryKey/)
+  assert.match(service, /request\.generation !== overviewSnapshotGeneration/)
+  assert.match(service, /automationsCache\.overview\.automations\.map/)
+  assert.match(service, /pageInfo: overview\.pageInfo/)
+  assert.match(library, /setAutomations\(current => \{[\s\S]*?applyMutation/)
+  assert.doesNotMatch(subscriptionSource, /setPageInfo/)
+  assert.match(service, /cacheAutomation\(automation, true\)/)
   assert.match(library, /subscribeAutomationsOverview\([\s\S]*?setFolders[\s\S]*?setAutomations/)
+  assert.match(library, /normalizedQuery[\s\S]*?automation\.folderId === folderId/)
 })
 
 test('citas ignoran cargas anteriores y revalidan despues de mutar', async () => {
@@ -101,4 +146,16 @@ test('citas ignoran cargas anteriores y revalidan despues de mutar', async () =>
   assert.match(source, /blockedSlotsRequestRef\.current === requestId/)
   assert.match(source, /await Promise\.all\(\[loadEvents\(\), loadUpcomingEvents\(\)\]\)/)
   assert.match(source, /setEvents\(current => current\.filter\(event => event\.id !== eventId\)\)/)
+})
+
+test('Sites no depende de permisos Meta y evita loops al cargar perfiles opcionales', async () => {
+  const source = await readSource('frontend/src/pages/Sites/Sites.tsx')
+
+  assert.match(source, /useIntegrationsStatus\(\)/)
+  assert.match(source, /status\.meta\?\.connected/)
+  assert.match(source, /return metaPixelConnectedRef\.current/)
+  assert.doesNotMatch(source, /campaignsService\.getMetaConfig\(\)/)
+  assert.match(source, /connectedSocialProfilesRef\.current/)
+  assert.match(source, /loadConnectedSocialProfiles[\s\S]*?\}, \[\]\)/)
+  assert.doesNotMatch(source, /catch\(\(\) => \{[\s\S]{0,180}setConnectedSocialProfiles\(\[\]\)/)
 })

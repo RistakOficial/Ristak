@@ -718,8 +718,9 @@ test('sincronizar un asset TUS antiguo repara su copia faltante de Storage sin c
         id, business_id, original_filename, stored_filename, bunny_path,
         public_url, mime_type, media_type, extension,
         size_original, size_processed, quota_size, status,
-        storage_provider, module, module_entity_id, is_public, metadata_json
-      ) VALUES (?, 'default', 'grabacion.mp4', 'grabacion.mp4', NULL, ?, 'video/mp4', 'video', 'mp4', ?, ?, ?, 'ready', 'bunny_stream', 'sites', 'site_legacy_tus', 1, ?)`,
+        storage_provider, module, module_entity_id, is_public, metadata_json,
+        stream_video_id
+      ) VALUES (?, 'default', 'grabacion.mp4', 'grabacion.mp4', NULL, ?, 'video/mp4', 'video', 'mp4', ?, ?, ?, 'ready', 'bunny_stream', 'sites', 'site_legacy_tus', 1, ?, ?)`,
       [
         assetId,
         'https://iframe.mediadelivery.net/embed/123/stream-video-1',
@@ -737,7 +738,8 @@ test('sincronizar un asset TUS antiguo repara su copia faltante de Storage sin c
             source: { storagePath: '', storagePublicUrl: '' }
           },
           directUpload: { protocol: 'tus', provider: 'bunny_stream', state: 'completed' }
-        })
+        }),
+        'stream-video-1'
       ]
     )
 

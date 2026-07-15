@@ -26,6 +26,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import type { Contact } from '@/types'
 import { PHONE_APP_HOME_PATH, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { getBusinessDateRangeTimestamps } from '@/utils/format'
 import { resolveStableRequestIntent, type StableRequestIntent } from '@/utils/requestIntent'
 import { convertLocalToUTC, dateOnlyToLocalDate, formatDateOnlyFromDate, formatInTimezone, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
@@ -60,6 +61,8 @@ const TIMELINE_TOUCH_ANCHOR_OFFSET_PX = 18
 const MONTH_SWIPE_MIN_PX = 56
 const MONTH_SWIPE_COMMIT_RATIO = 0.18
 const MONTH_SWIPE_MAX_OFFSET_RATIO = 0.92
+const PHONE_VISIBLE_APPOINTMENTS_PAGE_SIZE = 100
+const PHONE_MONTH_APPOINTMENT_PREVIEW_LIMIT = 2
 
 const STATUS_LABELS: Record<CalendarEvent['appointmentStatus'], string> = {
   confirmed: 'Confirmada',
@@ -112,13 +115,14 @@ const TABLET_VIEW_OPTIONS: Array<{ view: SwitchableCalendarView; label: string }
 interface DayCell {
   date: Date
   events: CalendarEvent[]
+  total: number
   isCurrentMonth: boolean
 }
 
 interface MiniMonthDayCell {
   key: string
   date: Date | null
-  events: CalendarEvent[]
+  total: number
 }
 
 const getStoredLastCalendarId = () => {
@@ -225,18 +229,64 @@ function buildMonthRange(date: Date) {
   return { start, end }
 }
 
-function buildMonthCellsForDate(date: Date, eventsByDate: Record<string, CalendarEvent[]>): DayCell[] {
+function buildPhoneCalendarVisibleRange(
+  view: CalendarView,
+  currentDate: Date,
+  selectedDate: Date,
+  timezone: string
+) {
+  let start: Date
+  let end: Date
+
+  if (view === 'month') {
+    ({ start, end } = buildMonthRange(currentDate))
+  } else if (view === 'week') {
+    start = startOfWeek(selectedDate)
+    end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    end.setHours(23, 59, 59, 999)
+  } else if (view === 'year') {
+    start = new Date(currentDate.getFullYear(), 0, 1)
+    end = new Date(currentDate.getFullYear(), 11, 31, 23, 59, 59, 999)
+  } else {
+    start = new Date(selectedDate)
+    start.setHours(0, 0, 0, 0)
+    end = new Date(selectedDate)
+    end.setHours(23, 59, 59, 999)
+  }
+
+  return getBusinessDateRangeTimestamps(start, end, timezone)
+}
+
+function buildPhoneCalendarDayRange(date: Date, timezone: string) {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(date)
+  end.setHours(23, 59, 59, 999)
+  return getBusinessDateRangeTimestamps(start, end, timezone)
+}
+
+function buildMonthCellsForDate(
+  date: Date,
+  eventsByDate: Record<string, CalendarEvent[]>,
+  eventCountsByDate: Record<string, number>
+): DayCell[] {
   const { start, end } = buildMonthRange(date)
-  const dayCount = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1
-  return Array.from({ length: dayCount }).map((_, index) => {
-    const cellDate = new Date(start)
-    cellDate.setDate(start.getDate() + index)
-    return {
+  const cells: DayCell[] = []
+  let cellDate = new Date(start)
+  while (formatDateKey(cellDate) <= formatDateKey(end) && cells.length < 42) {
+    const dateKey = formatDateKey(cellDate)
+    cells.push({
       date: cellDate,
       isCurrentMonth: cellDate.getMonth() === date.getMonth(),
-      events: eventsByDate[formatDateKey(cellDate)] || []
-    }
-  })
+      events: eventsByDate[dateKey] || [],
+      total: eventCountsByDate[dateKey] || 0
+    })
+    const nextDate = new Date(cellDate)
+    nextDate.setDate(cellDate.getDate() + 1)
+    cellDate = nextDate
+  }
+  return cells
 }
 
 function getDaysInMonth(year: number, month: number) {
@@ -348,6 +398,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [selectedCalendar, setSelectedCalendar] = useState<Calendar | null>(null)
   const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [eventCountsByDate, setEventCountsByDate] = useState<Record<string, number>>({})
+  const [visibleEventsTotal, setVisibleEventsTotal] = useState(0)
+  const [visibleEventsHasNext, setVisibleEventsHasNext] = useState(false)
+  const [visibleEventsLoading, setVisibleEventsLoading] = useState(false)
+  const [selectedDayEvents, setSelectedDayEvents] = useState<CalendarEvent[]>([])
+  const [selectedDayTotal, setSelectedDayTotal] = useState(0)
+  const [selectedDayHasNext, setSelectedDayHasNext] = useState(false)
+  const [selectedDayLoading, setSelectedDayLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [cacheRefreshing, setCacheRefreshing] = useState(false)
   const [currentDate, setCurrentDate] = useState(() => businessToday)
@@ -378,6 +436,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const monthSwipeGestureRef = useRef<MonthSwipeGesture | null>(null)
   const monthSwipeSettleDirectionRef = useRef<MonthSwipeDirection>(0)
   const handledOpenAppointmentRef = useRef<string | null>(null)
+  const eventsRequestRef = useRef(0)
+  const eventsAbortRef = useRef<AbortController | null>(null)
+  const visibleEventsNextCursorRef = useRef<string | null>(null)
+  const visibleEventsLoadingRef = useRef(false)
+  const selectedDayRequestRef = useRef(0)
+  const selectedDayAbortRef = useRef<AbortController | null>(null)
+  const selectedDayNextCursorRef = useRef<string | null>(null)
+  const selectedDayLoadingRef = useRef(false)
   const appointmentCreateIntentRef = useRef<StableRequestIntent | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
   const previousBusinessTodayRef = useRef(businessToday)
@@ -486,6 +552,25 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   }, [])
 
   const selectCalendar = useCallback((calendar: Calendar | null) => {
+    eventsRequestRef.current += 1
+    eventsAbortRef.current?.abort()
+    eventsAbortRef.current = null
+    selectedDayRequestRef.current += 1
+    selectedDayAbortRef.current?.abort()
+    selectedDayAbortRef.current = null
+    visibleEventsNextCursorRef.current = null
+    selectedDayNextCursorRef.current = null
+    visibleEventsLoadingRef.current = false
+    selectedDayLoadingRef.current = false
+    setEvents([])
+    setEventCountsByDate({})
+    setVisibleEventsTotal(0)
+    setVisibleEventsHasNext(false)
+    setVisibleEventsLoading(false)
+    setSelectedDayEvents([])
+    setSelectedDayTotal(0)
+    setSelectedDayHasNext(false)
+    setSelectedDayLoading(false)
     setSelectedCalendar(calendar)
     persistLastSelectedCalendar(calendar?.id ?? null)
   }, [persistLastSelectedCalendar])
@@ -567,39 +652,217 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     setCacheRefreshing(false)
   }, [accessToken, applyCalendars, locationId, timezone])
 
-  const loadEvents = useCallback(async () => {
+  const loadEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
     if (!selectedCalendar) {
+      eventsRequestRef.current += 1
+      eventsAbortRef.current?.abort()
+      eventsAbortRef.current = null
       setEvents([])
+      setEventCountsByDate({})
+      setVisibleEventsTotal(0)
+      setVisibleEventsHasNext(false)
       return
     }
 
-    const { start, end } = buildMonthRange(currentDate)
+    if (calendarView === 'years') {
+      setEvents([])
+      setEventCountsByDate({})
+      setVisibleEventsTotal(0)
+      setVisibleEventsHasNext(false)
+      return
+    }
+    if (append && (calendarView === 'month' || calendarView === 'year' || visibleEventsLoadingRef.current)) return
+    const cursor = append ? visibleEventsNextCursorRef.current : null
+    if (append && !cursor) return
+
+    const requestId = eventsRequestRef.current + 1
+    eventsRequestRef.current = requestId
+    eventsAbortRef.current?.abort()
+    const controller = new AbortController()
+    eventsAbortRef.current = controller
+
+    visibleEventsLoadingRef.current = true
+    setVisibleEventsLoading(true)
+    if (!append) {
+      visibleEventsNextCursorRef.current = null
+      setVisibleEventsHasNext(false)
+    }
+    const { startTime, endTime } = buildPhoneCalendarVisibleRange(
+      calendarView,
+      currentDate,
+      selectedDate,
+      timezone
+    )
     const cacheKey = getPhoneDailyCacheKey(
       'phone-calendar',
-      'events',
+      `events-${calendarView}`,
       locationId || 'default',
       selectedCalendar.id,
-      start.getTime(),
-      end.getTime()
+      startTime,
+      endTime
     )
-    const cachedEvents = readPhoneDailyCache<{ events: CalendarEvent[] }>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
+    const cachedEvents = append ? null : readPhoneDailyCache<{
+      events: CalendarEvent[]
+      countsByDate: Record<string, number>
+      total: number
+      hasNext: boolean
+      nextCursor: string | null
+    }>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
 
     if (cachedEvents) {
       setEvents(Array.isArray(cachedEvents.data.events) ? cachedEvents.data.events : [])
+      setEventCountsByDate(cachedEvents.data.countsByDate || {})
+      setVisibleEventsTotal(Number(cachedEvents.data.total || 0))
+      setVisibleEventsHasNext(Boolean(cachedEvents.data.hasNext))
+      visibleEventsNextCursorRef.current = cachedEvents.data.nextCursor || null
     }
 
-    const eventsData = await calendarsService.getEvents(
-      locationId || '',
-      start.getTime(),
-      end.getTime(),
-      accessToken || undefined,
-      selectedCalendar.id
-    )
-    const nextEvents = eventsData.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
-    setEvents(nextEvents)
-    writePhoneDailyCache(cacheKey, { events: nextEvents }, { maxEntryChars: 240_000 }, timezone) // (MOB-007)
-    setCacheRefreshing(false)
-  }, [accessToken, currentDate, locationId, selectedCalendar, timezone])
+    try {
+      if (calendarView === 'month') {
+        const response = await calendarsService.getMonthEventPreview({
+          calendarId: selectedCalendar.id,
+          startTime,
+          endTime,
+          previewLimit: PHONE_MONTH_APPOINTMENT_PREVIEW_LIMIT,
+          signal: controller.signal
+        })
+        if (controller.signal.aborted || eventsRequestRef.current !== requestId) return
+        const nextEvents = response.days
+          .flatMap(day => day.items)
+          .map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
+        const countsByDate = Object.fromEntries(response.days.map(day => [day.date, day.total]))
+        setEvents(nextEvents)
+        setEventCountsByDate(countsByDate)
+        setVisibleEventsTotal(response.total)
+        setVisibleEventsHasNext(false)
+        visibleEventsNextCursorRef.current = null
+        writePhoneDailyCache(cacheKey, {
+          events: nextEvents,
+          countsByDate,
+          total: response.total,
+          hasNext: false,
+          nextCursor: null
+        }, { maxEntryChars: 120_000 }, timezone)
+      } else if (calendarView === 'year') {
+        const response = await calendarsService.getEventDayCounts({
+          calendarId: selectedCalendar.id,
+          startTime,
+          endTime,
+          signal: controller.signal
+        })
+        if (controller.signal.aborted || eventsRequestRef.current !== requestId) return
+        const countsByDate = Object.fromEntries(response.days.map(day => [day.date, day.total]))
+        setEvents([])
+        setEventCountsByDate(countsByDate)
+        setVisibleEventsTotal(response.total)
+        setVisibleEventsHasNext(false)
+        visibleEventsNextCursorRef.current = null
+        writePhoneDailyCache(cacheKey, {
+          events: [],
+          countsByDate,
+          total: response.total,
+          hasNext: false,
+          nextCursor: null
+        }, { maxEntryChars: 80_000 }, timezone)
+      } else {
+        const response = await calendarsService.getEventsPage({
+          calendarId: selectedCalendar.id,
+          startTime,
+          endTime,
+          cursor,
+          limit: PHONE_VISIBLE_APPOINTMENTS_PAGE_SIZE,
+          includeCounts: !append,
+          signal: controller.signal
+        })
+        if (controller.signal.aborted || eventsRequestRef.current !== requestId) return
+        const pageEvents = response.items.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
+        setEvents((current) => {
+          if (!append) return pageEvents
+          const merged = new Map(current.map(event => [event.id, event]))
+          pageEvents.forEach(event => merged.set(event.id, event))
+          return Array.from(merged.values()).sort((left, right) => (
+            parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime) ||
+            left.id.localeCompare(right.id)
+          ))
+        })
+        const countsByDate = Object.fromEntries((response.days || []).map(day => [day.date, day.total]))
+        if (!append) {
+          setEventCountsByDate(countsByDate)
+          setVisibleEventsTotal(response.total || 0)
+        }
+        visibleEventsNextCursorRef.current = response.pagination.nextCursor
+        setVisibleEventsHasNext(response.pagination.hasNext)
+        if (!append) {
+          writePhoneDailyCache(cacheKey, {
+            events: pageEvents,
+            countsByDate,
+            total: response.total || 0,
+            hasNext: response.pagination.hasNext,
+            nextCursor: response.pagination.nextCursor
+          }, { maxEntryChars: 180_000 }, timezone)
+        }
+      }
+      setCacheRefreshing(false)
+    } finally {
+      if (eventsRequestRef.current === requestId) {
+        visibleEventsLoadingRef.current = false
+        setVisibleEventsLoading(false)
+      }
+      if (eventsAbortRef.current === controller) eventsAbortRef.current = null
+    }
+  }, [calendarView, currentDate, locationId, selectedCalendar, selectedDate, timezone])
+
+  const loadSelectedDayEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
+    if (!selectedCalendar || calendarView !== 'month') return
+    if (append && selectedDayLoadingRef.current) return
+    const cursor = append ? selectedDayNextCursorRef.current : null
+    if (append && !cursor) return
+
+    selectedDayAbortRef.current?.abort()
+    const controller = new AbortController()
+    selectedDayAbortRef.current = controller
+    const requestId = selectedDayRequestRef.current + 1
+    selectedDayRequestRef.current = requestId
+    selectedDayLoadingRef.current = true
+    setSelectedDayLoading(true)
+    if (!append) selectedDayNextCursorRef.current = null
+    const { startTime, endTime } = buildPhoneCalendarDayRange(selectedDate, timezone)
+
+    try {
+      const response = await calendarsService.getEventsPage({
+        calendarId: selectedCalendar.id,
+        startTime,
+        endTime,
+        cursor,
+        limit: PHONE_VISIBLE_APPOINTMENTS_PAGE_SIZE,
+        includeCounts: !append,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted || selectedDayRequestRef.current !== requestId) return
+      const pageEvents = response.items.map((event, index) => normalizeCalendarEvent(event, `day-event-${index}`))
+      setSelectedDayEvents((current) => {
+        if (!append) return pageEvents
+        const merged = new Map(current.map(event => [event.id, event]))
+        pageEvents.forEach(event => merged.set(event.id, event))
+        return Array.from(merged.values()).sort((left, right) => (
+          parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime) ||
+          left.id.localeCompare(right.id)
+        ))
+      })
+      if (!append) setSelectedDayTotal(response.total || 0)
+      selectedDayNextCursorRef.current = response.pagination.nextCursor
+      setSelectedDayHasNext(response.pagination.hasNext)
+    } catch (error) {
+      if (controller.signal.aborted || selectedDayRequestRef.current !== requestId) return
+      throw error
+    } finally {
+      if (selectedDayRequestRef.current === requestId) {
+        selectedDayLoadingRef.current = false
+        setSelectedDayLoading(false)
+      }
+      if (selectedDayAbortRef.current === controller) selectedDayAbortRef.current = null
+    }
+  }, [calendarView, selectedCalendar, selectedDate, timezone])
 
   useEffect(() => {
     if (embedded) return
@@ -793,8 +1056,32 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
     return () => {
       cancelled = true
+      eventsRequestRef.current += 1
+      eventsAbortRef.current?.abort()
     }
   }, [accessState, loadEvents, showToast])
+
+  useEffect(() => {
+    if (accessState !== 'allowed' || calendarView !== 'month' || !selectedCalendar) return
+    void loadSelectedDayEvents().catch(() => {
+      if (!selectedDayAbortRef.current?.signal.aborted) {
+        setSelectedDayEvents([])
+        setSelectedDayTotal(0)
+        setSelectedDayHasNext(false)
+      }
+    })
+    return () => {
+      selectedDayRequestRef.current += 1
+      selectedDayAbortRef.current?.abort()
+    }
+  }, [accessState, calendarView, loadSelectedDayEvents, selectedCalendar])
+
+  useEffect(() => () => {
+    eventsRequestRef.current += 1
+    eventsAbortRef.current?.abort()
+    selectedDayRequestRef.current += 1
+    selectedDayAbortRef.current?.abort()
+  }, [])
 
   useEffect(() => {
     if (accessState !== 'allowed' || sheetView !== 'contactPicker') return
@@ -875,10 +1162,6 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     return grouped
   }, [events, timezone])
 
-  const selectedDayEvents = useMemo(() => {
-    return eventsByDate[formatDateKey(selectedDate)] || []
-  }, [eventsByDate, selectedDate])
-
   const weekDays = useMemo(() => {
     const base = startOfWeek(selectedDate)
     return Array.from({ length: 7 }).map((_, index) => {
@@ -886,10 +1169,11 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       date.setDate(base.getDate() + index)
       return {
         date,
-        events: eventsByDate[formatDateKey(date)] || []
+        events: eventsByDate[formatDateKey(date)] || [],
+        total: eventCountsByDate[formatDateKey(date)] || 0
       }
     })
-  }, [eventsByDate, selectedDate])
+  }, [eventCountsByDate, eventsByDate, selectedDate])
 
   const monthPages = useMemo(() => {
     return ([-1, 0, 1] as const).map((offset) => {
@@ -898,10 +1182,10 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         key: `${pageDate.getFullYear()}-${pageDate.getMonth()}`,
         offset,
         date: pageDate,
-        cells: buildMonthCellsForDate(pageDate, eventsByDate)
+        cells: buildMonthCellsForDate(pageDate, eventsByDate, eventCountsByDate)
       }
     })
-  }, [currentDate, eventsByDate])
+  }, [currentDate, eventCountsByDate, eventsByDate])
 
   const yearMonths = useMemo(() => {
     const year = currentDate.getFullYear()
@@ -914,14 +1198,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         ...Array.from({ length: leadingBlanks }).map((_, index) => ({
           key: `${monthIndex}-blank-${index}`,
           date: null,
-          events: []
+          total: 0
         })),
         ...Array.from({ length: daysInMonth }).map((_, index) => {
           const date = new Date(year, monthIndex, index + 1)
           return {
             key: formatDateKey(date),
             date,
-            events: eventsByDate[formatDateKey(date)] || []
+            total: eventCountsByDate[formatDateKey(date)] || 0
           }
         })
       ]
@@ -933,7 +1217,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         cells
       }
     })
-  }, [currentDate, eventsByDate])
+  }, [currentDate, eventCountsByDate])
 
   const yearsGrid = useMemo(() => {
     const selectedYear = currentDate.getFullYear()
@@ -1536,7 +1820,10 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       }, accessToken || undefined)
       appointmentCreateIntentRef.current = null
       setIsCreateModalOpen(false)
-      await loadEvents()
+      await Promise.all([
+        loadEvents(),
+        calendarView === 'month' ? loadSelectedDayEvents() : Promise.resolve()
+      ])
     } catch {
       showToast('error', 'No se pudo agendar', 'Intenta otra vez en unos minutos.')
     } finally {
@@ -1549,7 +1836,10 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
     try {
       await calendarsService.updateAppointment(eventId, updates, accessToken || undefined)
-      await loadEvents()
+      await Promise.all([
+        loadEvents(),
+        calendarView === 'month' ? loadSelectedDayEvents() : Promise.resolve()
+      ])
     } catch (error) {
       showToast('error', 'No se pudo guardar', 'Intenta otra vez.')
       throw error
@@ -1561,7 +1851,10 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       await calendarsService.deleteEvent(eventId, accessToken || undefined)
       setIsEventModalOpen(false)
       setSelectedEvent(null)
-      await loadEvents()
+      await Promise.all([
+        loadEvents(),
+        calendarView === 'month' ? loadSelectedDayEvents() : Promise.resolve()
+      ])
     } catch (error) {
       showToast('error', 'No se pudo eliminar', 'Intenta otra vez.')
       throw error
@@ -1809,7 +2102,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 		                                  aria-label={`Ver citas del ${cell.date.getDate()} de ${MONTH_NAMES[cell.date.getMonth()]}`}
 		                                >
 		                                  <span>{cell.date.getDate()}</span>
-		                                  {cell.events[0] && (
+		                                  {cell.total > 0 && (
 		                                    <i className={styles.monthMarkers}>
 		                                      <b style={{ backgroundColor: getEventColor(cell.events[0]) }} />
 		                                    </i>
@@ -1832,6 +2125,11 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 		                                        <em>{formatEventTime(event.startTime)}</em>
 		                                      </button>
 		                                    ))}
+		                                    {cell.total > cell.events.length && (
+		                                      <small className={styles.monthMoreCount}>
+		                                        +{cell.total - cell.events.length} más
+		                                      </small>
+		                                    )}
 		                                  </span>
 		                                )}
 		                              </div>
@@ -1876,7 +2174,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	                                className={`${styles.miniDay} ${isSelected ? styles.miniDaySelected : ''} ${isToday ? styles.miniDayToday : ''}`}
 	                              >
 	                                <span>{cell.date.getDate()}</span>
-	                                {cell.events.length > 0 && <i />}
+	                                {cell.total > 0 && <i />}
 	                              </span>
 	                            )
 	                          })}
@@ -1920,12 +2218,27 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	            data-phone-scrollable="true"
 	            aria-label={calendarView === 'week' ? 'Horario semanal' : 'Horario del día'}
 	          >
+	            <div className={styles.timelineRangeStatus} role="status">
+	              <span>
+	                {visibleEventsTotal} cita{visibleEventsTotal === 1 ? '' : 's'}
+	                {visibleEventsTotal > events.length ? ` · mostrando ${events.length}` : ''}
+	              </span>
+	              {visibleEventsHasNext && (
+	                <button
+	                  type="button"
+	                  disabled={visibleEventsLoading}
+	                  onClick={() => void loadEvents({ append: true })}
+	                >
+	                  {visibleEventsLoading ? 'Cargando…' : 'Cargar más citas'}
+	                </button>
+	              )}
+	            </div>
 	            <div className={styles.timelineWrap}>
 	              {calendarView === 'week' ? (
 	                <section className={styles.weekTimelinePanel} aria-label="Horario semanal">
 	                  <div className={styles.weekTimelineHeader}>
 	                    <span aria-hidden="true" />
-	                    {weekDays.map(({ date, events: dayEvents }) => {
+	                    {weekDays.map(({ date, total }) => {
 	                      const isSelected = isSameDay(date, selectedDate)
 	                      const isToday = isSameDay(date, nowInCalendar)
 	                      return (
@@ -1939,7 +2252,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	                        >
 	                          <span>{DAYS_COMPACT[date.getDay()]}</span>
 	                          <strong>{date.getDate()}</strong>
-	                          {dayEvents.length > 0 && <i>{dayEvents.length}</i>}
+	                          {total > 0 && <i>{total}</i>}
 	                        </button>
 	                      )
 	                    })}
@@ -2046,7 +2359,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	            <section className={styles.agendaHeader}>
 	              <div>
 	                <p>{selectedDayLabel}</p>
-	                <h1>{selectedDayEvents.length ? `${selectedDayEvents.length} cita${selectedDayEvents.length === 1 ? '' : 's'}` : 'Sin citas'}</h1>
+	                <h1>{selectedDayTotal ? `${selectedDayTotal} cita${selectedDayTotal === 1 ? '' : 's'}` : 'Sin citas'}</h1>
 	              </div>
 	              {cacheRefreshing ? (
 	                <span className={styles.cacheRefreshPill} role="status">
@@ -2054,13 +2367,25 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	                  Actualizando
 	                </span>
 	              ) : (
-	                loading && <Loader2 size={18} className={styles.spinIcon} />
+	                selectedDayLoading && <Loader2 size={18} className={styles.spinIcon} />
 	              )}
 	            </section>
 
 	            <section className={`${styles.agendaList} ${styles.agendaList_list}`} aria-label="Citas del día">
 	              {selectedDayEvents.length > 0 ? (
-	                selectedDayEvents.map(renderEventItem)
+	                <>
+	                  {selectedDayEvents.map(renderEventItem)}
+	                  {selectedDayHasNext && (
+	                    <button
+	                      type="button"
+	                      className={styles.agendaLoadMore}
+	                      disabled={selectedDayLoading}
+	                      onClick={() => void loadSelectedDayEvents({ append: true })}
+	                    >
+	                      {selectedDayLoading ? 'Cargando…' : `Cargar más · ${selectedDayEvents.length} de ${selectedDayTotal}`}
+	                    </button>
+	                  )}
+	                </>
 	              ) : (
 	                <div className={styles.emptyAgenda}>
 	                  <CalendarDays size={30} />

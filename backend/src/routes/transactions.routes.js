@@ -5,6 +5,8 @@ import {
   getTransactionById,
   getTransactionStats,
   getTransactionSummary,
+  getTransactionFacets,
+  syncTransactions,
   updateTransaction,
   deleteTransaction,
   refundTransaction,
@@ -38,6 +40,8 @@ router.get('/', getTransactions)
 router.post('/', createTransaction)
 router.get('/stats', getTransactionStats)
 router.get('/summary', getTransactionSummary)
+router.get('/facets', getTransactionFacets)
+router.post('/sync', syncTransactions)
 
 // Planes y flujos de parcialidades propios de Ristak. Las rutas /highlevel se
 // conservan como alias legacy para instalaciones antiguas.

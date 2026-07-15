@@ -105,7 +105,16 @@ const paymentProducts = createLazyRoute(
 )
 const contacts = createLazyRoute(() => import('@/pages/Contacts/Contacts'), 'Contacts')
 const appointments = createLazyRoute(() => import('@/pages/Appointments/Appointments'), 'Appointments')
-const sites = createLazyRoute(() => import('@/pages/Sites/Sites'), 'Sites')
+const sites = createLazyRoute(
+  () => import('@/pages/Sites/SitesRoute').then((module) => {
+    // El hover abre primero la ruta liviana y aprovecha el tiempo ocioso para
+    // descargar el workspace; la navegacion directa puede pintar el fallback
+    // local sin esperar a parsear 45 mil lineas de editor.
+    void module.prefetchSitesWorkspace().catch(() => undefined)
+    return module
+  }),
+  'SitesRoute'
+)
 const automations = createLazyRoute(() => import('@/pages/Automations/Automations'), 'Automations')
 const analytics = createLazyRoute(() => import('@/pages/Analytics/Analytics'), 'default')
 const aiAgent = createLazyRoute(() => import('@/pages/AIAgent/AIAgent'), 'AIAgent')

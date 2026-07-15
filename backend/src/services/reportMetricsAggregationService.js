@@ -3,6 +3,7 @@ import { resolveDateRangeWithGHLTimezone, sqliteTimezoneModifierExpression } fro
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { getVisitorIdentityExpression } from './trackingService.js'
+import { createDatabaseAbortError } from '../utils/postgresCancelableQuery.js'
 
 const isPostgres = databaseDialect === 'postgres'
 const VALID_GROUPS = new Set(['day', 'month', 'year'])
@@ -87,14 +88,17 @@ function contactDateExpression(column, timezone, range = {}) {
 }
 
 function attributionMatchCondition(alias, timezone, range = {}) {
-  const metaDate = isPostgres ? '(ma.date)::date' : 'DATE(ma.date)'
+  const contactDate = contactDateExpression(`${alias}.created_at`, timezone, range)
+  const sameCalendarDay = isPostgres
+    ? `ma.date = (${contactDate})::text`
+    : `ma.date = ${contactDate}`
   return `${alias}.attribution_ad_id IS NOT NULL
     AND ${alias}.attribution_ad_id != ''
     AND EXISTS (
       SELECT 1
       FROM meta_ads ma
       WHERE ma.ad_id = ${alias}.attribution_ad_id
-        AND ${metaDate} = ${contactDateExpression(`${alias}.created_at`, timezone, range)}
+        AND ${sameCalendarDay}
     )`
 }
 
@@ -150,10 +154,19 @@ function contactDedupExpression(alias = 'c') {
   END`
 }
 
-async function getAttributionCalendarIds() {
+function throwIfReportQueryAborted(signal) {
+  if (signal?.aborted) throw createDatabaseAbortError()
+}
+
+function reportQueryOptions(signal) {
+  return signal ? { signal } : undefined
+}
+
+async function getAttributionCalendarIds(signal) {
   const row = await db.get(
     'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
-    ['attribution_calendar_ids']
+    ['attribution_calendar_ids'],
+    reportQueryOptions(signal)
   )
   if (!row?.config_value) return []
   try {
@@ -191,12 +204,13 @@ function createMetricBucket(period) {
   }
 }
 
-async function runBoundedQueryTasks(tasks, concurrency = 2) {
+async function runBoundedQueryTasks(tasks, concurrency = 2, signal) {
   const results = new Array(tasks.length)
   let nextIndex = 0
 
   const worker = async () => {
     while (nextIndex < tasks.length) {
+      throwIfReportQueryAborted(signal)
       const index = nextIndex
       nextIndex += 1
       results[index] = await tasks[index]()
@@ -213,16 +227,20 @@ async function runBoundedQueryTasks(tasks, concurrency = 2) {
  * una fila por periodo; nunca materializa contactos, citas ni pagos históricos en
  * Node y nunca consulta proveedores durante un GET de pantalla.
  */
-export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy = 'day', scope = 'all' } = {}) {
+export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy = 'day', scope = 'all', signal } = {}) {
+  throwIfReportQueryAborted(signal)
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  throwIfReportQueryAborted(signal)
   const cleanGroup = VALID_GROUPS.has(groupBy) ? groupBy : 'day'
   const timezone = range.appliedTimezone
   const useContactAttribution = scope === 'attribution' || scope === 'campaigns'
   const isAttributed = scope === 'campaigns'
   const [hiddenFilters, calendarIds] = await Promise.all([
-    getHiddenContactFilters(),
-    getAttributionCalendarIds()
+    getHiddenContactFilters({ signal }),
+    getAttributionCalendarIds(signal)
   ])
+  throwIfReportQueryAborted(signal)
+  const queryOptions = reportQueryOptions(signal)
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const contactConditions = []
   const contactParams = []
@@ -282,7 +300,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
     ...contactParams,
     ...(useContactAttribution ? activeCalendar.params : []),
     ...attendedCalendar.params
-  ])
+  ], queryOptions)
 
   const appointmentRowsTask = useContactAttribution
     ? async () => []
@@ -310,7 +328,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
           WHERE ${conditions.join(' AND ')}
           GROUP BY period
           ORDER BY period
-        `, [...appointmentParams, ...appointmentCalendar.params])
+        `, [...appointmentParams, ...appointmentCalendar.params], queryOptions)
       }
 
   const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
@@ -342,7 +360,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
         ${whereClause(firstPaymentConditions)}
         GROUP BY period
         ORDER BY period
-      `, firstPaymentParams)
+      `, firstPaymentParams, queryOptions)
       }
 
   const attributedPaymentConditions = [
@@ -362,7 +380,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
         ${whereClause(attributedPaymentConditions)}
         GROUP BY period
         ORDER BY period
-      `, attributedPaymentParams)
+      `, attributedPaymentParams, queryOptions)
     : async () => {
         const paymentConditions = [
           `LOWER(COALESCE(p.status, '')) IN (${statusPlaceholders})`,
@@ -381,7 +399,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
         ${whereClause(paymentConditions)}
         GROUP BY period
         ORDER BY period
-      `, paymentParams)
+      `, paymentParams, queryOptions)
       }
 
   const spendFrom = range.startZoned?.toISODate()
@@ -406,7 +424,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
     ${whereClause(spendConditions)}
     GROUP BY period
     ORDER BY period
-  `, spendParams)
+  `, spendParams, queryOptions)
 
   const visitorRowsTask = useContactAttribution
     ? () => db.all(`
@@ -418,7 +436,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
         ${whereClause(contactConditions)}
         GROUP BY period
         ORDER BY period
-      `, contactParams)
+      `, contactParams, queryOptions)
     : async () => {
         const visitorConditions = []
         const visitorParams = []
@@ -431,7 +449,7 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
         ${whereClause(visitorConditions)}
         GROUP BY period
         ORDER BY period
-      `, visitorParams)
+      `, visitorParams, queryOptions)
       }
 
   const [contactRows, appointmentRows, firstCustomerRows, paymentRows, spendRows, visitorRows] = await runBoundedQueryTasks([
@@ -441,7 +459,8 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
     paymentRowsTask,
     spendRowsTask,
     visitorRowsTask
-  ])
+  ], 2, signal)
+  throwIfReportQueryAborted(signal)
 
   const buckets = new Map()
   const getBucket = (period) => {
@@ -495,4 +514,97 @@ export async function buildAggregatedReportMetrics({ startDate, endDate, groupBy
     }))
 
   return { range, metrics }
+}
+
+/**
+ * Totales del periodo de comparacion usados por el snapshot principal de
+ * Reportes. El periodo actual ya fue recorrido por
+ * buildAggregatedReportMetrics(); volver a ejecutar los summaries historicos
+ * duplicaba los scans de contactos, pagos y anuncios. Esta lectura toca solo
+ * pagos y anuncios del periodo anterior, con exactamente el mismo alcance SQL
+ * que la tabla principal, y mantiene el limite de dos queries concurrentes.
+ */
+export async function buildReportComparisonTotals({ startDate, endDate, scope = 'all', signal } = {}) {
+  throwIfReportQueryAborted(signal)
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+  throwIfReportQueryAborted(signal)
+  const timezone = range.appliedTimezone
+  const useContactAttribution = scope === 'attribution' || scope === 'campaigns'
+  const isAttributed = scope === 'campaigns'
+  const hiddenFilters = await getHiddenContactFilters({ signal })
+  throwIfReportQueryAborted(signal)
+  const queryOptions = reportQueryOptions(signal)
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
+
+  const paymentTotalsTask = useContactAttribution
+    ? () => {
+        const conditions = []
+        const params = []
+        appendRangeConditions(conditions, params, 'c.created_at', range)
+        if (isAttributed) conditions.push(attributionMatchCondition('c', timezone, range))
+        if (hiddenCondition) conditions.push(hiddenCondition)
+        conditions.push(`LOWER(COALESCE(p.status, '')) IN (${statusPlaceholders})`)
+        conditions.push(nonTestPaymentCondition('p'))
+        params.push(...SUCCESS_PAYMENT_STATUSES)
+
+        return db.get(`
+          SELECT
+            COUNT(DISTINCT ${contactDedupExpression('c')}) AS sales,
+            COALESCE(SUM(p.amount), 0) AS revenue
+          FROM contacts c
+          INNER JOIN payments p ON p.contact_id = c.id
+          ${whereClause(conditions)}
+        `, params, queryOptions)
+      }
+    : () => {
+        const conditions = [
+          `LOWER(COALESCE(p.status, '')) IN (${statusPlaceholders})`,
+          nonTestPaymentCondition('p')
+        ]
+        const params = [...SUCCESS_PAYMENT_STATUSES]
+        appendRangeConditions(conditions, params, 'p.date', range)
+        if (hiddenCondition) conditions.push(hiddenCondition)
+
+        return db.get(`
+          SELECT
+            COUNT(*) AS sales,
+            COALESCE(SUM(p.amount), 0) AS revenue
+          FROM payments p
+          LEFT JOIN contacts c ON c.id = p.contact_id
+          ${whereClause(conditions)}
+        `, params, queryOptions)
+      }
+
+  const spendConditions = []
+  const spendParams = []
+  const spendFrom = range.startZoned?.toISODate()
+  const spendTo = range.endZoned?.toISODate()
+  if (spendFrom) {
+    spendConditions.push('ma.date >= ?')
+    spendParams.push(spendFrom)
+  }
+  if (spendTo) {
+    spendConditions.push('ma.date <= ?')
+    spendParams.push(spendTo)
+  }
+  const adTotalsTask = () => db.get(`
+    SELECT
+      COALESCE(SUM(ma.spend), 0) AS spend,
+      COALESCE(SUM(ma.clicks), 0) AS clicks,
+      COALESCE(SUM(ma.reach), 0) AS reach
+    FROM meta_ads ma
+    ${whereClause(spendConditions)}
+  `, spendParams, queryOptions)
+
+  const [payments, ads] = await runBoundedQueryTasks([paymentTotalsTask, adTotalsTask], 2, signal)
+  throwIfReportQueryAborted(signal)
+  return {
+    range,
+    revenue: Number(payments?.revenue || 0),
+    sales: Number(payments?.sales || 0),
+    spend: Number(ads?.spend || 0),
+    clicks: Number(ads?.clicks || 0),
+    reach: Number(ads?.reach || 0)
+  }
 }

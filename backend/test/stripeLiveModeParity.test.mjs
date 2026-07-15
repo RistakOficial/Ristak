@@ -6,6 +6,7 @@ import {
   createStripePaymentPlan,
   createStripeSavedCardPayment,
   getStripeSavedPaymentMethods,
+  refreshStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
   processDueStripePaymentPlanCharges,
   saveStripePaymentConfig,
@@ -320,6 +321,7 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
 
     const { contactId, contact, liveSavedMethodId } = await seedDualModeContact('live_modes')
     try {
+      await refreshStripeSavedPaymentMethods(contactId)
       const methods = await getStripeSavedPaymentMethods(contactId)
       assert.equal(methods.length, 1)
       assert.equal(methods[0].mode, 'live')
@@ -327,6 +329,11 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
       assert.equal(methods[0].stripePaymentMethodId, 'pm_live_saved')
       assert.ok(stripeMock.calls.paymentMethodsList.some((call) => call.params.customer === 'cus_live_saved'))
       assert.ok(stripeMock.calls.paymentMethodsList.some((call) => call.params.customer === 'cus_test_cached'))
+      assert.ok(stripeMock.calls.paymentMethodsList.every((call) => call.options.timeout === 8000))
+      const providerReadsAfterExplicitRefresh = stripeMock.calls.paymentMethodsList.length
+      const localMethods = await getStripeSavedPaymentMethods(contactId)
+      assert.deepEqual(localMethods, methods)
+      assert.equal(stripeMock.calls.paymentMethodsList.length, providerReadsAfterExplicitRefresh)
 
       const savedPayment = await createStripeSavedCardPayment({
         contactId,

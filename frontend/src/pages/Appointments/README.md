@@ -28,7 +28,7 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
   2. `default_calendar_id` desde `useAppConfig`,
   3. primer calendario activo.
 - Muestra vistas de mes, semana y día.
-- Carga eventos por rango visible.
+- Carga únicamente previews acotados en mes y páginas keyset en semana/día.
 - Carga citas futuras para la lista lateral.
 - Calcula KPIs mensuales.
 - Permite crear, editar y eliminar citas.
@@ -50,15 +50,21 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
 
 ### Mes
 
-Muestra días del mes actual, eventos agrupados por fecha y señal de horarios bloqueados.
+Muestra días del mes actual, hasta tres citas por día en escritorio y dos en
+teléfono, el total diario exacto y la señal de horarios bloqueados. `+N más`
+abre el día, donde la colección completa se obtiene por páginas; el mes nunca
+descarga todas las citas para poder pintar el grid.
 
 ### Semana
 
-Muestra grilla horaria de 7 días con eventos posicionados por hora y bloques editables.
+Muestra grilla horaria de 7 días con eventos posicionados por hora, total exacto
+por día y bloques editables. La primera página trae 100 citas y **Cargar más
+citas** avanza por cursor cuando el rango es más grande.
 
 ### Día
 
-Muestra una columna horaria del día actual seleccionado con eventos y bloqueos.
+Muestra una columna horaria del día actual seleccionado con eventos, bloqueos y
+total exacto. También usa páginas de 100 filas y carga incremental explícita.
 
 ## Flujos De Citas
 
@@ -139,6 +145,11 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - `getCalendars`
 - `getCalendar`
 - `getEvents`
+- `getMonthEventPreview`
+- `getEventsPage`
+- `getEventDayCounts`
+- `getAppointmentStats`
+- `getUpcomingAppointmentsPage`
 - `getAppointment`
 - `getFreeSlots`
 - `getBlockedSlots`
@@ -164,6 +175,12 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 | GET | `/api/calendars/:id` |
 | PUT | `/api/calendars/:id` |
 | GET | `/api/calendars/events` |
+| GET | `/api/calendars/events/month-preview` |
+| GET | `/api/calendars/events/page` |
+| GET | `/api/calendars/events/day-counts` |
+| GET | `/api/calendars/events/overview` |
+| GET | `/api/calendars/events/summary` |
+| GET | `/api/calendars/upcoming` |
 | GET | `/api/calendars/events/:eventId` |
 | POST | `/api/calendars/appointments` |
 | PUT | `/api/calendars/appointments/:id` |
@@ -212,8 +229,23 @@ Si no hay calendarios de atribución configurados, backend usa todos como fallba
 ## Notas Técnicas
 
 - Las fechas para llamadas de eventos se envían como timestamps en milisegundos.
+- Los timestamps delimitan días del negocio mediante
+  `getBusinessDateRangeTimestamps`; el backend vuelve a dividirlos con
+  `account_timezone` y conserva correctamente los cambios DST.
 - `calendarsRequestRef`, `eventsRequestRef`, `upcomingEventsRequestRef` y
   `blockedSlotsRequestRef` impiden que una petición vieja vuelva a pintar datos.
+- Las lecturas visibles llevan `AbortSignal`. Cambiar calendario, rango o vista
+  cancela la consulta anterior; los cursores de día/semana no se reutilizan en
+  otro alcance.
+- `PhoneCalendar` conserva un snapshot diario acotado por calendario, vista y
+  rango. El mes guarda sólo previews/conteos, la vista anual sólo conteos y la
+  agenda del día seleccionado solicita sus propias páginas completas.
+- El mini calendario para agendar desde `PhoneChat` comparte
+  `getMonthEventPreview`: pinta hasta tres marcadores por día y muestra el total
+  diario exacto sin descargar el mes completo.
+- La sección Citas de `PhoneApp` consume `getEventsOverview`: recibe KPIs
+  multi-calendario y sólo las próximas cinco filas, no todos los eventos del
+  periodo.
 - La grilla horaria calcula posiciones visuales por hora/minuto.
 - Los modales usan portal con componentes comunes; no deben usar `alert`, `confirm` ni `prompt`.
 - La página funciona con calendarios/citas de Ristak; HighLevel es una sincronización opcional y sólo debe mostrar estado pendiente cuando el usuario intenta operar recursos externos de esa integración.

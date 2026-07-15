@@ -1,8 +1,17 @@
 import { databaseDialect, db } from '../config/database.js'
-import { buildDedupExpression } from './analyticsService.js'
 import { resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
+import {
+  hashPaginationCursorScope,
+  paginationCursorHiddenFiltersScope,
+  paginationCursorListScope,
+  paginationCursorRangeScope
+} from '../utils/paginationCursorScope.js'
 import { timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
+import {
+  createContactPersonIdentityWarmingError,
+  getContactPersonIdentityProjectionStatus
+} from './contactPersonIdentityProjectionService.js'
 
 const isPostgres = databaseDialect === 'postgres'
 const DEFAULT_PAGE_LIMIT = 50
@@ -40,30 +49,60 @@ function serializeCursorTimestamp(value) {
   return String(value || '').trim()
 }
 
-function encodeCursor(row) {
-  const createdAt = serializeCursorTimestamp(row?.created_at)
-  const id = String(row?.id || '').trim()
-  if (!createdAt || !id) return null
-  return Buffer.from(JSON.stringify({ v: 1, kind: 'campaign-contacts', createdAt, id }), 'utf8').toString('base64url')
+function campaignContactCursorSortExpression(valueExpression) {
+  if (isPostgres) {
+    return `COALESCE(${valueExpression}, TIMESTAMP '1970-01-01 00:00:00')`
+  }
+  return `COALESCE(
+    NULLIF(${timestampSortExpression(valueExpression)}, 0),
+    julianday('1970-01-01 00:00:00')
+  )`
 }
 
-function decodeCursor(value) {
+function campaignContactCursorProjectionExpression(valueExpression) {
+  const effectiveTimestamp = isPostgres
+    ? campaignContactCursorSortExpression(valueExpression)
+    : `COALESCE(${valueExpression}, '1970-01-01 00:00:00')`
+  return isPostgres ? `(${effectiveTimestamp})::text` : effectiveTimestamp
+}
+
+function campaignContactCursorParameterExpression() {
+  if (isPostgres) return '?'
+  return `COALESCE(
+    NULLIF(${timestampSortParameterExpression()}, 0),
+    julianday('1970-01-01 00:00:00')
+  )`
+}
+
+function encodeCursor(row, scope) {
+  const createdAt = serializeCursorTimestamp(row?.cursor_created_at)
+  const id = String(row?.id || '').trim()
+  if (!createdAt || !id) return null
+  return Buffer.from(JSON.stringify({ v: 2, kind: 'campaign-contacts', scope, createdAt, id }), 'utf8').toString('base64url')
+}
+
+function decodeCursor(value, expectedScope) {
   const clean = String(value || '').trim()
   if (!clean) return null
   if (clean.length > 2048) throw requestError('Cursor inválido')
 
   try {
     const parsed = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
+    const isLegacyCursor = parsed?.v === 1 && parsed?.kind === 'campaign-contacts' && parsed?.scope === undefined
+    const isScopedCursor = parsed?.v === 2 && parsed?.kind === 'campaign-contacts' && typeof parsed?.scope === 'string'
+    if (!isLegacyCursor && !isScopedCursor) throw new Error('invalid cursor payload')
+    if (isScopedCursor && parsed.scope !== expectedScope) {
+      throw requestError('El cursor ya no corresponde a esta vista; vuelve a la primera página')
+    }
     const createdAt = String(parsed?.createdAt || '').trim()
     const id = String(parsed?.id || '').trim()
-    if (parsed?.v !== 1 || parsed?.kind !== 'campaign-contacts' || !createdAt || !id) {
-      throw new Error('invalid cursor payload')
-    }
+    if (!createdAt || !id) throw new Error('invalid cursor payload')
     if (createdAt.length > 100 || id.length > 300 || !Number.isFinite(Date.parse(createdAt))) {
       throw new Error('invalid cursor fields')
     }
     return { createdAt, id }
-  } catch {
+  } catch (error) {
+    if (error?.status === 400) throw error
     throw requestError('Cursor inválido')
   }
 }
@@ -118,11 +157,47 @@ function resolveEntityFilter({ campaignId, adsetId, adId }) {
   throw requestError('Se requiere al menos campaign_id, adset_id o ad_id')
 }
 
-function typeEligibilityCondition(type) {
-  if (type === 'sales') return 'person_is_sale = 1'
-  if (type === 'appointments') return 'person_has_appointment = 1'
-  if (type === 'attendances') return 'person_has_attendance = 1'
-  return '1 = 1'
+function queryArgumentsCte() {
+  const timestampArgument = isPostgres ? 'CAST(? AS TIMESTAMP)' : '?'
+  return `query_args AS (
+    SELECT
+      CAST(? AS TEXT) AS ad_start_date,
+      CAST(? AS TEXT) AS ad_end_date,
+      CAST(? AS TEXT) AS entity_value,
+      ${timestampArgument} AS contact_start_at,
+      ${timestampArgument} AS contact_end_at,
+      CAST(? AS TEXT) AS search_pattern
+  )`
+}
+
+function metaMatchCondition({ contactAlias, metaAlias, argsAlias, entityColumn, range }) {
+  return `${metaAlias}.ad_id = ${contactAlias}.attribution_ad_id
+    AND ${metaAlias}.date >= ${argsAlias}.ad_start_date
+    AND ${metaAlias}.date <= ${argsAlias}.ad_end_date
+    AND ${metaAlias}.${entityColumn} = ${argsAlias}.entity_value
+    AND ${metaDateExpression(`${metaAlias}.date`)} = ${timestampDateExpression(
+      `${contactAlias}.created_at`,
+      range.appliedTimezone,
+      range.startUtc
+    )}`
+}
+
+function candidateContactCondition({ alias, argsAlias, entityColumn, range, hiddenFilters }) {
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, alias, false)
+  return `${alias}.created_at >= ${argsAlias}.contact_start_at
+    AND ${alias}.created_at <= ${argsAlias}.contact_end_at
+    ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+    AND EXISTS (
+      SELECT 1
+      FROM meta_ads candidate_ad
+      WHERE ${metaMatchCondition({
+        contactAlias: alias,
+        metaAlias: 'candidate_ad',
+        argsAlias,
+        entityColumn,
+        range
+      })}
+    )`
 }
 
 function mapContactRow(row) {
@@ -163,142 +238,193 @@ export async function listCampaignContactsPage({
   if (!startDate || !endDate) throw requestError('Se requieren type, startDate y endDate')
 
   const entityFilter = resolveEntityFilter({ campaignId, adsetId, adId })
-  const decodedCursor = decodeCursor(cursor)
   const pageLimit = normalizeLimit(limit)
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   if (!range.startZoned || !range.endZoned || !range.startUtc || !range.endUtc) {
     throw requestError('Rango de fechas inválido')
   }
 
-  const [hiddenFilters, calendarIds] = await Promise.all([
+  const [hiddenFilters, calendarIds, identityProjectionStatus] = await Promise.all([
     getHiddenContactFilters(),
-    getAttributionCalendarIds()
+    getAttributionCalendarIds(),
+    getContactPersonIdentityProjectionStatus({ schedule: false })
   ])
-  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-  const calendarCondition = calendarIds.length
-    ? `AND a.calendar_id IN (${sqlList(calendarIds)})`
-    : ''
-  const personKey = buildDedupExpression('c')
-  const createdAtSort = timestampSortExpression('created_at')
-  const createdAtSortForRank = timestampSortExpression('created_at')
   const normalizedSearch = escapeLikeSearch(search)
+  const cursorScope = hashPaginationCursorScope('campaign-contacts', {
+    range: paginationCursorRangeScope(range),
+    type: cleanType,
+    entity: entityFilter,
+    search: normalizedSearch,
+    hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters),
+    calendarIds: paginationCursorListScope(calendarIds),
+    inactiveAppointmentStatuses: paginationCursorListScope(ACTIVE_APPOINTMENT_STATUSES_EXCLUDED),
+    attendedAppointmentStatuses: paginationCursorListScope(ATTENDED_APPOINTMENT_STATUSES),
+    sort: ['created_at:desc', 'id:desc']
+  })
+  const decodedCursor = decodeCursor(cursor, cursorScope)
+  if (!identityProjectionStatus.ready) {
+    throw createContactPersonIdentityWarmingError()
+  }
+
+  const createdAtSort = campaignContactCursorSortExpression('c.created_at')
   const searchPattern = normalizedSearch ? `%${normalizedSearch}%` : ''
-  const searchMatchExpression = normalizedSearch
-    ? `CASE WHEN (
-        LOWER(COALESCE(c.full_name, '')) LIKE ? ESCAPE '!' OR
-        LOWER(COALESCE(c.email, '')) LIKE ? ESCAPE '!' OR
-        LOWER(COALESCE(c.phone, '')) LIKE ? ESCAPE '!' OR
-        LOWER(COALESCE(CAST(c.id AS TEXT), '')) LIKE ? ESCAPE '!'
-      ) THEN 1 ELSE 0 END`
-    : '1'
-  const searchParams = normalizedSearch
-    ? [searchPattern, searchPattern, searchPattern, searchPattern]
-    : []
+  const outerCandidate = candidateContactCondition({
+    alias: 'c',
+    argsAlias: 'query_args',
+    entityColumn: entityFilter.column,
+    range,
+    hiddenFilters
+  })
+  const newerCandidate = candidateContactCondition({
+    alias: 'newer_contact',
+    argsAlias: 'query_args',
+    entityColumn: entityFilter.column,
+    range,
+    hiddenFilters
+  })
+  const personCandidate = candidateContactCondition({
+    alias: 'person_contact',
+    argsAlias: 'query_args',
+    entityColumn: entityFilter.column,
+    range,
+    hiddenFilters
+  })
+  const representativeCondition = `NOT EXISTS (
+    SELECT 1
+    FROM contact_person_identity newer_identity
+    INNER JOIN contacts newer_contact ON newer_contact.id = newer_identity.contact_id
+    WHERE newer_identity.campaign_person_key = identity_projection.campaign_person_key
+      AND ${newerCandidate}
+      AND (
+        ${campaignContactCursorSortExpression('newer_contact.created_at')}, newer_contact.id
+      ) > (
+        ${createdAtSort}, c.id
+      )
+  )`
+  const personProbePrefix = `
+    FROM contact_person_identity person_identity
+    INNER JOIN contacts person_contact ON person_contact.id = person_identity.contact_id
+    WHERE person_identity.campaign_person_key = identity_projection.campaign_person_key
+      AND ${personCandidate}`
+  const personIsSaleExpression = `EXISTS (
+    SELECT 1 ${personProbePrefix}
+      AND COALESCE(person_contact.purchases_count, 0) > 0
+  )`
+  const calendarCondition = calendarIds.length
+    ? `AND person_appointment.calendar_id IN (${sqlList(calendarIds)})`
+    : ''
+  const personHasAppointmentExpression = `EXISTS (
+    SELECT 1 ${personProbePrefix}
+      AND (
+        person_contact.appointment_date IS NOT NULL OR EXISTS (
+          SELECT 1
+          FROM appointments person_appointment
+          WHERE person_appointment.contact_id = person_contact.id
+            ${calendarCondition}
+            AND LOWER(COALESCE(person_appointment.appointment_status, person_appointment.status, ''))
+              NOT IN (${sqlList(ACTIVE_APPOINTMENT_STATUSES_EXCLUDED)})
+        )
+      )
+  )`
+  const personHasAttendanceExpression = `EXISTS (
+    SELECT 1 ${personProbePrefix}
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM appointment_attendance_signals person_signal
+          WHERE person_signal.contact_id = person_contact.id
+        ) OR EXISTS (
+          SELECT 1
+          FROM appointments person_appointment
+          WHERE person_appointment.contact_id = person_contact.id
+            ${calendarCondition}
+            AND LOWER(COALESCE(person_appointment.appointment_status, person_appointment.status, ''))
+              IN (${sqlList(ATTENDED_APPOINTMENT_STATUSES)})
+        )
+      )
+  )`
+  const personLtvExpression = `COALESCE((
+    SELECT MAX(person_contact.total_paid) ${personProbePrefix}
+  ), 0)`
+  const personSearchExpression = normalizedSearch
+    ? `EXISTS (
+        SELECT 1 ${personProbePrefix}
+          AND (
+            LOWER(COALESCE(person_contact.full_name, '')) LIKE query_args.search_pattern ESCAPE '!' OR
+            LOWER(COALESCE(person_contact.email, '')) LIKE query_args.search_pattern ESCAPE '!' OR
+            LOWER(COALESCE(person_contact.phone, '')) LIKE query_args.search_pattern ESCAPE '!' OR
+            LOWER(COALESCE(CAST(person_contact.id AS TEXT), '')) LIKE query_args.search_pattern ESCAPE '!'
+          )
+      )`
+    : '1 = 1'
+  const typeCondition = cleanType === 'sales'
+    ? personIsSaleExpression
+    : cleanType === 'appointments'
+      ? personHasAppointmentExpression
+      : cleanType === 'attendances'
+        ? personHasAttendanceExpression
+        : '1 = 1'
+  const metadataExpression = (column) => `(
+    SELECT MAX(metadata_ad.${column})
+    FROM meta_ads metadata_ad
+    WHERE ${metaMatchCondition({
+      contactAlias: 'c',
+      metaAlias: 'metadata_ad',
+      argsAlias: 'query_args',
+      entityColumn: entityFilter.column,
+      range
+    })}
+  )`
   const cursorCondition = decodedCursor
-    ? `AND (${createdAtSort}, id) < (${timestampSortParameterExpression()}, ?)`
+    ? `AND (${createdAtSort}, c.id) < (${campaignContactCursorParameterExpression()}, ?)`
     : ''
   const cursorParams = decodedCursor
     ? [decodedCursor.createdAt, decodedCursor.id]
     : []
 
   const query = `
-    WITH matched_ads AS (
-      SELECT
-        ma.ad_id,
-        ${metaDateExpression('ma.date')} AS ad_date,
-        MAX(ma.campaign_id) AS campaign_id,
-        MAX(ma.campaign_name) AS campaign_name,
-        MAX(ma.adset_id) AS adset_id,
-        MAX(ma.adset_name) AS adset_name,
-        MAX(ma.ad_name) AS ad_name
-      FROM meta_ads ma
-      WHERE ma.date >= ?
-        AND ma.date <= ?
-        AND ma.${entityFilter.column} = ?
-      GROUP BY ma.ad_id, ${metaDateExpression('ma.date')}
-    ),
-    candidate_contacts AS (
-      SELECT
-        c.id,
-        c.full_name,
-        c.email,
-        c.phone,
-        c.created_at,
-        c.total_paid,
-        c.purchases_count,
-        c.appointment_date,
-        c.attribution_ad_id,
-        c.attribution_ad_name,
-        c.source,
-        ma.campaign_id,
-        ma.campaign_name,
-        ma.adset_id,
-        ma.adset_name,
-        ma.ad_name,
-        ${personKey} AS person_key,
-        CASE WHEN COALESCE(c.purchases_count, 0) > 0 THEN 1 ELSE 0 END AS is_sale,
-        CASE WHEN c.appointment_date IS NOT NULL OR EXISTS (
-          SELECT 1
-          FROM appointments a
-          WHERE a.contact_id = c.id
-            ${calendarCondition}
-            AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${sqlList(ACTIVE_APPOINTMENT_STATUSES_EXCLUDED)})
-        ) THEN 1 ELSE 0 END AS has_appointment,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM appointment_attendance_signals signals
-          WHERE signals.contact_id = c.id
-        ) OR EXISTS (
-          SELECT 1
-          FROM appointments a
-          WHERE a.contact_id = c.id
-            ${calendarCondition}
-            AND LOWER(COALESCE(a.appointment_status, a.status, '')) IN (${sqlList(ATTENDED_APPOINTMENT_STATUSES)})
-        ) THEN 1 ELSE 0 END AS has_attendance,
-        ${searchMatchExpression} AS search_match
-      FROM contacts c
-      INNER JOIN matched_ads ma
-        ON ma.ad_id = c.attribution_ad_id
-        AND ma.ad_date = ${timestampDateExpression('c.created_at', range.appliedTimezone, range.startUtc)}
-      WHERE c.created_at >= ?
-        AND c.created_at <= ?
-        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-    ),
-    ranked_contacts AS (
-      SELECT
-        candidate_contacts.*,
-        ROW_NUMBER() OVER (
-          PARTITION BY person_key
-          ORDER BY ${createdAtSortForRank} DESC, id DESC
-        ) AS person_rank,
-        MAX(is_sale) OVER (PARTITION BY person_key) AS person_is_sale,
-        MAX(has_appointment) OVER (PARTITION BY person_key) AS person_has_appointment,
-        MAX(has_attendance) OVER (PARTITION BY person_key) AS person_has_attendance,
-        MAX(total_paid) OVER (PARTITION BY person_key) AS person_ltv,
-        MAX(search_match) OVER (PARTITION BY person_key) AS person_search_match
-      FROM candidate_contacts
-    ),
-    eligible_contacts AS (
-      SELECT *
-      FROM ranked_contacts
-      WHERE person_rank = 1
-        AND person_search_match = 1
-        AND ${typeEligibilityCondition(cleanType)}
-    )
-    SELECT *
-    FROM eligible_contacts
-    WHERE 1 = 1
+    WITH ${queryArgumentsCte()}
+    SELECT
+      c.id,
+      c.full_name,
+      c.email,
+      c.phone,
+      c.created_at,
+      c.total_paid,
+      c.purchases_count,
+      c.appointment_date,
+      c.attribution_ad_id,
+      c.attribution_ad_name,
+      c.source,
+      ${metadataExpression('campaign_id')} AS campaign_id,
+      ${metadataExpression('campaign_name')} AS campaign_name,
+      ${metadataExpression('adset_id')} AS adset_id,
+      ${metadataExpression('adset_name')} AS adset_name,
+      ${metadataExpression('ad_name')} AS ad_name,
+      ${personIsSaleExpression} AS person_is_sale,
+      ${personHasAppointmentExpression} AS person_has_appointment,
+      ${personHasAttendanceExpression} AS person_has_attendance,
+      ${personLtvExpression} AS person_ltv,
+      ${campaignContactCursorProjectionExpression('c.created_at')} AS cursor_created_at
+    FROM contacts c${isPostgres ? '' : ' INDEXED BY idx_campaign_contacts_cursor_created_at_id'}
+    INNER JOIN contact_person_identity identity_projection
+      ON identity_projection.contact_id = c.id
+    CROSS JOIN query_args
+    WHERE ${outerCandidate}
+      AND ${representativeCondition}
+      AND ${personSearchExpression}
+      AND ${typeCondition}
       ${cursorCondition}
-    ORDER BY ${createdAtSort} DESC, id DESC
+    ORDER BY ${createdAtSort} DESC, c.id DESC
     LIMIT ?
   `
   const params = [
     range.startZoned.toISODate(),
     range.endZoned.toISODate(),
     entityFilter.value,
-    ...searchParams,
     range.startUtc,
     range.endUtc,
+    searchPattern,
     ...cursorParams,
     pageLimit + 1
   ]
@@ -318,7 +444,7 @@ export async function listCampaignContactsPage({
     pagination: {
       limit: pageLimit,
       hasNext,
-      nextCursor: hasNext ? encodeCursor(pageRows[pageRows.length - 1]) : null
+      nextCursor: hasNext ? encodeCursor(pageRows[pageRows.length - 1], cursorScope) : null
     }
   }
 }

@@ -209,10 +209,79 @@ export function hasProfessionalPlan(plan = '') {
   return normalized.endsWith('_pro') || normalized.endsWith('_professional') || normalized.endsWith('_profesional')
 }
 
-// Estado cacheado de la última validación (token temporal de licencia)
-let cachedState = null
-let lastVerifiedEmail = null
+// El runtime de fondo necesita un estado de instalación estable, mientras que
+// cada request autenticado necesita el estado exacto de su principal. Mezclar
+// ambos en "el último usuario verificado" permite que dos requests concurrentes
+// se contaminen entre sí (por ejemplo, un empleado bloqueado cerrando features
+// al dueño). Son caches deliberadamente separados.
+let cachedInstallationState = null
+const cachedStatesByPrincipal = new Map()
+const verificationFlightsByPrincipal = new Map()
+let licenseCacheGeneration = 0
 let verifiedAppBaseUrlResolver = getVerifiedAppBaseUrl
+
+const LICENSE_VERIFY_TIMEOUT_MS = 3000
+const LICENSE_PORTAL_TIMEOUT_MS = 5000
+const ACCOUNT_CANCELLATION_SNAPSHOT_KEY = 'license_account_cancellation_snapshot_v1'
+const ACCOUNT_CANCELLATION_FRESH_MS = 60 * 1000
+const ACCOUNT_CANCELLATION_STALE_MS = 24 * 60 * 60 * 1000
+let accountCancellationSnapshot = null
+let accountCancellationRefreshFlight = null
+
+function normalizePrincipal(email = '') {
+  return String(email || '').trim().toLowerCase()
+}
+
+function rememberPrincipalState(email, state) {
+  const principal = normalizePrincipal(email)
+  if (!principal) {
+    cachedInstallationState = state
+    return
+  }
+
+  // Una instalación puede tener muchos usuarios. El LRU acotado evita que alternar
+  // entre empleados invalide el cache global y convierta cada request en una llamada
+  // al portal, sin dejar crecer memoria indefinidamente.
+  cachedStatesByPrincipal.delete(principal)
+  cachedStatesByPrincipal.set(principal, state)
+  if (cachedStatesByPrincipal.size > 1000) {
+    cachedStatesByPrincipal.delete(cachedStatesByPrincipal.keys().next().value)
+  }
+}
+
+function rememberInstallationStateFromPrincipal(email, state) {
+  const principal = normalizePrincipal(email)
+  const owner = normalizePrincipal(getConfig().ownerEmail)
+
+  // OWNER_EMAIL es la autoridad del estado de instalación. En instalaciones
+  // legacy sin owner configurado sólo aceptamos snapshots positivos de un
+  // principal; un rechazo individual nunca puede apagar jobs ni rutas públicas.
+  if (!principal || (owner && principal === owner) || (!owner && state?.allowed === true)) {
+    cachedInstallationState = state
+  }
+}
+
+function readPrincipalState(email) {
+  const principal = normalizePrincipal(email)
+  if (!principal) return cachedInstallationState
+  const state = cachedStatesByPrincipal.get(principal) || null
+  if (state) {
+    cachedStatesByPrincipal.delete(principal)
+    cachedStatesByPrincipal.set(principal, state)
+  }
+  return state
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = LICENSE_PORTAL_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  timer.unref?.()
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 function firstEnv(...keys) {
   for (const key of keys) {
@@ -353,7 +422,7 @@ export function isManagedOwnerEmail(email) {
   return !!ownerEmail && !!candidate && ownerEmail === candidate
 }
 
-async function callLicenseServer(path, body = {}) {
+async function callLicenseServer(path, body = {}, { timeoutMs = LICENSE_PORTAL_TIMEOUT_MS } = {}) {
   const config = getConfig()
 
   if (!isLicenseEnforced()) {
@@ -362,11 +431,11 @@ async function callLicenseServer(path, body = {}) {
 
   let response, data
   try {
-    response = await fetch(`${config.licenseServerUrl}${path}`, {
+    response = await fetchWithTimeout(`${config.licenseServerUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(await buildInstalledAppPayload(body))
-    })
+    }, timeoutMs)
     data = await response.json().catch(() => ({}))
   } catch (error) {
     logger.error(`No se pudo contactar al portal central: ${error.message}`)
@@ -433,8 +502,12 @@ export function getHealthInfo() {
 
 /** Solo para tests */
 export function resetLicenseCache() {
-  cachedState = null
-  lastVerifiedEmail = null
+  licenseCacheGeneration += 1
+  cachedInstallationState = null
+  cachedStatesByPrincipal.clear()
+  verificationFlightsByPrincipal.clear()
+  accountCancellationSnapshot = null
+  accountCancellationRefreshFlight = null
 }
 
 export function setVerifiedAppBaseUrlResolverForTests(resolver = getVerifiedAppBaseUrl) {
@@ -531,8 +604,8 @@ function normalizeLicenseFeatures(features = {}) {
   return normalized
 }
 
-function cacheIsValid() {
-  return !!(cachedState && cachedState.allowed && cachedState.expiresAt && new Date(cachedState.expiresAt).getTime() > Date.now())
+function cacheIsValid(state = cachedInstallationState) {
+  return !!(state && state.allowed && state.expiresAt && new Date(state.expiresAt).getTime() > Date.now())
 }
 
 // (LIC-008) El cache positivo es "fresco" (reutilizable sin pegarle al portal) solo si
@@ -540,43 +613,30 @@ function cacheIsValid() {
 // de revalidación. Cuando la ventana vence, getLicenseState revalida contra el portal
 // para reflejar cambios de plan en caliente. Si nunca se marcó revalidateAfter (estados
 // viejos en cache), se trata como fresco para no romper el comportamiento previo.
-function cacheIsFresh() {
-  if (!cacheIsValid()) return false
-  if (!cachedState.revalidateAfter) return true
-  return cachedState.revalidateAfter > Date.now()
+function cacheIsFresh(state = cachedInstallationState) {
+  if (!cacheIsValid(state)) return false
+  if (!state.revalidateAfter) return true
+  return state.revalidateAfter > Date.now()
 }
 
 // (LIC-006) Cache negativo: el estado bloqueado es válido mientras no expire su TTL
 // corto. Así dejamos de martillar el portal en cada request cuando la licencia está
 // bloqueada, sin volver el bloqueo permanente.
-function blockedCacheIsValid() {
-  return !!(cachedState && cachedState.allowed === false && cachedState.blockedUntil && cachedState.blockedUntil > Date.now())
-}
-
-// (LIC-007) El cache es un singleton por proceso compartido entre usuarios. Para no
-// servir un veredicto calculado contra otro email, solo reutilizamos el cache cuando
-// la verificación corresponde al mismo email solicitado (o no se pidió uno explícito).
-function cacheMatchesEmail(email) {
-  if (!email) return true
-  return lastVerifiedEmail === email
+function blockedCacheIsValid(state = cachedInstallationState) {
+  return !!(state && state.allowed === false && state.blockedUntil && state.blockedUntil > Date.now())
 }
 
 /**
  * Llama al license server central. Devuelve el estado de licencia y lo cachea.
  * @param {string} email - email del usuario que está iniciando sesión
  */
-export async function verifyLicenseWithServer(email) {
+async function performLicenseVerification(targetEmail, generation) {
   const config = getConfig()
-
-  if (!isLicenseEnforced()) {
-    return allowedWithoutEnforcement()
-  }
-
-  const targetEmail = email || lastVerifiedEmail || config.ownerEmail
+  const previousState = readPrincipalState(targetEmail)
 
   let response, data
   try {
-    response = await fetch(`${config.licenseServerUrl}/api/license/verify`, {
+    response = await fetchWithTimeout(`${config.licenseServerUrl}/api/license/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -587,11 +647,11 @@ export async function verifyLicenseWithServer(email) {
         app_url: await resolveManagedAppUrl(config.appUrl),
         version: config.appVersion
       })
-    })
+    }, LICENSE_VERIFY_TIMEOUT_MS)
     data = await response.json()
   } catch (error) {
     logger.error(`No se pudo contactar al servidor de licencias: ${error.message}`)
-    return handleServerUnreachable()
+    return handleServerUnreachable(previousState)
   }
 
   if (data && data.allowed) {
@@ -601,7 +661,7 @@ export async function verifyLicenseWithServer(email) {
     if (!hasValidFeatures) {
       logger.warn('[Licencia] El servidor respondió allowed sin un objeto "features" válido: se aplican features mínimas (premium apagado).')
     }
-    cachedState = {
+    const nextState = {
       allowed: true,
       enforced: true,
       plan: data.plan || null,
@@ -618,14 +678,17 @@ export async function verifyLicenseWithServer(email) {
       // caliente, sin re-login.
       revalidateAfter: Date.now() + config.revalidateSeconds * 1000
     }
-    lastVerifiedEmail = targetEmail
-    return cachedState
+    if (generation === licenseCacheGeneration) {
+      rememberPrincipalState(targetEmail, nextState)
+      rememberInstallationStateFromPrincipal(targetEmail, nextState)
+    }
+    return nextState
   }
 
   // Respuesta válida del servidor pero bloqueada: invalidar cualquier cache positivo.
   // (LIC-006) Cacheamos el estado bloqueado por un TTL corto (blockedUntil) para no
   // re-verificar contra el portal en cada request mientras la licencia siga bloqueada.
-  cachedState = {
+  const nextState = {
     allowed: false,
     enforced: true,
     reason: data?.reason || 'license_blocked',
@@ -634,23 +697,49 @@ export async function verifyLicenseWithServer(email) {
     verifiedAt: new Date().toISOString(),
     blockedUntil: Date.now() + config.blockedCacheSeconds * 1000
   }
-  lastVerifiedEmail = targetEmail
-  return cachedState
+  if (generation === licenseCacheGeneration) {
+    rememberPrincipalState(targetEmail, nextState)
+    rememberInstallationStateFromPrincipal(targetEmail, nextState)
+  }
+  return nextState
 }
 
-function handleServerUnreachable() {
+export async function verifyLicenseWithServer(email) {
+  const config = getConfig()
+
+  if (!isLicenseEnforced()) {
+    return allowedWithoutEnforcement()
+  }
+
+  const targetEmail = normalizePrincipal(email || config.ownerEmail)
+  const flightKey = targetEmail || '__installation__'
+  const existingFlight = verificationFlightsByPrincipal.get(flightKey)
+  if (existingFlight) return existingFlight
+
+  const generation = licenseCacheGeneration
+  const flight = performLicenseVerification(targetEmail, generation)
+    .finally(() => {
+      if (verificationFlightsByPrincipal.get(flightKey) === flight) {
+        verificationFlightsByPrincipal.delete(flightKey)
+      }
+    })
+  verificationFlightsByPrincipal.set(flightKey, flight)
+  return flight
+}
+
+function handleServerUnreachable(previousState = cachedInstallationState) {
   const config = getConfig()
 
   // Si hay un token temporal vigente, se sigue permitiendo el acceso
-  if (cacheIsValid()) {
-    return cachedState
+  if (cacheIsValid(previousState)) {
+    return previousState
   }
 
-  if (config.offlinePolicy === 'grace' && cachedState?.allowed && cachedState.verifiedAt) {
-    const graceLimit = new Date(cachedState.verifiedAt).getTime() + config.graceHours * 60 * 60 * 1000
+  if (config.offlinePolicy === 'grace' && previousState?.allowed && previousState.verifiedAt) {
+    const graceLimit = new Date(previousState.verifiedAt).getTime() + config.graceHours * 60 * 60 * 1000
     if (Date.now() < graceLimit) {
       logger.warn('Servidor de licencias inaccesible: acceso permitido por política de gracia')
-      return cachedState
+      return previousState
     }
   }
 
@@ -673,22 +762,21 @@ export async function getLicenseState({ email = null, forceRefresh = false } = {
     return allowedWithoutEnforcement()
   }
 
-  // (LIC-007) Solo reutilizamos el cache (positivo o negativo) cuando corresponde al
-  // mismo email solicitado; un email distinto fuerza re-verificación para no servir el
-  // veredicto de otro usuario desde este singleton compartido.
-  if (!forceRefresh && cacheMatchesEmail(email)) {
-    // (LIC-008) Reutilizamos el cache positivo solo mientras siga "fresco": con
-    // license_token vigente Y dentro de su ventana corta de revalidación. Al vencer la
-    // ventana caemos a verifyLicenseWithServer para reflejar cambios de plan en caliente
-    // (si el portal está caído, handleServerUnreachable conserva el último estado).
-    if (cacheIsFresh()) {
-      return cachedState
+  const principalState = readPrincipalState(email)
+  if (!forceRefresh) {
+    if (cacheIsFresh(principalState)) return principalState
+
+    // El token firmado sigue vigente aunque haya vencido la ventana corta de SWR.
+    // Servimos el snapshot local inmediatamente y una sola verificación por principal
+    // actualiza plan/features en segundo plano. Ninguna navegación queda rehén del portal.
+    if (cacheIsValid(principalState)) {
+      void verifyLicenseWithServer(email).catch((error) => {
+        logger.warn(`No se pudo revalidar licencia en segundo plano: ${error.message}`)
+      })
+      return principalState
     }
-    // (LIC-006) Reutiliza el bloqueo cacheado por su TTL corto en vez de re-verificar
-    // en cada request mientras la licencia siga bloqueada.
-    if (blockedCacheIsValid()) {
-      return cachedState
-    }
+
+    if (blockedCacheIsValid(principalState)) return principalState
   }
 
   return verifyLicenseWithServer(email)
@@ -703,22 +791,26 @@ export async function getConversationalAgentMaxAgents() {
 /**
  * Indica si una feature está habilitada según la última validación de licencia.
  */
-export async function hasFeature(featureKey) {
-  const state = await getLicenseState()
+export async function hasFeature(featureKey, { state: suppliedState = null, email = null } = {}) {
+  const state = suppliedState || await getLicenseState({ email })
   if (!state.allowed) return false
   if (!state.enforced) return true
   return readFeatureValue(state.features, featureKey)
 }
 
-export async function hasModuleFeature(moduleKey) {
-  const state = await getLicenseState()
+async function resolveModuleFeature(moduleKey, { state: suppliedState = null, email = null } = {}) {
+  const state = suppliedState || await getLicenseState({ email })
   if (!state.allowed) return false
   if (!state.enforced) return true
   return readModuleFeatureValue(state.features, moduleKey)
 }
 
-export async function hasCalendarPaymentsFeature() {
-  const state = await getLicenseState()
+export async function hasModuleFeature(moduleKey) {
+  return resolveModuleFeature(moduleKey, arguments[1] || {})
+}
+
+export async function hasCalendarPaymentsFeature({ state: suppliedState = null, email = null } = {}) {
+  const state = suppliedState || await getLicenseState({ email })
   if (!state.allowed) return false
   if (!state.enforced) return true
 
@@ -942,19 +1034,106 @@ export async function sendCentralMobilePushNotifications({ devices = [], payload
   })
 }
 
+async function readAccountCancellationSnapshot() {
+  if (accountCancellationSnapshot) return accountCancellationSnapshot
+  try {
+    const { db } = await import('../config/database.js')
+    const row = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ? LIMIT 1',
+      [ACCOUNT_CANCELLATION_SNAPSHOT_KEY]
+    )
+    const parsed = row?.config_value ? JSON.parse(row.config_value) : null
+    if (parsed?.data && Number.isFinite(Number(parsed.fetchedAt))) {
+      accountCancellationSnapshot = {
+        data: parsed.data,
+        fetchedAt: Number(parsed.fetchedAt)
+      }
+    }
+  } catch (error) {
+    logger.warn(`No se pudo leer snapshot local de cancelación: ${error.message}`)
+  }
+  return accountCancellationSnapshot
+}
+
+async function writeAccountCancellationSnapshot(data) {
+  const snapshot = { data, fetchedAt: Date.now() }
+  accountCancellationSnapshot = snapshot
+  try {
+    const { db } = await import('../config/database.js')
+    await db.run(
+      `INSERT INTO app_config (config_key, config_value, updated_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(config_key) DO UPDATE SET
+         config_value = excluded.config_value,
+         updated_at = CURRENT_TIMESTAMP`,
+      [ACCOUNT_CANCELLATION_SNAPSHOT_KEY, JSON.stringify(snapshot)]
+    )
+  } catch (error) {
+    // La memoria sigue sirviendo el snapshot; persistencia es una optimización y no
+    // debe convertir un estado remoto válido en error para el usuario.
+    logger.warn(`No se pudo persistir snapshot local de cancelación: ${error.message}`)
+  }
+  return data
+}
+
+async function invalidateAccountCancellationSnapshot() {
+  accountCancellationSnapshot = null
+  try {
+    const { db } = await import('../config/database.js')
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [ACCOUNT_CANCELLATION_SNAPSHOT_KEY])
+  } catch (error) {
+    logger.warn(`No se pudo invalidar snapshot local de cancelación: ${error.message}`)
+  }
+}
+
+function refreshAccountCancellationSnapshot() {
+  if (accountCancellationRefreshFlight) return accountCancellationRefreshFlight
+  const flight = callLicenseServer(
+    '/api/license/account-cancellation/status',
+    {},
+    { timeoutMs: LICENSE_VERIFY_TIMEOUT_MS }
+  )
+    .then(writeAccountCancellationSnapshot)
+    .finally(() => {
+      if (accountCancellationRefreshFlight === flight) accountCancellationRefreshFlight = null
+    })
+  accountCancellationRefreshFlight = flight
+  return flight
+}
+
 export async function getCentralAccountCancellationStatus() {
-  return callLicenseServer('/api/license/account-cancellation/status')
+  const snapshot = await readAccountCancellationSnapshot()
+  const ageMs = snapshot ? Date.now() - snapshot.fetchedAt : Number.POSITIVE_INFINITY
+
+  if (snapshot && ageMs <= ACCOUNT_CANCELLATION_FRESH_MS) return snapshot.data
+  if (snapshot && ageMs <= ACCOUNT_CANCELLATION_STALE_MS) {
+    void refreshAccountCancellationSnapshot().catch((error) => {
+      logger.warn(`No se pudo refrescar cancelación en segundo plano: ${error.message}`)
+    })
+    return snapshot.data
+  }
+
+  try {
+    return await refreshAccountCancellationSnapshot()
+  } catch (error) {
+    if (snapshot) return snapshot.data
+    throw error
+  }
 }
 
 export async function acceptCentralAccountRetentionOffer() {
-  return callLicenseServer('/api/license/account-cancellation/retention')
+  const result = await callLicenseServer('/api/license/account-cancellation/retention')
+  await invalidateAccountCancellationSnapshot()
+  return result
 }
 
 export async function requestCentralAccountCancellation({ reasonKey, reasonDetails = '' } = {}) {
-  return callLicenseServer('/api/license/account-cancellation/cancel', {
+  const result = await callLicenseServer('/api/license/account-cancellation/cancel', {
     reason_key: reasonKey,
     reason_details: reasonDetails
   })
+  await invalidateAccountCancellationSnapshot()
+  return result
 }
 
 /**
@@ -971,7 +1150,7 @@ export async function verifyOwnerCredentialsWithServer(email, password) {
   }
 
   try {
-    const response = await fetch(`${config.licenseServerUrl}/api/owner-credentials/verify`, {
+    const response = await fetchWithTimeout(`${config.licenseServerUrl}/api/owner-credentials/verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -981,7 +1160,7 @@ export async function verifyOwnerCredentialsWithServer(email, password) {
         email,
         password
       })
-    })
+    }, LICENSE_PORTAL_TIMEOUT_MS)
     const data = await response.json()
     return data || { valid: false }
   } catch (error) {
@@ -1012,14 +1191,14 @@ async function callSetupTokenEndpoint(action, token) {
   }
 
   try {
-    const response = await fetch(`${config.licenseServerUrl}/api/setup-token/${action}`, {
+    const response = await fetchWithTimeout(`${config.licenseServerUrl}/api/setup-token/${action}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         token,
         installation_id: config.installationId
       })
-    })
+    }, LICENSE_PORTAL_TIMEOUT_MS)
     const data = await response.json()
     return data || { valid: false }
   } catch (error) {

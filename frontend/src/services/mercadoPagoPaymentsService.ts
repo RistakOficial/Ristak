@@ -193,9 +193,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export const mercadoPagoPaymentsService = {
-  async getConfig(): Promise<MercadoPagoPaymentConfig> {
+  async getConfig(signal?: AbortSignal): Promise<MercadoPagoPaymentConfig> {
     const response = await fetch(apiUrl('/api/mercadopago/config'), {
-      credentials: 'include'
+      credentials: 'include',
+      signal
     })
     return parseResponse<MercadoPagoPaymentConfig>(response)
   },

@@ -549,7 +549,7 @@ export async function fetchMetaCreativeMediaForAd(adId, accessToken, accountId =
  * Obtiene la configuración de Meta desde la base de datos
  * DESENCRIPTA los tokens antes de devolverlos
  */
-async function decryptMetaConfigSecret(config, column, label) {
+async function decryptMetaConfigSecret(config, column, label, { migratePlaintext = true } = {}) {
   if (!config?.[column]) return
 
   try {
@@ -558,14 +558,15 @@ async function decryptMetaConfigSecret(config, column, label) {
       return
     }
 
-    logger.warn(`⚠️ ${label} de Meta NO estaba encriptado. Encriptando ahora...`)
     const plainToken = config[column]
-    const encryptedToken = encrypt(plainToken)
-
-    await db.run(
-      `UPDATE meta_config SET ${column} = ? WHERE id = ?`,
-      [encryptedToken, config.id]
-    )
+    if (migratePlaintext) {
+      logger.warn(`⚠️ ${label} de Meta NO estaba encriptado. Encriptando ahora...`)
+      const encryptedToken = encrypt(plainToken)
+      await db.run(
+        `UPDATE meta_config SET ${column} = ? WHERE id = ?`,
+        [encryptedToken, config.id]
+      )
+    }
 
     config[column] = plainToken
   } catch (error) {
@@ -574,7 +575,7 @@ async function decryptMetaConfigSecret(config, column, label) {
   }
 }
 
-export async function getLegacyMetaConfig() {
+export async function getLegacyMetaConfig({ migratePlaintext = true } = {}) {
   try {
     const config = await db.get('SELECT * FROM meta_config LIMIT 1')
 
@@ -582,11 +583,12 @@ export async function getLegacyMetaConfig() {
       return null
     }
 
-    await decryptMetaConfigSecret(config, 'access_token', 'token principal')
-    await decryptMetaConfigSecret(config, 'messenger_user_token', 'User Token de Messenger')
-    await decryptMetaConfigSecret(config, 'oauth_appsecret_proof', 'appsecret_proof OAuth')
-    await decryptMetaConfigSecret(config, 'oauth_page_access_token', 'Page token OAuth')
-    await decryptMetaConfigSecret(config, 'oauth_page_appsecret_proof', 'Page appsecret_proof OAuth')
+    const decryptOptions = { migratePlaintext }
+    await decryptMetaConfigSecret(config, 'access_token', 'token principal', decryptOptions)
+    await decryptMetaConfigSecret(config, 'messenger_user_token', 'User Token de Messenger', decryptOptions)
+    await decryptMetaConfigSecret(config, 'oauth_appsecret_proof', 'appsecret_proof OAuth', decryptOptions)
+    await decryptMetaConfigSecret(config, 'oauth_page_access_token', 'Page token OAuth', decryptOptions)
+    await decryptMetaConfigSecret(config, 'oauth_page_appsecret_proof', 'Page appsecret_proof OAuth', decryptOptions)
 
     // También desencriptar app_secret si existe
     if (config.app_secret && isEncrypted(config.app_secret)) {
@@ -609,10 +611,10 @@ export async function getLegacyMetaConfig() {
  * prioridad sobre meta_config. Los activos Social permanecen fuera de este
  * objeto para no fingir que el token Ads tiene tareas de Página.
  */
-export async function getMetaConfig() {
+export async function getMetaConfig({ migratePlaintext = true } = {}) {
   const [legacy, ads] = await Promise.all([
-    getLegacyMetaConfig(),
-    getActiveMetaOAuthIntegration('ads')
+    getLegacyMetaConfig({ migratePlaintext }),
+    getActiveMetaOAuthIntegration('ads', { migratePlaintext })
   ])
   if (
     legacy?.access_token &&
@@ -628,10 +630,10 @@ export async function getMetaConfig() {
  * hereda el token Ads; mientras no exista OAuth Social conserva el flujo
  * combinado/manual de meta_config como fallback.
  */
-export async function getMetaSocialConfig() {
+export async function getMetaSocialConfig({ migratePlaintext = true } = {}) {
   const [legacy, social] = await Promise.all([
-    getLegacyMetaConfig(),
-    getActiveMetaOAuthIntegration('social')
+    getLegacyMetaConfig({ migratePlaintext }),
+    getActiveMetaOAuthIntegration('social', { migratePlaintext })
   ])
   if (
     legacy?.access_token &&
@@ -690,11 +692,15 @@ function buildMetaDeveloperUseCaseUrl({ appId, businessId, useCase, selectedTab,
 }
 
 /**
- * Recupera y conserva los IDs reales para abrir la configuración exacta de
- * Messenger e Instagram en Meta Developers, sin exponer tokens al frontend.
+ * Arma la configuración de Messenger/Instagram con IDs locales. Sólo una
+ * acción explícita con refresh=true puede recuperar y conservar IDs faltantes
+ * desde Meta, sin exponer tokens al frontend.
  */
-export async function getMetaDeveloperSetup() {
-  const config = await getMetaSocialConfig()
+export async function getMetaDeveloperSetup({ refresh = false } = {}) {
+  // Este helper alimenta una pestaña de Configuración. En modo lectura sólo
+  // arma enlaces con los IDs ya guardados: no valida tokens, no llama Graph y
+  // no aprovecha el GET para migrar/escribir secretos heredados.
+  const config = await getMetaSocialConfig({ migratePlaintext: refresh })
   if (!config?.access_token) {
     return {
       configured: false,
@@ -710,12 +716,12 @@ export async function getMetaDeveloperSetup() {
   let appId = normalizeId(config.oauth_app_id || config.app_id) || ''
   let businessId = normalizeId(config.oauth_business_id || config.meta_business_id) || ''
 
-  if (!appId) {
+  if (refresh && !appId) {
     const tokenStatus = await verifyMetaToken(config.access_token, config.oauth_appsecret_proof || '')
     if (tokenStatus.valid) appId = normalizeId(tokenStatus.appId) || ''
   }
 
-  if (appId && !businessId) {
+  if (refresh && appId && !businessId) {
     try {
       const params = new URLSearchParams({ fields: 'business', access_token: config.access_token })
       if (config.oauth_appsecret_proof) params.set('appsecret_proof', config.oauth_appsecret_proof)
@@ -732,6 +738,7 @@ export async function getMetaDeveloperSetup() {
   }
 
   if (
+    refresh &&
     config.oauth_integration_kind !== 'social' &&
     (appId !== (normalizeId(config.app_id) || '') || businessId !== (normalizeId(config.meta_business_id) || ''))
   ) {
@@ -1059,11 +1066,11 @@ export async function saveMetaConfig(
     const metadata = {
       appId: isOAuth
         ? normalizeId(options.oauthAppId || options.appId)
-        : existingMetaConfig?.app_id || null,
+        : normalizeId(options.appId) || existingMetaConfig?.app_id || null,
       appSecret: isOAuth ? null : existingMetaConfig?.app_secret || null,
       businessId: isOAuth
         ? normalizeId(options.oauthBusinessId || options.businessId)
-        : existingMetaConfig?.meta_business_id || null,
+        : normalizeId(options.businessId) || existingMetaConfig?.meta_business_id || null,
       tokenExpiresAt: options.tokenExpiresAt ?? existingMetaConfig?.token_expires_at ?? null,
       oauthConnectionId: isOAuth ? normalizeId(options.oauthConnectionId || options.connectionId) : null,
       oauthUserId: isOAuth ? normalizeId(options.oauthUserId || options.userId) : null,

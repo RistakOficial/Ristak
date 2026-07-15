@@ -19,7 +19,12 @@ export function requireModuleAccess(moduleKey) {
     const requiredLevel = req.method === 'GET' || req.method === 'HEAD' ? 'read' : 'write'
 
     try {
-      if (isLicenseEnforced() && !(await hasModuleFeature(moduleKey))) {
+      // Contrato de seguridad: requireModuleAccess siempre debe pasar por hasModuleFeature(moduleKey).
+      // El segundo argumento evita mezclar el cache de licencia entre usuarios concurrentes.
+      if (isLicenseEnforced() && !(await hasModuleFeature(moduleKey, {
+        state: req.license || null,
+        email: req.user?.email || req.user?.username || null
+      }))) {
         return res.status(403).json({
           success: false,
           code: 'feature_not_available',

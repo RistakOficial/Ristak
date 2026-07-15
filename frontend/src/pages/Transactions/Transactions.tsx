@@ -489,7 +489,8 @@ const EMPTY_TRANSACTIONS_PAGINATION: TransactionsPagination = {
   total: 0,
   totalPages: 1,
   hasNext: false,
-  hasPrev: false
+  hasPrev: false,
+  nextCursor: null
 }
 const EMPTY_PAYMENT_PLANS_PAGINATION: CursorPagination = {
   page: 1,
@@ -848,6 +849,10 @@ export const Transactions: React.FC = () => {
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
   const paymentPlansUnavailableRedirectedRef = useRef(false)
   const transactionsRequestRef = useRef(0)
+  const transactionInsightsRequestRef = useRef(0)
+  const transactionsAbortRef = useRef<AbortController | null>(null)
+  const transactionInsightsAbortRef = useRef<AbortController | null>(null)
+  const transactionCursorStackRef = useRef<Array<string | null>>([null])
   const transactionsQueryKeyRef = useRef('')
   const paymentPlansRequestRef = useRef(0)
   const paymentPlansQueryKeyRef = useRef('')
@@ -1036,6 +1041,10 @@ export const Transactions: React.FC = () => {
 
     if (transactionsQueryKeyRef.current !== transactionsQueryKey) {
       transactionsQueryKeyRef.current = transactionsQueryKey
+      transactionsAbortRef.current?.abort()
+      transactionInsightsAbortRef.current?.abort()
+      transactionCursorStackRef.current = [null]
+      setTransactionsPagination(EMPTY_TRANSACTIONS_PAGINATION)
       if (transactionsPage !== 1) {
         setTransactionsPage(1)
         return
@@ -1044,6 +1053,11 @@ export const Transactions: React.FC = () => {
 
     fetchData({ page: transactionsPage })
   }, [paymentTableTab, transactionsPage, transactionsQueryKey])
+
+  useEffect(() => () => {
+    transactionsAbortRef.current?.abort()
+    transactionInsightsAbortRef.current?.abort()
+  }, [])
 
   useEffect(() => {
     if (paymentTableTab !== 'payment-plans') return
@@ -1139,8 +1153,15 @@ export const Transactions: React.FC = () => {
   }, [paymentTableTab, selectedPaymentPlanIds.length])
 
   const fetchData = async (options: boolean | { forceSync?: boolean; page?: number } = false) => {
-    const forceSync = typeof options === 'boolean' ? options : Boolean(options.forceSync)
     const pageToLoad = typeof options === 'object' && options.page ? options.page : transactionsPage
+    const pageCursor = transactionCursorStackRef.current[pageToLoad - 1]
+    if (pageToLoad > 1 && pageCursor === undefined) {
+      setTransactionsPage(Math.max(pageToLoad - 1, 1))
+      return
+    }
+    transactionsAbortRef.current?.abort()
+    const controller = new AbortController()
+    transactionsAbortRef.current = controller
     const requestId = transactionsRequestRef.current + 1
     transactionsRequestRef.current = requestId
     setLoading(true)
@@ -1156,46 +1177,69 @@ export const Transactions: React.FC = () => {
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los pagos
 
-      const [transactionsPageResult, summaryData] = await Promise.all([
-        transactionsService.getTransactionsPage({
-          startDate,
-          endDate,
-          forceSync,
-          search,
-          statuses: selectedTransactionStatuses,
-          page: pageToLoad,
-          limit: TRANSACTIONS_PAGE_SIZE,
-          sortBy: transactionTableSort.key,
-          sortOrder: transactionTableSort.order
-        }),
+      const transactionsPageResult = await transactionsService.getTransactionsPage({
+        startDate,
+        endDate,
+        search,
+        statuses: selectedTransactionStatuses,
+        page: pageToLoad,
+        cursor: pageCursor ?? null,
+        limit: TRANSACTIONS_PAGE_SIZE,
+        sortBy: transactionTableSort.key,
+        sortOrder: transactionTableSort.order,
+        signal: controller.signal
+      })
+
+      if (controller.signal.aborted || transactionsRequestRef.current !== requestId) {
+        return
+      }
+
+      const nextCursorStack = transactionCursorStackRef.current.slice(0, pageToLoad)
+      if (transactionsPageResult.pagination.hasNext && transactionsPageResult.pagination.nextCursor) {
+        nextCursorStack[pageToLoad] = transactionsPageResult.pagination.nextCursor
+      }
+      transactionCursorStackRef.current = nextCursorStack
+
+      setTransactions(transactionsPageResult.transactions)
+      setTransactionsPagination(transactionsPageResult.pagination)
+      setLoading(false)
+      setHasLoadedTransactions(true)
+
+      // KPIs y facetas no bloquean la tabla. En SQLite arrancan después de la
+      // página local; en Postgres aprovechan el cache SWR versionado.
+      transactionInsightsAbortRef.current?.abort()
+      const insightsController = new AbortController()
+      transactionInsightsAbortRef.current = insightsController
+      const insightsRequestId = transactionInsightsRequestRef.current + 1
+      transactionInsightsRequestRef.current = insightsRequestId
+      void Promise.all([
         transactionsService.getSummary({
           startDate,
           endDate,
           search,
-          statuses: selectedTransactionStatuses
+          statuses: selectedTransactionStatuses,
+          signal: insightsController.signal
+        }),
+        transactionsService.getFacets({
+          startDate,
+          endDate,
+          search,
+          signal: insightsController.signal
         })
-      ])
-
-      if (transactionsRequestRef.current !== requestId) {
-        return
-      }
-
-      const safeTotalPages = Math.max(transactionsPageResult.pagination.totalPages || 1, 1)
-      if (pageToLoad > safeTotalPages) {
-        setTransactionsPage(safeTotalPages)
-        return
-      }
-
-      setTransactions(transactionsPageResult.transactions)
-      setTransactionsPagination(transactionsPageResult.pagination)
-      setTransactionStatusCounts(
-        transactionsPageResult.facets.statuses.reduce<Record<string, number>>((acc, status) => {
-          acc[status.value] = status.count
-          return acc
-        }, {})
-      )
-      setSummary(summaryData)
+      ]).then(([summaryData, facetsData]) => {
+        if (insightsController.signal.aborted || transactionInsightsRequestRef.current !== insightsRequestId) return
+        setSummary(summaryData)
+        setTransactionStatusCounts(
+          facetsData.statuses.reduce<Record<string, number>>((acc, status) => {
+            acc[status.value] = status.count
+            return acc
+          }, {})
+        )
+      }).catch(() => undefined).finally(() => {
+        if (transactionInsightsAbortRef.current === insightsController) transactionInsightsAbortRef.current = null
+      })
     } catch (error) {
+      if (controller.signal.aborted) return
       // Error already shown to user via toast
       if (transactionsRequestRef.current === requestId) {
         showToast('error', 'No se pudieron cargar los pagos', 'Hubo un problema al obtener la información de pagos. Intenta refrescar la página.')
@@ -1207,6 +1251,7 @@ export const Transactions: React.FC = () => {
         setLoading(false)
         setHasLoadedTransactions(true)
       }
+      if (transactionsAbortRef.current === controller) transactionsAbortRef.current = null
     }
   }
 
@@ -1336,47 +1381,10 @@ export const Transactions: React.FC = () => {
       }
 
       showToast('info', 'Sincronizando pagos', 'Actualizando pagos desde las pasarelas conectadas...')
-
-      let startDate: string | undefined
-      let endDate: string | undefined
-      const search = debouncedTransactionSearch.trim()
-
-      if (viewMode === 'by-date') {
-        startDate = formatDateToISO(dateRange.start)
-        endDate = formatEndDateToISO(dateRange.end)
-      }
-
-      // Llamar al endpoint con sync=true para sincronización completa
-      const [transactionsPageResult, summaryData] = await Promise.all([
-        transactionsService.getTransactionsPage({
-          startDate,
-          endDate,
-          forceSync: true,
-          search,
-          statuses: selectedTransactionStatuses,
-          page: 1,
-          limit: TRANSACTIONS_PAGE_SIZE,
-          sortBy: transactionTableSort.key,
-          sortOrder: transactionTableSort.order
-        }),
-        transactionsService.getSummary({
-          startDate,
-          endDate,
-          search,
-          statuses: selectedTransactionStatuses
-        })
-      ])
-
+      await transactionsService.syncTransactions()
+      transactionCursorStackRef.current = [null]
       setTransactionsPage(1)
-      setTransactions(transactionsPageResult.transactions)
-      setTransactionsPagination(transactionsPageResult.pagination)
-      setTransactionStatusCounts(
-        transactionsPageResult.facets.statuses.reduce<Record<string, number>>((acc, status) => {
-          acc[status.value] = status.count
-          return acc
-        }, {})
-      )
-      setSummary(summaryData)
+      await fetchData({ page: 1 })
       showToast('success', 'Sincronización completa', 'Los pagos se actualizaron desde las pasarelas conectadas.')
     } catch (error) {
       showToast('error', 'Error en sincronización', 'No se pudo completar la sincronización. Intenta nuevamente.')
@@ -3787,8 +3795,10 @@ export const Transactions: React.FC = () => {
             onSearchTermChange={setTransactionSearchTerm}
             serverSidePagination={true}
             currentPage={transactionsPagination.page || transactionsPage}
-            totalItems={transactionsPagination.total}
-            totalPages={transactionsPagination.totalPages}
+            totalItems={transactionsPagination.total ?? 0}
+            totalPages={transactionsPagination.totalPages ?? 1}
+            cursorPagination={true}
+            hasNextPage={transactionsPagination.hasNext}
             onPageChange={setTransactionsPage}
             serverSideSort={true}
             sortBy={transactionTableSort.key}

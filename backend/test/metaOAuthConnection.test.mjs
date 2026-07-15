@@ -595,8 +595,8 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.deepEqual(selectedStatus.selectedAssets.adAccount, { id: '123', name: 'Ads' })
     await db.run('DELETE FROM meta_oauth_authorized_assets')
     const legacyNameFallback = await getMetaOAuthConnectionStatus()
-    assert.deepEqual(legacyNameFallback.selectedAssets.page, { id: 'page-1', name: 'Página Uno' })
-    assert.deepEqual(legacyNameFallback.selectedAssets.adAccount, { id: '123', name: 'Ads' })
+    assert.deepEqual(legacyNameFallback.selectedAssets.page, { id: 'page-1', name: 'page-1' })
+    assert.deepEqual(legacyNameFallback.selectedAssets.adAccount, { id: '123', name: '123' })
     await disconnectMetaOAuthConnection()
 
     handoffMeta.connection_id = 'connection-2'

@@ -289,9 +289,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export const rebillPaymentsService = {
-  async getConfig(): Promise<RebillPaymentConfig> {
+  async getConfig(signal?: AbortSignal): Promise<RebillPaymentConfig> {
     const response = await fetch(apiUrl('/api/rebill/config'), {
-      credentials: 'include'
+      credentials: 'include',
+      signal
     })
     return parseResponse<RebillPaymentConfig>(response)
   },

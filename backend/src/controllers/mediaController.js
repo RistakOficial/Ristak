@@ -9,6 +9,7 @@ import {
   finalizeBunnyStreamResumableUpload,
   getMediaAsset,
   getMediaAssetBunnyStreamAnalytics,
+  getMediaAssetBuffer,
   getMediaAssetFile,
   getMediaAssetReadStream,
   getStorageUsage,

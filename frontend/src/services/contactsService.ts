@@ -22,25 +22,59 @@ export interface ContactStats {
 export interface JourneyEvent {
   type: 'page_visit' | 'video_playback' | 'whatsapp_message' | 'meta_message' | 'email_message' | 'contact_created' | 'appointment' | 'appointment_confirmation' | 'payment'
   date: string
+  cursorDate?: string
+  cursorKey?: string
   data: Record<string, any>
+}
+
+export interface JourneyMessageCursor {
+  beforeMessageDate: string
+  beforeMessageCursor: string
 }
 
 interface ContactJourneyOptions {
   refreshExternalStatuses?: boolean
   throwOnError?: boolean
   chatActivityOnly?: boolean
+  limit?: number
+  beforeEventDate?: string
+  beforeEventCursor?: string
+  signal?: AbortSignal
 }
 
 interface ContactConversationOptions {
   refreshExternalStatuses?: boolean
   messageLimit?: number
   beforeMessageDate?: string
+  beforeMessageCursor?: string
   throwOnError?: boolean
+  signal?: AbortSignal
 }
 
 interface ContactDetailsOptions {
+  signal?: AbortSignal
+  includeChildren?: boolean
+  // Compatibilidad de firma: los GET son local-only aunque un consumidor viejo
+  // todavía mande estas banderas.
   warmProfilePictures?: boolean
   refreshExternalAppointments?: boolean
+}
+
+export interface ContactChildPagination {
+  mode: 'cursor'
+  limit: number
+  hasNext: boolean
+  nextCursor: string | null
+}
+
+export interface ContactPaymentsPage {
+  payments: NonNullable<Contact['payments']>
+  pagination: ContactChildPagination
+}
+
+export interface ContactAppointmentsPage {
+  appointments: NonNullable<Contact['appointments']>
+  pagination: ContactChildPagination
 }
 
 interface ChatReadStateResult {
@@ -72,6 +106,101 @@ function normalizeJourneyEvents(data: unknown): JourneyEvent[] {
     }))
 }
 
+function getCursorSubMillisecond(value: string) {
+  const match = value.match(/\.(\d{1,9})/)
+  if (!match) return 0
+  return Number(`${match[1]}000000`.slice(3, 6)) || 0
+}
+
+export function compareLosslessTimestampCursorTuples(
+  leftDate: string,
+  leftKey: string,
+  rightDate: string,
+  rightKey: string
+) {
+  const timestampDifference = parseSortableDateValue(leftDate) - parseSortableDateValue(rightDate)
+  if (timestampDifference !== 0) return timestampDifference
+
+  const subMillisecondDifference = getCursorSubMillisecond(leftDate) - getCursorSubMillisecond(rightDate)
+  if (subMillisecondDifference !== 0) return subMillisecondDifference
+
+  if (leftKey === rightKey) return 0
+  return leftKey < rightKey ? -1 : 1
+}
+
+interface NormalizedNumericCursor {
+  sign: -1 | 0 | 1
+  integer: string
+  fraction: string
+}
+
+function normalizeNumericCursor(value: unknown): NormalizedNumericCursor | null {
+  const raw = String(value ?? '').trim()
+  const match = raw.match(/^([+-]?)(\d+)(?:\.(\d+))?$/)
+  if (!match) return null
+
+  const integer = match[2].replace(/^0+(?=\d)/, '')
+  const fraction = String(match[3] || '').replace(/0+$/, '')
+  const isZero = /^0+$/.test(integer) && fraction.length === 0
+  return {
+    sign: isZero ? 0 : match[1] === '-' ? -1 : 1,
+    integer,
+    fraction
+  }
+}
+
+export function compareLosslessNumericCursorValues(left: unknown, right: unknown): number | null {
+  const normalizedLeft = normalizeNumericCursor(left)
+  const normalizedRight = normalizeNumericCursor(right)
+  if (!normalizedLeft || !normalizedRight) return null
+  if (normalizedLeft.sign !== normalizedRight.sign) {
+    return normalizedLeft.sign < normalizedRight.sign ? -1 : 1
+  }
+  if (normalizedLeft.sign === 0) return 0
+
+  let magnitudeDifference = normalizedLeft.integer.length - normalizedRight.integer.length
+  if (magnitudeDifference === 0 && normalizedLeft.integer !== normalizedRight.integer) {
+    magnitudeDifference = normalizedLeft.integer < normalizedRight.integer ? -1 : 1
+  }
+  if (magnitudeDifference === 0) {
+    const fractionWidth = Math.max(normalizedLeft.fraction.length, normalizedRight.fraction.length)
+    const leftFraction = normalizedLeft.fraction.padEnd(fractionWidth, '0')
+    const rightFraction = normalizedRight.fraction.padEnd(fractionWidth, '0')
+    if (leftFraction !== rightFraction) magnitudeDifference = leftFraction < rightFraction ? -1 : 1
+  }
+
+  return normalizedLeft.sign === -1 ? -magnitudeDifference : magnitudeDifference
+}
+
+function compareJourneyCursorTuple(
+  left: JourneyMessageCursor,
+  right: JourneyMessageCursor
+) {
+  return compareLosslessTimestampCursorTuples(
+    left.beforeMessageDate,
+    left.beforeMessageCursor,
+    right.beforeMessageDate,
+    right.beforeMessageCursor
+  )
+}
+
+export function getOldestJourneyMessageCursor(events: JourneyEvent[]): JourneyMessageCursor | null {
+  let oldest: JourneyMessageCursor | null = null
+
+  events.forEach((event) => {
+    const beforeMessageDate = String(event.cursorDate || event.date || '').trim()
+    const beforeMessageCursor = String(event.cursorKey || '').trim()
+    if (!beforeMessageDate || !beforeMessageCursor) return
+
+    const candidate = { beforeMessageDate, beforeMessageCursor }
+    if (!oldest || compareJourneyCursorTuple(candidate, oldest) < 0) {
+      oldest = candidate
+    }
+  })
+
+  return oldest
+}
+
 interface ContactChartData {
   date: string
   count: number
@@ -80,10 +209,11 @@ interface ContactChartData {
 export interface ContactsPagination {
   page: number
   limit: number
-  total: number
-  totalPages: number
+  total: number | null
+  totalPages: number | null
   hasNext: boolean
   hasPrev: boolean
+  nextCursor: string | null
 }
 
 export interface ContactsPageResult {
@@ -124,6 +254,8 @@ interface ContactsPageParams {
   trackingFilters?: Record<string, string[]>
   advancedFilters?: unknown
   warmProfilePictures?: boolean
+  pagination?: 'cursor' | 'offset'
+  cursor?: string | null
   signal?: AbortSignal
 }
 
@@ -134,6 +266,7 @@ interface ContactStatsParams {
   filter?: string
   trackingFilters?: Record<string, string[]>
   advancedFilters?: unknown
+  signal?: AbortSignal
 }
 
 const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
@@ -261,6 +394,8 @@ const requestContactsPage = async ({
   trackingFilters,
   advancedFilters,
   warmProfilePictures,
+  pagination: paginationMode = 'cursor',
+  cursor,
   signal
 }: ContactsPageParams = {}): Promise<ContactsPageResult> => {
   const params = new URLSearchParams()
@@ -268,6 +403,8 @@ const requestContactsPage = async ({
   params.append('limit', String(limit))
   params.append('sortBy', sortBy)
   params.append('sortOrder', sortOrder)
+  params.append('pagination', paginationMode)
+  if (cursor) params.append('cursor', cursor)
   appendContactsQueryParams(params, { startDate, endDate, search, filter, trackingFilters, advancedFilters })
   if (warmProfilePictures) params.append('warmProfilePictures', 'true')
 
@@ -290,10 +427,11 @@ const requestContactsPage = async ({
     pagination: {
       page: Number(pagination.page || page),
       limit: Number(pagination.limit || limit),
-      total: Number(pagination.total || contacts.length),
-      totalPages: Number(pagination.totalPages || 1),
+      total: pagination.total === null || pagination.total === undefined ? null : Number(pagination.total),
+      totalPages: pagination.totalPages === null || pagination.totalPages === undefined ? null : Number(pagination.totalPages),
       hasNext: Boolean(pagination.hasNext),
-      hasPrev: Boolean(pagination.hasPrev)
+      hasPrev: Boolean(pagination.hasPrev),
+      nextCursor: typeof pagination.nextCursor === 'string' && pagination.nextCursor ? pagination.nextCursor : null
     }
   }
 }
@@ -308,6 +446,7 @@ export const contactsService = {
       const MAX_PAGES = 100
       let allContacts: Contact[] = []
       let page = 1
+      let cursor: string | null = null
       let hasMore = true
 
       while (hasMore && page <= MAX_PAGES) {
@@ -315,11 +454,15 @@ export const contactsService = {
           startDate,
           endDate,
           page,
-          limit: 250
+          limit: 250,
+          pagination: 'cursor',
+          cursor
         })
 
         allContacts = allContacts.concat(result.contacts)
         hasMore = result.pagination.hasNext && result.contacts.length > 0
+        cursor = result.pagination.nextCursor
+        if (hasMore && !cursor) break
         page++
       }
 
@@ -352,7 +495,10 @@ export const contactsService = {
       const params = new URLSearchParams()
       appendContactsQueryParams(params, input)
 
-      const data = await apiClient.get<ContactStats>('/contacts/stats', { params: Object.fromEntries(params.entries()) })
+      const data = await apiClient.get<ContactStats>('/contacts/stats', {
+        params: Object.fromEntries(params.entries()),
+        signal: input.signal
+      })
       return data
     } catch (error) {
       // TODO: Implement proper logging service
@@ -424,13 +570,61 @@ export const contactsService = {
 
   async getContactDetails(id: string, options: ContactDetailsOptions = {}): Promise<Contact> {
     const params: Record<string, string> = {}
-    if (options.warmProfilePictures === false) params.warmProfilePictures = 'false'
-    if (options.refreshExternalAppointments === false) params.refreshExternalAppointments = 'false'
+    if (options.includeChildren) params.includeChildren = 'true'
 
     const data = await apiClient.get<Contact>(`/contacts/${id}`, {
-      params: Object.keys(params).length > 0 ? params : undefined
+      params: Object.keys(params).length > 0 ? params : undefined,
+      signal: options.signal
     })
     return normalizeContact(data)
+  },
+
+  async getContactPaymentsPage(
+    id: string,
+    options: { cursor?: string | null; limit?: number; signal?: AbortSignal } = {}
+  ): Promise<ContactPaymentsPage> {
+    const data = await apiClient.get<{ payments?: Contact['payments']; pagination?: Partial<ContactChildPagination> }>(`/contacts/${id}/payments`, {
+      params: {
+        ...(options.cursor ? { cursor: options.cursor } : {}),
+        ...(options.limit ? { limit: String(options.limit) } : {})
+      },
+      signal: options.signal
+    })
+    return {
+      payments: Array.isArray(data?.payments) ? data.payments : [],
+      pagination: {
+        mode: 'cursor',
+        limit: Number(data?.pagination?.limit || options.limit || 20),
+        hasNext: Boolean(data?.pagination?.hasNext),
+        nextCursor: data?.pagination?.nextCursor || null
+      }
+    }
+  },
+
+  async getContactAppointmentsPage(
+    id: string,
+    options: { cursor?: string | null; limit?: number; signal?: AbortSignal } = {}
+  ): Promise<ContactAppointmentsPage> {
+    const data = await apiClient.get<{ appointments?: Contact['appointments']; pagination?: Partial<ContactChildPagination> }>(`/contacts/${id}/appointments`, {
+      params: {
+        ...(options.cursor ? { cursor: options.cursor } : {}),
+        ...(options.limit ? { limit: String(options.limit) } : {})
+      },
+      signal: options.signal
+    })
+    return {
+      appointments: Array.isArray(data?.appointments) ? data.appointments : [],
+      pagination: {
+        mode: 'cursor',
+        limit: Number(data?.pagination?.limit || options.limit || 20),
+        hasNext: Boolean(data?.pagination?.hasNext),
+        nextCursor: data?.pagination?.nextCursor || null
+      }
+    }
+  },
+
+  refreshContactExternalData(id: string, sections?: Array<'profile' | 'appointments' | 'conversationStatuses'>) {
+    return apiClient.post(`/contacts/${id}/refresh`, sections ? { sections } : {})
   },
 
   getPaymentLinkDeliveryOptions(contactId: string): Promise<PaymentLinkDeliveryOptions> {
@@ -448,11 +642,14 @@ export const contactsService = {
   async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {
     try {
       const params: Record<string, string> = {}
-      if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
       if (options.chatActivityOnly) params.chatActivityOnly = 'true'
+      if (options.limit) params.limit = String(options.limit)
+      if (options.beforeEventDate) params.beforeEventDate = options.beforeEventDate
+      if (options.beforeEventCursor) params.beforeEventCursor = options.beforeEventCursor
 
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
-        params: Object.keys(params).length > 0 ? params : undefined
+        params: Object.keys(params).length > 0 ? params : undefined,
+        signal: options.signal
       })
 
       return normalizeJourneyEvents(data)
@@ -466,14 +663,15 @@ export const contactsService = {
   async getContactConversation(id: string, options: ContactConversationOptions = {}): Promise<JourneyEvent[]> {
     try {
       const params: Record<string, string> = {}
-      if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
       if (options.messageLimit && Number.isFinite(options.messageLimit) && options.messageLimit > 0) {
         params.messageLimit = String(Math.round(options.messageLimit))
       }
       if (options.beforeMessageDate) params.beforeMessageDate = options.beforeMessageDate
+      if (options.beforeMessageCursor) params.beforeMessageCursor = options.beforeMessageCursor
 
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/conversation`, {
-        params: Object.keys(params).length > 0 ? params : undefined
+        params: Object.keys(params).length > 0 ? params : undefined,
+        signal: options.signal
       })
 
       return normalizeJourneyEvents(data)

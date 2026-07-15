@@ -1,6 +1,12 @@
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
 import { buildHiddenContactsCondition, getHiddenContactFilters } from '../utils/hiddenContactsFilter.js'
+import {
+  hashPaginationCursorScope,
+  paginationCursorHiddenFiltersScope,
+  paginationCursorListScope,
+  paginationCursorRangeScope
+} from '../utils/paginationCursorScope.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
 import { serializePaymentAmount } from '../utils/paymentAmountSerialization.js'
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
@@ -11,6 +17,7 @@ import {
 
 const DEFAULT_PAGE_LIMIT = 50
 const MAX_PAGE_LIMIT = 100
+const isPostgres = databaseDialect === 'postgres'
 
 function requestError(message) {
   const error = new Error(message)
@@ -34,30 +41,46 @@ function serializeCursorTimestamp(value) {
   return String(value || '').trim()
 }
 
-function encodeCursor(row) {
+function transactionCursorSortExpression(alias = 'p') {
+  return isPostgres
+    ? `COALESCE(${alias}.date, ${alias}.created_at, TIMESTAMP '1970-01-01 00:00:00')`
+    : `COALESCE(${alias}.date, ${alias}.created_at, '1970-01-01 00:00:00')`
+}
+
+function transactionCursorProjectionExpression(alias = 'p') {
+  const sortExpression = transactionCursorSortExpression(alias)
+  return isPostgres ? `(${sortExpression})::text` : sortExpression
+}
+
+function encodeCursor(row, scope) {
   const occurredAt = serializeCursorTimestamp(row?.cursor_at)
   const id = String(row?.id || '').trim()
   if (!occurredAt || !id) return null
-  return Buffer.from(JSON.stringify({ v: 1, kind: 'report-transactions', occurredAt, id }), 'utf8').toString('base64url')
+  return Buffer.from(JSON.stringify({ v: 2, kind: 'report-transactions', scope, occurredAt, id }), 'utf8').toString('base64url')
 }
 
-function decodeCursor(value) {
+function decodeCursor(value, expectedScope) {
   const clean = String(value || '').trim()
   if (!clean) return null
   if (clean.length > 2048) throw requestError('Cursor inválido')
 
   try {
     const parsed = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
+    const isLegacyCursor = parsed?.v === 1 && parsed?.kind === 'report-transactions' && parsed?.scope === undefined
+    const isScopedCursor = parsed?.v === 2 && parsed?.kind === 'report-transactions' && typeof parsed?.scope === 'string'
+    if (!isLegacyCursor && !isScopedCursor) throw new Error('invalid cursor payload')
+    if (isScopedCursor && parsed.scope !== expectedScope) {
+      throw requestError('El cursor ya no corresponde a esta vista; vuelve a la primera página')
+    }
     const occurredAt = String(parsed?.occurredAt || '').trim()
     const id = String(parsed?.id || '').trim()
-    if (parsed?.v !== 1 || parsed?.kind !== 'report-transactions' || !occurredAt || !id) {
-      throw new Error('invalid cursor payload')
-    }
+    if (!occurredAt || !id) throw new Error('invalid cursor payload')
     if (occurredAt.length > 100 || id.length > 300 || !Number.isFinite(Date.parse(occurredAt))) {
       throw new Error('invalid cursor fields')
     }
     return { occurredAt, id }
-  } catch {
+  } catch (error) {
+    if (error?.status === 400) throw error
     throw requestError('Cursor inválido')
   }
 }
@@ -72,8 +95,7 @@ function escapeLikeSearch(value) {
     .replace(/_/g, '!_')
 }
 
-function buildSearchCondition(search) {
-  const normalized = escapeLikeSearch(search)
+function buildSearchCondition(normalized) {
   if (!normalized) return { sql: '', params: [] }
 
   const pattern = `%${normalized}%`
@@ -122,12 +144,21 @@ export async function listReportTransactionsPage({
 } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const pageLimit = normalizeLimit(limit)
-  const decodedCursor = decodeCursor(cursor)
+  const hiddenFilters = await getHiddenContactFilters()
+  const normalizedSearch = escapeLikeSearch(search)
+  const cursorScope = hashPaginationCursorScope('report-transactions', {
+    range: paginationCursorRangeScope(range),
+    search: normalizedSearch,
+    hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters),
+    paymentStatuses: paginationCursorListScope(SUCCESS_PAYMENT_STATUSES),
+    paymentMode: 'non-test',
+    sort: ['effective_date:desc', 'id:desc']
+  })
+  const decodedCursor = decodeCursor(cursor, cursorScope)
   const legacyPage = decodedCursor ? 1 : normalizeLegacyPage(page)
   if (!decodedCursor && legacyPage > 1) {
     throw requestError('Las páginas posteriores requieren cursor')
   }
-  const hiddenFilters = await getHiddenContactFilters()
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const baseConditions = [
     `LOWER(COALESCE(p.status, '')) IN (${SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')})`,
@@ -135,7 +166,7 @@ export async function listReportTransactionsPage({
   ]
   const baseParams = [...SUCCESS_PAYMENT_STATUSES]
 
-  const effectiveDateSort = 'COALESCE(p.date, p.created_at)'
+  const effectiveDateSort = transactionCursorSortExpression('p')
   if (range.startUtc) {
     baseConditions.push(`${effectiveDateSort} >= ?`)
     baseParams.push(range.startUtc)
@@ -146,7 +177,7 @@ export async function listReportTransactionsPage({
   }
   if (hiddenCondition) baseConditions.push(hiddenCondition)
 
-  const searchCondition = buildSearchCondition(search)
+  const searchCondition = buildSearchCondition(normalizedSearch)
   const listConditions = [...baseConditions]
   const listParams = [...baseParams]
   if (searchCondition.sql) {
@@ -173,7 +204,7 @@ export async function listReportTransactionsPage({
       p.status,
       p.date,
       p.created_at,
-      COALESCE(p.date, p.created_at) AS cursor_at,
+      ${transactionCursorProjectionExpression('p')} AS cursor_at,
       p.payment_provider,
       p.payment_method,
       p.metadata_json,
@@ -242,7 +273,7 @@ export async function listReportTransactionsPage({
       totalPages: total === null ? null : Math.ceil(total / pageLimit),
       hasNext,
       hasPrev: decodedCursor ? false : legacyPage > 1,
-      nextCursor: hasNext ? encodeCursor(pageRows[pageRows.length - 1]) : null
+      nextCursor: hasNext ? encodeCursor(pageRows[pageRows.length - 1], cursorScope) : null
     }
   }
 }

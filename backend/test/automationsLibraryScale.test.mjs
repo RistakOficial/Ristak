@@ -95,6 +95,10 @@ test('la librería pagina por cursor, busca en servidor y no devuelve grafos en 
       () => listAutomationsPage({ cursor: 'esto-no-es-un-cursor' }),
       (error) => error?.status === 400 && /Cursor/.test(error.message)
     )
+    await assert.rejects(
+      () => listAutomationsPage({ search: `${marker}-otro-scope`, cursor: firstPage.pageInfo.nextCursor }),
+      (error) => error?.status === 400 && /Cursor/.test(error.message)
+    )
 
     if (databaseDialect === 'sqlite') {
       const plan = await db.all(
@@ -129,6 +133,10 @@ test('el contrato HTTP y la librería mantienen filtros y carga incremental serv
   assert.match(pagedList, /limit \+ 1/)
   assert.match(pagedList, /SELECT id, flow, published_flow[\s\S]*WHERE id IN/)
   assert.match(pagedList, /reviewIds = includeReview/)
+  assert.match(pagedList, /cursorTimestamp = databaseDialect === 'postgres'/)
+  assert.match(pagedList, /\(\$\{sortTimestamp\}\)::text/)
+  assert.match(pagedList, /AS cursor_updated_at/)
+  assert.match(pagedList, /automationCursorScope/)
   assert.doesNotMatch(pagedList, /COUNT\(\*\)/)
 
   assert.match(library, /AUTOMATIONS_LIBRARY_PAGE_SIZE = 50/)

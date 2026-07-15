@@ -24,6 +24,9 @@ import { startConversationalAgentSafetyNotificationsCron } from './jobs/conversa
 import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversationalAgentTestPaymentsCleanup.js'
 import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
+import { startConversationalAgentPauseExpiryCron } from './jobs/conversationalAgentPauseExpiry.cron.js'
+import { startAutomationReviewProjectionScheduler } from './jobs/automationReviewProjection.cron.js'
+import { startReadModelProjectionMaintenanceScheduler } from './jobs/readModelProjectionMaintenance.cron.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
 import { isMetaConnected, isMetaSocialConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
@@ -32,13 +35,17 @@ import { runVersionedMigrations } from './startup/runMigrations.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
 import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
-import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
+import { ensureDefaultWhatsAppApiMessageTemplates } from './services/messageTemplatesService.js'
+import { ensureDefaultLocalCalendar } from './services/localCalendarService.js'
+import { ensureCalendarBookingSystemFormOnce } from './services/sitesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
 import { repairWhatsAppProtocolMessageIdentities } from './services/whatsappApiService.js'
 import { startMetaOAuthPendingSessionCleanupScheduler } from './services/metaOAuthService.js'
 import { startMetaOAuthIntegrationCleanupScheduler } from './services/metaOAuthIntegrationService.js'
 import { scheduleAutomationTriggerIndexBootstrap } from './services/automationTriggerIndexService.js'
 import { scheduleTrackingVisitorProjectionBackfill } from './services/trackingVisitorProjectionService.js'
+import { scheduleCrmListProjectionBackfill } from './services/crmListProjectionService.js'
+import { startWhatsAppStatusProjectionScheduler } from './services/whatsappStatusProjectionService.js'
 
 // Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
 // apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
@@ -568,10 +575,6 @@ async function startRuntimeServices() {
   // schema base ya creado por initTables, antes de habilitar tráfico.
   await runVersionedMigrations()
 
-  // La columna/index ya acepta tráfico. El histórico converge por lotes fuera
-  // de la compuerta de readiness; si el deploy se corta, retoma donde quedó.
-  scheduleTrackingVisitorProjectionBackfill()
-
   // Coexistence puede entregar el mismo mensaje por Baileys y por el webhook
   // oficial. Antes de aceptar tráfico, fusiona únicamente identidades exactas y
   // activa la unicidad que cierra carreras entre ambos adaptadores.
@@ -579,6 +582,12 @@ async function startRuntimeServices() {
 
   // Inicializar clave maestra de encriptación (DEBE ser lo primero)
   await initializeMasterKey()
+
+  // El calendario semilla se crea una sola vez antes de aceptar tráfico. Nunca
+  // se inicializa desde GET /api/calendars: abrir dos clientes en paralelo no
+  // puede convertir una lectura en dos INSERT ni dejar calendarios duplicados.
+  await ensureDefaultLocalCalendar()
+  await ensureCalendarBookingSystemFormOnce()
 
   // Verificar si existe usuario; si no, la app muestra /setup para crear el primero.
   await initializeDefaultUser()
@@ -680,14 +689,9 @@ async function startRuntimeServices() {
   )
 
   runStartupDrainTask(
-    'startup:message-template-repair',
-    repairDefaultMessageTemplatesForCurrentConnection,
-    'No se pudo ejecutar reparación inicial de plantillas default de WhatsApp',
-    (result) => {
-      if (result?.submitted > 0) {
-        logger.info(`[WhatsApp] Plantillas default preparadas y enviadas a revisión: ${result.submitted}`)
-      }
-    }
+    'startup:message-template-initialization',
+    ensureDefaultWhatsAppApiMessageTemplates,
+    'No se pudieron inicializar localmente las plantillas default de WhatsApp'
   )
 
   runStartupDrainTask(
@@ -718,10 +722,26 @@ async function startRuntimeServices() {
     startConversationalAgentTestPaymentsCleanup() // Invalida y limpia links sandbox vencidos del tester
     startConversationalAppointmentTestCleanupCron() // Elimina citas reales de prueba tras cinco minutos
     startConversationalAgentTestAssignmentsCleanup() // Restaura asignaciones temporales y respeta cambios humanos posteriores
+    startConversationalAgentPauseExpiryCron() // Reactiva pausas vencidas fuera de los GET de métricas/listados
     startConversationGoalEffectsRecoveryScheduler() // Recupera leases/fallos de metas sin depender de un reinicio
     await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
   }
   startupState.ready = true
+
+  // Primero publicamos readiness; después arrancan los backfills históricos.
+  // En el primer rollout pueden recorrer millones de filas en lotes y no deben
+  // competir con la llave maestra, el setup, calendarios ni crons necesarios
+  // para que la instancia pase su healthcheck. La cola conserva prioridades y
+  // un solo job de I/O intensivo a la vez.
+  scheduleCrmListProjectionBackfill()
+  scheduleTrackingVisitorProjectionBackfill()
+  // Chat, first-seen, metricas del agente e identidad se agendan desde sus
+  // singletons durables. Un restart caliente no vuelve a encolar ni a sondear
+  // historicos que ya fueron certificados como ready.
+  startReadModelProjectionMaintenanceScheduler()
+  startAutomationReviewProjectionScheduler()
+  startWhatsAppStatusProjectionScheduler()
+
   logger.success('App lista para recibir tráfico')
 }
 

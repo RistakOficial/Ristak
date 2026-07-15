@@ -42,7 +42,10 @@ export function requireFeature(featureKey) {
     try {
       if (!isLicenseEnforced()) return next()
 
-      if (await hasFeature(featureKey)) return next()
+      if (await hasFeature(featureKey, {
+        state: req.license || null,
+        email: req.user?.email || req.user?.username || null
+      })) return next()
 
       return res.status(403).json({
         success: false,

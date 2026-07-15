@@ -5,6 +5,7 @@ import {
   getCampaignsReport,
   getSummary,
   getMetrics,
+  getReportsSnapshot,
   getManualBusinessExpenses,
   upsertManualBusinessExpense,
   getContactsList,
@@ -19,6 +20,7 @@ router.use(requireAuth);
 router.use(requireModuleAccess('reports'));
 
 router.get('/metrics', getMetrics);
+router.get('/snapshot', getReportsSnapshot);
 router.get('/manual-business-expenses', getManualBusinessExpenses);
 router.put('/manual-business-expenses', upsertManualBusinessExpense);
 router.get('/contacts/list', getContactsList);

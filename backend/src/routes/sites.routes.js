@@ -17,6 +17,7 @@ import {
   getImportedSiteMappingHandler,
   getSiteHandler,
   getSiteFoldersHandler,
+  getSiteSelectorsHandler,
   getSitesAnalyticsSummaryHandler,
   getSitesHandler,
   getSiteContentAssetsHandler,
@@ -114,6 +115,7 @@ router.use(requireAuth)
 router.use(requireModuleAccess('sites'))
 
 router.get('/', getSitesHandler)
+router.get('/selectors', getSiteSelectorsHandler)
 router.post('/', requirePaymentsForSitePaymentFeature, createSiteHandler)
 router.post('/ai-create-html', requirePaymentsForSitePaymentFeature, createSiteWithAIHtmlHandler)
 router.post('/import-html', requirePaymentsForSitePaymentFeature, importSiteHtmlHandler)

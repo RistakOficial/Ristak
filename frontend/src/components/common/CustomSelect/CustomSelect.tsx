@@ -35,6 +35,9 @@ interface CustomSelectProps {
   defaultValue?: string | number
   onChange?: (event: CustomSelectChangeEvent) => void
   onValueChange?: (value: string) => void
+  onSearchChange?: (value: string) => void
+  onOpenChange?: (open: boolean) => void
+  onLoadMore?: () => void
   onBlur?: React.FocusEventHandler<HTMLButtonElement>
   placeholder?: string
   disabled?: boolean
@@ -52,6 +55,8 @@ interface CustomSelectProps {
   searchable?: boolean
   searchPlaceholder?: string
   emptyMessage?: string
+  hasMore?: boolean
+  loading?: boolean
   selectedContent?: React.ReactNode
   children?: React.ReactNode
   'aria-label'?: string
@@ -117,6 +122,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   defaultValue,
   onChange,
   onValueChange,
+  onSearchChange,
+  onOpenChange,
+  onLoadMore,
   onBlur,
   placeholder = 'Selecciona una opción',
   disabled = false,
@@ -134,6 +142,8 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   searchable = false,
   searchPlaceholder = 'Buscar…',
   emptyMessage = 'No hay resultados',
+  hasMore = false,
+  loading = false,
   selectedContent,
   children,
   'aria-label': ariaLabel,
@@ -147,6 +157,17 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const shouldPortal = portal && typeof document !== 'undefined'
+
+  const updateSearchQuery = useCallback((nextQuery: string) => {
+    setSearchQuery(nextQuery)
+    onSearchChange?.(nextQuery)
+  }, [onSearchChange])
+
+  const closeDropdown = useCallback(() => {
+    setIsOpen(false)
+    onOpenChange?.(false)
+    updateSearchQuery('')
+  }, [onOpenChange, updateSearchQuery])
 
   const optionEntries = useMemo<OptionEntry[]>(() => {
     if (options) return options.map(option => ({ ...option, value: String(option.value) }))
@@ -234,8 +255,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
       const clickedDropdown = dropdownRef.current?.contains(target)
 
       if (!clickedContainer && !clickedDropdown) {
-        setIsOpen(false)
-        setSearchQuery('')
+        closeDropdown()
       }
     }
 
@@ -246,7 +266,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [isOpen])
+  }, [closeDropdown, isOpen])
 
   useEffect(() => {
     if (!isOpen || !searchable) return
@@ -285,8 +305,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     if (!isControlled && changeEvent.currentTarget.value !== optionValue) {
       setInternalValue(changeEvent.currentTarget.value)
     }
-    setIsOpen(false)
-    setSearchQuery('')
+    closeDropdown()
   }
 
   const dropdown = isOpen && !disabled ? (
@@ -308,7 +327,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
             value={searchQuery}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) => updateSearchQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 const firstMatch = filteredFlatOptions.find(option => !option.disabled)
@@ -319,8 +338,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
               }
               if (event.key === 'Escape') {
                 event.preventDefault()
-                setIsOpen(false)
-                setSearchQuery('')
+                closeDropdown()
               }
             }}
           />
@@ -370,7 +388,18 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
           )
         })}
         {filteredFlatOptions.length === 0 ? (
-          <div className={styles.empty} role="status">{emptyMessage}</div>
+          <div className={styles.empty} role="status">{loading ? 'Cargando opciones…' : emptyMessage}</div>
+        ) : null}
+        {hasMore && onLoadMore ? (
+          <button
+            type="button"
+            className={styles.option}
+            onClick={onLoadMore}
+            disabled={loading}
+            data-ristak-dropdown-item
+          >
+            <span>{loading ? 'Cargando…' : 'Cargar más'}</span>
+          </button>
         ) : null}
       </div>
     </div>
@@ -389,10 +418,12 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         className={`${styles.trigger} ${iconOnly ? styles.iconOnlyTrigger : ''} ${isOpen ? styles.open : ''}`}
         onClick={() => {
           if (disabled) return
-          setIsOpen(open => {
-            if (open) setSearchQuery('')
-            return !open
-          })
+          if (isOpen) {
+            closeDropdown()
+            return
+          }
+          setIsOpen(true)
+          onOpenChange?.(true)
         }}
         onBlur={onBlur}
         disabled={disabled}

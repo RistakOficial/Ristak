@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
 import crypto from 'node:crypto'
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
@@ -31,6 +31,7 @@ import { hasConnectedMetaDatasetConfig } from './metaAdsService.js'
 import { createEntityId, generateShortId } from '../utils/idGenerator.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 import { getConversationalTestMode } from '../agents/conversational/nativeRuntimeConfig.js'
+import { hashPaginationCursorScope } from '../utils/paginationCursorScope.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -84,6 +85,8 @@ const CALENDAR_SITE_META_EVENTS = new Set([
 const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
 const DEFAULT_RISTAK_CALENDAR_NAME = 'calendario ristak'
 const DEFAULT_RISTAK_CALENDAR_DESC = 'calendario principal creado en ristak'
+const DEFAULT_LOCAL_CALENDAR_ID = 'rstk_cal_default'
+const DEFAULT_LOCAL_CALENDAR_LOCK_KEY = 'ristak-default-local-calendar'
 const DEFAULT_CALENDAR_CONFIG_KEY = 'default_calendar_id'
 const ATTRIBUTION_CALENDAR_IDS_CONFIG_KEY = 'attribution_calendar_ids'
 const SOURCE_PREFERENCE_CONFIG_KEY = 'calendar_source_preference'
@@ -112,6 +115,18 @@ const CALENDAR_FORM_CONTENT_BLOCK_TYPES = new Set(['title', 'subtitle', 'text', 
 const CALENDAR_FORM_ALL_BLOCK_TYPES = new Set([...CALENDAR_FORM_FIELD_TYPES, ...CALENDAR_FORM_CONTENT_BLOCK_TYPES])
 const CALENDAR_SLUG_MAX_LENGTH = 80
 const DEFAULT_CALENDAR_PHONE_LOCALE = { countryCode: 'MX', dialCode: '52' }
+const UPCOMING_APPOINTMENTS_DEFAULT_LIMIT = 20
+const UPCOMING_APPOINTMENTS_MAX_LIMIT = 100
+const UPCOMING_APPOINTMENTS_CURSOR_KIND = 'upcoming-appointments'
+const VISIBLE_APPOINTMENTS_DEFAULT_LIMIT = 100
+const VISIBLE_APPOINTMENTS_MAX_LIMIT = 200
+const VISIBLE_APPOINTMENTS_CURSOR_KIND = 'visible-appointments'
+const MONTH_APPOINTMENT_PREVIEW_DEFAULT_LIMIT = 3
+const MONTH_APPOINTMENT_PREVIEW_MAX_LIMIT = 5
+const APPOINTMENTS_OVERVIEW_DEFAULT_LIMIT = 5
+const APPOINTMENTS_OVERVIEW_MAX_LIMIT = 20
+const isPostgresDatabase = databaseDialect === 'postgres'
+let defaultLocalCalendarBootstrapPromise = null
 
 export function createDefaultCalendarOpenHours() {
   return DEFAULT_CALENDAR_OPEN_HOURS.map(schedule => ({
@@ -1026,20 +1041,27 @@ async function getCalendarAppointmentCounts(calendarIds = []) {
   const ids = [...new Set(calendarIds.map(id => cleanString(id)).filter(Boolean))]
   if (!ids.length) return new Map()
 
-  const placeholders = ids.map(() => '?').join(', ')
-  const rows = await db.all(`
-    SELECT calendar_id, COUNT(*) AS appointments_count
-    FROM appointments
-    WHERE calendar_id IN (${placeholders})
-      AND deleted_at IS NULL
-      AND COALESCE(sync_status, '') != 'pending_delete'
-    GROUP BY calendar_id
-  `, ids)
+  // Los únicos consumidores preguntan si un calendario semilla está vacío; no
+  // necesitan contar todas sus citas. COUNT(*) degradaba GET /calendars de forma
+  // lineal con el histórico. EXISTS se detiene en la primera cita visible y usa
+  // el índice parcial idx_appointments_upcoming_page.
+  const calendarProjection = isPostgresDatabase ? 'CAST(? AS TEXT)' : '?'
+  const clauses = ids.map(() => `
+    SELECT ${calendarProjection} AS calendar_id
+    WHERE EXISTS (
+      SELECT 1
+      FROM appointments a
+      WHERE a.calendar_id = ?
+        AND a.start_time IS NOT NULL
+        AND a.deleted_at IS NULL
+        AND COALESCE(a.sync_status, '') != 'pending_delete'
+      LIMIT 1
+    )
+  `)
+  const params = ids.flatMap(id => [id, id])
+  const rows = await db.all(clauses.join('\nUNION ALL\n'), params)
 
-  return new Map(rows.map(row => [
-    cleanString(row.calendar_id),
-    toInt(row.appointments_count, 0)
-  ]))
+  return new Map(rows.map(row => [cleanString(row.calendar_id), 1]))
 }
 
 function calendarHasAppointments(calendar = {}, appointmentCounts = new Map()) {
@@ -1086,7 +1108,8 @@ export async function reconcileCalendarDefaults({ sourcePreference = null } = {}
     && calendars.some(calendar => ['google', 'ghl'].includes(calendar.source))
   let nextDefaultCalendarId = configuredDefaultCalendar?.id || null
 
-  const appointmentCounts = await getCalendarAppointmentCounts(calendars.map(calendar => calendar.id))
+  const seedCalendarIds = calendars.filter(isLikelySeedRistakCalendar).map(calendar => calendar.id)
+  const appointmentCounts = await getCalendarAppointmentCounts(seedCalendarIds)
   const officialSeedCalendar = calendars.find(calendar => (
     isLikelySeedRistakCalendar(calendar) && calendarHasAppointments(calendar, appointmentCounts)
   ))
@@ -4357,7 +4380,8 @@ export async function listLocalCalendars({ sourcePreference = 'combined' } = {})
     return calendars
   }
 
-  const appointmentCounts = await getCalendarAppointmentCounts(calendars.map(calendar => calendar.id))
+  const seedCalendarIds = calendars.filter(isLikelySeedRistakCalendar).map(calendar => calendar.id)
+  const appointmentCounts = await getCalendarAppointmentCounts(seedCalendarIds)
   const visibleCalendars = calendars.filter(calendar => !isEmptySeedRistakCalendar(calendar, appointmentCounts))
   return visibleCalendars.length ? visibleCalendars : calendars
 }
@@ -4427,23 +4451,52 @@ export async function deleteLocalCalendar(calendarId) {
 }
 
 export async function ensureDefaultLocalCalendar() {
-  const existing = await db.get('SELECT * FROM calendars LIMIT 1')
-  if (existing) return calendarRowToApi(existing)
+  if (defaultLocalCalendarBootstrapPromise) return defaultLocalCalendarBootstrapPromise
 
-  return createLocalCalendar({
-    name: 'Calendario Ristak',
-    description: 'Calendario principal creado en Ristak',
-    eventTitle: 'Cita',
-    calendarType: 'event',
-    slotDuration: 60,
-    slotInterval: 60,
-    openHours: [
-      {
-        daysOfTheWeek: [1, 2, 3, 4, 5],
-        hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
-      }
-    ]
+  const operation = db.transaction(async transaction => {
+    // SQLite ya entra con BEGIN IMMEDIATE. PostgreSQL necesita un fence para el
+    // predicado "si no existe ningún calendario" porque no hay fila que pueda
+    // bloquearse todavía. El id fijo conserva además la PK como segunda defensa.
+    if (isPostgresDatabase) {
+      await transaction.get(
+        'SELECT pg_advisory_xact_lock(hashtext(?)) AS default_calendar_locked',
+        [DEFAULT_LOCAL_CALENDAR_LOCK_KEY]
+      )
+    }
+
+    const existing = await transaction.get(`
+      SELECT *
+      FROM calendars
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `)
+    if (existing) return calendarRowToApi(existing)
+
+    return createLocalCalendar({
+      id: DEFAULT_LOCAL_CALENDAR_ID,
+      name: 'Calendario Ristak',
+      description: 'Calendario principal creado en Ristak',
+      eventTitle: 'Cita',
+      calendarType: 'event',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        {
+          daysOfTheWeek: [1, 2, 3, 4, 5],
+          hours: [{ openHour: 9, openMinute: 0, closeHour: 17, closeMinute: 0 }]
+        }
+      ]
+    })
   })
+  defaultLocalCalendarBootstrapPromise = operation
+
+  try {
+    return await operation
+  } finally {
+    if (defaultLocalCalendarBootstrapPromise === operation) {
+      defaultLocalCalendarBootstrapPromise = null
+    }
+  }
 }
 
 function appointmentRowToApi(row = {}) {
@@ -5990,7 +6043,703 @@ export async function getLocalAppointment(appointmentId) {
   return appointment
 }
 
-export async function listLocalAppointments({ startTime, endTime, calendarId, includeOverlapping = false } = {}) {
+function upcomingAppointmentsCursorError() {
+  const error = new Error('Cursor de próximas citas inválido')
+  error.status = 400
+  error.code = 'invalid_upcoming_appointments_cursor'
+  return error
+}
+
+function upcomingAppointmentsCursorScope(calendarId) {
+  return hashPaginationCursorScope(UPCOMING_APPOINTMENTS_CURSOR_KIND, {
+    v: 1,
+    calendarId: cleanString(calendarId),
+    sort: 'start_time:asc,id:asc',
+    source: 'local'
+  })
+}
+
+function encodeUpcomingAppointmentsCursor(row, scope) {
+  const startTime = cleanString(row?._cursor_start_time || row?.start_time)
+  const id = cleanString(row?.id)
+  if (!startTime || !id) return null
+
+  return Buffer.from(JSON.stringify({
+    v: 2,
+    kind: UPCOMING_APPOINTMENTS_CURSOR_KIND,
+    scope,
+    startTime,
+    id
+  }), 'utf8').toString('base64url')
+}
+
+function decodeUpcomingAppointmentsCursor(value, expectedScope) {
+  const cursor = cleanString(value)
+  if (!cursor) return null
+  if (cursor.length > 600) throw upcomingAppointmentsCursorError()
+
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    const startTime = cleanString(parsed?.startTime)
+    const id = cleanString(parsed?.id)
+    if (
+      parsed?.v !== 2 ||
+      parsed?.kind !== UPCOMING_APPOINTMENTS_CURSOR_KIND ||
+      parsed?.scope !== expectedScope ||
+      !startTime ||
+      !id ||
+      !Number.isFinite(Date.parse(startTime))
+    ) {
+      throw upcomingAppointmentsCursorError()
+    }
+    return { startTime, id }
+  } catch (error) {
+    if (error?.code === 'invalid_upcoming_appointments_cursor') throw error
+    throw upcomingAppointmentsCursorError()
+  }
+}
+
+function normalizeUpcomingAppointmentsLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return UPCOMING_APPOINTMENTS_DEFAULT_LIMIT
+  return Math.min(parsed, UPCOMING_APPOINTMENTS_MAX_LIMIT)
+}
+
+function visibleAppointmentsCursorError() {
+  const error = new Error('Cursor de citas visibles inválido')
+  error.status = 400
+  error.code = 'invalid_visible_appointments_cursor'
+  return error
+}
+
+function normalizeVisibleAppointmentsLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return VISIBLE_APPOINTMENTS_DEFAULT_LIMIT
+  return Math.min(parsed, VISIBLE_APPOINTMENTS_MAX_LIMIT)
+}
+
+function normalizeMonthAppointmentPreviewLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return MONTH_APPOINTMENT_PREVIEW_DEFAULT_LIMIT
+  return Math.min(parsed, MONTH_APPOINTMENT_PREVIEW_MAX_LIMIT)
+}
+
+function normalizeAppointmentsOverviewLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return APPOINTMENTS_OVERVIEW_DEFAULT_LIMIT
+  return Math.min(parsed, APPOINTMENTS_OVERVIEW_MAX_LIMIT)
+}
+
+function normalizeAppointmentInstant(value) {
+  if (value instanceof Date) return new Date(value.getTime())
+  const raw = cleanString(value)
+  if (/^-?\d+(?:\.\d+)?$/.test(raw)) return new Date(Number(raw))
+  return new Date(raw)
+}
+
+function upcomingAppointmentSqlExpressions(alias = 'a') {
+  if (isPostgresDatabase) {
+    return {
+      sort: `${alias}.start_time`,
+      parameter: 'CAST(? AS TIMESTAMP)',
+      cursorProjection: `${alias}.start_time::text`,
+      cursorPredicate: `(${alias}.start_time, ${alias}.id) > (CAST(? AS TIMESTAMP), ?)`
+    }
+  }
+
+  return {
+    sort: `julianday(${alias}.start_time)`,
+    parameter: 'julianday(?)',
+    cursorProjection: `${alias}.start_time`,
+    cursorPredicate: `(julianday(${alias}.start_time), ${alias}.id) > (julianday(?), ?)`
+  }
+}
+
+function normalizeVisibleAppointmentRange({ startTime, endTime } = {}) {
+  const start = normalizeAppointmentInstant(startTime)
+  const end = normalizeAppointmentInstant(endTime)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+    const error = new Error('Rango visible de citas inválido')
+    error.status = 400
+    throw error
+  }
+  return { start, end }
+}
+
+async function resolveAppointmentBusinessTimezone(timezone = '') {
+  if (isValidTimezone(timezone)) return timezone
+  return getAccountTimezone()
+}
+
+/**
+ * Divide un rango de instantes en días del negocio. Los límites UTC se calculan
+ * con Luxon para conservar transiciones DST reales; SQLite nunca intenta
+ * interpretar una zona IANA por su cuenta.
+ */
+export async function buildAppointmentBusinessDayBounds({ startTime, endTime, timezone = '' } = {}) {
+  const { start, end } = normalizeVisibleAppointmentRange({ startTime, endTime })
+  const businessTimezone = await resolveAppointmentBusinessTimezone(timezone)
+  const startInstant = DateTime.fromJSDate(start, { zone: 'utc' })
+  const endInstant = DateTime.fromJSDate(end, { zone: 'utc' })
+  let day = startInstant.setZone(businessTimezone).startOf('day')
+  const lastDay = endInstant.setZone(businessTimezone).startOf('day')
+  const exclusiveRangeEndMillis = end.getTime() + 1
+  const bounds = []
+
+  while (day <= lastDay) {
+    const nextDay = day.plus({ days: 1 }).startOf('day')
+    const startMillis = Math.max(start.getTime(), day.toUTC().toMillis())
+    const endMillis = Math.min(exclusiveRangeEndMillis, nextDay.toUTC().toMillis())
+    if (endMillis > startMillis) {
+      bounds.push({
+        date: day.toISODate(),
+        startUtc: DateTime.fromMillis(startMillis, { zone: 'utc' }).toISO({ suppressMilliseconds: false }),
+        endUtc: DateTime.fromMillis(endMillis, { zone: 'utc' }).toISO({ suppressMilliseconds: false })
+      })
+    }
+    day = nextDay
+    if (bounds.length > 370) {
+      const error = new Error('El rango visible de citas permite hasta 370 días')
+      error.status = 400
+      throw error
+    }
+  }
+
+  return { timezone: businessTimezone, bounds }
+}
+
+async function countAppointmentsByBusinessDay({ calendarId, bounds, signal } = {}) {
+  if (!bounds?.length) return []
+  const valuesRow = isPostgresDatabase
+    ? '(CAST(? AS TEXT), CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP))'
+    : '(?, ?, ?)'
+  const values = bounds.map(() => valuesRow).join(', ')
+  const boundParams = bounds.flatMap(bound => [bound.date, bound.startUtc, bound.endUtc])
+  const lowerBound = isPostgresDatabase
+    ? 'a.start_time >= day_bounds.start_utc'
+    : 'julianday(a.start_time) >= julianday(day_bounds.start_utc)'
+  const upperBound = isPostgresDatabase
+    ? 'a.start_time < day_bounds.end_utc'
+    : 'julianday(a.start_time) < julianday(day_bounds.end_utc)'
+
+  const rows = await db.all(`
+    WITH day_bounds(day_key, start_utc, end_utc) AS (
+      VALUES ${values}
+    )
+    SELECT day_bounds.day_key, COUNT(a.id) AS total
+    FROM day_bounds
+    LEFT JOIN appointments a
+      ON a.calendar_id = ?
+     AND a.start_time IS NOT NULL
+     AND ${lowerBound}
+     AND ${upperBound}
+     AND COALESCE(a.sync_status, '') != 'pending_delete'
+     AND a.deleted_at IS NULL
+    GROUP BY day_bounds.day_key
+    ORDER BY day_bounds.day_key ASC
+  `, [...boundParams, calendarId], { signal })
+
+  return rows.map(row => ({
+    date: cleanString(row.day_key),
+    total: Math.max(0, Number(row.total || 0))
+  }))
+}
+
+async function listAppointmentPreviewsByBusinessDay({ calendarId, bounds, previewLimit, signal } = {}) {
+  if (!bounds?.length || previewLimit <= 0) return []
+  const sql = upcomingAppointmentSqlExpressions('a')
+  const dayKeyProjection = isPostgresDatabase ? 'CAST(? AS TEXT)' : '?'
+  const clauses = []
+  const params = []
+
+  bounds.forEach((bound, index) => {
+    clauses.push(`
+      SELECT * FROM (
+        SELECT
+          ${dayKeyProjection} AS _calendar_day,
+          a.*,
+          c.full_name AS contact_name,
+          c.email AS contact_email,
+          c.phone AS contact_phone,
+          ${sql.cursorProjection} AS _cursor_start_time
+        FROM appointments a
+        LEFT JOIN contacts c ON c.id = a.contact_id
+        WHERE a.calendar_id = ?
+          AND a.start_time IS NOT NULL
+          AND ${sql.sort} >= ${sql.parameter}
+          AND ${sql.sort} < ${sql.parameter}
+          AND COALESCE(a.sync_status, '') != 'pending_delete'
+          AND a.deleted_at IS NULL
+        ORDER BY ${sql.sort} ASC, a.id ASC
+        LIMIT ?
+      ) preview_day_${index}
+    `)
+    params.push(bound.date, calendarId, bound.startUtc, bound.endUtc, previewLimit)
+  })
+
+  return db.all(clauses.join('\nUNION ALL\n'), params, { signal })
+}
+
+function visibleAppointmentsCursorScope({ calendarId, startTime, endTime, timezone }) {
+  return hashPaginationCursorScope(VISIBLE_APPOINTMENTS_CURSOR_KIND, {
+    v: 1,
+    calendarId,
+    startTime,
+    endTime,
+    timezone,
+    sort: 'start_time:asc,id:asc',
+    source: 'local'
+  })
+}
+
+function encodeVisibleAppointmentsCursor(row, scope) {
+  const startTime = cleanString(row?._cursor_start_time || row?.start_time)
+  const id = cleanString(row?.id)
+  if (!startTime || !id) return null
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    kind: VISIBLE_APPOINTMENTS_CURSOR_KIND,
+    scope,
+    startTime,
+    id
+  }), 'utf8').toString('base64url')
+}
+
+function decodeVisibleAppointmentsCursor(value, expectedScope) {
+  const cursor = cleanString(value)
+  if (!cursor) return null
+  if (cursor.length > 600) throw visibleAppointmentsCursorError()
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    const startTime = cleanString(parsed?.startTime)
+    const id = cleanString(parsed?.id)
+    if (
+      parsed?.v !== 1 ||
+      parsed?.kind !== VISIBLE_APPOINTMENTS_CURSOR_KIND ||
+      parsed?.scope !== expectedScope ||
+      !startTime ||
+      !id ||
+      !Number.isFinite(Date.parse(startTime))
+    ) {
+      throw visibleAppointmentsCursorError()
+    }
+    return { startTime, id }
+  } catch (error) {
+    if (error?.code === 'invalid_visible_appointments_cursor') throw error
+    throw visibleAppointmentsCursorError()
+  }
+}
+
+/** Conteos exactos por día del negocio, sin devolver ninguna cita. */
+export async function getLocalAppointmentDayCounts({
+  calendarId,
+  startTime,
+  endTime,
+  timezone = '',
+  signal
+} = {}) {
+  const normalizedCalendarId = cleanString(calendarId)
+  if (!normalizedCalendarId) {
+    const error = new Error('Se requiere calendarId')
+    error.status = 400
+    throw error
+  }
+  const range = normalizeVisibleAppointmentRange({ startTime, endTime })
+  const dayBounds = await buildAppointmentBusinessDayBounds({
+    startTime: range.start,
+    endTime: range.end,
+    timezone
+  })
+  const days = await countAppointmentsByBusinessDay({
+    calendarId: normalizedCalendarId,
+    bounds: dayBounds.bounds,
+    signal
+  })
+  return {
+    timezone: dayBounds.timezone,
+    total: days.reduce((sum, day) => sum + day.total, 0),
+    days
+  }
+}
+
+/**
+ * Vista mensual: como máximo N previews por día y conteo exacto independiente.
+ * El proceso Node materializa a lo sumo 45 * 5 filas aunque el mes tenga
+ * cientos de miles de citas.
+ */
+export async function listLocalAppointmentMonthPreview({
+  calendarId,
+  startTime,
+  endTime,
+  previewLimit = MONTH_APPOINTMENT_PREVIEW_DEFAULT_LIMIT,
+  timezone = '',
+  signal
+} = {}) {
+  const normalizedCalendarId = cleanString(calendarId)
+  if (!normalizedCalendarId) {
+    const error = new Error('Se requiere calendarId')
+    error.status = 400
+    throw error
+  }
+  const range = normalizeVisibleAppointmentRange({ startTime, endTime })
+  const normalizedPreviewLimit = normalizeMonthAppointmentPreviewLimit(previewLimit)
+  const dayBounds = await buildAppointmentBusinessDayBounds({
+    startTime: range.start,
+    endTime: range.end,
+    timezone
+  })
+  if (dayBounds.bounds.length > 45) {
+    const error = new Error('La vista mensual permite hasta 45 días')
+    error.status = 400
+    throw error
+  }
+
+  const [counts, previewRows] = await Promise.all([
+    countAppointmentsByBusinessDay({
+      calendarId: normalizedCalendarId,
+      bounds: dayBounds.bounds,
+      signal
+    }),
+    listAppointmentPreviewsByBusinessDay({
+      calendarId: normalizedCalendarId,
+      bounds: dayBounds.bounds,
+      previewLimit: normalizedPreviewLimit,
+      signal
+    })
+  ])
+  const previewsByDay = new Map(dayBounds.bounds.map(bound => [bound.date, []]))
+  for (const row of previewRows) {
+    const date = cleanString(row._calendar_day)
+    if (!previewsByDay.has(date)) previewsByDay.set(date, [])
+    previewsByDay.get(date).push(appointmentRowToApi(row))
+  }
+  for (const items of previewsByDay.values()) {
+    items.sort((left, right) => (
+      Date.parse(left.startTime) - Date.parse(right.startTime) || left.id.localeCompare(right.id)
+    ))
+  }
+  const countByDay = new Map(counts.map(day => [day.date, day.total]))
+  const days = dayBounds.bounds.map(bound => ({
+    date: bound.date,
+    total: countByDay.get(bound.date) || 0,
+    items: previewsByDay.get(bound.date) || []
+  }))
+
+  return {
+    timezone: dayBounds.timezone,
+    previewLimit: normalizedPreviewLimit,
+    total: days.reduce((sum, day) => sum + day.total, 0),
+    days
+  }
+}
+
+/** Página keyset exacta para las vistas de día y semana. */
+export async function listVisibleLocalAppointmentsPage({
+  calendarId,
+  startTime,
+  endTime,
+  cursor = '',
+  limit = VISIBLE_APPOINTMENTS_DEFAULT_LIMIT,
+  includeCounts = true,
+  timezone = '',
+  signal
+} = {}) {
+  const normalizedCalendarId = cleanString(calendarId)
+  if (!normalizedCalendarId) {
+    const error = new Error('Se requiere calendarId')
+    error.status = 400
+    throw error
+  }
+  const range = normalizeVisibleAppointmentRange({ startTime, endTime })
+  const businessTimezone = await resolveAppointmentBusinessTimezone(timezone)
+  const normalizedStart = range.start.toISOString()
+  const normalizedEnd = range.end.toISOString()
+  // El frontend expresa el final inclusivo con precisión de milisegundo. La DB
+  // PostgreSQL conserva microsegundos, así que comparar <= .999 perdería filas
+  // válidas como .999500. Convertimos una sola vez a límite exclusivo.
+  const normalizedExclusiveEnd = new Date(range.end.getTime() + 1).toISOString()
+  const scope = visibleAppointmentsCursorScope({
+    calendarId: normalizedCalendarId,
+    startTime: normalizedStart,
+    endTime: normalizedEnd,
+    timezone: businessTimezone
+  })
+  const decodedCursor = decodeVisibleAppointmentsCursor(cursor, scope)
+  const normalizedLimit = normalizeVisibleAppointmentsLimit(limit)
+  const sql = upcomingAppointmentSqlExpressions('a')
+  const conditions = [
+    'a.calendar_id = ?',
+    'a.start_time IS NOT NULL',
+    `${sql.sort} >= ${sql.parameter}`,
+    `${sql.sort} < ${sql.parameter}`,
+    "COALESCE(a.sync_status, '') != 'pending_delete'",
+    'a.deleted_at IS NULL'
+  ]
+  const params = [normalizedCalendarId, normalizedStart, normalizedExclusiveEnd]
+  if (decodedCursor) {
+    conditions.push(sql.cursorPredicate)
+    params.push(decodedCursor.startTime, decodedCursor.id)
+  }
+
+  const pagePromise = db.all(`
+    SELECT
+      a.*,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone,
+      ${sql.cursorProjection} AS _cursor_start_time
+    FROM appointments a
+    LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${sql.sort} ASC, a.id ASC
+    LIMIT ?
+  `, [...params, normalizedLimit + 1], { signal })
+  const countsPromise = includeCounts
+    ? getLocalAppointmentDayCounts({
+        calendarId: normalizedCalendarId,
+        startTime: range.start,
+        endTime: range.end,
+        timezone: businessTimezone,
+        signal
+      })
+    : Promise.resolve(null)
+  const [rows, counts] = await Promise.all([pagePromise, countsPromise])
+  const hasNext = rows.length > normalizedLimit
+  const pageRows = hasNext ? rows.slice(0, normalizedLimit) : rows
+  const lastRow = pageRows[pageRows.length - 1]
+
+  return {
+    timezone: businessTimezone,
+    items: pageRows.map(appointmentRowToApi),
+    ...(counts ? { total: counts.total, days: counts.days } : {}),
+    pagination: {
+      limit: normalizedLimit,
+      hasNext,
+      nextCursor: hasNext ? encodeVisibleAppointmentsCursor(lastRow, scope) : null
+    }
+  }
+}
+
+/**
+ * Página local y acotada para el panel "Próximas citas". No contacta a
+ * HighLevel/Google y el cursor queda ligado al calendario seleccionado.
+ */
+export async function listUpcomingLocalAppointmentsPage({
+  calendarId,
+  cursor = '',
+  limit = UPCOMING_APPOINTMENTS_DEFAULT_LIMIT,
+  now = new Date()
+} = {}) {
+  const normalizedCalendarId = cleanString(calendarId)
+  if (!normalizedCalendarId) {
+    const error = new Error('Se requiere calendarId')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedNow = normalizeAppointmentInstant(now)
+  if (Number.isNaN(normalizedNow.getTime())) {
+    const error = new Error('El instante actual es inválido')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedLimit = normalizeUpcomingAppointmentsLimit(limit)
+  const cursorScope = upcomingAppointmentsCursorScope(normalizedCalendarId)
+  const decodedCursor = decodeUpcomingAppointmentsCursor(cursor, cursorScope)
+  const sql = upcomingAppointmentSqlExpressions('a')
+  const conditions = [
+    'a.calendar_id = ?',
+    'a.start_time IS NOT NULL',
+    `${sql.sort} >= ${sql.parameter}`,
+    "COALESCE(a.sync_status, '') != 'pending_delete'",
+    'a.deleted_at IS NULL'
+  ]
+  const params = [normalizedCalendarId, normalizedNow.toISOString()]
+
+  if (decodedCursor) {
+    conditions.push(sql.cursorPredicate)
+    params.push(decodedCursor.startTime, decodedCursor.id)
+  }
+
+  const rows = await db.all(`
+    SELECT
+      a.*,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone,
+      ${sql.cursorProjection} AS _cursor_start_time
+    FROM appointments a
+    LEFT JOIN contacts c ON c.id = a.contact_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${sql.sort} ASC, a.id ASC
+    LIMIT ?
+  `, [...params, normalizedLimit + 1])
+
+  const hasNext = rows.length > normalizedLimit
+  const pageRows = hasNext ? rows.slice(0, normalizedLimit) : rows
+  const lastRow = pageRows[pageRows.length - 1]
+
+  return {
+    items: pageRows.map(appointmentRowToApi),
+    pagination: {
+      limit: normalizedLimit,
+      hasNext,
+      nextCursor: hasNext ? encodeUpcomingAppointmentsCursor(lastRow, cursorScope) : null
+    }
+  }
+}
+
+function appointmentStatsFromRows(rows = []) {
+  const stats = {
+    pending: 0,
+    cancelled: 0,
+    confirmed: 0,
+    rescheduled: 0,
+    showed: 0,
+    noshow: 0
+  }
+
+  for (const row of rows) {
+    const status = cleanString(row.appointment_status).toLowerCase()
+    const total = Number(row.total || 0)
+    if (status === 'confirmed') {
+      const future = Number(row.future_confirmed || 0)
+      stats.pending += future
+      stats.confirmed += Math.max(total - future, 0)
+    } else if (Object.prototype.hasOwnProperty.call(stats, status) && status !== 'pending') {
+      stats[status] += total
+    }
+  }
+
+  return stats
+}
+
+/** Agregado mensual local para KPIs; evita descargar todas las citas del mes. */
+export async function getLocalAppointmentStats({
+  calendarId,
+  startTime,
+  endTime,
+  now = new Date(),
+  signal
+} = {}) {
+  const normalizedCalendarId = cleanString(calendarId)
+  const normalizedStart = normalizeAppointmentInstant(startTime)
+  const normalizedEnd = normalizeAppointmentInstant(endTime)
+  const normalizedNow = normalizeAppointmentInstant(now)
+  if (
+    !normalizedCalendarId ||
+    Number.isNaN(normalizedStart.getTime()) ||
+    Number.isNaN(normalizedEnd.getTime()) ||
+    Number.isNaN(normalizedNow.getTime()) ||
+    normalizedEnd < normalizedStart
+  ) {
+    const error = new Error('Rango de resumen de citas inválido')
+    error.status = 400
+    throw error
+  }
+
+  const sql = upcomingAppointmentSqlExpressions('a')
+  const statusExpression = "LOWER(COALESCE(a.appointment_status, a.status, ''))"
+  const normalizedExclusiveEnd = new Date(normalizedEnd.getTime() + 1).toISOString()
+  const rows = await db.all(`
+    SELECT
+      ${statusExpression} AS appointment_status,
+      COUNT(*) AS total,
+      SUM(CASE
+        WHEN ${statusExpression} = 'confirmed' AND ${sql.sort} >= ${sql.parameter}
+        THEN 1 ELSE 0
+      END) AS future_confirmed
+    FROM appointments a
+    WHERE a.calendar_id = ?
+      AND a.start_time IS NOT NULL
+      AND ${sql.sort} >= ${sql.parameter}
+      AND ${sql.sort} < ${sql.parameter}
+      AND COALESCE(a.sync_status, '') != 'pending_delete'
+      AND a.deleted_at IS NULL
+    GROUP BY ${statusExpression}
+  `, [
+    normalizedNow.toISOString(),
+    normalizedCalendarId,
+    normalizedStart.toISOString(),
+    normalizedExclusiveEnd
+  ], { signal })
+
+  return appointmentStatsFromRows(rows)
+}
+
+/**
+ * Resumen multi-calendario para la portada móvil: KPIs exactos del rango y sólo
+ * las próximas N citas. Sustituye la descarga histórica completa de PhoneApp.
+ */
+export async function getLocalAppointmentsOverview({
+  startTime,
+  endTime,
+  now = new Date(),
+  limit = APPOINTMENTS_OVERVIEW_DEFAULT_LIMIT,
+  signal
+} = {}) {
+  const range = normalizeVisibleAppointmentRange({ startTime, endTime })
+  const normalizedNow = normalizeAppointmentInstant(now)
+  if (Number.isNaN(normalizedNow.getTime())) {
+    const error = new Error('El instante actual es inválido')
+    error.status = 400
+    throw error
+  }
+
+  const sql = upcomingAppointmentSqlExpressions('a')
+  const statusExpression = "LOWER(COALESCE(a.appointment_status, a.status, ''))"
+  const normalizedStart = range.start.toISOString()
+  const normalizedExclusiveEnd = new Date(range.end.getTime() + 1).toISOString()
+  const normalizedLimit = normalizeAppointmentsOverviewLimit(limit)
+  const upcomingStart = new Date(Math.max(range.start.getTime(), normalizedNow.getTime())).toISOString()
+
+  const statsPromise = db.all(`
+    SELECT
+      ${statusExpression} AS appointment_status,
+      COUNT(*) AS total,
+      SUM(CASE
+        WHEN ${statusExpression} = 'confirmed' AND ${sql.sort} >= ${sql.parameter}
+        THEN 1 ELSE 0
+      END) AS future_confirmed
+    FROM appointments a
+    WHERE a.start_time IS NOT NULL
+      AND ${sql.sort} >= ${sql.parameter}
+      AND ${sql.sort} < ${sql.parameter}
+      AND COALESCE(a.sync_status, '') != 'pending_delete'
+      AND a.deleted_at IS NULL
+    GROUP BY ${statusExpression}
+  `, [
+    normalizedNow.toISOString(),
+    normalizedStart,
+    normalizedExclusiveEnd
+  ], { signal })
+
+  const upcomingPromise = normalizedNow.getTime() > range.end.getTime()
+    ? Promise.resolve([])
+    : db.all(`
+        SELECT
+          a.*,
+          ${sql.cursorProjection} AS _cursor_start_time
+        FROM appointments a
+        WHERE a.start_time IS NOT NULL
+          AND ${sql.sort} >= ${sql.parameter}
+          AND ${sql.sort} < ${sql.parameter}
+          AND COALESCE(a.sync_status, '') != 'pending_delete'
+          AND a.deleted_at IS NULL
+        ORDER BY ${sql.sort} ASC, a.id ASC
+        LIMIT ?
+      `, [upcomingStart, normalizedExclusiveEnd, normalizedLimit], { signal })
+
+  const [statsRows, upcomingRows] = await Promise.all([statsPromise, upcomingPromise])
+  return {
+    stats: appointmentStatsFromRows(statsRows),
+    upcoming: upcomingRows.map(appointmentRowToApi),
+    limit: normalizedLimit
+  }
+}
+
+export async function listLocalAppointments({ startTime, endTime, calendarId, includeOverlapping = false, signal } = {}) {
   // IMPORTANTE: esta consulta hace JOIN con `contacts`, y AMBAS tablas (appointments y
   // contacts) tienen columnas `deleted_at`/`sync_status`. En Postgres, referenciarlas sin
   // el alias de tabla lanza «column reference "deleted_at" is ambiguous» y revienta el
@@ -6025,7 +6774,7 @@ export async function listLocalAppointments({ startTime, endTime, calendarId, in
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE ${conditions.join(' AND ')}
     ORDER BY a.start_time ASC
-  `, params)
+  `, params, { signal })
 
   return rows.map(appointmentRowToApi)
 }
@@ -7348,6 +8097,9 @@ export default {
   deleteLocalAppointment,
   getLocalAppointment,
   getLocalFreeSlots,
+  getLocalAppointmentStats,
+  getLocalAppointmentsOverview,
+  listUpcomingLocalAppointmentsPage,
   listLocalAppointments,
   syncLocalAppointmentsToHighLevel,
   syncLocalCalendarsToHighLevel,

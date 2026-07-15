@@ -277,9 +277,10 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export const conektaPaymentsService = {
-  async getConfig(): Promise<ConektaPaymentConfig> {
+  async getConfig(signal?: AbortSignal): Promise<ConektaPaymentConfig> {
     const response = await fetch(apiUrl('/api/conekta/config'), {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      signal
     })
     return parseApiResponse<ConektaPaymentConfig>(response)
   },

@@ -180,7 +180,13 @@ import { createAuthScopedLocalStorageNamespace } from '@/services/authScopedLoca
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { subscribeToChatLiveEvents, reportViewing } from '@/services/chatLiveEventsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
-import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import {
+  compareLosslessNumericCursorValues,
+  compareLosslessTimestampCursorTuples,
+  contactsService,
+  getOldestJourneyMessageCursor,
+  type JourneyEvent
+} from '@/services/contactsService'
 import { customFieldsService, type CustomFieldDefinition } from '@/services/customFieldsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -237,8 +243,8 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_ACTIVITY_REFRESH_INTERVAL_MS = 30_000
-const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000
-const CHAT_OPEN_THREAD_REFRESH_INTERVAL_MS = 4000
+const CHAT_FALLBACK_REFRESH_INTERVAL_MS = 30_000
+const CHAT_HEALTHY_RECONCILE_INTERVAL_MS = 2 * 60_000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
 const CHAT_CONVERSATION_TOP_LOAD_GAP_PX = 96
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
@@ -1403,6 +1409,8 @@ interface ChatContact extends Contact {
   lastMessageType?: string
   lastMessageChannel?: string
   lastMessageDate?: string
+  lastMessageCursorSort?: string
+  lastMessageCursorScope?: string
   lastMessageDirection?: string
   lastBusinessPhone?: string
   lastBusinessPhoneNumberId?: string
@@ -1420,6 +1428,14 @@ interface ChatContact extends Contact {
   profile_picture_url?: string | null
   hasMetaMessengerProfile?: boolean
   hasMetaInstagramProfile?: boolean
+}
+
+interface ChatListKeysetCursor {
+  beforeMessageDate: string
+  beforeMessageSort?: string
+  beforeMessageScope?: string
+  beforeContactId: string
+  scope: string
 }
 
 function normalizeFilterProbe(values: unknown[]) {
@@ -1966,6 +1982,54 @@ function dedupeChatsById<T extends { id?: string | null }>(chats: T[]) {
   return Array.from(map.values())
 }
 
+function getChatListKeysetCursor(chats: ChatContact[], scope: string): ChatListKeysetCursor | null {
+  const boundary = chats[chats.length - 1]
+  const beforeMessageDate = String(boundary?.lastMessageDate || boundary?.createdAt || '').trim()
+  const beforeMessageSort = String(boundary?.lastMessageCursorSort || '').trim()
+  const beforeMessageScope = String(boundary?.lastMessageCursorScope || '').trim()
+  const beforeContactId = String(boundary?.id || '').trim()
+  return beforeMessageDate && beforeContactId
+    ? {
+      beforeMessageDate,
+      beforeMessageSort: beforeMessageSort || undefined,
+      beforeMessageScope: beforeMessageScope || undefined,
+      beforeContactId,
+      scope
+    }
+    : null
+}
+
+function didChatListCursorAdvance(previous: ChatListKeysetCursor, next: ChatListKeysetCursor | null) {
+  return Boolean(
+    next &&
+    (
+      next.beforeMessageSort !== previous.beforeMessageSort ||
+      next.beforeMessageScope !== previous.beforeMessageScope ||
+      next.beforeMessageDate !== previous.beforeMessageDate ||
+      next.beforeContactId !== previous.beforeContactId
+    )
+  )
+}
+
+function compareChatListContactCursors(left: ChatContact, right: ChatContact) {
+  const leftSort = String(left.lastMessageCursorSort || '').trim()
+  const rightSort = String(right.lastMessageCursorSort || '').trim()
+  if (leftSort && rightSort) {
+    const sortDifference = compareLosslessNumericCursorValues(leftSort, rightSort)
+    if (sortDifference !== null && sortDifference !== 0) return sortDifference
+    if (sortDifference !== null) {
+      return left.id === right.id ? 0 : left.id < right.id ? -1 : 1
+    }
+  }
+
+  return compareLosslessTimestampCursorTuples(
+    String(left.lastMessageDate || left.createdAt || ''),
+    left.id,
+    String(right.lastMessageDate || right.createdAt || ''),
+    right.id
+  )
+}
+
 // Reconcilia la cola cacheada contra la primera página fresca del servidor: descarta
 // contactos que el servidor ya NO devuelve (fusionados/borrados/ocultos) SIN perder la
 // cola real revelada con scroll. Página incompleta (< pageSize) = lista COMPLETA → no se
@@ -1974,10 +2038,9 @@ function reconcileCachedChatTail(freshPage: ChatContact[], current: ChatContact[
   const freshIds = new Set(freshPage.map((contact) => contact.id))
   const notFresh = current.filter((contact) => !freshIds.has(contact.id))
   if (freshPage.length < pageSize) return []
-  const oldestFresh = Math.min(
-    ...freshPage.map((contact) => parseSortableDateValue(contact.lastMessageDate || contact.createdAt))
-  )
-  return notFresh.filter((contact) => parseSortableDateValue(contact.lastMessageDate || contact.createdAt) < oldestFresh)
+  const boundary = freshPage[freshPage.length - 1]
+  if (!boundary) return []
+  return notFresh.filter((contact) => compareChatListContactCursors(contact, boundary) < 0)
 }
 
 function sanitizeAIAgentAttachment(value: unknown): AIAgentAttachment | null {
@@ -3070,11 +3133,18 @@ function getJourneyEventSignature(event: JourneyEvent) {
 function areJourneyEventsEquivalent(left: JourneyEvent[], right: JourneyEvent[]) {
   if (left === right) return true
   if (left.length !== right.length) return false
-  return left.every((event, index) => getJourneyEventSignature(event) === getJourneyEventSignature(right[index]))
+  return left.every((event, index) => (
+    getJourneyEventSignature(event) === getJourneyEventSignature(right[index]) &&
+    compactCompareValue(event.cursorDate) === compactCompareValue(right[index]?.cursorDate) &&
+    compactCompareValue(event.cursorKey) === compactCompareValue(right[index]?.cursorKey)
+  ))
 }
 
 function isConversationJourneyMessage(event: JourneyEvent) {
-  return event.type === 'whatsapp_message' || event.type === 'meta_message' || event.type === 'email_message'
+  return event.type === 'whatsapp_message' ||
+    event.type === 'meta_message' ||
+    event.type === 'email_message' ||
+    event.type === 'appointment_confirmation'
 }
 
 function mergeJourneyEvents(...eventGroups: JourneyEvent[][]) {
@@ -3083,31 +3153,18 @@ function mergeJourneyEvents(...eventGroups: JourneyEvent[][]) {
   eventGroups.flat().forEach((event) => {
     const key = getJourneyEventSignature(event)
     if (!key) return
-    merged.set(key, event)
+    const previous = merged.get(key)
+    merged.set(key, previous
+      ? {
+        ...event,
+        cursorDate: event.cursorDate || previous.cursorDate,
+        cursorKey: event.cursorKey || previous.cursorKey
+      }
+      : event)
   })
 
   return Array.from(merged.values())
     .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
-}
-
-function getOldestConversationMessageDate(journey: JourneyEvent[]) {
-  let oldestDate = ''
-  let oldestTime = Number.POSITIVE_INFINITY
-
-  journey.forEach((event) => {
-    if (!isConversationJourneyMessage(event) || !event.date) return
-    const time = getMessageTimeValue(event.date)
-    if (!Number.isFinite(time) || time <= 0) {
-      if (!oldestDate) oldestDate = event.date
-      return
-    }
-    if (time < oldestTime) {
-      oldestTime = time
-      oldestDate = event.date
-    }
-  })
-
-  return oldestDate
 }
 
 function getMediaPathExtension(value = '') {
@@ -5496,7 +5553,8 @@ export const PhoneChat: React.FC = () => {
   const chatsRef = useRef<ChatContact[]>([])
   const chatsRequestRef = useRef<AbortController | null>(null)
   const chatListRef = useRef<HTMLDivElement | null>(null)
-  const chatListOffsetRef = useRef(0)
+  const chatListCursorRef = useRef<ChatListKeysetCursor | null>(null)
+  const chatListHasAppendedRef = useRef(false)
   const chatListHasMoreRef = useRef(true)
   const chatListLoadingMoreRef = useRef(false)
   // Controller propio para "cargar más" (append), independiente de chatsRequestRef, para que
@@ -5526,6 +5584,7 @@ export const PhoneChat: React.FC = () => {
   const [appointmentCalendarGuestContact, setAppointmentCalendarGuestContact] = useState('')
   const [appointmentCalendarGuests, setAppointmentCalendarGuests] = useState<AppointmentCalendarGuest[]>([])
   const [appointmentCalendarEvents, setAppointmentCalendarEvents] = useState<CalendarEvent[]>([])
+  const [appointmentCalendarEventCountsByDate, setAppointmentCalendarEventCountsByDate] = useState<Record<string, number>>({})
   const [appointmentCalendarEventsLoading, setAppointmentCalendarEventsLoading] = useState(false)
   const [appointmentCalendarError, setAppointmentCalendarError] = useState('')
   const [appointmentCalendarSaving, setAppointmentCalendarSaving] = useState(false)
@@ -5648,6 +5707,9 @@ export const PhoneChat: React.FC = () => {
   const voiceAnimationFrameRef = useRef<number | null>(null)
   const voiceLastWaveUpdateRef = useRef(0)
   const chatInboxRefreshInFlightRef = useRef(false)
+  const chatLiveConnectedRef = useRef(false)
+  const chatLastInboxReconcileAtRef = useRef(Date.now())
+  const chatLastThreadReconcileAtRef = useRef(Date.now())
   const pendingRealtimePreviewMessagesRef = useRef<Record<string, ChatMessage>>({})
   // Si llega un evento mientras ya hay un refresh en curso, NO lo descartamos:
   // encolamos un re-run con el contactId más reciente (igual que el escritorio).
@@ -5891,8 +5953,8 @@ export const PhoneChat: React.FC = () => {
     if (!contactId || contactId === AI_AGENT_CHAT_ID) return
     if (olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return
 
-    const beforeMessageDate = getOldestConversationMessageDate(contactJourneyRef.current)
-    if (!beforeMessageDate) {
+    const oldestCursor = getOldestJourneyMessageCursor(contactJourneyRef.current)
+    if (!oldestCursor) {
       conversationHasOlderMessagesRef.current = false
       conversationHistoryExhaustedContactIdRef.current = contactId
       return
@@ -5918,7 +5980,8 @@ export const PhoneChat: React.FC = () => {
       const olderJourney = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
-        beforeMessageDate
+        beforeMessageDate: oldestCursor.beforeMessageDate,
+        beforeMessageCursor: oldestCursor.beforeMessageCursor
       })
       if (activeContactIdRef.current !== contactId) return
 
@@ -6336,7 +6399,7 @@ export const PhoneChat: React.FC = () => {
     [appointmentCalendarEventsByDate, appointmentCalendarMonth]
   )
   const appointmentCalendarSelectedDate = dateOnlyToLocalDate(appointmentCalendarDate)
-  const appointmentCalendarSelectedEvents = appointmentCalendarEventsByDate[appointmentCalendarDate] || []
+  const appointmentCalendarSelectedEventTotal = appointmentCalendarEventCountsByDate[appointmentCalendarDate] || 0
   useEffect(() => {
     if (sheet !== 'appointment') {
       appointmentCalendarOpenedRef.current = false
@@ -6373,6 +6436,7 @@ export const PhoneChat: React.FC = () => {
   useEffect(() => {
     if (sheet !== 'appointment' || activeAppointmentEntryMode !== 'calendar' || !appointmentSheetCalendarId) {
       setAppointmentCalendarEvents([])
+      setAppointmentCalendarEventCountsByDate({})
       setAppointmentCalendarEventsLoading(false)
       return
     }
@@ -6380,24 +6444,33 @@ export const PhoneChat: React.FC = () => {
     const range = getAppointmentMonthFetchRange(appointmentCalendarMonth, timezone)
     if (!range) {
       setAppointmentCalendarEvents([])
+      setAppointmentCalendarEventCountsByDate({})
       return
     }
 
     let cancelled = false
+    const controller = new AbortController()
     setAppointmentCalendarEventsLoading(true)
 
-    calendarsService.getEvents(
-      locationId || '',
-      range.startTime,
-      range.endTime,
-      accessToken || undefined,
-      appointmentSheetCalendarId
-    )
-      .then((events) => {
-        if (!cancelled) setAppointmentCalendarEvents(Array.isArray(events) ? events : [])
+    calendarsService.getMonthEventPreview({
+      calendarId: appointmentSheetCalendarId,
+      startTime: range.startTime,
+      endTime: range.endTime,
+      previewLimit: 3,
+      signal: controller.signal
+    })
+      .then((response) => {
+        if (cancelled) return
+        setAppointmentCalendarEvents(response.days.flatMap(day => day.items))
+        setAppointmentCalendarEventCountsByDate(Object.fromEntries(
+          response.days.map(day => [day.date, day.total])
+        ))
       })
       .catch(() => {
-        if (!cancelled) setAppointmentCalendarEvents([])
+        if (!cancelled && !controller.signal.aborted) {
+          setAppointmentCalendarEvents([])
+          setAppointmentCalendarEventCountsByDate({})
+        }
       })
       .finally(() => {
         if (!cancelled) setAppointmentCalendarEventsLoading(false)
@@ -6405,8 +6478,9 @@ export const PhoneChat: React.FC = () => {
 
     return () => {
       cancelled = true
+      controller.abort()
     }
-  }, [accessToken, activeAppointmentEntryMode, appointmentCalendarMonth, appointmentSheetCalendarId, locationId, sheet, timezone])
+  }, [activeAppointmentEntryMode, appointmentCalendarMonth, appointmentSheetCalendarId, sheet, timezone])
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
   const chatPhoneFilterEnabled = businessPhones.length > 1
@@ -7444,17 +7518,6 @@ export const PhoneChat: React.FC = () => {
     const append = options.append === true
     const showCacheRefresh = options.showCacheRefresh === true && !silentRefresh
     const useCache = options.useCache !== false && !silentRefresh
-
-    if (append) {
-      // El load-more usa su propio controller y solo se bloquea por otro load-more en curso o
-      // porque ya no hay más. NO lo bloquea la carga inicial ni los refrescos: dispara de
-      // inmediato al llegar al fondo.
-      if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
-    } else if (silentRefresh && chatsRequestRef.current) {
-      return
-    }
-
-    if (!silentRefresh) setChatsError('')
     const trimmed = chatQuery.trim()
     const phoneFilterParams: Record<string, string> = selectedChatPhoneFilterActive && effectiveSelectedChatPhone
       ? {
@@ -7462,6 +7525,24 @@ export const PhoneChat: React.FC = () => {
         businessPhone: getBusinessPhoneValue(effectiveSelectedChatPhone)
       }
       : {}
+    const cursorScope = JSON.stringify([
+      trimmed.toLocaleLowerCase('es-MX'),
+      effectiveSelectedChatPhoneId,
+      phoneFilterParams.businessPhone || ''
+    ])
+    const appendCursor = chatListCursorRef.current
+
+    if (append) {
+      // El load-more usa su propio controller y solo se bloquea por otro load-more en curso o
+      // porque ya no hay más. NO lo bloquea la carga inicial ni los refrescos: dispara de
+      // inmediato al llegar al fondo.
+      if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
+      if (!appendCursor || appendCursor.scope !== cursorScope) return
+    } else if (silentRefresh && chatsRequestRef.current) {
+      return
+    }
+
+    if (!silentRefresh) setChatsError('')
     const cacheEnabled = !trimmed
     const cacheKey = getPhoneDailyCacheKey(
       'phone-chat',
@@ -7478,7 +7559,8 @@ export const PhoneChat: React.FC = () => {
       const cachedList = cachedChats
         ? Array.isArray(cachedChats.data) ? cachedChats.data : []
         : fastStartInbox?.chats || []
-      chatListOffsetRef.current = 0
+      chatListCursorRef.current = null
+      chatListHasAppendedRef.current = false
       chatListHasMoreRef.current = true
       chatListLoadedSearchRef.current = ''
       const cachedRequestedContact = requestedContactParam
@@ -7501,8 +7583,8 @@ export const PhoneChat: React.FC = () => {
           setChatsLoading(true)
         }
       }
-      // Coalescamos cargas no-append concurrentes. NO reiniciamos offset/hasMore: la recarga
-      // explícita ahora es una sola página fusionada que conserva la profundidad cargada.
+      // Coalescamos cargas no-append concurrentes. La recarga explícita trae una sola página
+      // y conserva la frontera profunda cuando el usuario ya reveló más historial.
       setChatsRefreshing(false)
       chatsRequestRef.current?.abort()
     }
@@ -7516,15 +7598,20 @@ export const PhoneChat: React.FC = () => {
       chatsRequestRef.current = controller
     }
 
-    const fetchChatPage = async (pageOffset: number) => {
+    const fetchChatPage = async (cursor: ChatListKeysetCursor | null) => {
       const params: Record<string, string> = {
         ...(trimmed ? { q: trimmed } : {}),
         ...phoneFilterParams,
         // Una lista nunca debe esperar proveedores externos. El backend nuevo
         // usa esta señal solo para encolar avatares faltantes en segundo plano.
-        warmProfilePictures: pageOffset === 0 && !showedCachedChats ? 'true' : 'false',
+        warmProfilePictures: !cursor && !showedCachedChats ? 'true' : 'false',
         limit: String(CHAT_LIST_PAGE_SIZE),
-        ...(pageOffset > 0 ? { offset: String(pageOffset) } : {})
+        ...(cursor ? {
+          beforeMessageDate: cursor.beforeMessageDate,
+          ...(cursor.beforeMessageSort ? { beforeMessageSort: cursor.beforeMessageSort } : {}),
+          ...(cursor.beforeMessageScope ? { beforeMessageScope: cursor.beforeMessageScope } : {}),
+          beforeContactId: cursor.beforeContactId
+        } : {})
       }
       const data = await apiClient.get<ChatContact[]>('/contacts/chats', { params })
       return Array.isArray(data) ? data : []
@@ -7532,28 +7619,38 @@ export const PhoneChat: React.FC = () => {
 
     try {
       if (append) {
-        const offset = chatListOffsetRef.current
-        const loadedPageChats = await fetchChatPage(offset)
-        // Si mientras esperábamos una recarga movió el offset (o canceló este load-more),
-        // descartamos el lote: aplicarlo corrompería offset/hasMore y podría bloquear futuras
-        // cargas. La lista no se pierde: el usuario re-scrollea.
-        if (controller.signal.aborted || chatListLoadMoreRequestRef.current !== controller || chatListOffsetRef.current !== offset) return
+        const cursor = appendCursor as ChatListKeysetCursor
+        const loadedPageChats = await fetchChatPage(cursor)
+        // Si una recarga cambió la frontera mientras esperaba este lote, se descarta. Aplicarlo
+        // mezclaría dos snapshots y podría saltar conversaciones.
+        if (controller.signal.aborted || chatListLoadMoreRequestRef.current !== controller || chatListCursorRef.current !== cursor) return
         const pageChats = dedupeChatsById(loadedPageChats)
-        chatListOffsetRef.current = offset + loadedPageChats.length
-        chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE
+        const nextCursor = getChatListKeysetCursor(loadedPageChats, cursorScope)
+        const cursorAdvanced = didChatListCursorAdvance(cursor, nextCursor)
+        if (nextCursor) chatListCursorRef.current = nextCursor
+        if (loadedPageChats.length > 0) chatListHasAppendedRef.current = true
+        chatListHasMoreRef.current = loadedPageChats.length >= CHAT_LIST_PAGE_SIZE && cursorAdvanced
         applyLoadedChats(dedupeChatsById([...chatsRef.current, ...pageChats]))
       } else if (silentRefresh) {
         // Refresco en segundo plano: NO reconstruir la lista entera (causa tirones). Traemos
         // solo la primera página y la fusionamos sobre lo ya cargado, conservando la cola que
-        // el usuario reveló con scroll. El offset avanza por páginas reales del servidor; el
-        // caché no cuenta porque podría estar viejo o reordenado por mensajes nuevos.
-        const freshPage = dedupeChatsById(await fetchChatPage(0))
+        // el usuario reveló con scroll. El cursor sólo avanza por páginas reales del servidor;
+        // el caché no cuenta porque podría estar viejo o reordenado por mensajes nuevos.
+        const freshPage = dedupeChatsById(await fetchChatPage(null))
         if (chatsRequestRef.current !== controller) return
 
-        const loadedBeyondFreshPage = chatListOffsetRef.current > freshPage.length
-        chatListOffsetRef.current = Math.max(chatListOffsetRef.current, freshPage.length)
-        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE ||
-          (loadedBeyondFreshPage && chatListHasMoreRef.current)
+        const currentCursor = chatListCursorRef.current
+        const preserveDeepCursor = Boolean(
+          chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+        )
+        const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
+        if (!preserveDeepCursor) {
+          chatListCursorRef.current = freshCursor
+          chatListHasAppendedRef.current = false
+        }
+        chatListHasMoreRef.current = (
+          freshPage.length >= CHAT_LIST_PAGE_SIZE && Boolean(freshCursor)
+        ) || (preserveDeepCursor && chatListHasMoreRef.current)
         const merged = dedupeChatsById([
           ...freshPage,
           ...reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE)
@@ -7567,7 +7664,7 @@ export const PhoneChat: React.FC = () => {
         // Carga inicial / refresco / búsqueda / al limpiar la búsqueda: UNA sola página rápida.
         // Sin bucle multi-página y sin bloquear el "cargar más", por lo que la lista aparece al
         // instante y se rellena al hacer scroll.
-        const freshPage = dedupeChatsById(await fetchChatPage(0))
+        const freshPage = dedupeChatsById(await fetchChatPage(null))
         if (chatsRequestRef.current !== controller) return
 
         // En búsqueda (o al venir de una), REEMPLAZAMOS; en lista completa fusionamos sobre el
@@ -7580,13 +7677,20 @@ export const PhoneChat: React.FC = () => {
           ...(shouldReplace ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
 
-        // El offset representa páginas reales traídas del servidor, no filas pintadas desde
-        // caché. Si usáramos merged.length, un caché viejo podría saltarse conversaciones
-        // intermedias cuando el orden cambió por mensajes nuevos.
-        chatListOffsetRef.current = shouldReplace
-          ? freshPage.length
-          : Math.max(chatListOffsetRef.current, freshPage.length)
-        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE
+        // La frontera keyset representa la última página real, no las filas del caché. Una
+        // búsqueda siempre reconstruye su propia frontera para no saltarse páginas intermedias.
+        const currentCursor = chatListCursorRef.current
+        const preserveDeepCursor = Boolean(
+          !shouldReplace && chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+        )
+        const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
+        if (!preserveDeepCursor) {
+          chatListCursorRef.current = freshCursor
+          chatListHasAppendedRef.current = false
+        }
+        chatListHasMoreRef.current = (
+          freshPage.length >= CHAT_LIST_PAGE_SIZE && Boolean(freshCursor)
+        ) || (preserveDeepCursor && chatListHasMoreRef.current)
 
         let requestedContact = requestedContactParam
           ? merged.find((contact) => contact.id === requestedContactParam)
@@ -7607,7 +7711,14 @@ export const PhoneChat: React.FC = () => {
           writeChatFastStartInbox(selectedChatPhoneId, displayedChats)
         }
       }
-    } catch {
+    } catch (error: any) {
+      if (append && Number(error?.status) === 400 && chatListCursorRef.current === appendCursor) {
+        chatListCursorRef.current = null
+        chatListHasAppendedRef.current = false
+        chatListHasMoreRef.current = true
+        window.setTimeout(() => void loadChats({ silent: true }), 0)
+        return
+      }
       if (!append && !showedCachedChats && !silentRefresh) {
         setChatsError('No se pudieron cargar los chats.')
         setChats([])
@@ -9399,16 +9510,23 @@ export const PhoneChat: React.FC = () => {
 
     const refreshVisibleChats = () => {
       if (document.visibilityState === 'visible') {
+        chatLastInboxReconcileAtRef.current = Date.now()
         loadChats({ silent: true, useCache: false })
         loadAgentData({ includeDefinitions: false })
       }
     }
     const refreshInterval = window.setInterval(() => {
       if (document.visibilityState === 'visible' && !chatQuery.trim()) {
+        const now = Date.now()
+        if (
+          chatLiveConnectedRef.current &&
+          now - chatLastInboxReconcileAtRef.current < CHAT_HEALTHY_RECONCILE_INTERVAL_MS
+        ) return
+        chatLastInboxReconcileAtRef.current = now
         loadChats({ silent: true, useCache: false })
         loadAgentData({ includeDefinitions: false })
       }
-    }, CHAT_INBOX_REFRESH_INTERVAL_MS)
+    }, CHAT_FALLBACK_REFRESH_INTERVAL_MS)
 
     window.addEventListener('focus', refreshVisibleChats)
     document.addEventListener('visibilitychange', refreshVisibleChats)
@@ -9457,6 +9575,9 @@ export const PhoneChat: React.FC = () => {
     return subscribeToChatLiveEvents({
       onMessage: (event) => {
         refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
+      },
+      onStatusChange: (status) => {
+        chatLiveConnectedRef.current = status === 'connected'
       }
     })
   }, [accessState, refreshChatInboxNow])
@@ -9579,17 +9700,25 @@ export const PhoneChat: React.FC = () => {
   useEffect(() => {
     if (!activeContact?.id || accessState !== 'allowed' || !conversationVisible) return
     const openId = activeContact.id
-    const reconcileOpenThread = () => {
+    const reconcileOpenThread = (force = false) => {
       if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (
+        !force &&
+        chatLiveConnectedRef.current &&
+        now - chatLastThreadReconcileAtRef.current < CHAT_HEALTHY_RECONCILE_INTERVAL_MS
+      ) return
+      chatLastThreadReconcileAtRef.current = now
       void loadConversation(openId, { silent: true, useCache: false })
     }
-    const interval = window.setInterval(reconcileOpenThread, CHAT_OPEN_THREAD_REFRESH_INTERVAL_MS)
-    window.addEventListener('focus', reconcileOpenThread)
-    document.addEventListener('visibilitychange', reconcileOpenThread)
+    const reconcileOnReturn = () => reconcileOpenThread(true)
+    const interval = window.setInterval(() => reconcileOpenThread(false), CHAT_FALLBACK_REFRESH_INTERVAL_MS)
+    window.addEventListener('focus', reconcileOnReturn)
+    document.addEventListener('visibilitychange', reconcileOnReturn)
     return () => {
       window.clearInterval(interval)
-      window.removeEventListener('focus', reconcileOpenThread)
-      document.removeEventListener('visibilitychange', reconcileOpenThread)
+      window.removeEventListener('focus', reconcileOnReturn)
+      document.removeEventListener('visibilitychange', reconcileOnReturn)
     }
   }, [accessState, activeContact?.id, conversationVisible, loadConversation])
 
@@ -19191,7 +19320,7 @@ export const PhoneChat: React.FC = () => {
       ? `${appointmentCalendarSelectedDate.getDate()} de ${APPOINTMENT_MONTH_NAMES[appointmentCalendarSelectedDate.getMonth()]}`
       : 'Fecha sin elegir'
     const todayKey = todayDateOnlyInTimezone(timezone)
-    const selectedEventCount = appointmentCalendarSelectedEvents.length
+    const selectedEventCount = appointmentCalendarSelectedEventTotal
     const selectedEventLabel = appointmentCalendarEventsLoading
       ? 'Cargando citas...'
       : selectedEventCount === 0
@@ -19259,7 +19388,7 @@ export const PhoneChat: React.FC = () => {
             {appointmentCalendarMonthCells.map((cell) => {
               const selected = cell.dateKey === appointmentCalendarDate
               const today = cell.dateKey === todayKey
-              const markerCount = Math.min(3, cell.events.length)
+              const markerCount = Math.min(3, appointmentCalendarEventCountsByDate[cell.dateKey] || 0)
               return (
                 <button
                   key={cell.key}

@@ -1,5 +1,7 @@
 type AuthScopedCacheInvalidator = () => void
 
+export const AUTH_PRINCIPAL_CHANGED_EVENT = 'ristak:auth-principal-changed'
+
 const authScopedCacheInvalidators = new Set<AuthScopedCacheInvalidator>()
 const AUTH_PRINCIPAL_UNINITIALIZED = Symbol('auth-principal-uninitialized')
 let currentAuthPrincipal: string | null | typeof AUTH_PRINCIPAL_UNINITIALIZED = AUTH_PRINCIPAL_UNINITIALIZED
@@ -55,6 +57,16 @@ export function syncAuthScopedCachePrincipal(token: string | null = readStoredAu
       console.error('No se pudo limpiar un cache al cambiar de cuenta:', error)
     }
   })
+  try {
+    window.dispatchEvent(new CustomEvent(AUTH_PRINCIPAL_CHANGED_EVENT, {
+      detail: {
+        authenticated: Boolean(token),
+        revision: authScopedCacheRevision
+      }
+    }))
+  } catch {
+    // En runtimes sin DOM los invalidadores siguen funcionando sin evento.
+  }
   return true
 }
 

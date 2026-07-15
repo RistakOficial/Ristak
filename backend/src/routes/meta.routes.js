@@ -13,6 +13,7 @@ import {
   getAdCreativeMedia,
   getCampaigns,
   getCampaignsPage,
+  getCampaignOverview,
   getSpendOverTime,
   getSyncStatus,
   getContactsByType,
@@ -25,9 +26,11 @@ import {
   getMetaCustomValues,
   saveAndSyncMeta,
   getAdAccounts,
+  getMetaAssets,
   getPixels,
   getPages,
   getSocialProfiles,
+  refreshMetaAssets,
   deleteMetaConfig,
   sendMetaTestEvent,
   createMetaPixelTestLink,
@@ -54,6 +57,7 @@ import {
   disconnectMetaOAuth,
   finalizeMetaOAuth,
   getMetaOAuthStatus,
+  refreshMetaOAuthStatus,
   reconfigureMetaOAuth
 } from '../controllers/metaOAuthController.js'
 
@@ -64,6 +68,7 @@ router.use(requireModuleAccess('campaigns'))
 
 // Facebook Login for Business (BISU) administrado por Ristak Installer.
 router.get('/oauth/:integrationKind/status', getMetaOAuthStatus)
+router.post('/oauth/:integrationKind/status/refresh', refreshMetaOAuthStatus)
 router.post('/oauth/:integrationKind/connect-url', createMetaOAuthConnectUrl)
 router.post('/oauth/:integrationKind/complete', completeMetaOAuth)
 router.post('/oauth/:integrationKind/finalize', finalizeMetaOAuth)
@@ -71,6 +76,7 @@ router.post('/oauth/:integrationKind/disconnect', disconnectMetaOAuth)
 
 // Aliases legacy del OAuth combinado. No se usan para conexiones nuevas.
 router.get('/oauth/status', getMetaOAuthStatus)
+router.post('/oauth/status/refresh', refreshMetaOAuthStatus)
 router.post('/oauth/connect-url', createMetaOAuthConnectUrl)
 router.post('/oauth/complete', completeMetaOAuth)
 router.post('/oauth/finalize', finalizeMetaOAuth)
@@ -95,6 +101,8 @@ router.post('/test-event', sendMetaTestEvent)
 router.post('/pixel-test/link', createMetaPixelTestLink)
 
 // Obtener datos de Meta para dropdowns
+router.get('/assets', getMetaAssets)
+router.post('/assets/refresh', refreshMetaAssets)
 router.get('/ad-accounts', getAdAccounts)
 router.get('/pixels', getPixels)
 router.get('/pages', getPages)
@@ -114,6 +122,7 @@ router.post('/update-recent', updateRecent)
 // Datos
 router.get('/campaigns', getCampaigns)
 router.get('/campaigns/page', getCampaignsPage)
+router.get('/overview', getCampaignOverview)
 router.get('/creative-preview/:creativeId', getCreativePreview)
 router.get('/ad-creative-media/:adId', getAdCreativeMedia)
 router.get('/spend-over-time', getSpendOverTime)

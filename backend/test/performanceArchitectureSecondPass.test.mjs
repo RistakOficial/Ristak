@@ -112,6 +112,26 @@ test('resumen de mensajes no invoca el cargador legacy de filas crudas', async (
   assert.match(whatsappLegacySummaryBody, /COUNT\(\*\) AS inbound_messages/)
 })
 
+test('GET de tracking config es local y HighLevel queda detras de la mutacion explicita', async () => {
+  const source = await readFile(
+    new URL('../src/controllers/trackingController.js', import.meta.url),
+    'utf8'
+  )
+  const readHandler = source
+    .split('export async function getTrackingConfig')[1]
+    .split('export async function verifyTrackingDomainHandler')[0]
+  const configureHandler = source
+    .split('export async function configureTracking')[1]
+    .split('export async function setAnalyticsPreference')[0]
+
+  assert.doesNotMatch(readHandler, /await fetch\(/)
+  assert.doesNotMatch(readHandler, /services\.leadconnectorhq\.com/)
+  assert.match(readHandler, /Promise\.all\(/)
+  assert.match(readHandler, /TRACKING_GHL_SYNC_STATE_CONFIG_KEY/)
+  assert.match(configureHandler, /services\.leadconnectorhq\.com/)
+  assert.match(configureHandler, /setAppConfig\(TRACKING_GHL_SYNC_STATE_CONFIG_KEY/)
+})
+
 test('tendencia de mensajes agrupa por la zona del negocio y no por UTC', async () => {
   const prefix = marker('message_business_timezone')
   const timestamp = '2096-06-02T05:30:00.000Z'
@@ -186,6 +206,52 @@ test('invalidación real refresca create, update y delete sin esperar el TTL', a
 
     const deleted = await getTrackingAnalyticsSummary({ start: date, end: date })
     assert.equal(deleted.metrics.current.uniqueSessions, 0)
+  } finally {
+    clearTrackingAnalyticsSummaryCache()
+    await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+  }
+})
+
+test('Analytics sirve snapshot stale inmediato y comparte una sola revalidación fresca', async () => {
+  const prefix = marker('tracking_server_swr')
+  const date = '2097-05-18'
+  const timestamp = `${date}T12:00:00.000Z`
+
+  await setAppConfig(ACCOUNT_TIMEZONE_CONFIG_KEY, 'UTC')
+  invalidateTimezoneCache()
+  clearTrackingAnalyticsSummaryCache()
+
+  try {
+    const empty = await getTrackingAnalyticsSummary({ start: date, end: date })
+    assert.equal(empty.metrics.current.pageViews, 0)
+    assert.equal(empty.snapshot?.stale, false)
+
+    await createSession({
+      session_id: `${prefix}_session`,
+      visitor_id: `${prefix}_visitor`,
+      contact_id: null,
+      full_name: null,
+      event_name: 'page_view',
+      ts: timestamp,
+      data: { url: `https://example.test/${prefix}`, device_type: 'desktop' },
+      ip: '127.0.0.1',
+      user_agent: 'Ristak server SWR contract test'
+    })
+
+    const stale = await getTrackingAnalyticsSummary({
+      start: date,
+      end: date,
+      allowStale: true
+    })
+    assert.equal(stale.metrics.current.pageViews, 0)
+    assert.equal(stale.snapshot?.stale, true)
+
+    const fresh = await getTrackingAnalyticsSummary({ start: date, end: date })
+    assert.equal(fresh.metrics.current.pageViews, 1)
+    assert.equal(fresh.snapshot?.stale, false)
+
+    const warm = await getTrackingAnalyticsSummary({ start: date, end: date })
+    assert.strictEqual(warm, fresh, 'la lectura caliente reutiliza el mismo snapshot')
   } finally {
     clearTrackingAnalyticsSummaryCache()
     await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`${prefix}%`]).catch(() => undefined)

@@ -6,6 +6,7 @@ import http from 'node:http'
 let server
 let baseUrl
 let requestCount = 0
+let accountCancellationRequestCount = 0
 let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_calendar_payment_false | allow_partial_features | allow_without_features | block | down
 let lastRequestBody = null
 
@@ -151,6 +152,16 @@ function startMockServer() {
           return
         }
 
+        if (req.url === '/api/license/account-cancellation/status') {
+          accountCancellationRequestCount += 1
+          res.end(JSON.stringify({
+            success: true,
+            subscription: { status: 'active' },
+            cancellation: null
+          }))
+          return
+        }
+
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
           const { token } = lastRequestBody || {}
           if (token === 'good-token') {
@@ -212,6 +223,7 @@ after(() => {
 beforeEach(() => {
   serverMode = 'allow'
   requestCount = 0
+  accountCancellationRequestCount = 0
   lastRequestBody = null
   configureManagedInstall()
   licenseService.resetLicenseCache()
@@ -370,6 +382,93 @@ test('el token temporal evita consultar al servidor en cada request', async () =
   // forceRefresh vuelve a validar
   await licenseService.getLicenseState({ forceRefresh: true })
   assert.equal(requestCount, 2)
+})
+
+test('requests paralelos comparten una sola verificación fría por principal', async () => {
+  const states = await Promise.all(
+    Array.from({ length: 40 }, () => licenseService.getLicenseState({ email: 'dueno@clinica.com' }))
+  )
+
+  assert.equal(requestCount, 1)
+  assert.equal(states.every((state) => state.allowed === true), true)
+})
+
+test('el cache de licencia es independiente por principal y evita thrashing entre empleados', async () => {
+  await licenseService.getLicenseState({ email: 'dueno@clinica.com' })
+  await licenseService.getLicenseState({ email: 'empleado@clinica.com' })
+  await licenseService.getLicenseState({ email: 'dueno@clinica.com' })
+  await licenseService.getLicenseState({ email: 'empleado@clinica.com' })
+
+  assert.equal(requestCount, 2)
+})
+
+test('un principal bloqueado no contamina features del dueño ni el estado de instalación', async () => {
+  const ownerState = await licenseService.getLicenseState({ email: 'dueno@clinica.com' })
+  assert.equal(ownerState.allowed, true)
+
+  serverMode = 'block'
+  const employeeState = await licenseService.getLicenseState({ email: 'empleado@clinica.com' })
+  assert.equal(employeeState.allowed, false)
+
+  assert.equal(await licenseService.hasFeature('whatsapp', { state: ownerState }), true)
+  assert.equal(await licenseService.hasFeature('whatsapp', { email: 'dueno@clinica.com' }), true)
+  assert.equal(await licenseService.hasFeature('whatsapp'), true)
+  assert.equal(await licenseService.hasFeature('whatsapp', { state: employeeState }), false)
+  assert.equal(requestCount, 2)
+})
+
+test('requireFeature usa req.license y no el último estado global verificado', async () => {
+  const ownerState = await licenseService.getLicenseState({ email: 'dueno@clinica.com' })
+  serverMode = 'block'
+  await licenseService.getLicenseState({ email: 'dueno@clinica.com', forceRefresh: true })
+
+  const { requireFeature } = await import('../src/middleware/licenseMiddleware.js')
+  let nextCalls = 0
+  let responseStatus = null
+  const middleware = requireFeature('whatsapp')
+  await middleware({
+    license: ownerState,
+    user: { email: 'dueno@clinica.com' }
+  }, {
+    status(code) {
+      responseStatus = code
+      return this
+    },
+    json() {}
+  }, () => {
+    nextCalls += 1
+  })
+
+  assert.equal(nextCalls, 1)
+  assert.equal(responseStatus, null)
+})
+
+test('licencia stale sirve token vigente y revalida en segundo plano', async () => {
+  process.env.LICENSE_REVALIDATE_SECONDS = '0.001'
+  try {
+    await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+    assert.equal(requestCount, 1)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    const state = await licenseService.getLicenseState({ email: 'dueno@clinica.com' })
+    assert.equal(state.allowed, true)
+
+    for (let attempt = 0; attempt < 20 && requestCount < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    assert.equal(requestCount, 2)
+  } finally {
+    delete process.env.LICENSE_REVALIDATE_SECONDS
+  }
+})
+
+test('estado de cancelación usa snapshot durable y no bloquea cada montaje de Cuenta', async () => {
+  const first = await licenseService.getCentralAccountCancellationStatus()
+  const second = await licenseService.getCentralAccountCancellationStatus()
+
+  assert.equal(first.subscription.status, 'active')
+  assert.deepEqual(second, first)
+  assert.equal(accountCancellationRequestCount, 1)
 })
 
 test('hasFeature respeta los feature flags del plan', async () => {

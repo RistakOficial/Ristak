@@ -24,7 +24,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import {
   reportsService,
-  type ReportsSummary,
+  type ReportsSnapshotSummary,
   type ReportMetricRow,
   type ContactListItem,
   type ReportRange,
@@ -33,7 +33,7 @@ import {
 } from '@/services/reportsService'
 import { costsService, type Cost } from '@/services/costsService'
 import { contactsService } from '@/services/contactsService'
-import { trackingService } from '@/services/trackingService'
+import { trackingService, trackingVisitorsCoverageNotice } from '@/services/trackingService'
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
@@ -121,6 +121,7 @@ interface VisitorsModalPageState {
   search: string
   hasNext: boolean
   nextCursor: string | null
+  coverageNotice: string | null
 }
 
 interface TransactionsModalPageState {
@@ -147,7 +148,8 @@ const emptyVisitorsModalPageState: VisitorsModalPageState = {
   cursorHistory: [],
   search: '',
   hasNext: false,
-  nextCursor: null
+  nextCursor: null,
+  coverageNotice: null
 }
 
 type MetricsLoadState = {
@@ -1890,13 +1892,12 @@ export const Reports: React.FC = () => {
 
   const [metricsState, setMetricsState] = useState<MetricsLoadState>({ rows: [], viewType: null })
   const [metricsRange, setMetricsRange] = useState<ReportRange | null>(null)
-  const [summary, setSummary] = useState<ReportsSummary | null>(null)
+  const [summary, setSummary] = useState<ReportsSnapshotSummary | null>(null)
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [loadingSummary, setLoadingSummary] = useState(false)
   const [hasLoadedMetrics, setHasLoadedMetrics] = useState(false)
   const [hasLoadedSummary, setHasLoadedSummary] = useState(false)
-  const metricsRequestRef = React.useRef(0)
-  const summaryRequestRef = React.useRef(0)
+  const snapshotRequestRef = React.useRef(0)
 
   const [modalState, setModalState] = useState<{
     open: boolean
@@ -2073,87 +2074,70 @@ export const Reports: React.FC = () => {
   const [businessExpenseGuardDialog, setBusinessExpenseGuardDialog] = useState<BusinessExpenseGuardDialogState | null>(null)
 
   useEffect(() => {
-    const requestId = metricsRequestRef.current + 1
-    metricsRequestRef.current = requestId
+    const requestId = snapshotRequestRef.current + 1
+    snapshotRequestRef.current = requestId
+    const controller = new AbortController()
     let cancelled = false
     const requestedViewType = viewType
-    const isCurrentRequest = () => !cancelled && metricsRequestRef.current === requestId
-    const commitMetrics = (rows: ReportMetricRow[]) => {
+    const isCurrentRequest = () => (
+      !cancelled && !controller.signal.aborted && snapshotRequestRef.current === requestId
+    )
+
+    const applySnapshot = (result: Awaited<ReturnType<typeof reportsService.getSnapshot>>) => {
       if (!isCurrentRequest()) return
-      setMetricsState({ rows, viewType: requestedViewType })
+      setMetricsState({ rows: result.metrics, viewType: requestedViewType })
+      setMetricsRange(result.range)
+      setSummary(result.summary)
     }
 
-    const fetchMetrics = async () => {
+    const fetchSnapshot = async () => {
       try {
         setLoadingMetrics(true)
-        const result = await reportsService.getMetrics({
+        setLoadingSummary(true)
+        const query = {
           from: apiRange.from,
           to: apiRange.to,
           groupBy: requestedViewType,
           scope: scopeParam
-        })
-
-        if (!isCurrentRequest()) return
-
-        // buildAggregatedReportMetrics ya agrega visitantes desde sessions con el
-        // mismo rango/scope. Un segundo request sólo podía pisar datos más nuevos.
-        commitMetrics(result.metrics)
-
-        if (!isCurrentRequest()) return
-        setMetricsRange(result.range)
-      } catch (error) {
-        if (!isCurrentRequest()) return
-        setMetricsState({ rows: [], viewType: requestedViewType })
-        showToast('error', 'No se pudieron cargar las métricas', 'Revisa tu conexión e intenta nuevamente')
-      } finally {
-        if (isCurrentRequest()) {
-          setLoadingMetrics(false)
-          setHasLoadedMetrics(true)
-        }
-      }
-    }
-
-    fetchMetrics()
-    return () => {
-      cancelled = true
-    }
-  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast])
-
-  useEffect(() => {
-    const requestId = summaryRequestRef.current + 1
-    summaryRequestRef.current = requestId
-    const controller = new AbortController()
-    let cancelled = false
-    const isCurrentRequest = () => (
-      !cancelled && !controller.signal.aborted && summaryRequestRef.current === requestId
-    )
-
-    const fetchSummary = async () => {
-      try {
-        setLoadingSummary(true)
-        const result = await reportsService.getSummary(
-          { from: apiRange.from, to: apiRange.to, scope: scopeParam },
+        } as const
+        const result = await reportsService.getSnapshot(
+          query,
           controller.signal
         )
         if (!isCurrentRequest()) return
-        setSummary(result)
+        applySnapshot(result)
+
+        // SWR durable: una revision nueva pinta de inmediato el ultimo snapshot
+        // y esta segunda lectura espera la misma reconstruccion compartida; no
+        // dispara otro agregado.
+        if (result.cache.stale) {
+          const fresh = await reportsService.getSnapshot(
+            { ...query, waitForFresh: true },
+            controller.signal
+          )
+          applySnapshot(fresh)
+        }
       } catch (error) {
         if (!isCurrentRequest()) return
+        setMetricsState({ rows: [], viewType: requestedViewType })
         setSummary(null)
+        showToast('error', 'No se pudieron cargar los reportes', 'Revisa tu conexión e intenta nuevamente')
       } finally {
         if (isCurrentRequest()) {
+          setLoadingMetrics(false)
           setLoadingSummary(false)
+          setHasLoadedMetrics(true)
           setHasLoadedSummary(true)
         }
       }
     }
 
-    fetchSummary()
+    fetchSnapshot()
     return () => {
       cancelled = true
       controller.abort()
     }
-  }, [apiRange.from, apiRange.to, scopeParam])
+  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast])
 
   const loadManualBusinessExpenses = useCallback(async () => {
     try {
@@ -2430,15 +2414,9 @@ export const Reports: React.FC = () => {
       if (modalContactsRequestRef.current !== requestId) return
       setModalState((previous) => ({
         ...previous,
-        contacts: [],
-        loading: false,
-        pagination: {
-          limit: 50,
-          total: 0,
-          totalIsCapped: false,
-          hasNext: false,
-          nextCursor: null
-        }
+        // Un 503 de calentamiento es temporal. Conservamos la página previa
+        // para que una revalidación no vacíe el modal ni produzca parpadeos.
+        loading: false
       }))
       if (options.showError !== false) {
         showToast('error', 'No se pudieron cargar los contactos', 'Intenta nuevamente más tarde')
@@ -2716,14 +2694,18 @@ export const Reports: React.FC = () => {
       })
       if (visitorsModalRequestRef.current !== requestId) return
 
-      setVisitorsData(result.items)
+      const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
+      if (result.items.length > 0 || !coverageNotice) {
+        setVisitorsData(result.items)
+      }
       setVisitorsModalPage({
         page,
         cursor,
         cursorHistory,
         search,
         hasNext: result.pagination.hasNext,
-        nextCursor: result.pagination.nextCursor
+        nextCursor: result.pagination.nextCursor,
+        coverageNotice
       })
     } catch {
       if (visitorsModalRequestRef.current !== requestId) return
@@ -3515,7 +3497,10 @@ export const Reports: React.FC = () => {
             isOpen={isVisitorsModalOpen}
             onClose={() => setIsVisitorsModalOpen(false)}
             title="Visitantes"
-            subtitle={`Visitantes del ${visitorsModalDate}`}
+            subtitle={[
+              `Visitantes del ${visitorsModalDate}`,
+              visitorsModalPage.coverageNotice
+            ].filter(Boolean).join(' · ')}
             data={visitorsData}
             loading={visitorsModalLoading}
             currentPage={visitorsModalPage.page}

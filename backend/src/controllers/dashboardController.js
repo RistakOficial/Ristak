@@ -14,6 +14,8 @@ import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES, successfulPaymentSta
 import { getStorageStatus as getDatabaseStorageStatus } from '../services/notificationsService.js';
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { buildTransactionListWhere } from '../services/transactionQueryService.js';
+import { isContactListProjectionAvailable } from '../services/crmListProjectionService.js';
+import { getLocalWhatsAppAnalyticsPhoneNumbers } from '../services/whatsappApiService.js';
 
 const isPostgres = databaseDialect === 'postgres';
 const DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT = 5;
@@ -30,6 +32,25 @@ const DASHBOARD_INACTIVE_APPOINTMENT_STATUSES = [
   'voided'
 ];
 const DASHBOARD_ATTENDED_APPOINTMENT_STATUSES = ['showed', 'attended', 'completed', 'complete'];
+
+function createDashboardRequestAbortScope(res) {
+  const controller = new AbortController();
+  const onClose = () => {
+    if (!res?.writableEnded && !res?.finished) controller.abort();
+  };
+  const observable = typeof res?.once === 'function';
+  if (observable) res.once('close', onClose);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      if (observable && typeof res?.off === 'function') res.off('close', onClose);
+    }
+  };
+}
+
+function isDashboardRequestAbort(error, signal) {
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR');
+}
 
 const sqlStringList = (values) => values.map(value => `'${value}'`).join(', ');
 
@@ -266,26 +287,39 @@ const buildContactFilters = async (range) => {
   return { filters, params };
 };
 
-const computeFinancialSnapshot = async (range) => {
+const computeFinancialSnapshot = async (range, signal, hiddenFiltersOverride = null) => {
   // Obtener filtro de contactos ocultos
-  const hiddenFilters = await getHiddenContactFilters();
+  const hiddenFilters = hiddenFiltersOverride || await getHiddenContactFilters({ signal });
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
 
-  const successfulPayments = successfulPaymentStatusCondition();
-  const paymentsFilters = [successfulPayments.sql, nonTestPaymentCondition()];
-  const paymentsParams = [...successfulPayments.params];
+  // Ingresos, reembolsos y ticket promedio comparten exactamente el mismo
+  // universo de pagos. Hacer tres recorridos secuenciales multiplicaba la
+  // latencia del Dashboard conforme crecia la tabla; una sola pasada indexada
+  // produce los tres valores.
+  const successfulPayments = successfulPaymentStatusCondition('p');
   const { filters: dateFilters, params: dateParams } = buildDateFilters(range);
-  paymentsFilters.push(...dateFilters);
-  paymentsParams.push(...dateParams);
-
-  // Filtrar payments de contactos ocultos
+  const paymentBaseFilters = [
+    nonTestPaymentCondition('p'),
+    ...dateFilters.map(filter => filter.replace(/\bdate\b/g, 'p.date'))
+  ];
   if (hiddenCondition) {
-    paymentsFilters.push(`contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`);
+    paymentBaseFilters.push(`p.contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`);
   }
 
-  const ingresosQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE ${paymentsFilters.join(' AND ')}`;
-  const ingresosRow = await db.get(ingresosQuery, paymentsParams);
-  const ingresosNetos = parseFloat(ingresosRow?.total || 0);
+  const paymentAggregateQuery = `
+    SELECT
+      COALESCE(SUM(CASE WHEN ${successfulPayments.sql} THEN p.amount ELSE 0 END), 0) AS revenue,
+      COALESCE(SUM(CASE WHEN p.status = ? THEN p.amount ELSE 0 END), 0) AS refunds,
+      COALESCE(AVG(CASE WHEN ${successfulPayments.sql} THEN p.amount END), 0) AS avg_payment
+    FROM payments p
+    WHERE ${paymentBaseFilters.join(' AND ')}
+  `;
+  const paymentAggregateParams = [
+    ...successfulPayments.params,
+    'refunded',
+    ...successfulPayments.params,
+    ...dateParams
+  ];
 
   const gastosFilters = [];
   const gastosParams = [];
@@ -297,98 +331,52 @@ const computeFinancialSnapshot = async (range) => {
 
   const gastosWhere = gastosFilters.length ? `WHERE ${gastosFilters.join(' AND ')}` : '';
   const gastosQuery = `SELECT COALESCE(SUM(spend), 0) as total FROM meta_ads ${gastosWhere}`;
-  const gastosRow = await db.get(gastosQuery, gastosParams);
-  const gastosPublicidad = parseFloat(gastosRow?.total || 0);
-
-  const refundsFilters = ['status = ?', nonTestPaymentCondition()];
-  const refundsParams = ['refunded'];
-  const { filters: refundDateFilters, params: refundDateParams } = buildDateFilters(range);
-  refundsFilters.push(...refundDateFilters);
-  refundsParams.push(...refundDateParams);
-
-  // Filtrar refunds de contactos ocultos
-  if (hiddenCondition) {
-    refundsFilters.push(`contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`);
-  }
-
-  const refundsQuery = `SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE ${refundsFilters.join(' AND ')}`;
-  const refundsRow = await db.get(refundsQuery, refundsParams);
-  const reembolsos = parseFloat(refundsRow?.total || 0);
-
-  // Calcular promedio de pagos INDIVIDUALES (no total_paid de contactos)
-  // IMPORTANTE: Solo pagos exitosos según Mandamiento #11
-  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',');
-
-  const paymentsAvgFilters = [`LOWER(status) IN (${statusPlaceholders})`, nonTestPaymentCondition()];
-  const paymentsAvgParams = [...SUCCESS_PAYMENT_STATUSES];
-
-  const { filters: avgDateFilters, params: avgDateParams } = buildDateFilters(range);
-  paymentsAvgFilters.push(...avgDateFilters);
-  paymentsAvgParams.push(...avgDateParams);
-
-  // Filtrar payments de contactos ocultos
-  if (hiddenCondition) {
-    paymentsAvgFilters.push(`contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition})`);
-  }
-
-  const avgPaymentQuery = `SELECT COALESCE(AVG(amount), 0) as avg_payment FROM payments WHERE ${paymentsAvgFilters.join(' AND ')}`;
-  const avgPaymentRow = await db.get(avgPaymentQuery, paymentsAvgParams);
-  const ltvPromedio = parseFloat(avgPaymentRow?.avg_payment || 0);
-
-  const gananciaBruta = ingresosNetos - gastosPublicidad;
-  const roas = gastosPublicidad > 0 ? ingresosNetos / gastosPublicidad : 0;
 
   // (RPT-001) Rango local para prorratear costos fijos mensuales por longitud del rango
   const localDateRange = getLocalDateRange(range);
 
+  const [paymentAggregateRow, gastosRow, costs, manualBusinessExpenses] = await Promise.all([
+    db.get(paymentAggregateQuery, paymentAggregateParams, { signal }),
+    db.get(gastosQuery, gastosParams, { signal }),
+    db.all('SELECT * FROM costs WHERE is_active = 1', [], { signal }).catch((error) => {
+      if (isDashboardRequestAbort(error, signal)) throw error;
+      logger.warn(`Error calculando costos desde tabla costs (no se aplicará costo automático): ${error.message}`);
+      return [];
+    }),
+    localDateRange
+      ? getManualBusinessExpensesTotalForRange(localDateRange, { signal }).catch((error) => {
+        if (isDashboardRequestAbort(error, signal)) throw error;
+        logger.warn('Error calculando costos variables manuales:', error.message);
+        return 0;
+      })
+      : Promise.resolve(0)
+  ]);
+
+  const ingresosNetos = parseFloat(paymentAggregateRow?.revenue || 0);
+  const reembolsos = parseFloat(paymentAggregateRow?.refunds || 0);
+  const ltvPromedio = parseFloat(paymentAggregateRow?.avg_payment || 0);
+  const gastosPublicidad = parseFloat(gastosRow?.total || 0);
+  const gananciaBruta = ingresosNetos - gastosPublicidad;
+  const roas = gastosPublicidad > 0 ? ingresosNetos / gastosPublicidad : 0;
+
   // Calcular costos dinámicamente desde la tabla costs
   let totalCostos = 0;
-  try {
-    const costs = await db.all('SELECT * FROM costs WHERE is_active = 1');
+  for (const cost of costs) {
+    let amount = 0;
 
-    for (const cost of costs) {
-      let amount = 0;
-
-      if (cost.calculation_type === 'percentage') {
-        // (RPT-003) Porcentaje sobre la base elegida en la UI: 'revenue' (ingresos)
-        // o 'profit' (ganancias). Antes 'profit' se ignoraba en silencio y el costo
-        // valía 0. Usamos la ganancia bruta (ingresos - gasto publicitario) como base
-        // de ganancias, que es lo disponible antes de restar los propios costos.
-        if (cost.applies_to === 'profit') {
-          amount = (gananciaBruta * cost.value) / 100;
-        } else {
-          // 'revenue' o cualquier valor heredado/no especificado → sobre ingresos
-          amount = (ingresosNetos * cost.value) / 100;
-        }
-      } else if (cost.calculation_type === 'fixed') {
-        // (RPT-001) Los costos fijos son MENSUALES: prorratear por la longitud del rango
-        // (un día = valor/díasDelMes, un mes = valor completo, un año = valor*12).
-        // Misma fórmula que el reporte y los gastos manuales. Si no hay rango local,
-        // caer al monto mensual completo para no perder el costo.
-        amount = localDateRange
-          ? calculateMonthlyFixedCostForRange(localDateRange, cost.value)
-          : cost.value;
-      }
-
-      totalCostos += amount;
+    if (cost.calculation_type === 'percentage') {
+      amount = cost.applies_to === 'profit'
+        ? (gananciaBruta * cost.value) / 100
+        : (ingresosNetos * cost.value) / 100;
+    } else if (cost.calculation_type === 'fixed') {
+      amount = localDateRange
+        ? calculateMonthlyFixedCostForRange(localDateRange, cost.value)
+        : cost.value;
     }
-  } catch (error) {
-    // (RPT-010) Antes, si fallaba la query de `costs`, se fabricaba un costo = 16% de los
-    // ingresos (IVA heredado). Eso inventaba una deducción sin base y mostraba una ganancia
-    // confiadamente equivocada. Ahora NO inventamos: si no se pueden leer los costos, no se
-    // resta nada (totalCostos += 0) y se registra claramente para diagnosticarlo.
-    logger.warn(`Error calculando costos desde tabla costs (no se aplicará costo automático): ${error.message}`);
-  }
 
-  try {
-    const manualBusinessExpenses = localDateRange
-      ? await getManualBusinessExpensesTotalForRange(localDateRange)
-      : 0;
-
-    totalCostos += manualBusinessExpenses;
-  } catch (error) {
-    logger.warn('Error calculando costos variables manuales:', error.message);
+    totalCostos += amount;
   }
+  totalCostos += Number(manualBusinessExpenses || 0);
 
   const gananciaNeta = gananciaBruta - totalCostos;
 
@@ -410,6 +398,7 @@ const computeFinancialSnapshot = async (range) => {
  * Calendar ni ningún otro proveedor durante este GET.
  */
 export const getOperationalSnapshot = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate } = req.query;
 
@@ -421,7 +410,7 @@ export const getOperationalSnapshot = async (req, res) => {
     }
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
-    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal });
     const hiddenContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
     const visibleLinkedContactCondition = hiddenContactCondition
       ? `(${hiddenContactCondition} OR c.id IS NULL)`
@@ -510,10 +499,12 @@ export const getOperationalSnapshot = async (req, res) => {
     `;
 
     const [paymentRows, contactRows, appointmentRows] = await Promise.all([
-      db.all(paymentsQuery, paymentListWhere.params),
-      db.all(contactsQuery, [range.startUtc, range.endUtc]),
-      db.all(appointmentsQuery, [range.startUtc, range.endUtc])
+      db.all(paymentsQuery, paymentListWhere.params, { signal: requestScope.signal }),
+      db.all(contactsQuery, [range.startUtc, range.endUtc], { signal: requestScope.signal }),
+      db.all(appointmentsQuery, [range.startUtc, range.endUtc], { signal: requestScope.signal })
     ]);
+
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
 
     res.json({
       success: true,
@@ -530,18 +521,99 @@ export const getOperationalSnapshot = async (req, res) => {
       limit: DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT
     });
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getOperationalSnapshot: ${error.message}`);
     res.status(500).json({
       success: false,
       error: 'Error al obtener el resumen operativo del dashboard'
     });
+  } finally {
+    requestScope.cleanup();
   }
 };
+
+function buildPreviousDashboardRange(range) {
+  const spanDays = range.startZoned && range.endZoned
+    ? Math.max(Math.round(range.endZoned.diff(range.startZoned, 'days').days) + 1, 1)
+    : null;
+
+  if (spanDays) {
+    const prevEnd = range.startZoned.minus({ days: 1 }).endOf('day');
+    const prevStart = prevEnd.minus({ days: spanDays - 1 }).startOf('day');
+    return {
+      startUtc: prevStart.toUTC().toISO({ suppressMilliseconds: false }),
+      endUtc: prevEnd.toUTC().toISO({ suppressMilliseconds: false }),
+      appliedTimezone: range.appliedTimezone,
+      isFiltered: true,
+      startZoned: prevStart,
+      endZoned: prevEnd
+    };
+  }
+
+  const zone = range.appliedTimezone;
+  const nowZoned = DateTime.now().setZone(zone);
+  const currentMonthStart = nowZoned.startOf('month');
+  const previousMonthStart = currentMonthStart.minus({ months: 1 }).startOf('month');
+  const previousMonthEnd = currentMonthStart.minus({ days: 1 }).endOf('day');
+  return {
+    startUtc: previousMonthStart.toUTC().toISO({ suppressMilliseconds: false }),
+    endUtc: previousMonthEnd.toUTC().toISO({ suppressMilliseconds: false }),
+    appliedTimezone: zone,
+    isFiltered: true,
+    startZoned: previousMonthStart,
+    endZoned: previousMonthEnd
+  };
+}
+
+async function computeDashboardMetrics(range, signal, { hiddenFilters } = {}) {
+  const previousRange = buildPreviousDashboardRange(range);
+  const sharedHiddenFilters = hiddenFilters || await getHiddenContactFilters({ signal });
+  const [currentSnapshot, previousSnapshot] = await Promise.all([
+    computeFinancialSnapshot(range, signal, sharedHiddenFilters),
+    computeFinancialSnapshot(previousRange, signal, sharedHiddenFilters)
+  ]);
+
+  return {
+    ingresosNetos: {
+      value: parseFloat(currentSnapshot.ingresosNetos.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.ingresosNetos, previousSnapshot.ingresosNetos).toFixed(2))
+    },
+    gastosPublicidad: {
+      value: parseFloat(currentSnapshot.gastosPublicidad.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.gastosPublicidad, previousSnapshot.gastosPublicidad).toFixed(2))
+    },
+    gananciaBruta: {
+      value: parseFloat(currentSnapshot.gananciaBruta.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.gananciaBruta, previousSnapshot.gananciaBruta).toFixed(2))
+    },
+    roas: {
+      value: parseFloat(currentSnapshot.roas.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.roas, previousSnapshot.roas).toFixed(2))
+    },
+    totalCostos: {
+      value: parseFloat(currentSnapshot.totalCostos.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.totalCostos, previousSnapshot.totalCostos).toFixed(2))
+    },
+    gananciaNeta: {
+      value: parseFloat(currentSnapshot.gananciaNeta.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.gananciaNeta, previousSnapshot.gananciaNeta).toFixed(2))
+    },
+    reembolsos: {
+      value: parseFloat(currentSnapshot.reembolsos.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.reembolsos, previousSnapshot.reembolsos).toFixed(2))
+    },
+    ltvPromedio: {
+      value: parseFloat(currentSnapshot.ltvPromedio.toFixed(2)),
+      variation: parseFloat(calculateDelta(currentSnapshot.ltvPromedio, previousSnapshot.ltvPromedio).toFixed(2))
+    }
+  };
+}
 
 /**
  * Calcula y devuelve los KPIs principales del dashboard
  */
 export const getMetrics = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate } = req.query;
 
@@ -553,90 +625,17 @@ export const getMetrics = async (req, res) => {
     }
 
     logger.info(`Calculando métricas del dashboard desde ${startDate} hasta ${endDate}`);
-
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
-
-    const spanDays = range.startZoned && range.endZoned
-      ? Math.max(Math.round(range.endZoned.diff(range.startZoned, 'days').days) + 1, 1)
-      : null;
-
-    let previousRange = null;
-
-    if (spanDays) {
-      const prevEnd = range.startZoned.minus({ days: 1 }).endOf('day');
-      const prevStart = prevEnd.minus({ days: spanDays - 1 }).startOf('day');
-      previousRange = {
-        startUtc: prevStart.toUTC().toISO({ suppressMilliseconds: false }),
-        endUtc: prevEnd.toUTC().toISO({ suppressMilliseconds: false }),
-        appliedTimezone: range.appliedTimezone,
-        isFiltered: true,
-        startZoned: prevStart,
-        endZoned: prevEnd
-      };
-    } else {
-      const zone = range.appliedTimezone;
-      const nowZoned = DateTime.now().setZone(zone);
-      const currentMonthStart = nowZoned.startOf('month');
-      const previousMonthStart = currentMonthStart.minus({ months: 1 }).startOf('month');
-      const previousMonthEnd = currentMonthStart.minus({ days: 1 }).endOf('day');
-      previousRange = {
-        startUtc: previousMonthStart.toUTC().toISO({ suppressMilliseconds: false }),
-        endUtc: previousMonthEnd.toUTC().toISO({ suppressMilliseconds: false }),
-        appliedTimezone: zone,
-        isFiltered: true,
-        startZoned: previousMonthStart,
-        endZoned: previousMonthEnd
-      };
-    }
-
-    const currentSnapshot = await computeFinancialSnapshot(range);
-    const previousSnapshot = await computeFinancialSnapshot(previousRange);
-
-    const metrics = {
-      ingresosNetos: {
-        value: parseFloat(currentSnapshot.ingresosNetos.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.ingresosNetos, previousSnapshot.ingresosNetos).toFixed(2))
-      },
-      gastosPublicidad: {
-        value: parseFloat(currentSnapshot.gastosPublicidad.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.gastosPublicidad, previousSnapshot.gastosPublicidad).toFixed(2))
-      },
-      gananciaBruta: {
-        value: parseFloat(currentSnapshot.gananciaBruta.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.gananciaBruta, previousSnapshot.gananciaBruta).toFixed(2))
-      },
-      roas: {
-        value: parseFloat(currentSnapshot.roas.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.roas, previousSnapshot.roas).toFixed(2))
-      },
-      totalCostos: {
-        value: parseFloat(currentSnapshot.totalCostos.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.totalCostos, previousSnapshot.totalCostos).toFixed(2))
-      },
-      gananciaNeta: {
-        value: parseFloat(currentSnapshot.gananciaNeta.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.gananciaNeta, previousSnapshot.gananciaNeta).toFixed(2))
-      },
-      reembolsos: {
-        value: parseFloat(currentSnapshot.reembolsos.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.reembolsos, previousSnapshot.reembolsos).toFixed(2))
-      },
-      ltvPromedio: {
-        value: parseFloat(currentSnapshot.ltvPromedio.toFixed(2)),
-        variation: parseFloat(calculateDelta(currentSnapshot.ltvPromedio, previousSnapshot.ltvPromedio).toFixed(2))
-      }
-    };
-
+    const metrics = await computeDashboardMetrics(range, requestScope.signal);
     logger.info(`Métricas calculadas: ROAS ${metrics.roas.value}, Ganancia Neta ${metrics.gananciaNeta.value}`);
 
-    res.json(metrics);
-
+    if (!requestScope.signal.aborted) res.json(metrics);
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getMetrics: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Error al calcular las métricas'
-    });
+    res.status(500).json({ success: false, error: 'Error al calcular las métricas' });
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -869,6 +868,7 @@ export const getNewCustomersData = async (req, res) => {
  * Obtiene datos de visitantes únicos desde sessions por periodo
  */
 export const getVisitorsData = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, groupBy = 'day', periods: periodsParam } = req.query;
 
@@ -893,7 +893,8 @@ export const getVisitorsData = async (req, res) => {
         WHERE started_at >= ? AND started_at <= ?
       `;
 
-      const row = await db.get(bucketQuery, bucketParams);
+      const row = await db.get(bucketQuery, bucketParams, { signal: requestScope.signal });
+      if (requestScope.signal.aborted) return;
       return res.json(mapDistinctChartBuckets(row, periods));
     }
 
@@ -911,18 +912,21 @@ export const getVisitorsData = async (req, res) => {
     `;
     const params = [range.startUtc, range.endUtc];
 
-    const data = await db.all(query, params);
+    const data = await db.all(query, params, { signal: requestScope.signal });
 
     const visitorsData = data.map(row => ({
       label: row.periodo,
       value: parseInt(row.total)
     }));
 
-    res.json(visitorsData);
+    if (!requestScope.signal.aborted) res.json(visitorsData);
 
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getVisitorsData: ${error.message}`);
     res.json([]);
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -930,6 +934,7 @@ export const getVisitorsData = async (req, res) => {
  * Obtiene datos de leads (todos los contactos nuevos) por periodo
  */
 export const getLeadsData = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, groupBy = 'day' } = req.query;
 
@@ -945,7 +950,7 @@ export const getLeadsData = async (req, res) => {
     const dateExpression = getGroupExpression('created_at', groupBy, timezone);
 
     // Aplicar filtro de contactos ocultos
-    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal });
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false);
 
     // (RPT-009) '?' en vez de $1/$2 para ser compatible con SQLite y Postgres.
@@ -963,18 +968,21 @@ export const getLeadsData = async (req, res) => {
     `;
     const params = [range.startUtc, range.endUtc];
 
-    const data = await db.all(query, params);
+    const data = await db.all(query, params, { signal: requestScope.signal });
 
     const leadsData = data.map(row => ({
       label: row.periodo,
       value: parseInt(row.total)
     }));
 
-    res.json(leadsData);
+    if (!requestScope.signal.aborted) res.json(leadsData);
 
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getLeadsData: ${error.message}`);
     res.json([]);
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -987,6 +995,7 @@ export const getLeadsData = async (req, res) => {
  * GET nunca sincroniza calendarios ni descarga historiales de proveedores.
  */
 export const getAppointmentsData = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, groupBy = 'day', scope = 'all', periods: periodsParam } = req.query;
 
@@ -1000,8 +1009,8 @@ export const getAppointmentsData = async (req, res) => {
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
     const isAttributed = scope === 'campaigns' || scope === 'attributed';
     const [configuredCalendarIds, hiddenFilters] = await Promise.all([
-      getAttributionCalendarIds(),
-      getHiddenContactFilters()
+      getAttributionCalendarIds({ signal: requestScope.signal }),
+      getHiddenContactFilters({ signal: requestScope.signal })
     ]);
     const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
@@ -1024,7 +1033,8 @@ export const getAppointmentsData = async (req, res) => {
           buckets.overallStart,
           buckets.overallEnd,
           ...attributionCalendarIds
-        ]);
+        ], { signal: requestScope.signal });
+        if (requestScope.signal.aborted) return;
         return res.json(mapDistinctChartBuckets(row, periods));
       }
 
@@ -1037,7 +1047,8 @@ export const getAppointmentsData = async (req, res) => {
           AND ${baseConditions.join(' AND ')}
         GROUP BY periodo
         ORDER BY periodo
-      `, [range.startUtc, range.endUtc, ...attributionCalendarIds]);
+      `, [range.startUtc, range.endUtc, ...attributionCalendarIds], { signal: requestScope.signal });
+      if (requestScope.signal.aborted) return;
       return res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
     }
 
@@ -1072,7 +1083,8 @@ export const getAppointmentsData = async (req, res) => {
         buckets.overallStart,
         buckets.overallEnd,
         ...attributionCalendarIds
-      ]);
+      ], { signal: requestScope.signal });
+      if (requestScope.signal.aborted) return;
       return res.json(mapDistinctChartBuckets(row, periods));
     }
 
@@ -1084,12 +1096,17 @@ export const getAppointmentsData = async (req, res) => {
         AND ${contactConditions.join(' AND ')}
       GROUP BY periodo
       ORDER BY periodo
-    `, [range.startUtc, range.endUtc, ...attributionCalendarIds]);
-    res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
+    `, [range.startUtc, range.endUtc, ...attributionCalendarIds], { signal: requestScope.signal });
+    if (!requestScope.signal.aborted) {
+      res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
+    }
 
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getAppointmentsData: ${error.message}`);
     res.json([]);
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -1099,6 +1116,7 @@ export const getAppointmentsData = async (req, res) => {
  * La fecha de asistencia no se usa para esta gráfica porque aquí medimos atribución.
  */
 export const getAttendancesData = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, groupBy = 'day', scope = 'all', periods: periodsParam } = req.query;
 
@@ -1111,8 +1129,8 @@ export const getAttendancesData = async (req, res) => {
     const periods = parseChartPeriods(periodsParam, timezone);
     const isAttributed = scope === 'campaigns' || scope === 'attributed';
     const [hiddenFilters, configuredCalendarIds] = await Promise.all([
-      getHiddenContactFilters(),
-      getAttributionCalendarIds()
+      getHiddenContactFilters({ signal: requestScope.signal }),
+      getAttributionCalendarIds({ signal: requestScope.signal })
     ]);
     const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
     const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false);
@@ -1157,7 +1175,8 @@ export const getAttendancesData = async (req, res) => {
         buckets.overallStart,
         buckets.overallEnd,
         ...attributionCalendarIds
-      ]);
+      ], { signal: requestScope.signal });
+      if (requestScope.signal.aborted) return;
       return res.json(mapDistinctChartBuckets(row, periods));
     }
 
@@ -1169,12 +1188,17 @@ export const getAttendancesData = async (req, res) => {
         AND ${contactConditions.join(' AND ')}
       GROUP BY periodo
       ORDER BY periodo
-    `, [range.startUtc, range.endUtc, ...attributionCalendarIds]);
+    `, [range.startUtc, range.endUtc, ...attributionCalendarIds], { signal: requestScope.signal });
 
-    res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
+    if (!requestScope.signal.aborted) {
+      res.json(rows.map(row => ({ label: row.periodo, value: Number(row.total || 0) })));
+    }
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getAttendancesData: ${error.message}`);
     res.json([]);
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -1182,6 +1206,7 @@ export const getAttendancesData = async (req, res) => {
  * Obtiene datos de ventas (pagos exitosos) por periodo
  */
 export const getSalesData = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, groupBy = 'day' } = req.query;
 
@@ -1194,7 +1219,7 @@ export const getSalesData = async (req, res) => {
     const timezone = range.appliedTimezone;
 
     // Obtener filtro de contactos ocultos
-    const hiddenFilters = await getHiddenContactFilters();
+    const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal });
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
 
     // Usar getGroupExpression() con timezone dinámico
@@ -1218,18 +1243,21 @@ export const getSalesData = async (req, res) => {
     `;
     const params = [...successfulPayments.params, range.startUtc, range.endUtc];
 
-    const data = await db.all(query, params);
+    const data = await db.all(query, params, { signal: requestScope.signal });
 
     const salesData = data.map(row => ({
       label: row.periodo,
       value: parseInt(row.total)
     }));
 
-    res.json(salesData);
+    if (!requestScope.signal.aborted) res.json(salesData);
 
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getSalesData: ${error.message}`);
     res.json([]);
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -1345,7 +1373,7 @@ export const getTrafficSources = async (req, res) => {
 async function getSourceBreakdownByMetric(
   metric,
   range,
-  { hiddenFilters = [], attributionCalendarIds = null } = {}
+  { hiddenFilters = [], attributionCalendarIds = null, signal } = {}
 ) {
   const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
@@ -1358,7 +1386,8 @@ async function getSourceBreakdownByMetric(
           ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
       `,
       params: [range.startUtc, range.endUtc],
-      limit: 10
+      limit: 10,
+      signal
     })
   }
 
@@ -1387,28 +1416,38 @@ async function getSourceBreakdownByMetric(
           )
       `,
       params,
-      limit: 10
+      limit: 10,
+      signal
     })
   }
 
   // conversions: clientes nuevos = contactos cuyo primer pago exitoso cae en el rango.
+  const useProjectedFirstPayment = await isContactListProjectionAvailable()
   const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
-  return getContactSourceBreakdownForSelection({
-    selectionSql: `
-      SELECT ${CONTACT_SOURCE_SELECTION_COLUMNS}
-      FROM contacts c
-      INNER JOIN (
+  const firstPaymentRelation = useProjectedFirstPayment
+    ? 'contact_list_activity first_p'
+    : `(
         SELECT contact_id, MIN(date) AS first_payment_date
         FROM payments
         WHERE LOWER(status) IN (${statusPlaceholders})
           AND ${nonTestPaymentCondition()}
         GROUP BY contact_id
-      ) first_p ON first_p.contact_id = c.id
+      ) first_p`
+  return getContactSourceBreakdownForSelection({
+    selectionSql: `
+      SELECT ${CONTACT_SOURCE_SELECTION_COLUMNS}
+      FROM contacts c
+      INNER JOIN ${firstPaymentRelation} ON first_p.contact_id = c.id
       WHERE first_p.first_payment_date >= ? AND first_p.first_payment_date <= ?
         ${hiddenConditionC ? `AND ${hiddenConditionC}` : ''}
     `,
-    params: [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc],
-    limit: 10
+    params: [
+      ...(useProjectedFirstPayment ? [] : SUCCESS_PAYMENT_STATUSES),
+      range.startUtc,
+      range.endUtc
+    ],
+    limit: 10,
+    signal
   })
 }
 
@@ -1418,7 +1457,42 @@ async function getSourceBreakdownByMetric(
  * desglose por fuente de leads, citas y conversiones. El frontend cambia de vista
  * localmente sin volver a pedir datos.
  */
+async function computeOriginDistribution(range, {
+  includeWeb = true,
+  includeWhatsapp = true,
+  hiddenFilters,
+  attributionCalendarIds,
+  signal
+} = {}) {
+  const [resolvedHiddenFilters, resolvedAttributionCalendarIds] = await Promise.all([
+    hiddenFilters || getHiddenContactFilters({ signal }),
+    attributionCalendarIds || getAttributionCalendarIds({ signal })
+  ]);
+
+  const [traffic, leads, appointments, conversions, whatsappNumbers] = await Promise.all([
+    getTrafficDistributions(range, {
+      includeWeb,
+      includeWhatsapp,
+      hiddenFilters: resolvedHiddenFilters,
+      signal
+    }),
+    getSourceBreakdownByMetric('leads', range, { hiddenFilters: resolvedHiddenFilters, signal }),
+    getSourceBreakdownByMetric('appointments', range, {
+      hiddenFilters: resolvedHiddenFilters,
+      attributionCalendarIds: resolvedAttributionCalendarIds,
+      signal
+    }),
+    getSourceBreakdownByMetric('conversions', range, { hiddenFilters: resolvedHiddenFilters, signal }),
+    includeWhatsapp
+      ? getWhatsAppApiNumberBreakdown(range, { hiddenFilters: resolvedHiddenFilters, signal })
+      : []
+  ]);
+
+  return { traffic, leads, appointments, conversions, whatsappNumbers };
+}
+
 export const getOriginDistribution = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
 
@@ -1429,32 +1503,21 @@ export const getOriginDistribution = async (req, res) => {
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
-
-    const [hiddenFilters, attributionCalendarIds] = await Promise.all([
-      getHiddenContactFilters(),
-      getAttributionCalendarIds()
-    ])
-
-    const [traffic, leads, appointments, conversions, whatsappNumbers] = await Promise.all([
-      getTrafficDistributions(range, {
-        includeWeb: shouldIncludeWeb,
-        includeWhatsapp: shouldIncludeWhatsapp,
-        hiddenFilters
-      }),
-      getSourceBreakdownByMetric('leads', range, { hiddenFilters }),
-      getSourceBreakdownByMetric('appointments', range, { hiddenFilters, attributionCalendarIds }),
-      getSourceBreakdownByMetric('conversions', range, { hiddenFilters }),
-      shouldIncludeWhatsapp ? getWhatsAppApiNumberBreakdown(range, { hiddenFilters }) : []
-    ])
-
-    res.json({
-      success: true,
-      data: { traffic, leads, appointments, conversions, whatsappNumbers }
+    const data = await computeOriginDistribution(range, {
+      includeWeb: shouldIncludeWeb,
+      includeWhatsapp: shouldIncludeWhatsapp,
+      signal: requestScope.signal
     })
+
+    if (requestScope.signal.aborted) return;
+    res.json({ success: true, data })
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getOriginDistribution: ${error.message}`)
     logger.error(error.stack)
     res.status(500).json({ success: false, error: 'Error al obtener la distribución de origen' })
+  } finally {
+    requestScope.cleanup();
   }
 }
 
@@ -1462,7 +1525,89 @@ export const getOriginDistribution = async (req, res) => {
  * Obtiene TODOS los ingresos y gastos (no solo atribuidos)
  * Para el gráfico principal del Dashboard
  */
+async function computeFinancialOverview(range, {
+  scope = 'all',
+  hiddenFilters,
+  signal
+} = {}) {
+  const timezone = range.appliedTimezone;
+  const isAttributed = scope === 'campaigns' || scope === 'attributed';
+  const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
+  const resolvedHiddenFilters = hiddenFilters || await getHiddenContactFilters({ signal });
+  const hiddenCondition = buildHiddenContactsCondition(resolvedHiddenFilters, 'c', false);
+  const paymentDayExpression = getGroupExpression('date', 'day', timezone);
+  const spendDayExpression = getGroupExpression('meta_ads.date', 'day', timezone);
+
+  let revenueQuery = '';
+  let revenueParams = [];
+  const successfulPayments = successfulPaymentStatusCondition('p');
+
+  if (!useContactAttribution) {
+    revenueQuery = `
+      SELECT
+        ${paymentDayExpression.replace(/\bdate\b/g, 'p.date')} as day,
+        COALESCE(SUM(p.amount), 0) as revenue
+      FROM payments p
+      LEFT JOIN contacts c ON c.id = p.contact_id
+      WHERE ${successfulPayments.sql}
+        AND ${nonTestPaymentCondition('p')}
+        AND p.date >= ? AND p.date <= ?
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+      GROUP BY day
+      ORDER BY day ASC
+    `;
+    revenueParams = [...successfulPayments.params, range.startUtc, range.endUtc];
+  } else {
+    revenueQuery = `
+      SELECT
+        ${getGroupExpression('c.created_at', 'day', timezone)} as day,
+        COALESCE(SUM(p.amount), 0) as revenue
+      FROM contacts c
+      LEFT JOIN payments p
+        ON p.contact_id = c.id
+        AND ${successfulPayments.sql}
+        AND ${nonTestPaymentCondition('p')}
+      WHERE c.created_at >= ? AND c.created_at <= ?
+        ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM meta_ads ma
+          WHERE ma.ad_id = c.attribution_ad_id
+            AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', timezone)}
+        )` : ''}
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+      GROUP BY day
+      ORDER BY day ASC
+    `;
+    revenueParams = [...successfulPayments.params, range.startUtc, range.endUtc];
+  }
+
+  const spendQuery = `
+    SELECT
+      ${spendDayExpression} as day,
+      SUM(spend) as spend
+    FROM meta_ads
+    WHERE date >= ? AND date <= ?
+    GROUP BY day
+    ORDER BY day ASC
+  `;
+  const spendParams = [range.startZoned.toISODate(), range.endZoned.toISODate()];
+  const [revenueData, spendData] = await Promise.all([
+    db.all(revenueQuery, revenueParams, { signal }),
+    db.all(spendQuery, spendParams, { signal })
+  ]);
+
+  const revenueMap = new Map(revenueData.map(row => [row.day, parseFloat(row.revenue || 0)]));
+  const spendMap = new Map(spendData.map(row => [row.day, parseFloat(row.spend || 0)]));
+  const sortedDates = Array.from(new Set([...revenueMap.keys(), ...spendMap.keys()])).sort();
+
+  return sortedDates.map(date => ({
+    label: date,
+    value: revenueMap.get(date) || 0,
+    value2: spendMap.get(date) || 0
+  }));
+}
+
 export const getFinancialOverview = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
   try {
     const { startDate, endDate, scope = 'all' } = req.query;
 
@@ -1473,127 +1618,24 @@ export const getFinancialOverview = async (req, res) => {
       });
     }
 
-    // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
-    const timezone = range.appliedTimezone;
-    const isAttributed = scope === 'campaigns' || scope === 'attributed';
-    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
-
-    // Obtener filtro de contactos ocultos
-    const hiddenFilters = await getHiddenContactFilters();
-    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
-
-    // Usar getGroupExpression() con timezone dinámico.
-    // payments.date es timestamp, meta_ads.date es TEXT YYYY-MM-DD.
-    const paymentDayExpression = getGroupExpression('date', 'day', timezone);
-    const spendDayExpression = getGroupExpression('meta_ads.date', 'day', timezone);
-
-    let revenueQuery = '';
-    let revenueParams = [];
-    const successfulPayments = successfulPaymentStatusCondition('p');
-
-    if (!useContactAttribution) {
-      // Vista "Todos": ingresos por fecha real de pago
-      revenueQuery = `
-        SELECT
-          ${paymentDayExpression.replace(/\bdate\b/g, 'p.date')} as day,
-          COALESCE(SUM(p.amount), 0) as revenue
-        FROM payments p
-        LEFT JOIN contacts c ON c.id = p.contact_id
-        WHERE ${successfulPayments.sql}
-          AND ${nonTestPaymentCondition('p')}
-          AND p.date >= ? AND p.date <= ?
-          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-        GROUP BY day
-        ORDER BY day ASC
-      `;
-      revenueParams = [...successfulPayments.params, range.startUtc, range.endUtc];
-    } else {
-      // Vista "Al registro" / "Identificados de anuncios": ingresos por fecha de creación del contacto
-      revenueQuery = `
-        SELECT
-          ${getGroupExpression('c.created_at', 'day', timezone)} as day,
-          COALESCE(SUM(p.amount), 0) as revenue
-        FROM contacts c
-        LEFT JOIN payments p
-          ON p.contact_id = c.id
-          AND ${successfulPayments.sql}
-          AND ${nonTestPaymentCondition('p')}
-        WHERE c.created_at >= ? AND c.created_at <= ?
-          ${isAttributed ? `AND c.attribution_ad_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM meta_ads ma
-            WHERE ma.ad_id = c.attribution_ad_id
-              AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', timezone)}
-          )` : ''}
-          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
-        GROUP BY day
-        ORDER BY day ASC
-      `;
-      revenueParams = [...successfulPayments.params, range.startUtc, range.endUtc];
-    }
-
-    // Query para TODOS los gastos de publicidad
-    const spendQuery = `
-      SELECT
-        ${spendDayExpression} as day,
-        SUM(spend) as spend
-      FROM meta_ads
-      WHERE date >= ? AND date <= ?
-      GROUP BY day
-      ORDER BY day ASC
-    `;
-
-    // IMPORTANTE: meta_ads.date es TEXT "YYYY-MM-DD", usar toISODate()
-    const spendParams = [range.startZoned.toISODate(), range.endZoned.toISODate()];
-    const [revenueData, spendData] = await Promise.all([
-      db.all(revenueQuery, revenueParams),
-      db.all(spendQuery, spendParams)
-    ]);
-
-    logger.info(`Ingresos totales encontrados: ${revenueData.length} días con pagos`);
-    logger.info(`Gastos encontrados: ${spendData.length} días con gastos publicitarios`);
-
-    // Si no hay datos, retornar vacío
-    if (revenueData.length === 0 && spendData.length === 0) {
-      return res.json({
-        success: true,
-        data: []
-      });
-    }
-
-    // Crear mapas por fecha
-    const revenueMap = new Map();
-    revenueData.forEach(row => {
-      revenueMap.set(row.day, parseFloat(row.revenue || 0));
+    const data = await computeFinancialOverview(range, {
+      scope,
+      signal: requestScope.signal
     });
 
-    const spendMap = new Map();
-    spendData.forEach(row => {
-      spendMap.set(row.day, parseFloat(row.spend || 0));
-    });
-
-    // Combinar todas las fechas únicas
-    const allDates = new Set([...revenueMap.keys(), ...spendMap.keys()]);
-    const sortedDates = Array.from(allDates).sort();
-
-    // Mapear al formato esperado: { label, value (ingresos), value2 (gastos) }
-    const mappedData = sortedDates.map(date => ({
-      label: date,
-      value: revenueMap.get(date) || 0,  // Ingresos totales
-      value2: spendMap.get(date) || 0     // Gastos de publicidad
-    }));
-
-    res.json({
-      success: true,
-      data: mappedData
-    });
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
+    res.json({ success: true, data });
 
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
     logger.error(`Error en getFinancialOverview: ${error.message}`);
     res.status(500).json({
       success: false,
       error: 'Error al obtener panorama financiero'
     });
+  } finally {
+    requestScope.cleanup();
   }
 };
 
@@ -1621,7 +1663,204 @@ export const getFinancialOverview = async (req, res) => {
  *    - all: Contactos cuyo PRIMER pago está en el rango (MIN(date) FROM payments)
  *    - attribution/campaigns: COUNT(DISTINCT) WHERE created_at BETWEEN start AND end AND purchases_count > 0
  */
+const DEFAULT_DASHBOARD_LABELS = Object.freeze({
+  customer: 'Cliente',
+  customers: 'Clientes',
+  lead: 'Interesado',
+  leads: 'Interesados'
+});
+
+function parseDashboardLabels(hlConfig) {
+  if (!hlConfig?.custom_labels) return DEFAULT_DASHBOARD_LABELS;
+  try {
+    return { ...DEFAULT_DASHBOARD_LABELS, ...JSON.parse(hlConfig.custom_labels) };
+  } catch {
+    logger.warn('Error parsing custom_labels, usando valores por defecto');
+    return DEFAULT_DASHBOARD_LABELS;
+  }
+}
+
+async function computeFunnelData(range, {
+  scope = 'all',
+  includeWeb = true,
+  hiddenFilters,
+  attributionCalendarIds,
+  labels,
+  signal
+} = {}) {
+  const isAttributed = scope === 'campaigns' || scope === 'attributed';
+  const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
+  const [hlConfig, resolvedHiddenFilters, configuredCalendarIds] = await Promise.all([
+    labels ? null : db.get('SELECT custom_labels FROM highlevel_config LIMIT 1', [], { signal }),
+    hiddenFilters || getHiddenContactFilters({ signal }),
+    attributionCalendarIds || getAttributionCalendarIds({ signal })
+  ]);
+  const resolvedLabels = labels || parseDashboardLabels(hlConfig);
+  const calendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
+  const hiddenConditionC = buildHiddenContactsCondition(resolvedHiddenFilters, 'c', false);
+  const attributedContactCondition = isAttributed
+    ? `c.attribution_ad_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM meta_ads ma
+        WHERE ma.ad_id = c.attribution_ad_id
+          AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone)}
+      )`
+    : '';
+  const contactRangeConditions = ['c.created_at >= ?', 'c.created_at <= ?'];
+  if (attributedContactCondition) contactRangeConditions.push(attributedContactCondition);
+  if (hiddenConditionC) contactRangeConditions.push(hiddenConditionC);
+  const contactRangeParams = [range.startUtc, range.endUtc];
+
+  let visitorsQuery = 'SELECT 0 AS count';
+  let visitorsParams = [];
+  if (includeWeb && !useContactAttribution) {
+    visitorsQuery = `
+      SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
+      FROM sessions
+      WHERE started_at >= ? AND started_at <= ?
+    `;
+    visitorsParams = [range.startUtc, range.endUtc];
+  } else if (includeWeb) {
+    visitorsQuery = `
+      SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as count
+      FROM sessions s
+      INNER JOIN contacts c ON c.id = s.contact_id
+      WHERE c.created_at >= ? AND c.created_at <= ?
+        ${attributedContactCondition ? `AND ${attributedContactCondition}` : ''}
+    `;
+    visitorsParams = [range.startUtc, range.endUtc];
+  }
+
+  const leadsQuery = `
+    SELECT COUNT(*) as count
+    FROM contacts c
+    WHERE ${contactRangeConditions.join(' AND ')}
+  `;
+
+  const calendarCondition = (alias, params) => {
+    if (!calendarIds.length) return '';
+    params.push(...calendarIds);
+    return `${alias}.calendar_id IN (${calendarIds.map(() => '?').join(', ')})`;
+  };
+
+  let appointmentsQuery;
+  let appointmentsParams;
+  if (useContactAttribution) {
+    appointmentsParams = [...contactRangeParams];
+    const appointmentConditions = [
+      'a.contact_id = c.id',
+      `LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${sqlStringList(DASHBOARD_INACTIVE_APPOINTMENT_STATUSES)})`
+    ];
+    const appointmentCalendarCondition = calendarCondition('a', appointmentsParams);
+    if (appointmentCalendarCondition) appointmentConditions.push(appointmentCalendarCondition);
+    appointmentsQuery = `
+      SELECT COUNT(*) AS count
+      FROM contacts c
+      WHERE ${contactRangeConditions.join(' AND ')}
+        AND EXISTS (
+          SELECT 1 FROM appointments a
+          WHERE ${appointmentConditions.join(' AND ')}
+        )
+    `;
+  } else {
+    appointmentsParams = [range.startUtc, range.endUtc];
+    const appointmentConditions = [
+      'a.date_added >= ?',
+      'a.date_added <= ?',
+      'a.contact_id IS NOT NULL'
+    ];
+    if (hiddenConditionC) appointmentConditions.push(`(c.id IS NULL OR ${hiddenConditionC})`);
+    const appointmentCalendarCondition = calendarCondition('a', appointmentsParams);
+    if (appointmentCalendarCondition) appointmentConditions.push(appointmentCalendarCondition);
+    appointmentsQuery = `
+      SELECT COUNT(DISTINCT a.contact_id) AS count
+      FROM appointments a
+      LEFT JOIN contacts c ON c.id = a.contact_id
+      WHERE ${appointmentConditions.join(' AND ')}
+    `;
+  }
+
+  const attendanceParams = [...contactRangeParams];
+  const attendedAppointmentConditions = [
+    'attended_a.contact_id = c.id',
+    `LOWER(COALESCE(attended_a.appointment_status, attended_a.status, '')) IN (${sqlStringList(DASHBOARD_ATTENDED_APPOINTMENT_STATUSES)})`
+  ];
+  const attendanceCalendarCondition = calendarCondition('attended_a', attendanceParams);
+  if (attendanceCalendarCondition) attendedAppointmentConditions.push(attendanceCalendarCondition);
+  const attendancesQuery = `
+    SELECT COUNT(*) AS count
+    FROM contacts c
+    WHERE ${contactRangeConditions.join(' AND ')}
+      AND (
+        COALESCE(c.purchases_count, 0) > 0
+        OR COALESCE(c.total_paid, 0) > 0
+        OR EXISTS (
+          SELECT 1 FROM appointment_attendance_signals aas
+          WHERE aas.contact_id = c.id
+        )
+        OR EXISTS (
+          SELECT 1 FROM appointments attended_a
+          WHERE ${attendedAppointmentConditions.join(' AND ')}
+        )
+      )
+  `;
+
+  let customersQuery;
+  let customersParams;
+  if (useContactAttribution) {
+    customersQuery = `
+      SELECT COUNT(DISTINCT c.id) as count
+      FROM contacts c
+      WHERE COALESCE(c.purchases_count, 0) > 0
+        AND ${contactRangeConditions.join(' AND ')}
+    `;
+    customersParams = [...contactRangeParams];
+  } else {
+    const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',');
+    const useProjectedFirstPayment = await isContactListProjectionAvailable();
+    const firstPaymentConditions = [
+      'first_p.first_payment_date >= ?',
+      'first_p.first_payment_date <= ?'
+    ];
+    if (hiddenConditionC) firstPaymentConditions.push(hiddenConditionC);
+    customersQuery = `
+      SELECT COUNT(DISTINCT c.id) as count
+      FROM contacts c
+      INNER JOIN ${useProjectedFirstPayment
+        ? 'contact_list_activity first_p'
+        : `(SELECT contact_id, MIN(date) as first_payment_date
+            FROM payments
+            WHERE LOWER(status) IN (${statusPlaceholders})
+              AND ${nonTestPaymentCondition()}
+            GROUP BY contact_id) first_p`
+      } ON first_p.contact_id = c.id
+      WHERE ${firstPaymentConditions.join(' AND ')}
+    `;
+    customersParams = [
+      ...(useProjectedFirstPayment ? [] : SUCCESS_PAYMENT_STATUSES),
+      range.startUtc,
+      range.endUtc
+    ];
+  }
+
+  const [visitorsData, leadsData, appointmentsData, attendancesData, customersData] = await Promise.all([
+    db.get(visitorsQuery, visitorsParams, { signal }),
+    db.get(leadsQuery, contactRangeParams, { signal }),
+    db.get(appointmentsQuery, appointmentsParams, { signal }),
+    db.get(attendancesQuery, attendanceParams, { signal }),
+    db.get(customersQuery, customersParams, { signal })
+  ]);
+
+  return [
+    ...(includeWeb ? [{ stage: 'Visitantes', value: Number(visitorsData?.count || 0) }] : []),
+    { stage: resolvedLabels.leads, value: Number(leadsData?.count || 0) },
+    { stage: 'Citas', value: Number(appointmentsData?.count || 0) },
+    { stage: 'Asistencias', value: Number(attendancesData?.count || 0) },
+    { stage: resolvedLabels.customers, value: Number(customersData?.count || 0) }
+  ];
+}
+
 export const getFunnelData = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res)
   try {
     const { startDate, endDate, scope = 'all', includeWeb = '1' } = req.query
 
@@ -1630,205 +1869,128 @@ export const getFunnelData = async (req, res) => {
     }
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-    const isAttributed = scope === 'campaigns' || scope === 'attributed'
-    const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const shouldIncludeWeb = String(includeWeb) !== '0'
-    const [hlConfig, hiddenFilters, configuredCalendarIds] = await Promise.all([
-      db.get('SELECT custom_labels FROM highlevel_config LIMIT 1'),
-      getHiddenContactFilters(),
-      getAttributionCalendarIds()
-    ])
-    const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : []
-    const defaultLabels = {
-      customer: 'Cliente',
-      customers: 'Clientes',
-      lead: 'Interesado',
-      leads: 'Interesados'
-    }
-    let labels = defaultLabels
-    if (hlConfig?.custom_labels) {
-      try {
-        const parsed = JSON.parse(hlConfig.custom_labels)
-        labels = { ...defaultLabels, ...parsed }
-      } catch {
-        logger.warn('Error parsing custom_labels, usando valores por defecto')
-      }
-    }
-
-    const hiddenConditionC = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-    const attributedContactCondition = isAttributed
-      ? `c.attribution_ad_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM meta_ads ma
-          WHERE ma.ad_id = c.attribution_ad_id
-            AND ${metaAdsSameLocalDayCondition('ma.date', 'c.created_at', range.appliedTimezone)}
-        )`
-      : ''
-    const contactRangeConditions = ['c.created_at >= ?', 'c.created_at <= ?']
-    if (attributedContactCondition) contactRangeConditions.push(attributedContactCondition)
-    if (hiddenConditionC) contactRangeConditions.push(hiddenConditionC)
-    const contactRangeParams = [range.startUtc, range.endUtc]
-
-    let visitorsQuery = 'SELECT 0 AS count'
-    let visitorsParams = []
-    if (shouldIncludeWeb && !useContactAttribution) {
-      visitorsQuery = `
-        SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
-        FROM sessions
-        WHERE started_at >= ? AND started_at <= ?
-      `
-      visitorsParams = [range.startUtc, range.endUtc]
-    } else if (shouldIncludeWeb) {
-      visitorsQuery = `
-        SELECT COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as count
-        FROM sessions s
-        INNER JOIN contacts c ON c.id = s.contact_id
-        WHERE c.created_at >= ? AND c.created_at <= ?
-          ${attributedContactCondition ? `AND ${attributedContactCondition}` : ''}
-      `
-      visitorsParams = [range.startUtc, range.endUtc]
-    }
-
-    const leadsQuery = `
-      SELECT COUNT(*) as count
-      FROM contacts c
-      WHERE ${contactRangeConditions.join(' AND ')}
-    `
-
-    const calendarCondition = (alias, params) => {
-      if (!attributionCalendarIds.length) return ''
-      params.push(...attributionCalendarIds)
-      return `${alias}.calendar_id IN (${attributionCalendarIds.map(() => '?').join(', ')})`
-    }
-    let appointmentsQuery
-    let appointmentsParams
-    if (useContactAttribution) {
-      appointmentsParams = [...contactRangeParams]
-      const appointmentConditions = [
-        'a.contact_id = c.id',
-        `LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${sqlStringList(DASHBOARD_INACTIVE_APPOINTMENT_STATUSES)})`
-      ]
-      const appointmentCalendarCondition = calendarCondition('a', appointmentsParams)
-      if (appointmentCalendarCondition) appointmentConditions.push(appointmentCalendarCondition)
-      appointmentsQuery = `
-        SELECT COUNT(*) AS count
-        FROM contacts c
-        WHERE ${contactRangeConditions.join(' AND ')}
-          AND EXISTS (
-            SELECT 1 FROM appointments a
-            WHERE ${appointmentConditions.join(' AND ')}
-          )
-      `
-    } else {
-      appointmentsParams = [range.startUtc, range.endUtc]
-      const appointmentConditions = [
-        'a.date_added >= ?',
-        'a.date_added <= ?',
-        'a.contact_id IS NOT NULL'
-      ]
-      if (hiddenConditionC) appointmentConditions.push(`(c.id IS NULL OR ${hiddenConditionC})`)
-      const appointmentCalendarCondition = calendarCondition('a', appointmentsParams)
-      if (appointmentCalendarCondition) appointmentConditions.push(appointmentCalendarCondition)
-      appointmentsQuery = `
-        SELECT COUNT(DISTINCT a.contact_id) AS count
-        FROM appointments a
-        LEFT JOIN contacts c ON c.id = a.contact_id
-        WHERE ${appointmentConditions.join(' AND ')}
-      `
-    }
-
-    const attendanceParams = [...contactRangeParams]
-    const attendedAppointmentConditions = [
-      'attended_a.contact_id = c.id',
-      `LOWER(COALESCE(attended_a.appointment_status, attended_a.status, '')) IN (${sqlStringList(DASHBOARD_ATTENDED_APPOINTMENT_STATUSES)})`
-    ]
-    const attendanceCalendarCondition = calendarCondition('attended_a', attendanceParams)
-    if (attendanceCalendarCondition) attendedAppointmentConditions.push(attendanceCalendarCondition)
-    const attendancesQuery = `
-      SELECT COUNT(*) AS count
-      FROM contacts c
-      WHERE ${contactRangeConditions.join(' AND ')}
-        AND (
-          COALESCE(c.purchases_count, 0) > 0
-          OR COALESCE(c.total_paid, 0) > 0
-          OR EXISTS (
-            SELECT 1 FROM appointment_attendance_signals aas
-            WHERE aas.contact_id = c.id
-          )
-          OR EXISTS (
-            SELECT 1 FROM appointments attended_a
-            WHERE ${attendedAppointmentConditions.join(' AND ')}
-          )
-        )
-    `
-
-    let customersQuery
-    let customersParams
-    if (useContactAttribution) {
-      customersQuery = `
-        SELECT COUNT(DISTINCT c.id) as count
-        FROM contacts c
-        WHERE COALESCE(c.purchases_count, 0) > 0
-          AND ${contactRangeConditions.join(' AND ')}
-      `
-      customersParams = [...contactRangeParams]
-    } else {
-      const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')
-      const firstPaymentConditions = [
-        'first_p.first_payment_date >= ?',
-        'first_p.first_payment_date <= ?'
-      ]
-      if (hiddenConditionC) firstPaymentConditions.push(hiddenConditionC)
-      customersQuery = `
-        SELECT COUNT(DISTINCT c.id) as count
-        FROM contacts c
-        INNER JOIN (
-          SELECT contact_id, MIN(date) as first_payment_date
-          FROM payments
-          WHERE LOWER(status) IN (${statusPlaceholders})
-          AND ${nonTestPaymentCondition()}
-          GROUP BY contact_id
-        ) first_p ON first_p.contact_id = c.id
-        WHERE ${firstPaymentConditions.join(' AND ')}
-      `
-      customersParams = [...SUCCESS_PAYMENT_STATUSES, range.startUtc, range.endUtc]
-    }
-
-    const [visitorsData, leadsData, appointmentsData, attendancesData, customersData] = await Promise.all([
-      db.get(visitorsQuery, visitorsParams),
-      db.get(leadsQuery, contactRangeParams),
-      db.get(appointmentsQuery, appointmentsParams),
-      db.get(attendancesQuery, attendanceParams),
-      db.get(customersQuery, customersParams)
-    ])
-    const visitorsCount = Number(visitorsData?.count || 0)
-    const appointmentsCount = Number(appointmentsData?.count || 0)
-    const attendancesCount = Number(attendancesData?.count || 0)
-    const customersCount = Number(customersData?.count || 0)
-    const data = [
-      ...(shouldIncludeWeb ? [{ stage: 'Visitantes', value: visitorsCount }] : []),
-      { stage: labels.leads, value: Number(leadsData?.count || 0) },
-      { stage: 'Citas', value: appointmentsCount },
-      { stage: 'Asistencias', value: attendancesCount },
-      { stage: labels.customers, value: customersCount }
-    ]
-
+    const data = await computeFunnelData(range, {
+      scope,
+      includeWeb: shouldIncludeWeb,
+      signal: requestScope.signal
+    })
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
     res.json({ success: true, data })
   } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return
     logger.error(`Error en getFunnelData: ${error.message}`)
     logger.error(error.stack)
     res.status(500).json({ success: false, error: 'Error al obtener datos del funnel' })
+  } finally {
+    requestScope.cleanup()
   }
 }
+
+function normalizeDashboardScope(value) {
+  return ['all', 'attribution', 'campaigns'].includes(String(value || ''))
+    ? String(value)
+    : 'all';
+}
+
+/**
+ * Primer paint de Analíticas móvil. Comparte exactamente los mismos cálculos
+ * que Dashboard y los endpoints detallados, pero resuelve rango/contexto una
+ * sola vez y devuelve una sola respuesta local. Las vistas elegidas después
+ * siguen usando sus endpoints focales.
+ */
+export const getMobileAnalyticsSnapshot = async (req, res) => {
+  const requestScope = createDashboardRequestAbortScope(res);
+  try {
+    const {
+      startDate,
+      endDate,
+      includeWeb = '1',
+      funnelScope = 'all',
+      financialScope = 'all'
+    } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' });
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
+    const shouldIncludeWeb = String(includeWeb) !== '0';
+    const resolvedFunnelScope = normalizeDashboardScope(funnelScope);
+    const resolvedFinancialScope = normalizeDashboardScope(financialScope);
+    const [hiddenFilters, configuredCalendarIds, hlConfig, whatsappPhoneNumbers] = await Promise.all([
+      getHiddenContactFilters({ signal: requestScope.signal }),
+      getAttributionCalendarIds({ signal: requestScope.signal }),
+      db.get('SELECT custom_labels FROM highlevel_config LIMIT 1', [], { signal: requestScope.signal }),
+      getLocalWhatsAppAnalyticsPhoneNumbers({ signal: requestScope.signal })
+    ]);
+    const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
+    const labels = parseDashboardLabels(hlConfig);
+
+    const [metrics, origin, funnel, financialChart] = await Promise.all([
+      computeDashboardMetrics(range, requestScope.signal, { hiddenFilters }),
+      computeOriginDistribution(range, {
+        includeWeb: shouldIncludeWeb,
+        includeWhatsapp: true,
+        hiddenFilters,
+        attributionCalendarIds,
+        signal: requestScope.signal
+      }),
+      computeFunnelData(range, {
+        scope: resolvedFunnelScope,
+        includeWeb: shouldIncludeWeb,
+        hiddenFilters,
+        attributionCalendarIds,
+        labels,
+        signal: requestScope.signal
+      }),
+      computeFinancialOverview(range, {
+        scope: resolvedFinancialScope,
+        hiddenFilters,
+        signal: requestScope.signal
+      })
+    ]);
+
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
+    res.json({
+      success: true,
+      data: {
+        metrics,
+        origin,
+        funnel,
+        financialChart,
+        whatsappPhoneNumbers,
+        scopes: {
+          funnel: resolvedFunnelScope,
+          financial: resolvedFinancialScope
+        },
+        range: {
+          start: range.startUtc,
+          end: range.endUtc,
+          timezone: range.appliedTimezone
+        }
+      }
+    });
+  } catch (error) {
+    if (isDashboardRequestAbort(error, requestScope.signal)) return;
+    logger.error(`Error en getMobileAnalyticsSnapshot: ${error.message}`);
+    logger.error(error.stack);
+    res.status(500).json({ success: false, error: 'Error al obtener Analíticas móvil' });
+  } finally {
+    requestScope.cleanup();
+  }
+};
 
 /**
  * Obtiene los calendarios configurados para atribución
  * @returns {Promise<string[]|null>} Array de calendar IDs o null si no están configurados
  */
-async function getAttributionCalendarIds() {
+async function getAttributionCalendarIds({ signal } = {}) {
   try {
     const config = await db.get(
       'SELECT config_value FROM app_config WHERE config_key = ?',
-      ['attribution_calendar_ids']
+      ['attribution_calendar_ids'],
+      signal ? { signal } : undefined
     )
 
     if (!config || !config.config_value) {
@@ -1838,6 +2000,7 @@ async function getAttributionCalendarIds() {
     const calendarIds = JSON.parse(config.config_value)
     return calendarIds.length > 0 ? calendarIds : null
   } catch (error) {
+    if (isDashboardRequestAbort(error, signal)) throw error
     logger.warn(`Error al leer calendarios de atribución: ${error.message} - usando TODOS`)
     return null
   }

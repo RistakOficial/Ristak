@@ -29,14 +29,49 @@ test('Contactos no recalcula KPIs globales al cambiar únicamente de página u o
   assert.match(source, /contactsStatsQueryKeyRef\.current === contactsStatsQueryKey/)
 })
 
+test('los drill-downs de contactos acotan citas y paginan sin mentir sobre el total', async () => {
+  const [tracking, reportsService, modal] = await Promise.all([
+    repoFile('backend/src/controllers/trackingController.js'),
+    repoFile('frontend/src/services/reportsService.ts'),
+    repoFile('frontend/src/components/common/ContactDetailsModal/ContactDetailsModal.tsx')
+  ])
+
+  assert.match(tracking, /fetchBoundedAppointmentsForContacts\(contactIds, limitPerContact = 5\)/)
+  assert.match(tracking, /appointmentsTotal: appointmentSummary\.total/)
+  assert.match(tracking, /appointmentsTruncated: appointmentSummary\.total > appointmentSummary\.appointments\.length/)
+  assert.match(reportsService, /appointmentsTotal\?: number/)
+  assert.match(reportsService, /appointmentsTruncated\?: boolean/)
+  assert.match(modal, /selectedContact\?\.appointmentsTotal \?\? selectedContact\?\.appointments\?\.length/)
+  assert.match(modal, /Array\.isArray\(detail\.appointments\)[\s\S]*?hydrated\.appointmentsTruncated = false/)
+  assert.match(modal, /contactsService\.getContactAppointmentsPage/)
+  assert.match(modal, /Cargar más citas/)
+})
+
 test('la búsqueda de Chat pinta la primera página y pagina al hacer scroll', async () => {
   const source = await repoFile('frontend/src/pages/DesktopChat/DesktopChat.tsx')
   const searchBranch = source.match(/} else if \(hasSearch\) \{[\s\S]*?} else if \(silent\) \{/)?.[0] || ''
 
-  assert.match(searchBranch, /const pageChats = await fetchChatPage\(0\)/)
+  assert.match(searchBranch, /const pageChats = await fetchChatPage\(null\)/)
   assert.doesNotMatch(searchBranch, /while \(/)
-  assert.match(searchBranch, /chatListHasMoreRef\.current = pageChats\.length >= CHAT_LIST_PAGE_SIZE/)
+  assert.match(searchBranch, /chatListHasMoreRef\.current = pageChats\.length >= CHAT_LIST_PAGE_SIZE && Boolean\(chatListCursorRef\.current\)/)
   assert.doesNotMatch(source, /if \(hasSearch\) return/)
+})
+
+test('Chat Desktop y Phone cargan páginas profundas con keyset exacto, no con offset', async () => {
+  const [desktop, phone] = await Promise.all([
+    repoFile('frontend/src/pages/DesktopChat/DesktopChat.tsx'),
+    repoFile('frontend/src/pages/PhoneChat/PhoneChat.tsx')
+  ])
+
+  for (const source of [desktop, phone]) {
+    assert.match(source, /beforeMessageDate: cursor\.beforeMessageDate/)
+    assert.match(source, /beforeMessageSort: cursor\.beforeMessageSort/)
+    assert.match(source, /beforeMessageScope: cursor\.beforeMessageScope/)
+    assert.match(source, /beforeContactId: cursor\.beforeContactId/)
+    assert.match(source, /chatListCursorRef\.current !== cursor/)
+    assert.doesNotMatch(source, /chatListOffsetRef/)
+    assert.doesNotMatch(source, /offset: String\(pageOffset\)/)
+  }
 })
 
 test('el asistente pesado no forma parte estática del AppShell', async () => {
@@ -45,6 +80,37 @@ test('el asistente pesado no forma parte estática del AppShell', async () => {
   assert.doesNotMatch(source, /import \{ AIAgentPanel \} from '@\/components\/ai'/)
   assert.match(source, /React\.lazy\(\(\) => import\('@\/components\/ai\/AIAgentPanel\/AIAgentPanel'\)/)
   assert.match(source, /<React\.Suspense fallback=\{null\}>[\s\S]*<AIAgentPanel/)
+})
+
+test('Dashboard no arrastra modales y servicios de drill-down en su primer chunk', async () => {
+  const source = await repoFile('frontend/src/pages/Dashboard/Dashboard.tsx')
+
+  assert.doesNotMatch(source, /import \{ ContactDetailsModal \} from/)
+  assert.doesNotMatch(source, /import \{ VisitorDetailsModal \} from/)
+  assert.doesNotMatch(source, /import \{ reportsService/)
+  assert.doesNotMatch(source, /import \{ campaignsService/)
+  assert.match(source, /React\.lazy\(async \(\) => \{[\s\S]*ContactDetailsModal/)
+  assert.match(source, /React\.lazy\(async \(\) => \{[\s\S]*VisitorDetailsModal/)
+  assert.match(source, /const loadReportsService = \(\) => import/)
+  assert.match(source, /const loadCampaignsService = \(\) => import/)
+  assert.match(source, /Abriendo detalles\.\.\./)
+})
+
+test('Dashboard pinta su ultimo snapshot antes de revalidar y cancela rangos obsoletos', async () => {
+  const [page, service] = await Promise.all([
+    repoFile('frontend/src/pages/Dashboard/Dashboard.tsx'),
+    repoFile('frontend/src/services/dashboardService.ts')
+  ])
+
+  assert.match(service, /peekDashboardMetrics/)
+  assert.match(service, /DASHBOARD_METRICS_STALE_MS/)
+  assert.match(service, /registerAuthScopedCacheInvalidator\(clearDashboardMetricSnapshots\)/)
+  assert.match(service, /registerRistakApiReadCacheInvalidator\(clearDashboardMetricSnapshots\)/)
+  assert.match(service, /principalRevision === getAuthScopedCacheRevision\(\)/)
+  assert.match(page, /useState<DashboardMetrics \| null>\(\(\) => \(/)
+  assert.match(page, /const cachedMetrics = dashboardService\.peekDashboardMetrics/)
+  assert.match(page, /forceRefresh: Boolean\(cachedMetrics\)/)
+  assert.match(page, /controller\.abort\(\)/)
 })
 
 test('Configuración precarga el panel permitido y evita el redirect frío del menú', async () => {

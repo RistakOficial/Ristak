@@ -50,14 +50,14 @@ test('origen y funnel conservan el trabajo pesado en SQL y no cargan proveedores
     readRepoFile('backend/src/services/originDistributionService.js')
   ])
 
-  const originStart = controller.indexOf('export const getOriginDistribution')
-  const originEnd = controller.indexOf('export const getFinancialOverview', originStart)
+  const originStart = controller.indexOf('async function computeOriginDistribution')
+  const originEnd = controller.indexOf('export const getOriginDistribution', originStart)
   const originHandler = controller.slice(originStart, originEnd)
   assert.match(originHandler, /getSourceBreakdownByMetric\('leads'/)
   assert.doesNotMatch(originHandler, /getLeadsContactIds|getContactSourceBreakdown\(|contactIds/)
 
-  const funnelStart = controller.indexOf('export const getFunnelData')
-  const funnelEnd = controller.indexOf('async function getAttributionCalendarIds', funnelStart)
+  const funnelStart = controller.indexOf('async function computeFunnelData')
+  const funnelEnd = controller.indexOf('export const getFunnelData', funnelStart)
   const funnelHandler = controller.slice(funnelStart, funnelEnd)
   assert.match(funnelHandler, /COUNT\(DISTINCT a\.contact_id\)/)
   assert.match(funnelHandler, /Promise\.all\(\[[\s\S]*db\.get\(visitorsQuery[\s\S]*db\.get\(customersQuery/)

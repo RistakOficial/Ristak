@@ -26,6 +26,9 @@ export interface MetaOAuthStatus {
     page: { id: string; name: string } | null
     instagram: { id: string; name: string; username?: string } | null
   }
+  assetSnapshot?: MetaOAuthSession | null
+  remoteChecked?: boolean
+  remoteCheckedAt?: string
   oauth: {
     connected: boolean
     validated: boolean
@@ -162,6 +165,11 @@ async function requestMetaOAuth<T>(url: string, init?: RequestInit): Promise<T> 
 
 export const metaOAuthService = {
   getStatus: () => requestMetaOAuth<MetaOAuthStatus>('/api/meta/oauth/status'),
+
+  refreshStatus: () => requestMetaOAuth<MetaOAuthStatus>('/api/meta/oauth/status/refresh', {
+    method: 'POST',
+    body: JSON.stringify({})
+  }),
 
   createConnectUrl: (returnPath = '/settings/meta-ads/cuenta') => requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
     '/api/meta/oauth/connect-url',

@@ -176,9 +176,42 @@ export interface CursorPagePagination {
   nextCursor: string | null
 }
 
+export interface TrackingVisitorsCoverage {
+  source: 'tracking_visitor_latest'
+  projectionVersion: number | null
+  available: boolean
+  status: 'ready' | 'warming' | 'unavailable'
+  sourceStatus: string | null
+  updatedAt: string | null
+  exact: boolean
+  complete: boolean
+  partial: boolean
+  reason: string | null
+  reasons: string[]
+  rangeQuarterAligned: boolean
+  search: {
+    mode: 'none' | 'bounded_latest_projection'
+    historicalSessionsIncluded?: boolean
+    candidatesScanned?: number
+    candidateLimit?: number
+    exhausted?: boolean
+  }
+}
+
+export function trackingVisitorsCoverageNotice(coverage?: TrackingVisitorsCoverage): string | null {
+  if (coverage?.status === 'warming') {
+    return 'Preparando el historial completo; mostramos lo que ya está disponible.'
+  }
+  if (coverage?.status === 'unavailable') {
+    return 'Preparando el índice de visitantes; conservamos la última información disponible.'
+  }
+  return null
+}
+
 export interface CursorPage<T> {
   items: T[]
   pagination: CursorPagePagination
+  coverage?: TrackingVisitorsCoverage
 }
 
 export interface TrackingVisitorsPageInput {
@@ -263,6 +296,7 @@ async function getVisitorsPage<T = Record<string, unknown>>(
     error?: string
     data?: T[] | { items?: T[]; pagination?: Partial<CursorPagePagination> }
     pagination?: Partial<CursorPagePagination>
+    coverage?: TrackingVisitorsCoverage
   } | null
   if (!response.ok) throw new Error(payload?.error || 'No se pudieron cargar los visitantes')
 
@@ -276,6 +310,7 @@ async function getVisitorsPage<T = Record<string, unknown>>(
 
   return {
     items,
+    ...(payload?.coverage ? { coverage: payload.coverage } : {}),
     pagination: {
       limit: Number(pagination.limit) || limit,
       hasNext,

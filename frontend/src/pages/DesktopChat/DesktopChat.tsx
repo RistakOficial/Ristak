@@ -103,7 +103,13 @@ import {
   type ConversationalAgentCompletionEvent,
   type ConversationalAgentDef
 } from '@/services/conversationalAgentService'
-import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import {
+  compareLosslessNumericCursorValues,
+  compareLosslessTimestampCursorTuples,
+  contactsService,
+  getOldestJourneyMessageCursor,
+  type JourneyEvent
+} from '@/services/contactsService'
 import { subscribeToChatLiveEvents, reportViewing, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
@@ -224,6 +230,8 @@ interface DesktopChatContact extends Contact {
   lastMessageChannel?: string
   lastMessageTransport?: string
   lastMessageDate?: string
+  lastMessageCursorSort?: string
+  lastMessageCursorScope?: string
   lastMessageDirection?: string
   lastBusinessPhone?: string
   lastBusinessPhoneNumberId?: string
@@ -240,6 +248,14 @@ interface DesktopChatContact extends Contact {
   profile_picture_url?: string | null
   hasMetaMessengerProfile?: boolean
   hasMetaInstagramProfile?: boolean
+}
+
+interface ChatListKeysetCursor {
+  beforeMessageDate: string
+  beforeMessageSort?: string
+  beforeMessageScope?: string
+  beforeContactId: string
+  scope: string
 }
 
 interface RemovedChatState {
@@ -434,7 +450,8 @@ const CHAT_CACHE_ENTRY_LIMIT = 400
 const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
-const CHAT_REFRESH_INTERVAL_MS = 12000
+const CHAT_FALLBACK_REFRESH_INTERVAL_MS = 30_000
+const CHAT_HEALTHY_RECONCILE_INTERVAL_MS = 2 * 60_000
 const CHAT_LIVE_REFRESH_DEBOUNCE_MS = 80
 const CHAT_ACTIVITY_REFRESH_INTERVAL_MS = 30_000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
@@ -1318,6 +1335,54 @@ function dedupeChatsById<T extends { id?: string | null }>(chats: T[]) {
   return Array.from(map.values())
 }
 
+function getChatListKeysetCursor(chats: DesktopChatContact[], scope: string): ChatListKeysetCursor | null {
+  const boundary = chats[chats.length - 1]
+  const beforeMessageDate = String(boundary?.lastMessageDate || boundary?.createdAt || '').trim()
+  const beforeMessageSort = String(boundary?.lastMessageCursorSort || '').trim()
+  const beforeMessageScope = String(boundary?.lastMessageCursorScope || '').trim()
+  const beforeContactId = String(boundary?.id || '').trim()
+  return beforeMessageDate && beforeContactId
+    ? {
+      beforeMessageDate,
+      beforeMessageSort: beforeMessageSort || undefined,
+      beforeMessageScope: beforeMessageScope || undefined,
+      beforeContactId,
+      scope
+    }
+    : null
+}
+
+function didChatListCursorAdvance(previous: ChatListKeysetCursor, next: ChatListKeysetCursor | null) {
+  return Boolean(
+    next &&
+    (
+      next.beforeMessageSort !== previous.beforeMessageSort ||
+      next.beforeMessageScope !== previous.beforeMessageScope ||
+      next.beforeMessageDate !== previous.beforeMessageDate ||
+      next.beforeContactId !== previous.beforeContactId
+    )
+  )
+}
+
+function compareChatListContactCursors(left: DesktopChatContact, right: DesktopChatContact) {
+  const leftSort = String(left.lastMessageCursorSort || '').trim()
+  const rightSort = String(right.lastMessageCursorSort || '').trim()
+  if (leftSort && rightSort) {
+    const sortDifference = compareLosslessNumericCursorValues(leftSort, rightSort)
+    if (sortDifference !== null && sortDifference !== 0) return sortDifference
+    if (sortDifference !== null) {
+      return left.id === right.id ? 0 : left.id < right.id ? -1 : 1
+    }
+  }
+
+  return compareLosslessTimestampCursorTuples(
+    String(left.lastMessageDate || left.createdAt || ''),
+    left.id,
+    String(right.lastMessageDate || right.createdAt || ''),
+    right.id
+  )
+}
+
 // Reconcilia la cola cacheada contra la primera página fresca del servidor: descarta
 // contactos que el servidor ya NO devuelve (fusionados/borrados/ocultos) SIN perder la
 // cola real que el usuario reveló al hacer scroll. Regla: si la página fresca es
@@ -1328,10 +1393,9 @@ function reconcileCachedChatTail(freshPage: DesktopChatContact[], current: Deskt
   const freshIds = new Set(freshPage.map((contact) => contact.id))
   const notFresh = current.filter((contact) => !freshIds.has(contact.id))
   if (freshPage.length < pageSize) return []
-  const oldestFresh = Math.min(
-    ...freshPage.map((contact) => parseSortableDateValue(contact.lastMessageDate || contact.createdAt))
-  )
-  return notFresh.filter((contact) => parseSortableDateValue(contact.lastMessageDate || contact.createdAt) < oldestFresh)
+  const boundary = freshPage[freshPage.length - 1]
+  if (!boundary) return []
+  return notFresh.filter((contact) => compareChatListContactCursors(contact, boundary) < 0)
 }
 
 function getDesktopMessageSignature(message: DesktopChatMessage) {
@@ -1636,11 +1700,18 @@ function getJourneyEventSignature(event: JourneyEvent) {
 function areJourneyEventsEquivalent(left: JourneyEvent[], right: JourneyEvent[]) {
   if (left === right) return true
   if (left.length !== right.length) return false
-  return left.every((event, index) => getJourneyEventSignature(event) === getJourneyEventSignature(right[index]))
+  return left.every((event, index) => (
+    getJourneyEventSignature(event) === getJourneyEventSignature(right[index]) &&
+    compactCompareValue(event.cursorDate) === compactCompareValue(right[index]?.cursorDate) &&
+    compactCompareValue(event.cursorKey) === compactCompareValue(right[index]?.cursorKey)
+  ))
 }
 
 function isConversationJourneyMessage(event: JourneyEvent) {
-  return event.type === 'whatsapp_message' || event.type === 'meta_message' || event.type === 'email_message'
+  return event.type === 'whatsapp_message' ||
+    event.type === 'meta_message' ||
+    event.type === 'email_message' ||
+    event.type === 'appointment_confirmation'
 }
 
 function mergeJourneyEvents(...eventGroups: JourneyEvent[][]) {
@@ -1649,31 +1720,18 @@ function mergeJourneyEvents(...eventGroups: JourneyEvent[][]) {
   eventGroups.flat().forEach((event) => {
     const key = getJourneyEventSignature(event)
     if (!key) return
-    merged.set(key, event)
+    const previous = merged.get(key)
+    merged.set(key, previous
+      ? {
+        ...event,
+        cursorDate: event.cursorDate || previous.cursorDate,
+        cursorKey: event.cursorKey || previous.cursorKey
+      }
+      : event)
   })
 
   return Array.from(merged.values())
     .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
-}
-
-function getOldestConversationMessageDate(journey: JourneyEvent[]) {
-  let oldestDate = ''
-  let oldestTime = Number.POSITIVE_INFINITY
-
-  journey.forEach((event) => {
-    if (!isConversationJourneyMessage(event) || !event.date) return
-    const time = getMessageTimeValue(event.date)
-    if (!Number.isFinite(time) || time <= 0) {
-      if (!oldestDate) oldestDate = event.date
-      return
-    }
-    if (time < oldestTime) {
-      oldestTime = time
-      oldestDate = event.date
-    }
-  })
-
-  return oldestDate
 }
 
 function getConversationCacheKey(locationId: string | null | undefined, contactId: string) {
@@ -3198,7 +3256,8 @@ export const DesktopChat: React.FC = () => {
   const selectAllChatCheckboxRef = useRef<HTMLInputElement | null>(null)
   const chatsRef = useRef<DesktopChatContact[]>([])
   const [initialChatCache] = useState<ChatListCacheSnapshot>(() => readCachedChatList())
-  const chatListOffsetRef = useRef(0)
+  const chatListCursorRef = useRef<ChatListKeysetCursor | null>(null)
+  const chatListHasAppendedRef = useRef(false)
   const chatListHasMoreRef = useRef(initialChatCache.chats.length > 0)
   const chatListLoadingMoreRef = useRef(false)
   // Controller propio para "cargar más" (append), independiente de chatsRequestRef, para que
@@ -3227,6 +3286,8 @@ export const DesktopChat: React.FC = () => {
   const chatLiveRefreshTimeoutRef = useRef<number | null>(null)
   const chatLiveRefreshInFlightRef = useRef(false)
   const chatLiveRefreshQueuedRef = useRef(false)
+  const chatLiveConnectedRef = useRef(false)
+  const chatLastFallbackReconcileAtRef = useRef(Date.now())
   const archivedChatIdSetRef = useRef<Set<string>>(new Set())
   const removedChatStatesRef = useRef<RemovedChatState[]>([])
   const agentPriorityChatIdSetRef = useRef<Set<string>>(new Set())
@@ -4159,12 +4220,15 @@ export const DesktopChat: React.FC = () => {
     const append = options.append === true
     const normalizedSearch = String(options.search ?? chatQuery).trim()
     const hasSearch = normalizedSearch.length > 0
+    const cursorScope = normalizedSearch.toLocaleLowerCase('es-MX')
+    const appendCursor = chatListCursorRef.current
 
     if (append) {
       // El load-more usa su propio controller y solo se bloquea por otro load-more en curso o
       // porque ya no hay más. NO lo bloquea la carga inicial ni los refrescos: dispara de
       // inmediato al llegar al fondo.
       if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
+      if (!appendCursor || appendCursor.scope !== cursorScope) return
     } else if (silent && chatsRequestRef.current) {
       return
     }
@@ -4175,8 +4239,8 @@ export const DesktopChat: React.FC = () => {
       if (chatsRef.current.length === 0 || hasSearch) {
         setChatsLoading(true)
       }
-      // Coalescamos cargas no-append concurrentes. NO reiniciamos offset/hasMore: la recarga
-      // explícita ahora es una sola página fusionada que conserva la profundidad cargada.
+      // Coalescamos cargas no-append concurrentes. La recarga explícita trae una sola página
+      // y conserva el cursor profundo cuando el usuario ya reveló más historial.
       chatsRequestRef.current?.abort()
     }
 
@@ -4190,11 +4254,16 @@ export const DesktopChat: React.FC = () => {
       chatsRequestRef.current = controller
     }
 
-    const fetchChatPage = async (offset: number) => {
+    const fetchChatPage = async (cursor: ChatListKeysetCursor | null) => {
       const data = await apiClient.get<DesktopChatContact[]>('/contacts/chats', {
         params: {
           limit: String(CHAT_LIST_PAGE_SIZE),
-          ...(offset > 0 ? { offset: String(offset) } : {}),
+          ...(cursor ? {
+            beforeMessageDate: cursor.beforeMessageDate,
+            ...(cursor.beforeMessageSort ? { beforeMessageSort: cursor.beforeMessageSort } : {}),
+            ...(cursor.beforeMessageScope ? { beforeMessageScope: cursor.beforeMessageScope } : {}),
+            beforeContactId: cursor.beforeContactId
+          } : {}),
           ...(hasSearch ? { q: normalizedSearch } : {})
         },
         signal: controller.signal
@@ -4204,23 +4273,26 @@ export const DesktopChat: React.FC = () => {
 
     try {
       if (append) {
-        const offset = chatListOffsetRef.current
-        const pageChats = await fetchChatPage(offset)
-        // Si mientras esperábamos una recarga movió el offset (o canceló este load-more),
-        // descartamos el lote: aplicarlo corrompería offset/hasMore (podría dejar hasMore en
-        // false y bloquear futuras cargas). La lista no se pierde: el usuario re-scrollea.
-        if (controller.signal.aborted || chatListLoadMoreRequestRef.current !== controller || chatListOffsetRef.current !== offset) return
-        chatListOffsetRef.current = offset + pageChats.length
-        chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE
+        const cursor = appendCursor as ChatListKeysetCursor
+        const pageChats = await fetchChatPage(cursor)
+        // Si una recarga cambió la frontera mientras esperaba este lote, se descarta. Aplicarlo
+        // mezclaría dos snapshots y podría saltar conversaciones.
+        if (controller.signal.aborted || chatListLoadMoreRequestRef.current !== controller || chatListCursorRef.current !== cursor) return
+        const nextCursor = getChatListKeysetCursor(pageChats, cursorScope)
+        const cursorAdvanced = didChatListCursorAdvance(cursor, nextCursor)
+        if (nextCursor) chatListCursorRef.current = nextCursor
+        if (pageChats.length > 0) chatListHasAppendedRef.current = true
+        chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE && cursorAdvanced
         setChats((currentChats) => dedupeChatsById([...currentChats, ...pageChats]))
       } else if (hasSearch) {
-        const pageChats = await fetchChatPage(0)
+        const pageChats = await fetchChatPage(null)
 
         if (chatsRequestRef.current !== controller) return
 
         chatListLoadedSearchRef.current = normalizedSearch
-        chatListOffsetRef.current = pageChats.length
-        chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE
+        chatListCursorRef.current = getChatListKeysetCursor(pageChats, cursorScope)
+        chatListHasAppendedRef.current = false
+        chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE && Boolean(chatListCursorRef.current)
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, pageChats))
         setChats(pageChats)
         setActiveContactId((current) => {
@@ -4236,14 +4308,22 @@ export const DesktopChat: React.FC = () => {
         // Refresco en segundo plano: NO recortar ni reconstruir la lista entera (eso causa
         // tirones de scroll). Traemos solo la primera página (lo más reciente) y la fusionamos
         // sobre los chats ya cargados, conservando la cola que el usuario reveló con scroll.
-        // El offset solo avanza por páginas reales traídas del servidor; el caché no cuenta.
-        const freshPage = await fetchChatPage(0)
+        // El cursor sólo avanza por páginas reales traídas del servidor; el caché no cuenta.
+        const freshPage = await fetchChatPage(null)
         if (chatsRequestRef.current !== controller) return
 
-        const loadedBeyondFreshPage = chatListOffsetRef.current > freshPage.length
-        chatListOffsetRef.current = Math.max(chatListOffsetRef.current, freshPage.length)
-        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE ||
-          (loadedBeyondFreshPage && chatListHasMoreRef.current)
+        const currentCursor = chatListCursorRef.current
+        const preserveDeepCursor = Boolean(
+          chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+        )
+        const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
+        if (!preserveDeepCursor) {
+          chatListCursorRef.current = freshCursor
+          chatListHasAppendedRef.current = false
+        }
+        chatListHasMoreRef.current = (
+          freshPage.length >= CHAT_LIST_PAGE_SIZE && Boolean(freshCursor)
+        ) || (preserveDeepCursor && chatListHasMoreRef.current)
         // setChats funcional: fusionamos sobre el estado MÁS reciente para no pisar un
         // "cargar más" que pudiera estar corriendo en paralelo.
         setChats((current) => dedupeChatsById([
@@ -4260,7 +4340,7 @@ export const DesktopChat: React.FC = () => {
         // Carga inicial / refresco / al limpiar la búsqueda: UNA sola página rápida fusionada
         // sobre lo ya mostrado (caché). Sin bucle multi-página y sin bloquear el "cargar más",
         // por lo que la lista aparece al instante y se rellena al hacer scroll.
-        const freshPage = await fetchChatPage(0)
+        const freshPage = await fetchChatPage(null)
         if (chatsRequestRef.current !== controller) return
 
         // Si veníamos de una búsqueda, REEMPLAZAMOS (no fusionamos sobre esos resultados).
@@ -4271,13 +4351,19 @@ export const DesktopChat: React.FC = () => {
           ...(fromSearch ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
 
-        // El offset representa páginas reales traídas del servidor, no filas pintadas desde
-        // caché. Si usáramos merged.length, un caché viejo podría saltarse conversaciones
-        // intermedias cuando el orden cambió por mensajes nuevos.
-        chatListOffsetRef.current = fromSearch
-          ? freshPage.length
-          : Math.max(chatListOffsetRef.current, freshPage.length)
-        chatListHasMoreRef.current = freshPage.length >= CHAT_LIST_PAGE_SIZE
+        // La frontera keyset representa la última página real, no las filas del caché.
+        const currentCursor = chatListCursorRef.current
+        const preserveDeepCursor = Boolean(
+          !fromSearch && chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+        )
+        const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
+        if (!preserveDeepCursor) {
+          chatListCursorRef.current = freshCursor
+          chatListHasAppendedRef.current = false
+        }
+        chatListHasMoreRef.current = (
+          freshPage.length >= CHAT_LIST_PAGE_SIZE && Boolean(freshCursor)
+        ) || (preserveDeepCursor && chatListHasMoreRef.current)
         writeCachedChatList(merged)
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, merged))
         // setChats funcional: no pisar un "cargar más" que el usuario haya disparado al hacer
@@ -4298,6 +4384,13 @@ export const DesktopChat: React.FC = () => {
       }
     } catch (error: any) {
       if (controller.signal.aborted && chatsRequestRef.current !== controller) return
+      if (append && Number(error?.status) === 400 && chatListCursorRef.current === appendCursor) {
+        chatListCursorRef.current = null
+        chatListHasAppendedRef.current = false
+        chatListHasMoreRef.current = true
+        window.setTimeout(() => void loadChats({ silent: true }), 0)
+        return
+      }
       if (!silent && !append) {
         const timedOut = controller.signal.aborted || error?.name === 'AbortError'
         if (chatsRef.current.length === 0 || hasSearch) {
@@ -4533,8 +4626,8 @@ export const DesktopChat: React.FC = () => {
     if (!contactId) return
     if (olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return
 
-    const beforeMessageDate = getOldestConversationMessageDate(contactJourneyRef.current)
-    if (!beforeMessageDate) {
+    const oldestCursor = getOldestJourneyMessageCursor(contactJourneyRef.current)
+    if (!oldestCursor) {
       conversationHasOlderMessagesRef.current = false
       conversationHistoryExhaustedContactIdRef.current = contactId
       return
@@ -4554,7 +4647,8 @@ export const DesktopChat: React.FC = () => {
       const olderJourney = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
-        beforeMessageDate
+        beforeMessageDate: oldestCursor.beforeMessageDate,
+        beforeMessageCursor: oldestCursor.beforeMessageCursor
       })
       if (activeContactIdRef.current !== contactId) return
 
@@ -4659,6 +4753,10 @@ export const DesktopChat: React.FC = () => {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      const streamConnected = chatLiveConnectedRef.current
+      const now = Date.now()
+      if (streamConnected && now - chatLastFallbackReconcileAtRef.current < CHAT_HEALTHY_RECONCILE_INTERVAL_MS) return
+      chatLastFallbackReconcileAtRef.current = now
       void loadChats({ silent: true })
       // Red de seguridad: la conversación ABIERTA también se reconcilia en el
       // intervalo. Antes SOLO la lista se refrescaba aquí, así que si se perdía
@@ -4676,7 +4774,7 @@ export const DesktopChat: React.FC = () => {
           setAgentStateLists(mapAgentStateListsByContactId(states))
         })
         .catch(() => null)
-    }, CHAT_REFRESH_INTERVAL_MS)
+    }, CHAT_FALLBACK_REFRESH_INTERVAL_MS)
 
     return () => window.clearInterval(intervalId)
   }, [loadChats, loadConversation])
@@ -4719,7 +4817,10 @@ export const DesktopChat: React.FC = () => {
 
   useEffect(() => {
     return subscribeToChatLiveEvents({
-      onMessage: refreshFromLiveChatEvent
+      onMessage: refreshFromLiveChatEvent,
+      onStatusChange: (status) => {
+        chatLiveConnectedRef.current = status === 'connected'
+      }
     })
   }, [refreshFromLiveChatEvent])
 

@@ -10,7 +10,11 @@ import {
   readLatestCampaignPerformanceMaterializedPage,
   replaceCampaignPerformanceMaterializedRows
 } from '../src/services/campaignPerformanceMaterializationService.js'
-import { getCachedPaymentListSummary } from '../src/services/paymentListSummaryCacheService.js'
+import {
+  getCachedPaymentListSummary,
+  getCachedTransactionQuery,
+  PAYMENT_LIST_SUMMARY_CACHE_LIMITS
+} from '../src/services/paymentListSummaryCacheService.js'
 
 async function applySqliteMigration(name) {
   const sql = await readFile(new URL(`../migrations/versioned/${name}`, import.meta.url), 'utf8')
@@ -189,4 +193,40 @@ test('los resúmenes de pagos se reutilizan hasta que una mutación incrementa s
   } finally {
     await db.run('DELETE FROM subscriptions WHERE id = ?', [subscriptionId]).catch(() => undefined)
   }
+})
+
+test('cold misses distintos respetan un semáforo global de dos agregados', async () => {
+  const suffix = randomUUID().replaceAll('-', '')
+  await db.run(`
+    INSERT OR IGNORE INTO payment_list_revisions (scope, revision, updated_at)
+    VALUES ('transactions', 0, CURRENT_TIMESTAMP)
+  `)
+  let active = 0
+  let maxActive = 0
+  let started = 0
+  let releaseBuilds
+  const release = new Promise(resolve => { releaseBuilds = resolve })
+
+  const requests = Array.from({ length: 8 }, (_, index) => getCachedTransactionQuery(
+    `cold_${suffix}_${index}`,
+    async () => {
+      started += 1
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await release
+      active -= 1
+      return { index }
+    }
+  ))
+
+  for (let attempt = 0; attempt < 50 && started < 2; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2))
+  }
+  assert.equal(started, PAYMENT_LIST_SUMMARY_CACHE_LIMITS.maxConcurrentBuilds)
+  assert.equal(maxActive, PAYMENT_LIST_SUMMARY_CACHE_LIMITS.maxConcurrentBuilds)
+
+  releaseBuilds()
+  const results = await Promise.all(requests)
+  assert.equal(results.length, 8)
+  assert.equal(maxActive, PAYMENT_LIST_SUMMARY_CACHE_LIMITS.maxConcurrentBuilds)
 })

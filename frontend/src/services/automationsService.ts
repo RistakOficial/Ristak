@@ -258,6 +258,8 @@ export interface AutomationsOverview {
   }
 }
 
+export type AutomationsOverviewMutation = (overview: AutomationsOverview) => AutomationsOverview
+
 export interface AutomationsListOptions {
   suppressFeatureNotAvailableToast?: boolean
   limit?: number
@@ -267,6 +269,8 @@ export interface AutomationsListOptions {
   status?: AutomationStatus
   includeReview?: boolean
   force?: boolean
+  /** Publica o agrega esta pagina al store reactivo de la consulta visible. */
+  publishSnapshot?: boolean
 }
 
 export interface AutomationUpdateInput {
@@ -331,13 +335,20 @@ export const automationsCache = {
 
 const automationRequests = new Map<string, Promise<Automation>>()
 const deletedAutomationIds = new Set<string>()
-const overviewListeners = new Set<(overview: AutomationsOverview) => void>()
+const overviewListeners = new Set<(mutation: AutomationsOverviewMutation) => void>()
 const overviewPageCache = new Map<string, { overview: AutomationsOverview; expiresAt: number }>()
 const overviewPageRequests = new Map<string, Promise<AutomationsOverview>>()
 const OVERVIEW_PAGE_CACHE_TTL_MS = 15_000
 const OVERVIEW_PAGE_CACHE_MAX_ENTRIES = 40
+const OVERVIEW_MUTATION_LOG_MAX_ENTRIES = 500
 let overviewRequestVersion = 0
 let overviewRevision = 0
+let overviewSnapshotQueryKey = ''
+let overviewSnapshotGeneration = 0
+let overviewMutationLog: Array<{
+  revision: number
+  mutation: AutomationsOverviewMutation
+}> = []
 
 function invalidateAutomationsPrincipalCache() {
   overviewRequestVersion += 1
@@ -348,6 +359,9 @@ function invalidateAutomationsPrincipalCache() {
   overviewPageCache.clear()
   overviewPageRequests.clear()
   deletedAutomationIds.clear()
+  overviewSnapshotQueryKey = ''
+  overviewSnapshotGeneration += 1
+  overviewMutationLog = []
 }
 
 registerAuthScopedCacheInvalidator(invalidateAutomationsPrincipalCache)
@@ -359,6 +373,12 @@ function startAuthScopedCacheOperation() {
 
 function canPublishAuthScopedResult(requestPrincipalRevision: number) {
   return requestPrincipalRevision === getAuthScopedCacheRevision()
+}
+
+function staleAutomationPrincipalError() {
+  const error = new Error('La sesión cambió mientras se cargaban las automatizaciones.')
+  error.name = 'AbortError'
+  return error
 }
 
 function invalidateAutomationListPages() {
@@ -384,6 +404,63 @@ function overviewPageKey(options: ReturnType<typeof normalizeListOptions>) {
   return JSON.stringify(options)
 }
 
+function overviewSnapshotKey(options: ReturnType<typeof normalizeListOptions>) {
+  return JSON.stringify({
+    ...options,
+    cursor: ''
+  })
+}
+
+function beginOverviewSnapshotRequest(
+  options: ReturnType<typeof normalizeListOptions>,
+  enabled: boolean
+) {
+  const queryKey = overviewSnapshotKey(options)
+  if (!enabled) {
+    return { enabled: false, queryKey, generation: overviewSnapshotGeneration }
+  }
+
+  if (!options.cursor) {
+    overviewSnapshotQueryKey = queryKey
+    overviewSnapshotGeneration += 1
+  }
+
+  return {
+    enabled: true,
+    queryKey,
+    generation: overviewSnapshotGeneration
+  }
+}
+
+function publishOverviewSnapshotPage(
+  overview: AutomationsOverview,
+  options: ReturnType<typeof normalizeListOptions>,
+  request: ReturnType<typeof beginOverviewSnapshotRequest>
+) {
+  if (
+    !request.enabled ||
+    request.queryKey !== overviewSnapshotQueryKey ||
+    request.generation !== overviewSnapshotGeneration
+  ) {
+    return
+  }
+
+  if (!options.cursor || !automationsCache.overview) {
+    publishOverview(overview)
+    return
+  }
+
+  const merged = new Map(
+    automationsCache.overview.automations.map(automation => [automation.id, automation])
+  )
+  overview.automations.forEach(automation => merged.set(automation.id, automation))
+  publishOverview({
+    folders: overview.folders,
+    automations: [...merged.values()],
+    pageInfo: overview.pageInfo
+  })
+}
+
 function cacheOverviewPage(key: string, overview: AutomationsOverview) {
   overviewPageCache.delete(key)
   overviewPageCache.set(key, {
@@ -397,23 +474,62 @@ function cacheOverviewPage(key: string, overview: AutomationsOverview) {
   }
 }
 
-function publishOverview(overview: AutomationsOverview, localMutation = false) {
-  if (localMutation) overviewRevision += 1
+function publishOverview(overview: AutomationsOverview) {
   automationsCache.overview = {
     folders: [...overview.folders],
     automations: overview.automations.filter(automation => !deletedAutomationIds.has(automation.id)),
     pageInfo: { ...overview.pageInfo }
   }
-  overviewListeners.forEach(listener => listener(automationsCache.overview as AutomationsOverview))
 }
 
-function mutateOverview(update: (overview: AutomationsOverview) => AutomationsOverview) {
-  if (!automationsCache.overview) return
-  publishOverview(update(automationsCache.overview), true)
+function mutateOverview(mutation: AutomationsOverviewMutation) {
+  overviewRevision += 1
+  overviewMutationLog.push({ revision: overviewRevision, mutation })
+  if (overviewMutationLog.length > OVERVIEW_MUTATION_LOG_MAX_ENTRIES) {
+    overviewMutationLog = overviewMutationLog.slice(-OVERVIEW_MUTATION_LOG_MAX_ENTRIES)
+  }
+  if (automationsCache.overview) {
+    publishOverview(mutation(automationsCache.overview))
+  }
+  // La vista aplica el mismo delta sobre todas las paginas que ya tiene. Mandar
+  // un snapshot completo borraba paginas append si un autosave coincidia con
+  // "Cargar mas" o si el store pertenecia a otro filtro.
+  overviewListeners.forEach(listener => listener(mutation))
+}
+
+function applyOverviewMutationsSince(
+  overview: AutomationsOverview,
+  startingRevision: number
+): AutomationsOverview {
+  return overviewMutationLog.reduce(
+    (current, entry) => entry.revision > startingRevision ? entry.mutation(current) : current,
+    overview
+  )
+}
+
+function scopeOverviewToQuery(
+  overview: AutomationsOverview,
+  options: ReturnType<typeof normalizeListOptions>
+): AutomationsOverview {
+  const normalizedSearch = options.search.toLocaleLowerCase()
+  return {
+    ...overview,
+    automations: overview.automations.filter(automation => {
+      if (options.status && automation.status !== options.status) return false
+      if (normalizedSearch) {
+        return `${automation.id} ${automation.name} ${automation.description || ''}`
+          .toLocaleLowerCase()
+          .includes(normalizedSearch)
+      }
+      if (options.folderId === null) return true
+      if (options.folderId === 'root') return !automation.folderId
+      return automation.folderId === options.folderId
+    })
+  }
 }
 
 export function subscribeAutomationsOverview(
-  listener: (overview: AutomationsOverview) => void
+  listener: (mutation: AutomationsOverviewMutation) => void
 ): () => void {
   syncAuthScopedCachePrincipal()
   overviewListeners.add(listener)
@@ -435,33 +551,43 @@ export function automationToSummary(automation: Automation): AutomationSummary {
   }
 }
 
-function cacheAutomation(automation: Automation) {
+function cacheAutomation(automation: Automation, localMutation = false) {
   if (deletedAutomationIds.has(automation.id)) return
   automationsCache.automations.set(automation.id, automation)
-  if (!automationsCache.overview) return
 
   const summary = automationToSummary(automation)
-  const exists = automationsCache.overview.automations.some((item) => item.id === automation.id)
-  publishOverview({
-    ...automationsCache.overview,
-    automations: exists
-      ? automationsCache.overview.automations.map((item) =>
-          item.id === automation.id ? { ...item, ...summary } : item
-        )
-      : [summary, ...automationsCache.overview.automations]
-  }, true)
+  const mutation: AutomationsOverviewMutation = overview => {
+    const exists = overview.automations.some((item) => item.id === automation.id)
+    return {
+      ...overview,
+      automations: exists
+        ? overview.automations.map((item) =>
+            item.id === automation.id ? { ...item, ...summary } : item
+          )
+        : [summary, ...overview.automations]
+    }
+  }
+  if (localMutation) {
+    mutateOverview(mutation)
+  } else if (automationsCache.overview) {
+    publishOverview(mutation(automationsCache.overview))
+  }
 }
 
 function fetchAutomation(automationId: string): Promise<Automation> {
   syncAuthScopedCachePrincipal()
   const requestPrincipalRevision = getAuthScopedCacheRevision()
+  const requestOverviewRevision = overviewRevision
   const inFlight = automationRequests.get(automationId)
   if (inFlight) return inFlight
 
   const request = apiClient
     .get<Automation>(`/automations/${automationId}`)
     .then((automation) => {
-      if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+      if (requestPrincipalRevision !== getAuthScopedCacheRevision()) {
+        throw staleAutomationPrincipalError()
+      }
+      if (requestOverviewRevision === overviewRevision) {
         cacheAutomation(automation)
       }
       return automation
@@ -481,17 +607,30 @@ export const automationsService = {
     syncAuthScopedCachePrincipal()
     const requestPrincipalRevision = getAuthScopedCacheRevision()
     const normalizedOptions = normalizeListOptions(options)
+    const snapshotRequest = beginOverviewSnapshotRequest(
+      normalizedOptions,
+      options.publishSnapshot === true
+    )
     const cacheKey = overviewPageKey(normalizedOptions)
     const cached = overviewPageCache.get(cacheKey)
     if (!options.force && cached && cached.expiresAt > Date.now()) {
       overviewPageCache.delete(cacheKey)
       overviewPageCache.set(cacheKey, cached)
+      publishOverviewSnapshotPage(cached.overview, normalizedOptions, snapshotRequest)
       return cached.overview
     }
 
     if (!options.force) {
       const inFlight = overviewPageRequests.get(cacheKey)
-      if (inFlight) return inFlight
+      if (inFlight) {
+        if (!snapshotRequest.enabled) return inFlight
+        return inFlight.then(overview => {
+          if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
+            publishOverviewSnapshotPage(overview, normalizedOptions, snapshotRequest)
+          }
+          return overview
+        })
+      }
     }
 
     const requestVersion = overviewRequestVersion
@@ -511,6 +650,12 @@ export const automationsService = {
       params,
       suppressFeatureNotAvailableToast: options.suppressFeatureNotAvailableToast
     }).then((overview) => {
+      if (
+        requestPrincipalRevision !== getAuthScopedCacheRevision() ||
+        requestVersion !== overviewRequestVersion
+      ) {
+        throw staleAutomationPrincipalError()
+      }
       const normalized: AutomationsOverview = {
         folders: Array.isArray(overview.folders) ? overview.folders : [],
         automations: (Array.isArray(overview.automations) ? overview.automations : [])
@@ -522,18 +667,15 @@ export const automationsService = {
         }
       }
 
-      if (
-        requestPrincipalRevision === getAuthScopedCacheRevision() &&
-        requestVersion === overviewRequestVersion &&
-        startingRevision === overviewRevision
-      ) {
-        cacheOverviewPage(cacheKey, normalized)
-        if (!normalizedOptions.cursor && !normalizedOptions.search && options.folderId === undefined) {
-          publishOverview(normalized)
-        }
-      }
+      const reconciled = scopeOverviewToQuery(
+        applyOverviewMutationsSince(normalized, startingRevision),
+        normalizedOptions
+      )
 
-      return normalized
+      cacheOverviewPage(cacheKey, reconciled)
+      publishOverviewSnapshotPage(reconciled, normalizedOptions, snapshotRequest)
+
+      return reconciled
     }).finally(() => {
       if (overviewPageRequests.get(cacheKey) === request) {
         overviewPageRequests.delete(cacheKey)
@@ -560,7 +702,7 @@ export const automationsService = {
     if (canPublishAuthScopedResult(requestPrincipalRevision)) {
       invalidateAutomationListPages()
       deletedAutomationIds.delete(automation.id)
-      cacheAutomation(automation)
+      cacheAutomation(automation, true)
     }
     return automation
   },
@@ -573,7 +715,7 @@ export const automationsService = {
       && !deletedAutomationIds.has(automation.id)
     ) {
       invalidateAutomationListPages()
-      cacheAutomation(automation)
+      cacheAutomation(automation, true)
     }
     return automation
   },
@@ -584,7 +726,7 @@ export const automationsService = {
     if (canPublishAuthScopedResult(requestPrincipalRevision)) {
       invalidateAutomationListPages()
       deletedAutomationIds.delete(automation.id)
-      cacheAutomation(automation)
+      cacheAutomation(automation, true)
     }
     return automation
   },

@@ -13,8 +13,13 @@ import { runTrackingVisitorProjectionBackfill } from '../src/services/trackingVi
 async function ensureVisitorProjectionMigration() {
   if (databaseDialect !== 'sqlite') return
   const columns = await db.all("PRAGMA table_info('sessions')")
-  if (columns.some(column => column.name === 'visitor_projection_version')) return
-  await db.exec(await readFile(new URL('../migrations/versioned/080_tracking_visitor_projection.sqlite.sql', import.meta.url), 'utf8'))
+  if (!columns.some(column => column.name === 'visitor_projection_version')) {
+    await db.exec(await readFile(new URL('../migrations/versioned/080_tracking_visitor_projection.sqlite.sql', import.meta.url), 'utf8'))
+  }
+  const stateColumns = await db.all("PRAGMA table_info('tracking_visitor_projection_state')")
+  if (!stateColumns.length) {
+    await db.exec(await readFile(new URL('../migrations/versioned/111_tracking_visitor_projection_state.sqlite.sql', import.meta.url), 'utf8'))
+  }
 }
 
 function createResponse() {
@@ -47,7 +52,7 @@ test('el endpoint legacy de sesiones rechaza descargas grandes y offsets profund
   assert.match(tooDeep.error, /sessions\/search with cursor/i)
 })
 
-test('visitors drill-down is cursor paginated, searchable and capped for legacy callers', async () => {
+test('visitors drill-down is projection-paginated, bounded-searchable and capped for legacy callers', async () => {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const date = '2099-06-14'
   const sessionIds = []
@@ -151,6 +156,8 @@ test('visitors drill-down is cursor paginated, searchable and capped for legacy 
     assert.equal(legacyPage.pagination.limit, 50)
     assert.equal(legacyPage.pagination.hasNext, true)
     assert.ok(legacyPage.pagination.nextCursor)
+    assert.equal(legacyPage.coverage.source, 'tracking_visitor_latest')
+    assert.equal(legacyPage.coverage.exact, true)
     assert.equal(legacyPage.data.find(row => row.visitorId === `visitor-${suffix}-0`)?.sessionId, `session-${suffix}-latest`)
     assert.equal(new Set(legacyPage.data.map(row => row.visitorId)).size, legacyPage.data.length)
 
@@ -191,8 +198,10 @@ test('visitors drill-down is cursor paginated, searchable and capped for legacy 
       endDate: date,
       search: `historical-needle-${suffix}`
     })
-    assert.equal(historicalSearchPage.data.length, 1)
-    assert.equal(historicalSearchPage.data[0].sessionId, `session-historical-old-${suffix}`)
+    assert.equal(historicalSearchPage.data.length, 0)
+    assert.equal(historicalSearchPage.coverage.partial, true)
+    assert.equal(historicalSearchPage.coverage.search.mode, 'bounded_latest_projection')
+    assert.equal(historicalSearchPage.coverage.search.historicalSessionsIncluded, false)
 
     const contactSearchPage = await callController(getVisitorsList, {
       startDate: date,
@@ -226,30 +235,21 @@ test('visitors drill-down is cursor paginated, searchable and capped for legacy 
 
     const explain = await db.all(`
       EXPLAIN QUERY PLAN
-      SELECT current.id
-      FROM sessions current
-      WHERE current.started_at >= ?
-        AND current.started_at <= ?
-        AND current.visitor_key IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1
-          FROM sessions newer
-          WHERE newer.visitor_key = current.visitor_key
-            AND newer.started_at >= ?
-            AND newer.started_at <= ?
-            AND (newer.started_at, newer.id) > (current.started_at, current.id)
-        )
-      ORDER BY current.started_at DESC, current.id DESC
+      SELECT current.session_row_id
+      FROM tracking_visitor_latest current
+      WHERE current.scope_type = 'all'
+        AND current.scope_id = ''
+        AND current.bucket_kind = 'day'
+        AND current.latest_at >= ?
+        AND current.latest_at < ?
+      ORDER BY current.latest_at DESC, current.session_row_id DESC
       LIMIT 51
     `, [
-      `${date}T00:00:00.000Z`,
-      `${date}T23:59:59.999Z`,
       `${date}T00:00:00.000Z`,
       `${date}T23:59:59.999Z`
     ])
     const plan = explain.map(row => row.detail).join('\n')
-    assert.match(plan, /idx_sessions_started_at(?:_id)?/)
-    assert.match(plan, /idx_sessions_visitor_key_started_page/)
+    assert.match(plan, /idx_tracking_visitor_latest_day_page/)
   } finally {
     for (const id of sessionIds) {
       await db.run('DELETE FROM sessions WHERE id = ?', [id])
@@ -257,6 +257,78 @@ test('visitors drill-down is cursor paginated, searchable and capped for legacy 
     for (const id of contactIds) {
       await db.run('DELETE FROM contacts WHERE id = ?', [id])
     }
+  }
+})
+
+test('visitor GET serves partial projection during warming without inspecting historical sessions', async () => {
+  if (databaseDialect !== 'sqlite') return
+  await ensureVisitorProjectionMigration()
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const prefix = `warming-${suffix}-`
+  const observedSql = []
+  const originalAll = db.all
+  const originalGet = db.get
+
+  try {
+    await db.run(`
+      WITH RECURSIVE sequence(n) AS (
+        SELECT 1
+        UNION ALL
+        SELECT n + 1 FROM sequence WHERE n < 1200
+      )
+      INSERT INTO sessions (
+        id, session_id, visitor_id, event_name, started_at, created_at
+      )
+      SELECT
+        ? || printf('%04d', n),
+        'session-' || ? || printf('%04d', n),
+        'visitor-' || ? || printf('%04d', n),
+        'page_view',
+        datetime('2098-02-12T12:00:00.000Z', '+' || n || ' seconds'),
+        datetime('2098-02-12T12:00:00.000Z', '+' || n || ' seconds')
+      FROM sequence
+    `, [prefix, prefix, prefix])
+    await db.run('UPDATE sessions SET visitor_projection_version = 0 WHERE id LIKE ?', [`${prefix}%`])
+    await db.run(`
+      UPDATE tracking_visitor_projection_state
+      SET status = 'backfilling', updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1
+    `)
+
+    db.all = async function observedAll(sql, params) {
+      observedSql.push(String(sql))
+      return originalAll.call(this, sql, params)
+    }
+    db.get = async function observedGet(sql, params) {
+      observedSql.push(String(sql))
+      return originalGet.call(this, sql, params)
+    }
+
+    const page = await callController(getVisitorsList, {
+      startDate: '2098-02-12',
+      endDate: '2098-02-12',
+      limit: '50'
+    })
+    assert.equal(page.data.length, 50)
+    assert.equal(page.coverage.status, 'warming')
+    assert.equal(page.coverage.partial, true)
+    assert.equal(page.coverage.reason, 'projection_warming')
+
+    const requestSql = observedSql.join('\n')
+    assert.match(requestSql, /tracking_visitor_latest/i)
+    assert.doesNotMatch(requestSql, /visitor_projection_version/i)
+    assert.doesNotMatch(requestSql, /ranked_visitors|matched_visitor_candidates/i)
+    assert.doesNotMatch(requestSql, /ROW_NUMBER\s*\(\s*\)\s*OVER/i)
+    assert.equal(observedSql.filter(sql => /\bFROM\s+sessions\b/i.test(sql)).length, 0)
+  } finally {
+    db.all = originalAll
+    db.get = originalGet
+    await db.run('DELETE FROM sessions WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run(`
+      UPDATE tracking_visitor_projection_state
+      SET status = 'ready', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1
+    `).catch(() => undefined)
   }
 })
 
@@ -281,6 +353,11 @@ test('visitor projection backfill and triggers keep the durable identity exact',
 
     // Simula una fila heredada anterior a la migración.
     await db.run('UPDATE sessions SET visitor_key = NULL, visitor_projection_version = 0 WHERE id = ?', [id])
+    await db.run(`
+      UPDATE tracking_visitor_projection_state
+      SET status = 'backfilling', updated_at = CURRENT_TIMESTAMP
+      WHERE singleton_id = 1
+    `)
     const backfill = await runTrackingVisitorProjectionBackfill({ batchSize: 1, yieldMs: 0 })
     assert.equal(backfill.ready, true)
     assert.ok(backfill.updated >= 1)
@@ -328,6 +405,17 @@ test('visitor projection backfill and triggers keep the durable identity exact',
     assert.ok(numericHeads.every(head => head.session_row_id === numericLatestId))
     assert.ok(numericHeads.every(head => head.latest_at.endsWith('00.900Z')))
 
+    const dedupedPage = await callController(getVisitorsList, {
+      startDate: '2031-08-12',
+      endDate: '2031-08-12',
+      limit: '100'
+    })
+    assert.equal(
+      dedupedPage.data.filter(visitor => visitor.visitorId === numericVisitorId).length,
+      1,
+      'la misma cabeza day+quarter sólo puede producir un visitante/cursor'
+    )
+
     await db.run('UPDATE sessions SET started_at = ? WHERE id = ?', [
       Date.parse('2031-08-12T12:00:00.050Z'),
       numericLatestId
@@ -360,6 +448,71 @@ test('visitor projection backfill and triggers keep the durable identity exact',
     await db.run('DELETE FROM sessions WHERE id = ?', [id]).catch(() => undefined)
     await db.run('DELETE FROM sessions WHERE id = ?', [numericOlderId]).catch(() => undefined)
     await db.run('DELETE FROM sessions WHERE id = ?', [numericLatestId]).catch(() => undefined)
+  }
+})
+
+test('ready projection restart is O(1) and never rechecks sessions', async () => {
+  if (databaseDialect !== 'sqlite') return
+  await ensureVisitorProjectionMigration()
+  await db.run(`
+    UPDATE tracking_visitor_projection_state
+    SET projection_version = 3, status = 'ready', last_error = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE singleton_id = 1
+  `)
+  const observedSql = []
+  const originalGet = db.get
+  const originalAll = db.all
+  const originalRun = db.run
+
+  try {
+    db.get = async function observedGet(sql, params) {
+      observedSql.push(String(sql))
+      return originalGet.call(this, sql, params)
+    }
+    db.all = async function observedAll(sql, params) {
+      observedSql.push(String(sql))
+      return originalAll.call(this, sql, params)
+    }
+    db.run = async function observedRun(sql, params) {
+      observedSql.push(String(sql))
+      return originalRun.call(this, sql, params)
+    }
+
+    const result = await runTrackingVisitorProjectionBackfill({ batchSize: 1, yieldMs: 0 })
+    assert.equal(result.ready, true)
+    assert.equal(result.alreadyReady, true)
+    assert.equal(result.updated, 0)
+    assert.doesNotMatch(observedSql.join('\n'), /\b(?:FROM|UPDATE)\s+sessions\b/i)
+  } finally {
+    db.get = originalGet
+    db.all = originalAll
+    db.run = originalRun
+  }
+})
+
+test('visitor GET propagates operational projection-state errors instead of returning an empty success', async () => {
+  if (databaseDialect !== 'sqlite') return
+  await ensureVisitorProjectionMigration()
+  const originalGet = db.get
+
+  try {
+    db.get = async function failingProjectionState(sql, params) {
+      if (/tracking_visitor_projection_state/i.test(String(sql))) {
+        const error = new Error('database connection interrupted')
+        error.code = 'ECONNRESET'
+        throw error
+      }
+      return originalGet.call(this, sql, params)
+    }
+
+    const response = await callController(getVisitorsList, {
+      startDate: '2098-02-12',
+      endDate: '2098-02-12'
+    }, 500)
+    assert.equal(response.error, 'Internal server error')
+    assert.equal(response.success, undefined)
+  } finally {
+    db.get = originalGet
   }
 })
 
@@ -544,6 +697,8 @@ test('tracking drill-down source keeps remote calls and unbounded list queries o
   assert.match(visitorsHandler, /pagination:/)
   assert.doesNotMatch(conversionsHandler, /ORDER BY c\.created_at DESC\s*`/)
   assert.match(visitorsHandler, /fetchBoundedAppointmentsForContacts\(contactIds\)/)
+  assert.match(visitorsHandler, /SELECT \* FROM day_page\s+UNION\s+SELECT \* FROM quarter_page/)
+  assert.doesNotMatch(visitorsHandler, /SELECT \* FROM day_page\s+UNION ALL\s+SELECT \* FROM quarter_page/)
   assert.match(conversionsHandler, /fetchPaymentSummariesForContacts\(contactIds\)/)
   assert.doesNotMatch(conversionsHandler, /fetchPaymentsForContacts|fetchAppointmentsForContacts/)
   assert.match(conversionsHandler, /GROUP BY c\.id/)
@@ -551,11 +706,13 @@ test('tracking drill-down source keeps remote calls and unbounded list queries o
 
 test('desktop drill-down consumers use remote search and cursor navigation instead of direct unbounded fetches', async () => {
   const frontendFile = (path) => readFile(new URL(`../../frontend/src/${path}`, import.meta.url), 'utf8')
-  const [dashboard, campaigns, reports, analytics, visitorModal] = await Promise.all([
+  const [dashboard, campaigns, reports, analytics, analyticsService, trackingClient, visitorModal] = await Promise.all([
     frontendFile('pages/Dashboard/Dashboard.tsx'),
     frontendFile('pages/Campaigns/Campaigns.tsx'),
     frontendFile('pages/Reports/Reports.tsx'),
     frontendFile('pages/Analytics/Analytics.tsx'),
+    frontendFile('services/analyticsService.ts'),
+    frontendFile('services/trackingService.ts'),
     frontendFile('components/common/VisitorDetailsModal/VisitorDetailsModal.tsx')
   ])
 
@@ -564,7 +721,11 @@ test('desktop drill-down consumers use remote search and cursor navigation inste
     assert.match(source, /getVisitorsPage/)
     assert.match(source, /onPageChange=/)
     assert.match(source, /onSearchChange=/)
+    assert.match(source, /trackingVisitorsCoverageNotice\(result\.coverage\)/)
+    assert.match(source, /result\.items\.length > 0 \|\| !coverageNotice/)
   }
+  assert.match(analyticsService, /AnalyticsVisitorsCoverage = TrackingVisitorsCoverage/)
+  assert.match(trackingClient, /coverage\?: TrackingVisitorsCoverage/)
   assert.match(analytics, /getContactConversionContacts\(/)
   assert.match(analytics, /handleConversionContactPageChange/)
   assert.match(analytics, /handleConversionContactSearch/)

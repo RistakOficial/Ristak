@@ -81,6 +81,40 @@ export interface ReportsSummary {
   campaigns: CampaignsReport['summary']
 }
 
+export interface ReportsSnapshotSummary {
+  payments: Pick<PaymentsReport['summary'],
+    | 'totalRevenue'
+    | 'totalRevenuePrev'
+    | 'completedPayments'
+    | 'completedPaymentsPrev'
+    | 'averageTicket'
+    | 'averageTicketPrev'
+  >
+  campaigns: Pick<CampaignsReport['summary'],
+    | 'spend'
+    | 'spendPrev'
+    | 'clicks'
+    | 'clicksPrev'
+    | 'reach'
+    | 'reachPrev'
+    | 'roas'
+    | 'roasPrev'
+  >
+}
+
+export interface ReportsSnapshot {
+  metrics: ReportMetricRow[]
+  range: ReportRange
+  summary: ReportsSnapshotSummary
+  cache: {
+    stale: boolean
+    exactAtBuiltAt: boolean
+    builtAt: string
+    builtSourceRevision: string
+    currentSourceRevision: string
+  }
+}
+
 export interface ReportMetricRow {
   date: string
   spend: number
@@ -158,6 +192,8 @@ export interface ContactListItem {
   attributed: boolean
   payments?: ContactPaymentDetail[]
   appointments?: ContactAppointmentDetail[]
+  appointmentsTotal?: number
+  appointmentsTruncated?: boolean
   firstSession?: ContactFirstSessionDetail | null
   normalizedPhone?: string | null
   duplicateCount?: number
@@ -223,6 +259,26 @@ export interface ReportTransactionsPage {
 }
 
 class ReportsService {
+  async getSnapshot(
+    params: {
+      from?: string
+      to?: string
+      groupBy?: GroupBy
+      scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'
+      waitForFresh?: boolean
+    },
+    signal?: AbortSignal
+  ): Promise<ReportsSnapshot> {
+    const query: Record<string, string> = {}
+    if (params.from) query.from = params.from
+    if (params.to) query.to = params.to
+    if (params.groupBy) query.groupBy = params.groupBy
+    if (params.scope) query.scope = params.scope
+    if (params.waitForFresh) query.waitForFresh = '1'
+
+    return apiClient.get<ReportsSnapshot>('/reports/snapshot', { params: query, signal })
+  }
+
   async getMetrics(params: { from?: string; to?: string; groupBy?: GroupBy; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<{ metrics: ReportMetricRow[]; range: ReportRange }> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from

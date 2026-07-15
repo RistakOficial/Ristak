@@ -97,6 +97,7 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
 ])
 
 let stripeFactoryForTest = null
+const stripePaymentMethodRefreshFlights = new Map()
 
 export function setStripeFactoryForTest(factory) {
   stripeFactoryForTest = typeof factory === 'function' ? factory : null
@@ -1014,7 +1015,9 @@ export async function getStripeClient(mode = '') {
   return {
     config,
     stripe: getStripeInstance(config.secretKey),
-    requestOptions: undefined
+    // Ninguna interacción del CRM debe quedar esperando indefinidamente a Stripe.
+    // Stripe combina estas opciones con idempotencyKey en las operaciones de escritura.
+    requestOptions: { timeout: 8000, maxNetworkRetries: 1 }
   }
 }
 
@@ -1350,12 +1353,10 @@ function mapStripePaymentMethod(row) {
   }
 }
 
-async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymentMethodId, mode, makeDefault = true, requestOptions = undefined }) {
-  const cleanPaymentMethodId = cleanString(paymentMethodId)
+async function persistStripePaymentMethodSnapshot({ paymentMethod, contactId, customerId, mode, makeDefault = true }) {
+  const cleanPaymentMethodId = cleanString(paymentMethod?.id)
   const cleanCustomerId = extractStripeObjectId(customerId)
-  if (!stripe || !cleanPaymentMethodId || !cleanCustomerId) return null
-
-  const paymentMethod = await stripe.paymentMethods.retrieve(cleanPaymentMethodId, requestOptions)
+  if (!cleanPaymentMethodId || !cleanCustomerId) return null
   if (paymentMethod?.type !== 'card' || !paymentMethod.card) return null
 
   const existing = await db.get(
@@ -1425,6 +1426,21 @@ async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymen
   )
 
   return db.get('SELECT * FROM stripe_payment_methods WHERE stripe_payment_method_id = ?', [paymentMethod.id])
+}
+
+async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymentMethodId, mode, makeDefault = true, requestOptions = undefined }) {
+  const cleanPaymentMethodId = cleanString(paymentMethodId)
+  const cleanCustomerId = extractStripeObjectId(customerId)
+  if (!stripe || !cleanPaymentMethodId || !cleanCustomerId) return null
+
+  const paymentMethod = await stripe.paymentMethods.retrieve(cleanPaymentMethodId, requestOptions)
+  return persistStripePaymentMethodSnapshot({
+    paymentMethod,
+    contactId,
+    customerId: cleanCustomerId,
+    mode,
+    makeDefault
+  })
 }
 
 async function rememberStripePaymentMethodFromIntent(stripe, intent, paymentRow, config, requestOptions = undefined) {
@@ -3365,6 +3381,19 @@ async function updatePaymentFromRefundedCharge(charge) {
 }
 
 export async function getStripeSavedPaymentMethods(contactId) {
+  const config = await getStripePaymentConfig()
+  const contact = await getStripeContact(contactId)
+  if (!contact) {
+    const error = new Error('Contacto no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const rows = await getStoredStripePaymentMethodRows(contact.id, config.mode)
+  return (rows || []).map(mapStripePaymentMethod).filter(Boolean)
+}
+
+async function performStripeSavedPaymentMethodsRefresh(contactId) {
   const { stripe, config, requestOptions } = await getStripeClient()
   const contact = await getStripeContact(contactId)
   if (!contact) {
@@ -3392,25 +3421,61 @@ export async function getStripeSavedPaymentMethods(contactId) {
         requestOptions
       )
 
-      for (const method of methods.data || []) {
-        await upsertStripePaymentMethod({
-          stripe,
+      const remoteMethods = (methods.data || []).filter((method) => method?.type === 'card' && method.card)
+      for (const method of remoteMethods) {
+        await persistStripePaymentMethodSnapshot({
+          paymentMethod: method,
           contactId: contact.id,
           customerId: stripeCustomerId,
-          paymentMethodId: method.id,
           mode: config.mode,
-          makeDefault: false,
-          requestOptions
+          makeDefault: false
         })
       }
+
+      const remoteIds = remoteMethods.map((method) => cleanString(method.id)).filter(Boolean)
+      const staleParams = [contact.id, config.mode, stripeCustomerId]
+      await db.run(
+        `DELETE FROM stripe_payment_methods
+         WHERE contact_id = ? AND mode = ? AND stripe_customer_id = ?
+         ${remoteIds.length ? `AND stripe_payment_method_id NOT IN (${remoteIds.map(() => '?').join(', ')})` : ''}`,
+        [...staleParams, ...remoteIds]
+      )
     } catch (error) {
       if (error?.statusCode !== 404) throw error
+      await db.run(
+        `DELETE FROM stripe_payment_methods
+         WHERE contact_id = ? AND mode = ? AND stripe_customer_id = ?`,
+        [contact.id, config.mode, stripeCustomerId]
+      )
     }
   }
 
   const rows = await getStoredStripePaymentMethodRows(contact.id, config.mode)
 
   return (rows || []).map(mapStripePaymentMethod).filter(Boolean)
+}
+
+export async function refreshStripeSavedPaymentMethods(contactId) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) {
+    const error = new Error('Contacto no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  const config = await getStripePaymentConfig()
+  const key = `${normalizeMode(config.mode)}:${cleanContactId}`
+  const current = stripePaymentMethodRefreshFlights.get(key)
+  if (current) return current
+
+  const flight = performStripeSavedPaymentMethodsRefresh(cleanContactId)
+    .finally(() => {
+      if (stripePaymentMethodRefreshFlights.get(key) === flight) {
+        stripePaymentMethodRefreshFlights.delete(key)
+      }
+    })
+  stripePaymentMethodRefreshFlights.set(key, flight)
+  return flight
 }
 
 function mapSavedCardPayment(row) {

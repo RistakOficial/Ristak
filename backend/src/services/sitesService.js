@@ -173,10 +173,16 @@ export const SITE_TYPES = new Set(['standard_form', 'interactive_form', 'landing
 const FORM_SITE_TYPES = new Set(['standard_form', 'interactive_form'])
 export const SITE_STATUSES = new Set(['draft', 'published', 'archived'])
 const SITE_LIBRARY_FOLDER_SECTIONS = new Set(['landings', 'forms'])
+const SITE_LIBRARY_ROOT_ID = '__root__'
+const SITE_LIBRARY_SITE_FORMS_FOLDER_ID = 'system-site-forms'
 const SITE_LIBRARY_HTML_FORMS_FOLDER_ID = 'system-html-forms'
+const SITE_LIBRARY_VIDEO_FORMS_FOLDER_ID = 'system-video-forms'
+const SITE_LIBRARY_CALENDAR_FORMS_FOLDER_ID = 'system-calendar-forms'
 const SITE_LIBRARY_SOURCE_HTML = 'html'
 const SITE_LIST_DEFAULT_LIMIT = 100
 const SITE_LIST_MAX_LIMIT = 200
+const SITE_LIBRARY_PAGE_VIEWS = new Set(['landing_library', 'form_library'])
+const SITE_ANALYTICS_SELECTOR_TYPES = new Set(['sites', 'forms', 'videos'])
 export const CONTENT_BLOCK_TYPES = new Set([
   'headline',
   'subheading',
@@ -8336,12 +8342,13 @@ async function ensureCalendarBookingSystemForm() {
 
 let calendarBookingSystemFormEnsurePromise = null
 
-async function ensureCalendarBookingSystemFormOnce() {
+export async function ensureCalendarBookingSystemFormOnce() {
   if (!calendarBookingSystemFormEnsurePromise) {
     calendarBookingSystemFormEnsurePromise = ensureCalendarBookingSystemForm()
       .catch(error => {
         calendarBookingSystemFormEnsurePromise = null
         logger.warn(`No se pudo asegurar formulario de calendario: ${error.message}`)
+        throw error
       })
   }
   await calendarBookingSystemFormEnsurePromise
@@ -8353,30 +8360,193 @@ function normalizeSiteListLimit(value) {
   return Math.min(SITE_LIST_MAX_LIMIT, parsed)
 }
 
-function encodeSiteListCursor(row = {}) {
-  const updatedAt = row.updated_at instanceof Date
-    ? row.updated_at.toISOString()
-    : cleanString(row.updated_at)
-  const id = cleanString(row.id)
-  if (!updatedAt || !id) return ''
-  return Buffer.from(JSON.stringify({ updatedAt, id }), 'utf8').toString('base64url')
+function getSiteListCursorSortExpression(alias = 's') {
+  return databaseDialect === 'postgres'
+    ? `COALESCE(${alias}.updated_at, ${alias}.created_at, TIMESTAMP '1970-01-01 00:00:00')`
+    : `COALESCE(${alias}.updated_at, ${alias}.created_at, '1970-01-01 00:00:00')`
 }
 
-function decodeSiteListCursor(value = '') {
+function getSiteListCursorProjectionExpression(alias = 's') {
+  const timestampExpression = getSiteListCursorSortExpression(alias)
+  return databaseDialect === 'postgres'
+    ? `(${timestampExpression})::text`
+    : timestampExpression
+}
+
+function sitePaginationCursorError() {
+  const error = new Error('Cursor de Sites inválido')
+  error.status = 400
+  error.code = 'invalid_sites_cursor'
+  return error
+}
+
+function siteCursorScope(payload = {}) {
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('base64url')
+}
+
+function encodeSiteListCursor(row = {}, scope = '') {
+  const cursorUpdatedAt = row.cursor_updated_at ?? row.updated_at
+  const updatedAt = cursorUpdatedAt instanceof Date
+    ? cursorUpdatedAt.toISOString()
+    : cleanString(cursorUpdatedAt)
+  const id = cleanString(row.id)
+  if (!updatedAt || !id) return ''
+  return Buffer.from(JSON.stringify({ v: 2, scope, updatedAt, id }), 'utf8').toString('base64url')
+}
+
+function decodeSiteListCursor(value = '', expectedScope = '') {
   const encoded = cleanString(value)
-  if (!encoded || encoded.length > 600) return null
+  if (!encoded) return null
+  if (encoded.length > 600) throw sitePaginationCursorError()
   try {
     const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
     const updatedAt = cleanString(parsed?.updatedAt)
     const id = cleanString(parsed?.id)
-    return updatedAt && id ? { updatedAt, id } : null
-  } catch {
-    return null
+    const legacyCursor = parsed?.v === undefined && !parsed?.scope
+    if (
+      !updatedAt || updatedAt.length > 100 || !Number.isFinite(Date.parse(updatedAt)) ||
+      !id || id.length > 300 ||
+      (!legacyCursor && (parsed?.v !== 2 || !expectedScope || parsed?.scope !== expectedScope))
+    ) throw sitePaginationCursorError()
+    return { updatedAt, id }
+  } catch (error) {
+    if (error?.code === 'invalid_sites_cursor') throw error
+    throw sitePaginationCursorError()
   }
 }
 
+function getSafeSiteJsonExpression(column) {
+  return databaseDialect === 'postgres'
+    ? `ristak_safe_jsonb(${column})`
+    : `(CASE WHEN json_valid(${column}) THEN ${column} ELSE '{}' END)`
+}
+
+function getSitePageModeSqlExpression(alias = 'ps') {
+  const column = `${alias}.theme_json`
+  if (databaseDialect === 'postgres') {
+    return `COALESCE(ristak_safe_jsonb(${column}) ->> 'pageMode', 'funnel')`
+  }
+  return `CASE
+    WHEN json_valid(${column})
+      THEN COALESCE(json_extract(${column}, '$.pageMode'), 'funnel')
+    ELSE 'funnel'
+  END`
+}
+
+function getSiteLibraryJsonTextExpression(alias = 's', key = '') {
+  const source = getSafeSiteJsonExpression(`${alias}.theme_json`)
+  return databaseDialect === 'postgres'
+    ? `BTRIM(COALESCE(${source} ->> '${key}', ''))`
+    : `TRIM(CAST(COALESCE(json_extract(${source}, '$.${key}'), '') AS TEXT))`
+}
+
+function getSiteLibrarySourceSqlExpression(alias = 's') {
+  const librarySource = `LOWER(${getSiteLibraryJsonTextExpression(alias, 'librarySource')})`
+  const importedHtmlSource = getSiteLibraryJsonTextExpression(alias, 'importedHtmlSource')
+  const importedHtml = getSiteLibraryJsonTextExpression(alias, 'importedHtml')
+  return `CASE
+    WHEN ${librarySource} IN ('site_embed', 'html', 'video_gate', 'calendar', 'manual') THEN ${librarySource}
+    WHEN ${importedHtmlSource} != '' OR ${importedHtml} != '' THEN 'html'
+    ELSE 'manual'
+  END`
+}
+
+function getSiteLibraryFolderSqlExpression(alias = 's', libraryView = 'landing_library') {
+  const explicitFolder = `NULLIF(${getSiteLibraryJsonTextExpression(alias, 'libraryFolderId')}, '')`
+  if (libraryView === 'landing_library') {
+    return `COALESCE(${explicitFolder}, '${SITE_LIBRARY_ROOT_ID}')`
+  }
+
+  const librarySource = getSiteLibrarySourceSqlExpression(alias)
+  return `COALESCE(
+    ${explicitFolder},
+    CASE ${librarySource}
+      WHEN 'site_embed' THEN '${SITE_LIBRARY_SITE_FORMS_FOLDER_ID}'
+      WHEN 'html' THEN '${SITE_LIBRARY_HTML_FORMS_FOLDER_ID}'
+      WHEN 'video_gate' THEN '${SITE_LIBRARY_VIDEO_FORMS_FOLDER_ID}'
+      WHEN 'calendar' THEN '${SITE_LIBRARY_CALENDAR_FORMS_FOLDER_ID}'
+      ELSE '${SITE_LIBRARY_ROOT_ID}'
+    END
+  )`
+}
+
+function getSiteLibrarySearchDocumentSqlExpression(alias = 's') {
+  return `LOWER(
+    COALESCE(${alias}.id, '') || ' ' ||
+    COALESCE(${alias}.name, '') || ' ' ||
+    COALESCE(${alias}.title, '') || ' ' ||
+    COALESCE(${alias}.description, '') || ' ' ||
+    COALESCE(${alias}.slug, '') || ' ' ||
+    COALESCE(${alias}.domain, '') || ' ' ||
+    COALESCE(${alias}.site_type, '') || ' ' ||
+    COALESCE(${alias}.status, '')
+  )`
+}
+
+function escapeSiteLibraryLikePattern(value = '') {
+  return String(value || '')
+    .replaceAll('!', '!!')
+    .replaceAll('%', '!%')
+    .replaceAll('_', '!_')
+}
+
+function normalizeSiteLibrarySearch(value = '') {
+  const search = cleanString(value).slice(0, 160)
+  const searchableCharacters = search.match(/[\p{L}\p{N}]/gu)?.length || 0
+  return searchableCharacters >= 3 ? search : ''
+}
+
+function normalizeSiteLibraryFolderFilter(value) {
+  if (value === undefined || value === null) return null
+  return cleanString(value).slice(0, 180) || SITE_LIBRARY_ROOT_ID
+}
+
+function getSiteLibraryBaseScope(libraryView, alias = 's') {
+  if (libraryView === 'landing_library') {
+    return {
+      clauses: [`${alias}.site_type = 'landing_page'`],
+      params: []
+    }
+  }
+
+  return {
+    clauses: [
+      `${alias}.site_type IN ('standard_form', 'interactive_form')`,
+      `${alias}.id != ?`,
+      `${getSiteLibrarySourceSqlExpression(alias)} != 'calendar'`
+    ],
+    params: [CALENDAR_DEFAULT_FORM_SITE_ID]
+  }
+}
+
+async function getSiteLibraryFacets(libraryView) {
+  const baseScope = getSiteLibraryBaseScope(libraryView)
+  const folderExpression = getSiteLibraryFolderSqlExpression('s', libraryView)
+  const rows = await db.all(`
+    SELECT scoped.folder_id, COUNT(*) AS entity_count
+    FROM (
+      SELECT ${folderExpression} AS folder_id
+      FROM public_sites s
+      WHERE ${baseScope.clauses.join(' AND ')}
+    ) scoped
+    GROUP BY scoped.folder_id
+  `, baseScope.params)
+  const folderCounts = {}
+  let total = 0
+  for (const row of rows) {
+    const folderId = cleanString(row.folder_id) || SITE_LIBRARY_ROOT_ID
+    const count = Number(row.entity_count || 0)
+    folderCounts[folderId] = count
+    total += count
+  }
+  if (!Object.prototype.hasOwnProperty.call(folderCounts, SITE_LIBRARY_ROOT_ID)) {
+    folderCounts[SITE_LIBRARY_ROOT_ID] = 0
+  }
+  return { total, folderCounts }
+}
+
 function getSiteSummaryThemeExpression(alias = 's') {
-  const source = `COALESCE(NULLIF(${alias}.theme_json, ''), '{}')`
+  const source = getSafeSiteJsonExpression(`${alias}.theme_json`)
   const keys = [
     'accentColor',
     'backgroundColor',
@@ -8393,8 +8563,7 @@ function getSiteSummaryThemeExpression(alias = 's') {
   ]
 
   if (databaseDialect === 'postgres') {
-    const jsonSource = `(${source})::jsonb`
-    const pairs = keys.map(key => `'${key}', ${jsonSource} -> '${key}'`).join(', ')
+    const pairs = keys.map(key => `'${key}', ${source} -> '${key}'`).join(', ')
     return `jsonb_strip_nulls(jsonb_build_object(${pairs}))::text`
   }
 
@@ -8403,14 +8572,15 @@ function getSiteSummaryThemeExpression(alias = 's') {
 }
 
 function getSiteSelectorThemeExpression(alias = 's', selectorView = 'form_selector') {
-  const source = `COALESCE(NULLIF(${alias}.theme_json, ''), '{}')`
-  const keys = selectorView === 'domain_selector'
-    ? ['pages', 'paymentGate']
-    : ['paymentGate', 'libraryFolderId', 'librarySource', 'calendarSystemForm']
+  const source = getSafeSiteJsonExpression(`${alias}.theme_json`)
+  const keys = selectorView === 'analytics_selector'
+    ? ['pageMode', 'librarySource']
+    : selectorView === 'domain_selector' || selectorView === 'landing_selector'
+      ? ['pages', 'paymentGate']
+      : ['paymentGate', 'libraryFolderId', 'librarySource', 'calendarSystemForm']
 
   if (databaseDialect === 'postgres') {
-    const jsonSource = `(${source})::jsonb`
-    const pairs = keys.map(key => `'${key}', ${jsonSource} -> '${key}'`).join(', ')
+    const pairs = keys.map(key => `'${key}', ${source} -> '${key}'`).join(', ')
     return `jsonb_strip_nulls(jsonb_build_object(${pairs}))::text`
   }
 
@@ -8418,23 +8588,164 @@ function getSiteSelectorThemeExpression(alias = 's', selectorView = 'form_select
   return `json_object(${pairs})`
 }
 
-async function listSiteSelectorPage({ limit, cursor = '', view }) {
+function normalizeAnalyticsSelectorSiteType(value = 'sites') {
+  const siteType = cleanString(value).toLowerCase()
+  return SITE_ANALYTICS_SELECTOR_TYPES.has(siteType) ? siteType : 'sites'
+}
+
+function normalizeAnalyticsSelectorLandingMode(value = 'all') {
+  const landingMode = cleanString(value).toLowerCase()
+  return ['website', 'funnel'].includes(landingMode) ? landingMode : ''
+}
+
+function buildAnalyticsSiteSelectorScope({
+  siteType = 'sites',
+  landingMode = 'all',
+  alias = 's',
+  requireVideoAsset = true
+} = {}) {
+  const normalizedSiteType = normalizeAnalyticsSelectorSiteType(siteType)
+  const normalizedLandingMode = normalizeAnalyticsSelectorLandingMode(landingMode)
+  const clauses = [`${alias}.status = 'published'`]
+  const params = []
+
+  if (normalizedSiteType === 'forms') {
+    clauses.push(`${alias}.site_type IN ('standard_form', 'interactive_form')`)
+    clauses.push(`${alias}.id != ?`)
+    clauses.push(`${getSiteLibrarySourceSqlExpression(alias)} != 'calendar'`)
+    params.push(CALENDAR_DEFAULT_FORM_SITE_ID)
+  } else if (normalizedSiteType === 'sites') {
+    clauses.push(`${alias}.site_type = 'landing_page'`)
+    if (normalizedLandingMode) {
+      clauses.push(`${getSitePageModeSqlExpression(alias)} = ?`)
+      params.push(normalizedLandingMode)
+    }
+  } else if (requireVideoAsset) {
+    clauses.push(`EXISTS (
+      SELECT 1
+      FROM media_assets analytics_media
+      WHERE analytics_media.module_entity_id = ${alias}.id
+        AND analytics_media.module IN ('sites', 'forms')
+        AND analytics_media.media_type = 'video'
+        AND analytics_media.status = 'ready'
+        AND analytics_media.deleted_at IS NULL
+    )`)
+  }
+
+  return {
+    clauses,
+    params,
+    siteType: normalizedSiteType,
+    landingMode: normalizedLandingMode
+  }
+}
+
+async function listSiteSelectorPage({
+  limit,
+  cursor = '',
+  view,
+  search = '',
+  siteType = 'sites',
+  landingMode = 'all'
+}) {
   const pageLimit = normalizeSiteListLimit(limit ?? SITE_LIST_MAX_LIMIT)
-  const decodedCursor = decodeSiteListCursor(cursor)
-  const cursorClause = decodedCursor
-    ? '(s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))'
-    : ''
-  const scopeClause = view === 'form_selector'
-    ? "s.site_type IN ('standard_form', 'interactive_form') AND s.status != 'archived'"
-    : '1 = 1'
-  const whereClause = [scopeClause, cursorClause].filter(Boolean).join(' AND ')
-  const queryParams = decodedCursor
-    ? [decodedCursor.updatedAt, decodedCursor.updatedAt, decodedCursor.id, pageLimit + 1]
-    : [pageLimit + 1]
+  const normalizedSearch = normalizeSiteLibrarySearch(search)
+  const cursorScope = siteCursorScope({
+    kind: 'site-selector',
+    view,
+    search: normalizedSearch.toLowerCase(),
+    siteType: view === 'analytics_selector' ? normalizeAnalyticsSelectorSiteType(siteType) : '',
+    landingMode: view === 'analytics_selector' ? normalizeAnalyticsSelectorLandingMode(landingMode) : ''
+  })
+  const decodedCursor = decodeSiteListCursor(cursor, cursorScope)
+  const cursorTimestampExpression = getSiteListCursorSortExpression('s')
+  const predicates = []
+  const queryParams = []
+
+  if (view === 'analytics_selector') {
+    const analyticsScope = buildAnalyticsSiteSelectorScope({ siteType, landingMode })
+    predicates.push(...analyticsScope.clauses)
+    queryParams.push(...analyticsScope.params)
+    if (normalizedSearch) {
+      predicates.push(`${getSiteLibrarySearchDocumentSqlExpression('s')} LIKE ? ESCAPE '!'`)
+      queryParams.push(`%${escapeSiteLibraryLikePattern(normalizedSearch.toLowerCase())}%`)
+    }
+  } else if (view === 'form_selector') {
+    predicates.push("s.site_type IN ('standard_form', 'interactive_form') AND s.status != 'archived'")
+  } else if (view === 'landing_selector') {
+    predicates.push("s.site_type = 'landing_page' AND s.status != 'archived'")
+  } else {
+    predicates.push('1 = 1')
+  }
+
+  if (normalizedSearch && view !== 'analytics_selector') {
+    predicates.push(`${getSiteLibrarySearchDocumentSqlExpression('s')} LIKE ? ESCAPE '!'`)
+    queryParams.push(`%${escapeSiteLibraryLikePattern(normalizedSearch.toLowerCase())}%`)
+  }
+
+  if (decodedCursor) {
+    predicates.push(`(${cursorTimestampExpression} < ? OR (${cursorTimestampExpression} = ? AND s.id < ?))`)
+    queryParams.push(decodedCursor.updatedAt, decodedCursor.updatedAt, decodedCursor.id)
+  }
+  queryParams.push(pageLimit + 1)
+  const whereClause = predicates.join(' AND ')
   const themeExpression = getSiteSelectorThemeExpression('s', view)
 
-  // Este contrato existe para combos de configuración. No agrega submissions ni
-  // tracking: cargar un selector nunca debe escanear la actividad histórica.
+  // Este contrato existe para combos de configuración y Analíticas. No agrega
+  // submissions ni tracking: cargar un selector nunca escanea actividad histórica.
+  const rows = await db.all(`
+    SELECT
+      s.id,
+      s.name,
+      s.slug,
+      s.site_type,
+      s.status,
+      s.domain,
+      s.title,
+      s.description,
+      ${themeExpression} AS theme_json,
+      s.anti_tracking_enabled,
+      s.meta_capi_enabled,
+      s.meta_event_name,
+      s.render_domain_verified,
+      s.render_domain_checked_at,
+      s.render_domain_error,
+      s.published_at,
+      s.created_at,
+      s.updated_at,
+      ${getSiteListCursorProjectionExpression('s')} AS cursor_updated_at
+    FROM public_sites s
+    WHERE ${whereClause}
+    ORDER BY ${cursorTimestampExpression} DESC, s.id DESC
+    LIMIT ?
+  `, queryParams)
+
+  const hasMore = rows.length > pageLimit
+  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
+  return {
+    items: pageRows.map(mapSiteSummary).filter(Boolean),
+    hasMore,
+    nextCursor: hasMore ? encodeSiteListCursor(pageRows[pageRows.length - 1], cursorScope) : '',
+    limit: pageLimit
+  }
+}
+
+const SITE_SELECTOR_VIEW_BY_KIND = Object.freeze({
+  domain: 'domain_selector',
+  forms: 'form_selector',
+  landings: 'landing_selector'
+})
+
+function normalizeSiteSelectorIds(values = []) {
+  const source = Array.isArray(values) ? values : String(values || '').split(',')
+  return [...new Set(source.map(cleanString).filter(Boolean))].slice(0, 50)
+}
+
+async function hydrateSiteSelectorIds(ids, view) {
+  const normalizedIds = normalizeSiteSelectorIds(ids)
+  if (!normalizedIds.length) return []
+  const placeholders = normalizedIds.map(() => '?').join(', ')
+  const themeExpression = getSiteSelectorThemeExpression('s', view)
   const rows = await db.all(`
     SELECT
       s.id,
@@ -8456,19 +8767,31 @@ async function listSiteSelectorPage({ limit, cursor = '', view }) {
       s.created_at,
       s.updated_at
     FROM public_sites s
-    WHERE ${whereClause}
-    ORDER BY s.updated_at DESC, s.id DESC
-    LIMIT ?
-  `, queryParams)
+    WHERE s.id IN (${placeholders})
+  `, normalizedIds)
+  const byId = new Map(rows.map(row => [cleanString(row.id), mapSiteSummary(row)]))
+  return normalizedIds.map(id => byId.get(id)).filter(Boolean)
+}
 
-  const hasMore = rows.length > pageLimit
-  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
-  return {
-    items: pageRows.map(mapSiteSummary).filter(Boolean),
-    hasMore,
-    nextCursor: hasMore ? encodeSiteListCursor(pageRows[pageRows.length - 1]) : '',
-    limit: pageLimit
-  }
+/**
+ * Catálogo server-side para combos de Configuración. Limita cada página a 50
+ * summaries y permite hidratar los IDs ya guardados sin recorrer el catálogo.
+ */
+export async function listSiteSelectors({
+  kind = 'domain',
+  limit = 30,
+  cursor = '',
+  search = '',
+  selectedIds = []
+} = {}) {
+  const normalizedKind = Object.prototype.hasOwnProperty.call(SITE_SELECTOR_VIEW_BY_KIND, kind) ? kind : 'domain'
+  const view = SITE_SELECTOR_VIEW_BY_KIND[normalizedKind]
+  const pageLimit = Math.min(50, Math.max(1, Number.parseInt(String(limit || 30), 10) || 30))
+  const [page, selectedItems] = await Promise.all([
+    listSiteSelectorPage({ limit: pageLimit, cursor, view, search }),
+    hydrateSiteSelectorIds(selectedIds, view)
+  ])
+  return { ...page, selectedItems }
 }
 
 /**
@@ -8478,25 +8801,77 @@ async function listSiteSelectorPage({ limit, cursor = '', view }) {
  * `paginated: false` conserva el contrato histórico de arreglo, pero también lo
  * acota al máximo operativo para impedir respuestas sin límite.
  */
-export async function listSites({ limit, cursor = '', paginated = false, view = 'library' } = {}) {
-  await ensureCalendarBookingSystemFormOnce()
-
-  if (view === 'domain_selector' || view === 'form_selector') {
-    return listSiteSelectorPage({ limit, cursor, view })
+export async function listSites({
+  limit,
+  cursor = '',
+  paginated = false,
+  view = 'library',
+  search = '',
+  siteType = 'sites',
+  landingMode = 'all',
+  folderId,
+  includeFacets
+} = {}) {
+  const normalizedView = cleanString(view) || 'library'
+  if (
+    normalizedView === 'domain_selector' ||
+    normalizedView === 'form_selector' ||
+    normalizedView === 'landing_selector' ||
+    normalizedView === 'analytics_selector'
+  ) {
+    return listSiteSelectorPage({
+      limit,
+      cursor,
+      view: normalizedView,
+      search,
+      siteType,
+      landingMode
+    })
   }
 
-  const pageLimit = normalizeSiteListLimit(limit ?? (paginated ? SITE_LIST_DEFAULT_LIMIT : SITE_LIST_MAX_LIMIT))
-  const decodedCursor = decodeSiteListCursor(cursor)
-  const cursorClause = decodedCursor
-    ? 'WHERE (s.updated_at < ? OR (s.updated_at = ? AND s.id < ?))'
-    : ''
-  const queryParams = decodedCursor
-    ? [decodedCursor.updatedAt, decodedCursor.updatedAt, decodedCursor.id, pageLimit + 1]
-    : [pageLimit + 1]
-  const summaryThemeExpression = getSiteSummaryThemeExpression('s')
+  const libraryView = SITE_LIBRARY_PAGE_VIEWS.has(normalizedView) ? normalizedView : 'library'
+  const scopedLibraryView = SITE_LIBRARY_PAGE_VIEWS.has(libraryView)
+  const pageLimit = normalizeSiteListLimit(limit ?? (paginated || scopedLibraryView ? SITE_LIST_DEFAULT_LIMIT : SITE_LIST_MAX_LIMIT))
+  const normalizedSearch = normalizeSiteLibrarySearch(search)
+  const normalizedFolderId = normalizeSiteLibraryFolderFilter(folderId)
+  const effectiveFolderId = scopedLibraryView && !normalizedSearch ? normalizedFolderId : null
+  const cursorScope = siteCursorScope({
+    kind: 'site-library',
+    view: libraryView,
+    search: scopedLibraryView ? normalizedSearch.toLowerCase() : '',
+    folderId: effectiveFolderId
+  })
+  const decodedCursor = decodeSiteListCursor(cursor, cursorScope)
+  const cursorTimestampExpression = getSiteListCursorSortExpression('s')
+  const baseScope = scopedLibraryView
+    ? getSiteLibraryBaseScope(libraryView)
+    : { clauses: [], params: [] }
+  const predicates = [...baseScope.clauses]
+  const queryParams = [...baseScope.params]
 
-  const rows = await db.all(`
-    WITH paged_sites AS (
+  if (scopedLibraryView && normalizedSearch) {
+    predicates.push(`${getSiteLibrarySearchDocumentSqlExpression('s')} LIKE ? ESCAPE '!'`)
+    queryParams.push(`%${escapeSiteLibraryLikePattern(normalizedSearch.toLowerCase())}%`)
+  } else if (scopedLibraryView && effectiveFolderId !== null) {
+    predicates.push(`${getSiteLibraryFolderSqlExpression('s', libraryView)} = ?`)
+    queryParams.push(effectiveFolderId)
+  }
+
+  if (decodedCursor) {
+    predicates.push(`(${cursorTimestampExpression} < ? OR (${cursorTimestampExpression} = ? AND s.id < ?))`)
+    queryParams.push(decodedCursor.updatedAt, decodedCursor.updatedAt, decodedCursor.id)
+  }
+  const whereClause = predicates.length > 0 ? `WHERE ${predicates.join(' AND ')}` : ''
+  const summaryThemeExpression = getSiteSummaryThemeExpression('s')
+  const wantsFacets = scopedLibraryView && (
+    includeFacets === undefined
+      ? !cleanString(cursor)
+      : includeFacets === true || includeFacets === 'true' || includeFacets === '1'
+  )
+
+  const [rows, facets] = await Promise.all([
+    db.all(`
+      WITH paged_sites AS (
       SELECT
         s.id,
         s.name,
@@ -8515,10 +8890,11 @@ export async function listSites({ limit, cursor = '', paginated = false, view = 
         s.render_domain_error,
         s.published_at,
         s.created_at,
-        s.updated_at
+        s.updated_at,
+        ${getSiteListCursorProjectionExpression('s')} AS cursor_updated_at
       FROM public_sites s
-      ${cursorClause}
-      ORDER BY s.updated_at DESC, s.id DESC
+      ${whereClause}
+      ORDER BY ${cursorTimestampExpression} DESC, s.id DESC
       LIMIT ?
     ),
     scoped_submissions AS (
@@ -8583,8 +8959,10 @@ export async function listSites({ limit, cursor = '', paginated = false, view = 
     FROM paged_sites ps
     LEFT JOIN submission_metrics sm ON sm.resolved_site_id = ps.id
     LEFT JOIN tracking_metrics tm ON tm.resolved_site_id = ps.id
-    ORDER BY ps.updated_at DESC, ps.id DESC
-  `, queryParams)
+      ORDER BY ${getSiteListCursorSortExpression('ps')} DESC, ps.id DESC
+    `, [...queryParams, pageLimit + 1]),
+    wantsFacets ? getSiteLibraryFacets(libraryView) : Promise.resolve(null)
+  ])
 
   const hasMore = rows.length > pageLimit
   const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
@@ -8592,11 +8970,15 @@ export async function listSites({ limit, cursor = '', paginated = false, view = 
   const page = {
     items,
     hasMore,
-    nextCursor: hasMore ? encodeSiteListCursor(pageRows[pageRows.length - 1]) : '',
-    limit: pageLimit
+    nextCursor: hasMore ? encodeSiteListCursor(pageRows[pageRows.length - 1], cursorScope) : '',
+    limit: pageLimit,
+    facets
   }
 
-  return paginated ? page : items
+  // Las vistas por biblioteca nacen paginadas. El arreglo legacy se conserva
+  // exclusivamente para `view=library`, de modo que consumidores históricos no
+  // cambien de contrato mientras landings/forms pueden recorrer su cursor propio.
+  return paginated || scopedLibraryView ? page : items
 }
 
 function normalizeSitesVideoListLimit(value) {
@@ -8605,25 +8987,33 @@ function normalizeSitesVideoListLimit(value) {
   return Math.min(100, parsed)
 }
 
-function encodeSitesVideoListCursor(row = {}) {
+function encodeSitesVideoListCursor(row = {}, scope = '') {
   const createdAt = row.cursor_created_at instanceof Date
     ? row.cursor_created_at.toISOString()
     : cleanString(row.cursor_created_at)
   const id = cleanString(row.id)
   if (!createdAt || !id) return ''
-  return Buffer.from(JSON.stringify({ createdAt, id }), 'utf8').toString('base64url')
+  return Buffer.from(JSON.stringify({ v: 2, scope, createdAt, id }), 'utf8').toString('base64url')
 }
 
-function decodeSitesVideoListCursor(value = '') {
+function decodeSitesVideoListCursor(value = '', expectedScope = '') {
   const encoded = cleanString(value)
-  if (!encoded || encoded.length > 600) return null
+  if (!encoded) return null
+  if (encoded.length > 600) throw sitePaginationCursorError()
   try {
     const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
     const createdAt = cleanString(parsed?.createdAt)
     const id = cleanString(parsed?.id)
-    return createdAt && id ? { createdAt, id } : null
-  } catch {
-    return null
+    const legacyCursor = parsed?.v === undefined && !parsed?.scope
+    if (
+      !createdAt || createdAt.length > 100 || !Number.isFinite(Date.parse(createdAt)) ||
+      !id || id.length > 300 ||
+      (!legacyCursor && (parsed?.v !== 2 || !expectedScope || parsed?.scope !== expectedScope))
+    ) throw sitePaginationCursorError()
+    return { createdAt, id }
+  } catch (error) {
+    if (error?.code === 'invalid_sites_cursor') throw error
+    throw sitePaginationCursorError()
   }
 }
 
@@ -8652,7 +9042,11 @@ function attachSitesVideoSourceMetadata(asset, sourceSiteRow = {}) {
 export async function getSitesVideoAsset({
   businessId = 'default',
   assetId = '',
-  streamVideoId = ''
+  streamVideoId = '',
+  analyticsScope = false,
+  siteType = 'videos',
+  landingMode = 'all',
+  siteId = ''
 } = {}) {
   const normalizedBusinessId = cleanString(businessId) || 'default'
   const normalizedAssetId = cleanString(assetId)
@@ -8676,17 +9070,41 @@ export async function getSitesVideoAsset({
     return null
   }
 
+  const requireAnalyticsScope = normalizeBoolean(analyticsScope) === 1
+  if (requireAnalyticsScope && (cleanString(asset.status).toLowerCase() !== 'ready' || asset.deletedAt)) {
+    return null
+  }
+
+  const sourceClauses = ['ps.id = ?']
+  const sourceParams = [cleanString(asset.moduleEntityId)]
+  if (requireAnalyticsScope) {
+    const analyticsSiteScope = buildAnalyticsSiteSelectorScope({
+      siteType,
+      landingMode,
+      alias: 'ps',
+      requireVideoAsset: false
+    })
+    sourceClauses.push(...analyticsSiteScope.clauses)
+    sourceParams.push(...analyticsSiteScope.params)
+    const normalizedSiteId = cleanString(siteId).slice(0, 180)
+    if (normalizedSiteId) {
+      sourceClauses.push('ps.id = ?')
+      sourceParams.push(normalizedSiteId)
+    }
+  } else {
+    sourceClauses.push("ps.status != 'archived'")
+  }
+
   const sourceSite = await db.get(`
     SELECT
-      id AS source_site_id,
-      name AS source_site_name,
-      site_type AS source_site_type,
-      theme_json AS source_site_theme_json
-    FROM public_sites
-    WHERE id = ?
-      AND status != 'archived'
+      ps.id AS source_site_id,
+      ps.name AS source_site_name,
+      ps.site_type AS source_site_type,
+      ps.theme_json AS source_site_theme_json
+    FROM public_sites ps
+    WHERE ${sourceClauses.join(' AND ')}
     LIMIT 1
-  `, [cleanString(asset.moduleEntityId)])
+  `, sourceParams)
   return sourceSite ? attachSitesVideoSourceMetadata(asset, sourceSite) : null
 }
 
@@ -8703,7 +9121,6 @@ export async function listSitesVideoAssets({
   cursor = ''
 } = {}) {
   const safeLimit = normalizeSitesVideoListLimit(limit)
-  const decodedCursor = decodeSitesVideoListCursor(cursor)
   const normalizedType = ['sites', 'forms', 'videos'].includes(cleanString(siteType))
     ? cleanString(siteType)
     : 'videos'
@@ -8711,9 +9128,21 @@ export async function listSitesVideoAssets({
     ? cleanString(landingMode)
     : ''
   const normalizedSiteId = cleanString(siteId)
+  const normalizedBusinessId = cleanString(businessId) || 'default'
+  const cursorScope = siteCursorScope({
+    kind: 'sites-video-library',
+    businessId: normalizedBusinessId,
+    siteType: normalizedType,
+    landingMode: normalizedType === 'sites' ? normalizedLandingMode : '',
+    siteId: normalizedSiteId
+  })
+  const decodedCursor = decodeSitesVideoListCursor(cursor, cursorScope)
   const timestampExpression = databaseDialect === 'postgres'
     ? "COALESCE(m.created_at, TIMESTAMP '1970-01-01 00:00:00')"
     : "COALESCE(m.created_at, '1970-01-01 00:00:00')"
+  const cursorTimestampExpression = databaseDialect === 'postgres'
+    ? `(${timestampExpression})::text`
+    : timestampExpression
   const clauses = [
     'm.business_id = ?',
     "m.module IN ('sites', 'forms')",
@@ -8722,19 +9151,18 @@ export async function listSitesVideoAssets({
     'm.deleted_at IS NULL',
     "ps.status = 'published'"
   ]
-  const params = [cleanString(businessId) || 'default']
+  const params = [normalizedBusinessId]
 
   if (normalizedSiteId) {
     clauses.push('ps.id = ?')
     params.push(normalizedSiteId)
-  } else if (normalizedType === 'forms') {
+  }
+  if (normalizedType === 'forms') {
     clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
   } else if (normalizedType === 'sites') {
     clauses.push("ps.site_type = 'landing_page'")
     if (normalizedLandingMode) {
-      const pageModeExpression = databaseDialect === 'postgres'
-        ? "COALESCE((COALESCE(NULLIF(ps.theme_json, ''), '{}')::jsonb ->> 'pageMode'), 'funnel')"
-        : "COALESCE(json_extract(COALESCE(NULLIF(ps.theme_json, ''), '{}'), '$.pageMode'), 'funnel')"
+      const pageModeExpression = getSitePageModeSqlExpression('ps')
       clauses.push(`${pageModeExpression} = ?`)
       params.push(normalizedLandingMode)
     }
@@ -8748,7 +9176,7 @@ export async function listSitesVideoAssets({
   const rows = await db.all(`
     SELECT
       m.id,
-      ${timestampExpression} AS cursor_created_at,
+      ${cursorTimestampExpression} AS cursor_created_at,
       ps.id AS source_site_id,
       ps.name AS source_site_name,
       ps.site_type AS source_site_type,
@@ -8772,7 +9200,7 @@ export async function listSitesVideoAssets({
     pageInfo: {
       limit: safeLimit,
       hasMore,
-      nextCursor: hasMore ? encodeSitesVideoListCursor(pageRows[pageRows.length - 1]) : null
+      nextCursor: hasMore ? encodeSitesVideoListCursor(pageRows[pageRows.length - 1], cursorScope) : null
     },
     summary: null,
     facets: [],
@@ -8888,11 +9316,107 @@ function normalizeSitesAnalyticsIds(values = [], maxItems = 500) {
   return ids
 }
 
+function normalizeSitesTrackingSiteScope(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const siteType = cleanString(value.siteType || value.site_type).toLowerCase()
+  if (!['sites', 'forms'].includes(siteType)) return null
+
+  const requestedStatus = cleanString(value.status).toLowerCase()
+  if (requestedStatus && requestedStatus !== 'published') return null
+
+  const requestedLandingMode = cleanString(value.landingMode || value.landing_mode).toLowerCase()
+  if (
+    siteType === 'sites' &&
+    requestedLandingMode &&
+    !['all', 'website', 'funnel'].includes(requestedLandingMode)
+  ) {
+    return null
+  }
+  const landingMode = ['website', 'funnel'].includes(requestedLandingMode)
+    ? requestedLandingMode
+    : ''
+  const siteId = cleanString(value.siteId || value.site_id).slice(0, 180)
+
+  return {
+    siteType,
+    status: 'published',
+    landingMode: siteType === 'sites' ? landingMode : '',
+    siteId
+  }
+}
+
+function buildSitesTrackingScopeConditions(siteScope) {
+  const clauses = ['ps.status = ?']
+  const params = [siteScope.status]
+
+  if (siteScope.siteType === 'forms') {
+    clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
+    clauses.push('ps.id != ?')
+    params.push(CALENDAR_DEFAULT_FORM_SITE_ID)
+  } else {
+    clauses.push("ps.site_type = 'landing_page'")
+    if (siteScope.landingMode) {
+      const pageModeExpression = getSitePageModeSqlExpression('ps')
+      clauses.push(`${pageModeExpression} = ?`)
+      params.push(siteScope.landingMode)
+    }
+  }
+
+  if (siteScope.siteId) {
+    clauses.push('ps.id = ?')
+    params.push(siteScope.siteId)
+  }
+
+  return { clauses, params }
+}
+
+function buildSitesTrackingScopeSelection(siteScope, legacySiteIds = []) {
+  if (!siteScope) {
+    if (!legacySiteIds.length) return null
+    return {
+      sql: `
+        SELECT ps.id
+        FROM public_sites ps
+        WHERE ps.id IN (${legacySiteIds.map(() => '?').join(',')})
+      `,
+      params: legacySiteIds
+    }
+  }
+
+  const { clauses, params } = buildSitesTrackingScopeConditions(siteScope)
+
+  return {
+    sql: `
+      SELECT ps.id
+      FROM public_sites ps
+      WHERE ${clauses.join(' AND ')}
+    `,
+    params
+  }
+}
+
+async function filterSitesAnalyticsIdsByScope(siteIds = [], siteScope = null) {
+  if (!siteIds.length || !siteScope) return siteIds
+
+  const { clauses, params } = buildSitesTrackingScopeConditions(siteScope)
+  clauses.push(`ps.id IN (${siteIds.map(() => '?').join(',')})`)
+  const rows = await db.all(`
+    SELECT ps.id
+    FROM public_sites ps
+    WHERE ${clauses.join(' AND ')}
+  `, [...params, ...siteIds])
+  const allowedIds = new Set(rows.map(row => cleanString(row.id)).filter(Boolean))
+  return siteIds.filter(siteId => allowedIds.has(siteId))
+}
+
 async function resolveSitesAnalyticsDateFilters(input = {}) {
-  if (!input.dateFrom && !input.dateTo) return {}
+  const dateFrom = input.dateFrom || input.date_from
+  const dateTo = input.dateTo || input.date_to
+  if (!dateFrom && !dateTo) return {}
   const range = await resolveDateRangeWithGHLTimezone({
-    startDate: input.dateFrom || input.dateTo,
-    endDate: input.dateTo || input.dateFrom
+    startDate: dateFrom || dateTo,
+    endDate: dateTo || dateFrom
   })
   return {
     dateFrom: range.startUtc,
@@ -8908,6 +9432,13 @@ function emptySiteTrackingStats(extra = {}) {
     sessions: 0,
     conversions: 0,
     conversionRate: 0
+  }
+}
+
+function emptySitesTrackingAggregate() {
+  return {
+    ...emptySiteTrackingStats(),
+    entityCount: 0
   }
 }
 
@@ -8927,12 +9458,6 @@ function siteTrackingStatsFromRows(trackingRow = {}, submissionsRow = {}, extra 
   }
 }
 
-function hasSiteAnalyticsResponseValue(value) {
-  if (Array.isArray(value)) return value.map(cleanString).filter(Boolean).length > 0
-  if (value && typeof value === 'object') return Object.keys(value).length > 0
-  return cleanString(value) !== ''
-}
-
 function formatSiteAnalyticsRate(numerator, denominator) {
   const parsedNumerator = Number(numerator || 0)
   const parsedDenominator = Number(denominator || 0)
@@ -8943,6 +9468,188 @@ function formatSiteAnalyticsRate(numerator, denominator) {
 function getSiteAnalyticsFieldLabel(block = {}, index = 0) {
   return cleanString(block.label || block.placeholder || block.content || block.settings?.label) ||
     `Pregunta ${index + 1}`
+}
+
+const SITE_ANALYTICS_FIELD_AGGREGATE_CHUNK_SIZE = 350
+
+function getSiteAnalyticsAnsweredValueCondition(alias = 'answer') {
+  if (databaseDialect === 'postgres') {
+    return `(
+      CASE ${alias}.answer_type
+        WHEN 'string' THEN BTRIM(${alias}.answer_value #>> '{}') != ''
+        WHEN 'number' THEN (${alias}.answer_value #>> '{}')::numeric != 0
+        WHEN 'boolean' THEN ${alias}.answer_value = 'true'::jsonb
+        WHEN 'object' THEN ${alias}.answer_value != '{}'::jsonb
+        WHEN 'array' THEN EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(${alias}.answer_value) item(value)
+          WHERE CASE jsonb_typeof(item.value)
+            WHEN 'string' THEN BTRIM(item.value #>> '{}') != ''
+            WHEN 'number' THEN (item.value #>> '{}')::numeric != 0
+            WHEN 'boolean' THEN item.value = 'true'::jsonb
+            WHEN 'object' THEN TRUE
+            WHEN 'array' THEN jsonb_array_length(item.value) > 0
+            ELSE FALSE
+          END
+        )
+        ELSE FALSE
+      END
+    )`
+  }
+
+  return `(
+    CASE ${alias}.answer_type
+      WHEN 'text' THEN TRIM(CAST(${alias}.answer_value AS TEXT)) != ''
+      WHEN 'integer' THEN CAST(${alias}.answer_value AS REAL) != 0
+      WHEN 'real' THEN CAST(${alias}.answer_value AS REAL) != 0
+      WHEN 'true' THEN 1
+      WHEN 'object' THEN EXISTS (SELECT 1 FROM json_each(${alias}.answer_value))
+      WHEN 'array' THEN EXISTS (
+        SELECT 1
+        FROM json_each(${alias}.answer_value) item
+        WHERE CASE item.type
+          WHEN 'text' THEN TRIM(CAST(item.value AS TEXT)) != ''
+          WHEN 'integer' THEN CAST(item.value AS REAL) != 0
+          WHEN 'real' THEN CAST(item.value AS REAL) != 0
+          WHEN 'true' THEN 1
+          WHEN 'object' THEN 1
+          WHEN 'array' THEN json_array_length(item.value) > 0
+          ELSE 0
+        END
+      )
+      ELSE 0
+    END
+  )`
+}
+
+function getSiteAnalyticsJsonExpansion(sourceAlias = 'scoped') {
+  if (databaseDialect === 'postgres') {
+    const parsed = `ristak_safe_jsonb(${sourceAlias}.response_json)`
+    return `CROSS JOIN LATERAL jsonb_each(
+      CASE WHEN jsonb_typeof(${parsed}) = 'object' THEN ${parsed} ELSE '{}'::jsonb END
+    ) answer(key, value)`
+  }
+
+  const parsed = `CASE
+    WHEN json_valid(${sourceAlias}.response_json)
+      THEN CASE
+        WHEN json_type(${sourceAlias}.response_json) = 'object' THEN ${sourceAlias}.response_json
+        ELSE '{}'
+      END
+    ELSE '{}'
+  END`
+  return `CROSS JOIN json_each(${parsed}) answer`
+}
+
+async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
+  if (!siteIds.length) return new Map()
+  const requestedSiteValues = siteIds.map(() => '(?)').join(',')
+  const dateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND submission.created_at >= ? AND submission.created_at <= ?'
+    : ''
+  const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+    ? [dateFilters.dateFrom, dateFilters.dateTo]
+    : []
+  const rows = await db.all(`
+    WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
+    scoped_submissions AS (
+      SELECT submission.site_id AS resolved_site_id, submission.id
+      FROM public_site_submissions submission
+      INNER JOIN requested_sites requested ON requested.id = submission.site_id
+      WHERE submission.site_id IS NOT NULL
+        ${dateClause}
+      UNION ALL
+      SELECT submission.form_site_id AS resolved_site_id, submission.id
+      FROM public_site_submissions submission
+      INNER JOIN requested_sites requested ON requested.id = submission.form_site_id
+      WHERE submission.form_site_id IS NOT NULL
+        AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+        ${dateClause}
+    )
+    SELECT resolved_site_id, COUNT(DISTINCT id) AS submissions_count
+    FROM scoped_submissions
+    GROUP BY resolved_site_id
+  `, [...siteIds, ...dateParams, ...dateParams])
+
+  return new Map(rows.map(row => [
+    cleanString(row.resolved_site_id),
+    Number(row.submissions_count || 0)
+  ]))
+}
+
+async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
+  const answeredByField = new Map()
+  if (!fieldEntries.length) return answeredByField
+
+  for (let offset = 0; offset < fieldEntries.length; offset += SITE_ANALYTICS_FIELD_AGGREGATE_CHUNK_SIZE) {
+    const chunk = fieldEntries.slice(offset, offset + SITE_ANALYTICS_FIELD_AGGREGATE_CHUNK_SIZE)
+    const chunkSiteIds = [...new Set(chunk.map(field => field.siteId))]
+    const requestedSiteValues = chunkSiteIds.map(() => '(?)').join(',')
+    const fieldValues = chunk.map(() => '(?, ?)').join(',')
+    const dateClause = dateFilters.dateFrom && dateFilters.dateTo
+      ? 'AND submission.created_at >= ? AND submission.created_at <= ?'
+      : ''
+    const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+      ? [dateFilters.dateFrom, dateFilters.dateTo]
+      : []
+    const answerTypeExpression = databaseDialect === 'postgres'
+      ? 'jsonb_typeof(answer.value)'
+      : 'answer.type'
+    const rows = await db.all(`
+      WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
+      scoped_submissions AS (
+        SELECT submission.site_id AS resolved_site_id, submission.id, submission.response_json
+        FROM public_site_submissions submission
+        INNER JOIN requested_sites requested ON requested.id = submission.site_id
+        WHERE submission.site_id IS NOT NULL
+          ${dateClause}
+        UNION ALL
+        SELECT submission.form_site_id AS resolved_site_id, submission.id, submission.response_json
+        FROM public_site_submissions submission
+        INNER JOIN requested_sites requested ON requested.id = submission.form_site_id
+        WHERE submission.form_site_id IS NOT NULL
+          AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+          ${dateClause}
+      ),
+      field_scope(site_id, block_id) AS (VALUES ${fieldValues}),
+      expanded_answers AS (
+        SELECT
+          scoped.resolved_site_id,
+          scoped.id AS submission_id,
+          answer.key AS block_id,
+          answer.value AS answer_value,
+          ${answerTypeExpression} AS answer_type
+        FROM scoped_submissions scoped
+        ${getSiteAnalyticsJsonExpansion('scoped')}
+      )
+      SELECT
+        expanded.resolved_site_id,
+        expanded.block_id,
+        COUNT(DISTINCT CASE
+          WHEN ${getSiteAnalyticsAnsweredValueCondition('expanded')} THEN expanded.submission_id
+          ELSE NULL
+        END) AS answered_count
+      FROM expanded_answers expanded
+      INNER JOIN field_scope field
+        ON field.site_id = expanded.resolved_site_id
+       AND field.block_id = expanded.block_id
+      GROUP BY expanded.resolved_site_id, expanded.block_id
+    `, [
+      ...chunkSiteIds,
+      ...dateParams,
+      ...dateParams,
+      ...chunk.flatMap(field => [field.siteId, field.blockId])
+    ])
+
+    for (const row of rows) {
+      const siteId = cleanString(row.resolved_site_id)
+      const blockId = cleanString(row.block_id)
+      if (!siteId || !blockId) continue
+      answeredByField.set(`${siteId}\u0000${blockId}`, Number(row.answered_count || 0))
+    }
+  }
+
+  return answeredByField
 }
 
 async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBySite = {}) {
@@ -8964,62 +9671,20 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
     blocksBySite.set(block.siteId, list)
   }
 
-  const submissionDateClause = dateFilters.dateFrom && dateFilters.dateTo
-    ? 'AND created_at >= ? AND created_at <= ?'
-    : ''
-  const submissionRows = await db.all(`
-    WITH scoped_submissions AS (
-      SELECT
-        site_id as resolved_site_id,
-        id,
-        response_json,
-        status,
-        created_at
-      FROM public_site_submissions
-      WHERE site_id IN (${placeholders})
-        ${submissionDateClause}
-      UNION ALL
-      SELECT
-        form_site_id as resolved_site_id,
-        id,
-        response_json,
-        status,
-        created_at
-      FROM public_site_submissions
-      WHERE form_site_id IN (${placeholders})
-        AND (site_id IS NULL OR site_id != form_site_id)
-        ${submissionDateClause}
-    )
-    SELECT *
-    FROM scoped_submissions
-    WHERE resolved_site_id IS NOT NULL AND resolved_site_id != ''
-  `, [
-    ...siteIds,
-    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : []),
-    ...siteIds,
-    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
+  const fieldEntries = [...blocksBySite.entries()].flatMap(([siteId, blocks]) => (
+    collectFieldBlocks(blocks).map(field => ({ siteId, blockId: field.id }))
+  ))
+  const [submissionCounts, answeredByField] = await Promise.all([
+    getSitesFormSubmissionCounts(siteIds, dateFilters),
+    getSitesFormAnsweredCounts(fieldEntries, dateFilters)
   ])
-  const submissionsBySite = new Map()
-  for (const row of submissionRows) {
-    const siteId = cleanString(row.resolved_site_id)
-    if (!siteId) continue
-    const list = submissionsBySite.get(siteId) || []
-    list.push({
-      id: cleanString(row.id),
-      responses: parseJson(row.response_json, {}),
-      status: cleanString(row.status || 'received'),
-      createdAt: row.created_at || ''
-    })
-    submissionsBySite.set(siteId, list)
-  }
 
   const result = {}
   for (const siteId of siteIds) {
     const fields = collectFieldBlocks(blocksBySite.get(siteId) || [])
-    const submissions = submissionsBySite.get(siteId) || []
     const stats = statsBySite[siteId] || emptySiteTrackingStats({ siteId })
-    const starts = Math.max(Number(stats.visitors || 0), submissions.length)
-    const submissionsCount = submissions.length
+    const submissionsCount = submissionCounts.get(siteId) || 0
+    const starts = Math.max(Number(stats.visitors || 0), submissionsCount)
     let previousAnsweredCount = starts
 
     result[siteId] = {
@@ -9030,9 +9695,7 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
       submissions: submissionsCount,
       conversionRate: formatSiteAnalyticsRate(submissionsCount, starts),
       fields: fields.map((field, index) => {
-        const answeredCount = submissions.reduce((total, submission) => (
-          hasSiteAnalyticsResponseValue(submission.responses?.[field.id]) ? total + 1 : total
-        ), 0)
+        const answeredCount = answeredByField.get(`${siteId}\u0000${field.id}`) || 0
         const reachedCount = index === 0 ? starts : previousAnsweredCount
         const missedCount = Math.max(0, reachedCount - answeredCount)
         const row = {
@@ -9057,99 +9720,93 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
   return result
 }
 
-export async function getSitesTrackingSummary(input = {}) {
-  const siteIds = normalizeSitesAnalyticsIds(input.siteIds)
-  const dateFilters = await resolveSitesAnalyticsDateFilters(input)
+async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
   const bySiteId = Object.fromEntries(siteIds.map(siteId => [
     siteId,
     emptySiteTrackingStats({ siteId })
   ]))
+  if (!siteIds.length) return bySiteId
 
-  if (!siteIds.length) {
-    return {
-      dateFrom: dateFilters.dateFrom || '',
-      dateTo: dateFilters.dateTo || '',
-      bySiteId,
-      formFunnels: {}
-    }
-  }
-
-  const placeholders = siteIds.map(() => '?').join(',')
-  const trackingDateClause = dateFilters.dateFrom && dateFilters.dateTo
-    ? 'AND created_at >= ? AND created_at <= ?'
+  const requestedSiteValues = siteIds.map(() => '(?)').join(',')
+  const dateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND s.created_at >= ? AND s.created_at <= ?'
     : ''
-  const trackingRows = await db.all(`
-    WITH scoped_sessions AS (
-      SELECT
-        site_id as resolved_site_id,
-        contact_id,
-        visitor_id,
-        session_id,
-        event_name,
-        submission_id
-      FROM sessions
-      WHERE site_id IN (${placeholders})
-        ${trackingDateClause}
-      UNION ALL
-      SELECT
-        form_site_id as resolved_site_id,
-        contact_id,
-        visitor_id,
-        session_id,
-        event_name,
-        submission_id
-      FROM sessions
-      WHERE form_site_id IN (${placeholders})
-        AND (site_id IS NULL OR site_id != form_site_id)
-        ${trackingDateClause}
-    )
-    SELECT
-      resolved_site_id as site_id,
-      COUNT(CASE WHEN event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS tracking_visitors,
-      COUNT(DISTINCT CASE WHEN session_id IS NOT NULL AND session_id != '' THEN session_id ELSE NULL END) AS tracking_sessions,
-      COUNT(DISTINCT CASE WHEN event_name = 'native_site_conversion' AND submission_id IS NOT NULL AND submission_id != '' THEN submission_id ELSE NULL END) AS tracking_conversions
-    FROM scoped_sessions
-    WHERE resolved_site_id IS NOT NULL AND resolved_site_id != ''
-    GROUP BY resolved_site_id
-  `, [
-    ...siteIds,
-    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : []),
-    ...siteIds,
-    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
-  ])
+  const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+    ? [dateFilters.dateFrom, dateFilters.dateTo]
+    : []
 
-  const submissionDateClause = dateFilters.dateFrom && dateFilters.dateTo
-    ? 'AND created_at >= ? AND created_at <= ?'
-    : ''
-  const submissionRows = await db.all(`
-    WITH scoped_submissions AS (
+  const [trackingRows, submissionRows] = await Promise.all([
+    db.all(`
+      WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
+      scoped_sessions AS (
+        SELECT
+          s.site_id AS resolved_site_id,
+          s.contact_id,
+          s.visitor_id,
+          s.session_id,
+          s.event_name,
+          s.submission_id
+        FROM sessions s
+        INNER JOIN requested_sites requested ON requested.id = s.site_id
+        WHERE s.site_id IS NOT NULL
+          AND s.site_id != ''
+          ${dateClause}
+        UNION ALL
+        SELECT
+          s.form_site_id AS resolved_site_id,
+          s.contact_id,
+          s.visitor_id,
+          s.session_id,
+          s.event_name,
+          s.submission_id
+        FROM sessions s
+        INNER JOIN requested_sites requested ON requested.id = s.form_site_id
+        WHERE s.form_site_id IS NOT NULL
+          AND s.form_site_id != ''
+          AND (s.site_id IS NULL OR s.site_id != s.form_site_id)
+          ${dateClause}
+      )
       SELECT
-        site_id as resolved_site_id,
-        id
-      FROM public_site_submissions
-      WHERE site_id IN (${placeholders})
-        ${submissionDateClause}
-      UNION ALL
+        scoped.resolved_site_id AS site_id,
+        COUNT(CASE WHEN scoped.event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
+        COUNT(DISTINCT ${getVisitorIdentityExpression('scoped')}) AS tracking_visitors,
+        COUNT(DISTINCT CASE WHEN scoped.session_id IS NOT NULL AND scoped.session_id != '' THEN scoped.session_id ELSE NULL END) AS tracking_sessions,
+        COUNT(DISTINCT CASE WHEN scoped.event_name = 'native_site_conversion' AND scoped.submission_id IS NOT NULL AND scoped.submission_id != '' THEN scoped.submission_id ELSE NULL END) AS tracking_conversions
+      FROM scoped_sessions scoped
+      WHERE scoped.resolved_site_id IS NOT NULL AND scoped.resolved_site_id != ''
+      GROUP BY scoped.resolved_site_id
+    `, [
+      ...siteIds,
+      ...dateParams,
+      ...dateParams
+    ]),
+    db.all(`
+      WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
+      scoped_submissions AS (
+        SELECT s.site_id AS resolved_site_id, s.id
+        FROM public_site_submissions s
+        INNER JOIN requested_sites requested ON requested.id = s.site_id
+        WHERE s.site_id IS NOT NULL
+          ${dateClause}
+        UNION ALL
+        SELECT s.form_site_id AS resolved_site_id, s.id
+        FROM public_site_submissions s
+        INNER JOIN requested_sites requested ON requested.id = s.form_site_id
+        WHERE s.form_site_id IS NOT NULL
+          AND (s.site_id IS NULL OR s.site_id != s.form_site_id)
+          ${dateClause}
+      )
       SELECT
-        form_site_id as resolved_site_id,
-        id
-      FROM public_site_submissions
-      WHERE form_site_id IN (${placeholders})
-        AND (site_id IS NULL OR site_id != form_site_id)
-        ${submissionDateClause}
-    )
-    SELECT
-      resolved_site_id as site_id,
-      COUNT(DISTINCT id) as submissions_count
-    FROM scoped_submissions
-    WHERE resolved_site_id IS NOT NULL AND resolved_site_id != ''
-    GROUP BY resolved_site_id
-  `, [
-    ...siteIds,
-    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : []),
-    ...siteIds,
-    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
+        scoped.resolved_site_id AS site_id,
+        COUNT(DISTINCT scoped.id) AS submissions_count
+      FROM scoped_submissions scoped
+      WHERE scoped.resolved_site_id IS NOT NULL AND scoped.resolved_site_id != ''
+      GROUP BY scoped.resolved_site_id
+    `, [
+      ...siteIds,
+      ...dateParams,
+      ...dateParams
+    ])
   ])
 
   const trackingBySite = new Map(trackingRows.map(row => [cleanString(row.site_id), row]))
@@ -9162,23 +9819,182 @@ export async function getSitesTrackingSummary(input = {}) {
       { siteId }
     )
   }
-  const formFunnels = await getSitesFormFunnelSummary(siteIds, dateFilters, bySiteId)
+
+  return bySiteId
+}
+
+async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
+  if (!scopeSelection) return emptySitesTrackingAggregate()
+
+  const dateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND source.created_at >= ? AND source.created_at <= ?'
+    : ''
+  const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+    ? [dateFilters.dateFrom, dateFilters.dateTo]
+    : []
+
+  const row = await db.get(`
+    WITH scoped_sites AS (
+      ${scopeSelection.sql}
+    ),
+    scoped_sessions AS (
+      SELECT
+        source.contact_id,
+        source.visitor_id,
+        source.session_id,
+        source.event_name,
+        source.submission_id
+      FROM sessions source
+      INNER JOIN scoped_sites scope ON scope.id = source.site_id
+      WHERE source.site_id IS NOT NULL
+        AND source.site_id != ''
+        ${dateClause}
+      UNION ALL
+      SELECT
+        source.contact_id,
+        source.visitor_id,
+        source.session_id,
+        source.event_name,
+        source.submission_id
+      FROM sessions source
+      INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
+      WHERE source.form_site_id IS NOT NULL
+        AND source.form_site_id != ''
+        AND (source.site_id IS NULL OR source.site_id != source.form_site_id)
+        ${dateClause}
+    ),
+    tracking_aggregate AS (
+      SELECT
+        COUNT(CASE WHEN scoped.event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
+        COUNT(DISTINCT ${getVisitorIdentityExpression('scoped')}) AS tracking_visitors,
+        COUNT(DISTINCT CASE WHEN scoped.session_id IS NOT NULL AND scoped.session_id != '' THEN scoped.session_id ELSE NULL END) AS tracking_sessions,
+        COUNT(DISTINCT CASE WHEN scoped.event_name = 'native_site_conversion' AND scoped.submission_id IS NOT NULL AND scoped.submission_id != '' THEN scoped.submission_id ELSE NULL END) AS tracking_conversions
+      FROM scoped_sessions scoped
+    ),
+    scoped_submissions AS (
+      SELECT source.id
+      FROM public_site_submissions source
+      INNER JOIN scoped_sites scope ON scope.id = source.site_id
+      WHERE 1 = 1
+        ${dateClause}
+      UNION ALL
+      SELECT source.id
+      FROM public_site_submissions source
+      INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
+      WHERE (source.site_id IS NULL OR source.site_id != source.form_site_id)
+        ${dateClause}
+    ),
+    submission_aggregate AS (
+      SELECT COUNT(DISTINCT id) AS submissions_count
+      FROM scoped_submissions
+    )
+    SELECT
+      tracking_aggregate.tracking_views,
+      tracking_aggregate.tracking_visitors,
+      tracking_aggregate.tracking_sessions,
+      tracking_aggregate.tracking_conversions,
+      submission_aggregate.submissions_count,
+      (SELECT COUNT(*) FROM scoped_sites) AS entity_count
+    FROM tracking_aggregate
+    CROSS JOIN submission_aggregate
+  `, [
+    ...scopeSelection.params,
+    ...dateParams,
+    ...dateParams,
+    ...dateParams,
+    ...dateParams
+  ])
+
+  return {
+    ...siteTrackingStatsFromRows(row, row),
+    entityCount: Number(row?.entity_count || 0)
+  }
+}
+
+export async function getSitesTrackingSummary(input = {}) {
+  const rawSiteScope = input.siteScope ?? input.site_scope
+  const hasExplicitSiteScope = rawSiteScope !== undefined && rawSiteScope !== null
+  const siteScope = normalizeSitesTrackingSiteScope(rawSiteScope)
+  if (hasExplicitSiteScope && !siteScope) {
+    const error = new Error('El alcance de analíticas de Sites no es válido.')
+    error.status = 400
+    throw error
+  }
+
+  const legacySiteIds = normalizeSitesAnalyticsIds(input.siteIds || input.site_ids)
+  const hasExplicitBreakdown = Array.isArray(input.breakdownSiteIds) || Array.isArray(input.breakdown_site_ids)
+  const rawFormFunnelSiteId = input.formFunnelSiteId ?? input.form_funnel_site_id
+  const hasExplicitFormFunnel = rawFormFunnelSiteId !== undefined && rawFormFunnelSiteId !== null
+  const legacyMode = legacySiteIds.length > 0 &&
+    !hasExplicitSiteScope &&
+    !hasExplicitBreakdown &&
+    !hasExplicitFormFunnel
+  const hasV2Request = hasExplicitSiteScope || hasExplicitBreakdown || hasExplicitFormFunnel
+  const requestedDateFrom = input.dateFrom || input.date_from
+  const requestedDateTo = input.dateTo || input.date_to
+  if (!legacyMode && hasV2Request && (!requestedDateFrom || !requestedDateTo)) {
+    const error = new Error('Selecciona un rango de fechas completo para consultar analíticas de Sites.')
+    error.status = 400
+    throw error
+  }
+
+  const breakdownSiteIds = hasExplicitBreakdown
+    ? normalizeSitesAnalyticsIds(input.breakdownSiteIds || input.breakdown_site_ids, 100)
+    : normalizeSitesAnalyticsIds(legacySiteIds, legacyMode ? 500 : 100)
+  const formFunnelSiteId = cleanString(rawFormFunnelSiteId).slice(0, 180)
+  const requestedFormFunnelSiteIds = legacyMode
+    ? legacySiteIds
+    : formFunnelSiteId ? [formFunnelSiteId] : []
+  const internalBreakdownSiteIds = normalizeSitesAnalyticsIds([
+    ...breakdownSiteIds,
+    ...requestedFormFunnelSiteIds
+  ], legacyMode ? 500 : 101)
+  const scopeSelection = buildSitesTrackingScopeSelection(siteScope, legacySiteIds)
+  const dateFilters = await resolveSitesAnalyticsDateFilters(input)
+  const [aggregate, scopedInternalBreakdownSiteIds] = await Promise.all([
+    getSitesTrackingAggregate(scopeSelection, dateFilters),
+    filterSitesAnalyticsIdsByScope(internalBreakdownSiteIds, siteScope)
+  ])
+  const internalStatsBySite = await getSitesTrackingBreakdown(scopedInternalBreakdownSiteIds, dateFilters)
+  const scopedInternalIds = new Set(scopedInternalBreakdownSiteIds)
+  const scopedBreakdownSiteIds = breakdownSiteIds.filter(siteId => scopedInternalIds.has(siteId))
+  const scopedFormFunnelSiteIds = requestedFormFunnelSiteIds.filter(siteId => scopedInternalIds.has(siteId))
+  const bySiteId = Object.fromEntries(scopedBreakdownSiteIds.map(siteId => [
+    siteId,
+    internalStatsBySite[siteId] || emptySiteTrackingStats({ siteId })
+  ]))
+  const formFunnels = scopedFormFunnelSiteIds.length
+    ? await getSitesFormFunnelSummary(scopedFormFunnelSiteIds, dateFilters, internalStatsBySite)
+    : {}
 
   return {
     dateFrom: dateFilters.dateFrom || '',
     dateTo: dateFilters.dateTo || '',
+    aggregate,
     bySiteId,
     formFunnels
   }
 }
 
-export async function getSite(siteId, { includeBlocks = true, includeSubmissions = false, submissionLimit = 250 } = {}) {
+export async function getSite(siteId, {
+  includeBlocks = true,
+  includeSubmissions = false,
+  includeTrackingStats = false,
+  submissionLimit = 250
+} = {}) {
   const row = await db.get('SELECT * FROM public_sites WHERE id = ?', [siteId])
   const site = mapSite(row)
 
   if (!site) return null
 
-  site.trackingStats = await getSiteTrackingStats(site.id)
+  if (includeTrackingStats) {
+    site.trackingStats = await getSiteTrackingStats(site.id)
+  } else {
+    // `mapSite` conserva ceros para summaries legacy, pero el documento del
+    // editor no debe fingir un agregado ni escanear millones de sesiones. Al
+    // omitirlo, los consumidores pueden conservar su snapshot de Analytics.
+    delete site.trackingStats
+  }
 
   if (includeBlocks) {
     site.blocks = await ensureSocialProfileBlock(site, await listSiteBlocks(site.id))

@@ -34,6 +34,13 @@ export interface CatalogOption {
   meta?: string
 }
 
+export interface CatalogPage {
+  items: CatalogOption[]
+  hasMore: boolean
+  nextCursor: string | null
+  limit: number
+}
+
 export type CatalogKind =
   | 'tags'
   | 'users'
@@ -166,6 +173,13 @@ interface AutomationFormCatalogItem {
   meta?: string
 }
 
+interface AutomationFormsCatalogPage {
+  items: AutomationFormCatalogItem[]
+  hasMore: boolean
+  nextCursor?: string | null
+  limit: number
+}
+
 interface AutomationFormFieldCatalogItem {
   id: string
   name: string
@@ -173,15 +187,41 @@ interface AutomationFormFieldCatalogItem {
   meta?: string
 }
 
-async function loadForms(): Promise<CatalogOption[]> {
-  const forms = await apiClient.get<AutomationFormCatalogItem[]>('/automations/catalogs/forms')
-  return (forms || [])
+const mapAutomationForms = (forms: AutomationFormCatalogItem[] = []): CatalogOption[] => forms
     .map((form) => ({
       value: String(form.id || '').trim(),
       label: form.name || 'Formulario sin nombre',
       meta: form.meta || form.siteName
     }))
     .filter((option) => option.value)
+
+export async function getFormsCatalogPage(options: {
+  limit?: number
+  cursor?: string | null
+  search?: string
+  selectedIds?: string[]
+  signal?: AbortSignal
+} = {}): Promise<CatalogPage> {
+  const params: Record<string, string> = {
+    limit: String(Math.min(50, Math.max(1, Math.trunc(options.limit || 30))))
+  }
+  if (options.cursor) params.cursor = options.cursor
+  if (options.search?.trim()) params.search = options.search.trim()
+  if (options.selectedIds?.length) params.selectedIds = options.selectedIds.slice(0, 50).join(',')
+  const page = await apiClient.get<AutomationFormsCatalogPage>('/automations/catalogs/forms', {
+    params,
+    signal: options.signal
+  })
+  return {
+    items: mapAutomationForms(page?.items || []),
+    hasMore: Boolean(page?.hasMore),
+    nextCursor: page?.nextCursor || null,
+    limit: Number(page?.limit || params.limit)
+  }
+}
+
+async function loadForms(): Promise<CatalogOption[]> {
+  return (await getFormsCatalogPage()).items
 }
 
 const formFieldCache = new Map<string, Promise<CatalogOption[]>>()
@@ -360,20 +400,11 @@ async function loadRawWhatsAppTemplates(): Promise<WhatsAppApiTemplate[]> {
     const requestPrincipalRevision = getAuthScopedCacheRevision()
     const promise = apiClient
       .get<WhatsAppApiTemplatesResponse>('/automations/catalogs/whatsapp-templates', {
-        params: { status: 'APPROVED' }
+        params: { status: 'APPROVED', limit: '50' }
       })
       .then(async (response) => {
         if (requestPrincipalRevision !== getAuthScopedCacheRevision()) return []
-        let items = response.items || []
-        if (items.length === 0) {
-          // Tabla local sin sincronizar: trae las plantillas desde YCloud
-          try {
-            await whatsappApiService.refresh()
-            items = (await whatsappApiService.getTemplates('APPROVED')).items || []
-          } catch {
-            // sin credenciales o sin conexión: se queda vacío
-          }
-        }
+        const items = response.items || []
         if (items.length > 0) {
           rawTemplatesCache = items
         } else {
@@ -393,7 +424,24 @@ async function loadRawWhatsAppTemplates(): Promise<WhatsAppApiTemplate[]> {
 /** Devuelve la plantilla completa (para mostrar exactamente qué envía) */
 export async function getWhatsAppTemplate(templateId: string): Promise<WhatsAppApiTemplate | null> {
   const templates = await loadRawWhatsAppTemplates()
-  return templates.find((template) => template.id === templateId) || null
+  const cached = templates.find((template) => template.id === templateId)
+  if (cached) return cached
+
+  const requestPrincipalRevision = getAuthScopedCacheRevision()
+  try {
+    const response = await apiClient.get<WhatsAppApiTemplatesResponse>(
+      '/automations/catalogs/whatsapp-templates',
+      { params: { status: 'APPROVED', search: templateId, limit: '10' } }
+    )
+    if (requestPrincipalRevision !== getAuthScopedCacheRevision()) return null
+    const match = (response.items || []).find((template) => template.id === templateId) || null
+    if (match && rawTemplatesCache && !rawTemplatesCache.some((template) => template.id === match.id)) {
+      rawTemplatesCache = [...rawTemplatesCache, match]
+    }
+    return match
+  } catch {
+    return null
+  }
 }
 
 async function loadWhatsAppTemplates(): Promise<CatalogOption[]> {

@@ -1,5 +1,5 @@
 import express from 'express'
-import { getMetrics, getChartData, getRoasData, getNewCustomersData, getVisitorsData, getLeadsData, getAppointmentsData, getAttendancesData, getSalesData, getStorageStatus, getTrafficSources, getOriginDistribution, getFunnelData, getFinancialOverview, getOperationalSnapshot } from '../controllers/dashboardController.js'
+import { getMetrics, getChartData, getRoasData, getNewCustomersData, getVisitorsData, getLeadsData, getAppointmentsData, getAttendancesData, getSalesData, getStorageStatus, getTrafficSources, getOriginDistribution, getFunnelData, getFinancialOverview, getOperationalSnapshot, getMobileAnalyticsSnapshot } from '../controllers/dashboardController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
@@ -16,6 +16,7 @@ router.use(requireAuth)
 router.use(requireModuleAccess('dashboard'))
 
 router.get('/metrics', getMetrics)
+router.get('/mobile-analytics-snapshot', requireWebAnalyticsWhenIncluded, getMobileAnalyticsSnapshot)
 router.get('/operational-snapshot', getOperationalSnapshot)
 router.get('/chart-data', getChartData)
 router.get('/financial-overview', getFinancialOverview) // Ingresos y gastos TOTALES

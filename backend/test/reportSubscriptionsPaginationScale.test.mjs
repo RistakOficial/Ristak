@@ -4,20 +4,36 @@ import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { db } from '../src/config/database.js'
+import { databaseDialect, db } from '../src/config/database.js'
 import { listReportContactsPage, REPORT_CONTACTS_PAGE_LIMITS } from '../src/services/reportContactsPaginationService.js'
 import { listSubscriptions } from '../src/services/subscriptionsService.js'
+import { runContactPersonIdentityProjectionBackfill } from '../src/services/contactPersonIdentityProjectionService.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '..')
 const createdContactIds = []
 const createdSubscriptionIds = []
 
+function decodeCursor(value) {
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+}
+
+function encodeCursor(payload) {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+}
+
 test.before(async () => {
   await db.exec(fs.readFileSync(
     path.join(projectRoot, 'migrations/versioned/071_payment_lists_cursor_summary.sqlite.sql'),
     'utf8'
   ))
+  if (databaseDialect === 'sqlite') {
+    await db.exec(fs.readFileSync(
+      path.join(projectRoot, 'migrations/versioned/110_contact_person_identity.sqlite.sql'),
+      'utf8'
+    ))
+    await runContactPersonIdentityProjectionBackfill({ batchSize: 500, yieldMs: 0 })
+  }
 })
 
 test.after(async () => {
@@ -93,6 +109,10 @@ test('Reportes pagina por cursor, deduplica personas y sólo devuelve DTOs liger
   assert.equal(first.pagination.totalIsCapped, false)
   assert.equal(first.pagination.hasNext, true)
   assert.ok(first.pagination.nextCursor)
+  const scopedCursor = decodeCursor(first.pagination.nextCursor)
+  assert.equal(scopedCursor.v, 2)
+  assert.equal(scopedCursor.kind, 'report-contacts')
+  assert.match(scopedCursor.scope, /^[A-Za-z0-9_-]{40,}$/)
   assert.equal('payments' in first.contacts[0], false)
   assert.equal('appointments' in first.contacts[0], false)
   assert.equal('firstSession' in first.contacts[0], false)
@@ -109,6 +129,43 @@ test('Reportes pagina por cursor, deduplica personas y sólo devuelve DTOs liger
   const firstIds = new Set(first.contacts.map((contact) => contact.id))
   assert.equal(second.contacts.length, 50)
   assert.equal(second.contacts.some((contact) => firstIds.has(contact.id)), false)
+
+  const legacySecond = await listReportContactsPage({
+    startDate: '2026-01-01',
+    endDate: '2026-12-31',
+    type: 'interesados',
+    scope: 'all',
+    dedupeByPerson: true,
+    cursor: encodeCursor({ createdAt: scopedCursor.createdAt, id: scopedCursor.id }),
+    limit: 50
+  })
+  assert.deepEqual(
+    legacySecond.contacts.map(contact => contact.id),
+    second.contacts.map(contact => contact.id),
+    'el cursor histórico sin versión ni scope debe seguir funcionando'
+  )
+
+  for (const changedScope of [
+    { endDate: '2026-11-30' },
+    { type: 'customers' },
+    { scope: 'attribution' },
+    { dedupeByPerson: false },
+    { search: 'otro alcance' }
+  ]) {
+    await assert.rejects(
+      listReportContactsPage({
+        startDate: '2026-01-01',
+        endDate: '2026-12-31',
+        type: 'interesados',
+        scope: 'all',
+        dedupeByPerson: true,
+        cursor: first.pagination.nextCursor,
+        limit: 50,
+        ...changedScope
+      }),
+      error => error?.status === 400 && /ya no corresponde/.test(error.message)
+    )
+  }
 
   const search = await listReportContactsPage({
     startDate: '2026-01-01',
@@ -136,6 +193,54 @@ test('Reportes pagina por cursor, deduplica personas y sólo devuelve DTOs liger
   }
   assert.equal(REPORT_CONTACTS_PAGE_LIMITS.max, 100)
   assert.equal(REPORT_CONTACTS_PAGE_LIMITS.totalCap, 10_000)
+})
+
+test('Reportes pagina contactos con created_at nulo sin truncar cursor ni alterar el DTO', async () => {
+  if (databaseDialect !== 'sqlite') return
+  const suffix = `${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const contactIds = ['a', 'b', 'c'].map(letter => `report_null_cursor_${suffix}_${letter}`)
+  const paymentIds = contactIds.map((_, index) => `report_null_cursor_payment_${suffix}_${index}`)
+
+  try {
+    for (let index = 0; index < contactIds.length; index += 1) {
+      await db.run(`
+        INSERT INTO contacts (
+          id, full_name, email, source, total_paid, purchases_count, created_at, updated_at
+        ) VALUES (?, ?, ?, 'cursor_precision_test', 1, 1, NULL, NULL)
+      `, [contactIds[index], `Cursor nulo ${suffix}`, `${contactIds[index]}@example.test`])
+      await db.run(`
+        INSERT INTO payments (
+          id, contact_id, amount, currency, status, payment_mode, date, created_at, updated_at
+        ) VALUES (?, ?, 1, 'MXN', 'paid', 'live', '2098-03-20T12:00:00.123456Z',
+          '2098-03-20T12:00:00.123456Z', '2098-03-20T12:00:00.123456Z')
+      `, [paymentIds[index], contactIds[index]])
+    }
+
+    const collected = []
+    let cursor
+    let pageCount = 0
+    do {
+      pageCount += 1
+      assert.ok(pageCount <= contactIds.length, 'el cursor debe avanzar en cada página')
+      const page = await listReportContactsPage({
+        startDate: '2098-03-20',
+        endDate: '2098-03-20',
+        type: 'customers',
+        scope: 'all',
+        search: suffix,
+        cursor,
+        limit: 1
+      })
+      assert.ok(page.contacts.every(contact => contact.created_at === null))
+      collected.push(...page.contacts.map(contact => contact.id))
+      cursor = page.pagination.nextCursor || undefined
+    } while (cursor)
+
+    assert.deepEqual(collected, [...contactIds].sort().reverse())
+  } finally {
+    for (const id of paymentIds) await db.run('DELETE FROM payments WHERE id = ?', [id]).catch(() => undefined)
+    for (const id of contactIds) await db.run('DELETE FROM contacts WHERE id = ?', [id]).catch(() => undefined)
+  }
 })
 
 test('Suscripciones pagina y filtra en SQL mientras el resumen permanece global', async () => {

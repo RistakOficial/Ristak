@@ -10,6 +10,7 @@ import {
   getPublicStripePayment,
   getStripePaymentConfig,
   getStripeSavedPaymentMethods,
+  refreshStripeSavedPaymentMethods,
   handleStripeWebhookEvent,
   saveStripePaymentConfig,
   testStripePaymentConfig
@@ -286,6 +287,16 @@ export async function getStripeSavedPaymentMethodsView(req, res) {
   } catch (error) {
     logger.error(`Error obteniendo tarjetas guardadas Stripe: ${error.message}`)
     sendStripeError(res, error, 'No se pudieron obtener las tarjetas guardadas')
+  }
+}
+
+export async function refreshStripeSavedPaymentMethodsView(req, res) {
+  try {
+    const methods = await refreshStripeSavedPaymentMethods(req.params.contactId)
+    res.json({ success: true, data: methods })
+  } catch (error) {
+    logger.error(`Error sincronizando tarjetas guardadas Stripe: ${error.message}`)
+    sendStripeError(res, error, 'No se pudieron sincronizar las tarjetas guardadas')
   }
 }
 

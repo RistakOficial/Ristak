@@ -842,18 +842,10 @@ async function withKindLock(integrationKind, operation) {
 
 export async function getMetaOAuthIntegrationStatus(integrationKind) {
   const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
-  if (!localMutations.has(kind)) await cleanupMetaOAuthIntegrationSessions()
   const [row, legacy] = await Promise.all([
-    getActiveMetaOAuthIntegration(kind),
+    getActiveMetaOAuthIntegration(kind, { migratePlaintext: false }),
     db.get('SELECT * FROM meta_config ORDER BY id LIMIT 1').catch(() => null)
   ])
-  let central = {}
-  let centralError = ''
-  try {
-    central = await centralClient.getStatus({ integrationKind: kind })
-  } catch (error) {
-    centralError = error.message || 'No se pudo consultar el Installer'
-  }
   const legacyMode = normalizeMetaConnectionMode(legacy?.connection_mode)
   const manualConfigured = Boolean(legacy?.access_token && legacyMode === 'manual_system_user')
   const legacyCombinedConnected = Boolean(
@@ -861,26 +853,51 @@ export async function getMetaOAuthIntegrationStatus(integrationKind) {
   )
   return {
     integrationKind: kind,
-    configured: central?.configured === true,
-    available: central?.available === true,
-    mode: cleanString(central?.mode) || 'redirect',
-    source: cleanString(central?.source) || 'oauth_bisu',
-    reviewPending: central?.review_pending !== false,
+    // Status de navegación estrictamente local. La verificación de Installer
+    // vive en refreshMetaOAuthIntegrationStatus y sólo se expone por POST.
+    configured: true,
+    available: true,
+    mode: 'redirect',
+    source: 'oauth_bisu',
+    reviewPending: false,
     connectUrl: '',
     connectEndpoint: `/api/meta/oauth/${kind}/connect-url`,
-    appId: cleanString(central?.app_id || central?.appId),
-    configId: '',
-    requiredScopes: toStringArray(
-      central?.required_scopes || central?.requiredScopes || META_OAUTH_SCOPES_BY_KIND[kind]
-    ),
+    appId: cleanString(row?.app_id || legacy?.oauth_app_id || legacy?.app_id),
+    configId: cleanString(row?.config_id || legacy?.oauth_config_id),
+    requiredScopes: META_OAUTH_SCOPES_BY_KIND[kind],
     connectionMode: row ? 'oauth_bisu' : manualConfigured ? 'manual_system_user' : legacyCombinedConnected ? 'oauth_bisu' : null,
     manualConfigured,
     legacyCombinedConnected,
     oauth: localOAuthState(row),
     selected: selectedFromRow(row),
     capabilities: metaOAuthIntegrationCapabilities(row),
+    centralConnection: null,
+    remoteChecked: false,
+    error: null
+  }
+}
+
+export async function refreshMetaOAuthIntegrationStatus(integrationKind) {
+  const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
+  const [local, central] = await Promise.all([
+    getMetaOAuthIntegrationStatus(kind),
+    centralClient.getStatus({ integrationKind: kind })
+  ])
+  return {
+    ...local,
+    configured: central?.configured === true,
+    available: central?.available === true,
+    mode: cleanString(central?.mode) || local.mode,
+    source: cleanString(central?.source) || local.source,
+    reviewPending: central?.review_pending !== false,
+    appId: cleanString(central?.app_id || central?.appId),
+    requiredScopes: toStringArray(
+      central?.required_scopes || central?.requiredScopes || local.requiredScopes
+    ),
     centralConnection: central?.connection || null,
-    error: centralError || null
+    remoteChecked: true,
+    remoteCheckedAt: new Date().toISOString(),
+    error: null
   }
 }
 

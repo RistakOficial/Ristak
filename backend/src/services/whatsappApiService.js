@@ -72,6 +72,7 @@ import {
 } from './whatsapp/providers/providerRegistry.js'
 import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
 import { disconnectCentralWhatsAppMeta } from './licenseService.js'
+import { getWhatsAppStatusProjectionSnapshot } from './whatsappStatusProjectionService.js'
 import {
   buildMetaDirectTemplateCreatePayload,
   buildMetaDirectTemplateEditPayload,
@@ -2153,12 +2154,6 @@ async function clearYCloudConnectionConfig() {
   await clearWhatsAppApiIntegrationCredentials()
 }
 
-async function clearStaleDisconnectedYCloudCredentials(config) {
-  if (!config || config.enabled || !config.hasApiKey) return config
-  await clearYCloudConnectionConfig()
-  return loadConfig()
-}
-
 async function loadConfig({ includeSecrets = false } = {}) {
   const [
     enabled,
@@ -4163,7 +4158,10 @@ async function refreshYCloudWebhookEndpoint(config = {}) {
   return { skipped: false, webhookEndpoint }
 }
 
-async function getPhoneNumbersFromDb() {
+async function getPhoneNumbersFromDb({ signal, limit, connectedOnly = false } = {}) {
+  const boundedLimit = Number.isFinite(Number(limit))
+    ? Math.max(1, Math.min(Number(limit), 250))
+    : null
   return db.all(`
     SELECT id, waba_id, phone_number, display_phone_number, verified_name,
       provider, profile_picture_url, business_profile_json, quality_rating, messaging_limit,
@@ -4172,8 +4170,44 @@ async function getPhoneNumbersFromDb() {
       qr_connected_phone, qr_last_connected_at, qr_last_disconnected_at,
       qr_last_error, updated_at
     FROM whatsapp_api_phone_numbers
+    ${connectedOnly ? `WHERE (
+      LOWER(COALESCE(provider, '')) = 'qr'
+      OR (LOWER(COALESCE(provider, '')) != 'qr' AND COALESCE(api_send_enabled, 1) = 1)
+      OR COALESCE(qr_send_enabled, 0) = 1
+      OR LOWER(COALESCE(qr_status, '')) IN ('starting', 'qr_pending', 'connected', 'reconnecting', 'restarting')
+    )` : ''}
     ORDER BY is_default_sender DESC, updated_at DESC, phone_number ASC
-  `)
+    ${boundedLimit ? 'LIMIT ?' : ''}
+  `, boundedLimit ? [boundedLimit] : [], signal ? { signal } : undefined)
+}
+
+// Lectura estrictamente local y ligera para superficies analíticas. No carga
+// plantillas, alertas, balance, sesiones QR ni consulta proveedores externos.
+export async function getLocalWhatsAppAnalyticsPhoneNumbers({ signal } = {}) {
+  const phoneNumbers = await getPhoneNumbersFromDb({ signal, limit: 100, connectedOnly: true })
+  return phoneNumbers
+    .filter(isLocallyConnectedWhatsAppPhone)
+    .map(phone => ({
+      id: phone.id,
+      provider: phone.provider || PROVIDER_NAME,
+      waba_id: phone.waba_id || null,
+      phone_number: phone.phone_number || null,
+      display_phone_number: phone.display_phone_number || null,
+      verified_name: phone.verified_name || null,
+      profile_picture_url: phone.profile_picture_url || null,
+      quality_rating: phone.quality_rating || null,
+      messaging_limit: phone.messaging_limit || null,
+      status: phone.status || null,
+      label: phone.label || null,
+      is_default_sender: Number(phone.is_default_sender || 0) === 1,
+      api_send_enabled: Number(phone.api_send_enabled ?? 1) === 1,
+      qr_send_enabled: Number(phone.qr_send_enabled || 0) === 1,
+      qr_status: phone.qr_status || null,
+      qr_connected_phone: phone.qr_connected_phone || null,
+      qr_last_connected_at: phone.qr_last_connected_at || null,
+      qr_last_disconnected_at: phone.qr_last_disconnected_at || null,
+      qr_last_error: phone.qr_last_error || null
+    }))
 }
 
 export async function createWhatsAppQrPhoneNumber({ phoneNumberId, phoneNumber, label } = {}) {
@@ -4568,84 +4602,6 @@ async function getActiveAlertsFromDb({ limit = 20 } = {}) {
   return rows
 }
 
-async function countRows(sql, params = []) {
-  try {
-    const row = await db.get(sql, params)
-    return Number(row?.total || 0)
-  } catch {
-    return 0
-  }
-}
-
-async function getStats() {
-  const [
-    phoneNumbers,
-    contacts,
-    messages,
-    inboundMessages,
-    outboundMessages,
-    attributedMessages,
-    webhookEvents,
-    templates,
-    approvedTemplates,
-    activeAlerts,
-    criticalAlerts,
-    templateSends
-  ] = await Promise.all([
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers'),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_contacts'),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_messages'),
-    countRows("SELECT COUNT(*) as total FROM whatsapp_api_messages WHERE direction = 'inbound'"),
-    countRows("SELECT COUNT(*) as total FROM whatsapp_api_messages WHERE direction IN ('outbound', 'business_echo')"),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_attribution'),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_webhook_events'),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_templates'),
-    countRows("SELECT COUNT(*) as total FROM whatsapp_api_templates WHERE status = 'APPROVED'"),
-    countRows("SELECT COUNT(*) as total FROM whatsapp_api_alerts WHERE status = 'active'"),
-    countRows("SELECT COUNT(*) as total FROM whatsapp_api_alerts WHERE status = 'active' AND severity = 'critical'"),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_template_sends')
-  ])
-
-  return {
-    phoneNumbers,
-    contacts,
-    messages,
-    inboundMessages,
-    outboundMessages,
-    attributedMessages,
-    webhookEvents,
-    templates,
-    approvedTemplates,
-    activeAlerts,
-    criticalAlerts,
-    templateSends
-  }
-}
-
-// Contactos cuyo último evento de ruteo es una contingencia: si el número original ya volvió,
-// se le ofrece al usuario regresarlos. Los cambiados manualmente después quedan fuera porque
-// su último evento ya no es 'contingency'.
-async function getPendingContingencyRestoreCounts() {
-  const rows = await db.all(`
-    SELECT e.previous_phone_number_id, COUNT(*) AS contact_count
-    FROM whatsapp_routing_events e
-    JOIN (
-      SELECT contact_id, MAX(created_at) AS max_created
-      FROM whatsapp_routing_events
-      GROUP BY contact_id
-    ) latest ON latest.contact_id = e.contact_id AND latest.max_created = e.created_at
-    WHERE e.source = 'contingency'
-      AND e.previous_phone_number_id IS NOT NULL
-    GROUP BY e.previous_phone_number_id
-  `).catch(() => [])
-
-  const counts = new Map()
-  for (const row of rows) {
-    counts.set(cleanString(row.previous_phone_number_id), Number(row.contact_count) || 0)
-  }
-  return counts
-}
-
 export async function rerouteWhatsAppPhoneNumberContacts({ phoneNumberId, targetPhoneNumberId, reason } = {}) {
   const sourceId = cleanString(phoneNumberId)
   const targetId = cleanString(targetPhoneNumberId)
@@ -4759,7 +4715,13 @@ export async function restoreWhatsAppPhoneNumberContacts({ phoneNumberId } = {})
 }
 
 export async function getWhatsAppApiStatus() {
-  let config = await clearStaleDisconnectedYCloudCredentials(await loadConfig())
+  const storedConfig = await loadConfig()
+  // Un GET nunca limpia credenciales ni corrige configuración. El flujo de
+  // desconexión/reset es el dueño de esa escritura; aquí sólo normalizamos la
+  // vista de un registro legado que quedó apagado con una llave guardada.
+  let config = !storedConfig.enabled && storedConfig.hasApiKey
+    ? { ...storedConfig, hasApiKey: false }
+    : storedConfig
   const metaDirect = await loadMetaDirectConfig()
   if (
     cleanString(config.provider).toLowerCase() === META_DIRECT_PROVIDER_NAME &&
@@ -4767,16 +4729,15 @@ export async function getWhatsAppApiStatus() {
     config.enabled &&
     config.hasApiKey
   ) {
-    await setAppConfig(CONFIG_KEYS.provider, PROVIDER_NAME)
     config = { ...config, provider: PROVIDER_NAME }
   }
-  const [stats, phoneNumbers, balance, templates, alerts, qrSessions, qrDripSettings] = await Promise.all([
-    getStats(),
+  const [statusSnapshot, phoneNumbers, balance, templates, alerts, qrSessions, qrDripSettings] = await Promise.all([
+    getWhatsAppStatusProjectionSnapshot(),
     getPhoneNumbersFromDb(),
     getBalanceFromDb(),
     getTemplatesFromDb({ limit: 12 }),
     getActiveAlertsFromDb({ limit: 12 }),
-    getWhatsAppQrSessions().catch(error => {
+    getWhatsAppQrSessions({ repairMissingAuthState: false }).catch(error => {
       logger.warn(`No se pudieron leer sesiones QR WhatsApp: ${error.message}`)
       return []
     }),
@@ -4785,6 +4746,7 @@ export async function getWhatsAppApiStatus() {
       return { enabled: true, delaySeconds: 30, delayUnit: 'seconds', minDelaySeconds: 15, maxDelaySeconds: 600 }
     })
   ])
+  const { stats, pendingRestoreCounts } = statusSnapshot
 
   const connected = Boolean(config.enabled && config.hasApiKey)
   const requiresPhoneSelection = false
@@ -4818,7 +4780,6 @@ export async function getWhatsAppApiStatus() {
     !phoneNumbersWithAvailability.some(phone => Number(phone.is_default_sender || 0) === 1)
   )
 
-  const pendingRestoreCounts = await getPendingContingencyRestoreCounts().catch(() => new Map())
   const pendingRestores = phoneNumbersWithAvailability
     .filter(phone => (pendingRestoreCounts.get(phone.id) || 0) > 0 && phone.availability.apiAvailable)
     .map(phone => ({
@@ -10574,17 +10535,188 @@ async function sendInteractiveViaMetaDirect({ to, interactive, from, externalId 
 }
 
 export async function getWhatsAppApiTemplates({ status, limit } = {}) {
-  const [items, total, approved] = await Promise.all([
+  const [items, snapshot] = await Promise.all([
     getTemplatesFromDb({ status, limit }),
-    countRows('SELECT COUNT(*) as total FROM whatsapp_api_templates'),
-    countRows("SELECT COUNT(*) as total FROM whatsapp_api_templates WHERE status = 'APPROVED'")
+    getWhatsAppStatusProjectionSnapshot()
   ])
+  const total = Number(snapshot.stats.templates || 0)
+  const approved = Number(snapshot.stats.approvedTemplates || 0)
 
   return {
     total,
     approved,
     blocked: Math.max(0, total - approved),
     items
+  }
+}
+
+function normalizeWhatsAppTemplateCatalogLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed)) return 50
+  return Math.max(1, Math.min(parsed, 100))
+}
+
+function escapeWhatsAppTemplateCatalogLike(value) {
+  return String(value || '')
+    .replaceAll('!', '!!')
+    .replaceAll('%', '!%')
+    .replaceAll('_', '!_')
+}
+
+function whatsappTemplateCatalogScope({ status = '', search = '' } = {}) {
+  return JSON.stringify([status, search.toLowerCase()])
+}
+
+function encodeWhatsAppTemplateCatalogCursor(row, scope) {
+  if (!row) return null
+  const rawTimestamp = row.cursor_updated_at ?? row.sort_updated_at
+  const updatedAt = rawTimestamp instanceof Date ? rawTimestamp.toISOString() : cleanString(rawTimestamp)
+  return Buffer.from(JSON.stringify({
+    v: 1,
+    kind: 'whatsapp-template-catalog',
+    scope,
+    rank: Number(row.catalog_rank || 0),
+    updatedAt,
+    id: cleanString(row.id)
+  }), 'utf8').toString('base64url')
+}
+
+function decodeWhatsAppTemplateCatalogCursor(value, expectedScope) {
+  const cursor = cleanString(value)
+  if (!cursor) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
+    if (
+      parsed?.v !== 1 ||
+      parsed?.kind !== 'whatsapp-template-catalog' ||
+      parsed?.scope !== expectedScope ||
+      !Number.isInteger(Number(parsed?.rank)) ||
+      !cleanString(parsed?.updatedAt) ||
+      !cleanString(parsed?.id)
+    ) {
+      throw new Error('invalid cursor')
+    }
+    return {
+      rank: Number(parsed.rank),
+      updatedAt: cleanString(parsed.updatedAt),
+      id: cleanString(parsed.id)
+    }
+  } catch {
+    const error = new Error('Cursor de plantillas WhatsApp inválido')
+    error.status = 400
+    error.statusCode = 400
+    throw error
+  }
+}
+
+function mapTemplateCatalogRow(row = {}) {
+  const raw = parseJsonValue(row.raw_payload_json, {}) || {}
+  let localSnapshot = raw
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (localSnapshot?.localTemplateId || localSnapshot?.local_template_id) break
+    if (!localSnapshot?.raw || typeof localSnapshot.raw !== 'object') break
+    localSnapshot = localSnapshot.raw
+  }
+  const displayName = cleanString(
+    localSnapshot.localTemplateName || localSnapshot.local_template_name || row.name
+  )
+  return mapTemplateRow({
+    ...row,
+    display_name: displayName || row.name,
+    local_template_id: cleanString(
+      localSnapshot.localTemplateId || localSnapshot.local_template_id
+    ) || null
+  })
+}
+
+/**
+ * Catálogo local para el editor de automatizaciones. Nunca sincroniza ni llama
+ * al proveedor: create/update/import/webhook materializan whatsapp_api_templates.
+ */
+export async function getWhatsAppApiTemplatesCatalogPage({
+  status = 'APPROVED',
+  search = '',
+  cursor = '',
+  limit
+} = {}) {
+  const pageLimit = normalizeWhatsAppTemplateCatalogLimit(limit)
+  const normalizedStatus = cleanString(status).toUpperCase()
+  const normalizedSearch = cleanString(search).slice(0, 160)
+  const scope = whatsappTemplateCatalogScope({ status: normalizedStatus, search: normalizedSearch })
+  const decodedCursor = decodeWhatsAppTemplateCatalogCursor(cursor, scope)
+  const conditions = []
+  const params = []
+
+  if (normalizedStatus) {
+    conditions.push('t.status = ?')
+    params.push(normalizedStatus)
+  }
+  if (normalizedSearch) {
+    const rawDocument = isPostgres()
+      ? "COALESCE(t.raw_payload_json::text, '')"
+      : "COALESCE(t.raw_payload_json, '')"
+    conditions.push(`LOWER(
+      COALESCE(t.id, '') || ' ' || COALESCE(t.name, '') || ' ' ||
+      COALESCE(t.language, '') || ' ' || ${rawDocument}
+    ) LIKE ? ESCAPE '!'`)
+    params.push(`%${escapeWhatsAppTemplateCatalogLike(normalizedSearch.toLowerCase())}%`)
+  }
+
+  const sortTimestamp = isPostgres()
+    ? "COALESCE(t.updated_at, t.created_at, TIMESTAMP '1970-01-01 00:00:00')"
+    : "COALESCE(t.updated_at, t.created_at, '1970-01-01 00:00:00')"
+  const cursorTimestamp = isPostgres() ? `(${sortTimestamp})::text` : sortTimestamp
+  const rawPayloadText = isPostgres()
+    ? "COALESCE(t.raw_payload_json::text, '')"
+    : "COALESCE(t.raw_payload_json, '')"
+  const catalogRank = `CASE WHEN ${rawPayloadText} LIKE '%\"localTemplateId\"%' THEN 0 ELSE 1 END`
+  if (decodedCursor) {
+    conditions.push(`(
+      ${catalogRank} > ?
+      OR (${catalogRank} = ? AND (${sortTimestamp}, t.id) < (?, ?))
+    )`)
+    params.push(decodedCursor.rank, decodedCursor.rank, decodedCursor.updatedAt, decodedCursor.id)
+  }
+
+  const rows = await db.all(`
+    SELECT
+      t.*,
+      ${catalogRank} AS catalog_rank,
+      ${sortTimestamp} AS sort_updated_at,
+      ${cursorTimestamp} AS cursor_updated_at
+    FROM whatsapp_api_templates t
+    ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
+    ORDER BY ${catalogRank} ASC, ${sortTimestamp} DESC, t.id DESC
+    LIMIT ?
+  `, [...params, pageLimit + 1])
+
+  const hasMore = rows.length > pageLimit
+  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
+  const seen = new Set()
+  const items = []
+  for (const row of pageRows) {
+    const item = mapTemplateCatalogRow(row)
+    const canonicalKey = `${cleanString(item.waba_id)}|${cleanString(item.name).toLowerCase()}|${cleanString(item.language).toLowerCase()}`
+    if (seen.has(canonicalKey)) continue
+    seen.add(canonicalKey)
+    items.push(item)
+  }
+
+  const snapshot = await getWhatsAppStatusProjectionSnapshot()
+  const total = Number(snapshot.stats.templates || 0)
+  const approved = Number(snapshot.stats.approvedTemplates || 0)
+  return {
+    total,
+    approved,
+    blocked: Math.max(0, total - approved),
+    items,
+    pageInfo: {
+      limit: pageLimit,
+      hasMore,
+      nextCursor: hasMore
+        ? encodeWhatsAppTemplateCatalogCursor(pageRows[pageRows.length - 1], scope)
+        : null
+    }
   }
 }
 

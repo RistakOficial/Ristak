@@ -1438,7 +1438,7 @@ async function saveAuthorizedAssets(payload) {
 
 async function loadAuthorizedAssets() {
   const row = await db.get(
-    'SELECT connection_id, payload_encrypted FROM meta_oauth_authorized_assets WHERE id = ?',
+    'SELECT connection_id, payload_encrypted, updated_at FROM meta_oauth_authorized_assets WHERE id = ?',
     [AUTHORIZED_ASSETS_ID]
   ).catch(() => null)
   if (!row?.payload_encrypted) return null
@@ -1446,12 +1446,54 @@ async function loadAuthorizedAssets() {
     const payload = JSON.parse(decrypt(row.payload_encrypted))
     return {
       ...authorizedAssetsPayload(payload),
-      connectionId: cleanString(payload?.connectionId || row.connection_id)
+      connectionId: cleanString(payload?.connectionId || row.connection_id),
+      updatedAt: row.updated_at || null
     }
   } catch (error) {
     logger.error(`No se pudo abrir el inventario autorizado de Meta: ${error.message}`)
     return null
   }
+}
+
+function buildLocalAuthorizedAssetSnapshot(config = null, authorized = null) {
+  if (!config || !authorized) return null
+  if (!isMetaOAuthConnectionMode(config.connection_mode)) return null
+  if (cleanString(authorized.connectionId) !== cleanString(config.oauth_connection_id)) return null
+  return {
+    sessionId: '',
+    expiresAt: '',
+    connectionMode: authorized.connectionMode || normalizeMetaConnectionMode(config.connection_mode),
+    user: authorized.user || {
+      id: cleanString(config.oauth_user_id),
+      name: cleanString(config.oauth_user_name)
+    },
+    permissions: authorized.permissions || {
+      granted: parseJson(config.oauth_granted_scopes_json, []),
+      missing: parseJson(config.oauth_missing_scopes_json, []),
+      granular: parseJson(config.oauth_granular_scopes_json, [])
+    },
+    businesses: Array.isArray(authorized.businesses) ? authorized.businesses : [],
+    adAccounts: Array.isArray(authorized.adAccounts) ? authorized.adAccounts : [],
+    datasets: Array.isArray(authorized.datasets) ? authorized.datasets : [],
+    pages: Array.isArray(authorized.pages) ? authorized.pages : [],
+    defaults: {
+      businessId: cleanString(config.oauth_business_id || config.meta_business_id),
+      adAccountId: normalizeAdAccountId(config.ad_account_id),
+      pixelId: cleanString(config.pixel_id),
+      pageId: cleanString(config.page_id),
+      instagramAccountId: cleanString(config.instagram_account_id)
+    },
+    updatedAt: authorized.updatedAt || config.updated_at || null,
+    source: 'local_authorized_assets'
+  }
+}
+
+export async function getMetaOAuthAuthorizedAssetsSnapshot() {
+  const [config, authorized] = await Promise.all([
+    getMetaConfig({ migratePlaintext: false }).catch(() => null),
+    loadAuthorizedAssets()
+  ])
+  return buildLocalAuthorizedAssetSnapshot(config, authorized)
 }
 
 function summarizeSelectedMetaAssets(config = null, authorized = null) {
@@ -1532,9 +1574,8 @@ function localMetaOAuthState(config) {
 }
 
 export async function getMetaOAuthConnectionStatus() {
-  if (!metaConnectionMutationRunning) await cleanupMetaOAuthPendingSessions()
   const [localConfig, manualBackup, authorized] = await Promise.all([
-    getMetaConfig().catch(error => {
+    getMetaConfig({ migratePlaintext: false }).catch(error => {
       logger.warn(`No se pudo leer estado local Meta OAuth: ${error.message}`)
       return null
     }),
@@ -1542,35 +1583,51 @@ export async function getMetaOAuthConnectionStatus() {
     loadAuthorizedAssets()
   ])
   const local = localMetaOAuthState(localConfig)
-  let central = {}
-  let centralError = ''
-  try {
-    central = await centralClient.getStatus()
-  } catch (error) {
-    centralError = error.message || 'No se pudo consultar el Installer'
-  }
-  // Conexiones creadas antes del vault local todavía pueden recuperar nombres
-  // desde el inventario cifrado del Installer. Esto es sólo estado cacheado: no
-  // abre Graph ni agrega llamadas pasivas a Meta.
-  const selectedInventory = authorized || normalizeHintAssets(central?.connection?.available || {})
-  const selectedSummary = summarizeSelectedMetaAssets(localConfig, selectedInventory)
+  const assetSnapshot = buildLocalAuthorizedAssetSnapshot(localConfig, authorized)
+  const selectedSummary = summarizeSelectedMetaAssets(localConfig, authorized)
 
   return {
-    configured: central?.configured === true,
-    available: central?.available === true,
-    mode: cleanString(central?.mode) || 'redirect',
-    source: cleanString(central?.source) || 'oauth_user',
-    reviewPending: central?.review_pending !== false,
+    // Esta lectura alimenta navegación: nunca consulta Installer ni crea/limpia
+    // sesiones. La acción POST connect-url es la verificación remota real.
+    configured: true,
+    available: true,
+    mode: 'redirect',
+    source: local.connectionMode || 'oauth_user',
+    reviewPending: false,
     connectUrl: '',
     connectEndpoint: '/api/meta/oauth/connect-url',
-    appId: cleanString(central?.app_id || central?.appId),
-    configId: cleanString(central?.config_id || central?.configId),
-    requiredScopes: toStringArray(central?.required_scopes || central?.requiredScopes || META_OAUTH_REQUIRED_SCOPES),
+    appId: cleanString(localConfig?.oauth_app_id || localConfig?.app_id),
+    configId: cleanString(localConfig?.oauth_config_id),
+    requiredScopes: META_OAUTH_REQUIRED_SCOPES,
     ...local,
     ...selectedSummary,
+    assetSnapshot,
     manualBackupAvailable: Boolean(manualBackup?.config?.access_token),
+    centralConnection: null,
+    remoteChecked: false,
+    error: null
+  }
+}
+
+export async function refreshMetaOAuthConnectionStatus() {
+  const [local, central] = await Promise.all([
+    getMetaOAuthConnectionStatus(),
+    centralClient.getStatus()
+  ])
+  return {
+    ...local,
+    configured: central?.configured === true,
+    available: central?.available === true,
+    mode: cleanString(central?.mode) || local.mode,
+    source: cleanString(central?.source) || local.source,
+    reviewPending: central?.review_pending !== false,
+    appId: cleanString(central?.app_id || central?.appId) || local.appId,
+    configId: cleanString(central?.config_id || central?.configId) || local.configId,
+    requiredScopes: toStringArray(central?.required_scopes || central?.requiredScopes || local.requiredScopes),
     centralConnection: central?.connection || null,
-    error: centralError || null
+    remoteChecked: true,
+    remoteCheckedAt: new Date().toISOString(),
+    error: null
   }
 }
 

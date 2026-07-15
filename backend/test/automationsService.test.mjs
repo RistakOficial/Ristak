@@ -21,6 +21,7 @@ import {
   updateAutomation
 } from '../src/services/automationsService.js'
 import { getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
+import { syncLocalMessageTemplateSnapshots } from '../src/services/messageTemplatesService.js'
 
 async function withAppConfigValue(key, value, callback) {
   const previous = await db.get('SELECT config_value FROM app_config WHERE config_key = ?', [key])
@@ -767,6 +768,7 @@ test('catálogo de plantillas WhatsApp refleja plantillas locales aprobadas', as
         JSON.stringify({ id: officialId, status: 'APPROVED' })
       ])
 
+      await syncLocalMessageTemplateSnapshots({ onlyApproved: true })
       const catalog = await listAutomationWhatsAppTemplatesCatalog()
       const item = catalog.items.find((template) => template.id === officialId)
 
@@ -831,6 +833,7 @@ test('catálogo WhatsApp oculta nombres técnicos de reintento y no duplica plan
         ) VALUES (?, ?, ?, ?, 'es_MX', 'APPROVED', ?, '{}', CURRENT_TIMESTAMP)
       `, [officialRetryId, officialRetryId, wabaId, retryName, JSON.stringify(components)])
 
+      await syncLocalMessageTemplateSnapshots({ onlyApproved: true })
       const catalog = await listAutomationWhatsAppTemplatesCatalog()
       const matches = catalog.items.filter((template) => template.name === templateName && template.language === 'es_MX')
 

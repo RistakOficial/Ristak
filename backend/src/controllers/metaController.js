@@ -29,11 +29,9 @@ import {
   buildDedupExpression
 } from '../services/analyticsService.js';
 import {
-  fetchAndSaveMetaConfig,
   reconcileMetaBusinessWithHighLevel,
   saveMetaCustomValues
 } from '../services/highlevelSyncService.js';
-import { getConnectedMetaSocialProfiles } from '../services/metaSocialProfilesService.js';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
@@ -57,8 +55,14 @@ import { getAccountCurrency } from '../utils/accountLocale.js';
 import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js';
 import {
   disconnectMetaOAuthConnection,
+  getMetaOAuthAuthorizedAssetsSnapshot,
   replaceMetaOAuthWithManualConnection
 } from '../services/metaOAuthService.js';
+import {
+  clearMetaAssetSnapshot,
+  getMetaAssetSnapshot,
+  saveMetaAssetSnapshot
+} from '../services/metaAssetSnapshotService.js';
 import {
   DEFAULT_META_ADS_SYNC_INTERVAL_MINUTES,
   MAX_META_ADS_SYNC_INTERVAL_MINUTES,
@@ -71,6 +75,7 @@ import {
   getCampaignPerformancePage,
   invalidateCampaignPerformanceCache
 } from '../services/campaignPerformanceService.js';
+import { getCampaignOverviewSnapshot } from '../services/campaignOverviewService.js';
 import { listCampaignContactsPage } from '../services/campaignContactsPaginationService.js';
 
 const SUCCESS_PAYMENT_STATUSES = new Set([
@@ -86,6 +91,27 @@ const REFUND_PAYMENT_STATUSES = new Set(['refunded', 'refund']);
 
 const isPostgres = Boolean(process.env.DATABASE_URL);
 const MASKED_SECRET_PREFIX = '***';
+
+function createClientAbortScope(res) {
+  const controller = new AbortController();
+  const abortWhenSocketCloses = () => {
+    if (!res.writableEnded) controller.abort();
+  };
+  const canObserveSocket = typeof res?.once === 'function';
+  if (canObserveSocket) res.once('close', abortWhenSocketCloses);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (canObserveSocket && typeof res?.off === 'function') {
+        res.off('close', abortWhenSocketCloses);
+      }
+    }
+  };
+}
+
+function isClientAbort(error, signal) {
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR');
+}
 
 function buildMetaAdsHistoricalSyncStartDate() {
   const startDate = new Date();
@@ -913,7 +939,7 @@ export const getConfig = async (req, res) => {
     const rawConfig = await db.get(
       'SELECT access_token FROM meta_config LIMIT 1'
     );
-    const config = await getMetaConfig();
+    const config = await getMetaConfig({ migratePlaintext: false });
 
     if (!config) {
       return res.json({
@@ -1681,7 +1707,7 @@ export const saveMetaMessengerUserToken = async (req, res) => {
     await persistMetaMessengerUserToken(userToken);
     const socialChannels = await enableMetaSocialChannelsForConnectedProfiles(config);
     const subscription = await ensureMetaPageMessagingSubscription();
-    const setup = await getMetaDeveloperSetup();
+    const setup = await getMetaDeveloperSetup({ refresh: true });
 
     res.json({
       success: true,
@@ -1707,6 +1733,7 @@ export const deleteMetaConfig = async (req, res) => {
     const existingConfig = await getLegacyMetaConfig().catch(() => null);
     if (existingConfig && ['oauth_bisu', 'oauth_user'].includes(cleanString(existingConfig.connection_mode))) {
       const result = await disconnectMetaOAuthConnection({ publicBaseUrl: getPublicBaseUrl(req) });
+      await clearMetaAssetSnapshot();
       return res.json({
         success: true,
         message: 'Conexión OAuth de Meta eliminada exitosamente',
@@ -1725,6 +1752,7 @@ export const deleteMetaConfig = async (req, res) => {
       await clearMetaIntegrationCredentials();
     }
     await setAppConfig('meta_config_disconnected', '1');
+    await clearMetaAssetSnapshot();
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-disconnected' });
     await syncRegisteredIntegrationCronsForProvider('meta-ads', { reason: 'meta-legacy-disconnected' });
     await syncRegisteredIntegrationCronsForProvider('meta-social', { reason: 'meta-legacy-disconnected' });
@@ -2337,6 +2365,7 @@ export const getCampaignsLegacyHierarchy = async (req, res) => {
  * proporcional al tamaño de la cuenta.
  */
 export const getCampaignsPage = async (req, res) => {
+  const client = createClientAbortScope(res);
   try {
     const { startDate, endDate } = req.query;
     if (!startDate || !endDate) {
@@ -2358,17 +2387,63 @@ export const getCampaignsPage = async (req, res) => {
       campaignId: req.query.campaignId,
       adsetId: req.query.adsetId,
       includeVisitors: ['1', 'true', 'yes'].includes(String(req.query.includeVisitors || '').toLowerCase()),
-      onlyWithResults: ['1', 'true', 'yes'].includes(String(req.query.onlyWithResults || '').toLowerCase())
+      onlyWithResults: ['1', 'true', 'yes'].includes(String(req.query.onlyWithResults || '').toLowerCase()),
+      signal: client.signal
     });
 
+    if (client.signal.aborted) return;
     res.json({ success: true, data });
   } catch (error) {
+    if (isClientAbort(error, client.signal)) return;
     const status = Number(error?.status) || 500;
     logger.error(`Error en getCampaignsPage: ${error.message}`);
     res.status(status).json({
       success: false,
       error: status < 500 ? error.message : 'Error al obtener campañas'
     });
+  } finally {
+    client.cleanup();
+  }
+};
+
+/**
+ * Read-model único de la cabecera y gráficas de Publicidad. El servicio deriva
+ * resumen, inversión/ingresos y funnel de cuatro scans acotados y conserva un
+ * snapshot durable SWR; navegar no vuelve a disparar tres endpoints pesados.
+ */
+export const getCampaignOverview = async (req, res) => {
+  const client = createClientAbortScope(res);
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'Se requieren startDate y endDate'
+      });
+    }
+
+    const data = await getCampaignOverviewSnapshot({
+      startDate,
+      endDate,
+      includeVisitors: ['1', 'true', 'yes'].includes(String(req.query.includeVisitors ?? '1').toLowerCase()),
+      waitForFresh: ['1', 'true', 'yes'].includes(String(req.query.waitForFresh || '').toLowerCase()),
+      signal: client.signal
+    });
+    if (client.signal.aborted) return;
+
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Ristak-Snapshot-Stale', data.cache?.stale ? '1' : '0');
+    return res.json({ success: true, data });
+  } catch (error) {
+    if (isClientAbort(error, client.signal)) return;
+    const status = Number(error?.status) || 500;
+    logger.error(`Error en getCampaignOverview: ${error.message}`);
+    return res.status(status).json({
+      success: false,
+      error: status < 500 ? error.message : 'Error al obtener el resumen de publicidad'
+    });
+  } finally {
+    client.cleanup();
   }
 };
 
@@ -2631,9 +2706,20 @@ export const getContactsByType = async (req, res) => {
   } catch (error) {
     logger.error(`Error en getContactsByType: ${error.message}`);
     const status = Number(error?.status) || 500;
+    if (status === 503 && error?.retryAfter) {
+      res.set?.('Retry-After', String(error.retryAfter));
+    }
     res.status(status).json({
       success: false,
-      error: status < 500 ? error.message : 'Error al obtener contactos'
+      error: status === 503 ? error.message : status < 500 ? error.message : 'Error al obtener contactos',
+      ...(status === 503
+        ? {
+            code: error.code,
+            retriable: Boolean(error.retriable),
+            projection: error.projection,
+            projectionStatus: error.projectionStatus
+          }
+        : {})
     });
   }
 };
@@ -2643,7 +2729,7 @@ export const getContactsByType = async (req, res) => {
  */
 export const verifyToken = async (req, res) => {
   try {
-    const config = await getMetaConfig();
+    const config = await getMetaConfig({ migratePlaintext: false });
 
     if (!config || !config.access_token) {
       return res.json({
@@ -3219,24 +3305,26 @@ export const getFunnelMetrics = async (req, res) => {
 };
 
 /**
- * Obtiene los Custom Values de Meta desde HighLevel
+ * Snapshot local de Meta para Configuración.
+ *
+ * Contrato crítico: este GET no contacta HighLevel, Installer ni Meta Graph y
+ * no reconcilia/escribe configuración. La sincronización opcional desde
+ * HighLevel vive exclusivamente en POST /api/meta/sync-from-highlevel.
  */
 export const getMetaCustomValues = async (req, res) => {
   try {
-    logger.info('Obteniendo configuración de Meta desde HighLevel o DB local...');
-
-    const hlConfig = await db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
-    const [localMetaConfig, localSocialConfig] = await Promise.all([
-      getMetaConfig().catch(error => {
+    const [localMetaConfig, localSocialConfig, metaDisconnected, whatsappBusinessAccountId] = await Promise.all([
+      getMetaConfig({ migratePlaintext: false }).catch(error => {
         logger.warn(`No se pudo leer Meta Ads local: ${error.message}`);
         return null;
       }),
-      getMetaSocialConfig().catch(error => {
+      getMetaSocialConfig({ migratePlaintext: false }).catch(error => {
         logger.warn(`No se pudo leer Meta Social local: ${error.message}`);
         return null;
-      })
+      }),
+      getAppConfig('meta_config_disconnected').then(value => cleanString(value) === '1').catch(() => false),
+      getAppConfig('meta_whatsapp_business_account_id').catch(() => null)
     ]);
-    const metaDisconnected = cleanString(await getAppConfig('meta_config_disconnected')) === '1';
 
     if (metaDisconnected && !hasUsableLocalMetaConfig(localMetaConfig) && !hasUsableLocalMetaConfig(localSocialConfig)) {
       return res.json({
@@ -3251,69 +3339,12 @@ export const getMetaCustomValues = async (req, res) => {
       });
     }
 
-    if (hlConfig?.location_id && hlConfig?.api_token) {
-      const reconciliation = await reconcileMetaBusinessWithHighLevel(
-        hlConfig.location_id,
-        hlConfig.api_token,
-        { prefer: 'local' }
-      );
-
-      logger.info(`Reconciliación Meta/HighLevel al cargar Settings: ${reconciliation.action} - ${reconciliation.message}`);
-
-      const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
-      const [refreshedLocalConfig, refreshedSocialConfig] = await Promise.all([
-        getMetaConfig().catch(() => null),
-        getMetaSocialConfig().catch(() => null)
-      ]);
-
-      // PRIORIDAD: si ya existe configuración de Meta en Ristak, usarla siempre.
-      // Los custom values de HighLevel solo se usan cuando no hay config local.
-      if (hasUsableLocalMetaConfig(refreshedLocalConfig) || hasUsableLocalMetaConfig(refreshedSocialConfig)) {
-        const whatsappBusinessAccountId = await db.get(
-          'SELECT config_value FROM app_config WHERE config_key = ?',
-          ['meta_whatsapp_business_account_id']
-        );
-
-        return res.json({
-          success: true,
-          data: toMaskedMetaCredentials(
-            refreshedLocalConfig || {},
-            whatsappBusinessAccountId?.config_value,
-            refreshedSocialConfig
-          ),
-          source: 'local',
-          reconciliation
-        });
-      }
-
-      if (metaCustomValues && (
-        metaCustomValues.adAccountId ||
-        metaCustomValues.accessToken ||
-        metaCustomValues.pixelId ||
-        metaCustomValues.pageId ||
-        metaCustomValues.instagramAccountId ||
-        metaCustomValues.whatsappBusinessAccountId
-      )) {
-        return res.json({
-          success: true,
-          data: metaCustomValues,
-          source: 'highlevel',
-          reconciliation
-        });
-      }
-    }
-
     if (hasUsableLocalMetaConfig(localMetaConfig) || hasUsableLocalMetaConfig(localSocialConfig)) {
-      const whatsappBusinessAccountId = await db.get(
-        'SELECT config_value FROM app_config WHERE config_key = ?',
-        ['meta_whatsapp_business_account_id']
-      );
-
       return res.json({
         success: true,
         data: toMaskedMetaCredentials(
           localMetaConfig || {},
-          whatsappBusinessAccountId?.config_value,
+          whatsappBusinessAccountId,
           localSocialConfig
         ),
         source: 'local',
@@ -3342,7 +3373,7 @@ export const getMetaCustomValues = async (req, res) => {
     logger.error(`Error en getMetaCustomValues: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Error al obtener custom values de Meta desde HighLevel'
+      error: 'Error al obtener la configuración local de Meta'
     });
   }
 };
@@ -3417,6 +3448,18 @@ export const saveAndSyncMeta = async (req, res) => {
     let effectivePixelId = normalizedPixelId;
     if (!effectivePixelId) {
       try {
+        const assetSnapshot = await getMetaAssetSnapshot({ explicitAccessToken: effectiveAccessToken });
+        const cachedPixel = assetSnapshot.pixelsByAdAccount?.[normalizedAdAccountId]?.[0];
+        if (cachedPixel?.id) {
+          effectivePixelId = cleanString(cachedPixel.id);
+          logger.info(`Dataset auto-asociado desde el snapshot local de la cuenta ${normalizedAdAccountId}`);
+        }
+      } catch (snapshotError) {
+        logger.warn(`No se pudo leer el snapshot local de activos Meta: ${snapshotError.message}`);
+      }
+    }
+    if (!effectivePixelId) {
+      try {
         const accountForPixels = normalizedAdAccountId.startsWith('act_')
           ? normalizedAdAccountId
           : `act_${normalizedAdAccountId}`;
@@ -3442,7 +3485,11 @@ export const saveAndSyncMeta = async (req, res) => {
       effectivePixelId || null,
       normalizedPageId || null,
       normalizedInstagramAccountId || null,
-      { connectionMode: 'manual_system_user', allowOAuthToManual: true }
+      {
+        connectionMode: 'manual_system_user',
+        allowOAuthToManual: true,
+        appId: validation.appId || ''
+      }
     );
     if (replacingOAuthWithManual) {
       await replaceMetaOAuthWithManualConnection(persistManualConfig, { publicBaseUrl: getPublicBaseUrl(req) });
@@ -3600,27 +3647,26 @@ export const syncFromHighLevel = async (req, res) => {
       });
     }
 
-    // 2. Buscar custom values de Meta en HighLevel
-    logger.info('Buscando custom values de Meta en HighLevel...');
-    const metaCustomValues = await fetchAndSaveMetaConfig(hlConfig.location_id, hlConfig.api_token);
-
-    if (!metaCustomValues || !metaCustomValues.adAccountId || !metaCustomValues.accessToken.startsWith('***')) {
-      return res.status(404).json({
-        success: false,
-        error: 'No se encontraron custom values de Meta en HighLevel. Verifica que hayas creado los custom values con los nombres exactos.'
-      });
-    }
-
+    // Una sola lectura remota. reconcileMetaBusinessWithHighLevel valida el
+    // contrato antes de escribir y, en dirección from_highlevel, jamás empuja
+    // valores locales si HighLevel está vacío o incompleto.
     const reconciliation = await reconcileMetaBusinessWithHighLevel(
       hlConfig.location_id,
       hlConfig.api_token,
-      { prefer: 'highlevel' }
+      { prefer: 'highlevel', direction: 'from_highlevel' }
     );
 
     if (!reconciliation.success) {
       return res.status(500).json({
         success: false,
         error: `No se pudo sincronizar Meta desde HighLevel: ${reconciliation.message}`
+      });
+    }
+
+    if (!reconciliation.highLevelConfigured) {
+      return res.status(404).json({
+        success: false,
+        error: 'No se encontraron custom values completos de Meta en HighLevel. Verifica los nombres y valores configurados.'
       });
     }
 
@@ -3690,13 +3736,129 @@ export function extractMetaAccessToken(req) {
   return null;
 }
 
-function extractExplicitMetaAccessToken(req) {
-  const customHeader = req.headers['x-meta-access-token'];
-  if (typeof customHeader === 'string' && customHeader.trim()) {
-    return customHeader.trim();
-  }
+function normalizeMetaAssetPage(page = {}) {
+  const normalized = normalizeMetaPage(page);
+  if (!normalized.id) return null;
+  const rawInstagramAccounts = [
+    page.instagram_business_account,
+    page.connected_instagram_account,
+    ...(Array.isArray(page.instagramAccounts) ? page.instagramAccounts : [])
+  ].filter(Boolean);
+  const instagramById = new Map();
+  rawInstagramAccounts.forEach(account => {
+    const id = cleanString(account.id || account.sourceId);
+    if (!id) return;
+    instagramById.set(id, {
+      id,
+      username: cleanString(account.username),
+      name: cleanString(account.name) || cleanString(account.username) || id,
+      pageId: normalized.id,
+      avatarUrl: cleanString(account.profile_picture_url || account.avatarUrl),
+      followers: Number.isFinite(Number(account.followers_count ?? account.followers))
+        ? Number(account.followers_count ?? account.followers)
+        : null
+    });
+  });
+  return {
+    ...normalized,
+    businessId: cleanString(page.businessId || page.business_id || page.business?.id),
+    followers: Number.isFinite(Number(page.followers_count ?? page.fan_count ?? page.followers))
+      ? Number(page.followers_count ?? page.fan_count ?? page.followers)
+      : null,
+    instagramAccounts: [...instagramById.values()]
+  };
+}
 
-  return cleanString(req.query?.accessToken);
+function compactFollowers(value) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count < 0) return '';
+  if (count < 1000) return String(Math.round(count));
+  if (count < 1_000_000) return `${Number((count / 1000).toFixed(1))} mil`;
+  return `${Number((count / 1_000_000).toFixed(1))} millones`;
+}
+
+function buildMetaProfilesFromPages(pages = [], updatedAt = new Date().toISOString()) {
+  const profiles = [];
+  pages.forEach(page => {
+    if (!page?.id) return;
+    profiles.push({
+      id: `facebook:${page.id}`,
+      platform: 'facebook',
+      sourceId: page.id,
+      pageId: page.id,
+      pageName: page.name,
+      name: page.name,
+      username: '',
+      category: page.category || '',
+      avatarUrl: page.pictureUrl || '',
+      followers: Number.isFinite(Number(page.followers)) ? Number(page.followers) : null,
+      followersLabel: compactFollowers(page.followers),
+      updatedAt
+    });
+    (page.instagramAccounts || []).forEach(account => {
+      profiles.push({
+        id: `instagram:${account.id}`,
+        platform: 'instagram',
+        sourceId: account.id,
+        pageId: page.id,
+        pageName: page.name,
+        name: account.username || account.name || account.id,
+        username: account.username || '',
+        category: 'Instagram',
+        avatarUrl: account.avatarUrl || '',
+        followers: Number.isFinite(Number(account.followers)) ? Number(account.followers) : null,
+        followersLabel: compactFollowers(account.followers),
+        updatedAt
+      });
+    });
+  });
+  return profiles;
+}
+
+function metaAssetSnapshotFromOAuth(session) {
+  if (!session) return null;
+  const updatedAt = session.updatedAt || null;
+  const adAccounts = (session.adAccounts || []).map(account => ({
+    id: String(account.id || '').startsWith('act_') ? account.id : `act_${account.id}`,
+    account_id: normalizeMetaAdAccountId(account.accountId || account.id),
+    name: cleanString(account.name) || normalizeMetaAdAccountId(account.id),
+    currency: cleanString(account.currency),
+    timezone_name: cleanString(account.timezoneName),
+    account_status: Number(account.accountStatus ?? account.status ?? 0) || 0
+  })).filter(account => account.account_id);
+  const pixelsByAdAccount = Object.fromEntries((session.adAccounts || []).flatMap(account => {
+    const accountId = normalizeMetaAdAccountId(account.accountId || account.id);
+    if (!accountId) return [];
+    return [[accountId, (account.pixels || []).map(pixel => ({
+      id: cleanString(pixel.id),
+      name: cleanString(pixel.name) || cleanString(pixel.id),
+      creation_time: '',
+      last_fired_time: '',
+      adAccountId: accountId
+    })).filter(pixel => pixel.id)]];
+  }));
+  const pages = (session.pages || []).map(normalizeMetaAssetPage).filter(Boolean);
+  return {
+    version: 1,
+    updatedAt,
+    stale: false,
+    source: 'oauth_local',
+    adAccounts,
+    pixelsByAdAccount,
+    pages,
+    profiles: buildMetaProfilesFromPages(pages, updatedAt || new Date().toISOString())
+  };
+}
+
+async function readLocalMetaAssetSnapshot(req) {
+  const explicitAccessToken = extractMetaAccessToken(req) || '';
+  const cached = await getMetaAssetSnapshot({ explicitAccessToken });
+  const hasCachedAssets = cached.updatedAt || cached.adAccounts.length || cached.pages.length || cached.profiles.length;
+  if (hasCachedAssets) return { ...cached, source: 'local_cache' };
+  if (explicitAccessToken) return { ...cached, source: 'empty' };
+
+  const oauthSnapshot = metaAssetSnapshotFromOAuth(await getMetaOAuthAuthorizedAssetsSnapshot());
+  return oauthSnapshot || { ...cached, source: 'empty' };
 }
 
 async function resolveMetaRequestCredentials(req, integrationKind = 'ads') {
@@ -3717,124 +3879,227 @@ async function resolveMetaRequestCredentials(req, integrationKind = 'ads') {
   };
 }
 
-/**
- * Obtiene las cuentas de anuncios del usuario de Meta
- * GET /api/meta/ad-accounts (token en header X-Meta-Access-Token / Authorization)
- */
+async function resolveRemoteMetaUserId({ accessToken, appSecretProof, oauthUserId, isOAuth }) {
+  if (oauthUserId) return oauthUserId;
+  if (isOAuth) {
+    const params = new URLSearchParams({ fields: 'id', access_token: accessToken });
+    if (appSecretProof) params.set('appsecret_proof', appSecretProof);
+    const response = await fetch(`${API_URLS.META_GRAPH}/me?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok || data?.error || !data?.id) {
+      throw new Error(data?.error?.message || 'Meta no devolvió la identidad OAuth');
+    }
+    return cleanString(data.id);
+  }
+
+  // System User: debug_token se resuelve una sola vez para todo el inventario.
+  const params = new URLSearchParams({ input_token: accessToken, access_token: accessToken });
+  const response = await fetch(`${API_URLS.META_TOKEN_DEBUG}?${params.toString()}`);
+  const data = await response.json();
+  const userId = cleanString(data?.data?.user_id);
+  if (!response.ok || data?.error || !userId) {
+    throw new Error(data?.error?.message || 'Meta no pudo identificar el System User Token');
+  }
+  return userId;
+}
+
+async function fetchRemoteMetaPages({ accessToken, appSecretProof, userId }) {
+  const fields = [
+    'id',
+    'name',
+    'category',
+    'picture{url}',
+    'fan_count',
+    'followers_count',
+    'business{id,name}',
+    'instagram_business_account{id,username,name,profile_picture_url,followers_count}',
+    'connected_instagram_account{id,username,name,profile_picture_url,followers_count}'
+  ].join(',');
+  const params = new URLSearchParams({ fields, limit: '100', access_token: accessToken });
+  if (appSecretProof) params.set('appsecret_proof', appSecretProof);
+  let pages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/me/accounts?${params.toString()}`).catch(() => []);
+  if (pages.length === 0 && userId) {
+    const fallbacks = await Promise.all(['accounts', 'assigned_pages'].map(edge => (
+      fetchMetaConnection(`${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/${edge}?${params.toString()}`)
+        .catch(error => {
+          logger.warn(`Meta assets: no se pudo leer ${edge}: ${safeMetaGraphTransportError(error)}`);
+          return [];
+        })
+    )));
+    pages = fallbacks.flat();
+  }
+  const byId = new Map();
+  pages.map(normalizeMetaAssetPage).filter(Boolean).forEach(page => byId.set(page.id, page));
+  return [...byId.values()];
+}
+
+async function fetchRemoteMetaAssetSnapshot(req) {
+  const explicitAccessToken = extractMetaAccessToken(req) || '';
+  const credentials = await resolveMetaRequestCredentials(req);
+  const { accessToken, appSecretProof, oauthUserId, isOAuth } = credentials;
+  if (!accessToken) {
+    const error = new Error('Meta no tiene Access Token para actualizar activos');
+    error.statusCode = 400;
+    throw error;
+  }
+  const requestedAdAccountId = normalizeMetaAdAccountId(req.body?.adAccountId || req.body?.ad_account_id);
+  const requestedScope = cleanString(req.body?.scope).toLowerCase();
+  const currentSnapshot = await getMetaAssetSnapshot({ explicitAccessToken });
+  const canReuseBaseSnapshot = requestedScope === 'pixels' &&
+    Boolean(requestedAdAccountId && currentSnapshot.updatedAt && !currentSnapshot.stale) &&
+    currentSnapshot.adAccounts.some(account => normalizeMetaAdAccountId(account.id || account.account_id) === requestedAdAccountId);
+
+  // Al entrar al paso Dataset, una base fresca ya trae cuentas y Pages. En ese
+  // caso pedimos sólo los pixels de la cuenta elegida: cero /me, cero cuentas
+  // repetidas y cero Pages repetidas. Un refresh general sigue reconstruyendo
+  // todo el inventario en paralelo.
+  const baseAssetsPromise = canReuseBaseSnapshot
+    ? Promise.resolve({ rawAdAccounts: null, pages: null })
+    : (async () => {
+        const userId = await resolveRemoteMetaUserId({ accessToken, appSecretProof, oauthUserId, isOAuth });
+        const accountParams = new URLSearchParams({
+          fields: 'id,account_id,name,currency,timezone_name,account_status',
+          limit: '100',
+          access_token: accessToken
+        });
+        if (appSecretProof) accountParams.set('appsecret_proof', appSecretProof);
+        const adAccountsUrl = `${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/adaccounts?${accountParams.toString()}`;
+        const [rawAdAccounts, pages] = await Promise.all([
+          fetchMetaConnection(adAccountsUrl),
+          fetchRemoteMetaPages({ accessToken, appSecretProof, userId })
+        ]);
+        return { rawAdAccounts, pages };
+      })();
+  const pixelsPromise = requestedAdAccountId
+    ? (() => {
+        const params = new URLSearchParams({
+          fields: 'id,name,creation_time,last_fired_time',
+          limit: '100',
+          access_token: accessToken
+        });
+        if (appSecretProof) params.set('appsecret_proof', appSecretProof);
+        return fetchMetaConnection(`${API_URLS.META_GRAPH}/act_${encodeURIComponent(requestedAdAccountId)}/adspixels?${params.toString()}`)
+          .catch(error => {
+            logger.warn(`Meta assets: no se pudieron leer Datasets: ${safeMetaGraphTransportError(error)}`);
+            return [];
+          });
+      })()
+    : Promise.resolve(null);
+
+  const [{ rawAdAccounts, pages }, rawPixels] = await Promise.all([
+    baseAssetsPromise,
+    pixelsPromise
+  ]);
+  const adAccountsById = new Map();
+  (rawAdAccounts || []).forEach(account => {
+    const id = normalizeMetaAdAccountId(account.id || account.account_id);
+    if (!id) return;
+    adAccountsById.set(id, {
+      id: `act_${id}`,
+      account_id: cleanString(account.account_id) || id,
+      name: cleanString(account.name) || id,
+      currency: cleanString(account.currency),
+      timezone_name: cleanString(account.timezone_name),
+      account_status: Number(account.account_status) || 0
+    });
+  });
+  const updatedAt = canReuseBaseSnapshot ? currentSnapshot.updatedAt : new Date().toISOString();
+  const pixelsByAdAccount = rawPixels === null ? {} : {
+    [requestedAdAccountId]: rawPixels.map(pixel => ({
+      id: cleanString(pixel.id),
+      name: cleanString(pixel.name) || cleanString(pixel.id),
+      creation_time: cleanString(pixel.creation_time),
+      last_fired_time: cleanString(pixel.last_fired_time),
+      adAccountId: requestedAdAccountId
+    })).filter(pixel => pixel.id)
+  };
+  const nextSnapshot = {
+    updatedAt,
+    pixelsByAdAccount
+  };
+  if (rawAdAccounts !== null) nextSnapshot.adAccounts = [...adAccountsById.values()];
+  if (pages !== null) {
+    nextSnapshot.pages = pages;
+    nextSnapshot.profiles = buildMetaProfilesFromPages(pages, updatedAt);
+  }
+  return saveMetaAssetSnapshot(nextSnapshot, { explicitAccessToken });
+}
+
+export const getMetaAssets = async (req, res) => {
+  try {
+    res.json({ success: true, data: await readLocalMetaAssetSnapshot(req) });
+  } catch (error) {
+    logger.error(`Error leyendo snapshot local de activos Meta: ${error.message}`);
+    res.status(500).json({ success: false, error: 'No se pudieron leer los activos guardados de Meta' });
+  }
+};
+
+export const refreshMetaAssets = async (req, res) => {
+  try {
+    const snapshot = await fetchRemoteMetaAssetSnapshot(req);
+    res.json({ success: true, data: { ...snapshot, source: 'remote_refresh' } });
+  } catch (error) {
+    logger.warn(`No se pudieron actualizar activos Meta: ${safeMetaGraphTransportError(error)}`);
+    res.status(Number(error?.statusCode) || 400).json({
+      success: false,
+      error: error.message || 'No se pudieron actualizar los activos de Meta'
+    });
+  }
+};
+
+/** Lectura compatible del inventario local. Nunca contacta Meta Graph. */
 export const getAdAccounts = async (req, res) => {
   try {
-    // (META-005) El access token llega por header (Authorization: Bearer o X-Meta-Access-Token),
-    // ya no por query string, para no exponerlo en logs/historial frontend->backend.
-    const { accessToken, appSecretProof, oauthUserId, isOAuth } = await resolveMetaRequestCredentials(req);
-
-    if (!accessToken) {
-      logger.error('❌ No se proporcionó accessToken');
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
-    }
-
-    logger.info('Obteniendo cuentas de Meta Ads');
-
-    // PASO 1: Verificar token y obtener user_id
-    let userId = oauthUserId;
-    if (isOAuth && !userId) {
-      const meParams = new URLSearchParams({ fields: 'id', access_token: accessToken, appsecret_proof: appSecretProof });
-      const meResponse = await fetch(`${API_URLS.META_GRAPH}/me?${meParams.toString()}`);
-      const meData = await meResponse.json();
-      userId = meData?.id;
-      if (!meResponse.ok || meData?.error) {
-        return res.status(400).json({ success: false, error: meData?.error?.message || 'Token OAuth inválido' });
-      }
-    } else if (!isOAuth) {
-      const debugParams = new URLSearchParams({ input_token: accessToken, access_token: accessToken });
-      const debugUrl = `${API_URLS.META_TOKEN_DEBUG}?${debugParams.toString()}`;
-      const debugResponse = await fetch(debugUrl);
-      const debugData = await debugResponse.json();
-      if (debugData.error) {
-        return res.status(400).json({ success: false, error: debugData.error.message || 'Token inválido' });
-      }
-      userId = debugData.data?.user_id;
-    }
-
-    if (!userId) {
-      logger.error('No se pudo extraer user_id del token');
-      return res.status(400).json({
-        success: false,
-        error: 'No se pudo obtener user_id del token'
-      });
-    }
-
-    // PASO 2: Obtener ad accounts DIRECTAMENTE del System User (sin businesses)
-    const adAccountParams = new URLSearchParams({
-      fields: 'id,account_id,name,currency,timezone_name,account_status',
-      limit: '100',
-      access_token: accessToken
-    });
-    if (appSecretProof) adAccountParams.set('appsecret_proof', appSecretProof);
-    const adAccountsUrl = `${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/adaccounts?${adAccountParams.toString()}`;
-    const uniqueAccounts = await fetchMetaConnection(adAccountsUrl);
-    logger.info(`Encontradas ${uniqueAccounts.length} cuenta(s) de anuncios`);
+    const snapshot = await readLocalMetaAssetSnapshot(req);
 
     res.json({
       success: true,
       data: {
-        adAccounts: uniqueAccounts
+        adAccounts: snapshot.adAccounts,
+        updatedAt: snapshot.updatedAt,
+        stale: snapshot.stale,
+        source: snapshot.source
       }
     });
-
   } catch (error) {
-    logger.error(`Error en getAdAccounts: ${safeMetaGraphTransportError(error)}`);
+    logger.error(`Error leyendo cuentas Meta locales: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Error al obtener cuentas de anuncios'
+      error: 'Error al leer las cuentas de anuncios guardadas'
     });
   }
 };
 
 /**
- * Obtiene los pixeles de Meta de una cuenta de anuncios
- * GET /api/meta/pixels?adAccountId=act_123  (token vía header X-Meta-Access-Token, ver META-005)
+ * Obtiene los Datasets/pixels del snapshot local de una cuenta.
  */
 export const getPixels = async (req, res) => {
   try {
     const { adAccountId } = req.query;
-    // (META-005) Token desde header en vez de query string.
-    const { accessToken, appSecretProof } = await resolveMetaRequestCredentials(req);
-
-    if (!adAccountId || !accessToken) {
+    if (!adAccountId) {
       return res.status(400).json({
         success: false,
-        error: 'Se requieren adAccountId y accessToken'
+        error: 'Se requiere adAccountId'
       });
     }
-
-    logger.info(`Obteniendo pixeles para cuenta: ${adAccountId}`);
-
-    // Llamar a Meta Graph API para obtener pixels
-    const pixelParams = new URLSearchParams({
-      fields: 'id,name,code,creation_time,last_fired_time',
-      limit: '100',
-      access_token: accessToken
-    });
-    if (appSecretProof) pixelParams.set('appsecret_proof', appSecretProof);
-    const url = `${API_URLS.META_GRAPH}/${encodeURIComponent(adAccountId)}/adspixels?${pixelParams.toString()}`;
-    const pixels = await fetchMetaConnection(url);
-    logger.info(`✅ Encontrados ${pixels.length} pixeles`);
+    const snapshot = await readLocalMetaAssetSnapshot(req);
+    const accountId = normalizeMetaAdAccountId(adAccountId);
+    const pixels = snapshot.pixelsByAdAccount?.[accountId] || [];
 
     res.json({
       success: true,
       data: {
-        pixels: pixels
+        pixels,
+        updatedAt: snapshot.updatedAt,
+        stale: snapshot.stale,
+        source: snapshot.source
       }
     });
-
   } catch (error) {
-    logger.error(`Error en getPixels: ${safeMetaGraphTransportError(error)}`);
+    logger.error(`Error leyendo Datasets Meta locales: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Error al obtener pixeles'
+      error: 'Error al leer Datasets guardados'
     });
   }
 };
@@ -3886,107 +4151,58 @@ async function fetchMetaConnection(initialUrl) {
   return records;
 }
 
-/**
- * Obtiene las páginas disponibles para el token de Meta
- * GET /api/meta/pages  (token vía header X-Meta-Access-Token, ver META-005)
- */
+/** Lectura compatible de páginas desde el snapshot local. */
 export const getPages = async (req, res) => {
   try {
-    // (META-005) Token desde header en vez de query string.
-    const { accessToken, appSecretProof, oauthUserId, isOAuth } = await resolveMetaRequestCredentials(req, 'social');
-
-    if (!accessToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'Se requiere accessToken'
-      });
-    }
-
-    logger.info('Obteniendo páginas de Meta asignadas al token');
-
-    const pageFields = 'id,name,category,picture{url}';
-    const params = new URLSearchParams({
-      fields: pageFields,
-      limit: '100',
-      access_token: accessToken
-    });
-    if (appSecretProof) params.set('appsecret_proof', appSecretProof);
-
-    let rawPages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/me/accounts?${params.toString()}`);
-
-    if (rawPages.length === 0) {
-      let userId = oauthUserId;
-      if (isOAuth && !userId) {
-        const meParams = new URLSearchParams({ fields: 'id', access_token: accessToken, appsecret_proof: appSecretProof });
-        const meResponse = await fetch(`${API_URLS.META_GRAPH}/me?${meParams.toString()}`);
-        const meData = await meResponse.json();
-        userId = meData?.id;
-      } else if (!isOAuth) {
-        const debugParams = new URLSearchParams({ input_token: accessToken, access_token: accessToken });
-        const debugResponse = await fetch(`${API_URLS.META_TOKEN_DEBUG}?${debugParams.toString()}`);
-        const debugData = await debugResponse.json();
-        userId = debugData?.data?.user_id;
-      }
-
-      if (userId) {
-        const fallbackEdges = ['accounts', 'assigned_pages'];
-
-        for (const edge of fallbackEdges) {
-          try {
-            const fallbackPages = await fetchMetaConnection(`${API_URLS.META_GRAPH}/${encodeURIComponent(userId)}/${edge}?${params.toString()}`);
-            rawPages.push(...fallbackPages);
-          } catch (fallbackError) {
-            logger.warn(`No se pudieron leer páginas desde ${edge}: ${safeMetaGraphTransportError(fallbackError)}`);
-          }
-        }
-      }
-    }
-
-    const pagesById = new Map();
-    rawPages
-      .map(normalizeMetaPage)
-      .filter(page => page.id && page.name)
-      .forEach(page => pagesById.set(page.id, page));
-
-    const pages = [...pagesById.values()];
-    logger.info(`Encontradas ${pages.length} página(s) de Meta`);
+    const snapshot = await readLocalMetaAssetSnapshot(req);
 
     res.json({
       success: true,
       data: {
-        pages
+        pages: snapshot.pages,
+        updatedAt: snapshot.updatedAt,
+        stale: snapshot.stale,
+        source: snapshot.source
       }
     });
   } catch (error) {
-    logger.error(`Error en getPages: ${safeMetaGraphTransportError(error)}`);
-    res.status(400).json({
+    logger.error(`Error leyendo páginas Meta locales: ${error.message}`);
+    res.status(500).json({
       success: false,
-      error: 'Error al obtener páginas'
+      error: 'Error al leer páginas guardadas'
     });
   }
 };
 
 /**
- * Obtiene perfiles sociales disponibles desde la conexión Meta guardada.
+ * Obtiene perfiles sociales disponibles desde el snapshot local.
  * GET /api/meta/social-profiles
  */
 export const getSocialProfiles = async (req, res) => {
   try {
-    const accessToken = extractExplicitMetaAccessToken(req);
-    const result = await getConnectedMetaSocialProfiles({
-      ...(accessToken ? { accessToken } : {}),
-      pageId: req.query?.pageId,
-      instagramAccountId: req.query?.instagramAccountId
-    });
+    const snapshot = await readLocalMetaAssetSnapshot(req);
+    const configuredPageId = cleanString(req.query?.pageId);
+    const configuredInstagramAccountId = cleanString(req.query?.instagramAccountId);
+    const profiles = snapshot.profiles.map(profile => ({
+      ...profile,
+      isConfiguredPage: Boolean(configuredPageId && profile.pageId === configuredPageId),
+      isConfiguredInstagram: Boolean(configuredInstagramAccountId && profile.sourceId === configuredInstagramAccountId)
+    }));
     res.json({
       success: true,
-      data: result
+      data: {
+        connected: profiles.length > 0,
+        updatedAt: snapshot.updatedAt,
+        stale: snapshot.stale,
+        source: snapshot.source,
+        profiles
+      }
     });
   } catch (error) {
     logger.error(`Error en getSocialProfiles: ${error.message}`);
-    res.status(400).json({
+    res.status(500).json({
       success: false,
-      error: error.message || 'Error al obtener perfiles sociales conectados'
+      error: error.message || 'Error al leer perfiles sociales guardados'
     });
   }
 };

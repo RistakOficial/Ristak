@@ -31,14 +31,19 @@ function escapeSqlLiteral(value) {
  * Obtiene todos los filtros activos de contactos ocultos
  * @returns {Promise<Array<{text: string, type: string}>>} Array de filtros con texto y tipo
  */
-export async function getHiddenContactFilters() {
+export async function getHiddenContactFilters(options = {}) {
   try {
-    const filters = await db.all('SELECT filter_text, match_type FROM hidden_contact_filters ORDER BY created_at DESC')
+    const filters = await db.all(
+      'SELECT filter_text, match_type FROM hidden_contact_filters ORDER BY created_at DESC',
+      [],
+      options?.signal ? { signal: options.signal } : undefined
+    )
     return filters.map(f => ({
       text: f.filter_text,
       type: f.match_type || 'contains' // default a 'contains' para compatibilidad
     }))
   } catch (error) {
+    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
     // Si hay error, devolver array vacío para no romper queries
     return []
   }

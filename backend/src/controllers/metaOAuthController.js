@@ -6,15 +6,18 @@ import {
   disconnectMetaOAuthConnection,
   finalizeMetaOAuthConnection,
   getMetaOAuthConnectionStatus,
-  prepareMetaOAuthReconfiguration
+  prepareMetaOAuthReconfiguration,
+  refreshMetaOAuthConnectionStatus
 } from '../services/metaOAuthService.js'
 import {
   completeMetaOAuthIntegration,
   createMetaOAuthIntegrationUrl,
   disconnectMetaOAuthIntegration,
   finalizeMetaOAuthIntegration,
-  getMetaOAuthIntegrationStatus
+  getMetaOAuthIntegrationStatus,
+  refreshMetaOAuthIntegrationStatus
 } from '../services/metaOAuthIntegrationService.js'
+import { clearMetaAssetSnapshot } from '../services/metaAssetSnapshotService.js'
 
 function integrationKind(req) {
   return req.params?.integrationKind || req.body?.integrationKind || req.body?.integration_kind || ''
@@ -73,6 +76,19 @@ export async function getMetaOAuthStatus(req, res) {
   } catch (error) {
     logger.error(`Error consultando Meta OAuth: ${error.message}`)
     errorResponse(res, error, 'No se pudo consultar la conexión OAuth de Meta')
+  }
+}
+
+export async function refreshMetaOAuthStatus(req, res) {
+  try {
+    const kind = integrationKind(req)
+    const data = kind
+      ? await refreshMetaOAuthIntegrationStatus(kind)
+      : await refreshMetaOAuthConnectionStatus()
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.warn(`No se pudo verificar Meta OAuth contra Installer: ${error.message}`)
+    errorResponse(res, error, 'No se pudo verificar la conexión OAuth de Meta')
   }
 }
 
@@ -172,6 +188,7 @@ export async function disconnectMetaOAuth(req, res) {
     const data = kind
       ? await disconnectMetaOAuthIntegration(kind)
       : await disconnectMetaOAuthConnection({ publicBaseUrl: publicBaseUrl(req) })
+    await clearMetaAssetSnapshot()
     res.json({ success: true, data })
   } catch (error) {
     logger.warn(`No se pudo desconectar Meta OAuth: ${error.message}`)

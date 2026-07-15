@@ -42,14 +42,23 @@ function sendError(res, error, fallback = 'No se pudo completar la operación') 
 
 export async function getMessageTemplatesView(req, res) {
   try {
-    await repairDefaultMessageTemplatesForCurrentConnection({ publicBaseUrl: getPublicBaseUrl(req) }).catch(error => {
-      logger.warn(`No se pudo reparar plantillas default de WhatsApp antes de listar: ${error.message}`)
-    })
     const data = await getMessageTemplateBundle()
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error leyendo plantillas de WhatsApp: ${error.message}`)
     sendError(res, error, 'No se pudieron leer las plantillas')
+  }
+}
+
+export async function repairDefaultMessageTemplatesView(req, res) {
+  try {
+    const data = await repairDefaultMessageTemplatesForCurrentConnection({
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error reparando plantillas default de WhatsApp: ${error.message}`)
+    sendError(res, error, 'No se pudieron reparar las plantillas predeterminadas')
   }
 }
 

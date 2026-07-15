@@ -8,8 +8,7 @@ import {
 import { controlAutomationEnrollment as controlEngineEnrollment, enrollContactManually, testWebhookAction } from './automationEngine.js'
 import { hasFeature, isLicenseEnforced } from './licenseService.js'
 import { findContactByPhoneCandidates, recordContactPhoneNumber } from './contactIdentityService.js'
-import { getWhatsAppApiTemplates } from './whatsappApiService.js'
-import { syncLocalMessageTemplateSnapshots } from './messageTemplatesService.js'
+import { getWhatsAppApiTemplatesCatalogPage } from './whatsappApiService.js'
 import { normalizePhoneForAccount } from '../utils/accountLocale.js'
 import { serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
 import {
@@ -92,19 +91,26 @@ function normalizeAutomationPageLimit(value) {
   return Math.min(MAX_AUTOMATIONS_PAGE_SIZE, Math.max(1, parsed))
 }
 
-function encodeAutomationCursor(row) {
+function automationCursorScope({ search = '', status = '', folderId = null } = {}) {
+  return JSON.stringify([search.toLowerCase(), status, folderId])
+}
+
+function encodeAutomationCursor(row, scope) {
   if (!row) return null
-  const rawUpdatedAt = row.sort_updated_at
+  const rawUpdatedAt = row.cursor_updated_at ?? row.sort_updated_at
   const updatedAt = rawUpdatedAt instanceof Date
     ? rawUpdatedAt.toISOString()
     : String(rawUpdatedAt || '')
   return Buffer.from(JSON.stringify({
+    v: 2,
+    kind: 'automations',
+    scope,
     updatedAt,
     id: String(row.id || '')
   }), 'utf8').toString('base64url')
 }
 
-function decodeAutomationCursor(value) {
+function decodeAutomationCursor(value, expectedScope) {
   const cursor = cleanString(value)
   if (!cursor) return null
 
@@ -113,6 +119,9 @@ function decodeAutomationCursor(value) {
     const updatedAt = cleanString(parsed?.updatedAt)
     const id = cleanString(parsed?.id)
     if (!updatedAt || !id) throw new Error('invalid cursor')
+    if (parsed?.scope !== undefined && parsed.scope !== expectedScope) {
+      throw new Error('cursor scope mismatch')
+    }
     return { updatedAt, id }
   } catch {
     throw badRequest('Cursor de automatizaciones inválido')
@@ -472,7 +481,6 @@ export async function listAutomations() {
  */
 export async function listAutomationsPage(options = {}) {
   const limit = normalizeAutomationPageLimit(options.limit)
-  const cursor = decodeAutomationCursor(options.cursor)
   const search = cleanString(options.search).slice(0, 200)
   const requestedStatus = cleanString(options.status).toLowerCase()
   const status = AUTOMATION_STATUSES.includes(requestedStatus) ? requestedStatus : ''
@@ -480,6 +488,8 @@ export async function listAutomationsPage(options = {}) {
     ? null
     : cleanString(options.folderId)
   const includeReview = options.includeReview === true
+  const cursorScope = automationCursorScope({ search, status, folderId: rawFolderId })
+  const cursor = decodeAutomationCursor(options.cursor, cursorScope)
   const conditions = []
   const params = []
 
@@ -507,7 +517,12 @@ export async function listAutomationsPage(options = {}) {
     }
   }
 
-  const sortTimestamp = "COALESCE(updated_at, created_at, '1970-01-01 00:00:00')"
+  const sortTimestamp = databaseDialect === 'postgres'
+    ? "COALESCE(updated_at, created_at, TIMESTAMP '1970-01-01 00:00:00')"
+    : "COALESCE(updated_at, created_at, '1970-01-01 00:00:00')"
+  const cursorTimestamp = databaseDialect === 'postgres'
+    ? `(${sortTimestamp})::text`
+    : sortTimestamp
   if (cursor) {
     conditions.push(`(${sortTimestamp}, id) < (?, ?)`)
     params.push(cursor.updatedAt, cursor.id)
@@ -523,7 +538,8 @@ export async function listAutomationsPage(options = {}) {
        created_at,
        updated_at,
        published_at,
-       ${sortTimestamp} AS sort_updated_at
+       ${sortTimestamp} AS sort_updated_at,
+       ${cursorTimestamp} AS cursor_updated_at
      FROM automations
      ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''}
      ORDER BY ${sortTimestamp} DESC, id DESC
@@ -563,7 +579,7 @@ export async function listAutomationsPage(options = {}) {
     pageInfo: {
       limit,
       hasMore,
-      nextCursor: hasMore ? encodeAutomationCursor(pageRows[pageRows.length - 1]) : null
+      nextCursor: hasMore ? encodeAutomationCursor(pageRows[pageRows.length - 1], cursorScope) : null
     }
   }
 }
@@ -1254,151 +1270,266 @@ function mapImportedFieldToFieldOption(field = {}, meta = '') {
  * No depende del permiso de Sites: si alguien puede administrar automatizaciones,
  * debe poder elegir el formulario que dispara la automatización.
  */
-export async function listAutomationFormsCatalog() {
-  const [allSiteRows, formEmbedRows, fieldSiteRows, importedRows] = await Promise.all([
-    db.all(`
-      SELECT id, name, slug, site_type, status, updated_at
-      FROM public_sites
-      WHERE COALESCE(status, 'draft') != 'archived'
-      ORDER BY updated_at DESC, name ASC
-    `),
-    db.all(`
-      SELECT
-        b.id AS block_id,
-        b.label AS block_label,
-        b.settings_json,
-        b.updated_at AS block_updated_at,
-        s.id AS site_id,
-        s.name AS site_name,
-        s.site_type,
-        s.status,
-        s.updated_at AS site_updated_at
-      FROM public_site_blocks b
-      INNER JOIN public_sites s ON s.id = b.site_id
-      WHERE COALESCE(s.status, 'draft') != 'archived'
-        AND b.block_type = 'form_embed'
-      ORDER BY s.updated_at DESC, b.sort_order ASC, b.created_at ASC
-    `),
-    db.all(`
-      SELECT DISTINCT s.id, s.name, s.slug, s.site_type, s.status, s.updated_at
-      FROM public_sites s
-      INNER JOIN public_site_blocks b ON b.site_id = s.id
-      WHERE COALESCE(s.status, 'draft') != 'archived'
-        AND b.block_type IN (${Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES).map(() => '?').join(',')})
-      ORDER BY s.updated_at DESC, s.name ASC
-    `, Array.from(AUTOMATION_FORM_FIELD_BLOCK_TYPES)),
-    db.all(`
-      SELECT
-        i.site_id,
-        i.form_mappings_json,
-        i.updated_at AS import_updated_at,
-        s.name AS site_name,
-        s.status,
-        s.updated_at AS site_updated_at
-      FROM public_site_imports i
-      INNER JOIN public_sites s ON s.id = i.site_id
-      WHERE COALESCE(s.status, 'draft') != 'archived'
-      ORDER BY s.updated_at DESC, i.updated_at DESC
-    `)
-  ])
+const DEFAULT_AUTOMATION_FORMS_CATALOG_LIMIT = 30
+const MAX_AUTOMATION_FORMS_CATALOG_LIMIT = 50
 
-  const options = []
+function normalizeAutomationFormsCatalogLimit(value) {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+  if (!Number.isFinite(parsed)) return DEFAULT_AUTOMATION_FORMS_CATALOG_LIMIT
+  return Math.min(MAX_AUTOMATION_FORMS_CATALOG_LIMIT, Math.max(1, parsed))
+}
+
+function normalizeAutomationFormsSelectedIds(values = []) {
+  const source = Array.isArray(values) ? values : String(values || '').split(',')
+  return [...new Set(source.map(cleanCatalogString).filter(Boolean))].slice(0, 50)
+}
+
+function automationFormsCatalogCursorScope(search = '') {
+  return JSON.stringify(['automation-forms-catalog', cleanCatalogString(search).toLowerCase()])
+}
+
+function encodeAutomationFormsCatalogCursor(row, scope) {
+  if (!row) return null
+  const updatedAt = cleanCatalogString(row.cursor_updated_at || row.updated_at)
+  const id = cleanCatalogString(row.id)
+  if (!updatedAt || !id) return null
+  return Buffer.from(JSON.stringify({ v: 1, scope, updatedAt, id }), 'utf8').toString('base64url')
+}
+
+function decodeAutomationFormsCatalogCursor(value, expectedScope) {
+  const encoded = cleanCatalogString(value)
+  if (!encoded) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
+    const updatedAt = cleanCatalogString(parsed?.updatedAt)
+    const id = cleanCatalogString(parsed?.id)
+    if (parsed?.v !== 1 || parsed?.scope !== expectedScope || !updatedAt || !id) throw new Error('invalid cursor')
+    return { updatedAt, id }
+  } catch {
+    throw badRequest('Cursor del catálogo de formularios inválido')
+  }
+}
+
+const automationFormFieldBlockTypesSql = [...AUTOMATION_FORM_FIELD_BLOCK_TYPES]
+  .map(value => `'${value.replaceAll("'", "''")}'`)
+  .join(', ')
+
+function automationCatalogJsonText(column, keys) {
+  if (usePostgres) {
+    return `COALESCE(${keys.map(key => `ristak_safe_jsonb(${column}) ->> '${key}'`).join(', ')}, '')`
+  }
+  return `COALESCE(${keys.map(key => `CASE WHEN json_valid(${column}) THEN json_extract(${column}, '$.${key}') END`).join(', ')}, '')`
+}
+
+function automationFormsImportMappingSource() {
+  if (usePostgres) {
+    return `LATERAL jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(ristak_safe_jsonb(i.form_mappings_json)) = 'array'
+          AND jsonb_array_length(ristak_safe_jsonb(i.form_mappings_json)) > 0
+          THEN ristak_safe_jsonb(i.form_mappings_json)
+        ELSE jsonb_build_array('{}'::jsonb)
+      END
+    ) mapping(value)`
+  }
+  return `json_each(
+    CASE
+      WHEN json_valid(i.form_mappings_json)
+        AND json_type(i.form_mappings_json) = 'array'
+        AND json_array_length(i.form_mappings_json) > 0
+        THEN i.form_mappings_json
+      ELSE '[{}]'
+    END
+  ) mapping`
+}
+
+function automationFormsImportJsonText(keys) {
+  if (usePostgres) {
+    return `COALESCE(${keys.map(key => `mapping.value ->> '${key}'`).join(', ')}, '')`
+  }
+  return `COALESCE(${keys.map(key => `json_extract(mapping.value, '$.${key}')`).join(', ')}, '')`
+}
+
+function buildAutomationFormsCatalogBranches() {
+  const siteUpdatedAt = `COALESCE(s.updated_at, s.created_at${usePostgres ? ", TIMESTAMP '1970-01-01 00:00:00'" : ", '1970-01-01 00:00:00'"})`
+  const blockUpdatedAt = `COALESCE(b.updated_at, ${siteUpdatedAt})`
+  const importUpdatedAt = `COALESCE(i.updated_at, ${siteUpdatedAt})`
+  const embeddedSiteId = automationCatalogJsonText('b.settings_json', ['embeddedSiteId', 'embedded_site_id', 'formSiteId', 'form_site_id'])
+  const embeddedSiteName = automationCatalogJsonText('b.settings_json', ['embeddedSiteName', 'embedded_site_name', 'formSiteName', 'form_site_name'])
+  const embeddedFormName = automationCatalogJsonText('b.settings_json', ['formName', 'form_name', 'formTitle', 'form_title', 'name'])
+  const importedFormId = automationFormsImportJsonText(['formId', 'form_id'])
+  const importedFormTitle = automationFormsImportJsonText(['formTitle', 'form_title', 'title'])
+  const siteSearchDocument = `LOWER(
+    COALESCE(s.id, '') || ' ' || COALESCE(s.name, '') || ' ' || COALESCE(s.title, '') || ' ' ||
+    COALESCE(s.description, '') || ' ' || COALESCE(s.slug, '') || ' ' || COALESCE(s.domain, '') || ' ' ||
+    COALESCE(s.site_type, '') || ' ' || COALESCE(s.status, '')
+  )`
+  const blockSearchDocument = `LOWER(COALESCE(b.id, '') || ' ' || COALESCE(b.label, '') || ' ' || COALESCE(b.settings_json, ''))`
+  const importSearchDocument = `LOWER(COALESCE(i.id, '') || ' ' || COALESCE(i.site_id, '') || ' ' || COALESCE(i.form_mappings_json, ''))`
+
+  return [
+    `SELECT s.id, COALESCE(NULLIF(s.name, ''), 'Formulario sin nombre') AS name,
+       s.id AS site_id, s.name AS site_name, 'site_form' AS kind, s.status,
+       ${siteUpdatedAt} AS sort_updated_at,
+       CASE WHEN s.site_type = 'interactive_form' THEN 'Formulario interactivo' ELSE 'Formulario' END AS meta,
+       ${siteSearchDocument} AS search_document
+     FROM public_sites s
+     WHERE COALESCE(s.status, 'draft') != 'archived'
+       AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
+       AND s.site_type IN ('standard_form', 'interactive_form')`,
+    `SELECT s.id, COALESCE(NULLIF(s.name, ''), 'Formulario sin nombre') AS name,
+       s.id AS site_id, s.name AS site_name, 'native_fields' AS kind, s.status,
+       ${siteUpdatedAt} AS sort_updated_at, 'Formulario en landing' AS meta,
+       ${siteSearchDocument} AS search_document
+     FROM public_sites s
+     WHERE COALESCE(s.status, 'draft') != 'archived'
+       AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
+       AND s.site_type NOT IN ('standard_form', 'interactive_form')
+       AND EXISTS (
+         SELECT 1 FROM public_site_blocks native_block
+         WHERE native_block.site_id = s.id
+           AND native_block.block_type IN (${automationFormFieldBlockTypesSql})
+       )`,
+    `SELECT (s.id || ':form_embed:' || b.id) AS id,
+       COALESCE(NULLIF(${embeddedSiteName}, ''), NULLIF(${embeddedFormName}, ''), 'Formulario de ' || COALESCE(NULLIF(s.name, ''), 'sitio')) AS name,
+       s.id AS site_id, s.name AS site_name, 'landing_form' AS kind, s.status,
+       ${blockUpdatedAt} AS sort_updated_at, 'Formulario en ' || COALESCE(NULLIF(s.name, ''), 'sitio') AS meta,
+       ${blockSearchDocument} AS search_document
+     FROM public_site_blocks b
+     INNER JOIN public_sites s ON s.id = b.site_id
+     WHERE COALESCE(s.status, 'draft') != 'archived'
+       AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
+       AND b.block_type = 'form_embed'
+       AND NULLIF(${embeddedSiteId}, '') IS NULL`,
+    `SELECT ${embeddedSiteId} AS id,
+       COALESCE(NULLIF(linked.name, ''), NULLIF(${embeddedSiteName}, ''), NULLIF(${embeddedFormName}, ''), 'Formulario guardado') AS name,
+       s.id AS site_id, s.name AS site_name, 'embedded_site_form' AS kind, s.status,
+       ${blockUpdatedAt} AS sort_updated_at, 'Embebido en ' || COALESCE(NULLIF(s.name, ''), 'sitio') AS meta,
+       ${blockSearchDocument} AS search_document
+     FROM public_site_blocks b
+     INNER JOIN public_sites s ON s.id = b.site_id
+     LEFT JOIN public_sites linked ON linked.id = ${embeddedSiteId}
+     WHERE COALESCE(s.status, 'draft') != 'archived'
+       AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
+       AND b.block_type = 'form_embed'
+       AND NULLIF(${embeddedSiteId}, '') IS NOT NULL`,
+    `SELECT CASE WHEN NULLIF(${importedFormId}, '') IS NULL
+         THEN s.id ELSE s.id || ':imported:' || ${importedFormId} END AS id,
+       COALESCE(NULLIF(${importedFormTitle}, ''), NULLIF(s.name, ''), 'Formulario importado') AS name,
+       s.id AS site_id, s.name AS site_name,
+       CASE WHEN NULLIF(${importedFormId}, '') IS NULL THEN 'imported_site' ELSE 'imported_form' END AS kind,
+       s.status, ${importUpdatedAt} AS sort_updated_at,
+       CASE WHEN NULLIF(${importedFormTitle}, '') IS NOT NULL AND ${importedFormTitle} != COALESCE(s.name, '')
+         THEN 'Importado de ' || COALESCE(NULLIF(s.name, ''), 'sitio') ELSE 'Formulario importado' END AS meta,
+       ${importSearchDocument} AS search_document
+     FROM public_site_imports i
+     INNER JOIN public_sites s ON s.id = i.site_id
+     CROSS JOIN ${automationFormsImportMappingSource()}
+     WHERE COALESCE(s.status, 'draft') != 'archived'
+       AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
+       AND (NULLIF(${importedFormId}, '') IS NOT NULL OR NOT EXISTS (
+         SELECT 1 FROM public_site_blocks native_block
+         WHERE native_block.site_id = s.id
+           AND native_block.block_type IN (${automationFormFieldBlockTypesSql})
+       ))`
+  ]
+}
+
+async function queryAutomationFormsCatalogBranch(baseSql, { limit, search, cursor, selectedIds }) {
+  const predicates = []
+  const params = []
+  if (selectedIds.length) {
+    predicates.push(`candidate.id IN (${selectedIds.map(() => '?').join(', ')})`)
+    params.push(...selectedIds)
+  } else {
+    if (search) {
+      predicates.push(`candidate.search_document LIKE ? ESCAPE '!'`)
+      params.push(`%${escapeAutomationLikePattern(search.toLowerCase())}%`)
+    }
+    if (cursor) {
+      predicates.push(`(candidate.sort_updated_at < ? OR (candidate.sort_updated_at = ? AND candidate.id < ?))`)
+      params.push(cursor.updatedAt, cursor.updatedAt, cursor.id)
+    }
+  }
+  params.push(limit + 1)
+  const cursorProjection = usePostgres ? 'candidate.sort_updated_at::text' : 'candidate.sort_updated_at'
+  return db.all(`
+    SELECT candidate.*, ${cursorProjection} AS cursor_updated_at
+    FROM (${baseSql}) candidate
+    ${predicates.length ? `WHERE ${predicates.join(' AND ')}` : ''}
+    ORDER BY candidate.sort_updated_at DESC, candidate.id DESC
+    LIMIT ?
+  `, params)
+}
+
+function mapAutomationFormCatalogRow(row) {
+  return mapAutomationFormOption({
+    id: row.id,
+    name: row.name,
+    siteId: row.site_id,
+    siteName: row.site_name,
+    kind: row.kind,
+    status: row.status,
+    updatedAt: row.cursor_updated_at || row.sort_updated_at,
+    meta: row.meta
+  })
+}
+
+export async function listAutomationFormsCatalogPage({
+  limit = DEFAULT_AUTOMATION_FORMS_CATALOG_LIMIT,
+  cursor = '',
+  search = '',
+  selectedIds = []
+} = {}) {
+  const pageLimit = normalizeAutomationFormsCatalogLimit(limit)
+  const normalizedSearch = cleanCatalogString(search).slice(0, 160)
+  const normalizedSelectedIds = normalizeAutomationFormsSelectedIds(selectedIds)
+  const scope = automationFormsCatalogCursorScope(normalizedSearch)
+  const decodedCursor = normalizedSelectedIds.length ? null : decodeAutomationFormsCatalogCursor(cursor, scope)
+  const branchRows = await Promise.all(buildAutomationFormsCatalogBranches().map(baseSql => (
+    queryAutomationFormsCatalogBranch(baseSql, {
+      limit: normalizedSelectedIds.length ? Math.min(50, normalizedSelectedIds.length) : pageLimit,
+      search: normalizedSelectedIds.length ? '' : normalizedSearch,
+      cursor: decodedCursor,
+      selectedIds: normalizedSelectedIds
+    })
+  )))
   const seen = new Set()
-  const siteById = new Map(allSiteRows.map((site) => [cleanCatalogString(site.id), site]))
-  const siteRows = allSiteRows.filter((site) => cleanCatalogString(site.site_type).includes('form'))
-
-  for (const site of siteRows) {
-    addAutomationFormOption(options, seen, {
-      id: site.id,
-      name: site.name,
-      siteId: site.id,
-      siteName: site.name,
-      kind: 'site_form',
-      status: site.status,
-      updatedAt: site.updated_at,
-      meta: site.site_type === 'interactive_form' ? 'Formulario interactivo' : 'Formulario'
+  const rows = branchRows.flat()
+    .sort((left, right) => (
+      String(right.cursor_updated_at || right.sort_updated_at).localeCompare(String(left.cursor_updated_at || left.sort_updated_at)) ||
+      String(right.id).localeCompare(String(left.id))
+    ))
+    .filter(row => {
+      const id = cleanCatalogString(row.id)
+      if (!id || seen.has(id)) return false
+      seen.add(id)
+      return true
     })
-  }
 
-  for (const row of formEmbedRows) {
-    const settings = parseCatalogJson(row.settings_json, {})
-    const embeddedSiteId = cleanCatalogString(
-      settings.embeddedSiteId ||
-      settings.embedded_site_id ||
-      settings.formSiteId ||
-      settings.form_site_id
-    )
-    const embeddedSiteName = cleanCatalogString(
-      settings.embeddedSiteName ||
-      settings.embedded_site_name ||
-      settings.formSiteName ||
-      settings.form_site_name
-    )
-    const linkedSite = embeddedSiteId ? siteById.get(embeddedSiteId) : null
-    const id = embeddedSiteId || `${row.site_id}:form_embed:${row.block_id}`
-    const name = cleanCatalogString(linkedSite?.name) ||
-      embeddedSiteName ||
-      cleanCatalogString(settings.formName || settings.form_name || settings.formTitle || settings.form_title || settings.name) ||
-      `Formulario de ${row.site_name}`
-    addAutomationFormOption(options, seen, {
-      id,
-      name,
-      siteId: row.site_id,
-      siteName: row.site_name,
-      kind: embeddedSiteId ? 'embedded_site_form' : 'landing_form',
-      status: row.status,
-      updatedAt: row.block_updated_at || row.site_updated_at,
-      meta: embeddedSiteId ? `Embebido en ${row.site_name}` : `Formulario en ${row.site_name}`
-    })
-  }
-
-  for (const site of fieldSiteRows) {
-    addAutomationFormOption(options, seen, {
-      id: site.id,
-      name: site.name,
-      siteId: site.id,
-      siteName: site.name,
-      kind: 'native_fields',
-      status: site.status,
-      updatedAt: site.updated_at,
-      meta: site.site_type === 'landing_page' ? 'Formulario en landing' : 'Formulario'
-    })
-  }
-
-  for (const row of importedRows) {
-    const mappings = parseCatalogJson(row.form_mappings_json, [])
-    if (!Array.isArray(mappings) || !mappings.length) {
-      addAutomationFormOption(options, seen, {
-        id: row.site_id,
-        name: row.site_name,
-        siteId: row.site_id,
-        siteName: row.site_name,
-        kind: 'imported_site',
-        status: row.status,
-        updatedAt: row.import_updated_at || row.site_updated_at,
-        meta: 'Formulario importado'
-      })
-      continue
-    }
-
-    for (const mapping of mappings) {
-      const formId = cleanCatalogString(mapping?.formId || mapping?.form_id)
-      const id = automationImportedFormId(row.site_id, formId) || row.site_id
-      const formTitle = cleanCatalogString(mapping?.formTitle || mapping?.form_title || mapping?.title)
-      addAutomationFormOption(options, seen, {
-        id,
-        name: formTitle || row.site_name,
-        siteId: row.site_id,
-        siteName: row.site_name,
-        kind: 'imported_form',
-        status: row.status,
-        updatedAt: row.import_updated_at || row.site_updated_at,
-        meta: formTitle && formTitle !== row.site_name ? `Importado de ${row.site_name}` : 'Formulario importado'
-      })
+  if (normalizedSelectedIds.length) {
+    const byId = new Map(rows.map(row => [cleanCatalogString(row.id), mapAutomationFormCatalogRow(row)]))
+    return {
+      items: normalizedSelectedIds.map(id => byId.get(id)).filter(Boolean),
+      hasMore: false,
+      nextCursor: null,
+      limit: pageLimit
     }
   }
 
-  return options
+  const pageRows = rows.slice(0, pageLimit)
+  const hasMore = rows.length > pageLimit || branchRows.some(items => items.length > pageLimit)
+  return {
+    items: pageRows.map(mapAutomationFormCatalogRow),
+    hasMore,
+    nextCursor: hasMore ? encodeAutomationFormsCatalogCursor(pageRows[pageRows.length - 1], scope) : null,
+    limit: pageLimit
+  }
+}
+
+/** Compatibilidad acotada para consumidores internos antiguos. */
+export async function listAutomationFormsCatalog(options = {}) {
+  return (await listAutomationFormsCatalogPage(options)).items
 }
 
 export async function listAutomationFormFieldsCatalog(formId) {
@@ -1702,10 +1833,16 @@ export async function getEnrollmentStats(automationId) {
   return { active, total: Number(totals?.total) || 0, byNode }
 }
 
-export async function listAutomationWhatsAppTemplatesCatalog({ status = 'APPROVED', limit = 200 } = {}) {
-  await syncLocalMessageTemplateSnapshots({ onlyApproved: true })
-  return getWhatsAppApiTemplates({
+export async function listAutomationWhatsAppTemplatesCatalog({
+  status = 'APPROVED',
+  search = '',
+  cursor = '',
+  limit = 50
+} = {}) {
+  return getWhatsAppApiTemplatesCatalogPage({
     status: cleanCatalogString(status) || 'APPROVED',
+    search,
+    cursor,
     limit
   })
 }

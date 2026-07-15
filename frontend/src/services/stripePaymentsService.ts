@@ -353,9 +353,10 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export const stripePaymentsService = {
-  async getConfig(): Promise<StripePaymentConfig> {
+  async getConfig(signal?: AbortSignal): Promise<StripePaymentConfig> {
     const response = await fetch(apiUrl('/api/stripe/config'), {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      signal
     })
     return parseApiResponse<StripePaymentConfig>(response)
   },
@@ -476,9 +477,19 @@ export const stripePaymentsService = {
     return parseApiResponse<StripeSubscriptionCheckoutResponse>(response)
   },
 
-  async getSavedPaymentMethods(contactId: string): Promise<StripeSavedPaymentMethod[]> {
+  async getSavedPaymentMethods(contactId: string, signal?: AbortSignal): Promise<StripeSavedPaymentMethod[]> {
     const response = await fetch(apiUrl(`/api/stripe/contacts/${encodeURIComponent(contactId)}/payment-methods`), {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      signal
+    })
+    return parseApiResponse<StripeSavedPaymentMethod[]>(response)
+  },
+
+  async refreshSavedPaymentMethods(contactId: string, signal?: AbortSignal): Promise<StripeSavedPaymentMethod[]> {
+    const response = await fetch(apiUrl(`/api/stripe/contacts/${encodeURIComponent(contactId)}/payment-methods/refresh`), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      signal
     })
     return parseApiResponse<StripeSavedPaymentMethod[]>(response)
   },

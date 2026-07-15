@@ -26,6 +26,7 @@ import {
   buildTransactionListWhere,
   normalizeTransactionStatusFilters
 } from './transactionQueryService.js'
+import { isContactListProjectionAvailable } from './crmListProjectionService.js'
 
 const isPostgres = databaseDialect === 'postgres'
 const ACTIVE_PAYMENT_STATUSES = new Set(SUCCESS_PAYMENT_STATUSES)
@@ -222,6 +223,7 @@ export async function buildContactStats ({
 } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
+  const useProjectedActivity = await isContactListProjectionAvailable()
 
   const dedupExpr = buildDedupExpression('contacts')
 
@@ -230,24 +232,30 @@ export async function buildContactStats ({
   // exitoso, incluyendo sandbox; los importes/LTV sí excluyen pagos test.
   const activePaymentList = [...ACTIVE_PAYMENT_STATUSES].map(value => `'${value}'`).join(', ')
   const inactiveAppointmentList = [...INACTIVE_APPOINTMENT_STATUSES].map(value => `'${value}'`).join(', ')
-  const customerPaymentExists = `EXISTS (
-    SELECT 1 FROM payments p
-    WHERE p.contact_id = contacts.id
-      AND p.amount > 0
-      AND LOWER(p.status) IN (${activePaymentList})
-  )`
-  const activeAppointmentExists = `EXISTS (
-    SELECT 1 FROM appointments a
-    WHERE a.contact_id = contacts.id
-      AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${inactiveAppointmentList})
-  )`
-  const validPaymentTotal = `COALESCE((
-    SELECT SUM(p.amount) FROM payments p
-    WHERE p.contact_id = contacts.id
-      AND p.amount > 0
-      AND LOWER(p.status) IN (${activePaymentList})
-      AND ${nonTestPaymentCondition('p')}
-  ), 0)`
+  const customerPaymentExists = useProjectedActivity
+    ? 'COALESCE(contact_activity.customer_payments_count, 0) > 0'
+    : `EXISTS (
+      SELECT 1 FROM payments p
+      WHERE p.contact_id = contacts.id
+        AND p.amount > 0
+        AND LOWER(p.status) IN (${activePaymentList})
+    )`
+  const activeAppointmentExists = useProjectedActivity
+    ? 'COALESCE(contact_activity.active_appointments_count, 0) > 0'
+    : `EXISTS (
+      SELECT 1 FROM appointments a
+      WHERE a.contact_id = contacts.id
+        AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (${inactiveAppointmentList})
+    )`
+  const validPaymentTotal = useProjectedActivity
+    ? 'COALESCE(contact_activity.total_paid, 0)'
+    : `COALESCE((
+      SELECT SUM(p.amount) FROM payments p
+      WHERE p.contact_id = contacts.id
+        AND p.amount > 0
+        AND LOWER(p.status) IN (${activePaymentList})
+        AND ${nonTestPaymentCondition('p')}
+    ), 0)`
 
   const selectClause = `
     SELECT
@@ -261,6 +269,7 @@ export async function buildContactStats ({
       COALESCE(SUM(${validPaymentTotal}), 0) as ltv_total,
       COALESCE(AVG(${validPaymentTotal}), 0) as avg_ltv
     FROM contacts
+    ${useProjectedActivity ? 'LEFT JOIN contact_list_activity contact_activity ON contact_activity.contact_id = contacts.id' : ''}
   `
 
   // Aplicar filtro de contactos ocultos
@@ -275,7 +284,8 @@ export async function buildContactStats ({
       hiddenCondition,
       quickFilter: normalizeContactListQuickFilter(filter),
       trackingFilters: normalizeContactListTrackingFilters(trackingFilters),
-      advancedFilters: normalizeContactAdvancedFilters(advancedFilters)
+      advancedFilters: normalizeContactAdvancedFilters(advancedFilters),
+      activityAlias: useProjectedActivity ? 'contact_activity' : ''
     })
     const conditions = [...builtWhere.conditions]
     const params = [...builtWhere.params]
@@ -1060,16 +1070,21 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
 
   if (!useContactAttribution) {
     // Vista "Todos": Agrupar por fecha del PRIMER PAGO
-    // Subquery para obtener la fecha del primer pago de cada contacto
-    const firstPaymentSubquery = `
-      SELECT contact_id, MIN(date) as first_payment_date
-      FROM payments
-      WHERE LOWER(status) IN (${SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')})
-        AND ${nonTestPaymentCondition()}
-      GROUP BY contact_id
-    `
+    // El read model elimina el GROUP BY histórico del GET. Durante el primer
+    // calentamiento converge por lotes y nunca bloquea Analíticas barriendo
+    // pagos completos.
+    const useProjectedFirstPayment = await isContactListProjectionAvailable()
+    const firstPaymentSubquery = useProjectedFirstPayment
+      ? `SELECT contact_id, first_payment_date
+         FROM contact_list_activity
+         WHERE first_payment_date IS NOT NULL`
+      : `SELECT contact_id, MIN(date) as first_payment_date
+         FROM payments
+         WHERE LOWER(status) IN (${SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')})
+           AND ${nonTestPaymentCondition()}
+         GROUP BY contact_id`
 
-    const firstPaymentsParams = [...SUCCESS_PAYMENT_STATUSES]
+    const firstPaymentsParams = useProjectedFirstPayment ? [] : [...SUCCESS_PAYMENT_STATUSES]
     const firstPaymentsConditions = []
 
     if (range.startUtc) {
@@ -1614,15 +1629,18 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   } else if (type === 'interesados' || type === 'customers') {
     if (type === 'customers' && !useContactAttribution) {
       // Vista "Todos": Clientes nuevos = contactos cuyo PRIMER PAGO está en el rango
-      const firstPaymentSubquery = `
-        SELECT contact_id, MIN(date) as first_payment_date
-        FROM payments
-        WHERE LOWER(status) IN (${SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')})
-          AND ${nonTestPaymentCondition()}
-        GROUP BY contact_id
-      `
+      const useProjectedFirstPayment = await isContactListProjectionAvailable()
+      const firstPaymentSubquery = useProjectedFirstPayment
+        ? `SELECT contact_id, first_payment_date
+           FROM contact_list_activity
+           WHERE first_payment_date IS NOT NULL`
+        : `SELECT contact_id, MIN(date) as first_payment_date
+           FROM payments
+           WHERE LOWER(status) IN (${SUCCESS_PAYMENT_STATUSES.map(() => '?').join(',')})
+             AND ${nonTestPaymentCondition()}
+           GROUP BY contact_id`
 
-      const firstPaymentsParams = [...SUCCESS_PAYMENT_STATUSES]
+      const firstPaymentsParams = useProjectedFirstPayment ? [] : [...SUCCESS_PAYMENT_STATUSES]
       const firstPaymentsConditions = []
 
       if (range.startUtc) {

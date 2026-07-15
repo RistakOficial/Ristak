@@ -1043,7 +1043,8 @@ function buildAggregatePlaybackWhere(assetIds, siteIds, siteScope, dateFilters =
   if (siteIds.length) {
     conditions.push(`vps.site_id IN (${siteIds.map(() => '?').join(',')})`)
     params.push(...siteIds)
-  } else if (siteScope) {
+  }
+  if (siteScope) {
     const siteConditions = ["ps.status = 'published'"]
     if (siteScope.siteType === 'forms') {
       siteConditions.push("ps.site_type IN ('standard_form', 'interactive_form')")
@@ -1051,8 +1052,8 @@ function buildAggregatePlaybackWhere(assetIds, siteIds, siteScope, dateFilters =
       siteConditions.push("ps.site_type = 'landing_page'")
       if (siteScope.landingMode) {
         const pageModeExpression = isPostgresRuntime
-          ? "COALESCE((COALESCE(NULLIF(ps.theme_json, ''), '{}')::jsonb ->> 'pageMode'), 'funnel')"
-          : "COALESCE(json_extract(COALESCE(NULLIF(ps.theme_json, ''), '{}'), '$.pageMode'), 'funnel')"
+          ? "COALESCE(ristak_safe_jsonb(ps.theme_json) ->> 'pageMode', 'funnel')"
+          : "CASE WHEN json_valid(ps.theme_json) THEN COALESCE(json_extract(ps.theme_json, '$.pageMode'), 'funnel') ELSE 'funnel' END"
         siteConditions.push(`${pageModeExpression} = ?`)
         params.push(siteScope.landingMode)
       }

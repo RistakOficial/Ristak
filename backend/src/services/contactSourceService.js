@@ -232,7 +232,8 @@ function normalizeBreakdownLimit(value) {
 export async function getContactSourceBreakdownForSelection({
   selectionSql,
   params = [],
-  limit = 10
+  limit = 10,
+  signal
 } = {}) {
   if (!selectionSql || typeof selectionSql !== 'string') return []
 
@@ -429,7 +430,7 @@ export async function getContactSourceBreakdownForSelection({
     FROM ranked_sources
     WHERE source_rank <= ?
     ORDER BY source_rank ASC
-  `, [...params, safeLimit])
+  `, [...params, safeLimit], { signal })
 
   return rows.map(row => ({ name: row.name || 'Directo', value: Number(row.value || 0) }))
 }

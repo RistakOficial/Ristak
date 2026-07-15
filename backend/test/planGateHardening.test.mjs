@@ -139,7 +139,11 @@ test('mobile phone view and background jobs respect plan features', async () => 
   assert.match(phoneApp, /id: 'transactions', label: 'Pagos'[\s\S]*featureKeys: \['payments'\]/)
   assert.match(phoneApp, /const visibleSections = useMemo/)
   assert.match(phoneApp, /featureAccessKey/)
-  assert.match(phoneApp, /canUsePayments\s+\?\s+safe\(transactionsService\.getTransactions/)
+  assert.match(
+    phoneApp,
+    /loadTransactions && canUsePayments\s*\?\s*safe\(\s*transactionsService\.getTransactionsPage\(\{[\s\S]*?limit:\s*5,[\s\S]*?\}\)\.then\(result => result\.transactions\)/
+  )
+  assert.doesNotMatch(phoneApp, /transactionsService\.getTransactions\(/)
 
   for (const cronPath of [
     'src/jobs/scheduledChatMessages.cron.js',

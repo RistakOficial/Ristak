@@ -70,6 +70,46 @@ export interface CampaignPerformancePageParams {
   onlyWithResults?: boolean
 }
 
+export interface CampaignOverviewSummary {
+  spend: number
+  spendPrev: number
+  clicks: number
+  clicksPrev: number
+  reach: number
+  reachPrev: number
+  leads: number
+  leadsPrev: number
+  sales: number
+  salesPrev: number
+  revenue: number
+  revenuePrev: number
+  roas: number
+  roasPrev: number
+}
+
+export interface CampaignOverviewSnapshot {
+  range: {
+    start: string | null
+    end: string | null
+    timezone: string
+    filtered: boolean
+  }
+  summary: CampaignOverviewSummary
+  spendOverTime: Array<{ label: string; value: number; value2: number }>
+  funnelMetrics: Array<{
+    label: string
+    visitors: number
+    leads: number
+    appointments: number
+    sales: number
+  }>
+  cache: {
+    stale: boolean
+    builtAt: string | null
+    sourceRevision: string | null
+  }
+}
+
 export interface MetaTestCustomParameter {
   id?: string
   key: string
@@ -112,6 +152,48 @@ export interface ConnectedSocialProfile {
   isConfiguredPage?: boolean
   isConfiguredInstagram?: boolean
   updatedAt?: string
+}
+
+export interface MetaAssetAdAccount {
+  id: string
+  account_id: string
+  name: string
+  currency: string
+  timezone_name: string
+  account_status: number
+}
+
+export interface MetaAssetPixel {
+  id: string
+  name: string
+  creation_time: string
+  last_fired_time: string
+  adAccountId?: string
+}
+
+export interface MetaAssetPage {
+  id: string
+  name: string
+  category: string | null
+  pictureUrl: string | null
+  businessId?: string
+  instagramAccounts?: Array<{
+    id: string
+    username?: string
+    name: string
+    pageId?: string
+  }>
+}
+
+export interface MetaAssetSnapshot {
+  version: number
+  updatedAt: string | null
+  stale: boolean
+  source: 'local_cache' | 'oauth_local' | 'remote_refresh' | 'empty' | string
+  adAccounts: MetaAssetAdAccount[]
+  pixelsByAdAccount: Record<string, MetaAssetPixel[]>
+  pages: MetaAssetPage[]
+  profiles: ConnectedSocialProfile[]
 }
 
 export interface MetaAdsSyncSettings {
@@ -323,7 +405,7 @@ class CampaignsService {
     }
   }
 
-  async getCampaignPerformancePage(params: CampaignPerformancePageParams): Promise<CampaignPerformancePage> {
+  async getCampaignPerformancePage(params: CampaignPerformancePageParams, signal?: AbortSignal): Promise<CampaignPerformancePage> {
     const query: Record<string, string> = {
       startDate: params.startDate,
       endDate: params.endDate,
@@ -340,7 +422,23 @@ class CampaignsService {
     if (params.adsetId) query.adsetId = params.adsetId
     if (params.onlyWithResults) query.onlyWithResults = '1'
 
-    return apiClient.get<CampaignPerformancePage>('/meta/campaigns/page', { params: query })
+    return apiClient.get<CampaignPerformancePage>('/meta/campaigns/page', { params: query, signal })
+  }
+
+  async getOverviewSnapshot(
+    startDate: string,
+    endDate: string,
+    options: { includeVisitors?: boolean; waitForFresh?: boolean; signal?: AbortSignal } = {}
+  ): Promise<CampaignOverviewSnapshot> {
+    return apiClient.get<CampaignOverviewSnapshot>('/meta/overview', {
+      params: {
+        startDate,
+        endDate,
+        includeVisitors: options.includeVisitors === false ? '0' : '1',
+        waitForFresh: options.waitForFresh ? '1' : '0'
+      },
+      signal: options.signal
+    })
   }
 
   async getSyncStatus(): Promise<any> {
@@ -603,6 +701,17 @@ class CampaignsService {
 
   async updateMetaAdsSyncSettings(intervalMinutes: number): Promise<{ intervalMinutes: number }> {
     return apiClient.put<{ intervalMinutes: number }>('/meta/sync/settings', { intervalMinutes })
+  }
+
+  async getMetaAssets(): Promise<MetaAssetSnapshot> {
+    return apiClient.get<MetaAssetSnapshot>('/meta/assets')
+  }
+
+  async refreshMetaAssets(params: { accessToken?: string; adAccountId?: string; scope?: 'all' | 'pixels' } = {}): Promise<MetaAssetSnapshot> {
+    const { accessToken = '', adAccountId = '', scope = 'all' } = params
+    return apiClient.post<MetaAssetSnapshot>('/meta/assets/refresh', { adAccountId, scope }, accessToken ? {
+      headers: { 'X-Meta-Access-Token': accessToken }
+    } : undefined)
   }
 
   async fetchAdAccounts(accessToken = ''): Promise<{

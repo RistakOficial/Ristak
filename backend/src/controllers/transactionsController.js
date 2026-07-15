@@ -18,7 +18,7 @@ import {
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
-import { refreshStripePaymentFromIntent, syncStripePaymentPlanFromLocalPayment } from '../services/stripePaymentService.js'
+import { syncStripePaymentPlanFromLocalPayment } from '../services/stripePaymentService.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerMetaPaymentPurchaseEvent } from '../services/metaConversionEventsService.js'
@@ -36,15 +36,21 @@ import { findContactByPhoneCandidates, generateContactId } from '../services/con
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import {
+  hashPaginationCursorScope,
+  paginationCursorHiddenFiltersScope,
+  paginationCursorListScope,
+  paginationCursorRangeScope
+} from '../utils/paginationCursorScope.js'
+import { isPaymentListProjectionReady } from '../services/crmListProjectionService.js'
+import { getCachedTransactionQuery } from '../services/paymentListSummaryCacheService.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
 import { serializePaymentAmount } from '../utils/paymentAmountSerialization.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 import { completeConversationalAgentSalePaymentFromInvoice } from '../services/conversationalAgentService.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
-const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
 const STRIPE_PLAN_AUTHORIZATION_TRIGGERS = new Set(['card_setup', 'card_setup_authorization', 'first_payment', 'first_payment_saved_card'])
-const MAX_STRIPE_LIST_REFRESHES = 25
 const VALID_TRANSACTION_STATUSES = new Set([
   'draft',
   'sent',
@@ -273,46 +279,6 @@ const splitName = (name = '') => {
 }
 
 const normalizePaymentMode = (mode) => mode === 'test' ? 'test' : 'live'
-
-const shouldRefreshStripeTransaction = (transaction = {}) => {
-  if (!transaction?.stripe_payment_intent_id) return false
-  const provider = cleanString(transaction.payment_provider || transaction.payment_method).toLowerCase()
-  if (provider !== 'stripe') return false
-
-  const status = normalizeStatus(transaction.status || 'pending')
-  return !CLOSED_PAYMENT_STATUSES.has(status)
-}
-
-async function refreshStripeTransactionsForRows(rows = []) {
-  const intentIds = []
-  const seen = new Set()
-
-  for (const row of rows || []) {
-    if (!shouldRefreshStripeTransaction(row)) continue
-
-    const intentId = cleanString(row.stripe_payment_intent_id)
-    if (!intentId || seen.has(intentId)) continue
-
-    seen.add(intentId)
-    intentIds.push(intentId)
-
-    if (intentIds.length >= MAX_STRIPE_LIST_REFRESHES) break
-  }
-
-  if (!intentIds.length) return false
-
-  let refreshed = false
-  for (const intentId of intentIds) {
-    try {
-      const nextStatus = await refreshStripePaymentFromIntent(intentId)
-      refreshed = Boolean(nextStatus) || refreshed
-    } catch (error) {
-      logger.warn(`No se pudo reconciliar pago Stripe ${intentId}: ${error.message}`)
-    }
-  }
-
-  return refreshed
-}
 
 async function findExistingContactForPayment({ contactId, email, phone }) {
   if (contactId) {
@@ -837,6 +803,93 @@ export const createTransaction = async (req, res) => {
 /**
  * Obtiene todas las transacciones/pagos con paginación y filtros
  */
+const TRANSACTION_LIST_CURSOR_KIND = 'transactions-list'
+
+function transactionListCursorError(message) {
+  return Object.assign(new Error(message), { status: 400 })
+}
+
+function encodeTransactionListCursor(row, scope) {
+  if (!row?.id || row.cursor_sort_value === undefined || row.cursor_sort_value === null) return null
+  return Buffer.from(JSON.stringify({
+    v: 2,
+    kind: TRANSACTION_LIST_CURSOR_KIND,
+    scope,
+    sort: String(row.cursor_sort_value),
+    created: String(row.cursor_created_value ?? 0),
+    id: String(row.id)
+  }), 'utf8').toString('base64url')
+}
+
+function decodeTransactionListCursor(value, expectedScope) {
+  const clean = cleanString(value)
+  if (!clean) return null
+  if (clean.length > 4096) throw transactionListCursorError('Cursor inválido')
+  try {
+    const decoded = JSON.parse(Buffer.from(clean, 'base64url').toString('utf8'))
+    if (decoded?.v !== 2 || decoded?.kind !== TRANSACTION_LIST_CURSOR_KIND || decoded?.scope !== expectedScope) {
+      if (decoded?.scope && decoded.scope !== expectedScope) {
+        throw transactionListCursorError('El cursor ya no corresponde a estos filtros; vuelve a la primera página')
+      }
+      throw new Error('invalid cursor payload')
+    }
+    // Un valor de orden vacío es legítimo (por ejemplo, un pago huérfano
+    // ordenado por nombre/email). No lo confundimos con un cursor ausente y
+    // conservamos espacios exactamente como quedaron almacenados.
+    const sort = typeof decoded.sort === 'string' ? decoded.sort : null
+    const created = typeof decoded.created === 'string' ? decoded.created : null
+    const id = cleanString(decoded.id)
+    if (sort === null || !created || !id || sort.length > 500 || created.length > 500 || id.length > 500) {
+      throw new Error('invalid cursor values')
+    }
+    return { sort, created, id }
+  } catch (error) {
+    if (error?.status === 400) throw error
+    throw transactionListCursorError('Cursor inválido')
+  }
+}
+
+function getTransactionListSortDescriptor(sortBy, useProjection) {
+  const normalized = String(sortBy || 'date')
+  const key = normalized === 'createdAt'
+    ? 'created_at'
+    : normalized === 'paymentType'
+      ? 'method'
+      : normalized === 'paymentChannel'
+        ? 'provider'
+        : normalized
+  const statusGroupExpression = buildTransactionStatusGroupExpression('p')
+  const directMap = {
+    date: timestampSortExpression('p.date'),
+    created_at: timestampSortExpression('p.created_at'),
+    amount: 'COALESCE(p.amount, 0)',
+    status: statusGroupExpression,
+    contactName: "LOWER(COALESCE(c.full_name, ''))",
+    email: "LOWER(COALESCE(c.email, ''))",
+    method: "LOWER(COALESCE(p.payment_method, ''))",
+    provider: "LOWER(COALESCE(p.payment_provider, ''))",
+    title: "LOWER(COALESCE(p.title, p.description, ''))"
+  }
+  const projectedMap = {
+    date: 'pla.date_sort',
+    created_at: 'pla.created_sort',
+    amount: 'pla.amount_sort',
+    status: 'pla.status_sort',
+    contactName: 'pla.contact_name_sort',
+    email: 'pla.contact_email_sort',
+    method: 'pla.method_sort',
+    provider: 'pla.provider_sort',
+    title: 'pla.title_sort'
+  }
+  const safeKey = Object.prototype.hasOwnProperty.call(directMap, key) ? key : 'date'
+  return {
+    key: safeKey,
+    primary: useProjection ? projectedMap[safeKey] : directMap[safeKey],
+    created: useProjection ? 'pla.created_sort' : timestampSortExpression('p.created_at'),
+    type: ['status', 'contactName', 'email', 'method', 'provider', 'title'].includes(safeKey) ? 'text' : 'numeric'
+  }
+}
+
 export const getTransactions = async (req, res) => {
   try {
     const {
@@ -849,8 +902,7 @@ export const getTransactions = async (req, res) => {
       startDate,
       endDate,
       sortBy = 'date',
-      sortOrder = 'DESC',
-      sync = 'false' // Por defecto NO sincroniza (más rápido)
+      sortOrder = 'DESC'
     } = req.query
 
     const searchTerm = cleanString(q || search)
@@ -863,20 +915,9 @@ export const getTransactions = async (req, res) => {
       ? `${range.startUtc || '---'} -> ${range.endUtc || '---'}`
       : 'todos'
     const { pageNumber, limitNumber, offset } = normalizeTransactionPagination({ page, limit })
+    const cursorMode = String(req.query.pagination || '').toLowerCase() === 'cursor' || Boolean(req.query.cursor)
 
     logger.info(`Obteniendo transacciones - página ${pageNumber}, límite ${limitNumber}, rango: ${rangeLabel}`)
-
-    // Sincronizar invoices desde HighLevel antes de devolver datos
-    if (sync !== 'false') {
-      try {
-        logger.info('🔄 Sincronizando TODOS los invoices desde HighLevel...')
-        const syncStats = await syncAllInvoices()
-        logger.success(`✅ Sincronización completa: ${syncStats.totalFetched} invoices obtenidos, ${syncStats.created} creados, ${syncStats.updated} actualizados`)
-      } catch (syncError) {
-        logger.warn('⚠️ Error en sincronización de invoices (continuando):', syncError.message)
-        // No fallar la request si la sincronización falla
-      }
-    }
 
     // Obtener filtro de contactos ocultos
     const hiddenFilters = await getHiddenContactFilters()
@@ -890,57 +931,80 @@ export const getTransactions = async (req, res) => {
       paymentAlias: 'p',
       contactAlias: 'c'
     })
-    const facetsWhere = buildTransactionListWhere({
-      range,
-      statuses: [],
-      search: searchTerm,
-      hiddenCondition,
-      paymentAlias: 'p',
-      contactAlias: 'c'
-    })
-
-    const countResult = await db.get(
-      `SELECT COUNT(*) as total
-       FROM payments p
-       LEFT JOIN contacts c ON p.contact_id = c.id
-       ${listWhere.whereClause}`,
-      listWhere.params
-    )
-    const totalTransactions = countResult?.total || 0
-    const statusGroupExpression = buildTransactionStatusGroupExpression('p')
-    const statusFacetRows = await db.all(
-      `SELECT ${statusGroupExpression} as status, COUNT(*) as count
-       FROM payments p
-       LEFT JOIN contacts c ON p.contact_id = c.id
-       ${facetsWhere.whereClause}
-       GROUP BY ${statusGroupExpression}`,
-      facetsWhere.params
-    )
-
-    const dateSortExpression = timestampSortExpression('p.date')
-    const createdAtSortExpression = timestampSortExpression('p.created_at')
-    const sortableMap = {
-      date: dateSortExpression,
-      created_at: createdAtSortExpression,
-      createdAt: createdAtSortExpression,
-      amount: 'p.amount',
-      status: statusGroupExpression,
-      contactName: "LOWER(COALESCE(c.full_name, ''))",
-      email: "LOWER(COALESCE(c.email, ''))",
-      method: "LOWER(COALESCE(p.payment_method, ''))",
-      paymentType: "LOWER(COALESCE(p.payment_method, ''))",
-      paymentChannel: "LOWER(COALESCE(p.payment_provider, ''))",
-      title: "LOWER(COALESCE(p.title, p.description, ''))"
-    }
-
-    const safeSortBy = sortableMap[sortBy] || dateSortExpression
+    const projectionReady = await isPaymentListProjectionReady()
+    const sortDescriptor = getTransactionListSortDescriptor(sortBy, projectionReady)
+    const legacySortDescriptor = getTransactionListSortDescriptor(sortBy, false)
     const orderDirection = String(sortOrder).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
-    // Desempate estable por el momento real de registro: si dos pagos comparten la
-    // misma fecha, gana el registrado más recientemente (orden descendente correcto).
-    const orderTieBreaker = `${createdAtSortExpression} ${orderDirection}, p.id ${orderDirection}`
+    const cursorScope = hashPaginationCursorScope(TRANSACTION_LIST_CURSOR_KIND, {
+      range: paginationCursorRangeScope(range),
+      statuses: paginationCursorListScope(selectedStatuses),
+      search: searchTerm.toLowerCase(),
+      hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters),
+      sortBy: sortDescriptor.key,
+      sortOrder: orderDirection
+    })
+    const decodedCursor = cursorMode ? decodeTransactionListCursor(req.query.cursor, cursorScope) : null
+    const comparator = orderDirection === 'ASC' ? '>' : '<'
+    const valueCast = sortDescriptor.type === 'text' ? 'CAST(? AS TEXT)' : 'CAST(? AS NUMERIC)'
+    const cursorConditions = []
+    const cursorParams = []
+    if (decodedCursor) {
+      if (sortDescriptor.key === 'created_at') {
+        cursorConditions.push(`(
+          ${sortDescriptor.created} ${comparator} CAST(? AS NUMERIC)
+          OR (${sortDescriptor.created} = CAST(? AS NUMERIC) AND p.id ${comparator} ?)
+        )`)
+        cursorParams.push(decodedCursor.sort, decodedCursor.sort, decodedCursor.id)
+      } else {
+        cursorConditions.push(`(
+          ${sortDescriptor.primary} ${comparator} ${valueCast}
+          OR (${sortDescriptor.primary} = ${valueCast} AND (
+            ${sortDescriptor.created} ${comparator} CAST(? AS NUMERIC)
+            OR (${sortDescriptor.created} = CAST(? AS NUMERIC) AND p.id ${comparator} ?)
+          ))
+        )`)
+        cursorParams.push(
+          decodedCursor.sort,
+          decodedCursor.sort,
+          decodedCursor.created,
+          decodedCursor.created,
+          decodedCursor.id
+        )
+      }
+    }
+    const pageConditions = [...listWhere.filters, ...cursorConditions]
+    const projectionJoin = projectionReady
+      ? 'JOIN payment_list_activity pla ON pla.payment_id = p.id'
+      : ''
+    const primaryOrder = `cursor_sort_value ${orderDirection}`
+    const tieOrder = sortDescriptor.key === 'created_at'
+      ? `payment_id ${orderDirection}`
+      : `cursor_created_value ${orderDirection}, payment_id ${orderDirection}`
 
-    const transactionsQuery = `
-      SELECT
+    let transactions
+    let totalTransactions = null
+    let totalPages = null
+    let hasNext
+    let statusFacetRows = []
+
+    if (cursorMode) {
+      const transactionsQuery = `
+        WITH page_payments AS (
+          SELECT
+            p.id AS payment_id,
+            ${sortDescriptor.primary} AS cursor_sort_value,
+            ${sortDescriptor.created} AS cursor_created_value
+          FROM payments p
+          LEFT JOIN contacts c ON p.contact_id = c.id
+          ${projectionJoin}
+          ${pageConditions.length ? `WHERE ${pageConditions.join(' AND ')}` : ''}
+          ORDER BY ${sortDescriptor.primary} ${orderDirection},
+            ${sortDescriptor.key === 'created_at' ? `p.id ${orderDirection}` : `${sortDescriptor.created} ${orderDirection}, p.id ${orderDirection}`}
+          LIMIT ?
+        )
+        SELECT
+          page_payments.cursor_sort_value,
+          page_payments.cursor_created_value,
         p.id,
         p.contact_id,
         p.amount,
@@ -979,28 +1043,67 @@ export const getTransactions = async (req, res) => {
         c.full_name as contact_name,
         c.email as contact_email,
         c.phone as contact_phone
-      FROM payments p
-      LEFT JOIN contacts c ON p.contact_id = c.id
-      ${listWhere.whereClause}
-      ORDER BY ${safeSortBy} ${orderDirection}, ${orderTieBreaker}
-      LIMIT ? OFFSET ?
-    `
-
-    let transactions = await db.all(transactionsQuery, [...listWhere.params, limitNumber, offset])
-
-    if (await refreshStripeTransactionsForRows(transactions)) {
-      transactions = await db.all(transactionsQuery, [...listWhere.params, limitNumber, offset])
+        FROM page_payments
+        JOIN payments p ON p.id = page_payments.payment_id
+        LEFT JOIN contacts c ON p.contact_id = c.id
+        ORDER BY ${primaryOrder}, ${tieOrder}
+      `
+      const queried = await db.all(transactionsQuery, [
+        ...listWhere.params,
+        ...cursorParams,
+        limitNumber + 1
+      ])
+      hasNext = queried.length > limitNumber
+      transactions = hasNext ? queried.slice(0, limitNumber) : queried
+    } else {
+      const facetsWhere = buildTransactionListWhere({
+        range,
+        statuses: [],
+        search: searchTerm,
+        hiddenCondition,
+        paymentAlias: 'p',
+        contactAlias: 'c'
+      })
+      const statusGroupExpression = buildTransactionStatusGroupExpression('p')
+      const [countResult, facetRows, rows] = await Promise.all([
+        db.get(
+          `SELECT COUNT(*) as total FROM payments p LEFT JOIN contacts c ON p.contact_id = c.id ${listWhere.whereClause}`,
+          listWhere.params
+        ),
+        db.all(
+          `SELECT ${statusGroupExpression} as status, COUNT(*) as count
+           FROM payments p LEFT JOIN contacts c ON p.contact_id = c.id
+           ${facetsWhere.whereClause}
+           GROUP BY ${statusGroupExpression}`,
+          facetsWhere.params
+        ),
+        db.all(`
+          SELECT p.*, c.full_name as contact_name, c.email as contact_email, c.phone as contact_phone
+          FROM payments p
+          LEFT JOIN contacts c ON p.contact_id = c.id
+          ${listWhere.whereClause}
+          ORDER BY ${legacySortDescriptor.primary} ${orderDirection},
+            ${legacySortDescriptor.key === 'created_at' ? `p.id ${orderDirection}` : `${legacySortDescriptor.created} ${orderDirection}, p.id ${orderDirection}`}
+          LIMIT ? OFFSET ?
+        `, [...listWhere.params, limitNumber, offset])
+      ])
+      totalTransactions = Number(countResult?.total || 0)
+      totalPages = Math.max(Math.ceil(totalTransactions / limitNumber), 1)
+      hasNext = pageNumber < totalPages
+      statusFacetRows = facetRows
+      transactions = rows
     }
 
     // Mapear campos de base de datos a nombres esperados por frontend
     const responseBaseUrl = getRequestBaseUrl(req)
     const mappedTransactions = transactions.map(transaction => mapTransactionRow(transaction, responseBaseUrl))
 
-    // Calcular información de paginación
-    const totalPages = Math.max(Math.ceil(totalTransactions / limitNumber), 1)
+    const nextCursor = cursorMode && hasNext && transactions.length
+      ? encodeTransactionListCursor(transactions[transactions.length - 1], cursorScope)
+      : null
 
     logger.debug(
-      `Transacciones obtenidas (${rangeLabel}) -> ${transactions.length} registros en esta página, ${totalTransactions} total`
+      `Transacciones obtenidas (${rangeLabel}) -> ${transactions.length} registros, modo ${cursorMode ? 'cursor' : 'legacy'}`
     )
 
     res.json({
@@ -1011,8 +1114,9 @@ export const getTransactions = async (req, res) => {
         limit: limitNumber,
         total: totalTransactions,
         totalPages,
-        hasNext: pageNumber < totalPages,
-        hasPrev: pageNumber > 1
+        hasNext,
+        hasPrev: pageNumber > 1,
+        nextCursor
       },
       facets: {
         statuses: statusFacetRows
@@ -1026,10 +1130,67 @@ export const getTransactions = async (req, res) => {
 
   } catch (error) {
     logger.error(`Error obteniendo transacciones: ${error.message}`)
-    res.status(500).json({
+    const status = error?.status === 400 ? 400 : 500
+    res.status(status).json({
       success: false,
-      error: 'Error obteniendo transacciones'
+      error: status === 400 ? error.message : 'Error obteniendo transacciones'
     })
+  }
+}
+
+/** Facetas versionadas; nunca forman parte del camino crítico de la tabla. */
+export const getTransactionFacets = async (req, res) => {
+  try {
+    const { q = '', search = '', startDate, endDate } = req.query
+    const searchTerm = cleanString(q || search)
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const facetsWhere = buildTransactionListWhere({
+      range,
+      statuses: [],
+      search: searchTerm,
+      hiddenCondition,
+      paymentAlias: 'p',
+      contactAlias: 'c'
+    })
+    const cacheKey = `facets:${hashPaginationCursorScope('transactions-facets-v1', {
+      range: paginationCursorRangeScope(range),
+      search: searchTerm.toLowerCase(),
+      hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters)
+    })}`
+    const facets = await getCachedTransactionQuery(cacheKey, async () => {
+      const statusGroupExpression = buildTransactionStatusGroupExpression('p')
+      const rows = await db.all(
+        `SELECT ${statusGroupExpression} AS status, COUNT(*) AS count
+         FROM payments p
+         LEFT JOIN contacts c ON p.contact_id = c.id
+         ${facetsWhere.whereClause}
+         GROUP BY ${statusGroupExpression}`,
+        facetsWhere.params
+      )
+      return {
+        statuses: rows
+          .map(row => ({ value: cleanString(row.status), count: Number(row.count || 0) }))
+          .filter(row => row.value)
+      }
+    })
+
+    res.json({ success: true, data: facets })
+  } catch (error) {
+    logger.error(`Error obteniendo facetas de transacciones: ${error.message}`)
+    res.status(500).json({ success: false, error: 'Error obteniendo filtros de transacciones' })
+  }
+}
+
+/** Sincronización explícita: las lecturas GET permanecen 100% locales. */
+export const syncTransactions = async (_req, res) => {
+  try {
+    const stats = await syncAllInvoices()
+    res.json({ success: true, data: stats })
+  } catch (error) {
+    logger.error(`Error sincronizando transacciones: ${error.message}`)
+    res.status(502).json({ success: false, error: 'No se pudieron sincronizar los pagos' })
   }
 }
 
@@ -1050,7 +1211,7 @@ export const getTransactionById = async (req, res) => {
       conditions.push(`(p.contact_id IS NULL OR ${hiddenCondition})`)
     }
 
-    let transaction = await db.get(
+    const transaction = await db.get(
       `SELECT
         p.*,
         c.full_name as contact_name,
@@ -1064,23 +1225,6 @@ export const getTransactionById = async (req, res) => {
       WHERE ${conditions.join(' AND ')}`,
       [id]
     )
-
-    if (transaction && await refreshStripeTransactionsForRows([transaction])) {
-      transaction = await db.get(
-        `SELECT
-          p.*,
-          c.full_name as contact_name,
-          c.email as contact_email,
-          c.phone as contact_phone,
-          c.source as contact_source,
-          c.attribution_ad_name,
-          c.attribution_ad_id
-        FROM payments p
-        LEFT JOIN contacts c ON p.contact_id = c.id
-        WHERE ${conditions.join(' AND ')}`,
-        [id]
-      )
-    }
 
     if (!transaction) {
       return res.status(404).json({
@@ -1188,11 +1332,23 @@ export const getTransactionSummary = async (req, res) => {
       ...(Array.isArray(status) ? status : [status]),
       ...(Array.isArray(statuses) ? statuses : [statuses])
     ])
-    const { range, summary } = await buildTransactionSummary({
-      startDate,
-      endDate,
-      search: cleanString(q || search),
-      statuses: selectedStatuses
+    const searchTerm = cleanString(q || search)
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const hiddenFilters = await getHiddenContactFilters()
+    const cacheKey = `summary:${hashPaginationCursorScope('transactions-summary-v1', {
+      range: paginationCursorRangeScope(range),
+      statuses: paginationCursorListScope(selectedStatuses),
+      search: searchTerm.toLowerCase(),
+      hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters)
+    })}`
+    const summary = await getCachedTransactionQuery(cacheKey, async () => {
+      const built = await buildTransactionSummary({
+        startDate,
+        endDate,
+        search: searchTerm,
+        statuses: selectedStatuses
+      })
+      return built.summary
     })
 
     const rangeLabel = range.isFiltered

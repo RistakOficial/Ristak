@@ -1,4 +1,8 @@
+import { randomUUID } from 'node:crypto'
 import { db } from '../config/database.js'
+import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
+import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
+import { logger } from '../utils/logger.js'
 import {
   LEGACY_SYSTEM_TAG_ALIASES,
   getSystemTagDefinitions,
@@ -12,6 +16,13 @@ const REVIEW_OK = {
   summary: '',
   issues: []
 }
+
+const AUTOMATION_REVIEW_BACKFILL_KEY = 'automation-review-projection'
+const AUTOMATION_REVIEW_BATCH_SIZE = 100
+const AUTOMATION_REVIEW_MAX_BATCH_SIZE = 100
+const AUTOMATION_REVIEW_ABANDONED_RUN_AGE_MS = 24 * 60 * 60 * 1000
+const AUTOMATION_REVIEW_CLEANUP_BATCH_SIZE = 200
+const AUTOMATION_REVIEW_REVISION_CHANGED = 'AUTOMATION_REVIEW_REVISION_CHANGED'
 
 const FORM_FIELD_BLOCK_TYPES = new Set([
   'short_text',
@@ -906,24 +917,293 @@ function parseFlow(rawFlow) {
   }
 }
 
-export async function listAutomationReviewProblems({ limit = 20 } = {}) {
-  const rows = await safeRows(
-    'automations',
+function parseProjectedIssues(value) {
+  const parsed = parseJson(value, [])
+  return Array.isArray(parsed) ? parsed : []
+}
+
+export async function readAutomationReviewProjectionState() {
+  try {
+    return await db.get(
+      `SELECT source_revision, projected_revision, status
+       FROM automation_review_projection_state
+       WHERE singleton = 1`
+    )
+  } catch {
+    return null
+  }
+}
+
+function normalizeAutomationReviewBatchSize(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return AUTOMATION_REVIEW_BATCH_SIZE
+  return Math.max(1, Math.min(Math.trunc(parsed), AUTOMATION_REVIEW_MAX_BATCH_SIZE))
+}
+
+async function readAutomationReviewPage({ afterId = '', limit = AUTOMATION_REVIEW_BATCH_SIZE } = {}) {
+  return db.all(
     `SELECT id, name, status, flow, published_flow, published_at, updated_at
      FROM automations
      WHERE status IN ('published', 'paused')
-     ORDER BY updated_at DESC, created_at DESC`
+       AND id > ?
+     ORDER BY id ASC
+     LIMIT ?`,
+    [afterId, normalizeAutomationReviewBatchSize(limit)]
   )
-  if (!rows.length) return []
+}
 
-  const catalogs = await loadAutomationReferenceCatalogs()
-  return rows
-    .map((row) => {
-      const status = getAutomationReviewStatus(parseFlow(row.published_flow || row.flow), catalogs)
-      return { automation: row, reviewStatus: status }
+async function stageAutomationReviewProblems({ runToken, projectedAt, rows, catalogs }) {
+  let problems = 0
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const reviewStatus = getAutomationReviewStatus(
+        parseFlow(row.published_flow || row.flow),
+        catalogs
+      )
+      if (reviewStatus.state !== 'requires_review') continue
+
+      problems += 1
+      await tx.run(
+        `INSERT INTO automation_review_projection_staging (
+           run_token, automation_id, automation_name, automation_status,
+           issue_count, summary, issues_json, automation_updated_at, projected_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(run_token, automation_id) DO UPDATE SET
+           automation_name = excluded.automation_name,
+           automation_status = excluded.automation_status,
+           issue_count = excluded.issue_count,
+           summary = excluded.summary,
+           issues_json = excluded.issues_json,
+           automation_updated_at = excluded.automation_updated_at,
+           projected_at = excluded.projected_at`,
+        [
+          runToken,
+          row.id,
+          row.name || 'Automatización',
+          row.status || 'published',
+          Number(reviewStatus.issueCount || 0),
+          reviewStatus.summary || '',
+          JSON.stringify(reviewStatus.issues || []),
+          row.updated_at || row.published_at || null,
+          projectedAt
+        ]
+      )
+    }
+  })
+  return problems
+}
+
+async function cleanupAutomationReviewRun(runToken) {
+  return db.run(
+    'DELETE FROM automation_review_projection_staging WHERE run_token = ?',
+    [runToken]
+  )
+}
+
+export async function cleanupAbandonedAutomationReviewRuns({
+  olderThanMs = AUTOMATION_REVIEW_ABANDONED_RUN_AGE_MS,
+  limit = AUTOMATION_REVIEW_CLEANUP_BATCH_SIZE,
+  now = Date.now()
+} = {}) {
+  const max = Math.max(1, Math.min(Number(limit) || AUTOMATION_REVIEW_CLEANUP_BATCH_SIZE, 200))
+  const ageMs = Math.max(60_000, Number(olderThanMs) || AUTOMATION_REVIEW_ABANDONED_RUN_AGE_MS)
+  const before = new Date(Number(now) - ageMs).toISOString()
+  const rows = await db.all(
+    `SELECT run_token, automation_id
+     FROM automation_review_projection_staging
+     WHERE projected_at < ?
+     ORDER BY projected_at ASC, run_token ASC, automation_id ASC
+     LIMIT ?`,
+    [before, max]
+  )
+  if (!rows.length) return 0
+
+  const predicates = rows.map(() => '(run_token = ? AND automation_id = ?)').join(' OR ')
+  const params = rows.flatMap((row) => [row.run_token, row.automation_id])
+  const result = await db.run(
+    `DELETE FROM automation_review_projection_staging
+     WHERE ${predicates}`,
+    params
+  )
+  return Number(result?.changes || 0)
+}
+
+async function publishAutomationReviewRun({ runToken, sourceRevision }) {
+  try {
+    await db.transaction(async (tx) => {
+      // Este UPDATE toma la fila de estado como fence. Si una fuente cambió antes
+      // de la publicación, cero filas actualizadas aborta y conserva intacto el
+      // snapshot anterior. Si cambia después, su trigger espera el commit y deja
+      // inmediatamente la proyección en pending para la siguiente corrida.
+      const claimed = await tx.run(
+        `UPDATE automation_review_projection_state
+         SET projected_revision = ?, status = 'ready', updated_at = CURRENT_TIMESTAMP
+         WHERE singleton = 1
+           AND source_revision = ?`,
+        [sourceRevision, sourceRevision]
+      )
+      if (Number(claimed?.changes || 0) !== 1) {
+        const error = new Error('Las referencias cambiaron durante la reconstrucción')
+        error.code = AUTOMATION_REVIEW_REVISION_CHANGED
+        throw error
+      }
+
+      // La tabla que atiende el GET sólo cambia dentro de esta transacción final.
+      // Los lotes previos viven en staging, por lo que jamás se expone una mezcla
+      // parcial entre la proyección anterior y la corrida nueva.
+      await tx.run(
+        `INSERT INTO automation_review_projection (
+           automation_id, automation_name, automation_status, issue_count,
+           summary, issues_json, automation_updated_at, projected_at
+         )
+         SELECT automation_id, automation_name, automation_status, issue_count,
+                summary, issues_json, automation_updated_at, projected_at
+         FROM automation_review_projection_staging
+         WHERE run_token = ?
+         ON CONFLICT(automation_id) DO UPDATE SET
+           automation_name = excluded.automation_name,
+           automation_status = excluded.automation_status,
+           issue_count = excluded.issue_count,
+           summary = excluded.summary,
+           issues_json = excluded.issues_json,
+           automation_updated_at = excluded.automation_updated_at,
+           projected_at = excluded.projected_at`,
+        [runToken]
+      )
+
+      await tx.run(
+        `DELETE FROM automation_review_projection AS published
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM automation_review_projection_staging AS staged
+           WHERE staged.run_token = ?
+             AND staged.automation_id = published.automation_id
+         )`,
+        [runToken]
+      )
     })
-    .filter((item) => item.reviewStatus.state === 'requires_review')
-    .slice(0, Math.max(1, Math.min(Number(limit) || 20, 100)))
+    return true
+  } catch (error) {
+    if (error?.code === AUTOMATION_REVIEW_REVISION_CHANGED) return false
+    throw error
+  }
+}
+
+const yieldAutomationReviewWorker = () => new Promise((resolve) => setImmediate(resolve))
+
+export async function rebuildAutomationReviewProjection({
+  batchSize = AUTOMATION_REVIEW_BATCH_SIZE,
+  onBatch = null
+} = {}) {
+  const state = await readAutomationReviewProjectionState()
+  if (!state) return { ready: false, skipped: true }
+
+  const sourceRevision = Number(state.source_revision || 0)
+  if (state.status === 'ready' && Number(state.projected_revision) === sourceRevision) {
+    return { ready: true, skipped: true, sourceRevision, problems: 0, scanned: 0, pages: 0 }
+  }
+
+  const limit = normalizeAutomationReviewBatchSize(batchSize)
+  const runToken = randomUUID()
+  const projectedAt = new Date().toISOString()
+  let catalogs = null
+  let afterId = ''
+  let scanned = 0
+  let problems = 0
+  let pages = 0
+
+  try {
+    while (true) {
+      const rows = await readAutomationReviewPage({ afterId, limit })
+      if (!rows.length) break
+
+      // Los catálogos de IDs válidos se comparten una sola vez por corrida. Se
+      // mantienen como Sets globales porque validar cada referencia por grafo
+      // produciría un fan-out de consultas mucho peor; las automatizaciones y sus
+      // flows, que son el volumen dominante, sí permanecen acotadas a <= 100.
+      if (!catalogs) catalogs = await loadAutomationReferenceCatalogs()
+      problems += await stageAutomationReviewProblems({
+        runToken,
+        projectedAt,
+        rows,
+        catalogs
+      })
+      pages += 1
+      scanned += rows.length
+      afterId = String(rows[rows.length - 1]?.id || afterId)
+
+      if (typeof onBatch === 'function') {
+        await onBatch({
+          runToken,
+          sourceRevision,
+          page: pages,
+          rows: rows.length,
+          scanned,
+          problems
+        })
+      }
+
+      const currentState = await readAutomationReviewProjectionState()
+      if (!currentState || Number(currentState.source_revision) !== sourceRevision) {
+        await cleanupAutomationReviewRun(runToken)
+        return { ready: false, stale: true, sourceRevision, problems, scanned, pages }
+      }
+
+      if (rows.length < limit) break
+      await yieldAutomationReviewWorker()
+    }
+
+    const ready = await publishAutomationReviewRun({ runToken, sourceRevision })
+    await cleanupAutomationReviewRun(runToken)
+    return { ready, stale: !ready, sourceRevision, problems, scanned, pages }
+  } catch (error) {
+    await cleanupAutomationReviewRun(runToken).catch(() => undefined)
+    throw error
+  }
+}
+
+export function scheduleAutomationReviewProjectionBackfill() {
+  return scheduleProjectionBackfillJob({
+    key: AUTOMATION_REVIEW_BACKFILL_KEY,
+    priority: BACKFILL_JOB_PRIORITY.MAINTENANCE,
+    run: rebuildAutomationReviewProjection,
+    onError: (error) => {
+      logger.warn(`[Automatizaciones] No se pudo reconstruir proyección de revisión: ${error.message}`)
+    }
+  })
+}
+
+export async function listAutomationReviewProblems({ limit = 20 } = {}) {
+  const max = Math.max(1, Math.min(Number(limit) || 20, 100))
+
+  try {
+    const rows = await db.all(
+      `SELECT automation_id, automation_name, automation_status, issue_count,
+              summary, issues_json, automation_updated_at
+       FROM automation_review_projection
+       ORDER BY automation_updated_at DESC, automation_id DESC
+       LIMIT ?`,
+      [max]
+    )
+    return rows.map((row) => ({
+      automation: {
+        id: row.automation_id,
+        name: row.automation_name,
+        status: row.automation_status,
+        updated_at: row.automation_updated_at
+      },
+      reviewStatus: {
+        state: 'requires_review',
+        issueCount: Number(row.issue_count || 0),
+        summary: row.summary || '',
+        issues: parseProjectedIssues(row.issues_json)
+      }
+    }))
+  } catch {
+    // Durante el primer deploy la migración puede no haber terminado todavía. El
+    // header sigue respondiendo vacío; jamás regresa al scan histórico bloqueante.
+    return []
+  }
 }
 
 export const AUTOMATION_REVIEW_OK = REVIEW_OK

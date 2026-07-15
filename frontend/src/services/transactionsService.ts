@@ -55,10 +55,11 @@ export interface TransactionSummary {
 export interface TransactionsPagination {
   page: number
   limit: number
-  total: number
-  totalPages: number
+  total: number | null
+  totalPages: number | null
   hasNext: boolean
   hasPrev: boolean
+  nextCursor: string | null
 }
 
 export interface CursorPagination {
@@ -143,7 +144,7 @@ interface TransactionsPageParams {
   endDate?: string
   page?: number
   limit?: number
-  forceSync?: boolean
+  cursor?: string | null
   search?: string
   statuses?: string[]
   sortBy?: string
@@ -156,6 +157,7 @@ interface TransactionSummaryParams {
   endDate?: string
   search?: string
   statuses?: string[]
+  signal?: AbortSignal
 }
 
 interface CreateTransactionOptions {
@@ -208,7 +210,7 @@ const requestTransactionsPage = async ({
   endDate,
   page = 1,
   limit = 50,
-  forceSync,
+  cursor,
   search,
   statuses,
   sortBy = 'date',
@@ -220,8 +222,9 @@ const requestTransactionsPage = async ({
   params.append('limit', String(limit))
   params.append('sortBy', sortBy)
   params.append('sortOrder', String(sortOrder).toUpperCase())
+  params.append('pagination', 'cursor')
+  if (cursor) params.append('cursor', cursor)
   appendTransactionQueryParams(params, { startDate, endDate, search, statuses })
-  if (forceSync) params.append('sync', 'true')
 
   const response = await fetch(apiUrl(`/api/transactions?${params.toString()}`), {
     headers: getAuthHeaders(),
@@ -242,10 +245,11 @@ const requestTransactionsPage = async ({
     pagination: {
       page: Number(pagination.page || page),
       limit: Number(pagination.limit || limit),
-      total: Number(pagination.total || transactions.length),
-      totalPages: Number(pagination.totalPages || 1),
+      total: pagination.total === null || pagination.total === undefined ? null : Number(pagination.total),
+      totalPages: pagination.totalPages === null || pagination.totalPages === undefined ? null : Number(pagination.totalPages),
       hasNext: Boolean(pagination.hasNext),
-      hasPrev: Boolean(pagination.hasPrev)
+      hasPrev: Boolean(pagination.hasPrev),
+      nextCursor: typeof pagination.nextCursor === 'string' && pagination.nextCursor ? pagination.nextCursor : null
     },
     facets: {
       statuses: Array.isArray(facets.statuses)
@@ -333,10 +337,10 @@ export const transactionsService = {
     searchTerm?: string
   ): Promise<Transaction[]> {
     try {
+      if (forceSync) await apiClient.post('/transactions/sync', {})
       const result = await requestTransactionsPage({
         startDate,
         endDate,
-        forceSync,
         search: searchTerm,
         limit: 250
       })
@@ -352,10 +356,10 @@ export const transactionsService = {
   },
 
   async getSummary(startOrParams?: string | TransactionSummaryParams, endDate?: string): Promise<TransactionSummary> {
+    const input = typeof startOrParams === 'object'
+      ? startOrParams
+      : { startDate: startOrParams, endDate }
     try {
-      const input = typeof startOrParams === 'object'
-        ? startOrParams
-        : { startDate: startOrParams, endDate }
       const params: Record<string, string> = {}
       if (input.startDate) params.startDate = input.startDate
       if (input.endDate) params.endDate = input.endDate
@@ -363,13 +367,38 @@ export const transactionsService = {
       if (input.statuses?.length) params.status = input.statuses.join(',')
 
       const data = await apiClient.get<TransactionSummary>('/transactions/summary', {
-        params
+        params,
+        signal: input.signal
       })
 
       return data
     } catch (error) {
+      if (input.signal?.aborted) throw error
       return EMPTY_TRANSACTION_SUMMARY
     }
+  },
+
+  async getFacets(paramsInput: Omit<TransactionSummaryParams, 'statuses'> = {}): Promise<{ statuses: TransactionStatusFacet[] }> {
+    const params: Record<string, string> = {}
+    if (paramsInput.startDate) params.startDate = paramsInput.startDate
+    if (paramsInput.endDate) params.endDate = paramsInput.endDate
+    if (paramsInput.search?.trim()) params.q = paramsInput.search.trim()
+    const data = await apiClient.get<{ statuses?: TransactionStatusFacet[] }>('/transactions/facets', {
+      params,
+      signal: paramsInput.signal
+    })
+    return {
+      statuses: Array.isArray(data?.statuses)
+        ? data.statuses.map(status => ({
+          value: String(status.value || '').trim().toLowerCase(),
+          count: Number(status.count || 0)
+        })).filter(status => status.value)
+        : []
+    }
+  },
+
+  async syncTransactions(): Promise<Record<string, unknown>> {
+    return await apiClient.post<Record<string, unknown>>('/transactions/sync', {})
   },
 
   async createTransaction(

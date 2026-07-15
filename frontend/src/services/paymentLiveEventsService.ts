@@ -31,6 +31,13 @@ interface SseFrame {
 const STREAM_ENDPOINT = '/api/payment-events/stream'
 const INITIAL_RECONNECT_MS = 1_000
 const MAX_RECONNECT_MS = 15_000
+const PAYMENT_LIVE_CACHE_PATHS = [
+  '/api/transactions',
+  '/api/subscriptions',
+  '/api/dashboard',
+  '/api/reports',
+  '/api/contacts'
+]
 
 function buildStreamHeaders() {
   const headers = new Headers()
@@ -81,7 +88,7 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
     const payload = JSON.parse(parsed.data)
     if (payload?.type !== 'payment_changed' && payload?.type !== 'subscription_changed') return
 
-    invalidateRistakApiReadCache()
+    invalidateRistakApiReadCache({ pathPrefixes: PAYMENT_LIVE_CACHE_PATHS })
     options.onEvent({
       ...payload,
       scopes: normalizeScopes(payload.scopes)

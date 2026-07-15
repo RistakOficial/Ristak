@@ -41,6 +41,24 @@ router.delete('/google-integration', requireGoogleCalendarFeature, calendarsCont
 // Obtener eventos/citas
 router.get('/events', calendarsController.getEvents);
 
+// Mes: previews acotados por día y conteos exactos
+router.get('/events/month-preview', calendarsController.getEventsMonthPreview);
+
+// Día/semana: página keyset exacta y carga incremental
+router.get('/events/page', calendarsController.getEventsPage);
+
+// Año/mini-calendarios: sólo conteos diarios, ninguna cita materializada
+router.get('/events/day-counts', calendarsController.getEventDayCounts);
+
+// Portada móvil: KPIs multi-calendario + próximas cinco citas
+router.get('/events/overview', calendarsController.getEventsOverview);
+
+// KPIs del rango sin descargar todas las citas
+router.get('/events/summary', calendarsController.getAppointmentStats);
+
+// Próximas citas locales, paginadas por cursor
+router.get('/upcoming', calendarsController.getUpcomingAppointments);
+
 // Obtener detalles completos de una cita individual (con contactId y assignedUserId)
 router.get('/events/:eventId', calendarsController.getAppointment);
 

@@ -390,6 +390,7 @@ export async function completeMetaDirectEmbeddedSignupView(req, res) {
       code: req.body?.code,
       signupData: req.body?.signupData || req.body?.signup_data || {}
     })
+    await ensureDefaultTemplatesForWhatsAppApi(req)
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error finalizando Embedded Signup de Meta: ${error.message}`)
@@ -408,6 +409,7 @@ export async function completeMetaDirectConnectionView(req, res) {
       rawBody: req.rawBody || JSON.stringify(req.body || {}),
       headers: getInstallerSignatureHeaders(req)
     })
+    await ensureDefaultTemplatesForWhatsAppApi(req)
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error completando Meta directo: ${error.message}`)
@@ -1099,7 +1101,6 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
 
 export async function getWhatsAppApiTemplatesView(req, res) {
   try {
-    await ensureDefaultTemplatesForWhatsAppApi(req)
     const data = await getWhatsAppApiTemplates({
       status: req.query?.status,
       limit: req.query?.limit
@@ -1110,6 +1111,22 @@ export async function getWhatsAppApiTemplatesView(req, res) {
     res.status(500).json({
       success: false,
       error: 'No se pudieron leer las plantillas de WhatsApp_API'
+    })
+  }
+}
+
+export async function repairDefaultWhatsAppApiTemplatesView(req, res) {
+  try {
+    const data = await ensureDefaultWhatsAppApiMessageTemplates({
+      submitToYCloud: true,
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error reparando plantillas default WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudieron reparar las plantillas predeterminadas'
     })
   }
 }

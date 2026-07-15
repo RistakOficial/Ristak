@@ -3809,15 +3809,21 @@ function mediaLibraryCursorError() {
 }
 
 function encodeMediaLibraryCursor(kind, payload = {}) {
-  return Buffer.from(JSON.stringify({ v: 1, kind, ...payload }), 'utf8').toString('base64url')
+  return Buffer.from(JSON.stringify({ v: payload.scope ? 2 : 1, kind, ...payload }), 'utf8').toString('base64url')
 }
 
-function decodeMediaLibraryCursor(value, expectedKind) {
+function decodeMediaLibraryCursor(value, expectedKind, expectedScope = '') {
   const cursor = cleanString(value)
   if (!cursor) return null
   try {
     const payload = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'))
-    if (payload?.v !== 1 || payload?.kind !== expectedKind) throw mediaLibraryCursorError()
+    const supportedVersion = payload?.v === 1 || payload?.v === 2
+    const legacyCursor = payload?.v === 1 && !payload?.scope
+    if (
+      !supportedVersion || payload?.kind !== expectedKind ||
+      (expectedScope && !legacyCursor && payload?.scope !== expectedScope) ||
+      (payload?.v === 2 && (!expectedScope || payload?.scope !== expectedScope))
+    ) throw mediaLibraryCursorError()
     return payload
   } catch (error) {
     if (error?.code === 'invalid_media_cursor') throw error
@@ -3829,6 +3835,38 @@ function mediaLibraryTimestampExpression(column = 'created_at') {
   return databaseDialect === 'postgres'
     ? `COALESCE(${column}, TIMESTAMP '${MEDIA_LIBRARY_CURSOR_FALLBACK_TIMESTAMP}')`
     : `COALESCE(${column}, '${MEDIA_LIBRARY_CURSOR_FALLBACK_TIMESTAMP}')`
+}
+
+function mediaLibraryCursorProjectionExpression(timestampExpression) {
+  // node-postgres convierte TIMESTAMP a Date y pierde los microsegundos. La
+  // columna privada del cursor se serializa en SQL; el DTO publico conserva su
+  // tipo habitual y la llave keyset mantiene precision total.
+  return databaseDialect === 'postgres'
+    ? `(${timestampExpression})::text`
+    : timestampExpression
+}
+
+function mediaLibraryAssetCursorScope(input = {}) {
+  const exactModule = cleanString(input.module)
+  const modules = exactModule
+    ? []
+    : Array.from(new Set(
+        (Array.isArray(input.modules) ? input.modules : [])
+          .map(cleanString)
+          .filter(Boolean)
+          .map(normalizeModule)
+      )).sort()
+  const folderIsScoped = input.folderPath !== null && input.folderPath !== undefined
+  return crypto.createHash('sha256').update(JSON.stringify({
+    businessId: normalizeBusinessId(input.businessId),
+    module: exactModule ? normalizeModule(exactModule) : '',
+    modules,
+    mediaType: cleanString(input.mediaType).toLowerCase(),
+    status: cleanString(input.status).toLowerCase(),
+    searchTerms: mediaLibrarySearchTerms(input.search),
+    folderPath: folderIsScoped ? normalizeMediaFolderPath(input.folderPath) : null,
+    recursive: folderIsScoped && boolValue(input.recursive)
+  })).digest('base64url')
 }
 
 function cursorTimestampValue(value) {
@@ -4048,15 +4086,19 @@ export async function listMediaAssets({
   includeFolders = true
 } = {}) {
   const safeLimit = normalizeMediaLibraryLimit(limit, MEDIA_LIBRARY_DEFAULT_LIMIT, MEDIA_LIBRARY_MAX_LIMIT)
-  const decodedCursor = decodeMediaLibraryCursor(cursor, 'media-asset')
   const sortTimestamp = mediaLibraryTimestampExpression('created_at')
   const filtersInput = { businessId, module, modules, mediaType, status, search, folderPath, recursive }
+  const cursorScope = mediaLibraryAssetCursorScope(filtersInput)
+  const decodedCursor = decodeMediaLibraryCursor(cursor, 'media-asset', cursorScope)
   const filters = buildMediaLibraryFilters(filtersInput)
 
   if (decodedCursor) {
     const cursorCreatedAt = cursorTimestampValue(decodedCursor.createdAt)
     const cursorId = cleanString(decodedCursor.id)
-    if (!cursorId) throw mediaLibraryCursorError()
+    if (
+      cursorCreatedAt.length > 100 || !Number.isFinite(Date.parse(cursorCreatedAt)) ||
+      !cursorId || cursorId.length > 300
+    ) throw mediaLibraryCursorError()
     filters.clauses.push(`(${sortTimestamp} < ? OR (${sortTimestamp} = ? AND id < ?))`)
     filters.params.push(cursorCreatedAt, cursorCreatedAt, cursorId)
   }
@@ -4081,7 +4123,7 @@ export async function listMediaAssets({
   const rowsPromise = db.all(
     `SELECT
        ${MEDIA_LIBRARY_LIST_COLUMNS},
-       ${sortTimestamp} AS cursor_created_at
+       ${mediaLibraryCursorProjectionExpression(sortTimestamp)} AS cursor_created_at
      FROM media_assets
      WHERE ${filters.clauses.join(' AND ')}
      ORDER BY ${sortTimestamp} DESC, id DESC
@@ -4124,6 +4166,7 @@ export async function listMediaAssets({
       hasMore,
       nextCursor: hasMore && lastRow
         ? encodeMediaLibraryCursor('media-asset', {
+            scope: cursorScope,
             createdAt: cursorTimestampValue(lastRow.cursor_created_at),
             id: lastRow.id
           })

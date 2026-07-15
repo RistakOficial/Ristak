@@ -34,19 +34,21 @@ test('Dashboard cancela y descarta datasets extendidos de una ventana anterior',
   assert.ok((service.match(/\{ signal: params\.signal \}/g) || []).length >= 5)
 })
 
-test('Reportes cancela y descarta summaries atrasados al cambiar el rango', async () => {
+test('Reportes cancela y descarta snapshots unificados atrasados al cambiar el rango', async () => {
   const [page, service] = await Promise.all([
     repoFile('frontend/src/pages/Reports/Reports.tsx'),
     repoFile('frontend/src/services/reportsService.ts')
   ])
 
-  assert.match(page, /const summaryRequestRef = React\.useRef\(0\)/)
+  assert.match(page, /const snapshotRequestRef = React\.useRef\(0\)/)
   assert.match(page, /const controller = new AbortController\(\)/)
-  assert.match(page, /summaryRequestRef\.current === requestId/)
-  assert.match(page, /reportsService\.getSummary\([\s\S]{0,180}controller\.signal/)
+  assert.match(page, /snapshotRequestRef\.current === requestId/)
+  assert.match(page, /reportsService\.getSnapshot\([\s\S]{0,180}controller\.signal/)
+  assert.match(page, /result\.cache\.stale/)
+  assert.match(page, /waitForFresh: true/)
   assert.match(page, /controller\.abort\(\)/)
-  assert.match(service, /async getSummary\([\s\S]{0,220}signal\?: AbortSignal/)
-  assert.match(service, /apiClient\.get<ReportsSummary>\('\/reports\/summary', \{ params: query, signal \}\)/)
+  assert.match(service, /async getSnapshot\([\s\S]{0,380}signal\?: AbortSignal/)
+  assert.match(service, /apiClient\.get<ReportsSnapshot>\('\/reports\/snapshot', \{ params: query, signal \}\)/)
 })
 
 test('los drilldowns de Publicidad no mezclan hijos de otro rango o página', async () => {

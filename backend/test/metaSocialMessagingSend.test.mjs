@@ -981,7 +981,7 @@ test('Messenger usa su User Token humano y arma enlaces de Developers con la app
         assert.equal(messengerPageToken, 'page-token-from-messenger-user')
         assert.equal(instagramPageToken, 'page-token-from-system-user')
 
-        const setup = await getMetaDeveloperSetup()
+        const setup = await getMetaDeveloperSetup({ refresh: true })
         assert.equal(setup.appId, 'app-developer-setup-test')
         assert.equal(setup.businessId, 'business-developer-setup-test')
         assert.equal(setup.messengerUserTokenConfigured, true)

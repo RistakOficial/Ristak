@@ -8,6 +8,7 @@ import { useAccountCurrency, useAppConfig } from '@/hooks'
 import {
   campaignsService,
   type ConnectedSocialProfile,
+  type MetaAssetSnapshot,
   type MetaTestCustomParameter,
   type MetaTestEventParameters,
   type MetaTestEventResponse
@@ -57,11 +58,6 @@ interface MetaPage {
   category: string | null
   pictureUrl: string | null
   businessId?: string
-}
-
-interface FetchCollectionResult {
-  success: boolean
-  count: number
 }
 
 interface MetaWizardRefreshOptions {
@@ -165,12 +161,6 @@ const getMaskedSecretTail = (value = '') => (
     ? value.trim().slice(MASKED_SECRET_PREFIX.length)
     : value.trim()
 )
-
-const normalizeMetaAdAccountIdForLookup = (adAccountId = '') => {
-  const cleanAdAccountId = adAccountId.trim()
-  if (!cleanAdAccountId) return ''
-  return cleanAdAccountId.startsWith('act_') ? cleanAdAccountId : `act_${cleanAdAccountId}`
-}
 
 const tokenSetupGuideSteps = [
   {
@@ -492,6 +482,7 @@ export const MetaAdsIntegration: React.FC = () => {
   const [pixels, setPixels] = useState<Pixel[]>([])
   const [pages, setPages] = useState<MetaPage[]>([])
   const [instagramAccounts, setInstagramAccounts] = useState<ConnectedSocialProfile[]>([])
+  const [metaAssetSnapshot, setMetaAssetSnapshot] = useState<MetaAssetSnapshot | null>(null)
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
   const [isLoadingPixels, setIsLoadingPixels] = useState(false)
   const [isLoadingPages, setIsLoadingPages] = useState(false)
@@ -504,7 +495,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [savedMetaOAuthSelection, setSavedMetaOAuthSelection] = useState<MetaOAuthFinalizeSelection>({ sessionId: '' })
   const [savingMetaAssetSection, setSavingMetaAssetSection] = useState<MetaAssetSection | null>(null)
   const [isConnectingMetaOAuth, setIsConnectingMetaOAuth] = useState(false)
-  const [isLoadingAuthorizedMetaAssets, setIsLoadingAuthorizedMetaAssets] = useState(false)
   const [showManualConnection, setShowManualConnection] = useState(false)
   const [isSavingToken, setIsSavingToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
@@ -528,7 +518,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isOpeningMetaPixelTest, setIsOpeningMetaPixelTest] = useState(false)
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
-  const [wizardRefreshNonce, setWizardRefreshNonce] = useState(0)
   const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>(routeConnectedTab || 'cuenta')
   const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
   const [metaDeveloperSetup, setMetaDeveloperSetup] = useState<MetaDeveloperSetup | null>(null)
@@ -538,7 +527,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const handledMetaOAuthHandoffs = useRef(new Set<string>())
   const credentialsLoadVersion = useRef(0)
   const metaStatusLoadVersion = useRef(0)
-  const loadedMetaOAuthAssetsForConnection = useRef('')
   const loadedManualMetaHelp = useRef(false)
 
   const { showToast } = useNotification()
@@ -627,8 +615,15 @@ export const MetaAdsIntegration: React.FC = () => {
     : ''
 
   useEffect(() => {
-    void Promise.all([loadCredentials(), loadMetaAdsSyncSettings()])
+    void Promise.all([loadCredentials(), loadMetaAdsSyncSettings(), loadCachedMetaAssets()])
   }, [])
+
+  useEffect(() => {
+    const accountId = credentials.adAccountId.replace(/^act_/, '')
+    setPixels(accountId && metaAssetSnapshot
+      ? metaAssetSnapshot.pixelsByAdAccount[accountId] || []
+      : [])
+  }, [credentials.adAccountId, metaAssetSnapshot])
 
   useEffect(() => {
     setActiveStep(current => current === routeStep ? current : routeStep)
@@ -726,7 +721,7 @@ export const MetaAdsIntegration: React.FC = () => {
   }
 
   const requestWizardRefresh = () => {
-    setWizardRefreshNonce(current => current + 1)
+    void loadCachedMetaAssets()
   }
 
   const handleSelectMetaTab = (tab: MetaConnectedTab) => {
@@ -782,6 +777,7 @@ export const MetaAdsIntegration: React.FC = () => {
       if (loadVersion !== metaStatusLoadVersion.current) return null
       setMetaOAuthStatus(status)
       if (status.connectionMode) setMetaConnectionMode(status.connectionMode)
+      if (status.assetSnapshot) applyMetaOAuthSession(status.assetSnapshot)
       return status
     } catch (error) {
       const status = buildUnavailableMetaOAuthStatus(error)
@@ -874,7 +870,15 @@ export const MetaAdsIntegration: React.FC = () => {
 
     setSavingMetaAssetSection(section)
     try {
-      const result = await metaOAuthService.finalize(nextSelection)
+      // El snapshot local que pinta la pantalla no crea una sesión mutable. Sólo
+      // al pulsar Guardar pedimos la sesión corta y cifrada para el commit.
+      const commitSession = session.sessionId ? session : await metaOAuthService.reconfigure()
+      const commitSelection = buildMetaOAuthSelection(
+        commitSession,
+        selectionFromMetaOAuthSession(commitSession),
+        sectionPatch
+      )
+      const result = await metaOAuthService.finalize(commitSelection)
       const nextPageId = result.selected.pageId || ''
       const nextInstagramAccountId = result.selected.instagramAccountId || ''
       const nextSession = result.session || await metaOAuthService.reconfigure()
@@ -1039,42 +1043,9 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const loadAuthorizedMetaAssets = async ({ silent = true } = {}) => {
-    setIsLoadingAuthorizedMetaAssets(true)
-    try {
-      const session = await metaOAuthService.reconfigure()
-      applyMetaOAuthSession(session)
-    } catch (error) {
-      if (!silent) {
-        showToast(
-          'warning',
-          'Autoriza Meta una vez más',
-          error instanceof Error ? error.message : 'Meta no devolvió el inventario autorizado.'
-        )
-      }
-    } finally {
-      setIsLoadingAuthorizedMetaAssets(false)
-    }
-  }
-
   useEffect(() => {
     void loadMetaOAuthStatus()
   }, [])
-
-  useEffect(() => {
-    if (!['cuenta', 'social'].includes(activeMetaTab) || !isLegacyOAuthConnection || metaOAuthSession || isLoadingAuthorizedMetaAssets) return
-    const connectionKey = metaOAuthStatus?.oauth.connectionId || metaOAuthStatus?.oauth.userId || 'meta-connected'
-    if (loadedMetaOAuthAssetsForConnection.current === connectionKey) return
-    loadedMetaOAuthAssetsForConnection.current = connectionKey
-    void loadAuthorizedMetaAssets({ silent: true })
-  }, [
-    activeMetaTab,
-    isLegacyOAuthConnection,
-    isLoadingAuthorizedMetaAssets,
-    metaOAuthSession,
-    metaOAuthStatus?.oauth.connectionId,
-    metaOAuthStatus?.oauth.userId
-  ])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -1149,27 +1120,6 @@ export const MetaAdsIntegration: React.FC = () => {
         })
         setSavedPageId(data.data.pageId || '')
         setSavedInstagramAccountId(data.data.instagramAccountId || '')
-
-        const isOAuthConnection = connectionMode === 'oauth_user' || connectionMode === 'oauth_bisu'
-        if (data.data.accessToken && !isOAuthConnection) {
-          // Una conexión guardada se consulta server-side. El secreto no vuelve
-          // al navegador sólo para poblar selectores de activos. OAuth conserva
-          // su inventario autorizado localmente para alimentar los selectores
-          // de la tabla sin volver a consultar Graph.
-          const tokenToUse = isMaskedSecretValue(data.data.accessToken) ? '' : data.data.accessToken
-          setRealAccessToken(tokenToUse)
-          await fetchAdAccounts(tokenToUse, data.data.adAccountId, { silent: true })
-          await fetchPages(tokenToUse, data.data.pageId, { silent: true })
-          await fetchInstagramAccounts(tokenToUse, data.data.instagramAccountId, {
-            silent: true,
-            pageId: data.data.pageId || ''
-          })
-
-          if (data.data.adAccountId) {
-            const accountIdWithPrefix = normalizeMetaAdAccountIdForLookup(data.data.adAccountId)
-            await fetchPixels(accountIdWithPrefix, tokenToUse, data.data.pixelId, { silent: true })
-          }
-        }
       }
     } catch {
     } finally {
@@ -1194,215 +1144,19 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const fetchAdAccounts = async (
-    token = '',
-    savedAdAccountId?: string,
-    options: { silent?: boolean } = {}
-  ): Promise<FetchCollectionResult> => {
-    setIsLoadingAccounts(true)
-    try {
-      const result = await campaignsService.fetchAdAccounts(token)
-      if (result.success && result.adAccounts.length > 0) {
-        setAdAccounts(result.adAccounts)
-
-        if (savedAdAccountId) {
-          const normalizedSavedId = savedAdAccountId.replace(/^act_/, '')
-          const matchingAccount = result.adAccounts.find(acc =>
-            acc.id.replace(/^act_/, '') === normalizedSavedId
-          )
-
-          if (matchingAccount) {
-            setCredentials(prev => ({
-              ...prev,
-              adAccountId: matchingAccount.id.replace(/^act_/, '')
-            }))
-          }
-        }
-
-        if (!options.silent) {
-          showToast('success', 'Cuentas cargadas', `Se encontraron ${result.adAccounts.length} cuentas de anuncios`)
-        }
-
-        return { success: true, count: result.adAccounts.length }
-      }
-
-      if (result.success) {
-        if (!options.silent) {
-          showToast('warning', 'Sin cuentas', 'No se encontraron cuentas de anuncios')
-        }
-        setAdAccounts([])
-        return { success: true, count: 0 }
-      } else {
-        if (!options.silent) {
-          showToast('error', 'Error', 'No se pudieron cargar las cuentas')
-        }
-        setAdAccounts([])
-        return { success: false, count: 0 }
-      }
-    } catch {
-      if (!options.silent) {
-        showToast('error', 'Error', 'No se pudieron cargar las cuentas')
-      }
-      setAdAccounts([])
-      return { success: false, count: 0 }
-    } finally {
-      setIsLoadingAccounts(false)
-    }
+  const applyMetaAssetSnapshot = (snapshot: MetaAssetSnapshot) => {
+    setMetaAssetSnapshot(snapshot)
+    setAdAccounts(Array.isArray(snapshot.adAccounts) ? snapshot.adAccounts : [])
+    setPages(Array.isArray(snapshot.pages) ? snapshot.pages : [])
+    setInstagramAccounts((snapshot.profiles || []).filter(profile => profile.platform === 'instagram'))
   }
 
-  const fetchPixels = async (
-    adAccountId: string,
-    token = '',
-    savedPixelId?: string,
-    options: { silent?: boolean } = {}
-  ): Promise<FetchCollectionResult> => {
-    if (!adAccountId) {
-      if (!options.silent) {
-        showToast('error', 'Datos requeridos', 'Primero selecciona una cuenta de anuncios')
-      }
-      return { success: false, count: 0 }
-    }
-
-    setIsLoadingPixels(true)
+  const loadCachedMetaAssets = async () => {
     try {
-      const result = await campaignsService.fetchPixels(adAccountId, token)
-
-      if (result.success && result.pixels.length > 0) {
-        setPixels(result.pixels)
-
-        if (savedPixelId) {
-          const matchingPixel = result.pixels.find(p => p.id === savedPixelId)
-          if (matchingPixel) {
-            setCredentials(prev => ({
-              ...prev,
-              pixelId: matchingPixel.id
-            }))
-          }
-        }
-
-        if (!options.silent) {
-          showToast('success', 'Datasets cargados', `Se encontraron ${result.pixels.length} datasets`)
-        }
-
-        return { success: true, count: result.pixels.length }
-      }
-
-      if (result.success) {
-        if (!options.silent) {
-          showToast('info', 'Sin datasets', 'No se encontraron datasets para esta cuenta')
-        }
-        setPixels([])
-        return { success: true, count: 0 }
-      } else {
-        if (!options.silent) {
-          showToast('error', 'Error', 'No se pudieron cargar los datasets')
-        }
-        setPixels([])
-        return { success: false, count: 0 }
-      }
+      applyMetaAssetSnapshot(await campaignsService.getMetaAssets())
     } catch {
-      if (!options.silent) {
-        showToast('error', 'Error', 'No se pudieron cargar los datasets')
-      }
-      setPixels([])
-      return { success: false, count: 0 }
-    } finally {
-      setIsLoadingPixels(false)
-    }
-  }
-
-  const fetchPages = async (
-    token = '',
-    savedPageId?: string,
-    options: { silent?: boolean } = {}
-  ): Promise<FetchCollectionResult> => {
-    setIsLoadingPages(true)
-    try {
-      const result = await campaignsService.fetchPages(token)
-
-      if (result.success && result.pages.length > 0) {
-        setPages(result.pages)
-
-        if (savedPageId) {
-          const matchingPage = result.pages.find(page => page.id === savedPageId)
-          if (matchingPage) {
-            setCredentials(prev => ({
-              ...prev,
-              pageId: matchingPage.id
-            }))
-          }
-        }
-
-        if (!options.silent) {
-          showToast('success', 'Páginas cargadas', `Se encontraron ${result.pages.length} páginas`)
-        }
-
-        return { success: true, count: result.pages.length }
-      }
-
-      setPages([])
-      if (!options.silent) {
-        showToast('warning', 'Sin páginas', 'Revisa que el token tenga pages_show_list y la Página asignada al usuario del sistema')
-      }
-      return { success: result.success, count: 0 }
-    } catch {
-      setPages([])
-      if (!options.silent) {
-        showToast('error', 'Error', 'No se pudieron cargar las páginas')
-      }
-      return { success: false, count: 0 }
-    } finally {
-      setIsLoadingPages(false)
-    }
-  }
-
-  const fetchInstagramAccounts = async (
-    token = '',
-    savedInstagramAccountId?: string,
-    options: MetaWizardRefreshOptions & { pageId?: string } = {}
-  ): Promise<FetchCollectionResult> => {
-    setIsLoadingInstagramAccounts(true)
-    try {
-      const result = await campaignsService.getConnectedSocialProfiles({
-        accessToken: token,
-        pageId: options.pageId ?? credentials.pageId,
-        instagramAccountId: savedInstagramAccountId
-      })
-      const accounts = result.profiles.filter(profile => profile.platform === 'instagram')
-
-      if (result.success && accounts.length > 0) {
-        setInstagramAccounts(accounts)
-
-        if (savedInstagramAccountId) {
-          const matchingAccount = accounts.find(account => account.sourceId === savedInstagramAccountId)
-          if (matchingAccount) {
-            setCredentials(prev => ({
-              ...prev,
-              instagramAccountId: matchingAccount.sourceId
-            }))
-          }
-        }
-
-        if (!options.silent) {
-          showToast('success', 'Instagram cargado', `Se encontraron ${accounts.length} cuentas de Instagram`)
-        }
-
-        return { success: true, count: accounts.length }
-      }
-
-      setInstagramAccounts([])
-      if (!options.silent) {
-        showToast('info', 'Sin Instagram', 'No encontramos cuentas de Instagram conectadas a tus páginas de Meta')
-      }
-      return { success: result.success, count: 0 }
-    } catch {
-      setInstagramAccounts([])
-      if (!options.silent) {
-        showToast('error', 'Error', 'No se pudieron cargar las cuentas de Instagram')
-      }
-      return { success: false, count: 0 }
-    } finally {
-      setIsLoadingInstagramAccounts(false)
+      // La configuración sigue siendo utilizable por IDs aunque todavía no haya
+      // inventario local. Un GET de pantalla jamás cae a Meta Graph.
     }
   }
 
@@ -1420,47 +1174,41 @@ export const MetaAdsIntegration: React.FC = () => {
   const refreshMetaWizardStep = async (
     stepIndex = activeStep,
     options: MetaWizardRefreshOptions = {}
-  ) => {
-    if (metaOAuthSession) return
+  ): Promise<MetaAssetSnapshot | null> => {
+    if (metaOAuthSession) return null
     const token = await getUsableAccessToken(options)
-    if (!token && !hasManualAccessToken) return
+    if (!token && !hasManualAccessToken) return null
     const assetToken = isMaskedSecretValue(token) ? '' : token
-
     const step = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
-    const currentAdAccountId = credentials.adAccountId
-    const currentPixelId = credentials.pixelId
-    const currentPageId = credentials.pageId
-    const currentInstagramAccountId = credentials.instagramAccountId
-    const adAccountIdForLookup = normalizeMetaAdAccountIdForLookup(currentAdAccountId)
-
-    if (step === 0) {
-      await Promise.all([
-        fetchAdAccounts(assetToken, currentAdAccountId, options),
-        fetchPages(assetToken, currentPageId, options),
-        fetchInstagramAccounts(assetToken, currentInstagramAccountId, { ...options, pageId: currentPageId }),
-        adAccountIdForLookup
-          ? fetchPixels(adAccountIdForLookup, assetToken, currentPixelId, options)
-          : Promise.resolve({ success: false, count: 0 })
-      ])
-      return
-    }
-
-    if (step === 1) {
-      await fetchAdAccounts(assetToken, currentAdAccountId, options)
-      return
-    }
-
-    if (step === 2) {
-      if (!adAccountIdForLookup) return
-      await fetchPixels(adAccountIdForLookup, assetToken, currentPixelId, options)
-      return
-    }
-
-    if (step === 3) {
-      await Promise.all([
-        fetchPages(assetToken, currentPageId, options),
-        fetchInstagramAccounts(assetToken, currentInstagramAccountId, { ...options, pageId: currentPageId })
-      ])
+    setIsLoadingAccounts(step <= 1)
+    setIsLoadingPixels(step === 0 || step === 2)
+    setIsLoadingPages(step === 0 || step === 3)
+    setIsLoadingInstagramAccounts(step === 0 || step === 3)
+    try {
+      const snapshot = await campaignsService.refreshMetaAssets({
+        accessToken: assetToken,
+        adAccountId: credentials.adAccountId,
+        scope: step === 2 ? 'pixels' : 'all'
+      })
+      applyMetaAssetSnapshot(snapshot)
+      if (!options.silent) {
+        showToast(
+          'success',
+          'Activos actualizados',
+          `Meta devolvió ${snapshot.adAccounts.length} cuenta(s), ${snapshot.pages.length} página(s) y ${snapshot.profiles.filter(profile => profile.platform === 'instagram').length} Instagram.`
+        )
+      }
+      return snapshot
+    } catch (error) {
+      if (!options.silent) {
+        showToast('error', 'No se pudieron actualizar los activos', error instanceof Error ? error.message : 'Inténtalo de nuevo')
+      }
+      return null
+    } finally {
+      setIsLoadingAccounts(false)
+      setIsLoadingPixels(false)
+      setIsLoadingPages(false)
+      setIsLoadingInstagramAccounts(false)
     }
   }
 
@@ -1479,6 +1227,9 @@ export const MetaAdsIntegration: React.FC = () => {
     }))
     if (credentials.adAccountId && credentials.adAccountId !== accountIdWithoutPrefix) {
       setPixels([])
+    }
+    if (metaAssetSnapshot) {
+      setPixels(metaAssetSnapshot.pixelsByAdAccount[accountIdWithoutPrefix] || [])
     }
     if (metaOAuthSession) {
       setPixels((oauthAccount?.pixels || []).map(pixel => ({
@@ -1627,7 +1378,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setMetaOAuthSelection({ sessionId: '' })
     setSavedMetaOAuthSelection({ sessionId: '' })
     setSavingMetaAssetSection(null)
-    loadedMetaOAuthAssetsForConnection.current = ''
+    setMetaAssetSnapshot(null)
     setShowManualConnection(false)
     setMetaDeveloperSetup(null)
     setMessengerUserToken('')
@@ -1651,21 +1402,17 @@ export const MetaAdsIntegration: React.FC = () => {
     try {
       showToast('info', 'Validando token...', 'Revisando tus cuentas de anuncios')
       setRealAccessToken(credentials.accessToken)
-      const accountsResult = await fetchAdAccounts(credentials.accessToken)
+      const snapshot = await refreshMetaWizardStep(0, { silent: true })
 
-      if (!accountsResult.success) {
+      if (!snapshot) {
         setRealAccessToken('')
         return
       }
 
-      await fetchPages(credentials.accessToken, credentials.pageId, { silent: true })
-      await fetchInstagramAccounts(credentials.accessToken, credentials.instagramAccountId, {
-        silent: true,
-        pageId: credentials.pageId
-      })
-
-      if (accountsResult.count > 0) {
+      if (snapshot.adAccounts.length > 0) {
         showToast('success', 'Token válido', 'Selecciona tu cuenta de anuncios')
+      } else {
+        showToast('warning', 'Token válido, sin cuentas', 'Asigna una cuenta publicitaria al usuario del sistema en Meta Business')
       }
 
       goToMetaStep(1)
@@ -1802,6 +1549,7 @@ export const MetaAdsIntegration: React.FC = () => {
     setIsEditingMetaConfig(true)
     goToMetaStep(0, { replace: true })
     requestWizardRefresh()
+    if (!isLegacyOAuthConnection) void refreshMetaWizardStep(0, { silent: true })
   }
 
   const handleDisconnectMetaConfig = async () => {
@@ -2577,11 +2325,6 @@ export const MetaAdsIntegration: React.FC = () => {
     !isLoadingAccounts
   )
 
-  useEffect(() => {
-    if (!shouldShowWizard || isLoading) return
-    void refreshMetaWizardStep(activeStep, { silent: true })
-  }, [activeStep, isEditingMetaConfig, showManualConnection, wizardRefreshNonce, shouldShowWizard, isLoading])
-
   const getMetaAssetDisplayName = (name: string | null | undefined, id: string, fallback: string) => {
     const cleanName = String(name || '').trim()
     const normalizedName = cleanName.replace(/^@/, '').replace(/^act_/, '')
@@ -2706,6 +2449,17 @@ export const MetaAdsIntegration: React.FC = () => {
     return 'Completa el paso anterior para continuar'
   }
 
+  const ensureSelectedAccountAssets = () => {
+    const accountId = credentials.adAccountId.replace(/^act_/, '')
+    const hasCachedPixels = Boolean(accountId && metaAssetSnapshot && Object.prototype.hasOwnProperty.call(
+      metaAssetSnapshot.pixelsByAdAccount,
+      accountId
+    ))
+    if (!hasCachedPixels || metaAssetSnapshot?.stale) {
+      void refreshMetaWizardStep(2, { silent: true })
+    }
+  }
+
   const handleNextStep = () => {
     const currentStep = metaSetupSteps[activeStep]
 
@@ -2724,6 +2478,7 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
+    if (activeStep === 1) ensureSelectedAccountAssets()
     goToMetaStep(Math.min(activeStep + 1, metaSetupSteps.length - 1))
   }
 
@@ -2739,6 +2494,7 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
+    if (stepIndex >= 2) ensureSelectedAccountAssets()
     goToMetaStep(stepIndex)
   }
 

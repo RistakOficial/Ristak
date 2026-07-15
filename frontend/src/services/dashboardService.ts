@@ -4,7 +4,15 @@ import { formatDateToISO, formatEndDateToISO } from '@/utils/format'
 import type { CalendarEvent } from './calendarsService'
 import type { ContactListItem } from './reportsService'
 import type { Transaction } from './transactionsService'
+import type { WhatsAppApiPhoneNumber } from './whatsappApiService'
 import { trackingService, type CursorPage } from './trackingService'
+import {
+  getAuthScopedCacheRevision,
+  registerAuthScopedCacheInvalidator,
+  syncAuthScopedCachePrincipal
+} from './authPrincipalCache'
+import { registerRistakApiReadCacheInvalidator } from './authFetch'
+import { getOrCreateSharedRequest } from './sharedRequest'
 
 export interface DashboardKPI {
   value: number;
@@ -109,6 +117,23 @@ export interface OriginDistributionData {
   whatsappNumbers?: WhatsAppNumberOriginDatum[];
 }
 
+export interface DashboardMobileAnalyticsSnapshot {
+  metrics: DashboardMetrics;
+  origin: OriginDistributionData;
+  funnel: Array<{ stage: string; value: number }>;
+  financialChart: Array<{ label: string; value: number; value2: number }>;
+  whatsappPhoneNumbers: WhatsAppApiPhoneNumber[];
+  scopes: {
+    funnel: DashboardFunnelScope;
+    financial: DashboardFunnelScope;
+  };
+  range: {
+    start: string;
+    end: string;
+    timezone: string;
+  };
+}
+
 const EMPTY_ORIGIN_DISTRIBUTION: OriginDistributionData = {
   traffic: { sources: [], platforms: [], devices: [], placements: [], browsers: [], os: [] },
   leads: [],
@@ -117,35 +142,181 @@ const EMPTY_ORIGIN_DISTRIBUTION: OriginDistributionData = {
   whatsappNumbers: []
 };
 
+const DASHBOARD_METRICS_FRESH_MS = 30_000
+const DASHBOARD_METRICS_STALE_MS = 5 * 60_000
+const dashboardMetricsSnapshots = new Map<string, { data: DashboardMetrics; fetchedAt: number }>()
+const dashboardMetricsInflight = new Map<string, Promise<DashboardMetrics>>()
+const MOBILE_ANALYTICS_FRESH_MS = 30_000
+const MOBILE_ANALYTICS_STALE_MS = 5 * 60_000
+const MOBILE_ANALYTICS_CACHE_LIMIT = 8
+const mobileAnalyticsSnapshots = new Map<string, { data: DashboardMobileAnalyticsSnapshot; fetchedAt: number }>()
+
+function clearDashboardMetricSnapshots() {
+  dashboardMetricsSnapshots.clear()
+  dashboardMetricsInflight.clear()
+}
+
+registerAuthScopedCacheInvalidator(clearDashboardMetricSnapshots)
+registerRistakApiReadCacheInvalidator(clearDashboardMetricSnapshots)
+
+function clearMobileAnalyticsSnapshots() {
+  mobileAnalyticsSnapshots.clear()
+}
+
+registerAuthScopedCacheInvalidator(clearMobileAnalyticsSnapshots)
+registerRistakApiReadCacheInvalidator(clearMobileAnalyticsSnapshots)
+
+function dashboardMetricsKey(params: { start: Date; end: Date }) {
+  return `${formatDateToISO(params.start)}:${formatEndDateToISO(params.end)}`
+}
+
+function mobileAnalyticsKey(params: {
+  start: Date;
+  end: Date;
+  includeWeb?: boolean;
+  funnelScope?: DashboardFunnelScope;
+  financialScope?: DashboardFunnelScope;
+}) {
+  return [
+    formatDateToISO(params.start),
+    formatEndDateToISO(params.end),
+    params.includeWeb === false ? 'no-web' : 'web',
+    params.funnelScope || 'all',
+    params.financialScope || 'all'
+  ].join(':')
+}
+
 class DashboardService {
+  peekMobileAnalyticsSnapshot(params: {
+    start: Date;
+    end: Date;
+    includeWeb?: boolean;
+    funnelScope?: DashboardFunnelScope;
+    financialScope?: DashboardFunnelScope;
+  }): DashboardMobileAnalyticsSnapshot | null {
+    syncAuthScopedCachePrincipal()
+    const key = mobileAnalyticsKey(params)
+    const cached = mobileAnalyticsSnapshots.get(key)
+    if (!cached) return null
+    if (Date.now() - cached.fetchedAt >= MOBILE_ANALYTICS_STALE_MS) {
+      mobileAnalyticsSnapshots.delete(key)
+      return null
+    }
+    mobileAnalyticsSnapshots.delete(key)
+    mobileAnalyticsSnapshots.set(key, cached)
+    return cached.data
+  }
+
+  async getMobileAnalyticsSnapshot(params: {
+    start: Date;
+    end: Date;
+    includeWeb?: boolean;
+    funnelScope?: DashboardFunnelScope;
+    financialScope?: DashboardFunnelScope;
+  }, options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<DashboardMobileAnalyticsSnapshot> {
+    syncAuthScopedCachePrincipal()
+    const principalRevision = getAuthScopedCacheRevision()
+    const key = mobileAnalyticsKey(params)
+    const cached = mobileAnalyticsSnapshots.get(key)
+    if (!options.forceRefresh && cached && Date.now() - cached.fetchedAt < MOBILE_ANALYTICS_FRESH_MS) {
+      return cached.data
+    }
+
+    const queryParams = new URLSearchParams({
+      startDate: formatDateToISO(params.start),
+      endDate: formatEndDateToISO(params.end),
+      includeWeb: params.includeWeb === false ? '0' : '1',
+      funnelScope: params.funnelScope || 'all',
+      financialScope: params.financialScope || 'all'
+    })
+    const response = await fetch(apiUrl(`/api/dashboard/mobile-analytics-snapshot?${queryParams}`), {
+      signal: options.signal
+    })
+    if (!response.ok) throw new Error('No se pudo cargar Analíticas móvil')
+    const result = await response.json()
+    const data = result?.data as DashboardMobileAnalyticsSnapshot | undefined
+    if (!data?.metrics || !data?.origin || !Array.isArray(data.funnel) || !Array.isArray(data.financialChart)) {
+      throw new Error('El snapshot de Analíticas móvil está incompleto')
+    }
+
+    if (principalRevision === getAuthScopedCacheRevision()) {
+      while (mobileAnalyticsSnapshots.size >= MOBILE_ANALYTICS_CACHE_LIMIT) {
+        const oldest = mobileAnalyticsSnapshots.keys().next().value
+        if (!oldest) break
+        mobileAnalyticsSnapshots.delete(oldest)
+      }
+      mobileAnalyticsSnapshots.set(key, { data, fetchedAt: Date.now() })
+    }
+    return data
+  }
+
+  peekDashboardMetrics(params: { start: Date; end: Date }): DashboardMetrics | null {
+    syncAuthScopedCachePrincipal()
+    const key = dashboardMetricsKey(params)
+    const cached = dashboardMetricsSnapshots.get(key)
+    if (!cached) return null
+    if (Date.now() - cached.fetchedAt >= DASHBOARD_METRICS_STALE_MS) {
+      dashboardMetricsSnapshots.delete(key)
+      return null
+    }
+    dashboardMetricsSnapshots.delete(key)
+    dashboardMetricsSnapshots.set(key, cached)
+    return cached.data
+  }
+
   async getDashboardMetrics(params: {
     start: Date;
     end: Date;
-  }): Promise<DashboardMetrics> {
-    try {
-      const queryParams = new URLSearchParams({
-        startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end)
-      });
-
-      const response = await fetch(apiUrl(`/api/dashboard/metrics?${queryParams}`));
-
-      if (!response.ok) {
-        // Si el endpoint no existe, devolver valores por defecto
-        return this.getDefaultMetrics();
-      }
-
-      return await response.json();
-    } catch (error) {
-      // TODO: Implement proper logging service
-      return this.getDefaultMetrics();
+  }, options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<DashboardMetrics> {
+    syncAuthScopedCachePrincipal()
+    const principalRevision = getAuthScopedCacheRevision()
+    const key = dashboardMetricsKey(params)
+    const cached = dashboardMetricsSnapshots.get(key)
+    if (!options.forceRefresh && cached && Date.now() - cached.fetchedAt < DASHBOARD_METRICS_FRESH_MS) {
+      return cached.data
     }
+    return getOrCreateSharedRequest({
+      inflight: dashboardMetricsInflight,
+      key,
+      signal: options.signal,
+      createRequest: async () => {
+        try {
+          const queryParams = new URLSearchParams({
+            startDate: formatDateToISO(params.start),
+            endDate: formatEndDateToISO(params.end)
+          });
+
+          // El request pertenece al rango, no al primer componente que llegó.
+          // Cada consumidor cancela únicamente su espera en sharedRequest.ts.
+          const response = await fetch(apiUrl(`/api/dashboard/metrics?${queryParams}`));
+
+          if (!response.ok) {
+            // Si el endpoint no existe, devolver valores por defecto
+            return this.getDefaultMetrics();
+          }
+
+          const data = await response.json() as DashboardMetrics
+          if (principalRevision === getAuthScopedCacheRevision()) {
+            while (dashboardMetricsSnapshots.size >= 12) {
+              const oldest = dashboardMetricsSnapshots.keys().next().value
+              if (!oldest) break
+              dashboardMetricsSnapshots.delete(oldest)
+            }
+            dashboardMetricsSnapshots.set(key, { data, fetchedAt: Date.now() })
+          }
+          return data
+        } catch {
+          // TODO: Implement proper logging service
+          return this.getDefaultMetrics();
+        }
+      }
+    })
   }
 
   async getOperationalSnapshot(params: {
     start: Date;
     end: Date;
-  }): Promise<DashboardOperationalSnapshot> {
+  }, signal?: AbortSignal): Promise<DashboardOperationalSnapshot> {
     const emptySnapshot: DashboardOperationalSnapshot = {
       transactions: [],
       contacts: [],
@@ -157,7 +328,7 @@ class DashboardService {
         startDate: formatDateToISO(params.start),
         endDate: formatDateToISO(params.end)
       });
-      const response = await fetch(apiUrl(`/api/dashboard/operational-snapshot?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/operational-snapshot?${queryParams}`), { signal });
 
       if (!response.ok) return emptySnapshot;
 
@@ -169,7 +340,8 @@ class DashboardService {
         contacts: Array.isArray(data.contacts) ? data.contacts : [],
         appointments: Array.isArray(data.appointments) ? data.appointments : []
       };
-    } catch {
+    } catch (error) {
+      if (signal?.aborted) throw error;
       return emptySnapshot;
     }
   }
@@ -178,7 +350,7 @@ class DashboardService {
     start: Date;
     end: Date;
     scope?: 'all' | 'attribution' | 'campaigns';
-  }): Promise<ChartData[]> {
+  }, signal?: AbortSignal): Promise<ChartData[]> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
@@ -187,7 +359,7 @@ class DashboardService {
       });
 
       // Usar el nuevo endpoint de dashboard que muestra TODOS los ingresos y gastos
-      const response = await fetch(apiUrl(`/api/dashboard/financial-overview?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/financial-overview?${queryParams}`), { signal });
 
       if (!response.ok) {
         return [];
@@ -205,6 +377,7 @@ class DashboardService {
         gastado: item.value2 || 0
       }));
     } catch (error) {
+      if (signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -213,6 +386,7 @@ class DashboardService {
   async getRoasData(params: {
     start: Date;
     end: Date;
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -220,7 +394,7 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end)
       });
 
-      const response = await fetch(apiUrl(`/api/dashboard/roas?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/roas?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];
@@ -228,6 +402,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -237,6 +412,7 @@ class DashboardService {
     start: Date;
     end: Date;
     groupBy?: 'day' | 'month';
+    signal?: AbortSignal;
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -245,7 +421,7 @@ class DashboardService {
         groupBy: params.groupBy || 'day'
       });
 
-      const response = await fetch(apiUrl(`/api/dashboard/new-customers?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/new-customers?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return [];
@@ -253,6 +429,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -283,6 +460,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -331,6 +509,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -361,6 +540,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -391,6 +571,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -417,6 +598,7 @@ class DashboardService {
 
       return await response.json();
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }
@@ -455,6 +637,7 @@ class DashboardService {
     end: Date;
     includeWeb?: boolean;
     includeWhatsapp?: boolean;
+    signal?: AbortSignal;
   }): Promise<OriginDistributionData> {
     try {
       const queryParams = new URLSearchParams({
@@ -464,7 +647,7 @@ class DashboardService {
         includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
       });
 
-      const response = await fetch(apiUrl(`/api/dashboard/origin-distribution?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/origin-distribution?${queryParams}`), { signal: params.signal });
 
       if (!response.ok) {
         return EMPTY_ORIGIN_DISTRIBUTION;
@@ -473,6 +656,7 @@ class DashboardService {
       const result = await response.json();
       return result?.data || EMPTY_ORIGIN_DISTRIBUTION;
     } catch (error) {
+      if (params.signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return EMPTY_ORIGIN_DISTRIBUTION;
     }
@@ -483,7 +667,7 @@ class DashboardService {
     end: Date;
     scope?: 'all' | 'attribution' | 'campaigns';
     includeWeb?: boolean;
-  }): Promise<{ stage: string; value: number }[]> {
+  }, signal?: AbortSignal): Promise<{ stage: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
@@ -492,7 +676,7 @@ class DashboardService {
         includeWeb: params.includeWeb === false ? '0' : '1'
       });
 
-      const response = await fetch(apiUrl(`/api/dashboard/funnel?${queryParams}`));
+      const response = await fetch(apiUrl(`/api/dashboard/funnel?${queryParams}`), { signal });
 
       if (!response.ok) {
         return [];
@@ -501,6 +685,7 @@ class DashboardService {
       const result = await response.json();
       return result?.data || [];
     } catch (error) {
+      if (signal?.aborted) throw error;
       // TODO: Implement proper logging service
       return [];
     }

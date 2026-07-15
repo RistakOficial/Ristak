@@ -225,13 +225,13 @@ export const calculateManualBusinessExpensesForRange = (targetRange, expenses = 
   return roundCurrencyValue(total)
 }
 
-export const getManualBusinessExpensesTotalForRange = async (targetRange) => {
+export const getManualBusinessExpensesTotalForRange = async (targetRange, { signal } = {}) => {
   if (!targetRange?.from || !targetRange?.to) return 0
 
   const expenses = await db.all(`
     SELECT period_type, period_start, amount
     FROM report_manual_business_expenses
-  `)
+  `, [], signal ? { signal } : undefined)
 
   return calculateManualBusinessExpensesForRange(
     targetRange,

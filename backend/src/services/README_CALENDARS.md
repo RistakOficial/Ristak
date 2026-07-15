@@ -25,6 +25,12 @@ app.use('/api/calendars', calendarsRoutes)
 | --- | --- | --- |
 | GET | `/api/calendars` | `getCalendars` |
 | GET | `/api/calendars/events` | `getEvents` |
+| GET | `/api/calendars/events/month-preview` | `getEventsMonthPreview` |
+| GET | `/api/calendars/events/page` | `getEventsPage` |
+| GET | `/api/calendars/events/day-counts` | `getEventDayCounts` |
+| GET | `/api/calendars/events/overview` | `getEventsOverview` |
+| GET | `/api/calendars/events/summary` | `getAppointmentStats` |
+| GET | `/api/calendars/upcoming` | `getUpcomingAppointments` |
 | GET | `/api/calendars/events/:eventId` | `getAppointment` |
 | POST | `/api/calendars/appointments` | `createAppointment` |
 | PUT | `/api/calendars/appointments/:id` | `updateAppointment` |
@@ -39,6 +45,49 @@ app.use('/api/calendars', calendarsRoutes)
 | DELETE | `/api/calendars/:id` | `deleteCalendar` |
 
 El orden importa: rutas específicas como `/events` y `/block-slots` van antes de `/:id`.
+
+## Lecturas Acotadas Para Navegación
+
+Las vistas autenticadas de Calendario leen el espejo local y nunca sincronizan
+Google o HighLevel dentro del GET. El contrato para volumen alto es:
+
+- `events/month-preview` admite como máximo 45 días, devuelve conteos exactos
+  por día del negocio y como máximo cinco previews por día. La UI usa tres en
+  escritorio y dos en teléfono.
+- `events/page` pagina día o semana por keyset ascendente `start_time + id`, con
+  100 filas por default y 200 máximo. La primera página puede incluir el total y
+  los conteos diarios; las siguientes usan `includeCounts=0` y no recalculan el
+  agregado.
+- `events/day-counts` devuelve únicamente conteos diarios. La vista anual del
+  teléfono no descarga citas.
+- `events/overview` devuelve los KPIs exactos de todos los calendarios y sólo
+  las próximas cinco citas del rango (20 máximo). La portada móvil no descarga
+  el histórico para calcular tres tarjetas y una lista corta.
+- `events/summary` calcula los KPIs mensuales en SQL y se resuelve aparte del
+  camino crítico que pinta la agenda.
+- `upcoming` pagina próximas citas por el mismo orden estable, con límite 20 por
+  default y 100 máximo.
+
+Los cursores quedan ligados por hash al calendario, rango, zona del negocio y
+orden. Reutilizarlos en otro alcance responde `400`; no reinicia silenciosamente.
+Los límites UTC de cada día se construyen con Luxon y `account_timezone`, por lo
+que días de 23 o 25 horas se cuentan correctamente. El índice parcial `095*`
+coincide con filtro y orden en SQLite/PostgreSQL; Node nunca materializa el mes
+completo aunque existan cientos de miles de citas. El índice `107*`
+(`start_time + id`, sin `calendar_id` al frente) cubre el overview
+multi-calendario y evita ordenar el histórico completo para hallar las próximas
+cinco filas.
+
+`GET /api/calendars` también es una lectura pura. El calendario semilla se crea
+en `startRuntimeServices`, después de inicializar la clave maestra y antes de
+habilitar tráfico. `ensureDefaultLocalCalendar` comparte una sola promesa por
+proceso, usa `BEGIN IMMEDIATE` en SQLite y `pg_advisory_xact_lock` dentro de una
+transacción PostgreSQL; el ID estable `rstk_cal_default` deja además la PK como
+segunda defensa. Dos instancias o clientes simultáneos no pueden crear agendas
+semilla duplicadas y abrir la pantalla nunca ejecuta un INSERT. Para decidir si
+debe ocultar una semilla vacía, el GET consulta únicamente candidatos semilla
+con `EXISTS` sobre el índice parcial; no ejecuta `COUNT(*)` sobre el histórico
+ni revisa las citas de todos los calendarios.
 
 ## Calendarios Publicos Y Contactos
 
@@ -119,6 +168,10 @@ Obtiene detalle de un calendario.
 ### `getCalendarEvents(locationId, startTime, endTime, accessToken, calendarId = null)`
 
 Lista eventos/citas por rango en timestamp ms. `calendarId` es opcional.
+
+Las pantallas nuevas no deben usar esta lectura legacy para un mes completo.
+Usan `listLocalAppointmentMonthPreview`, `listVisibleLocalAppointmentsPage` y
+`getLocalAppointmentDayCounts` mediante los endpoints acotados anteriores.
 
 ### `getAppointment(eventId, accessToken)`
 

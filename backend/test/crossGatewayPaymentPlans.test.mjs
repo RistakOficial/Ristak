@@ -151,6 +151,12 @@ test('planes de pago: listado conserva fechas de calendario guardadas como media
     const plan = (listed.data || []).find((item) => item.id === planId)
 
     assert.ok(plan, 'el plan insertado debe aparecer en el listado')
+    assert.deepEqual(listed.summaryCache, {
+      stale: false,
+      exactAtBuiltAt: true,
+      builtAt: '',
+      sourceRevision: 0
+    }, 'sin ejecutar server.js, el resumen debe calcularse exacto y no fingir un cache persistente')
     assert.equal(plan.startDate, '2026-06-29')
     assert.equal(plan.nextRunAt, '2026-06-29')
     assert.equal(plan.endDate, '2026-07-03')
@@ -289,6 +295,9 @@ test('planes de pago: Stripe y Conekta coexisten para el mismo contacto y el lis
 
     const listed = await collectListInvoiceSchedules({ activeOnly: 'false' })
     const listedForContact = (listed.data || []).filter((plan) => plan.contactId === contactId)
+    assert.equal(listed.summaryCache?.stale, false)
+    assert.equal(listed.summaryCache?.exactAtBuiltAt, true)
+    assert.equal(listed.summaryCache?.builtAt, '')
     assert.equal(listedForContact.length, 2)
     assert.deepEqual(new Set(listedForContact.map((plan) => plan.id)), new Set([stripePlan.flowId, conektaPlan.flowId]))
     assert.deepEqual(new Set(listedForContact.map((plan) => plan.source)), new Set(['stripe', 'conekta']))

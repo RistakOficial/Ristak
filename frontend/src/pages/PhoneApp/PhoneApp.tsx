@@ -31,7 +31,7 @@ import { campaignsService, type Campaign } from '@/services/campaignsService'
 import { contactsService, type ContactStats } from '@/services/contactsService'
 import { dashboardService, type ChartData, type DashboardMetrics } from '@/services/dashboardService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
-import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
+import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSnapshotSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateTime as formatBusinessDateTime, formatDateToISO, formatNumber, formatRoas, getBusinessDateRangeTimestamps, normalizeDateInputToLocalDate } from '@/utils/format'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -89,7 +89,7 @@ interface PhoneAppData {
   contacts: ContactListItem[]
   campaigns: Campaign[]
   reportMetrics: ReportMetricRow[]
-  reportsSummary: ReportsSummary | null
+  reportsSummary: ReportsSnapshotSummary | null
   calendars: Calendar[]
   appointmentEvents: CalendarEvent[]
   appointmentStats: AppointmentStats
@@ -604,8 +604,7 @@ export const PhoneApp: React.FC = () => {
           contactStats,
           contactsResponse,
           campaigns,
-          reportsMetricsResponse,
-          reportsSummary
+          reportsSnapshot
         ] = await Promise.all([
           loadDashboard && canUseDashboard
             ? safe(dashboardService.getDashboardMetrics({ start: startDate, end: endDate }), createEmptyDashboardMetrics())
@@ -678,33 +677,29 @@ export const PhoneApp: React.FC = () => {
             ? safe(campaignsService.getCampaigns(startIso, endIso), [] as Campaign[])
             : Promise.resolve([] as Campaign[]),
           loadReports && canUseReports
-            ? safe(reportsService.getMetrics({ from: startIso, to: endIso, groupBy, scope: 'all' }), {
-                metrics: [],
-                range: { start: startIso, end: endIso, timezone: '', filtered: true }
-              })
-            : Promise.resolve({
-                metrics: [],
-                range: { start: startIso, end: endIso, timezone: '', filtered: true }
-              }),
-          loadReports && canUseReports
-            ? safe(reportsService.getSummary({ from: startIso, to: endIso, scope: 'all' }), null)
+            ? safe(reportsService.getSnapshot({ from: startIso, to: endIso, groupBy, scope: 'all' }), null)
             : Promise.resolve(null)
         ])
 
         // No requiere HighLevel: el backend usa su config guardada y sirve
         // las citas locales aunque no haya GHL.
-        const [calendars, rawEvents] = await Promise.all([
+        const [calendars, appointmentOverview] = await Promise.all([
           loadAppointments && canUseAppointments
             ? safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[])
             : Promise.resolve([] as Calendar[]),
           loadAppointments && canUseAppointments
             ? safe(
-                calendarsService.getEvents(locationId || '', rangeStartTime, rangeEndTime, accessToken || undefined),
-                [] as CalendarEvent[]
+                calendarsService.getEventsOverview({
+                  startTime: rangeStartTime,
+                  endTime: rangeEndTime,
+                  limit: 5
+                }),
+                { stats: createEmptyAppointmentStats(), upcoming: [] as CalendarEvent[], limit: 5 }
               )
-            : Promise.resolve([] as CalendarEvent[])
+            : Promise.resolve({ stats: createEmptyAppointmentStats(), upcoming: [] as CalendarEvent[], limit: 5 })
         ])
-        const appointmentEvents = rawEvents.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
+        const appointmentEvents = appointmentOverview.upcoming
+          .map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
 
         if (cancelled) return
 
@@ -722,11 +717,11 @@ export const PhoneApp: React.FC = () => {
           contactStats,
           contacts: contactsResponse.contacts || [],
           campaigns,
-          reportMetrics: reportsMetricsResponse.metrics || [],
-          reportsSummary,
+          reportMetrics: reportsSnapshot?.metrics || [],
+          reportsSummary: reportsSnapshot?.summary || null,
           calendars,
           appointmentEvents,
-          appointmentStats: calendarsService.calculateStats(appointmentEvents)
+          appointmentStats: appointmentOverview.stats
         }
 
         setPhoneData(nextPhoneData)
@@ -1314,7 +1309,7 @@ interface ReportsSectionProps {
     leads: number
     customers: number
   }
-  reportsSummary: ReportsSummary | null
+  reportsSummary: ReportsSnapshotSummary | null
   profitTrend: TrendPoint[]
   rows: ReportMetricRow[]
   showWebAnalytics: boolean

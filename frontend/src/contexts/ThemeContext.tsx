@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { apiUrl } from '@/services/apiBaseUrl'
+import { AUTH_PRINCIPAL_CHANGED_EVENT } from '@/services/authPrincipalCache'
 import { themes, sharedTokens } from '@/theme/tokens'
 
 type ThemeMode = 'light' | 'dark'
@@ -307,12 +308,28 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     let isMounted = true
+    let syncRequestVersion = 0
 
     const syncThemeConfig = async () => {
+      const requestVersion = ++syncRequestVersion
+      let hasAuthenticatedSession = false
+      try {
+        hasAuthenticatedSession = Boolean(window.localStorage.getItem('auth_token'))
+      } catch {
+        // Storage restringido: conservar el tema local sin hacer una lectura privada.
+      }
+
+      if (!hasAuthenticatedSession) {
+        return
+      }
+
       try {
         const response = await fetch(apiUrl(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_DIR_CONFIG_KEY}`))
 
         if (!response.ok) {
+          // La sesión pudo cerrarse mientras la petición estaba en vuelo. No es
+          // un error de tema ni debe ensuciar la consola de login.
+          if (response.status === 401) return
           throw new Error('Failed to fetch theme config')
         }
 
@@ -323,7 +340,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const legacyTheme = getLegacyTheme()
         const migrations: Array<Promise<void>> = []
 
-        if (!isMounted) {
+        if (!isMounted || requestVersion !== syncRequestVersion) {
           return
         }
 
@@ -342,9 +359,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // El preset antiguo queda neutralizado en 'classic'; la familia visual
         // se gobierna con theme_dir.
         setDesignPresetState(DEFAULT_DESIGN_PRESET)
-        if (configuredDir) {
-          setThemeDirState(configuredDir)
-        }
+        // ThemeProvider sobrevive logout/login. Una cuenta sin theme_dir no
+        // debe heredar en memoria la familia visual de la cuenta anterior.
+        setThemeDirState(configuredDir || DEFAULT_THEME_DIR)
 
         void Promise.all(migrations)
           .then(() => {
@@ -360,8 +377,26 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     void syncThemeConfig()
 
+    const handleAuthPrincipalChanged = (event: Event) => {
+      // El provider no se desmonta entre cuentas. Borramos primero cualquier
+      // apariencia privada anterior; si la nueva lectura falla, jamás queda
+      // visible el tema de otro negocio.
+      syncRequestVersion += 1
+      setThemeState(getTimeBasedTheme())
+      setThemeSource('system')
+      setDesignPresetState(DEFAULT_DESIGN_PRESET)
+      setThemeDirState(DEFAULT_THEME_DIR)
+      const authenticated = Boolean(
+        (event as CustomEvent<{ authenticated?: boolean }>).detail?.authenticated
+      )
+      if (authenticated) void syncThemeConfig()
+    }
+    window.addEventListener(AUTH_PRINCIPAL_CHANGED_EVENT, handleAuthPrincipalChanged)
+
     return () => {
       isMounted = false
+      syncRequestVersion += 1
+      window.removeEventListener(AUTH_PRINCIPAL_CHANGED_EVENT, handleAuthPrincipalChanged)
     }
   }, [])
 

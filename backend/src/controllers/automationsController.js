@@ -20,7 +20,7 @@ import {
   listAttributionCampaigns,
   listAttributionAdsets,
   listAttributionAds,
-  listAutomationFormsCatalog,
+  listAutomationFormsCatalogPage,
   listAutomationFormFieldsCatalog,
   listAutomationWhatsAppTemplatesCatalog,
   saveAutomationAsset,
@@ -173,7 +173,16 @@ export async function getAdsCatalogHandler(req, res) {
 
 export async function getFormsCatalogHandler(req, res) {
   try {
-    res.json({ success: true, data: await listAutomationFormsCatalog() })
+    const rawSelectedIds = req.query?.selectedIds ?? req.query?.selected_ids ?? ''
+    res.json({
+      success: true,
+      data: await listAutomationFormsCatalogPage({
+        limit: req.query?.limit,
+        cursor: req.query?.cursor,
+        search: req.query?.search,
+        selectedIds: Array.isArray(rawSelectedIds) ? rawSelectedIds : String(rawSelectedIds || '').split(',')
+      })
+    })
   } catch (error) {
     logger.error(`Error listando formularios de automatización: ${error.message}`)
     sendError(res, error, 'Error listando los formularios')
@@ -193,6 +202,8 @@ export async function getWhatsAppTemplatesCatalogHandler(req, res) {
   try {
     const data = await listAutomationWhatsAppTemplatesCatalog({
       status: req.query?.status || 'APPROVED',
+      search: req.query?.search,
+      cursor: req.query?.cursor,
       limit: req.query?.limit
     })
     res.json({ success: true, data })

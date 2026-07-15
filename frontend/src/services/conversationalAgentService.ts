@@ -625,6 +625,10 @@ export interface ConversationalAgentMetrics {
   toolFailureRate: number
   successRate: number
   byAgent: ConversationalAgentMetricByAgent[]
+  projection?: {
+    status: 'ready' | 'warming' | 'unavailable'
+    complete: boolean
+  }
 }
 
 export interface ResetAgentSkippedContactsResult {

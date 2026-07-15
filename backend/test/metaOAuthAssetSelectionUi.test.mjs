@@ -88,3 +88,22 @@ test('finalize conserva los vacíos explícitos y separa selección local de cam
   assert.match(service, /syncCrons: socialChanged/)
   assert.match(service, /syncAds: adChanged/)
 })
+
+test('CustomSelect publica la búsqueda remota y la limpia por una sola ruta al cerrar', async () => {
+  const select = await readSource('frontend/src/components/common/CustomSelect/CustomSelect.tsx')
+
+  assert.match(select, /onSearchChange\?: \(value: string\) => void/)
+  assert.match(
+    select,
+    /const updateSearchQuery = useCallback\(\(nextQuery: string\) => \{[\s\S]*?setSearchQuery\(nextQuery\)[\s\S]*?onSearchChange\?\.\(nextQuery\)/
+  )
+  assert.match(
+    select,
+    /const closeDropdown = useCallback\(\(\) => \{[\s\S]*?setIsOpen\(false\)[\s\S]*?updateSearchQuery\(''\)/
+  )
+  assert.match(select, /onChange=\{\(event\) => updateSearchQuery\(event\.target\.value\)\}/)
+  assert.match(select, /if \(event\.key === 'Escape'\) \{[\s\S]{0,120}?closeDropdown\(\)/)
+  assert.match(select, /if \(isOpen\) \{[\s\S]{0,120}?closeDropdown\(\)/)
+  assert.equal(select.match(/\bcloseDropdown\(\)/g)?.length, 4)
+  assert.equal(select.match(/\bsetSearchQuery\(/g)?.length, 1)
+})

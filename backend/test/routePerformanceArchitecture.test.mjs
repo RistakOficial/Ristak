@@ -10,9 +10,10 @@ const repoRoot = join(__dirname, '..', '..')
 const repoFile = (path) => readFile(join(repoRoot, path), 'utf8')
 
 test('las rutas principales se descargan por modulo y no inflan el bundle inicial', async () => {
-  const [app, routeModules] = await Promise.all([
+  const [app, routeModules, sitesRoute] = await Promise.all([
     repoFile('frontend/src/App.tsx'),
-    repoFile('frontend/src/routing/routeModules.tsx')
+    repoFile('frontend/src/routing/routeModules.tsx'),
+    repoFile('frontend/src/pages/Sites/SitesRoute.tsx')
   ])
 
   assert.match(app, /from '@\/routing\/routeModules'/)
@@ -29,7 +30,11 @@ test('las rutas principales se descargan por modulo y no inflan el bundle inicia
   assert.match(routeModules, /import\('@\/pages\/DesktopChat\/DesktopChat'\)/)
   assert.match(routeModules, /import\('@\/pages\/Analytics\/Analytics'\)/)
   assert.match(routeModules, /createLazyRoute\(\(\) => import\('@\/pages\/Analytics\/Analytics'\), 'default'\)/)
-  assert.match(routeModules, /import\('@\/pages\/Sites\/Sites'\)/)
+  assert.match(routeModules, /import\('@\/pages\/Sites\/SitesRoute'\)/)
+  assert.match(routeModules, /module\.prefetchSitesWorkspace\(\)/)
+  assert.match(sitesRoute, /export function prefetchSitesWorkspace/)
+  assert.match(sitesRoute, /sitesWorkspacePromise = import\('\.\/Sites'\)/)
+  assert.match(sitesRoute, /React\.Suspense/)
   assert.match(routeModules, /import\('@\/pages\/PhoneChat\/PhoneChat'\)/)
   assert.match(routeModules, /import\('@\/pages\/PublicPayment\/PublicPayment'\)/)
   assert.doesNotMatch(routeModules, /import\('@\/pages\/(?:Dashboard|DesktopChat|Analytics|Sites|PhoneChat)'\)/)

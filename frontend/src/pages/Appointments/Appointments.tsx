@@ -78,6 +78,9 @@ const viewTabs = [
 type ViewMode = 'month' | 'week' | 'day';
 
 const MIN_DAY_EVENT_MINUTES = 45;
+const UPCOMING_APPOINTMENTS_PAGE_SIZE = 20;
+const VISIBLE_APPOINTMENTS_PAGE_SIZE = 100;
+const MONTH_APPOINTMENT_PREVIEW_LIMIT = 3;
 
 const getCalendarSharePath = (calendar?: Calendar | null) => {
   const slug = calendar?.slug || calendar?.widgetSlug || calendar?.id || '';
@@ -98,6 +101,7 @@ interface DayCell {
   date: Date;
   isCurrentMonth: boolean;
   events: CalendarEvent[];
+  total: number;
 }
 
 const getTimeZoneParts = (date: Date, timeZone?: string) => {
@@ -333,8 +337,14 @@ export const Appointments: React.FC = () => {
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [selectedCalendar, setSelectedCalendar] = useState<Calendar | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [eventCountsByDate, setEventCountsByDate] = useState<Record<string, number>>({});
+  const [visibleEventsTotal, setVisibleEventsTotal] = useState(0);
+  const [visibleEventsHasNext, setVisibleEventsHasNext] = useState(false);
+  const [visibleEventsLoading, setVisibleEventsLoading] = useState(false);
   const [blockedSlots, setBlockedSlots] = useState<BlockedSlot[]>([]);
   const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([]); // Eventos próximos desde HOY
+  const [upcomingEventsLoading, setUpcomingEventsLoading] = useState(false);
+  const [upcomingEventsHasNext, setUpcomingEventsHasNext] = useState(false);
   const [stats, setStats] = useState<AppointmentStats>({
     pending: 0,
     cancelled: 0,
@@ -480,8 +490,24 @@ export const Appointments: React.FC = () => {
 
   const selectCalendar = useCallback((calendar: Calendar | null) => {
     eventsRequestRef.current += 1;
+    eventsAbortRef.current?.abort();
+    eventsAbortRef.current = null;
     upcomingEventsRequestRef.current += 1;
+    upcomingEventsAbortRef.current?.abort();
+    upcomingEventsAbortRef.current = null;
+    upcomingEventsLoadingRef.current = false;
     blockedSlotsRequestRef.current += 1;
+    upcomingEventsNextCursorRef.current = null;
+    visibleEventsNextCursorRef.current = null;
+    visibleEventsLoadingRef.current = false;
+    setUpcomingEventsLoading(false);
+    setUpcomingEvents([]);
+    setUpcomingEventsHasNext(false);
+    setEvents([]);
+    setEventCountsByDate({});
+    setVisibleEventsTotal(0);
+    setVisibleEventsHasNext(false);
+    setVisibleEventsLoading(false);
     setSelectedCalendar(calendar);
     persistLastSelectedCalendar(calendar?.id ?? null);
   }, [persistLastSelectedCalendar]);
@@ -521,7 +547,14 @@ export const Appointments: React.FC = () => {
   const handledOpenAppointmentRef = useRef<string | null>(null);
   const calendarsRequestRef = useRef(0);
   const eventsRequestRef = useRef(0);
+  const eventsAbortRef = useRef<AbortController | null>(null);
+  const visibleEventsNextCursorRef = useRef<string | null>(null);
+  const visibleEventsLoadingRef = useRef(false);
   const upcomingEventsRequestRef = useRef(0);
+  const upcomingEventsNextCursorRef = useRef<string | null>(null);
+  const upcomingEventsBoundaryRef = useRef('');
+  const upcomingEventsLoadingRef = useRef(false);
+  const upcomingEventsAbortRef = useRef<AbortController | null>(null);
   const blockedSlotsRequestRef = useRef(0);
 
   // Tooltip de eventos
@@ -627,13 +660,25 @@ export const Appointments: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationId, accessToken, defaultCalendarId, routeState.calendarId, selectCalendar]);
 
-  const loadEvents = useCallback(async () => {
+  const loadEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
     if (!selectedCalendar) return;
+    if (append && (viewMode === 'month' || visibleEventsLoadingRef.current)) return;
+    const cursor = append ? visibleEventsNextCursorRef.current : null;
+    if (append && !cursor) return;
     const requestId = eventsRequestRef.current + 1;
     eventsRequestRef.current = requestId;
+    eventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    eventsAbortRef.current = controller;
 
     try {
-      setLoading(true);
+      visibleEventsLoadingRef.current = true;
+      setVisibleEventsLoading(true);
+      if (!append) {
+        visibleEventsNextCursorRef.current = null;
+        setVisibleEventsHasNext(false);
+        setLoading(true);
+      }
 
       // Calcular rango de fechas según la vista
       const { startTime, endTime } = getDateRange();
@@ -643,58 +688,104 @@ export const Appointments: React.FC = () => {
       const monthEnd = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
       const { startTime: monthStartTime, endTime: monthEndTime } = getBusinessDateRangeTimestamps(monthStart, monthEnd, timezone);
 
-      const visibleEventsPromise = calendarsService.getEvents(
-        locationId || '',
-        startTime,
-        endTime,
-        accessToken || undefined,
-        selectedCalendar.id
-      );
-      const monthlyEventsPromise = startTime === monthStartTime && endTime === monthEndTime
-        ? visibleEventsPromise
-        : calendarsService.getEvents(
-            locationId || '',
+      const visibleEventsPromise = viewMode === 'month'
+        ? calendarsService.getMonthEventPreview({
+            calendarId: selectedCalendar.id,
+            startTime,
+            endTime,
+            previewLimit: MONTH_APPOINTMENT_PREVIEW_LIMIT,
+            signal: controller.signal
+          })
+        : calendarsService.getEventsPage({
+            calendarId: selectedCalendar.id,
+            startTime,
+            endTime,
+            cursor,
+            limit: VISIBLE_APPOINTMENTS_PAGE_SIZE,
+            includeCounts: !append,
+            signal: controller.signal
+          });
+      const monthlyStatsPromise = append
+        ? Promise.resolve(null)
+        : calendarsService.getAppointmentStats(
+            selectedCalendar.id,
             monthStartTime,
             monthEndTime,
-            accessToken || undefined,
-            selectedCalendar.id
+            controller.signal
           );
       // La agenda visible es el camino crítico. Las estadísticas mensuales se
       // publican por separado para que un agregado lento o fallido no retenga
       // citas que ya llegaron correctamente.
       const publishVisibleEvents = visibleEventsPromise
-        .then((eventsData) => {
+        .then((response) => {
           if (eventsRequestRef.current !== requestId) return;
-          setEvents(eventsData);
+          if (viewMode === 'month' && 'previewLimit' in response) {
+            const nextEvents = response.days.flatMap(day => day.items);
+            setEvents(nextEvents);
+            setEventCountsByDate(Object.fromEntries(response.days.map(day => [day.date, day.total])));
+            setVisibleEventsTotal(response.total);
+            visibleEventsNextCursorRef.current = null;
+            setVisibleEventsHasNext(false);
+            return;
+          }
+
+          if (!('pagination' in response)) return;
+          setEvents((current) => {
+            if (!append) return response.items;
+            const merged = new Map(current.map(event => [event.id, event]));
+            response.items.forEach(event => merged.set(event.id, event));
+            return Array.from(merged.values()).sort((left, right) => (
+              parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime) ||
+              left.id.localeCompare(right.id)
+            ));
+          });
+          if (!append) {
+            setEventCountsByDate(Object.fromEntries((response.days || []).map(day => [day.date, day.total])));
+            setVisibleEventsTotal(response.total || 0);
+          }
+          visibleEventsNextCursorRef.current = response.pagination.nextCursor;
+          setVisibleEventsHasNext(response.pagination.hasNext);
         })
         .catch(() => {
+          if (controller.signal.aborted) return;
           if (eventsRequestRef.current === requestId) {
             showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
           }
         })
         .finally(() => {
-          if (eventsRequestRef.current === requestId) setLoading(false);
+          if (eventsRequestRef.current === requestId) {
+            visibleEventsLoadingRef.current = false;
+            setVisibleEventsLoading(false);
+            setLoading(false);
+          }
         });
 
-      const publishMonthlyStats = monthlyEventsPromise
-        .then((monthlyData) => {
-          if (eventsRequestRef.current !== requestId) return;
-          setStats(calendarsService.calculateStats(monthlyData));
+      const publishMonthlyStats = monthlyStatsPromise
+        .then((monthlyStats) => {
+          if (eventsRequestRef.current !== requestId || !monthlyStats) return;
+          setStats(monthlyStats);
         })
         .catch(() => {
+          if (controller.signal.aborted) return;
           // Conserva el último snapshot de KPIs; la agenda ya puede usarse.
         });
 
       await Promise.all([publishVisibleEvents, publishMonthlyStats]);
     } catch (error) {
+      if (controller.signal.aborted) return;
       if (eventsRequestRef.current === requestId) {
         showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
       }
     } finally {
-      if (eventsRequestRef.current === requestId) setLoading(false);
+      if (eventsAbortRef.current === controller) eventsAbortRef.current = null;
+      if (eventsRequestRef.current === requestId) {
+        visibleEventsLoadingRef.current = false;
+        setVisibleEventsLoading(false);
+        setLoading(false);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationId, accessToken, selectedCalendar, currentDate, getDateRange, timezone]);
+  }, [selectedCalendar, currentDate, getDateRange, timezone, viewMode]);
 
   useEffect(() => {
     const isOverlayRoute = routeState.create || Boolean(routeState.appointmentId);
@@ -713,25 +804,56 @@ export const Appointments: React.FC = () => {
   }, [calendars, routeState.appointmentId, routeState.calendarId, routeState.create, routeState.currentDate, routeState.viewMode, selectCalendar, selectedCalendar?.id]);
 
   // Cargar eventos próximos desde HOY (independiente del calendario visible)
-  const loadUpcomingEvents = useCallback(async () => {
+  const loadUpcomingEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
     if (!selectedCalendar) return;
+    if (append && upcomingEventsLoadingRef.current) return;
+    const cursor = append ? upcomingEventsNextCursorRef.current : null;
+    if (append && !cursor) return;
+    upcomingEventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    upcomingEventsAbortRef.current = controller;
     const requestId = upcomingEventsRequestRef.current + 1;
     upcomingEventsRequestRef.current = requestId;
+    const requestBoundary = `${selectedCalendar.id}:${cursor || 'root'}`;
+    upcomingEventsBoundaryRef.current = requestBoundary;
+    const isCurrentRequest = () => (
+      !controller.signal.aborted &&
+      upcomingEventsRequestRef.current === requestId &&
+      upcomingEventsBoundaryRef.current === requestBoundary
+    );
 
     try {
-      const upcomingData = await calendarsService.getFutureAppointments(
-        selectedCalendar.id,
-        locationId || '',
-        accessToken || undefined
-      );
+      upcomingEventsLoadingRef.current = true;
+      setUpcomingEventsLoading(true);
+      const page = await calendarsService.getUpcomingAppointmentsPage({
+        calendarId: selectedCalendar.id,
+        cursor,
+        limit: UPCOMING_APPOINTMENTS_PAGE_SIZE,
+        signal: controller.signal
+      });
 
-      if (upcomingEventsRequestRef.current === requestId) {
-        setUpcomingEvents(upcomingData);
+      if (isCurrentRequest()) {
+        setUpcomingEvents((current) => {
+          if (!append) return page.items;
+          const merged = new Map(current.map(event => [event.id, event]));
+          page.items.forEach(event => merged.set(event.id, event));
+          return Array.from(merged.values()).sort((a, b) => (
+            parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime) || a.id.localeCompare(b.id)
+          ));
+        });
+        upcomingEventsNextCursorRef.current = page.pagination.nextCursor;
+        setUpcomingEventsHasNext(page.pagination.hasNext);
       }
     } catch (error) {
       // Error silencioso - no afecta funcionalidad principal
+    } finally {
+      if (isCurrentRequest()) {
+        upcomingEventsLoadingRef.current = false;
+        upcomingEventsAbortRef.current = null;
+        setUpcomingEventsLoading(false);
+      }
     }
-  }, [locationId, accessToken, selectedCalendar]);
+  }, [selectedCalendar]);
 
   // Cargar horarios bloqueados del calendario
   const loadBlockedSlots = useCallback(async () => {
@@ -781,6 +903,13 @@ export const Appointments: React.FC = () => {
       loadUpcomingEvents();
     }
   }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
+
+  useEffect(() => () => {
+    eventsRequestRef.current += 1;
+    eventsAbortRef.current?.abort();
+    upcomingEventsRequestRef.current += 1;
+    upcomingEventsAbortRef.current?.abort();
+  }, []);
 
   // Auto-scroll en vistas de semana y día
   useEffect(() => {
@@ -858,7 +987,8 @@ export const Appointments: React.FC = () => {
       cells.push({
         date,
         isCurrentMonth: true,
-        events: dayEvents
+        events: dayEvents,
+        total: eventCountsByDate[dateKey] || 0
       });
     }
 
@@ -872,11 +1002,13 @@ export const Appointments: React.FC = () => {
     }
 
     return cells;
-  }, [currentDate, eventsByDate]);
+  }, [currentDate, eventCountsByDate, eventsByDate]);
 
   // Próximas citas (siempre desde HOY, no del rango visible)
   const upcomingAppointments = useMemo(() => {
-    return upcomingEvents.slice().sort((a, b) => a.startTime.localeCompare(b.startTime));
+    return upcomingEvents.slice().sort((a, b) => (
+      parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime) || a.id.localeCompare(b.id)
+    ));
   }, [upcomingEvents]);
 
   // Navegación del calendario
@@ -1865,6 +1997,26 @@ export const Appointments: React.FC = () => {
             </div>
           </div>
 
+          {viewMode !== 'month' && (
+            <div className={styles.visibleRangeStatus} role="status">
+              <span>
+                {visibleEventsTotal} cita{visibleEventsTotal === 1 ? '' : 's'} en esta {viewMode === 'week' ? 'semana' : 'día'}
+                {visibleEventsTotal > events.length ? ` · mostrando ${events.length}` : ''}
+              </span>
+              {visibleEventsHasNext && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  loading={visibleEventsLoading}
+                  onClick={() => void loadEvents({ append: true })}
+                >
+                  Cargar más citas
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Vista del calendario */}
           {viewMode === 'month' && (
             <div className={styles.calendarView}>
@@ -1988,8 +2140,18 @@ export const Appointments: React.FC = () => {
                               )}
                             </div>
                           ))}
-                          {cell.events.length > 3 && (
-                            <div className={styles.eventMore}>+{cell.events.length - 3} más</div>
+                          {cell.total > cell.events.length && (
+                            <button
+                              type="button"
+                              className={styles.eventMore}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedDate(cell.date);
+                                setCalendarView('day', cell.date);
+                              }}
+                            >
+                              +{cell.total - cell.events.length} más
+                            </button>
                           )}
                           {(() => {
                             const dateKey = formatDateKey(cell.date);
@@ -2046,6 +2208,9 @@ export const Appointments: React.FC = () => {
                         <div className={`${styles.weekDayNumber} ${isToday ? styles.weekDayToday : ''}`}>
                           {date.getDate()}
                         </div>
+                        {(eventCountsByDate[formatDateKey(date)] || 0) > 0 && (
+                          <Badge variant="neutral">{eventCountsByDate[formatDateKey(date)]}</Badge>
+                        )}
                       </div>
                     );
                   });
@@ -2423,37 +2588,51 @@ export const Appointments: React.FC = () => {
           </div>
 
           <div className={styles.upcomingList}>
-            {upcomingAppointments.length === 0 ? (
+            {upcomingAppointments.length === 0 && !upcomingEventsLoading ? (
               <p className={styles.emptyText}>No hay citas próximas</p>
             ) : (
-              upcomingAppointments.map((event) => (
-                <div
-                  key={event.id}
-                  className={styles.upcomingItem}
-                  onClick={() => handleEventClick(event)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <div className={styles.upcomingInfo}>
-                    <div className={styles.upcomingTitle}>{event.title}</div>
-                    <div className={styles.upcomingDetails}>
-                      {(() => {
-                        const desc = getAppointmentStatusBadge(event.appointmentStatus);
-                        return (
-                          <>
-                            {formatLocalDateShort(new Date(event.startTime))} · <Badge variant={desc.variant}>{desc.label}</Badge>
-                          </>
-                        );
-                      })()}
+              <>
+                {upcomingAppointments.map((event) => (
+                  <div
+                    key={event.id}
+                    className={styles.upcomingItem}
+                    onClick={() => handleEventClick(event)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <div className={styles.upcomingInfo}>
+                      <div className={styles.upcomingTitle}>{event.title}</div>
+                      <div className={styles.upcomingDetails}>
+                        {(() => {
+                          const desc = getAppointmentStatusBadge(event.appointmentStatus);
+                          return (
+                            <>
+                              {formatLocalDateShort(new Date(event.startTime))} · <Badge variant={desc.variant}>{desc.label}</Badge>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                    <div
+                      className={styles.upcomingTime}
+                      style={{ backgroundColor: `${getEventColor(event.appointmentStatus)}20` }}
+                    >
+                      {formatEventTime(event.startTime)}
                     </div>
                   </div>
-                  <div
-                    className={styles.upcomingTime}
-                    style={{ backgroundColor: `${getEventColor(event.appointmentStatus)}20` }}
+                ))}
+                {upcomingEventsHasNext && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    fullWidth
+                    loading={upcomingEventsLoading}
+                    onClick={() => void loadUpcomingEvents({ append: true })}
                   >
-                    {formatEventTime(event.startTime)}
-                  </div>
-                </div>
-              ))
+                    Cargar más
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </Card>

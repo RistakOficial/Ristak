@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { db } from '../config/database.js'
+import { databaseDialect, db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
@@ -31,6 +31,7 @@ import {
 import { getPaymentGateCheckoutKeys } from './publicPaymentGateService.js'
 import { withConversationalAgentTestMutationLock } from './conversationalAgentTestMutationLockService.js'
 import { CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT } from './conversationalAppointmentPreviewOfferService.js'
+import { loadConversationalAgentMetricAggregates } from './conversationalAgentMetricsProjectionService.js'
 import { isHighLevelConnected } from './integrationConnectionStateService.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 
@@ -6143,9 +6144,15 @@ function buildEmptyAgentMetric(agent) {
   }
 }
 
-export function buildConversationalAgentMetrics({ agents = [], stateRows = [], eventSummary = {} } = {}) {
+export function buildConversationalAgentMetrics({
+  agents = [],
+  stateRows = [],
+  stateSummaryRows = null,
+  eventSummary = {}
+} = {}) {
   const metricsByAgent = new Map(agents.map((agent) => [agent.id, buildEmptyAgentMetric(agent)]))
   const assignedAgentIds = new Set()
+  let answeredConversations = 0
   const totals = {
     totalAgents: agents.length,
     activeAgents: agents.filter((agent) => agent.enabled).length,
@@ -6175,9 +6182,7 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
     byAgent: []
   }
 
-  for (const row of stateRows || []) {
-    const agentId = row?.agent_id
-    if (!agentId) continue
+  const ensureMetricForAgent = (agentId) => {
     if (!metricsByAgent.has(agentId)) {
       metricsByAgent.set(agentId, {
         ...buildEmptyAgentMetric({
@@ -6189,10 +6194,52 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
         })
       })
     }
+    return metricsByAgent.get(agentId)
+  }
 
-    const agentMetric = metricsByAgent.get(agentId)
+  if (Array.isArray(stateSummaryRows)) {
+    for (const row of stateSummaryRows) {
+      const agentId = row?.agent_id
+      if (!agentId) continue
+      const agentMetric = ensureMetricForAgent(agentId)
+      const totalConversations = toMetricNumber(row.total_conversations)
+      const assignedConversations = toMetricNumber(row.assigned_conversations)
+      const completedConversations = toMetricNumber(row.completed_conversations)
+      const pausedConversations = toMetricNumber(row.paused_conversations)
+      const humanTakeovers = toMetricNumber(row.human_takeovers)
+      const skippedConversations = toMetricNumber(row.skipped_conversations)
+      const discardedConversations = toMetricNumber(row.discarded_conversations)
+
+      agentMetric.totalConversations += totalConversations
+      agentMetric.assignedConversations += assignedConversations
+      agentMetric.completedConversations += completedConversations
+      agentMetric.pausedConversations += pausedConversations
+      agentMetric.humanTakeovers += humanTakeovers
+      agentMetric.skippedConversations += skippedConversations
+      agentMetric.discardedConversations += discardedConversations
+
+      totals.totalTrackedConversations += totalConversations
+      totals.assignedConversations += assignedConversations
+      totals.completedConversations += completedConversations
+      totals.pausedConversations += pausedConversations
+      totals.humanTakeovers += humanTakeovers
+      totals.skippedConversations += skippedConversations
+      totals.discardedConversations += discardedConversations
+      answeredConversations += toMetricNumber(row.answered_conversations)
+      if (assignedConversations > 0) assignedAgentIds.add(agentId)
+
+      const activity = row.last_activity_at || null
+      if (activity && (!agentMetric.lastActivityAt || activity > agentMetric.lastActivityAt)) {
+        agentMetric.lastActivityAt = activity
+      }
+    }
+  } else for (const row of stateRows || []) {
+    const agentId = row?.agent_id
+    if (!agentId) continue
+    const agentMetric = ensureMetricForAgent(agentId)
     agentMetric.totalConversations += 1
     totals.totalTrackedConversations += 1
+    if (row.last_reply_at) answeredConversations += 1
 
     if (row.status === 'active' && !row.signal) {
       agentMetric.assignedConversations += 1
@@ -6231,7 +6278,6 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
   totals.successRate = closedConversations > 0
     ? Math.round((totals.completedConversations / closedConversations) * 100)
     : 0
-  const answeredConversations = (stateRows || []).filter((row) => Boolean(row.last_reply_at)).length
   totals.responseRate = totals.totalTrackedConversations > 0
     ? Math.round((answeredConversations / totals.totalTrackedConversations) * 100)
     : 0
@@ -6245,49 +6291,23 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
 }
 
 export async function getConversationalAgentMetrics() {
-  await expirePausedConversationStates()
-  const [agentRows, stateRows, eventSummary] = await Promise.all([
+  const [agentRows, metricAggregates] = await Promise.all([
     db.all('SELECT * FROM conversational_agents ORDER BY position ASC, created_at ASC'),
-    db.all(`
-      SELECT agent_id, status, signal, signal_at, last_reply_at, updated_at
-      FROM conversational_agent_state
-      WHERE agent_id IS NOT NULL AND agent_id <> ''
-    `),
-    db.get(`
-      SELECT
-        COUNT(*) AS total_events,
-        SUM(CASE WHEN event_type = 'signal_set' THEN 1 ELSE 0 END) AS success_events,
-        SUM(CASE WHEN event_type = 'agent_assigned' THEN 1 ELSE 0 END) AS assigned_events,
-        SUM(CASE WHEN event_type = 'reply_sent' THEN 1 ELSE 0 END) AS reply_events,
-        SUM(CASE WHEN event_type = 'appointment_booked' THEN 1 ELSE 0 END) AS appointment_events,
-        SUM(CASE WHEN event_type IN ('payment_link_created', 'payment_link_reused') THEN 1 ELSE 0 END) AS payment_link_events,
-        SUM(CASE WHEN event_type IN ('goal_url_completed', 'purchase_completed') THEN 1 ELSE 0 END) AS goal_completion_events,
-        SUM(CASE WHEN event_type = 'follow_up_sent' THEN 1 ELSE 0 END) AS follow_up_sent_events,
-        SUM(CASE WHEN event_type = 'follow_up_suppressed' THEN 1 ELSE 0 END) AS follow_up_suppressed_events,
-        SUM(CASE WHEN event_type IN ('human_handoff', 'runtime_human_handoff_forced') THEN 1 ELSE 0 END) AS human_handoff_events,
-        SUM(CASE
-          WHEN LOWER(event_type) LIKE '%tool%failed%'
-            OR LOWER(event_type) LIKE '%calendar%error%'
-            OR event_type = 'payment_link_failed'
-          THEN 1 ELSE 0
-        END) AS tool_failure_events,
-        SUM(CASE
-          WHEN event_type = 'error'
-            OR LOWER(event_type) LIKE '%error%'
-            OR LOWER(event_type) LIKE '%failed%'
-            OR LOWER(event_type) LIKE '%failure%'
-          THEN 1 ELSE 0
-        END) AS error_events
-      FROM conversational_agent_events
-      WHERE event_type != ?
-    `, [CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT])
+    loadConversationalAgentMetricAggregates()
   ])
 
-  return buildConversationalAgentMetrics({
+  const metrics = buildConversationalAgentMetrics({
     agents: agentRows.map(mapAgentRow),
-    stateRows,
-    eventSummary
+    stateSummaryRows: metricAggregates.stateSummaryRows,
+    eventSummary: metricAggregates.eventSummary
   })
+  return {
+    ...metrics,
+    projection: {
+      status: metricAggregates.projectionStatus || (metricAggregates.projectionReady ? 'ready' : 'warming'),
+      complete: Boolean(metricAggregates.projectionReady)
+    }
+  }
 }
 
 export async function getConversationalAgent(agentId) {
@@ -8088,56 +8108,100 @@ function isExpiredPausedStateRow(row, nowMs = Date.now()) {
 }
 
 async function activateExpiredPause(row) {
-  if (!row?.id) return
-  await db.run(`
-    UPDATE conversational_agent_state
-    SET status = 'active',
-        paused_until_at = NULL,
-        updated_by = 'system',
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-      AND status = 'paused'
-  `, [row.id])
+  if (!row?.id) return false
+  const nowIso = new Date().toISOString()
+  return db.transaction(async (transaction) => {
+    const result = await transaction.run(`
+      UPDATE conversational_agent_state
+      SET status = 'active',
+          paused_until_at = NULL,
+          updated_by = 'system',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND status = 'paused'
+        AND paused_until_at IS NOT NULL
+        AND paused_until_at <= ?
+    `, [row.id, nowIso])
+    if (dbMutationCount(result) !== 1) return false
 
-  await recordConversationalAgentEvent({
-    contactId: row.contact_id,
-    eventType: 'status_changed',
-    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired', agentId: row.agent_id || null }
+    await recordExpiredPauseEvents([row], transaction)
+    return true
   })
 }
 
-async function expirePausedConversationStates() {
-  const nowIso = new Date().toISOString()
-  const rows = await db.all(`
-    SELECT id, contact_id, agent_id
-    FROM conversational_agent_state
-    WHERE status = 'paused'
-      AND paused_until_at IS NOT NULL
-      AND paused_until_at <= ?
-    LIMIT 500
-  `, [nowIso]).catch(() => [])
-  if (!rows.length) return 0
-  const stateIds = rows.map((row) => row.id).filter(Boolean)
-  if (!stateIds.length) return 0
-  const placeholders = stateIds.map(() => '?').join(', ')
+async function recordExpiredPauseEvents(rows = [], database = db) {
+  const chunkSize = 100
+  for (let offset = 0; offset < rows.length; offset += chunkSize) {
+    const chunk = rows.slice(offset, offset + chunkSize)
+    const params = []
+    const values = chunk.map((row) => {
+      const detail = {
+        status: 'active',
+        updatedBy: 'system',
+        reason: 'pause_expired',
+        agentId: row.agent_id || null
+      }
+      params.push(
+        `cae_${randomUUID()}`,
+        row.contact_id,
+        String(row.agent_id || '').trim() || null,
+        'status_changed',
+        JSON.stringify(detail)
+      )
+      return '(?, ?, ?, ?, ?)'
+    })
+    await database.run(`
+      INSERT INTO conversational_agent_events (
+        id, contact_id, agent_id, event_type, detail_json
+      ) VALUES ${values.join(', ')}
+      ON CONFLICT(id) DO NOTHING
+    `, params)
+  }
+}
 
-  await db.run(`
-    UPDATE conversational_agent_state
-    SET status = 'active',
-        paused_until_at = NULL,
-        updated_by = 'system',
-        updated_at = CURRENT_TIMESTAMP
-    WHERE status = 'paused'
-      AND id IN (${placeholders})
-  `, stateIds)
+export async function expirePausedConversationStates({
+  database = db,
+  nowIso = new Date().toISOString(),
+  limit = 500
+} = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 500, 500))
+  return database.transaction(async (transaction) => {
+    // PostgreSQL reclama cada lote con row locks; SQLite entra a la transaccion
+    // con BEGIN IMMEDIATE. En ambos dialectos una pausa solo puede generar un
+    // status_changed aunque varios procesos ejecuten el job al mismo tiempo.
+    const rowLock = databaseDialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : ''
+    const rows = await transaction.all(`
+      SELECT id, contact_id, agent_id
+      FROM conversational_agent_state
+      WHERE status = 'paused'
+        AND paused_until_at IS NOT NULL
+        AND paused_until_at <= ?
+      ORDER BY paused_until_at ASC, id ASC
+      LIMIT ?${rowLock}
+    `, [nowIso, safeLimit])
+    if (!rows.length) return 0
 
-  await Promise.all(rows.map((row) => recordConversationalAgentEvent({
-    contactId: row.contact_id,
-    eventType: 'status_changed',
-    detail: { status: 'active', updatedBy: 'system', reason: 'pause_expired', agentId: row.agent_id || null }
-  }).catch(() => undefined)))
+    const stateIds = rows.map((row) => row.id).filter(Boolean)
+    if (!stateIds.length) return 0
+    const placeholders = stateIds.map(() => '?').join(', ')
+    const result = await transaction.run(`
+      UPDATE conversational_agent_state
+      SET status = 'active',
+          paused_until_at = NULL,
+          updated_by = 'system',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'paused'
+        AND paused_until_at IS NOT NULL
+        AND paused_until_at <= ?
+        AND id IN (${placeholders})
+    `, [nowIso, ...stateIds])
+    if (dbMutationCount(result) !== stateIds.length) {
+      throw new Error('El claim de pausas vencidas cambio dentro de la transaccion')
+    }
 
-  return stateIds.length
+    await recordExpiredPauseEvents(rows, transaction)
+    return stateIds.length
+  })
 }
 
 export async function assignAgentToConversation(contactId, agentId, {
@@ -8223,7 +8287,6 @@ export async function getConversationState(contactId, { agentId = null, channel 
 
 export async function listConversationStatesForContact(contactId, { channel = null } = {}) {
   if (!contactId) return []
-  await expirePausedConversationStates()
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   const channelFilter = cleanChannel
     ? " AND COALESCE(NULLIF(s.channel, ''), 'whatsapp') = ?"
@@ -9321,8 +9384,6 @@ export async function markHumanTakeoverByPhone(phone, { updatedBy = 'human' } = 
 }
 
 export async function listConversationStates({ signal = null, statuses = null } = {}) {
-  await expirePausedConversationStates()
-
   const where = []
   const params = []
   if (signal) {

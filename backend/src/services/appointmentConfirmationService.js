@@ -4,6 +4,7 @@ import { isAffirmativeReply } from './appointmentReminderLogic.js'
 import { classifyConfirmationResponse } from '../agents/appointmentConfirmationAgent.js'
 import { sendAppNotificationPayload, sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
 
 export { isAffirmativeReply }
 
@@ -17,6 +18,14 @@ function makeWindowId() {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function publishAppointmentChanged(contactId, appointmentId) {
+  publishChatDataChangedEvent({
+    contactId,
+    domains: ['appointments'],
+    entityId: appointmentId
+  })
 }
 
 // Tras cambiar el estado de una cita (confirmar/cancelar) hay que reflejarlo en Google:
@@ -236,6 +245,7 @@ async function processConfirmationWindow(win) {
       SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
       WHERE id = ? AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('confirmed')
     `, [appointmentId])
+    publishAppointmentChanged(contactId, appointmentId)
     await resyncAppointmentToGoogle(appointmentId)
     await executeConfirmationSuccessAction({
       contactId,
@@ -311,6 +321,7 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
       SET confirmation_badge_until = COALESCE(start_time, ?), date_updated = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), appointmentId])
+    publishAppointmentChanged(contactId, appointmentId)
     logger.info(`[Confirmación IA] Etiqueta visual temporal activada para cita ${appointmentId}`)
     return
   }
@@ -339,6 +350,7 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
       SET appointment_status = 'cancelled', status = 'cancelled', date_updated = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [appointmentId])
+    publishAppointmentChanged(contactId, appointmentId)
     await resyncAppointmentToGoogle(appointmentId)
     logger.info(`[Confirmación IA] Cita ${appointmentId} cancelada por acción automática (resultado: ${result})`)
   }
@@ -403,6 +415,7 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
     SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [pending.appointment_id])
+  publishAppointmentChanged(id, pending.appointment_id)
   await resyncAppointmentToGoogle(pending.appointment_id)
 
   logger.info(`[Citas] IA confirmó la cita ${pending.appointment_id} por respuesta del contacto ${id}`)

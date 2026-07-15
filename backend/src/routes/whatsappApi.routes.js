@@ -22,6 +22,7 @@ import {
   previewWhatsAppApiPhoneNumbersView,
   handleMetaDirectWebhookRelayView,
   refreshWhatsAppApiView,
+  repairDefaultWhatsAppApiTemplatesView,
   resetWhatsAppApiCredentialsView,
   backfillWhatsAppContactProfilePicturesView,
   listScheduledChatMessagesView,
@@ -140,6 +141,7 @@ router.post('/messages/document', requireWhatsAppMessageTransportAccess, sendWha
 router.post('/messages/video', requireWhatsAppMessageTransportAccess, sendWhatsAppApiVideoMessageView)
 router.post('/messages/audio', requireWhatsAppMessageTransportAccess, sendWhatsAppApiAudioMessageView)
 router.get('/templates', requireFeature('whatsapp_templates'), getWhatsAppApiTemplatesView)
+router.post('/templates/repair-defaults', requireWhatsAppApiAccess, requireModuleAccess('settings_whatsapp'), repairDefaultWhatsAppApiTemplatesView)
 router.post('/templates/send', requireWhatsAppTemplatesChatAccess, sendWhatsAppApiTemplateMessageView)
 
 export default router

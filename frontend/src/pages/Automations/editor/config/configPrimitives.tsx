@@ -7,7 +7,7 @@ import { CustomSelect as BaseCustomSelect, NumberInput as BaseNumberInput, TagPi
 export const CustomSelect: React.FC<React.ComponentProps<typeof BaseCustomSelect>> = (props) => (
   <BaseCustomSelect portal size="large" {...props} />
 )
-import { getCatalog, type CatalogKind, type CatalogOption } from '@/services/automationCatalogsService'
+import { getCatalog, getFormsCatalogPage, type CatalogKind, type CatalogOption } from '@/services/automationCatalogsService'
 import { CONTACT_VARIABLES } from '../nodeRegistry'
 import { DrillSelect } from './DrillSelect'
 import styles from '../AutomationEditor.module.css'
@@ -107,6 +107,105 @@ export function useCatalogOptions(kind: CatalogKind | undefined): {
   return { options, loading }
 }
 
+function mergeCatalogOptions(current: CatalogOption[], incoming: CatalogOption[]) {
+  const byValue = new Map(current.map(option => [option.value, option]))
+  incoming.forEach(option => byValue.set(option.value, option))
+  return [...byValue.values()]
+}
+
+function usePagedFormsCatalog(selectedId: string) {
+  const [options, setOptions] = useState<CatalogOption[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const openRef = React.useRef(false)
+  const requestRef = React.useRef<AbortController | null>(null)
+  const hydrationRef = React.useRef<AbortController | null>(null)
+  const searchTimerRef = React.useRef<number | null>(null)
+
+  const loadPage = React.useCallback(async ({
+    reset = false,
+    query = search
+  }: { reset?: boolean; query?: string } = {}) => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    setLoading(true)
+    try {
+      const page = await getFormsCatalogPage({
+        limit: 30,
+        cursor: reset ? null : nextCursor,
+        search: query,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
+      setOptions(current => mergeCatalogOptions(reset ? current.filter(option => option.value === selectedId) : current, page.items))
+      setHasMore(page.hasMore)
+      setNextCursor(page.nextCursor)
+      setLoaded(true)
+    } catch (error) {
+      if ((error as Error)?.name !== 'AbortError') {
+        setHasMore(false)
+      }
+    } finally {
+      if (requestRef.current === controller) {
+        requestRef.current = null
+        setLoading(false)
+      }
+    }
+  }, [nextCursor, search, selectedId])
+
+  useEffect(() => {
+    const cleanSelectedId = String(selectedId || '').trim()
+    if (!cleanSelectedId || options.some(option => option.value === cleanSelectedId)) return
+    hydrationRef.current?.abort()
+    const controller = new AbortController()
+    hydrationRef.current = controller
+    void getFormsCatalogPage({ selectedIds: [cleanSelectedId], signal: controller.signal })
+      .then(page => {
+        if (!controller.signal.aborted) setOptions(current => mergeCatalogOptions(current, page.items))
+      })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [options, selectedId])
+
+  useEffect(() => () => {
+    requestRef.current?.abort()
+    hydrationRef.current?.abort()
+    if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current)
+  }, [])
+
+  const handleOpenChange = React.useCallback((open: boolean) => {
+    openRef.current = open
+    if (open && !loaded && !loading) void loadPage({ reset: true, query: search })
+  }, [loadPage, loaded, loading, search])
+
+  const handleSearchChange = React.useCallback((query: string) => {
+    setSearch(query)
+    if (searchTimerRef.current !== null) window.clearTimeout(searchTimerRef.current)
+    if (!openRef.current) {
+      if (!query && search) setLoaded(false)
+      return
+    }
+    searchTimerRef.current = window.setTimeout(() => {
+      void loadPage({ reset: true, query })
+    }, 250)
+  }, [loadPage, search])
+
+  return {
+    options,
+    loading,
+    hasMore,
+    onOpenChange: handleOpenChange,
+    onSearchChange: handleSearchChange,
+    onLoadMore: () => {
+      if (!loading && hasMore && nextCursor) void loadPage()
+    }
+  }
+}
+
 type SelectOption = {
   value: string
   label: string
@@ -137,7 +236,9 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
   onChange,
   ...rest
 }) => {
-  const { options, loading } = useCatalogOptions(catalog)
+  const staticCatalog = useCatalogOptions(catalog === 'forms' ? undefined : catalog)
+  const pagedFormsCatalog = usePagedFormsCatalog(catalog === 'forms' ? value : '')
+  const { options, loading } = catalog === 'forms' ? pagedFormsCatalog : staticCatalog
 
   // Etiquetas: selector con buscador y "crear etiqueta" inline (catálogo real)
   if (catalog === 'tags') {
@@ -159,7 +260,12 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
   }
 
   if (loading) {
+    if (catalog === 'forms') {
+      // El combo se mantiene disponible para pintar el valor guardado mientras
+      // busca la primera página; el estado de carga vive dentro del dropdown.
+    } else {
     return <span className={styles.configHelp} role="status" aria-live="polite" aria-label="Cargando opciones" />
+    }
   }
 
   if (catalog === 'customFields') {
@@ -231,6 +337,14 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
       placeholder={placeholder || 'Selecciona una opción'}
       className={hasSavedValue ? styles.configSelectMissing : undefined}
       aria-label={rest['aria-label']}
+      searchable={catalog === 'forms'}
+      searchPlaceholder={catalog === 'forms' ? 'Buscar formulario…' : undefined}
+      onOpenChange={catalog === 'forms' ? pagedFormsCatalog.onOpenChange : undefined}
+      onSearchChange={catalog === 'forms' ? pagedFormsCatalog.onSearchChange : undefined}
+      onLoadMore={catalog === 'forms' ? pagedFormsCatalog.onLoadMore : undefined}
+      hasMore={catalog === 'forms' ? pagedFormsCatalog.hasMore : false}
+      loading={catalog === 'forms' ? pagedFormsCatalog.loading : false}
+      emptyMessage={catalog === 'forms' ? 'No hay formularios para esta búsqueda' : undefined}
     />
   )
 }

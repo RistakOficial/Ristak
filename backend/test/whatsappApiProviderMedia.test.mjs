@@ -851,7 +851,7 @@ test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Medi
           query: {},
           originalUrl: `/media/assets/${deliveryMediaAssetId}/voice.ogg`
         }, proxyResponse)
-        assert.equal(proxyResponse.statusCode, 200)
+        assert.equal(proxyResponse.statusCode, 200, JSON.stringify(proxyResponse.body))
         assert.equal(proxyResponse.headers['content-type'], 'audio/ogg')
         assert.equal(
           proxyResponse.headers['content-disposition'],

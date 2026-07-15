@@ -104,7 +104,8 @@ const createEmptyContactsPagination = (page = 1): ContactsPagination => ({
   total: 0,
   totalPages: 1,
   hasNext: false,
-  hasPrev: page > 1
+  hasPrev: page > 1,
+  nextCursor: null
 })
 
 const getDateRangeKeyPart = (value: unknown) => {
@@ -617,6 +618,9 @@ const ContactsTable: React.FC = () => {
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
   const statsRequestRef = useRef(0)
+  const contactsAbortRef = useRef<AbortController | null>(null)
+  const contactDetailsAbortRef = useRef<AbortController | null>(null)
+  const contactsCursorStackRef = useRef<Array<string | null>>([null])
   const contactsQueryKeyRef = useRef('')
   const contactsStatsQueryKeyRef = useRef('')
 
@@ -726,6 +730,7 @@ const ContactsTable: React.FC = () => {
   }
 
   const closeContactModal = () => {
+    contactDetailsAbortRef.current?.abort()
     setSelectedContact(null)
     setSelectedContactId(null)
     setContactDetailsLoading(false)
@@ -809,6 +814,9 @@ const ContactsTable: React.FC = () => {
     const queryChanged = contactsQueryKeyRef.current !== contactsQueryKey
     if (queryChanged) {
       contactsQueryKeyRef.current = contactsQueryKey
+      contactsAbortRef.current?.abort()
+      contactsCursorStackRef.current = [null]
+      setContactsPagination(createEmptyContactsPagination(1))
       if (contactsPage !== 1) {
         setContactsPage(1)
         return
@@ -818,18 +826,13 @@ const ContactsTable: React.FC = () => {
     fetchData(contactsPage)
   }, [contactsPage, contactsQueryKey])
 
+  useEffect(() => () => contactsAbortRef.current?.abort(), [])
+
   useEffect(() => {
     if (contactsStatsQueryKeyRef.current === contactsStatsQueryKey) return
     contactsStatsQueryKeyRef.current = contactsStatsQueryKey
     void fetchStats()
   }, [contactsStatsQueryKey])
-
-  useEffect(() => {
-    const safeTotalPages = Math.max(contactsPagination.totalPages || 1, 1)
-    if (contactsPage > safeTotalPages) {
-      setContactsPage(safeTotalPages)
-    }
-  }, [contactsPage, contactsPagination.totalPages])
 
   useEffect(() => {
     setShowNewContactModal(routeState.create)
@@ -949,51 +952,28 @@ const ContactsTable: React.FC = () => {
   useEffect(() => {
     if (!selectedContactId) return
 
-    let isMounted = true
-
-    const targetIds = Array.from(
-      new Set(
-        [selectedContactId, ...(selectedContact?.mergedContactIds ?? [])].filter(
-          (id): id is string => Boolean(id)
-        )
-      )
-    )
+    contactDetailsAbortRef.current?.abort()
+    const controller = new AbortController()
+    contactDetailsAbortRef.current = controller
 
     const loadContactDetails = async () => {
       try {
-        const results = await Promise.all(
-          targetIds.map(async (id) => {
-            try {
-              return await contactsService.getContactDetails(id)
-            } catch (error) {
-              if (id === selectedContactId) {
-                throw error
-              }
-              return null
-            }
-          })
-        )
-
-        if (!isMounted) {
-          return
-        }
-
-        const validResults = results.filter((contact): contact is Contact => Boolean(contact))
-
-        if (validResults.length === 0) {
-          setSelectedContactDetails(selectedContact ?? null)
-          return
-        }
-
-        const mergedDetails = mergeContactDetailRecords(selectedContact ?? null, validResults, selectedContactId)
+        // Una fusión real ya reasigna referencias y elimina el contacto absorbido.
+        // Pedir una ficha completa por cada ID histórico multiplicaba pagos/citas
+        // sin aportar datos canónicos.
+        const detail = await contactsService.getContactDetails(selectedContactId, {
+          signal: controller.signal
+        })
+        if (controller.signal.aborted) return
+        const mergedDetails = mergeContactDetailRecords(selectedContact ?? null, [detail], selectedContactId)
         setSelectedContactDetails(mergedDetails)
       } catch (error) {
-        if (isMounted) {
+        if (!controller.signal.aborted) {
           setSelectedContactDetails(selectedContact ?? null)
           showToast('error', 'No se pudieron cargar los detalles del contacto', 'Intenta nuevamente.')
         }
       } finally {
-        if (isMounted) {
+        if (!controller.signal.aborted) {
           setContactDetailsLoading(false)
         }
       }
@@ -1002,7 +982,8 @@ const ContactsTable: React.FC = () => {
     loadContactDetails()
 
     return () => {
-      isMounted = false
+      controller.abort()
+      if (contactDetailsAbortRef.current === controller) contactDetailsAbortRef.current = null
     }
   }, [selectedContactId, selectedContact, showToast])
 
@@ -1075,7 +1056,14 @@ const ContactsTable: React.FC = () => {
       ltv: contactData.ltv,
       purchases: contactData.purchases,
       payments,
+      paymentsTotal: contactData.paymentsTotal,
+      hasPaymentRecords: contactData.hasPaymentRecords,
+      paymentsTruncated: contactData.paymentsTruncated,
+      paymentsNextCursor: contactData.paymentsNextCursor,
       appointments,
+      appointmentsTotal: contactData.appointmentsTotal,
+      appointmentsTruncated: contactData.appointmentsTruncated,
+      appointmentsNextCursor: contactData.appointmentsNextCursor,
       firstAppointmentDate: contactData.firstAppointmentDate,
       nextAppointmentDate: contactData.nextAppointmentDate,
       hasAppointments: contactData.hasAppointments ?? contactAppointments.length > 0,
@@ -1230,6 +1218,14 @@ const ContactsTable: React.FC = () => {
   }
 
   const fetchData = async (pageToLoad = contactsPage) => {
+    const pageCursor = contactsCursorStackRef.current[pageToLoad - 1]
+    if (pageToLoad > 1 && pageCursor === undefined) {
+      setContactsPage(Math.max(pageToLoad - 1, 1))
+      return
+    }
+    contactsAbortRef.current?.abort()
+    const controller = new AbortController()
+    contactsAbortRef.current = controller
     const requestId = fetchRequestRef.current + 1
     fetchRequestRef.current = requestId
     const normalizedSearch = debouncedContactSearch.trim()
@@ -1262,19 +1258,28 @@ const ContactsTable: React.FC = () => {
         endDate,
         page: pageToLoad,
         limit: CONTACTS_PAGE_SIZE,
+        pagination: 'cursor',
+        cursor: pageCursor ?? null,
+        signal: controller.signal,
         ...contactsQueryOptions,
         ...(normalizedSearch ? { search: normalizedSearch } : {})
       })
 
-      if (fetchRequestRef.current !== requestId) {
+      if (controller.signal.aborted || fetchRequestRef.current !== requestId) {
         return
       }
 
+      const nextCursorStack = contactsCursorStackRef.current.slice(0, pageToLoad)
+      if (contactsPageResult.pagination.hasNext && contactsPageResult.pagination.nextCursor) {
+        nextCursorStack[pageToLoad] = contactsPageResult.pagination.nextCursor
+      }
+      contactsCursorStackRef.current = nextCursorStack
       setContacts(contactsPageResult.contacts)
       setContactsPagination(contactsPageResult.pagination)
       setHasLoadedContacts(true)
       setLoading(false)
     } catch (error) {
+      if (controller.signal.aborted) return
       // Error already shown to user via toast
       if (fetchRequestRef.current === requestId) {
         setContactsPagination(createEmptyContactsPagination(pageToLoad))
@@ -1285,6 +1290,7 @@ const ContactsTable: React.FC = () => {
         setLoading(false)
         setHasLoadedContacts(true)
       }
+      if (contactsAbortRef.current === controller) contactsAbortRef.current = null
     }
   }
 
@@ -1953,8 +1959,10 @@ const ContactsTable: React.FC = () => {
           pageSize={20}
           serverSidePagination={true}
           currentPage={contactsPage}
-          totalItems={contactsPagination.total}
-          totalPages={contactsPagination.totalPages}
+          totalItems={contactsPagination.total ?? 0}
+          totalPages={contactsPagination.totalPages ?? 1}
+          cursorPagination={true}
+          hasNextPage={contactsPagination.hasNext}
           onPageChange={setContactsPage}
           serverSideSort={true}
           sortBy={tableSort.key}

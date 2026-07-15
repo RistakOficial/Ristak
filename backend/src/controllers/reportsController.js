@@ -10,6 +10,7 @@ import {
 import { buildAggregatedReportMetrics } from '../services/reportMetricsAggregationService.js'
 import { listReportContactsPage } from '../services/reportContactsPaginationService.js'
 import { listReportTransactionsPage } from '../services/reportTransactionsPaginationService.js'
+import { getReportsSnapshot as getReportsSnapshotReadModel } from '../services/reportsSnapshotService.js'
 import {
   MANUAL_BUSINESS_EXPENSE_PERIODS,
   deleteManualBusinessExpenseDescendants,
@@ -23,6 +24,38 @@ const buildRangePayload = (range) => ({
   timezone: range.appliedTimezone,
   filtered: range.isFiltered
 })
+
+function createReportsRequestAbortScope(req, res) {
+  const controller = new AbortController()
+  let disconnected = Boolean(req.aborted || res.destroyed)
+  const abortIfDisconnected = () => {
+    disconnected = true
+    if (!res.writableEnded && !res.finished && !controller.signal.aborted) {
+      controller.abort()
+    }
+  }
+
+  req.once?.('aborted', abortIfDisconnected)
+  res.once?.('close', abortIfDisconnected)
+  if (req.aborted) abortIfDisconnected()
+
+  return {
+    signal: controller.signal,
+    get disconnected() {
+      return disconnected || Boolean(req.aborted) || Boolean(res.destroyed) || res.writable === false
+    },
+    cleanup() {
+      req.off?.('aborted', abortIfDisconnected)
+      res.off?.('close', abortIfDisconnected)
+      req.removeListener?.('aborted', abortIfDisconnected)
+      res.removeListener?.('close', abortIfDisconnected)
+    }
+  }
+}
+
+function isReportsRequestAbort(error) {
+  return error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+}
 
 export const getContactsReport = async (req, res) => {
   try {
@@ -171,6 +204,41 @@ export const getMetrics = async (req, res) => {
   }
 }
 
+export const getReportsSnapshot = async (req, res) => {
+  const requestScope = createReportsRequestAbortScope(req, res)
+  try {
+    const { from, to, groupBy = 'day', scope = 'all' } = req.query
+    const snapshot = await getReportsSnapshotReadModel({
+      principal: req.user?.userId || req.user?.id || req.user?.email || 'authenticated-user',
+      startDate: from,
+      endDate: to,
+      groupBy,
+      scope,
+      waitForFresh: req.query.waitForFresh === '1' || req.query.waitForFresh === 'true',
+      signal: requestScope.signal
+    })
+
+    if (requestScope.disconnected || requestScope.signal.aborted || res.writableEnded || res.finished) return
+    logger.info(`Snapshot unificado de Reportes generado (${snapshot.metrics.length} periodos)`)
+    res.json({ success: true, data: snapshot })
+  } catch (error) {
+    if (isReportsRequestAbort(error) || requestScope.signal.aborted) {
+      logger.info('Snapshot de Reportes cancelado porque el cliente abandono la vista')
+      if (!requestScope.disconnected && !res.headersSent && !res.writableEnded && !res.finished) {
+        res.status(499).json({ success: false, error: 'Consulta cancelada' })
+      }
+      return
+    }
+    logger.error(`Error en getReportsSnapshot: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener el snapshot de reportes'
+    })
+  } finally {
+    requestScope.cleanup()
+  }
+}
+
 export const getManualBusinessExpenses = async (req, res) => {
   try {
     const expenses = await db.all(`
@@ -316,9 +384,21 @@ export const getContactsList = async (req, res) => {
     })
   } catch (error) {
     logger.error(`Error en getContactsList: ${error.message}`)
-    res.status(500).json({
+    const status = Number(error?.status) || 500
+    if (status === 503 && error?.retryAfter) {
+      res.set?.('Retry-After', String(error.retryAfter))
+    }
+    res.status(status).json({
       success: false,
-      error: 'Error al obtener la lista de contactos'
+      error: status === 503 ? error.message : 'Error al obtener la lista de contactos',
+      ...(status === 503
+        ? {
+            code: error.code,
+            retriable: Boolean(error.retriable),
+            projection: error.projection,
+            projectionStatus: error.projectionStatus
+          }
+        : {})
     })
   }
 }

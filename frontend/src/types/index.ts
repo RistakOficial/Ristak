@@ -216,7 +216,14 @@ export interface Contact {
   hasAttendedAppointment?: boolean
   hasUpcomingConfirmedAppointmentBadge?: boolean
   payments?: ContactPayment[]
+  paymentsTotal?: number
+  hasPaymentRecords?: boolean
+  paymentsTruncated?: boolean
+  paymentsNextCursor?: string | null
   appointments?: ContactAppointment[]
+  appointmentsTotal?: number
+  appointmentsTruncated?: boolean
+  appointmentsNextCursor?: string | null
   firstSession?: ContactFirstSession | null
   metaAttribution?: ContactMetaAttribution | null
   customFields?: ContactCustomField[]

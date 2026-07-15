@@ -552,10 +552,11 @@ test('webhook showed trata el estado remoto como divergencia y conserva el estad
   }
 })
 
-test('refresh de getEvents usa la misma reconciliación y no crea una segunda fila por el ID GHL', async () => {
+test('getEvents permanece local-first y no dispara refresh remoto al navegar el calendario', async () => {
   const fixture = await createFixture('events_refresh_echo')
   const previousConfig = await db.all('SELECT * FROM highlevel_config')
   const previousFetch = global.fetch
+  let fetchCalls = 0
   try {
     const before = await db.get('SELECT * FROM appointments WHERE id = ?', [fixture.appointmentId])
     const expectedSnapshot = businessSnapshot(before)
@@ -565,6 +566,7 @@ test('refresh de getEvents usa la misma reconciliación y no crea una segunda fi
       [fixture.locationId, `token_${fixture.suffix}`, '{}']
     )
     global.fetch = async (url, options = {}) => {
+      fetchCalls += 1
       assert.equal(String(options.method || 'GET').toUpperCase(), 'GET')
       assert.match(String(url), /services\.leadconnectorhq\.com\/calendars\/events/)
       return new Response(JSON.stringify({ events: [divergentRemoteEvent(fixture)] }), {
@@ -584,17 +586,11 @@ test('refresh de getEvents usa la misma reconciliación y no crea una segunda fi
 
     assert.equal(res.statusCode, 200)
     assert.equal(res.body?.success, true)
-
-    const deadline = Date.now() + 3_000
-    let stored
-    do {
-      stored = await db.get('SELECT * FROM appointments WHERE id = ?', [fixture.appointmentId])
-      if (stored?.sync_status === 'pending') break
-      await new Promise(resolve => setTimeout(resolve, 25))
-    } while (Date.now() < deadline)
+    assert.equal(fetchCalls, 0)
 
     await assertSingleCanonicalAppointment(fixture, expectedSnapshot)
-    assert.equal(stored?.sync_status, 'pending')
+    const stored = await db.get('SELECT * FROM appointments WHERE id = ?', [fixture.appointmentId])
+    assert.equal(stored?.sync_status, 'synced')
   } finally {
     global.fetch = previousFetch
     await db.run('DELETE FROM highlevel_config').catch(() => undefined)

@@ -1547,7 +1547,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }, [includeIVA, paymentTaxes.enabled])
 
   useEffect(() => {
-    let cancelled = false
+    const controller = new AbortController()
 
     if (!isOpen || !stripeConnected || !selectedContact?.id) {
       setSavedPaymentMethods([])
@@ -1557,13 +1557,13 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         setPaymentOption(getDefaultPaymentOption())
       }
       return () => {
-        cancelled = true
+        controller.abort()
       }
     }
 
-    stripePaymentsService.getSavedPaymentMethods(selectedContact.id)
+    stripePaymentsService.getSavedPaymentMethods(selectedContact.id, controller.signal)
       .then((methods) => {
-        if (cancelled) return
+        if (controller.signal.aborted) return
         setSavedPaymentMethods(methods)
         setSelectedSavedPaymentMethodId((current) => {
           const stillExists = methods.some((method) => (
@@ -1579,7 +1579,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         }
       })
       .catch(() => {
-        if (cancelled) return
+        if (controller.signal.aborted) return
         setSavedPaymentMethods([])
         setSelectedSavedPaymentMethodId('')
         if (paymentOption === 'stripe_saved_card') {
@@ -1589,7 +1589,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       })
 
     return () => {
-      cancelled = true
+      controller.abort()
     }
   }, [isOpen, stripeConnected, selectedContact?.id, paymentOption])
 

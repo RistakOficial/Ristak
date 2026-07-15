@@ -3,9 +3,19 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
-import { db } from '../src/config/database.js'
+import { databaseDialect, db } from '../src/config/database.js'
 import { getCampaigns, getCampaignsPage, getContactsByType } from '../src/controllers/metaController.js'
 import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
+import { runContactPersonIdentityProjectionBackfill } from '../src/services/contactPersonIdentityProjectionService.js'
+
+test.before(async () => {
+  if (databaseDialect !== 'sqlite') return
+  await db.exec(readFileSync(
+    new URL('../migrations/versioned/110_contact_person_identity.sqlite.sql', import.meta.url),
+    'utf8'
+  ))
+  await runContactPersonIdentityProjectionBackfill({ batchSize: 500, yieldMs: 0 })
+})
 
 function createResponse() {
   return {
@@ -55,8 +65,10 @@ test('getContactsByType delega a una página local, estable y acotada', () => {
 
   assert.match(handler, /listCampaignContactsPage/)
   assert.doesNotMatch(handler, /getContactsWithAppointmentsHybrid|getContactsWithShowedAppointmentsHybrid|api_token|fetch\(/)
-  assert.match(service, /ROW_NUMBER\(\) OVER/)
-  assert.match(service, /ORDER BY \$\{createdAtSort\} DESC, id DESC[\s\S]*LIMIT \?/)
+  assert.doesNotMatch(service, /ROW_NUMBER\(\) OVER|MAX\([^)]*\) OVER/)
+  assert.match(service, /contact_person_identity/)
+  assert.match(service, /NOT EXISTS \([\s\S]*newer_identity/)
+  assert.match(service, /ORDER BY \$\{createdAtSort\} DESC, c\.id DESC[\s\S]*LIMIT \?/)
   assert.match(service, /MAX_PAGE_LIMIT = 100/)
 })
 

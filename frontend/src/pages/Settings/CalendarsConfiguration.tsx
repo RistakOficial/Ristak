@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -60,7 +60,7 @@ import {
 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { useAppConfig, useHighLevelConnected } from '@/hooks'
+import { useAppConfig, useHighLevelConnected, useIntegrationsStatus } from '@/hooks'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   calendarsService,
@@ -830,6 +830,7 @@ export const CalendarsConfiguration: React.FC = () => {
     configured: highLevelConfigured,
     loading: highLevelLoading
   } = useHighLevelConnected()
+  const { status: integrationsStatus, loading: integrationsStatusLoading } = useIntegrationsStatus()
 
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
@@ -848,7 +849,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const [googleMergePrompt, setGoogleMergePrompt] = useState<GoogleCalendarMergePreview | null>(null)
   const [savingGoogleMergePrompt, setSavingGoogleMergePrompt] = useState(false)
   const [googleCalendarId, setGoogleCalendarId] = useState('')
-  const googleConnected = Boolean(googleIntegration?.connected)
+  const googleConnected = Boolean(googleIntegration?.connected || integrationsStatus?.googleCalendar?.connected)
   const [savingGoogleSyncCalendarId, setSavingGoogleSyncCalendarId] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showNotificationsModal, setShowNotificationsModal] = useState(false)
@@ -896,6 +897,13 @@ export const CalendarsConfiguration: React.FC = () => {
   const [deletingCalendarId, setDeletingCalendarId] = useState<string | null>(null)
   const [formSites, setFormSites] = useState<PublicSite[]>([])
   const [loadingFormSites, setLoadingFormSites] = useState(false)
+  const [formSitesHasMore, setFormSitesHasMore] = useState(false)
+  const [formSitesNextCursor, setFormSitesNextCursor] = useState('')
+  const formSitesRequestRef = useRef<AbortController | null>(null)
+  const formSitesSearchTimerRef = useRef<number | null>(null)
+  const formSitesSelectOpenRef = useRef(false)
+  const formSitesSearchRef = useRef('')
+  const googleIntegrationRequestRef = useRef<Promise<GoogleCalendarIntegrationStatus | null> | null>(null)
   const [appointmentReminders, setAppointmentReminders] = useState<AppointmentReminder[]>([])
   const [reminderSenders, setReminderSenders] = useState<ReminderSenderOption[]>([])
   const [reminderChannels, setReminderChannels] = useState<ReminderChannelOption[]>([])
@@ -904,6 +912,8 @@ export const CalendarsConfiguration: React.FC = () => {
   const [isAppointmentReminderModalOpen, setIsAppointmentReminderModalOpen] = useState(false)
   const [loadingAppointmentReminders, setLoadingAppointmentReminders] = useState(false)
   const [creatingAppointmentReminder, setCreatingAppointmentReminder] = useState(false)
+  const appointmentReminderSettingsLoadedRef = useRef(false)
+  const metaVariablesLoadedRef = useRef(false)
 
   // Cargar calendarios al montar
   useEffect(() => {
@@ -911,16 +921,12 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [locationId, accessToken, calendarSourcePreference])
 
   useEffect(() => {
-    if (!hasCalendarCustomFormsAccess) {
-      setFormSites([])
-      setLoadingFormSites(false)
-      return
-    }
-
-    loadCalendarForms()
-  }, [hasCalendarCustomFormsAccess])
-
-  useEffect(() => {
+    if (
+      appointmentReminderSettingsLoadedRef.current ||
+      activeView !== 'calendars' ||
+      !expandedCalendarId ||
+      calendarWizardStep !== 'reminders'
+    ) return
     let cancelled = false
 
     const loadAppointmentReminderSettings = async () => {
@@ -935,6 +941,7 @@ export const CalendarsConfiguration: React.FC = () => {
         setReminderSenders(overview.senders)
         setReminderChannels(overview.channels)
         setReminderTemplates(templateBundle.templates)
+        appointmentReminderSettingsLoadedRef.current = true
       } catch {
         if (!cancelled) {
           showToast('error', 'Recordatorios automáticos', 'No se pudieron cargar los mensajes automáticos.')
@@ -951,7 +958,7 @@ export const CalendarsConfiguration: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [showToast])
+  }, [activeView, calendarWizardStep, expandedCalendarId, showToast])
 
   useEffect(() => {
     if (!hasGoogleCalendarAccess) {
@@ -962,8 +969,13 @@ export const CalendarsConfiguration: React.FC = () => {
       return
     }
 
+    const params = new URLSearchParams(location.search)
+    if (routeState.view !== 'google' && !params.get('google_handoff_token') && params.get('connected') !== '1') {
+      setLoadingGoogleIntegration(false)
+      return
+    }
     loadGoogleIntegration()
-  }, [hasGoogleCalendarAccess])
+  }, [hasGoogleCalendarAccess, location.search, routeState.view])
 
   useEffect(() => {
     if (!hasGoogleCalendarAccess) return
@@ -1001,12 +1013,66 @@ export const CalendarsConfiguration: React.FC = () => {
       setGoogleCalendarOptions([])
       return
     }
-    if (googleIntegration?.connected) {
+    if (routeState.view === 'google' && googleIntegration?.connected) {
       loadGoogleCalendarOptions()
     } else {
       setGoogleCalendarOptions([])
     }
-  }, [hasGoogleCalendarAccess, googleIntegration?.connected])
+  }, [hasGoogleCalendarAccess, googleIntegration?.connected, routeState.view])
+
+  useEffect(() => {
+    if (
+      !hasGoogleCalendarAccess ||
+      activeView !== 'calendars' ||
+      !expandedCalendarId ||
+      calendarWizardStep !== 'advanced' ||
+      !googleConnected ||
+      googleIntegration?.connected
+    ) return
+
+    let cancelled = false
+    void loadGoogleIntegration().then((status) => {
+      if (!cancelled && status?.connected) {
+        void loadGoogleCalendarOptions(status)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeView,
+    calendarWizardStep,
+    expandedCalendarId,
+    googleConnected,
+    googleIntegration?.connected,
+    hasGoogleCalendarAccess
+  ])
+
+  useEffect(() => {
+    if (!hasCalendarCustomFormsAccess) {
+      formSitesRequestRef.current?.abort()
+      setFormSites([])
+      setLoadingFormSites(false)
+      return
+    }
+    const bookingForm = normalizeCalendarBookingForm(selectedCalendar?.bookingForm, { allowCustomForm: true })
+    if (
+      activeView !== 'calendars' ||
+      !expandedCalendarId ||
+      calendarWizardStep !== 'publicUrl' ||
+      !bookingForm.useCustomForm
+    ) return
+    void loadCalendarForms({
+      reset: true,
+      selectedIds: bookingForm.customFormId ? [bookingForm.customFormId] : []
+    })
+  }, [activeView, calendarWizardStep, expandedCalendarId, hasCalendarCustomFormsAccess, selectedCalendar?.bookingForm])
+
+  useEffect(() => () => {
+    formSitesRequestRef.current?.abort()
+    if (formSitesSearchTimerRef.current !== null) window.clearTimeout(formSitesSearchTimerRef.current)
+  }, [])
 
   useEffect(() => {
     setActiveView(current => current === routeState.view ? current : routeState.view)
@@ -1056,10 +1122,10 @@ export const CalendarsConfiguration: React.FC = () => {
     if (!highLevelLoading && !highLevelConnected && calendarSourcePreference === 'ghl') {
       setCalendarSourcePreference(googleConnected ? 'combined' : 'ristak').catch(() => {})
     }
-    if (!loadingGoogleIntegration && !googleConnected && calendarSourcePreference === 'google') {
+    if (!loadingGoogleIntegration && !integrationsStatusLoading && !googleConnected && calendarSourcePreference === 'google') {
       setCalendarSourcePreference(highLevelConnected ? 'combined' : 'ristak').catch(() => {})
     }
-  }, [highLevelLoading, highLevelConnected, loadingGoogleIntegration, googleConnected, calendarSourcePreference, setCalendarSourcePreference])
+  }, [highLevelLoading, highLevelConnected, integrationsStatusLoading, loadingGoogleIntegration, googleConnected, calendarSourcePreference, setCalendarSourcePreference])
 
   // Con un único calendario, ese es el predeterminado: no tiene sentido pedir
   // selección manual cuando solo existe la opción de Ristak.
@@ -1091,35 +1157,65 @@ export const CalendarsConfiguration: React.FC = () => {
     }
   }
 
-  const loadCalendarForms = async () => {
+  const mergeFormSites = (current: PublicSite[], incoming: PublicSite[]) => {
+    const byId = new Map(current.map(site => [site.id, site]))
+    incoming.forEach(site => byId.set(site.id, site))
+    return [...byId.values()].sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'es'))
+  }
+
+  const loadCalendarForms = async ({
+    reset = false,
+    search = '',
+    selectedIds = []
+  }: { reset?: boolean; search?: string; selectedIds?: string[] } = {}) => {
     if (!hasCalendarCustomFormsAccess) {
       setFormSites([])
       setLoadingFormSites(false)
       return []
     }
 
+    if (reset) formSitesSearchRef.current = search
+    formSitesRequestRef.current?.abort()
+    const controller = new AbortController()
+    formSitesRequestRef.current = controller
     try {
       setLoadingFormSites(true)
-      const data = await sitesService.listAllSiteSelectors({ kind: 'forms' })
-      const forms = data.items
-        .sort((left, right) => {
-          const leftSystem = left.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
-          const rightSystem = right.id === CALENDAR_DEFAULT_FORM_SITE_ID ? 0 : 1
-          if (leftSystem !== rightSystem) return leftSystem - rightSystem
-          return String(left.name || '').localeCompare(String(right.name || ''), 'es')
-        })
-      setFormSites(forms)
-      if (data.truncated) {
-        showToast('warning', 'Demasiados formularios', 'Se muestran los 2,000 formularios más recientes. Archiva los que ya no uses para reducir la lista.')
-      }
-      return forms
+      const page = await sitesService.listSiteSelectorsPage({
+        kind: 'forms',
+        limit: 30,
+        cursor: reset ? '' : formSitesNextCursor,
+        search,
+        selectedIds,
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return []
+      const incoming = [...(page.selectedItems || []), ...page.items]
+        .filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
+      setFormSites(current => mergeFormSites(reset ? current.filter(site => selectedIds.includes(site.id)) : current, incoming))
+      setFormSitesHasMore(page.hasMore)
+      setFormSitesNextCursor(page.nextCursor || '')
+      return incoming
     } catch (error: any) {
-      setFormSites([])
-      showToast('warning', 'No se pudieron cargar formularios', error.message || 'El calendario usará el formulario predeterminado')
+      if (error?.name !== 'AbortError') {
+        showToast('warning', 'No se pudieron cargar formularios', error.message || 'El calendario usará el formulario predeterminado')
+      }
       return []
     } finally {
-      setLoadingFormSites(false)
+      if (formSitesRequestRef.current === controller) {
+        formSitesRequestRef.current = null
+        setLoadingFormSites(false)
+      }
     }
+  }
+
+  const handleCalendarFormsSearch = (search: string) => {
+    formSitesSearchRef.current = search
+    if (formSitesSearchTimerRef.current !== null) window.clearTimeout(formSitesSearchTimerRef.current)
+    if (!formSitesSelectOpenRef.current) return
+    formSitesSearchTimerRef.current = window.setTimeout(() => {
+      const selectedId = normalizeCalendarBookingForm(selectedCalendar?.bookingForm, { allowCustomForm: true }).customFormId
+      void loadCalendarForms({ reset: true, search, selectedIds: selectedId ? [selectedId] : [] })
+    }, 250)
   }
 
   const loadGoogleIntegration = async () => {
@@ -1131,14 +1227,30 @@ export const CalendarsConfiguration: React.FC = () => {
       return null
     }
 
+    if (googleIntegrationRequestRef.current) {
+      return googleIntegrationRequestRef.current
+    }
+
+    const request = (async () => {
+      try {
+        const data = await calendarsService.getGoogleIntegration()
+        setGoogleIntegration(data)
+        setGoogleCalendarId(data.calendarId || '')
+        return data
+      } catch (error: any) {
+        showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
+        return null
+      }
+    })()
+    googleIntegrationRequestRef.current = request
+
     try {
       setLoadingGoogleIntegration(true)
-      const data = await calendarsService.getGoogleIntegration()
-      setGoogleIntegration(data)
-      setGoogleCalendarId(data.calendarId || '')
-    } catch (error: any) {
-      showToast('error', 'Error al cargar Google Calendar', error.message || 'No se pudo leer la integración')
+      return await request
     } finally {
+      if (googleIntegrationRequestRef.current === request) {
+        googleIntegrationRequestRef.current = null
+      }
       setLoadingGoogleIntegration(false)
     }
   }
@@ -1236,12 +1348,21 @@ export const CalendarsConfiguration: React.FC = () => {
   }), [])
 
   useEffect(() => {
+    if (
+      metaVariablesLoadedRef.current ||
+      activeView !== 'calendars' ||
+      !expandedCalendarId ||
+      calendarWizardStep !== 'events'
+    ) return
     let cancelled = false
     void loadAllVariables().then((variables) => {
-      if (!cancelled) setLoadedMetaVariables(variables)
+      if (!cancelled) {
+        setLoadedMetaVariables(variables)
+        metaVariablesLoadedRef.current = true
+      }
     })
     return () => { cancelled = true }
-  }, [])
+  }, [activeView, calendarWizardStep, expandedCalendarId])
 
   const calendarMetaParameterVariables = useMemo(() => {
     const variables = [
@@ -1697,9 +1818,12 @@ export const CalendarsConfiguration: React.FC = () => {
       const bookingDisplay = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
       const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
       let selectedFormWithPayment = findSelectedFormWithPaymentGate(bookingForm, formSites)
-      const selectedFormSummary = bookingForm.useCustomForm && bookingForm.customFormId
+      let selectedFormSummary = bookingForm.useCustomForm && bookingForm.customFormId
         ? formSites.find(site => site.id === bookingForm.customFormId) || null
         : null
+      if (bookingForm.useCustomForm && bookingForm.customFormId && !selectedFormSummary) {
+        selectedFormSummary = await sitesService.getSite(bookingForm.customFormId, { includeTrackingStats: false })
+      }
       if (bookingPayment.enabled && selectedFormSummary?.summary && !selectedFormWithPayment) {
         const selectedFormDetail = await sitesService.getSite(selectedFormSummary.id)
         selectedFormWithPayment = siteHasPaymentGateEnabled(selectedFormDetail) ? selectedFormDetail : null
@@ -3242,7 +3366,22 @@ export const CalendarsConfiguration: React.FC = () => {
                       onValueChange={handleCustomBookingFormChange}
                       options={calendarFormOptions}
                       placeholder={loadingFormSites ? 'Cargando formularios...' : 'Elige un formulario'}
-                      disabled={loadingFormSites || calendarFormOptions.length === 0}
+                      searchable
+                      searchPlaceholder="Buscar formulario…"
+                      emptyMessage="No hay formularios para esta búsqueda"
+                      onOpenChange={(open) => {
+                        formSitesSelectOpenRef.current = open
+                        if (open && !loadingFormSites) {
+                          void loadCalendarForms({
+                            reset: true,
+                            selectedIds: bookingFormConfig.customFormId ? [bookingFormConfig.customFormId] : []
+                          })
+                        }
+                      }}
+                      onSearchChange={handleCalendarFormsSearch}
+                      onLoadMore={() => void loadCalendarForms({ search: formSitesSearchRef.current })}
+                      hasMore={formSitesHasMore}
+                      loading={loadingFormSites}
                     />
                     <small>
                       {selectedCustomForm?.siteType === 'interactive_form'

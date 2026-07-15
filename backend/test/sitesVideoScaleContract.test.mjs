@@ -148,6 +148,24 @@ test('/sites/video-assets pagina una sola ventana y resuelve streamVideoId aunqu
       'el cursor debe avanzar, no repetir la primera ventana'
     )
 
+    const decodedVideoCursor = JSON.parse(
+      Buffer.from(firstResult.payload.data.pageInfo.nextCursor, 'base64url').toString('utf8')
+    )
+    assert.equal(decodedVideoCursor.v, 2)
+    assert.equal(typeof decodedVideoCursor.scope, 'string')
+    const mismatchedCursorResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        siteType: 'forms',
+        limit: '3',
+        cursor: firstResult.payload.data.pageInfo.nextCursor
+      }
+    }, mismatchedCursorResponse.res)
+    const mismatchedCursorResult = mismatchedCursorResponse.read()
+    assert.equal(mismatchedCursorResult.statusCode, 400)
+    assert.match(mismatchedCursorResult.payload?.error || '', /Cursor de Sites inválido/)
+
     // El lookup exacto también alimenta el preview autenticado del editor. Un
     // sitio en borrador no aparece en Analíticas, pero su video sí debe abrir.
     await db.run("UPDATE public_sites SET status = 'draft' WHERE id = ?", [siteId])
@@ -175,6 +193,80 @@ test('/sites/video-assets pagina una sola ventana y resuelve streamVideoId aunqu
       siteType: 'landing_page',
       pageMode: 'website'
     })
+
+    const hiddenDraftResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        assetId: exactResult.payload.data.id,
+        analyticsScope: '1',
+        siteType: 'sites',
+        landingMode: 'website',
+        siteId
+      }
+    }, hiddenDraftResponse.res)
+    assert.equal(hiddenDraftResponse.read().statusCode, 404)
+
+    await db.run("UPDATE public_sites SET status = 'published' WHERE id = ?", [siteId])
+    const scopedResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        assetId: exactResult.payload.data.id,
+        analyticsScope: '1',
+        siteType: 'sites',
+        landingMode: 'website',
+        siteId
+      }
+    }, scopedResponse.res)
+    assert.equal(scopedResponse.read().statusCode, 200)
+
+    const wrongTypeResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        assetId: exactResult.payload.data.id,
+        analyticsScope: '1',
+        siteType: 'forms',
+        siteId
+      }
+    }, wrongTypeResponse.res)
+    assert.equal(wrongTypeResponse.read().statusCode, 404)
+
+    const wrongListTypeResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        siteId,
+        siteType: 'forms',
+        limit: '3'
+      }
+    }, wrongListTypeResponse.res)
+    assert.deepEqual(wrongListTypeResponse.read().payload?.data?.items, [])
+
+    const wrongListModeResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        siteId,
+        siteType: 'sites',
+        landingMode: 'funnel',
+        limit: '3'
+      }
+    }, wrongListModeResponse.res)
+    assert.deepEqual(wrongListModeResponse.read().payload?.data?.items, [])
+
+    const matchingListScopeResponse = handlerResponse()
+    await getSitesVideoAssetsHandler({
+      query: {
+        businessId,
+        siteId,
+        siteType: 'sites',
+        landingMode: 'website',
+        limit: '3'
+      }
+    }, matchingListScopeResponse.res)
+    assert.equal(matchingListScopeResponse.read().payload?.data?.items?.length, 3)
   } finally {
     await db.run('DELETE FROM media_assets WHERE business_id = ?', [businessId]).catch(() => undefined)
     await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
@@ -275,13 +367,39 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
     assert.equal(scopedAggregate.summary.plays, 3)
     assert.deepEqual(Object.keys(scopedAggregate.byAssetId).sort(), selectedAssets.sort())
     assert.deepEqual(scopedAggregate.bySiteId, {})
+
+    const explicitScopedAggregate = await getVideoPlaybackAggregate({
+      siteIds: [selectedSiteId, otherSiteId],
+      siteScope: { siteType: 'sites', landingMode: 'website' },
+      breakdownAssetIds: [...selectedAssets, `${marker}_asset_outside`]
+    })
+    assert.equal(explicitScopedAggregate.summary.playbackSessions, 2)
+    assert.equal(explicitScopedAggregate.summary.plays, 3)
+    assert.equal(explicitScopedAggregate.byAssetId[`${marker}_asset_outside`].plays, 0)
+
+    await db.run("UPDATE public_sites SET status = 'draft' WHERE id = ?", [selectedSiteId])
+    const draftScopedAggregate = await getVideoPlaybackAggregate({
+      siteIds: [selectedSiteId],
+      siteScope: { siteType: 'sites', landingMode: 'website' }
+    })
+    assert.equal(draftScopedAggregate.summary.playbackSessions, 0)
+
+    await db.run(
+      "UPDATE public_sites SET status = 'published', theme_json = ? WHERE id = ?",
+      [JSON.stringify({ pageMode: 'funnel' }), selectedSiteId]
+    )
+    const wrongModeAggregate = await getVideoPlaybackAggregate({
+      siteIds: [selectedSiteId],
+      siteScope: { siteType: 'sites', landingMode: 'website' }
+    })
+    assert.equal(wrongModeAggregate.summary.playbackSessions, 0)
   } finally {
     await db.run('DELETE FROM video_playback_sessions WHERE playback_id LIKE ?', [`${marker}_playback_%`]).catch(() => undefined)
     await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [selectedSiteId, otherSiteId]).catch(() => undefined)
   }
 })
 
-test('el frontend pide previews por streamVideoId y el resumen usa siteIds sin depender de toda la videoteca', async () => {
+test('el frontend pide previews por streamVideoId y resume Sites por scope sin enumerar toda la biblioteca o videoteca', async () => {
   const [controllerSource, frontendSource, frontendServiceSource] = await Promise.all([
     readFile(sitesControllerSourceUrl, 'utf8'),
     readFile(sitesFrontendSourceUrl, 'utf8'),
@@ -295,6 +413,13 @@ test('el frontend pide previews por streamVideoId y el resumen usa siteIds sin d
   assert.match(handlerSource, /limit:\s*req\.query\.limit/)
   assert.match(handlerSource, /cursor:\s*req\.query\.cursor/)
   assert.match(handlerSource, /streamVideoId|stream_video_id/)
+  assert.match(handlerSource, /analyticsScope:\s*req\.query\.analyticsScope/)
+
+  assert.match(controllerSource, /getSitesVideoAssetsHandler/)
+  const backendSitesSource = await readFile(new URL('../src/services/sitesService.js', import.meta.url), 'utf8')
+  assert.match(backendSitesSource, /cursorTimestampExpression = databaseDialect === 'postgres'/)
+  assert.match(backendSitesSource, /\(\$\{timestampExpression\}\)::text/)
+  assert.match(backendSitesSource, /\$\{cursorTimestampExpression\} AS cursor_created_at/)
 
   const analyticsHandlerStart = controllerSource.indexOf('export async function getSitesAnalyticsSummaryHandler')
   const analyticsHandlerEnd = controllerSource.indexOf('\nexport async function ', analyticsHandlerStart + 1)
@@ -332,8 +457,21 @@ test('el frontend pide previews por streamVideoId y el resumen usa siteIds sin d
   assert.match(listVideoAssetsSource, /params/)
   assert.doesNotMatch(listVideoAssetsSource, /apiClient\.get<MediaAsset\[]>/)
 
-  const summaryCall = frontendSource.match(/sitesService\.getAnalyticsSummary\(\{[\s\S]*?\}\)/)?.[0] || ''
-  assert.match(summaryCall, /siteIds:\s*analyticsSummarySiteIds/)
+  const exactVideoStart = frontendServiceSource.indexOf('getVideoAssetById(assetId: string, options?:')
+  const exactVideoEnd = frontendServiceSource.indexOf('\n  getAnalyticsSummary(', exactVideoStart)
+  const exactVideoSource = frontendServiceSource.slice(exactVideoStart, exactVideoEnd)
+  assert.ok(exactVideoStart >= 0 && exactVideoEnd > exactVideoStart)
+  assert.match(exactVideoSource, /analyticsScope/)
+  assert.match(exactVideoSource, /siteType/)
+  assert.match(exactVideoSource, /landingMode/)
+  assert.match(exactVideoSource, /siteId/)
+
+  const summaryCallStart = frontendSource.indexOf('sitesService.getAnalyticsSummary({')
+  const summaryCallEnd = frontendSource.indexOf('}, { signal: controller.signal })', summaryCallStart)
+  const summaryCall = frontendSource.slice(summaryCallStart, summaryCallEnd)
+  assert.match(summaryCall, /siteScope:/)
+  assert.match(summaryCall, /breakdownSiteIds:\s*analyticsBreakdownSiteIds/)
+  assert.doesNotMatch(summaryCall, /siteIds:/)
   assert.match(summaryCall, /videoSiteIds:/)
   assert.match(summaryCall, /videoScope:/)
   assert.match(summaryCall, /videoBreakdownAssetIds:/)

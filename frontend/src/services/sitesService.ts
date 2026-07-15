@@ -296,6 +296,10 @@ export interface SitesTrackingStats {
   conversionRate: number
 }
 
+export interface SitesTrackingAggregate extends SitesTrackingStats {
+  entityCount: number
+}
+
 export interface SitesFormFunnelField {
   blockId: string
   label: string
@@ -340,13 +344,24 @@ export interface SitesVideoAnalyticsAggregate {
 export interface SitesAnalyticsSummary {
   dateFrom?: string
   dateTo?: string
+  aggregate: SitesTrackingAggregate
   sites: Record<string, SitesTrackingStats>
   formFunnels?: Record<string, SitesFormFunnelAnalytics>
   videos: SitesVideoAnalyticsAggregate
 }
 
+export interface SitesAnalyticsSiteScope {
+  siteType: 'sites' | 'forms'
+  landingMode?: 'website' | 'funnel' | 'all'
+  status: 'published'
+  siteId?: string
+}
+
 export interface SitesAnalyticsSummaryInput {
   siteIds?: string[]
+  siteScope?: SitesAnalyticsSiteScope
+  breakdownSiteIds?: string[]
+  formFunnelSiteId?: string
   videoAssetIds?: string[]
   videoBreakdownAssetIds?: string[]
   videoSiteIds?: string[]
@@ -757,6 +772,16 @@ export interface SitesListPage {
   hasMore: boolean
   nextCursor: string
   limit: number
+  facets?: SitesLibraryFacets | null
+}
+
+export interface SitesSelectorPage extends SitesListPage {
+  selectedItems: PublicSite[]
+}
+
+export interface SitesLibraryFacets {
+  total: number
+  folderCounts: Record<string, number>
 }
 
 export interface SitesSelectorCollection {
@@ -1160,10 +1185,63 @@ export const sitesService = {
     return apiClient.get<PublicSite[]>('/sites')
   },
 
-  listSitesPage(options: { limit?: number; cursor?: string } = {}) {
+  listSitesPage(options: {
+    limit?: number
+    cursor?: string
+    kind?: 'landings' | 'forms'
+    search?: string
+    folderId?: string | null
+    includeFacets?: boolean
+  } = {}) {
     const params = new URLSearchParams({ paginated: '1' })
     if (options.limit) params.set('limit', String(options.limit))
     if (options.cursor) params.set('cursor', options.cursor)
+    if (options.kind) params.set('view', options.kind === 'landings' ? 'landing_library' : 'form_library')
+    if (options.search?.trim()) {
+      params.set('search', options.search.trim())
+    } else if (options.folderId !== undefined && options.folderId !== null) {
+      params.set('folderId', options.folderId || '__root__')
+    }
+    if (options.includeFacets !== undefined) params.set('includeFacets', options.includeFacets ? '1' : '0')
+    return apiClient.get<SitesListPage>(`/sites?${params.toString()}`)
+  },
+
+  listSiteSelectorsPage(options: {
+    kind: 'domain' | 'forms' | 'landings'
+    limit?: number
+    cursor?: string
+    search?: string
+    selectedIds?: string[]
+    signal?: AbortSignal
+  }) {
+    const params = new URLSearchParams({
+      kind: options.kind,
+      limit: String(Math.min(50, Math.max(1, Math.trunc(options.limit || 30))))
+    })
+    if (options.cursor) params.set('cursor', options.cursor)
+    if (options.search?.trim()) params.set('search', options.search.trim())
+    if (options.selectedIds?.length) params.set('selectedIds', options.selectedIds.slice(0, 50).join(','))
+    return apiClient.get<SitesSelectorPage>(`/sites/selectors?${params.toString()}`, {
+      signal: options.signal
+    })
+  },
+
+  listAnalyticsSiteOptionsPage(options: {
+    limit?: number
+    cursor?: string
+    search?: string
+    siteType: 'sites' | 'forms' | 'videos'
+    landingMode?: 'website' | 'funnel' | 'all'
+  }) {
+    const params = new URLSearchParams({
+      paginated: '1',
+      view: 'analytics_selector',
+      limit: String(Math.min(200, Math.max(1, Math.trunc(options.limit || 100)))),
+      siteType: options.siteType
+    })
+    if (options.cursor) params.set('cursor', options.cursor)
+    if (options.search?.trim()) params.set('search', options.search.trim())
+    if (options.landingMode) params.set('landingMode', options.landingMode)
     return apiClient.get<SitesListPage>(`/sites?${params.toString()}`)
   },
 
@@ -1180,14 +1258,11 @@ export const sitesService = {
     let hasMore = true
 
     while (hasMore && items.length < maxItems) {
-      const params = new URLSearchParams({
-        paginated: '1',
-        limit: String(Math.min(pageSize, maxItems - items.length)),
-        view: options.kind === 'forms' ? 'form_selector' : 'domain_selector'
+      const page = await this.listSiteSelectorsPage({
+        kind: options.kind,
+        limit: Math.min(pageSize, maxItems - items.length),
+        cursor
       })
-      if (cursor) params.set('cursor', cursor)
-
-      const page = await apiClient.get<SitesListPage>(`/sites?${params.toString()}`)
       items.push(...page.items)
       hasMore = page.hasMore
       const nextCursor = page.nextCursor || ''
@@ -1270,9 +1345,16 @@ export const sitesService = {
     return apiClient.delete<{ id: string; deleted: boolean }>(`/sites/${siteId}/content-assets/${bindingId}`)
   },
 
-  getSite(siteId: string, options: { includeSubmissions?: boolean; submissionLimit?: number } = {}) {
+  getSite(siteId: string, options: {
+    includeSubmissions?: boolean
+    includeTrackingStats?: boolean
+    submissionLimit?: number
+  } = {}) {
     const params = new URLSearchParams()
     if (options.includeSubmissions) params.set('includeSubmissions', '1')
+    // Biblioteca/editor/respuestas necesitan el documento, no un agregado de
+    // todo el historial. Analytics tiene su propio summary por rango.
+    params.set('includeTrackingStats', options.includeTrackingStats ? '1' : '0')
     if (options.submissionLimit) params.set('submissionLimit', String(options.submissionLimit))
     const query = params.toString()
     return apiClient.get<PublicSite>(`/sites/${siteId}${query ? `?${query}` : ''}`)
@@ -1378,14 +1460,27 @@ export const sitesService = {
     })
   },
 
-  getVideoAssetById(assetId: string) {
+  getVideoAssetById(assetId: string, options?: {
+    analyticsScope?: boolean
+    siteType?: 'sites' | 'forms' | 'videos'
+    landingMode?: 'website' | 'funnel' | 'all'
+    siteId?: string
+  }) {
     return apiClient.get<MediaAsset>('/sites/video-assets', {
-      params: { assetId }
+      params: {
+        assetId,
+        ...(options?.analyticsScope ? { analyticsScope: '1' } : {}),
+        ...(options?.siteType ? { siteType: options.siteType } : {}),
+        ...(options?.landingMode ? { landingMode: options.landingMode } : {}),
+        ...(options?.siteId ? { siteId: options.siteId } : {})
+      }
     })
   },
 
-  getAnalyticsSummary(input: SitesAnalyticsSummaryInput) {
-    return apiClient.post<SitesAnalyticsSummary>('/sites/analytics/summary', input)
+  getAnalyticsSummary(input: SitesAnalyticsSummaryInput, options: { signal?: AbortSignal } = {}) {
+    return apiClient.post<SitesAnalyticsSummary>('/sites/analytics/summary', input, {
+      signal: options.signal
+    })
   },
 
   getVideoAnalytics(assetId: string, input: MediaStreamAnalyticsInput = {}) {

@@ -2,8 +2,6 @@ import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Card, DateRangePicker, AreaChart, PageContainer, PageHeader, OriginDistributionCard, ConversionFunnelChart, ViewSelector, Loading, TabList, Modal } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
-import { ContactDetailsModal } from '@/components/common/ContactDetailsModal/ContactDetailsModal'
-import { VisitorDetailsModal } from '@/components/common/VisitorDetailsModal/VisitorDetailsModal'
 import {
   DollarSign,
   Megaphone,
@@ -27,17 +25,51 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useUrlDateRangeSync } from '@/hooks'
 import { dashboardService, type DashboardMetrics, type ChartData, type DashboardVisitorDetail } from '@/services/dashboardService'
-import { trackingService } from '@/services/trackingService'
-import { reportsService, type ContactListItem } from '@/services/reportsService'
+import { trackingService, trackingVisitorsCoverageNotice } from '@/services/trackingService'
+import type { ContactListItem } from '@/services/reportsService'
 import type { Transaction } from '@/services/transactionsService'
 import type { CalendarEvent } from '@/services/calendarsService'
-import { campaignsService, type Campaign } from '@/services/campaignsService'
+import type { Campaign } from '@/services/campaignsService'
 import { formatCurrency, formatRoas, formatChartDate, formatDateToISO, formatEndDateToISO, parseLocalDateString, formatChartCurrency, formatChartNumber, formatDate } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
 import { hasLicenseFeature } from '@/utils/accessControl'
+
+const LazyContactDetailsModal = React.lazy(async () => {
+  const module = await import('@/components/common/ContactDetailsModal/ContactDetailsModal')
+  return { default: module.ContactDetailsModal }
+})
+
+const LazyVisitorDetailsModal = React.lazy(async () => {
+  const module = await import('@/components/common/VisitorDetailsModal/VisitorDetailsModal')
+  return { default: module.VisitorDetailsModal }
+})
+
+const loadReportsService = () => import('@/services/reportsService').then(module => module.reportsService)
+const loadCampaignsService = () => import('@/services/campaignsService').then(module => module.campaignsService)
+
+const DetailsModalLoadingFallback = ({
+  title,
+  subtitle,
+  onClose
+}: {
+  title: string
+  subtitle?: string
+  onClose: () => void
+}) => (
+  <Modal
+    isOpen
+    onClose={onClose}
+    title={title}
+    subtitle={subtitle}
+    size="lg"
+    type="custom"
+  >
+    <Loading message="Abriendo detalles..." size="md" />
+  </Modal>
+)
 
 const parseAnalyticsFlag = (value: unknown) => {
   if (value === null || value === undefined) return false
@@ -157,6 +189,7 @@ interface VisitorsModalPageState {
   search: string
   hasNext: boolean
   nextCursor: string | null
+  coverageNotice: string | null
 }
 
 const emptyVisitorsModalPageState: VisitorsModalPageState = {
@@ -165,7 +198,8 @@ const emptyVisitorsModalPageState: VisitorsModalPageState = {
   cursorHistory: [],
   search: '',
   hasNext: false,
-  nextCursor: null
+  nextCursor: null,
+  coverageNotice: null
 }
 
 const emptyChartInsightModal: ChartInsightModalState = {
@@ -509,7 +543,9 @@ export const Dashboard: React.FC = () => {
   const analyticsEnabled = hasWebAnalyticsAccess && analyticsPreferenceEnabled && webTrackingConfigured
   const showFunnelVisitors = analyticsEnabled && parseAnalyticsFlag(showFunnelVisitorsConfig)
 
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(() => (
+    user ? dashboardService.peekDashboardMetrics({ start: dateRange.start, end: dateRange.end }) : null
+  ))
   const [chartData, setChartData] = useState<ChartData[]>([])
   const [visitorsLeadsData, setVisitorsLeadsData] = useState<{ label: string; value: number; value2: number }[]>([])
   const [leadsAppointmentsData, setLeadsAppointmentsData] = useState<{ label: string; value: number; value2: number }[]>([])
@@ -848,14 +884,18 @@ export const Dashboard: React.FC = () => {
     })
     if (visitorsModalRequestRef.current !== requestId) return
 
-    setVisitorsModalData(result.items)
+    const coverageNotice = trackingVisitorsCoverageNotice(result.coverage)
+    if (result.items.length > 0 || !coverageNotice) {
+      setVisitorsModalData(result.items)
+    }
     setVisitorsModalPage({
       page,
       cursor,
       cursorHistory,
       search,
       hasNext: result.pagination.hasNext,
-      nextCursor: result.pagination.nextCursor
+      nextCursor: result.pagination.nextCursor,
+      coverageNotice
     })
     setVisitorsModalLoading(false)
   }, [dateRange.end, dateRange.start, funnelScope])
@@ -924,6 +964,7 @@ export const Dashboard: React.FC = () => {
     setContactModalLoading(true)
 
     try {
+      const reportsService = await loadReportsService()
       const result = await reportsService.getContactsList({
         from: formatDateToISO(dateRange.start, { timezone }),
         to: formatEndDateToISO(dateRange.end, { timezone }),
@@ -1106,16 +1147,25 @@ export const Dashboard: React.FC = () => {
     if (!user) return
 
     let mounted = true
+    const controller = new AbortController()
+    const cachedMetrics = dashboardService.peekDashboardMetrics({
+      start: dateRange.start,
+      end: dateRange.end
+    })
+    setMetrics(cachedMetrics)
 
     const loadData = async () => {
-      setLoading(true)
+      setLoading(!cachedMetrics)
       try {
         const metricsData = await dashboardService.getDashboardMetrics({
           start: dateRange.start,
           end: dateRange.end
+        }, {
+          forceRefresh: Boolean(cachedMetrics),
+          signal: controller.signal
         })
 
-        if (!mounted) return
+        if (!mounted || controller.signal.aborted) return
 
         setMetrics(metricsData)
       } catch (error) {
@@ -1131,6 +1181,7 @@ export const Dashboard: React.FC = () => {
 
     return () => {
       mounted = false
+      controller.abort()
     }
   }, [dateRange.end, dateRange.start, user])
 
@@ -1138,6 +1189,7 @@ export const Dashboard: React.FC = () => {
     if (!user) return
 
     let mounted = true
+    const controller = new AbortController()
 
     const loadFinancialChartData = async () => {
       setChartLoading(true)
@@ -1146,7 +1198,7 @@ export const Dashboard: React.FC = () => {
           start: chartWindow.start,
           end: chartWindow.end,
           scope: financialScope
-        })
+        }, controller.signal)
 
         if (!mounted) return
         setChartData(chartDataResponse)
@@ -1165,6 +1217,7 @@ export const Dashboard: React.FC = () => {
 
     return () => {
       mounted = false
+      controller.abort()
     }
   }, [chartWindow.end, chartWindow.start, financialScope, user])
 
@@ -1172,6 +1225,7 @@ export const Dashboard: React.FC = () => {
     if (!user) return
 
     let mounted = true
+    const controller = new AbortController()
 
     const loadOperationalSnapshot = async () => {
       setOperationsLoading(true)
@@ -1180,7 +1234,7 @@ export const Dashboard: React.FC = () => {
         const snapshot = await dashboardService.getOperationalSnapshot({
           start: dateRange.start,
           end: dateRange.end
-        })
+        }, controller.signal)
 
         if (!mounted) return
 
@@ -1203,6 +1257,7 @@ export const Dashboard: React.FC = () => {
 
     return () => {
       mounted = false
+      controller.abort()
     }
   }, [dateRange.end, dateRange.start, timezone, user])
 
@@ -1211,6 +1266,7 @@ export const Dashboard: React.FC = () => {
     if (!user) return
 
     let mounted = true
+    const controller = new AbortController()
 
     const loadFunnelData = async () => {
       try {
@@ -1219,7 +1275,7 @@ export const Dashboard: React.FC = () => {
           end: dateRange.end,
           scope: funnelScope,
           includeWeb: hasWebAnalyticsAccess
-        })
+        }, controller.signal)
         if (mounted) setFunnelData(funnelDataResponse)
       } catch (error) {
         // Error silencioso
@@ -1230,6 +1286,7 @@ export const Dashboard: React.FC = () => {
 
     return () => {
       mounted = false
+      controller.abort()
     }
   }, [dateRange.end, dateRange.start, funnelScope, hasWebAnalyticsAccess, user])
 
@@ -1264,6 +1321,7 @@ export const Dashboard: React.FC = () => {
     to: string,
     scope: 'all' | 'attribution' | 'campaigns' = 'all'
   ) => {
+    const reportsService = await loadReportsService()
     const result = await reportsService.getContactsList({ from, to, type, scope })
     return normalizeContacts(result.contacts)
   }, [normalizeContacts])
@@ -1420,7 +1478,7 @@ export const Dashboard: React.FC = () => {
       if (selectedChartView === 'revenue-spend') {
         const [payingContacts, campaigns] = await Promise.all([
           fetchContactsForInsight('sales', periodStart, periodEnd, financialScope),
-          campaignsService.getCampaigns(periodStart, periodEnd)
+          loadCampaignsService().then(service => service.getCampaigns(periodStart, periodEnd))
         ])
 
         columns = [
@@ -2009,29 +2067,53 @@ export const Dashboard: React.FC = () => {
           </div>
         </Modal>
 
-        <ContactDetailsModal
-          isOpen={contactModalOpen}
-          onClose={() => setContactModalOpen(false)}
-          title={contactModalTitle}
-          subtitle={contactModalSubtitle}
-          data={contactModalContacts}
-          loading={contactModalLoading}
-          type={contactModalType}
-        />
+        {contactModalOpen && (
+          <React.Suspense
+            fallback={(
+              <DetailsModalLoadingFallback
+                title={contactModalTitle}
+                subtitle={contactModalSubtitle}
+                onClose={() => setContactModalOpen(false)}
+              />
+            )}
+          >
+            <LazyContactDetailsModal
+              isOpen
+              onClose={() => setContactModalOpen(false)}
+              title={contactModalTitle}
+              subtitle={contactModalSubtitle}
+              data={contactModalContacts}
+              loading={contactModalLoading}
+              type={contactModalType}
+            />
+          </React.Suspense>
+        )}
 
-      <VisitorDetailsModal
-        isOpen={visitorsModalOpen}
-        onClose={() => setVisitorsModalOpen(false)}
-        title={visitorsModalTitle}
-        subtitle={visitorsModalSubtitle}
-        data={visitorsModalData}
-        loading={visitorsModalLoading}
-        currentPage={visitorsModalPage.page}
-        hasNextPage={visitorsModalPage.hasNext}
-        hasPreviousPage={visitorsModalPage.page > 1}
-        onPageChange={handleVisitorsModalPageChange}
-        onSearchChange={handleVisitorsModalSearch}
-      />
+      {visitorsModalOpen && (
+        <React.Suspense
+          fallback={(
+            <DetailsModalLoadingFallback
+              title={visitorsModalTitle}
+              subtitle={visitorsModalSubtitle}
+              onClose={() => setVisitorsModalOpen(false)}
+            />
+          )}
+        >
+          <LazyVisitorDetailsModal
+            isOpen
+            onClose={() => setVisitorsModalOpen(false)}
+            title={visitorsModalTitle}
+            subtitle={[visitorsModalSubtitle, visitorsModalPage.coverageNotice].filter(Boolean).join(' · ')}
+            data={visitorsModalData}
+            loading={visitorsModalLoading}
+            currentPage={visitorsModalPage.page}
+            hasNextPage={visitorsModalPage.hasNext}
+            hasPreviousPage={visitorsModalPage.page > 1}
+            onPageChange={handleVisitorsModalPageChange}
+            onSearchChange={handleVisitorsModalSearch}
+          />
+        </React.Suspense>
+      )}
     </>
   )
 }

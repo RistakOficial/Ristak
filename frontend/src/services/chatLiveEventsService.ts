@@ -18,7 +18,10 @@ export interface ChatLiveMessageEvent {
 interface SubscribeOptions {
   onMessage: (event: ChatLiveMessageEvent) => void
   onError?: (error: unknown) => void
+  onStatusChange?: (status: ChatLiveConnectionStatus) => void
 }
+
+export type ChatLiveConnectionStatus = 'connecting' | 'connected' | 'stale' | 'disconnected'
 
 interface SseFrame {
   event: string
@@ -29,6 +32,20 @@ const STREAM_ENDPOINT = '/api/chat-events/stream'
 const VIEWING_ENDPOINT = '/api/chat-events/viewing'
 const INITIAL_RECONNECT_MS = 1_000
 const MAX_RECONNECT_MS = 15_000
+const STREAM_STALE_AFTER_MS = 55_000
+const STREAM_WATCHDOG_INTERVAL_MS = 10_000
+const CHAT_LIVE_CACHE_PATHS = [
+  '/api/contacts',
+  '/api/highlevel/conversations',
+  '/api/dashboard',
+  '/api/reports'
+]
+const CHAT_APPOINTMENT_CACHE_PATHS = [
+  '/api/calendars',
+  '/api/contacts',
+  '/api/dashboard',
+  '/api/reports'
+]
 
 // Presencia: le avisa al backend qué contacto tiene abierto este usuario y si la
 // app está al frente. Con esto, cuando llega un mensaje, NO se le manda push a
@@ -92,12 +109,22 @@ function parseSseFrame(frame: string): SseFrame | null {
 
 function dispatchFrame(frame: string, options: SubscribeOptions) {
   const parsed = parseSseFrame(frame)
-  if (!parsed || parsed.event !== 'chat_message') return
+  if (!parsed) return
 
   try {
     const payload = JSON.parse(parsed.data)
+    if (
+      parsed.event === 'chat_data_changed' &&
+      payload?.type === 'chat_data_changed' &&
+      Array.isArray(payload.domains) &&
+      payload.domains.includes('appointments')
+    ) {
+      invalidateRistakApiReadCache({ pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS })
+      return
+    }
+    if (parsed.event !== 'chat_message') return
     if (payload?.type === 'chat_message' && typeof payload.contactId === 'string' && payload.contactId.trim()) {
-      invalidateRistakApiReadCache()
+      invalidateRistakApiReadCache({ pathPrefixes: CHAT_LIVE_CACHE_PATHS })
       options.onMessage(payload as ChatLiveMessageEvent)
     }
   } catch (error) {
@@ -105,7 +132,11 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
   }
 }
 
-async function readEventStream(stream: ReadableStream<Uint8Array>, options: SubscribeOptions) {
+async function readEventStream(
+  stream: ReadableStream<Uint8Array>,
+  options: SubscribeOptions,
+  onActivity: () => void
+) {
   const reader = stream.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -114,6 +145,7 @@ async function readEventStream(stream: ReadableStream<Uint8Array>, options: Subs
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+      onActivity()
 
       buffer += decoder.decode(value, { stream: true })
       const frames = buffer.split(/\r?\n\r?\n/)
@@ -136,7 +168,37 @@ export function subscribeToChatLiveEvents(options: SubscribeOptions) {
   let stopped = false
   let reconnectMs = INITIAL_RECONNECT_MS
   let reconnectTimer: number | null = null
+  let watchdogTimer: number | null = null
   let controller: AbortController | null = null
+  let lastActivityAt = 0
+  let currentStatus: ChatLiveConnectionStatus | null = null
+
+  const publishStatus = (status: ChatLiveConnectionStatus) => {
+    if (currentStatus === status) return
+    currentStatus = status
+    options.onStatusChange?.(status)
+  }
+
+  const stopWatchdog = () => {
+    if (watchdogTimer !== null) {
+      window.clearInterval(watchdogTimer)
+      watchdogTimer = null
+    }
+  }
+
+  const markActivity = () => {
+    lastActivityAt = Date.now()
+    publishStatus('connected')
+  }
+
+  const startWatchdog = () => {
+    stopWatchdog()
+    watchdogTimer = window.setInterval(() => {
+      if (!lastActivityAt || Date.now() - lastActivityAt <= STREAM_STALE_AFTER_MS) return
+      publishStatus('stale')
+      controller?.abort()
+    }, STREAM_WATCHDOG_INTERVAL_MS)
+  }
 
   const scheduleReconnect = () => {
     if (stopped) return
@@ -151,6 +213,7 @@ export function subscribeToChatLiveEvents(options: SubscribeOptions) {
     if (stopped) return
 
     controller = new AbortController()
+    publishStatus('connecting')
 
     try {
       const response = await fetch(apiUrl(STREAM_ENDPOINT), {
@@ -164,13 +227,17 @@ export function subscribeToChatLiveEvents(options: SubscribeOptions) {
       }
 
       reconnectMs = INITIAL_RECONNECT_MS
-      await readEventStream(response.body, options)
+      markActivity()
+      startWatchdog()
+      await readEventStream(response.body, options, markActivity)
     } catch (error) {
       if (!stopped && !controller?.signal.aborted) {
         options.onError?.(error)
       }
     } finally {
+      stopWatchdog()
       controller = null
+      if (!stopped) publishStatus('disconnected')
       scheduleReconnect()
     }
   }
@@ -179,10 +246,12 @@ export function subscribeToChatLiveEvents(options: SubscribeOptions) {
 
   return () => {
     stopped = true
+    stopWatchdog()
     if (reconnectTimer !== null) {
       window.clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
     controller?.abort()
+    publishStatus('disconnected')
   }
 }

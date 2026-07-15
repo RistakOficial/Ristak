@@ -25,7 +25,7 @@ function parseJsonArray(value) {
   }
 }
 
-async function openSecret(row, column, label) {
+async function openSecret(row, column, label, { migratePlaintext = true } = {}) {
   if (!row?.[column]) return
   try {
     if (isEncrypted(row[column])) {
@@ -33,18 +33,20 @@ async function openSecret(row, column, label) {
       return
     }
     const plain = row[column]
-    await db.run(
-      `UPDATE meta_oauth_integrations SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-      [encrypt(plain), row.id]
-    )
+    if (migratePlaintext) {
+      await db.run(
+        `UPDATE meta_oauth_integrations SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [encrypt(plain), row.id]
+      )
+      logger.warn(`La credencial ${label} de Meta OAuth se migró a almacenamiento cifrado.`)
+    }
     row[column] = plain
-    logger.warn(`La credencial ${label} de Meta OAuth se migró a almacenamiento cifrado.`)
   } catch (error) {
     throw new Error(`No se pudo abrir ${label} de Meta OAuth. Verifica ENCRYPTION_MASTER_KEY: ${error.message}`)
   }
 }
 
-export async function getActiveMetaOAuthIntegration(integrationKind) {
+export async function getActiveMetaOAuthIntegration(integrationKind, { migratePlaintext = true } = {}) {
   const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
   const row = await db.get(
     `SELECT * FROM meta_oauth_integrations
@@ -59,10 +61,11 @@ export async function getActiveMetaOAuthIntegration(integrationKind) {
   })
   if (!row) return null
 
-  await openSecret(row, 'access_token', `${kind} access token`)
-  await openSecret(row, 'appsecret_proof', `${kind} appsecret_proof`)
-  await openSecret(row, 'page_access_token', `${kind} Page token`)
-  await openSecret(row, 'page_appsecret_proof', `${kind} Page appsecret_proof`)
+  const openOptions = { migratePlaintext }
+  await openSecret(row, 'access_token', `${kind} access token`, openOptions)
+  await openSecret(row, 'appsecret_proof', `${kind} appsecret_proof`, openOptions)
+  await openSecret(row, 'page_access_token', `${kind} Page token`, openOptions)
+  await openSecret(row, 'page_appsecret_proof', `${kind} Page appsecret_proof`, openOptions)
   row.granted_scopes = parseJsonArray(row.granted_scopes_json)
   row.missing_scopes = parseJsonArray(row.missing_scopes_json)
   row.granular_scopes = parseJsonArray(row.granular_scopes_json)

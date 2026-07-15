@@ -1,4 +1,6 @@
 import { databaseDialect, db } from '../config/database.js'
+import { BACKFILL_JOB_PRIORITY } from '../jobs/backfillJobCoordinator.js'
+import { scheduleProjectionBackfillJob } from '../jobs/projectionBackfillScheduler.js'
 import { logger } from '../utils/logger.js'
 
 export const TRACKING_VISITOR_PROJECTION_VERSION = 3
@@ -7,12 +9,82 @@ const POSTGRES_BATCH_SIZE = 2_000
 // debajo del límite SQLite legacy de 999 bind parameters.
 const SQLITE_BATCH_SIZE = 200
 const DEFAULT_YIELD_MS = 25
+const BACKFILL_JOB_KEY = 'tracking-visitor-projection'
+const PROJECTION_STATE_ID = 1
 
 let projectionReady = false
 let workerPromise = null
 let workerScheduled = false
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
+
+function isMissingTrackingVisitorProjectionSchema(error) {
+  const code = String(error?.code || '').toUpperCase()
+  if (code === '42P01' || code === '42703') return true
+  if (code !== 'SQLITE_ERROR') return false
+  const message = String(error?.message || '')
+  return /no such table:\s*tracking_visitor_projection_state/i.test(message) ||
+    /no such column:\s*(?:tracking_visitor_projection_state\.)?(?:singleton_id|projection_version|status|last_error|updated_at)/i.test(message)
+}
+
+export async function readTrackingVisitorProjectionState(database = db) {
+  try {
+    return await database.get(`
+      SELECT singleton_id, projection_version, status, last_error, updated_at
+      FROM tracking_visitor_projection_state
+      WHERE singleton_id = ?
+    `, [PROJECTION_STATE_ID])
+  } catch (error) {
+    if (isMissingTrackingVisitorProjectionSchema(error)) return null
+    throw error
+  }
+}
+
+async function updateTrackingVisitorProjectionState(status, error = null, database = db) {
+  return database.run(`
+    UPDATE tracking_visitor_projection_state
+    SET projection_version = ?,
+        status = ?,
+        last_error = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE singleton_id = ?
+  `, [
+    TRACKING_VISITOR_PROJECTION_VERSION,
+    status,
+    error ? String(error).slice(0, 2_000) : null,
+    PROJECTION_STATE_ID
+  ]).catch(() => null)
+}
+
+/**
+ * Estado O(1) del read model. Un GET nunca inspecciona `sessions` para decidir
+ * si puede responder: durante backfill publica la cobertura parcial disponible.
+ */
+export async function getTrackingVisitorProjectionStatus({ schedule = false } = {}) {
+  const state = await readTrackingVisitorProjectionState()
+  if (!state || Number(state.projection_version) !== TRACKING_VISITOR_PROJECTION_VERSION) {
+    if (schedule) scheduleTrackingVisitorProjectionBackfill()
+    return {
+      available: false,
+      ready: false,
+      status: 'unavailable',
+      sourceStatus: state?.status || 'missing',
+      version: TRACKING_VISITOR_PROJECTION_VERSION
+    }
+  }
+
+  const ready = String(state.status || '').toLowerCase() === 'ready'
+  if (!ready && schedule) scheduleTrackingVisitorProjectionBackfill()
+  return {
+    available: true,
+    ready,
+    status: ready ? 'ready' : 'warming',
+    sourceStatus: String(state.status || 'backfilling'),
+    version: TRACKING_VISITOR_PROJECTION_VERSION,
+    updatedAt: state.updated_at || null,
+    lastError: state.last_error || null
+  }
+}
 
 function visitorKeySql(alias = 'sessions') {
   return `CASE
@@ -259,6 +331,23 @@ export async function runTrackingVisitorProjectionBackfill({
   let updated = 0
   const normalizedBatchSize = Math.max(1, Math.min(Number(batchSize) || 1, 10_000))
 
+  const state = await readTrackingVisitorProjectionState()
+  if (
+    Number(state?.projection_version) === TRACKING_VISITOR_PROJECTION_VERSION &&
+    String(state?.status || '').toLowerCase() === 'ready'
+  ) {
+    projectionReady = true
+    return {
+      ready: true,
+      updated: 0,
+      version: TRACKING_VISITOR_PROJECTION_VERSION,
+      alreadyReady: true
+    }
+  }
+  if (state && String(state.status || '').toLowerCase() !== 'ready') {
+    await updateTrackingVisitorProjectionState('backfilling')
+  }
+
   while (true) {
     const changes = Number(await backfillBatch(normalizedBatchSize) || 0)
     updated += changes
@@ -268,6 +357,7 @@ export async function runTrackingVisitorProjectionBackfill({
       // cuando la tabla confirma que ya no queda ninguna versión vieja.
       if (!(await hasPendingProjectionRows())) {
         projectionReady = true
+        await updateTrackingVisitorProjectionState('ready')
         break
       }
     }
@@ -287,48 +377,34 @@ export function scheduleTrackingVisitorProjectionBackfill() {
     return { scheduled: false, ready: projectionReady }
   }
 
-  workerScheduled = true
-  setTimeout(() => {
-    workerScheduled = false
-    if (projectionReady || workerPromise) return
-    workerPromise = runTrackingVisitorProjectionBackfill()
-      .catch((error) => {
-        logger.warn(`[Tracking] No se pudo completar la proyección de visitantes: ${error.message}`)
-        return { ready: false, error: error.message }
-      })
-      .finally(() => {
-        workerPromise = null
-      })
-  }, 0)
+  const queued = scheduleProjectionBackfillJob({
+    key: BACKFILL_JOB_KEY,
+    priority: BACKFILL_JOB_PRIORITY.NORMAL,
+    run: () => {
+      workerScheduled = false
+      if (projectionReady || workerPromise) return workerPromise
+      workerPromise = runTrackingVisitorProjectionBackfill()
+        .catch((error) => {
+          void updateTrackingVisitorProjectionState('failed', error?.message || error)
+          logger.warn(`[Tracking] No se pudo completar la proyección de visitantes: ${error.message}`)
+          return { ready: false, error: error.message }
+        })
+        .finally(() => {
+          workerPromise = null
+        })
+      return workerPromise
+    }
+  })
+  workerScheduled = queued.scheduled
 
-  return { scheduled: true, ready: false }
+  return { scheduled: queued.scheduled, ready: false }
 }
 
-/**
- * Compuerta exacta: mientras exista una fila histórica sin proyectar, la ruta
- * usa el SQL legacy correcto y el worker sigue convergiendo en background.
- */
+/** Compatibilidad para callers existentes; la comprobación ya no toca sessions. */
 export async function isTrackingVisitorProjectionReady({
-  schedule = true,
-  startUtc,
-  endExclusiveUtc,
-  scopeType,
-  scopeId
+  schedule = true
 } = {}) {
-  if (projectionReady) return true
-
-  try {
-    const scopedCheck = Boolean(startUtc && endExclusiveUtc)
-    const ready = !(await hasPendingProjectionRows({ startUtc, endExclusiveUtc, scopeType, scopeId }))
-    if (!scopedCheck) projectionReady = ready
-    if (ready) return true
-  } catch {
-    // Rolling deploy/test sin migración: no usar columnas que aún no existen.
-    return false
-  }
-
-  if (schedule) scheduleTrackingVisitorProjectionBackfill()
-  return false
+  return (await getTrackingVisitorProjectionStatus({ schedule })).ready
 }
 
 export const TRACKING_VISITOR_PROJECTION_LIMITS = Object.freeze({

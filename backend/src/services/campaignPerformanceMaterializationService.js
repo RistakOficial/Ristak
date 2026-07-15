@@ -35,22 +35,33 @@ function revisionValue(value) {
   return cleanString(value, 120)
 }
 
-export async function getCampaignPerformanceAccountScope() {
-  const row = await db.get('SELECT location_id FROM highlevel_config ORDER BY created_at DESC, id DESC LIMIT 1')
-    .catch(() => null)
+export async function getCampaignPerformanceAccountScope({ signal } = {}) {
+  const row = await db.get(
+    'SELECT location_id FROM highlevel_config ORDER BY created_at DESC, id DESC LIMIT 1',
+    [],
+    signal ? { signal } : undefined
+  )
+    .catch((error) => {
+      if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
+      return null
+    })
   return `account:${cleanString(row?.location_id, 240) || 'local-database'}`
 }
 
-export async function getCampaignPerformanceSourceRevision({ includeVisitors = false } = {}) {
+export async function getCampaignPerformanceSourceRevision({ includeVisitors = false, signal } = {}) {
   const revision = await db.get(
-    'SELECT core_revision, visitor_revision FROM campaign_performance_revision WHERE id = 1'
+    'SELECT core_revision, visitor_revision FROM campaign_performance_revision WHERE id = 1',
+    [],
+    signal ? { signal } : undefined
   )
   const coreRevision = Number(revision?.core_revision || 0)
   if (!includeVisitors) return `core:${coreRevision}`
 
   if (databaseDialect === 'postgres') {
     const visitorSequence = await db.get(
-      'SELECT last_value, is_called FROM campaign_performance_visitor_revision_seq'
+      'SELECT last_value, is_called FROM campaign_performance_visitor_revision_seq',
+      [],
+      signal ? { signal } : undefined
     )
     const visitorRevision = visitorSequence?.is_called
       ? Number(visitorSequence.last_value || 0)

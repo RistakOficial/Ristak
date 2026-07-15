@@ -4,6 +4,7 @@ import { sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { formatPlacementName } from '../utils/placementName.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { buildNormalizedTrafficSourceSql } from './contactSourceService.js'
+import { getProjectedMessageFirstSeenCount } from './messageFirstSeenProjectionService.js'
 
 const toRanked = (bucketMap, limit = 10) =>
   Array.from(bucketMap.entries())
@@ -197,56 +198,28 @@ function normalizeMessageFilters(filters = {}) {
   }
 }
 
-async function getMessageFirstSeenCount(range, providedHiddenFilters = null) {
+async function getMessageFirstSeenCount(range, providedHiddenFilters = null, signal) {
   const hiddenFilters = providedHiddenFilters || await getHiddenContactFilters()
-  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-  const hiddenSql = hiddenCondition ? `AND (msg.contact_id IS NULL OR ${hiddenCondition})` : ''
-  const whatsappTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
-  const metaTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
-  const emailTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
+  return getProjectedMessageFirstSeenCount(range, {
+    hiddenFilters,
+    signal,
+    withStatus: true
+  })
+}
 
-  const row = await db.get(`
-    SELECT COUNT(*) as total
-    FROM (
-      SELECT identity, MIN(first_seen_at) as first_seen_at
-      FROM (
-        SELECT ${getWhatsAppApiIdentitySql('msg')} as identity, MIN(${whatsappTimestamp}) as first_seen_at
-        FROM whatsapp_api_messages msg
-        LEFT JOIN contacts c ON c.id = msg.contact_id
-        WHERE LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'
-          ${hiddenSql}
-        GROUP BY identity
-
-        UNION ALL
-
-        SELECT ${getMetaMessageIdentitySql('msg')} as identity, MIN(${metaTimestamp}) as first_seen_at
-        FROM meta_social_messages msg
-        LEFT JOIN contacts c ON c.id = msg.contact_id
-        WHERE LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'
-          ${hiddenSql}
-        GROUP BY identity
-
-        UNION ALL
-
-        SELECT ${getEmailMessageIdentitySql('msg')} as identity, MIN(${emailTimestamp}) as first_seen_at
-        FROM email_messages msg
-        LEFT JOIN contacts c ON c.id = msg.contact_id
-        WHERE LOWER(COALESCE(msg.direction, 'outbound')) = 'inbound'
-          ${hiddenSql}
-        GROUP BY identity
-      ) all_first_seen
-      GROUP BY identity
-    ) first_seen
-    WHERE first_seen_at >= ? AND first_seen_at <= ?
-  `, [range.startUtc, range.endUtc]).catch(() => ({ total: 0 }))
-
-  return Number(row?.total || 0)
+async function getWhatsAppFirstSeenCount(range, hiddenFilters) {
+  return getProjectedMessageFirstSeenCount(range, {
+    sourceKind: 'whatsapp',
+    hiddenFilters,
+    withStatus: true
+  })
 }
 
 async function getMessageAnalyticsAggregateRows(range, {
   groupBy = 'day',
   filters = {},
-  hiddenFilters = []
+  hiddenFilters = [],
+  signal
 } = {}) {
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const hiddenSql = hiddenCondition ? `AND (msg.contact_id IS NULL OR ${hiddenCondition})` : ''
@@ -423,15 +396,15 @@ async function getMessageAnalyticsAggregateRows(range, {
       0 AS all_messages_value
     FROM ranked_sources
     WHERE item_rank <= ${MESSAGE_FILTER_OPTION_LIMIT}
-  `, params)
+  `, params, { signal })
 }
 
-async function getMessageConnectionStatus() {
+async function getMessageConnectionStatus(signal) {
   const [phoneRows, metaConfig, metaContactRows, emailConfigRow] = await Promise.all([
-    db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers').catch(() => ({ total: 0 })),
+    db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers', [], { signal }).catch(() => ({ total: 0 })),
     getMetaSocialConfig().catch(() => null),
-    db.get('SELECT COUNT(*) as total FROM meta_social_contacts').catch(() => ({ total: 0 })),
-    db.get("SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'").catch(() => null)
+    db.get('SELECT COUNT(*) as total FROM meta_social_contacts', [], { signal }).catch(() => ({ total: 0 })),
+    db.get("SELECT config_value FROM app_config WHERE config_key = 'email_smtp_config'", [], { signal }).catch(() => null)
   ])
 
   const emailConfig = parseJsonSafe(emailConfigRow?.config_value, {})
@@ -443,7 +416,7 @@ async function getMessageConnectionStatus() {
   }
 }
 
-export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filters = {} } = {}) {
+export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filters = {}, signal } = {}) {
   const normalizedGroupBy = ['day', 'month', 'year'].includes(groupBy) ? groupBy : 'day'
   const normalizedFilters = normalizeMessageFilters(filters)
   const hasActiveFilters = normalizedFilters.channels.length > 0 || normalizedFilters.sources.length > 0
@@ -452,10 +425,13 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
     getMessageAnalyticsAggregateRows(range, {
       groupBy: normalizedGroupBy,
       filters: normalizedFilters,
-      hiddenFilters
+      hiddenFilters,
+      signal
     }),
-    getMessageConnectionStatus(),
-    hasActiveFilters ? Promise.resolve(null) : getMessageFirstSeenCount(range, hiddenFilters)
+    getMessageConnectionStatus(signal),
+    hasActiveFilters
+      ? Promise.resolve({ count: null, projectionReady: true, projectionStatus: 'filtered' })
+      : getMessageFirstSeenCount(range, hiddenFilters, signal)
   ])
   const metricsRow = aggregateRows.find(row => row.row_type === 'metrics') || {}
   const inboundMessages = Number(metricsRow.count_value || 0)
@@ -474,7 +450,9 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
     metrics: {
       inboundMessages,
       conversations,
-      contacts: hasActiveFilters ? conversations : Number(firstSeenCount || 0),
+      contacts: hasActiveFilters || firstSeenCount?.projectionStatus === 'unavailable'
+        ? Math.max(conversations, Number(firstSeenCount?.count || 0))
+        : Number(firstSeenCount?.count || 0),
       attributionRate: conversations > 0
         ? Number(((attributedConversations / conversations) * 100).toFixed(1))
         : 0
@@ -496,7 +474,9 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
     status: {
       connected,
       hasData: allMessages > 0,
-      channels: connectionStatus
+      channels: connectionStatus,
+      firstSeenProjection: firstSeenCount?.projectionStatus || 'unavailable',
+      firstSeenProjectionComplete: Boolean(firstSeenCount?.projectionReady)
     }
   }
 }
@@ -519,11 +499,6 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
   const periodExpr = whatsappPeriodExpression(timestampColumn, normalizedGroupBy, range.appliedTimezone)
   const identityExpr = getWhatsAppApiIdentitySql('msg')
   const sourceExpr = getWhatsAppMessageSourceSql('msg', 'attr', 'c')
-  const firstSeenConditions = ["LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'"]
-  if (hiddenCondition) {
-    firstSeenConditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
-  }
-
   // Este endpoint se conserva por compatibilidad, pero jamás debe descargar el
   // historial crudo. Las cuatro métricas tienen cardinalidad fija y se calculan
   // dentro de la base aunque el periodo contenga millones de mensajes.
@@ -550,17 +525,7 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
       GROUP BY label
       ORDER BY label ASC
     `, [range.startUtc, range.endUtc]),
-    db.get(`
-      SELECT COUNT(*) as total
-      FROM (
-        SELECT ${identityExpr} as identity, MIN(${timestampColumn}) as first_seen_at
-        FROM whatsapp_api_messages msg
-        LEFT JOIN contacts c ON c.id = msg.contact_id
-        WHERE ${firstSeenConditions.join(' AND ')}
-        GROUP BY identity
-      ) first_seen
-      WHERE first_seen_at >= ? AND first_seen_at <= ?
-    `, [range.startUtc, range.endUtc]),
+    getWhatsAppFirstSeenCount(range, hiddenFilters),
     db.get('SELECT COUNT(*) as total FROM whatsapp_api_phone_numbers').catch(() => ({ total: 0 }))
   ])
 
@@ -572,7 +537,9 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
     metrics: {
       inboundMessages,
       conversations,
-      contacts: Number(firstSeenRow?.total || 0),
+      contacts: firstSeenRow?.projectionStatus === 'unavailable'
+        ? Math.max(conversations, Number(firstSeenRow?.count || 0))
+        : Number(firstSeenRow?.count || 0),
       attributionRate: conversations > 0 ? Number(((attributedConversations / conversations) * 100).toFixed(1)) : 0
     },
     trend: trendRows.map(row => ({
@@ -581,7 +548,9 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
     })),
     status: {
       connected: Number(phoneRows?.total || 0) > 0,
-      hasData: inboundMessages > 0
+      hasData: inboundMessages > 0,
+      firstSeenProjection: firstSeenRow?.projectionStatus || 'unavailable',
+      firstSeenProjectionComplete: Boolean(firstSeenRow?.projectionReady)
     }
   }
 }
@@ -596,7 +565,7 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
  */
 export async function getTrafficDistributions(
   range,
-  { includeWeb = true, includeWhatsapp = true, hiddenFilters: suppliedHiddenFilters = null } = {}
+  { includeWeb = true, includeWhatsapp = true, hiddenFilters: suppliedHiddenFilters = null, signal } = {}
 ) {
   const hiddenFilters = Array.isArray(suppliedHiddenFilters)
     ? suppliedHiddenFilters
@@ -695,7 +664,7 @@ export async function getTrafficDistributions(
     FROM ranked_dimensions
     WHERE item_rank <= ${rawFacetLimit}
     ORDER BY dimension ASC, item_rank ASC
-  `, [range.startUtc, range.endUtc, range.startUtc, range.endUtc])
+  `, [range.startUtc, range.endUtc, range.startUtc, range.endUtc], { signal })
 
   const buckets = {
     sources: new Map(),
@@ -783,7 +752,7 @@ export async function getWhatsAppApiSourceBreakdown(
 
 export async function getWhatsAppApiNumberBreakdown(
   range,
-  { limit = 10, hiddenFilters: suppliedHiddenFilters = null } = {}
+  { limit = 10, hiddenFilters: suppliedHiddenFilters = null, signal } = {}
 ) {
   const hiddenFilters = Array.isArray(suppliedHiddenFilters)
     ? suppliedHiddenFilters
@@ -839,7 +808,7 @@ export async function getWhatsAppApiNumberBreakdown(
     GROUP BY ${phoneKey}
     ORDER BY value DESC, name ASC
     LIMIT ?
-  `, [range.startUtc, range.endUtc, safeLimit])
+  `, [range.startUtc, range.endUtc, safeLimit], { signal })
 
   return rows.map(row => ({
     name: row.name || 'Número sin nombre',

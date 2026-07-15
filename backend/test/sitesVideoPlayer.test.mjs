@@ -1346,8 +1346,9 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
         id, business_id, original_filename, stored_filename, bunny_path,
         public_url, mime_type, media_type, extension,
         size_original, size_processed, quota_size, status,
-        storage_provider, module, module_entity_id, is_public, metadata_json
-      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+        storage_provider, module, module_entity_id, is_public, metadata_json,
+        stream_video_id
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?, ?)`,
       [
         assetId,
         `sites/${assetId}.mp4`,
@@ -1360,7 +1361,8 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
             libraryId: '123456',
             videoId: streamVideoId
           }
-        })
+        }),
+        streamVideoId
       ]
     )
 
@@ -1425,8 +1427,9 @@ test('legacy Stream-only assets stay disabled in preview and remain playable in 
         id, business_id, original_filename, stored_filename, bunny_path,
         public_url, mime_type, media_type, extension,
         size_original, size_processed, quota_size, status,
-        storage_provider, module, module_entity_id, is_public, metadata_json
-      ) VALUES (?, 'default', 'recording.mov', 'recording.mov', ?, ?, 'video/quicktime', 'video', 'mov', 128, 128, 128, 'ready', 'bunny_stream', 'sites', ?, 1, ?)`,
+        storage_provider, module, module_entity_id, is_public, metadata_json,
+        stream_video_id
+      ) VALUES (?, 'default', 'recording.mov', 'recording.mov', ?, ?, 'video/quicktime', 'video', 'mov', 128, 128, 128, 'ready', 'bunny_stream', 'sites', ?, 1, ?, ?)`,
       [
         assetId,
         `stream/${streamVideoId}`,
@@ -1439,7 +1442,8 @@ test('legacy Stream-only assets stay disabled in preview and remain playable in 
             libraryId: '123456',
             videoId: streamVideoId
           }
-        })
+        }),
+        streamVideoId
       ]
     )
 

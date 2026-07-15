@@ -6,7 +6,9 @@ import {
 } from './authPrincipalCache'
 import { registerRistakApiReadCacheInvalidator } from './authFetch'
 import type { ContactListItem } from './reportsService'
-import type { CursorPagePagination, TrackingSession } from './trackingService'
+import type { CursorPagePagination, TrackingSession, TrackingVisitorsCoverage } from './trackingService'
+
+export type AnalyticsVisitorsCoverage = TrackingVisitorsCoverage
 
 export type TrackingAnalyticsGroupBy = 'day' | 'month' | 'year'
 
@@ -59,6 +61,10 @@ export interface TrackingAnalyticsConversionPoint {
 }
 
 export interface TrackingAnalyticsSummary {
+  snapshot?: {
+    stale: boolean
+    revision: number
+  }
   range: {
     start: string
     end: string
@@ -127,7 +133,7 @@ export function peekTrackingAnalyticsSummary(input: TrackingAnalyticsSummaryInpu
  */
 export async function getTrackingAnalyticsSummary(
   input: TrackingAnalyticsSummaryInput,
-  options: { signal?: AbortSignal; forceRefresh?: boolean } = {}
+  options: { signal?: AbortSignal; forceRefresh?: boolean; waitForFresh?: boolean } = {}
 ): Promise<TrackingAnalyticsSummary> {
   syncAuthScopedCachePrincipal()
   const requestPrincipalRevision = getAuthScopedCacheRevision()
@@ -139,7 +145,7 @@ export async function getTrackingAnalyticsSummary(
 
   const data = await apiClient.post<TrackingAnalyticsSummary>(
     '/tracking/analytics/summary',
-    input,
+    options.waitForFresh ? { ...input, waitForFresh: true } : input,
     { signal: options.signal }
   )
   if (requestPrincipalRevision === getAuthScopedCacheRevision()) {
@@ -222,6 +228,8 @@ export interface MessageAnalyticsSummary {
     connected?: boolean
     hasData?: boolean
     channels?: Record<string, boolean>
+    firstSeenProjection?: 'ready' | 'warming' | 'unavailable' | 'filtered'
+    firstSeenProjectionComplete?: boolean
   }
 }
 
@@ -253,12 +261,13 @@ export async function getMessageAnalyticsSummary(
   startDate: string,
   endDate: string,
   groupBy: 'day' | 'month' | 'year' = 'day',
-  filters: { channels?: string[]; sources?: string[] } = {}
+  filters: { channels?: string[]; sources?: string[] } = {},
+  signal?: AbortSignal
 ): Promise<MessageAnalyticsSummary> {
   const params = new URLSearchParams({ start: startDate, end: endDate, groupBy })
   if (filters.channels?.length) params.set('channels', filters.channels.join(','))
   if (filters.sources?.length) params.set('sources', filters.sources.join(','))
-  return apiClient.get<MessageAnalyticsSummary>(`/tracking/messages-summary?${params.toString()}`)
+  return apiClient.get<MessageAnalyticsSummary>(`/tracking/messages-summary?${params.toString()}`, { signal })
 }
 
 /**

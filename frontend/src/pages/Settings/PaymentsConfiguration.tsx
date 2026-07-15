@@ -829,6 +829,9 @@ export const PaymentsConfiguration: React.FC = () => {
   const latestSettingsRef = useRef(settings)
   const loadedSettingsRef = useRef(false)
   const lastSavedSettingsRef = useRef(JSON.stringify(defaultPaymentSettings))
+  const gatewayConfigLoadedRef = useRef(new Set<PaymentGatewayId>())
+  const paymentAutomationsPanelLoadedRef = useRef(false)
+  const paymentMetaVariablesLoadedRef = useRef(false)
 
   const checkout = settings.checkout
   const receipt = settings.receipt
@@ -903,12 +906,16 @@ export const PaymentsConfiguration: React.FC = () => {
   }, [accountBusinessProfile])
 
   useEffect(() => {
+    if (activeSection !== 'meta' || paymentMetaVariablesLoadedRef.current) return
     let cancelled = false
     void loadAllVariables().then((variables) => {
-      if (!cancelled) setLoadedMetaVariables(variables)
+      if (!cancelled) {
+        setLoadedMetaVariables(variables)
+        paymentMetaVariablesLoadedRef.current = true
+      }
     })
     return () => { cancelled = true }
-  }, [])
+  }, [activeSection])
 
   useEffect(() => {
     const nextSection = getInitialSection(location.pathname)
@@ -916,20 +923,45 @@ export const PaymentsConfiguration: React.FC = () => {
   }, [location.pathname])
 
   useEffect(() => {
-    loadPaymentSettings()
-    loadStripeConfig()
-    loadConektaConfig()
-    loadMercadoPagoConfig()
-    loadClipConfig()
-    loadRebillConfig()
-    loadWhatsAppAvailability()
-    loadPaymentWhatsappTemplates()
+    const controller = new AbortController()
+    void loadPaymentSettings(controller.signal)
+    return () => controller.abort()
   }, [])
 
   useEffect(() => {
-    if (loadingHighLevelConnection) return
-    if (highLevelConnected) loadHighLevelPaymentConfig()
-  }, [highLevelConnected, loadingHighLevelConnection])
+    if (activeSection !== 'automations' || paymentAutomationsPanelLoadedRef.current) return
+    const controller = new AbortController()
+    void Promise.allSettled([
+      loadWhatsAppAvailability(controller.signal),
+      loadPaymentWhatsappTemplates(controller.signal)
+    ]).then(() => {
+      if (!controller.signal.aborted) paymentAutomationsPanelLoadedRef.current = true
+    })
+    return () => controller.abort()
+  }, [activeSection])
+
+  useEffect(() => {
+    if (activeSection !== 'gateways') return
+    if (activeGatewayRoute === 'highlevel' && loadingHighLevelConnection) return
+    const targetGateways: PaymentGatewayId[] = activeGatewayRoute
+      ? [activeGatewayRoute]
+      : ['stripe', 'conekta', 'mercadopago', 'clip', 'rebill']
+    const controllers: AbortController[] = []
+    const loadGateway = (gateway: PaymentGatewayId) => {
+      if (gatewayConfigLoadedRef.current.has(gateway)) return
+      if (gateway === 'highlevel' && !highLevelConnected) return
+      const controller = new AbortController()
+      controllers.push(controller)
+      if (gateway === 'highlevel') void loadHighLevelPaymentConfig(controller.signal)
+      if (gateway === 'stripe') void loadStripeConfig(controller.signal)
+      if (gateway === 'conekta') void loadConektaConfig(controller.signal)
+      if (gateway === 'mercadopago') void loadMercadoPagoConfig(controller.signal)
+      if (gateway === 'clip') void loadClipConfig(controller.signal)
+      if (gateway === 'rebill') void loadRebillConfig(controller.signal)
+    }
+    targetGateways.forEach(loadGateway)
+    return () => controllers.forEach(controller => controller.abort())
+  }, [activeGatewayRoute, activeSection, highLevelConnected, loadingHighLevelConnection])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -1350,10 +1382,11 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
-  const loadPaymentSettings = async () => {
+  const loadPaymentSettings = async (signal?: AbortSignal) => {
     setLoadingSettings(true)
     try {
-      const nextSettings = await paymentSettingsService.getSettings()
+      const nextSettings = await paymentSettingsService.getSettings(signal)
+      if (signal?.aborted) return
       const serialized = JSON.stringify(nextSettings)
       loadedSettingsRef.current = true
       lastSavedSettingsRef.current = serialized
@@ -1361,45 +1394,40 @@ export const PaymentsConfiguration: React.FC = () => {
       setSettings(nextSettings)
       setAutoSaveState('saved')
     } catch (error: any) {
-      showToast('warning', 'Configuración local', error.message || 'Usaremos valores por defecto mientras se carga pagos.')
+      if (!signal?.aborted) showToast('warning', 'Configuración local', error.message || 'Usaremos valores por defecto mientras se carga pagos.')
     } finally {
       setLoadingSettings(false)
     }
   }
 
-  const loadWhatsAppAvailability = async () => {
+  const loadWhatsAppAvailability = async (signal?: AbortSignal) => {
     try {
-      const status = await whatsappApiService.getStatus()
-      setWhatsappAvailability(getWhatsAppStatusConnectionAvailability(status))
+      const status = await whatsappApiService.getStatus({ signal })
+      if (!signal?.aborted) setWhatsappAvailability(getWhatsAppStatusConnectionAvailability(status))
     } catch {
-      setWhatsappAvailability(defaultWhatsAppAvailability)
+      if (!signal?.aborted) setWhatsappAvailability(defaultWhatsAppAvailability)
     }
   }
 
-  const loadPaymentWhatsappTemplates = async () => {
+  const loadPaymentWhatsappTemplates = async (signal?: AbortSignal) => {
     setLoadingPaymentWhatsappTemplates(true)
     try {
-      let items = (await whatsappApiService.getTemplates('APPROVED')).items || []
-      if (!items.length) {
-        try {
-          await whatsappApiService.refresh()
-          items = (await whatsappApiService.getTemplates('APPROVED')).items || []
-        } catch {
-          // La pantalla sigue permitiendo las plantillas predeterminadas por nombre.
-        }
+      const items = (await whatsappApiService.getTemplates('APPROVED', { signal })).items || []
+      if (!signal?.aborted) {
+        setPaymentWhatsappTemplates(items.filter((template) => String(template.status || '').toUpperCase() === 'APPROVED'))
       }
-      setPaymentWhatsappTemplates(items.filter((template) => String(template.status || '').toUpperCase() === 'APPROVED'))
     } catch {
-      setPaymentWhatsappTemplates([])
+      if (!signal?.aborted) setPaymentWhatsappTemplates([])
     } finally {
       setLoadingPaymentWhatsappTemplates(false)
     }
   }
 
-  const loadHighLevelPaymentConfig = async () => {
+  const loadHighLevelPaymentConfig = async (signal?: AbortSignal) => {
     try {
-      const response = await fetch('/api/highlevel/config')
+      const response = await fetch('/api/highlevel/config', { signal })
       const config = await response.json()
+      if (signal?.aborted) return
 
       if (config.invoiceTitle) setPaymentTitle(config.invoiceTitle)
       if (config.invoiceNumberPrefix) setPaymentNumberPrefix(config.invoiceNumberPrefix)
@@ -1429,6 +1457,7 @@ export const PaymentsConfiguration: React.FC = () => {
             }
           : current.checkout
       }))
+      gatewayConfigLoadedRef.current.add('highlevel')
     } catch {
       // Usar valores por defecto si no hay configuración todavía.
     }
@@ -1535,14 +1564,18 @@ export const PaymentsConfiguration: React.FC = () => {
     setStripeConnectionFailed(false)
   }
 
-  const loadStripeConfig = async () => {
+  const loadStripeConfig = async (signal?: AbortSignal) => {
     setLoadingStripeConfig(true)
     try {
-      const config = await stripePaymentsService.getConfig()
+      const config = await stripePaymentsService.getConfig(signal)
+      if (signal?.aborted) return
       applyStripeConfig(config)
+      gatewayConfigLoadedRef.current.add('stripe')
     } catch {
-      setStripeConfig(null)
-      setStripeManualCredentials(emptyStripeModeCredentials)
+      if (!signal?.aborted) {
+        setStripeConfig(null)
+        setStripeManualCredentials(emptyStripeModeCredentials)
+      }
     } finally {
       setLoadingStripeConfig(false)
     }
@@ -1554,14 +1587,18 @@ export const PaymentsConfiguration: React.FC = () => {
     setConektaConnectionFailed(false)
   }
 
-  const loadConektaConfig = async () => {
+  const loadConektaConfig = async (signal?: AbortSignal) => {
     setLoadingConektaConfig(true)
     try {
-      const config = await conektaPaymentsService.getConfig()
+      const config = await conektaPaymentsService.getConfig(signal)
+      if (signal?.aborted) return
       applyConektaConfig(config)
+      gatewayConfigLoadedRef.current.add('conekta')
     } catch {
-      setConektaConfig(null)
-      setConektaManualCredentials(emptyConektaModeCredentials)
+      if (!signal?.aborted) {
+        setConektaConfig(null)
+        setConektaManualCredentials(emptyConektaModeCredentials)
+      }
     } finally {
       setLoadingConektaConfig(false)
     }
@@ -1572,14 +1609,18 @@ export const PaymentsConfiguration: React.FC = () => {
     setMercadoPagoSubscriptionTestCredentials(getMercadoPagoSubscriptionTestCredentialsFromConfig(config))
   }
 
-  const loadMercadoPagoConfig = async () => {
+  const loadMercadoPagoConfig = async (signal?: AbortSignal) => {
     setLoadingMercadoPagoConfig(true)
     try {
-      const config = await mercadoPagoPaymentsService.getConfig()
+      const config = await mercadoPagoPaymentsService.getConfig(signal)
+      if (signal?.aborted) return
       applyMercadoPagoConfig(config)
+      gatewayConfigLoadedRef.current.add('mercadopago')
     } catch {
-      setMercadoPagoConfig(null)
-      setMercadoPagoSubscriptionTestCredentials(emptyMercadoPagoSubscriptionTestCredentials)
+      if (!signal?.aborted) {
+        setMercadoPagoConfig(null)
+        setMercadoPagoSubscriptionTestCredentials(emptyMercadoPagoSubscriptionTestCredentials)
+      }
     } finally {
       setLoadingMercadoPagoConfig(false)
     }
@@ -1591,14 +1632,18 @@ export const PaymentsConfiguration: React.FC = () => {
     setClipConnectionFailed(false)
   }
 
-  const loadClipConfig = async () => {
+  const loadClipConfig = async (signal?: AbortSignal) => {
     setLoadingClipConfig(true)
     try {
-      const config = await clipPaymentsService.getConfig()
+      const config = await clipPaymentsService.getConfig(signal)
+      if (signal?.aborted) return
       applyClipConfig(config)
+      gatewayConfigLoadedRef.current.add('clip')
     } catch {
-      setClipConfig(null)
-      setClipManualCredentials(emptyClipModeCredentials)
+      if (!signal?.aborted) {
+        setClipConfig(null)
+        setClipManualCredentials(emptyClipModeCredentials)
+      }
     } finally {
       setLoadingClipConfig(false)
     }
@@ -1610,14 +1655,18 @@ export const PaymentsConfiguration: React.FC = () => {
     setRebillConnectionFailed(false)
   }
 
-  const loadRebillConfig = async () => {
+  const loadRebillConfig = async (signal?: AbortSignal) => {
     setLoadingRebillConfig(true)
     try {
-      const config = await rebillPaymentsService.getConfig()
+      const config = await rebillPaymentsService.getConfig(signal)
+      if (signal?.aborted) return
       applyRebillConfig(config)
+      gatewayConfigLoadedRef.current.add('rebill')
     } catch {
-      setRebillConfig(null)
-      setRebillManualCredentials(emptyRebillModeCredentials)
+      if (!signal?.aborted) {
+        setRebillConfig(null)
+        setRebillManualCredentials(emptyRebillModeCredentials)
+      }
     } finally {
       setLoadingRebillConfig(false)
     }

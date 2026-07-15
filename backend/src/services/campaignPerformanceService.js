@@ -81,6 +81,28 @@ const PAGE_CACHE_TTL_MS = 20_000
 const PAGE_CACHE_MAX_ENTRIES = 80
 const MATERIALIZATION_BACKGROUND_BUILD_LIMIT = 2
 
+function createCampaignAbortError() {
+  return Object.assign(new Error('La consulta de campañas fue cancelada'), {
+    name: 'AbortError',
+    code: 'ABORT_ERR',
+    status: 499
+  })
+}
+
+function throwIfCampaignRequestAborted(signal) {
+  if (signal?.aborted) throw createCampaignAbortError()
+}
+
+function waitForCampaignBuild(build, signal) {
+  if (!signal) return build
+  throwIfCampaignRequestAborted(signal)
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(createCampaignAbortError())
+    signal.addEventListener('abort', onAbort, { once: true })
+    build.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
 function cloneResult(value) {
   return typeof structuredClone === 'function'
     ? structuredClone(value)
@@ -291,8 +313,10 @@ export async function getCampaignPerformancePage({
   campaignId = '',
   adsetId = '',
   includeVisitors = false,
-  onlyWithResults = false
+  onlyWithResults = false,
+  signal
 } = {}) {
+  throwIfCampaignRequestAborted(signal)
   if (!range?.startZoned || !range?.endZoned || !range?.startUtc || !range?.endUtc) {
     const error = new Error('Rango de fechas inválido')
     error.status = 400
@@ -349,7 +373,8 @@ export async function getCampaignPerformancePage({
       SELECT COUNT(*) AS total
       FROM entity_rollups
       ${searchClause.sql}
-    `, [...rollupParams, ...searchClause.params])
+    `, [...rollupParams, ...searchClause.params], { signal })
+    throwIfCampaignRequestAborted(signal)
     totalItems = Number(totalRow?.total || 0)
     totalPages = Math.max(Math.ceil(totalItems / pageSize), 1)
     safePage = Math.min(page, totalPages)
@@ -357,9 +382,11 @@ export async function getCampaignPerformancePage({
   let offset = (safePage - 1) * pageSize
 
   const hiddenFilters = await getHiddenContactFilters()
+  throwIfCampaignRequestAborted(signal)
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const dedupExpression = buildDedupExpression('c')
   const appointmentCalendars = await getAttributionCalendarIds()
+  throwIfCampaignRequestAborted(signal)
   const calendarCondition = appointmentCalendars?.length
     ? `AND a.calendar_id IN (${appointmentCalendars.map(() => '?').join(', ')})`
     : ''
@@ -627,7 +654,8 @@ export async function getCampaignPerformancePage({
         if (backgroundBuild) void backgroundBuild.catch(() => undefined)
       } else {
         const build = startBuild(sourceRevision)
-        if (build) await build
+        if (build) await waitForCampaignBuild(build, signal)
+        throwIfCampaignRequestAborted(signal)
 
         const currentRevision = await getCampaignPerformanceSourceRevision({ includeVisitors })
         const currentPage = await readPage(currentRevision)
@@ -676,7 +704,8 @@ export async function getCampaignPerformancePage({
     materializedAt = materializedPage.builtAt
     materializedRevision = materializedPage.sourceRevision
   } else {
-    const rows = await db.all(query, queryParams)
+    const rows = await db.all(query, queryParams, { signal })
+    throwIfCampaignRequestAborted(signal)
     items = rows.map(row => normalizeEntityRow(row, level))
   }
   const result = {
@@ -709,5 +738,6 @@ export async function getCampaignPerformancePage({
     pageCache.set(cacheKey, { value: cloneResult(result), expiresAt: now + PAGE_CACHE_TTL_MS })
     prunePageCache(now)
   }
+  throwIfCampaignRequestAborted(signal)
   return result
 }

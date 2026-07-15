@@ -125,15 +125,22 @@ const existsAttendanceSignal = (contactAlias = 'c') => (
   )`
 )
 
-const buildQuickFilterCondition = (quickFilter = 'all', contactAlias = 'c') => {
+const buildQuickFilterCondition = (quickFilter = 'all', contactAlias = 'c', activityAlias = '') => {
   const filter = CONTACT_LIST_QUICK_FILTERS.has(String(quickFilter)) ? String(quickFilter) : 'all'
-  const customer = existsCustomerPayment(contactAlias)
-  const activeAppointment = existsActiveAppointment(contactAlias)
+  const customer = activityAlias
+    ? `COALESCE(${activityAlias}.customer_payments_count, 0) > 0`
+    : existsCustomerPayment(contactAlias)
+  const activeAppointment = activityAlias
+    ? `COALESCE(${activityAlias}.active_appointments_count, 0) > 0`
+    : existsActiveAppointment(contactAlias)
+  const attended = activityAlias
+    ? `(COALESCE(${activityAlias}.attendance_signals_count, 0) > 0 OR COALESCE(${activityAlias}.attended_appointments_count, 0) > 0)`
+    : `(${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)})`
 
   if (filter === 'customers') return customer
   if (filter === 'appointments') return `(${activeAppointment} AND NOT ${customer})`
   if (filter === 'attendances') {
-    return `(${customer} OR ${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)})`
+    return `(${customer} OR ${attended})`
   }
   if (filter === 'leads') return `(NOT ${customer} AND NOT ${activeAppointment})`
   return ''
@@ -157,7 +164,7 @@ export const contactListPrioritySortExpression = (contactAlias = 'c', paymentSta
 )
 
 const appointmentStatusExpression = (alias = 'a') => `LOWER(COALESCE(${alias}.appointment_status, ${alias}.status, ''))`
-const appointmentDateExpression = (alias = 'a') => `COALESCE(${alias}.start_time, ${alias}.date_added, ${alias}.created_at)`
+const appointmentDateExpression = (alias = 'a') => `COALESCE(${alias}.start_time, ${alias}.date_added, ${alias}.date_updated)`
 const appointmentActiveCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
 const appointmentAttendedCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
 const appointmentCancelledOnlyCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} IN (${sqlList(APPOINTMENT_CANCELLED_ONLY_STATUSES)})`
@@ -192,11 +199,15 @@ const appointmentDateAggregateExpression = (aggregate = 'MAX', contactAlias = 'c
 }
 
 export function getContactListSortExpression(sortBy, contactAlias = 'c', paymentStatsAlias = 'ps') {
-  const createdAtSortExpression = timestampSortExpression(`${contactAlias}.created_at`)
+  // created_at/updated_at son TIMESTAMP en PostgreSQL y texto ISO normalizado
+  // en SQLite. Mantener la columna cruda permite que el keyset use directamente
+  // idx_contacts_cursor_{created,updated}; convertirla a epoch forzaba un sort
+  // global en cada página aunque existiera el índice correcto.
+  const createdAtSortExpression = `${contactAlias}.created_at`
   const sortableMap = {
     priority: contactListPrioritySortExpression(contactAlias, paymentStatsAlias),
     created_at: createdAtSortExpression,
-    updated_at: timestampSortExpression(`${contactAlias}.updated_at`),
+    updated_at: `${contactAlias}.updated_at`,
     full_name: `${contactAlias}.full_name`,
     email: `${contactAlias}.email`,
     phone: `${contactAlias}.phone`,
@@ -213,6 +224,62 @@ export function getContactListSortExpression(sortBy, contactAlias = 'c', payment
   }
 
   return sortableMap[String(sortBy || '')] || createdAtSortExpression
+}
+
+const PROJECTED_CONTACT_SORTS = new Set([
+  'priority',
+  'created_at',
+  'updated_at',
+  'full_name',
+  'email',
+  'phone',
+  'total_paid',
+  'purchases_count',
+  'payments_count',
+  'failed_payments_count',
+  'last_purchase_date',
+  'appointments_count',
+  'active_appointments_count',
+  'attended_appointments_count',
+  'last_appointment_date'
+])
+
+export function isProjectedContactListSort(sortBy) {
+  return PROJECTED_CONTACT_SORTS.has(String(sortBy || 'created_at'))
+}
+
+export function getContactListSortType(sortBy) {
+  if (['created_at', 'updated_at'].includes(String(sortBy || ''))) return 'timestamp'
+  return ['full_name', 'email', 'phone'].includes(String(sortBy || '')) ? 'text' : 'numeric'
+}
+
+export function getProjectedContactListSortExpression(
+  sortBy,
+  contactAlias = 'c',
+  activityAlias = 'cla',
+  { completeCoverage = false } = {}
+) {
+  const projectedValue = (column, fallback) => completeCoverage
+    ? `${activityAlias}.${column}`
+    : `COALESCE(${activityAlias}.${column}, ${fallback})`
+  const sortableMap = {
+    priority: projectedValue('priority', 1),
+    created_at: `${contactAlias}.created_at`,
+    updated_at: `${contactAlias}.updated_at`,
+    full_name: `LOWER(COALESCE(${contactAlias}.full_name, ''))`,
+    email: `LOWER(COALESCE(${contactAlias}.email, ''))`,
+    phone: `COALESCE(${contactAlias}.phone, '')`,
+    total_paid: projectedValue('total_paid', 0),
+    purchases_count: projectedValue('purchases_count', 0),
+    payments_count: projectedValue('payments_count', 0),
+    failed_payments_count: projectedValue('failed_payments_count', 0),
+    last_purchase_date: timestampSortExpression(`${activityAlias}.last_purchase_date`),
+    appointments_count: projectedValue('appointments_count', 0),
+    active_appointments_count: projectedValue('active_appointments_count', 0),
+    attended_appointments_count: projectedValue('attended_appointments_count', 0),
+    last_appointment_date: timestampSortExpression(`${activityAlias}.last_appointment_date`)
+  }
+  return sortableMap[String(sortBy || '')] || sortableMap.created_at
 }
 
 export function buildContactListPaymentStatsCte() {
@@ -1508,6 +1575,7 @@ export function buildContactListWhere({
   quickFilter = 'all',
   trackingFilters = {},
   advancedFilters = {},
+  activityAlias = '',
   timezone
 } = {}) {
   const conditions = []
@@ -1535,7 +1603,7 @@ export function buildContactListWhere({
 
   conditions.push(`${alias}.deleted_at IS NULL`)
 
-  const quickCondition = buildQuickFilterCondition(quickFilter, alias)
+  const quickCondition = buildQuickFilterCondition(quickFilter, alias, activityAlias)
   if (quickCondition) {
     conditions.push(quickCondition)
   }

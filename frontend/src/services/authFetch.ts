@@ -25,6 +25,10 @@ type ApiReadRequestPolicy = {
   cacheResponse: boolean
 }
 
+type ApiReadCacheInvalidation = {
+  pathPrefixes?: string[]
+}
+
 const apiReadResponseCache = new Map<string, ApiReadCacheEntry>()
 const apiReadInFlight = new Map<string, Promise<Response>>()
 const apiReadInvalidationListeners = new Set<() => void>()
@@ -73,6 +77,26 @@ function clearApiReadCache() {
   apiReadCacheVersion += 1
 }
 
+function getApiReadCacheKeyPathname(key: string) {
+  const rawUrl = key.split('\n', 1)[0]
+  try {
+    return new URL(rawUrl).pathname
+  } catch {
+    return ''
+  }
+}
+
+function normalizeApiReadInvalidationPrefixes(values: string[] = []) {
+  return [...new Set(values
+    .map(value => String(value || '').trim())
+    .filter(value => value.startsWith('/api/')))]
+}
+
+function cacheKeyMatchesPathPrefixes(key: string, prefixes: string[]) {
+  const pathname = getApiReadCacheKeyPathname(key)
+  return prefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
+}
+
 function deleteCachedApiResponse(key: string) {
   const cached = apiReadResponseCache.get(key)
   if (!cached) return false
@@ -86,8 +110,24 @@ function deleteCachedApiResponse(key: string) {
  * Las mutaciones que atraviesan installAuthFetch ya lo hacen automáticamente;
  * este helper cubre servicios que reciben actualizaciones por SSE/websocket.
  */
-export function invalidateRistakApiReadCache() {
-  clearApiReadCache()
+export function invalidateRistakApiReadCache(options: ApiReadCacheInvalidation = {}) {
+  const prefixes = normalizeApiReadInvalidationPrefixes(options.pathPrefixes)
+
+  if (prefixes.length === 0) {
+    clearApiReadCache()
+  } else {
+    // Una invalidacion viva de Chat/Pagos no debe enfriar Sites, Configuracion
+    // ni los demas modulos. Las promesas coincidentes se desacoplan para que
+    // una lectura nueva no comparta una respuesta que ya quedo obsoleta.
+    apiReadCacheVersion += 1
+    for (const key of apiReadResponseCache.keys()) {
+      if (cacheKeyMatchesPathPrefixes(key, prefixes)) deleteCachedApiResponse(key)
+    }
+    for (const key of apiReadInFlight.keys()) {
+      if (cacheKeyMatchesPathPrefixes(key, prefixes)) apiReadInFlight.delete(key)
+    }
+  }
+
   apiReadInvalidationListeners.forEach((invalidate) => invalidate())
 }
 
@@ -370,16 +410,25 @@ export function installAuthFetch() {
         sharedRequest = originalFetch(input, nextInit)
           .then(response => {
             maybeHandleLicenseBlocked(response)
-            if (readPolicy.cacheResponse && requestCacheVersion === apiReadCacheVersion) {
-              void cacheApiResponse(
-                readPolicy.key,
-                response,
-                readPolicy.ttlMs,
-                requestCacheVersion
-              )
-            }
             return response
           })
+
+        // Mantener la promesa compartida registrada hasta que termine de
+        // materializarse el snapshot cierra la ventana donde un segundo GET
+        // podia arrancar entre la respuesta de red y la escritura del cache.
+        const cacheLifecycle = sharedRequest.then(async response => {
+          if (readPolicy.cacheResponse && requestCacheVersion === apiReadCacheVersion) {
+            await cacheApiResponse(
+              readPolicy.key,
+              response,
+              readPolicy.ttlMs,
+              requestCacheVersion
+            )
+          }
+        })
+
+        void cacheLifecycle
+          .catch(() => undefined)
           .finally(() => {
             if (apiReadInFlight.get(readPolicy.key) === sharedRequest) {
               apiReadInFlight.delete(readPolicy.key)

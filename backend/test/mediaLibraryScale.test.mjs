@@ -135,6 +135,26 @@ test('Media pagina por created_at + id, busca en servidor y resume carpetas sin 
       secondPage.items.some((asset) => firstPage.items.some((first) => first.id === asset.id)),
       false
     )
+    assert.equal(
+      firstPage.items.some((asset) => Object.hasOwn(asset, 'cursor_created_at')),
+      false
+    )
+    const decodedPageCursor = JSON.parse(
+      Buffer.from(firstPage.pageInfo.nextCursor, 'base64url').toString('utf8')
+    )
+    assert.equal(decodedPageCursor.v, 2)
+    assert.equal(typeof decodedPageCursor.scope, 'string')
+    assert.ok(decodedPageCursor.scope.length > 20)
+
+    await assert.rejects(
+      () => listMediaAssets({
+        businessId,
+        mediaType: 'image',
+        limit: 50,
+        cursor: firstPage.pageInfo.nextCursor
+      }),
+      (error) => error?.status === 400 && error?.code === 'invalid_media_cursor'
+    )
 
     const clampedPage = await listMediaAssets({ businessId, limit: 500 })
     assert.equal(clampedPage.items.length, 100)
@@ -205,6 +225,22 @@ test('Media pagina por created_at + id, busca en servidor y resume carpetas sin 
     await db.run('DELETE FROM media_assets WHERE business_id = ?', [businessId]).catch(() => undefined)
     await db.run('DELETE FROM storage_quotas WHERE business_id = ?', [businessId]).catch(() => undefined)
   }
+})
+
+test('Media conserva el timestamp lossless del cursor PostgreSQL en una columna privada', async () => {
+  const source = await readFile(mediaServiceSourceUrl, 'utf8')
+  assert.match(
+    source,
+    /function mediaLibraryCursorProjectionExpression[\s\S]*?databaseDialect === 'postgres'[\s\S]*?::text/
+  )
+  assert.match(
+    source,
+    /mediaLibraryCursorProjectionExpression\(sortTimestamp\)[\s\S]{0,80}AS cursor_created_at/
+  )
+  assert.match(
+    source,
+    /ORDER BY \$\{sortTimestamp\} DESC, id DESC/
+  )
 })
 
 test('lookup Stream está acotado por negocio y módulos mediante columna indexable', async () => {

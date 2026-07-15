@@ -278,6 +278,11 @@ export interface WhatsAppApiTemplatesResponse {
   approved: number
   blocked: number
   items: WhatsAppApiTemplate[]
+  pageInfo?: {
+    limit: number
+    hasMore: boolean
+    nextCursor?: string | null
+  }
 }
 
 export interface WhatsAppApiPhoneNumbersPreviewResponse {
@@ -660,7 +665,7 @@ export interface WhatsAppQrPhoneNumberPayload {
 }
 
 export const whatsappApiService = {
-  getStatus: () => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status'),
+  getStatus: (options: { signal?: AbortSignal } = {}) => apiClient.get<WhatsAppApiStatus>('/whatsapp-api/status', options),
   getMetaBusinessAccount: () => apiClient.get<WhatsAppMetaBusinessAccountResponse>('/whatsapp-api/meta/business-account'),
   getMetaConnectUrl: () => apiClient.get<WhatsAppMetaDirectConnectUrlResponse>('/whatsapp-api/meta/connect-url'),
   prepareMetaSignup: () => apiClient.get<WhatsAppMetaEmbeddedSignupSession>('/whatsapp-api/meta/signup-session'),
@@ -711,7 +716,8 @@ export const whatsappApiService = {
   createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
   connectQr: (payload: WhatsAppQrConnectPayload) => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload)),
   disconnectQr: (phoneNumberId: string) => refreshIntegrationsStatusAfter(apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId })),
-  getTemplates: (status: string | null = WHATSAPP_API_APPROVED_TEMPLATE_STATUS) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
+  getTemplates: (status: string | null = WHATSAPP_API_APPROVED_TEMPLATE_STATUS, options: { signal?: AbortSignal } = {}) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
+    ...options,
     params: status ? { status } : undefined
   }),
   getScheduledMessages: (contactId: string) => apiClient.get<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {

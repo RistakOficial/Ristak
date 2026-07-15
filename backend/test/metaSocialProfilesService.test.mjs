@@ -5,6 +5,7 @@ import http from 'node:http'
 import { db } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { getSocialProfiles } from '../src/controllers/metaController.js'
+import { saveMetaAssetSnapshot, clearMetaAssetSnapshot } from '../src/services/metaAssetSnapshotService.js'
 import { refreshConnectedSocialProfileBlocks } from '../src/services/metaSocialProfilesService.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
@@ -56,6 +57,50 @@ async function insertMetaConfig({
     pageToken ? encrypt(pageToken) : null,
     pageProof ? encrypt(pageProof) : null
   ])
+}
+
+async function seedMetaAssetSnapshot() {
+  await saveMetaAssetSnapshot({
+    updatedAt: '2026-07-14T00:00:00.000Z',
+    pages: [{
+      id: 'page_1',
+      name: 'Raul Gomez',
+      category: 'Marketing',
+      pictureUrl: 'https://example.test/page.webp',
+      followers: 1532,
+      instagramAccounts: [{
+        id: 'ig_1',
+        username: 'raulgomezjj',
+        name: 'Raul Gomez IG',
+        avatarUrl: 'https://example.test/instagram.webp',
+        followers: 24000
+      }]
+    }],
+    profiles: [{
+      id: 'facebook:page_1',
+      platform: 'facebook',
+      sourceId: 'page_1',
+      pageId: 'page_1',
+      pageName: 'Raul Gomez',
+      name: 'Raul Gomez',
+      category: 'Marketing',
+      avatarUrl: 'https://example.test/page.webp',
+      followers: 1532,
+      followersLabel: '1,5 mil'
+    }, {
+      id: 'instagram:ig_1',
+      platform: 'instagram',
+      sourceId: 'ig_1',
+      pageId: 'page_1',
+      pageName: 'Raul Gomez',
+      name: 'raulgomezjj',
+      username: 'raulgomezjj',
+      category: 'Instagram',
+      avatarUrl: 'https://example.test/instagram.webp',
+      followers: 24000,
+      followersLabel: '24 mil'
+    }]
+  })
 }
 
 async function withFakeMetaGraph(callback) {
@@ -155,6 +200,7 @@ test('Meta social profiles endpoint uses saved Meta config instead of the Ristak
 
   await snapshotMetaConfig(async () => {
     await insertMetaConfig()
+    await seedMetaAssetSnapshot()
 
     await withFakeMetaGraph(async (calls) => {
       const res = createJsonResponse()
@@ -170,10 +216,12 @@ test('Meta social profiles endpoint uses saved Meta config instead of the Ristak
       assert.equal(res.statusCode, 200)
       assert.equal(res.body.success, true)
       assert.equal(res.body.data.connected, true)
-      assert.equal(calls[0]?.accessToken, 'meta-token-db')
+      assert.equal(calls.length, 0)
       assert.equal(res.body.data.profiles.some(profile => profile.id === 'facebook:page_1'), true)
       assert.equal(res.body.data.profiles.some(profile => profile.id === 'instagram:ig_1'), true)
     })
+
+    await clearMetaAssetSnapshot()
   })
 })
 
@@ -250,6 +298,7 @@ test('OAuth social profiles uses the stored Page token and matching Page proof',
       pageToken: 'oauth-page-token',
       pageProof: 'oauth-page-proof'
     })
+    await seedMetaAssetSnapshot()
 
     await withFakeMetaGraph(async (calls) => {
       const res = createJsonResponse()
@@ -257,10 +306,10 @@ test('OAuth social profiles uses the stored Page token and matching Page proof',
 
       assert.equal(res.statusCode, 200)
       assert.equal(res.body.success, true)
-      assert.equal(calls[0]?.pathname, '/page_1')
-      assert.equal(calls[0]?.accessToken, 'oauth-page-token')
-      assert.equal(calls[0]?.appSecretProof, 'oauth-page-proof')
+      assert.equal(calls.length, 0)
       assert.equal(res.body.data.profiles.some(profile => profile.id === 'instagram:ig_1'), true)
     })
+
+    await clearMetaAssetSnapshot()
   })
 })

@@ -9,6 +9,7 @@ import {
   getPublicStripePaymentView,
   getStripeConfigView,
   getStripeSavedPaymentMethodsView,
+  refreshStripeSavedPaymentMethodsView,
   confirmPublicStripeInstallmentPaymentView,
   preparePublicStripeInstallmentPlansView,
   saveStripeConfigView,
@@ -39,6 +40,7 @@ router.post('/config/test', requireModuleAccess('settings_payments'), testStripe
 router.post('/payment-links', requireModuleAccess('payments'), createStripePaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createStripePaymentPlanView)
 router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), getStripeSavedPaymentMethodsView)
+router.post('/contacts/:contactId/payment-methods/refresh', requireModuleAccess('payments'), refreshStripeSavedPaymentMethodsView)
 router.post('/saved-card-payments', requireModuleAccess('payments'), createStripeSavedCardPaymentView)
 
 export default router

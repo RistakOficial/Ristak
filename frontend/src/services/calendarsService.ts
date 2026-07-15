@@ -321,6 +321,53 @@ export interface AppointmentStats {
   noshow: number;
 }
 
+export interface CalendarEventDayCount {
+  date: string;
+  total: number;
+}
+
+export interface CalendarEventDayPreview extends CalendarEventDayCount {
+  items: CalendarEvent[];
+}
+
+export interface CalendarEventDayCountsResponse {
+  timezone: string;
+  total: number;
+  days: CalendarEventDayCount[];
+}
+
+export interface CalendarMonthPreviewResponse extends CalendarEventDayCountsResponse {
+  previewLimit: number;
+  days: CalendarEventDayPreview[];
+}
+
+export interface CalendarEventsPage {
+  timezone: string;
+  items: CalendarEvent[];
+  total?: number;
+  days?: CalendarEventDayCount[];
+  pagination: {
+    limit: number;
+    hasNext: boolean;
+    nextCursor: string | null;
+  };
+}
+
+export interface CalendarEventsOverview {
+  stats: AppointmentStats;
+  upcoming: CalendarEvent[];
+  limit: number;
+}
+
+export interface UpcomingAppointmentsPage {
+  items: CalendarEvent[];
+  pagination: {
+    limit: number;
+    hasNext: boolean;
+    nextCursor: string | null;
+  };
+}
+
 export interface FreeSlot {
   date: string;
   slots: string[];
@@ -377,7 +424,8 @@ export const calendarsService = {
   async getCalendars(
     locationId?: string | null,
     accessToken?: string | null,
-    sourcePreference?: 'combined' | 'ristak' | 'ghl' | 'google'
+    sourcePreference?: 'combined' | 'ristak' | 'ghl' | 'google',
+    options: { throwOnError?: boolean } = {}
   ): Promise<Calendar[]> {
     try {
       const data = await apiClient.get<Calendar[]>('/calendars', {
@@ -389,6 +437,7 @@ export const calendarsService = {
       });
       return Array.isArray(data) ? data : [];
     } catch (error) {
+      if (options.throwOnError) throw error;
       return [];
     }
   },
@@ -480,7 +529,8 @@ export const calendarsService = {
     startTime: number,
     endTime: number,
     accessToken?: string,
-    calendarId?: string
+    calendarId?: string,
+    signal?: AbortSignal
   ): Promise<CalendarEvent[]> {
     try {
       const params: any = {
@@ -495,11 +545,151 @@ export const calendarsService = {
         params.calendarId = calendarId;
       }
 
-      const data = await apiClient.get<CalendarEvent[]>('/calendars/events', { params });
+      const data = await apiClient.get<CalendarEvent[]>('/calendars/events', { params, signal });
       return Array.isArray(data) ? data : [];
     } catch (error) {
+      if (signal?.aborted) throw error;
       return [];
     }
+  },
+
+  /** Vista mensual local: máximo previewLimit filas por día y conteos exactos. */
+  async getMonthEventPreview({
+    calendarId,
+    startTime,
+    endTime,
+    previewLimit = 3,
+    signal
+  }: {
+    calendarId: string;
+    startTime: number;
+    endTime: number;
+    previewLimit?: number;
+    signal?: AbortSignal;
+  }): Promise<CalendarMonthPreviewResponse> {
+    return apiClient.get<CalendarMonthPreviewResponse>('/calendars/events/month-preview', {
+      params: {
+        calendarId,
+        startTime: String(startTime),
+        endTime: String(endTime),
+        previewLimit: String(previewLimit)
+      },
+      signal
+    });
+  },
+
+  /** Página keyset local para día/semana; nunca usa offset ni límite silencioso. */
+  async getEventsPage({
+    calendarId,
+    startTime,
+    endTime,
+    cursor,
+    limit = 100,
+    includeCounts = true,
+    signal
+  }: {
+    calendarId: string;
+    startTime: number;
+    endTime: number;
+    cursor?: string | null;
+    limit?: number;
+    includeCounts?: boolean;
+    signal?: AbortSignal;
+  }): Promise<CalendarEventsPage> {
+    return apiClient.get<CalendarEventsPage>('/calendars/events/page', {
+      params: {
+        calendarId,
+        startTime: String(startTime),
+        endTime: String(endTime),
+        limit: String(limit),
+        includeCounts: includeCounts ? '1' : '0',
+        ...(cursor ? { cursor } : {})
+      },
+      signal
+    });
+  },
+
+  /** Conteos exactos por día sin descargar citas (vista anual/mini calendarios). */
+  async getEventDayCounts({
+    calendarId,
+    startTime,
+    endTime,
+    signal
+  }: {
+    calendarId: string;
+    startTime: number;
+    endTime: number;
+    signal?: AbortSignal;
+  }): Promise<CalendarEventDayCountsResponse> {
+    return apiClient.get<CalendarEventDayCountsResponse>('/calendars/events/day-counts', {
+      params: {
+        calendarId,
+        startTime: String(startTime),
+        endTime: String(endTime)
+      },
+      signal
+    });
+  },
+
+  /** KPIs exactos multi-calendario y próximas filas acotadas para PhoneApp. */
+  async getEventsOverview({
+    startTime,
+    endTime,
+    limit = 5,
+    signal
+  }: {
+    startTime: number;
+    endTime: number;
+    limit?: number;
+    signal?: AbortSignal;
+  }): Promise<CalendarEventsOverview> {
+    return apiClient.get<CalendarEventsOverview>('/calendars/events/overview', {
+      params: {
+        startTime: String(startTime),
+        endTime: String(endTime),
+        limit: String(limit)
+      },
+      signal
+    });
+  },
+
+  /** Resumen local del rango para KPIs, sin descargar todas las citas. */
+  async getAppointmentStats(
+    calendarId: string,
+    startTime: number,
+    endTime: number,
+    signal?: AbortSignal
+  ): Promise<AppointmentStats> {
+    return apiClient.get<AppointmentStats>('/calendars/events/summary', {
+      params: {
+        calendarId,
+        startTime: String(startTime),
+        endTime: String(endTime)
+      },
+      signal
+    });
+  },
+
+  /** Próximas citas desde el espejo local, con página keyset acotada. */
+  async getUpcomingAppointmentsPage({
+    calendarId,
+    cursor,
+    limit = 20,
+    signal
+  }: {
+    calendarId: string;
+    cursor?: string | null;
+    limit?: number;
+    signal?: AbortSignal;
+  }): Promise<UpcomingAppointmentsPage> {
+    return apiClient.get<UpcomingAppointmentsPage>('/calendars/upcoming', {
+      params: {
+        calendarId,
+        limit: String(limit),
+        ...(cursor ? { cursor } : {})
+      },
+      signal
+    });
   },
 
   /**
@@ -808,28 +998,12 @@ export const calendarsService = {
 
   async getFutureAppointments(
     calendarId: string,
-    locationId: string,
-    accessToken?: string
+    _locationId: string,
+    _accessToken?: string
   ): Promise<CalendarEvent[]> {
     try {
-      const now = new Date();
-      const startTimestamp = now.getTime();
-
-      const endDate = new Date(now);
-      endDate.setFullYear(endDate.getFullYear() + 1);
-      const endTimestamp = endDate.getTime();
-
-      const events = await this.getEvents(
-        locationId,
-        startTimestamp,
-        endTimestamp,
-        accessToken,
-        calendarId
-      );
-
-      return events
-        .filter((event: CalendarEvent) => new Date(event.startTime) >= now)
-        .sort((a: CalendarEvent, b: CalendarEvent) => a.startTime.localeCompare(b.startTime));
+      const page = await this.getUpcomingAppointmentsPage({ calendarId, limit: 20 });
+      return page.items;
     } catch (error) {
       return [];
     }

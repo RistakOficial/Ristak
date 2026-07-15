@@ -151,7 +151,7 @@ test('desconectar WhatsApp API borra credenciales locales y evita reconectar sin
   })
 })
 
-test('WhatsApp API limpia llaves viejas marcadas como desconectadas', async () => {
+test('WhatsApp API limpia llaves viejas sólo en comandos y mantiene GET status read-only', async () => {
   await initializeMasterKey()
   const { keys, all, deletedOnDisconnect } = whatsappConnectionKeys()
 
@@ -182,7 +182,7 @@ test('WhatsApp API limpia llaves viejas marcadas como desconectadas', async () =
     const status = await getWhatsAppApiStatus()
     assert.equal(status.configured, false)
     assert.equal(status.credentials.hasApiKey, false)
-    assert.equal(await countExistingAppConfig(deletedOnDisconnect), 0)
+    assert.equal(await countExistingAppConfig(deletedOnDisconnect), 1)
   })
 })
 

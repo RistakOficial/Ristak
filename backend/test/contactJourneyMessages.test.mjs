@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { db } from '../src/config/database.js'
+import { readFile } from 'node:fs/promises'
+import { databaseDialect, db } from '../src/config/database.js'
+import { runChatActivityProjectionBackfill } from '../src/services/chatActivityProjectionService.js'
 import {
   getChatContacts,
   getContactConversation,
@@ -10,6 +12,22 @@ import {
   updateContact,
   waitForProfilePictureWarmupsForTest
 } from '../src/controllers/contactsController.js'
+
+test.before(async () => {
+  if (databaseDialect !== 'sqlite') return
+  for (const migration of [
+    '095za_chat_activity_whatsapp_version.sqlite.sql',
+    '095zb_chat_activity_meta_version.sqlite.sql',
+    '095zc_chat_activity_email_version.sqlite.sql',
+    '096_chat_activity_projection.sqlite.sql'
+  ]) {
+    await db.exec(await readFile(
+      new URL(`../migrations/versioned/${migration}`, import.meta.url),
+      'utf8'
+    ))
+  }
+  await runChatActivityProjectionBackfill()
+})
 
 function createMockResponse() {
   return {
@@ -49,6 +67,10 @@ async function readConversation(contactId, query = {}) {
 }
 
 async function readChatContacts(query = {}, user = {}) {
+  // Los writes de identidad/message son síncronos, pero una reasignación puede
+  // dejar trabajo deliberadamente en la cola incremental. La app lo procesa en
+  // background; el fixture espera esa misma convergencia antes de afirmar datos.
+  await runChatActivityProjectionBackfill()
   const res = createMockResponse()
   await getChatContacts({ query, user }, res)
 
@@ -649,9 +671,11 @@ test('chat contacts caps oversized pages for safer inbox prefetch', async () => 
 
     const boundary = firstPage[firstPage.length - 1]
     assert.ok(boundary?.lastMessageDate)
+    assert.ok(boundary?.lastMessageCursorSort)
     const cursorPage = await readChatContacts({
       limit: '110',
       beforeMessageDate: boundary.lastMessageDate,
+      beforeMessageSort: boundary.lastMessageCursorSort,
       beforeContactId: boundary.id
     })
     const cursorSyntheticChats = cursorPage.filter(chat => String(chat.id).startsWith(prefix))
@@ -665,6 +689,133 @@ test('chat contacts caps oversized pages for safer inbox prefetch', async () => 
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+  }
+})
+
+test('chat keyset uses the exact normalized sort instead of an unrelated textual MAX', async () => {
+  const id = randomUUID().replace(/-/g, '')
+  const marker = `cursor_mixed_${id}`
+  const contactA = `${marker}_a`
+  const contactB = `${marker}_b`
+  const contactC = `${marker}_c`
+  const contacts = [contactA, contactB, contactC]
+
+  try {
+    for (const contactId of contacts) {
+      await insertRow('contacts', {
+        id: contactId,
+        phone: `+52990${contactId.slice(-8)}`,
+        full_name: marker,
+        first_name: marker,
+        source: 'manual',
+        created_at: '2098-08-01T11:00:00.000Z',
+        updated_at: '2098-08-01T11:00:00.000Z'
+      })
+    }
+
+    // El espacio gana cronológicamente, pero "T" gana con MAX textual en SQLite.
+    // El cursor no puede salir de ese MAX independiente porque apuntaría a otro mensaje.
+    await insertRow('whatsapp_api_messages', {
+      id: `wa_${contactA}`,
+      contact_id: contactA,
+      phone: `+52990${contactA.slice(-8)}`,
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Más reciente con formato SQLite',
+      message_timestamp: '2098-08-01 12:00:00.900',
+      created_at: '2098-08-01 12:00:00.900'
+    })
+    await insertRow('email_messages', {
+      id: `email_${contactA}`,
+      contact_id: contactA,
+      direction: 'inbound',
+      subject: 'Más viejo con formato ISO',
+      message_text: '',
+      message_timestamp: '2098-08-01T12:00:00.100Z',
+      created_at: '2098-08-01T12:00:00.100Z'
+    })
+
+    for (const contactId of [contactB, contactC]) {
+      await insertRow('whatsapp_api_messages', {
+        id: `wa_${contactId}`,
+        contact_id: contactId,
+        phone: `+52990${contactId.slice(-8)}`,
+        direction: 'inbound',
+        message_type: 'text',
+        message_text: `Empate ${contactId}`,
+        message_timestamp: '2098-08-01T12:00:00.500Z',
+        created_at: '2098-08-01T12:00:00.500Z'
+      })
+    }
+
+    const lexicalMax = await db.get(
+      `SELECT MAX(message_date) AS value
+       FROM (
+         SELECT COALESCE(message_timestamp, created_at) AS message_date
+         FROM whatsapp_api_messages
+         WHERE contact_id = ?
+         UNION ALL
+         SELECT COALESCE(message_timestamp, created_at) AS message_date
+         FROM email_messages
+         WHERE contact_id = ?
+       ) mixed_dates`,
+      [contactA, contactA]
+    )
+    assert.equal(lexicalMax.value, '2098-08-01T12:00:00.100Z')
+
+    const collected = []
+    let cursor = null
+    let firstCursor = null
+    for (let pageNumber = 0; pageNumber < 4; pageNumber += 1) {
+      const page = await readChatContacts({
+        q: marker,
+        limit: '1',
+        ...(cursor ? {
+          beforeMessageDate: cursor.lastMessageDate,
+          beforeMessageSort: cursor.lastMessageCursorSort,
+          beforeMessageScope: cursor.lastMessageCursorScope,
+          beforeContactId: cursor.id
+        } : {})
+      })
+      if (!page.length) break
+      assert.ok(page[0].lastMessageCursorSort)
+      assert.match(page[0].lastMessageCursorScope, /^[A-Za-z0-9_-]{40,}$/)
+      collected.push(page[0].id)
+      cursor = page[0]
+      firstCursor ||= page[0]
+    }
+
+    assert.deepEqual(collected, [contactA, contactC, contactB])
+    assert.equal(new Set(collected).size, contacts.length)
+
+    const mismatchResponse = createMockResponse()
+    await getChatContacts({
+      query: {
+        q: `${marker}_otra_vista`,
+        limit: '1',
+        beforeMessageDate: firstCursor.lastMessageDate,
+        beforeMessageSort: firstCursor.lastMessageCursorSort,
+        beforeMessageScope: firstCursor.lastMessageCursorScope,
+        beforeContactId: firstCursor.id
+      },
+      user: {}
+    }, mismatchResponse)
+    assert.equal(mismatchResponse.statusCode, 400)
+    assert.equal(mismatchResponse.body?.success, false)
+    assert.match(mismatchResponse.body?.error, /ya no corresponde a esta vista/)
+
+    // Durante la transición, clientes viejos sin scope conservan el cursor legacy.
+    const wrongIndependentMaxPage = await readChatContacts({
+      q: marker,
+      limit: '10',
+      beforeMessageDate: lexicalMax.value,
+      beforeContactId: contactA
+    })
+    assert.deepEqual(wrongIndependentMaxPage, [])
+  } finally {
+    for (const contactId of contacts) {
+      await cleanup(contactId, `+52990${contactId.slice(-8)}`)
+    }
   }
 })
 
@@ -1334,13 +1485,14 @@ test('contact conversation compound cursor paginates equal timestamps without om
       })
       if (!page.length) break
       assert.ok(page.every(event => event.date === tiedTimestamp))
+      assert.ok(page.every(event => typeof event.cursorDate === 'string' && event.cursorDate.length > 0))
       assert.ok(page.every(event => typeof event.cursorKey === 'string' && event.cursorKey.length > 0))
       const pageCursorKeys = page.map(event => event.cursorKey)
       assert.deepEqual(pageCursorKeys, [...pageCursorKeys].sort((left, right) => (
         left === right ? 0 : left < right ? -1 : 1
       )))
       collectedEvents.push(...page)
-      beforeMessageDate = page[0].date
+      beforeMessageDate = page[0].cursorDate || page[0].date
       beforeMessageCursor = page[0].cursorKey
     }
 
@@ -1426,6 +1578,8 @@ test('contact conversation includes appointment confirmation cards without full 
     const journey = await readConversation(contactId)
 
     assert.deepEqual(journey.map(event => event.type), ['whatsapp_message', 'appointment_confirmation'])
+    assert.ok(journey.every(event => typeof event.cursorDate === 'string' && event.cursorDate.length > 0))
+    assert.ok(journey.every(event => typeof event.cursorKey === 'string' && event.cursorKey.length > 0))
     assert.equal(journey[1].data.appointment_id, appointmentId)
     assert.equal(journey[1].data.result_detail, 'Confirmo asistencia')
 
@@ -2179,7 +2333,7 @@ test('contact journey summarizes tracking rows into one page visit per session',
   }
 })
 
-test('contact journey rolls same-day visits into one visible web summary', async () => {
+test('contact journey keeps same-day logical sessions as independent summaries', async () => {
   const id = randomUUID()
   const contactId = `journey_visible_visit_${id}`
   const phone = `+52995${Date.now().toString().slice(-7)}`
@@ -2263,17 +2417,32 @@ test('contact journey rolls same-day visits into one visible web summary', async
     const journey = await readJourney(contactId)
     const pageVisits = journey.filter(event => event.type === 'page_visit')
 
-    assert.equal(pageVisits.length, 1)
-    assert.equal(pageVisits[0].date, '2026-06-16T10:00:00.000Z')
-    assert.equal(pageVisits[0].data.session_event_count, 3)
-    assert.equal(pageVisits[0].data.session_page_view_count, 2)
-    assert.equal(pageVisits[0].data.pages_visited, 1)
-    assert.equal(pageVisits[0].data.session_duration_seconds, 900)
-    assert.equal(pageVisits[0].data.visible_session_count, 2)
-    assert.deepEqual(pageVisits[0].data.session_ids, [firstSessionId, secondSessionId])
-    assert.deepEqual(pageVisits[0].data.event_names, ['page_view', 'session_end'])
-    assert.equal(pageVisits[0].data.first_page_url, 'https://demo.ristak.test/landing')
-    assert.equal(pageVisits[0].data.last_page_url, 'https://demo.ristak.test/landing')
+    assert.equal(pageVisits.length, 2)
+    assert.equal(new Set(pageVisits.map(event => event.cursorKey)).size, 2)
+
+    const firstVisit = pageVisits.find(event => event.data.session_id === firstSessionId)
+    const secondVisit = pageVisits.find(event => event.data.session_id === secondSessionId)
+    assert.ok(firstVisit)
+    assert.ok(secondVisit)
+
+    assert.equal(firstVisit.cursorKey, `page_visit:${firstSessionId}`)
+    assert.equal(firstVisit.date, '2026-06-16T10:00:00.000Z')
+    assert.equal(firstVisit.data.session_event_count, 2)
+    assert.equal(firstVisit.data.session_page_view_count, 1)
+    assert.equal(firstVisit.data.pages_visited, 1)
+    assert.equal(firstVisit.data.session_duration_seconds, 300)
+    assert.equal(firstVisit.data.visible_session_count, 1)
+    assert.deepEqual(firstVisit.data.session_ids, [firstSessionId])
+    assert.deepEqual(firstVisit.data.event_names, ['page_view', 'session_end'])
+
+    assert.equal(secondVisit.cursorKey, `page_visit:${secondSessionId}`)
+    assert.equal(secondVisit.date, '2026-06-16T10:15:00.000Z')
+    assert.equal(secondVisit.data.session_event_count, 1)
+    assert.equal(secondVisit.data.session_page_view_count, 1)
+    assert.equal(secondVisit.data.pages_visited, 1)
+    assert.equal(secondVisit.data.session_duration_seconds, 0)
+    assert.equal(secondVisit.data.visible_session_count, 1)
+    assert.deepEqual(secondVisit.data.session_ids, [secondSessionId])
   } finally {
     await cleanup(contactId, phone)
   }
@@ -2351,16 +2520,23 @@ test('contact journey suppresses inflated metrics from ad-like visitor ids', asy
     const journey = await readJourney(contactId)
     const pageVisits = journey.filter(event => event.type === 'page_visit')
 
-    assert.equal(pageVisits.length, 1)
-    assert.equal(pageVisits[0].data.tracking_identity_untrusted, true)
-    assert.equal(pageVisits[0].data.identity_warning, 'shared_ad_like_visitor_id')
-    assert.equal(pageVisits[0].data.session_event_count, 0)
-    assert.equal(pageVisits[0].data.session_page_view_count, 0)
-    assert.equal(pageVisits[0].data.pages_visited, 0)
-    assert.equal(pageVisits[0].data.session_duration_seconds, 0)
-    assert.equal(pageVisits[0].data.visible_session_count, 0)
-    assert.deepEqual(pageVisits[0].data.visitor_ids, [adLikeVisitorId])
-    assert.equal(pageVisits[0].data.first_page_url, `https://raulgomez.com.mx/quiero-pacientes?rkvi_id=${adLikeVisitorId}&ad_id=${adLikeVisitorId}&utm_source=facebook`)
+    assert.equal(pageVisits.length, 2)
+    assert.equal(new Set(pageVisits.map(event => event.cursorKey)).size, 2)
+    assert.deepEqual(
+      new Set(pageVisits.map(event => event.data.session_id)),
+      new Set([firstSessionId, secondSessionId])
+    )
+    pageVisits.forEach(visit => {
+      assert.equal(visit.data.tracking_identity_untrusted, true)
+      assert.equal(visit.data.identity_warning, 'shared_ad_like_visitor_id')
+      assert.equal(visit.data.session_event_count, 0)
+      assert.equal(visit.data.session_page_view_count, 0)
+      assert.equal(visit.data.pages_visited, 0)
+      assert.equal(visit.data.session_duration_seconds, 0)
+      assert.equal(visit.data.visible_session_count, 0)
+      assert.deepEqual(visit.data.visitor_ids, [adLikeVisitorId])
+      assert.equal(visit.data.first_page_url, `https://raulgomez.com.mx/quiero-pacientes?rkvi_id=${adLikeVisitorId}&ad_id=${adLikeVisitorId}&utm_source=facebook`)
+    })
   } finally {
     await cleanup(contactId, phone)
   }

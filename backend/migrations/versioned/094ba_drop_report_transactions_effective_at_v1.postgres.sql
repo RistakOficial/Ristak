@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_report_transactions_effective_at_id;
