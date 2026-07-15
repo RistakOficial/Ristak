@@ -490,7 +490,7 @@ class GHLClient {
     const page = Math.max(Math.trunc(Number(options.page) || 0), 0)
 
     return this.request(`/phone-system/numbers/location/${encodeURIComponent(this.locationId)}`, {
-      version: 'v3',
+      version: GHL_API_VERSION,
       params: {
         pageSize,
         page,

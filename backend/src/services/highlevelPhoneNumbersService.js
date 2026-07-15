@@ -40,12 +40,19 @@ function getPhoneNumberRows(payload) {
 }
 
 function hasSmsCapability(row = {}) {
+  if (Array.isArray(row.capabilities)) {
+    return row.capabilities.some((value) => ['sms', 'mms'].includes(cleanString(value).toLowerCase()))
+  }
   const capabilities = row.capabilities && typeof row.capabilities === 'object'
     ? row.capabilities
     : {}
   const signals = [
     capabilities.sms,
     capabilities.SMS,
+    capabilities.smsEnabled,
+    capabilities.sms_enabled,
+    capabilities.mmsEnabled,
+    capabilities.mms_enabled,
     row.sms,
     row.smsEnabled,
     row.sms_enabled,
