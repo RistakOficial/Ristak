@@ -198,6 +198,31 @@ export interface WhatsAppMetaDirectStatus {
   hasSystemUserToken?: boolean
 }
 
+export function isWhatsAppPhoneApiAvailable(
+  phone?: WhatsAppApiPhoneNumber | null,
+  status?: WhatsAppApiStatus | null
+) {
+  if (!phone?.id || Number(phone.api_send_enabled ?? 1) === 0) return false
+
+  if (typeof phone.availability?.apiAvailable === 'boolean') {
+    return phone.availability.apiAvailable
+  }
+
+  const provider = String(phone.provider || '').trim().toLowerCase()
+  if (provider === 'meta_direct') {
+    if (!status?.metaDirect?.connected) return false
+    const configuredPhoneNumberId = String(status.metaDirect.phoneNumberId || '').trim()
+    return !configuredPhoneNumberId || configuredPhoneNumberId === phone.id
+  }
+
+  if (provider === 'qr') return false
+  return Boolean(status?.connected)
+}
+
+export function hasWhatsAppPhoneApiAvailable(status?: WhatsAppApiStatus | null) {
+  return Boolean(status?.phoneNumbers?.some((phone) => isWhatsAppPhoneApiAvailable(phone, status)))
+}
+
 export interface WhatsAppMetaDirectConnectUrlResponse {
   url: string
   expiresAt?: string

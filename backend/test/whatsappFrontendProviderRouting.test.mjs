@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const repoRoot = join(__dirname, '..', '..')
+
+const readSource = (path) => readFile(join(repoRoot, path), 'utf8')
+
+test('frontend resuelve la API oficial por cada numero y no por el estado global de YCloud', async () => {
+  const source = await readSource('frontend/src/services/whatsappApiService.ts')
+
+  assert.match(source, /export function isWhatsAppPhoneApiAvailable/)
+  assert.match(source, /typeof phone\.availability\?\.apiAvailable === 'boolean'/)
+  assert.match(source, /provider === 'meta_direct'[\s\S]*?status\?\.metaDirect\?\.connected/)
+  assert.match(source, /configuredPhoneNumberId === phone\.id/)
+  assert.match(source, /if \(provider === 'qr'\) return false/)
+  assert.match(source, /return Boolean\(status\?\.connected\)/)
+})
+
+test('PhoneChat conserva el numero nativo seleccionado y aplica plantillas fuera de 24 horas', async () => {
+  const source = await readSource('frontend/src/pages/PhoneChat/PhoneChat.tsx')
+
+  assert.match(source, /const whatsappConnected = isWhatsAppPhoneApiAvailable\(selectedBusinessPhone, whatsappStatus\)/)
+  assert.match(source, /activeHighLevelChatChannel === 'whatsapp_api' && !selectedBusinessPhone/)
+  assert.match(source, /const selectedApiUnavailable = Boolean\(selectedBusinessPhone && !whatsappConnected\)/)
+  assert.match(source, /message\.businessPhoneNumberId === selectedBusinessPhone\.id/)
+  assert.match(source, /const composerBlockedByReplyWindow = Boolean\(outsideReplyWindow && !selectedApiUnavailable && !sendingThroughHighLevel/)
+  assert.doesNotMatch(source, /Boolean\(whatsappStatus\?\.connected && whatsappStatus\?\.configured\)/)
+  assert.doesNotMatch(source, /activeHighLevelChatChannel === 'whatsapp_api' && !whatsappConnected && !selectedQrReady/)
+})
+
+test('DesktopChat no usa HighLevel como rescate silencioso de un numero nativo', async () => {
+  const source = await readSource('frontend/src/pages/DesktopChat/DesktopChat.tsx')
+  const sendStart = source.indexOf('const handleSendMessage = async')
+  const sendEnd = source.indexOf('const handleReactToMessage = async', sendStart)
+
+  assert.ok(sendStart >= 0 && sendEnd > sendStart, 'No se encontro la ruta de envio de DesktopChat')
+  const sendSource = source.slice(sendStart, sendEnd)
+
+  assert.match(source, /selectedBusinessPhoneValue && isWhatsAppPhoneApiAvailable\(selectedBusinessPhone, whatsappStatus\)/)
+  assert.match(source, /selectedBusinessPhone[\s\S]*?\? whatsappConnected \|\| selectedQrReady[\s\S]*?: highLevelConnected/)
+  assert.match(sendSource, /composerChannel === 'whatsapp' && !selectedBusinessPhone/)
+  assert.match(sendSource, /highLevelConnected && \(composerChannel !== 'whatsapp' \|\| !selectedBusinessPhone\)/)
+  assert.match(sendSource, /!apiReplyWindowOpen[\s\S]*?Usa una plantilla/)
+  assert.doesNotMatch(source, /Boolean\(whatsappStatus\?\.connected && selectedBusinessPhoneValue\)/)
+  assert.doesNotMatch(sendSource, /composerChannel === 'whatsapp' && !whatsappConnected && !selectedQrReady/)
+})

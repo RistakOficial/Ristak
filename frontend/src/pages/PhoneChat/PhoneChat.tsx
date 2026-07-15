@@ -208,7 +208,7 @@ import {
 } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
-import { filterApprovedWhatsAppApiTemplates, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
+import { filterApprovedWhatsAppApiTemplates, isWhatsAppPhoneApiAvailable, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
 import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, getChatTimestampDayKey, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
@@ -6481,7 +6481,6 @@ export const PhoneChat: React.FC = () => {
       controller.abort()
     }
   }, [activeAppointmentEntryMode, appointmentCalendarMonth, appointmentSheetCalendarId, sheet, timezone])
-  const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
   const chatPhoneFilterEnabled = businessPhones.length > 1
   const activeContactBusinessPhoneOverrideId = activeContact?.id ? contactBusinessPhoneOverrides[activeContact.id] || '' : ''
@@ -6842,6 +6841,7 @@ export const PhoneChat: React.FC = () => {
     whatsappStatus?.selectedPhone
   ])
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
+  const whatsappConnected = isWhatsAppPhoneApiAvailable(selectedBusinessPhone, whatsappStatus)
   const getBusinessPhoneForMessage = (message: ChatMessage) => {
     if (message.businessPhoneNumberId) {
       const fromId = businessPhones.find((phone) => phone.id === message.businessPhoneNumberId)
@@ -6868,30 +6868,29 @@ export const PhoneChat: React.FC = () => {
   ), [businessPhones, effectiveSelectedChatPhone, whatsappStatus?.selectedPhone])
   const cameraShareBusinessPhoneValue = getBusinessPhoneValue(cameraShareBusinessPhone)
   const cameraShareQrReady = isBusinessPhoneQrReady(cameraShareBusinessPhone)
-  const cameraShareApiEnabled = cameraShareBusinessPhone?.api_send_enabled !== false
-  const cameraShareTransport: 'api' | 'qr' = cameraShareQrReady && (!whatsappConnected || !cameraShareApiEnabled)
+  const cameraShareApiAvailable = isWhatsAppPhoneApiAvailable(cameraShareBusinessPhone, whatsappStatus)
+  const cameraShareTransport: 'api' | 'qr' = cameraShareQrReady && !cameraShareApiAvailable
     ? 'qr'
     : 'api'
   const lastInboundForSelectedPhone = useMemo(() => {
     return [...messages]
       .filter((message) => {
         if (message.direction !== 'inbound') return false
-        if (!selectedBusinessPhoneValue) return true
-        return phoneLooksSame(message.businessPhone, selectedBusinessPhoneValue)
+        if (!selectedBusinessPhoneValue && !selectedBusinessPhone?.id) return true
+        return Boolean(
+          (selectedBusinessPhone?.id && message.businessPhoneNumberId === selectedBusinessPhone.id) ||
+          (selectedBusinessPhoneValue && phoneLooksSame(message.businessPhone, selectedBusinessPhoneValue))
+        )
       })
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
-  }, [messages, selectedBusinessPhoneValue])
+  }, [messages, selectedBusinessPhone, selectedBusinessPhoneValue])
   const lastInboundWhatsAppReplyWindowMessage = useMemo(() => (
     getNewestMessageByDate(messages.filter(messageCanOpenWhatsAppReplyWindow))
   ), [messages])
   const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
   const highLevelWhatsAppReplyWindowOpen = isInsideReplyWindow(lastInboundWhatsAppReplyWindowMessage?.date)
   const selectedQrReady = isBusinessPhoneQrReady(selectedBusinessPhone)
-  const selectedApiUnavailable = Boolean(selectedBusinessPhone) && (
-    selectedBusinessPhone?.availability?.apiAvailable === false ||
-    selectedBusinessPhone?.api_send_enabled === false ||
-    !whatsappConnected
-  )
+  const selectedApiUnavailable = Boolean(selectedBusinessPhone && !whatsappConnected)
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
   const inferredHighLevelChatChannel = useMemo(() => inferHighLevelChatChannel(activeContact, messages), [activeContact, messages])
   const activeContactHighLevelChannelOverride = activeContact?.id ? contactHighLevelChannelOverrides[activeContact.id] : undefined
@@ -6959,7 +6958,7 @@ export const PhoneChat: React.FC = () => {
       !activeContactHasNativeMetaProfile ||
       activeSocialConversationUsesHighLevel
     ))
-    || (activeHighLevelChatChannel === 'whatsapp_api' && !whatsappConnected && !selectedQrReady)
+    || (activeHighLevelChatChannel === 'whatsapp_api' && !selectedBusinessPhone)
   const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact && highLevelChannelRequired)
   const highLevelWhatsAppFallsBackToSms = Boolean(sendingThroughHighLevel && activeHighLevelChatChannel === 'whatsapp_api' && activeContact?.phone && !highLevelWhatsAppReplyWindowOpen)
   const effectiveHighLevelChatChannel: HighLevelChatChannel = highLevelWhatsAppFallsBackToSms ? 'sms_qr' : activeHighLevelChatChannel
@@ -12506,7 +12505,7 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!whatsappConnected && !cameraShareQrReady) {
+    if (!cameraShareApiAvailable && !cameraShareQrReady) {
       showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API o QR para mandar capturas desde la cámara.')
       return
     }
@@ -17287,8 +17286,11 @@ export const PhoneChat: React.FC = () => {
         : selectedBusinessPhone
       if (!activeContact.phone) return 'Este contacto no tiene teléfono guardado.'
       if (routePhoneId && !routePhone) return 'Ese número de WhatsApp ya no está disponible.'
-      if (routePhone && !getBusinessPhoneValue(routePhone) && !highLevelConnected) return 'Ese WhatsApp todavía no tiene número detectado.'
-      if (!sendingThroughHighLevel && !whatsappConnected && !isBusinessPhoneQrReady(routePhone || selectedBusinessPhone)) return 'Conecta WhatsApp API o QR para responder.'
+      if (routePhone && !getBusinessPhoneValue(routePhone)) return 'Ese WhatsApp todavía no tiene número detectado.'
+      if (routePhone && !isWhatsAppPhoneApiAvailable(routePhone, whatsappStatus) && !isBusinessPhoneQrReady(routePhone)) {
+        return routePhone.availability?.apiReason || 'Conecta WhatsApp API o QR para responder.'
+      }
+      if (!routePhone && !highLevelConnected) return 'Conecta WhatsApp API, QR o HighLevel para responder.'
       return ''
     }
     if (value === 'sms_qr') {

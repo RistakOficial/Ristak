@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-12.
+Ultima actualizacion: 2026-07-14.
 
 ## Proposito
 
@@ -56,6 +56,21 @@ No puede sobreescribir el `provider` de la fila seleccionada. En particular:
   YCloud;
 - una fila `provider=qr` sin conexión API oficial hermana sólo usa Baileys;
 - desactivar o revocar una fila no debe apagar ni secuestrar las otras.
+
+El frontend aplica el mismo contrato por fila. `status.connected` sólo describe
+la conexión histórica de YCloud y no basta para decidir si un número puede usar
+API: cada chat debe leer primero `phone.availability.apiAvailable` y, cuando ese
+campo no exista por compatibilidad, resolver `phone.provider=meta_direct` contra
+`status.metaDirect.connected`. Si el usuario eligió una fila nativa, esa fila
+permanece autoritativa aunque HighLevel también esté conectado. HighLevel sólo
+es ruta de WhatsApp cuando no existe una fila nativa seleccionable; nunca es
+respaldo silencioso de una fila Meta directo, YCloud o QR indisponible.
+
+Por lo tanto, seleccionar un número Meta directo sano mantiene el composer en
+WhatsApp API y calcula su ventana de 24 horas con los mensajes entrantes de ese
+mismo número. Si la ventana está cerrada, la UI ofrece plantillas y no desvía el
+texto libre a HighLevel. Adjuntos, audio, reacciones y mensajes programados
+respetan la misma autoridad del número seleccionado.
 
 Si una fila QR representa el mismo teléfono que una fila oficial sana, la fila
 oficial toma la salida aunque el consumidor histórico haya solicitado

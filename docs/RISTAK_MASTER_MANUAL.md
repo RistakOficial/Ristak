@@ -1319,6 +1319,17 @@ indisponibilidad inequívoca del transporte (desconexión, autorización perdida
 suspensión/restricción o límite confirmado) permite el respaldo. Cuando Meta
 pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando.
 
+El chat desktop y `/movil` también resuelven la disponibilidad por la fila
+seleccionada. El `connected` superior del status corresponde a la conexión
+histórica de YCloud; Meta directo se valida con
+`phone.availability.apiAvailable` y `metaDirect.connected`. Si HighLevel y una
+fila nativa de WhatsApp coexisten, elegir esa fila conserva la ruta nativa:
+HighLevel sólo puede manejar WhatsApp cuando no hay un número nativo
+seleccionado, nunca como fallback silencioso de una fila indisponible. La
+ventana de 24 horas se calcula para el número elegido y, al cerrarse, el composer
+debe exigir plantilla oficial. Texto, adjuntos, audio, reacciones y programación
+mantienen esa misma decisión de proveedor.
+
 Un webhook sólo concilia estado y puede marcar la API como restringida para
 solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
 acciones masivas usan `allowQrFallback=false`: si la API falla, el lote registra

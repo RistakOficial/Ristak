@@ -120,6 +120,8 @@ import {
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
 import {
+  hasWhatsAppPhoneApiAvailable,
+  isWhatsAppPhoneApiAvailable,
   whatsappApiService,
   type ScheduledChatMessage,
   type WhatsAppApiPhoneNumber,
@@ -3068,7 +3070,7 @@ function isPhoneQrReadyForSend(phone?: WhatsAppApiPhoneNumber | null) {
 }
 
 function isPhoneApiEnabled(phone?: WhatsAppApiPhoneNumber | null, status?: WhatsAppApiStatus | null) {
-  return Boolean(status?.connected) && Number(phone?.api_send_enabled ?? 1) !== 0
+  return isWhatsAppPhoneApiAvailable(phone, status)
 }
 
 function isInsideWhatsAppReplyWindow(date?: string | null) {
@@ -3469,7 +3471,9 @@ export const DesktopChat: React.FC = () => {
     ? getBusinessPhoneDisplay(whatsappPreferenceRoutePhone)
     : 'Sin número configurado'
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
-  const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
+  const whatsappConnected = Boolean(
+    selectedBusinessPhoneValue && isWhatsAppPhoneApiAvailable(selectedBusinessPhone, whatsappStatus)
+  )
   const lastInboundForSelectedPhone = useMemo(() => {
     return [...messages]
       .filter((message) => {
@@ -3481,7 +3485,7 @@ export const DesktopChat: React.FC = () => {
   }, [messages, selectedBusinessPhone, selectedBusinessPhoneValue])
   const apiReplyWindowOpen = isInsideWhatsAppReplyWindow(lastInboundForSelectedPhone?.date)
   const selectedQrReady = isPhoneQrReadyForSend(selectedBusinessPhone)
-  const selectedApiUnavailable = selectedBusinessPhone?.availability?.apiAvailable === false || Number(selectedBusinessPhone?.api_send_enabled ?? 1) === 0
+  const selectedApiUnavailable = Boolean(selectedBusinessPhone && !isWhatsAppPhoneApiAvailable(selectedBusinessPhone, whatsappStatus))
   const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && (!whatsappConnected || selectedApiUnavailable)
     ? 'qr'
     : 'api'
@@ -3506,7 +3510,7 @@ export const DesktopChat: React.FC = () => {
     }
 
     const fromPhone = message.businessPhone || getBusinessPhoneValue(routePhone)
-    return whatsappStatus?.connected && fromPhone ? 'whatsapp_api' : null
+    return isWhatsAppPhoneApiAvailable(routePhone, whatsappStatus) && fromPhone ? 'whatsapp_api' : null
   }, [activeContact, metaInstagramConnected, metaMessengerConnected, selectedBusinessPhone, whatsappStatus])
 
   useEffect(() => {
@@ -3995,7 +3999,7 @@ export const DesktopChat: React.FC = () => {
     : selectedBusinessPhone
     ? [selectedBusinessPhone]
     : []
-  const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && whatsappComposerPhones.some((phone) => getBusinessPhoneValue(phone)))
+  const whatsappApiSourcesAvailable = hasWhatsAppPhoneApiAvailable(whatsappStatus)
   const whatsappNativeSourcesAvailable = whatsappComposerPhones.some((phone) => (
     Boolean(getBusinessPhoneValue(phone)) && (isPhoneApiEnabled(phone, whatsappStatus) || isPhoneQrReadyForSend(phone))
   ))
@@ -4062,13 +4066,15 @@ export const DesktopChat: React.FC = () => {
       }]
     }
     if (option.value === 'whatsapp') {
-      const whatsappDisabled = !activeContact?.phone || (!whatsappNativeSourcesAvailable && !highLevelConnected)
-      if (whatsappComposerPhones.length === 0) return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled }]
+      const whatsappDisabled = !activeContact?.phone
+      if (whatsappComposerPhones.length === 0) {
+        return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled || !highLevelConnected }]
+      }
       return whatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
         label: `${option.label} · ${getBusinessPhoneDisplay(phone)}`,
         icon: renderComposerChannelIcon(option.value),
-        disabled: whatsappDisabled || !getBusinessPhoneValue(phone)
+        disabled: whatsappDisabled || !getBusinessPhoneValue(phone) || (!isPhoneApiEnabled(phone, whatsappStatus) && !isPhoneQrReadyForSend(phone))
       }))
     }
     if (option.value === 'email') {
@@ -4095,7 +4101,11 @@ export const DesktopChat: React.FC = () => {
     : isCommentComposerChannel(composerChannel)
     ? Boolean(selectedCommentReplyTarget && canSendSelectedCommentPlatform)
     : composerChannel === 'whatsapp'
-    ? Boolean(activeContact?.phone && (whatsappConnected || selectedQrReady || highLevelConnected))
+    ? Boolean(activeContact?.phone && (
+      selectedBusinessPhone
+        ? whatsappConnected || selectedQrReady
+        : highLevelConnected
+    ))
     : composerChannel === 'messenger'
     ? Boolean(hasDetectedMessenger && canSendMessenger)
     : Boolean(hasDetectedInstagram && canSendInstagram)
@@ -4109,6 +4119,8 @@ export const DesktopChat: React.FC = () => {
     ? 'Conecta HighLevel o tu correo de envío en Configuración > Correos.'
     : composerChannel === 'whatsapp' && !activeContact.phone
     ? 'Este contacto no tiene teléfono guardado.'
+    : composerChannel === 'whatsapp' && selectedBusinessPhone && !whatsappConnected && !selectedQrReady
+    ? selectedBusinessPhone.availability?.apiReason || 'El WhatsApp seleccionado no tiene una conexión disponible para enviar.'
     : composerChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
     ? 'Elige una caja de WhatsApp para responder.'
     : composerChannel === 'whatsapp' && !whatsappNativeSourcesAvailable && !highLevelConnected
@@ -6003,15 +6015,24 @@ export const DesktopChat: React.FC = () => {
 
     let provider: 'highlevel' | 'whatsapp_api' = 'whatsapp_api'
     let channel: HighLevelChatChannel | undefined
-    let transport: 'api' | undefined = 'api'
+    let transport: 'api' | 'qr' | undefined = 'api'
 
     if ((composerChannel === 'messenger' || composerChannel === 'instagram') && !highLevelConnected) {
       setScheduleError('La programación para Messenger e Instagram todavía no está disponible en Meta nativo. Puedes enviarlo al momento desde Ristak.')
       return
     }
 
-    if (composerChannel === 'whatsapp' && whatsappConnected && activeContact.phone) {
+    if (composerChannel === 'whatsapp' && selectedBusinessPhone) {
+      if (!activeContact.phone) {
+        setScheduleError('Este contacto necesita teléfono para programar por WhatsApp.')
+        return
+      }
+      if (!whatsappConnected && !selectedQrReady) {
+        setScheduleError(selectedBusinessPhone.availability?.apiReason || 'El WhatsApp seleccionado no tiene una conexión disponible para programar.')
+        return
+      }
       provider = 'whatsapp_api'
+      transport = selectedQrReady && !whatsappConnected ? 'qr' : 'api'
     } else if (highLevelConnected) {
       provider = 'highlevel'
       channel = activeConversationChannel
@@ -6032,6 +6053,11 @@ export const DesktopChat: React.FC = () => {
 
     if (provider === 'whatsapp_api' && !selectedBusinessPhoneValue) {
       setScheduleError('Elige el WhatsApp del negocio que mandará el mensaje.')
+      return
+    }
+
+    if (provider === 'whatsapp_api' && transport === 'api' && !apiReplyWindowOpen) {
+      setScheduleError('Para este chat necesitas mandar una plantilla antes de programar un mensaje libre.')
       return
     }
 
@@ -6802,7 +6828,7 @@ export const DesktopChat: React.FC = () => {
     const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && !activeNativeMetaChannel && highLevelConnected && (
       composerChannel === 'messenger' ||
       composerChannel === 'instagram' ||
-      (composerChannel === 'whatsapp' && !whatsappConnected && !selectedQrReady)
+      (composerChannel === 'whatsapp' && !selectedBusinessPhone)
     )
     const sendVoiceThroughNativeMeta = Boolean(voiceToSend && activeNativeMetaChannel)
     const sendVoiceThroughHighLevel = Boolean(
@@ -7353,7 +7379,7 @@ export const DesktopChat: React.FC = () => {
             ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: data.status || 'sent', transport: data.transport || 'instagram' }
             : message
         )))
-      } else if (highLevelConnected) {
+      } else if (highLevelConnected && (composerChannel !== 'whatsapp' || !selectedBusinessPhone)) {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: activeConversationChannel,
