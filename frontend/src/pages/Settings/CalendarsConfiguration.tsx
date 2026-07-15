@@ -23,6 +23,7 @@ import {
   MetaParameterValueInput,
   type MetaParameterVariable,
   WeeklyAvailabilityEditor,
+  type WeeklyAvailability,
   calendarDurationToMinutes,
   createDefaultWeeklyAvailability,
   openHoursToWeeklyAvailability,
@@ -898,6 +899,22 @@ export const CalendarsConfiguration: React.FC = () => {
   // Estados del wizard de edición de calendario
   const [expandedCalendarId, setExpandedCalendarId] = useState<string | null>(null)
   const [selectedCalendar, setSelectedCalendar] = useState<CalendarType | null>(null)
+  // Borrador vivo de la disponibilidad semanal mientras se edita. Es la fuente de
+  // verdad del editor: así un rango a medio configurar (p. ej. varios bloques por
+  // día) no se pierde al convertirlo a openHours en cada tecla (openHours descarta
+  // los rangos con fin <= inicio, lo que hacía "revertir" el 2.º bloque). Se ancla
+  // al calendario por id para no arrastrar el borrador de otro calendario.
+  const [availabilityDraft, setAvailabilityDraft] = useState<{ calendarId: string; value: WeeklyAvailability } | null>(null)
+
+  // Disponibilidad efectiva en edición: el borrador vivo si corresponde a este
+  // calendario, o la derivada de openHours cuando aún no se ha tocado.
+  const resolveEditingAvailability = (calendar: CalendarType): WeeklyAvailability => (
+    availabilityDraft && availabilityDraft.calendarId === calendar.id
+      ? availabilityDraft.value
+      : openHoursToWeeklyAvailability(calendar.openHours, {
+          fallbackToDefault: calendar.availabilityScheduleConfigured !== true
+        })
+  )
   const [calendarWizardStep, setCalendarWizardStep] = useState<CalendarWizardStepId>('basics')
   const [calendarPreviewStep, setCalendarPreviewStep] = useState<CalendarPreviewStep>('date')
   const [calendarPreviewDate, setCalendarPreviewDate] = useState(CALENDAR_PREVIEW_DEFAULT_DAY)
@@ -1793,6 +1810,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleCloseCalendarEditor = () => {
     setExpandedCalendarId(null)
     setSelectedCalendar(null)
+    setAvailabilityDraft(null)
     setCalendarWizardStep('basics')
     setCalendarMetaParamsOpen(false)
     setCalendarPreviewStep('date')
@@ -1802,9 +1820,9 @@ export const CalendarsConfiguration: React.FC = () => {
   const handleSaveCalendarConfig = async () => {
     if (!selectedCalendar) return
 
-    const weeklyAvailability = openHoursToWeeklyAvailability(selectedCalendar.openHours, {
-      fallbackToDefault: selectedCalendar.availabilityScheduleConfigured !== true
-    })
+    // Guardamos desde el borrador vivo (lo que realmente configuró la persona),
+    // no desde openHours, para no perder ningún bloque en la conversión.
+    const weeklyAvailability = resolveEditingAvailability(selectedCalendar)
     const availabilityValidation = validateWeeklyAvailability(
       weeklyAvailability,
       calendarDurationToMinutes(selectedCalendar.slotDuration, selectedCalendar.slotDurationUnit)
@@ -2496,9 +2514,7 @@ export const CalendarsConfiguration: React.FC = () => {
       ? normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
       : createDefaultCalendarBookingPayment()
     const bookingDisplayConfig = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
-    const weeklyAvailability = openHoursToWeeklyAvailability(selectedCalendar.openHours, {
-      fallbackToDefault: selectedCalendar.availabilityScheduleConfigured !== true
-    })
+    const weeklyAvailability = resolveEditingAvailability(selectedCalendar)
     const appointmentDurationMinutes = calendarDurationToMinutes(
       selectedCalendar.slotDuration,
       selectedCalendar.slotDurationUnit
@@ -3222,10 +3238,15 @@ export const CalendarsConfiguration: React.FC = () => {
             <WeeklyAvailabilityEditor
               value={weeklyAvailability}
               minimumRangeMinutes={appointmentDurationMinutes}
-              onChange={(nextAvailability) => updateSelectedCalendar({
-                openHours: weeklyAvailabilityToOpenHours(nextAvailability),
-                availabilityScheduleConfigured: true
-              })}
+              onChange={(nextAvailability) => {
+                // El borrador es la fuente de verdad del editor; openHours se
+                // mantiene como proyección válida para la vista y el guardado.
+                setAvailabilityDraft({ calendarId: selectedCalendar.id, value: nextAvailability })
+                updateSelectedCalendar({
+                  openHours: weeklyAvailabilityToOpenHours(nextAvailability),
+                  availabilityScheduleConfigured: true
+                })
+              }}
               aria-label={`Horarios disponibles de ${selectedCalendar.name}`}
             />
             <small>

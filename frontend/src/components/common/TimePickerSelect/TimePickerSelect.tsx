@@ -110,6 +110,7 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
           className={`${styles.trigger} ${className}`}
           disabled={disabled}
           aria-label={ariaLabel}
+          data-ristak-dropdown-trigger
         >
           <span>{formatTimeValue(value)}</span>
           <Clock3 size={15} aria-hidden="true" />
@@ -123,6 +124,11 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
         className={styles.content}
         aria-label={ariaLabel}
       >
+        <div className={styles.columnLabels} aria-hidden="true">
+          <span>Hora</span>
+          <span>Min</span>
+          <span>AM/PM</span>
+        </div>
         <div className={styles.columns}>
           <DropdownMenuRadioGroup
             value={String(draft.hour)}

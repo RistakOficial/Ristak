@@ -15,9 +15,13 @@ import {
   WEEKLY_AVAILABILITY_DAYS,
   cloneWeeklyAvailability,
   findSuggestedAvailabilityRange,
+  minutesToTimeValue,
+  timeValueToMinutes,
   type WeeklyAvailability,
   type WeeklyAvailabilityTimeRange
 } from './weeklyAvailability'
+
+const LAST_MINUTE_OF_DAY = 24 * 60 - 1
 import styles from './WeeklyAvailabilityEditor.module.css'
 
 export interface WeeklyAvailabilityEditorProps {
@@ -164,6 +168,40 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
     }))
   }
 
+  // Mantiene el rango siempre válido (fin > inicio). Cuando la persona mueve un
+  // extremo por encima del otro, en vez de dejar un rango imposible (que se
+  // descartaría al guardar) conservamos la duración del bloque desplazando el
+  // extremo que NO tocó. Así se puede configurar "2:00 – 7:00 PM" empezando por
+  // cualquiera de los dos selectores sin que el bloque se pierda.
+  const keepRangeValid = (
+    previous: WeeklyAvailabilityTimeRange,
+    patch: Partial<WeeklyAvailabilityTimeRange>
+  ): WeeklyAvailabilityTimeRange => {
+    const next = { ...previous, ...patch }
+    const start = timeValueToMinutes(next.start)
+    const end = timeValueToMinutes(next.end, true)
+    if (start === null || end === null || end > start) return next
+
+    const prevStart = timeValueToMinutes(previous.start)
+    const prevEnd = timeValueToMinutes(previous.end, true)
+    const fallbackSpan = Math.max(5, Math.round(minimumRangeMinutes) || 0)
+    const span = prevStart !== null && prevEnd !== null && prevEnd > prevStart
+      ? prevEnd - prevStart
+      : fallbackSpan
+
+    if ('start' in patch) {
+      const shiftedEnd = Math.min(LAST_MINUTE_OF_DAY, start + span)
+      if (shiftedEnd > start) return { start: next.start, end: minutesToTimeValue(shiftedEnd, true) }
+      // Sin espacio al final del día: fija el fin al último minuto y retrocede el inicio.
+      return {
+        start: minutesToTimeValue(Math.max(0, LAST_MINUTE_OF_DAY - span)),
+        end: minutesToTimeValue(LAST_MINUTE_OF_DAY, true)
+      }
+    }
+    // Se movió el fin: adelanta el inicio para conservar el bloque.
+    return { start: minutesToTimeValue(Math.max(0, end - span)), end: next.end }
+  }
+
   const handleRangeChange = (
     day: number,
     rangeIndex: number,
@@ -171,7 +209,7 @@ export const WeeklyAvailabilityEditor: React.FC<WeeklyAvailabilityEditorProps> =
   ) => {
     emitDayChange(day, current => ({
       ...current,
-      ranges: current.ranges.map((range, index) => index === rangeIndex ? { ...range, ...patch } : range)
+      ranges: current.ranges.map((range, index) => index === rangeIndex ? keepRangeValid(range, patch) : range)
     }))
   }
 

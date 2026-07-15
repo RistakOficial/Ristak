@@ -512,6 +512,82 @@ test('la lista y el candado final respetan horario, cierre y cadencia en la zona
   }
 })
 
+test('la lista y el candado final ofrecen dos bloques del mismo día y omiten el hueco entre ellos', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_two_blocks_${suffix}`
+  const timezone = 'America/Ciudad_Juarez'
+  const businessDay = DateTime.fromISO('2030-01-07T00:00:00', { zone: timezone })
+  const currentTime = businessDay.set({ hour: 6 })
+  const dateKey = businessDay.toISODate()
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con dos bloques por día',
+      source: 'ristak',
+      slotDuration: 1,
+      slotDurationUnit: 'hours',
+      slotInterval: 1,
+      slotIntervalUnit: 'hours',
+      allowBookingFor: 365,
+      allowBookingForUnit: 'days',
+      // 9:00–13:00 y 14:00–19:00 el mismo día: el hueco 13:00–14:00 nunca debe
+      // ofrecer horarios, ni en la URL pública ni en el agente (misma función).
+      openHours: [{
+        daysOfTheWeek: [businessDay.weekday],
+        hours: [
+          { openHour: 9, openMinute: 0, closeHour: 13, closeMinute: 0 },
+          { openHour: 14, openMinute: 0, closeHour: 19, closeMinute: 0 }
+        ]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const listed = await getLocalFreeSlots(calendarId, dateKey, dateKey, timezone, {
+      currentTimeMs: currentTime.toMillis(),
+      allowDefaultOpenHours: false
+    })
+    const listedStarts = listed[0]?.slots || []
+    const startAt = (hour) => businessDay.set({ hour, minute: 0 }).toUTC().toISO()
+
+    // Primer bloque: 9, 10, 11 y 12 (el de las 12 termina justo a la 1 PM).
+    for (const hour of [9, 10, 11, 12]) {
+      assert.equal(listedStarts.includes(startAt(hour)), true, `falta ${hour}:00 del primer bloque`)
+    }
+    // El hueco 13:00–14:00 no ofrece ningún inicio.
+    assert.equal(listedStarts.includes(startAt(13)), false, 'la 1 PM (hueco) no debe ofrecerse')
+    // Segundo bloque: 14, 15, 16, 17 y 18 (el de las 18 termina a las 7 PM).
+    for (const hour of [14, 15, 16, 17, 18]) {
+      assert.equal(listedStarts.includes(startAt(hour)), true, `falta ${hour}:00 del segundo bloque`)
+    }
+    // Nada después del cierre del segundo bloque.
+    assert.equal(listedStarts.includes(startAt(19)), false, 'las 7 PM (cierre) no debe ofrecerse')
+    assert.equal(listedStarts.length, 9, 'solo 4 + 5 inicios entre ambos bloques')
+
+    // El candado final (que usan tanto el POST público como el agente) coincide.
+    const gapStart = businessDay.set({ hour: 13, minute: 0 })
+    const gap = await checkSlotAvailability(
+      calendarId,
+      gapStart.toUTC().toISO(),
+      gapStart.plus({ hours: 1 }).toUTC().toISO(),
+      { timezone, currentTimeMs: currentTime.toMillis(), enforceCalendarRules: true }
+    )
+    assert.equal(gap.available, false)
+    assert.equal(gap.reason, 'outside_open_hours')
+
+    const secondBlockStart = businessDay.set({ hour: 14, minute: 0 })
+    const secondBlock = await checkSlotAvailability(
+      calendarId,
+      secondBlockStart.toUTC().toISO(),
+      secondBlockStart.plus({ hours: 1 }).toUTC().toISO(),
+      { timezone, currentTimeMs: currentTime.toMillis(), enforceCalendarRules: true }
+    )
+    assert.equal(secondBlock.available, true)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
 test('la lista y el candado estricto fallan cerrado ante openHours malformado', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_malformed_hours_${suffix}`

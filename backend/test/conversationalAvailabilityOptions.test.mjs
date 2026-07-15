@@ -292,6 +292,64 @@ test('offer_appointment_options muestra hasta tres días reales sin crear una of
   }
 })
 
+test('el agente ofrece dos bloques del mismo día y nunca horarios del hueco entre ellos', async () => {
+  const suffix = randomUUID()
+  const calendarId = `calendar_two_blocks_${suffix}`
+  const agentId = `agent_two_blocks_${suffix}`
+  const contactId = `contact_two_blocks_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 21 }).startOf('day')
+  // Fijamos un día entre semana concreto (martes) para anclar la disponibilidad.
+  const day = baseDay.plus({ days: (2 - baseDay.weekday + 7) % 7 })
+  const previewScopeId = `appointment_preview_${createHash('sha256').update(suffix).digest('hex').slice(0, 48)}`
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    objective: 'custom',
+    capabilitiesConfig: {
+      schemaVersion: 1,
+      items: [{ id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }]
+    }
+  }
+  const ctx = previewContext({ config, contactId, previewScopeId, executionId: `exec_${suffix}` })
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con dos bloques para el agente',
+      source: 'ristak',
+      slotDuration: 60,
+      slotDurationUnit: 'mins',
+      slotInterval: 60,
+      slotIntervalUnit: 'mins',
+      appoinmentPerSlot: 1,
+      allowBookingFor: 60,
+      allowBookingForUnit: 'days',
+      // 9:00–13:00 y 14:00–19:00: el agente jamás debe ofrecer horarios de 1 a 2 PM.
+      openHours: [{
+        daysOfTheWeek: [day.weekday],
+        hours: [
+          { openHour: 9, openMinute: 0, closeHour: 13, closeMinute: 0 },
+          { openHour: 14, openMinute: 0, closeHour: 19, closeMinute: 0 }
+        ]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const availability = await toolByName(ctx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(day.toISODate(), day.toISODate())
+    ))
+    assert.equal(availability.ok, true, JSON.stringify(availability))
+    assert.equal(availability.durationMinutes, 60)
+    // 4 inicios en el primer bloque + 5 en el segundo, ninguno en el hueco 13–14.
+    // Un cálculo que fusionara ambos bloques o incluyera la 1 PM daría 10.
+    assert.equal(availability.total, 9, JSON.stringify(availability))
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+  }
+})
+
 test('una lista durable permite pedir más tarde o más temprano en otra ejecución sin repetir sus límites', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_relative_list_${suffix}`
