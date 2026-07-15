@@ -209,11 +209,21 @@ final class ConversationViewModel {
     /// "ok" previo borre el globo que aún se está enviando (y con él su estado
     /// de reintento/fallo).
     private var inFlightExternalIds: Set<String> = []
+    /// Fallos que sí fueron contestados por el proveedor dentro de un HTTP 2xx.
+    /// A diferencia de una caída de red, éstos tienen espejo durable y pueden
+    /// reconciliarse sin duplicar el globo que conserva «Reintentar».
+    private var providerAcknowledgedFailureExternalIds: Set<String> = []
+    /// Id de la fila durable que devuelve el backend. HighLevel puede contestar
+    /// sin `messageId`; este vínculo exacto evita recurrir a heurísticas de texto.
+    private var authoritativeServerMessageIDsByExternalID: [String: String] = [:]
 
     private var lastFullJourneyFetch: Date?
     private var realtimeTask: Task<Void, Never>?
     /// Cadena serial de operaciones start/stop del engine SSE.
     private var realtimeControl: Task<Void, Never>?
+    /// Un evento que entra antes del primer `/conversation` no se descarta: se
+    /// reconcilia una vez apenas la carga inicial queda lista.
+    private var realtimeBootstrapGate = ConversationRealtimeBootstrapGate()
 
     struct FailedSendPayload {
         var text: String
@@ -236,6 +246,12 @@ final class ConversationViewModel {
         // Igual para el estado del agente: el robot del header se pinta en el
         // PRIMER frame desde caché, sin esperar el fetch en frío (~10 s).
         hydrateAgentStatesFromCache()
+        // El catálogo guardado por Ajustes permite rutear desde el primer toque,
+        // aunque el GET local de status siga en vuelo o falle transitoriamente.
+        whatsAppStatus = RistakSnapshotCache.shared.value(
+            WhatsAppAPIStatus.self,
+            for: SettingsCacheKey.whatsappStatus
+        )
     }
 
     func bind(appConfig: AppConfigStore) {
@@ -254,9 +270,11 @@ final class ConversationViewModel {
 
     func loadInitial() async {
         guard !hasLoadedOnce else { return }
+        realtimeBootstrapGate.beginInitialAttempt()
         let performanceSpan = RistakObservability.begin(.conversationInitialLoad)
         var performanceOutcome: RistakPerformanceOutcome = .failed
         var performanceSpanFinished = false
+        var allowsSilentRecovery = false
         if !timeline.isEmpty {
             performanceSpan.finish(
                 outcome: .success,
@@ -276,14 +294,18 @@ final class ConversationViewModel {
         accessDenied = false
         defer { isLoadingInitial = false }
 
-        // El estado del agente NO depende de la conversación: láncalo EN PARALELO
-        // al fetch del hilo para que un server frío no lo serialice detrás de él
-        // (antes corría DESPUÉS de cargar la conversación → robot ~10 s tarde).
+        // Nada de esto depende de la conversación: se lanza EN PARALELO para que
+        // un journey lento no deje al composer sin números/canales durante el
+        // bootstrap. Los catálogos son GET locales; no consultan Meta.
         async let agentTask: Void = loadAgentStates()
+        async let contactTask: Void = hydrateContactDetail()
+        async let statusTask: Void = loadWhatsAppStatus()
+        async let highLevelTask: Void = loadHighLevelChannels()
 
         do {
             try await loadConversation(reset: true)
             hasLoadedOnce = true
+            allowsSilentRecovery = true
             performanceOutcome = .success
         } catch let error as RistakAPIError {
             if error.isAccessDenied {
@@ -292,8 +314,10 @@ final class ConversationViewModel {
             } else if error.kind == .featureUnavailable {
                 // Silencioso en cargas: se queda el vacío estándar.
                 hasLoadedOnce = true
+                allowsSilentRecovery = true
                 performanceOutcome = .unavailable
             } else {
+                allowsSilentRecovery = true
                 loadErrorMessage = error.message
                 if error.kind == .network || error.kind == .starting || error.kind == .notConfigured {
                     performanceOutcome = .unavailable
@@ -302,6 +326,7 @@ final class ConversationViewModel {
         } catch is CancellationError {
             performanceOutcome = .cancelled
         } catch {
+            allowsSilentRecovery = true
             loadErrorMessage = "No se pudo cargar la conversación."
         }
 
@@ -312,16 +337,26 @@ final class ConversationViewModel {
             )
         }
 
-        // Espera SIEMPRE el fetch del agente ya en vuelo (aunque la conversación
-        // falle) para no dejar una tarea hija colgada.
-        await agentTask
+        // El GET principal ya terminó. Un error de red no deja el gate muerto:
+        // libera SSE/poll para que el chat se recupere solo. Acceso denegado y
+        // cancelación sí permanecen cerrados.
+        isLoadingInitial = false
+        let shouldDrainBootstrapRefresh = realtimeBootstrapGate.finishInitialAttempt(
+            allowsSilentRecovery: allowsSilentRecovery && !Task.isCancelled
+        )
+        if hasLoadedOnce {
+            markRead()
+        }
+        if shouldDrainBootstrapRefresh {
+            Task { [weak self] in
+                await self?.refreshSilently()
+            }
+        }
 
-        guard hasLoadedOnce else { return }
-        markRead()
-        async let contactTask: Void = hydrateContactDetail()
-        async let statusTask: Void = loadWhatsAppStatus()
-        async let highLevelTask: Void = loadHighLevelChannels()
-        _ = await (contactTask, statusTask, highLevelTask)
+        // Espera SIEMPRE las tareas hijas ya en vuelo (aunque la conversación
+        // falle) para no dejarlas colgadas y para resolver el canal con el mejor
+        // catálogo disponible/cacheado.
+        _ = await (agentTask, contactTask, statusTask, highLevelTask)
         resolveDefaultChannelIfNeeded()
     }
 
@@ -335,7 +370,10 @@ final class ConversationViewModel {
     /// corriendo repite al terminar. Así un burst de eventos SSE + poll + envío no
     /// dispara fetches completos solapados. (`@MainActor` → los flags no compiten.)
     func refreshSilently() async {
-        guard hasLoadedOnce else { return }
+        guard !accessDenied else { return }
+        // Antes de que termine el primer intento, guarda el nudge en el mismo
+        // gate de SSE. Al terminar se drena exactamente una vez.
+        guard realtimeBootstrapGate.receiveVisibleThreadEvent() else { return }
         if refreshInFlight {
             refreshQueued = true
             return
@@ -344,8 +382,29 @@ final class ConversationViewModel {
         defer { refreshInFlight = false }
         repeat {
             refreshQueued = false
-            try? await loadConversation(reset: false)
-        } while refreshQueued
+            let isBootstrapRecovery = !hasLoadedOnce
+            do {
+                try await loadConversation(reset: isBootstrapRecovery)
+                if isBootstrapRecovery {
+                    hasLoadedOnce = true
+                    loadErrorMessage = nil
+                    markRead()
+                }
+            } catch let error as RistakAPIError {
+                if error.isAccessDenied {
+                    accessDenied = true
+                    loadErrorMessage = error.message
+                    refreshQueued = false
+                } else if error.kind == .featureUnavailable {
+                    hasLoadedOnce = true
+                    loadErrorMessage = nil
+                }
+            } catch is CancellationError {
+                refreshQueued = false
+            } catch {
+                // Silencioso: el próximo SSE/poll vuelve a intentar.
+            }
+        } while refreshQueued && !accessDenied
         // El estado del agente puede cambiar por detrás (el bot responde, marca
         // objetivo, otro dispositivo lo pausa): refréscalo junto al poll/SSE para
         // que el header y el banner no se queden pegados. Throttled y sin bloquear.
@@ -500,6 +559,7 @@ final class ConversationViewModel {
 
         if messagesChanged {
             serverMessages = messages
+            refreshSelectedHighLevelWhatsAppRouteIfNeeded()
             persistThreadCache()
         }
         if contextsChanged {
@@ -534,7 +594,12 @@ final class ConversationViewModel {
         var matchedServerByOptimisticIndex: [Int: Int] = [:]
         let candidateIndexes = optimisticMessages.indices.filter { index in
             let message = optimisticMessages[index]
-            return !message.failed && !inFlightExternalIds.contains(message.id)
+            return ConversationOptimisticReconciliationPolicy.canMatch(
+                optimistic: message,
+                isInFlight: inFlightExternalIds.contains(message.id),
+                providerAcknowledgedFailure: providerAcknowledgedFailureExternalIds.contains(message.id),
+                authoritativeServerMessageID: authoritativeServerMessageIDsByExternalID[message.id]
+            )
         }
 
         // Primera pasada: identidad definitiva. Se hace antes del fallback para
@@ -542,9 +607,15 @@ final class ConversationViewModel {
         // otro optimista con providerMessageId conocido.
         for optimisticIndex in candidateIndexes {
             let optimistic = optimisticMessages[optimisticIndex]
-            guard let provider = optimistic.providerMessageId, !provider.isEmpty else { continue }
+            let provider = optimistic.providerMessageId
+            let localServerID = authoritativeServerMessageIDsByExternalID[optimistic.id]
+            guard provider?.isEmpty == false || localServerID?.isEmpty == false else { continue }
             guard let match = availableServerIndexes.first(where: { index in
-                outboundServer[index].providerMessageId == provider
+                ConversationOptimisticReconciliationPolicy.identitiesMatch(
+                    optimisticProviderMessageID: provider,
+                    authoritativeServerMessageID: localServerID,
+                    server: outboundServer[index]
+                )
             }) else { continue }
             availableServerIndexes.remove(match)
             matchedServerByOptimisticIndex[optimisticIndex] = match
@@ -554,6 +625,9 @@ final class ConversationViewModel {
         // Cada eco puede satisfacer exactamente una burbuja local.
         for optimisticIndex in candidateIndexes where matchedServerByOptimisticIndex[optimisticIndex] == nil {
             let optimistic = optimisticMessages[optimisticIndex]
+            // Un fallo reconocido sólo se une por ID remoto exacto. Hacerle
+            // fallback por texto podría tragarse otro envío legítimo igual.
+            guard !optimistic.failed else { continue }
             guard let optimisticDate = optimistic.parsedDate else { continue }
             let orderedIndexes = availableServerIndexes.sorted { lhs, rhs in
                 let left = outboundServer[lhs].parsedDate ?? .distantFuture
@@ -591,8 +665,12 @@ final class ConversationViewModel {
             stable.id = optimistic.id
             stable.date = optimistic.date
             stable.text = server.text.isEmpty ? optimistic.text : server.text
-            stable.pending = false
-            stable.failed = false
+            let disposition = ChatSendDeliveryDisposition.resolve(
+                status: server.status,
+                hasError: server.errorReason?.isEmpty == false
+            )
+            stable.pending = disposition == .pending
+            stable.failed = disposition == .failed
             if stable.providerMessageId?.isEmpty != false {
                 stable.providerMessageId = optimistic.providerMessageId
             }
@@ -601,6 +679,16 @@ final class ConversationViewModel {
                 optimistic: optimistic.attachment
             )
             optimisticMessages[optimisticIndex] = stable
+
+            if disposition.shouldRetainRetryPayload {
+                if disposition == .failed {
+                    providerAcknowledgedFailureExternalIds.insert(optimistic.id)
+                }
+            } else {
+                failedPayloads.removeValue(forKey: optimistic.id)
+                providerAcknowledgedFailureExternalIds.remove(optimistic.id)
+                authoritativeServerMessageIDsByExternalID.removeValue(forKey: optimistic.id)
+            }
         }
 
         reconciledServerMessageIDs = consumedServerIDs
@@ -711,6 +799,12 @@ final class ConversationViewModel {
 
     // MARK: - Polling / realtime / presencia
 
+    /// Abre SSE antes del primer fetch del hilo. El polling de reconciliación
+    /// conserva su cadencia normal y se agenda después del bootstrap.
+    func startRealtimeBootstrap() {
+        startRealtime()
+    }
+
     func startPolling() {
         clock.schedule("thread", every: PollingClock.Cadence.thread) { [weak self] in
             await self?.refreshSilently()
@@ -771,7 +865,8 @@ final class ConversationViewModel {
                         event: payload,
                         conversationIsVisible: belongsToVisibleThread
                     ))
-                    if belongsToVisibleThread {
+                    if belongsToVisibleThread,
+                       self.realtimeBootstrapGate.receiveVisibleThreadEvent() {
                         await self.refreshSilently()
                     }
                 }
@@ -842,18 +937,49 @@ final class ConversationViewModel {
     }
 
     private func loadWhatsAppStatus() async {
-        whatsAppStatus = try? await WhatsAppNumbersService.status()
+        do {
+            let fresh = try await ConversationLocalCatalogRetry.load {
+                try await WhatsAppNumbersService.status()
+            }
+            whatsAppStatus = fresh
+            RistakSnapshotCache.shared.store(
+                SettingsWhatsAppStatusSnapshot(fresh),
+                for: SettingsCacheKey.whatsappStatus
+            )
+        } catch {
+            // Conserva el catálogo cacheado/anterior. Un fallo transitorio del
+            // GET local no debe convertir un número operativo en "desconectado".
+        }
     }
 
     private func loadHighLevelChannels() async {
-        let status = try? await IntegrationsService.status()
-        highLevelConnected = status?.isHighLevelConnected == true
-        guard highLevelConnected else {
+        let status: IntegrationsStatus
+        do {
+            status = try await ConversationLocalCatalogRetry.load {
+                try await IntegrationsService.status()
+            }
+        } catch {
+            // No borres un estado conocido por un timeout momentáneo.
+            return
+        }
+
+        let connected = status.isHighLevelConnected
+        guard connected else {
+            highLevelConnected = false
             highLevelPhoneNumbers = []
             return
         }
-        let catalog = try? await IntegrationsService.highLevelPhoneNumbers()
-        highLevelPhoneNumbers = catalog?.phoneNumbers ?? []
+
+        highLevelConnected = true
+        do {
+            let catalog = try await ConversationLocalCatalogRetry.load {
+                try await IntegrationsService.highLevelPhoneNumbers()
+            }
+            highLevelPhoneNumbers = catalog.phoneNumbers
+        } catch {
+            // HighLevel sigue conectado. Conserva remitentes conocidos; si no
+            // había ninguno, el endpoint de envío usa el default de la cuenta.
+        }
     }
 
     func loadAgentStates() async {
@@ -896,7 +1022,49 @@ final class ConversationViewModel {
         if !phoneId.isEmpty, let match = whatsAppPhones.first(where: { $0.id == phoneId }) {
             return match
         }
-        return whatsAppPhones.first(where: { $0.isDefaultSender }) ?? whatsAppPhones.first
+        return ConversationWhatsAppRouteResolver.resolvePhone(
+            from: whatsAppPhones,
+            preferredPhoneNumberID: preferredWhatsAppPhoneNumberID,
+            lastInboundBusinessPhoneNumberID: seedContact?.lastInboundBusinessPhoneNumberId,
+            lastInboundBusinessPhone: seedContact?.lastInboundBusinessPhone,
+            lastBusinessPhoneNumberID: seedContact?.lastBusinessPhoneNumberId,
+            lastBusinessPhone: seedContact?.lastBusinessPhone
+        )
+    }
+
+    private var preferredWhatsAppPhoneNumberID: String {
+        let candidates = [
+            contactDetail?.preferredWhatsAppPhoneNumberId,
+            seedContact?.preferredWhatsAppPhoneNumberId,
+        ]
+        return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty }) ?? ""
+    }
+
+    /// Remitente verificable de WhatsApp HighLevel. No sale del catálogo LC
+    /// Phone (SMS): se deriva únicamente del inbound GHL más reciente.
+    private var highLevelWhatsAppFromNumber: String? {
+        ConversationHighLevelWhatsAppRouteResolver.latestInboundBusinessPhone(
+            in: serverMessages
+        )
+    }
+
+    private func refreshSelectedHighLevelWhatsAppRouteIfNeeded() {
+        guard case .highLevelWhatsApp = selectedChannel else { return }
+        selectedChannel = .highLevelWhatsApp(fromNumber: highLevelWhatsAppFromNumber ?? "")
+    }
+
+    @discardableResult
+    private func requireVerifiedHighLevelWhatsAppSender() -> Bool {
+        guard case .highLevelWhatsApp(let fromNumber) = selectedChannel else { return true }
+        guard !fromNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            alert = ConversationAlert(
+                title: "WhatsApp de HighLevel sin remitente",
+                message: "Este chat todavía no tiene un número de WhatsApp de HighLevel verificado. Recibe primero un mensaje por ese canal o elige otro remitente."
+            )
+            return false
+        }
+        return true
     }
 
     private func resolveDefaultChannelIfNeeded() {
@@ -909,31 +1077,38 @@ final class ConversationViewModel {
             if evidence.contains("messenger") || evidence.contains("facebook") { selectedChannel = .messenger; return }
         }
 
-        if highLevelConnected, evidence.contains("ghl_whatsapp") {
-            selectedChannel = .highLevelWhatsApp
-            return
-        }
-        if highLevelConnected,
-           evidence.contains("ghl_sms") || evidence.contains("sms_qr") {
-            let sender = highLevelPhoneNumbers.first(where: \.isDefault)?.phoneNumber
-                ?? highLevelPhoneNumbers.first?.phoneNumber
-                ?? ""
-            selectedChannel = .sms(fromNumber: sender)
-            return
-        }
+        selectedChannel = ConversationWhatsAppRouteResolver.defaultChannel(
+            latestChannelEvidence: latestChannelEvidence(),
+            highLevelConnected: highLevelConnected,
+            highLevelWhatsAppFromNumber: highLevelWhatsAppFromNumber,
+            highLevelPhoneNumbers: highLevelPhoneNumbers,
+            whatsAppPhones: whatsAppPhones,
+            preferredPhoneNumberID: preferredWhatsAppPhoneNumberID,
+            lastInboundBusinessPhoneNumberID: seedContact?.lastInboundBusinessPhoneNumberId,
+            lastInboundBusinessPhone: seedContact?.lastInboundBusinessPhone,
+            lastBusinessPhoneNumberID: seedContact?.lastBusinessPhoneNumberId,
+            lastBusinessPhone: seedContact?.lastBusinessPhone
+        )
+    }
 
-        let preferred = contactDetail?.preferredWhatsAppPhoneNumberId
-            ?? seedContact?.preferredWhatsAppPhoneNumberId ?? ""
-        let lastBusiness = seedContact?.lastBusinessPhoneNumberId ?? ""
-        for candidate in [preferred, lastBusiness] where !candidate.isEmpty {
-            if whatsAppPhones.contains(where: { $0.id == candidate }) {
-                selectedChannel = .whatsapp(phoneNumberId: candidate)
-                return
+    /// Solo el canal MÁS RECIENTE decide si el composer abre en HighLevel. Usar
+    /// `contains` sobre todo el historial hacía que un GHL viejo ganara incluso
+    /// después de recibir el mensaje actual por Meta Direct.
+    private func latestChannelEvidence() -> String {
+        let lastServerMessage = serverMessages.last(where: { $0.direction != .system })
+        let serverEvidence = lastServerMessage.map { "\($0.channel) \($0.transport ?? "")" } ?? ""
+
+        if let seed = seedContact {
+            let seedEvidence = "\(seed.lastMessageChannel) \(seed.lastMessageTransport)"
+            let seedDate = RistakDateParsing.date(fromISO: seed.lastMessageDate)
+            let serverDate = lastServerMessage?.parsedDate
+            if !seedEvidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               lastServerMessage == nil || (seedDate ?? .distantPast) >= (serverDate ?? .distantPast) {
+                return seedEvidence.lowercased()
             }
         }
-        let fallback = whatsAppPhones.first(where: { $0.isDefaultSender })?.id
-            ?? whatsAppPhones.first?.id ?? ""
-        selectedChannel = .whatsapp(phoneNumberId: fallback)
+
+        return serverEvidence.lowercased()
     }
 
     /// Probe de canales visto en el hilo/bandeja para habilitar Meta/SMS.
@@ -952,98 +1127,14 @@ final class ConversationViewModel {
 
     /// Opciones del sheet «Elegir canal de envío» (copys doc 05 §7.1).
     var channelOptions: [ComposerChannelOption] {
-        var options: [ComposerChannelOption] = []
-        let evidence = channelEvidence()
-        let hasPhone = !(contactPhone ?? "").isEmpty
-
-        if whatsAppPhones.isEmpty {
-            options.append(
-                ComposerChannelOption(
-                    channel: .whatsapp(phoneNumberId: ""),
-                    title: "WhatsApp",
-                    subtitle: "Mensaje por WhatsApp conectado.",
-                    disabledReason: whatsAppStatus?.connected == true
-                        ? (hasPhone ? nil : "Este contacto no tiene teléfono guardado.")
-                        : "Conecta WhatsApp API o QR para responder."
-                )
-            )
-        } else {
-            for (index, phone) in whatsAppPhones.enumerated() {
-                let label = phone.label?.isEmpty == false ? phone.label! : "Número \(index + 1)"
-                let available = phone.apiSendEnabled || phone.isQRConnected
-                var reason: String?
-                if !hasPhone {
-                    reason = "Este contacto no tiene teléfono guardado."
-                } else if !available {
-                    reason = "Ese número de WhatsApp ya no está disponible."
-                } else if (phone.displayPhoneNumber ?? phone.phoneNumber ?? "").isEmpty {
-                    reason = "Ese WhatsApp todavía no tiene número detectado."
-                }
-                options.append(
-                    ComposerChannelOption(
-                        channel: .whatsapp(phoneNumberId: phone.id),
-                        title: "WhatsApp · \(label)",
-                        subtitle: phone.displayPhoneNumber ?? phone.phoneNumber ?? phone.verifiedName ?? "",
-                        disabledReason: reason
-                    )
-                )
-            }
-        }
-
-        if highLevelConnected {
-            options.append(
-                ComposerChannelOption(
-                    channel: .highLevelWhatsApp,
-                    title: "WhatsApp · HighLevel",
-                    subtitle: "Envía desde la conversación conectada en HighLevel.",
-                    disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
-                )
-            )
-
-            if highLevelPhoneNumbers.isEmpty {
-                options.append(
-                    ComposerChannelOption(
-                        channel: .sms(fromNumber: ""),
-                        title: "SMS · HighLevel",
-                        subtitle: "HighLevel elegirá el número configurado en la conversación.",
-                        disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
-                    )
-                )
-            } else {
-                for (index, phone) in highLevelPhoneNumbers.enumerated() {
-                    options.append(
-                        ComposerChannelOption(
-                            channel: .sms(fromNumber: phone.phoneNumber),
-                            title: "SMS · \(phone.label.isEmpty ? "Número \(index + 1)" : phone.label)",
-                            subtitle: phone.phoneNumber,
-                            disabledReason: hasPhone ? nil : "Este contacto no tiene teléfono guardado."
-                        )
-                    )
-                }
-            }
-        }
-
-        options.append(
-            ComposerChannelOption(
-                channel: .messenger,
-                title: "Messenger",
-                subtitle: "Responde por Facebook Messenger.",
-                disabledReason: (evidence.contains("messenger") || evidence.contains("facebook"))
-                    ? nil
-                    : "Activa Messenger en Configuración > Meta Ads para responder desde Ristak."
-            )
+        ConversationChannelOptionsBuilder.build(
+            whatsAppStatus: whatsAppStatus,
+            highLevelConnected: highLevelConnected,
+            highLevelWhatsAppFromNumber: highLevelWhatsAppFromNumber,
+            highLevelPhoneNumbers: highLevelPhoneNumbers,
+            hasContactPhone: !(contactPhone ?? "").isEmpty,
+            channelEvidence: channelEvidence()
         )
-        options.append(
-            ComposerChannelOption(
-                channel: .instagram,
-                title: "Instagram DM",
-                subtitle: "Responde por Instagram Direct.",
-                disabledReason: evidence.contains("instagram")
-                    ? nil
-                    : "Activa Instagram en Configuración > Meta Ads para responder desde Ristak."
-            )
-        )
-        return options
     }
 
     var selectedChannelTitle: String {
@@ -1057,17 +1148,14 @@ final class ConversationViewModel {
         }
         guard !isSavingChannelSelection else { return }
 
-        let previousChannel = selectedChannel
         selectedChannel = option.channel
+        channelResolved = true
         isChannelSheetPresented = false
         isComposerChannelSheetPresented = false
 
         guard case .whatsapp(let phoneNumberId) = option.channel,
               !phoneNumberId.isEmpty else { return }
-        let previousPreferredPhoneNumberId = contactDetail?.preferredWhatsAppPhoneNumberId
-            ?? seedContact?.preferredWhatsAppPhoneNumberId
-            ?? ""
-        guard previousPreferredPhoneNumberId != phoneNumberId else { return }
+        guard preferredWhatsAppPhoneNumberID != phoneNumberId else { return }
 
         isSavingChannelSelection = true
         Task { [weak self] in
@@ -1080,31 +1168,22 @@ final class ConversationViewModel {
                     routingReason: "Cambio desde selector inferior o ficha del chat"
                 )
             } catch {
-                if self.selectedChannel == option.channel {
-                    self.selectedChannel = previousChannel
-                }
-                self.alert = ConversationAlert(
-                    title: "No se guardó el WhatsApp de respuesta",
-                    message: (error as? RistakAPIError)?.message ?? "Intenta otra vez."
-                )
+                // La preferencia es comodidad, no autoridad de transporte. Un
+                // 404 (contacto movido/oculto) o timeout no revierte el canal:
+                // el envío actual conserva explícitos `from` + `phoneNumberId`.
             }
         }
     }
 
     // MARK: - Ventana de 24 h (preflight cliente, doc 05 §1.1)
 
-    /// Último inbound WhatsApp cargado (no sms/meta/email).
+    /// Último inbound WhatsApp nativo del remitente seleccionado. No toma
+    /// prestada la ventana de HighLevel ni de otro número conectado.
     private var lastWhatsAppInboundDate: Date? {
-        for message in serverMessages.reversed() where message.direction == .inbound {
-            let probe = "\(message.channel) \(message.transport ?? "")".lowercased()
-            let excluded = probe.contains("sms") || probe.contains("messenger")
-                || probe.contains("instagram") || probe.contains("facebook")
-                || probe.contains("mail") || message.isComment
-            if !excluded {
-                return message.parsedDate
-            }
-        }
-        return nil
+        ConversationWhatsAppReplyWindowResolver.lastInboundDate(
+            in: serverMessages,
+            selectedPhone: selectedWhatsAppPhone
+        )
     }
 
     var apiReplyWindowOpen: Bool {
@@ -1414,6 +1493,7 @@ final class ConversationViewModel {
             )
             return
         }
+        guard requireVerifiedHighLevelWhatsAppSender() else { return }
         if selectedChannel.isWhatsApp || selectedChannel.isHighLevel {
             guard let phone = contactPhone, !phone.isEmpty else {
                 alert = ConversationAlert(
@@ -1455,6 +1535,9 @@ final class ConversationViewModel {
             : resolveWhatsAppTransport().rawValue
         var optimistic = makeOptimisticMessage(id: externalId, text: "", transport: optimisticTransport)
         optimistic.messageType = "audio"
+        if selectedChannel.isHighLevel {
+            optimistic.businessPhone = selectedChannel.highLevelFromNumber
+        }
         optimistic.attachment = ChatAttachment(
             type: .audio,
             url: preview.url.absoluteString,
@@ -1608,10 +1691,12 @@ final class ConversationViewModel {
     }
 
     private func sendHighLevel(text: String, drafts: [ComposerAttachmentDraft], preserveComposer: Bool = false) async {
+        guard requireVerifiedHighLevelWhatsAppSender() else { return }
         let externalId = MessageExternalIdFactory.highLevel()
         let highLevelChannel = selectedChannel.highLevelChannel ?? "sms_qr"
         let highLevelTransport = highLevelChannel == "sms_qr" ? "ghl_sms" : "ghl_whatsapp"
         var optimistic = makeOptimisticMessage(id: externalId, text: text, transport: highLevelTransport)
+        optimistic.businessPhone = selectedChannel.highLevelFromNumber
         if let first = drafts.first {
             optimistic.attachment = ChatAttachment(
                 type: attachmentKind(for: first.kind),
@@ -1834,16 +1919,19 @@ final class ConversationViewModel {
     }
 
     private func applySendResult(_ result: MessageSendResult, to externalId: String) {
+        let disposition = result.deliveryDisposition
+        let failureMessage = "El proveedor rechazó el mensaje después de recibir la solicitud."
         mutateMessage(id: externalId) { message in
-            message.pending = false
-            message.failed = false
+            message.pending = disposition == .pending
+            message.failed = disposition == .failed
             message.status = result.status?.isEmpty == false ? result.status : "sent"
+            message.errorReason = disposition == .failed ? failureMessage : nil
             if let transport = result.transport, !transport.isEmpty {
                 message.transport = transport
                 message.channel = transport
             }
             message.routingReason = result.resolvedRoutingReason
-            if let provider = result.wamid ?? result.remoteMessageId ?? result.id, !provider.isEmpty {
+            if let provider = result.resolvedProviderMessageId {
                 message.providerMessageId = provider
             }
             if var attachment = message.attachment {
@@ -1855,12 +1943,25 @@ final class ConversationViewModel {
             }
         }
         inFlightExternalIds.remove(externalId)
-        failedPayloads.removeValue(forKey: externalId)
+        if let localMessageId = result.localMessageId, !localMessageId.isEmpty {
+            authoritativeServerMessageIDsByExternalID[externalId] = localMessageId
+        }
+        if disposition == .failed {
+            providerAcknowledgedFailureExternalIds.insert(externalId)
+            alert = ConversationAlert(title: "No se envió el mensaje", message: failureMessage)
+        } else {
+            providerAcknowledgedFailureExternalIds.remove(externalId)
+        }
+        if !disposition.shouldRetainRetryPayload {
+            failedPayloads.removeValue(forKey: externalId)
+        }
     }
 
     private func handleSendFailure(_ error: Error, externalId: String, restoreOnWindowError: String?) {
         // El POST terminó (con error): sale de "en vuelo".
         inFlightExternalIds.remove(externalId)
+        providerAcknowledgedFailureExternalIds.remove(externalId)
+        authoritativeServerMessageIDsByExternalID.removeValue(forKey: externalId)
 
         // 400 de ventana de 24 h (doc 05 §1.1 / gap §10.5).
         if WhatsAppReplyWindowRules.isReplyWindowError(error) {
@@ -1891,6 +1992,8 @@ final class ConversationViewModel {
         optimisticMessages.removeAll { $0.id == id }
         failedPayloads.removeValue(forKey: id)
         inFlightExternalIds.remove(id)
+        providerAcknowledgedFailureExternalIds.remove(id)
+        authoritativeServerMessageIDsByExternalID.removeValue(forKey: id)
         reconcileOptimisticMessages()
         rebuildCombined()
     }
@@ -2314,6 +2417,7 @@ final class ConversationViewModel {
             )
             return
         }
+        guard requireVerifiedHighLevelWhatsAppSender() else { return }
         scheduleSheet = ScheduleSheetState(
             editingId: nil,
             externalId: nil,
@@ -2361,6 +2465,20 @@ final class ConversationViewModel {
         }
         guard state.date.timeIntervalSinceNow > 10 else {
             alert = ConversationAlert(title: "Programado", message: "Elige una hora futura para programar el mensaje.")
+            return false
+        }
+
+        if let origin = state.origin,
+           origin.provider == "highlevel",
+           origin.channel == "whatsapp_api",
+           origin.fromPhone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            alert = ConversationAlert(
+                title: "WhatsApp de HighLevel sin remitente",
+                message: "No puedo reprogramar este WhatsApp porque no tiene un número de negocio verificado. Crea uno nuevo desde una conversación recibida por HighLevel."
+            )
+            return false
+        }
+        if state.origin == nil, !requireVerifiedHighLevelWhatsAppSender() {
             return false
         }
 

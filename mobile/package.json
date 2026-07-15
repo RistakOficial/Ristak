@@ -38,7 +38,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "prebuild": "expo prebuild --clean",
-    "test:chat-reliability": "node --test test/chatReliability.test.cjs test/calendarReliability.test.cjs test/paymentReliability.test.cjs test/analyticsReliability.test.cjs test/offlineSnapshotCache.test.cjs test/firstSyncProgress.test.cjs test/pushRegistrationReliability.test.cjs",
+    "test:chat-reliability": "node --test test/chatReliability.test.cjs test/chatRouting.test.cjs test/calendarReliability.test.cjs test/paymentReliability.test.cjs test/analyticsReliability.test.cjs test/offlineSnapshotCache.test.cjs test/firstSyncProgress.test.cjs test/pushRegistrationReliability.test.cjs",
     "typecheck": "tsc --noEmit",
     "web": "expo start --web"
   },

@@ -64,5 +64,11 @@ assert.deepEqual(getChatSendResponseIds({
   serverMessageId: 'db-nested',
   providerMessageId: 'provider-nested'
 })
+assert.deepEqual(getChatSendResponseIds({
+  data: { messageId: 'ghl-provider-message', localMessageId: 'ghl-local-message' }
+}), {
+  serverMessageId: 'ghl-local-message',
+  providerMessageId: 'ghl-provider-message'
+})
 
 console.log(`chat reconciliation OK (${pathToFileURL(sourceUrl.pathname).pathname})`)

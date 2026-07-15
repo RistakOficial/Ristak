@@ -7,7 +7,12 @@ import { fileURLToPath } from 'url'
 import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
-import { findContactByPhoneCandidates, generateContactId, recordContactPhoneNumber } from './contactIdentityService.js'
+import {
+  findContactByPhoneCandidates,
+  generateContactId,
+  recordContactPhoneNumber,
+  restoreSoftDeletedContactForNewInbound
+} from './contactIdentityService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 import {
@@ -6159,7 +6164,7 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
     ? await db.get(`
         SELECT id, phone, full_name, source, total_paid, purchases_count,
                attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
-               created_at
+               created_at, deleted_at
         FROM contacts
         WHERE id = ?
         LIMIT 1
@@ -6297,7 +6302,8 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
   return {
     id: existing.id,
     created: false,
-    contactName: getStoredContactDisplayName(existing, contactName, canonicalPhone)
+    contactName: getStoredContactDisplayName(existing, contactName, canonicalPhone),
+    deletedAt: existing.deleted_at || null
   }
 }
 
@@ -7862,6 +7868,23 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     }, persistCanonicalMessageAndClaim)
   } else {
     await persistCanonicalMessageAndClaim()
+  }
+
+  const hasDurableInboundIdentity = Boolean(providerMessageId || wamid || protocolMessageKeyId)
+  if (
+    identity.direction === 'inbound' &&
+    !historyImport &&
+    hasDurableInboundIdentity &&
+    canonicalMessage?.id
+  ) {
+    // La restauración es idempotente y ocurre sólo después de confirmar la fila
+    // durable. También debe correr en deduplicados: si el proceso cayó después
+    // del INSERT/claim, el reintento cierra el hueco sin crear otro mensaje.
+    await restoreSoftDeletedContactForNewInbound({
+      contactId: localContact.id,
+      messageTimestamp,
+      source: `whatsapp_${cleanTransport}`
+    })
   }
 
   const canonicalQrFallbackApplied = existingQrFallbackApplied || (

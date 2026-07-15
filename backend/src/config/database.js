@@ -8,6 +8,7 @@ import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import {
   extractWhatsAppProfileName,
@@ -78,6 +79,8 @@ const CORE_SCHEMA_BOOTSTRAP_CONFIG_KEY = 'core_schema_bootstrap_version'
 const CORE_SCHEMA_BOOTSTRAP_VERSION = '2026-07-12-v1'
 const STARTUP_DATA_MAINTENANCE_CONFIG_KEY = 'startup_data_maintenance_version'
 const STARTUP_DATA_MAINTENANCE_VERSION = '2026-07-12-v1'
+const CONTACT_REENGAGEMENT_REPAIR_CONFIG_KEY = 'contact_reengagement_repair_version'
+const CONTACT_REENGAGEMENT_REPAIR_VERSION = '2026-07-15-v1'
 const STARTUP_DATA_BATCH_SIZE = 250
 const STARTUP_SCHEMA_LOCK_NAME = 'startup-schema-bootstrap'
 const STARTUP_SCHEMA_LOCK_WAIT_MS = 120_000
@@ -8225,9 +8228,68 @@ export async function runCoreSchemaBootstrap() {
   }
 }
 
+/**
+ * Repara el hueco histórico donde un contacto en papelera podía recibir un
+ * mensaje nuevo y reaparecer en Chats sin volver a estar disponible en su ficha.
+ * Sólo reactiva cuando el inbound es posterior al deleted_at; un backfill viejo
+ * jamás deshace una eliminación intencional.
+ */
+export async function repairSoftDeletedContactsWithNewInboundActivity() {
+  const whatsappInboundSort = timestampSortExpression('COALESCE(message_timestamp, created_at)')
+  const metaInboundSort = timestampSortExpression('COALESCE(message_timestamp, created_at)')
+  const emailInboundSort = timestampSortExpression('COALESCE(message_timestamp, created_at)')
+  const deletedAtSort = timestampSortExpression('c.deleted_at')
+  const rows = await db.all(`
+    SELECT c.id, c.deleted_at, MAX(activity.last_inbound_sort) AS last_inbound_sort
+    FROM contacts c
+    JOIN (
+      SELECT contact_id, MAX(${whatsappInboundSort}) AS last_inbound_sort
+      FROM whatsapp_api_messages
+      WHERE contact_id IS NOT NULL AND LOWER(COALESCE(direction, '')) = 'inbound'
+      GROUP BY contact_id
+      UNION ALL
+      SELECT contact_id, MAX(${metaInboundSort}) AS last_inbound_sort
+      FROM meta_social_messages
+      WHERE contact_id IS NOT NULL AND LOWER(COALESCE(direction, '')) = 'inbound'
+      GROUP BY contact_id
+      UNION ALL
+      SELECT contact_id, MAX(${emailInboundSort}) AS last_inbound_sort
+      FROM email_messages
+      WHERE contact_id IS NOT NULL AND LOWER(COALESCE(direction, '')) = 'inbound'
+      GROUP BY contact_id
+    ) activity ON activity.contact_id = c.id
+    WHERE c.deleted_at IS NOT NULL
+    GROUP BY c.id, c.deleted_at
+    HAVING ${deletedAtSort} > 0
+       AND MAX(activity.last_inbound_sort) > ${deletedAtSort}
+  `)
+
+  let restored = 0
+  for (const row of rows) {
+    const result = await db.run(`
+      UPDATE contacts
+      SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at = ?
+    `, [row.id, row.deleted_at])
+    if (Number(result?.changes || 0) > 0) restored += 1
+  }
+
+  if (restored > 0) {
+    logger.success(`[Contactos] ${restored} contacto${restored === 1 ? '' : 's'} reactivado${restored === 1 ? '' : 's'} por mensajes posteriores a la papelera.`)
+  }
+  return { restored }
+}
+
 export async function runStartupDataMaintenance() {
   try {
     return await db.withAdvisoryLock('startup-data-maintenance', async () => {
+      const reengagementRepairVersion = await getAppConfig(CONTACT_REENGAGEMENT_REPAIR_CONFIG_KEY).catch(() => '')
+      if (reengagementRepairVersion !== CONTACT_REENGAGEMENT_REPAIR_VERSION) {
+        logger.info('[Arranque] Reparando contactos que volvieron a escribir después de la papelera...')
+        await repairSoftDeletedContactsWithNewInboundActivity()
+        await setAppConfig(CONTACT_REENGAGEMENT_REPAIR_CONFIG_KEY, CONTACT_REENGAGEMENT_REPAIR_VERSION)
+      }
+
       const appliedVersion = await getAppConfig(STARTUP_DATA_MAINTENANCE_CONFIG_KEY).catch(() => '')
       if (appliedVersion === STARTUP_DATA_MAINTENANCE_VERSION) {
         logger.info(`[Arranque] Mantenimiento histórico ${STARTUP_DATA_MAINTENANCE_VERSION} ya aplicado.`)

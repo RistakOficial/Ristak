@@ -76,6 +76,25 @@ la cuenta cambió, el primer `CONVERSATIONS_CONTACT_NOT_FOUND` obliga a buscar o
 recrear el contacto por teléfono/correo, guardar el vínculo nuevo y reintentar
 una sola vez; otros errores no autorizan reintentos ciegos.
 
+La ventana de `WhatsApp · HighLevel` pertenece al remitente HighLevel ligado a
+la conversacion. Ristak deriva el `fromNumber` del ultimo inbound
+`ghl_whatsapp` verificado; el inventario `/api/highlevel/phone-numbers` es
+exclusivamente LC Phone/SMS (`source=lc_phone`, `channels=['sms']`) y nunca se
+usa para inventar remitentes WhatsApp.
+Sólo cuenta un inbound local `transport=ghl_whatsapp` cuyo `business_phone`
+coincida con ese `fromNumber`, o la misma evidencia exacta obtenida en el export
+de HighLevel. Un inbound Meta Direct, YCloud, QR o de otro numero no abre la
+ventana. Fuera de 24 horas se rechaza el texto libre con
+`HIGHLEVEL_WHATSAPP_REPLY_WINDOW_CLOSED`; si no se puede verificar, se usa
+`HIGHLEVEL_WHATSAPP_REPLY_WINDOW_UNKNOWN`. Ninguno de los dos casos autoriza
+convertir el envio a SMS.
+
+El sync HighLevel persiste la identidad real del payload (`from_phone`,
+`to_phone`, `business_phone`) y el motivo limpio de `message.error`. Una
+respuesta HTTP aceptada sin recibo durable, incluso `sent/pending/queued`, se queda pendiente hasta el acuse
+durable; webhook/sync actualiza la misma fila y publica `chat_message` para que
+las superficies reconcilien por SSE sin consultar al proveedor en polling.
+
 Por lo tanto, seleccionar un número Meta directo sano mantiene el composer en
 WhatsApp API y calcula su ventana de 24 horas con los mensajes entrantes de ese
 mismo número. Si la ventana está cerrada, la UI ofrece plantillas y no desvía el

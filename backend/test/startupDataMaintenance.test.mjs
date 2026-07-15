@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
@@ -19,10 +19,13 @@ test('el mantenimiento histórico corre fuera del bootstrap, por lotes y una sol
   const suffix = randomUUID()
   const contactId = `legacy_external_${suffix}`
   const messageId = `startup_message_${suffix}`
+  const reengagedContactId = `startup_reengaged_${suffix}`
+  const reengagedEarlyMessageId = `startup_reengaged_early_${suffix}`
+  const reengagedLateMessageId = `startup_reengaged_late_${suffix}`
   const phone = `+52155${Date.now().toString().slice(-8)}`
   const timestamp = '2026-07-12T12:00:00.000Z'
 
-  await db.run("DELETE FROM app_config WHERE config_key IN ('startup_data_maintenance_version', 'whatsapp_api_first_ad_attribution_backfill_version')")
+  await db.run("DELETE FROM app_config WHERE config_key IN ('startup_data_maintenance_version', 'whatsapp_api_first_ad_attribution_backfill_version', 'contact_reengagement_repair_version')")
 
   try {
     await db.run(`
@@ -38,6 +41,45 @@ test('el mantenimiento histórico corre fuera del bootstrap, por lotes y una sol
       ) VALUES (?, 'meta_direct', ?, ?, ?, 'api', 'inbound', 'text',
         'Mensaje histórico', 'received', ?, ?, ?, 'ycloud')
     `, [messageId, `legacy_meta_${suffix}`, contactId, phone, timestamp, timestamp, timestamp])
+
+    await db.run(`
+      INSERT INTO contacts (id, phone, source, deleted_at, created_at, updated_at)
+      VALUES (?, ?, 'WhatsApp_API', ?, ?, ?)
+    `, [
+      reengagedContactId,
+      `${phone}9`,
+      '2026-07-15 12:00:00',
+      '2026-07-01T00:00:00.000Z',
+      '2026-07-15 12:00:00'
+    ])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, contact_id, phone, transport, direction, message_type,
+        message_text, status, message_timestamp, created_at, updated_at, source_adapter
+      ) VALUES (?, 'meta_direct', ?, ?, 'api', 'inbound', 'text',
+        'Mensaje anterior a la papelera', 'received', ?, ?, ?, 'meta_direct')
+    `, [
+      reengagedEarlyMessageId,
+      reengagedContactId,
+      `${phone}9`,
+      '2026-07-15T00:01:00.000Z',
+      '2026-07-15T00:01:00.000Z',
+      '2026-07-15T00:01:00.000Z'
+    ])
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, contact_id, phone, transport, direction, message_type,
+        message_text, status, message_timestamp, created_at, updated_at, source_adapter
+      ) VALUES (?, 'meta_direct', ?, ?, 'api', 'inbound', 'text',
+        'Volvió después de la papelera', 'received', ?, ?, ?, 'meta_direct')
+    `, [
+      reengagedLateMessageId,
+      reengagedContactId,
+      `${phone}9`,
+      '2026-07-15 23:59:00',
+      '2026-07-15 23:59:00',
+      '2026-07-15 23:59:00'
+    ])
 
     const firstRun = await runStartupDataMaintenance()
     assert.equal(firstRun.skipped, false)
@@ -64,12 +106,42 @@ test('el mantenimiento histórico corre fuera del bootstrap, por lotes y una sol
     assert.equal(message?.provider_message_id, `legacy_meta_${suffix}`)
     assert.equal(message?.source_adapter, 'meta_direct')
     assert.equal(await getAppConfig('startup_data_maintenance_version'), '2026-07-12-v1')
+    const reengagedContact = await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [reengagedContactId])
+    assert.equal(reengagedContact?.deleted_at, null)
+    assert.equal(await getAppConfig('contact_reengagement_repair_version'), '2026-07-15-v1')
 
     const secondRun = await runStartupDataMaintenance()
     assert.equal(secondRun.skipped, true)
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [messageId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id IN (?, ?)', [reengagedEarlyMessageId, reengagedLateMessageId]).catch(() => undefined)
     await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [reengagedContactId]).catch(() => undefined)
+  }
+})
+
+test('la reparación de reactivación no marca versión cuando la consulta falla', async () => {
+  await databaseReady
+  const configKey = 'contact_reengagement_repair_version'
+  const realAll = db.all.bind(db)
+
+  await db.run('DELETE FROM app_config WHERE config_key = ?', [configKey])
+  mock.method(db, 'all', async (sql, params) => {
+    if (String(sql).includes('MAX(activity.last_inbound_sort)')) {
+      throw new Error('fallo forzado de reparación')
+    }
+    return realAll(sql, params)
+  })
+
+  try {
+    await assert.rejects(
+      runStartupDataMaintenance(),
+      /fallo forzado de reparación/
+    )
+    assert.equal(await getAppConfig(configKey), null)
+  } finally {
+    mock.restoreAll()
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [configKey])
   }
 })

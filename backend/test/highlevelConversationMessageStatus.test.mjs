@@ -2,15 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { getHighLevelResponseStatus } from '../src/controllers/highlevelController.js'
 
-test('HighLevel accepted outbound responses are stored as sent by default', () => {
-  assert.equal(getHighLevelResponseStatus({ messageId: 'msg_123' }), 'sent')
-  assert.equal(getHighLevelResponseStatus({ data: { messageId: 'msg_456' } }), 'sent')
+test('HighLevel accepted outbound responses remain pending without a durable receipt', () => {
+  assert.equal(getHighLevelResponseStatus({ messageId: 'msg_123' }), 'pending')
+  assert.equal(getHighLevelResponseStatus({ data: { messageId: 'msg_456' } }), 'pending')
+  assert.equal(getHighLevelResponseStatus({ status: 'sent' }), 'pending')
 })
 
-test('HighLevel provider queue states do not keep local chat bubbles pending', () => {
-  assert.equal(getHighLevelResponseStatus({ status: 'pending' }), 'sent')
-  assert.equal(getHighLevelResponseStatus({ data: { status: 'queued' } }), 'sent')
-  assert.equal(getHighLevelResponseStatus({ msg: 'Message queued for delivery' }), 'sent')
+test('HighLevel provider queue states remain pending until a durable receipt arrives', () => {
+  assert.equal(getHighLevelResponseStatus({ status: 'pending' }), 'pending')
+  assert.equal(getHighLevelResponseStatus({ data: { status: 'queued' } }), 'pending')
+  assert.equal(getHighLevelResponseStatus({ msg: 'Message queued for delivery' }), 'pending')
 })
 
 test('HighLevel terminal delivery states are preserved', () => {

@@ -20,12 +20,14 @@
 import crypto from 'crypto'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import GHLClient from './ghlClient.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
+import { restoreSoftDeletedContactForNewInbound } from './contactIdentityService.js'
 // (NOTI-003) La confirmación de citas por respuesta también debe abrirse cuando el
 // contacto responde por canales sincronizados vía HighLevel (SMS/Messenger/Instagram/
 // WhatsApp de GHL), no solo por WhatsApp API.
@@ -534,7 +536,7 @@ function inferAttachmentMessageType(url = '') {
 async function getLocalContact(contactId) {
   if (!cleanString(contactId)) return null
   return db.get(
-    'SELECT id, phone, email, full_name, first_name, last_name FROM contacts WHERE id = ?',
+    'SELECT id, phone, email, full_name, first_name, last_name, deleted_at FROM contacts WHERE id = ?',
     [contactId]
   ).catch(() => null)
 }
@@ -650,6 +652,55 @@ function getLocalChannelFromWhatsAppTransport(transport = '') {
   return 'whatsapp'
 }
 
+function resolveHighLevelPhoneIdentity(message = {}, contact = {}, direction = 'inbound') {
+  const rawFrom = normalizePhoneForStorage(
+    message.fromNumber || message.from_number || message.from || message.senderPhone || message.sender_phone
+  ) || cleanString(message.fromNumber || message.from_number || message.from)
+  const rawTo = normalizePhoneForStorage(
+    message.toNumber || message.to_number || message.to || message.recipientPhone || message.recipient_phone
+  ) || cleanString(message.toNumber || message.to_number || message.to)
+  const fallbackContactPhone = normalizePhoneForStorage(contact?.phone) || cleanString(contact?.phone)
+  const inbound = direction === 'inbound'
+
+  return {
+    customerPhone: (inbound ? rawFrom : rawTo) || fallbackContactPhone,
+    businessPhone: inbound ? rawTo : rawFrom,
+    fromPhone: rawFrom || (inbound ? fallbackContactPhone : ''),
+    toPhone: rawTo || (inbound ? '' : fallbackContactPhone)
+  }
+}
+
+function getHighLevelMessageErrorText(message = {}) {
+  const rawError = message.errorMessage || message.error_message || message.failureReason ||
+    message.failure_reason || message.error?.message || message.error
+  if (!rawError) return ''
+  return cleanString(typeof rawError === 'string' ? rawError : safeJsonStringify(rawError))
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/p>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .slice(0, 2000)
+}
+
+async function restoreContactAfterPersistedInbound({
+  contact,
+  direction,
+  messageTimestamp,
+  source
+} = {}) {
+  if (direction !== 'inbound' || !contact?.id) return
+  // Este helper se llama únicamente después de que el upsert del mensaje terminó.
+  // También corre en deduplicados: si el proceso cayó entre el INSERT y la
+  // restauración, el reintento debe cerrar el hueco sin crear otro mensaje.
+  await restoreSoftDeletedContactForNewInbound({
+    contactId: contact.id,
+    messageTimestamp,
+    source
+  })
+}
+
 async function upsertWhatsAppRow({ message, contact, transport, direction, notifyNewInbound }) {
   const remoteMessageId = getRemoteMessageId(message)
   if (!remoteMessageId) return { saved: 0, isNew: false }
@@ -660,7 +711,9 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
     message.dateAdded || message.date_added || message.createdAt || message.created_at || message.dateUpdated
   ) || new Date().toISOString()
   const status = normalizeMessageStatus(message.status) || (direction === 'inbound' ? 'delivered' : 'sent')
-  const contactPhone = cleanString(contact?.phone)
+  const errorMessage = getHighLevelMessageErrorText(message)
+  const phoneIdentity = resolveHighLevelPhoneIdentity(message, contact, direction)
+  const contactPhone = phoneIdentity.customerPhone
   const rawPayload = safeJsonStringify({ provider: 'highlevel', source: 'conversations_sync', message })
   const items = attachments.length ? attachments : [null]
 
@@ -688,22 +741,28 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
 
       await db.run(`
         INSERT INTO whatsapp_api_messages (
-          id, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+          id, ycloud_message_id, contact_id, phone, from_phone, to_phone, business_phone,
           transport, direction, message_type, message_text, media_url,
-          status, message_timestamp, raw_payload_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          status, error_message, message_timestamp, raw_payload_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
           ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
           contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
           phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
           from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
           to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
+          business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
           transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
           direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
           message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
           message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
           media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
           status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
+          error_message = CASE
+            WHEN LOWER(COALESCE(excluded.status, '')) = 'failed'
+              THEN COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message)
+            ELSE NULL
+          END,
           message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
           raw_payload_json = excluded.raw_payload_json,
           updated_at = CURRENT_TIMESTAMP
@@ -712,14 +771,16 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
         remoteMessageId,
         contact.id,
         contactPhone || null,
-        direction === 'inbound' ? (contactPhone || null) : null,
-        direction === 'inbound' ? null : (contactPhone || null),
+        phoneIdentity.fromPhone || null,
+        phoneIdentity.toPhone || null,
+        phoneIdentity.businessPhone || null,
         transport,
         direction,
         attachmentUrl ? inferAttachmentMessageType(attachmentUrl) : 'text',
         index === 0 ? text : '',
         attachmentUrl || null,
         status,
+        errorMessage || null,
         messageTimestamp,
         rawPayload
       ])
@@ -738,6 +799,13 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   } else {
     await persistRows()
   }
+
+  await restoreContactAfterPersistedInbound({
+    contact,
+    direction,
+    messageTimestamp,
+    source: `highlevel_${getLocalChannelFromWhatsAppTransport(transport)}`
+  })
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
     await recordInboundChatUnread({
@@ -852,6 +920,13 @@ async function upsertEmailRow({ message, contact, direction, notifyNewInbound })
   const isNew = direction === 'inbound'
     ? await withConversationalInboundCommitLock({ contactId: contact.id, channel: 'email' }, persistRow)
     : await persistRow()
+
+  await restoreContactAfterPersistedInbound({
+    contact,
+    direction,
+    messageTimestamp,
+    source: 'highlevel_email'
+  })
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
     await recordInboundChatUnread({
@@ -984,6 +1059,13 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
   } else {
     await persistRows()
   }
+
+  await restoreContactAfterPersistedInbound({
+    contact,
+    direction,
+    messageTimestamp,
+    source: `highlevel_${platform}`
+  })
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
     await recordInboundChatUnread({
@@ -1183,6 +1265,7 @@ function prepareHistoricalMessageRows({ message, contact, channel, direction }) 
   const attachments = getMessageAttachments(message)
   const messageTimestamp = getMessageTimestamp(message)
   const status = normalizeMessageStatus(message.status) || (direction === 'inbound' ? 'delivered' : 'sent')
+  const errorMessage = getHighLevelMessageErrorText(message)
   const rawPayload = safeJsonStringify({ provider: 'highlevel', source: 'conversations_sync', message })
   const items = attachments.length ? attachments : [null]
 
@@ -1245,7 +1328,8 @@ function prepareHistoricalMessageRows({ message, contact, channel, direction }) 
     }
   }
 
-  const contactPhone = cleanString(contact?.phone)
+  const phoneIdentity = resolveHighLevelPhoneIdentity(message, contact, direction)
+  const contactPhone = phoneIdentity.customerPhone
   return {
     table: 'whatsapp',
     rows: items.map((attachmentUrl, index) => [
@@ -1253,14 +1337,16 @@ function prepareHistoricalMessageRows({ message, contact, channel, direction }) 
       remoteMessageId,
       contact.id,
       contactPhone || null,
-      direction === 'inbound' ? (contactPhone || null) : null,
-      direction === 'inbound' ? null : (contactPhone || null),
+      phoneIdentity.fromPhone || null,
+      phoneIdentity.toPhone || null,
+      phoneIdentity.businessPhone || null,
       channel.transport,
       direction,
       attachmentUrl ? inferAttachmentMessageType(attachmentUrl) : 'text',
       index === 0 ? text : '',
       attachmentUrl || null,
       status,
+      errorMessage || null,
       messageTimestamp,
       rawPayload
     ])
@@ -1302,22 +1388,28 @@ async function persistHistoricalWhatsAppRows(rows = []) {
   for (const chunk of chunkRows(rows)) {
     await db.run(`
       INSERT INTO whatsapp_api_messages (
-        id, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+        id, ycloud_message_id, contact_id, phone, from_phone, to_phone, business_phone,
         transport, direction, message_type, message_text, media_url,
-        status, message_timestamp, raw_payload_json, updated_at
-      ) VALUES ${createValuesSql(chunk.length, 14)}
+        status, error_message, message_timestamp, raw_payload_json, updated_at
+      ) VALUES ${createValuesSql(chunk.length, 16)}
       ON CONFLICT(id) DO UPDATE SET
         ycloud_message_id = COALESCE(NULLIF(excluded.ycloud_message_id, ''), whatsapp_api_messages.ycloud_message_id),
         contact_id = COALESCE(whatsapp_api_messages.contact_id, excluded.contact_id),
         phone = COALESCE(NULLIF(excluded.phone, ''), whatsapp_api_messages.phone),
         from_phone = COALESCE(NULLIF(excluded.from_phone, ''), whatsapp_api_messages.from_phone),
         to_phone = COALESCE(NULLIF(excluded.to_phone, ''), whatsapp_api_messages.to_phone),
+        business_phone = COALESCE(NULLIF(excluded.business_phone, ''), whatsapp_api_messages.business_phone),
         transport = COALESCE(NULLIF(excluded.transport, ''), whatsapp_api_messages.transport),
         direction = COALESCE(NULLIF(excluded.direction, ''), whatsapp_api_messages.direction),
         message_type = COALESCE(NULLIF(excluded.message_type, ''), whatsapp_api_messages.message_type),
         message_text = COALESCE(NULLIF(excluded.message_text, ''), whatsapp_api_messages.message_text),
         media_url = COALESCE(NULLIF(excluded.media_url, ''), whatsapp_api_messages.media_url),
         status = COALESCE(NULLIF(excluded.status, ''), whatsapp_api_messages.status),
+        error_message = CASE
+          WHEN LOWER(COALESCE(excluded.status, '')) = 'failed'
+            THEN COALESCE(NULLIF(excluded.error_message, ''), whatsapp_api_messages.error_message)
+          ELSE NULL
+        END,
         message_timestamp = COALESCE(excluded.message_timestamp, whatsapp_api_messages.message_timestamp),
         raw_payload_json = excluded.raw_payload_json,
         updated_at = CURRENT_TIMESTAMP
@@ -1330,8 +1422,8 @@ async function bulkUpsertHistoricalWhatsAppRows(rows = []) {
     rows,
     identityForRow: row => ({
       contactId: row[2],
-      channel: getLocalChannelFromWhatsAppTransport(row[6]),
-      direction: row[7]
+      channel: getLocalChannelFromWhatsAppTransport(row[7]),
+      direction: row[8]
     }),
     persistRows: persistHistoricalWhatsAppRows
   })
@@ -1888,13 +1980,7 @@ export async function syncHighLevelConversationHistory({
  * Acepta payloads flexibles: el mensaje puede venir en message{}, customData{}
  * o en la raíz del body.
  */
-export async function processHighLevelConversationWebhook(payload = {}) {
-  const { getHighLevelConfig } = await import('../config/database.js')
-  const config = await getHighLevelConfig()
-  if (!config?.api_token || !config?.location_id) {
-    return { saved: 0, skipped: true, reason: 'highlevel_not_configured' }
-  }
-
+export function buildHighLevelConversationWebhookMessage(payload = {}) {
   const messageSource = payload.message && typeof payload.message === 'object'
     ? payload.message
     : payload.customData && typeof payload.customData === 'object'
@@ -1929,7 +2015,7 @@ export async function processHighLevelConversationWebhook(payload = {}) {
     payload.timestamp ||
     new Date().toISOString()
 
-  const message = {
+  return {
     id: getRemoteMessageId(messageSource) || getRemoteMessageId(payload) ||
       buildHighLevelWebhookFallbackMessageId({ contactId, body, messageType, direction, attachments, timestamp: dateAdded }),
     contactId,
@@ -1937,9 +2023,26 @@ export async function processHighLevelConversationWebhook(payload = {}) {
     direction,
     messageType,
     status: messageSource.status || payload.status,
+    fromNumber: messageSource.fromNumber || messageSource.from_number || messageSource.from ||
+      messageSource.senderPhone || messageSource.sender_phone || payload.fromNumber || payload.from_number ||
+      payload.from || payload.senderPhone || payload.sender_phone,
+    toNumber: messageSource.toNumber || messageSource.to_number || messageSource.to ||
+      messageSource.recipientPhone || messageSource.recipient_phone || payload.toNumber || payload.to_number ||
+      payload.to || payload.recipientPhone || payload.recipient_phone,
+    errorMessage: getHighLevelMessageErrorText(messageSource) || getHighLevelMessageErrorText(payload),
     attachments,
     dateAdded
   }
+}
+
+export async function processHighLevelConversationWebhook(payload = {}) {
+  const { getHighLevelConfig } = await import('../config/database.js')
+  const config = await getHighLevelConfig()
+  if (!config?.api_token || !config?.location_id) {
+    return { saved: 0, skipped: true, reason: 'highlevel_not_configured' }
+  }
+
+  const message = buildHighLevelConversationWebhookMessage(payload)
 
   // Si el workflow no especifica canal, asumir WhatsApp (canal principal de chat)
   if (!resolveHighLevelMessageChannel(message)) {

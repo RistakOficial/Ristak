@@ -2875,7 +2875,9 @@ export const getChatContacts = async (req, res) => {
       phoneNumberId: phoneNumberIdFilter,
       businessPhone: businessPhoneFilter || businessPhone
     })
-    const conditions = []
+    // La papelera no es una bandeja de chat. Si el contacto vuelve a escribir,
+    // la ingesta lo reactiva antes de publicar el evento realtime.
+    const conditions = ['c.deleted_at IS NULL']
     const params = []
     const includeMetaSocialMessages = !phoneNumberIdFilter && !businessPhoneFilter
     const requestedBusinessScope = Boolean(phoneNumberIdFilter || businessPhoneFilter)

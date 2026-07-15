@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
@@ -3380,6 +3380,189 @@ test('backfill YCloud reanuda desde la siguiente pagina sin repetir el historial
   } finally {
     setYCloudFetchForTest(null)
     await cleanup({ phone })
+  }
+})
+
+test('un inbound WhatsApp nuevo reactiva el contacto eliminado que conserva el historial', async () => {
+  const id = randomUUID()
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const contactId = `rstk_contact_reengaged_${id}`
+  const messageId = `ycloud_reengaged_${id}`
+
+  await cleanup({ contactId, messageId, phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, source, deleted_at, created_at, updated_at
+      ) VALUES (?, ?, 'Contacto eliminado', 'WhatsApp_API', ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      '2026-07-14T06:24:27.810Z',
+      '2026-07-01T00:00:00.000Z',
+      '2026-07-14T06:24:27.810Z'
+    ])
+
+    const result = await syncYCloudMessageRecords([{
+      id: messageId,
+      wamid: `wamid.${id}`,
+      from: phone,
+      to: businessPhone,
+      sendTime: '2026-07-15T17:13:48.064Z',
+      type: 'text',
+      text: { body: 'Volví a escribir' }
+    }], {
+      businessPhoneHints: [businessPhone],
+      direction: 'inbound',
+      eventType: 'whatsapp.inbound_message.received',
+      source: 'ycloud_reengagement_test'
+    })
+
+    assert.equal(result.created, 1)
+    const contact = await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [contactId])
+    assert.equal(contact.deleted_at, null)
+  } finally {
+    await cleanup({ contactId, messageId, phone })
+  }
+})
+
+test('un reintento deduplicado reactiva el contacto si el primer proceso cayó después de persistir', async () => {
+  const id = randomUUID()
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const contactId = `rstk_contact_reengaged_retry_${id}`
+  const messageId = `ycloud_reengaged_retry_${id}`
+  const messageTimestamp = '2026-07-15T17:13:48.064Z'
+  const record = {
+    id: messageId,
+    wamid: `wamid.${id}`,
+    contactId,
+    from: phone,
+    to: businessPhone,
+    sendTime: messageTimestamp,
+    type: 'text',
+    text: { body: 'Este mensaje ya quedó persistido' }
+  }
+
+  await cleanup({ contactId, messageId, phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, source, created_at, updated_at
+      ) VALUES (?, ?, 'Contacto activo', 'WhatsApp_API', ?, ?)
+    `, [contactId, phone, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'])
+
+    const first = await syncYCloudMessageRecords([record], {
+      businessPhoneHints: [businessPhone],
+      direction: 'inbound',
+      eventType: 'whatsapp.inbound_message.received',
+      source: 'ycloud_reengagement_retry_test'
+    })
+    assert.equal(first.created, 1)
+
+    // Simula el hueco de crash: mensaje y claim ya son durables, pero la
+    // reactivación todavía no ocurrió.
+    await db.run(
+      'UPDATE contacts SET deleted_at = ? WHERE id = ?',
+      ['2026-07-14T06:24:27.810Z', contactId]
+    )
+
+    const retry = await syncYCloudMessageRecords([record], {
+      businessPhoneHints: [businessPhone],
+      direction: 'inbound',
+      eventType: 'whatsapp.inbound_message.received',
+      source: 'ycloud_reengagement_retry_test'
+    })
+
+    assert.equal(retry.updated, 1)
+    const contact = await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [contactId])
+    assert.equal(contact.deleted_at, null)
+    const rows = await db.get(
+      'SELECT COUNT(*) AS count FROM whatsapp_api_messages WHERE contact_id = ?',
+      [contactId]
+    )
+    assert.equal(Number(rows.count), 1)
+  } finally {
+    await cleanup({ contactId, messageId, phone })
+  }
+})
+
+test('un inbound sin identidad durable o con insert fallido no reactiva el contacto', async () => {
+  const id = randomUUID()
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const contactId = `rstk_contact_reengaged_invalid_${id}`
+  const deletionTimestamp = '2026-07-14T06:24:27.810Z'
+
+  await cleanup({ contactId, messageId: '', phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, source, deleted_at, created_at, updated_at
+      ) VALUES (?, ?, 'Contacto eliminado', 'WhatsApp_API', ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      deletionTimestamp,
+      '2026-07-01T00:00:00.000Z',
+      deletionTimestamp
+    ])
+
+    const missingIdentity = await syncYCloudMessageRecords([{
+      contactId,
+      from: phone,
+      to: businessPhone,
+      sendTime: '2026-07-15T17:13:48.064Z',
+      type: 'text',
+      text: { body: 'Sin ID del proveedor' }
+    }], {
+      businessPhoneHints: [businessPhone],
+      direction: 'inbound',
+      eventType: 'whatsapp.inbound_message.received',
+      source: 'ycloud_reengagement_missing_identity_test'
+    })
+    assert.equal(missingIdentity.messages, 1)
+    assert.equal(
+      (await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [contactId])).deleted_at,
+      deletionTimestamp
+    )
+
+    const realRun = db.run.bind(db)
+    mock.method(db, 'run', async (sql, params) => {
+      if (String(sql).includes('INSERT INTO whatsapp_api_messages')) {
+        throw new Error('fallo forzado de persistencia')
+      }
+      return realRun(sql, params)
+    })
+
+    const failedInsert = await syncYCloudMessageRecords([{
+      id: `ycloud_reengaged_failed_${id}`,
+      wamid: `wamid.failed.${id}`,
+      contactId,
+      from: phone,
+      to: businessPhone,
+      sendTime: '2026-07-15T17:14:48.064Z',
+      type: 'text',
+      text: { body: 'No se pudo guardar' }
+    }], {
+      businessPhoneHints: [businessPhone],
+      direction: 'inbound',
+      eventType: 'whatsapp.inbound_message.received',
+      source: 'ycloud_reengagement_failed_insert_test'
+    })
+
+    assert.equal(failedInsert.failed, 1)
+    assert.equal(
+      (await db.get('SELECT deleted_at FROM contacts WHERE id = ?', [contactId])).deleted_at,
+      deletionTimestamp
+    )
+  } finally {
+    mock.restoreAll()
+    await cleanup({ contactId, messageId: '', phone })
   }
 })
 

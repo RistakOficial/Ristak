@@ -10,7 +10,7 @@ import SwiftUI
 /// SMS sale por HighLevel (`sms_qr`).
 enum ComposerChannel: Hashable, Identifiable, Sendable {
     case whatsapp(phoneNumberId: String)
-    case highLevelWhatsApp
+    case highLevelWhatsApp(fromNumber: String)
     case messenger
     case instagram
     case sms(fromNumber: String)
@@ -18,7 +18,7 @@ enum ComposerChannel: Hashable, Identifiable, Sendable {
     var id: String {
         switch self {
         case .whatsapp(let phoneId): return "whatsapp-\(phoneId)"
-        case .highLevelWhatsApp: return "highlevel-whatsapp"
+        case .highLevelWhatsApp(let fromNumber): return "highlevel-whatsapp-\(fromNumber)"
         case .messenger: return "messenger"
         case .instagram: return "instagram"
         case .sms(let fromNumber): return "highlevel-sms-\(fromNumber)"
@@ -49,8 +49,12 @@ enum ComposerChannel: Hashable, Identifiable, Sendable {
     }
 
     var highLevelFromNumber: String? {
-        guard case .sms(let fromNumber) = self, !fromNumber.isEmpty else { return nil }
-        return fromNumber
+        switch self {
+        case .highLevelWhatsApp(let fromNumber), .sms(let fromNumber):
+            return fromNumber.isEmpty ? nil : fromNumber
+        default:
+            return nil
+        }
     }
 
     var metaPlatform: MetaSocialPlatform? {

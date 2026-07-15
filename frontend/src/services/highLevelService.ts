@@ -1,6 +1,7 @@
 // Servicio de GoHighLevel para manejar configuración
 import { apiUrl } from './apiBaseUrl'
 import { refreshIntegrationsStatusAfter } from './integrationsService'
+import { getHighLevelChatSendOutcome } from '@/utils/highLevelChatSend'
 
 // Evento que avisa al AppShell que se inició una sincronización manual,
 // para mostrar la barra de progreso sin sondear continuamente el backend.
@@ -61,6 +62,7 @@ export interface HighLevelConversationMessagePayload {
 
 export interface HighLevelConversationMessageResponse {
   success?: boolean
+  error?: string
   data?: {
     messageId?: string
     conversationId?: string
@@ -79,6 +81,8 @@ export interface HighLevelConversationMessageResponse {
     replyWindowOpen?: boolean | null
     replyWindowSource?: string | null
     lastInboundAt?: string | null
+    error?: string
+    errorMessage?: string
     audio?: {
       link?: string
       url?: string
@@ -420,7 +424,25 @@ class HighLevelService {
       throw new Error(data.error || 'No se pudo enviar el mensaje por HighLevel')
     }
 
-    return data
+    const outcome = getHighLevelChatSendOutcome(data, payload.channel)
+    if (!outcome.accepted) {
+      throw new Error(outcome.errorReason)
+    }
+
+    if (data?.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+      return {
+        ...data,
+        data: {
+          ...data.data,
+          status: outcome.status
+        }
+      }
+    }
+
+    return {
+      ...data,
+      status: outcome.status
+    }
   }
 
 }

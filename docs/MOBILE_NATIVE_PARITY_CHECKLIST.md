@@ -312,7 +312,14 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: el composer separa WhatsApp API/QR, HighLevel WhatsApp, cada número
     SMS de HighLevel y Messenger/Instagram; texto, media, ubicación y programación
     conservan la ruta elegida. WhatsApp nativo mantiene su ventana de 24 horas y
-    plantillas, mientras SMS HighLevel pasa el `fromNumber` seleccionado.
+    plantillas, mientras WhatsApp HighLevel se liga al ultimo `business_phone`
+    inbound verificado y SMS HighLevel pasa el `fromNumber` seleccionado del
+    catalogo LC Phone, que nunca se trata como inventario WhatsApp. Android
+    conserva juntos `phoneNumberId + fromPhone +
+    transport` tambien en plantillas; la seleccion inicial prioriza ultimo
+    inbound del mismo numero. Un fallo al persistir preferencia no revierte el
+    canal util de la sesion y un fallo transitorio de catalogo conserva el ultimo
+    snapshot valido con un solo retry local.
 - [ ] Info de mensaje, receipts, errores, pendientes y reintentos.
   - Avance: long press sobre globo abre bottom sheet con preview, reacciones
     rapidas, responder e informacion de canal/estado/hora. Los globos muestran
@@ -320,6 +327,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     fallidos siete dias, reconcilia acuses al abrir y ofrece reintento real sin
     duplicar un envio que siga activo. Falta pantalla completa de info del
     mensaje y acciones especiales de programados.
+- [x] Realtime del hilo disponible durante bootstrap.
+  - Avance: iOS abre SSE antes del fetch inicial, bufferiza un nudge recibido
+    durante la carga y ejecuta una sola reconciliacion local al quedar listo.
+    Android y web conservan SSE como camino principal y polling local como red
+    de seguridad; ninguna superficie sondea Meta para refrescar el hilo.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
 - [x] Aislar y aligerar sincronizacion de conversaciones.

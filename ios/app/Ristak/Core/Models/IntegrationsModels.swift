@@ -83,6 +83,9 @@ struct IntegrationsStatus: Decodable, Sendable, Equatable {
         PaymentGateway.allCases.filter { state(for: $0)?.isUsable == true }
     }
 
+    /// HighLevel sólo puede enviar cuando el backend confirmó credenciales y
+    /// location usables. `configured` también existe para filas parciales (por
+    /// ejemplo, sólo etiquetas) y no debe inventar canales fantasma.
     var isHighLevelConnected: Bool { highlevel?.connected == true }
 }
 

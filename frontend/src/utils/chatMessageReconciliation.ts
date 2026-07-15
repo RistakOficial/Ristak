@@ -35,9 +35,11 @@ export function getChatSendResponseIds(value: unknown) {
     serverMessageId: cleanId(response.localMessageId) || cleanId(nested.localMessageId),
     providerMessageId: cleanId(response.wamid) ||
       cleanId(response.remoteMessageId) ||
+      cleanId(response.messageId) ||
       cleanId(response.id) ||
       cleanId(nested.wamid) ||
       cleanId(nested.remoteMessageId) ||
+      cleanId(nested.messageId) ||
       cleanId(nested.id)
   }
 }

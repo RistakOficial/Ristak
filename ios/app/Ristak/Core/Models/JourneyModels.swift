@@ -315,11 +315,14 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
     /// Palomitas para mensajes salientes, con los sets normalizados de /movil.
     var receiptStatus: ChatMessageReceiptStatus {
         let normalized = (status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if failed || ["error", "failed", "undelivered", "rejected"].contains(normalized)
-            || (errorReason?.isEmpty == false) {
+        let delivery = ChatSendDeliveryDisposition.resolve(
+            status: normalized,
+            hasError: errorReason?.isEmpty == false
+        )
+        if failed || delivery == .failed {
             return .failed
         }
-        if pending || ["pending", "queued", "sending"].contains(normalized) || normalized.hasPrefix("enviando") {
+        if pending || delivery == .pending {
             return .pending
         }
         if (readAt?.isEmpty == false) || ["read", "seen", "opened", "played"].contains(normalized) {

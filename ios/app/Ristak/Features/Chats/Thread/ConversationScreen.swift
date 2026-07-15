@@ -65,9 +65,14 @@ struct ConversationScreen: View {
             }
             .task {
                 viewModel.bind(appConfig: appConfig)
+                // SSE primero: si el mensaje entra mientras `/conversation`
+                // carga, el ViewModel conserva el nudge y reconcilia al quedar
+                // listo. No espera a journey/agentes/catálogos secundarios.
+                viewModel.startRealtimeBootstrap()
                 await viewModel.loadInitial()
                 // En un pop rápido la `.task` se cancela durante `loadInitial`:
-                // no arranques polling/SSE/presencia después (fuga de tareas).
+                // no arranques polling/presencia después (fuga de tareas). El
+                // SSE temprano ya quedó detenido por `onDisappear`.
                 guard !Task.isCancelled else { return }
                 viewModel.startPolling()
                 presence.startViewing(contactID: viewModel.contactID)

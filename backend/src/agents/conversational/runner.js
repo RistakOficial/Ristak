@@ -3282,6 +3282,7 @@ async function sendConversationalChannelTextMessage({
       contactId,
       channel: getHighLevelReplyChannel({ channel: normalizedChannel, latest }),
       message: text,
+      fromNumber: latest.business_phone || undefined,
       toNumber: phone || latest.phone || undefined,
       externalId,
       agentId

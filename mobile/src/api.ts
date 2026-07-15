@@ -63,6 +63,10 @@ import type {
 import * as FileSystem from 'expo-file-system/legacy';
 import { cleanBaseUrl } from './format';
 import { normalizeChatSelectionIds } from './chatSelectionState';
+import {
+  normalizeNativeWhatsAppSenderRoute,
+  type NativeWhatsAppSenderRoute,
+} from './chatRouting';
 
 declare const process: { env?: Record<string, string | undefined> } | undefined;
 
@@ -838,8 +842,7 @@ export class RistakApiClient {
     text: string,
     channel: NativeMessageChannel = 'whatsapp',
     reply?: MessageReplyPayload,
-    phoneNumberId?: string,
-    transport?: 'qr' | 'api',
+    whatsAppSender?: NativeWhatsAppSenderRoute,
     externalId?: string,
   ) {
     if (channel === 'email') {
@@ -873,17 +876,18 @@ export class RistakApiClient {
       });
     }
 
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/text', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         text,
         externalId: externalId || createNativeExternalId('native'),
-        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
         messageOrigin: 'manual_chat',
-        transport: transport || undefined,
+        transport: sender.transport,
         replyToMessageId: reply?.replyToMessageId || undefined,
         replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
       }),
@@ -923,73 +927,77 @@ export class RistakApiClient {
     return this.request<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`);
   }
 
-  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
+  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/image', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         imageDataUrl,
         caption,
         externalId: externalId || createNativeExternalId('native-image'),
-        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
         messageOrigin: 'manual_chat',
-        transport: transport || undefined,
+        transport: sender.transport,
       }),
     });
   }
 
-  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
+  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/document', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         documentDataUrl,
         filename,
         mimeType: mimeType || undefined,
         caption,
         externalId: externalId || createNativeExternalId('native-document'),
-        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
         messageOrigin: 'manual_chat',
-        transport: transport || undefined,
+        transport: sender.transport,
       }),
     });
   }
 
-  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
+  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/video', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         videoDataUrl,
         caption,
         externalId: externalId || createNativeExternalId('native-video'),
-        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
         messageOrigin: 'manual_chat',
-        transport: transport || undefined,
+        transport: sender.transport,
       }),
     });
   }
 
-  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
+  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/audio', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         audioDataUrl,
         durationMs,
         voice: true,
         externalId: externalId || createNativeExternalId('native-audio'),
-        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
         messageOrigin: 'manual_chat',
-        transport: transport || undefined,
+        transport: sender.transport,
       }),
     });
   }
@@ -1009,21 +1017,22 @@ export class RistakApiClient {
     });
   }
 
-  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
+  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/messages/location', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         latitude,
         longitude,
         name,
         address,
         externalId: externalId || createNativeExternalId('native-location'),
-        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
         messageOrigin: 'manual_chat',
-        transport: transport || undefined,
+        transport: sender.transport,
       }),
     });
   }
@@ -1074,9 +1083,8 @@ export class RistakApiClient {
     scheduledAt: string,
     channel?: NativeMessageChannel,
     scheduledId?: string,
-    phoneNumberId?: string,
+    whatsAppSender?: NativeWhatsAppSenderRoute,
     options: {
-      transport?: 'qr' | 'api';
       template?: WhatsAppTemplate;
       highLevelChannel?: 'whatsapp_api' | 'sms_qr';
       fromNumber?: string;
@@ -1086,13 +1094,14 @@ export class RistakApiClient {
     const route: NativeScheduleRoute = options.highLevelChannel
       ? { provider: 'highlevel', channel: options.highLevelChannel }
       : getNativeScheduleRoute(contact, channel);
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     // Prefer the caller-computed transport (qr/api resolved from the selected
     // phone + reply window) over the route default, matching /movil scheduling.
     const transport = route.provider === 'whatsapp_api'
-      ? (options.transport || route.transport)
+      ? (sender.transport || route.transport)
       : undefined;
     const template = options.template;
-    return this.request('/whatsapp-api/messages/scheduled', {
+    return this.request<SendTextResponse & { data?: ScheduledChatMessage }>('/whatsapp-api/messages/scheduled', {
       method: 'POST',
       body: JSON.stringify({
         id: scheduledId || undefined,
@@ -1108,9 +1117,9 @@ export class RistakApiClient {
         toPhone: contact.phone || undefined,
         fromPhone: route.provider === 'highlevel'
           ? options.fromNumber || undefined
-          : contact.lastBusinessPhone || undefined,
+          : sender.fromPhone,
         businessPhoneNumberId: route.provider === 'whatsapp_api'
-          ? phoneNumberId || contact.lastBusinessPhoneNumberId || undefined
+          ? sender.phoneNumberId
           : undefined,
         scheduledAt,
         externalId,
@@ -1137,18 +1146,19 @@ export class RistakApiClient {
     return this.request<MessageTemplateBundle>('/settings/message-templates');
   }
 
-  sendWhatsAppTemplate(contact: ChatContact, template: WhatsAppTemplate, externalId?: string) {
+  sendWhatsAppTemplate(contact: ChatContact, template: WhatsAppTemplate, whatsAppSender?: NativeWhatsAppSenderRoute, externalId?: string) {
+    const sender = normalizeNativeWhatsAppSenderRoute(contact, whatsAppSender);
     return this.request<SendTextResponse>('/whatsapp-api/templates/send', {
       method: 'POST',
       body: JSON.stringify({
         to: contact.phone || '',
-        from: contact.lastBusinessPhone || undefined,
+        from: sender.fromPhone,
         contactId: contact.id,
         templateId: template.id || undefined,
         templateName: template.name || undefined,
         language: template.language || 'es_MX',
         externalId: externalId || createNativeExternalId('native-template'),
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: sender.phoneNumberId,
       }),
     });
   }

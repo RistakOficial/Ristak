@@ -108,6 +108,10 @@ export type ChatContact = {
   lastMessageDirection?: string;
   lastBusinessPhone?: string;
   lastBusinessPhoneNumberId?: string;
+  lastInboundBusinessPhone?: string;
+  lastInboundBusinessPhoneNumberId?: string;
+  firstInboundBusinessPhone?: string;
+  firstInboundBusinessPhoneNumberId?: string;
   preferredWhatsAppPhoneNumberId?: string;
   preferred_whatsapp_phone_number_id?: string;
   routingSource?: string;
@@ -334,14 +338,22 @@ export type ChatMessage = {
 };
 
 export type SendTextResponse = {
+  success?: boolean;
   id?: string;
+  messageId?: string;
+  messageIds?: string[];
   localMessageId?: string | null;
   status?: string;
+  provider?: string;
+  requestedChannel?: string;
   transport?: string;
   channel?: string;
   message?: unknown;
+  data?: unknown;
   fallbackReason?: string;
   routingReason?: string;
+  error?: string | { message?: string };
+  errorMessage?: string;
   audio?: {
     link?: string;
     url?: string;
@@ -664,6 +676,8 @@ export type HighLevelPhoneNumber = {
 
 export type HighLevelPhoneNumberCatalog = {
   success: boolean;
+  source?: 'lc_phone';
+  channels?: Array<'sms'>;
   phoneNumbers: HighLevelPhoneNumber[];
   selectable: boolean;
   fallbackToAccountDefault: boolean;

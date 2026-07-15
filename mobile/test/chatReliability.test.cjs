@@ -364,7 +364,8 @@ test('la carga canonica conserva el outbox y la cache escribe vacio solo despues
   assert.match(source, /retainNativeLocalOutboxMessages\(current\)/);
   assert.match(source, /mergeNativeChatMessagesAuthoritatively\([\s\S]*!sendLockedRef\.current,[\s\S]*retainedOutboxMessages/);
   assert.match(source, /reconcileNativeOptimisticMessages\(byId, includeUnsettledLocal\)/);
-  assert.match(source, /pending: false,[\s\S]{0,80}failed: false,[\s\S]{0,80}errorReason: ''/);
+  assert.match(source, /const serverState = getOutboundSendResultState\(serverRow\)/);
+  assert.match(source, /pending: serverRow\.pending \?\? serverState\.pending,[\s\S]{0,120}failed: serverRow\.failed \?\? serverState\.failed/);
   assert.doesNotMatch(source, /if \(messages\.length\) \{[\s\S]{0,300}conversationCacheKey\(contact\.id\)/);
 });
 

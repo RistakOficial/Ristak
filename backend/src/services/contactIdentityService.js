@@ -7,6 +7,7 @@ import { mergeContactCustomFields, serializeContactCustomFieldsForDb } from '../
 import { formatContactName, normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 import { mergeConversationalAgentSafetyContactReferences } from '../utils/conversationalAgentSafetyMerge.js'
 import { acquireConversationalInboundCommitLocks } from './conversationalInboundCommitLockService.js'
+import { parseSortableTimestamp } from '../utils/sqlTimestampSort.js'
 
 // (CNT-002) Parser tolerante de tags almacenados como JSON array (o null/legacy).
 function parseStoredTags(raw) {
@@ -56,6 +57,10 @@ function contactPriorityScore(contact = {}) {
   let score = 0
   const source = String(contact.source || '').toLowerCase()
 
+  // Una identidad activa siempre debe ganar sobre una copia en la papelera.
+  // Conservamos la fila eliminada como último recurso para que un inbound nuevo
+  // pueda reactivarla sin crear otro contacto con el mismo teléfono.
+  if (!contact.deleted_at) score += 10_000
   if (!isWhatsAppAutoCreatedContact(contact)) score += 1000
   if (Number(contact.total_paid || 0) > 0) score += 500
   if (Number(contact.purchases_count || 0) > 0) score += 250
@@ -378,7 +383,8 @@ export async function findContactByPhoneCandidates(phone, { excludeId = null } =
   const rows = await db.all(
     `SELECT DISTINCT contacts.id, contacts.phone, contacts.full_name, contacts.source,
             contacts.total_paid, contacts.purchases_count, contacts.attribution_ctwa_clid,
-            contacts.attribution_ad_name, contacts.attribution_ad_id, contacts.created_at
+            contacts.attribution_ad_name, contacts.attribution_ad_id, contacts.created_at,
+            contacts.deleted_at
      FROM contacts
      LEFT JOIN contact_phone_numbers cpn ON cpn.contact_id = contacts.id
      WHERE (contacts.phone IN (${placeholders}) OR cpn.phone IN (${placeholders}))${excludeClause}`,
@@ -386,6 +392,45 @@ export async function findContactByPhoneCandidates(phone, { excludeId = null } =
   )
 
   return rows.sort(sortContactsByPriority)[0] || null
+}
+
+/**
+ * Reactiva un contacto que volvió a escribir después de haber sido enviado a
+ * la papelera. La comparación temporal evita que un reintento o una importación
+ * histórica anterior al borrado deshaga una eliminación intencional.
+ */
+export async function restoreSoftDeletedContactForNewInbound({
+  contactId,
+  messageTimestamp,
+  source = 'chat'
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  if (!cleanContactId) return { restored: false, reason: 'missing_contact' }
+
+  const contact = await db.get(
+    'SELECT id, deleted_at FROM contacts WHERE id = ? LIMIT 1',
+    [cleanContactId]
+  ).catch(() => null)
+  if (!contact?.deleted_at) return { restored: false, reason: 'contact_active' }
+
+  const deletedAtMs = parseSortableTimestamp(contact.deleted_at)
+  const inboundAtMs = parseSortableTimestamp(messageTimestamp)
+  if (!deletedAtMs || !inboundAtMs || inboundAtMs <= deletedAtMs) {
+    return { restored: false, reason: 'inbound_not_newer_than_deletion' }
+  }
+
+  const result = await db.run(
+    `UPDATE contacts
+     SET deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND deleted_at IS NOT NULL`,
+    [cleanContactId]
+  )
+  const restored = Number(result?.changes || 0) > 0
+  if (restored) {
+    logger.info(`[Contactos] ${cleanContactId} salió de la papelera por un inbound nuevo (${String(source || 'chat')}).`)
+  }
+
+  return { restored, reason: restored ? 'new_inbound' : 'already_restored' }
 }
 
 async function mergeContactIdsUnderCommitLocks({ fromId, toId, canonicalPhone = null }) {

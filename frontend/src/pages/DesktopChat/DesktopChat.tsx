@@ -92,6 +92,13 @@ import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
+import {
+  getHighLevelChatSendOutcome,
+  getHighLevelRouteChangeMessage,
+  getHighLevelWhatsAppRouteLabel,
+  getLatestHighLevelWhatsAppInboundSender,
+  resolveHighLevelChatFromNumber
+} from '@/utils/highLevelChatSend'
 import apiClient from '@/services/apiClient'
 import { createAuthScopedLocalStorageNamespace } from '@/services/authScopedLocalStorage'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
@@ -2686,7 +2693,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     sentAt: pickMessageTimestamp(data, ['sent_at', 'sentAt']),
     deliveredAt: pickMessageTimestamp(data, ['delivered_at', 'deliveredAt']),
     readAt: pickMessageTimestamp(data, ['read_at', 'readAt']),
-    businessPhone: String(data.business_phone || data.businessPhone || data.from || '').trim(),
+    businessPhone: String(data.business_phone || data.businessPhone || '').trim(),
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
     transport,
     provider,
@@ -2972,6 +2979,18 @@ function getBusinessPhoneDisplay(phone?: WhatsAppApiPhoneNumber | null) {
   const label = getBusinessPhoneLabel(phone)
   if (!value) return label
   return label && label !== value ? `${label} · ${value}` : value
+}
+
+function getNativeWhatsAppRouteLabel(phone?: WhatsAppApiPhoneNumber | null) {
+  const provider = String(phone?.provider || '').trim().toLowerCase()
+  const route = provider === 'meta_direct'
+    ? 'Meta Direct'
+    : provider === 'ycloud'
+      ? 'YCloud'
+      : isPhoneQrReadyForSend(phone) && !phone?.api_send_enabled
+        ? 'QR de Ristak'
+        : 'Ristak'
+  return `WhatsApp · ${route} · ${getBusinessPhoneDisplay(phone)}`
 }
 
 function getPreferredWhatsAppPhoneNumberId(contact?: Contact | DesktopChatContact | null) {
@@ -3490,6 +3509,10 @@ export const DesktopChat: React.FC = () => {
   const selectedHighLevelPhoneNumber = selectedHighLevelFromNumber
     ? highLevelPhoneNumbers.find((phone) => phone.phoneNumber === selectedHighLevelFromNumber) || null
     : null
+  const highLevelWhatsAppSender = useMemo(
+    () => getLatestHighLevelWhatsAppInboundSender(messages),
+    [messages]
+  )
   const whatsappConnected = Boolean(
     selectedBusinessPhoneValue && isWhatsAppPhoneApiAvailable(selectedBusinessPhone, whatsappStatus)
   )
@@ -4132,7 +4155,7 @@ export const DesktopChat: React.FC = () => {
       const whatsappDisabled = !activeContact?.phone
       const nativeWhatsAppOptions = whatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
-        label: `${option.label} · ${getBusinessPhoneDisplay(phone)}`,
+        label: getNativeWhatsAppRouteLabel(phone),
         icon: renderComposerChannelIcon(option.value),
         disabled: whatsappDisabled || !getBusinessPhoneValue(phone) || (!isPhoneApiEnabled(phone, whatsappStatus) && !isPhoneQrReadyForSend(phone))
       }))
@@ -4140,7 +4163,7 @@ export const DesktopChat: React.FC = () => {
         ...nativeWhatsAppOptions,
         {
           value: HIGHLEVEL_WHATSAPP_COMPOSER_VALUE,
-          label: 'WhatsApp · HighLevel',
+          label: getHighLevelWhatsAppRouteLabel(highLevelWhatsAppSender),
           icon: renderComposerChannelIcon(option.value),
           disabled: whatsappDisabled || !highLevelConnected
         }
@@ -4824,16 +4847,18 @@ export const DesktopChat: React.FC = () => {
         ? await highLevelService.getPhoneNumbers().catch(() => null)
         : null
       const stateList = await conversationalAgentService.listStates().catch(() => [] as ConversationAgentState[])
-      setWhatsappStatus(status)
-      setHighLevelConnected(highLevelIsConnected)
-      setHighLevelPhoneNumbers(
-        highLevelIsConnected && Array.isArray(highLevelPhoneCatalog?.phoneNumbers)
-          ? highLevelPhoneCatalog.phoneNumbers
-          : []
-      )
-      setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
-      setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
-      setEmailConnected(Boolean(emailStatus?.connected))
+      if (status) setWhatsappStatus(status)
+      if (integrationsStatus) {
+        setHighLevelConnected(highLevelIsConnected)
+        if (!highLevelIsConnected) {
+          setHighLevelPhoneNumbers([])
+        } else if (Array.isArray(highLevelPhoneCatalog?.phoneNumbers)) {
+          setHighLevelPhoneNumbers(highLevelPhoneCatalog.phoneNumbers)
+        }
+        setMetaMessengerConnected(Boolean(integrationsStatus.meta?.connected && integrationsStatus.meta?.pageId))
+        setMetaInstagramConnected(Boolean(integrationsStatus.meta?.connected && integrationsStatus.meta?.instagramAccountId))
+      }
+      if (emailStatus) setEmailConnected(Boolean(emailStatus.connected))
       setAgentStates(mapAgentStatesByContactId(stateList))
       setAgentStateLists(mapAgentStateListsByContactId(stateList))
       setAgentDefs(agentList)
@@ -5681,11 +5706,14 @@ export const DesktopChat: React.FC = () => {
         preferredWhatsAppPhoneNumberId: previousPreferredId,
         preferred_whatsapp_phone_number_id: previousPreferredId
       } as Partial<Contact>
-      setComposerBusinessPhoneId(previousPreferredId)
       setContactInfoData((current) => current?.id === contactId ? { ...current, ...rollbackPatch } : current)
       setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...rollbackPatch } : contact))
       setWhatsappPreferenceError(error?.message || 'No se pudo guardar el número de respuesta.')
-      showToast('error', 'No se guardó el WhatsApp de respuesta', error?.message || 'Intenta otra vez.')
+      showToast(
+        'warning',
+        'Se usará este WhatsApp ahora',
+        'La ruta elegida sigue activa para este chat, pero no se pudo guardar como preferencia permanente.'
+      )
     } finally {
       setSavingWhatsAppPreference(false)
     }
@@ -6206,9 +6234,12 @@ export const DesktopChat: React.FC = () => {
         text,
         toPhone: activeContact.phone || undefined,
         fromPhone: provider === 'highlevel'
-          ? channel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined
+          ? resolveHighLevelChatFromNumber(channel, {
+              smsFromNumber: selectedHighLevelFromNumber,
+              whatsappSender: highLevelWhatsAppSender
+            }) || undefined
           : selectedBusinessPhoneValue || undefined,
-        businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
+        businessPhoneNumberId: provider === 'whatsapp_api' ? selectedBusinessPhone?.id || undefined : undefined,
         scheduledAt: scheduledDate.toISOString(),
         externalId: editingScheduledMessageId || undefined
       })
@@ -6904,15 +6935,15 @@ export const DesktopChat: React.FC = () => {
 	            html: cleanEmailHtml,
 	            externalId: optimisticId
 	          })
-	          const data = result.data || result
+	          const outcome = getHighLevelChatSendOutcome(result, 'email')
 	          const responseIds = getChatSendResponseIds(result)
 	          setMessages((current) => current.map((message) => message.id === optimisticId
 	            ? {
 	                ...message,
 	                serverMessageId: responseIds.serverMessageId || message.serverMessageId,
 	                providerMessageId: responseIds.providerMessageId || message.providerMessageId,
-	                status: data.status || 'sent',
-	                transport: data.transport || 'ghl_email'
+	                status: outcome.status,
+	                transport: outcome.transport || 'ghl_email'
 	              }
 	            : message
 	          ))
@@ -7038,6 +7069,15 @@ export const DesktopChat: React.FC = () => {
       : sendAttachmentsThroughNativeMeta
         ? activeNativeMetaChannel || activeConversationChannel
         : nativeWhatsAppTransport
+    const highLevelOptimisticFromNumber = resolveHighLevelChatFromNumber(activeConversationChannel, {
+      smsFromNumber: selectedHighLevelFromNumber,
+      whatsappSender: highLevelWhatsAppSender
+    })
+    const defaultOptimisticUsesHighLevel = Boolean(
+      highLevelConnected &&
+      !activeNativeMetaChannel &&
+      (composerChannel !== 'whatsapp' || !selectedBusinessPhone)
+    )
     const optimisticMessages: DesktopChatMessage[] = voiceToSend
       ? [{
           id: `${optimisticId}-audio`,
@@ -7046,8 +7086,8 @@ export const DesktopChat: React.FC = () => {
           date: sentAt,
           direction: 'outbound',
           status: sendVoiceThroughNativeMeta || sendVoiceThroughHighLevel ? 'enviando' : nativeSendStatus,
-          businessPhone: selectedBusinessPhoneValue,
-          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          businessPhone: sendVoiceThroughHighLevel ? highLevelOptimisticFromNumber : selectedBusinessPhoneValue,
+          businessPhoneNumberId: sendVoiceThroughHighLevel ? '' : selectedBusinessPhone?.id || '',
           transport: voiceOptimisticTransport,
           attachment: {
             type: 'audio',
@@ -7065,8 +7105,8 @@ export const DesktopChat: React.FC = () => {
           date: sentAt,
           direction: 'outbound',
           status: sendAttachmentsThroughHighLevel || sendAttachmentsThroughNativeMeta ? 'enviando' : nativeSendStatus,
-          businessPhone: selectedBusinessPhoneValue,
-          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          businessPhone: sendAttachmentsThroughHighLevel ? highLevelOptimisticFromNumber : selectedBusinessPhoneValue,
+          businessPhoneNumberId: sendAttachmentsThroughHighLevel ? '' : selectedBusinessPhone?.id || '',
           transport: attachmentOptimisticTransport,
           attachment: {
             type: getDraftAttachmentMessageType(attachment),
@@ -7082,8 +7122,8 @@ export const DesktopChat: React.FC = () => {
           date: sentAt,
           direction: 'outbound',
           status: composerChannel === 'whatsapp' && (whatsappConnected || selectedQrReady) ? nativeSendStatus : 'enviando',
-          businessPhone: selectedBusinessPhoneValue,
-          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          businessPhone: defaultOptimisticUsesHighLevel ? highLevelOptimisticFromNumber : selectedBusinessPhoneValue,
+          businessPhoneNumberId: defaultOptimisticUsesHighLevel ? '' : selectedBusinessPhone?.id || '',
           transport: composerChannel === 'whatsapp' && (whatsappConnected || selectedQrReady) ? nativeWhatsAppTransport : activeConversationChannel
         }]
 
@@ -7168,7 +7208,10 @@ export const DesktopChat: React.FC = () => {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: activeConversationChannel,
-          fromNumber: activeConversationChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
+          fromNumber: resolveHighLevelChatFromNumber(activeConversationChannel, {
+            smsFromNumber: selectedHighLevelFromNumber,
+            whatsappSender: highLevelWhatsAppSender
+          }) || undefined,
           message: '',
           audioDataUrl: voiceToSend.dataUrl,
           durationMs: voiceToSend.durationMs,
@@ -7176,6 +7219,7 @@ export const DesktopChat: React.FC = () => {
           externalId: `${optimisticId}-audio`
         })
         const resultData = result.data || result
+        const outcome = getHighLevelChatSendOutcome(result, activeConversationChannel)
         const responseAudioUrl = resultData.audio?.link || resultData.audio?.url || resultData.localMedia?.publicUrl || ''
         const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend.durationMs
@@ -7185,8 +7229,9 @@ export const DesktopChat: React.FC = () => {
               ...message,
               serverMessageId: responseIds.serverMessageId || message.serverMessageId,
               providerMessageId: responseIds.providerMessageId || message.providerMessageId,
-              status: resultData.status || 'pending',
-              transport: resultData.transport || activeConversationChannel,
+              status: outcome.status,
+              transport: outcome.transport || activeConversationChannel,
+              routingReason: getHighLevelRouteChangeMessage(outcome) || message.routingReason,
               attachment: message.attachment?.type === 'audio'
                 ? {
                     ...message.attachment,
@@ -7198,6 +7243,8 @@ export const DesktopChat: React.FC = () => {
             }
           : message
         ))
+        const routeChangeMessage = getHighLevelRouteChangeMessage(outcome)
+        if (routeChangeMessage) showToast('warning', 'HighLevel cambió el canal', routeChangeMessage)
       } else if (voiceToSend) {
         const result = await whatsappApiService.sendAudio({
           to: activeContact.phone || '',
@@ -7239,7 +7286,10 @@ export const DesktopChat: React.FC = () => {
           const result = await highLevelService.sendConversationMessage({
             contactId: activeContact.id,
             channel: activeConversationChannel,
-            fromNumber: activeConversationChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
+            fromNumber: resolveHighLevelChatFromNumber(activeConversationChannel, {
+              smsFromNumber: selectedHighLevelFromNumber,
+              whatsappSender: highLevelWhatsAppSender
+            }) || undefined,
             message: text,
             attachmentDataUrls: attachmentsToSend.map((attachment) => ({
               dataUrl: attachment.dataUrl,
@@ -7250,7 +7300,7 @@ export const DesktopChat: React.FC = () => {
             toNumber: activeContact.phone || undefined,
             externalId: optimisticId
           })
-          const data = result.data || result
+          const outcome = getHighLevelChatSendOutcome(result, activeConversationChannel)
           const responseIds = getChatSendResponseIds(result)
           setMessages((current) => current.map((message) => (
             message.id.startsWith(`${optimisticId}-attachment-`)
@@ -7262,11 +7312,14 @@ export const DesktopChat: React.FC = () => {
                   providerMessageId: message.id === `${optimisticId}-attachment-0`
                     ? responseIds.providerMessageId || message.providerMessageId
                     : message.providerMessageId,
-                  status: data.status || 'pending',
-                  transport: data.transport || activeConversationChannel
+                  status: outcome.status,
+                  transport: outcome.transport || activeConversationChannel,
+                  routingReason: getHighLevelRouteChangeMessage(outcome) || message.routingReason
                 }
               : message
           )))
+          const routeChangeMessage = getHighLevelRouteChangeMessage(outcome)
+          if (routeChangeMessage) showToast('warning', 'HighLevel cambió el canal', routeChangeMessage)
         } else if (sendAttachmentsThroughNativeMeta && activeNativeMetaChannel) {
           const failedAttachments: DesktopDraftAttachment[] = []
           let textFailed = false
@@ -7523,18 +7576,30 @@ export const DesktopChat: React.FC = () => {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: activeConversationChannel,
-          fromNumber: activeConversationChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
+          fromNumber: resolveHighLevelChatFromNumber(activeConversationChannel, {
+            smsFromNumber: selectedHighLevelFromNumber,
+            whatsappSender: highLevelWhatsAppSender
+          }) || undefined,
           message: text,
           toNumber: activeContact.phone || undefined,
           externalId: optimisticId
         })
-        const data = result.data || result
+        const outcome = getHighLevelChatSendOutcome(result, activeConversationChannel)
         const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
-            ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: data.status || 'pending', transport: data.transport || activeConversationChannel }
+            ? {
+                ...message,
+                serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                providerMessageId: responseIds.providerMessageId || message.providerMessageId,
+                status: outcome.status,
+                transport: outcome.transport || activeConversationChannel,
+                routingReason: getHighLevelRouteChangeMessage(outcome) || message.routingReason
+              }
             : message
         )))
+        const routeChangeMessage = getHighLevelRouteChangeMessage(outcome)
+        if (routeChangeMessage) showToast('warning', 'HighLevel cambió el canal', routeChangeMessage)
       } else {
         throw new Error('Conecta el canal nativo correspondiente para enviar mensajes desde esta pantalla.')
       }

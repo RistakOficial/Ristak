@@ -31,7 +31,8 @@ test('idsOnly devuelve todas las conversaciones aunque limit sea menor', async (
   const firstContactId = `select_all_first_${suffix}`
   const secondContactId = `select_all_second_${suffix}`
   const contactWithoutChatId = `select_all_no_chat_${suffix}`
-  const contactIds = [firstContactId, secondContactId, contactWithoutChatId]
+  const deletedContactId = `select_all_deleted_${suffix}`
+  const contactIds = [firstContactId, secondContactId, contactWithoutChatId, deletedContactId]
 
   await cleanup(contactIds)
 
@@ -47,8 +48,12 @@ test('idsOnly devuelve todas las conversaciones aunque limit sea menor', async (
         `2099-07-14T12:0${index}:00.000Z`
       ])
     }
+    await db.run(
+      'UPDATE contacts SET deleted_at = ? WHERE id = ?',
+      ['2099-07-14T12:05:00.000Z', deletedContactId]
+    )
 
-    for (const [index, contactId] of [firstContactId, secondContactId].entries()) {
+    for (const [index, contactId] of [firstContactId, secondContactId, deletedContactId].entries()) {
       await db.run(`
         INSERT INTO whatsapp_api_messages (
           id, contact_id, provider, transport, direction, message_type,
@@ -77,6 +82,7 @@ test('idsOnly devuelve todas las conversaciones aunque limit sea menor', async (
     assert.ok(response.body.data.includes(firstContactId))
     assert.ok(response.body.data.includes(secondContactId))
     assert.equal(response.body.data.includes(contactWithoutChatId), false)
+    assert.equal(response.body.data.includes(deletedContactId), false)
   } finally {
     await cleanup(contactIds)
   }

@@ -11,6 +11,8 @@ export async function listHighLevelPhoneNumbers(req, res) {
     })
     return res.json({
       success: true,
+      source: 'lc_phone',
+      channels: ['sms'],
       phoneNumbers,
       selectable: phoneNumbers.length > 0,
       fallbackToAccountDefault: phoneNumbers.length === 0,
@@ -21,6 +23,8 @@ export async function listHighLevelPhoneNumbers(req, res) {
       logger.warn(`[HighLevel Phone Numbers] Catálogo no disponible para esta conexión: ${error.code || error.status || 'provider_rejected'}`)
       return res.json({
         success: true,
+        source: 'lc_phone',
+        channels: ['sms'],
         phoneNumbers: [],
         selectable: false,
         fallbackToAccountDefault: true,
@@ -31,6 +35,8 @@ export async function listHighLevelPhoneNumbers(req, res) {
     logger.error(`[HighLevel Phone Numbers] No se pudo leer el catálogo: ${error.message}`)
     return res.status(502).json({
       success: false,
+      source: 'lc_phone',
+      channels: ['sms'],
       phoneNumbers: [],
       selectable: false,
       fallbackToAccountDefault: true,

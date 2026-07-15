@@ -775,10 +775,43 @@ struct SentLocationEcho: Decodable, Sendable {
     }
 }
 
+/// Estado semántico del resultado. Un HTTP 2xx sólo dice que el backend pudo
+/// procesar la solicitud; el proveedor todavía puede dejarla pendiente o
+/// rechazarla dentro del mismo payload.
+enum ChatSendDeliveryDisposition: Equatable {
+    case failed
+    case pending
+    case settled
+
+    static func resolve(status: String?, hasError: Bool = false) -> Self {
+        if hasError { return .failed }
+        let normalized = (status ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+
+        if ["error", "failed", "failure", "undelivered", "bounced", "rejected"].contains(normalized) {
+            return .failed
+        }
+        if ["pending", "queued", "sending", "processing", "accepted"].contains(normalized)
+            || normalized.hasPrefix("enviando") {
+            return .pending
+        }
+        return .settled
+    }
+
+    var shouldRetainRetryPayload: Bool {
+        self == .failed || self == .pending
+    }
+}
+
 /// Respuesta común de TODOS los envíos (doc 05 §2 y §4): mensaje del
 /// proveedor + extras de fallback QR / fallback WhatsApp→SMS de HighLevel.
 struct MessageSendResult: Decodable, Sendable {
     let id: String?
+    /// Id remoto usado por HighLevel Conversations.
+    let messageId: String?
     let wamid: String?
     let remoteMessageId: String?
     /// Id de la fila local persistida — usar para reconciliar el globo optimista.
@@ -813,7 +846,7 @@ struct MessageSendResult: Decodable, Sendable {
     let location: SentLocationEcho?
 
     enum CodingKeys: String, CodingKey {
-        case id, wamid, remoteMessageId, localMessageId, status, transport
+        case id, messageId, wamid, remoteMessageId, localMessageId, status, transport
         case fallback, fallbackFrom, fallbackReason, routingReason
         case channel, requestedChannel, channelLabel, requestedChannelLabel
         case fallbackApplied, replyWindowOpen, replyWindowSource, lastInboundAt
@@ -824,6 +857,7 @@ struct MessageSendResult: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = container.flexibleString(forKey: .id)
+        messageId = container.flexibleString(forKey: .messageId)
         wamid = container.flexibleString(forKey: .wamid)
         remoteMessageId = container.flexibleString(forKey: .remoteMessageId)
         localMessageId = container.flexibleString(forKey: .localMessageId)
@@ -858,6 +892,17 @@ struct MessageSendResult: Decodable, Sendable {
     var resolvedRoutingReason: String? {
         if let routingReason, !routingReason.isEmpty { return routingReason }
         if let fallbackReason, !fallbackReason.isEmpty { return fallbackReason }
+        return nil
+    }
+
+    var deliveryDisposition: ChatSendDeliveryDisposition {
+        ChatSendDeliveryDisposition.resolve(status: status)
+    }
+
+    var resolvedProviderMessageId: String? {
+        for candidate in [wamid, remoteMessageId, messageId, id] {
+            if let candidate, !candidate.isEmpty { return candidate }
+        }
         return nil
     }
 }

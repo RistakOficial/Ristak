@@ -1397,6 +1397,14 @@ Capacidades:
   esta lista y cae a agregados indexados del contacto cuando aun hay backfill.
   Un contacto fusionado se consulta por su ID canonico; la UI no dispara un
   detalle completo por cada ID absorbido.
+- La papelera no alimenta la bandeja de Chats. Un contacto con `deleted_at`
+  queda fuera de `/api/contacts/chats` y de la ficha activa. Si despues del
+  borrado llega un inbound nuevo por WhatsApp, HighLevel, Meta o correo, Ristak
+  reactiva la misma identidad antes de publicar el evento realtime; el mensaje
+  debe ser estrictamente posterior a `deleted_at`. Un retry duplicado o un
+  backfill con fecha anterior nunca deshace una eliminacion intencional. El
+  mantenimiento versionado `contact_reengagement_repair_version` corrige el
+  historico que ya hubiera quedado como `conversation=200` y `contact=404`.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - `contacts.attribution_ad_id` y `contacts.attribution_ad_name` representan el
@@ -1550,16 +1558,35 @@ instalado todavía no tiene `phonenumbers.read`, o HighLevel no devuelve número
 el selector conserva `SMS · HighLevel` como fallback y deja que la cuenta resuelva
 su remitente predeterminado. Cada selección limpia o conserva el remitente nativo
 según la ruta elegida, de modo que el envío salga por el proveedor visible. La
-ventana de 24 horas se calcula para el número elegido y, al cerrarse, el composer
-debe exigir plantilla oficial. Texto, adjuntos, audio, reacciones y programación
-mantienen esa misma decisión de proveedor.
+ruta WhatsApp HighLevel se liga al `business_phone` del ultimo inbound
+`transport=ghl_whatsapp` verificado de la conversacion; durante una sesion activa
+no inventa una lista de remitentes usando LC Phone. La ventana de 24 horas se
+calcula para ese numero usando solamente inbounds dirigidos al mismo
+`business_phone`; un
+  inbound Meta Direct, YCloud, QR o de otro numero no abre esa ventana. Si esta
+  cerrada, el backend responde `HIGHLEVEL_WHATSAPP_REPLY_WINDOW_CLOSED`; si no
+  puede verificarla responde `HIGHLEVEL_WHATSAPP_REPLY_WINDOW_UNKNOWN`. En ambos
+  casos conserva la ruta solicitada y nunca convierte el envio a SMS. Texto,
+  adjuntos, audio, reacciones y programación mantienen esa misma decisión de
+  proveedor.
 
 Los envíos por HighLevel nunca incluyen el remitente de una fila nativa de
-WhatsApp. `WhatsApp · HighLevel` y el fallback genérico resuelven su número en la
-cuenta; sólo una fila SMS explícita incluye su propio `fromNumber`. Si el `ghl_contact_id`
+WhatsApp. `WhatsApp · HighLevel` usa el `fromNumber` verificado de la conversacion;
+una fila SMS explicita incluye su propio `fromNumber`. El endpoint
+`/api/highlevel/phone-numbers` es exclusivamente LC Phone/SMS y responde
+`source=lc_phone`, `channels=['sms']`; jamás alimenta rutas WhatsApp. Si el `ghl_contact_id`
 guardado ya no existe, Ristak busca o recrea el contacto por teléfono/correo,
 persiste el vínculo reparado y reintenta el envío una sola vez únicamente ante
 `CONVERSATIONS_CONTACT_NOT_FOUND`.
+
+Un HTTP 2xx de HighLevel sin recibo durable, incluso `sent`, `pending` o `queued`, solo significa
+aceptacion, no entrega. El espejo local conserva `pending` hasta que webhook o
+sync publique el estado durable `sent/delivered/read/failed`; el mismo evento
+SSE reconcilia el globo optimista. En fallo se guarda tambien el motivo limpio
+de `message.error`, y nunca se pinta una palomita de exito antes del acuse real.
+Los inbounds sincronizados guardan `from_phone`, `to_phone` y `business_phone`
+desde el payload HighLevel para que selector, ventana y ultimo remitente
+compartan la misma identidad.
 
 Un webhook sólo concilia estado y puede marcar la API como restringida para
 solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
@@ -1817,6 +1844,12 @@ React Native Android e iOS deben abrir después con el mismo remitente. En iOS e
 botón vive en el panel inferior antes de `+`, además del acceso equivalente
 dentro de la ficha del contacto. Messenger/Instagram aparecen cuando el
 proveedor correspondiente está conectado y el contacto pertenece a ese canal.
+La resolucion inicial es comun: preferencia explicita, ultimo numero inbound,
+ultimo numero usado y finalmente default. Guardar la preferencia es best-effort:
+si la ficha responde `404` o hay una falla transitoria, la seleccion de esta
+sesion sigue siendo autoritativa y el envio no se bloquea ni vuelve al canal
+anterior. Los catalogos locales conservan el ultimo snapshot valido y admiten un
+solo retry acotado; nunca consultan Meta ni HighLevel en loop.
 
 Los comentarios de Facebook e Instagram son un canal publico distinto de
 Messenger/Instagram DM. Si un contacto nace desde un comentario, el composer debe
@@ -2111,6 +2144,12 @@ poll/SSE. Incluso cuando un arranque frío solicita calentamiento, la lista
 responde con fotos cacheadas y el backend encola las faltantes en segundo plano,
 en tandas deduplicadas; ninguna llamada a YCloud/QR forma parte del tiempo de
 respuesta de chats, contactos o búsqueda.
+El hilo iOS abre el stream antes de esperar conversacion, journey, contacto y
+catalogos. Si llega un `chat_message` durante ese bootstrap, guarda un unico
+nudge pendiente y ejecuta una reconciliacion REST coalescida en cuanto la carga
+base queda lista; no pierde el evento ni crea otro polling. Status de WhatsApp e
+inventario HighLevel se leen en paralelo desde Ristak, con un retry corto y el
+ultimo snapshot valido como respaldo.
 La codificacion de fotos, videos, audios y documentos corre fuera del hilo
 visual, el composer bloquea enviar mientras prepara y el tray conserva el limite
 de 4 adjuntos con tope acumulado de 40 MB binarios. La app sube el multipart

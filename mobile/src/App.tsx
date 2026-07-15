@@ -177,6 +177,21 @@ import {
   retainNativeLocalOutboxMessages,
 } from './conversationReliability';
 import {
+  buildNativeWhatsAppSenderRoute,
+  getNativeApiReplyWindowOpen,
+  getLastHighLevelWhatsAppBusinessPhone,
+  getNativeLastReplyWindowInboundTime,
+  getNativeWhatsAppPhoneValue,
+  getOutboundMessageChannelFamily,
+  getOutboundProviderMessageId,
+  getOutboundSendResultState,
+  getPreferredWhatsAppPhoneId,
+  isHighLevelWhatsAppTransport,
+  keepLastKnownCatalogValue,
+  readLocalCatalogWithRetry,
+  type NativeWhatsAppSenderRoute,
+} from './chatRouting';
+import {
   getAppointmentAvailabilityRequestFields,
   isCurrentCalendarSlotSelection,
   type CalendarSlotSelection,
@@ -2728,6 +2743,8 @@ function ChatScreen({
   const [chatCustomFields, setChatCustomFields] = useState<ContactCustomFieldDefinition[]>(() => cachedFilterCatalog.customFields || []);
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(() => cachedFilterCatalog.whatsappStatus || null);
   const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => cachedFilterCatalog.integrationsStatus || null);
+  const whatsappStatusRef = useRef<WhatsAppApiStatus | null>(whatsappStatus);
+  const integrationsStatusRef = useRef<IntegrationsStatus | null>(integrationsStatus);
   const [filterCatalogLoading, setFilterCatalogLoading] = useState(false);
   const [filterManagerMode, setFilterManagerMode] = useState<'list' | 'editor'>('list');
   const [editingCustomChatFilterId, setEditingCustomChatFilterId] = useState('');
@@ -2746,6 +2763,14 @@ function ChatScreen({
   const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
   const [cameraCaption, setCameraCaption] = useState('');
   const [cameraSending, setCameraSending] = useState(false);
+
+  useEffect(() => {
+    whatsappStatusRef.current = whatsappStatus;
+  }, [whatsappStatus]);
+
+  useEffect(() => {
+    integrationsStatusRef.current = integrationsStatus;
+  }, [integrationsStatus]);
   const canUseCanonicalInboxCache = !settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all';
   const currentChatListScopeKey = `${query.trim()}|phone:${canUseCanonicalInboxCache ? 'all' : settings.selectedWhatsAppPhoneId}`;
   const canonicalInboxScopeKey = '|phone:all';
@@ -3298,15 +3323,17 @@ function ChatScreen({
     setFilterCatalogLoading(true);
     setChatTagsLoading(true);
     try {
-      const [configResponse, tags, fields, status, integrations] = await Promise.all([
+      const [configResponse, tags, fields, statusResult, integrationsResult] = await Promise.all([
         api.getConfig([PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]).catch(() => null),
         api.getContactTags().catch(() => []),
         api.getCustomFieldDefinitions(false).catch(() => []),
-        api.getWhatsAppStatus().catch(() => null),
-        api.getIntegrationsStatus().catch(() => null),
+        readLocalCatalogWithRetry(() => api.getWhatsAppStatus()),
+        readLocalCatalogWithRetry(() => api.getIntegrationsStatus()),
       ]);
       const config = unwrapConfigResponse(configResponse);
       if (!chatMountedRef.current) return;
+      const status = keepLastKnownCatalogValue(statusResult, whatsappStatusRef.current);
+      const integrations = keepLastKnownCatalogValue(integrationsResult, integrationsStatusRef.current);
       const nextCatalog: NativeChatFilterCatalogSnapshot = {
         customFilters: normalizePhoneChatCustomFilterPresets(config[PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]),
         tags: Array.isArray(tags) ? tags : [],
@@ -3319,6 +3346,8 @@ function ChatScreen({
       setChatCustomFields(nextCatalog.customFields || []);
       setWhatsappStatus(nextCatalog.whatsappStatus || null);
       setIntegrationsStatus(nextCatalog.integrationsStatus || null);
+      whatsappStatusRef.current = nextCatalog.whatsappStatus || null;
+      integrationsStatusRef.current = nextCatalog.integrationsStatus || null;
       writeCache(MOBILE_CACHE_KEYS.chatFilterCatalog, nextCatalog);
     } finally {
       if (chatMountedRef.current) {
@@ -4021,22 +4050,70 @@ function ChatScreen({
       return;
     }
     const scheduleChannel = getDefaultComposerChannel(contact);
+    const lastTransport = String(contact.lastMessageTransport || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const highLevelScheduleChannel = isHighLevelConnected(integrationsStatus)
+      ? isHighLevelWhatsAppTransport(lastTransport)
+        ? 'whatsapp_api' as const
+        : (lastTransport.includes('ghl_') || lastTransport.includes('highlevel')) && lastTransport.includes('sms')
+          ? 'sms_qr' as const
+          : undefined
+      : undefined;
+    const highLevelScheduleFromNumber = highLevelScheduleChannel && contact.lastMessageDirection === 'inbound'
+      ? contact.lastBusinessPhone || contact.lastInboundBusinessPhone || undefined
+      : undefined;
     const channelUnavailableReason = getScheduleChannelUnavailableReason(scheduleChannel, contact);
     if (channelUnavailableReason) {
       setScheduleError(channelUnavailableReason);
       Alert.alert('Programar mensaje', channelUnavailableReason);
       return;
     }
+    let scheduledWhatsAppSender: NativeWhatsAppSenderRoute | undefined;
+    if (scheduleChannel === 'whatsapp' && !highLevelScheduleChannel) {
+      const preferredPhoneId = getPreferredWhatsAppPhoneId(contact);
+      const phone = businessPhones.find((item) => item.id === preferredPhoneId)
+        || businessPhones.find((item) => item.is_default_sender)
+        || businessPhones[0]
+        || null;
+      const apiUnavailable = Boolean(phone) && (
+        phone?.availability?.apiAvailable === false
+        || phone?.api_send_enabled === false
+      );
+      const transport: 'qr' | 'api' = isBusinessPhoneQrReady(phone) && apiUnavailable ? 'qr' : 'api';
+      scheduledWhatsAppSender = buildNativeWhatsAppSenderRoute(contact, phone, transport);
+    }
     setScheduleBusy(true);
     setScheduleError('');
     try {
       const scheduledAt = scheduledDate.toISOString();
-      const signature = [contact.id, text, scheduledAt, scheduleChannel].join('|');
+      const signature = [
+        contact.id,
+        text,
+        scheduledAt,
+        scheduleChannel,
+        scheduledWhatsAppSender?.phoneNumberId || '',
+        scheduledWhatsAppSender?.fromPhone || '',
+        scheduledWhatsAppSender?.transport || '',
+        highLevelScheduleChannel || '',
+        highLevelScheduleFromNumber || '',
+      ].join('|');
       const scheduledId = scheduleIntentRef.current?.signature === signature
         ? scheduleIntentRef.current.scheduledId
         : createNativeMutationId('native-scheduled', contact.id);
       scheduleIntentRef.current = { signature, scheduledId };
-      await api.scheduleText(contact, text, scheduledAt, scheduleChannel, scheduledId);
+      const response = await api.scheduleText(
+        contact,
+        text,
+        scheduledAt,
+        scheduleChannel,
+        scheduledId,
+        scheduledWhatsAppSender,
+        {
+          highLevelChannel: highLevelScheduleChannel,
+          fromNumber: highLevelScheduleFromNumber,
+        },
+      );
+      const responseState = getOutboundSendResultState(response);
+      if (responseState.failed) throw new Error(responseState.errorReason);
       scheduleIntentRef.current = null;
       closeSheet();
       setScheduleText('');
@@ -13000,7 +13077,7 @@ function getThemeMeta(preference: PhoneThemePreference, tone: 'light' | 'dark' =
 }
 
 function getBusinessPhoneValue(phone?: WhatsAppApiPhoneNumber | null) {
-  return phone?.phone_number || phone?.display_phone_number || phone?.qr_connected_phone || '';
+  return getNativeWhatsAppPhoneValue(phone);
 }
 
 function getBusinessPhoneLabel(phone?: WhatsAppApiPhoneNumber | null) {
@@ -13012,6 +13089,22 @@ function getBusinessPhoneDisplay(phone?: WhatsAppApiPhoneNumber | null) {
   const label = getBusinessPhoneLabel(phone);
   if (!value) return label;
   return label && label !== value ? `${label} · ${value}` : value;
+}
+
+function getNativeWhatsAppRouteLabel(phone?: WhatsAppApiPhoneNumber | null) {
+  const provider = String(phone?.provider || '').trim().toLowerCase();
+  const apiUnavailable = Boolean(phone) && (
+    phone?.availability?.apiAvailable === false
+    || phone?.api_send_enabled === false
+  );
+  const route = isBusinessPhoneQrReady(phone) && apiUnavailable
+    ? 'QR de Ristak'
+    : provider === 'meta_direct'
+      ? 'Meta Direct'
+      : provider === 'ycloud'
+        ? 'YCloud'
+        : 'Ristak';
+  return `WhatsApp · ${route} · ${getBusinessPhoneDisplay(phone)}`;
 }
 
 function getBusinessPhoneStatusLabel(phone: WhatsAppApiPhoneNumber) {
@@ -18652,10 +18745,7 @@ function getComposerRouteChannel(value: ComposerChannelRouteValue): ComposerRout
 }
 
 function getPreferredComposerPhoneId(contact: ChatContact) {
-  return contact.preferredWhatsAppPhoneNumberId
-    || contact.preferred_whatsapp_phone_number_id
-    || contact.lastBusinessPhoneNumberId
-    || '';
+  return getPreferredWhatsAppPhoneId(contact);
 }
 
 function canStartNativeCommentPublicReply(message: ChatMessage) {
@@ -18700,7 +18790,14 @@ function isBusinessPhoneQrReady(phone?: WhatsAppApiPhoneNumber | null) {
 
 function isBusinessPhoneSendReady(phone?: WhatsAppApiPhoneNumber | null) {
   if (!phone?.id) return false;
-  if (phone.availability) return Boolean(phone.availability.available || phone.availability.apiAvailable || phone.availability.qrReady);
+  if (phone.availability) {
+    return Boolean(
+      phone.availability.available
+      || phone.availability.apiAvailable
+      || phone.availability.qrReady
+      || isBusinessPhoneQrReady(phone)
+    );
+  }
   return phone.api_send_enabled !== false || isBusinessPhoneQrReady(phone);
 }
 
@@ -18748,6 +18845,7 @@ function getComposerChannelOptions(
   highLevelPhoneNumbers: HighLevelPhoneNumber[] = [],
   integrations?: IntegrationsStatus | null,
   latestCommentReplyTarget?: NativeCommentReplyTarget | null,
+  highLevelWhatsAppFromNumber = '',
 ): ComposerChannelOption[] {
   const kind = getContactChannelKind(contact);
   const hasPhone = Boolean(String(contact.phone || '').trim());
@@ -18756,18 +18854,21 @@ function getComposerChannelOptions(
   const highLevelConnected = isHighLevelConnected(integrations);
   const messengerConnected = isNativeMessengerConnected(integrations);
   const instagramConnected = isNativeInstagramConnected(integrations);
-  const connectedPhones = businessPhones.filter(isBusinessPhoneSendReady);
-  const whatsappOptions: ComposerChannelOption[] = hasPhone
-    ? connectedPhones.map((phone, index) => ({
+  const connectedPhones = businessPhones.filter((phone) => Boolean(phone.id));
+  const whatsappOptions: ComposerChannelOption[] = connectedPhones.map((phone, index) => ({
         value: `whatsapp:${phone.id}` as ComposerChannelRouteValue,
         channel: 'whatsapp',
         phoneNumberId: phone.id,
-        label: `WhatsApp · ${getBusinessPhoneLabel(phone) || `Número ${index + 1}`}`,
+        label: getNativeWhatsAppRouteLabel(phone) || `WhatsApp · Número ${index + 1}`,
         description: getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado',
         kind: 'whatsapp',
         provider: 'native' as const,
-      }))
-    : [];
+        disabledReason: !hasPhone
+          ? 'Este contacto no tiene teléfono guardado.'
+          : isBusinessPhoneSendReady(phone)
+            ? undefined
+            : phone.availability?.apiReason || phone.qr_last_error || 'Este número de WhatsApp no está disponible para enviar.',
+      }));
   const options: ComposerChannelOption[] = [...whatsappOptions];
 
   if (latestCommentReplyTarget) {
@@ -18787,11 +18888,16 @@ function getComposerChannelOptions(
     options.push({
       value: 'highlevel:whatsapp',
       channel: 'whatsapp',
-      label: 'WhatsApp · HighLevel',
-      description: 'Envía desde la conversación conectada en HighLevel.',
+      label: highLevelWhatsAppFromNumber
+        ? `WhatsApp · HighLevel · ${highLevelWhatsAppFromNumber}`
+        : 'WhatsApp · HighLevel',
+      description: highLevelWhatsAppFromNumber
+        ? 'Responde por el número ligado a la sesión activa de HighLevel.'
+        : 'HighLevel resolverá el número ligado a la conversación.',
       kind: 'whatsapp',
       provider: 'highlevel',
       highLevelChannel: 'whatsapp_api',
+      fromNumber: highLevelWhatsAppFromNumber || undefined,
       disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
     });
 
@@ -22709,18 +22815,27 @@ function NativeConversationScreen({
       return () => { active = false; };
     }
 
-    void api.getHighLevelPhoneNumbers()
-      .then((catalog) => {
-        if (active) setHighLevelPhoneNumbers(Array.isArray(catalog.phoneNumbers) ? catalog.phoneNumbers : []);
-      })
-      .catch(() => {
-        if (active) setHighLevelPhoneNumbers([]);
+    void readLocalCatalogWithRetry(() => api.getHighLevelPhoneNumbers(), 1, 250)
+      .then((result) => {
+        if (!active || !result.ok) return;
+        setHighLevelPhoneNumbers(Array.isArray(result.value.phoneNumbers) ? result.value.phoneNumbers : []);
       });
     return () => { active = false; };
   }, [api, integrationsStatus?.highlevel?.connected]);
+  const highLevelWhatsAppFromNumber = useMemo(
+    () => getLastHighLevelWhatsAppBusinessPhone(messages),
+    [messages],
+  );
   const composerChannelOptions = useMemo(
-    () => getComposerChannelOptions(contact, businessPhones, highLevelPhoneNumbers, integrationsStatus, latestEligibleCommentReplyTarget),
-    [businessPhones, contact, highLevelPhoneNumbers, integrationsStatus, latestEligibleCommentReplyTarget],
+    () => getComposerChannelOptions(
+      contact,
+      businessPhones,
+      highLevelPhoneNumbers,
+      integrationsStatus,
+      latestEligibleCommentReplyTarget,
+      highLevelWhatsAppFromNumber,
+    ),
+    [businessPhones, contact, highLevelPhoneNumbers, highLevelWhatsAppFromNumber, integrationsStatus, latestEligibleCommentReplyTarget],
   );
   useEffect(() => {
     const contactChanged = selectedSendContactIdRef.current !== contact.id;
@@ -22776,10 +22891,11 @@ function NativeConversationScreen({
       phone?.availability?.apiAvailable === false
       || phone?.api_send_enabled === false
     );
-    const replyWindowOpen = getNativeApiReplyWindowOpen(messagesRef.current);
     const transport: 'qr' | 'api' = qrReady && apiUnavailable ? 'qr' : 'api';
-    return { phone, qrReady, apiUnavailable, replyWindowOpen, transport };
-  }, [businessPhones, selectedRoutePhoneNumberId]);
+    const sender = buildNativeWhatsAppSenderRoute(contact, phone, transport);
+    const replyWindowOpen = getNativeApiReplyWindowOpen(messagesRef.current, sender);
+    return { phone, qrReady, apiUnavailable, replyWindowOpen, transport, sender };
+  }, [businessPhones, contact, selectedRoutePhoneNumberId]);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
@@ -22918,6 +23034,15 @@ function NativeConversationScreen({
       return;
     }
 
+    const whatsAppSend = selectedHighLevelChannel ? null : resolveWhatsAppSendTransport();
+    if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.apiUnavailable) {
+      Alert.alert(
+        'Ventana de WhatsApp cerrada',
+        'Ese número necesita una plantilla aprobada antes de volver a enviar. La ubicación no se mandó por otro canal.',
+      );
+      return;
+    }
+
     sendLockedRef.current = true;
     closeSheet();
     let optimisticId = '';
@@ -22955,7 +23080,7 @@ function NativeConversationScreen({
         direction: 'outbound',
         text: '',
         channel: selectedHighLevelChannel || 'whatsapp_api',
-        transport: 'native',
+        transport: selectedHighLevelChannel === 'whatsapp_api' ? 'ghl_whatsapp' : 'native',
         status: 'enviando',
         pending: true,
         failed: false,
@@ -22978,10 +23103,11 @@ function NativeConversationScreen({
             locationPayload.longitude,
             locationPayload.name,
             locationPayload.address,
-            selectedRoutePhoneNumberId,
-            resolveWhatsAppSendTransport().transport,
-            intent.externalId,
-          );
+              whatsAppSend?.sender,
+              intent.externalId,
+            );
+      const responseState = getOutboundSendResultState(response);
+      if (responseState.failed) throw new Error(responseState.errorReason);
       const localMessageId = getSendResponseLocalMessageId(response);
       const providerMessageId = getSendResponseProviderMessageId(response);
       setMessages((current) => current.map((message) => (
@@ -22991,10 +23117,10 @@ function NativeConversationScreen({
             optimisticId: message.optimisticId || message.id,
             serverMessageId: localMessageId || message.serverMessageId,
             providerMessageId: providerMessageId || message.providerMessageId,
-            pending: false,
-            failed: false,
-            errorReason: '',
-            status: response.status || 'sent',
+            pending: responseState.pending,
+            failed: responseState.failed,
+            errorReason: responseState.errorReason,
+            status: responseState.status,
             channel: response.transport || message.channel,
             transport: response.transport || message.transport,
             routingReason: response.routingReason || response.fallbackReason || message.routingReason,
@@ -23146,8 +23272,6 @@ function NativeConversationScreen({
       openTemplatesSheet();
       return;
     }
-    const resolvedWhatsAppTransport = whatsAppSend?.transport;
-
     if (!options.skipAgentInterruptionConfirm) {
       const latestAgentStates = await refreshAgentStates({ silent: true });
       const activeStates = getActiveConversationAgentStates(latestAgentStates);
@@ -23163,6 +23287,11 @@ function NativeConversationScreen({
 
     const sentAt = new Date().toISOString();
     const optimisticChannel = selectedHighLevelChannel || getBackendChannelForComposer(selectedRouteChannel);
+    const optimisticTransport = selectedHighLevelChannel === 'whatsapp_api'
+      ? 'ghl_whatsapp'
+      : selectedHighLevelChannel === 'sms_qr'
+        ? 'ghl_sms'
+        : 'native';
     const replyPayload = replyingToMessage ? getNativeMessageReferencePayload(replyingToMessage) : undefined;
     const sendSignature = JSON.stringify({
       contactId: contact.id,
@@ -23189,7 +23318,7 @@ function NativeConversationScreen({
         direction: 'outbound',
         text: index === 0 ? textToSend : '',
         channel: optimisticChannel,
-        transport: 'native',
+        transport: optimisticTransport,
         status: 'enviando',
         pending: true,
         paymentPreview: index === 0 ? paymentPreviewToSend || undefined : undefined,
@@ -23213,7 +23342,7 @@ function NativeConversationScreen({
         direction: 'outbound',
         text: textToSend,
         channel: optimisticChannel,
-        transport: 'native',
+        transport: optimisticTransport,
         status: 'enviando',
         pending: true,
         paymentPreview: paymentPreviewToSend || undefined,
@@ -23253,13 +23382,14 @@ function NativeConversationScreen({
               contact,
               attachmentsToSend[index],
               index === 0 ? textToSend : '',
-              selectedRoutePhoneNumberId,
-              resolvedWhatsAppTransport,
+              whatsAppSend?.sender,
               selectedRouteChannel,
               replyPayload,
               selectedHighLevelChannel,
               selectedHighLevelFromNumber,
             );
+            const responseState = getOutboundSendResultState(response);
+            if (responseState.failed) throw new Error(responseState.errorReason);
             responses.push({ status: 'fulfilled', value: response });
           } catch (reason) {
             responses.push({ status: 'rejected', reason });
@@ -23276,6 +23406,7 @@ function NativeConversationScreen({
             return { ...message, pending: false, failed: true, status: 'error', errorReason };
           }
           const response = result.value;
+          const responseState = getOutboundSendResultState(response);
           const localMessageId = getSendResponseLocalMessageId(response);
           const providerMessageId = getSendResponseProviderMessageId(response);
           const responseAudioUrl = response?.audio?.link || response?.audio?.url || response?.localMedia?.publicUrl || '';
@@ -23286,10 +23417,10 @@ function NativeConversationScreen({
             optimisticId: message.optimisticId || message.id,
             serverMessageId: localMessageId || message.serverMessageId,
             providerMessageId: providerMessageId || message.providerMessageId,
-            pending: false,
-            failed: false,
-            errorReason: '',
-            status: response?.status || 'sent',
+            pending: responseState.pending,
+            failed: responseState.failed,
+            errorReason: responseState.errorReason,
+            status: responseState.status,
             channel: response?.transport || message.channel,
             transport: response?.transport || message.transport,
             routingReason: response?.routingReason || response?.fallbackReason || message.routingReason,
@@ -23346,10 +23477,11 @@ function NativeConversationScreen({
                 textToSend,
                 selectedRouteChannel as NativeMessageChannel,
                 replyPayload,
-                selectedRoutePhoneNumberId,
-                resolvedWhatsAppTransport,
+                whatsAppSend?.sender,
                 externalId,
               );
+        const responseState = getOutboundSendResultState(response);
+        if (responseState.failed) throw new Error(responseState.errorReason);
         const localMessageId = getSendResponseLocalMessageId(response);
         const providerMessageId = getSendResponseProviderMessageId(response);
         setMessages((current) => current.map((message) => (
@@ -23359,10 +23491,10 @@ function NativeConversationScreen({
               optimisticId: message.optimisticId || message.id,
               serverMessageId: localMessageId || message.serverMessageId,
               providerMessageId: providerMessageId || message.providerMessageId,
-              pending: false,
-              failed: false,
-              errorReason: '',
-              status: response.status || 'sent',
+              pending: responseState.pending,
+              failed: responseState.failed,
+              errorReason: responseState.errorReason,
+              status: responseState.status,
               channel: response.transport || message.channel,
               transport: response.transport || message.transport,
               routingReason: response.routingReason || response.fallbackReason || message.routingReason,
@@ -23657,6 +23789,10 @@ function NativeConversationScreen({
       Alert.alert('Plantillas', 'Este contacto necesita teléfono para recibir una plantilla por WhatsApp.');
       return;
     }
+    if (selectedRouteChannel !== 'whatsapp' || selectedHighLevelChannel) {
+      Alert.alert('Plantillas', 'Las plantillas oficiales se envían desde un número de WhatsApp conectado en Ristak. Elige ese número en el selector de canal.');
+      return;
+    }
 
     if (!template.id && localText) {
       setDraft((current) => current ? `${current}\n${localText}` : localText);
@@ -23685,7 +23821,10 @@ function NativeConversationScreen({
     templateSendIntentRef.current.set(templateIntentKey, externalId);
     setTemplateBusyId(templateKey || 'template');
     try {
-      const response = await api.sendWhatsAppTemplate(contact, template, externalId);
+      const whatsAppSend = resolveWhatsAppSendTransport();
+      const response = await api.sendWhatsAppTemplate(contact, template, whatsAppSend.sender, externalId);
+      const responseState = getOutboundSendResultState(response);
+      if (responseState.failed) throw new Error(responseState.errorReason);
       templateSendIntentRef.current.delete(templateIntentKey);
       const sentAt = new Date().toISOString();
       setMessages((current) => mergeNativeChatMessages(current, [{
@@ -23696,7 +23835,10 @@ function NativeConversationScreen({
         text: localText || template.name || 'Plantilla enviada',
         channel: response.channel || response.transport || 'whatsapp_api',
         transport: response.transport || 'native',
-        status: response.status || 'sent',
+        status: responseState.status,
+        pending: responseState.pending,
+        failed: responseState.failed,
+        errorReason: responseState.errorReason,
       }]));
       updateContactPreview(localText || template.name || 'Plantilla enviada', sentAt, 'whatsapp_api');
       closeSheet();
@@ -23762,6 +23904,16 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', 'Envía la CLABE por Messenger o WhatsApp; el canal de comentario público es solo para responder publicaciones.');
       return;
     }
+    const clabeWhatsAppSend = selectedRouteChannel === 'whatsapp' && !selectedHighLevelChannel
+      ? resolveWhatsAppSendTransport()
+      : null;
+    if (clabeWhatsAppSend && !clabeWhatsAppSend.replyWindowOpen && !clabeWhatsAppSend.apiUnavailable) {
+      Alert.alert(
+        'Ventana de WhatsApp cerrada',
+        'Ese número necesita una plantilla aprobada antes de volver a enviar. La CLABE no se mandó por otro canal.',
+      );
+      return;
+    }
     const clabeActionKey = `clabe:${account.id}`;
     if (!acquireConversationActionLock(clabeActionKey)) return;
     setClabeBusyId(account.id);
@@ -23771,15 +23923,23 @@ function NativeConversationScreen({
       const externalId = clabeSendIntentRef.current.get(clabeIntentKey)
         || createNativeMutationId('native-clabe', contact.id);
       clabeSendIntentRef.current.set(clabeIntentKey, externalId);
-      await api.sendText(
-        contact,
-        text,
-        selectedRouteChannel as NativeMessageChannel,
-        undefined,
-        selectedRoutePhoneNumberId,
-        selectedRouteChannel === 'whatsapp' ? resolveWhatsAppSendTransport().transport : undefined,
-        externalId,
-      );
+      const response = selectedHighLevelChannel
+        ? await api.sendHighLevelMessage(contact, {
+          channel: selectedHighLevelChannel,
+          message: text,
+          fromNumber: selectedHighLevelFromNumber,
+          externalId,
+        })
+        : await api.sendText(
+          contact,
+          text,
+          selectedRouteChannel as NativeMessageChannel,
+          undefined,
+          clabeWhatsAppSend?.sender,
+          externalId,
+        );
+      const responseState = getOutboundSendResultState(response);
+      if (responseState.failed) throw new Error(responseState.errorReason);
       clabeSendIntentRef.current.delete(clabeIntentKey);
       const sentAt = new Date().toISOString();
       setMessages((current) => mergeNativeChatMessages(current, [{
@@ -23789,8 +23949,17 @@ function NativeConversationScreen({
         direction: 'outbound',
         text,
         channel: getBackendChannelForComposer(selectedRouteChannel),
-        transport: 'native',
-        status: 'sent',
+        transport: response.transport || (selectedHighLevelChannel === 'whatsapp_api'
+          ? 'ghl_whatsapp'
+          : selectedHighLevelChannel === 'sms_qr'
+            ? 'ghl_sms'
+            : 'native'),
+        status: responseState.status,
+        pending: responseState.pending,
+        failed: responseState.failed,
+        errorReason: responseState.errorReason,
+        serverMessageId: getSendResponseLocalMessageId(response) || undefined,
+        providerMessageId: getSendResponseProviderMessageId(response) || undefined,
       }]));
       updateContactPreview('CLABE', sentAt, getBackendChannelForComposer(selectedRouteChannel));
       closeSheet();
@@ -24063,10 +24232,12 @@ function NativeConversationScreen({
     // La ventana futura nunca cambia el transporte. Con API disponible exige
     // plantilla; QR sólo queda habilitado si esa API ya no está disponible.
     let scheduledTransport: 'qr' | 'api' | undefined;
+    let scheduledWhatsAppSender: NativeWhatsAppSenderRoute | undefined;
     if (selectedRouteChannel === 'whatsapp' && !selectedHighLevelChannel) {
       const whatsAppSend = resolveWhatsAppSendTransport();
       scheduledTransport = whatsAppSend.transport;
-      const lastInbound = getNativeLastReplyWindowInboundTime(messagesRef.current);
+      scheduledWhatsAppSender = whatsAppSend.sender;
+      const lastInbound = getNativeLastReplyWindowInboundTime(messagesRef.current, whatsAppSend.sender);
       const windowEnd = lastInbound ? lastInbound + 24 * 60 * 60 * 1000 : 0;
       const scheduledWithinWindow = windowEnd > 0 && scheduledDate.getTime() < windowEnd;
       if (!whatsAppSend.apiUnavailable && !scheduledWithinWindow) {
@@ -24096,11 +24267,12 @@ function NativeConversationScreen({
         ? scheduleSendIntentRef.current.scheduledId
         : createNativeMutationId('native-scheduled', target.id));
       if (!editingId) scheduleSendIntentRef.current = { signature, scheduledId };
-      await api.scheduleText(target, text, scheduledAt, selectedRouteChannel as NativeMessageChannel, scheduledId, selectedRoutePhoneNumberId, {
-        transport: scheduledTransport,
+      const response = await api.scheduleText(target, text, scheduledAt, selectedRouteChannel as NativeMessageChannel, scheduledId, scheduledWhatsAppSender, {
         highLevelChannel: selectedHighLevelChannel,
         fromNumber: selectedHighLevelFromNumber,
       });
+      const responseState = getOutboundSendResultState(response);
+      if (responseState.failed) throw new Error(responseState.errorReason);
       scheduleSendIntentRef.current = null;
       closeSheet();
       setScheduleText('');
@@ -24225,8 +24397,6 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', option.disabledReason);
       return;
     }
-    if (composerChannelPreferenceSavingRef.current) return;
-
     if (isCommentComposerRoute(channel)) {
       if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== getCommentComposerPlatform(channel)) {
         Alert.alert('Canal no disponible', 'Para responder en la publicación toca el comentario exacto.');
@@ -24238,13 +24408,13 @@ function NativeConversationScreen({
       setCommentReplyTarget(null);
     }
 
-    const previousChannel = selectedSendChannel;
     selectedSendManuallyRef.current = true;
     setSelectedSendChannel(channel);
     closeSheet();
 
     const phoneNumberId = getComposerRoutePhoneId(channel);
     if (!phoneNumberId) return;
+    if (composerChannelPreferenceSavingRef.current) return;
     const previousPreferredPhoneNumberId = contact.preferredWhatsAppPhoneNumberId
       || contact.preferred_whatsapp_phone_number_id
       || '';
@@ -24265,17 +24435,17 @@ function NativeConversationScreen({
       });
       onContactPatch(contact.id, { ...updated, ...preferencePatch });
     } catch (err) {
-      const rollbackPatch: Partial<ChatContact> = {
-        preferredWhatsAppPhoneNumberId: previousPreferredPhoneNumberId,
-        preferred_whatsapp_phone_number_id: previousPreferredPhoneNumberId,
-      };
-      onContactPatch(contact.id, rollbackPatch);
-      setSelectedSendChannel((current) => current === channel ? previousChannel : current);
-      Alert.alert('No se guardó el WhatsApp de respuesta', err instanceof Error ? err.message : 'Intenta otra vez.');
+      // La preferencia persistida es comodidad, no autoridad de envío. Incluso
+      // si un contacto legado devuelve 404, el número elegido sigue siendo la
+      // ruta válida del composer actual.
+      Alert.alert(
+        'Número elegido para este chat',
+        `Puedes seguir enviando con este número. No pude guardar la preferencia para la próxima vez: ${err instanceof Error ? err.message : 'intenta otra vez.'}`,
+      );
     } finally {
       composerChannelPreferenceSavingRef.current = false;
     }
-  }, [api, closeSheet, composerChannelOptions, contact, latestEligibleCommentReplyTarget, onContactPatch, selectedSendChannel]);
+  }, [api, closeSheet, composerChannelOptions, contact, latestEligibleCommentReplyTarget, onContactPatch]);
 
   if (contactInfoOpen) {
     return (
@@ -27012,7 +27182,7 @@ function isNativeEmailOrSmsMessage(message: ChatMessage) {
 }
 
 function getMessageReceiptStatus(message: ChatMessage): 'sent' | 'delivered' | 'read' | 'pending' | 'failed' {
-  if (message.failed || String(message.status || '').toLowerCase() === 'error') return 'failed';
+  if (message.failed || ['error', 'failed', 'undelivered', 'bounced', 'rejected'].includes(String(message.status || '').toLowerCase())) return 'failed';
   if (message.pending || ['pending', 'queued', 'enviando', 'sending'].includes(String(message.status || '').toLowerCase())) return 'pending';
   if (message.readAt || String(message.status || '').toLowerCase() === 'read') return 'read';
   if (message.deliveredAt || String(message.status || '').toLowerCase() === 'delivered') return 'delivered';
@@ -27153,8 +27323,7 @@ async function sendDraftAttachment(
   contact: ChatContact,
   attachment: ConversationDraftAttachment,
   caption: string,
-  phoneNumberId?: string,
-  transport?: 'qr' | 'api',
+  whatsAppSender?: NativeWhatsAppSenderRoute,
   channel: ComposerRouteChannel = 'whatsapp',
   reply?: { replyToMessageId?: string; replyToProviderMessageId?: string },
   highLevelChannel?: 'whatsapp_api' | 'sms_qr',
@@ -27180,35 +27349,10 @@ async function sendDraftAttachment(
       externalId,
     });
   }
-  if (attachment.kind === 'video') return api.sendVideo(contact, dataUrl, caption, phoneNumberId, transport, externalId);
-  if (attachment.kind === 'audio') return api.sendAudio(contact, dataUrl, attachment.durationMs, phoneNumberId, transport, externalId);
-  if (attachment.kind === 'document') return api.sendDocument(contact, dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId, transport, externalId);
-  return api.sendImage(contact, dataUrl, caption, phoneNumberId, transport, externalId);
-}
-
-// Native port of /movil's WhatsApp reply-window logic. An inbound WhatsApp
-// message opens a 24h window during which free text can be sent via the API.
-function nativeMessageOpensReplyWindow(message: ChatMessage) {
-  if (message.direction !== 'inbound') return false;
-  const probe = `${message.transport || ''} ${message.channel || ''}`.toLowerCase();
-  if (probe.includes('sms') || probe.includes('messenger') || probe.includes('instagram') || probe.includes('email')) return false;
-  return true;
-}
-
-function getNativeLastReplyWindowInboundTime(messages: ChatMessage[]) {
-  let newest = 0;
-  messages.forEach((message) => {
-    if (!nativeMessageOpensReplyWindow(message)) return;
-    const time = getNativeMessageSortTime(message.date);
-    if (time > newest) newest = time;
-  });
-  return newest;
-}
-
-function getNativeApiReplyWindowOpen(messages: ChatMessage[]) {
-  const newest = getNativeLastReplyWindowInboundTime(messages);
-  if (!newest) return false;
-  return Date.now() - newest < 24 * 60 * 60 * 1000;
+  if (attachment.kind === 'video') return api.sendVideo(contact, dataUrl, caption, whatsAppSender, externalId);
+  if (attachment.kind === 'audio') return api.sendAudio(contact, dataUrl, attachment.durationMs, whatsAppSender, externalId);
+  if (attachment.kind === 'document') return api.sendDocument(contact, dataUrl, attachment.name, attachment.mimeType, caption, whatsAppSender, externalId);
+  return api.sendImage(contact, dataUrl, caption, whatsAppSender, externalId);
 }
 
 function getSendResponseLocalMessageId(response?: SendTextResponse | null) {
@@ -27216,7 +27360,7 @@ function getSendResponseLocalMessageId(response?: SendTextResponse | null) {
 }
 
 function getSendResponseProviderMessageId(response?: SendTextResponse | null) {
-  return typeof response?.id === 'string' ? response.id.trim() : '';
+  return getOutboundProviderMessageId(response);
 }
 
 function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessage[]): ChatMessage[] {
@@ -27273,19 +27417,6 @@ function hasNewInboundNativeMessage(current: ChatMessage[], incoming: ChatMessag
 const NATIVE_OPTIMISTIC_RECONCILE_FORWARD_MS = 4 * 60 * 1000;
 const NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS = 60 * 1000;
 
-// Familia de canal para no emparejar un envío de WhatsApp con un mensaje de
-// email/Meta con el mismo texto (la bandeja es multi-agente y multi-canal).
-function getNativeMessageChannelFamily(message: ChatMessage) {
-  const raw = `${message.channel || ''} ${message.transport || ''}`.toLowerCase();
-  if (raw.includes('meta') || raw.includes('messenger') || raw.includes('instagram') || raw.includes('social')) return 'meta';
-  if (raw.includes('email') || raw.includes('mail')) return 'email';
-  if (raw.includes('sms')) return 'sms';
-  // 'native' es el transport de los envíos optimistas; su channel ya trae la
-  // familia real, así que solo cae aquí cuando de verdad es WhatsApp.
-  if (raw.includes('whatsapp') || raw.includes('native')) return 'whatsapp';
-  return 'other';
-}
-
 function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow: ChatMessage): ChatMessage {
   const localAttachment = localRow.attachment;
   const serverAttachment = serverRow.attachment;
@@ -27300,6 +27431,7 @@ function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow
     }
     : localAttachment;
 
+  const serverState = getOutboundSendResultState(serverRow);
   return {
     ...localRow,
     ...serverRow,
@@ -27309,9 +27441,9 @@ function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow
     providerMessageId: serverRow.providerMessageId || localRow.providerMessageId,
     date: localRow.date || serverRow.date,
     text: serverRow.text || localRow.text,
-    pending: false,
-    failed: false,
-    errorReason: '',
+    pending: serverRow.pending ?? serverState.pending,
+    failed: serverRow.failed ?? serverState.failed,
+    errorReason: serverRow.errorReason || serverState.errorReason,
     ...(attachment ? { attachment } : {}),
   };
 }
@@ -27341,7 +27473,7 @@ function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>, inclu
     .forEach((localRow) => {
       const localTime = getNativeMessageSortTime(localRow.date);
       const localText = String(localRow.text || '').trim();
-      const localFamily = getNativeMessageChannelFamily(localRow);
+      const localFamily = getOutboundMessageChannelFamily(localRow);
       let match: ChatMessage | null = null;
       let matchDistance = Number.POSITIVE_INFINITY;
       serverRows.forEach((serverRow) => {
@@ -27358,7 +27490,7 @@ function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>, inclu
         if (serverTime < localTime - NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS) return;
         const distance = Math.abs(serverTime - localTime);
         if (distance > NATIVE_OPTIMISTIC_RECONCILE_FORWARD_MS || distance >= matchDistance) return;
-        const serverFamily = getNativeMessageChannelFamily(serverRow);
+        const serverFamily = getOutboundMessageChannelFamily(serverRow);
         if (localFamily !== 'other' && serverFamily !== 'other' && localFamily !== serverFamily) return;
         const serverText = String(serverRow.text || '').trim();
         const textMatches = Boolean(localText) && localText === serverText;

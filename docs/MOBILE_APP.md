@@ -362,10 +362,22 @@ para insertar otra fila.
 El botón de canal del composer inferior mantiene el mismo catálogo en `/movil`,
 React Native Android e iOS: cada WhatsApp nativo, `WhatsApp · HighLevel` y cada
 número SMS activo de HighLevel aparecen como rutas independientes. Seleccionar un
-SMS pasa su `fromNumber` en texto, archivos, audio, ubicación y programación. Si
+WhatsApp HighLevel liga la ruta al `business_phone` del ultimo inbound
+`ghl_whatsapp` verificado; seleccionar un SMS pasa el `fromNumber` del inventario
+LC Phone en texto, archivos, audio, ubicación y programación. El catalogo
+`/api/highlevel/phone-numbers` declara `source=lc_phone` y `channels=['sms']`: no
+es inventario WhatsApp y nunca se reutiliza como tal. La ventana WhatsApp
+HighLevel solo usa el inbound dirigido a ese mismo numero; no toma prestada una
+respuesta de Meta Direct, YCloud, QR ni otro remitente y nunca cambia a SMS en
+silencio. Si
 el token HighLevel no permite leer números, el fallback `SMS · HighLevel` sigue
 operativo con el remitente predeterminado de la cuenta. Ninguna ruta HighLevel
 puede heredar el `phoneNumberId` de un WhatsApp nativo.
+
+La aceptacion HighLevel sin recibo durable, incluida `sent/pending/queued`, se conserva como pendiente en el globo
+hasta recibir `sent/delivered/read/failed` por webhook o sync. El `messageId`
+remoto y `localMessageId` enlazan el optimista con ese estado durable; si falla,
+la app muestra el motivo guardado y no una palomita anticipada.
 
 Los comentarios de Facebook e Instagram en la conversacion nativa deben mantener
 la misma paridad que escritorio y `/movil`: el globo muestra si fue comentario,
@@ -436,6 +448,12 @@ autoridad sobre texto, perfil y contadores. Los refresh por SSE, polling o
 foreground usan `/api/contacts/chats?warmProfilePictures=false` y conservan los
 avatares ya hidratados; la precarga remota de fotos se reserva para arranque frio
 y paginacion para que no convierta cada tick en una consulta lenta.
+El hilo iOS abre `/api/chat-events/stream` antes de esperar conversacion, journey,
+contacto y catalogos. Un evento recibido durante el bootstrap queda como nudge
+pendiente y dispara una sola reconciliacion REST coalescida al terminar la carga
+base. Status WhatsApp e inventario HighLevel se leen desde Ristak en paralelo,
+con un retry corto y conservando el ultimo snapshot valido; no se consulta Meta
+ni HighLevel en un loop.
 Los selectores de `Nuevo chat`, `Nueva cita` y contacto para pagos comparten el
 directorio ligero `/api/contacts/search?picker=true`: al abrir pintan primero el
 ultimo snapshot de esa cuenta, revalidan en segundo plano y buscan en servidor
@@ -941,8 +959,10 @@ como opcion separada cuando la cuenta tiene mas de un remitente. Elegir
 `WhatsApp · <nombre/numero>` cambia el remitente del chat abierto, guarda ese
 `phoneNumberId` como `preferred_whatsapp_phone_number_id` del contacto y lo
 mantiene al reabrirlo desde cualquier superficie; no debe obligar al usuario a
-ir al desktop o a la ficha para elegir entre WhatsApp 1, WhatsApp 2, etc. Si el
-guardado falla, el selector regresa al remitente anterior y muestra el error.
+ir al desktop o a la ficha para elegir entre WhatsApp 1, WhatsApp 2, etc. Guardar
+esa preferencia es best-effort: si el contacto responde `404` o hay una falla
+transitoria, la seleccion de la sesion sigue activa y el envio no regresa al
+remitente anterior.
 La conversacion nativa en `mobile/` debe aplicar el mismo contrato: el selector
 del composer solo muestra rutas realmente conectadas para ese chat, lista cada
 numero de WhatsApp disponible por separado y agrega Messenger/Instagram solo si
@@ -950,6 +970,13 @@ la integracion Meta correspondiente esta conectada y el contacto pertenece a
 ese canal. `ios/app` conserva ese mismo boton de canal en el panel inferior,
 antes del boton `+`, y comparte la preferencia persistente con `/movil`, Android
 y la ficha `Contactando desde`.
+
+El remitente automatico sigue la misma prioridad en las tres superficies:
+`preferred_whatsapp_phone_number_id`, ultimo `lastInboundBusinessPhone*`, ultimo
+`lastBusinessPhone*` y finalmente el default conectado. Cada request nativo
+conserva juntos `phoneNumberId`, `fromPhone` y `transport`; texto, media,
+ubicacion, plantilla y programacion no pueden mezclar el ID elegido con el
+telefono de otro mensaje.
 
 La selección de transporte es idéntica en `/movil`, React Native Android y iOS:
 si la fila elegida tiene API disponible, el envío usa `transport=api` aunque el

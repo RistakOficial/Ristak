@@ -14,7 +14,7 @@ import { sendPaymentNotification } from '../services/pushNotificationsService.js
 import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
 import { renderTemplateVariables } from '../services/templateVariablesService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
-import { normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js';
 import { clearHighLevelIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import {
@@ -52,7 +52,11 @@ import { applyConektaPaymentPlanAction, updateConektaPaymentPlanSchedule } from 
 import { applyRebillPaymentPlanAction, updateRebillPaymentPlanSchedule } from '../services/rebillPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
-import { parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
+import {
+  parseSortableTimestamp,
+  timestampSortExpression,
+  timestampSortParameterExpression
+} from '../utils/sqlTimestampSort.js';
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js';
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js';
 import { getCachedPaymentListSummary } from '../services/paymentListSummaryCacheService.js';
@@ -196,16 +200,10 @@ const GHL_CHAT_CHANNEL_ALIASES = {
 const LOCAL_ONLY_CONTACT_PREFIXES = ['waapi_contact_', 'manual_contact_', 'meta_social_contact_', 'site_contact_', 'rstk_'];
 const GHL_WHATSAPP_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const GHL_REPLY_WINDOW_FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+const GHL_REPLY_WINDOW_EXPORT_PAGE_LIMIT = 100;
+const GHL_REPLY_WINDOW_EXPORT_MAX_PAGES = 5;
 const GHL_LOCAL_WHATSAPP_TRANSPORTS = new Set([
-  '',
-  'api',
-  'qr',
-  'whatsapp',
-  'whatsapp_api',
-  'ghl_whatsapp',
-  'baileys',
-  'bailey',
-  'whatsapp_qr'
+  'ghl_whatsapp'
 ]);
 const GHL_INBOUND_DIRECTIONS = new Set(['inbound', 'incoming', 'received', 'customer']);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -587,17 +585,77 @@ function extractHighLevelMessageItems(response = {}) {
   return candidates.find(Array.isArray) || [];
 }
 
-async function findRecentLocalWhatsAppInbound(contactId) {
+function getHighLevelMessageBusinessPhone(message = {}) {
+  return normalizePhoneForStorage(firstDefined(
+    message.toNumber,
+    message.to_number,
+    message.to,
+    message.recipientPhone,
+    message.recipient_phone
+  )) || cleanString(firstDefined(message.toNumber, message.to_number, message.to));
+}
+
+function getStoredHighLevelBusinessPhone(row = {}) {
+  const stored = normalizePhoneForStorage(row.business_phone) || cleanString(row.business_phone);
+  if (stored) return stored;
+  try {
+    const raw = typeof row.raw_payload_json === 'string'
+      ? JSON.parse(row.raw_payload_json)
+      : row.raw_payload_json;
+    return getHighLevelMessageBusinessPhone(raw?.message || raw || {});
+  } catch {
+    return '';
+  }
+}
+
+function phoneMatchesRequestedSender(phone, requestedSender) {
+  const requestedCandidates = buildPhoneMatchCandidates(requestedSender);
+  if (!requestedCandidates.length) return true;
+  const phoneCandidates = buildPhoneMatchCandidates(phone);
+  return phoneCandidates.some(candidate => requestedCandidates.includes(candidate));
+}
+
+function extractHighLevelExportCursor(response = {}) {
+  return cleanString(firstDefined(
+    response.nextCursor,
+    response.next_cursor,
+    response.meta?.nextCursor,
+    response.meta?.next_cursor,
+    response.data?.nextCursor,
+    response.data?.next_cursor,
+    response.pageInfo?.nextCursor,
+    response.pageInfo?.next_cursor
+  ));
+}
+
+function highLevelReplyWindowPaginationError() {
+  return Object.assign(
+    new Error('HighLevel no permitió revisar completa la ventana de WhatsApp sin seguir paginando.'),
+    { code: 'HIGHLEVEL_WHATSAPP_REPLY_WINDOW_INCOMPLETE' }
+  );
+}
+
+async function findRecentLocalWhatsAppInbound(contactId, { fromNumber = '' } = {}) {
   if (!cleanString(contactId)) return null;
 
+  const requestedCandidates = buildPhoneMatchCandidates(fromNumber);
+  const messageSort = timestampSortExpression('COALESCE(message_timestamp, created_at)');
+  const cutoffSort = timestampSortParameterExpression();
+  const cutoff = new Date(Date.now() - GHL_WHATSAPP_REPLY_WINDOW_MS).toISOString();
+  const phoneClause = requestedCandidates.length
+    ? `AND (business_phone IN (${requestedCandidates.map(() => '?').join(', ')}) OR COALESCE(business_phone, '') = '')`
+    : '';
   const rows = await db.all(
-    `SELECT COALESCE(message_timestamp, created_at) AS message_date, transport
+    `SELECT COALESCE(message_timestamp, created_at) AS message_date, transport,
+            business_phone, raw_payload_json
      FROM whatsapp_api_messages
      WHERE contact_id = ?
        AND LOWER(COALESCE(direction, '')) = 'inbound'
-     ORDER BY COALESCE(message_timestamp, created_at) DESC
-     LIMIT 30`,
-    [contactId]
+       AND LOWER(COALESCE(transport, '')) = 'ghl_whatsapp'
+       AND ${messageSort} >= ${cutoffSort}
+       ${phoneClause}
+     ORDER BY ${messageSort} DESC, id DESC`,
+    [contactId, cutoff, ...requestedCandidates]
   ).catch(error => {
     logger.warn(`[HighLevel Conversations] No se pudo revisar ventana local de WhatsApp: ${error.message}`);
     return [];
@@ -607,61 +665,86 @@ async function findRecentLocalWhatsAppInbound(contactId) {
   const recent = rows
     .map(row => ({
       dateMs: parseTimestampMs(row.message_date),
-      transport: cleanString(row.transport).toLowerCase()
+      transport: cleanString(row.transport).toLowerCase(),
+      businessPhone: getStoredHighLevelBusinessPhone(row)
     }))
-    .filter(row => GHL_LOCAL_WHATSAPP_TRANSPORTS.has(row.transport))
+    .filter(row => (
+      GHL_LOCAL_WHATSAPP_TRANSPORTS.has(row.transport) &&
+      Boolean(row.businessPhone) &&
+      phoneMatchesRequestedSender(row.businessPhone, fromNumber)
+    ))
     .find(row => isWithinWhatsAppReplyWindowMs(row.dateMs, nowMs));
 
   return recent
     ? {
         lastInboundAt: new Date(recent.dateMs).toISOString(),
-        source: 'local'
+        source: 'local',
+        businessPhone: recent.businessPhone
       }
     : null;
 }
 
-async function findRecentHighLevelWhatsAppInbound({ ghlClient, highLevelContactId }) {
+async function findRecentHighLevelWhatsAppInbound({ ghlClient, highLevelContactId, fromNumber = '' }) {
   const cleanContactId = cleanString(highLevelContactId);
   if (!cleanContactId) return null;
 
   const now = new Date();
   const cutoff = new Date(now.getTime() - GHL_WHATSAPP_REPLY_WINDOW_MS);
-  const response = await ghlClient.exportConversationMessages({
-    contactId: cleanContactId,
-    channel: 'WhatsApp',
-    startDate: cutoff.toISOString(),
-    endDate: now.toISOString(),
-    limit: 100,
-    sortBy: 'createdAt',
-    sortOrder: 'desc'
-  });
-  const messages = extractHighLevelMessageItems(response);
   const nowMs = now.getTime();
-  const recent = messages
-    .map(message => ({
-      message,
-      dateMs: getHighLevelMessageTimestampMs(message)
-    }))
-    .filter(item => (
-      highLevelMessageLooksInbound(item.message) &&
-      highLevelMessageLooksWhatsApp(item.message) &&
-      isWithinWhatsAppReplyWindowMs(item.dateMs, nowMs)
-    ))
-    .sort((left, right) => right.dateMs - left.dateMs)[0];
+  let cursor = '';
+  const seenCursors = new Set();
 
-  return recent
-    ? {
+  for (let page = 0; page < GHL_REPLY_WINDOW_EXPORT_MAX_PAGES; page += 1) {
+    const response = await ghlClient.exportConversationMessages({
+      contactId: cleanContactId,
+      channel: 'WhatsApp',
+      startDate: cutoff.toISOString(),
+      endDate: now.toISOString(),
+      cursor: cursor || undefined,
+      limit: GHL_REPLY_WINDOW_EXPORT_PAGE_LIMIT,
+      sortBy: 'createdAt',
+      sortOrder: 'desc'
+    });
+    const messages = extractHighLevelMessageItems(response);
+    const recent = messages
+      .map(message => ({
+        message,
+        dateMs: getHighLevelMessageTimestampMs(message),
+        businessPhone: getHighLevelMessageBusinessPhone(message)
+      }))
+      .filter(item => (
+        highLevelMessageLooksInbound(item.message) &&
+        highLevelMessageLooksWhatsApp(item.message) &&
+        Boolean(item.businessPhone) &&
+        phoneMatchesRequestedSender(item.businessPhone, fromNumber) &&
+        isWithinWhatsAppReplyWindowMs(item.dateMs, nowMs)
+      ))
+      .sort((left, right) => right.dateMs - left.dateMs)[0];
+
+    if (recent) {
+      return {
         lastInboundAt: new Date(recent.dateMs).toISOString(),
-        source: 'highlevel'
-      }
-    : null;
+        source: 'highlevel',
+        businessPhone: recent.businessPhone
+      };
+    }
+
+    const nextCursor = extractHighLevelExportCursor(response);
+    if (!nextCursor) return null;
+    if (seenCursors.has(nextCursor)) throw highLevelReplyWindowPaginationError();
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  throw highLevelReplyWindowPaginationError();
 }
 
-async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, ghlClient, highLevelContactId }) {
+async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, ghlClient, highLevelContactId, fromNumber = '' }) {
   if (requestedChannel.key !== 'whatsapp_api') {
     return {
       channel: requestedChannel,
       requestedChannel,
+      fromNumber: cleanString(fromNumber),
       replyWindowOpen: null,
       lastInboundAt: null,
       replyWindowSource: null,
@@ -670,11 +753,12 @@ async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, 
     };
   }
 
-  const localRecent = await findRecentLocalWhatsAppInbound(contact.id);
+  const localRecent = await findRecentLocalWhatsAppInbound(contact.id, { fromNumber });
   if (localRecent) {
     return {
       channel: requestedChannel,
       requestedChannel,
+      fromNumber: localRecent.businessPhone,
       replyWindowOpen: true,
       lastInboundAt: localRecent.lastInboundAt,
       replyWindowSource: localRecent.source,
@@ -686,7 +770,7 @@ async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, 
   let remoteRecent = null;
   let remoteError = null;
   try {
-    remoteRecent = await findRecentHighLevelWhatsAppInbound({ ghlClient, highLevelContactId });
+    remoteRecent = await findRecentHighLevelWhatsAppInbound({ ghlClient, highLevelContactId, fromNumber });
   } catch (error) {
     if (isHighLevelConversationContactNotFoundError(error)) throw error;
     remoteError = error;
@@ -697,6 +781,7 @@ async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, 
     return {
       channel: requestedChannel,
       requestedChannel,
+      fromNumber: remoteRecent.businessPhone,
       replyWindowOpen: true,
       lastInboundAt: remoteRecent.lastInboundAt,
       replyWindowSource: remoteRecent.source,
@@ -706,12 +791,13 @@ async function resolveHighLevelChatChannelForReply({ requestedChannel, contact, 
   }
 
   return {
-    channel: GHL_CHAT_CHANNELS.sms_qr,
+    channel: requestedChannel,
     requestedChannel,
+    fromNumber: cleanString(fromNumber),
     replyWindowOpen: false,
     lastInboundAt: null,
     replyWindowSource: remoteError ? 'highlevel_unavailable' : 'none',
-    fallbackApplied: true,
+    fallbackApplied: false,
     fallbackReason: remoteError ? 'reply_window_unknown' : 'outside_24h'
   };
 }
@@ -2453,16 +2539,18 @@ export function getHighLevelResponseStatus(response = {}) {
     response.data?.status
   ));
   if (explicitStatus) {
-    // A successful Conversations API response means HighLevel accepted the send.
-    // Provider queue states should not leave the local chat bubble spinning forever.
-    return explicitStatus === 'pending' ? 'sent' : explicitStatus;
+    // HTTP 2xx sólo confirma que HighLevel aceptó la solicitud. El proveedor
+    // todavía puede rechazarla después (por ejemplo, por la ventana de 24 h).
+    return explicitStatus === 'sent' ? 'pending' : explicitStatus;
   }
 
   const responseText = cleanString(firstDefined(response.msg, response.message, response.data?.msg)).toLowerCase();
   if (responseText.includes('failed') || responseText.includes('error')) return 'failed';
-  if (responseText.includes('queued') || responseText.includes('pending') || responseText.includes('scheduled')) return 'sent';
+  if (responseText.includes('queued') || responseText.includes('pending') || responseText.includes('scheduled')) return 'pending';
 
-  return 'sent';
+  // La respuesta oficial de creación puede traer únicamente messageId. Eso no
+  // es un recibo de entrega: el estado terminal llegará por webhook/sync.
+  return 'pending';
 }
 
 async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments = [], fromNumber, toNumber, externalId, agentId, requestBody, response }) {
@@ -2698,9 +2786,10 @@ async function saveHighLevelEmailMirror({ contact, channel, subject, text, html,
   };
 }
 
-function createHighLevelChatError(message, statusCode = 400) {
+function createHighLevelChatError(message, statusCode = 400, code = '') {
   const error = new Error(message);
   error.statusCode = statusCode;
+  if (code) error.code = code;
   return error;
 }
 
@@ -2856,7 +2945,8 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       requestedChannel: channelConfig,
       contact,
       ghlClient,
-      highLevelContactId
+      highLevelContactId,
+      fromNumber: cleanFromNumber
     });
   } catch (error) {
     if (!isHighLevelConversationContactNotFoundError(error)) throw error;
@@ -2866,10 +2956,27 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       requestedChannel: channelConfig,
       contact,
       ghlClient,
-      highLevelContactId
+      highLevelContactId,
+      fromNumber: cleanFromNumber
     });
   }
+  if (channelConfig.key === 'whatsapp_api' && channelResolution.replyWindowOpen === false) {
+    if (channelResolution.replyWindowSource === 'highlevel_unavailable') {
+      throw createHighLevelChatError(
+        'No pudimos confirmar con HighLevel si este número todavía puede responder por WhatsApp. Intenta de nuevo; no se cambió el envío a SMS.',
+        503,
+        'HIGHLEVEL_WHATSAPP_REPLY_WINDOW_UNKNOWN'
+      );
+    }
+    throw createHighLevelChatError(
+      'Este número de HighLevel está fuera de la ventana de 24 horas de WhatsApp. Elige SMS o usa una plantilla aprobada; Ristak no cambiará el canal a escondidas.',
+      409,
+      'HIGHLEVEL_WHATSAPP_REPLY_WINDOW_CLOSED'
+    );
+  }
   const effectiveChannel = channelResolution.channel;
+  const resolvedFromNumber = normalizePhoneForStorage(channelResolution.fromNumber || cleanFromNumber) ||
+    cleanString(channelResolution.fromNumber || cleanFromNumber);
   const shouldIncludePhoneFields = effectiveChannel.key !== 'email';
   const requestBody = {
     type: effectiveChannel.type,
@@ -2879,7 +2986,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     ...(effectiveChannel.key === 'email' && renderedSubject && { subject: renderedSubject }),
     ...(effectiveChannel.key === 'email' && renderedEmailHtml && { html: renderedEmailHtml }),
     ...(resolvedAttachmentUrls.length > 0 && { attachments: resolvedAttachmentUrls }),
-    ...(shouldIncludePhoneFields && cleanFromNumber && { fromNumber: cleanFromNumber }),
+    ...(shouldIncludePhoneFields && resolvedFromNumber && { fromNumber: resolvedFromNumber }),
     ...(shouldIncludePhoneFields && cleanToNumber && { toNumber: cleanToNumber }),
     ...(cleanString(conversationProviderId) && { conversationProviderId: cleanString(conversationProviderId) })
   };
@@ -2923,7 +3030,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       channel: effectiveChannel,
       text: renderedText,
       attachments: mirrorAttachments,
-      fromNumber: cleanFromNumber,
+      fromNumber: resolvedFromNumber,
       toNumber: cleanToNumber,
       externalId,
       agentId,
@@ -2955,6 +3062,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     replyWindowOpen: channelResolution.replyWindowOpen,
     replyWindowSource: channelResolution.replyWindowSource,
     lastInboundAt: channelResolution.lastInboundAt,
+    fromNumber: resolvedFromNumber || null,
     ...(voiceAttachment?.audio ? { audio: voiceAttachment.audio } : {}),
     ...(voiceAttachment?.localMedia || preparedFileAttachments.localMedia[0]
       ? { localMedia: voiceAttachment?.localMedia || preparedFileAttachments.localMedia[0] }
@@ -2971,7 +3079,8 @@ export const sendConversationMessage = async (req, res) => {
     logger.error(`Error enviando mensaje por HighLevel Conversations: ${error.message}`);
     res.status(error.statusCode || 502).json({
       success: false,
-      error: error.message || 'No se pudo enviar el mensaje por HighLevel.'
+      error: error.message || 'No se pudo enviar el mensaje por HighLevel.',
+      ...(error.code ? { code: error.code } : {})
     });
   }
 };

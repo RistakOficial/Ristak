@@ -1,6 +1,7 @@
 import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { db } from '../src/config/database.js'
 import { sendHighLevelConversationMessageCore } from '../src/controllers/highlevelController.js'
 import GHLClient from '../src/services/ghlClient.js'
@@ -39,6 +40,15 @@ async function cleanupContact(contactId, marker) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 
+test('HighLevel conversational agent preserves the inbound business number when replying', async () => {
+  const source = await readFile(
+    new URL('../src/agents/conversational/runner.js', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /fromNumber: latest\.business_phone \|\| undefined/)
+})
+
 test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, Instagram and Email routes', async () => {
   const marker = randomUUID().replace(/-/g, '')
   const contactId = `contact_send_channels_${marker}`
@@ -55,10 +65,10 @@ test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, 
     )
     await db.run(
       `INSERT INTO whatsapp_api_messages (
-        id, ycloud_message_id, contact_id, phone, transport, direction, message_type,
+        id, ycloud_message_id, contact_id, phone, business_phone, transport, direction, message_type,
         message_text, status, message_timestamp, created_at
-      ) VALUES (?, ?, ?, ?, 'ghl_whatsapp', 'inbound', 'text', 'Ventana abierta', 'received', ?, CURRENT_TIMESTAMP)`,
-      [`local_reply_window_${marker}`, `local_reply_window_remote_${marker}`, contactId, phone, new Date().toISOString()]
+      ) VALUES (?, ?, ?, ?, ?, 'ghl_whatsapp', 'inbound', 'text', 'Ventana abierta', 'received', ?, CURRENT_TIMESTAMP)`,
+      [`local_reply_window_${marker}`, `local_reply_window_remote_${marker}`, contactId, phone, '+19155550188', new Date().toISOString()]
     )
 
     mock.method(GHLClient.prototype, 'exportConversationMessages', async () => {
@@ -76,6 +86,7 @@ test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, 
       const whatsapp = await sendHighLevelConversationMessageCore({
         contactId,
         channel: 'whatsapp_api',
+        fromNumber: '+19155550188',
         message: 'Hola por WhatsApp'
       }, { markHumanTakeover: false })
       const smsFromNumber = '+19155550199'
@@ -104,7 +115,7 @@ test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, 
       }, { markHumanTakeover: false })
 
       assert.deepEqual(sentPayloads.map(payload => payload.type), ['WhatsApp', 'SMS', 'FB', 'IG', 'Email'])
-      assert.deepEqual([whatsapp.status, sms.status, messenger.status, instagram.status, email.status], ['sent', 'sent', 'sent', 'sent', 'sent'])
+      assert.deepEqual([whatsapp.status, sms.status, messenger.status, instagram.status, email.status], ['pending', 'pending', 'pending', 'pending', 'pending'])
       assert.equal(whatsapp.channel, 'whatsapp_api')
       assert.equal(sms.channel, 'sms_qr')
       assert.equal(sentPayloads[1].fromNumber, smsFromNumber)
@@ -129,7 +140,7 @@ test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, 
       assert.equal(whatsappRow.direction, 'outbound')
       assert.equal(whatsappRow.message_type, 'text')
       assert.equal(whatsappRow.message_text, 'Hola por WhatsApp')
-      assert.equal(whatsappRow.status, 'sent')
+      assert.equal(whatsappRow.status, 'pending')
 
       const metaRows = await db.all(
         `SELECT platform, direction, message_type, message_text, status
@@ -142,7 +153,7 @@ test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, 
       assert.equal(metaRows.find(row => row.platform === 'messenger')?.message_text, 'Hola por Messenger')
       assert.equal(metaRows.find(row => row.platform === 'instagram')?.message_text, 'Hola por Instagram')
       assert.ok(metaRows.every(row => row.direction === 'outbound'))
-      assert.ok(metaRows.every(row => row.status === 'sent'))
+      assert.ok(metaRows.every(row => row.status === 'pending'))
 
       const emailRow = await db.get(
         `SELECT direction, status, to_email, subject, message_text, html_body, raw_payload_json
@@ -151,12 +162,257 @@ test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, 
         [contactId, 'Asunto por correo']
       )
       assert.equal(emailRow.direction, 'outbound')
-      assert.equal(emailRow.status, 'sent')
+      assert.equal(emailRow.status, 'pending')
       assert.equal(emailRow.to_email, `cliente-${marker}@example.com`)
       assert.equal(emailRow.subject, 'Asunto por correo')
       assert.equal(emailRow.message_text, 'Hola por correo')
       assert.equal(emailRow.html_body, '<p>Hola por correo</p>')
       assert.equal(JSON.parse(emailRow.raw_payload_json).provider, 'highlevel')
+    } finally {
+      mock.restoreAll()
+      await cleanupContact(contactId, marker)
+    }
+  })
+})
+
+test('HighLevel WhatsApp never borrows a Meta Direct window or falls back silently to SMS', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const contactId = `contact_send_window_scope_${marker}`
+  const phone = `+52656${marker.slice(0, 10).replace(/[a-f]/g, '6')}`
+  const metaDirectNumber = '+19155550177'
+  const selectedHighLevelNumber = '+19155550188'
+  const sentPayloads = []
+
+  await cleanupContact(contactId, marker)
+
+  await snapshotHighLevelConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, ghl_contact_id, phone, full_name, source, created_at, updated_at)
+       VALUES (?, ?, ?, 'Cliente Ventana', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `ghl_send_window_${marker}`, phone]
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_messages (
+        id, ycloud_message_id, contact_id, phone, business_phone, transport, direction,
+        message_type, message_text, status, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'api', 'inbound', 'text', 'Inbound por Meta Direct',
+        'received', ?, CURRENT_TIMESTAMP)`,
+      [`meta_window_${marker}`, `meta_window_remote_${marker}`, contactId, phone, metaDirectNumber, new Date().toISOString()]
+    )
+
+    mock.method(GHLClient.prototype, 'exportConversationMessages', async () => ({ messages: [] }))
+    mock.method(GHLClient.prototype, 'sendConversationMessage', async payload => {
+      sentPayloads.push(payload)
+      return { messageId: `should_not_send_${marker}`, status: 'pending' }
+    })
+
+    try {
+      await assert.rejects(
+        sendHighLevelConversationMessageCore({
+          contactId,
+          channel: 'whatsapp_api',
+          fromNumber: selectedHighLevelNumber,
+          message: 'No debes convertir esto a SMS'
+        }, { markHumanTakeover: false }),
+        error => {
+          assert.equal(error.statusCode, 409)
+          assert.equal(error.code, 'HIGHLEVEL_WHATSAPP_REPLY_WINDOW_CLOSED')
+          assert.match(error.message, /fuera de la ventana de 24 horas/i)
+          return true
+        }
+      )
+      assert.equal(sentPayloads.length, 0)
+    } finally {
+      mock.restoreAll()
+      await cleanupContact(contactId, marker)
+    }
+  })
+})
+
+test('HighLevel WhatsApp keeps each reply window scoped to its own business number', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const contactId = `contact_send_multinumber_${marker}`
+  const phone = `+52658${marker.slice(0, 9).replace(/[a-f]/g, '5')}`
+  const staleNumber = '+19155550201'
+  const recentNumber = '+19155550202'
+  const sentPayloads = []
+  let exportCalls = 0
+
+  await cleanupContact(contactId, marker)
+
+  await snapshotHighLevelConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, ghl_contact_id, phone, full_name, source, created_at, updated_at)
+       VALUES (?, ?, ?, 'Cliente Multi Número', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `ghl_send_multinumber_${marker}`, phone]
+    )
+    for (const [idSuffix, businessPhone, timestamp] of [
+      ['stale', staleNumber, new Date(Date.now() - (25 * 60 * 60 * 1000)).toISOString()],
+      ['recent', recentNumber, new Date().toISOString()]
+    ]) {
+      await db.run(
+        `INSERT INTO whatsapp_api_messages (
+          id, ycloud_message_id, contact_id, phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'ghl_whatsapp', 'inbound', 'text', ?, 'received', ?, CURRENT_TIMESTAMP)`,
+        [`multinumber_${idSuffix}_${marker}`, `multinumber_remote_${idSuffix}_${marker}`, contactId, phone, businessPhone, idSuffix, timestamp]
+      )
+    }
+
+    mock.method(GHLClient.prototype, 'exportConversationMessages', async () => {
+      exportCalls += 1
+      return { messages: [] }
+    })
+    mock.method(GHLClient.prototype, 'sendConversationMessage', async payload => {
+      sentPayloads.push(payload)
+      return { messageId: `remote_send_${marker}_implicit`, status: 'pending' }
+    })
+
+    try {
+      await assert.rejects(
+        sendHighLevelConversationMessageCore({
+          contactId,
+          channel: 'whatsapp_api',
+          fromNumber: staleNumber,
+          message: 'No uses la ventana del otro número'
+        }, { markHumanTakeover: false }),
+        error => error.code === 'HIGHLEVEL_WHATSAPP_REPLY_WINDOW_CLOSED'
+      )
+
+      const implicit = await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'whatsapp_api',
+        message: 'Responde desde el número que recibió el mensaje'
+      }, { markHumanTakeover: false })
+
+      assert.equal(exportCalls, 1)
+      assert.equal(sentPayloads.length, 1)
+      assert.equal(sentPayloads[0].fromNumber, recentNumber)
+      assert.equal(implicit.fromNumber, recentNumber)
+    } finally {
+      mock.restoreAll()
+      await cleanupContact(contactId, marker)
+    }
+  })
+})
+
+test('HighLevel local reply-window lookup filters the selected number before bounding work', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const contactId = `contact_send_window_depth_${marker}`
+  const phone = `+52659${marker.slice(0, 9).replace(/[a-f]/g, '4')}`
+  const selectedNumber = '+19155550301'
+  const noisyNumber = '+19155550302'
+  const sentPayloads = []
+
+  await cleanupContact(contactId, marker)
+
+  await snapshotHighLevelConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, ghl_contact_id, phone, full_name, source, created_at, updated_at)
+       VALUES (?, ?, ?, 'Cliente con Tráfico', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `ghl_send_window_depth_${marker}`, phone]
+    )
+    await db.run(
+      `INSERT INTO whatsapp_api_messages (
+        id, ycloud_message_id, contact_id, phone, business_phone, transport, direction,
+        message_type, message_text, status, message_timestamp, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'ghl_whatsapp', 'inbound', 'text', 'Ventana elegida', 'received', ?, CURRENT_TIMESTAMP)`,
+      [`window_depth_selected_${marker}`, `window_depth_selected_remote_${marker}`, contactId, phone, selectedNumber,
+        new Date(Date.now() - (60 * 60 * 1000)).toISOString()]
+    )
+    for (let index = 0; index < 35; index += 1) {
+      await db.run(
+        `INSERT INTO whatsapp_api_messages (
+          id, ycloud_message_id, contact_id, phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'ghl_whatsapp', 'inbound', 'text', ?, 'received', ?, CURRENT_TIMESTAMP)`,
+        [`window_depth_noise_${index}_${marker}`, `window_depth_noise_remote_${index}_${marker}`, contactId, phone, noisyNumber,
+          `Ruido ${index}`, new Date(Date.now() - (index * 1000)).toISOString()]
+      )
+    }
+
+    mock.method(GHLClient.prototype, 'exportConversationMessages', async () => {
+      throw new Error('La ventana local exacta no debe consultar HighLevel')
+    })
+    mock.method(GHLClient.prototype, 'sendConversationMessage', async payload => {
+      sentPayloads.push(payload)
+      return { messageId: `remote_send_${marker}_depth`, status: 'pending' }
+    })
+
+    try {
+      await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'whatsapp_api',
+        fromNumber: selectedNumber,
+        message: 'La ventana exacta sigue abierta'
+      }, { markHumanTakeover: false })
+
+      assert.equal(sentPayloads.length, 1)
+      assert.equal(sentPayloads[0].fromNumber, selectedNumber)
+    } finally {
+      mock.restoreAll()
+      await cleanupContact(contactId, marker)
+    }
+  })
+})
+
+test('HighLevel reply-window lookup follows a bounded export cursor to the selected number', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const contactId = `contact_send_window_cursor_${marker}`
+  const phone = `+52650${marker.slice(0, 9).replace(/[a-f]/g, '3')}`
+  const selectedNumber = '+19155550401'
+  const sentPayloads = []
+  const cursors = []
+
+  await cleanupContact(contactId, marker)
+
+  await snapshotHighLevelConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, ghl_contact_id, phone, full_name, source, created_at, updated_at)
+       VALUES (?, ?, ?, 'Cliente Paginado', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `ghl_send_window_cursor_${marker}`, phone]
+    )
+
+    mock.method(GHLClient.prototype, 'exportConversationMessages', async options => {
+      cursors.push(options.cursor || '')
+      if (!options.cursor) {
+        return {
+          messages: [{
+            id: `remote_other_${marker}`,
+            direction: 'inbound',
+            messageType: 'TYPE_WHATSAPP',
+            toNumber: '+19155550402',
+            dateAdded: new Date().toISOString()
+          }],
+          nextCursor: 'cursor-page-2'
+        }
+      }
+      return {
+        messages: [{
+          id: `remote_selected_${marker}`,
+          direction: 'inbound',
+          messageType: 'TYPE_WHATSAPP',
+          toNumber: selectedNumber,
+          dateAdded: new Date().toISOString()
+        }]
+      }
+    })
+    mock.method(GHLClient.prototype, 'sendConversationMessage', async payload => {
+      sentPayloads.push(payload)
+      return { messageId: `remote_send_${marker}_cursor`, status: 'pending' }
+    })
+
+    try {
+      await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'whatsapp_api',
+        fromNumber: selectedNumber,
+        message: 'Encontrado en la segunda página'
+      }, { markHumanTakeover: false })
+
+      assert.deepEqual(cursors, ['', 'cursor-page-2'])
+      assert.equal(sentPayloads.length, 1)
+      assert.equal(sentPayloads[0].fromNumber, selectedNumber)
     } finally {
       mock.restoreAll()
       await cleanupContact(contactId, marker)

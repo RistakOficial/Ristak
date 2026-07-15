@@ -210,6 +210,13 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { filterApprovedWhatsAppApiTemplates, isWhatsAppPhoneApiAvailable, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
+import {
+  getHighLevelChatSendOutcome,
+  getHighLevelRouteChangeMessage,
+  getHighLevelWhatsAppRouteLabel,
+  getLatestHighLevelWhatsAppInboundSender,
+  resolveHighLevelChatFromNumber
+} from '@/utils/highLevelChatSend'
 import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, getChatTimestampDayKey, isChatTimestampToday } from '@/utils/chatTimestamps'
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
@@ -4942,6 +4949,18 @@ function getBusinessPhoneDisplay(phone?: WhatsAppApiStatus['phoneNumbers'][numbe
   return label && label !== value ? `${label} · ${value}` : value
 }
 
+function getNativeWhatsAppRouteLabel(phone?: WhatsAppApiStatus['phoneNumbers'][number] | null) {
+  const provider = String(phone?.provider || '').trim().toLowerCase()
+  const route = provider === 'meta_direct'
+    ? 'Meta Direct'
+    : provider === 'ycloud'
+      ? 'YCloud'
+      : isBusinessPhoneQrReady(phone) && !phone?.api_send_enabled
+        ? 'QR de Ristak'
+        : 'Ristak'
+  return `WhatsApp · ${route}`
+}
+
 function isWhatsAppComposerRoute(value: ComposerMessageRouteValue): value is 'whatsapp_api' | `whatsapp:${string}` {
   return value === 'whatsapp_api' || String(value).startsWith('whatsapp:')
 }
@@ -4971,22 +4990,6 @@ function isInsideReplyWindow(date?: string | null) {
   const timestamp = parseSortableDateValue(date)
   if (!timestamp) return false
   return Date.now() - timestamp < 24 * 60 * 60 * 1000
-}
-
-function getNewestMessageByDate(messagesToSearch: ChatMessage[]) {
-  return [...messagesToSearch]
-    .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
-}
-
-function messageCanOpenWhatsAppReplyWindow(message: ChatMessage) {
-  if (message.direction !== 'inbound') return false
-
-  const normalizedChannel = normalizeGhlChatChannelValue(message.transport || '')
-  if (normalizedChannel === 'whatsapp_api') return true
-  if (normalizedChannel === 'sms_qr' || normalizedChannel === 'messenger' || normalizedChannel === 'instagram') return false
-
-  const transport = String(message.transport || '').trim().toLowerCase()
-  return !transport || ['api', 'qr', 'whatsapp', 'whatsapp_qr', 'baileys', 'bailey'].includes(transport)
 }
 
 function getFileExtension(name = '') {
@@ -6503,6 +6506,10 @@ export const PhoneChat: React.FC = () => {
   const activeContactBusinessPhoneOverrideId = explicitContactBusinessPhoneOverrideId || (
     inferredHighLevelWhatsAppRoute ? HIGHLEVEL_WHATSAPP_ROUTE_OVERRIDE_ID : ''
   )
+  const highLevelWhatsAppSender = useMemo(
+    () => getLatestHighLevelWhatsAppInboundSender(messages),
+    [messages]
+  )
   const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleCommentReplyTarget(messages), [messages])
   const composerMessageChannelOptions = useMemo<Array<{
     value: ComposerMessageRouteValue
@@ -6511,8 +6518,8 @@ export const PhoneChat: React.FC = () => {
   }>>(() => {
     const whatsappOptions = businessPhones.map((phone, index) => ({
       value: `whatsapp:${phone.id}` as ComposerMessageRouteValue,
-      label: `WhatsApp · ${getBusinessPhoneLabel(phone) || `Número ${index + 1}`}`,
-      description: getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado'
+      label: getNativeWhatsAppRouteLabel(phone),
+      description: `${getBusinessPhoneLabel(phone) || `Número ${index + 1}`} · ${getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado'}`
     }))
     const highLevelSmsOptions = highLevelPhoneNumbers.map((phone) => ({
       value: `${HIGHLEVEL_SMS_ROUTE_PREFIX}${phone.id}` as ComposerMessageRouteValue,
@@ -6534,9 +6541,17 @@ export const PhoneChat: React.FC = () => {
       ...(commentOption ? [commentOption] : []),
       ...whatsappOptions,
       ...highLevelSmsOptions,
-      ...baseOptions
+      ...baseOptions.map((option) => option.value === 'whatsapp_api'
+        ? {
+            ...option,
+            label: getHighLevelWhatsAppRouteLabel(highLevelWhatsAppSender),
+            description: highLevelWhatsAppSender
+              ? `Responde desde ${highLevelWhatsAppSender.fromNumber}, según el último mensaje recibido por HighLevel.`
+              : option.description
+          }
+        : option)
     ]
-  }, [baseComposerMessageChannelOptions, businessPhones, highLevelPhoneNumbers, latestEligibleCommentReplyTarget])
+  }, [baseComposerMessageChannelOptions, businessPhones, highLevelPhoneNumbers, highLevelWhatsAppSender, latestEligibleCommentReplyTarget])
   const selectedChatPhone = useMemo(() => (
     businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
   ), [businessPhones, selectedChatPhoneId])
@@ -6908,11 +6923,7 @@ export const PhoneChat: React.FC = () => {
       })
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
   }, [messages, selectedBusinessPhone, selectedBusinessPhoneValue])
-  const lastInboundWhatsAppReplyWindowMessage = useMemo(() => (
-    getNewestMessageByDate(messages.filter(messageCanOpenWhatsAppReplyWindow))
-  ), [messages])
   const apiReplyWindowOpen = isInsideReplyWindow(lastInboundForSelectedPhone?.date)
-  const highLevelWhatsAppReplyWindowOpen = isInsideReplyWindow(lastInboundWhatsAppReplyWindowMessage?.date)
   const selectedQrReady = isBusinessPhoneQrReady(selectedBusinessPhone)
   const selectedApiUnavailable = Boolean(selectedBusinessPhone && !whatsappConnected)
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
@@ -6995,8 +7006,7 @@ export const PhoneChat: React.FC = () => {
     || (activeHighLevelChatChannel === 'whatsapp_api' && !selectedBusinessPhone)
   const sendingThroughHighLevel = Boolean(highLevelConnected && activeContact && highLevelChannelRequired)
   const selectedHighLevelChannelUnavailable = Boolean(activeContact && highLevelChannelRequired && !highLevelConnected)
-  const highLevelWhatsAppFallsBackToSms = Boolean(sendingThroughHighLevel && activeHighLevelChatChannel === 'whatsapp_api' && activeContact?.phone && !highLevelWhatsAppReplyWindowOpen)
-  const effectiveHighLevelChatChannel: HighLevelChatChannel = highLevelWhatsAppFallsBackToSms ? 'sms_qr' : activeHighLevelChatChannel
+  const effectiveHighLevelChatChannel: HighLevelChatChannel = activeHighLevelChatChannel
   const activeHighLevelChannelNeedsPhone = effectiveHighLevelChatChannel === 'whatsapp_api' || effectiveHighLevelChatChannel === 'sms_qr'
   const selectedChannelCanSend = selectedHighLevelChannelUnavailable
     ? false
@@ -8688,13 +8698,15 @@ export const PhoneChat: React.FC = () => {
       setWhatsappStatus(status)
       writePhoneDailyCache(statusCacheKey, status, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
     }
-    setMetaMessengerConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.pageId))
-    setMetaInstagramConnected(Boolean(integrationsStatus?.meta?.connected && integrationsStatus?.meta?.instagramAccountId))
-    setHighLevelPhoneNumbers(
-      highLevelIsConnected && Array.isArray(highLevelPhoneCatalog?.phoneNumbers)
-        ? highLevelPhoneCatalog.phoneNumbers
-        : []
-    )
+    if (integrationsStatus) {
+      setMetaMessengerConnected(Boolean(integrationsStatus.meta?.connected && integrationsStatus.meta?.pageId))
+      setMetaInstagramConnected(Boolean(integrationsStatus.meta?.connected && integrationsStatus.meta?.instagramAccountId))
+      if (!highLevelIsConnected) {
+        setHighLevelPhoneNumbers([])
+      } else if (Array.isArray(highLevelPhoneCatalog?.phoneNumbers)) {
+        setHighLevelPhoneNumbers(highLevelPhoneCatalog.phoneNumbers)
+      }
+    }
     if (Array.isArray(calendarItems)) {
       applyCalendars(calendarItems)
       writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
@@ -13097,9 +13109,12 @@ export const PhoneChat: React.FC = () => {
         templateLanguage: templateToSchedule?.language || undefined,
         toPhone: activeContact.phone || undefined,
         fromPhone: provider === 'highlevel'
-          ? channel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined
+          ? resolveHighLevelChatFromNumber(channel, {
+              smsFromNumber: selectedHighLevelFromNumber,
+              whatsappSender: highLevelWhatsAppSender
+            }) || undefined
           : selectedBusinessPhoneValue || undefined,
-        businessPhoneNumberId: selectedBusinessPhone?.id || undefined,
+        businessPhoneNumberId: provider === 'whatsapp_api' ? selectedBusinessPhone?.id || undefined : undefined,
         scheduledAt: scheduledDate.toISOString(),
         externalId: editingScheduledMessageId || undefined
       })
@@ -13810,9 +13825,10 @@ export const PhoneChat: React.FC = () => {
             ? 'ghl_messenger'
             : 'ghl_instagram'
       const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
-      const optimisticBusinessPhone = optimisticChannel === 'sms_qr'
-        ? selectedHighLevelFromNumber
-        : selectedBusinessPhoneValue
+      const optimisticBusinessPhone = resolveHighLevelChatFromNumber(optimisticChannel, {
+        smsFromNumber: selectedHighLevelFromNumber,
+        whatsappSender: highLevelWhatsAppSender
+      })
 
       setComposerStatus('sending')
       if (!preserveComposer) {
@@ -13835,7 +13851,7 @@ export const PhoneChat: React.FC = () => {
             direction: 'outbound',
             status: 'enviando',
             businessPhone: optimisticBusinessPhone || '',
-            businessPhoneNumberId: selectedBusinessPhone?.id || '',
+            businessPhoneNumberId: '',
             transport: transportLabel,
             attachment: {
               type: getDraftAttachmentKind(attachment),
@@ -13852,7 +13868,7 @@ export const PhoneChat: React.FC = () => {
             direction: 'outbound',
             status: 'enviando',
             businessPhone: optimisticBusinessPhone || '',
-            businessPhoneNumberId: selectedBusinessPhone?.id || '',
+            businessPhoneNumberId: '',
             transport: transportLabel,
             location: locationToSend
           }]
@@ -13863,7 +13879,7 @@ export const PhoneChat: React.FC = () => {
             direction: 'outbound',
             status: 'enviando',
             businessPhone: optimisticBusinessPhone || '',
-            businessPhoneNumberId: selectedBusinessPhone?.id || '',
+            businessPhoneNumberId: '',
             transport: transportLabel,
             ...(voiceToSend
               ? {
@@ -13896,7 +13912,10 @@ export const PhoneChat: React.FC = () => {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: requestedChannel,
-          fromNumber: requestedChannel === 'sms_qr' ? selectedHighLevelFromNumber || undefined : undefined,
+          fromNumber: resolveHighLevelChatFromNumber(requestedChannel, {
+            smsFromNumber: selectedHighLevelFromNumber,
+            whatsappSender: highLevelWhatsAppSender
+          }) || undefined,
           message: outgoingText,
           audioDataUrl: voiceToSend?.dataUrl,
           durationMs: voiceToSend?.durationMs,
@@ -13910,7 +13929,7 @@ export const PhoneChat: React.FC = () => {
           externalId: optimisticId
         })
         const resultData = result.data || result
-        const resultStatus = String(resultData.status || '').trim() || 'pending'
+        const outcome = getHighLevelChatSendOutcome(result, requestedChannel)
         const responseAudioUrl = resultData.audio?.link || resultData.audio?.url || resultData.localMedia?.publicUrl || ''
         const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend?.durationMs
@@ -13926,9 +13945,9 @@ export const PhoneChat: React.FC = () => {
                 providerMessageId: message.id === optimisticId || message.id === `${optimisticId}-attachment-0`
                   ? responseIds.providerMessageId || message.providerMessageId
                   : message.providerMessageId,
-                status: resultStatus,
-                transport: resultData.transport || message.transport,
-                routingReason: routingData.routingReason || routingData.fallbackReason || message.routingReason,
+                status: outcome.status,
+                transport: outcome.transport || message.transport,
+                routingReason: getHighLevelRouteChangeMessage(outcome) || routingData.routingReason || routingData.fallbackReason || message.routingReason,
                 attachment: message.attachment?.type === 'audio'
                   ? {
                       ...message.attachment,
@@ -13940,6 +13959,8 @@ export const PhoneChat: React.FC = () => {
               }
             : message
         )))
+        const routeChangeMessage = getHighLevelRouteChangeMessage(outcome)
+        if (routeChangeMessage) showToast('warning', 'HighLevel cambió el canal', routeChangeMessage)
         void Promise.all([
           loadConversation(activeContact.id, { silent: true, useCache: false }),
           loadChats({ silent: true, useCache: false })
@@ -17389,9 +17410,6 @@ export const PhoneChat: React.FC = () => {
     const previousPreferredPhoneId = activeContact.preferredWhatsAppPhoneNumberId ||
       activeContact.preferred_whatsapp_phone_number_id ||
       ''
-    const previousBusinessPhoneOverride = contactBusinessPhoneOverrides[contactId]
-    const previousHighLevelChannelOverride = contactHighLevelChannelOverrides[contactId]
-    const previousHighLevelChannel = activeHighLevelChatChannel
     const highLevelSmsPhoneId = getHighLevelSmsRoutePhoneId(value)
     const nextChannel = getComposerRouteChannel(value)
     setCommentReplyTarget(null)
@@ -17434,20 +17452,11 @@ export const PhoneChat: React.FC = () => {
         } as Partial<Contact>
         setContactInfoContact((current) => current?.id === contactId ? { ...current, ...rollbackPatch } : current)
         setChats((current) => current.map((contact) => contact.id === contactId ? { ...contact, ...rollbackPatch } : contact))
-        setContactBusinessPhoneOverrides((current) => {
-          const next = { ...current }
-          if (previousBusinessPhoneOverride) next[contactId] = previousBusinessPhoneOverride
-          else delete next[contactId]
-          return next
-        })
-        setContactHighLevelChannelOverrides((current) => {
-          const next = { ...current }
-          if (previousHighLevelChannelOverride) next[contactId] = previousHighLevelChannelOverride
-          else delete next[contactId]
-          return next
-        })
-        saveConfigPreference(setSelectedHighLevelChatChannel, previousHighLevelChannel)
-        showToast('error', 'No se guardó el WhatsApp de respuesta', getErrorMessage(error, 'Intenta otra vez.'))
+        showToast(
+          'warning',
+          'Se usará este WhatsApp ahora',
+          'La ruta elegida sigue activa para este chat, pero no se pudo guardar como preferencia permanente.'
+        )
       } finally {
         setComposerChannelSaving(false)
       }
