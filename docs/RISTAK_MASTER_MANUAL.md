@@ -5045,10 +5045,27 @@ nunca un booleano escrito por el modelo.
   `get_free_slots` y llamar `offer_appointment_slot` con un solo `startTime`.
   Esta tool vuelve a validar el
   slot, guarda `appointment_slot_offer_created` en vivo o su sobre aislado de
-  preview y construye el unico texto visible de la oferta. El modelo no escribe,
-  reformula ni agrega horarios; live y preview
+  preview y construye el unico texto visible de la oferta. El modelo sólo
+  clasifica el enlace conversacional con el enum cerrado `selectionContext`:
+  `selected_from_options` cuando la persona eligió de una lista,
+  `exact_preference` cuando pidió directamente fecha y hora, `replacement`
+  cuando reemplazó otra opción o `neutral` si el hilo no permite distinguirlo.
+  El backend usa ese matiz para responder de forma congruente, pero sigue siendo
+  el único dueño de la fecha, la hora, el anticipo, el responsable y la pregunta
+  de confirmación. El modelo no escribe, reformula ni agrega horarios; live y preview
   terminan la vuelta y entregan esa oferta en un solo globo, sin pasarla por el
-  divisor de mensajes. Una oferta activa queda en fase durable
+  divisor de mensajes. El contrato de copy v2 persiste `offerCopyVersion`, el
+  contexto normalizado, `depositRequiredAtOffer` y el `offerText` exacto que se
+  entregó. Ese mismo string alimenta la burbuja, el ledger, la evidencia y los
+  reintentos; si la misma ejecución se repite con otro matiz, gana el primer texto
+  durable. Si el requisito de anticipo cambia después de mostrar la oferta, ésta
+  se cierra con `appointment_deposit_requirement_changed` y debe consultarse otra
+  vez: un “sí” nunca puede cobrar ni agendar contradiciendo el siguiente paso que
+  la persona aceptó. En reagenda el snapshot de anticipo siempre debe ser `false`.
+  Ofertas v1 sin versión conservan y validan la frase anterior después del cutover;
+  esta compatibilidad supone un cambio atómico de tráfico o un único writer activo,
+  no lectores viejos atendiendo ofertas v2. Una versión desconocida, un enum
+  inválido o un texto adulterado fallan cerrado. Una oferta activa queda en fase durable
   `awaiting_decision` y no puede ser sobrescrita por otra ejecución. Antes de
   cada vuelta el backend hidrata ese hecho desde
   `conversational_agent_events`. La misma IA puede responder una duda, consultar

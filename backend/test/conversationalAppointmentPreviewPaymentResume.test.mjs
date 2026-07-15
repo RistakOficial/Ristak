@@ -600,7 +600,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     })
 
     assert.equal(forcedToolCalls, 1)
-    assert.doesNotMatch(resumedTurn.reply, /tengo disponible|te funciona|preparo el enlace/i)
+    assert.doesNotMatch(resumedTurn.reply, /tengo disponible|te funciona|confirmas que|preparo el enlace/i)
     assert.match(resumedTurn.reply, /cita(?: de prueba)? quedó confirmada/i)
     const bookingAction = resumedTurn.ctx.actions.find((action) => action.type === 'book_appointment')
     assert.ok(bookingAction)

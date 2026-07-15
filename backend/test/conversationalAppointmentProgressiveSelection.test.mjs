@@ -276,10 +276,12 @@ test('día en un turno + hora en otro + “sí” termina la cita sin repetir fe
     const exactSlot = exactAvailability.slots[0].options[0]
     const offered = await toolNamed(timeCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
       startTime: exactSlot.startTime,
-      appointmentId: null
+      appointmentId: null,
+      selectionContext: 'selected_from_options'
     }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
-    assert.match(offered.visibleReply, /¿Te funciona ese horario\?/)
+    assert.match(offered.visibleReply, /^Perfecto, elegiste /)
+    assert.match(offered.visibleReply, /¿Confirmas que te agende en ese horario\?$/)
 
     const confirmationExecutionId = `confirm-${fixture.suffix}`
     const offerMessageId = `assistant-offer-${fixture.suffix}`

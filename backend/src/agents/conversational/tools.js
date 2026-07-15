@@ -3385,10 +3385,95 @@ export async function supersedeUndeliveredConversationalAppointmentOffer({
   })
 }
 
-function nativeAppointmentOfferText(localLabel = '') {
+const NATIVE_APPOINTMENT_OFFER_COPY_VERSION = 2
+const NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXTS = Object.freeze([
+  'selected_from_options',
+  'exact_preference',
+  'replacement',
+  'neutral'
+])
+const NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXT_SET = new Set(
+  NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXTS
+)
+
+function normalizeNativeAppointmentOfferSelectionContext(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXT_SET.has(normalized)
+    ? normalized
+    : 'neutral'
+}
+
+function nativeAppointmentOfferLegacyText(localLabel = '') {
   const label = String(localLabel || '').trim()
   const separator = /[.!?]$/u.test(label) ? ' ' : '. '
   return `Tengo disponible ${label}${separator}¿Te funciona ese horario?`
+}
+
+function nativeAppointmentOfferText({
+  localLabel = '',
+  selectionContext = 'neutral',
+  purpose = 'book',
+  bookingOwner = 'ai',
+  depositRequired = false
+} = {}) {
+  const label = String(localLabel || '').trim()
+  const sentenceLabel = /^(?:el|la|los|las)\s/iu.test(label) ? label : `el ${label}`
+  const normalizedSelectionContext = normalizeNativeAppointmentOfferSelectionContext(selectionContext)
+  const opening = {
+    selected_from_options: 'Perfecto, elegiste ',
+    exact_preference: 'Sí, el horario que me pediste está disponible: ',
+    replacement: 'Va, la nueva opción sería ',
+    neutral: 'Perfecto, entonces sería '
+  }[normalizedSelectionContext]
+  const separator = /[.!?]$/u.test(label) ? ' ' : '. '
+  let confirmationQuestion = '¿Confirmas que te agende en ese horario?'
+
+  if (purpose === 'reschedule') {
+    confirmationQuestion = bookingOwner === 'human'
+      ? '¿Confirmas que envíe al equipo la solicitud para cambiar tu cita a ese horario?'
+      : '¿Confirmas que cambie tu cita a ese horario?'
+  } else if (depositRequired && bookingOwner === 'human') {
+    confirmationQuestion = '¿Confirmas que sigamos con el anticipo para después enviar la solicitud al equipo?'
+  } else if (depositRequired) {
+    confirmationQuestion = '¿Confirmas que sigamos con el anticipo para ese horario?'
+  } else if (bookingOwner === 'human') {
+    confirmationQuestion = '¿Confirmas que envíe al equipo la solicitud con ese horario?'
+  }
+
+  return `${opening}${sentenceLabel}${separator}${confirmationQuestion}`
+}
+
+function nativeAppointmentOfferCopyContractMatches(detail = {}, canonicalLocalLabel = '') {
+  const persistedOfferText = String(detail?.offerText || '')
+  if (!Object.hasOwn(detail || {}, 'offerCopyVersion')) {
+    return persistedOfferText === nativeAppointmentOfferLegacyText(canonicalLocalLabel)
+  }
+  if (detail.offerCopyVersion !== NATIVE_APPOINTMENT_OFFER_COPY_VERSION) return false
+  if (!NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXT_SET.has(detail.selectionContext)) return false
+  if (typeof detail.depositRequiredAtOffer !== 'boolean') return false
+  const purpose = detail.purpose === 'reschedule' ? 'reschedule' : 'book'
+  if (purpose === 'reschedule' && detail.depositRequiredAtOffer !== false) return false
+  const terminalBinding = readBoundNativeAppointmentTerminalBinding(detail)
+  if (!terminalBinding) return false
+  return persistedOfferText === nativeAppointmentOfferText({
+    localLabel: canonicalLocalLabel,
+    selectionContext: detail.selectionContext,
+    purpose,
+    bookingOwner: terminalBinding.bookingOwner,
+    depositRequired: detail.depositRequiredAtOffer
+  })
+}
+
+function nativeAppointmentOfferDepositRequirementChanged(detail = {}, ctx = {}, config = {}) {
+  if (
+    detail.offerCopyVersion !== NATIVE_APPOINTMENT_OFFER_COPY_VERSION ||
+    typeof detail.depositRequiredAtOffer !== 'boolean'
+  ) return false
+  const purpose = detail.purpose === 'reschedule' ? 'reschedule' : 'book'
+  const currentDepositRequired = purpose === 'book' && Boolean(
+    getDepositRequirementForRuntime(ctx, config)
+  )
+  return detail.depositRequiredAtOffer !== currentDepositRequired
 }
 
 async function supersedeNativeAppointmentProgressForOffer({
@@ -3517,7 +3602,8 @@ async function persistNativeAppointmentOffer({
   appointmentId = '',
   expectedStartTime = '',
   expectedEndTime = '',
-  durationMs = NaN
+  durationMs = NaN,
+  selectionContext = 'neutral'
 } = {}) {
   const agentId = String(config?.id || ctx?.agentId || '').trim()
   const contactId = String(ctx?.contactId || '').trim()
@@ -3558,6 +3644,10 @@ async function persistNativeAppointmentOffer({
   const normalizedDurationMs = normalizedPurpose === 'reschedule' && Number.isFinite(Number(durationMs))
     ? Number(durationMs)
     : 0
+  const normalizedSelectionContext = normalizeNativeAppointmentOfferSelectionContext(selectionContext)
+  const depositRequiredAtOffer = normalizedPurpose === 'book' && Boolean(
+    getDepositRequirementForRuntime(ctx, config)
+  )
   if (
     !agentId || !contactId || !executionId || !calendarId || !startTime || !localLabel || !terminalBinding ||
     (normalizedPurpose === 'reschedule' && (
@@ -3586,7 +3676,16 @@ async function persistNativeAppointmentOffer({
     executionId,
     offerSourceMessageId,
     offerSourceMessageQuoteHash,
-    offerText: nativeAppointmentOfferText(localLabel),
+    offerCopyVersion: NATIVE_APPOINTMENT_OFFER_COPY_VERSION,
+    selectionContext: normalizedSelectionContext,
+    depositRequiredAtOffer,
+    offerText: nativeAppointmentOfferText({
+      localLabel,
+      selectionContext: normalizedSelectionContext,
+      purpose: normalizedPurpose,
+      bookingOwner: terminalBinding.bookingOwner,
+      depositRequired: depositRequiredAtOffer
+    }),
     purpose: normalizedPurpose,
     appointmentId: normalizedAppointmentId || null,
     expectedStartTime: normalizedExpectedStartTime || null,
@@ -3809,6 +3908,7 @@ async function persistNativeAppointmentOffer({
     String(storedDetail.expectedStartTime || '') !== normalizedExpectedStartTime ||
     String(storedDetail.expectedEndTime || '') !== normalizedExpectedEndTime ||
     Number(storedDetail.durationMs || 0) !== normalizedDurationMs ||
+    !nativeAppointmentOfferCopyContractMatches(storedDetail, localLabel) ||
     (previewScopeId && String(storedDetail.previewScopeId || '') !== previewScopeId)
   ) {
     return appointmentSelectionError('La oferta de horario ya fue reemplazada por otra. Vuelve a ofrecer un solo horario.', 'appointment_offer_superseded')
@@ -4102,7 +4202,7 @@ async function reconcileNativeAppointmentOfferWithSelectionProgress({
       String(offerDetail.calendarId || '').trim() &&
       String(offerDetail.startTime || '') === String(canonical?.startTime || '') &&
       String(offerDetail.localLabel || '') === String(canonical?.localLabel || '') &&
-      String(offerDetail.offerText || '') === nativeAppointmentOfferText(canonical?.localLabel) &&
+      nativeAppointmentOfferCopyContractMatches(offerDetail, canonical?.localLabel) &&
       offerPurposeShapeIsValid &&
       canonical?.localDate &&
       canonical.localDate >= businessTodayDateOnly(currentTimezone) &&
@@ -4442,6 +4542,8 @@ export async function loadConversationalAppointmentOfferDecisionContext({ ctx, c
     )
   ) {
     invalidationReason = 'booking_owner_changed'
+  } else if (nativeAppointmentOfferDepositRequirementChanged(candidate.offer.detail, ctx, config)) {
+    invalidationReason = 'appointment_deposit_requirement_changed'
   }
   if (invalidationReason) return invalidateScopeChangedOffer(invalidationReason)
 
@@ -4722,6 +4824,11 @@ async function validateNativeAppointmentOfferRuntimeScope({
   const configuredTerminalBinding = storedTerminalBinding && scheduleCapability
     ? buildNativeAppointmentTerminalBinding(scheduleCapability, storedTerminalBinding.terminalToolName)
     : null
+  const depositRequirementChanged = nativeAppointmentOfferDepositRequirementChanged(
+    offerDetail,
+    currentCtx,
+    currentConfig || {}
+  )
   const scopeMatches = Boolean(
     (previewRuntime || currentConfig?.enabled === true) &&
     scheduleCapability &&
@@ -4735,7 +4842,8 @@ async function validateNativeAppointmentOfferRuntimeScope({
     storedTerminalBinding &&
     configuredTerminalBinding &&
     configuredTerminalBinding.bookingOwner === storedTerminalBinding.bookingOwner &&
-    configuredTerminalBinding.terminalToolName === storedTerminalBinding.terminalToolName
+    configuredTerminalBinding.terminalToolName === storedTerminalBinding.terminalToolName &&
+    !depositRequirementChanged
   )
   if (scopeMatches) {
     return {
@@ -8761,15 +8869,19 @@ export function createConversationalTools(ctx) {
 
   const offerAppointmentSlotTool = tool({
     name: 'offer_appointment_slot',
-    description: 'Ofrece UN solo slot real con texto construido por el servidor. Úsala después de get_free_slots; esta herramienta cierra el turno y su visibleReply no se puede mezclar con otro horario. Para cambiar una cita existente manda el appointmentId exacto devuelto por get_contact_appointments; null significa una cita nueva.',
+    description: 'Ofrece UN solo slot real con texto construido por el servidor. Úsala después de get_free_slots; esta herramienta cierra el turno y su visibleReply no se puede mezclar con otro horario. selectionContext sólo indica cómo llegó la persona a ese horario y nunca controla fecha, acción ni hechos. Para cambiar una cita existente manda el appointmentId exacto devuelto por get_contact_appointments; null significa una cita nueva.',
     parameters: z.object({
       startTime: z.string().describe('options[].startTime exacto devuelto por get_free_slots'),
       appointmentId: z.preprocess(
         (value) => value ?? null,
         z.string().nullable()
-      ).describe('ID exacto devuelto por get_contact_appointments cuando esta oferta es para reagendar; null para una cita nueva')
+      ).describe('ID exacto devuelto por get_contact_appointments cuando esta oferta es para reagendar; null para una cita nueva'),
+      selectionContext: z.preprocess(
+        (value) => value ?? null,
+        z.enum(NATIVE_APPOINTMENT_OFFER_SELECTION_CONTEXTS).nullable()
+      ).describe('Contexto conversacional cerrado: selected_from_options si eligió de una lista, exact_preference si pidió directamente fecha y hora, replacement si reemplazó una opción, neutral si no está claro; null equivale a neutral')
     }),
-    execute: async ({ startTime, appointmentId }) => {
+    execute: async ({ startTime, appointmentId, selectionContext }) => {
       if (ctx.appointmentOfferDecision?.active === true) {
         return appointmentSelectionError(
           'Primero resuelve el horario individual pendiente antes de ofrecer uno nuevo.',
@@ -8909,17 +9021,18 @@ export function createConversationalTools(ctx) {
       if (!canonical?.localLabel) {
         return { ok: false, actionCompleted: false, error: 'No se pudo construir la oferta canónica del horario.' }
       }
-      const visibleReply = nativeAppointmentOfferText(canonical.localLabel)
+      const normalizedSelectionContext = normalizeNativeAppointmentOfferSelectionContext(selectionContext)
       const action = pushAction(ctx, 'offer_appointment_slot', {
         calendarId,
         startTime: canonicalStartTime,
         localLabel: canonical.localLabel,
+        offerCopyVersion: NATIVE_APPOINTMENT_OFFER_COPY_VERSION,
+        selectionContext: normalizedSelectionContext,
         purpose: rescheduledAppointment ? 'reschedule' : 'book',
         appointmentId: rescheduledAppointment?.id || null,
         expectedStartTime: rescheduledAppointment?.start_time || null,
         expectedEndTime: rescheduledAppointment?.end_time || null,
         durationMs: Number.isFinite(rescheduleDurationMs) ? rescheduleDurationMs : null,
-        visibleReply,
         effect: { liveEffect: 'OFRECERÍA un solo horario real y esperaría confirmación', marksObjectiveCompleted: false }
       })
       const persisted = await persistNativeAppointmentOffer({
@@ -8933,7 +9046,8 @@ export function createConversationalTools(ctx) {
         appointmentId: rescheduledAppointment?.id || '',
         expectedStartTime: rescheduledAppointment?.start_time || '',
         expectedEndTime: rescheduledAppointment?.end_time || '',
-        durationMs: rescheduleDurationMs
+        durationMs: rescheduleDurationMs,
+        selectionContext: normalizedSelectionContext
       })
       if (!persisted.ok) {
         settleAction(action, 'error', { error: persisted.error })
@@ -8950,6 +9064,10 @@ export function createConversationalTools(ctx) {
         }
         return persisted
       }
+      const visibleReply = String(persisted.detail?.offerText || '').trim()
+      action.visibleReply = visibleReply
+      action.offerCopyVersion = persisted.detail?.offerCopyVersion ?? null
+      action.selectionContext = persisted.detail?.selectionContext ?? null
       if (ctx.dryRun) {
         settleAction(action, 'simulated', {
           visibleReply,

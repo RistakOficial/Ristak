@@ -152,13 +152,35 @@ async function authorizeAppointmentOffer(ctx, startTime, timezone, customerQuote
   ctx.executionId = `${confirmationExecutionId}_offer`
   const offered = await createConversationalTools(ctx)
     .find((item) => item.name === 'offer_appointment_slot')
-    .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
+    .invoke(null, JSON.stringify({
+      startTime,
+      appointmentId: null,
+      selectionContext: 'exact_preference'
+    }))
   assert.equal(offered.ok, true, JSON.stringify(offered))
   assert.doesNotMatch(offered.visibleReply, /[ap]\.\s?m\.\./i)
   const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
+  const capabilityItems = Array.isArray(ctx?.config?.capabilitiesConfig?.items)
+    ? ctx.config.capabilitiesConfig.items
+    : []
+  const bookingOwner = capabilityItems.find((item) => item?.id === 'schedule_appointment')?.bookingOwner === 'human'
+    ? 'human'
+    : 'ai'
+  const depositRequired = capabilityItems.some((item) => (
+    item?.id === 'collect_payment' &&
+    item?.enabled !== false &&
+    (item?.paymentMode === 'deposit' || item?.chargeType === 'deposit' || item?.deposit?.enabled === true)
+  ))
+  const confirmationQuestion = depositRequired && bookingOwner === 'human'
+    ? '¿Confirmas que sigamos con el anticipo para después enviar la solicitud al equipo?'
+    : depositRequired
+      ? '¿Confirmas que sigamos con el anticipo para ese horario?'
+      : bookingOwner === 'human'
+        ? '¿Confirmas que envíe al equipo la solicitud con ese horario?'
+        : '¿Confirmas que te agende en ese horario?'
   assert.equal(
     offered.visibleReply,
-    `Tengo disponible ${localLabel}${/[.!?]$/u.test(localLabel) ? ' ' : '. '}¿Te funciona ese horario?`
+    `Sí, el horario que me pediste está disponible: el ${localLabel}${/[.!?]$/u.test(localLabel) ? ' ' : '. '}${confirmationQuestion}`
   )
   ctx.executionId = confirmationExecutionId
   ctx.conversationMessages = [
@@ -254,6 +276,8 @@ async function createLiveDepositSelection({ calendarId, contactId, agentId, star
     .find((item) => item.name === 'offer_appointment_slot')
     .invoke(null, JSON.stringify({ startTime, appointmentId: null }))
   assert.equal(offerResult.ok, true, JSON.stringify(offerResult))
+  assert.match(offerResult.visibleReply, /¿Confirmas que sigamos con el anticipo para ese horario\?$/)
+  assert.doesNotMatch(offerResult.visibleReply, /¿Confirmas que te agende/)
   const localLabel = buildNativeFreeSlotDays([{ timezone, slots: [startTime] }], timezone)[0].options[0].localLabel
   ctx.executionId = executionId
   ctx.conversationMessages = [
@@ -1432,6 +1456,18 @@ test('todas las tools v2 conservan JSON Schema estricto y todos sus campos son r
   }
   const paymentTool = tools.find((item) => item.name === 'create_payment_link')
   assert.equal('dueDate' in paymentTool.parameters.properties, false, 'v2 no debe permitir que el modelo invente fecha límite')
+  const offerTool = tools.find((item) => item.name === 'offer_appointment_slot')
+  assert.deepEqual(
+    offerTool.parameters.properties.selectionContext.anyOf?.[0]?.enum,
+    ['selected_from_options', 'exact_preference', 'replacement', 'neutral']
+  )
+  for (const unsafeCopyField of ['offerText', 'reply', 'preamble']) {
+    assert.equal(
+      unsafeCopyField in offerTool.parameters.properties,
+      false,
+      `offer_appointment_slot no debe aceptar prosa libre en ${unsafeCopyField}`
+    )
+  }
   for (const bookingTool of tools.filter((item) => ['book_appointment', 'request_human_booking'].includes(item.name))) {
     assert.equal(
       'selectionEvidence' in bookingTool.parameters.properties,
@@ -8138,9 +8174,13 @@ test('aceptar una oferta de reagendamiento conserva ID y participantes, mueve di
       .find((item) => item.name === 'offer_appointment_slot')
       .invoke(null, JSON.stringify({
         startTime: targetStart.toUTC().toISO(),
-        appointmentId
+        appointmentId,
+        selectionContext: 'replacement'
       }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
+    assert.match(offered.visibleReply, /^Va, la nueva opción sería /)
+    assert.match(offered.visibleReply, /¿Confirmas que cambie tu cita a ese horario\?$/)
+    assert.doesNotMatch(offered.visibleReply, /anticipo|te agende/i)
 
     const confirmationExecutionId = `confirm_reschedule_${suffix}`
     ctx.executionId = confirmationExecutionId
@@ -8341,9 +8381,16 @@ test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que
       .find((item) => item.name === 'offer_appointment_slot')
       .invoke(null, JSON.stringify({
         startTime: requestedStart.toUTC().toISO(),
-        appointmentId
+        appointmentId,
+        selectionContext: 'replacement'
       }))
     assert.equal(offered.ok, true, JSON.stringify(offered))
+    assert.match(offered.visibleReply, /^Va, la nueva opción sería /)
+    assert.match(
+      offered.visibleReply,
+      /¿Confirmas que envíe al equipo la solicitud para cambiar tu cita a ese horario\?$/
+    )
+    assert.doesNotMatch(offered.visibleReply, /ya (?:cambi|mov)|te agende/i)
 
     const confirmationExecutionId = `confirm_human_reschedule_${suffix}`
     ctx.executionId = confirmationExecutionId

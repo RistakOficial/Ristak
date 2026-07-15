@@ -216,7 +216,7 @@ test('una oferta durable fuerza adjudicación semántica primero y preserve deja
     timezone,
     slots: [pendingStartTime]
   }], timezone)[0].options[0].localLabel
-  const pendingOfferText = `Tengo disponible ${pendingLabel}${/[.!?]$/u.test(pendingLabel) ? ' ' : '. '}¿Te funciona ese horario?`
+  const pendingOfferText = `Perfecto, elegiste el ${pendingLabel}${/[.!?]$/u.test(pendingLabel) ? ' ' : '. '}¿Confirmas que sigamos con el anticipo para ese horario?`
   const config = {
     id: agentId,
     runtimeMode: 'tool_calling_v2',
@@ -259,6 +259,9 @@ test('una oferta durable fuerza adjudicación semántica primero y preserve deja
         terminalToolName: 'book_appointment',
         channel: 'whatsapp',
         executionId: offerExecutionId,
+        offerCopyVersion: 2,
+        selectionContext: 'selected_from_options',
+        depositRequiredAtOffer: true,
         offerText: pendingOfferText,
         purpose: 'book',
         appointmentId: null,

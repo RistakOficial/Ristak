@@ -141,6 +141,37 @@ async function createFixture(label) {
   }
 }
 
+function appointmentDepositCapability() {
+  return {
+    id: 'collect_payment',
+    enabled: true,
+    chargeType: 'deposit',
+    paymentMode: 'deposit',
+    collectionMethod: 'bank_transfer',
+    bankTransfer: { details: 'Datos bancarios de prueba' },
+    deposit: {
+      enabled: true,
+      mode: 'fixed',
+      amount: 500,
+      currency: 'MXN',
+      methods: { bankTransfer: true }
+    }
+  }
+}
+
+async function setFixtureDepositRequirement(fixture, enabled) {
+  const nextConfig = structuredClone(fixture.config)
+  nextConfig.capabilitiesConfig.items = nextConfig.capabilitiesConfig.items
+    .filter((item) => item.id !== 'collect_payment')
+  if (enabled) nextConfig.capabilitiesConfig.items.push(appointmentDepositCapability())
+  fixture.config = nextConfig
+  await db.run(
+    'UPDATE conversational_agents SET capabilities_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(nextConfig.capabilitiesConfig), fixture.agentId]
+  )
+  return nextConfig
+}
+
 function collectClientRequestIds(fixture, ctx) {
   for (const action of Array.isArray(ctx?.actions) ? ctx.actions : []) {
     const clientRequestId = String(action?.clientRequestId || '').trim()
@@ -210,7 +241,12 @@ async function selectDate(fixture, executionId = `select-date-${fixture.suffix}`
   return { ctx, availability, selected }
 }
 
-async function offerExactTime(fixture, localTime, executionId = `offer-time-${fixture.suffix}`) {
+async function offerExactTime(
+  fixture,
+  localTime,
+  executionId = `offer-time-${fixture.suffix}`,
+  selectionContext = 'selected_from_options'
+) {
   const ctx = liveContext({ fixture, executionId })
   ctx.appointmentOfferDecision = null
   ctx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
@@ -229,12 +265,30 @@ async function offerExactTime(fixture, localTime, executionId = `offer-time-${fi
   const startTime = availability.slots[0].options[0].startTime
   const offered = await toolNamed(ctx, 'offer_appointment_slot').invoke(null, JSON.stringify({
     startTime,
-    appointmentId: null
+    appointmentId: null,
+    selectionContext
   }))
   assert.equal(offered.ok, true, JSON.stringify(offered))
   assert.equal(offered.actionCompleted, true)
   assert.equal(offered.simulated, undefined)
-  assert.match(offered.visibleReply, /¿Te funciona ese horario\?/)
+  const expectedOpening = {
+    selected_from_options: 'Perfecto, elegiste el ',
+    exact_preference: 'Sí, el horario que me pediste está disponible: ',
+    replacement: 'Va, la nueva opción sería el ',
+    neutral: 'Perfecto, entonces sería el '
+  }[selectionContext]
+  assert.match(offered.visibleReply, new RegExp(`^${expectedOpening.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+  const depositRequired = fixture.config.capabilitiesConfig.items.some((item) => (
+    item.id === 'collect_payment' &&
+    item.enabled !== false &&
+    (item.paymentMode === 'deposit' || item.deposit?.enabled === true)
+  ))
+  assert.match(
+    offered.visibleReply,
+    depositRequired
+      ? /¿Confirmas que sigamos con el anticipo para ese horario\?$/
+      : /¿Confirmas que te agende en ese horario\?$/
+  )
   return { ctx, availability, offered, startTime }
 }
 
@@ -459,6 +513,270 @@ async function insertLiveInboundAuthorityClaim(fixture, id, messageTimestamp, cl
     [id, fixture.contactId, messageTimestamp, claimedAt]
   )
 }
+
+test('live: el copy v2 enlaza la oferta con el hilo y un replay conserva el primer texto durable', async () => {
+  const cases = [
+    ['selected_from_options', '11:00'],
+    ['exact_preference', '12:00'],
+    ['replacement', '13:00'],
+    ['neutral', '14:00']
+  ]
+
+  for (const [selectionContext, localTime] of cases) {
+    const fixture = await createFixture(`copy_context_${selectionContext}`)
+    try {
+      await selectDate(fixture)
+      const exact = await offerExactTime(
+        fixture,
+        localTime,
+        `offer-context-${selectionContext}-${fixture.suffix}`,
+        selectionContext
+      )
+      const row = await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+        [fixture.contactId, fixture.agentId]
+      )
+      const detail = JSON.parse(row.detail_json)
+      assert.equal(detail.offerCopyVersion, 2)
+      assert.equal(detail.selectionContext, selectionContext)
+      assert.equal(detail.depositRequiredAtOffer, false)
+      assert.equal(detail.offerText, exact.offered.visibleReply)
+      assert.equal(detail.startTime, exact.startTime)
+
+      if (selectionContext === 'selected_from_options') {
+        const replay = await toolNamed(exact.ctx, 'offer_appointment_slot').invoke(null, JSON.stringify({
+          startTime: exact.startTime,
+          appointmentId: null,
+          selectionContext: 'replacement'
+        }))
+        assert.equal(replay.ok, true, JSON.stringify(replay))
+        assert.equal(replay.visibleReply, exact.offered.visibleReply)
+        assert.match(replay.visibleReply, /^Perfecto, elegiste el /)
+        assert.equal(Number((await db.get(
+          `SELECT COUNT(*) AS total FROM conversational_agent_events
+           WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+          [fixture.contactId, fixture.agentId]
+        )).total), 1)
+      }
+    } finally {
+      await cleanupFixture(fixture)
+    }
+  }
+})
+
+test('live: un copy v2 adulterado o de versión desconocida falla cerrado', async () => {
+  const cases = [
+    [
+      'context_mismatch',
+      (detail) => ({ ...detail, selectionContext: 'replacement' }),
+      'legacy_offer_contract_invalid'
+    ],
+    [
+      'unknown_version',
+      (detail) => ({ ...detail, offerCopyVersion: 99 }),
+      'legacy_offer_contract_invalid'
+    ],
+    [
+      'offer_text_changed',
+      (detail) => ({ ...detail, offerText: `${detail.offerText} alterado` }),
+      'legacy_offer_contract_invalid'
+    ],
+    ['deposit_snapshot_changed', (detail) => ({
+      ...detail,
+      depositRequiredAtOffer: !detail.depositRequiredAtOffer
+    }), 'appointment_deposit_requirement_changed'],
+    [
+      'booking_owner_changed',
+      (detail) => ({ ...detail, bookingOwner: 'human' }),
+      'legacy_offer_contract_invalid'
+    ],
+    ['terminal_binding_changed', (detail) => ({
+      ...detail,
+      bookingOwner: 'human',
+      terminalToolName: 'request_human_booking'
+    }), 'booking_owner_changed']
+  ]
+
+  for (const [label, mutate, expectedResolution] of cases) {
+    const fixture = await createFixture(`copy_contract_${label}`)
+    try {
+      await selectDate(fixture)
+      const exact = await offerExactTime(fixture, '15:00')
+      const row = await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+        [fixture.contactId, fixture.agentId]
+      )
+      const detail = JSON.parse(row.detail_json)
+      await db.run(
+        'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
+        [JSON.stringify(mutate(detail)), row.id, row.detail_json]
+      )
+
+      const ctx = liveContext({
+        fixture,
+        executionId: `confirm-tampered-${label}-${fixture.suffix}`,
+        messages: [
+          { id: `assistant-tampered-${label}-${fixture.suffix}`, role: 'assistant', content: exact.offered.visibleReply },
+          { id: `confirm-tampered-${label}-${fixture.suffix}`, role: 'user', content: 'sí' }
+        ]
+      })
+      ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+        ctx,
+        config: fixture.config
+      })
+      assert.equal(ctx.appointmentOfferDecision, null)
+      const closed = JSON.parse((await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+        [row.id]
+      )).detail_json)
+      assert.equal(closed.status, 'superseded')
+      assert.equal(closed.resolution, expectedResolution)
+      assert.equal(await appointmentCount(fixture), 0)
+    } finally {
+      await cleanupFixture(fixture)
+    }
+  }
+})
+
+test('live: prender o apagar el anticipo después de ofrecer invalida la promesa y no crea cita', async () => {
+  for (const scenario of [
+    { label: 'off_to_on', requiredAtOffer: false, requiredAtConfirmation: true },
+    { label: 'on_to_off', requiredAtOffer: true, requiredAtConfirmation: false }
+  ]) {
+    const fixture = await createFixture(`deposit_requirement_${scenario.label}`)
+    try {
+      await setFixtureDepositRequirement(fixture, scenario.requiredAtOffer)
+      await selectDate(fixture)
+      const exact = await offerExactTime(fixture, '15:00')
+      const offeredRow = await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+        [fixture.contactId, fixture.agentId]
+      )
+      const offeredDetail = JSON.parse(offeredRow.detail_json)
+      assert.equal(offeredDetail.offerCopyVersion, 2)
+      assert.equal(offeredDetail.depositRequiredAtOffer, scenario.requiredAtOffer)
+      assert.equal(offeredDetail.offerText, exact.offered.visibleReply)
+
+      await setFixtureDepositRequirement(fixture, scenario.requiredAtConfirmation)
+      const confirmationExecutionId = `confirm-deposit-${scenario.label}-${fixture.suffix}`
+      const confirmation = liveContext({
+        fixture,
+        executionId: confirmationExecutionId,
+        messages: [
+          { id: exact.ctx.executionId, role: 'user', content: 'ese horario me interesa' },
+          { id: `assistant-deposit-${scenario.label}-${fixture.suffix}`, role: 'assistant', content: exact.offered.visibleReply },
+          { id: confirmationExecutionId, role: 'user', content: 'sí, confirma' }
+        ]
+      })
+      confirmation.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+        ctx: confirmation,
+        config: fixture.config
+      })
+
+      assert.equal(confirmation.appointmentOfferDecision, null)
+      assert.equal(
+        createConversationalTools(confirmation).some((item) => item.name === 'resolve_active_appointment_offer'),
+        false
+      )
+      const invalidated = JSON.parse((await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+        [offeredRow.id]
+      )).detail_json)
+      assert.equal(invalidated.status, 'superseded')
+      assert.equal(invalidated.resolution, 'appointment_deposit_requirement_changed')
+      assert.equal(invalidated.depositRequiredAtOffer, scenario.requiredAtOffer)
+      assert.equal(await appointmentCount(fixture), 0)
+    } finally {
+      await cleanupFixture(fixture)
+    }
+  }
+})
+
+test('live: una duda lateral preserva la oferta v2 y un “sí” posterior crea exactamente una cita', async () => {
+  const fixture = await createFixture('preserve_side_question_then_accept')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '16:00')
+    const sideQuestionExecutionId = `location-question-${fixture.suffix}`
+    const sideMessages = [
+      { id: exact.ctx.executionId, role: 'user', content: 'me interesa ese horario' },
+      { id: `assistant-offer-before-location-${fixture.suffix}`, role: 'assistant', content: exact.offered.visibleReply },
+      { id: sideQuestionExecutionId, role: 'user', content: 'antes, ¿dónde están ubicados?' }
+    ]
+    const sideQuestion = liveContext({
+      fixture,
+      executionId: sideQuestionExecutionId,
+      messages: sideMessages
+    })
+    sideQuestion.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: sideQuestion,
+      config: fixture.config
+    })
+    assert.equal(sideQuestion.appointmentOfferDecision?.active, true)
+    const offerRowBeforePreserve = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [fixture.contactId, fixture.agentId]
+    )
+
+    const preserved = await toolNamed(sideQuestion, 'resolve_active_appointment_offer').invoke(
+      null,
+      JSON.stringify({ ...acceptOfferInput(), decision: 'preserve' })
+    )
+    assert.equal(preserved.ok, true, JSON.stringify(preserved))
+    assert.equal(preserved.terminal, false)
+    assert.equal(preserved.appointmentOfferPreserved, true)
+    assert.equal(await appointmentCount(fixture), 0)
+    assert.equal(
+      (await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+        [offerRowBeforePreserve.id]
+      )).detail_json,
+      offerRowBeforePreserve.detail_json,
+      'preserve no debe reescribir ni cerrar la oferta'
+    )
+
+    const confirmationExecutionId = `confirm-after-location-${fixture.suffix}`
+    const confirmation = liveContext({
+      fixture,
+      executionId: confirmationExecutionId,
+      messages: [
+        ...sideMessages,
+        {
+          id: `assistant-location-${fixture.suffix}`,
+          role: 'assistant',
+          content: 'Estamos en Hospital San Miguel, Coahuila 216, Morelia.'
+        },
+        { id: confirmationExecutionId, role: 'user', content: 'gracias, sí, confirma ese horario' }
+      ]
+    })
+    confirmation.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: confirmation,
+      config: fixture.config
+    })
+    assert.equal(confirmation.appointmentOfferDecision?.active, true)
+    const confirmed = await toolNamed(confirmation, 'resolve_active_appointment_offer').invoke(
+      null,
+      JSON.stringify(acceptOfferInput())
+    )
+    collectClientRequestIds(fixture, confirmation)
+
+    assert.equal(confirmed.ok, true, JSON.stringify(confirmed))
+    assert.equal(confirmed.actionCompleted, true)
+    assert.match(confirmed.visibleReply, /cita quedó confirmada/i)
+    assert.equal(await appointmentCount(fixture), 1)
+    const appointment = await db.get(
+      'SELECT start_time FROM appointments WHERE calendar_id = ? AND contact_id = ?',
+      [fixture.calendarId, fixture.contactId]
+    )
+    assert.equal(new Date(appointment.start_time).toISOString(), exact.startTime)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
 
 test('live: fecha, hora, oferta y “sí” crean una sola cita real por el resolver; el replay no duplica', async () => {
   const fixture = await createFixture('book_once')
@@ -1931,6 +2249,58 @@ test('live: decline cierra el estado parcial sin crear ni cancelar una cita', as
   }
 })
 
+test('live: rechazar una oferta contextual la cierra y un “sí” posterior no la revive', async () => {
+  const fixture = await createFixture('decline_contextual_offer')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '16:00')
+    const declineExecutionId = `decline-offer-${fixture.suffix}`
+    const ctx = liveContext({
+      fixture,
+      executionId: declineExecutionId,
+      messages: [
+        { id: `assistant-decline-${fixture.suffix}`, role: 'assistant', content: exact.offered.visibleReply },
+        { id: declineExecutionId, role: 'user', content: 'no, mejor ya no quiero agendar' }
+      ]
+    })
+    ctx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx,
+      config: fixture.config
+    })
+    assert.equal(ctx.appointmentOfferDecision?.active, true)
+    const declined = await toolNamed(ctx, 'resolve_active_appointment_offer').invoke(null, JSON.stringify({
+      ...acceptOfferInput(),
+      decision: 'decline'
+    }))
+    assert.equal(declined.ok, true, JSON.stringify(declined))
+    assert.match(declined.visibleReply, /sin problema/i)
+    assert.equal(await appointmentCount(fixture), 0)
+
+    const row = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [fixture.contactId, fixture.agentId]
+    )
+    assert.equal(JSON.parse(row.detail_json).status, 'declined')
+
+    const retryCtx = liveContext({
+      fixture,
+      executionId: `confirm-after-decline-${fixture.suffix}`,
+      messages: [
+        { id: `assistant-after-decline-${fixture.suffix}`, role: 'assistant', content: exact.offered.visibleReply },
+        { id: `confirm-after-decline-${fixture.suffix}`, role: 'user', content: 'bueno sí, confirma' }
+      ]
+    })
+    assert.equal(await loadConversationalAppointmentOfferDecisionContext({
+      ctx: retryCtx,
+      config: fixture.config
+    }), null)
+    assert.equal(await appointmentCount(fixture), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
 test('live: una hora inexistente conserva la fecha y permite mostrar alternativas del mismo día', async () => {
   const fixture = await createFixture('unavailable_then_alternatives')
   try {
@@ -2072,7 +2442,10 @@ test('live: un replay tardío de la misma ejecución no vuelve a mostrar una ofe
       appointmentId: null
     }))
     assert.equal(replay.ok, false, JSON.stringify(replay))
-    assert.doesNotMatch(String(replay.visibleReply || ''), /¿Te funciona ese horario\?/i)
+    assert.doesNotMatch(
+      String(replay.visibleReply || ''),
+      /¿(?:Te funciona ese horario|Confirmas que te agende en ese horario)\?/i
+    )
     const stored = JSON.parse((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerAction.outcome.offerEventId]
