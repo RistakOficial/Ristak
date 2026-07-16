@@ -60,6 +60,39 @@ final class RistakUITests: XCTestCase {
         )
     }
 
+    func testRealInboxStartsWithSearchDrawerVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ristak-ui-testing",
+            "-AppleLanguages", "(es)",
+            "-AppleLocale", "es_MX"
+        ]
+        app.launchEnvironment = [
+            "RISTAK_UI_TEST_MODE": "inbox-presentation",
+            "RISTAK_NETWORK_ACCESS": "disabled"
+        ]
+        launchedApp = app
+        app.launch()
+
+        XCTAssertTrue(
+            element(in: app, identifier: "inbox-presentation-root")
+                .waitForExistence(timeout: 8)
+        )
+        let search = app.searchFields["Buscar chats"]
+        XCTAssertTrue(
+            search.waitForExistence(timeout: 3),
+            "El InboxScreen real debe presentar Buscar chats desde el arranque."
+        )
+        XCTAssertTrue(
+            search.isHittable,
+            "El buscador no debe iniciar colapsado como si la lista ya tuviera scroll."
+        )
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Inbox real con buscador visible al abrir"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testLaunchPerformanceWithFiveThousandChats() {
         measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)]) {
             let app = configuredSyntheticApp(chatCount: 5_000)
@@ -149,6 +182,15 @@ final class RistakUITests: XCTestCase {
             )
         } else {
             XCTAssertTrue(element(in: app, identifier: "ristak-main-shell").exists)
+            let inboxSearch = app.searchFields["Buscar chats"]
+            XCTAssertTrue(
+                inboxSearch.waitForExistence(timeout: 5),
+                "Chats debe abrir con el buscador visible, no colapsado como si la lista ya estuviera desplazada."
+            )
+            XCTAssertTrue(
+                inboxSearch.isHittable,
+                "El buscador inicial debe estar completamente presentado y listo para tocarse."
+            )
         }
     }
 

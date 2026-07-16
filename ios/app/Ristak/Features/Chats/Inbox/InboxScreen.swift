@@ -45,7 +45,15 @@ struct InboxScreen: View {
             // Los refrescos de fondo son silenciosos para no ensuciar la vista.
             .navigationTitle("Chats")
             .navigationSubtitle(inboxSubtitle)
-            .searchable(text: $viewModel.searchText, prompt: "Buscar chats")
+            // `.automatic` arranca con el drawer del buscador colapsado y hace
+            // que la bandeja parezca abierta a media pantalla aunque la List
+            // este en offset cero. En la raiz de Chats el campo debe nacer
+            // visible; al desplazarse conserva el comportamiento nativo de iOS.
+            .searchable(
+                text: $viewModel.searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Buscar chats"
+            )
             .onChange(of: viewModel.searchText) {
                 viewModel.searchTextDidChange()
             }

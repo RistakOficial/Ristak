@@ -61,12 +61,15 @@ mantener el contenido vivo hasta terminar la animacion para poder reabrir el
 mismo sheet/contacto sin que se trabe.
 
 En la bandeja de chats de `ios/app`, cada arranque o regreso desde background
-real debe entrar por Chats con la lista en su posicion nativa inicial. No uses
-`ScrollViewReader.scrollTo` contra la primera fila de la `List`: con
-`navigationTitle` grande y `searchable`, esa fila vive debajo del header/search y
-forzarla como ancla hace que la pantalla abra visualmente mas abajo. Si hay que
-reiniciar la bandeja, remonta la `List` con una identidad nueva y deja que iOS
-coloque el tope real.
+real debe entrar por Chats con la lista en su posicion nativa inicial y el campo
+`Buscar chats` visible. En esta raiz, `searchable` usa
+`navigationBarDrawer(displayMode: .always)`: el modo automatico de iOS arranca
+con el drawer colapsado y produce la falsa impresion de que la pantalla ya fue
+desplazada. No uses `ScrollViewReader.scrollTo` contra la primera fila de la
+`List`: con `navigationTitle` grande y `searchable`, esa fila vive debajo del
+header/search y forzarla como ancla hace que la pantalla abra visualmente mas
+abajo. Si hay que reiniciar la bandeja, remonta la `List` con una identidad nueva
+y deja que iOS coloque el tope real.
 
 Cada fila real de las bandejas `/movil`, `mobile/` e `ios/app` comparte el mismo
 contrato: al deslizar hacia la izquierda aparecen, en ese orden, **Más** y

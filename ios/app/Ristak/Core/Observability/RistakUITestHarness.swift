@@ -5,21 +5,41 @@ import SwiftUI
 /// `RootView`, este modo no abre sesión, no lee datos reales y no toca la red.
 struct RistakUITestConfiguration: Sendable {
     let chatCount: Int
+    let showsRealInboxPresentation: Bool
 
     static var current: RistakUITestConfiguration? {
         let process = ProcessInfo.processInfo
-        guard process.arguments.contains("-ristak-ui-testing"),
-              process.environment["RISTAK_UI_TEST_MODE"] == "synthetic"
-        else {
+        guard process.arguments.contains("-ristak-ui-testing") else {
             return nil
         }
+        let mode = process.environment["RISTAK_UI_TEST_MODE"]
+        guard mode == "synthetic" || mode == "inbox-presentation" else { return nil }
 
         let requestedCount = Int(
             process.environment["RISTAK_SYNTHETIC_CHAT_COUNT"] ?? "5000"
         ) ?? 5_000
         return RistakUITestConfiguration(
-            chatCount: min(max(requestedCount, 100), 50_000)
+            chatCount: min(max(requestedCount, 100), 50_000),
+            showsRealInboxPresentation: mode == "inbox-presentation"
         )
+    }
+}
+
+/// Monta el `InboxScreen` real sin sesión ni red para verificar su presentación
+/// inicial (título grande, buscador y tope de la List) de forma determinista.
+struct RistakInboxPresentationUITestHarnessView: View {
+    @State private var viewModel = InboxViewModel()
+
+    var body: some View {
+        NavigationStack {
+            InboxScreen(
+                viewModel: viewModel,
+                selectedContactID: nil,
+                onOpenChat: { _ in },
+                onOpenAssistant: {}
+            )
+        }
+        .accessibilityIdentifier("inbox-presentation-root")
     }
 }
 
