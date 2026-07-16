@@ -78,6 +78,7 @@ const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
 ]);
 const PAYMENT_PLAN_PAGE_SIZE = 20;
 const PAYMENT_PLAN_MAX_PAGE_SIZE = 100;
+const PAYMENT_PLAN_LIST_REQUEST_DEADLINE_MS = 18_000;
 const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE;
 const GHL_CHAT_CHANNELS = {
   whatsapp_api: {
@@ -127,6 +128,60 @@ const GHL_CHAT_CHANNELS = {
 };
 
 const todayDateOnly = (timezone = DEFAULT_PAYMENT_TIMEZONE) => businessTodayDateOnly(timezone);
+
+function createPaymentPlanListAbortScope(req, res, timeoutMs = PAYMENT_PLAN_LIST_REQUEST_DEADLINE_MS) {
+  const controller = new AbortController();
+  let disconnected = Boolean(req.aborted || res.destroyed);
+  let timedOut = false;
+  const abort = (reason) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+  const abortIfDisconnected = () => {
+    disconnected = true;
+    abort();
+  };
+
+  req.once?.('aborted', abortIfDisconnected);
+  res.once?.('close', abortIfDisconnected);
+  if (req.aborted) abortIfDisconnected();
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    abort(Object.assign(new Error('La consulta de planes de pago agotó su tiempo.'), {
+      status: 504,
+      code: 'payment_request_deadline',
+      retryable: true,
+      retryAfter: 1
+    }));
+  }, timeoutMs);
+  timer.unref?.();
+
+  return {
+    signal: controller.signal,
+    abort,
+    get disconnected() {
+      return disconnected || Boolean(req.aborted) || Boolean(res.destroyed);
+    },
+    get timedOut() {
+      return timedOut;
+    },
+    cleanup() {
+      clearTimeout(timer);
+      req.off?.('aborted', abortIfDisconnected);
+      res.off?.('close', abortIfDisconnected);
+      req.removeListener?.('aborted', abortIfDisconnected);
+      res.removeListener?.('close', abortIfDisconnected);
+    }
+  };
+}
+
+function isPaymentPlanListAbort(error, scope) {
+  const abortError = error?.name === 'AbortError' || error?.code === 'ABORT_ERR';
+  return Boolean(
+    scope?.disconnected ||
+    (!scope?.timedOut && scope?.signal?.aborted && abortError)
+  );
+}
 
 const toDateOnly = (value, timezone = DEFAULT_PAYMENT_TIMEZONE) => {
   if (!value) return '';
@@ -3683,12 +3738,14 @@ function appendPaymentPlanCursorCondition(filters, params, cursor, sortExpressio
   );
 }
 
-async function getPaymentPlansSummary() {
+async function getPaymentPlansSummary(signal) {
   const normalizedStatus = normalizePaymentPlanStatusExpression('payment_plans');
   const statusRows = await db.all(
     `SELECT ${normalizedStatus} AS status, COUNT(*) AS count
      FROM payment_plans
-     GROUP BY ${normalizedStatus}`
+     GROUP BY ${normalizedStatus}`,
+    [],
+    { signal }
   );
   const facets = statusRows
     .map(row => ({
@@ -3708,7 +3765,7 @@ async function getPaymentPlansSummary() {
   };
 }
 
-async function listLocalInvoiceSchedules(query = {}) {
+async function listLocalInvoiceSchedules(query = {}, { signal } = {}) {
   const normalized = normalizePaymentPlanListQuery(query);
   if (Number.isFinite(Number(query.offset)) && Number(query.offset) > 0) {
     throw paymentPlanCursorError('La paginación por offset ya no está disponible; usa nextCursor');
@@ -3811,9 +3868,14 @@ async function listLocalInvoiceSchedules(query = {}) {
        ${listWhere.whereClause}
        ORDER BY ${nullRankExpression} ${normalized.sortOrder}, ${sortExpression} ${normalized.sortOrder}, ${fallbackSortExpression} ${normalized.sortOrder}, payment_plans.id ${normalized.sortOrder}
        LIMIT ?`,
-      [...listWhere.params, normalized.limit + 1]
+      [...listWhere.params, normalized.limit + 1],
+      { signal }
     ),
-    getCachedPaymentListSummary('payment_plans', getPaymentPlansSummary)
+    getCachedPaymentListSummary(
+      'payment_plans',
+      buildSignal => getPaymentPlansSummary(buildSignal),
+      { signal }
+    )
   ]);
 
   const hasNext = candidateRows.length > normalized.limit;
@@ -4091,23 +4153,40 @@ export const createInvoiceSchedule = async (req, res) => {
 };
 
 export const listInvoiceSchedules = async (req, res) => {
+  const requestScope = createPaymentPlanListAbortScope(req, res);
   try {
     // La lectura de una pantalla nunca consulta proveedores ni reconstruye todos
     // los espejos. Los webhooks, jobs conectados y mutaciones explícitas son los
     // únicos responsables de materializar el estado remoto en payment_plans.
-    const result = await listLocalInvoiceSchedules(req.query);
+    const result = await listLocalInvoiceSchedules(req.query, { signal: requestScope.signal });
+    if (requestScope.disconnected) return undefined;
     return res.json({
       success: true,
       ...result,
       source: 'local'
     });
   } catch (error) {
+    if (isPaymentPlanListAbort(error, requestScope)) return undefined;
+    requestScope.abort(error);
     logger.error(`Error leyendo planes de pago locales: ${error.message}`);
-    const status = Number(error?.status) >= 400 && Number(error?.status) < 500 ? Number(error.status) : 500;
+    const requestedStatus = Number(error?.status || error?.statusCode || 500);
+    const status = requestScope.timedOut
+      ? 504
+      : Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+        ? requestedStatus
+        : 500;
+    const retryable = status >= 503 || Boolean(error?.retryable || error?.retriable);
+    if (retryable) res.set?.('Retry-After', String(error?.retryAfter || 1));
     res.status(status).json({
       success: false,
-      error: status < 500 ? error.message : 'Error al obtener planes de pago'
+      error: status >= 503
+        ? (error?.message || 'La consulta de planes de pago tardó demasiado.')
+        : (status < 500 ? error.message : 'Error al obtener planes de pago'),
+      code: requestScope.timedOut ? 'payment_request_deadline' : (error?.code || null),
+      retryable
     });
+  } finally {
+    requestScope.cleanup();
   }
 };
 

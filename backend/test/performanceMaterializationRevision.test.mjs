@@ -218,6 +218,7 @@ test('cold misses distintos respetan un semáforo global de dos agregados', asyn
       return { index }
     }
   ))
+  const settledRequests = Promise.allSettled(requests)
 
   for (let attempt = 0; attempt < 50 && started < 2; attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 2))
@@ -226,7 +227,125 @@ test('cold misses distintos respetan un semáforo global de dos agregados', asyn
   assert.equal(maxActive, PAYMENT_LIST_SUMMARY_CACHE_LIMITS.maxConcurrentBuilds)
 
   releaseBuilds()
-  const results = await Promise.all(requests)
-  assert.equal(results.length, 8)
+  const results = await settledRequests
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 2)
+  const rejected = results.filter(result => result.status === 'rejected')
+  assert.equal(rejected.length, 6)
+  assert.ok(rejected.every(result => result.reason?.code === 'payment_summary_busy'))
   assert.equal(maxActive, PAYMENT_LIST_SUMMARY_CACHE_LIMITS.maxConcurrentBuilds)
+  assert.equal(PAYMENT_LIST_SUMMARY_CACHE_LIMITS.queuedBuilds, 0)
+  assert.equal(PAYMENT_LIST_SUMMARY_CACHE_LIMITS.maxBackgroundBuilds, 1)
+  assert.equal(PAYMENT_LIST_SUMMARY_CACHE_LIMITS.buildDeadlineMs, 16_000)
+})
+
+test('un mismo hash frío comparte un solo build entre todos sus waiters', async () => {
+  const suffix = randomUUID().replaceAll('-', '')
+  const cacheKey = `coalesce_${suffix}`
+  let builds = 0
+  let releaseBuild
+  const release = new Promise(resolve => { releaseBuild = resolve })
+
+  const first = getCachedTransactionQuery(cacheKey, async () => {
+    builds += 1
+    await release
+    return { marker: 'shared' }
+  })
+
+  for (let attempt = 0; attempt < 50 && builds === 0; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2))
+  }
+  assert.equal(builds, 1)
+  const second = getCachedTransactionQuery(cacheKey, async () => {
+    builds += 1
+    return { marker: 'duplicate' }
+  })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(builds, 1)
+  releaseBuild()
+  const [firstResult, secondResult] = await Promise.all([first, second])
+  assert.equal(firstResult.marker, 'shared')
+  assert.equal(secondResult.marker, 'shared')
+  assert.equal(builds, 1)
+})
+
+test('una revalidación stale de pagos siempre deja un carril para una vista fría', async () => {
+  const suffix = randomUUID().replaceAll('-', '')
+  const backgroundKey = `background_${suffix}`
+  const coldKey = `foreground_${suffix}`
+  await db.run(`
+    INSERT OR IGNORE INTO payment_list_revisions (scope, revision, updated_at)
+    VALUES ('transactions', 0, CURRENT_TIMESTAMP)
+  `)
+
+  await getCachedTransactionQuery(backgroundKey, async () => ({ marker: 'old' }))
+  await db.run(`
+    UPDATE payment_list_revisions
+    SET revision = revision + 1, updated_at = CURRENT_TIMESTAMP
+    WHERE scope = 'transactions'
+  `)
+
+  let releaseBackground
+  const backgroundRelease = new Promise(resolve => { releaseBackground = resolve })
+  let backgroundStarted = false
+  try {
+    const stale = await getCachedTransactionQuery(backgroundKey, async () => {
+      backgroundStarted = true
+      await backgroundRelease
+      return { marker: 'new' }
+    })
+    for (let attempt = 0; attempt < 50 && !backgroundStarted; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 2))
+    }
+    assert.equal(stale.cache.stale, true)
+    assert.equal(backgroundStarted, true)
+
+    const cold = await getCachedTransactionQuery(coldKey, async () => ({ marker: 'foreground' }))
+    assert.equal(cold.marker, 'foreground')
+    assert.equal(cold.cache.stale, false)
+  } finally {
+    releaseBackground()
+  }
+
+  let fresh = null
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    fresh = await getCachedTransactionQuery(backgroundKey, async () => ({ marker: 'unexpected-rebuild' }))
+    if (!fresh.cache.stale) break
+    await new Promise(resolve => setTimeout(resolve, 2))
+  }
+  assert.equal(fresh?.cache.stale, false)
+  assert.equal(fresh?.marker, 'new')
+})
+
+test('cancelar el último resumen de pagos aborta el builder y permite un retry limpio', async () => {
+  const suffix = randomUUID().replaceAll('-', '')
+  const cacheKey = `abort_${suffix}`
+  const controller = new AbortController()
+  let internalSignal = null
+  let started = false
+
+  const first = getCachedTransactionQuery(cacheKey, signal => new Promise((resolve, reject) => {
+    started = true
+    internalSignal = signal
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }), { signal: controller.signal })
+
+  for (let attempt = 0; attempt < 100 && !started; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 2))
+  }
+  assert.equal(started, true)
+  controller.abort()
+  await assert.rejects(first, error => error?.name === 'AbortError')
+  assert.equal(internalSignal?.aborted, true)
+
+  let retried = false
+  for (let attempt = 0; attempt < 100 && !retried; attempt += 1) {
+    try {
+      const result = await getCachedTransactionQuery(cacheKey, async () => ({ retry: true }))
+      retried = result.retry === true
+    } catch (error) {
+      if (error?.code !== 'payment_summary_busy') throw error
+      await new Promise(resolve => setTimeout(resolve, 2))
+    }
+  }
+  assert.equal(retried, true)
 })

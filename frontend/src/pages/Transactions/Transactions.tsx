@@ -855,6 +855,7 @@ export const Transactions: React.FC = () => {
   const transactionCursorStackRef = useRef<Array<string | null>>([null])
   const transactionsQueryKeyRef = useRef('')
   const paymentPlansRequestRef = useRef(0)
+  const paymentPlansAbortRef = useRef<AbortController | null>(null)
   const paymentPlansQueryKeyRef = useRef('')
   const paymentPlanCursorStackRef = useRef<Array<string | null>>([null])
   const paymentPlanDetailRequestRef = useRef<{ sequence: number; planId: string | null }>({
@@ -1057,10 +1058,16 @@ export const Transactions: React.FC = () => {
   useEffect(() => () => {
     transactionsAbortRef.current?.abort()
     transactionInsightsAbortRef.current?.abort()
+    paymentPlansRequestRef.current += 1
+    paymentPlansAbortRef.current?.abort()
+    paymentPlansAbortRef.current = null
   }, [])
 
   useEffect(() => {
-    if (paymentTableTab !== 'payment-plans') return
+    if (paymentTableTab !== 'payment-plans') {
+      paymentPlansAbortRef.current?.abort()
+      return
+    }
 
     if (paymentPlansQueryKeyRef.current !== paymentPlansQueryKey) {
       paymentPlansQueryKeyRef.current = paymentPlansQueryKey
@@ -1235,7 +1242,15 @@ export const Transactions: React.FC = () => {
             return acc
           }, {})
         )
-      }).catch(() => undefined).finally(() => {
+      }).catch(() => {
+        if (insightsController.signal.aborted || transactionInsightsRequestRef.current !== insightsRequestId) return
+        insightsController.abort()
+        showToast(
+          'warning',
+          'Resumen de pagos no disponible',
+          'La tabla ya está lista, pero Ristak no pudo actualizar los indicadores y filtros. Se conservan los datos anteriores; intenta refrescar en un momento.'
+        )
+      }).finally(() => {
         if (transactionInsightsAbortRef.current === insightsController) transactionInsightsAbortRef.current = null
       })
     } catch (error) {
@@ -1257,6 +1272,9 @@ export const Transactions: React.FC = () => {
 
   const fetchPaymentPlans = async (options: { page?: number; forceRefresh?: boolean } = {}) => {
     const pageToLoad = options.page || paymentPlansPage
+    paymentPlansAbortRef.current?.abort()
+    const controller = new AbortController()
+    paymentPlansAbortRef.current = controller
     const requestId = paymentPlansRequestRef.current + 1
     paymentPlansRequestRef.current = requestId
     setPaymentPlansLoading(true)
@@ -1269,9 +1287,10 @@ export const Transactions: React.FC = () => {
         statuses: selectedPaymentPlanStatuses,
         sortBy: paymentPlanTableSort.key,
         sortOrder: paymentPlanTableSort.order,
-        forceRefresh: options.forceRefresh
+        forceRefresh: options.forceRefresh,
+        signal: controller.signal
       })
-      if (paymentPlansRequestRef.current === requestId) {
+      if (!controller.signal.aborted && paymentPlansRequestRef.current === requestId) {
         if (result.paymentPlans.length === 0 && pageToLoad > 1) {
           paymentPlanCursorStackRef.current = paymentPlanCursorStackRef.current.slice(0, pageToLoad - 1)
           setPaymentPlansPage(pageToLoad - 1)
@@ -1291,6 +1310,7 @@ export const Transactions: React.FC = () => {
         setPaymentPlanSummary(result.summary)
       }
     } catch (error) {
+      if (controller.signal.aborted) return
       if (paymentPlansRequestRef.current === requestId) {
         showToast('error', 'No se pudieron cargar los planes de pago', 'Ristak no pudo leer los planes guardados. Intenta actualizar de nuevo.')
         setPaymentPlansPagination(EMPTY_PAYMENT_PLANS_PAGINATION)
@@ -1300,6 +1320,7 @@ export const Transactions: React.FC = () => {
       if (paymentPlansRequestRef.current === requestId) {
         setPaymentPlansLoading(false)
       }
+      if (paymentPlansAbortRef.current === controller) paymentPlansAbortRef.current = null
     }
   }
 

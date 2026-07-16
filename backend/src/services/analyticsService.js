@@ -508,11 +508,18 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
   }
 }
 
-export async function buildTransactionSummary ({ startDate, endDate, scope = 'all', search = '', statuses = [] } = {}) {
-  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+export async function buildTransactionSummary ({
+  startDate,
+  endDate,
+  scope = 'all',
+  search = '',
+  statuses = [],
+  signal
+} = {}) {
+  const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal })
   const scopeAttributed = scope === 'campaigns'
 
-  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenFilters = await getHiddenContactFilters({ signal })
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const selectedStatuses = normalizeTransactionStatusFilters(statuses)
   const extraContactConditions = scopeAttributed
@@ -558,7 +565,8 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
      FROM payments p
      LEFT JOIN contacts c ON p.contact_id = c.id
      ${currentSuccessWhere.whereClause}`,
-    currentSuccessWhere.params
+    currentSuccessWhere.params,
+    { signal }
   )
 
   const refundCondition = buildRefundedTransactionCondition('p')
@@ -568,7 +576,8 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
      FROM payments p
      LEFT JOIN contacts c ON p.contact_id = c.id
      ${currentRefundsWhere.whereClause}`,
-    currentRefundsWhere.params
+    currentRefundsWhere.params,
+    { signal }
   )
 
   let previousResult = { count: 0, total: 0, average: 0 }
@@ -589,7 +598,8 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
        FROM payments p
        LEFT JOIN contacts c ON p.contact_id = c.id
        ${previousSuccessWhere.whereClause}`,
-      previousSuccessWhere.params
+      previousSuccessWhere.params,
+      { signal }
     ) || { count: 0, total: 0, average: 0 }
 
     const previousRefundsWhere = appendSummaryConditions(previousBaseWhere, refundCondition, livePaymentCondition)
@@ -598,7 +608,8 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
        FROM payments p
        LEFT JOIN contacts c ON p.contact_id = c.id
        ${previousRefundsWhere.whereClause}`,
-      previousRefundsWhere.params
+      previousRefundsWhere.params,
+      { signal }
     ) || { count: 0 }
   }
 

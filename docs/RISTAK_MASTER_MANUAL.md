@@ -820,6 +820,18 @@ vista reutiliza el snapshot, pero una mutacion o evento SSE cambia la revision y
 revalida. Los GET son locales; hablar con pasarelas/HighLevel exige la accion
 explicita `POST /api/transactions/sync`.
 
+El cache SWR de Pagos admite como maximo dos builds globales y uno de fondo; no
+existe cola de espera. Un snapshot stale se sirve de inmediato y su revalidacion
+solo ocupa el carril de fondo, dejando libre el segundo slot para una lectura
+fria. Cada build tiene 16 segundos, el request HTTP 18 y el cliente 20. La
+cancelacion llega hasta SQL y, cuando abandona el ultimo waiter, tambien corta el
+build compartido. Saturacion responde `503 payment_summary_busy` y el deadline
+del request responde `504 payment_request_deadline`; ambos son reintentables y
+envian `Retry-After: 1`. Un cache hit no escribe para actualizar LRU y una falla
+de resumen conserva los KPIs anteriores en vez de fabricar valores en cero. Este
+contrato no cambia las lecturas de suscripciones ni el refresh o la
+sincronizacion de Mercado Pago.
+
 La revision materializada de esas listas es una optimizacion, no una dependencia
 de disponibilidad. Durante el intervalo de un rolling deploy en que una instancia
 nueva ya sirve trafico pero `payment_list_revisions` aun no existe, el backend

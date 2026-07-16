@@ -65,6 +65,60 @@ const VALID_TRANSACTION_STATUSES = new Set([
   'deleted'
 ])
 
+function createTransactionsRequestAbortScope(req, res, timeoutMs = 18_000) {
+  const controller = new AbortController()
+  let disconnected = Boolean(req.aborted || res.destroyed)
+  let timedOut = false
+  const abort = (reason) => {
+    if (!controller.signal.aborted) controller.abort(reason)
+  }
+  const abortIfDisconnected = () => {
+    disconnected = true
+    abort()
+  }
+
+  req.once?.('aborted', abortIfDisconnected)
+  res.once?.('close', abortIfDisconnected)
+  if (req.aborted) abortIfDisconnected()
+
+  const timer = setTimeout(() => {
+    timedOut = true
+    abort(Object.assign(new Error('La consulta de pagos agotó su tiempo.'), {
+      status: 504,
+      code: 'payment_request_deadline',
+      retryable: true,
+      retryAfter: 1
+    }))
+  }, timeoutMs)
+  timer.unref?.()
+
+  return {
+    signal: controller.signal,
+    abort,
+    get disconnected() {
+      return disconnected || Boolean(req.aborted) || Boolean(res.destroyed)
+    },
+    get timedOut() {
+      return timedOut
+    },
+    cleanup() {
+      clearTimeout(timer)
+      req.off?.('aborted', abortIfDisconnected)
+      res.off?.('close', abortIfDisconnected)
+      req.removeListener?.('aborted', abortIfDisconnected)
+      res.removeListener?.('close', abortIfDisconnected)
+    }
+  }
+}
+
+function isTransactionsRequestAbort(error, scope) {
+  const abortError = error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+  return Boolean(
+    scope?.disconnected ||
+    (!scope?.timedOut && scope?.signal?.aborted && abortError)
+  )
+}
+
 const PAYMENT_METHOD_TO_GHL_MODE = {
   card: 'card',
   transfer: 'bank_transfer',
@@ -1140,11 +1194,12 @@ export const getTransactions = async (req, res) => {
 
 /** Facetas versionadas; nunca forman parte del camino crítico de la tabla. */
 export const getTransactionFacets = async (req, res) => {
+  const requestScope = createTransactionsRequestAbortScope(req, res)
   try {
     const { q = '', search = '', startDate, endDate } = req.query
     const searchTerm = cleanString(q || search)
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-    const hiddenFilters = await getHiddenContactFilters()
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal })
+    const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal })
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
     const facetsWhere = buildTransactionListWhere({
       range,
@@ -1159,7 +1214,7 @@ export const getTransactionFacets = async (req, res) => {
       search: searchTerm.toLowerCase(),
       hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters)
     })}`
-    const facets = await getCachedTransactionQuery(cacheKey, async () => {
+    const facets = await getCachedTransactionQuery(cacheKey, async (buildSignal) => {
       const statusGroupExpression = buildTransactionStatusGroupExpression('p')
       const rows = await db.all(
         `SELECT ${statusGroupExpression} AS status, COUNT(*) AS count
@@ -1167,19 +1222,37 @@ export const getTransactionFacets = async (req, res) => {
          LEFT JOIN contacts c ON p.contact_id = c.id
          ${facetsWhere.whereClause}
          GROUP BY ${statusGroupExpression}`,
-        facetsWhere.params
+        facetsWhere.params,
+        { signal: buildSignal }
       )
       return {
         statuses: rows
           .map(row => ({ value: cleanString(row.status), count: Number(row.count || 0) }))
           .filter(row => row.value)
       }
-    })
+    }, { signal: requestScope.signal })
 
-    res.json({ success: true, data: facets })
+    if (!requestScope.disconnected) res.json({ success: true, data: facets })
   } catch (error) {
+    if (isTransactionsRequestAbort(error, requestScope)) return
+    requestScope.abort(error)
     logger.error(`Error obteniendo facetas de transacciones: ${error.message}`)
-    res.status(500).json({ success: false, error: 'Error obteniendo filtros de transacciones' })
+    const requestedStatus = Number(error?.status || error?.statusCode || 500)
+    const status = requestScope.timedOut
+      ? 504
+      : Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+        ? requestedStatus
+        : 500
+    const retryable = status >= 503 || Boolean(error?.retryable || error?.retriable)
+    if (retryable) res.set?.('Retry-After', String(error?.retryAfter || 1))
+    res.status(status).json({
+      success: false,
+      error: status >= 503 ? (error?.message || 'La consulta tardó demasiado') : 'Error obteniendo filtros de transacciones',
+      code: requestScope.timedOut ? 'payment_request_deadline' : (error?.code || null),
+      retryable
+    })
+  } finally {
+    requestScope.cleanup()
   }
 }
 
@@ -1326,6 +1399,7 @@ export const getTransactionStats = async (req, res) => {
  * Obtiene el resumen de transacciones para el dashboard
  */
 export const getTransactionSummary = async (req, res) => {
+  const requestScope = createTransactionsRequestAbortScope(req, res)
   try {
     const { startDate, endDate, status = '', statuses = '', q = '', search = '' } = req.query
     const selectedStatuses = normalizeTransactionStatusFilters([
@@ -1333,23 +1407,24 @@ export const getTransactionSummary = async (req, res) => {
       ...(Array.isArray(statuses) ? statuses : [statuses])
     ])
     const searchTerm = cleanString(q || search)
-    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
-    const hiddenFilters = await getHiddenContactFilters()
+    const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal })
+    const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal })
     const cacheKey = `summary:${hashPaginationCursorScope('transactions-summary-v1', {
       range: paginationCursorRangeScope(range),
       statuses: paginationCursorListScope(selectedStatuses),
       search: searchTerm.toLowerCase(),
       hiddenFilters: paginationCursorHiddenFiltersScope(hiddenFilters)
     })}`
-    const summary = await getCachedTransactionQuery(cacheKey, async () => {
+    const summary = await getCachedTransactionQuery(cacheKey, async (buildSignal) => {
       const built = await buildTransactionSummary({
         startDate,
         endDate,
         search: searchTerm,
-        statuses: selectedStatuses
+        statuses: selectedStatuses,
+        signal: buildSignal
       })
       return built.summary
-    })
+    }, { signal: requestScope.signal })
 
     const rangeLabel = range.isFiltered
       ? `${range.startUtc || '---'} -> ${range.endUtc || '---'} (${range.appliedTimezone})`
@@ -1357,21 +1432,37 @@ export const getTransactionSummary = async (req, res) => {
 
     logger.info(`Obteniendo resumen de transacciones - rango: ${rangeLabel}`)
 
-    res.json({
-      success: true,
-      data: summary
-    })
+    if (!requestScope.disconnected) {
+      res.json({
+        success: true,
+        data: summary
+      })
+    }
 
     logger.debug(
       `Resumen transacciones (${rangeLabel}) -> total: ${summary.totalRevenue}, reembolsos: ${summary.refunds}`
     )
 
   } catch (error) {
+    if (isTransactionsRequestAbort(error, requestScope)) return
+    requestScope.abort(error)
     logger.error(`Error obteniendo resumen de transacciones: ${error.message}`)
-    res.status(500).json({
+    const requestedStatus = Number(error?.status || error?.statusCode || 500)
+    const status = requestScope.timedOut
+      ? 504
+      : Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+        ? requestedStatus
+        : 500
+    const retryable = status >= 503 || Boolean(error?.retryable || error?.retriable)
+    if (retryable) res.set?.('Retry-After', String(error?.retryAfter || 1))
+    res.status(status).json({
       success: false,
-      error: 'Error obteniendo resumen'
+      error: status >= 503 ? (error?.message || 'La consulta tardó demasiado') : 'Error obteniendo resumen',
+      code: requestScope.timedOut ? 'payment_request_deadline' : (error?.code || null),
+      retryable
     })
+  } finally {
+    requestScope.cleanup()
   }
 }
 

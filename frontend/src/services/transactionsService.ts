@@ -168,17 +168,6 @@ interface CreateTransactionOptions {
   idempotencyKey?: string
 }
 
-const EMPTY_TRANSACTION_SUMMARY: TransactionSummary = {
-  totalRevenue: 0,
-  totalRevenuePrev: 0,
-  completedPayments: 0,
-  completedPaymentsPrev: 0,
-  averageTicket: 0,
-  averageTicketPrev: 0,
-  refunds: 0,
-  refundsPrev: 0
-}
-
 const getAuthHeaders = () => {
   const headers = new Headers()
 
@@ -379,23 +368,21 @@ export const transactionsService = {
     const input = typeof startOrParams === 'object'
       ? startOrParams
       : { startDate: startOrParams, endDate }
-    try {
-      const params: Record<string, string> = {}
-      if (input.startDate) params.startDate = input.startDate
-      if (input.endDate) params.endDate = input.endDate
-      if (input.search?.trim()) params.q = input.search.trim()
-      if (input.statuses?.length) params.status = input.statuses.join(',')
+    const params: Record<string, string> = {}
+    if (input.startDate) params.startDate = input.startDate
+    if (input.endDate) params.endDate = input.endDate
+    if (input.search?.trim()) params.q = input.search.trim()
+    if (input.statuses?.length) params.status = input.statuses.join(',')
 
-      const data = await apiClient.get<TransactionSummary>('/transactions/summary', {
+    return withRequestTimeout({
+      timeoutMs: TRANSACTIONS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'El resumen de pagos tardó demasiado. Reintenta la carga.',
+      signal: input.signal,
+      request: requestSignal => apiClient.get<TransactionSummary>('/transactions/summary', {
         params,
-        signal: input.signal
+        signal: requestSignal
       })
-
-      return data
-    } catch (error) {
-      if (input.signal?.aborted) throw error
-      return EMPTY_TRANSACTION_SUMMARY
-    }
+    })
   },
 
   async getFacets(paramsInput: Omit<TransactionSummaryParams, 'statuses'> = {}): Promise<{ statuses: TransactionStatusFacet[] }> {
@@ -403,9 +390,14 @@ export const transactionsService = {
     if (paramsInput.startDate) params.startDate = paramsInput.startDate
     if (paramsInput.endDate) params.endDate = paramsInput.endDate
     if (paramsInput.search?.trim()) params.q = paramsInput.search.trim()
-    const data = await apiClient.get<{ statuses?: TransactionStatusFacet[] }>('/transactions/facets', {
-      params,
-      signal: paramsInput.signal
+    const data = await withRequestTimeout({
+      timeoutMs: TRANSACTIONS_VIEW_REQUEST_TIMEOUT_MS,
+      timeoutMessage: 'Los filtros de pagos tardaron demasiado. Reintenta la carga.',
+      signal: paramsInput.signal,
+      request: requestSignal => apiClient.get<{ statuses?: TransactionStatusFacet[] }>('/transactions/facets', {
+        params,
+        signal: requestSignal
+      })
     })
     return {
       statuses: Array.isArray(data?.statuses)

@@ -1,52 +1,135 @@
 import { db } from '../config/database.js'
 
 const PAYMENT_SUMMARY_CACHE_TTL_MS = 24 * 60 * 60 * 1000
-const PAYMENT_SUMMARY_BACKGROUND_BUILD_LIMIT = 2
+const PAYMENT_SUMMARY_MAX_CONCURRENT_BUILDS = 2
+const PAYMENT_SUMMARY_BACKGROUND_BUILD_LIMIT = 1
+const PAYMENT_SUMMARY_BUILD_DEADLINE_MS = 16_000
 const PAYMENT_SUMMARY_CACHE_ENTRIES_PER_ACCOUNT = 96
 const VALID_SCOPES = new Set(['subscriptions', 'payment_plans', 'transactions'])
 const summaryBuilds = new Map()
-const summaryBuildQueue = []
 let activeSummaryBuilds = 0
+let activeBackgroundSummaryBuilds = 0
 
-function drainSummaryBuildQueue() {
-  while (
-    activeSummaryBuilds < PAYMENT_SUMMARY_BACKGROUND_BUILD_LIMIT &&
-    summaryBuildQueue.length > 0
-  ) {
-    const job = summaryBuildQueue.shift()
-    activeSummaryBuilds += 1
-    Promise.resolve()
-      .then(job.run)
-      .then(job.resolve, job.reject)
-      .finally(() => {
-        activeSummaryBuilds -= 1
-        if (summaryBuilds.get(job.key) === job.promise) summaryBuilds.delete(job.key)
-        drainSummaryBuildQueue()
-      })
+function abortReason(signal) {
+  if (signal?.reason !== undefined) return signal.reason
+  const error = new Error('La consulta fue cancelada')
+  error.name = 'AbortError'
+  error.code = 'ABORT_ERR'
+  return error
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal)
+}
+
+function isAbortError(error, signal) {
+  return Boolean(signal?.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR')
+}
+
+function summaryUnavailable(code, message) {
+  const error = new Error(message)
+  error.status = 503
+  error.code = code
+  error.retryable = true
+  error.retriable = true
+  error.retryAfter = 1
+  return error
+}
+
+function createSummaryBuild(key, run, { background = false } = {}) {
+  if (
+    activeSummaryBuilds >= PAYMENT_SUMMARY_MAX_CONCURRENT_BUILDS ||
+    (background && (
+      activeBackgroundSummaryBuilds >= PAYMENT_SUMMARY_BACKGROUND_BUILD_LIMIT ||
+      activeSummaryBuilds >= PAYMENT_SUMMARY_MAX_CONCURRENT_BUILDS - 1
+    ))
+  ) return null
+
+  activeSummaryBuilds += 1
+  if (background) activeBackgroundSummaryBuilds += 1
+
+  const controller = new AbortController()
+  const entry = {
+    controller,
+    keepAlive: false,
+    background,
+    waiters: 0,
+    settled: false,
+    timedOut: false,
+    promise: null
+  }
+  const timer = setTimeout(() => {
+    entry.timedOut = true
+    controller.abort(summaryUnavailable(
+      'payment_summary_deadline',
+      'El resumen de pagos tardó demasiado y fue cancelado.'
+    ))
+  }, PAYMENT_SUMMARY_BUILD_DEADLINE_MS)
+  timer.unref?.()
+
+  entry.promise = Promise.resolve()
+    .then(() => run(controller.signal))
+    .then((value) => {
+      throwIfAborted(controller.signal)
+      return value
+    })
+    .catch((error) => {
+      if (entry.timedOut) {
+        throw summaryUnavailable(
+          'payment_summary_deadline',
+          'El resumen de pagos tardó demasiado y fue cancelado.'
+        )
+      }
+      throw error
+    })
+    .finally(() => {
+      entry.settled = true
+      activeSummaryBuilds = Math.max(0, activeSummaryBuilds - 1)
+      if (entry.background) {
+        activeBackgroundSummaryBuilds = Math.max(0, activeBackgroundSummaryBuilds - 1)
+      }
+      clearTimeout(timer)
+      if (summaryBuilds.get(key) === entry) summaryBuilds.delete(key)
+    })
+
+  summaryBuilds.set(key, entry)
+  void entry.promise.catch(() => undefined)
+  return entry
+}
+
+function releaseSummaryWaiter(key, entry) {
+  entry.waiters = Math.max(0, entry.waiters - 1)
+  if (entry.waiters === 0 && !entry.keepAlive && !entry.settled) {
+    entry.controller.abort(abortReason(entry.controller.signal))
+    if (summaryBuilds.get(key) === entry) summaryBuilds.delete(key)
   }
 }
 
-function enqueueSummaryBuild(key, run) {
-  const existing = summaryBuilds.get(key)
-  if (existing) return existing
+function waitForSummaryBuild(key, entry, signal) {
+  throwIfAborted(signal)
+  entry.waiters += 1
+  if (!signal) return entry.promise.finally(() => releaseSummaryWaiter(key, entry))
 
-  let resolveBuild
-  let rejectBuild
-  const build = new Promise((resolve, reject) => {
-    resolveBuild = resolve
-    rejectBuild = reject
+  return new Promise((resolve, reject) => {
+    let finished = false
+    const finish = (callback) => {
+      if (finished) return
+      finished = true
+      signal.removeEventListener('abort', onAbort)
+      releaseSummaryWaiter(key, entry)
+      callback()
+    }
+    const onAbort = () => finish(() => reject(abortReason(signal)))
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    entry.promise.then(
+      value => finish(() => resolve(value)),
+      error => finish(() => reject(error))
+    )
   })
-  const job = {
-    key,
-    run,
-    resolve: resolveBuild,
-    reject: rejectBuild,
-    promise: build
-  }
-  summaryBuilds.set(key, build)
-  summaryBuildQueue.push(job)
-  drainSummaryBuildQueue()
-  return build
 }
 
 function normalizeScope(scope) {
@@ -69,15 +152,25 @@ function isPaymentSummaryCacheSchemaUnavailable(error) {
   )
 }
 
-async function getAccountScope() {
-  const row = await db.get('SELECT location_id FROM highlevel_config ORDER BY created_at DESC, id DESC LIMIT 1')
-    .catch(() => null)
+async function getAccountScope(signal) {
+  const row = await db.get(
+    'SELECT location_id FROM highlevel_config ORDER BY created_at DESC, id DESC LIMIT 1',
+    [],
+    { signal }
+  ).catch((error) => {
+    if (isAbortError(error, signal)) throw error
+    return null
+  })
   return `account:${String(row?.location_id || '').trim() || 'local-database'}`
 }
 
-export async function getPaymentListRevision(scope) {
+export async function getPaymentListRevision(scope, signal) {
   const normalized = normalizeScope(scope)
-  const row = await db.get('SELECT revision FROM payment_list_revisions WHERE scope = ?', [normalized])
+  const row = await db.get(
+    'SELECT revision FROM payment_list_revisions WHERE scope = ?',
+    [normalized],
+    { signal }
+  )
   if (!row) {
     throw Object.assign(
       new Error(`No existe la revisión materializada para ${normalized}`),
@@ -87,33 +180,28 @@ export async function getPaymentListRevision(scope) {
   return Number(row?.revision || 0)
 }
 
-async function readCachedSummary(accountScope, scope, revision) {
+async function readCachedSummary(accountScope, scope, revision, signal) {
   const row = await db.get(`
     SELECT payload_json, built_at
     FROM payment_list_summary_cache
     WHERE account_scope = ? AND scope = ? AND source_revision = ?
     LIMIT 1
-  `, [accountScope, scope, revision])
+  `, [accountScope, scope, revision], { signal })
   if (!row || Date.now() - timestampMs(row.built_at) > PAYMENT_SUMMARY_CACHE_TTL_MS) return null
-
-  void db.run(`
-    UPDATE payment_list_summary_cache
-    SET last_accessed_at = CURRENT_TIMESTAMP
-    WHERE account_scope = ? AND scope = ? AND source_revision = ?
-  `, [accountScope, scope, revision]).catch(() => undefined)
   return {
     value: JSON.parse(row.payload_json),
     builtAt: String(row.built_at || '')
   }
 }
 
-async function readLatestSummary(accountScope, scope) {
+async function readLatestSummary(accountScope, scope, signal) {
   const row = await db.get(`
     SELECT source_revision, payload_json, built_at
     FROM payment_list_summary_cache
     WHERE account_scope = ? AND scope = ?
+    ORDER BY source_revision DESC, built_at DESC
     LIMIT 1
-  `, [accountScope, scope])
+  `, [accountScope, scope], { signal })
   if (!row || Date.now() - timestampMs(row.built_at) > PAYMENT_SUMMARY_CACHE_TTL_MS) return null
   return {
     value: JSON.parse(row.payload_json),
@@ -122,7 +210,7 @@ async function readLatestSummary(accountScope, scope) {
   }
 }
 
-async function persistSummary(accountScope, scope, revision, summary) {
+async function persistSummary(accountScope, scope, revision, summary, signal) {
   const now = new Date().toISOString()
   await db.run(`
     INSERT INTO payment_list_summary_cache (
@@ -134,8 +222,8 @@ async function persistSummary(accountScope, scope, revision, summary) {
       built_at = excluded.built_at,
       last_accessed_at = excluded.last_accessed_at
     WHERE payment_list_summary_cache.source_revision <= excluded.source_revision
-  `, [accountScope, scope, revision, JSON.stringify(summary), now, now])
-  void db.run(`
+  `, [accountScope, scope, revision, JSON.stringify(summary), now, now], { signal })
+  await db.run(`
     DELETE FROM payment_list_summary_cache
     WHERE account_scope = ?
       AND scope NOT IN (
@@ -145,7 +233,7 @@ async function persistSummary(accountScope, scope, revision, summary) {
         ORDER BY last_accessed_at DESC, built_at DESC, scope DESC
         LIMIT ?
       )
-  `, [accountScope, accountScope, PAYMENT_SUMMARY_CACHE_ENTRIES_PER_ACCOUNT]).catch(() => undefined)
+  `, [accountScope, accountScope, PAYMENT_SUMMARY_CACHE_ENTRIES_PER_ACCOUNT], { signal })
   return now
 }
 
@@ -161,17 +249,19 @@ function withCacheMetadata(value, { stale, builtAt, sourceRevision }) {
   }
 }
 
-async function getCachedPaymentValue({ revisionScope, cacheScope, buildValue }) {
+async function getCachedPaymentValue({ revisionScope, cacheScope, buildValue, signal }) {
   const normalized = normalizeScope(revisionScope)
   const normalizedCacheScope = String(cacheScope || normalized).trim()
   if (!normalizedCacheScope || normalizedCacheScope.length > 240 || typeof buildValue !== 'function') {
     throw new Error('Consulta cacheada de pagos inválida')
   }
-  const accountScope = await getAccountScope()
+  throwIfAborted(signal)
+  const accountScope = await getAccountScope(signal)
   let revision
   try {
-    revision = await getPaymentListRevision(normalized)
+    revision = await getPaymentListRevision(normalized, signal)
   } catch (error) {
+    if (isAbortError(error, signal)) throw error
     if (!isPaymentSummaryCacheSchemaUnavailable(error)) throw error
 
     // Los consumidores unitarios importan controladores sin arrancar server.js,
@@ -179,14 +269,15 @@ async function getCachedPaymentValue({ revisionScope, cacheScope, buildValue }) 
     // 071. También protege un bootstrap incompleto: sin tabla/fila de revisión
     // no existe invalidación confiable, así que jamás se guarda un snapshot.
     // Sólo se tolera esa ausencia conocida; cualquier otro error SQL se propaga.
-    const summary = await buildValue()
+    const summary = await buildValue(signal)
+    throwIfAborted(signal)
     return withCacheMetadata(summary, {
       stale: false,
       builtAt: '',
       sourceRevision: 0
     })
   }
-  const cached = await readCachedSummary(accountScope, normalizedCacheScope, revision)
+  const cached = await readCachedSummary(accountScope, normalizedCacheScope, revision, signal)
   if (cached) {
     return withCacheMetadata(cached.value, {
       stale: false,
@@ -195,20 +286,31 @@ async function getCachedPaymentValue({ revisionScope, cacheScope, buildValue }) 
     })
   }
 
-  const stale = await readLatestSummary(accountScope, normalizedCacheScope)
+  const stale = await readLatestSummary(accountScope, normalizedCacheScope, signal)
   const buildKey = `${accountScope}:${normalizedCacheScope}:${revision}`
-  let build = summaryBuilds.get(buildKey)
-  if (!build) {
-    build = enqueueSummaryBuild(buildKey, async () => {
-      const summary = await buildValue()
-      const builtAt = await persistSummary(accountScope, normalizedCacheScope, revision, summary)
-      const currentRevision = await getPaymentListRevision(normalized)
+  let entry = summaryBuilds.get(buildKey)
+  if (!entry) {
+    entry = createSummaryBuild(buildKey, async (buildSignal) => {
+      const summary = await buildValue(buildSignal)
+      throwIfAborted(buildSignal)
+      const builtAt = await persistSummary(
+        accountScope,
+        normalizedCacheScope,
+        revision,
+        summary,
+        buildSignal
+      )
+      throwIfAborted(buildSignal)
+      const currentRevision = await getPaymentListRevision(normalized, buildSignal)
       return { summary, builtAt, exact: currentRevision === revision }
-    })
+    }, { background: Boolean(stale) })
   }
 
   if (stale) {
-    if (build) void build.catch(() => undefined)
+    if (entry) {
+      entry.keepAlive = true
+      void entry.promise.catch(() => undefined)
+    }
     return withCacheMetadata(stale.value, {
       stale: true,
       builtAt: stale.builtAt,
@@ -216,8 +318,13 @@ async function getCachedPaymentValue({ revisionScope, cacheScope, buildValue }) 
     })
   }
 
-  if (!build) throw new Error('No se pudo iniciar el resumen de pagos')
-  const built = await build
+  if (!entry) {
+    throw summaryUnavailable(
+      'payment_summary_busy',
+      'Hay demasiados resúmenes de pagos en proceso. Intenta nuevamente.'
+    )
+  }
+  const built = await waitForSummaryBuild(buildKey, entry, signal)
   return withCacheMetadata(built.summary, {
     stale: !built.exact,
     builtAt: built.builtAt,
@@ -225,16 +332,17 @@ async function getCachedPaymentValue({ revisionScope, cacheScope, buildValue }) 
   })
 }
 
-export async function getCachedPaymentListSummary(scope, buildSummary) {
+export async function getCachedPaymentListSummary(scope, buildSummary, { signal } = {}) {
   return getCachedPaymentValue({
     revisionScope: scope,
     cacheScope: normalizeScope(scope),
-    buildValue: buildSummary
+    buildValue: buildSummary,
+    signal
   })
 }
 
 /** Cache SWR por hash de consulta, invalidado por la revisión durable de pagos. */
-export async function getCachedTransactionQuery(cacheKey, buildValue) {
+export async function getCachedTransactionQuery(cacheKey, buildValue, { signal } = {}) {
   const normalizedKey = String(cacheKey || '').trim()
   if (!/^[a-z0-9:_-]{1,200}$/i.test(normalizedKey)) {
     throw new Error('Llave de consulta de transacciones inválida')
@@ -242,7 +350,8 @@ export async function getCachedTransactionQuery(cacheKey, buildValue) {
   return getCachedPaymentValue({
     revisionScope: 'transactions',
     cacheScope: `transactions:${normalizedKey}`,
-    buildValue
+    buildValue,
+    signal
   })
 }
 
@@ -250,5 +359,8 @@ export const PAYMENT_LIST_SUMMARY_CACHE_LIMITS = Object.freeze({
   scopesPerAccount: VALID_SCOPES.size,
   entriesPerAccount: PAYMENT_SUMMARY_CACHE_ENTRIES_PER_ACCOUNT,
   ttlMs: PAYMENT_SUMMARY_CACHE_TTL_MS,
-  maxConcurrentBuilds: PAYMENT_SUMMARY_BACKGROUND_BUILD_LIMIT
+  maxConcurrentBuilds: PAYMENT_SUMMARY_MAX_CONCURRENT_BUILDS,
+  maxBackgroundBuilds: PAYMENT_SUMMARY_BACKGROUND_BUILD_LIMIT,
+  buildDeadlineMs: PAYMENT_SUMMARY_BUILD_DEADLINE_MS,
+  queuedBuilds: 0
 })
