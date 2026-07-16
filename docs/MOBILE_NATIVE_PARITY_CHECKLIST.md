@@ -258,15 +258,21 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: `mobile/` escucha `/api/chat-events/stream` con bearer, aplica el
     timestamp/direccion/canal/unread y promueve la fila local antes del REST;
     despues reconcilia sin calentamiento de avatares, con timeout, abort y
-    coalescing. El backend guarda unread antes de publicar el evento.
+    coalescing. Tras un gap real, Android e iOS emiten un unico nudge canonico al
+    reconectar; el primer `connected` no se trata como reconexion ni duplica el
+    bootstrap. iOS permite una recuperacion silenciosa si su GET inicial fallo con
+    el stream sano. Una rafaga usa maximo dos GET inmediatos y, si el segundo se
+    ensucia, un trailing unico a 500 ms. El polling es adaptativo, no el loop fijo
+    anterior de 12 s/4 s. El backend guarda unread antes de publicar el evento.
 - [x] Replicar empty/loading/cache-refresh states.
   - Avance: una falla silenciosa conserva filas cacheadas; una respuesta fresca
     corta o vacia retira fantasmas, y la cache canonica no se contamina con una
     busqueda o bandeja filtrada por numero.
-  - Primer arranque sin cache: iOS y Android muestran una barra por etapas reales
-    (cuenta, configuracion, contactos, conversaciones y copia local), conservan
-    el paso exacto ante error y permiten reintentar. Con snapshot valido no se
-    muestra y la revalidacion sigue silenciosa.
+  - Primer arranque sin cache: Android muestra progreso reducido a cuenta,
+    conversaciones y copia local; un timeout sale en modo degradado y reintenta
+    sin secuestrar la app. iOS nunca muestra overlay ni spinner de bootstrap:
+    conserva el shell montado y carga inbox/directorio en paralelo. Con snapshot,
+    ambas apps pintan inmediatamente y revalidan en silencio.
 - [ ] Validar visualmente contra `/movil` en telefono.
 
 ### 2. Conversacion
@@ -328,10 +334,13 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     duplicar un envio que siga activo. Falta pantalla completa de info del
     mensaje y acciones especiales de programados.
 - [x] Realtime del hilo disponible durante bootstrap.
-  - Avance: iOS abre SSE antes del fetch inicial, bufferiza un nudge recibido
-    durante la carga y ejecuta una sola reconciliacion local al quedar listo.
-    Android y web conservan SSE como camino principal y polling local como red
-    de seguridad; ninguna superficie sondea Meta para refrescar el hilo.
+  - Avance: iOS abre SSE antes del fetch inicial y conserva un nudge durante
+    bootstrap sin duplicar el GET con el primer `connected`. iOS y Android
+    detectan un gap real y emiten un unico nudge canonico al reconectar. Inbox e
+    hilo usan maximo dos GET inmediatos por rafaga; actividad durante el segundo
+    produce un trailing unico a 500 ms. El polling queda como respaldo adaptativo,
+    nunca como loop fijo de 12 s/4 s; ninguna superficie sondea Meta para
+    refrescar el hilo.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
 - [x] Aislar y aligerar sincronizacion de conversaciones.
@@ -492,7 +501,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - `npm run mobile:native:typecheck`.
 - `cd mobile && npm run test:chat-reliability` para fechas UTC, ACL offline,
-  promocion SSE, merges autoritativos, slots de calendario e intentos de pago.
+  promocion/reconexion SSE, recuperacion del bootstrap, backpressure con trailing,
+  cache por lotes resistente a carreras, merges autoritativos, slots de
+  calendario e intentos de pago.
 - `git diff --check`.
 - Instalar Release en Android fisico cuando cambie UI principal:
   `npm run mobile:native:android`.

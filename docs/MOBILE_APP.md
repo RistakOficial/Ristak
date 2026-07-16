@@ -153,14 +153,34 @@ refetch no calienta avatares externos, tiene timeout/cancelacion y solo refresca
 el hilo si el `contactId` coincide con la conversacion abierta. El backend
 persiste el incremento de `chat_read_states` antes de publicar el evento para que
 la reconciliacion no observe un contador viejo. El polling sigue existiendo como
-respaldo: bandeja cada 12 s e hilo abierto cada 4 s, sin spinner, sin borrar cache
-visible y sin mover el scroll si no hubo cambios reales. El poll del hilo no debe
-volver a descargar el journey completo ni mandar `mark-read` si no aparecio un
-entrante nuevo; los programados se reconcilian con una frecuencia menor.
+respaldo adaptativo, no como ruta normal: Android reconcilia bandeja e hilo cada
+30 s mientras SSE esta desconectado y cada 2 min con el stream sano; iOS usa 25 s
+durante la desconexion, 2 min para la bandeja conectada y no mantiene polling
+periodico del hilo conectado. Tras una desconexion real, ambos clientes hacen
+una reconciliacion canonica al reconectar. La primera conexion no se trata como
+reconexion ni duplica el bootstrap; en iOS, si el GET inicial fallo con el stream
+sano, se permite una sola recuperacion silenciosa. Ningun cliente vuelve al poll
+fijo de 12 s/4 s.
+
+Los nudges de SSE, push y polling comparten backpressure. Una rafaga admite como
+maximo dos GET inmediatos: la solicitud actual/primaria y un follow-up. Si llega
+actividad despues de iniciar ese follow-up, conserva un dirty bit y agenda un
+unico trailing refresh tras 500 ms; todos los nudges del cooldown se pliegan en
+esa misma lectura. Timers, gates y resultados viejos se invalidan al desmontar,
+cambiar contacto, API, sesion o cuenta. Todo refresh es silencioso, conserva
+cache/scroll y no calienta avatares externos. El hilo no vuelve a descargar el
+journey completo ni manda `mark-read` si no aparecio un entrante nuevo; los
+programados se reconcilian con una frecuencia menor.
 Al abrir una conversacion, `/contacts/:id/conversation` es la ruta critica y sus
 ultimos mensajes se pintan en cuanto responde. El journey completo y los
 mensajes programados cargan despues con cancelacion/generacion propia; nunca
 deben retener el spinner del hilo.
+Cuando `chat_message_activity` esta `ready`, el backend selecciona primero los
+IDs exactos de WhatsApp, Meta y email en orden global `(message_sort, cursorKey)`
+y despues hidrata solo esas filas. Si la proyeccion aun no esta lista conserva el
+fallback compatible por identidad/telefono, siempre con deadline de 8 s y
+cancelacion real al cerrar el cliente. Las ramas auxiliares de atribucion de
+WhatsApp y confirmacion de cita siguen entrando al merge final.
 La paginacion historica de esa ruta usa un cursor keyset compuesto:
 `beforeMessageDate` + `beforeMessageCursor`. Cada evento de chat devuelve un
 `cursorKey` estable y el backend ordena por `(instante, cursorKey)`; asi, si
@@ -182,10 +202,16 @@ hidratacion inicial, pero despues de hidratarse una respuesta autoritativa vacia
 si debe persistir `[]` para retirar mensajes fantasma.
 
 Arranque offline-first de Android: antes de pedir datos frescos al servidor,
-`mobile/` precarga desde la copia local en disco a RAM los snapshots recientes
-del namespace servidor/sesion y solo despues expone el shell. La precarga queda
-acotada a 180 archivos, 32 MiB y 45 dias; una entrada corrupta o vencida se
-descarta sin impedir abrir la app. Cubre configuracion y labels del shell,
+`mobile/` precarga solamente los cinco snapshots necesarios para la primera
+pintura (bandeja, marca de first sync, configuracion/labels del shell y catalogo
+de filtros), con presupuesto total de 4 MiB, y entonces expone el shell. La
+precarga general del namespace se difiere hasta despues de las interacciones y
+enumera metadata, lee y limpia en lotes de cuatro, cediendo el hilo JS despues
+de cada lote; sigue acotada a 180 archivos, 32 MiB y 45 dias. Entre lotes valida
+namespace y epoch: un cambio de cuenta cancela el resultado y una escritura
+foreground ya presente en RAM siempre gana sobre el snapshot viejo de disco.
+Una entrada corrupta o vencida se descarta sin impedir abrir la app. Esa copia
+general cubre configuracion y labels del shell,
 bandeja y conversaciones, bootstrap/rangos de calendario, catalogos del chat,
 capacidad de Pagos (plan, pasarelas y HighLevel), productos, pagos recientes,
 impuestos, Analiticas (KPIs, grafica, embudo, origen y numeros) y paneles de
@@ -213,24 +239,30 @@ sesion/cache; timeout, offline y `5xx` conservan temporalmente la ultima ACL
 valida.
 
 Cuando una cuenta todavia no tiene snapshot local de bandeja ni marca de
-bootstrap completado, `mobile/` e `ios/app` cubren la pagina principal con un
-progreso inicial visible y determinista. La barra solo avanza al completar
-trabajo real: cuenta conectada, configuracion/catalogos, directorio inicial de
-contactos, primera pagina de conversaciones y escritura de la copia local. Cada
-etapa muestra su nombre y cantidades obtenidas cuando aplican; no usa un timer
-para inventar porcentaje. Si configuración o directorio fallan sin ninguna copia
-útil, conserva la etapa exacta y ofrece `Reintentar`. Si el directorio ya quedó
-guardado pero la primera página de conversaciones sufre timeout, no secuestra la
-app en 78 %: termina como arranque degradado, abre el producto con los contactos
-disponibles y reintenta la bandeja por SSE/polling en segundo plano. Al completar
-o entrar en ese modo degradado se guarda `mobile:first-sync:completed` dentro del
-namespace de esa cuenta, por lo que los siguientes arranques pintan cache y
-revalidan en silencio. Una cuenta con cero chats tambien puede completar. Logout
-o cambio de cuenta limpia la marca junto con sus snapshots.
+bootstrap completado, Android muestra progreso solo para cuenta, primera pagina
+de conversaciones y copia local. Pide el inbox primero y deja
+configuracion/directorio a sus cargas de fondo normales. Si esa pagina sufre
+timeout, termina como arranque degradado, abre el producto y reintenta por
+SSE/polling; no queda encerrado en una etapa satelite.
 
-Este bootstrap prepara el directorio y el indice reciente de conversaciones;
-no descarga todos los mensajes de todos los hilos. El historial detallado se
-pagina al abrir cada chat, como exige el limite de almacenamiento y privacidad.
+iOS nunca cubre el shell con un overlay de bootstrap: mantiene navegacion,
+buscador y chrome montados desde el primer frame. Pinta cualquier snapshot de
+inmediato o conserva un vacio silencioso mientras inbox y directorio cargan en
+paralelo. Numeros, labels, integraciones, flags y etiquetas llegan despues en una
+tarea satelite cuyo snapshot puro solo puede aplicarse si siguen coincidiendo
+task ID, namespace, generacion y sesion, y si la tarea no fue cancelada.
+
+Al completar o entrar en modo degradado, Android guarda
+`mobile:first-sync:completed` dentro del namespace de esa cuenta, por lo que los
+siguientes arranques pintan cache y revalidan en silencio. Una cuenta con cero
+chats tambien puede completar. iOS guarda la misma marca cuando obtiene estado
+primario utilizable de inbox o directorio. Logout o cambio de cuenta limpia la
+marca junto con sus snapshots.
+
+Android prepara el indice reciente de conversaciones; iOS puede precalentar
+tambien el directorio. Ninguno descarga todos los mensajes de todos los hilos.
+El historial detallado se pagina al abrir cada chat, como exige el limite de
+almacenamiento y privacidad.
 Las listas nunca esperan consultas externas de fotos: devuelven inmediatamente
 el avatar ya cacheado y el backend encola faltantes en tandas pequeñas para un
 refresh posterior.
@@ -816,6 +848,63 @@ por WhatsApp API oficial o QR se manda como mensaje nativo de ubicación; por
 Messenger, Instagram o HighLevel se manda como texto con link de mapa cuando no
 exista soporte nativo verificado. iOS requiere
 `NSLocationWhenInUseUsageDescription` en `ios/app/Support/Info.plist`.
+
+En QR, YCloud y Meta Direct, mensaje, unread y SSE quedan confirmados antes de
+esperar la red push. QR y YCloud disparan la notificacion best-effort fuera de su
+ruta critica. Meta Direct inserta un job `push` en
+`chat_delivery_outbox` dentro de la misma transaccion que reclama el inbound y
+despierta al worker despues del commit; el ACK del relay no espera APNs, FCM ni
+Installer.
+
+Los requests locales a APNs, FCM y OAuth FCM tienen presupuesto end-to-end de
+8 s, incluida la lectura del response body; Web Push usa el mismo timeout.
+Installer central conserva su propio presupuesto end-to-end de 5 s en
+`licenseService`. Un token se invalida solo por razones permanentes explicitas
+del proveedor, no por cualquier `400`. Un fallo transitorio total o parcial deja
+el job pendiente y restringe el siguiente intento a los IDs exactos de
+suscripcion/device que fallaron. Cuando el evento ya conoce destinatarios,
+`push_subscriptions` y `mobile_push_devices` se filtran por `enabled + user_id`
+en SQL, no cargando todos los dispositivos de la cuenta en memoria. Un
+`apns_not_configured`/`fcm_not_configured` del broker tambien es transitorio: no
+se acepta como entrega. Si falla la comprobacion de contactos ocultos, la ruta
+durable reintenta; las llamadas best-effort conservan el fail-closed para no
+filtrar contenido sensible.
+
+Meta Direct encola `push` y `meta_enrichment` como trabajos independientes con
+unicidad `(job_kind, message_id)`, lease, heartbeat y backoff. Push y
+`meta_enrichment` tienen lanes/locks separados, por lo que Graph, descarga o
+Storage nunca bloquean la notificacion. Push admite hasta 20 intentos con
+backoff acotado a 5 min. `meta_enrichment` usa hasta 2,016 intentos,
+aproximadamente siete dias con ese backoff, para tolerar caidas largas de Graph
+o Storage. Al agotar su politica queda `failed`/dead-letter con `failed_at`; un
+replay real del mismo webhook puede revivir solo el enrichment con payload nuevo,
+nunca una push terminal. El enriquecimiento actualiza la misma fila y publica
+`isNew=false` para que el cliente reconcilie el adjunto sin otra burbuja ni otro
+no-leido; si la media ya esta hidratada termina como no-op. Un fallo reintenta el
+job, no el relay ni el unread.
+
+La ejecucion es at-least-once, no exactly-once: un crash despues de que el
+proveedor acepta la entrega y antes de completar el job puede repetir una
+notificacion. `messageId`, tag y collapse permanecen estables para reducir
+duplicados donde el proveedor o sistema operativo lo soporte. Al completar o
+entrar en dead-letter, `payload_json` se reemplaza inmediatamente por `{}`; solo
+queda metadata operativa durante 7 dias para `completed` y 30 dias para `failed`.
+Los jobs pending/reintentables siguen durables.
+
+La limpieza terminal no corre en cada tick de entrega: se intenta como maximo
+una vez por hora y procesa lotes de hasta 500 filas por categoria. Asi el scrub
+defensivo de payloads legacy y la retencion no convierten la tabla historica en
+un scan repetido cada 10 s.
+
+Las lanes de `push` y limpieza forman parte de la infraestructura del sistema y
+permanecen siempre activas,
+incluso si Meta Direct se desconecta despues de confirmar el inbound. Solo la
+lane `meta_enrichment` se registra como cron de integracion y se enciende mientras
+Meta Direct siga conectado localmente; no depende de que sea el provider de envio
+activo. Los avatares inbound tambien se rehospedan despues de la primera
+persistencia. Citas, automatizaciones y agente corren post-ACK como best-effort
+registrado en deploy drain; un crash abrupto aun puede cortar esos side effects
+sin deshacer el mensaje confirmado.
 
 En Android hay dos contratos de push y no se deben mezclar:
 

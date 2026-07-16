@@ -132,6 +132,15 @@ Las cargas y escrituras llevan generación de sesión y secuencia de carga: un
 resultado viejo no puede hidratar, cachear ni ejecutar rollback sobre la cuenta
 que acaba de entrar.
 
+El arranque de Chats nunca espera ese contexto completo ni tapa el shell con un
+loader. Si existe snapshot se pinta de inmediato; en frio, inbox y directorio se
+solapan mientras navegacion, buscador y chrome permanecen visibles. Numeros,
+labels, integraciones, flags y etiquetas llegan despues en una tarea satelite:
+primero construye un snapshot puro y solo lo aplica si siguen coincidiendo task
+ID, namespace, generacion y sesion, y si la tarea no fue cancelada. El registro
+push arranca en paralelo con `AppConfigStore` y se repite unicamente si al
+terminar cambio el filtro de calendarios.
+
 ## Realtime (doc 11)
 
 - `ChatEventsClient`: SSE por `URLSession.bytes` a `/api/chat-events/stream`
@@ -142,8 +151,16 @@ que acaba de entrar.
   usa el mismo puente aunque el hilo cubra la bandeja en iPhone. Los refresh
   vivos consultan `/contacts/chats` con `warmProfilePictures=false`; el
   calentamiento remoto de avatares queda para arranque frío/paginación.
-- `PollingClock`: bandeja 12s, hilo abierto 4s, receipts 12s; pausa en
-  background.
+- `PollingClock`: la bandeja usa un solo ticker de 25s con SSE desconectado y
+  120s con SSE sano. El hilo no hace poll conectado: usa fallback de 25s durante
+  la caida. La primera conexion espera el GET inicial; si ya termino bien no lo
+  duplica y, si fallo, reconcilia una vez. Toda reconexion real cierra el hueco
+  sin replay con otra reconciliacion unica.
+- SSE, push y ticks admiten como maximo dos GET inmediatos: primario/actual y un
+  follow-up. Un nudge durante el follow-up agenda un solo trailing a 500 ms; los
+  nudges del cooldown se coalescen. Background cancela trailing y tickers antes
+  de cortar SSE; teardown o cambio de sesion invalidan ademas tareas y
+  generaciones pendientes. No existe el polling fijo anterior de 12s/4s.
 - `PresenceReporter`: `POST /api/chat-events/viewing {contactId, foreground}`
   cada 20s mientras un hilo está visible (traga 403 silenciosamente).
 - `PaymentEventsClient`: `connected`, `payment_changed` y
