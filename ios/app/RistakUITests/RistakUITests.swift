@@ -93,6 +93,60 @@ final class RistakUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testPersonalAssistantSendsAndRendersReplyWithoutNetwork() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ristak-ui-testing",
+            "-AppleLanguages", "(es)",
+            "-AppleLocale", "es_MX"
+        ]
+        app.launchEnvironment = [
+            "RISTAK_UI_TEST_MODE": "personal-assistant-chat",
+            "RISTAK_NETWORK_ACCESS": "disabled"
+        ]
+        launchedApp = app
+        app.launch()
+
+        XCTAssertTrue(
+            element(in: app, identifier: "personal-assistant-harness-root")
+                .waitForExistence(timeout: 8)
+        )
+        let input = element(in: app, identifier: "ristak-personal-assistant-input")
+        XCTAssertTrue(input.waitForExistence(timeout: 3))
+        input.tap()
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForExistence(timeout: 3),
+            "El campo del asistente debe obtener foco antes de escribir."
+        )
+        input.typeText("Revisa mi agenda")
+
+        let send = element(in: app, identifier: "ristak-personal-assistant-send")
+        XCTAssertTrue(send.isHittable)
+        send.tap()
+
+        let reply = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@",
+            "Ya estoy conectado al mismo asistente"
+        )).firstMatch
+        XCTAssertTrue(
+            reply.waitForExistence(timeout: 4),
+            "El chat nativo debe presentar la respuesta del mismo contrato del asistente."
+        )
+        XCTAssertTrue(
+            element(in: app, identifier: "ristak-personal-assistant-option")
+                .waitForExistence(timeout: 2),
+            "Las opciones de continuación deben quedar accionables."
+        )
+        XCTAssertTrue(
+            element(in: app, identifier: "ristak-personal-assistant-source").exists
+        )
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Chat nativo del Asistente Personal AI respondiendo"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testLaunchPerformanceWithFiveThousandChats() {
         measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)]) {
             let app = configuredSyntheticApp(chatCount: 5_000)

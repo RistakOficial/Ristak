@@ -395,12 +395,16 @@ Personal AI` abre un chat nativo real conectado a `/api/ai-agent/chat` con el
 mismo proveedor/configuracion del asistente de escritorio. Ese chat usa el layout
 de conversacion nativa, pero no muestra acciones de contacto: no agenda citas,
 no registra pagos y no permite acciones de WhatsApp; solo conversa con el
-asistente personal. El composer del asistente mantiene `+` para enviar fotos y
-documentos como attachments al agente; los videos se bloquean en movil hasta que
-la app genere miniatura/contenido visual legible para el backend. El microfono
-graba nota de voz, la transcribe con `/api/ai-agent/transcribe` y manda el texto
-resultante al mismo chat. Las burbujas del asistente nativo deben renderizar el
-formato basico que ya usa el asistente de escritorio: negritas, italicas,
+asistente personal. En `mobile/`, el composer del asistente mantiene `+` para
+enviar fotos y documentos como attachments al agente; los videos se bloquean en
+movil hasta que la app genere miniatura/contenido visual legible para el backend.
+En `ios/app`, la fila ya no abre un placeholder: conserva hasta 24 mensajes de
+contexto por request, mantiene la categoria en las continuaciones, presenta
+fuentes y opciones aclaratorias accionables, y explica dentro del chat si OpenAI
+falta o requiere reconexion. En ambos clientes el microfono graba nota de voz, la
+transcribe con `/api/ai-agent/transcribe` y manda el texto resultante al mismo
+chat. Las burbujas del asistente nativo deben renderizar el formato basico que ya
+usa el asistente de escritorio: negritas, italicas,
 tachado, codigo inline, links y listas no deben mostrar delimitadores crudos como
 `**`, `_`, `~` o marcadores Markdown; la UI interpreta el formato y conserva una
 burbuja legible.

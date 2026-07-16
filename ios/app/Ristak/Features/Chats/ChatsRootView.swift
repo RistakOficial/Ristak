@@ -207,7 +207,7 @@ struct ChatsRootView: View {
                 .id(contactID)
             case .assistant:
                 NavigationStack {
-                    AssistantComingSoonScreen()
+                    PersonalAssistantChatScreen()
                 }
             case nil:
                 RistakEmptyState(
@@ -246,7 +246,7 @@ struct ChatsRootView: View {
                 }
             )
         case .assistant:
-            AssistantComingSoonScreen()
+            PersonalAssistantChatScreen()
         }
     }
 }
