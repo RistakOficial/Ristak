@@ -44,6 +44,14 @@ export type TrackingAnalyticsFacetDimension =
   | 'topVisitors'
   | 'adsHierarchy'
 
+export const TRACKING_ANALYTICS_VIEWPORT_DISTRIBUTION_DIMENSIONS: readonly TrackingAnalyticsFacetDimension[] = Object.freeze([
+  'sources',
+  'placements',
+  'devices',
+  'os',
+  'browsers'
+])
+
 export interface TrackingAnalyticsFacetInput {
   start: string
   end: string
@@ -143,6 +151,32 @@ export interface TrackingAnalyticsFacetResponse {
     revalidateAfter?: string
     maxStaleAgeMs?: number
   }
+}
+
+export const TRACKING_ANALYTICS_STALE_REVALIDATION_MIN_DELAY_MS = 30_000
+
+export function getTrackingAnalyticsStaleRevalidationDelayMs(
+  snapshot: TrackingAnalyticsSummary['snapshot'],
+  now = Date.now()
+) {
+  if (!snapshot?.stale) return null
+  const revalidateAt = Date.parse(snapshot.revalidateAfter || '')
+  return Number.isFinite(revalidateAt)
+    ? Math.max(TRACKING_ANALYTICS_STALE_REVALIDATION_MIN_DELAY_MS, revalidateAt - now)
+    : TRACKING_ANALYTICS_STALE_REVALIDATION_MIN_DELAY_MS
+}
+
+export function scheduleTrackingAnalyticsStaleRevalidation(
+  snapshot: TrackingAnalyticsSummary['snapshot'],
+  revalidate: () => void,
+  options: {
+    now?: number
+    setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof globalThis.setTimeout>
+  } = {}
+) {
+  const delayMs = getTrackingAnalyticsStaleRevalidationDelayMs(snapshot, options.now)
+  if (delayMs === null) return null
+  return (options.setTimer || globalThis.setTimeout)(revalidate, delayMs)
 }
 
 const TRACKING_ANALYTICS_CACHE_TTL_MS = 30_000

@@ -30,6 +30,8 @@ import {
   getTrackingAnalyticsFacet,
   getTrackingAnalyticsSummary,
   peekTrackingAnalyticsSummary,
+  scheduleTrackingAnalyticsStaleRevalidation,
+  TRACKING_ANALYTICS_VIEWPORT_DISTRIBUTION_DIMENSIONS as ANALYTICS_DISTRIBUTION_DIMENSIONS,
   type ContactsByDate,
   type ContactConversionListType,
   type ContactConversionsByDate,
@@ -589,15 +591,6 @@ const ANALYTICS_FILTER_CATEGORY_BY_FIELD: Record<string, string> = {
   os: 'os',
   placement: 'placements'
 }
-
-const ANALYTICS_DISTRIBUTION_DIMENSIONS: TrackingAnalyticsFacetDimension[] = [
-  'sources',
-  'placements',
-  'devices',
-  'os',
-  'browsers',
-  'topVisitors'
-]
 
 const trackingFacetToFilterData = (
   dimension: TrackingAnalyticsFacetDimension,
@@ -1365,6 +1358,7 @@ const Analytics: React.FC = () => {
   const analyticsFacetGenerationRef = React.useRef(0)
   const analyticsStatsGridRef = React.useRef<HTMLDivElement | null>(null)
   const [shouldLoadAnalyticsDistributions, setShouldLoadAnalyticsDistributions] = useState(false)
+  const [topVisitorsPanelVisible, setTopVisitorsPanelVisible] = useState(false)
   const availableFilterData = React.useMemo(
     () => ({ ...webFilterData, ...messageFilterData }),
     [messageFilterData, webFilterData]
@@ -1545,6 +1539,7 @@ const Analytics: React.FC = () => {
     setWebFilterData({})
     setAnalyticsDistributionFacets({})
     setShouldLoadAnalyticsDistributions(false)
+    setTopVisitorsPanelVisible(false)
   }, [analyticsSummaryScopeKey])
 
   useEffect(() => () => {
@@ -1617,6 +1612,7 @@ const Analytics: React.FC = () => {
   // El navegador recibe agregados acotados; nunca el historial crudo de tracking.
   useEffect(() => {
     const controller = new AbortController()
+    let staleRevalidationTimer: ReturnType<typeof setTimeout> | null = null
     const requestId = ++analyticsRequestIdRef.current
     const cachedSummary = hasWebAnalyticsAccess
       ? peekTrackingAnalyticsSummary(analyticsSummaryInput)
@@ -1713,6 +1709,29 @@ const Analytics: React.FC = () => {
       }
     }
 
+    const scheduleStaleRevalidation = (summary: TrackingAnalyticsSummary) => {
+      if (!summary.snapshot?.stale || staleRevalidationTimer) return
+
+      // El primer request ya hace que backend reconstruya el snapshot stale en
+      // segundo plano. Esperar una ventana tranquila evita abrir de inmediato
+      // un segundo POST que compita con mensajes, tabla y facetas por viewport.
+      staleRevalidationTimer = scheduleTrackingAnalyticsStaleRevalidation(summary.snapshot, () => {
+        staleRevalidationTimer = null
+        void getTrackingAnalyticsSummary(analyticsSummaryInput, {
+          signal: controller.signal,
+          forceRefresh: true,
+          waitForFresh: true
+        })
+          .then(freshSummary => {
+            if (isCurrentRequest()) applyTrackingSummary(freshSummary)
+          })
+          .catch(error => {
+            if (!isCurrentRequest()) return
+            console.warn('No se pudo revalidar el snapshot de Analíticas:', error)
+          })
+      })
+    }
+
     // Stale-while-revalidate real: el snapshot tiene que pintarse antes de
     // arrancar la revalidación. Leerlo únicamente para ocultar el loader dejaba
     // visibles las métricas del rango anterior bajo las fechas nuevas.
@@ -1746,6 +1765,7 @@ const Analytics: React.FC = () => {
 
         if (summary) {
           applyTrackingSummary(summary)
+          scheduleStaleRevalidation(summary)
           void trackingConfigPromise.then(trackingConfig => {
             if (!trackingConfig || !isCurrentRequest()) return
             const current = summary.metrics.current
@@ -1756,26 +1776,6 @@ const Analytics: React.FC = () => {
               current.uniqueVisitors > 0
             ))
           })
-          const revalidateAfter = Date.parse(summary.snapshot?.revalidateAfter || '')
-          const shouldRevalidateSnapshot = Boolean(
-            summary.snapshot?.stale && (
-              !Number.isFinite(revalidateAfter) || revalidateAfter <= Date.now()
-            )
-          )
-          if (shouldRevalidateSnapshot) {
-            setLoading(false)
-            setHasLoadedAnalytics(true)
-            // El servidor devuelve de inmediato el ultimo snapshot aunque el
-            // stream de tracking este escribiendo sin parar. Esta segunda
-            // lectura comparte la revalidacion en curso y repinta al terminar.
-            const freshSummary = await getTrackingAnalyticsSummary(analyticsSummaryInput, {
-              signal: controller.signal,
-              forceRefresh: true,
-              waitForFresh: true
-            })
-            if (!isCurrentRequest()) return
-            applyTrackingSummary(freshSummary)
-          }
         } else if (!hasWebAnalyticsAccess) {
           const fallbackSeries = completeConversionTrendPeriods(
             aggregateContactConversionsByPeriod(fallbackConversions, viewType),
@@ -1828,6 +1828,7 @@ const Analytics: React.FC = () => {
     void fetchAnalytics()
 
     return () => {
+      if (staleRevalidationTimer) clearTimeout(staleRevalidationTimer)
       controller.abort()
     }
   }, [
@@ -2037,6 +2038,72 @@ const Analytics: React.FC = () => {
     shouldLoadAnalyticsDistributions,
     showToast
   ])
+
+  // Top Visitantes es la faceta de mayor cardinalidad. Se calcula únicamente
+  // cuando su propia tarjeta se acerca al viewport; no junto con los cinco
+  // desgloses secundarios del grid.
+  useEffect(() => {
+    if (
+      !topVisitorsPanelVisible
+      || loadedAnalyticsCoreScopeKey !== analyticsSummaryScopeKey
+      || !hasWebAnalyticsAccess
+    ) return
+
+    const controller = new AbortController()
+    const generation = analyticsFacetGenerationRef.current
+
+    void getTrackingAnalyticsFacet({
+      start: analyticsSummaryInput.start,
+      end: analyticsSummaryInput.end,
+      filters: analyticsSummaryInput.filters,
+      dimension: 'topVisitors'
+    }, { signal: controller.signal })
+      .then(response => {
+        if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+        setAnalyticsDistributionFacets(existing => ({
+          ...existing,
+          topVisitors: response.facet.items as TrackingAnalyticsFacetItem[]
+        }))
+      })
+      .catch(error => {
+        if (controller.signal.aborted || generation !== analyticsFacetGenerationRef.current) return
+        console.error('No se pudo cargar la distribución topVisitors:', error)
+        showToast(
+          'error',
+          'No se cargaron los visitantes principales',
+          'Las métricas principales siguen disponibles; cambia de rango para reintentar.'
+        )
+      })
+
+    return () => controller.abort()
+  }, [
+    analyticsSummaryInput,
+    analyticsSummaryScopeKey,
+    hasWebAnalyticsAccess,
+    loadedAnalyticsCoreScopeKey,
+    showToast,
+    topVisitorsPanelVisible
+  ])
+
+  useEffect(() => {
+    if (!showWebAnalyticsBlocks || topVisitorsPanelVisible) return
+    const panel = document.querySelector<HTMLElement>('[data-analytics-top-visitors]')
+    if (!panel) return
+
+    if (typeof IntersectionObserver === 'undefined') {
+      setTopVisitorsPanelVisible(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      setTopVisitorsPanelVisible(true)
+      observer.disconnect()
+    }, { rootMargin: '160px 0px' })
+
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [showWebAnalyticsBlocks, topVisitorsPanelVisible])
 
   const metricSections: Array<{ title: string; metrics: typeof webMetrics; loading: boolean }> = []
   if (showWebAnalyticsBlocks) {
@@ -2985,7 +3052,7 @@ const Analytics: React.FC = () => {
           </Card>
 
           {/* Top Visitors */}
-          <Card variant="glass">
+          <Card variant="glass" data-analytics-top-visitors>
             <div className="p-4 border-b border-[var(--color-border)]">
               <h3 className="text-base font-semibold">Top Visitantes</h3>
             </div>

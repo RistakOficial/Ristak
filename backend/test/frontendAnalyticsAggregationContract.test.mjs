@@ -22,10 +22,15 @@ test('Analíticas consume agregados y deja las filas crudas a la búsqueda pagin
   )
   assert.match(initialSummaryRequest, /getTrackingAnalyticsSummary\(analyticsSummaryInput, \{[\s\S]*signal: controller\.signal/)
   assert.doesNotMatch(initialSummaryRequest, /forceRefresh/)
+  assert.doesNotMatch(initialSummaryRequest, /waitForFresh/)
   assert.match(page, /includeFacets: false/)
   assert.match(page, /ANALYTICS_DISTRIBUTION_DIMENSIONS[\s\S]*for \(const dimension of ANALYTICS_DISTRIBUTION_DIMENSIONS\)/)
+  assert.match(page, /TRACKING_ANALYTICS_VIEWPORT_DISTRIBUTION_DIMENSIONS as ANALYTICS_DISTRIBUTION_DIMENSIONS/)
   assert.match(page, /getTrackingAnalyticsFacet\([\s\S]*dimension/)
   assert.match(page, /IntersectionObserver/)
+  assert.match(page, /shouldLoadAnalyticsDistributions[\s\S]*rootMargin: '280px 0px'/)
+  assert.match(page, /topVisitorsPanelVisible[\s\S]*dimension: 'topVisitors'/)
+  assert.match(page, /data-analytics-top-visitors/)
   assert.match(page, /onCategoryIntent=\{loadWebFilterCategory\}/)
   assert.match(page, /const controller = new AbortController\(\)/)
   assert.match(page, /analyticsRequestIdRef\.current === requestId/)
@@ -58,6 +63,20 @@ test('Analíticas consume agregados y deja las filas crudas a la búsqueda pagin
   assert.match(page, /onSessionsChanged=\{handleTrackingSessionsChanged\}/)
   assert.match(page, /\{hasWebAnalyticsAccess && \(\s*<SessionsTable/)
   assert.doesNotMatch(page, /\{showWebAnalyticsBlocks && \(\s*<SessionsTable/)
+})
+
+test('Analíticas no abre una segunda lectura fresca mientras todavía carga la vista inicial', async () => {
+  const page = await repoFile('frontend/src/pages/Analytics/Analytics.tsx')
+  const scheduleStart = page.indexOf('const scheduleStaleRevalidation')
+  const scheduleEnd = page.indexOf('// Stale-while-revalidate real', scheduleStart)
+  const schedule = page.slice(scheduleStart, scheduleEnd)
+
+  assert.ok(scheduleStart >= 0 && scheduleEnd > scheduleStart)
+  assert.match(schedule, /staleRevalidationTimer = scheduleTrackingAnalyticsStaleRevalidation\(/)
+  assert.match(schedule, /forceRefresh: true,[\s\S]*waitForFresh: true/)
+  assert.doesNotMatch(schedule, /setLoading\(|setHasLoadedAnalytics\(/)
+  assert.equal((page.match(/waitForFresh: true/g) || []).length, 1)
+  assert.match(page, /if \(staleRevalidationTimer\) clearTimeout\(staleRevalidationTimer\)/)
 })
 
 test('editar o borrar tracking invalida el snapshot agregado del navegador', async () => {

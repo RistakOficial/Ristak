@@ -8,7 +8,7 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(testDir, '..', '..')
 const repoFile = path => readFile(join(repoRoot, path), 'utf8')
 
-test('Analíticas pinta el snapshot fresco y no fuerza otra consulta del mismo rango', async () => {
+test('Analíticas pinta el snapshot fresco y difiere una sola revalidación stale', async () => {
   const source = await repoFile('frontend/src/pages/Analytics/Analytics.tsx')
   const cachedApplyIndex = source.indexOf('if (cachedSummary) {')
   const fetchIndex = source.indexOf('const fetchAnalytics = async () =>', cachedApplyIndex)
@@ -21,6 +21,9 @@ test('Analíticas pinta el snapshot fresco y no fuerza otra consulta del mismo r
   assert.ok(fetchIndex > cachedApplyIndex)
   assert.match(source.slice(cachedApplyIndex, fetchIndex), /applyTrackingSummary\(cachedSummary(?:,\s*null)?\)/)
   assert.doesNotMatch(initialSummaryRequest, /forceRefresh/)
+  assert.doesNotMatch(initialSummaryRequest, /waitForFresh/)
+  assert.match(source, /scheduleTrackingAnalyticsStaleRevalidation\(summary\.snapshot/)
+  assert.equal((source.match(/waitForFresh: true/g) || []).length, 1)
 })
 
 test('Dashboard cancela y descarta datasets extendidos de una ventana anterior', async () => {

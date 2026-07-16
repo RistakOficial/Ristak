@@ -429,10 +429,14 @@ escritura de tracking incrementa su revision sin crear una llave nueva: durante
 reentrada recibe el ultimo snapshot inmediatamente mientras una sola promesa
 compartida recalcula en background. El frontend no fuerza red cuando el snapshot
 sigue fresco, pinta primero cualquier snapshot util y no mantiene la pagina tras
-el loader mientras revalida. El resumen, la configuracion de tracking y la tabla
-de sesiones son cargas independientes: una configuracion lenta o un error de
-metricas no desmonta la tabla. Toda lectura tiene cancelacion y presupuesto de 20
-segundos con error reintentable; nunca deja una promesa ni un loader pendientes.
+el loader mientras revalida. Si recibe un snapshot `stale`, agenda una unica
+lectura `waitForFresh` despues de `revalidateAfter` y nunca antes de 30 segundos;
+no abre inmediatamente un segundo resumen mientras mensajes y tablas siguen
+cargando. El timer se cancela al cambiar de rango o salir de la pagina. El
+resumen, la configuracion de tracking y la tabla de sesiones son cargas
+independientes: una configuracion lenta o un error de metricas no desmonta la
+tabla. Toda lectura tiene cancelacion y presupuesto de 20 segundos con error
+reintentable; nunca deja una promesa ni un loader pendientes.
 En backend el core tiene dos carriles logicos —sesiones y conversiones— y un
 semaforo global permite como maximo dos consultas pesadas activas entre todos los
 builds. Asi el resumen inicial no espera facetas, no suma seis tiempos en serie
@@ -460,8 +464,10 @@ de 671.3 MiB leidos + 517.8 MiB escritos a 271.0 + 271.5 MiB, sin cambiar una
 metrica (`EXCEPT` dio cero filas en ambos sentidos). Node aumento solo 6.4 MiB de
 RSS y 1.8 MiB de heap en el pico; no materializa el millon de eventos. El
 frontend pide filtros por hover, click, foco o teclado, conserva un cache acotado
-por cuenta/rango y carga las seis tarjetas inferiores de forma secuencial cuando
-entran al viewport.
+por cuenta/rango y carga de forma secuencial las cinco dimensiones normales
+cuando su grid entra al viewport. `topVisitors`, la faceta de mayor cardinalidad,
+queda fuera de ese lote y se solicita solo cuando su propia tarjeta se acerca al
+viewport.
 
 La tabla de visitantes lee exclusivamente `tracking_visitor_latest` con
 pagina de 50, cursor estable, filtros y busqueda server-side. Nunca vuelve a

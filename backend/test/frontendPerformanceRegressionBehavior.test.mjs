@@ -286,6 +286,63 @@ async function importDashboardServiceModule() {
   return importTypeScriptSource(source, 'dashboardService.behavior.ts')
 }
 
+test('el plan inicial de Analíticas difiere la frescura stale y excluye topVisitors del lote por viewport', async () => {
+  const previousClient = globalThis.__ristakAnalyticsTestApiClient
+  const previousInvalidators = globalThis.__ristakAnalyticsTestInvalidators
+  globalThis.__ristakAnalyticsTestApiClient = {
+    post: () => Promise.reject(new Error('POST inesperado durante el plan inicial')),
+    get: () => Promise.reject(new Error('GET inesperado durante el plan inicial'))
+  }
+  globalThis.__ristakAnalyticsTestInvalidators = []
+
+  try {
+    const {
+      TRACKING_ANALYTICS_VIEWPORT_DISTRIBUTION_DIMENSIONS,
+      scheduleTrackingAnalyticsStaleRevalidation
+    } = await importAnalyticsServiceModule()
+    assert.deepEqual(
+      [...TRACKING_ANALYTICS_VIEWPORT_DISTRIBUTION_DIMENSIONS],
+      ['sources', 'placements', 'devices', 'os', 'browsers']
+    )
+    assert.equal(TRACKING_ANALYTICS_VIEWPORT_DISTRIBUTION_DIMENSIONS.includes('topVisitors'), false)
+
+    const now = Date.parse('2026-07-16T12:00:00.000Z')
+    const scheduled = []
+    let refreshes = 0
+    const timer = scheduleTrackingAnalyticsStaleRevalidation(
+      { stale: true, revalidateAfter: '2026-07-16T11:59:00.000Z' },
+      () => { refreshes += 1 },
+      {
+        now,
+        setTimer: (callback, delayMs) => {
+          scheduled.push({ callback, delayMs })
+          return 41
+        }
+      }
+    )
+
+    assert.equal(timer, 41)
+    assert.equal(refreshes, 0, 'la revalidación no debe arrancar dentro de la carga inicial')
+    assert.equal(scheduled.length, 1)
+    assert.equal(scheduled[0].delayMs, 30_000)
+    scheduled[0].callback()
+    assert.equal(refreshes, 1)
+
+    const freshTimer = scheduleTrackingAnalyticsStaleRevalidation(
+      { stale: false, revalidateAfter: '2026-07-16T12:00:00.000Z' },
+      () => { refreshes += 1 },
+      { now, setTimer: () => 42 }
+    )
+    assert.equal(freshTimer, null)
+    assert.equal(refreshes, 1)
+  } finally {
+    if (previousClient === undefined) delete globalThis.__ristakAnalyticsTestApiClient
+    else globalThis.__ristakAnalyticsTestApiClient = previousClient
+    if (previousInvalidators === undefined) delete globalThis.__ristakAnalyticsTestInvalidators
+    else globalThis.__ristakAnalyticsTestInvalidators = previousInvalidators
+  }
+})
+
 test('el snapshot especializado de Analíticas declara que sólo depende de tracking', async () => {
   const previousClient = globalThis.__ristakAnalyticsTestApiClient
   const previousInvalidators = globalThis.__ristakAnalyticsTestInvalidators
