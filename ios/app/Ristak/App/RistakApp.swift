@@ -33,7 +33,10 @@ struct RistakApp: App {
             Group {
                 #if DEBUG
                 if let testConfiguration = RistakUITestConfiguration.current {
-                    if testConfiguration.showsRealInboxPresentation {
+                    if testConfiguration.showsPersonalAssistantChat {
+                        RistakPersonalAssistantChatUITestHarnessView()
+                            .reportsRistakUIReady()
+                    } else if testConfiguration.showsRealInboxPresentation {
                         RistakInboxPresentationUITestHarnessView()
                             .reportsRistakUIReady()
                     } else {

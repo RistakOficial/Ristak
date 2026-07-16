@@ -6,6 +6,7 @@ import SwiftUI
 struct RistakUITestConfiguration: Sendable {
     let chatCount: Int
     let showsRealInboxPresentation: Bool
+    let showsPersonalAssistantChat: Bool
 
     static var current: RistakUITestConfiguration? {
         let process = ProcessInfo.processInfo
@@ -13,15 +14,32 @@ struct RistakUITestConfiguration: Sendable {
             return nil
         }
         let mode = process.environment["RISTAK_UI_TEST_MODE"]
-        guard mode == "synthetic" || mode == "inbox-presentation" else { return nil }
+        guard ["synthetic", "inbox-presentation", "personal-assistant-chat"].contains(mode) else {
+            return nil
+        }
 
         let requestedCount = Int(
             process.environment["RISTAK_SYNTHETIC_CHAT_COUNT"] ?? "5000"
         ) ?? 5_000
         return RistakUITestConfiguration(
             chatCount: min(max(requestedCount, 100), 50_000),
-            showsRealInboxPresentation: mode == "inbox-presentation"
+            showsRealInboxPresentation: mode == "inbox-presentation",
+            showsPersonalAssistantChat: mode == "personal-assistant-chat"
         )
+    }
+}
+
+/// Monta el chat real del asistente con un cliente determinista y sin red. Así
+/// XCUITest valida el flujo completo de escribir, enviar y continuar opciones.
+@MainActor
+struct RistakPersonalAssistantChatUITestHarnessView: View {
+    @State private var viewModel = PersonalAssistantChatViewModel(client: .uiTest)
+
+    var body: some View {
+        NavigationStack {
+            PersonalAssistantChatScreen(viewModel: viewModel)
+        }
+        .accessibilityIdentifier("personal-assistant-harness-root")
     }
 }
 

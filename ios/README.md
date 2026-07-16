@@ -118,6 +118,13 @@ solo en capa flotante; copy en español.
   primera conexión sin snapshot; si los contactos ya están listos pero la
   bandeja sufre timeout, abre en modo degradado y la reintenta silenciosamente
   en vez de bloquear toda la app en 78 %. SSE + polling 20s, badge de no leídos.
+  La fila fija **Asistente Personal AI** abre una conversación nativa real —no
+  un placeholder— sobre `/api/ai-agent/chat`, usando la misma configuración de
+  OpenAI y contexto de negocio que escritorio. Permite texto y notas de voz
+  transcritas, conserva las últimas 24 intervenciones y la categoría entre
+  continuaciones, interpreta Markdown, muestra fuentes y opciones aclaratorias,
+  permite iniciar una conversación limpia y guía al usuario si OpenAI falta o
+  requiere reconexión. No expone acciones de contacto, WhatsApp, cita o cobro.
   Conversación: todos los tipos de mensaje (texto, foto, video, nota de voz,
   documento, ubicación, email desplegable, comentarios FB/IG, sistema), texto
   con formato WhatsApp en globos y previews (`*negrita*`, `_italica_`,

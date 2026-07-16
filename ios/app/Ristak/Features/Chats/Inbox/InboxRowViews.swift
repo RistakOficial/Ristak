@@ -312,18 +312,3 @@ struct ChatSelectionPanel: View {
         .buttonStyle(.plain)
     }
 }
-
-// MARK: - Placeholder del asistente
-
-/// Detalle del chat del Asistente Personal AI (módulo aparte — placeholder).
-struct AssistantComingSoonScreen: View {
-    var body: some View {
-        RistakEmptyState(
-            icon: "sparkles",
-            title: "Próximamente",
-            message: "El Asistente Personal AI estará disponible aquí muy pronto."
-        )
-        .navigationTitle("Asistente Personal AI")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}

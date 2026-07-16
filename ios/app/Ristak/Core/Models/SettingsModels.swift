@@ -519,12 +519,28 @@ struct AIAgentChatMessagePayload: Encodable, Sendable {
     /// `'user' | 'assistant'`.
     var role: String
     var content: String
+    var selectedClarificationOption: AIAgentSelectedClarificationChoicePayload?
 
-    init(id: String? = nil, role: String, content: String) {
+    init(
+        id: String? = nil,
+        role: String,
+        content: String,
+        selectedClarificationOption: AIAgentSelectedClarificationChoicePayload? = nil
+    ) {
         self.id = id
         self.role = role
         self.content = content
+        self.selectedClarificationOption = selectedClarificationOption
     }
+}
+
+/// Opción tocada por el usuario en una respuesta aclaratoria. El backend usa
+/// este metadato para conservar la intención exacta además del label visible.
+struct AIAgentSelectedClarificationChoicePayload: Encodable, Sendable, Equatable {
+    var label: String
+    var value: String
+    var description: String?
+    var assistantMessageId: String?
 }
 
 /// Contexto de vista que acompaña la pregunta (RN `AIAgentViewContext`).
