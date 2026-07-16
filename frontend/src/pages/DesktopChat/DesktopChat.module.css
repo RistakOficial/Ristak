@@ -4135,35 +4135,6 @@
   box-shadow: var(--ristak-focus-ring);
 }
 
-.scheduleDateControl {
-  position: relative;
-  display: grid;
-  align-items: center;
-  height: 40px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-}
-
-.scheduleDateControl:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--ristak-focus-ring);
-}
-
-.scheduleDateText {
-  padding: 0 11px;
-  color: var(--text);
-  font-size: var(--font-size-sm);
-}
-
-.scheduleDateNativeInput {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 .scheduleTimeRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;

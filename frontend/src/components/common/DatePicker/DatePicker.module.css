@@ -1,0 +1,196 @@
+.container {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  outline: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.trigger:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.trigger:focus-visible,
+.trigger.open {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+.value,
+.placeholder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.value {
+  color: var(--text);
+}
+
+.placeholder,
+.icon {
+  color: var(--text-mute);
+}
+
+.icon {
+  flex: 0 0 auto;
+  margin-left: 8px;
+}
+
+.panel {
+  position: fixed;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-solid, var(--surface));
+  box-shadow: var(--shadow-pop);
+  animation: datePickerEnter var(--transition-fast) ease-out;
+}
+
+.header {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.monthTitle {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-align: center;
+}
+
+.navButton,
+.dayButton {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.navButton {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-ctl);
+}
+
+.navButton:hover {
+  background: var(--surface-hover);
+}
+
+.navButton:focus-visible,
+.dayButton:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--ristak-focus-ring);
+}
+
+.weekdays,
+.days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.weekdays {
+  margin-bottom: 4px;
+}
+
+.weekdays span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.days {
+  gap: 2px;
+}
+
+.dayButton {
+  min-width: 0;
+  aspect-ratio: 1;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+
+.dayButton:hover:not(:disabled):not(.selected) {
+  background: var(--surface-hover);
+}
+
+.outsideMonth {
+  color: var(--text-mute);
+}
+
+.today:not(.selected) {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.selected,
+.selected:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+.dayButton:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+@keyframes datePickerEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

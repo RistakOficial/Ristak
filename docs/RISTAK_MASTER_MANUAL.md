@@ -2291,6 +2291,15 @@ a una API ya indisponible. SMS usa `provider='highlevel'` con
 `channel='sms_qr'`; Messenger, Instagram y correo no se programan desde la app
 nativa hasta tener scheduler real para esos canales.
 
+En `/chat` desktop, el campo `Fecha` del modal para programar o editar un mensaje
+usa el `<DatePicker>` común y abre un calendario propio de Ristak al hacer clic en
+cualquier parte del control. El panel se portalea con la capa de popover del
+modal para no quedar recortado o detrás del overlay y no depende de
+`input.showPicker()` ni del selector nativo del navegador. Las fechas anteriores
+al día de negocio actual quedan deshabilitadas. La fecha seleccionada sigue
+siendo una fecha de negocio `YYYY-MM-DD` y la hora se convierte a UTC con la zona
+horaria de la cuenta antes de guardarse.
+
 La sincronizacion historica de mensajeria es exhaustiva dentro de lo que cada
 proveedor realmente expone y siempre es idempotente. Al vincular WhatsApp QR,
 Baileys debe arrancar con `syncFullHistory=true`, aceptar todos los tipos de
