@@ -431,6 +431,45 @@ Analytics usa dos contratos protegidos por `analytics` + `web_analytics`:
   conversion avanza por chunks de 500, con cursor, y corta a 10,000 candidatos
   por request para conservar latencia/memoria predecibles.
 
+El contrato web `includeFacets=false` se calcula exclusivamente desde
+`tracking_analytics_range_delta` / `tracking_analytics_presence` (proyeccion 113)
+y `tracking_conversion_daily_rollup` (proyeccion 116). Esa lectura nunca cae de
+regreso a scans de `sessions`, `contacts`, `payments` o `appointments`: si cualquiera de
+las dos proyecciones todavia no converge para la zona horaria de la cuenta,
+responde `503 tracking_analytics_projection_warming` o
+`503 tracking_conversion_projection_warming`, con `Retry-After: 2`. La lectura no
+agenda backfills; los workers y el mantenimiento existentes son quienes calientan
+las proyecciones. El frontend reintenta solamente esos dos codigos, como maximo
+tres intentos, respetando `Retry-After` con espera cancelable y tope de diez
+segundos. Nunca reintenta automaticamente `tracking_analytics_busy` ni
+`tracking_analytics_deadline`.
+`allowStale=false` obliga a reconstruir de inmediato un snapshot stale y una
+revision cruzada o una cola de proyeccion pendiente conserva la consistencia
+`moving-window` hasta que un build nazca y termine sobre la misma revision.
+El contrato `includeFacets=true` sigue usando el agregador legacy por
+compatibilidad y es deuda explicita: no debe anunciarse como raw-free.
+La generacion 4 de la proyeccion 113 separa `traffic_source` normalizado para
+Origin de `source_filter_value`, que conserva la expresion historica de filtros
+y facetas (`newsletter`, `fb` y demas aliases). Tambien representa por separado
+`contact_id IS NULL` y el raro `contact_id = ''`: el primero no suma contactos
+identificados y el segundo cuenta una vez, igual que el contrato legacy. La
+misma regla conserva `session_id IS NULL` frente a `session_id = ''` para el
+conteo de sesiones unicas. La migracion `120*` publica un fence generacional
+antes del rebuild: PostgreSQL toma el mismo advisory lock global de los workers,
+espera cualquier lote v3 en curso, renombra la fila durable a
+`tracking_analytics_projection_state_v4` y deja en el nombre viejo una vista
+vacia. SQLite hace el mismo corte dentro de su migracion atomica. Asi un binario
+v3 que siga vivo durante el rolling deploy obtiene cero filas de estado y sale
+`unavailable` antes de su primer `DELETE`; no puede alternar resets con v4. La
+migracion no borra el read model. Solo el worker v4 conoce el nuevo state y hace
+un unico reset/rebuild reanudable bajo lock. Hasta que termina, el reader
+responde warming sin mezclar generaciones ni iniciar trabajo desde el request.
+El fast path global conserva hasta 400 periodos y los consulta en lotes de hasta
+900 parametros, por lo que no rebasa el limite clasico de SQLite ni recorta la
+serie. `tracking_analytics_range_delta` tiene un indice de cobertura orientado a
+`start_boundary + occurrence_date`; PostgreSQL lo instala con
+`CREATE INDEX CONCURRENTLY` aislado para no bloquear escrituras durante deploy.
+
 El resumen mantiene un snapshot SWR por rango, zona, agrupacion y filtros. Una
 escritura de tracking incrementa su revision sin crear una llave nueva: durante
 30 segundos se reutiliza el resultado fresco y, hasta cinco minutos, una
@@ -616,8 +655,10 @@ independientes y no forman parte de este fast path.
 
 `PhoneAnalytics` obtiene su primer paint desde
 `GET /api/dashboard/mobile-analytics-snapshot`: una sola peticion entrega KPIs,
-origen, funnel, la grafica financiera seleccionada y hasta 100 numeros WhatsApp
-con estado leido exclusivamente de la base local. El endpoint resuelve una vez
+origen, funnel y la grafica financiera seleccionada. El cliente actual manda
+`includePhoneBreakdown=0` para sacar el desglose por numero del camino critico;
+por compatibilidad, un bundle anterior que omita el flag conserva el payload
+historico con hasta 100 numeros WhatsApp. El endpoint resuelve una vez
 el rango en `account_timezone`, filtros ocultos, calendarios de atribucion y
 labels, y reutiliza las mismas funciones puras que los endpoints de Dashboard;
 no llama controladores entre si ni toca HighLevel, Meta, WhatsApp u otro
@@ -629,6 +670,20 @@ request propia. Peticiones concurrentes de la misma llave comparten single-fligh
 cada consumidor puede abandonar su espera y la consulta real se cancela solo
 cuando ya no queda ninguno. Cambiar scope, grafica u otra vista despues del primer
 paint usa solamente el endpoint focal necesario.
+
+El desglose `Origen por numero` se enriquece despues del primer render: web lo
+pide cuando el panel se acerca al viewport, Android despues de las interacciones
+iniciales e iOS al aparecer el panel Origen. Los tres clientes llaman
+`GET /api/dashboard/origin-distribution` con `includeWeb=0`,
+`includeWhatsapp=0`, `includeBreakdowns=0` e `includePhoneBreakdown=1`; la
+respuesta solo mezcla `whatsappNumbers` y nunca reemplaza trafico, leads, citas
+o conversiones ya visibles. Cada superficie cancela rangos anteriores y evita
+que una respuesta vieja publique sobre el periodo activo. La lectura usa
+exclusivamente `message_analytics_phone_range_delta` y metadata proyectada
+`118*`, respeta contactos ocultos y no consulta `whatsapp_api_messages`, no
+agenda backfills y no cae al historial crudo. Si la proyeccion aun calienta, el
+panel secundario conserva el ultimo dato util y reintenta en una recarga o rango
+posterior sin bloquear el resto de Analiticas.
 
 Contactos confia en los flags de cita/asistencia calculados por su endpoint
 paginado; no descarga anos de calendarios para pintar veinte filas. La busqueda

@@ -385,7 +385,8 @@ Contrato agregado y acotado para la pagina Analytics. Body:
   "start": "2026-05-01",
   "end": "2026-05-28",
   "groupBy": "day",
-  "filters": { "device_type": ["mobile"] }
+  "filters": { "device_type": ["mobile"] },
+  "includeFacets": false
 }
 ```
 
@@ -400,6 +401,45 @@ No incluye eventos crudos. `groupBy` acepta `day`, `month` o `year`; si el rango
 generaria mas de 400 puntos, el backend sube automaticamente la granularidad.
 Cada facet devuelve como maximo 25 opciones. Los filtros desconocidos o valores
 fuera de los limites se rechazan en vez de interpolarse en SQL.
+
+El contrato de apertura de la web manda `includeFacets=false`. Esa variante
+lee sesiones/visitantes desde el read model `113*` y conversiones desde `116*`;
+no vuelve a agregar `sessions`, `contacts`, `payments` ni `appointments`. Si
+alguna proyeccion todavia no esta disponible o no coincide con el timezone de la
+cuenta, responde `503` con
+`tracking_analytics_projection_warming` o
+`tracking_conversion_projection_warming` y `Retry-After: 2`. El navegador
+reintenta un maximo de tres intentos, respeta cancelacion y nunca reintenta por
+`busy` o `deadline`.
+
+La generacion 4 de `113*` conserva por separado la categoria normalizada de
+fuente (`traffic_source`, usada por Origin) y el valor compatible con el filtro
+historico (`source_filter_value`). Asi aliases como `newsletter` o `fb` siguen
+filtrando exactamente las sesiones que anunciaron las facetas, sin ampliar el
+resultado a toda la categoria Email/Facebook. Tambien distingue
+`contact_id IS NULL` de `contact_id = ''`: NULL nunca suma un contacto
+identificado y el string vacio conserva la semantica legacy de contar una vez.
+La misma distincion aplica a `session_id`: NULL no suma una sesion unica y el
+string vacio legacy cuenta una vez.
+La migracion `120*` separa tambien la autoridad de cada binario. PostgreSQL
+espera el mismo advisory lock global de los workers y ambos dialectos renombran
+el state durable a `tracking_analytics_projection_state_v4`; el nombre v3 queda
+como una vista vacia. Una instancia vieja obtiene cero filas y sale antes de
+borrar datos, mientras solo el worker v4 ejecuta una vez el reset y el rebuild
+reanudable. La migracion no borra el read model. Mientras v4 no converge, la
+lectura responde warming y nunca mezcla generaciones ni vuelve a tablas crudas.
+El reader global conserva los 400 periodos y los divide en lotes de hasta 900
+parametros para funcionar tambien con el limite clasico de SQLite. El indice de
+cobertura por `start_boundary + occurrence_date` evita recorrer completo
+`tracking_analytics_range_delta`; en PostgreSQL se crea concurrentemente desde
+una migracion aislada.
+
+Deuda explicita: `includeFacets=true` conserva temporalmente el contrato legacy
+que calcula el resumen junto con todas las facetas. No debe describirse como
+raw-free ni usarse para la apertura de Analytics. Las facetas visibles se piden
+de una en una por `POST /api/tracking/analytics/facets`; eliminar el camino
+legacy requiere una migracion separada con paridad completa de todas las
+dimensiones.
 
 ### `POST /api/tracking/sessions/search`
 
