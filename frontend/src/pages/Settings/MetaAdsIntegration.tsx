@@ -2989,14 +2989,14 @@ export const MetaAdsIntegration: React.FC = () => {
                             id: selectedOAuthAdAccount.id.replace(/^act_/, ''),
                             name: selectedOAuthAdAccount.name
                           } : null,
-                          'Sin cuenta publicitaria',
+                          'Selecciona tu cuenta publicitaria',
                           'Cuenta publicitaria seleccionada'
                         )}
                         onChange={(event) => updateMetaOAuthAssetDraft({ adAccountId: event.target.value })}
                         disabled={Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
                         aria-label="Cuenta publicitaria"
                       >
-                        <option value="">Sin cuenta publicitaria</option>
+                        <option value="">Selecciona tu cuenta publicitaria</option>
                         {metaOAuthSession.adAccounts.map(account => (
                           <option key={account.id} value={account.id.replace(/^act_/, '')}>
                             {getMetaAssetDisplayName(account.name, account.id, 'Cuenta publicitaria')}
@@ -3015,14 +3015,14 @@ export const MetaAdsIntegration: React.FC = () => {
                         searchPlaceholder="Buscar Dataset o pixel…"
                         selectedContent={renderOAuthSelectValue(
                           selectedOAuthDataset ? { id: selectedOAuthDataset.id, name: selectedOAuthDataset.name } : null,
-                          'Sin Dataset o pixel',
+                          'Selecciona tu Dataset o pixel',
                           'Dataset o pixel seleccionado'
                         )}
                         onChange={(event) => updateMetaOAuthAssetDraft({ pixelId: event.target.value })}
                         disabled={!selectedOAuthAdAccount || Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
                         aria-label="Dataset o pixel"
                       >
-                        <option value="">Sin Dataset o pixel</option>
+                        <option value="">Selecciona tu Dataset o pixel</option>
                         {availableOAuthDatasets.map(dataset => (
                           <option key={dataset.id} value={dataset.id}>
                             {getMetaAssetDisplayName(dataset.name, dataset.id, 'Dataset o pixel')}
@@ -3103,14 +3103,14 @@ export const MetaAdsIntegration: React.FC = () => {
                           searchPlaceholder="Buscar página…"
                           selectedContent={renderOAuthSelectValue(
                             selectedOAuthPage ? { id: selectedOAuthPage.id, name: selectedOAuthPage.name } : null,
-                            'Sin página',
+                            'Selecciona tu página',
                             'Página seleccionada'
                           )}
                           onChange={(event) => updateMetaOAuthAssetDraft({ pageId: event.target.value })}
                           disabled={Boolean(savingMetaAssetSection) || Boolean(metaOAuthSession.permissions.missing.length)}
                           aria-label="Página"
                         >
-                          <option value="">Sin página</option>
+                          <option value="">Selecciona tu página</option>
                           {metaOAuthSession.pages.map(page => (
                             <option key={page.id} value={page.id}>
                               {getMetaAssetDisplayName(page.name, page.id, 'Página de Facebook')}
@@ -3230,14 +3230,14 @@ export const MetaAdsIntegration: React.FC = () => {
                               id: selectedOAuthInstagram.id,
                               name: selectedOAuthInstagram.username ? `@${selectedOAuthInstagram.username}` : selectedOAuthInstagram.name
                             } : null,
-                            metaOAuthSelection.pageId ? 'Sin Instagram' : 'Elige primero una página',
+                            metaOAuthSelection.pageId ? 'Selecciona tu cuenta de Instagram' : 'Selecciona primero tu página',
                             'Cuenta de Instagram seleccionada'
                           )}
                           onChange={(event) => updateMetaOAuthAssetDraft({ instagramAccountId: event.target.value })}
                           disabled={Boolean(savingMetaAssetSection) || !metaOAuthSelection.pageId || Boolean(metaOAuthSession.permissions.missing.length)}
                           aria-label="Cuenta de Instagram"
                         >
-                          <option value="">Sin Instagram</option>
+                          <option value="">Selecciona tu cuenta de Instagram</option>
                           {availableOAuthInstagramAccounts.map(account => (
                             <option key={account.id} value={account.id}>
                               {getMetaAssetDisplayName(

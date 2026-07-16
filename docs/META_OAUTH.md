@@ -57,6 +57,10 @@ La migracion es gradual y no elimina lo que ya funciona:
    boton **Guardar**. La credencial de Messenger y la guia de Developers aparecen
    sólo en modo manual; OAuth ya incluye el acceso de Page y no presenta esos
    detalles al usuario final.
+   Cuando todavía no hay una selección, cada dropdown OAuth guía con
+   **Selecciona tu cuenta publicitaria**, **Selecciona tu Dataset o pixel**,
+   **Selecciona tu página** o **Selecciona tu cuenta de Instagram** en lugar de
+   describir el activo como ausente.
 3. **Rastreo web**: parametros UTM e inclusion del Dataset en el snippet de
    tracking.
 4. **Dataset Test**: codigo temporal de Test Events y envio controlado de
