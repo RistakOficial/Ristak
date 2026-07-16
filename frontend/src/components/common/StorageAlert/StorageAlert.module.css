@@ -2,12 +2,12 @@
   position: fixed;
   top: 16px;
   right: 16px;
-  max-width: 500px;
+  max-width: 520px;
   background: var(--warn-soft);
   border: 1px solid var(--warn);
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow-pop);
-  z-index: 9999;
+  z-index: var(--z-index-toast);
   animation: slideIn 0.3s ease-out;
 }
 
@@ -36,37 +36,30 @@
 }
 
 .text {
+  display: grid;
   flex: 1;
+  gap: 10px;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text);
 }
 
 .text strong {
-  font-weight: 500;
-}
-
-.link {
-  display: inline-block;
-  margin-left: 8px;
-  color: var(--accent);
-  text-decoration: underline;
-  font-weight: 500;
-}
-
-.link:hover {
-  color: var(--accent-2);
+  font-weight: 600;
 }
 
 .closeButton {
-  background: none;
-  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
   padding: 4px;
   cursor: pointer;
   color: var(--text-mute);
   flex-shrink: 0;
-  border-radius: 4px;
-  transition: all 0.2s;
+  border-radius: var(--radius-ctl);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .closeButton:hover {
@@ -74,7 +67,148 @@
   color: var(--text);
 }
 
-/* Responsive */
+.decisionBody {
+  display: grid;
+  gap: 18px;
+}
+
+.usageLead {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.usageLead strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.costPanel {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.costHeading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 16px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.costHeading svg {
+  color: var(--accent);
+}
+
+.costRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.costRow + .costRow {
+  border-top: 1px solid var(--border);
+}
+
+.costRow strong {
+  flex-shrink: 0;
+  color: var(--text);
+  font: var(--num-font);
+  font-weight: 600;
+}
+
+.costRowTarget {
+  background: var(--accent-soft);
+}
+
+.costDelta {
+  padding: 11px 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.costDelta strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.providerNote {
+  margin: 0;
+  padding: 13px 16px 15px;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.55;
+  border-top: 1px solid var(--border);
+}
+
+.providerNote a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.providerNote a:hover {
+  text-decoration: underline;
+}
+
+.riskNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--neg-soft);
+  border: 1px solid var(--neg);
+  border-radius: var(--radius-card);
+  color: var(--text-dim);
+}
+
+.riskNotice > svg {
+  flex-shrink: 0;
+  color: var(--neg);
+  margin-top: 1px;
+}
+
+.riskNotice strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.riskNotice p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.actionError {
+  margin: 0;
+  padding: 11px 13px;
+  color: var(--neg);
+  background: var(--neg-soft);
+  border: 1px solid var(--neg);
+  border-radius: var(--radius-ctl);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 @media (max-width: 768px) {
   .alert {
     top: 8px;
@@ -89,5 +223,10 @@
 
   .text {
     font-size: 13px;
+  }
+
+  .costRow {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

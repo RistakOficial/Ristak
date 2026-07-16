@@ -30,6 +30,33 @@ Define:
   asi que un Blueprint sync puede fallar si una base existente ya fue aumentada
   manualmente por encima de 1 GB.
 
+### Consentimiento del cliente antes de aumentar el disco
+
+En instalaciones administradas por Ristak Installer, la base nace con autoscaling
+habilitado como seguro. Ristak mide el uso real de PostgreSQL y, al llegar al 80%,
+solicita al Installer la capacidad efectiva y el siguiente salto que aplicaría
+Render. Si no existe una decisión para ese salto, el Installer pausa el autoscaling
+antes de mostrar el aviso para impedir un aumento de precio sin autorización.
+
+El modal sólo aparece a administradores con permiso de escritura sobre la cuenta y
+muestra en USD el costo de almacenamiento cobrado directamente por Render: tarifa
+por GB/mes, costo actual, costo con la nueva capacidad y diferencia mensual. Esa
+tarifa vive en la configuración interna del Installer bajo
+`render_postgres_storage_usd_per_gb_month`; no se infiere de la moneda de negocio
+de Ristak porque es un precio externo de Render.
+
+- **Autorizar aumento:** el Installer reactiva el autoscaling. Render puede ampliar
+  el disco al llegar a su umbral operativo del 90%.
+- **No aumentar:** exige escribir `RECHAZAR`, conserva el límite y deja un aviso de
+  riesgo persistente. Si el disco se llena, Render puede suspender PostgreSQL y
+  Ristak dejará de guardar datos o funcionar hasta ampliar el espacio.
+- La decisión se registra por instalación y por salto de capacidad. Después de un
+  aumento, el siguiente salto vuelve a requerir una decisión consciente.
+
+Este flujo depende de que el Installer conserve cifrada la Render API Key y el ID
+de la base. Si la instalación no es administrable, Ristak muestra el riesgo pero no
+ofrece botones que prometan un cambio que no puede ejecutar.
+
 Los jobs automáticos viven dentro del backend. No hay cron services separados en
 Render.
 
@@ -115,3 +142,5 @@ Eso hace que el frontend llame al mismo servicio Render donde corre el backend.
 - [Blueprint YAML Reference](https://render.com/docs/blueprint-spec)
 - [Environment variables and secrets](https://render.com/docs/configure-environment-variables/)
 - [Deploys](https://render.com/docs/deploys/)
+- [PostgreSQL pricing](https://render.com/docs/postgresql-refresh)
+- [PostgreSQL disk autoscaling and full-disk behavior](https://render.com/docs/postgresql-creating-connecting)

@@ -48,6 +48,7 @@ import {
   ContactCustomFieldsPanel,
   CustomSelect,
   ContactPhoneSelector,
+  DatePicker,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -152,7 +153,7 @@ import {
   isChatActivityEvent,
   type ChatActivityMarker
 } from '@/utils/chatActivityMarkers'
-import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
+import { formatCurrency, formatUrlParameter } from '@/utils/format'
 import { useAccountCurrency } from '@/hooks/useAccountCurrency'
 import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
 import styles from './DesktopChat.module.css'
@@ -1901,10 +1902,6 @@ function padTwoDigits(value: number) {
 
 function formatDateInputValue(date: Date) {
   return `${date.getFullYear()}-${padTwoDigits(date.getMonth() + 1)}-${padTwoDigits(date.getDate())}`
-}
-
-function formatScheduleDateDisplay(value: string) {
-  return formatDate(value, { includeYear: true, padDay: false, fallback: 'Elige fecha' }).replace('.', '')
 }
 
 function createDefaultScheduleDraft(timezone?: string): ScheduleDraft {
@@ -10345,22 +10342,17 @@ export const DesktopChat: React.FC = () => {
               disabled={schedulingMessage}
             />
           </label>
-          <label className={styles.scheduleField}>
+          <div className={styles.scheduleField}>
             <span>Fecha</span>
-            <span className={styles.scheduleDateControl}>
-              <span className={styles.scheduleDateText} aria-hidden="true">
-                {formatScheduleDateDisplay(scheduleDraft.date)}
-              </span>
-              <input
-                className={styles.scheduleDateNativeInput}
-                type="date"
-                value={scheduleDraft.date}
-                min={todayDateOnlyInTimezone(timezone)}
-                aria-label="Fecha"
-                onChange={(event) => handleScheduleDraftChange({ date: event.target.value })}
-              />
-            </span>
-          </label>
+            <DatePicker
+              value={scheduleDraft.date}
+              min={todayDateOnlyInTimezone(timezone)}
+              today={todayDateOnlyInTimezone(timezone)}
+              ariaLabel="Fecha"
+              disabled={schedulingMessage}
+              onChange={(date) => handleScheduleDraftChange({ date })}
+            />
+          </div>
           <div className={styles.scheduleTimeRow}>
             <label className={styles.scheduleField}>
               <span>Hora</span>

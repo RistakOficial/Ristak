@@ -21,6 +21,8 @@ export { OriginDistributionCard } from './OriginDistributionCard'
 export { ConversionFunnelChart } from './ConversionFunnelChart'
 
 // Componentes de fecha
+export { DatePicker } from './DatePicker'
+export type { DatePickerProps } from './DatePicker'
 export { DateRangePicker } from './DateRangePicker'
 export {
   WeeklyAvailabilityEditor,

@@ -1064,6 +1064,7 @@ export async function getStorageStatus() {
     const sizeGB = sizeBytes / (1024 * 1024 * 1024)
     const percentUsed = (sizeGB / limitGB) * 100
     return {
+      sizeBytes,
       sizeGB,
       sizePretty: row?.size_pretty || `${sizeGB.toFixed(2)} GB`,
       limitGB,
@@ -1080,6 +1081,7 @@ export async function getStorageStatus() {
   const percentUsed = (sizeGB / limitGB) * 100
 
   return {
+    sizeBytes,
     sizeGB,
     sizePretty: `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`,
     limitGB,

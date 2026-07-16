@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { db } from '../src/config/database.js'
 import {
   createBlock,
   createImportedSiteFromHtml,
@@ -637,6 +638,90 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(previewHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported HTML native video slots keep the customized Ristak player in the published site', async () => {
+  let siteId = ''
+  const assetId = `site_imported_stream_${Date.now()}`
+  const storageUrl = `https://cdn.example.test/sites/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'video.mp4', 'video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `sites/${assetId}.mp4`,
+        storageUrl,
+        'site_imported_native_video',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId
+          }
+        })
+      ]
+    )
+
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+          </main>
+        </body>
+      </html>
+    `, `HTML native live player ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: storageUrl,
+        videoControlsMode: 'clean',
+        videoControlBar: true,
+        videoPlayerRadius: 27,
+        videoPlayShape: 'round',
+        videoPlaySize: 88
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(html, /data-rstk-native-slot-id="video-principal"/)
+    assert.match(html, /class="rstk-video[^\"]*rstk-video-player/)
+    assert.match(html, /rstk-video-custom-controls/)
+    assert.match(html, new RegExp(`data-rstk-video-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(html, /--rstk-video-radius:27px/)
+    assert.match(html, /rstk-video-play-shape-round/)
+    assert.match(html, /--rstk-video-play-size:88px/)
+    assert.match(html, /data-rstk-video-provider="bunny_stream"/)
+    assert.match(html, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
+    assert.doesNotMatch(html, /rstk-video-stream-frame/)
+    assert.doesNotMatch(html, /iframe\.mediadelivery\.net\/embed/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
 })
 

@@ -2401,6 +2401,15 @@ a una API ya indisponible. SMS usa `provider='highlevel'` con
 `channel='sms_qr'`; Messenger, Instagram y correo no se programan desde la app
 nativa hasta tener scheduler real para esos canales.
 
+En `/chat` desktop, el campo `Fecha` del modal para programar o editar un mensaje
+usa el `<DatePicker>` común y abre un calendario propio de Ristak al hacer clic en
+cualquier parte del control. El panel se portalea con la capa de popover del
+modal para no quedar recortado o detrás del overlay y no depende de
+`input.showPicker()` ni del selector nativo del navegador. Las fechas anteriores
+al día de negocio actual quedan deshabilitadas. La fecha seleccionada sigue
+siendo una fecha de negocio `YYYY-MM-DD` y la hora se convierte a UTC con la zona
+horaria de la cuenta antes de guardarse.
+
 La sincronizacion historica de mensajeria es exhaustiva dentro de lo que cada
 proveedor realmente expone y siempre es idempotente. Al vincular WhatsApp QR,
 Baileys debe arrancar con `syncFullHistory=true`, aceptar todos los tipos de
@@ -2719,6 +2728,10 @@ Reglas base:
   `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
   semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
   Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- La cabecera de Configuración > Calendarios refleja el estado real de Google:
+  cuando la integración está activa muestra un check y `Conectado a Google
+  Calendar` sobre un botón verde; cuando no está activa muestra `Conectar con
+  Google Calendar` y conserva la acción para abrir la conexión.
 - Cada hora del editor semanal se elige en un menú de tres columnas
   (hora, minuto y AM/PM). La selección sólo cambia el rango al pulsar
   `De acuerdo`; cerrar el menú o usar Escape descarta el borrador. El botón de
@@ -4234,12 +4247,14 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   resumible y firma temporal; la API key nunca llega al navegador. Al finalizar,
   backend descarga el original autenticado desde Stream y lo transmite a Bunny
   Storage sin cargarlo completo en memoria. El asset queda listo solamente
-  cuando existen las dos superficies: Storage para editor/preview y Stream para
-  publicado/en vivo.
-  Editor, canvas y preview-session usan exclusivamente la URL de Storage con el
-  reproductor personalizable de Ristak; nunca montan el iframe de Stream y por
-  eso sus reproducciones no contaminan las analíticas reales. Publicado/en vivo
-  cambia al iframe de Stream y conserva la configuración guardada del frame.
+  cuando existen Storage para reproducción nativa y la identidad/metadata de
+  Stream para procesamiento y analítica.
+  Editor, canvas, preview-session y publicado/en vivo usan la URL de Storage con
+  el reproductor personalizable de Ristak. Publicar nunca sustituye un video
+  nativo listo por el iframe visual de Stream: conserva exactamente el botón,
+  colores, barra, controles, acciones y formulario configurados. Editor y
+  preview mantienen tracking apagado; publicado envía los eventos first-party
+  de video y conserva los ids del asset y de Stream.
   Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
   previa del video`; abrir el editor o crear una preview-session autenticada
   dispara automáticamente la creación de su espejo de Storage. El proceso está
@@ -4257,8 +4272,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
   legacy respaldados por Storage conservan su preview compatible y cambian a
-  Stream cuando la metadata queda lista. Las acciones temporizadas se conectan
-  a Player.js para conservar el mismo comportamiento en el player publicado.
+  reproducción nativa de Ristak en publicado. Player.js queda como compatibilidad
+  para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
+  externos sin archivo Storage asociado; las acciones del reproductor nativo se
+  conectan directamente al elemento de video.
 
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o
@@ -6567,6 +6584,24 @@ El licenciamiento central protege instalaciones managed Docker, feature flags y
 límites de plan. El backend local valida licencia y plan con cache. El frontend
 tambien oculta modulos o anticipa limites, pero el bloqueo real debe estar en
 backend.
+
+El límite de almacenamiento de PostgreSQL también se administra mediante el
+Installer central. La app local reporta el tamaño real de la base a
+`POST /api/license/database-storage/status`; el backend central consulta en Render
+la capacidad efectiva, el estado del autoscaling y la decisión guardada para el
+siguiente salto. Al 80% de uso, si todavía no hay decisión, el Installer pausa el
+autoscaling y la app muestra a un administrador con permiso `settings_account`
+un modal no descartable con los costos de almacenamiento de Render en USD.
+
+La autorización por `POST /api/license/database-storage/decision` reactiva el
+autoscaling para que Render pueda ampliar el disco al 90%. Rechazar exige una
+segunda confirmación escrita, mantiene el autoscaling apagado y conserva un aviso
+de riesgo con opción de cambiar la decisión. Render factura ese almacenamiento
+directamente al cliente y sus discos no pueden reducirse. Si la base se llena,
+puede ser suspendida y Ristak dejará de guardar información o funcionar. Cada
+nuevo salto de capacidad requiere una decisión nueva. Las instalaciones sin
+credenciales administradas de Render sólo reciben el aviso de riesgo y nunca
+acciones falsas.
 
 Documento: `docs/LICENSING.md`.
 
