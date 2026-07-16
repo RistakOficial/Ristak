@@ -49,6 +49,23 @@ test('mutaciones de proveedores revalidan el estado global', async () => {
   assert.match(highLevel, /disconnect[\s\S]*?refreshIntegrationsStatusAfter/)
 })
 
+test('la cabecera de calendarios comunica claramente el estado de Google Calendar', async () => {
+  const [page, styles] = await Promise.all([
+    readSource('frontend/src/pages/Settings/CalendarsConfiguration.tsx'),
+    readSource('frontend/src/pages/Settings/CalendarsConfiguration.module.css')
+  ])
+  const headerStart = page.indexOf('const renderGoogleHeaderAction')
+  const headerEnd = page.indexOf('const renderCalendarHeaderActions', headerStart)
+  const header = page.slice(headerStart, headerEnd)
+
+  assert.ok(headerStart >= 0 && headerEnd > headerStart)
+  assert.match(header, /isConnected \? \([\s\S]*?<CheckCircle size=\{18\} aria-hidden="true" \/>/)
+  assert.match(header, /isConnected \? 'Conectado a Google Calendar' : 'Conectar con Google Calendar'/)
+  assert.doesNotMatch(header, /Contectar/)
+  assert.match(styles, /\.googleHeaderButtonConnected \{[\s\S]*?color: var\(--bg\);[\s\S]*?border-color: var\(--pos\);[\s\S]*?background: var\(--pos\);/)
+  assert.match(styles, /:global\(body\.light\) \.googleHeaderButtonConnected \{[\s\S]*?color: var\(--text\);/)
+})
+
 test('la disponibilidad del agente AI no reutiliza snapshots de otra cuenta', async () => {
   const source = await readSource('frontend/src/hooks/useAIAgentAvailability.ts')
 

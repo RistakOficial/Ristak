@@ -2609,6 +2609,10 @@ Reglas base:
   `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
   semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
   Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- La cabecera de Configuración > Calendarios refleja el estado real de Google:
+  cuando la integración está activa muestra un check y `Conectado a Google
+  Calendar` sobre un botón verde; cuando no está activa muestra `Conectar con
+  Google Calendar` y conserva la acción para abrir la conexión.
 - Cada hora del editor semanal se elige en un menú de tres columnas
   (hora, minuto y AM/PM). La selección sólo cambia el rango al pulsar
   `De acuerdo`; cerrar el menú o usar Escape descarta el borrador. El botón de

@@ -4678,10 +4678,14 @@ export const CalendarsConfiguration: React.FC = () => {
           navigate(buildCalendarSettingsPath('google'))
         }}
       >
-        <span className={pageStyles.googleCalendarMark}>
-          <Calendar size={16} />
-        </span>
-        <span>{isConnected ? 'Conectado' : 'Contectar con Google Calendar'}</span>
+        {isConnected ? (
+          <CheckCircle size={18} aria-hidden="true" />
+        ) : (
+          <span className={pageStyles.googleCalendarMark}>
+            <Calendar size={16} />
+          </span>
+        )}
+        <span>{isConnected ? 'Conectado a Google Calendar' : 'Conectar con Google Calendar'}</span>
       </button>
     )
   }
