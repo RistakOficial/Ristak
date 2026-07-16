@@ -595,6 +595,17 @@ resultado sin rehacer las otras cinco agregaciones. Si una dimension falla, la
 card conserva las demas y ofrece reintento local; no borra datos validos ni
 reactiva el loader global.
 
+El caso visible `dimension=sources` con web y WhatsApp activos tiene un carril
+proyectado propio: combina el ledger de rangos de tracking `119*` con la
+generacion activa de mensajes `114*`/`115*`, aplica los contactos ocultos y
+devuelve el mismo top 10 sin consultar `sessions` ni los historiales de mensajes.
+Ese GET tampoco agenda backfills. Si alguna proyeccion, version, timezone o
+ledger todavia no esta disponible, responde `503` con `Retry-After` en lugar de
+volver silenciosamente al scan legacy; `performance.readPath` y
+`X-Ristak-Read-Path` permiten comprobar el carril servido. Las demas dimensiones,
+los breakdowns de contactos y los numeros de WhatsApp conservan sus contratos
+independientes y no forman parte de este fast path.
+
 `PhoneAnalytics` obtiene su primer paint desde
 `GET /api/dashboard/mobile-analytics-snapshot`: una sola peticion entrega KPIs,
 origen, funnel, la grafica financiera seleccionada y hasta 100 numeros WhatsApp

@@ -1,11 +1,16 @@
 import { databaseDialect, db } from '../config/database.js'
 import { getMetaSocialConfig } from './metaAdsService.js'
-import { sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
+import { normalizeDateOnlyInTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { formatPlacementName } from '../utils/placementName.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { buildNormalizedTrafficSourceSql } from './contactSourceService.js'
 import { getProjectedMessageFirstSeenCount } from './messageFirstSeenProjectionService.js'
-import { queryMessageAnalyticsProjectionAggregateRows } from './messageAnalyticsProjectionService.js'
+import {
+  queryMessageAnalyticsProjectionAggregateRows,
+  queryMessageAnalyticsProjectionOriginSources
+} from './messageAnalyticsProjectionService.js'
+import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
+import { queryTrackingAnalyticsProjectionFacet } from './trackingAnalyticsProjectionQueryService.js'
 
 const toRanked = (bucketMap, limit = 10) =>
   Array.from(bucketMap.entries())
@@ -355,6 +360,117 @@ export async function getWhatsAppApiAnalyticsSummary(range, { groupBy = 'day' } 
       firstSeenProjection: firstSeenRow?.projectionStatus || 'unavailable',
       firstSeenProjectionComplete: Boolean(firstSeenRow?.projectionReady)
     }
+  }
+}
+
+function emptyTrafficDistributions() {
+  return {
+    sources: [],
+    platforms: [],
+    devices: [],
+    placements: [],
+    browsers: [],
+    os: []
+  }
+}
+
+function isMissingOriginReadModelSchema(error) {
+  const code = String(error?.code || '').toUpperCase()
+  if (['42P01', '42703', '42883'].includes(code)) return true
+  return code === 'SQLITE_ERROR' && /no such (?:table|column):\s*(?:tracking_analytics_|message_analytics_)/i.test(String(error?.message || ''))
+}
+
+function originProjectionWarmingError(code, message, projectionStatus = 'warming') {
+  const error = new Error(message)
+  error.code = code
+  error.status = 503
+  error.retryable = true
+  error.projectionStatus = projectionStatus
+  return error
+}
+
+/**
+ * Fast path exclusivo de la dona medida en Edge: fuentes web + fuentes de
+ * mensajes. Ambos lados leen ledgers de rango; nunca sessions ni historiales de
+ * mensajes. El wrapper conserva por separado los read paths para poder probar
+ * que un deploy no reintrodujo el scan legacy.
+ */
+export async function getProjectedOriginSourceDistribution(
+  range,
+  { hiddenFilters: suppliedHiddenFilters = null, signal } = {}
+) {
+  const hiddenFilters = Array.isArray(suppliedHiddenFilters)
+    ? suppliedHiddenFilters
+    : await getHiddenContactFilters({ signal })
+  const projectionRange = {
+    ...range,
+    startDate: range.startDate || normalizeDateOnlyInTimezone(range.startUtc, range.appliedTimezone),
+    endDate: range.endDate || normalizeDateOnlyInTimezone(range.endUtc, range.appliedTimezone)
+  }
+
+  try {
+    const trackingStatus = await getTrackingAnalyticsProjectionStatus({ schedule: false, signal })
+    if (!trackingStatus?.available) {
+      throw originProjectionWarmingError(
+        'tracking_analytics_projection_warming',
+        'La distribución web sigue preparando su read model incremental.',
+        trackingStatus?.status || 'warming'
+      )
+    }
+    const webRows = await queryTrackingAnalyticsProjectionFacet(
+      projectionRange,
+      {},
+      'sources',
+      { signal }
+    )
+    const messageResult = await queryMessageAnalyticsProjectionOriginSources(range, {
+      limit: 100,
+      hiddenFilters,
+      signal,
+      schedule: false
+    })
+
+    const sources = new Map()
+    for (const item of webRows) {
+      const name = String(item.label || item.value || 'Desconocido')
+      sources.set(name, Number(sources.get(name) || 0) + Number(item.count || 0))
+    }
+    for (const item of messageResult.rows) {
+      const name = String(item.name || 'WhatsApp')
+      sources.set(name, Number(sources.get(name) || 0) + Number(item.value || 0))
+    }
+
+    const traffic = emptyTrafficDistributions()
+    traffic.sources = Array.from(sources.entries())
+      .filter(([, value]) => value > 0)
+      .map(([name, value]) => ({ name, value }))
+      .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name))
+      .slice(0, 10)
+
+    const trackingReadPath = 'tracking_analytics_facet_range_delta'
+    const messageReadPath = messageResult.status.readPath || 'origin_range_rollup'
+    return {
+      traffic,
+      performance: {
+        readPath: `${trackingReadPath}+${messageReadPath}`,
+        trackingReadPath,
+        messageReadPath,
+        trackingProjection: trackingStatus.status,
+        trackingProjectionPending: Boolean(trackingStatus.pending),
+        messageProjection: messageResult.status.status,
+        messageProjectionGeneration: messageResult.status.activeGeneration || null,
+        messageProjectionPending: Boolean(messageResult.status.pending)
+      }
+    }
+  } catch (error) {
+    if (!isMissingOriginReadModelSchema(error)) throw error
+    const messageSchema = /message_analytics_/i.test(String(error?.message || ''))
+    throw originProjectionWarmingError(
+      messageSchema ? 'message_analytics_projection_warming' : 'tracking_analytics_projection_warming',
+      messageSchema
+        ? 'La distribución de mensajes sigue preparando su read model incremental.'
+        : 'La distribución web sigue preparando su read model incremental.'
+    )
   }
 }
 

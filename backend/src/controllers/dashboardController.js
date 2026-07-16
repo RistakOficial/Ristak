@@ -7,7 +7,11 @@ import {
   CONTACT_SOURCE_SELECTION_COLUMNS,
   getContactSourceBreakdownForSelection
 } from '../services/contactSourceService.js';
-import { getTrafficDistributions, getWhatsAppApiNumberBreakdown } from '../services/originDistributionService.js';
+import {
+  getProjectedOriginSourceDistribution,
+  getTrafficDistributions,
+  getWhatsAppApiNumberBreakdown
+} from '../services/originDistributionService.js';
 import { DateTime } from 'luxon';
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js';
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES, successfulPaymentStatusCondition } from '../utils/paymentMode.js';
@@ -1605,6 +1609,24 @@ async function computeOriginDistribution(range, {
     ? (attributionCalendarIds || await getAttributionCalendarIds({ signal }))
     : [];
 
+  // Fast path exacto de la dona visible en Edge. Mantenerlo explícito evita
+  // ampliar este cutover a breakdowns/contactos/teléfonos que tienen contratos
+  // y read models distintos.
+  if (!includeBreakdowns && includeWeb && includeWhatsapp && dimension === 'sources') {
+    const projected = await getProjectedOriginSourceDistribution(range, {
+      hiddenFilters: resolvedHiddenFilters,
+      signal
+    });
+    return {
+      traffic: projected.traffic,
+      leads: [],
+      appointments: [],
+      conversions: [],
+      whatsappNumbers: [],
+      performance: projected.performance
+    };
+  }
+
   // El endpoint anterior lanzaba cinco trabajos y tres copias del cálculo de
   // atribución al mismo tiempo. En instalaciones pequeñas eso agotaba el pool y
   // PostgreSQL terminaba reiniciándose. La respuesta conserva el mismo contrato,
@@ -1681,6 +1703,10 @@ export const getOriginDistribution = async (req, res) => {
       });
     }
     if (requestScope.signal.aborted || res.writableEnded || res.finished) return;
+    if (data?.performance?.readPath) {
+      if (typeof res.set === 'function') res.set('X-Ristak-Read-Path', data.performance.readPath);
+      else res.setHeader?.('X-Ristak-Read-Path', data.performance.readPath);
+    }
     res.json({ success: true, data })
   } catch (error) {
     if (requestScope.timedOut) {
@@ -1690,6 +1716,21 @@ export const getOriginDistribution = async (req, res) => {
         error: 'La distribución de origen tardó demasiado. Intenta nuevamente.',
         code: 'dashboard_origin_deadline',
         retryable: true
+      });
+    }
+    if (
+      error?.code === 'message_analytics_projection_warming' ||
+      error?.code === 'tracking_analytics_projection_warming'
+    ) {
+      if (res.writableEnded || res.finished) return;
+      if (typeof res.set === 'function') res.set('Retry-After', '2');
+      else res.setHeader?.('Retry-After', '2');
+      return res.status(503).json({
+        success: false,
+        error: 'La distribución de origen se está preparando. Reintenta en unos segundos.',
+        code: error.code,
+        retryable: true,
+        projectionStatus: error.projectionStatus || 'warming'
       });
     }
     if (isDashboardRequestAbort(error, requestScope.signal)) return;

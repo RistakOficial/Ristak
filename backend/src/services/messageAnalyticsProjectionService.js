@@ -3022,7 +3022,8 @@ export async function queryMessageAnalyticsProjectionAggregateRows(range, {
 export async function queryMessageAnalyticsProjectionOriginSources(range, {
   limit = 10,
   hiddenFilters = [],
-  signal
+  signal,
+  schedule = false
 } = {}) {
   return withPinnedMessageAnalyticsGeneration(range, signal, async (database, status) => {
     if (!status.schemaAvailable) throw projectionWarmingError(status)
@@ -3073,7 +3074,7 @@ export async function queryMessageAnalyticsProjectionOriginSources(range, {
       },
       rows: correctedRows
     }
-  })
+  }, { schedule })
 }
 
 export async function queryMessageAnalyticsProjectionPhoneNumbers(range, {
