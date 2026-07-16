@@ -43,6 +43,8 @@ struct ChatMessageRealtimeEvent: Decodable, Sendable, Equatable {
 enum ChatRealtimeEvent: Sendable {
     /// Evento inicial `connected` (`{ connected: true, serverTime }`).
     case connected(serverTime: String?)
+    /// El socket cayó o terminó; el engine sigue intentando reconectar.
+    case disconnected
     /// `chat_message` — es solo un «nudge»: NO trae texto; disparar refresh
     /// REST coalescido de bandeja/hilo (merge por id).
     case message(ChatMessageRealtimeEvent)
@@ -50,6 +52,8 @@ enum ChatRealtimeEvent: Sendable {
     /// Mapea un frame SSE crudo; frames desconocidos/incompletos → nil.
     init?(frame: RistakServerSentEvent) {
         switch frame.name {
+        case RistakSSEInternalEvent.disconnected:
+            self = .disconnected
         case "connected":
             let payload = try? JSONDecoder().decode(
                 ChatConnectedFramePayload.self,
@@ -91,8 +95,8 @@ struct ChatConnectedFramePayload: Decodable, Sendable {
 /// Cliente SSE de chat — `GET /api/chat-events/stream` (doc research/11 §2).
 /// Requiere sesión + módulo `chat` (403 detiene el stream). Broadcast global:
 /// avisa de TODOS los contactos; usarlo únicamente para disparar refresh.
-/// El polling de reconciliación (12 s bandeja / 4 s hilo) NO es opcional:
-/// los eventos perdidos en reconexión no se re-entregan.
+/// El polling de reconciliación sigue cubriendo eventos perdidos, pero el hilo lo
+/// activa como fallback de 25 s solo mientras este stream esté desconectado.
 final class ChatEventsClient: Sendable {
     private let engine = RistakSSEStreamEngine(path: "/api/chat-events/stream")
 

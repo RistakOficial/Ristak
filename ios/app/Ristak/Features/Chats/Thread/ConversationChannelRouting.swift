@@ -55,6 +55,56 @@ struct ConversationRealtimeBootstrapGate: Equatable {
     }
 }
 
+enum ConversationRealtimeConnectionTransition: Equatable {
+    case none
+    case initial
+    case disconnected
+    case reconnected
+}
+
+/// Decide si una transición de conexión necesita cerrar un hueco sin replay.
+/// La conexión inicial que llega mientras el GET inicial está en vuelo NO agrega
+/// una segunda descarga; si llega tarde, o es una reconexión real, sí reconcilia.
+enum ConversationRealtimeRefreshDecision {
+    static func shouldReconcile(
+        transition: ConversationRealtimeConnectionTransition,
+        initialAttemptFinished: Bool
+    ) -> Bool {
+        switch transition {
+        case .initial:
+            return initialAttemptFinished
+        case .reconnected:
+            return true
+        case .none, .disconnected:
+            return false
+        }
+    }
+}
+
+/// Contrato de reconciliación del hilo: SSE es la ruta normal; el GET periódico
+/// existe únicamente mientras la conexión está caída. Veinticinco segundos deja
+/// margen al reconnect del engine (1...15 s) sin regresar al poll agresivo de 4 s.
+struct ConversationRealtimePollingPolicy: Equatable {
+    static let fallbackInterval: TimeInterval = 25
+
+    private(set) var isConnected = false
+    private(set) var hasEverConnected = false
+
+    var shouldScheduleFallback: Bool { !isConnected }
+
+    /// Distingue el primer enlace del socket de una reconexión real. Repetir el
+    /// mismo frame es `.none` y no reprograma timers ni descarga conversaciones.
+    @discardableResult
+    mutating func setConnected(_ connected: Bool) -> ConversationRealtimeConnectionTransition {
+        guard isConnected != connected else { return .none }
+        isConnected = connected
+        guard connected else { return .disconnected }
+        if hasEverConnected { return .reconnected }
+        hasEverConnected = true
+        return .initial
+    }
+}
+
 /// Ventana de respuesta de WhatsApp nativo ligada al remitente seleccionado.
 /// Una conversación de HighLevel o de otro número de negocio nunca abre la
 /// ventana de Meta/YCloud por accidente.

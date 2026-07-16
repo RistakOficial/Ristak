@@ -20,8 +20,6 @@ struct ChatsRootView: View {
     @State private var path: [ChatsRoute] = []
     /// Ruta del detalle (iPad).
     @State private var detailRoute: ChatsRoute?
-    @State private var firstSyncProgress: MobileFirstSyncProgress?
-    @State private var firstSyncRunning = false
 
     enum ChatsRoute: Hashable {
         case conversation(contactID: String)
@@ -33,13 +31,6 @@ struct ChatsRootView: View {
         // el type-checker de Swift (SwiftUI infiere un tipo anidado por cada
         // `.onChange`; demasiados en una sola expresión lo tumban).
         realtimeWiredLayout
-            .overlay {
-                if let firstSyncProgress {
-                    MobileFirstSyncProgressView(progress: firstSyncProgress) {
-                        Task { await runFirstSync() }
-                    }
-                }
-            }
             .onChange(of: router.deepLinkVersion) {
                 consumeChatDeepLink()
             }
@@ -125,31 +116,11 @@ struct ChatsRootView: View {
             // Migra instalaciones que ya tenían bandeja cacheada antes de que
             // existiera la marca explícita del bootstrap.
             cache.store(true, for: ChatSnapshotKey.firstSyncCompleted)
-            await viewModel.initialLoad()
-        } else {
-            await runFirstSync()
         }
-    }
-
-    private func runFirstSync() async {
-        guard !firstSyncRunning else { return }
-        firstSyncRunning = true
-        firstSyncProgress = .init(
-            stage: .account,
-            detail: "La sesión está conectada. Iniciando la descarga segura."
-        )
-
-        let succeeded = await viewModel.initialLoad { progress in
-            firstSyncProgress = progress
-        }
-        if succeeded {
-            // El 100 % solo aparece después de terminar todas las peticiones y
-            // escribir la marca local. La pausa breve únicamente permite leer
-            // "Todo listo"; no mueve artificialmente la barra.
-            try? await Task.sleep(for: .milliseconds(450))
-            firstSyncProgress = nil
-        }
-        firstSyncRunning = false
+        // El shell siempre queda montado desde el primer frame. Sin snapshot se
+        // muestra su estado vacío silencioso; con snapshot se ven los chats de
+        // inmediato. La red revalida debajo y jamás vuelve a tapar la navegación.
+        _ = await viewModel.initialLoad(markFirstSyncCompleted: !alreadyPrepared)
     }
 
     private func refreshIdentityNamespace() {

@@ -5,7 +5,7 @@ import SwiftUI
 // `getContactInfoJourneyDescription`, `getContactJourneyItems` y helpers) para
 // que el iOS muestre los mismos hitos, en el mismo orden (nuevo → viejo) y con
 // las mismas descripciones. La lógica es 100 % local sobre el journey COMPLETO
-// (sin filtrar) que trae `JourneyService.fetchFullJourney`.
+// (sin filtrar) que carga la ficha del contacto.
 
 // MARK: - Fase de carga del journey
 

@@ -103,4 +103,13 @@ final class SessionIsolationAndFallbackTests: XCTestCase {
         XCTAssertFalse(JourneyService.canUseLegacyConversationFallback(unavailable))
         XCTAssertFalse(JourneyService.canUseLegacyConversationFallback(unauthorized))
     }
+
+    func testConversationMarkersUseLightweightChatActivityContract() {
+        let query = JourneyService.chatActivityQuery(limit: 75)
+
+        XCTAssertEqual(query["chatActivityOnly"] ?? nil, "true")
+        XCTAssertEqual(query["messageLimit"] ?? nil, "75")
+        XCTAssertNil(query["chatMessagesOnly"] ?? nil)
+        XCTAssertNil(query["includeBusinessMessages"] ?? nil)
+    }
 }

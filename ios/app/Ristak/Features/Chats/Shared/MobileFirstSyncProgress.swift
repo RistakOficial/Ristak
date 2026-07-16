@@ -41,6 +41,34 @@ struct MobileFirstSyncProgress: Equatable, Sendable {
     var canRetry: Bool { errorMessage != nil }
 }
 
+/// Resultado de las dos lecturas que sí forman la ruta crítica de Chats. El
+/// directorio permite abrir contactos aunque la bandeja falle; la bandeja pinta
+/// conversaciones aunque el directorio tarde o no esté disponible.
+struct MobileFirstSyncPrimaryResult<Directory> {
+    let directory: Directory?
+    let inboxLoaded: Bool
+}
+
+/// Ejecuta únicamente las fuentes primarias del primer arranque. Al estar
+/// aisladas al `MainActor`, los dos closures pueden publicar estado con seguridad,
+/// pero sus suspensiones de red se solapan mediante `async let` en vez de sumar
+/// sus timeouts. Configuración, etiquetas y canales se lanzan después desde el
+/// ViewModel y nunca forman parte de este presupuesto.
+enum MobileFirstSyncCoordinator {
+    @MainActor
+    static func loadPrimaries<Directory>(
+        directory: @escaping @MainActor () async -> Directory?,
+        inbox: @escaping @MainActor () async -> Bool
+    ) async -> MobileFirstSyncPrimaryResult<Directory> {
+        async let directoryTask = directory()
+        async let inboxTask = inbox()
+        return await MobileFirstSyncPrimaryResult(
+            directory: directoryTask,
+            inboxLoaded: inboxTask
+        )
+    }
+}
+
 struct MobileFirstSyncProgressView: View {
     let progress: MobileFirstSyncProgress
     let onRetry: () -> Void

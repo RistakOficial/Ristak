@@ -42,6 +42,26 @@ enum ChatTagApplyOutcome: Equatable {
     case alreadyTagged
 }
 
+/// Token de commit para los GET satélite. El resultado se calcula sin mutar UI
+/// y sólo puede aplicarse si cuenta + generación siguen siendo las mismas.
+struct ChatSatelliteContextLoadToken: Equatable {
+    let namespace: String?
+    let generation: UInt64
+}
+
+enum ChatSatelliteContextCommitPolicy {
+    static func canCommit(
+        _ token: ChatSatelliteContextLoadToken,
+        currentNamespace: String?,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled
+            && token.namespace == currentNamespace
+            && token.generation == currentGeneration
+    }
+}
+
 // MARK: - ViewModel
 
 /// ViewModel de la bandeja de chats (doc research/03 completo + realtime doc 11).
@@ -65,6 +85,10 @@ final class InboxViewModel {
     private var namespace: String?
     private var directoryPrewarmNamespace: String?
     private var directoryPrewarmTask: Task<[ChatContact]?, Never>?
+    private var satelliteContextTask: Task<Void, Never>?
+    private var satelliteContextTaskID: UUID?
+    private var satelliteContextGeneration: UInt64 = 0
+    private var primaryLoadFinished = false
     private var configured = false
 
     // MARK: Estado de datos
@@ -85,8 +109,10 @@ final class InboxViewModel {
     /// Parámetros (query + número) con los que se cargó `rows`; si cambian,
     /// la siguiente recarga REEMPLAZA en vez de fusionar.
     private var loadedFetchKey = ""
-    private var refreshInFlight = false
-    private var refreshQueued = false
+    private var refreshBurstGate = ChatRefreshBurstGate()
+    private var trailingRefreshTask: Task<Void, Never>?
+    private var trailingRefreshTaskID: UUID?
+    private var refreshBurstGeneration: UInt64 = 0
     /// Ids de actividad ya aplicada. iPad puede recibir el mismo evento por el
     /// SSE de la bandeja y por el callback del hilo; el set evita duplicar
     /// badges. El orden acota la memoria sin depender de un TTL.
@@ -113,6 +139,8 @@ final class InboxViewModel {
     private var activityRevision: UInt64 = 0
     private static let pendingActivityLifetime: Duration = .seconds(60)
     private var realtimeTask: Task<Void, Never>?
+    private var realtimePollingPolicy = InboxRealtimePollingPolicy()
+    private var scheduledInboxPollingInterval: TimeInterval?
     /// Cadena serial de operaciones start/stop del engine SSE (ver
     /// `startEventsStream`/`enqueueEventsStop`).
     private var realtimeControl: Task<Void, Never>?
@@ -201,6 +229,7 @@ final class InboxViewModel {
     func updateNamespace(_ newNamespace: String?) {
         let previous = namespace
         guard previous != newNamespace else { return }
+        invalidateSatelliteContextLoad()
         namespace = newNamespace
         localState.configure(namespace: newNamespace)
 
@@ -225,6 +254,12 @@ final class InboxViewModel {
         }
 
         indexDirectoryContacts(contactsService.cachedPickerContacts())
+        // Si la identidad verificada llegó después del primer pintado, el cambio
+        // de namespace canceló correctamente el lote anterior; arrancar ahora su
+        // reemplazo vigente para no dejar etiquetas/números sin cargar.
+        if primaryLoadFinished {
+            scheduleSatelliteContextLoad()
+        }
         guard directoryPrewarmNamespace != newNamespace else { return }
         directoryPrewarmNamespace = newNamespace
         let directoryService = contactsService
@@ -240,6 +275,7 @@ final class InboxViewModel {
 
     private func clearAccountScopedState() {
         activitySessionGeneration &+= 1
+        invalidateRefreshBackpressure()
         for task in unknownContactResolutionTasks.values { task.cancel() }
         unknownContactResolutionTasks.removeAll()
         unknownContactResolutionIDs.removeAll()
@@ -249,6 +285,7 @@ final class InboxViewModel {
         isShowingCachedData = false
         loadErrorMessage = nil
         isAccessDenied = false
+        primaryLoadFinished = false
         serverOffset = 0
         loadedFetchKey = ""
         appliedActivityKeys.removeAll()
@@ -273,6 +310,22 @@ final class InboxViewModel {
         directoryPrewarmNamespace = nil
         directoryPrewarmTask?.cancel()
         directoryPrewarmTask = nil
+    }
+
+    private func invalidateSatelliteContextLoad() {
+        satelliteContextGeneration &+= 1
+        satelliteContextTask?.cancel()
+        satelliteContextTask = nil
+        satelliteContextTaskID = nil
+    }
+
+    private func invalidateRefreshBackpressure() {
+        refreshBurstGeneration &+= 1
+        trailingRefreshTask?.cancel()
+        trailingRefreshTask = nil
+        trailingRefreshTaskID = nil
+        refreshBurstGate.reset()
+        isSilentRefreshing = false
     }
 
     var isConfigured: Bool { configured }
@@ -320,9 +373,15 @@ final class InboxViewModel {
 
     @discardableResult
     func initialLoad(
-        firstSyncProgress: ((MobileFirstSyncProgress) -> Void)? = nil
+        markFirstSyncCompleted: Bool = false
     ) async -> Bool {
-        guard rows.isEmpty || isShowingCachedData else { return true }
+        guard rows.isEmpty || isShowingCachedData else {
+            if !Task.isCancelled {
+                primaryLoadFinished = true
+                scheduleSatelliteContextLoad()
+            }
+            return true
+        }
         let performanceSpan = RistakObservability.begin(.chatInboxLoad)
         let hadVisibleRows = !rows.isEmpty
         if hadVisibleRows {
@@ -332,120 +391,148 @@ final class InboxViewModel {
         loadErrorMessage = nil
         isAccessDenied = false
 
-        if let firstSyncProgress {
-            firstSyncProgress(.init(
-                stage: .settings,
-                detail: "Consultando preferencias, etiquetas y canales conectados."
-            ))
-            await loadSatelliteContext()
-
-            firstSyncProgress(.init(
-                stage: .contacts,
-                detail: "Descargando el directorio inicial de contactos."
-            ))
-            let directoryContacts: [ChatContact]?
-            if let directoryPrewarmTask {
-                directoryContacts = await directoryPrewarmTask.value
-            } else {
-                directoryContacts = try? await contactsService.fetchPickerContacts(limit: 100)
-            }
-            guard let directoryContacts else {
-                let message = "No se pudieron cargar los contactos. Revisa tu conexión e intenta de nuevo."
-                loadErrorMessage = message
-                isInitialLoading = false
-                firstSyncProgress(.init(
-                    stage: .contacts,
-                    detail: "La descarga se interrumpió.",
-                    errorMessage: message
-                ))
-                performanceSpan.finish(outcome: .failed, itemCount: rows.count)
-                return false
-            }
+        // Directorio e inbox son las únicas fuentes primarias. Sus esperas de red
+        // se solapan para que el arranque pague el timeout más lento, no la suma.
+        // Etiquetas, canales y labels se piden DESPUÉS y nunca retienen el shell.
+        let primaries = await MobileFirstSyncCoordinator.loadPrimaries(
+            directory: { [self] in await fetchPrimaryDirectory() },
+            inbox: { [self] in await loadInitialInboxWithBackpressure() }
+        )
+        if let directoryContacts = primaries.directory {
             indexDirectoryContacts(directoryContacts, validatesDestinations: true)
-
-            firstSyncProgress(.init(
-                stage: .conversations,
-                detail: directoryContacts.isEmpty
-                    ? "El directorio está listo. Buscando conversaciones."
-                    : "\(directoryContacts.count) contactos listos. Cargando la bandeja y el historial reciente."
-            ))
-            let loaded = await reloadFromServer(showSpinner: rows.isEmpty)
-            if !loaded {
-                // El directorio ya está disponible y cacheado. Un timeout de la
-                // bandeja no debe secuestrar toda la app en el 78 %: abrimos el
-                // shell con esos datos y dejamos que SSE/polling reintenten la
-                // primera página silenciosamente.
-                RistakSnapshotCache.shared.store(true, for: ChatSnapshotKey.firstSyncCompleted)
-                firstSyncProgress(.init(
-                    stage: .localCopy,
-                    detail: "Tus contactos ya están disponibles. Las conversaciones seguirán cargando en segundo plano."
-                ))
-                firstSyncProgress(.init(
-                    stage: .complete,
-                    detail: "Ristak está listo. Reintentaremos la bandeja automáticamente."
-                ))
-                performanceSpan.finish(outcome: .unavailable, itemCount: rows.count)
-                requestSilentRefresh()
-                restorePersistedPhoneFilter()
-                return true
-            }
-
-            firstSyncProgress(.init(
-                stage: .localCopy,
-                detail: "\(rows.count) conversaciones preparadas. Guardando la copia para próximos arranques."
-            ))
-            RistakSnapshotCache.shared.store(true, for: ChatSnapshotKey.firstSyncCompleted)
-            firstSyncProgress(.init(
-                stage: .complete,
-                detail: "Tus contactos y conversaciones ya están listos."
-            ))
-            performanceSpan.finish(outcome: .success, itemCount: rows.count)
-            restorePersistedPhoneFilter()
-            return true
         }
 
-        async let contextTask: Void = loadSatelliteContext()
-        let loaded = await reloadFromServer(showSpinner: rows.isEmpty)
+        let hasUsablePrimaryState = primaries.inboxLoaded
+            || primaries.directory != nil
+            || hadVisibleRows
+        if markFirstSyncCompleted, hasUsablePrimaryState {
+            RistakSnapshotCache.shared.store(true, for: ChatSnapshotKey.firstSyncCompleted)
+        }
+
         if !hadVisibleRows {
             let outcome: RistakPerformanceOutcome
             if Task.isCancelled {
                 outcome = .cancelled
             } else if isAccessDenied {
                 outcome = .unavailable
-            } else if loadErrorMessage != nil {
+            } else if !hasUsablePrimaryState || loadErrorMessage != nil {
                 outcome = .failed
             } else {
                 outcome = .success
             }
             performanceSpan.finish(outcome: outcome, itemCount: rows.count)
         }
-        await contextTask
-        restorePersistedPhoneFilter()
+        if !Task.isCancelled {
+            primaryLoadFinished = true
+            scheduleSatelliteContextLoad()
+        }
+        return hasUsablePrimaryState
+    }
+
+    private func fetchPrimaryDirectory() async -> [ChatContact]? {
+        if let directoryPrewarmTask {
+            return await directoryPrewarmTask.value
+        }
+        return try? await contactsService.fetchPickerContacts(limit: 100)
+    }
+
+    /// Incluye la primera página dentro del mismo backpressure que SSE/polling.
+    /// Si llega un nudge mientras el request frío está en vuelo, se confirma una
+    /// sola vez; nunca se solapan dos inbox completos durante el bootstrap.
+    private func loadInitialInboxWithBackpressure() async -> Bool {
+        guard refreshBurstGate.beginOrQueue() else { return !rows.isEmpty }
+        let expectedGeneration = refreshBurstGeneration
+
+        var loaded = await reloadFromServer(showSpinner: rows.isEmpty)
+        guard expectedGeneration == refreshBurstGeneration else { return loaded }
+        if !Task.isCancelled, refreshBurstGate.consumeFollowUp() {
+            let followUpLoaded = await reloadFromServer(showSpinner: false)
+            loaded = loaded || followUpLoaded
+        }
+        guard expectedGeneration == refreshBurstGeneration else { return loaded }
+        let needsTrailing = refreshBurstGate.finishBurst()
+        if needsTrailing, !Task.isCancelled {
+            scheduleTrailingRefresh(generation: expectedGeneration)
+        } else if needsTrailing {
+            refreshBurstGate.cancelCooldown()
+        }
         return loaded
     }
 
+    /// Satélites fuera del presupuesto de primera pintura. Se conserva una sola
+    /// tarea por ViewModel para que reentradas de SwiftUI no dupliquen los cinco
+    /// GETs mientras el lote anterior sigue en vuelo.
+    private func scheduleSatelliteContextLoad() {
+        guard !Task.isCancelled, satelliteContextTask == nil else { return }
+        let taskID = UUID()
+        let token = ChatSatelliteContextLoadToken(
+            namespace: namespace,
+            generation: satelliteContextGeneration
+        )
+        satelliteContextTaskID = taskID
+        satelliteContextTask = Task { [weak self] in
+            guard let self else { return }
+            let snapshot = await self.fetchSatelliteContext()
+            guard self.satelliteContextTaskID == taskID else { return }
+            defer {
+                if self.satelliteContextTaskID == taskID {
+                    self.satelliteContextTask = nil
+                    self.satelliteContextTaskID = nil
+                }
+            }
+            guard ChatSatelliteContextCommitPolicy.canCommit(
+                token,
+                currentNamespace: self.namespace,
+                currentGeneration: self.satelliteContextGeneration,
+                isCancelled: Task.isCancelled
+            ) else { return }
+            self.applySatelliteContext(snapshot)
+            self.restorePersistedPhoneFilter()
+        }
+    }
+
+    private struct SatelliteContextSnapshot {
+        let whatsAppStatus: WhatsAppAPIStatus?
+        let customLabels: DashboardCustomLabels?
+        let openAIConfigured: Bool?
+        let commentsFeatureEnabled: Bool?
+        let tagsCatalog: [ContactTag]?
+    }
+
     /// Contexto satélite: números, labels, integraciones, flags de comentarios
-    /// y catálogo de etiquetas. Fallos silenciosos (no bloquean la bandeja).
-    private func loadSatelliteContext() async {
+    /// y catálogo de etiquetas. Esta fase es pura respecto al ViewModel: una
+    /// cancelación/cambio de cuenta no puede aplicar un resultado parcial.
+    private func fetchSatelliteContext() async -> SatelliteContextSnapshot {
         async let statusTask = try? WhatsAppNumbersService.status()
         async let labelsTask = try? AnalyticsService.customLabels()
         async let integrationsTask = try? IntegrationsService.status()
         async let metaFlagsTask = fetchMetaCommentsFlags()
         async let tagsTask = try? tagsService.fetchTags()
 
-        whatsAppStatus = await statusTask
-        if let labels = await labelsTask { customLabels = labels }
-        if let integrations = await integrationsTask {
-            openAIConfigured = integrations.openai?.isUsable == true
-        }
-        // Chip «Comentarios»: /movil lo gatea con los switches de COMENTARIOS
-        // (no los de DMs) y con OR, sin exigir integración Meta conectada
-        // (PhoneChat.tsx: commentsFeatureEnabled = fb || ig). Fetch fallido →
-        // fail-open (deja `true` por defecto).
-        if let flags = await metaFlagsTask {
-            commentsFeatureEnabled = flags.facebook || flags.instagram
-        }
-        if let tags = await tagsTask {
+        let status = await statusTask
+        let labels = await labelsTask
+        let integrations = await integrationsTask
+        let flags = await metaFlagsTask
+        let tags = await tagsTask
+        return SatelliteContextSnapshot(
+            whatsAppStatus: status,
+            customLabels: labels,
+            openAIConfigured: integrations.map { $0.openai?.isUsable == true },
+            // /movil usa OR de los switches de COMENTARIOS, sin exigir que la
+            // integración Meta esté conectada. Fetch fallido conserva fail-open.
+            commentsFeatureEnabled: flags.map { $0.facebook || $0.instagram },
+            tagsCatalog: tags
+        )
+    }
+
+    /// Commit atómico en MainActor: o se aplica el snapshot completo vigente o
+    /// no se toca nada. Los `nil` conservan el último estado conocido.
+    private func applySatelliteContext(_ snapshot: SatelliteContextSnapshot) {
+        if let status = snapshot.whatsAppStatus { whatsAppStatus = status }
+        if let labels = snapshot.customLabels { customLabels = labels }
+        if let configured = snapshot.openAIConfigured { openAIConfigured = configured }
+        if let enabled = snapshot.commentsFeatureEnabled { commentsFeatureEnabled = enabled }
+        if let tags = snapshot.tagsCatalog {
             tagsCatalog = tags
             tagsLoaded = true
         }
@@ -585,16 +672,15 @@ final class InboxViewModel {
             return true
         } catch let error as RistakAPIError {
             isAccessDenied = error.isAccessDenied
-            if rows.isEmpty {
-                loadErrorMessage = error.kind == .featureUnavailable
-                    ? nil
-                    : "No se pudieron cargar los chats."
-            }
+            // Conserva el fallo aun con snapshot para diagnóstico/reintento, pero
+            // `InboxScreen` solo pinta el error a pantalla completa cuando no hay
+            // filas. Los datos guardados nunca se reemplazan por el error.
+            loadErrorMessage = error.kind == .featureUnavailable
+                ? nil
+                : "No se pudieron cargar los chats."
             return false
         } catch {
-            if rows.isEmpty {
-                loadErrorMessage = "No se pudieron cargar los chats."
-            }
+            loadErrorMessage = "No se pudieron cargar los chats."
             return false
         }
     }
@@ -899,35 +985,108 @@ final class InboxViewModel {
         return result
     }
 
-    /// Refresh coalescido (nudge SSE / push foreground / tick de polling).
-    /// Si hay uno en vuelo, encola UNO más (doc 11 §2.4).
+    /// Refresh coalescido (nudge SSE / push foreground / tick de polling). Una
+    /// ráfaga admite el request en vuelo + una confirmación, nunca un loop sin fin.
     func requestSilentRefresh() {
         guard configured else { return }
-        if refreshInFlight {
-            refreshQueued = true
-            return
-        }
-        refreshInFlight = true
+        guard refreshBurstGate.beginOrQueue() else { return }
+        let expectedGeneration = refreshBurstGeneration
         isSilentRefreshing = true
         Task { [weak self] in
             guard let self else { return }
-            await self.reloadFromServer(showSpinner: false)
-            self.refreshInFlight = false
-            self.isSilentRefreshing = false
-            if self.refreshQueued {
-                self.refreshQueued = false
-                self.requestSilentRefresh()
-            }
+            await self.performSilentRefreshBurst(generation: expectedGeneration)
         }
     }
 
-    /// Arranca SSE + ticker de bandeja (12 s). Idempotente.
+    private func performSilentRefreshBurst(generation: UInt64) async {
+        await reloadFromServer(showSpinner: false)
+        guard generation == refreshBurstGeneration else { return }
+        if !Task.isCancelled, refreshBurstGate.consumeFollowUp() {
+            await reloadFromServer(showSpinner: false)
+        }
+        guard generation == refreshBurstGeneration else { return }
+
+        let needsTrailing = refreshBurstGate.finishBurst()
+        isSilentRefreshing = false
+        if needsTrailing, !Task.isCancelled {
+            scheduleTrailingRefresh(generation: generation)
+        } else if needsTrailing {
+            refreshBurstGate.cancelCooldown()
+        }
+    }
+
+    private func scheduleTrailingRefresh(generation: UInt64) {
+        guard generation == refreshBurstGeneration,
+              trailingRefreshTask == nil,
+              refreshBurstGate.isCoolingDown else { return }
+        let taskID = UUID()
+        trailingRefreshTaskID = taskID
+        trailingRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(
+                    nanoseconds: ChatRefreshBurstGate.trailingCooldownNanoseconds
+                )
+            } catch {
+                guard let self, self.trailingRefreshTaskID == taskID else { return }
+                self.trailingRefreshTask = nil
+                self.trailingRefreshTaskID = nil
+                self.refreshBurstGate.cancelCooldown()
+                return
+            }
+
+            guard let self,
+                  self.trailingRefreshTaskID == taskID,
+                  generation == self.refreshBurstGeneration else { return }
+            self.trailingRefreshTask = nil
+            self.trailingRefreshTaskID = nil
+            guard !Task.isCancelled,
+                  self.refreshBurstGate.beginTrailingRefresh() else {
+                self.refreshBurstGate.cancelCooldown()
+                return
+            }
+            self.isSilentRefreshing = true
+            await self.performSilentRefreshBurst(generation: generation)
+        }
+    }
+
+    private func cancelTrailingRefresh() {
+        trailingRefreshTask?.cancel()
+        trailingRefreshTask = nil
+        trailingRefreshTaskID = nil
+        refreshBurstGate.cancelCooldown()
+    }
+
+    /// Arranca SSE + una sola reconciliación adaptativa. Mientras SSE está
+    /// sano baja a 2 min; durante una caída usa fallback de 25 s.
     func startRealtime() {
         guard configured else { return }
-        pollingClock.schedule("inbox", every: PollingClock.Cadence.inbox) { [weak self] in
+        reconcileInboxPolling()
+        startEventsStream()
+    }
+
+    private func setRealtimeConnected(_ connected: Bool) {
+        guard realtimePollingPolicy.setConnected(connected) else { return }
+        reconcileInboxPolling()
+    }
+
+    /// Mantiene exactamente un ticker `inbox`. Cambiar de estado reemplaza el
+    /// intervalo anterior; frames connected/disconnected repetidos son no-op.
+    private func reconcileInboxPolling() {
+        let shouldSchedule = configured && !isScenePaused && !isCoveredByThread
+        guard shouldSchedule else {
+            if scheduledInboxPollingInterval != nil {
+                pollingClock.cancel("inbox")
+                scheduledInboxPollingInterval = nil
+            }
+            return
+        }
+
+        let interval = realtimePollingPolicy.reconciliationInterval
+        guard scheduledInboxPollingInterval != interval else { return }
+        scheduledInboxPollingInterval = interval
+        pollingClock.schedule("inbox", every: interval) { [weak self] in
             self?.requestSilentRefresh()
         }
-        startEventsStream()
     }
 
     /// Las operaciones start/stop del engine SSE se encadenan en serie: un
@@ -935,7 +1094,7 @@ final class InboxViewModel {
     /// conexión recién abierta y el realtime quedaría muerto hasta el próximo
     /// cambio de escena.
     private func startEventsStream() {
-        realtimeTask?.cancel()
+        guard realtimeTask == nil else { return }
         let client = eventsClient
         let previous = realtimeControl
         let task = Task { [weak self] in
@@ -945,19 +1104,33 @@ final class InboxViewModel {
             for await event in stream {
                 if Task.isCancelled { return }
                 guard let self else { return }
-                if case .message(let payload) = event {
+                switch event {
+                case .connected:
+                    self.setRealtimeConnected(true)
+                case .disconnected:
+                    self.setRealtimeConnected(false)
+                case .message(let payload):
+                    // Un frame de negocio también prueba que el socket está
+                    // sano aunque un servidor viejo omita `connected`.
+                    self.setRealtimeConnected(true)
                     self.applyActivity(ChatInboxActivity(event: payload))
                     self.requestSilentRefresh()
                 }
             }
+            guard let self, !Task.isCancelled else { return }
+            self.realtimeTask = nil
+            self.setRealtimeConnected(false)
         }
         realtimeTask = task
         realtimeControl = task
     }
 
-    private func enqueueEventsStop() {
+    private func enqueueEventsStop(updateConnectionState: Bool = true) {
         realtimeTask?.cancel()
         realtimeTask = nil
+        if updateConnectionState {
+            setRealtimeConnected(false)
+        }
         let client = eventsClient
         let previous = realtimeControl
         realtimeControl = Task {
@@ -968,7 +1141,10 @@ final class InboxViewModel {
 
     func stopRealtime() {
         pollingClock.cancelAll()
-        enqueueEventsStop()
+        scheduledInboxPollingInterval = nil
+        cancelTrailingRefresh()
+        _ = realtimePollingPolicy.setConnected(false)
+        enqueueEventsStop(updateConnectionState: false)
     }
 
     /// scenePhase: pausar polls y cortar SSE en background; al volver,
@@ -976,14 +1152,18 @@ final class InboxViewModel {
     func setScenePaused(_ paused: Bool) {
         guard isScenePaused != paused else { return }
         isScenePaused = paused
-        pollingClock.setPaused(paused)
         if paused {
+            pollingClock.setPaused(true)
+            cancelTrailingRefresh()
             enqueueEventsStop()
         } else if configured && !isCoveredByThread {
+            // Programa el fallback mientras el reloj sigue pausado; al
+            // reanudar se ejecuta una sola reconciliación inmediata.
+            reconcileInboxPolling()
+            pollingClock.setPaused(false)
             startEventsStream()
-            // El refresh de reconciliación al volver a foreground ya lo dispara
-            // `pollingClock.setPaused(false)`, que re-ejecuta el ticker "inbox"
-            // una vez. Llamar aquí de nuevo provocaba DOS recargas back-to-back.
+        } else {
+            pollingClock.setPaused(false)
         }
     }
 
@@ -995,8 +1175,9 @@ final class InboxViewModel {
         guard configured, isCoveredByThread != covered else { return }
         isCoveredByThread = covered
         if covered {
-            pollingClock.cancel("inbox")
+            cancelTrailingRefresh()
             enqueueEventsStop()
+            reconcileInboxPolling()
         } else if !isScenePaused {
             startRealtime()
             requestSilentRefresh()

@@ -7,6 +7,13 @@ struct RistakServerSentEvent: Sendable {
     let data: String
 }
 
+/// Frames internos del engine. El prefijo evita colisionar con eventos que el
+/// backend pudiera publicar y permite a cada cliente decidir si necesita un
+/// fallback mientras el reconnect automático está trabajando.
+enum RistakSSEInternalEvent {
+    static let disconnected = "_ristak_connection_disconnected"
+}
+
 /// Parser incremental del protocolo SSE (doc research/11 §2.2):
 /// - Campos `event:` / `data:`; líneas comentario `:` (heartbeats) se ignoran.
 /// - `id:` / `retry:` se ignoran (el backend no soporta replay).
@@ -139,6 +146,10 @@ actor RistakSSEStreamEngine {
                 }
                 if http.statusCode == 401 || http.statusCode == 403 {
                     // Sesión inválida o sin permiso de módulo: no reintentar.
+                    continuation.yield(RistakServerSentEvent(
+                        name: RistakSSEInternalEvent.disconnected,
+                        data: ""
+                    ))
                     return
                 }
                 guard http.statusCode == 200 else {
@@ -157,10 +168,22 @@ actor RistakSSEStreamEngine {
                     }
                 }
                 // Fin del stream sin error: reconectar tras el backoff.
+                if !Task.isCancelled && !isStopped {
+                    continuation.yield(RistakServerSentEvent(
+                        name: RistakSSEInternalEvent.disconnected,
+                        data: ""
+                    ))
+                }
             } catch is CancellationError {
                 return
             } catch {
                 // Error de red/timeout: caer al backoff.
+                if !Task.isCancelled && !isStopped {
+                    continuation.yield(RistakServerSentEvent(
+                        name: RistakSSEInternalEvent.disconnected,
+                        data: ""
+                    ))
+                }
             }
 
             if Task.isCancelled || isStopped { return }

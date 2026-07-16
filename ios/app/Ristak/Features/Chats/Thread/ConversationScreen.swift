@@ -7,8 +7,8 @@ import UIKit
 /// - Hilo con ids estables y merges identity-preserving (memoria del
 ///   proyecto): jamás scroll-jumps en refresh; «bajar al final» flotante.
 /// - Composer como `safeAreaInset(bottom)` — un solo dueño del teclado.
-/// - Presencia (start/stop con scenePhase + appear), polling 4 s/12 s,
-///   SSE + nudges de push en foreground.
+/// - Presencia (start/stop con scenePhase + appear), SSE + nudges de push en
+///   foreground y fallback de 25 s solo durante desconexión.
 struct ConversationScreen: View {
     @State private var viewModel: ConversationViewModel
     @State private var presence = PresenceReporter()
@@ -69,12 +69,15 @@ struct ConversationScreen: View {
                 // carga, el ViewModel conserva el nudge y reconcilia al quedar
                 // listo. No espera a journey/agentes/catálogos secundarios.
                 viewModel.startRealtimeBootstrap()
+                // Agenda desde ahora el fallback desconectado. Su primer tick es
+                // a 25 s y el bootstrap gate lo coalesce si el GET inicial sigue
+                // en vuelo; no hay una ventana muerta por catálogos secundarios.
+                viewModel.startPolling()
                 await viewModel.loadInitial()
                 // En un pop rápido la `.task` se cancela durante `loadInitial`:
-                // no arranques polling/presencia después (fuga de tareas). El
-                // SSE temprano ya quedó detenido por `onDisappear`.
+                // no arranques presencia después (fuga de tareas). SSE y fallback
+                // tempranos ya quedaron detenidos por `onDisappear`.
                 guard !Task.isCancelled else { return }
-                viewModel.startPolling()
                 presence.startViewing(contactID: viewModel.contactID)
             }
             .onDisappear {

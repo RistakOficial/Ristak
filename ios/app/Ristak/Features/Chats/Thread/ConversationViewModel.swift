@@ -11,8 +11,8 @@ import UIKit
 ///   sin cambios es no-op de render (memoria del proyecto: jamás reemplazar el
 ///   array si es igual, jamás ids por índice).
 /// - Paginación hacia atrás con `beforeMessageDate` + merge por id.
-/// - Polling del hilo cada 4 s, acuses cada 12 s (solo con salientes
-///   pendientes), programados autoritativos en cada poll.
+/// - SSE como ruta normal; polling de reconciliación a 25 s únicamente mientras
+///   el stream está desconectado.
 /// - Envíos optimistas con `externalId` idempotente y reconciliación con la
 ///   copia del servidor (ventana ±4 min, paridad RN).
 @MainActor
@@ -133,12 +133,14 @@ final class ConversationViewModel {
     /// La hidratación desde caché instantánea corre una sola vez por hilo.
     private var threadCacheHydrated = false
 
-    /// Coalescing del refresh silencioso: el poll de 4 s, el de acuses (12 s), cada
-    /// evento SSE, el nudge de push y cada envío disparan `refreshSilently`. Sin
-    /// guard, un burst lanzaba N fetches completos solapados. Con estos flags se
-    /// colapsa a lo sumo uno en vuelo + uno encolado (paridad con la bandeja).
-    private var refreshInFlight = false
-    private var refreshQueued = false
+    /// Backpressure compartido por SSE, push, fallback y envíos. Una ráfaga puede
+    /// confirmar una vez después del request en vuelo, pero nunca crear un loop
+    /// ilimitado de recargas completas si el backend está lento.
+    private var refreshBurstGate = ChatRefreshBurstGate()
+    /// Un nudge que aterriza durante el follow-up se reconcilia tras un cooldown
+    /// corto. Una sola tarea cubre toda la ráfaga y se cancela al cerrar el hilo.
+    private var trailingRefreshTask: Task<Void, Never>?
+    private var trailingRefreshTaskID: UUID?
 
     private(set) var hasOlderMessages = false
     private(set) var isLoadingOlder = false
@@ -217,13 +219,17 @@ final class ConversationViewModel {
     /// sin `messageId`; este vínculo exacto evita recurrir a heurísticas de texto.
     private var authoritativeServerMessageIDsByExternalID: [String: String] = [:]
 
-    private var lastFullJourneyFetch: Date?
+    private var lastActivityFetch: Date?
     private var realtimeTask: Task<Void, Never>?
     /// Cadena serial de operaciones start/stop del engine SSE.
     private var realtimeControl: Task<Void, Never>?
     /// Un evento que entra antes del primer `/conversation` no se descarta: se
     /// reconcilia una vez apenas la carga inicial queda lista.
     private var realtimeBootstrapGate = ConversationRealtimeBootstrapGate()
+    private var realtimePollingPolicy = ConversationRealtimePollingPolicy()
+    private var pollingStarted = false
+    private var fallbackPollingScheduled = false
+    private var isScenePaused = false
 
     struct FailedSendPayload {
         var text: String
@@ -351,6 +357,15 @@ final class ConversationViewModel {
             Task { [weak self] in
                 await self?.refreshSilently()
             }
+        } else if !hasLoadedOnce,
+                  allowsSilentRecovery,
+                  realtimePollingPolicy.isConnected,
+                  !Task.isCancelled {
+            // La conexión inicial no duplica un GET exitoso. Si ese GET falló,
+            // tampoco puede dejar el hilo muerto con SSE sano y sin fallback.
+            Task { [weak self] in
+                await self?.refreshSilently()
+            }
         }
 
         // Espera SIEMPRE las tareas hijas ya en vuelo (aunque la conversación
@@ -365,50 +380,102 @@ final class ConversationViewModel {
         Task { await loadInitial() }
     }
 
-    /// Poll silencioso (4 s / foreground / SSE). Nunca alerta ni muestra spinner.
-    /// Coalescido: si ya hay uno en vuelo, encola UNO más y regresa; el que está
-    /// corriendo repite al terminar. Así un burst de eventos SSE + poll + envío no
-    /// dispara fetches completos solapados. (`@MainActor` → los flags no compiten.)
+    /// Reconciliación silenciosa de SSE / push / fallback. Nunca alerta ni muestra
+    /// spinner. Una ráfaga admite como máximo el request actual + un follow-up;
+    /// esto conserva el evento que llegó a media respuesta sin caer en un loop de
+    /// GETs completos cuando la red tarda más que los nudges.
     func refreshSilently() async {
         guard !accessDenied else { return }
         // Antes de que termine el primer intento, guarda el nudge en el mismo
         // gate de SSE. Al terminar se drena exactamente una vez.
         guard realtimeBootstrapGate.receiveVisibleThreadEvent() else { return }
-        if refreshInFlight {
-            refreshQueued = true
-            return
+        guard refreshBurstGate.beginOrQueue() else { return }
+        await performSilentRefreshBurst()
+    }
+
+    /// Ejecuta la parte adquirida del burst: request primario + un follow-up
+    /// inmediato como máximo. Si ensuciaron ese follow-up, agenda un trailing
+    /// coalescido en vez de borrar el nudge o entrar en un loop apretado.
+    private func performSilentRefreshBurst() async {
+        await performSilentRefreshOnce()
+        if !Task.isCancelled,
+           !accessDenied,
+           refreshBurstGate.consumeFollowUp() {
+            await performSilentRefreshOnce()
         }
-        refreshInFlight = true
-        defer { refreshInFlight = false }
-        repeat {
-            refreshQueued = false
-            let isBootstrapRecovery = !hasLoadedOnce
-            do {
-                try await loadConversation(reset: isBootstrapRecovery)
-                if isBootstrapRecovery {
-                    hasLoadedOnce = true
-                    loadErrorMessage = nil
-                    markRead()
-                }
-            } catch let error as RistakAPIError {
-                if error.isAccessDenied {
-                    accessDenied = true
-                    loadErrorMessage = error.message
-                    refreshQueued = false
-                } else if error.kind == .featureUnavailable {
-                    hasLoadedOnce = true
-                    loadErrorMessage = nil
-                }
-            } catch is CancellationError {
-                refreshQueued = false
-            } catch {
-                // Silencioso: el próximo SSE/poll vuelve a intentar.
-            }
-        } while refreshQueued && !accessDenied
+
+        let needsTrailing = refreshBurstGate.finishBurst()
+        if needsTrailing, !accessDenied, !Task.isCancelled {
+            scheduleTrailingRefresh()
+        } else if needsTrailing {
+            refreshBurstGate.cancelCooldown()
+        }
+
         // El estado del agente puede cambiar por detrás (el bot responde, marca
-        // objetivo, otro dispositivo lo pausa): refréscalo junto al poll/SSE para
+        // objetivo, otro dispositivo lo pausa): refréscalo junto al fallback/SSE para
         // que el header y el banner no se queden pegados. Throttled y sin bloquear.
         Task { await refreshAgentStatesIfStale() }
+    }
+
+    private func scheduleTrailingRefresh() {
+        guard trailingRefreshTask == nil, refreshBurstGate.isCoolingDown else { return }
+        let taskID = UUID()
+        trailingRefreshTaskID = taskID
+        trailingRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(
+                    nanoseconds: ChatRefreshBurstGate.trailingCooldownNanoseconds
+                )
+            } catch {
+                guard let self, self.trailingRefreshTaskID == taskID else { return }
+                self.trailingRefreshTask = nil
+                self.trailingRefreshTaskID = nil
+                self.refreshBurstGate.cancelCooldown()
+                return
+            }
+
+            guard let self, self.trailingRefreshTaskID == taskID else { return }
+            self.trailingRefreshTask = nil
+            self.trailingRefreshTaskID = nil
+            guard !Task.isCancelled,
+                  !self.accessDenied,
+                  self.refreshBurstGate.beginTrailingRefresh() else {
+                self.refreshBurstGate.cancelCooldown()
+                return
+            }
+            await self.performSilentRefreshBurst()
+        }
+    }
+
+    private func cancelTrailingRefresh() {
+        trailingRefreshTask?.cancel()
+        trailingRefreshTask = nil
+        trailingRefreshTaskID = nil
+        refreshBurstGate.cancelCooldown()
+    }
+
+    private func performSilentRefreshOnce() async {
+        let isBootstrapRecovery = !hasLoadedOnce
+        do {
+            try await loadConversation(reset: isBootstrapRecovery)
+            if isBootstrapRecovery {
+                hasLoadedOnce = true
+                loadErrorMessage = nil
+                markRead()
+            }
+        } catch let error as RistakAPIError {
+            if error.isAccessDenied {
+                accessDenied = true
+                loadErrorMessage = error.message
+            } else if error.kind == .featureUnavailable {
+                hasLoadedOnce = true
+                loadErrorMessage = nil
+            }
+        } catch is CancellationError {
+            // La pantalla salió o la sesión cambió; el caller cierra el gate.
+        } catch {
+            // Silencioso: el próximo SSE/fallback vuelve a intentar.
+        }
     }
 
     /// El POST aceptado ya deja la burbuja optimista y la fila de bandeja en su
@@ -420,18 +487,18 @@ final class ConversationViewModel {
         }
     }
 
-    /// Carga del hilo: página reciente + programados (+ journey completo
-    /// throttled 30 s para markers, gap doc 04 §10.18).
+    /// Carga del hilo: página reciente + programados (+ activity read-path
+    /// ligero, throttled 30 s para markers).
     private func loadConversation(reset: Bool) async throws {
-        let needsMarkers = reset || lastFullJourneyFetch == nil
-            || Date().timeIntervalSince(lastFullJourneyFetch!) > 30
+        let needsMarkers = reset || lastActivityFetch == nil
+            || Date().timeIntervalSince(lastActivityFetch!) > 30
 
         async let eventsTask = journeyService.fetchConversationEvents(
             contactId: contactID,
             limit: JourneyService.defaultMessageLimit
         )
         async let scheduledTask = fetchScheduledSafely()
-        // Los markers (pagos/citas del journey completo) viven en una SEGUNDA
+        // Los markers (pagos/citas) viven en una SEGUNDA
         // petición; lánzala EN PARALELO a la de eventos —no en serie después del
         // primer pintado— para que su inserción quepa en el MISMO relayout y no
         // reacomode el hilo una vez más al entrar.
@@ -468,7 +535,7 @@ final class ConversationViewModel {
         let freshMarkers = await markersTask
 
         if needsMarkers, let markers = freshMarkers {
-            lastFullJourneyFetch = Date()
+            lastActivityFetch = Date()
             if markers != activityMarkers {
                 activityMarkers = markers
                 persistThreadMarkers()
@@ -486,10 +553,10 @@ final class ConversationViewModel {
     /// Fetch + build de markers SIN efectos secundarios (para lanzarlo en
     /// paralelo con la petición de eventos). Devuelve nil si no toca refrescar
     /// (deja intactos los markers cacheados) o si la red falla —en ese caso
-    /// `lastFullJourneyFetch` no se toca y se reintenta en el siguiente poll—.
+    /// `lastActivityFetch` no se toca y se reintenta en el siguiente fallback—.
     private func fetchMarkersIfNeeded(_ needed: Bool) async -> [ConversationActivityMarker]? {
         guard needed else { return nil }
-        guard let events = try? await journeyService.fetchFullJourney(contactId: contactID) else { return nil }
+        guard let events = try? await journeyService.fetchChatActivity(contactId: contactID) else { return nil }
         return ConversationTimelineBuilder.buildMarkers(from: events, formatters: formatters)
     }
 
@@ -799,26 +866,24 @@ final class ConversationViewModel {
 
     // MARK: - Polling / realtime / presencia
 
-    /// Abre SSE antes del primer fetch del hilo. El polling de reconciliación
-    /// conserva su cadencia normal y se agenda después del bootstrap.
+    /// Abre SSE antes del primer fetch del hilo. El fallback periódico se decide
+    /// después del bootstrap según el estado real de esta conexión.
     func startRealtimeBootstrap() {
         startRealtime()
     }
 
     func startPolling() {
-        clock.schedule("thread", every: PollingClock.Cadence.thread) { [weak self] in
-            await self?.refreshSilently()
-        }
-        clock.schedule("receipts", every: PollingClock.Cadence.receipts) { [weak self] in
-            guard let self, self.hasPendingReceipts else { return }
-            await self.refreshSilently()
-        }
+        pollingStarted = true
         startRealtime()
+        reconcileFallbackPolling()
         updateScheduledTicker()
     }
 
     func stopPolling() {
+        pollingStarted = false
+        fallbackPollingScheduled = false
         clock.cancelAll()
+        cancelTrailingRefresh()
         stopRealtime()
         scheduledTickTask?.cancel()
         scheduledTickTask = nil
@@ -828,20 +893,19 @@ final class ConversationViewModel {
     }
 
     func setScenePaused(_ paused: Bool) {
-        clock.setPaused(paused)
+        guard isScenePaused != paused else { return }
+        isScenePaused = paused
         if paused {
+            clock.setPaused(true)
+            cancelTrailingRefresh()
             stopRealtime()
         } else {
+            // `stopRealtime()` quitó el ticker al pausar. Reinstalarlo mientras
+            // el clock sigue pausado permite que `setPaused(false)` dispare una
+            // única reconciliación inmediata aun si regresamos sin red.
+            reconcileFallbackPolling()
+            clock.setPaused(false)
             startRealtime()
-        }
-    }
-
-    /// ¿Hay salientes con acuse pendiente? (gate del poll de 12 s).
-    private var hasPendingReceipts: Bool {
-        combinedMessages.contains { message in
-            guard message.direction == .outbound, !message.isScheduled else { return false }
-            let receipt = message.receiptStatus
-            return receipt == .pending || receipt == .sent
         }
     }
 
@@ -859,14 +923,34 @@ final class ConversationViewModel {
             for await event in stream {
                 if Task.isCancelled { return }
                 guard let self else { return }
-                if case .message(let payload) = event {
+                switch event {
+                case .connected:
+                    // SSE no ofrece replay: al reconectar hay que cerrar una
+                    // vez el hueco previo antes de volver a depender del stream.
+                    let transition = self.setRealtimeConnected(true)
+                    if ConversationRealtimeRefreshDecision.shouldReconcile(
+                        transition: transition,
+                        initialAttemptFinished: self.realtimeBootstrapGate.initialAttemptFinished
+                    ) {
+                        await self.refreshSilently()
+                    }
+                case .disconnected:
+                    _ = self.setRealtimeConnected(false)
+                case .message(let payload):
+                    // Cualquier frame de negocio prueba que el socket está vivo,
+                    // aun si una instalación antigua omitiera el frame `connected`.
+                    let transition = self.setRealtimeConnected(true)
+                    let shouldReconcileConnection = ConversationRealtimeRefreshDecision
+                        .shouldReconcile(
+                            transition: transition,
+                            initialAttemptFinished: self.realtimeBootstrapGate.initialAttemptFinished
+                        )
                     let belongsToVisibleThread = payload.contactId == self.contactID
                     self.onInboxActivity(ChatInboxActivity(
                         event: payload,
                         conversationIsVisible: belongsToVisibleThread
                     ))
-                    if belongsToVisibleThread,
-                       self.realtimeBootstrapGate.receiveVisibleThreadEvent() {
+                    if shouldReconcileConnection || belongsToVisibleThread {
                         await self.refreshSilently()
                     }
                 }
@@ -878,6 +962,7 @@ final class ConversationViewModel {
             // (ya lo nilificó).
             guard let self, !Task.isCancelled else { return }
             self.realtimeTask = nil
+            _ = self.setRealtimeConnected(false)
         }
         realtimeTask = task
         realtimeControl = task
@@ -886,11 +971,45 @@ final class ConversationViewModel {
     private func stopRealtime() {
         realtimeTask?.cancel()
         realtimeTask = nil
+        _ = setRealtimeConnected(false)
         let client = chatEventsClient
         let previous = realtimeControl
         realtimeControl = Task {
             await previous?.value
             await client.stop()
+        }
+    }
+
+    /// Clasifica enlace inicial/reconexión para que el primer `connected` no
+    /// duplique el GET de bootstrap. Desconexiones y frames repetidos son no-op
+    /// para la reconciliación, pero una transición real siempre ajusta el fallback.
+    private func setRealtimeConnected(
+        _ connected: Bool
+    ) -> ConversationRealtimeConnectionTransition {
+        let transition = realtimePollingPolicy.setConnected(connected)
+        guard transition != .none else { return .none }
+        reconcileFallbackPolling()
+        return transition
+    }
+
+    /// Mantiene exactamente un ticker de respaldo. Repetidos frames de
+    /// desconexión durante el backoff no lo reprograman ni aplazan su primer tick.
+    private func reconcileFallbackPolling() {
+        let shouldSchedule = pollingStarted
+            && !isScenePaused
+            && realtimePollingPolicy.shouldScheduleFallback
+        if shouldSchedule {
+            guard !fallbackPollingScheduled else { return }
+            fallbackPollingScheduled = true
+            clock.schedule(
+                "thread-fallback",
+                every: PollingClock.Cadence.threadFallback
+            ) { [weak self] in
+                await self?.refreshSilently()
+            }
+        } else if fallbackPollingScheduled {
+            fallbackPollingScheduled = false
+            clock.cancel("thread-fallback")
         }
     }
 

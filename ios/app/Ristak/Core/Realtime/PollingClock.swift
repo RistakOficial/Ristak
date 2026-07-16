@@ -4,8 +4,10 @@ import Observation
 /// Reloj de polling de reconciliación (doc research/11 §1, §10.3). El polling
 /// NO es opcional: el SSE no re-entrega eventos perdidos.
 ///
-/// Cadencias estándar: bandeja 12 s, hilo abierto 4 s, acuses 12 s. Un tick
-/// sin cambios debe ser no-op visual (responsabilidad del `action`).
+/// Cadencias estándar: bandeja/hilo usan fallback de 25 s únicamente cuando
+/// SSE está desconectado. Con SSE sano, la bandeja solo hace una reconciliación
+/// defensiva cada 2 min. Un tick sin cambios debe ser no-op visual
+/// (responsabilidad del `action`).
 ///
 /// Hook de scenePhase: el shell llama `setPaused(true)` al pasar a background
 /// y `setPaused(false)` al volver (des-pausar dispara todos los ticks una vez
@@ -15,12 +17,13 @@ import Observation
 final class PollingClock {
     /// Intervalos estándar en segundos.
     enum Cadence {
-        /// Bandeja de chats: 12 s.
-        static let inbox: TimeInterval = 12
-        /// Hilo de conversación abierto: 4 s.
-        static let thread: TimeInterval = 4
-        /// Acuses (receipts) de mensajes salientes: 12 s.
-        static let receipts: TimeInterval = 12
+        /// Bandeja sin SSE: respaldo durante el backoff de reconexión.
+        static let inboxFallback: TimeInterval = 25
+        /// Bandeja con SSE sano: cubre un evento excepcionalmente perdido sin
+        /// convertir la ruta realtime en cinco GET por minuto.
+        static let inboxConnectedReconciliation: TimeInterval = 120
+        /// Hilo abierto sin SSE: reconciliación de respaldo, no ruta normal.
+        static let threadFallback: TimeInterval = 25
     }
 
     private struct TickerDefinition {
@@ -94,5 +97,25 @@ final class PollingClock {
                 await action()
             }
         }
+    }
+}
+
+/// Decide la única cadencia activa de la bandeja según la salud del socket.
+/// El retorno de `setConnected` permite ignorar frames repetidos y evita que
+/// cada mensaje reprograme (y aplace) el ticker ya correcto.
+struct InboxRealtimePollingPolicy: Equatable {
+    private(set) var isConnected = false
+
+    var reconciliationInterval: TimeInterval {
+        isConnected
+            ? PollingClock.Cadence.inboxConnectedReconciliation
+            : PollingClock.Cadence.inboxFallback
+    }
+
+    @discardableResult
+    mutating func setConnected(_ connected: Bool) -> Bool {
+        guard isConnected != connected else { return false }
+        isConnected = connected
+        return true
     }
 }

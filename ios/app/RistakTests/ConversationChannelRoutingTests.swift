@@ -152,6 +152,160 @@ final class ConversationChannelRoutingTests: XCTestCase {
         XCTAssertFalse(gate.receiveVisibleThreadEvent())
     }
 
+    func testRealtimeConnectionDisablesThreadPollingUntilDisconnected() {
+        var policy = ConversationRealtimePollingPolicy()
+
+        XCTAssertTrue(policy.shouldScheduleFallback)
+        XCTAssertEqual(
+            ConversationRealtimePollingPolicy.fallbackInterval,
+            PollingClock.Cadence.threadFallback
+        )
+        XCTAssertTrue((20.0...30.0).contains(ConversationRealtimePollingPolicy.fallbackInterval))
+
+        XCTAssertEqual(policy.setConnected(true), .initial)
+        XCTAssertTrue(policy.isConnected)
+        XCTAssertFalse(policy.shouldScheduleFallback)
+
+        XCTAssertEqual(policy.setConnected(false), .disconnected)
+        XCTAssertFalse(policy.isConnected)
+        XCTAssertTrue(policy.shouldScheduleFallback)
+    }
+
+    func testInitialConnectionDoesNotDuplicateBootstrapButRealReconnectClosesGap() {
+        var policy = ConversationRealtimePollingPolicy()
+
+        let initial = policy.setConnected(true)
+        XCTAssertEqual(initial, .initial)
+        XCTAssertFalse(ConversationRealtimeRefreshDecision.shouldReconcile(
+            transition: initial,
+            initialAttemptFinished: false
+        ))
+        // Si el primer enlace llega DESPUÉS del bootstrap, sí cierra el hueco.
+        XCTAssertTrue(ConversationRealtimeRefreshDecision.shouldReconcile(
+            transition: initial,
+            initialAttemptFinished: true
+        ))
+        XCTAssertEqual(policy.setConnected(true), .none)
+
+        let disconnected = policy.setConnected(false)
+        XCTAssertEqual(disconnected, .disconnected)
+        XCTAssertFalse(ConversationRealtimeRefreshDecision.shouldReconcile(
+            transition: disconnected,
+            initialAttemptFinished: true
+        ))
+        XCTAssertEqual(policy.setConnected(false), .none)
+
+        // Al recuperar un stream sin replay se pide exactamente una descarga.
+        let reconnected = policy.setConnected(true)
+        XCTAssertEqual(reconnected, .reconnected)
+        XCTAssertTrue(ConversationRealtimeRefreshDecision.shouldReconcile(
+            transition: reconnected,
+            initialAttemptFinished: true
+        ))
+        XCTAssertEqual(policy.setConnected(true), .none)
+    }
+
+    func testInboxUsesFallbackOnlyDisconnectedAndTwoMinuteReconciliationConnected() {
+        var policy = InboxRealtimePollingPolicy()
+
+        XCTAssertFalse(policy.isConnected)
+        XCTAssertEqual(
+            policy.reconciliationInterval,
+            PollingClock.Cadence.inboxFallback
+        )
+        XCTAssertTrue((20.0...30.0).contains(policy.reconciliationInterval))
+
+        XCTAssertTrue(policy.setConnected(true))
+        XCTAssertTrue(policy.isConnected)
+        XCTAssertEqual(
+            policy.reconciliationInterval,
+            PollingClock.Cadence.inboxConnectedReconciliation
+        )
+        XCTAssertEqual(policy.reconciliationInterval, 120)
+
+        // Un frame repetido no debe reprogramar un ticker nuevo ni aplazar el
+        // que ya corre; el ViewModel solo reconcilia cuando esto devuelve true.
+        XCTAssertFalse(policy.setConnected(true))
+        XCTAssertTrue(policy.setConnected(false))
+        XCTAssertEqual(
+            policy.reconciliationInterval,
+            PollingClock.Cadence.inboxFallback
+        )
+    }
+
+    func testRefreshBurstPreservesDirtyFollowUpAsOneCoalescedTrailingRefresh() {
+        var gate = ChatRefreshBurstGate()
+
+        XCTAssertTrue(gate.beginOrQueue())
+        XCTAssertEqual(gate.phase, .primary)
+        XCTAssertFalse(gate.beginOrQueue())
+        XCTAssertTrue(gate.hasPendingFollowUp)
+        XCTAssertTrue(gate.consumeFollowUp())
+        XCTAssertEqual(gate.phase, .followUp)
+
+        // Cien eventos durante el follow-up/cooldown producen UN trailing, no
+        // cien GETs ni una pérdida silenciosa del último mensaje.
+        XCTAssertFalse(gate.beginOrQueue())
+        XCTAssertFalse(gate.consumeFollowUp())
+        XCTAssertTrue(gate.finishBurst())
+        XCTAssertTrue(gate.isCoolingDown)
+        for _ in 0..<100 {
+            XCTAssertFalse(gate.beginOrQueue())
+        }
+
+        XCTAssertTrue(gate.beginTrailingRefresh())
+        XCTAssertEqual(gate.phase, .primary)
+        XCTAssertFalse(gate.finishBurst())
+        XCTAssertEqual(gate.phase, .idle)
+
+        XCTAssertFalse(gate.isInFlight)
+        XCTAssertFalse(gate.hasPendingFollowUp)
+        XCTAssertTrue(gate.beginOrQueue())
+    }
+
+    func testRefreshBurstCooldownCanBeCancelledWithoutReleasingInFlightRequest() {
+        var gate = ChatRefreshBurstGate()
+        XCTAssertTrue(gate.beginOrQueue())
+        XCTAssertFalse(gate.beginOrQueue())
+        XCTAssertTrue(gate.consumeFollowUp())
+        XCTAssertFalse(gate.beginOrQueue())
+        XCTAssertTrue(gate.finishBurst())
+
+        gate.cancelCooldown()
+        XCTAssertEqual(gate.phase, .idle)
+        XCTAssertTrue(gate.beginOrQueue())
+        gate.cancelCooldown()
+        XCTAssertEqual(gate.phase, .primary, "cancelCooldown no libera un GET en vuelo")
+    }
+
+    @MainActor
+    func testFallbackScheduledWhilePausedFiresExactlyOnceWhenClockResumes() async {
+        let clock = PollingClock()
+        var fireCount = 0
+        clock.setPaused(true)
+        clock.schedule("foreground-fallback", every: 60) {
+            fireCount += 1
+        }
+
+        clock.setPaused(false)
+        for _ in 0..<10 where fireCount == 0 {
+            await Task.yield()
+        }
+        XCTAssertEqual(fireCount, 1)
+        clock.cancelAll()
+    }
+
+    func testChatStreamMapsInternalDisconnectToFallbackSignal() {
+        let event = ChatRealtimeEvent(frame: RistakServerSentEvent(
+            name: RistakSSEInternalEvent.disconnected,
+            data: ""
+        ))
+
+        guard case .disconnected? = event else {
+            return XCTFail("El cierre del socket debe activar el fallback del hilo")
+        }
+    }
+
     func testLocalCatalogRetryRunsAtMostTwice() async throws {
         enum StubError: Error { case unavailable }
         var attempts = 0

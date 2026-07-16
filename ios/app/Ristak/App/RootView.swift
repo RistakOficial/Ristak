@@ -92,20 +92,33 @@ struct RootView: View {
                 // caché SWR (ya precargada en memoria durante el bootstrap)
                 // ANTES de disparar el load de red, evitando el flash inicial.
                 appConfig.hydrateFromCache()
+                let cachedCalendarIDs = appConfig.calendarPushEnabled
+                    ? appConfig.calendarPushCalendarIDs
+                    : []
                 Task {
-                    await appConfig.load()
+                    // Push y AppConfig arrancan juntos. Antes, tres GET de config
+                    // podían retrasar hasta 15 s el enlace APNs -> backend.
+                    async let configLoad: Void = appConfig.load()
+                    async let cachedPushRegistration: Void = PushRegistrar.shared
+                        .registerAfterLoginIfPossible(calendarIDs: cachedCalendarIDs)
+
+                    await configLoad
+                    // Esperar la activación cacheada evita que dos registros con
+                    // filtros distintos se fusionen dentro del mismo activationTask.
+                    await cachedPushRegistration
                     guard session.isCurrentActiveSession(expectedGeneration) else { return }
-                    // Re-registro silencioso del token APNs si el permiso ya
-                    // fue concedido (la activación explícita vive en Ajustes).
-                    // El filtro de calendarios solo aplica cuando el toggle de
-                    // citas está encendido; apagado = [] (= todos), para no
-                    // reimponer una selección vieja y perder pushes de otros
-                    // tipos (p. ej. citas confirmadas) — paridad RN.
-                    await PushRegistrar.shared.registerAfterLoginIfPossible(
-                        calendarIDs: appConfig.calendarPushEnabled
-                            ? appConfig.calendarPushCalendarIDs
-                            : []
-                    )
+
+                    // Si la revalidación cambió el filtro de calendarios, registrar
+                    // una segunda vez con el valor autoritativo. Apagado = []
+                    // (= todos), para no perder pushes de otros tipos.
+                    let refreshedCalendarIDs = appConfig.calendarPushEnabled
+                        ? appConfig.calendarPushCalendarIDs
+                        : []
+                    if refreshedCalendarIDs != cachedCalendarIDs {
+                        await PushRegistrar.shared.registerAfterLoginIfPossible(
+                            calendarIDs: refreshedCalendarIDs
+                        )
+                    }
                 }
             case .loggedOut where oldPhase == .active:
                 appConfig.reset()

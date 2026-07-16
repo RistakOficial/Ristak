@@ -76,16 +76,27 @@ struct JourneyService: Sendable {
         await client.currentBaseURL
     }
 
-    /// Journey completo sin filtrar (activity markers + Info del contacto).
-    /// ⚠️ Puede ser pesado en contactos muy activos: throttle recomendado
-    /// (gap doc 04 §10.18).
-    func fetchFullJourney(contactId: String) async throws -> [JourneyEvent] {
+    /// Query estable del read-path ligero de pagos/citas. Mantenerlo separado del
+    /// journey completo evita volver a descargar mensajes, atribución y sesiones
+    /// únicamente para insertar tres tipos de marker en el hilo.
+    static func chatActivityQuery(
+        limit: Int = JourneyService.defaultMessageLimit
+    ) -> [String: String?] {
+        [
+            "chatActivityOnly": "true",
+            "messageLimit": String(max(1, limit)),
+        ]
+    }
+
+    /// Solo activity markers de pagos/citas. El backend resuelve sus tres lecturas
+    /// en paralelo y corta antes de construir el journey completo.
+    func fetchChatActivity(
+        contactId: String,
+        limit: Int = JourneyService.defaultMessageLimit
+    ) async throws -> [JourneyEvent] {
         try await client.get(
             "/contacts/\(contactId)/journey",
-            query: [
-                "includeBusinessMessages": "true",
-                "refreshExternalStatuses": "false",
-            ]
+            query: Self.chatActivityQuery(limit: limit)
         )
     }
 
