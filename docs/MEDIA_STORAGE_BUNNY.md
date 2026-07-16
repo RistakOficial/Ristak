@@ -191,13 +191,14 @@ another account.
 - Premium imported-HTML video uses a native slot such as
   `<div data-rstk-native-element="video" data-rstk-native-id="video-01"></div>`.
   This preserves the complete Sites player configuration and the Storage preview
-  / Stream live split. A code-owned `<video>` is kept only as HTML/legacy media
-  and does not gain the native player's customization contract.
-- Editor, canvas and preview-session always use the Bunny Storage URL with the
-  customizable Ristak player. They never mount the Bunny Stream iframe, so
-  editing and preview playback cannot inflate real Stream views. Published/live
-  pages switch the same asset to its Bunny Stream iframe and apply the saved
-  frame settings; video actions and live analytics use that Stream surface.
+  and published-player contract. A code-owned `<video>` is kept only as
+  HTML/legacy media and does not gain the native player's customization contract.
+- Editor, canvas, preview-session and published/live native video blocks use the
+  Bunny Storage URL with the customizable Ristak player. Publishing never swaps
+  a ready Storage-backed native video to the Bunny Stream iframe, so the saved
+  button, colors, controls, preview behavior, video actions and form gate remain
+  identical. Preview playback keeps tracking disabled; published playback emits
+  Ristak first-party video events while preserving the Media asset and Stream ids.
 - During a direct TUS upload the temporary asset has
   `storage_provider='bunny_stream'` and an iframe `public_url`. Finalization must
   validate the TUS byte count, confirm the original in Stream, copy that original
@@ -210,7 +211,9 @@ another account.
   mirror automatically. The same repair remains available through
   `POST /api/media/assets/:id/stream/sync`, preserves the original Stream video
   ID and is deduplicated with an advisory lock. The same rule applies to imported
-  HTML previews; live rendering can continue using Stream while repair is pending.
+  HTML previews. A public request never starts that heavy repair; the iframe is
+  only a compatibility fallback for a legacy Stream-only asset until an
+  authenticated editor/preview or sync operation creates its Storage mirror.
 
 ## App media explorer
 

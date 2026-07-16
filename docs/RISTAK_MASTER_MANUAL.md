@@ -4128,12 +4128,14 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   resumible y firma temporal; la API key nunca llega al navegador. Al finalizar,
   backend descarga el original autenticado desde Stream y lo transmite a Bunny
   Storage sin cargarlo completo en memoria. El asset queda listo solamente
-  cuando existen las dos superficies: Storage para editor/preview y Stream para
-  publicado/en vivo.
-  Editor, canvas y preview-session usan exclusivamente la URL de Storage con el
-  reproductor personalizable de Ristak; nunca montan el iframe de Stream y por
-  eso sus reproducciones no contaminan las analíticas reales. Publicado/en vivo
-  cambia al iframe de Stream y conserva la configuración guardada del frame.
+  cuando existen Storage para reproducción nativa y la identidad/metadata de
+  Stream para procesamiento y analítica.
+  Editor, canvas, preview-session y publicado/en vivo usan la URL de Storage con
+  el reproductor personalizable de Ristak. Publicar nunca sustituye un video
+  nativo listo por el iframe visual de Stream: conserva exactamente el botón,
+  colores, barra, controles, acciones y formulario configurados. Editor y
+  preview mantienen tracking apagado; publicado envía los eventos first-party
+  de video y conserva los ids del asset y de Stream.
   Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
   previa del video`; abrir el editor o crear una preview-session autenticada
   dispara automáticamente la creación de su espejo de Storage. El proceso está
@@ -4151,8 +4153,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
   legacy respaldados por Storage conservan su preview compatible y cambian a
-  Stream cuando la metadata queda lista. Las acciones temporizadas se conectan
-  a Player.js para conservar el mismo comportamiento en el player publicado.
+  reproducción nativa de Ristak en publicado. Player.js queda como compatibilidad
+  para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
+  externos sin archivo Storage asociado; las acciones del reproductor nativo se
+  conectan directamente al elemento de video.
 
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o

@@ -599,7 +599,9 @@ Ristak guarda cada zona como bloque real del sitio importado:
   sale del cobro confirmado, no del click.
 - `video`: usa el mismo bloque de video del editor: subida/URL, controles,
   diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI
-  configurados.
+  configurados. En publicado conserva el reproductor personalizable de Ristak y
+  manda los eventos first-party a `/video-event`; una copia lista en Bunny
+  Storage no se reemplaza por el iframe visual de Bunny Stream.
 
 Si el calendario usa frontend propio, el HTML debe marcar
 `data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo

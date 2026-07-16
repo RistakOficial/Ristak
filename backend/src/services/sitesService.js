@@ -18089,16 +18089,30 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  if (context.noTrack) {
-    return directVideoUrl
-      ? renderVideoPlayer(directVideoUrl, block, settings, {
-          noTrack: false,
-          tracking: { enabled: false, asset, stream: resolvedStream, provider: 'html5_video' },
-          context
-        })
-      : renderDisabledStreamPreview()
+  // El asset sincronizado ya tiene una copia directa en Storage. Esa copia debe
+  // alimentar SIEMPRE al reproductor nativo de Ristak, también en publicado.
+  // Antes el live render reemplazaba todo el player configurado por el iframe de
+  // Bunny Stream, así que colores, botón, barra y controles sólo existían en
+  // preview/no-track. Conservamos la identidad Stream para analítica y relación
+  // con Media, pero no cedemos la interfaz visible al proveedor.
+  if (directVideoUrl) {
+    return renderVideoPlayer(directVideoUrl, block, settings, {
+      noTrack: false,
+      tracking: {
+        enabled: !context.noTrack,
+        asset,
+        stream: resolvedStream,
+        provider: resolvedStream?.videoId ? 'bunny_stream' : 'html5_video'
+      },
+      context
+    })
   }
 
+  if (context.noTrack) return renderDisabledStreamPreview()
+
+  // Compatibilidad exclusiva para assets Stream-only que todavía no tienen su
+  // espejo de Storage. Las rutas autenticadas de editor/preview preparan ese
+  // espejo; una visita pública nunca dispara una copia pesada por sorpresa.
   if (resolvedStream?.videoId && resolvedStream?.libraryId) {
     const params = new URLSearchParams()
     if (settings.videoAutoplay) params.set('autoplay', 'true')
@@ -18111,14 +18125,6 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
       asset,
       stream: resolvedStream
     }, settings, context)
-  }
-
-  if (directVideoUrl) {
-    return renderVideoPlayer(directVideoUrl, block, settings, {
-      noTrack: false,
-      tracking: { enabled: !context.noTrack, asset, stream: resolvedStream, provider: 'html5_video' },
-      context
-    })
   }
 
   const embedUrl = normalizeVideoEmbedUrl(asset.publicUrl)

@@ -931,7 +931,7 @@ test('video actions fire when preview playback becomes real without a second pla
   assert.equal(typeof frameCallback, 'function')
 })
 
-test('video player keeps Storage preview and uses Bunny Stream for the live render', async () => {
+test('video player keeps the customized Ristak player in preview and live for Stream-synced assets', async () => {
   const assetId = `site_parity_stream_${Date.now()}`
   const plainUrl = 'https://cdn.example.com/sites/plain-parity-video.mp4'
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
@@ -1030,18 +1030,17 @@ test('video player keeps Storage preview and uses Bunny Stream for the live rend
     assert.equal(plainPreviewSignature.soundText, 'Toca para escuchar')
     assert.deepEqual(getVideoPlayerVisualSignature(plainLiveHtml), plainPreviewSignature)
     assert.deepEqual(getVideoPlayerVisualSignature(streamPreviewHtml), plainPreviewSignature)
-    assert.match(streamLiveHtml, /class="[^"]*rstk-video-stream-frame[^"]*"/)
-    assert.match(streamLiveHtml, /style="[^"]*--rstk-video-radius:31px/)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamLiveHtml), plainPreviewSignature)
+    assert.match(streamLiveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(storageUrl)}"`))
 
     assert.match(plainLiveHtml, /data-rstk-video-provider="html5_video"/)
     assert.match(streamLiveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(streamLiveHtml, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
     assert.match(streamLiveHtml, new RegExp(`data-rstk-stream-video-id="${escapeRegExp(streamVideoId)}"`))
     assert.doesNotMatch(streamPreviewHtml, /<iframe[^>]+player\.mediadelivery\.net\/embed/)
-    assert.match(streamLiveHtml, new RegExp(`<iframe[^>]+iframe\\.mediadelivery\\.net/embed/123456/${escapeRegExp(streamVideoId)}`))
-    assert.match(streamLiveHtml, /data-rstk-stream-action-proxy/)
-    assert.match(streamLiveHtml, /player\.getDuration/)
-    assert.match(streamLiveHtml, /proxy\.dispatchEvent\(new Event\('seeked'\)\)/)
+    assert.doesNotMatch(streamLiveHtml, /<iframe[^>]+(?:player|iframe)\.mediadelivery\.net\/embed/)
+    assert.doesNotMatch(streamLiveHtml, /data-rstk-stream-action-proxy/)
+    assert.match(streamLiveHtml, /data-rstk-video-actions=/)
 
     const autoplayHtml = await render(baseSite({
       ...visualSettings,
@@ -1099,8 +1098,7 @@ test('video player keeps Storage preview and uses Bunny Stream for the live rend
 
     assert.match(hiddenInitialSignature.classes, /\brstk-video-controls-hidden\b/)
     assert.doesNotMatch(hiddenInitialSignature.classes, /\brstk-video-controls-visible\b/)
-    assert.match(streamHiddenHtml, /class="[^"]*rstk-video-stream-frame[^"]*"/)
-    assert.match(streamHiddenHtml, /style="[^"]*--rstk-video-radius:31px/)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamHiddenHtml), hiddenInitialSignature)
 
     const visibleInitialSettings = {
       ...visualSettings,
@@ -1119,8 +1117,7 @@ test('video player keeps Storage preview and uses Bunny Stream for the live rend
     assert.match(visibleInitialSignature.classes, /\brstk-video-controls-hidden\b/)
     assert.match(visibleInitialSignature.classes, /\brstk-video-controls-start-hidden\b/)
     assert.doesNotMatch(visibleInitialSignature.classes, /\brstk-video-controls-visible\b/)
-    assert.match(streamVisibleHtml, /class="[^"]*rstk-video-stream-frame[^"]*"/)
-    assert.match(streamVisibleHtml, /style="[^"]*--rstk-video-radius:31px/)
+    assert.deepEqual(getVideoPlayerVisualSignature(streamVisibleHtml), visibleInitialSignature)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
@@ -1167,8 +1164,9 @@ test('video player auto orientation uses portrait dimensions from storage assets
       trackingEnabled: true,
       preview: false
     })
-    assert.match(html, /class="[^"]*rstk-video-stream-frame[^"]*rstk-video-portrait[^"]*"/)
-    assert.doesNotMatch(html, /rstk-video-stream-frame[^"]*rstk-video-landscape/)
+    assert.match(html, /class="[^"]*rstk-video-player[^"]*rstk-video-portrait[^"]*"/)
+    assert.doesNotMatch(html, /rstk-video-stream-frame/)
+    assert.doesNotMatch(html, /rstk-video-player[^"]*rstk-video-landscape/)
     assert.match(html, /--rstk-video-aspect-ratio:9 \/ 16/)
     assert.match(html, /--rstk-media-width:44%/)
     assert.match(html, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
@@ -1286,7 +1284,7 @@ test('live Bunny Stream iframe uses the same editable video frame settings', asy
   assert.doesNotMatch(html, /class="[^"]*\brstk-video-player\b/)
 })
 
-test('live render switches a synced Storage video to Bunny Stream while preview stays on Storage', async () => {
+test('live render keeps a synced Storage video inside the customized Ristak player', async () => {
   const assetId = `site_stream_asset_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
   const streamVideoId = `stream-${assetId}`
@@ -1341,14 +1339,16 @@ test('live render switches a synced Storage video to Bunny Stream while preview 
       preview: false
     })
 
-    assert.match(liveHtml, /rstk-video-stream-frame/)
-    assert.match(liveHtml, new RegExp(`src="https:\/\/iframe\.mediadelivery\.net\/embed\/123456\/${streamVideoId}[^\"]*"`))
+    assert.match(liveHtml, /rstk-video-player/)
+    assert.match(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
     assert.match(liveHtml, /data-rstk-playback-id="[^"]+"/)
-    assert.doesNotMatch(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(liveHtml, /rstk-video-stream-frame/)
+    assert.doesNotMatch(liveHtml, /iframe\.mediadelivery\.net\/embed/)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
@@ -1408,13 +1408,15 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
       preview: false
     })
 
-    assert.match(liveHtml, /rstk-video-stream-frame/)
-    assert.match(liveHtml, new RegExp(`src="https:\/\/iframe\.mediadelivery\.net\/embed\/123456\/${streamVideoId}[^\"]*"`))
+    assert.match(liveHtml, /rstk-video-player/)
+    assert.match(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
-    assert.doesNotMatch(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(liveHtml, /rstk-video-stream-frame/)
+    assert.doesNotMatch(liveHtml, /iframe\.mediadelivery\.net\/embed/)
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
   }
