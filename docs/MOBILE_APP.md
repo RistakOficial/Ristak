@@ -417,6 +417,12 @@ header fusionadas dentro de una sola capsula compacta. El boton de canal puede
 colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
 solido.
 
+En `ios/app`, los hitos de cita y pago dentro del timeline se presentan como
+tarjetas centradas con superficie real, borde semantico azul/verde y divisores
+laterales. La tarjeta acepta el ancho disponible hasta un maximo compacto, nunca
+usa tamaño horizontal fijo y permite que el detalle ocupe dos lineas; nombres,
+conceptos, horarios o montos largos no pueden salir de los bordes del chat.
+
 En listas y headers de chat, el avatar del contacto no lleva aro ni contorno por
 canal. El canal se identifica con un badge inferior derecho usando los assets
 WebP nativos de `mobile/assets/channel-badges/` y

@@ -7,6 +7,7 @@ struct RistakUITestConfiguration: Sendable {
     let chatCount: Int
     let showsRealInboxPresentation: Bool
     let showsPersonalAssistantChat: Bool
+    let showsActivityMarkers: Bool
 
     static var current: RistakUITestConfiguration? {
         let process = ProcessInfo.processInfo
@@ -14,7 +15,9 @@ struct RistakUITestConfiguration: Sendable {
             return nil
         }
         let mode = process.environment["RISTAK_UI_TEST_MODE"]
-        guard ["synthetic", "inbox-presentation", "personal-assistant-chat"].contains(mode) else {
+        guard [
+            "synthetic", "inbox-presentation", "personal-assistant-chat", "activity-markers",
+        ].contains(mode) else {
             return nil
         }
 
@@ -24,8 +27,50 @@ struct RistakUITestConfiguration: Sendable {
         return RistakUITestConfiguration(
             chatCount: min(max(requestedCount, 100), 50_000),
             showsRealInboxPresentation: mode == "inbox-presentation",
-            showsPersonalAssistantChat: mode == "personal-assistant-chat"
+            showsPersonalAssistantChat: mode == "personal-assistant-chat",
+            showsActivityMarkers: mode == "activity-markers"
         )
+    }
+}
+
+/// Reproduce los textos largos que antes forzaban los hitos de cita/pago a
+/// desbordarse horizontalmente. No abre sesión ni usa red.
+struct RistakActivityMarkersUITestHarnessView: View {
+    private let formatters = BusinessFormatters(
+        timeZone: .gmt,
+        currencyCode: "MXN"
+    )
+
+    private let appointment = ConversationActivityMarker(
+        id: "appointment-long",
+        kind: .appointment,
+        title: "Cita agendada",
+        subtitle: "Asesoría con José Francisco Murillo Ávila · Hoy · 3:00 p.m. · 11:00 p.m.",
+        amountLabel: nil,
+        date: "2026-07-16T21:00:00.000Z"
+    )
+
+    private let payment = ConversationActivityMarker(
+        id: "payment-long",
+        kind: .payment,
+        title: "Pago completado",
+        subtitle: "Programa Premium de acompañamiento y seguimiento personalizado",
+        amountLabel: "$123,456.78 MXN",
+        date: "2026-07-16T21:00:00.000Z"
+    )
+
+    var body: some View {
+        ZStack {
+            ChatWallpaperBackground()
+            VStack(spacing: RistakTheme.Spacing.lg) {
+                Text("Marcadores de actividad")
+                    .font(.headline)
+                    .accessibilityIdentifier("activity-markers-harness-root")
+                ActivityMarkerView(marker: appointment, formatters: formatters)
+                ActivityMarkerView(marker: payment, formatters: formatters)
+            }
+            .frame(maxWidth: .infinity)
+        }
     }
 }
 
