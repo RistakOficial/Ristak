@@ -93,6 +93,7 @@ import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
+import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
 import {
   getHighLevelChatSendOutcome,
   getHighLevelRouteChangeMessage,
@@ -302,6 +303,7 @@ interface DesktopChatMessage {
   businessPhoneNumberId?: string
   transport?: string
   provider?: string
+  channel?: string
   routingReason?: string
   sentByAgent?: boolean
   agentId?: string
@@ -2646,6 +2648,16 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
   const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
   const transport = String(data.transport || data.channel || '').trim() || provider
+  const platform = String(data.social_platform || data.platform || '').trim()
+  const channel = resolveChatMessageChannel({
+    eventType: event.type,
+    channel: data.channel,
+    transport,
+    provider,
+    platform,
+    messageType,
+    hasEmail: event.type === 'email_message'
+  })
   const agentMetadata = getJourneyAgentMessageMetadata(data)
   const adPreview = event.type === 'whatsapp_message' || event.type === 'meta_message'
     ? buildMessageAdPreview(data, direction)
@@ -2694,6 +2706,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
     transport,
     provider,
+    channel: channel === 'unknown' ? String(data.channel || transport || '').trim() : channel,
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
     ...agentMetadata,
     replyToMessageId: String(data.reply_to_message_id || data.replyToMessageId || '').trim() || undefined,
@@ -2704,7 +2717,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     isComment: isCommentMessageType(messageType),
     commentReplyMode: normalizedMessageType === 'comment_reply_public' ? 'public' : normalizedMessageType === 'comment_reply_private' ? 'private' : undefined,
     commentId: String(data.comment_id || data.commentId || '').trim() || undefined,
-    commentPlatform: String(data.social_platform || data.platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
+    commentPlatform: platform.toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
     commentPost: (isCommentMessageType(messageType) && (data.post_message || data.post_image_url || data.post_permalink || postDeleted))
       ? {
           message: String(data.post_message || (postDeleted ? 'Publicación eliminada' : '')).trim(),
@@ -2736,6 +2749,13 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): DesktopCh
     businessPhone: message.fromPhone || '',
     businessPhoneNumberId: message.businessPhoneNumberId || '',
     transport: message.transport || message.provider,
+    provider: message.provider,
+    channel: resolveChatMessageChannel({
+      channel: message.channel,
+      transport: message.transport,
+      provider: message.provider,
+      messageType: message.messageType
+    }),
     routingReason: message.routingReason || ''
   }
 }
@@ -9442,6 +9462,14 @@ export const DesktopChat: React.FC = () => {
                         }
                         const message = item.message
                         const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
+                        const messageChannel = resolveChatMessageChannel({
+                          channel: message.channel,
+                          transport: message.transport,
+                          provider: message.provider,
+                          commentPlatform: message.commentPlatform,
+                          messageType: message.messageType,
+                          hasEmail: Boolean(message.email)
+                        })
                         const directionClass = message.direction === 'outbound'
                           ? styles.messageOutbound
                           : message.direction === 'system'
@@ -9459,6 +9487,7 @@ export const DesktopChat: React.FC = () => {
                                 {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                                 <article
                                   className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
+                                  data-chat-channel={getChatBubbleColorChannel(messageChannel)}
                                   onContextMenu={(event) => handleMessageReactionContextMenu(message, event)}
                                 >
                                   {message.isComment ? (

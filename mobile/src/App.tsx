@@ -316,6 +316,7 @@ import type {
   WhatsAppNumberOriginDatum,
 } from './types';
 import { buildUserCustomFieldRows, isUserCustomFieldDefinition } from './contactCustomFields';
+import { resolveChatMessageChannel, type ChatMessageChannelKind } from './chatMessageChannel';
 
 type NativeThemeTone = 'light' | 'dark';
 type NativeColorPalette = {
@@ -404,6 +405,15 @@ function parseHexColor(value: string): RgbColor | null {
     g: Number.parseInt(hex.slice(2, 4), 16),
     b: Number.parseInt(hex.slice(4, 6), 16),
   };
+}
+
+function mixHexColors(baseColor: string, tintColor: string, tintWeight: number) {
+  const base = parseHexColor(baseColor);
+  const tint = parseHexColor(tintColor);
+  if (!base || !tint) return baseColor;
+  const weight = Math.max(0, Math.min(1, tintWeight));
+  const toHex = (value: number) => Math.round(value).toString(16).padStart(2, '0');
+  return `#${toHex(base.r + ((tint.r - base.r) * weight))}${toHex(base.g + ((tint.g - base.g) * weight))}${toHex(base.b + ((tint.b - base.b) * weight))}`;
 }
 
 function getRelativeLuminance({ r, g, b }: RgbColor) {
@@ -1283,15 +1293,49 @@ const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
 ];
 
 const CHANNEL_BADGE_COLORS: Record<ChannelBadgeKind, string> = {
-  whatsapp: '#22c55e',
-  instagram: '#d62976',
+  whatsapp: '#25d366',
+  instagram: '#c13584',
   messenger: '#1877f2',
   facebook_comment: '#1877f2',
-  instagram_comment: '#d62976',
-  email: '#8b5cf6',
-  sms: '#0ea5e9',
+  instagram_comment: '#c13584',
+  email: '#8e8e93',
+  sms: '#8e8e93',
   unknown: '#8e8e93',
 };
+
+const CHANNEL_BUBBLE_COLORS: Partial<Record<ChatMessageChannelKind, string>> = {
+  whatsapp_api: '#25d366',
+  whatsapp_qr: '#1fae57',
+  instagram: '#c13584',
+  messenger: '#1877f2',
+};
+
+function getNativeMessageChannelBubbleStyle(message: ChatMessage, outbound: boolean, scheduled: boolean): ViewStyle | undefined {
+  const channel = resolveChatMessageChannel({
+    channel: message.channel,
+    transport: message.transport,
+    commentPlatform: message.commentPlatform,
+    messageType: message.messageType,
+    hasEmail: Boolean(message.emailDetails),
+  });
+  const channelColor = CHANNEL_BUBBLE_COLORS[channel];
+  if (!channelColor) return undefined;
+
+  const light = activeNativeThemeTone === 'light';
+  const baseColor = scheduled
+    ? (light ? '#f0f1f4' : '#48484a')
+    : outbound
+      ? (light ? '#e9eaee' : '#3a3a3c')
+      : (light ? '#ffffff' : '#1c1c1e');
+  const tintWeight = scheduled ? 0.24 : outbound ? 0.30 : 0.18;
+  const style: ViewStyle = {
+    backgroundColor: mixHexColors(baseColor, channelColor, tintWeight),
+  };
+  if (scheduled) {
+    style.borderColor = mixHexColors(light ? '#d1d1d6' : '#636366', channelColor, 0.72);
+  }
+  return style;
+}
 
 const CHANNEL_AVATAR_BADGE_ASSETS: Partial<Record<ChannelBadgeKind, ImageSourcePropType>> = {
   whatsapp: require('../assets/channel-badges/whatsapp.webp'),
@@ -25836,6 +25880,10 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   const attachmentKind = attachment ? getNativeAttachmentKind(attachment) : null;
   const status = getMessageReceiptStatus(message);
   const scheduled = isScheduledMessage(message);
+  const channelBubbleStyle = useMemo(
+    () => getNativeMessageChannelBubbleStyle(message, outbound, scheduled),
+    [message.channel, message.commentPlatform, message.emailDetails, message.messageType, message.transport, outbound, scheduled, _themeTone],
+  );
   const linkPreview = useMemo(() => getNativeMessageLinkPreview(message), [message]);
   const visibleMessageText = linkPreview?.displayText ?? message.text;
   const scheduledCountdown = scheduled ? formatNativeScheduledCountdown(message.scheduledAt || message.date, scheduledCountdownNow) : '';
@@ -25943,6 +25991,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
           attachmentKind === 'audio' && styles.audioMessageBubble,
           message.location && styles.locationMessageBubble,
           scheduled && styles.messageBubbleScheduled,
+          channelBubbleStyle,
           message.failed && styles.failedBubble,
           searchActive && styles.messageSearchMatch,
           pressed && styles.pressed,

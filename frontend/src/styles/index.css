@@ -31,6 +31,10 @@
   --font-mono: 'SF Mono', 'Consolas', 'Monaco', monospace;
   --brand-ristak-blue: #0078f8;
   --brand-ristak-blue-rgb: 0, 120, 248;
+  --brand-channel-whatsapp-api: #25d366;
+  --brand-channel-whatsapp-qr: #1fae57;
+  --brand-channel-instagram: #c13584;
+  --brand-channel-messenger: #1877f2;
   --color-bg-primary: var(--color-background-primary);
   --app-page-max: 104rem;
   --app-page-wide-max: var(--app-page-max);
@@ -2545,7 +2549,10 @@ body[data-design-preset][data-phone-chat-theme='active'] {
   --phone-chat-accent: var(--accent);
   --phone-chat-accent-rgb: var(--accent-rgb);
   --phone-chat-accent-soft: var(--accent-soft);
-  --phone-channel-whatsapp: #25d366;
+  --phone-channel-whatsapp: var(--brand-channel-whatsapp-api);
+  --phone-channel-whatsapp-qr: var(--brand-channel-whatsapp-qr);
+  --phone-channel-instagram: var(--brand-channel-instagram);
+  --phone-channel-messenger: var(--brand-channel-messenger);
   --phone-chat-inbound: var(--surface);
   --phone-chat-outbound: color-mix(in srgb, var(--accent) 22%, var(--surface));
   --phone-chat-outbound-text: var(--text);
@@ -2936,8 +2943,14 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-msg] { justify-content: flex-start; }
   [data-msg][data-from='me'] { justify-content: flex-end; }
   [data-msg] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 14px 4px; }
-  [data-msg][data-from='me'] .bubble { background: var(--accent); color: var(--on-accent); border-radius: 14px 14px 4px 14px; }
-  [data-msg][data-from='me'] .bubble .btime { color: var(--on-accent); opacity: 0.8; }
+  [data-msg][data-from='me'] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 4px 14px; }
+  [data-msg][data-channel='whatsapp_api'] { --message-channel-color: var(--brand-channel-whatsapp-api); }
+  [data-msg][data-channel='whatsapp_qr'] { --message-channel-color: var(--brand-channel-whatsapp-qr); }
+  [data-msg][data-channel='instagram'] { --message-channel-color: var(--brand-channel-instagram); }
+  [data-msg][data-channel='messenger'] { --message-channel-color: var(--brand-channel-messenger); }
+  [data-msg]:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 82%, var(--message-channel-color) 18%); }
+  [data-msg][data-from='me']:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 70%, var(--message-channel-color) 30%); }
+  [data-msg][data-from='me'] .bubble .btime { color: var(--text-dim); }
   [data-chip]:hover { border-color: var(--border-strong); color: var(--text); }
   [data-icon-btn]:hover { background: var(--surface-hover); color: var(--text); }
   [data-site-card]:hover { border-color: var(--accent); transform: translateY(-2px); }

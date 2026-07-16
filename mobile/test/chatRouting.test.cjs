@@ -28,6 +28,23 @@ const {
   normalizeNativeWhatsAppSenderRoute,
   readLocalCatalogWithRetry,
 } = require('../src/chatRouting.ts');
+const { resolveChatMessageChannel } = require('../src/chatMessageChannel.ts');
+
+test('los globos distinguen WhatsApp API de QR y dejan correo/SMS neutrales', () => {
+  assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'api' }), 'whatsapp_api');
+  assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'qr' }), 'whatsapp_qr');
+  assert.equal(resolveChatMessageChannel({ channel: 'whatsapp', transport: 'baileys' }), 'whatsapp_qr');
+  assert.equal(resolveChatMessageChannel({ channel: 'whatsapp_qr' }), 'whatsapp_qr');
+  assert.equal(resolveChatMessageChannel({ channel: 'whatsapp', provider: 'qr' }), 'whatsapp_qr');
+  assert.equal(resolveChatMessageChannel({ eventType: 'email_message', transport: 'smtp' }), 'email');
+  assert.equal(resolveChatMessageChannel({ channel: 'sms_qr', transport: 'qr' }), 'sms');
+  assert.equal(resolveChatMessageChannel({ eventType: 'sms_message' }), 'sms');
+});
+
+test('Instagram y Facebook/Messenger ganan sobre un transporte API generico', () => {
+  assert.equal(resolveChatMessageChannel({ eventType: 'meta_message', transport: 'api', platform: 'instagram' }), 'instagram');
+  assert.equal(resolveChatMessageChannel({ channel: 'facebook_comment', transport: 'meta' }), 'messenger');
+});
 
 const contact = {
   id: 'contact-1',

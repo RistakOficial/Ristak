@@ -6,6 +6,7 @@
     "dev": "vite",
     "design:audit": "node scripts/audit-design-system.mjs",
     "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
+    "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
     "test:highlevel-chat-send": "node scripts/test-highlevel-chat-send.mjs",
     "typecheck": "tsc --noEmit",

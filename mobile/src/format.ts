@@ -1,4 +1,5 @@
 import type { ChatAttachment, ChatContact, ChatLocation, JourneyEvent, ChatMessage } from './types';
+import { resolveChatMessageChannel } from './chatMessageChannel';
 
 const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City';
 const CHAT_SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -1080,6 +1081,16 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
         || `${event.type}-${event.date}-${direction}-${hashConversationEventContent(`${text}|${attachment?.url || attachment?.name || ''}|${messageType}`)}`;
       const normalizedMessageType = messageType.trim().toLowerCase();
       const agentMetadata = getJourneyAgentMessageMetadata(data);
+      const transport = readString(data, ['transport', 'social_platform', 'source']) || event.type;
+      const channel = resolveChatMessageChannel({
+        eventType: event.type,
+        channel: readString(data, ['channel']),
+        transport,
+        provider: readString(data, ['provider', 'message_provider', 'source_provider']),
+        platform: readString(data, ['social_platform', 'platform']),
+        messageType,
+        hasEmail: Boolean(emailDetails),
+      });
 
       return {
         id,
@@ -1087,8 +1098,8 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
         date: event.date,
         direction,
         text,
-        channel: readString(data, ['transport', 'social_platform', 'source']) || event.type,
-        transport: readString(data, ['transport', 'social_platform', 'source']) || event.type,
+        channel: channel === 'unknown' ? transport : channel,
+        transport,
         status: readString(data, ['status']),
         errorReason: readString(data, ['error_reason', 'errorReason', 'error', 'message_error']),
         providerMessageId: readString(data, ['provider_message_id', 'providerMessageId', 'whatsapp_message_id', 'meta_message_id']),

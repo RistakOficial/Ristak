@@ -19,9 +19,10 @@
   --phone-chat-accent-rgb: var(--accent-rgb);
   --phone-chat-accent-soft: var(--accent-soft);
   --phone-chat-avatar-fill: linear-gradient(135deg, var(--accent) 0%, var(--accent-2, var(--accent)) 100%);
-  --phone-channel-whatsapp: #25d366;
-  --phone-channel-messenger: #1877f2;
-  --phone-channel-instagram: #e1306c;
+  --phone-channel-whatsapp: var(--brand-channel-whatsapp-api);
+  --phone-channel-whatsapp-qr: var(--brand-channel-whatsapp-qr);
+  --phone-channel-messenger: var(--brand-channel-messenger);
+  --phone-channel-instagram: var(--brand-channel-instagram);
   --phone-channel-email: var(--text-mute);
   --phone-channel-sms: var(--text-mute);
   --phone-chat-inbound: var(--surface);
@@ -4906,11 +4907,41 @@
   background: var(--phone-chat-outbound);
 }
 
+.messageBubble[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 18%, var(--phone-chat-surface));
+}
+
+.messageRow_outbound .messageBubble[data-chat-channel],
+.messageActionPreviewOutbound[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--phone-chat-surface));
+}
+
+.messageBubble[data-chat-channel='whatsapp_api'] {
+  --message-channel-color: var(--phone-channel-whatsapp);
+}
+
+.messageBubble[data-chat-channel='whatsapp_qr'] {
+  --message-channel-color: var(--phone-channel-whatsapp-qr);
+}
+
+.messageBubble[data-chat-channel='instagram'] {
+  --message-channel-color: var(--phone-channel-instagram);
+}
+
+.messageBubble[data-chat-channel='messenger'] {
+  --message-channel-color: var(--phone-channel-messenger);
+}
+
 .messageRow_outbound .messageBubbleScheduled {
   color: var(--phone-chat-outbound-text);
   border: 1.5px dashed color-mix(in srgb, var(--phone-chat-outbound) 62%, #064e3b 38%);
   background: var(--phone-chat-outbound);
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
+}
+
+.messageRow_outbound .messageBubbleScheduled[data-chat-channel] {
+  border-color: color-mix(in srgb, var(--message-channel-color) 72%, var(--phone-chat-border));
+  background: color-mix(in srgb, var(--message-channel-color) 24%, var(--phone-chat-surface));
 }
 
 .phoneChatPage[data-phone-chat-tone="dark"] .messageRow_outbound .messageBubbleScheduled {
@@ -5941,9 +5972,18 @@
   background: var(--phone-chat-outbound);
 }
 
+.messageActionPreviewOutbound[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--phone-chat-surface));
+}
+
 .messageActionPreviewBubble.messageBubbleScheduled {
   border: 1.5px dashed color-mix(in srgb, var(--phone-chat-outbound) 62%, #064e3b 38%);
   background: var(--phone-chat-outbound);
+}
+
+.messageActionPreviewBubble.messageBubbleScheduled[data-chat-channel] {
+  border-color: color-mix(in srgb, var(--message-channel-color) 72%, var(--phone-chat-border));
+  background: color-mix(in srgb, var(--message-channel-color) 24%, var(--phone-chat-surface));
 }
 
 .messageActionAttachmentPreview {
@@ -12048,8 +12088,16 @@
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 55%, var(--phone-chat-inbound));
 }
 
+.messageComment[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 20%, var(--phone-chat-surface));
+}
+
 .messageRow_outbound .messageComment {
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 40%, var(--phone-chat-outbound));
+}
+
+.messageRow_outbound .messageComment[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--phone-chat-surface));
 }
 
 .commentContext {

@@ -3,6 +3,10 @@
   --chat-border-strong: rgba(148, 163, 184, 0.28);
   --chat-soft: rgba(148, 163, 184, 0.08);
   --chat-soft-strong: rgba(148, 163, 184, 0.14);
+  --chat-channel-whatsapp-api: var(--brand-channel-whatsapp-api);
+  --chat-channel-whatsapp-qr: var(--brand-channel-whatsapp-qr);
+  --chat-channel-instagram: var(--brand-channel-instagram);
+  --chat-channel-messenger: var(--brand-channel-messenger);
   width: 100%;
   max-width: none;
   height: calc(100vh - var(--header-height));
@@ -1441,6 +1445,30 @@
   color: var(--text);
 }
 
+.messageBubble[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 18%, var(--surface));
+}
+
+.messageOutbound[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--surface));
+}
+
+.messageBubble[data-chat-channel='whatsapp_api'] {
+  --message-channel-color: var(--chat-channel-whatsapp-api);
+}
+
+.messageBubble[data-chat-channel='whatsapp_qr'] {
+  --message-channel-color: var(--chat-channel-whatsapp-qr);
+}
+
+.messageBubble[data-chat-channel='instagram'] {
+  --message-channel-color: var(--chat-channel-instagram);
+}
+
+.messageBubble[data-chat-channel='messenger'] {
+  --message-channel-color: var(--chat-channel-messenger);
+}
+
 .messageReactionButton {
   display: inline-flex;
   align-items: center;
@@ -1802,6 +1830,15 @@
   max-width: min(88%, 560px);
   border-left: 3px solid var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 26%, var(--color-background-primary));
+}
+
+.messageComment[data-chat-channel] {
+  border-color: var(--message-channel-color);
+  background: color-mix(in srgb, var(--message-channel-color) 20%, var(--surface));
+}
+
+.messageComment.messageOutbound[data-chat-channel] {
+  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--surface));
 }
 
 .messageComment.messageOutbound {
@@ -2174,6 +2211,11 @@
 
 .messageScheduled {
   border: 1px dashed var(--border-strong);
+}
+
+.messageScheduled[data-chat-channel] {
+  border-color: color-mix(in srgb, var(--message-channel-color) 72%, var(--border-strong));
+  background: color-mix(in srgb, var(--message-channel-color) 24%, var(--surface));
 }
 
 .scheduledActions {

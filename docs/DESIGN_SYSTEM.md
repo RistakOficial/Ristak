@@ -81,6 +81,8 @@ Bordes:       --border  --border-strong
 Acento:       --accent  --accent-2  --accent-soft   (rgb: --accent-rgb)
 Semántico:    --pos --pos-soft   --neg --neg-soft   --warn --warn-soft   --info --info-soft
 Marca:        --brand-ristak-blue  --brand-ristak-blue-rgb
+Canales:      --brand-channel-whatsapp-api  --brand-channel-whatsapp-qr
+              --brand-channel-instagram  --brand-channel-messenger
 Forma:        --radius-card  --radius-ctl  --radius-pill
 Sombra:       --shadow-card  --shadow-xs  --shadow-pop
 Tipografía:   --font-display  --font-body  --font-mono  --num-font  --label-font
@@ -92,6 +94,13 @@ Los tokens viejos (`--color-text-primary`, `--color-primary`, `--design-*`,
 `index.css` los re-apunta a los de arriba. Pero para código **nuevo** prefiere
 los nuevos. **Jamás** declares un alias nuevo en `:root` que apunte a un token
 temado (se congela con el default oscuro); decláralo en `body` si hace falta.
+
+Los cuatro tokens de canal son colores de marca fijos y se usan solamente como
+tinte de globos e identificadores de mensajeria. WhatsApp API usa verde,
+WhatsApp QR un verde ligeramente mas oscuro, Messenger/Facebook azul e Instagram
+morado rosita. Correo y SMS no tienen token de marca: sus globos permanecen
+neutrales. El fondo final siempre mezcla el color con `--surface`; no se usa el
+color solido como fondo del texto.
 
 ---
 
