@@ -53,13 +53,12 @@ struct ActivityMarkerView: View {
             markerCard
             line
         }
+        .padding(.horizontal, RistakTheme.Spacing.sm)
         .padding(.vertical, RistakTheme.Spacing.xxs)
-        .accessibilityElement(children: .combine)
     }
 
-    /// Tarjeta cómoda del hito: ícono + título + monto + fecha en una línea
-    /// legible y centrada. La tarjeta ABRAZA su contenido y NO se deja aplastar:
-    /// los divisores flexibles de los lados rellenan el espacio sobrante.
+    /// Tarjeta centrada con tope compacto. Puede ceder y crecer verticalmente
+    /// cuando el contacto/concepto es largo, pero nunca desborda la ventana.
     private var markerCard: some View {
         HStack(alignment: .center, spacing: RistakTheme.Spacing.xs) {
             Image(systemName: marker.systemImage)
@@ -74,32 +73,45 @@ struct ActivityMarkerView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(RistakTheme.textPrimary)
                         .lineLimit(1)
+                        .layoutPriority(1)
                     if let amount = marker.amountLabel {
                         Text(amount)
                             .font(.caption.weight(.bold))
                             .monospacedDigit()
                             .foregroundStyle(RistakTheme.pos)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .layoutPriority(2)
                     }
                 }
                 if !subtitleLine.isEmpty {
                     Text(subtitleLine)
                         .font(.caption2)
                         .foregroundStyle(RistakTheme.textDim)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, RistakTheme.Spacing.md)
         .padding(.vertical, 10)
+        // En iPhone ocupa como máximo ~85 % del ancho; en iPad conserva una
+        // tarjeta compacta y centrada. La propuesta menor siempre gana.
+        .frame(maxWidth: 340, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(RistakTheme.daySeparator)
+                .fill(RistakTheme.surface)
         )
-        // Abraza el contenido (no se estira ni se comprime): tamaño dictado por el
-        // texto, con prioridad de layout para ganar el ancho frente a los
-        // divisores `.frame(maxWidth: .infinity)` que lo flanquean.
-        .fixedSize(horizontal: true, vertical: false)
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(markerBorder, lineWidth: 1)
+        }
+        .shadow(color: RistakTheme.bubbleShadow, radius: 2, x: 0, y: 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("ristak-activity-marker-card-\(marker.id)")
+        // El marcador gana espacio frente a las líneas, pero sí acepta la
+        // propuesta angosta del contenedor; ésa era la regresión original.
         .layoutPriority(1)
     }
 
@@ -112,11 +124,18 @@ struct ActivityMarkerView: View {
         return pieces.joined(separator: " · ")
     }
 
+    private var markerBorder: Color {
+        (marker.kind == .payment ? RistakTheme.pos : RistakTheme.accent)
+            .opacity(0.24)
+    }
+
     private var line: some View {
         Rectangle()
             .fill(RistakTheme.border)
             .frame(height: 0.5)
+            .frame(minWidth: 8)
             .frame(maxWidth: .infinity)
+            .accessibilityHidden(true)
     }
 }
 

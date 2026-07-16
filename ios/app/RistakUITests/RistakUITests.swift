@@ -147,6 +147,49 @@ final class RistakUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testLongActivityMarkersStayInsideTheChatWindow() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ristak-ui-testing",
+            "-AppleLanguages", "(es)",
+            "-AppleLocale", "es_MX"
+        ]
+        app.launchEnvironment = [
+            "RISTAK_UI_TEST_MODE": "activity-markers",
+            "RISTAK_NETWORK_ACCESS": "disabled"
+        ]
+        launchedApp = app
+        app.launch()
+
+        XCTAssertTrue(
+            element(in: app, identifier: "activity-markers-harness-root")
+                .waitForExistence(timeout: 8)
+        )
+        let appointment = element(
+            in: app,
+            identifier: "ristak-activity-marker-card-appointment-long"
+        )
+        let payment = element(
+            in: app,
+            identifier: "ristak-activity-marker-card-payment-long"
+        )
+        XCTAssertTrue(appointment.waitForExistence(timeout: 3))
+        XCTAssertTrue(payment.waitForExistence(timeout: 3))
+
+        let window = app.windows.firstMatch.frame
+        for marker in [appointment, payment] {
+            XCTAssertGreaterThan(marker.frame.minX, window.minX)
+            XCTAssertLessThan(marker.frame.maxX, window.maxX)
+            XCTAssertLessThan(marker.frame.width, window.width)
+            XCTAssertGreaterThan(marker.frame.height, 40)
+        }
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Marcadores de cita y pago dentro del chat"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testLaunchPerformanceWithFiveThousandChats() {
         measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)]) {
             let app = configuredSyntheticApp(chatCount: 5_000)

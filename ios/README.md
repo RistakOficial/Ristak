@@ -132,6 +132,9 @@ solo en capa flotante; copy en español.
   swipe, reacciones por canal, mensajes programados
   (crear/editar/cancelar), info de mensaje, reintento de fallidos, carga de
   historial hacia atrás, polling 7s + presencia (suprime push y marca leído).
+  Los hitos de cita y pago viven en tarjetas centradas responsive, con borde
+  semántico y detalle de hasta dos líneas; nunca crecen fuera de la ventana por
+  nombres, horarios, conceptos o montos largos.
   Las reacciones conservan su emoji aunque el mensaje objetivo esté fuera de la
   página cargada o la app arranque desde una caché anterior; los stickers se
   reconocen como imagen en vez de degradarse al texto genérico `Mensaje`.
