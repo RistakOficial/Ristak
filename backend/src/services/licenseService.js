@@ -444,7 +444,10 @@ async function callLicenseServer(path, body = {}, { timeoutMs = LICENSE_PORTAL_T
 
   if (!response.ok || data?.success === false) {
     const message = data?.message || data?.error || 'El portal central rechazó la solicitud.'
-    throw new Error(message)
+    const error = new Error(message)
+    error.code = data?.code || 'license_portal_rejected'
+    error.status = response.status
+    throw error
   }
 
   return data || {}
@@ -1134,6 +1137,28 @@ export async function requestCentralAccountCancellation({ reasonKey, reasonDetai
   })
   await invalidateAccountCancellationSnapshot()
   return result
+}
+
+export async function getCentralDatabaseStorageStatus({ usedBytes = 0 } = {}) {
+  return callLicenseServer('/api/license/database-storage/status', {
+    used_bytes: Math.max(0, Number(usedBytes) || 0)
+  })
+}
+
+export async function decideCentralDatabaseStorage({
+  decision,
+  currentDiskSizeGB,
+  targetDiskSizeGB,
+  usedBytes = 0,
+  requestedByEmail = ''
+} = {}) {
+  return callLicenseServer('/api/license/database-storage/decision', {
+    decision,
+    current_disk_size_gb: currentDiskSizeGB,
+    target_disk_size_gb: targetDiskSizeGB,
+    used_bytes: Math.max(0, Number(usedBytes) || 0),
+    requested_by_email: String(requestedByEmail || '').trim().toLowerCase()
+  })
 }
 
 /**

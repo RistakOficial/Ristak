@@ -162,6 +162,56 @@ function startMockServer() {
           return
         }
 
+        if (req.url === '/api/license/database-storage/status') {
+          res.end(JSON.stringify({
+            success: true,
+            managed: true,
+            current_disk_size_gb: 1,
+            target_disk_size_gb: 5,
+            used_bytes: lastRequestBody?.used_bytes || 0,
+            usage_percent: 82,
+            warning_threshold_percent: 80,
+            autoscale_threshold_percent: 90,
+            autoscaling_enabled: false,
+            decision: 'pending',
+            needs_attention: true,
+            needs_decision: true,
+            render_pricing: {
+              currency: 'USD',
+              storage_rate_per_gb_month: 0.30,
+              current_monthly_storage_cost: 0.30,
+              target_monthly_storage_cost: 1.50,
+              additional_monthly_storage_cost: 1.20
+            }
+          }))
+          return
+        }
+
+        if (req.url === '/api/license/database-storage/decision') {
+          res.end(JSON.stringify({
+            success: true,
+            managed: true,
+            current_disk_size_gb: lastRequestBody?.current_disk_size_gb,
+            target_disk_size_gb: lastRequestBody?.target_disk_size_gb,
+            used_bytes: lastRequestBody?.used_bytes || 0,
+            usage_percent: 82,
+            warning_threshold_percent: 80,
+            autoscale_threshold_percent: 90,
+            autoscaling_enabled: lastRequestBody?.decision === 'approved',
+            decision: lastRequestBody?.decision,
+            needs_attention: true,
+            needs_decision: false,
+            render_pricing: {
+              currency: 'USD',
+              storage_rate_per_gb_month: 0.30,
+              current_monthly_storage_cost: 0.30,
+              target_monthly_storage_cost: 1.50,
+              additional_monthly_storage_cost: 1.20
+            }
+          }))
+          return
+        }
+
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
           const { token } = lastRequestBody || {}
           if (token === 'good-token') {
@@ -469,6 +519,31 @@ test('estado de cancelación usa snapshot durable y no bloquea cada montaje de C
   assert.equal(first.subscription.status, 'active')
   assert.deepEqual(second, first)
   assert.equal(accountCancellationRequestCount, 1)
+})
+
+test('estado y decisión de storage viajan al Installer con las credenciales de la instalación', async () => {
+  const status = await licenseService.getCentralDatabaseStorageStatus({ usedBytes: 880_000_000 })
+
+  assert.equal(status.needs_decision, true)
+  assert.equal(status.render_pricing.additional_monthly_storage_cost, 1.20)
+  assert.equal(lastRequestBody.client_id, 'cli_1')
+  assert.equal(lastRequestBody.license_key, 'RSTK-TEST-0000')
+  assert.equal(lastRequestBody.installation_id, 'inst_1')
+  assert.equal(lastRequestBody.used_bytes, 880_000_000)
+
+  const decision = await licenseService.decideCentralDatabaseStorage({
+    decision: 'approved',
+    currentDiskSizeGB: 1,
+    targetDiskSizeGB: 5,
+    usedBytes: 880_000_000,
+    requestedByEmail: 'DUENO@CLINICA.COM'
+  })
+
+  assert.equal(decision.decision, 'approved')
+  assert.equal(decision.autoscaling_enabled, true)
+  assert.equal(lastRequestBody.current_disk_size_gb, 1)
+  assert.equal(lastRequestBody.target_disk_size_gb, 5)
+  assert.equal(lastRequestBody.requested_by_email, 'dueno@clinica.com')
 })
 
 test('hasFeature respeta los feature flags del plan', async () => {

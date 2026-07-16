@@ -6462,6 +6462,24 @@ límites de plan. El backend local valida licencia y plan con cache. El frontend
 tambien oculta modulos o anticipa limites, pero el bloqueo real debe estar en
 backend.
 
+El límite de almacenamiento de PostgreSQL también se administra mediante el
+Installer central. La app local reporta el tamaño real de la base a
+`POST /api/license/database-storage/status`; el backend central consulta en Render
+la capacidad efectiva, el estado del autoscaling y la decisión guardada para el
+siguiente salto. Al 80% de uso, si todavía no hay decisión, el Installer pausa el
+autoscaling y la app muestra a un administrador con permiso `settings_account`
+un modal no descartable con los costos de almacenamiento de Render en USD.
+
+La autorización por `POST /api/license/database-storage/decision` reactiva el
+autoscaling para que Render pueda ampliar el disco al 90%. Rechazar exige una
+segunda confirmación escrita, mantiene el autoscaling apagado y conserva un aviso
+de riesgo con opción de cambiar la decisión. Render factura ese almacenamiento
+directamente al cliente y sus discos no pueden reducirse. Si la base se llena,
+puede ser suspendida y Ristak dejará de guardar información o funcionar. Cada
+nuevo salto de capacidad requiere una decisión nueva. Las instalaciones sin
+credenciales administradas de Render sólo reciben el aviso de riesgo y nunca
+acciones falsas.
+
 Documento: `docs/LICENSING.md`.
 
 Variables y datos sensibles de licencia:
