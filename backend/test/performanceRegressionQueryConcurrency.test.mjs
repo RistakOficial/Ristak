@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import { db } from '../src/config/database.js'
@@ -9,6 +10,48 @@ import {
 } from '../src/services/trackingAnalyticsService.js'
 import { invalidateTrackingAnalyticsCache } from '../src/services/trackingAnalyticsCache.js'
 import { getMessageAnalyticsSummary } from '../src/services/originDistributionService.js'
+import {
+  MESSAGE_ANALYTICS_PROJECTION_VERSION,
+  runMessageAnalyticsProjectionBackfill
+} from '../src/services/messageAnalyticsProjectionService.js'
+import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
+
+let messageProjectionMigrationPromise = null
+
+async function syncMessageProjection() {
+  if (!messageProjectionMigrationPromise) {
+    messageProjectionMigrationPromise = (async () => {
+      for (const migrationName of [
+        '114_message_analytics_projection.sqlite.sql',
+        '115_message_analytics_range_rollup.sqlite.sql',
+        '118_message_analytics_phone_projection.sqlite.sql'
+      ]) {
+        await db.exec(await readFile(
+          new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+          'utf8'
+        ))
+      }
+    })()
+  }
+  await messageProjectionMigrationPromise
+  await db.run(`
+    INSERT INTO app_config(config_key, config_value, created_at, updated_at)
+    VALUES ('account_timezone', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value,
+      updated_at = CURRENT_TIMESTAMP
+  `)
+  invalidateTimezoneCache()
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await runMessageAnalyticsProjectionBackfill({
+      batchSize: 100,
+      maxBackfillBatches: 3,
+      maxQueueBatches: 6
+    })
+    if (result.ready) return
+  }
+  assert.fail('read model de mensajes no convergio')
+}
 
 function observeDatabaseConcurrency({ shouldObserve = () => true } = {}) {
   const originals = {
@@ -284,6 +327,7 @@ test('al irse el último consumidor se cancela la consulta pesada real', { concu
 })
 
 test('el resumen multicanal no solapa el agregado pesado con lecturas auxiliares', { concurrency: false }, async () => {
+  await syncMessageProjection()
   const observer = observeDatabaseConcurrency()
   try {
     const result = await getMessageAnalyticsSummary({
@@ -318,7 +362,7 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
 
   const enter = async (sql) => {
     const text = String(sql || '')
-    const aggregate = /WITH\s+message_base\s+AS/i.test(text)
+    const aggregate = /FROM\s+message_analytics_(?:daily_identity|daily_rollup|range_delta)\b/i.test(text)
     if (!aggregate && aggregateActive) auxiliaryOverlap += 1
     if (aggregate) aggregateActive = true
     active += 1
@@ -335,45 +379,15 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
   db.all = async function boundedAnalyticsAll(sql) {
     const aggregate = await enter(sql)
     try {
-      if (/FROM\s+hidden_contact_filters/i.test(String(sql || ''))) return []
-      if (aggregate) {
+      const text = String(sql || '')
+      if (/FROM\s+hidden_contact_filters/i.test(text)) return []
+      if (aggregate && /FROM\s+message_analytics_daily_rollup\s+daily/i.test(text)) {
+        return [{ period: '2097-06-01', message_total: 4 }]
+      }
+      if (aggregate && /facet_kind/i.test(text) && /message_analytics_range_delta/i.test(text)) {
         return [
-          {
-            row_type: 'metrics',
-            label: '',
-            value: '',
-            count_value: 4,
-            secondary_value: 3,
-            tertiary_value: 1,
-            all_messages_value: 4
-          },
-          {
-            row_type: 'trend',
-            label: '2097-06-01',
-            value: '',
-            count_value: 4,
-            secondary_value: 0,
-            tertiary_value: 0,
-            all_messages_value: 0
-          },
-          {
-            row_type: 'channel_filter',
-            label: 'WhatsApp',
-            value: 'whatsapp',
-            count_value: 3,
-            secondary_value: 0,
-            tertiary_value: 0,
-            all_messages_value: 0
-          },
-          {
-            row_type: 'source_filter',
-            label: 'Meta Ads',
-            value: 'Meta Ads',
-            count_value: 1,
-            secondary_value: 0,
-            tertiary_value: 0,
-            all_messages_value: 0
-          }
+          { facet_kind: 'channel', value: 'whatsapp', identity_count: 3 },
+          { facet_kind: 'source', value: 'Meta Ads', identity_count: 1 }
         ]
       }
       throw new Error(`Lectura all inesperada en prueba: ${String(sql || '').slice(0, 120)}`)
@@ -386,10 +400,10 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
     const aggregate = await enter(sql)
     try {
       const text = String(sql || '')
-      if (/AS\s+whatsapp_total[\s\S]+AS\s+meta_contact_total[\s\S]+AS\s+email_config_value/i.test(text)) {
+      if (/AS\s+whatsapp_connected[\s\S]+AS\s+meta_contact_connected[\s\S]+AS\s+email_config_value/i.test(text)) {
         return {
-          whatsapp_total: 1,
-          meta_contact_total: 0,
+          whatsapp_connected: 1,
+          meta_contact_connected: 0,
           email_config_value: JSON.stringify({ connected: true })
         }
       }
@@ -411,6 +425,29 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
         return { singleton_id: 1, projection_version: 1, status: 'ready', last_error: null }
       }
       if (/FROM\s+message_identity_first_seen_global/i.test(text)) return { total: 2 }
+      if (/FROM\s+message_analytics_projection_state/i.test(text)) {
+        return {
+          singleton_id: 1,
+          projection_version: MESSAGE_ANALYTICS_PROJECTION_VERSION,
+          status: 'ready',
+          active_generation: 1,
+          active_version: MESSAGE_ANALYTICS_PROJECTION_VERSION,
+          active_timezone: 'UTC',
+          building_generation: null
+        }
+      }
+      if (/FROM\s+message_analytics_range_generation/i.test(text)) return { status: 'ready' }
+      if (/EXISTS\(SELECT\s+1\s+FROM\s+message_analytics_change_queue/i.test(text)) {
+        return { change_pending: 0, contact_pending: 0 }
+      }
+      if (aggregate && /FROM\s+message_analytics_range_delta\s+delta/i.test(text)) {
+        return {
+          inbound_messages: 4,
+          conversations: 3,
+          attributed_conversations: 1,
+          all_messages: 4
+        }
+      }
       throw new Error(`Lectura get inesperada en prueba: ${text.slice(0, 120)}`)
     } finally {
       leave(aggregate)
@@ -445,8 +482,18 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
           instagram: true,
           email: true
         },
+        messageProjection: 'ready',
+        messageProjectionComplete: true,
+        messageProjectionReadPath: 'range_rollup',
+        messageProjectionGeneration: 1,
+        messageProjectionPending: false,
         firstSeenProjection: 'ready',
         firstSeenProjectionComplete: true
+      },
+      performance: {
+        readPath: 'range_rollup',
+        activeGeneration: 1,
+        pending: false
       }
     })
     assert.equal(auxiliaryOverlap, 0, 'ninguna lectura auxiliar debe empezar mientras corre el agregado')
@@ -458,7 +505,7 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
       /email_smtp_config/i.test(sql)
     ))
     assert.equal(localStatusCalls.length, 1, 'los tres estados locales deben compartir un solo SELECT')
-    assert.equal(calls.length, 7, 'hidden, agregado y cinco lecturas auxiliares forman el camino completo')
+    assert.equal(calls.length, 12, 'estado, cuatro lecturas covering, hidden y auxiliares forman el camino completo acotado')
   } finally {
     db.all = originals.all
     db.get = originals.get
@@ -466,6 +513,7 @@ test('el resumen multicanal reduce auxiliares a dos olas acotadas sin cambiar el
 })
 
 test('cancelar el resumen multicanal aborta el SELECT auxiliar combinado', { concurrency: false }, async () => {
+  await syncMessageProjection()
   const originals = { all: db.all, get: db.get }
   let resolveAuxiliaryStarted
   const auxiliaryStarted = new Promise(resolve => {
@@ -476,21 +524,12 @@ test('cancelar el resumen multicanal aborta el SELECT auxiliar combinado', { con
 
   db.all = async function cancellableAnalyticsAll(sql) {
     if (/FROM\s+hidden_contact_filters/i.test(String(sql || ''))) return []
-    if (/WITH\s+message_base\s+AS/i.test(String(sql || ''))) {
-      return [{
-        row_type: 'metrics',
-        count_value: 0,
-        secondary_value: 0,
-        tertiary_value: 0,
-        all_messages_value: 0
-      }]
-    }
     return originals.all.apply(this, arguments)
   }
 
   db.get = async function cancellableAnalyticsGet(sql, params, options) {
     const text = String(sql || '')
-    if (/AS\s+whatsapp_total[\s\S]+AS\s+meta_contact_total[\s\S]+AS\s+email_config_value/i.test(text)) {
+    if (/AS\s+whatsapp_connected[\s\S]+AS\s+meta_contact_connected[\s\S]+AS\s+email_config_value/i.test(text)) {
       auxiliarySignal = options?.signal || null
       resolveAuxiliaryStarted()
       return new Promise((resolve, reject) => {

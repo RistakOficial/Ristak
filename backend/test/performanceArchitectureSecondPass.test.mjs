@@ -14,6 +14,7 @@ import {
   invalidateTrackingAnalyticsCache
 } from '../src/services/trackingAnalyticsCache.js'
 import { getMessageAnalyticsSummary } from '../src/services/originDistributionService.js'
+import { runMessageAnalyticsProjectionBackfill } from '../src/services/messageAnalyticsProjectionService.js'
 import { updateSessionHandler, deleteSessionsHandler } from '../src/controllers/trackingController.js'
 import { migrationRunsForDialect } from '../src/startup/runMigrations.js'
 import {
@@ -23,6 +24,38 @@ import {
 
 function marker(label) {
   return `${label}_${Date.now()}_${Math.random().toString(16).slice(2)}`
+}
+
+let messageProjectionMigrationPromise = null
+
+async function syncMessageProjection(timezone = 'UTC') {
+  if (!messageProjectionMigrationPromise) {
+    messageProjectionMigrationPromise = (async () => {
+      for (const migrationName of [
+        '114_message_analytics_projection.sqlite.sql',
+        '115_message_analytics_range_rollup.sqlite.sql',
+        '118_message_analytics_phone_projection.sqlite.sql'
+      ]) {
+        await db.exec(await readFile(
+          new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+          'utf8'
+        ))
+      }
+    })()
+  }
+  await messageProjectionMigrationPromise
+  await setAppConfig(ACCOUNT_TIMEZONE_CONFIG_KEY, timezone)
+  invalidateTimezoneCache()
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const result = await runMessageAnalyticsProjectionBackfill({
+      batchSize: 100,
+      maxBackfillBatches: 4,
+      maxQueueBatches: 8
+    })
+    if (result.ready) return
+  }
+  assert.fail('read model analitico de mensajes no convergio')
 }
 
 function responseRecorder() {
@@ -71,9 +104,10 @@ test('resumen multicanal conserva contrato con miles de mensajes y respuesta aco
       }
     })
 
+    await syncMessageProjection()
     const summary = await getMessageAnalyticsSummary(range, { groupBy: 'day' })
 
-    assert.deepEqual(Object.keys(summary), ['metrics', 'trend', 'filters', 'status'])
+    assert.deepEqual(Object.keys(summary), ['metrics', 'trend', 'filters', 'status', 'performance'])
     assert.deepEqual(Object.keys(summary.metrics), [
       'inboundMessages',
       'conversations',
@@ -92,17 +126,20 @@ test('resumen multicanal conserva contrato con miles de mensajes y respuesta aco
 })
 
 test('resumen de mensajes no invoca el cargador legacy de filas crudas', async () => {
-  const source = await readFile(
-    new URL('../src/services/originDistributionService.js', import.meta.url),
-    'utf8'
-  )
+  const [source, projectionSource] = await Promise.all([
+    readFile(new URL('../src/services/originDistributionService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/messageAnalyticsProjectionService.js', import.meta.url), 'utf8')
+  ])
   const summaryBody = source
     .split('export async function getMessageAnalyticsSummary')[1]
     .split('export async function getWhatsAppApiAnalyticsSummary')[0]
 
-  assert.match(summaryBody, /getMessageAnalyticsAggregateRows/)
-  assert.doesNotMatch(summaryBody, /getMessageAnalyticsRows/)
-  assert.match(source, /ROW_NUMBER\(\) OVER \(ORDER BY identity_count DESC, label ASC\)/)
+  assert.match(summaryBody, /queryMessageAnalyticsProjectionAggregateRows/)
+  assert.match(summaryBody, /const aggregateRows = projected\.rows/)
+  assert.match(summaryBody, /schedule:\s*false/)
+  assert.doesNotMatch(summaryBody, /message_base|whatsapp_api_messages|meta_social_messages|email_messages/)
+  assert.match(projectionSource, /FROM message_analytics_daily_identity daily/)
+  assert.match(projectionSource, /FROM message_analytics_range_delta delta/)
 
   const whatsappLegacySummaryBody = source
     .split('export async function getWhatsAppApiAnalyticsSummary')[1]
@@ -144,6 +181,7 @@ test('tendencia de mensajes agrupa por la zona del negocio y no por UTC', async 
       ) VALUES (?, 'inbound', 'received', ?, 'owner@example.test', 'Zona', ?, ?, ?)
     `, [`${prefix}_email`, `${prefix}@example.test`, timestamp, timestamp, timestamp])
 
+    await syncMessageProjection('America/Ciudad_Juarez')
     const summary = await getMessageAnalyticsSummary({
       startUtc: '2096-06-01T06:00:00.000Z',
       endUtc: '2096-06-02T05:59:59.999Z',

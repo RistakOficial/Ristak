@@ -485,15 +485,23 @@ La jerarquia publicitaria de tracking se agrega en SQL como
 unicas y conserva los IDs UTM crudos para filtros. El payload se poda a 8
 plataformas, 8 campanas por plataforma, 5 conjuntos por campana, 5 anuncios por
 conjunto y 750 nodos globales. Las etiquetas URL-encoded se decodifican sin
-alterar esos IDs. El resumen multicanal de mensajes tambien agrega WhatsApp,
-Meta y correo en SQL; no materializa historiales crudos y limita sus opciones de
-filtro a 50. Ese agregado termina antes de abrir lecturas auxiliares. Los estados
-locales de WhatsApp, contactos Meta y correo comparten un solo statement; despues
-solo corren en paralelo dos tareas acotadas: estado de conexiones y conteo
-first-seen. El par interno de configuracion Meta deja el pico auxiliar en tres
-conexiones y nunca se solapa con el agregado principal. La misma senal de aborto
-llega al statement combinado para que abandonar la vista no deje trabajo
-huerfano.
+alterar esos IDs. `GET /api/tracking/messages-summary` lee exclusivamente la
+generacion activa del read model `114*`/`115*`: hechos angostos, rollup diario y
+ledger exacto de rangos para WhatsApp, Meta y correo. El request ya no ejecuta el
+`UNION` legacy sobre `whatsapp_api_messages`, `meta_social_messages` y
+`email_messages`, ni lo conserva como fallback. Si la version, timezone,
+generacion o ledger de rangos aun no estan disponibles, responde
+`503 message_analytics_projection_warming` con `Retry-After`; nunca fabrica ceros
+ni vuelve a recorrer los historiales.
+
+La respuesta conserva las metricas, tendencia y filtros existentes y agrega
+observabilidad en `performance.readPath`, estado/generacion de la proyeccion y el
+header `X-Ristak-Read-Path`. El agregado proyectado termina antes de abrir las dos
+lecturas auxiliares acotadas: estado local de conexiones mediante `EXISTS` y
+conteo first-seen. La misma senal de aborto llega a todas las lecturas para que
+abandonar la vista no deje trabajo huerfano. El GET no agenda backfills; el
+scheduler de mantenimiento es el unico responsable de hacer converger la
+proyeccion.
 
 El conteo de contactos por primer mensaje inbound no vuelve a ejecutar
 `MIN(...) GROUP BY` sobre todo el historial. La proyeccion versionada

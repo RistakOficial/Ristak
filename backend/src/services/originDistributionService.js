@@ -5,6 +5,7 @@ import { formatPlacementName } from '../utils/placementName.js'
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { buildNormalizedTrafficSourceSql } from './contactSourceService.js'
 import { getProjectedMessageFirstSeenCount } from './messageFirstSeenProjectionService.js'
+import { queryMessageAnalyticsProjectionAggregateRows } from './messageAnalyticsProjectionService.js'
 
 const toRanked = (bucketMap, limit = 10) =>
   Array.from(bucketMap.entries())
@@ -13,7 +14,6 @@ const toRanked = (bucketMap, limit = 10) =>
     .slice(0, limit)
 
 const isPostgres = databaseDialect === 'postgres'
-const MESSAGE_FILTER_OPTION_LIMIT = 50
 const TRAFFIC_DISTRIBUTION_DIMENSIONS = new Set([
   'sources',
   'platforms',
@@ -53,23 +53,6 @@ const normalizeMessageChannel = (value, fallback = 'whatsapp') => {
   if (normalized.includes('whatsapp') || normalized === 'wa' || normalized.includes('ycloud')) return 'whatsapp'
   return fallback
 }
-
-const getMetaMessageIdentitySql = (alias = 'msg') => `
-  CASE
-    WHEN COALESCE(${alias}.contact_id, '') != '' THEN 'contact:' || ${alias}.contact_id
-    WHEN COALESCE(${alias}.sender_id, '') != '' THEN 'meta:' || COALESCE(${alias}.platform, 'messenger') || ':' || ${alias}.sender_id
-    WHEN COALESCE(${alias}.meta_social_contact_id, '') != '' THEN 'meta-profile:' || ${alias}.meta_social_contact_id
-    ELSE 'message:' || ${alias}.id
-  END
-`
-
-const getEmailMessageIdentitySql = (alias = 'msg') => `
-  CASE
-    WHEN COALESCE(${alias}.contact_id, '') != '' THEN 'contact:' || ${alias}.contact_id
-    WHEN COALESCE(${alias}.from_email, '') != '' THEN 'email:' || LOWER(${alias}.from_email)
-    ELSE 'message:' || ${alias}.id
-  END
-`
 
 const getWhatsAppApiIdentitySql = (alias = 'msg') => `
   CASE
@@ -125,48 +108,6 @@ function getWhatsAppMessageSourceSql(messageAlias = 'msg', attributionAlias = 'a
     WHEN ${signal} LIKE '%email%' OR ${signal} LIKE '%newsletter%' THEN 'Email'
     WHEN ${attributedId} IS NOT NULL THEN 'Meta Ads'
     ELSE 'WhatsApp'
-  END`
-}
-
-function getMetaMessageChannelSql(alias = 'msg') {
-  const platform = `LOWER(COALESCE(${alias}.platform, ''))`
-  return `CASE
-    WHEN ${platform} LIKE '%instagram%' OR ${platform} = 'ig' THEN 'instagram'
-    WHEN ${platform} LIKE '%email%' OR ${platform} LIKE '%smtp%' THEN 'email'
-    WHEN ${platform} LIKE '%whatsapp%' OR ${platform} = 'wa' OR ${platform} LIKE '%ycloud%' THEN 'whatsapp'
-    ELSE 'messenger'
-  END`
-}
-
-function getMetaMessageChannelLabelSql(alias = 'msg') {
-  const channel = getMetaMessageChannelSql(alias)
-  return `CASE
-    WHEN ${channel} = 'instagram' THEN 'Instagram DM'
-    WHEN ${channel} = 'email' THEN 'Email'
-    WHEN ${channel} = 'whatsapp' THEN 'WhatsApp'
-    ELSE 'Messenger'
-  END`
-}
-
-function getMetaMessageSourceSql(alias = 'msg') {
-  const referral = `LOWER(COALESCE(${alias}.referral_json, ''))`
-  const platform = `LOWER(COALESCE(${alias}.platform, ''))`
-
-  return `CASE
-    WHEN ${referral} LIKE '%instagram%' THEN 'Instagram'
-    WHEN ${referral} LIKE '%messenger%' OR ${referral} LIKE '%m.me%' THEN 'Messenger'
-    WHEN ${referral} LIKE '%facebook%' THEN 'Facebook'
-    WHEN ${referral} LIKE '%audience_network%' OR ${referral} LIKE '%audience network%' THEN 'Audience Network'
-    WHEN ${platform} LIKE '%instagram%' OR ${platform} = 'ig' THEN 'Instagram'
-    WHEN ${platform} LIKE '%messenger%' THEN 'Messenger'
-    WHEN ${platform} LIKE '%facebook%' OR ${platform} = 'fb' THEN 'Facebook'
-    WHEN ${referral} LIKE '%tiktok%' OR ${referral} LIKE '%ttclid%' THEN 'TikTok'
-    WHEN ${referral} LIKE '%google%' OR ${referral} LIKE '%gclid%' THEN 'Google'
-    WHEN ${referral} LIKE '%youtube%' OR ${referral} LIKE '%youtu.be%' THEN 'YouTube'
-    WHEN ${referral} LIKE '%bing%' OR ${referral} LIKE '%microsoft%' OR ${referral} LIKE '%msclkid%' THEN 'Bing'
-    WHEN ${referral} LIKE '%linkedin%' OR ${referral} LIKE '%lnkd%' THEN 'LinkedIn'
-    WHEN ${referral} LIKE '%source_id%' OR ${referral} LIKE '%ad_id%' OR ${referral} LIKE '%\"source\":\"ads\"%' THEN 'Meta Ads'
-    ELSE ${getMetaMessageChannelLabelSql(alias)}
   END`
 }
 
@@ -228,198 +169,14 @@ async function getWhatsAppFirstSeenCount(range, hiddenFilters) {
   })
 }
 
-async function getMessageAnalyticsAggregateRows(range, {
-  groupBy = 'day',
-  filters = {},
-  hiddenFilters = [],
-  signal
-} = {}) {
-  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-  const hiddenSql = hiddenCondition ? `AND (msg.contact_id IS NULL OR ${hiddenCondition})` : ''
-  const normalizedFilters = normalizeMessageFilters(filters)
-  const filteredConditions = []
-  const params = [
-    range.startUtc,
-    range.endUtc,
-    range.startUtc,
-    range.endUtc,
-    range.startUtc,
-    range.endUtc
-  ]
-
-  if (normalizedFilters.channels.length > 0) {
-    filteredConditions.push(`LOWER(channel) IN (${normalizedFilters.channels.map(() => '?').join(', ')})`)
-    params.push(...normalizedFilters.channels.map(channel => channel.toLowerCase()))
-  }
-  if (normalizedFilters.sources.length > 0) {
-    filteredConditions.push(`LOWER(source) IN (${normalizedFilters.sources.map(() => '?').join(', ')})`)
-    params.push(...normalizedFilters.sources.map(source => source.toLowerCase()))
-  }
-
-  const whatsappSource = getWhatsAppMessageSourceSql('msg', 'attr', 'c')
-  const metaChannel = getMetaMessageChannelSql('msg')
-  const metaChannelLabel = getMetaMessageChannelLabelSql('msg')
-  const metaSource = getMetaMessageSourceSql('msg')
-  const periodExpression = whatsappPeriodExpression('message_timestamp', groupBy, range.appliedTimezone)
-  const filteredWhere = filteredConditions.length > 0
-    ? `WHERE ${filteredConditions.join(' AND ')}`
-    : ''
-
-  return db.all(`
-    WITH message_base AS (
-      SELECT
-        'whatsapp' AS channel,
-        'WhatsApp' AS channel_label,
-        ${whatsappSource} AS source,
-        ${getWhatsAppApiIdentitySql('msg')} AS identity,
-        COALESCE(msg.message_timestamp, msg.created_at) AS message_timestamp,
-        'non_direct' AS attribution_mode
-      FROM whatsapp_api_messages msg
-      LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
-      LEFT JOIN contacts c ON c.id = msg.contact_id
-      WHERE LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'
-        AND COALESCE(msg.message_timestamp, msg.created_at) >= ?
-        AND COALESCE(msg.message_timestamp, msg.created_at) <= ?
-        ${hiddenSql}
-
-      UNION ALL
-
-      SELECT
-        ${metaChannel} AS channel,
-        ${metaChannelLabel} AS channel_label,
-        ${metaSource} AS source,
-        ${getMetaMessageIdentitySql('msg')} AS identity,
-        COALESCE(msg.message_timestamp, msg.created_at) AS message_timestamp,
-        'meta_ads' AS attribution_mode
-      FROM meta_social_messages msg
-      LEFT JOIN contacts c ON c.id = msg.contact_id
-      WHERE LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'
-        AND COALESCE(msg.message_timestamp, msg.created_at) >= ?
-        AND COALESCE(msg.message_timestamp, msg.created_at) <= ?
-        ${hiddenSql}
-
-      UNION ALL
-
-      SELECT
-        'email' AS channel,
-        'Email' AS channel_label,
-        'Email' AS source,
-        ${getEmailMessageIdentitySql('msg')} AS identity,
-        COALESCE(msg.message_timestamp, msg.created_at) AS message_timestamp,
-        'none' AS attribution_mode
-      FROM email_messages msg
-      LEFT JOIN contacts c ON c.id = msg.contact_id
-      WHERE LOWER(COALESCE(msg.direction, 'outbound')) = 'inbound'
-        AND COALESCE(msg.message_timestamp, msg.created_at) >= ?
-        AND COALESCE(msg.message_timestamp, msg.created_at) <= ?
-        ${hiddenSql}
-    ),
-    normalized_messages AS (
-      SELECT
-        channel,
-        channel_label,
-        source,
-        identity,
-        message_timestamp,
-        ${periodExpression} AS period,
-        CASE
-          WHEN attribution_mode = 'non_direct'
-            AND source NOT IN ('WhatsApp', 'Directo', 'Desconocido', 'Otro') THEN 1
-          WHEN attribution_mode = 'meta_ads' AND source = 'Meta Ads' THEN 1
-          ELSE 0
-        END AS attributed
-      FROM message_base
-    ),
-    filtered_messages AS (
-      SELECT *
-      FROM normalized_messages
-      ${filteredWhere}
-    ),
-    channel_counts AS (
-      SELECT
-        channel AS value,
-        MAX(channel_label) AS label,
-        COUNT(DISTINCT identity) AS identity_count
-      FROM normalized_messages
-      WHERE COALESCE(channel, '') != ''
-      GROUP BY channel
-    ),
-    source_counts AS (
-      SELECT
-        source AS value,
-        MAX(source) AS label,
-        COUNT(DISTINCT identity) AS identity_count
-      FROM normalized_messages
-      WHERE COALESCE(source, '') != ''
-      GROUP BY source
-    ),
-    ranked_sources AS (
-      SELECT
-        value,
-        label,
-        identity_count,
-        ROW_NUMBER() OVER (ORDER BY identity_count DESC, label ASC) AS item_rank
-      FROM source_counts
-    )
-    SELECT
-      'metrics' AS row_type,
-      '' AS label,
-      '' AS value,
-      COUNT(*) AS count_value,
-      COUNT(DISTINCT identity) AS secondary_value,
-      COUNT(DISTINCT CASE WHEN attributed = 1 THEN identity END) AS tertiary_value,
-      (SELECT COUNT(*) FROM normalized_messages) AS all_messages_value
-    FROM filtered_messages
-
-    UNION ALL
-
-    SELECT
-      'trend' AS row_type,
-      period AS label,
-      '' AS value,
-      COUNT(*) AS count_value,
-      0 AS secondary_value,
-      0 AS tertiary_value,
-      0 AS all_messages_value
-    FROM filtered_messages
-    WHERE COALESCE(period, '') != ''
-    GROUP BY period
-
-    UNION ALL
-
-    SELECT
-      'channel_filter' AS row_type,
-      label,
-      value,
-      identity_count AS count_value,
-      0 AS secondary_value,
-      0 AS tertiary_value,
-      0 AS all_messages_value
-    FROM channel_counts
-
-    UNION ALL
-
-    SELECT
-      'source_filter' AS row_type,
-      label,
-      value,
-      identity_count AS count_value,
-      0 AS secondary_value,
-      0 AS tertiary_value,
-      0 AS all_messages_value
-    FROM ranked_sources
-    WHERE item_rank <= ${MESSAGE_FILTER_OPTION_LIMIT}
-  `, params, { signal })
-}
-
 async function getMessageConnectionStatus(signal) {
   // Los tres estados locales comparten una sola ida a la base. La configuracion
   // Meta conserva su contrato de merge/decryption, pero se lee despues para no
   // volver al burst de cuatro conexiones que competia con el agregado pesado.
   const localStatus = await db.get(
     `SELECT
-      (SELECT COUNT(*) FROM whatsapp_api_phone_numbers) AS whatsapp_total,
-      (SELECT COUNT(*) FROM meta_social_contacts) AS meta_contact_total,
+      EXISTS(SELECT 1 FROM whatsapp_api_phone_numbers LIMIT 1) AS whatsapp_connected,
+      EXISTS(SELECT 1 FROM meta_social_contacts LIMIT 1) AS meta_contact_connected,
       (SELECT config_value
        FROM app_config
        WHERE config_key = 'email_smtp_config'
@@ -427,8 +184,8 @@ async function getMessageConnectionStatus(signal) {
     [],
     { signal }
   ).catch(fallbackUnlessAborted({
-    whatsapp_total: 0,
-    meta_contact_total: 0,
+    whatsapp_connected: false,
+    meta_contact_connected: false,
     email_config_value: null
   }, signal))
   const metaConfig = await getMetaSocialConfig({ migratePlaintext: false })
@@ -436,9 +193,9 @@ async function getMessageConnectionStatus(signal) {
 
   const emailConfig = parseJsonSafe(localStatus?.email_config_value, {})
   return {
-    whatsapp: Number(localStatus?.whatsapp_total || 0) > 0,
-    messenger: hasText(metaConfig?.page_id) || Number(localStatus?.meta_contact_total || 0) > 0,
-    instagram: hasText(metaConfig?.instagram_account_id) || Number(localStatus?.meta_contact_total || 0) > 0,
+    whatsapp: localStatus?.whatsapp_connected === true || Number(localStatus?.whatsapp_connected || 0) === 1,
+    messenger: hasText(metaConfig?.page_id) || localStatus?.meta_contact_connected === true || Number(localStatus?.meta_contact_connected || 0) === 1,
+    instagram: hasText(metaConfig?.instagram_account_id) || localStatus?.meta_contact_connected === true || Number(localStatus?.meta_contact_connected || 0) === 1,
     email: Boolean(emailConfig?.connected)
   }
 }
@@ -450,12 +207,16 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
   const hiddenFilters = await getHiddenContactFilters({ signal })
   // Mantener el mismo payload sin abrir hasta seis conexiones a la vez. El
   // agregado es la parte dominante; los snapshots auxiliares se leen después.
-  const aggregateRows = await getMessageAnalyticsAggregateRows(range, {
+  const projected = await queryMessageAnalyticsProjectionAggregateRows(range, {
     groupBy: normalizedGroupBy,
     filters: normalizedFilters,
     hiddenFilters,
-    signal
+    signal,
+    schedule: false
   })
+  // Schema ausente o warming falla desde la proyeccion con 503. No existe un
+  // fallback a los tres historiales: proteger la base es parte del contrato.
+  const aggregateRows = projected.rows
   // El agregado ya termino antes de abrir auxiliares. A partir de aqui solo hay
   // dos tareas acotadas: estado de conexiones y first-seen; asi recuperamos una
   // ola completa de latencia sin competir con el scan principal.
@@ -507,8 +268,18 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
       connected,
       hasData: allMessages > 0,
       channels: connectionStatus,
+      messageProjection: projected.status.status,
+      messageProjectionComplete: Boolean(projected.status.ready),
+      messageProjectionReadPath: projected.status.readPath || 'message_analytics_projection',
+      messageProjectionGeneration: projected.status.activeGeneration || null,
+      messageProjectionPending: Boolean(projected.status.pending),
       firstSeenProjection: firstSeenCount?.projectionStatus || 'unavailable',
       firstSeenProjectionComplete: Boolean(firstSeenCount?.projectionReady)
+    },
+    performance: {
+      readPath: projected.status.readPath || 'message_analytics_projection',
+      activeGeneration: projected.status.activeGeneration || null,
+      pending: Boolean(projected.status.pending)
     }
   }
 }

@@ -126,7 +126,7 @@ test('los tres read paths no convierten GET en comando de backfill', async () =>
   )
   const originFirstSeen = origin.slice(
     origin.indexOf('async function getMessageFirstSeenCount'),
-    origin.indexOf('async function getMessageAnalyticsAggregateRows')
+    origin.indexOf('async function getMessageConnectionStatus')
   )
 
   assert.doesNotMatch(chatGet, /scheduleChatActivityProjectionBackfill|legacyMessageStatsRowsSql/)

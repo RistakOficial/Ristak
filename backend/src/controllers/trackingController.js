@@ -3297,8 +3297,29 @@ export async function getMessagesSummary(req, res) {
 
     if (requestScope.timedOut) throw new Error('tracking_messages_deadline')
     if (requestScope.signal.aborted || res.writableEnded || res.finished) return
+    if (data?.performance?.readPath) {
+      res.setHeader?.('X-Ristak-Read-Path', data.performance.readPath)
+    }
     res.json({ success: true, data })
   } catch (error) {
+    if (error?.code === 'message_analytics_hidden_scope_too_large') {
+      if (res.writableEnded || res.finished) return
+      return res.status(422).json({
+        error: error.message,
+        code: error.code,
+        retryable: false
+      })
+    }
+    if (error?.code === 'message_analytics_projection_warming') {
+      if (res.writableEnded || res.finished) return
+      res.setHeader?.('Retry-After', '2')
+      return res.status(503).json({
+        error: 'El resumen de mensajes se está preparando. Reintenta en unos segundos.',
+        code: error.code,
+        retryable: true,
+        projectionStatus: error.projectionStatus || 'warming'
+      })
+    }
     if (requestScope.timedOut) {
       if (res.writableEnded || res.finished) return
       return res.status(503).json({

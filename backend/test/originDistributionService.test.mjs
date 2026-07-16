@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 import { db } from '../src/config/database.js'
 import {
@@ -7,6 +8,40 @@ import {
   getWhatsAppApiAnalyticsSummary,
   getWhatsAppApiSourceBreakdown
 } from '../src/services/originDistributionService.js'
+import { runMessageAnalyticsProjectionBackfill } from '../src/services/messageAnalyticsProjectionService.js'
+import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
+
+async function syncMessageProjection() {
+  await db.exec(await readFile(
+    new URL('../migrations/versioned/114_message_analytics_projection.sqlite.sql', import.meta.url),
+    'utf8'
+  ))
+  await db.exec(await readFile(
+    new URL('../migrations/versioned/115_message_analytics_range_rollup.sqlite.sql', import.meta.url),
+    'utf8'
+  ))
+  await db.exec(await readFile(
+    new URL('../migrations/versioned/118_message_analytics_phone_projection.sqlite.sql', import.meta.url),
+    'utf8'
+  ))
+  await db.run(`
+    INSERT INTO app_config(config_key, config_value, created_at, updated_at)
+    VALUES ('account_timezone', 'UTC', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value,
+      updated_at = CURRENT_TIMESTAMP
+  `)
+  invalidateTimezoneCache()
+
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const result = await runMessageAnalyticsProjectionBackfill({
+      batchSize: 100,
+      maxBackfillBatches: 3,
+      maxQueueBatches: 6
+    })
+    if (result.ready) return
+  }
+  assert.fail('read model de mensajes no convergió')
+}
 
 async function cleanup(marker) {
   await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id LIKE ?', [`origin_${marker}%`]).catch(() => undefined)
@@ -292,12 +327,18 @@ test('message analytics summary combines WhatsApp, Messenger, Instagram and Emai
       '2099-07-13T18:00:00.000Z'
     ])
 
+    await syncMessageProjection()
     const summary = await getMessageAnalyticsSummary(range, { groupBy: 'month' })
 
     assert.equal(summary.metrics.inboundMessages, 4)
     assert.equal(summary.metrics.conversations, 4)
     assert.equal(summary.metrics.contacts, 4)
     assert.deepEqual(summary.trend, [{ label: '2099-07', messages: 4 }])
+    assert.equal(summary.status.messageProjection, 'ready')
+    assert.equal(summary.status.messageProjectionComplete, true)
+    assert.equal(summary.status.messageProjectionReadPath, 'range_rollup')
+    assert.equal(summary.performance.readPath, 'range_rollup')
+    assert.ok(Number(summary.performance.activeGeneration) > 0)
 
     const channels = new Map(summary.filters.channels.map(item => [item.value, item.count]))
     assert.equal(channels.get('whatsapp'), 1)
@@ -325,7 +366,39 @@ test('message analytics summary combines WhatsApp, Messenger, Instagram and Emai
     assert.equal(filteredBySource.metrics.inboundMessages, 1)
     assert.equal(filteredBySource.metrics.conversations, 1)
     assert.equal(filteredBySource.metrics.contacts, 1)
+
+    await assert.rejects(
+      getMessageAnalyticsSummary({
+        ...range,
+        appliedTimezone: 'America/New_York'
+      }, { groupBy: 'month' }),
+      error => error?.code === 'message_analytics_projection_warming' &&
+        error?.status === 503 && error?.retryable === true
+    )
   } finally {
     await cleanup(marker)
   }
+})
+
+test('messages-summary no conserva fallback raw y expone warming como 503 reintentable', async () => {
+  const [serviceSource, controllerSource] = await Promise.all([
+    readFile(new URL('../src/services/originDistributionService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/controllers/trackingController.js', import.meta.url), 'utf8')
+  ])
+  const serviceHandler = serviceSource.slice(
+    serviceSource.indexOf('export async function getMessageAnalyticsSummary'),
+    serviceSource.indexOf('export async function getWhatsAppApiAnalyticsSummary')
+  )
+  const controllerHandler = controllerSource.slice(
+    controllerSource.indexOf('export async function getMessagesSummary'),
+    controllerSource.indexOf('export async function getContactConversionsList')
+  )
+
+  assert.match(serviceHandler, /queryMessageAnalyticsProjectionAggregateRows/)
+  assert.match(serviceHandler, /schedule:\s*false/)
+  assert.doesNotMatch(serviceHandler, /whatsapp_api_messages|meta_social_messages|email_messages/)
+  assert.match(serviceHandler, /performance:\s*\{[\s\S]*readPath:/)
+  assert.match(controllerHandler, /X-Ristak-Read-Path/)
+  assert.match(controllerHandler, /message_analytics_projection_warming/)
+  assert.match(controllerHandler, /Retry-After[\s\S]*res\.status\(503\)/)
 })

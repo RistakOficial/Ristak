@@ -13,6 +13,10 @@ import {
   isMessageFirstSeenProjectionReady,
   runMessageFirstSeenProjectionBackfill
 } from '../src/services/messageFirstSeenProjectionService.js'
+import {
+  readMessageAnalyticsProjectionState,
+  runMessageAnalyticsProjectionBackfill
+} from '../src/services/messageAnalyticsProjectionService.js'
 
 const migrationNames = [
   '099_message_first_seen_whatsapp_version.sqlite.sql',
@@ -22,6 +26,7 @@ const migrationNames = [
 ]
 
 let migrationPromise = null
+let analyticsMigrationPromise = null
 
 async function ensureProjectionMigration() {
   if (!migrationPromise) {
@@ -55,6 +60,40 @@ async function ensureProjectionMigration() {
     })()
   }
   return migrationPromise
+}
+
+async function syncMessageAnalyticsProjection() {
+  if (!analyticsMigrationPromise) {
+    analyticsMigrationPromise = (async () => {
+      const projection = await db.get(`
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'message_analytics_projection_state'
+      `)
+      if (!projection) {
+        for (const migrationName of [
+          '114_message_analytics_projection.sqlite.sql',
+          '115_message_analytics_range_rollup.sqlite.sql',
+          '118_message_analytics_phone_projection.sqlite.sql'
+        ]) {
+          await db.exec(await readFile(
+            new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
+            'utf8'
+          ))
+        }
+      }
+    })()
+  }
+  await analyticsMigrationPromise
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const result = await runMessageAnalyticsProjectionBackfill({
+      batchSize: 100,
+      maxBackfillBatches: 4,
+      maxQueueBatches: 8
+    })
+    if (result.ready) return
+  }
+  assert.fail('read model analitico de mensajes no convergio')
 }
 
 function fixturePrefix(label) {
@@ -275,11 +314,16 @@ test('ocultos se evaluan con datos actuales sin reproyectar el historial', async
 
 test('readiness sirve snapshot warming acotado y queda exacto despues de reparar', async () => {
   await ensureProjectionMigration()
+  await syncMessageAnalyticsProjection()
+  const analyticsState = await readMessageAnalyticsProjectionState()
   const prefix = fixturePrefix('readiness')
   const messageId = `${prefix}_message`
   const phone = `${prefix}_phone`
   const timestamp = '2200-01-04T10:00:00.000000Z'
-  const range = rangeFor('2200-01-04')
+  const range = {
+    ...rangeFor('2200-01-04'),
+    appliedTimezone: analyticsState.active_timezone
+  }
 
   try {
     await insertRow('whatsapp_api_messages', {
@@ -289,6 +333,7 @@ test('readiness sirve snapshot warming acotado y queda exacto despues de reparar
       message_timestamp: timestamp,
       created_at: timestamp
     })
+    await syncMessageAnalyticsProjection()
     await db.run(`
       DELETE FROM message_first_seen_ledger
       WHERE source_kind = 'whatsapp' AND source_message_id = ?
@@ -350,7 +395,7 @@ test('los helpers first-seen no contienen fallback historico ni agendan trabajo 
   ])
   const firstSeenHelpers = originSource.slice(
     originSource.indexOf('async function getMessageFirstSeenCount'),
-    originSource.indexOf('async function getMessageAnalyticsAggregateRows')
+    originSource.indexOf('async function getMessageConnectionStatus')
   )
   const projectedRead = projectionSource.slice(
     projectionSource.indexOf('export async function getProjectedMessageFirstSeenCount'),
