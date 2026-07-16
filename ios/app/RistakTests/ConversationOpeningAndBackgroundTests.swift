@@ -2,6 +2,29 @@ import XCTest
 @testable import Ristak
 
 final class ConversationOpeningAndBackgroundTests: XCTestCase {
+    func testBottomJumpKeepsInteractionLockedUntilItsOwnGenerationFinishes() {
+        var state = ConversationBottomJumpState()
+
+        let firstGeneration = state.begin()
+        let secondGeneration = state.begin()
+
+        state.finish(generation: firstGeneration)
+        XCTAssertTrue(state.locksUserScrolling)
+
+        state.finish(generation: secondGeneration)
+        XCTAssertFalse(state.locksUserScrolling)
+    }
+
+    func testCancellingBottomJumpInvalidatesPendingGeneration() {
+        var state = ConversationBottomJumpState()
+        let generation = state.begin()
+
+        state.cancel()
+
+        XCTAssertFalse(state.isActive(generation: generation))
+        XCTAssertFalse(state.locksUserScrolling)
+    }
+
     func testHistoricalPaginationStaysClosedUntilBottomIsEstablished() throws {
         var state = ConversationOpeningScrollState()
         XCTAssertFalse(state.canLoadOlderMessages)

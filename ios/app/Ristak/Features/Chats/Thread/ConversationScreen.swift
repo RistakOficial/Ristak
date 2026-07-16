@@ -270,13 +270,16 @@ struct ConversationScreen: View {
             .refreshable {
                 await viewModel.refreshSilently()
             }
-            .overlay(alignment: .bottomTrailing) {
-                ScrollToBottomButton(
-                    viewModel: viewModel,
-                    proxy: proxy,
-                    anchorID: Self.bottomAnchorID
-                )
-            }
+            .conversationScrollToBottomControl(
+                isNearBottom: Binding(
+                    get: { viewModel.isNearBottom },
+                    set: { viewModel.isNearBottom = $0 }
+                ),
+                onJumpStarted: prepareForManualBottomJump,
+                scrollToBottom: {
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                }
+            )
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if access.canWrite(module: .chat) {
                     ComposerView(viewModel: viewModel)
@@ -377,6 +380,15 @@ struct ConversationScreen: View {
         viewModel.hasLoadedOnce
             || viewModel.loadErrorMessage != nil
             || viewModel.accessDenied
+    }
+
+    /// El toque manual manda sobre cualquier reposicionamiento automático que
+    /// todavía siga pendiente por apertura o teclado.
+    private func prepareForManualBottomJump() {
+        openingBottomTask?.cancel()
+        openingBottomTask = nil
+        openingScrollState.userDidBeginScrolling()
+        keyboardReanchorGeneration &+= 1
     }
 
     /// Conserva visible el final si el usuario estaba abajo antes de que el
@@ -598,37 +610,5 @@ struct ConversationScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Info del contacto: \(viewModel.displayName)")
-    }
-}
-
-// MARK: - Botón flotante «bajar al final»
-
-/// Vista aislada para que el cambio de `isNearBottom` (que ocurre en pleno scroll
-/// al cruzar el umbral de 140 pt) re-renderice SOLO este botón y no todo el hilo.
-/// Antes vivía como método del `body` del padre, así que cada flip re-evaluaba el
-/// árbol completo del hilo mientras te desplazabas.
-private struct ScrollToBottomButton: View {
-    let viewModel: ConversationViewModel
-    let proxy: ScrollViewProxy
-    let anchorID: String
-
-    var body: some View {
-        if !viewModel.isNearBottom {
-            Button {
-                withAnimation(.snappy(duration: 0.25)) {
-                    proxy.scrollTo(anchorID, anchor: .bottom)
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(RistakTheme.textPrimary)
-                    .padding(12)
-            }
-            .glassEffect(.regular.interactive(), in: Circle())
-            .padding(.trailing, RistakTheme.Spacing.md)
-            .padding(.bottom, RistakTheme.Spacing.md)
-            .accessibilityLabel("Bajar al final")
-            .transition(.scale.combined(with: .opacity))
-        }
     }
 }

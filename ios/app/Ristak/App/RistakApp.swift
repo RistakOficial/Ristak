@@ -33,7 +33,10 @@ struct RistakApp: App {
             Group {
                 #if DEBUG
                 if let testConfiguration = RistakUITestConfiguration.current {
-                    if testConfiguration.showsActivityMarkers {
+                    if testConfiguration.showsConversationScroll {
+                        RistakConversationScrollUITestHarnessView()
+                            .reportsRistakUIReady()
+                    } else if testConfiguration.showsActivityMarkers {
                         RistakActivityMarkersUITestHarnessView()
                             .reportsRistakUIReady()
                     } else if testConfiguration.showsPersonalAssistantChat {

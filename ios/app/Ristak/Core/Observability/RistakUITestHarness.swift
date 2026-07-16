@@ -8,6 +8,7 @@ struct RistakUITestConfiguration: Sendable {
     let showsRealInboxPresentation: Bool
     let showsPersonalAssistantChat: Bool
     let showsActivityMarkers: Bool
+    let showsConversationScroll: Bool
 
     static var current: RistakUITestConfiguration? {
         let process = ProcessInfo.processInfo
@@ -17,6 +18,7 @@ struct RistakUITestConfiguration: Sendable {
         let mode = process.environment["RISTAK_UI_TEST_MODE"]
         guard [
             "synthetic", "inbox-presentation", "personal-assistant-chat", "activity-markers",
+            "conversation-scroll",
         ].contains(mode) else {
             return nil
         }
@@ -28,8 +30,54 @@ struct RistakUITestConfiguration: Sendable {
             chatCount: min(max(requestedCount, 100), 50_000),
             showsRealInboxPresentation: mode == "inbox-presentation",
             showsPersonalAssistantChat: mode == "personal-assistant-chat",
-            showsActivityMarkers: mode == "activity-markers"
+            showsActivityMarkers: mode == "activity-markers",
+            showsConversationScroll: mode == "conversation-scroll"
         )
+    }
+}
+
+/// Historial largo y determinista que monta el mismo control de producción. La
+/// suite puede lanzar un gesto rápido y tocar la flecha mientras aún hay inercia.
+struct RistakConversationScrollUITestHarnessView: View {
+    @State private var isNearBottom = true
+
+    private static let bottomAnchorID = "scroll-harness-bottom-anchor"
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(0..<240, id: \.self) { index in
+                        Text("Mensaje de prueba \(index + 1)")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .id("scroll-harness-message-\(index + 1)")
+                            .accessibilityIdentifier("scroll-harness-message-\(index + 1)")
+                    }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.bottomAnchorID)
+                }
+                .scrollTargetLayout()
+            }
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.bottom, for: .alignment)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height
+                    >= geometry.contentSize.height - 40
+            } action: { _, newValue in
+                isNearBottom = newValue
+            }
+            .accessibilityIdentifier("conversation-scroll-harness-root")
+            .conversationScrollToBottomControl(
+                isNearBottom: $isNearBottom,
+                scrollToBottom: {
+                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                }
+            )
+        }
     }
 }
 
