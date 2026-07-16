@@ -172,7 +172,7 @@ test('la dona de origen pide sólo la dimensión visible y omite desgloses que n
   const originStart = controller.indexOf('async function computeOriginDistribution')
   const originEnd = controller.indexOf('export const getOriginDistribution', originStart)
   const computeOrigin = controller.slice(originStart, originEnd)
-  assert.match(computeOrigin, /if \(!includeBreakdowns\) \{[\s\S]*leads: \[\][\s\S]*whatsappNumbers: \[\]/)
+  assert.match(computeOrigin, /if \(!includeBreakdowns\) \{[\s\S]*includePhoneBreakdown[\s\S]*leads: \[\][\s\S]*whatsappNumbers/)
   assert.match(computeOrigin, /getTrafficDistributions\(range, \{[\s\S]*dimension,/)
   assert.match(originService, /const selectedBranches = selectedDimension[\s\S]*\[dimensionBranches\[selectedDimension\]\]/)
   assert.match(originService, /dimension_values AS \([\s\S]*\$\{selectedBranches\.join/)

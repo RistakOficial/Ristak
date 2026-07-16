@@ -134,7 +134,33 @@ enum AnalyticsService {
     static func originDistribution(startDate: String, endDate: String) async throws -> OriginDistributionSnapshot {
         try await APIClient.shared.get(
             "/api/dashboard/origin-distribution",
-            query: ["startDate": startDate, "endDate": endDate],
+            query: [
+                "startDate": startDate,
+                "endDate": endDate,
+                "dimension": "sources",
+                "includePhoneBreakdown": "0",
+            ],
+            timeout: APIClient.dashboardTimeout
+        )
+    }
+
+    /// Enriquecimiento secundario del panel Origen. Apaga el resto de las
+    /// familias para consultar únicamente el read model por número.
+    static func originPhoneBreakdown(
+        startDate: String,
+        endDate: String
+    ) async throws -> OriginDistributionSnapshot {
+        try await APIClient.shared.get(
+            "/api/dashboard/origin-distribution",
+            query: [
+                "startDate": startDate,
+                "endDate": endDate,
+                "includeWeb": "0",
+                "includeWhatsapp": "0",
+                "dimension": "sources",
+                "includeBreakdowns": "0",
+                "includePhoneBreakdown": "1",
+            ],
             timeout: APIClient.dashboardTimeout
         )
     }

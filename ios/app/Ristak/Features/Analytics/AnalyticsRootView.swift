@@ -47,6 +47,9 @@ struct AnalyticsRootView: View {
             guard phase == .active else { return }
             Task { await model.reloadAll() }
         }
+        .onDisappear {
+            model.stopOriginPhoneBreakdown()
+        }
         .sensoryFeedback(.selection, trigger: model.period)
     }
 
@@ -55,7 +58,7 @@ struct AnalyticsRootView: View {
     private var content: some View {
         let formatters = appConfig.formatters
         return ScrollView {
-            VStack(alignment: .leading, spacing: RistakTheme.Spacing.lg) {
+            LazyVStack(alignment: .leading, spacing: RistakTheme.Spacing.lg) {
                 if model.lastRefreshFailed {
                     Label(
                         "No se pudo actualizar todo. Se conservan los últimos datos disponibles.",

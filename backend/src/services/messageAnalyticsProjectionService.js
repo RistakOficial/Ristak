@@ -3080,7 +3080,8 @@ export async function queryMessageAnalyticsProjectionOriginSources(range, {
 export async function queryMessageAnalyticsProjectionPhoneNumbers(range, {
   limit = 10,
   hiddenFilters = [],
-  signal
+  signal,
+  schedule = false
 } = {}) {
   return withPinnedMessageAnalyticsGeneration(range, signal, async (database, status) => {
     if (!status.schemaAvailable) throw projectionWarmingError(status)
@@ -3158,7 +3159,7 @@ export async function queryMessageAnalyticsProjectionPhoneNumbers(range, {
       },
       rows
     }
-  })
+  }, { schedule })
 }
 
 export const MESSAGE_ANALYTICS_PROJECTION_LIMITS = Object.freeze({

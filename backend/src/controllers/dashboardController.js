@@ -1592,6 +1592,7 @@ async function computeOriginDistribution(range, {
   includeWhatsapp = true,
   dimension = null,
   includeBreakdowns = true,
+  includePhoneBreakdown = false,
   hiddenFilters,
   attributionCalendarIds,
   signal
@@ -1599,7 +1600,7 @@ async function computeOriginDistribution(range, {
   // Estas lecturas son pequeñas pero comparten el mismo pool que los agregados
   // de abajo. Resolverlas en secuencia evita sumar conexiones justo cuando la
   // base está bajo presión.
-  const needsHiddenFilters = includeBreakdowns || (
+  const needsHiddenFilters = includeBreakdowns || includePhoneBreakdown || (
     includeWhatsapp && (!dimension || dimension === 'sources' || dimension === 'platforms')
   );
   const resolvedHiddenFilters = hiddenFilters || (
@@ -1609,6 +1610,25 @@ async function computeOriginDistribution(range, {
     ? (attributionCalendarIds || await getAttributionCalendarIds({ signal }))
     : [];
 
+  // La carga lazy del desglose por teléfono apaga ambas fuentes. No tiene
+  // sentido construir CTEs vacíos sobre sesiones/mensajes antes de consultar
+  // su read model dedicado.
+  if (!includeBreakdowns && !includeWeb && !includeWhatsapp) {
+    const whatsappNumbers = includePhoneBreakdown
+      ? await getWhatsAppApiNumberBreakdown(range, {
+          hiddenFilters: resolvedHiddenFilters,
+          signal
+        })
+      : [];
+    return {
+      traffic: { sources: [], platforms: [], devices: [], placements: [], browsers: [], os: [] },
+      leads: [],
+      appointments: [],
+      conversions: [],
+      whatsappNumbers
+    };
+  }
+
   // Fast path exacto de la dona visible en Edge. Mantenerlo explícito evita
   // ampliar este cutover a breakdowns/contactos/teléfonos que tienen contratos
   // y read models distintos.
@@ -1617,12 +1637,18 @@ async function computeOriginDistribution(range, {
       hiddenFilters: resolvedHiddenFilters,
       signal
     });
+    const whatsappNumbers = includePhoneBreakdown
+      ? await getWhatsAppApiNumberBreakdown(range, {
+          hiddenFilters: resolvedHiddenFilters,
+          signal
+        })
+      : [];
     return {
       traffic: projected.traffic,
       leads: [],
       appointments: [],
       conversions: [],
-      whatsappNumbers: [],
+      whatsappNumbers,
       performance: projected.performance
     };
   }
@@ -1639,7 +1665,13 @@ async function computeOriginDistribution(range, {
     signal
   });
   if (!includeBreakdowns) {
-    return { traffic, leads: [], appointments: [], conversions: [], whatsappNumbers: [] };
+    const whatsappNumbers = includePhoneBreakdown
+      ? await getWhatsAppApiNumberBreakdown(range, {
+          hiddenFilters: resolvedHiddenFilters,
+          signal
+        })
+      : [];
+    return { traffic, leads: [], appointments: [], conversions: [], whatsappNumbers };
   }
   const leads = await getSourceBreakdownByMetric('leads', range, {
     hiddenFilters: resolvedHiddenFilters,
@@ -1654,7 +1686,7 @@ async function computeOriginDistribution(range, {
     hiddenFilters: resolvedHiddenFilters,
     signal
   });
-  const whatsappNumbers = includeWhatsapp
+  const whatsappNumbers = includePhoneBreakdown
     ? await getWhatsAppApiNumberBreakdown(range, { hiddenFilters: resolvedHiddenFilters, signal })
     : [];
 
@@ -1672,7 +1704,8 @@ export const getOriginDistribution = async (req, res) => {
       includeWeb = '1',
       includeWhatsapp = '1',
       dimension = '',
-      includeBreakdowns = '1'
+      includeBreakdowns = '1',
+      includePhoneBreakdown
     } = req.query
 
     if (!startDate || !endDate) {
@@ -1685,11 +1718,18 @@ export const getOriginDistribution = async (req, res) => {
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal })
     const shouldIncludeWeb = String(includeWeb) !== '0'
     const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
+    // Clientes anteriores omitían este flag: conservar exactamente el contrato
+    // histórico sólo cuando también pidieron breakdowns y WhatsApp. Un `1`
+    // explícito es independiente de includeWhatsapp para permitir la carga lazy.
+    const shouldIncludePhoneBreakdown = includePhoneBreakdown === undefined
+      ? String(includeBreakdowns) !== '0' && shouldIncludeWhatsapp
+      : String(includePhoneBreakdown) === '1'
     const data = await computeOriginDistribution(range, {
       includeWeb: shouldIncludeWeb,
       includeWhatsapp: shouldIncludeWhatsapp,
       dimension: dimension ? String(dimension) : null,
       includeBreakdowns: String(includeBreakdowns) !== '0',
+      includePhoneBreakdown: shouldIncludePhoneBreakdown,
       signal: requestScope.signal
     })
 
@@ -2131,7 +2171,8 @@ export const getMobileAnalyticsSnapshot = async (req, res) => {
       endDate,
       includeWeb = '1',
       funnelScope = 'all',
-      financialScope = 'all'
+      financialScope = 'all',
+      includePhoneBreakdown
     } = req.query;
 
     if (!startDate || !endDate) {
@@ -2140,6 +2181,11 @@ export const getMobileAnalyticsSnapshot = async (req, res) => {
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate, signal: requestScope.signal });
     const shouldIncludeWeb = String(includeWeb) !== '0';
+    // Bundles anteriores no conocen este flag y esperan el payload completo.
+    // Los clientes nuevos envían `0` para sacar este read model del primer paint.
+    const shouldIncludePhoneBreakdown = includePhoneBreakdown === undefined
+      ? true
+      : String(includePhoneBreakdown) === '1';
     const resolvedFunnelScope = normalizeDashboardScope(funnelScope);
     const resolvedFinancialScope = normalizeDashboardScope(financialScope);
     const runContextRead = createDashboardReadLimiter(requestScope.signal, 2);
@@ -2159,6 +2205,8 @@ export const getMobileAnalyticsSnapshot = async (req, res) => {
     const origin = await computeOriginDistribution(range, {
       includeWeb: shouldIncludeWeb,
       includeWhatsapp: true,
+      dimension: 'sources',
+      includePhoneBreakdown: shouldIncludePhoneBreakdown,
       hiddenFilters,
       attributionCalendarIds,
       signal: requestScope.signal

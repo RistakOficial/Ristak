@@ -144,6 +144,13 @@ final class AnalyticsViewModel {
     private(set) var financialScope: DashboardScope = .all
     private(set) var funnelScope: DashboardScope = .all
     var originTab: AnalyticsOriginTab = .traffic
+    private var phoneOriginRequested = false
+    private var phoneOriginCompletedRangeKey: String?
+    private var phoneOriginInFlightRangeKey: String?
+    private var phoneOriginTask: Task<Void, Never>?
+    private var phoneOriginGeneration = 0
+    private var primaryReloadGeneration = 0
+    private var primaryReloadInProgress = false
 
     /// 403 de módulo `dashboard` → pantalla completa «No tienes acceso…».
     private(set) var accessDenied = false
@@ -270,6 +277,19 @@ final class AnalyticsViewModel {
         Task { _ = await loadFunnel(range) }
     }
 
+    /// El panel ya existente dispara esta carga cuando entra en pantalla. No
+    /// depende de cuántos teléfonos estén conectados hoy: el historial puede
+    /// contener números anteriores que también deben aparecer.
+    func requestOriginPhoneBreakdown() {
+        phoneOriginRequested = true
+        scheduleOriginPhoneBreakdownIfNeeded()
+    }
+
+    func stopOriginPhoneBreakdown() {
+        phoneOriginRequested = false
+        cancelOriginPhoneBreakdown(clearCompleted: false)
+    }
+
     // MARK: - Cargas
 
     /// Recarga TODOS los paneles en paralelo (cambio de rango, retry global
@@ -277,6 +297,13 @@ final class AnalyticsViewModel {
     @discardableResult
     func reloadAll() async -> Bool {
         guard let range else { return false }
+        // Toda recarga primaria invalida también el enriquecimiento ya terminado,
+        // incluso si Origen salió del viewport. Al reaparecer, el panel debe leer
+        // nuevamente el breakdown del mismo rango en vez de quedarse con cache vieja.
+        cancelOriginPhoneBreakdown(clearCompleted: true)
+        primaryReloadGeneration += 1
+        let reloadGeneration = primaryReloadGeneration
+        primaryReloadInProgress = true
         let performanceSpan = RistakObservability.begin(.analyticsLoad)
         accessDenied = false
         async let labelsLoad: Void = loadLabelsIfNeeded()
@@ -294,6 +321,10 @@ final class AnalyticsViewModel {
             phonesLoad
         )
         let succeeded = metricsOK && chartOK && funnelOK && originOK
+        if primaryReloadGeneration == reloadGeneration {
+            primaryReloadInProgress = false
+            scheduleOriginPhoneBreakdownIfNeeded()
+        }
         lastRefreshFailed = !succeeded
         if succeeded { lastSuccessfulRefreshAt = Date() }
         performanceSpan.finish(
@@ -369,6 +400,7 @@ final class AnalyticsViewModel {
     }
 
     private func hydrateOrigin(_ range: AnalyticsDateRange) {
+        prepareOriginPhoneState(for: range)
         let cached = AnalyticsCache.readOrigin(range)
         origin.value = cached
         origin.isLoading = (cached == nil)
@@ -489,15 +521,109 @@ final class AnalyticsViewModel {
                 endDate: range.endDate
             )
             guard self.range == range else { return false }
-            origin.value = snapshot
+            // La respuesta principal excluye teléfonos. Conservar sólo esas
+            // filas del snapshot SWR evita que una revalidación tardía borre
+            // el enriquecimiento ya publicado para este mismo rango.
+            let merged = OriginDistributionSnapshot(
+                traffic: snapshot.traffic,
+                leads: snapshot.leads,
+                appointments: snapshot.appointments,
+                conversions: snapshot.conversions,
+                whatsappNumbers: origin.value?.whatsappNumbers ?? snapshot.whatsappNumbers
+            )
+            origin.value = merged
             origin.isLoading = false
-            AnalyticsCache.storeOrigin(snapshot, range)
+            AnalyticsCache.storeOrigin(merged, range)
+            scheduleOriginPhoneBreakdownIfNeeded()
             return true
         } catch {
             guard self.range == range else { return false }
             origin = applyFailure(classify(error), to: origin, empty: nil)
             return false
         }
+    }
+
+    private func scheduleOriginPhoneBreakdownIfNeeded() {
+        guard
+            phoneOriginRequested,
+            !primaryReloadInProgress,
+            let range,
+            origin.value != nil
+        else { return }
+
+        let key = phoneOriginKey(for: range)
+        guard phoneOriginCompletedRangeKey != key, phoneOriginInFlightRangeKey != key else { return }
+
+        cancelOriginPhoneBreakdown(clearCompleted: false)
+        phoneOriginGeneration += 1
+        let generation = phoneOriginGeneration
+        phoneOriginInFlightRangeKey = key
+        phoneOriginTask = Task { [weak self] in
+            guard let self else { return }
+            await self.loadOriginPhoneBreakdown(range: range, key: key, generation: generation)
+        }
+    }
+
+    private func loadOriginPhoneBreakdown(
+        range: AnalyticsDateRange,
+        key: String,
+        generation: Int
+    ) async {
+        do {
+            let snapshot = try await AnalyticsService.originPhoneBreakdown(
+                startDate: range.startDate,
+                endDate: range.endDate
+            )
+            try Task.checkCancellation()
+            guard
+                phoneOriginGeneration == generation,
+                phoneOriginInFlightRangeKey == key,
+                self.range == range,
+                let current = origin.value
+            else { return }
+
+            let merged = OriginDistributionSnapshot(
+                traffic: current.traffic,
+                leads: current.leads,
+                appointments: current.appointments,
+                conversions: current.conversions,
+                whatsappNumbers: snapshot.whatsappNumbers
+            )
+            origin.value = merged
+            phoneOriginCompletedRangeKey = key
+            phoneOriginInFlightRangeKey = nil
+            phoneOriginTask = nil
+            AnalyticsCache.storeOrigin(merged, range)
+        } catch {
+            guard
+                phoneOriginGeneration == generation,
+                phoneOriginInFlightRangeKey == key
+            else { return }
+            phoneOriginInFlightRangeKey = nil
+            phoneOriginTask = nil
+        }
+    }
+
+    private func cancelOriginPhoneBreakdown(clearCompleted: Bool) {
+        phoneOriginGeneration += 1
+        phoneOriginTask?.cancel()
+        phoneOriginTask = nil
+        phoneOriginInFlightRangeKey = nil
+        if clearCompleted { phoneOriginCompletedRangeKey = nil }
+    }
+
+    private func prepareOriginPhoneState(for range: AnalyticsDateRange) {
+        let key = phoneOriginKey(for: range)
+        if let inFlight = phoneOriginInFlightRangeKey, inFlight != key {
+            cancelOriginPhoneBreakdown(clearCompleted: false)
+        }
+        if phoneOriginCompletedRangeKey != key {
+            phoneOriginCompletedRangeKey = nil
+        }
+    }
+
+    private func phoneOriginKey(for range: AnalyticsDateRange) -> String {
+        "\(range.startDate):\(range.endDate)"
     }
 
     /// El panel Origen no depende de WhatsApp. Esta carga secundaria publica

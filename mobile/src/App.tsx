@@ -9,6 +9,7 @@ import {
   Easing,
   FlatList,
   Image,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -12145,7 +12146,11 @@ function AnalyticsSection({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [analyticsOverviewVersion, setAnalyticsOverviewVersion] = useState(0);
   const analyticsOverviewGenerationRef = useRef(0);
+  const analyticsOverviewReadyRangeRef = useRef('');
+  const analyticsPhoneOriginRangeRef = useRef('');
+  const analyticsPhoneOriginAbortRef = useRef<AbortController | null>(null);
   const analyticsContextRef = useRef({ timezone: initialAnalyticsTimezone, currency: initialAnalyticsCurrency });
 
   const activePeriod = ANALYTICS_PERIOD_OPTIONS.find((option) => option.id === period) || ANALYTICS_PERIOD_OPTIONS[0];
@@ -12252,15 +12257,21 @@ function AnalyticsSection({
 
   const loadOverview = useCallback(async () => {
     const generation = ++analyticsOverviewGenerationRef.current;
+    const overviewRangeKey = `${range.startDate}:${range.endDate}`;
+    analyticsOverviewReadyRangeRef.current = '';
+    analyticsPhoneOriginAbortRef.current?.abort();
+    analyticsPhoneOriginAbortRef.current = null;
+    analyticsPhoneOriginRangeRef.current = '';
     const metricsCacheKey = analyticsMetricsCacheKey(range.startDate, range.endDate);
     const originCacheKey = analyticsOriginCacheKey(range.startDate, range.endDate, hasWebAnalyticsAccess);
     const hasCachedMetrics = hasCachedValue(metricsCacheKey);
     const hasCachedOrigin = hasCachedValue(originCacheKey);
+    const cachedOrigin = peekCache<OriginDistributionData>(originCacheKey, EMPTY_ORIGIN_DATA);
     // Repaint the exact range before the request. A dashboard range is never
     // allowed to borrow the previous range's numbers while it refreshes.
     if (hasCachedMetrics) setMetrics(peekCache<DashboardMetrics | null>(metricsCacheKey, null));
     else setMetrics(null);
-    if (hasCachedOrigin) setOriginData(peekCache<OriginDistributionData>(originCacheKey, EMPTY_ORIGIN_DATA));
+    if (hasCachedOrigin) setOriginData(cachedOrigin);
     else setOriginData({ ...EMPTY_ORIGIN_DATA });
     if (!hasCachedMetrics) setLoading(true);
     else setLoading(false);
@@ -12290,17 +12301,24 @@ function AnalyticsSection({
 
       if (originResult.status === 'fulfilled') {
         const originResponse = originResult.value;
-        const nextOrigin = {
-          ...EMPTY_ORIGIN_DATA,
-          ...originResponse,
-          traffic: {
-            ...EMPTY_ORIGIN_DATA.traffic,
-            ...(originResponse?.traffic || {}),
-          },
-          whatsappNumbers: originResponse?.whatsappNumbers || [],
-        };
-        setOriginData(nextOrigin);
-        writeCache(originCacheKey, nextOrigin);
+        setOriginData((current) => {
+          const nextOrigin = {
+            ...EMPTY_ORIGIN_DATA,
+            ...originResponse,
+            traffic: {
+              ...EMPTY_ORIGIN_DATA.traffic,
+              ...(originResponse?.traffic || {}),
+            },
+            // La consulta inicial pide explícitamente no traer teléfonos. Se
+            // conserva el snapshot SWR hasta que la lectura secundaria lo
+            // reemplace, sin mezclar ninguna otra parte de la respuesta.
+            whatsappNumbers: originResponse?.whatsappNumbers?.length
+              ? originResponse.whatsappNumbers
+              : (current.whatsappNumbers || cachedOrigin.whatsappNumbers || []),
+          };
+          writeCache(originCacheKey, nextOrigin);
+          return nextOrigin;
+        });
       } else {
         console.warn('[RistakNative][analytics] origin failed', originResult.reason);
         if (!hasCachedOrigin) {
@@ -12328,11 +12346,71 @@ function AnalyticsSection({
       if (!hasCachedOrigin) setOriginError(fallbackMessage);
     } finally {
       if (generation !== analyticsOverviewGenerationRef.current) return;
+      analyticsOverviewReadyRangeRef.current = overviewRangeKey;
+      setAnalyticsOverviewVersion((current) => current + 1);
       setLoading(false);
       setOriginLoading(false);
       setRefreshing(false);
     }
   }, [api, hasWebAnalyticsAccess, range.endDate, range.startDate]);
+
+  const loadPhoneOriginAfterFirstRender = useCallback(() => {
+    const requestKey = `${range.startDate}:${range.endDate}`;
+    if (
+      !range.startDate
+      || !range.endDate
+      || analyticsOverviewReadyRangeRef.current !== requestKey
+      || analyticsPhoneOriginRangeRef.current === requestKey
+    ) return;
+
+    analyticsPhoneOriginAbortRef.current?.abort();
+    const controller = new AbortController();
+    const generation = analyticsOverviewGenerationRef.current;
+    const originCacheKey = analyticsOriginCacheKey(
+      range.startDate,
+      range.endDate,
+      hasWebAnalyticsAccess,
+    );
+    analyticsPhoneOriginAbortRef.current = controller;
+    analyticsPhoneOriginRangeRef.current = requestKey;
+
+    void api.getOriginPhoneBreakdown(range.startDate, range.endDate, controller.signal)
+      .then((phoneOrigin) => {
+        if (
+          controller.signal.aborted
+          || generation !== analyticsOverviewGenerationRef.current
+          || analyticsPhoneOriginAbortRef.current !== controller
+        ) return;
+        setOriginData((current) => {
+          const nextOrigin = {
+            ...current,
+            whatsappNumbers: phoneOrigin?.whatsappNumbers || [],
+          };
+          writeCache(originCacheKey, nextOrigin);
+          return nextOrigin;
+        });
+      })
+      .catch((phoneOriginError) => {
+        if (
+          controller.signal.aborted
+          || generation !== analyticsOverviewGenerationRef.current
+          || analyticsPhoneOriginAbortRef.current !== controller
+        ) return;
+        analyticsPhoneOriginRangeRef.current = '';
+        console.warn('[RistakNative][analytics] phone origin failed', phoneOriginError);
+      })
+      .finally(() => {
+        if (analyticsPhoneOriginAbortRef.current === controller) {
+          analyticsPhoneOriginAbortRef.current = null;
+        }
+      });
+  }, [api, hasWebAnalyticsAccess, range.endDate, range.startDate]);
+
+  useEffect(() => {
+    if (originLoading || originError) return undefined;
+    const task = InteractionManager.runAfterInteractions(loadPhoneOriginAfterFirstRender);
+    return () => task.cancel();
+  }, [analyticsOverviewVersion, loadPhoneOriginAfterFirstRender, originError, originLoading]);
 
   useEffect(() => {
     if (!businessTimezone || !accountCurrency || accountContextError) {
@@ -12347,6 +12425,10 @@ function AnalyticsSection({
 
   useEffect(() => () => {
     analyticsOverviewGenerationRef.current += 1;
+    analyticsPhoneOriginAbortRef.current?.abort();
+    analyticsPhoneOriginAbortRef.current = null;
+    analyticsPhoneOriginRangeRef.current = '';
+    analyticsOverviewReadyRangeRef.current = '';
   }, []);
 
   useEffect(() => {

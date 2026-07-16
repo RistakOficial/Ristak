@@ -1403,6 +1403,23 @@ export class RistakApiClient {
         startDate,
         endDate,
         includeWeb: includeWeb ? '1' : '0',
+        dimension: 'sources',
+        includePhoneBreakdown: '0',
+      },
+    });
+  }
+
+  getOriginPhoneBreakdown(startDate: string, endDate: string, signal?: AbortSignal) {
+    return this.request<OriginDistributionData>('/dashboard/origin-distribution', {
+      signal,
+      params: {
+        startDate,
+        endDate,
+        includeWeb: '0',
+        includeWhatsapp: '0',
+        dimension: 'sources',
+        includeBreakdowns: '0',
+        includePhoneBreakdown: '1',
       },
     });
   }

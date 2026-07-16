@@ -314,6 +314,20 @@ struct OriginDistributionSnapshot: Decodable, Sendable, Equatable {
         case traffic, leads, appointments, conversions, whatsappNumbers
     }
 
+    init(
+        traffic: OriginTrafficBuckets,
+        leads: [SourceBreakdownItem],
+        appointments: [SourceBreakdownItem],
+        conversions: [SourceBreakdownItem],
+        whatsappNumbers: [WhatsAppNumberOriginItem]
+    ) {
+        self.traffic = traffic
+        self.leads = leads
+        self.appointments = appointments
+        self.conversions = conversions
+        self.whatsappNumbers = whatsappNumbers
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         traffic = (try? container.decodeIfPresent(OriginTrafficBuckets.self, forKey: .traffic)) ?? OriginTrafficBuckets()

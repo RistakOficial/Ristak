@@ -320,6 +320,7 @@ export const PhoneAnalytics: React.FC = () => {
   const [funnelLoading, setFunnelLoading] = useState(true)
   const [originLoading, setOriginLoading] = useState(true)
   const [snapshotVersion, setSnapshotVersion] = useState(0)
+  const [originPanelVisible, setOriginPanelVisible] = useState(false)
 
   const range = useMemo(() => getAnalyticsRange(period, timezone), [period, timezone])
   const groupBy = useMemo(() => getGroupBy(period), [period])
@@ -327,16 +328,35 @@ export const PhoneAnalytics: React.FC = () => {
   const activePeriod = PERIOD_OPTIONS.find((option) => option.id === period) || PERIOD_OPTIONS[0]
   const snapshotRequestIdRef = useRef(0)
   const snapshotReadyRangeRef = useRef('')
+  const phoneOriginRangeRef = useRef('')
+  const phoneOriginRequestIdRef = useRef(0)
   const mobileSnapshotRef = useRef<DashboardMobileAnalyticsSnapshot | null>(null)
   const funnelScopeRef = useRef(funnelScope)
   const financialScopeRef = useRef(financialScope)
   const chartViewRef = useRef(chartView)
+  const originPanelRef = useRef<HTMLElement | null>(null)
   funnelScopeRef.current = funnelScope
   financialScopeRef.current = financialScope
   chartViewRef.current = chartView
 
   useEffect(() => {
     document.title = 'Analíticas móviles | Ristak'
+  }, [])
+
+  useEffect(() => {
+    const panel = originPanelRef.current
+    if (!panel) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setOriginPanelVisible(true)
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      setOriginPanelVisible(true)
+      observer.disconnect()
+    }, { threshold: 0.1 })
+    observer.observe(panel)
+    return () => observer.disconnect()
   }, [])
 
   useEffect(() => {
@@ -362,25 +382,31 @@ export const PhoneAnalytics: React.FC = () => {
       end: range.end,
       includeWeb: hasWebAnalyticsAccess,
       funnelScope: requestedFunnelScope,
-      financialScope: requestedFinancialScope
+      financialScope: requestedFinancialScope,
+      includePhoneBreakdown: false
     }
     const cachedSnapshot = dashboardService.peekMobileAnalyticsSnapshot(snapshotParams)
 
     const applySnapshot = (snapshot: DashboardMobileAnalyticsSnapshot) => {
       if (!active || requestId !== snapshotRequestIdRef.current) return
       const becameReady = snapshotReadyRangeRef.current !== rangeKey
+      const snapshotPhoneNumbers = snapshot.origin?.whatsappNumbers || []
       mobileSnapshotRef.current = snapshot
       snapshotReadyRangeRef.current = rangeKey
       setMetrics(snapshot.metrics)
-      setOriginData({
+      setOriginData(current => ({
         ...EMPTY_ORIGIN_DATA,
         ...snapshot.origin,
         traffic: {
           ...EMPTY_ORIGIN_DATA.traffic,
           ...(snapshot.origin?.traffic || {})
         },
-        whatsappNumbers: snapshot.origin?.whatsappNumbers || []
-      })
+        // El snapshot inicial omite este desglose. Una revalidación tardía no
+        // debe borrar la carga secundaria que ya terminó para el mismo rango.
+        whatsappNumbers: snapshotPhoneNumbers.length > 0
+          ? snapshotPhoneNumbers
+          : (phoneOriginRangeRef.current === rangeKey ? current.whatsappNumbers : [])
+      }))
       setDetectedPhones((snapshot.whatsappPhoneNumbers || []).filter((phone) => (
         Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
       )))
@@ -410,6 +436,8 @@ export const PhoneAnalytics: React.FC = () => {
     } else {
       mobileSnapshotRef.current = null
       snapshotReadyRangeRef.current = ''
+      phoneOriginRangeRef.current = ''
+      phoneOriginRequestIdRef.current += 1
       setLoading(true)
       setOriginLoading(true)
       setFunnelLoading(true)
@@ -440,6 +468,39 @@ export const PhoneAnalytics: React.FC = () => {
       controller.abort()
     }
   }, [hasWebAnalyticsAccess, range.end, range.start, rangeKey])
+
+  useEffect(() => {
+    if (!originPanelVisible || snapshotReadyRangeRef.current !== rangeKey) return
+    const controller = new AbortController()
+    const requestId = ++phoneOriginRequestIdRef.current
+
+    dashboardService.getOriginDistribution({
+      start: range.start,
+      end: range.end,
+      includeWeb: false,
+      includeWhatsapp: false,
+      dimension: 'sources',
+      includeBreakdowns: false,
+      includePhoneBreakdown: true,
+      signal: controller.signal
+    })
+      .then((phoneOrigin) => {
+        if (controller.signal.aborted || requestId !== phoneOriginRequestIdRef.current) return
+        phoneOriginRangeRef.current = rangeKey
+        setOriginData(current => ({
+          ...current,
+          whatsappNumbers: phoneOrigin.whatsappNumbers || []
+        }))
+      })
+      .catch(() => {
+        // Este panel es enriquecimiento secundario: un fallo no toca ni vacía
+        // el origen principal y se reintentará al cambiar/refrescar el rango.
+      })
+
+    return () => {
+      controller.abort()
+    }
+  }, [originPanelVisible, range.end, range.start, rangeKey, snapshotVersion])
 
   useEffect(() => {
     if (snapshotReadyRangeRef.current !== rangeKey) return
@@ -823,7 +884,7 @@ export const PhoneAnalytics: React.FC = () => {
           )}
         </section>
 
-        <section className={styles.panel} aria-label="Origen">
+        <section ref={originPanelRef} className={styles.panel} aria-label="Origen">
           <div className={styles.panelHeader}>
             <div>
               <p className={styles.sectionLabel}>Origen</p>

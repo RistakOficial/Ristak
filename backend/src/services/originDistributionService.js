@@ -7,7 +7,8 @@ import { buildNormalizedTrafficSourceSql } from './contactSourceService.js'
 import { getProjectedMessageFirstSeenCount } from './messageFirstSeenProjectionService.js'
 import {
   queryMessageAnalyticsProjectionAggregateRows,
-  queryMessageAnalyticsProjectionOriginSources
+  queryMessageAnalyticsProjectionOriginSources,
+  queryMessageAnalyticsProjectionPhoneNumbers
 } from './messageAnalyticsProjectionService.js'
 import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
 import { queryTrackingAnalyticsProjectionFacet } from './trackingAnalyticsProjectionQueryService.js'
@@ -683,68 +684,14 @@ export async function getWhatsAppApiNumberBreakdown(
 ) {
   const hiddenFilters = Array.isArray(suppliedHiddenFilters)
     ? suppliedHiddenFilters
-    : await getHiddenContactFilters()
-  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
-
-  const conditions = [
-    "LOWER(COALESCE(msg.direction, 'inbound')) = 'inbound'",
-    'COALESCE(msg.message_timestamp, msg.created_at) >= ?',
-    'COALESCE(msg.message_timestamp, msg.created_at) <= ?',
-    `(
-      COALESCE(msg.business_phone_number_id, '') != ''
-      OR COALESCE(msg.business_phone, '') != ''
-      OR COALESCE(phone.phone_number, '') != ''
-      OR COALESCE(phone.display_phone_number, '') != ''
-    )`
-  ]
-
-  if (hiddenCondition) {
-    conditions.push(`(msg.contact_id IS NULL OR ${hiddenCondition})`)
-  }
-
-  const phoneKey = `COALESCE(
-    NULLIF(msg.business_phone_number_id, ''),
-    NULLIF(msg.business_phone, ''),
-    NULLIF(phone.phone_number, ''),
-    NULLIF(phone.display_phone_number, '')
-  )`
-  const label = `COALESCE(
-    NULLIF(phone.label, ''),
-    NULLIF(phone.verified_name, ''),
-    NULLIF(phone.display_phone_number, ''),
-    NULLIF(msg.business_phone, ''),
-    NULLIF(phone.phone_number, ''),
-    'Número sin nombre'
-  )`
-  const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 10))
-  const rows = await db.all(`
-    SELECT
-      ${phoneKey} AS phone_key,
-      MAX(${label}) AS name,
-      COUNT(DISTINCT ${getWhatsAppApiIdentitySql('msg')}) AS value,
-      MAX(NULLIF(msg.business_phone_number_id, '')) AS phone_number_id,
-      MAX(COALESCE(NULLIF(phone.phone_number, ''), NULLIF(msg.business_phone, ''))) AS phone_number,
-      MAX(COALESCE(NULLIF(phone.display_phone_number, ''), NULLIF(msg.business_phone, ''), NULLIF(phone.phone_number, ''))) AS display_phone_number,
-      MAX(COALESCE(NULLIF(phone.status, ''), NULLIF(phone.qr_status, ''))) AS status,
-      MAX(COALESCE(phone.api_send_enabled, 0)) AS api_send_enabled,
-      MAX(COALESCE(phone.qr_send_enabled, 0)) AS qr_send_enabled
-    FROM whatsapp_api_messages msg
-    LEFT JOIN whatsapp_api_phone_numbers phone ON phone.id = msg.business_phone_number_id
-    LEFT JOIN contacts c ON c.id = msg.contact_id
-    WHERE ${conditions.join(' AND ')}
-    GROUP BY ${phoneKey}
-    ORDER BY value DESC, name ASC
-    LIMIT ?
-  `, [range.startUtc, range.endUtc, safeLimit], { signal })
-
-  return rows.map(row => ({
-    name: row.name || 'Número sin nombre',
-    value: Number(row.value || 0),
-    phoneNumberId: row.phone_number_id || null,
-    phoneNumber: row.phone_number || null,
-    displayPhoneNumber: row.display_phone_number || null,
-    status: row.status || null,
-    apiSendEnabled: Boolean(Number(row.api_send_enabled || 0)),
-    qrSendEnabled: Boolean(Number(row.qr_send_enabled || 0))
-  }))
+    : await getHiddenContactFilters({ signal })
+  const projected = await queryMessageAnalyticsProjectionPhoneNumbers(range, {
+    limit,
+    hiddenFilters,
+    signal,
+    schedule: false
+  })
+  // No existe fallback al historial crudo: si el read model aún no está listo,
+  // el controller responde 503 reintentable en vez de volver a castigar la DB.
+  return projected.rows
 }

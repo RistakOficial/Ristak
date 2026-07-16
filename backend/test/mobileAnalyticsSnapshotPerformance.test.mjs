@@ -40,12 +40,13 @@ function responseRecorder() {
 }
 
 test('Analíticas móvil abre con una petición abortable y deja los cambios de vista como cargas focales', async () => {
-  const [phone, frontendService, controller, routes, whatsappService] = await Promise.all([
+  const [phone, frontendService, controller, routes, whatsappService, iosViewModel] = await Promise.all([
     repoFile('frontend/src/pages/PhoneAnalytics/PhoneAnalytics.tsx'),
     repoFile('frontend/src/services/dashboardService.ts'),
     repoFile('backend/src/controllers/dashboardController.js'),
     repoFile('backend/src/routes/dashboard.routes.js'),
-    repoFile('backend/src/services/whatsappApiService.js')
+    repoFile('backend/src/services/whatsappApiService.js'),
+    repoFile('ios/app/Ristak/Features/Analytics/AnalyticsViewModel.swift')
   ])
 
   assert.equal((phone.match(/dashboardService\.getMobileAnalyticsSnapshot\(/g) || []).length, 1)
@@ -57,11 +58,13 @@ test('Analíticas móvil abre con una petición abortable y deja los cambios de 
   assert.match(phone, /requestId !== snapshotRequestIdRef\.current/)
   assert.match(phone, /snapshotReadyRangeRef\.current !== rangeKey/)
   assert.match(phone, /controller\.abort\(\)/)
+  assert.match(phone, /financialScope: requestedFinancialScope,\s*includePhoneBreakdown: false/)
 
   assert.match(frontendService, /MOBILE_ANALYTICS_CACHE_LIMIT = 8/)
   assert.match(frontendService, /registerAuthScopedCacheInvalidator\(clearMobileAnalyticsSnapshots\)/)
   assert.match(frontendService, /principalRevision === getAuthScopedCacheRevision\(\)/)
   assert.match(frontendService, /mobile-analytics-snapshot\?\$\{queryParams\}/)
+  assert.match(frontendService, /queryParams\.set\('includePhoneBreakdown', params\.includePhoneBreakdown \? '1' : '0'\)/)
   assert.match(frontendService, /signal: options\.signal/)
   assert.match(frontendService, /inflight: mobileAnalyticsInflight/)
   assert.match(frontendService, /abortWhenUnused: true/)
@@ -82,12 +85,27 @@ test('Analíticas móvil abre con una petición abortable y deja los cambios de 
   const handler = controller.slice(handlerStart, handlerEnd)
   assert.match(handler, /computeDashboardMetrics\(range, requestScope\.signal/)
   assert.match(handler, /computeOriginDistribution\(range/)
+  assert.match(handler, /dimension:\s*'sources'/)
+  assert.match(handler, /includePhoneBreakdown === undefined\s*\? true\s*:\s*String\(includePhoneBreakdown\) === '1'/)
+  assert.match(handler, /includePhoneBreakdown: shouldIncludePhoneBreakdown/)
   assert.match(handler, /computeFunnelData\(range/)
   assert.match(handler, /computeFinancialOverview\(range/)
   assert.match(handler, /getLocalWhatsAppAnalyticsPhoneNumbers\(\{ signal: requestScope\.signal \}\)/)
   assert.doesNotMatch(handler, /getMetrics\(|getOriginDistribution\(|getFunnelData\(|getFinancialOverview\(|fetch\(/)
   assert.match(whatsappService, /getPhoneNumbersFromDb\(\{ signal, limit: 100, connectedOnly: true \}\)/)
   assert.match(whatsappService, /Lectura estrictamente local y ligera/)
+
+  const reloadStart = iosViewModel.indexOf('func reloadAll() async -> Bool')
+  const reloadEnd = iosViewModel.indexOf('func retryMetrics()', reloadStart)
+  const reloadContract = iosViewModel.slice(reloadStart, reloadEnd)
+  assert.match(reloadContract, /guard let range else \{ return false \}[\s\S]*cancelOriginPhoneBreakdown\(clearCompleted: true\)[\s\S]*primaryReloadInProgress = true/)
+  assert.doesNotMatch(reloadContract, /if phoneOriginRequested[\s\S]*cancelOriginPhoneBreakdown\(clearCompleted: true\)/)
+  const stopStart = iosViewModel.indexOf('func stopOriginPhoneBreakdown()')
+  const stopEnd = iosViewModel.indexOf('// MARK: - Cargas', stopStart)
+  assert.match(
+    iosViewModel.slice(stopStart, stopEnd),
+    /phoneOriginRequested = false[\s\S]*cancelOriginPhoneBreakdown\(clearCompleted: false\)/
+  )
 })
 
 test('el snapshot conserva payload acotado con más de cien números y no toca proveedores', async () => {
@@ -124,7 +142,8 @@ test('el snapshot conserva payload acotado con más de cien números y no toca p
           endDate: '2199-01-30',
           includeWeb: '0',
           funnelScope: 'all',
-          financialScope: 'all'
+          financialScope: 'all',
+          includePhoneBreakdown: '0'
         }
       }, response)
     } finally {
@@ -154,7 +173,9 @@ test('el snapshot y Dashboard conservan una sola definición de cada métrica', 
     endDate: '2197-05-30',
     includeWeb: '0',
     includeWhatsapp: '1',
-    scope: 'all'
+    scope: 'all',
+    dimension: 'sources',
+    includePhoneBreakdown: '0'
   }
   const snapshotResponse = responseRecorder()
   const metricsResponse = responseRecorder()

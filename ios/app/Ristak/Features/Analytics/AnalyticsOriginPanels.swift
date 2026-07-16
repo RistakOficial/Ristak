@@ -29,6 +29,12 @@ struct AnalyticsOriginPanel: View {
                 content
             }
         }
+        .onAppear {
+            model.requestOriginPhoneBreakdown()
+        }
+        .onDisappear {
+            model.stopOriginPhoneBreakdown()
+        }
     }
 
     private var tabChips: some View {

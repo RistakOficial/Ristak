@@ -376,6 +376,7 @@ function originDistributionKey(params: {
   includeWhatsapp?: boolean;
   dimension?: OriginTrafficDimension;
   includeBreakdowns?: boolean;
+  includePhoneBreakdown?: boolean;
 }) {
   return [
     formatDateToISO(params.start),
@@ -383,7 +384,10 @@ function originDistributionKey(params: {
     params.includeWeb === false ? 'no-web' : 'web',
     params.includeWhatsapp === false ? 'no-whatsapp' : 'whatsapp',
     params.dimension || 'all-dimensions',
-    params.includeBreakdowns === false ? 'traffic-only' : 'with-breakdowns'
+    params.includeBreakdowns === false ? 'traffic-only' : 'with-breakdowns',
+    params.includePhoneBreakdown === true
+      ? 'with-phone-breakdown'
+      : (params.includePhoneBreakdown === false ? 'without-phone-breakdown' : 'phone-default')
   ].join(':')
 }
 
@@ -393,13 +397,15 @@ function mobileAnalyticsKey(params: {
   includeWeb?: boolean;
   funnelScope?: DashboardFunnelScope;
   financialScope?: DashboardFunnelScope;
+  includePhoneBreakdown?: boolean;
 }) {
   return [
     formatDateToISO(params.start),
     formatEndDateToISO(params.end),
     params.includeWeb === false ? 'no-web' : 'web',
     params.funnelScope || 'all',
-    params.financialScope || 'all'
+    params.financialScope || 'all',
+    params.includePhoneBreakdown === false ? 'without-phone-breakdown' : 'phone-default'
   ].join(':')
 }
 
@@ -430,6 +436,7 @@ class DashboardService {
     includeWeb?: boolean;
     funnelScope?: DashboardFunnelScope;
     financialScope?: DashboardFunnelScope;
+    includePhoneBreakdown?: boolean;
   }): DashboardMobileAnalyticsSnapshot | null {
     syncAuthScopedCachePrincipal()
     const key = mobileAnalyticsKey(params)
@@ -450,6 +457,7 @@ class DashboardService {
     includeWeb?: boolean;
     funnelScope?: DashboardFunnelScope;
     financialScope?: DashboardFunnelScope;
+    includePhoneBreakdown?: boolean;
   }, options: { forceRefresh?: boolean; signal?: AbortSignal } = {}): Promise<DashboardMobileAnalyticsSnapshot> {
     syncAuthScopedCachePrincipal()
     const principalRevision = getAuthScopedCacheRevision()
@@ -467,6 +475,9 @@ class DashboardService {
       funnelScope: params.funnelScope || 'all',
       financialScope: params.financialScope || 'all'
     })
+    if (params.includePhoneBreakdown !== undefined) {
+      queryParams.set('includePhoneBreakdown', params.includePhoneBreakdown ? '1' : '0')
+    }
     return getOrCreateSharedRequest({
       inflight: mobileAnalyticsInflight,
       key,
@@ -793,6 +804,7 @@ class DashboardService {
     includeWhatsapp?: boolean;
     dimension?: OriginTrafficDimension;
     includeBreakdowns?: boolean;
+    includePhoneBreakdown?: boolean;
     signal?: AbortSignal;
   }): Promise<OriginDistributionData> {
     syncAuthScopedCachePrincipal()
@@ -813,6 +825,9 @@ class DashboardService {
       includeBreakdowns: params.includeBreakdowns === false ? '0' : '1'
     });
     if (params.dimension) queryParams.set('dimension', params.dimension)
+    if (params.includePhoneBreakdown !== undefined) {
+      queryParams.set('includePhoneBreakdown', params.includePhoneBreakdown ? '1' : '0')
+    }
 
     const requestPrincipalRevision = getAuthScopedCacheRevision()
     const requestCacheRevision = originDistributionRevision
