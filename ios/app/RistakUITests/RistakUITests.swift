@@ -190,6 +190,58 @@ final class RistakUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ristak-ui-testing",
+            "-AppleLanguages", "(es)",
+            "-AppleLocale", "es_MX"
+        ]
+        app.launchEnvironment = [
+            "RISTAK_UI_TEST_MODE": "conversation-scroll",
+            "RISTAK_NETWORK_ACCESS": "disabled"
+        ]
+        launchedApp = app
+        app.launch()
+
+        let history = element(in: app, identifier: "conversation-scroll-harness-root")
+        XCTAssertTrue(history.waitForExistence(timeout: 8))
+
+        history.swipeDown(velocity: .fast)
+        history.swipeDown(velocity: .fast)
+
+        let button = element(in: app, identifier: "ristak-conversation-scroll-to-bottom")
+        XCTAssertTrue(
+            button.waitForExistence(timeout: 3),
+            "La flecha debe aparecer al alejarse del último mensaje."
+        )
+
+        // Un último flick deja al ScrollView desacelerando. El botón se toca una
+        // sola vez: la prueba no contiene reintentos que puedan ocultar la carrera.
+        history.swipeDown(velocity: .fast)
+        button.tap()
+
+        let lastMessage = element(in: app, identifier: "scroll-harness-message-240")
+        let lastMessageIsHittable = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true AND hittable == true"),
+            object: lastMessage
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [lastMessageIsHittable], timeout: 2),
+            .completed,
+            "Un solo toque debe cancelar la inercia y presentar el último mensaje."
+        )
+        XCTAssertTrue(
+            button.waitForNonExistence(timeout: 2),
+            "La flecha debe ocultarse al quedar otra vez en el fondo."
+        )
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Flecha de chat regresa al último mensaje con un toque"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testLaunchPerformanceWithFiveThousandChats() {
         measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true)]) {
             let app = configuredSyntheticApp(chatCount: 5_000)

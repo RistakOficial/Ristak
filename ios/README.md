@@ -135,6 +135,10 @@ solo en capa flotante; copy en español.
   Los hitos de cita y pago viven en tarjetas centradas responsive, con borde
   semántico y detalle de hasta dos líneas; nunca crecen fuera de la ventana por
   nombres, horarios, conceptos o montos largos.
+  Al desplazarse hacia mensajes anteriores, la flecha flotante **Bajar al final**
+  cancela el arrastre o la inercia que siga activa y vuelve al último mensaje con
+  un solo toque; el anclaje se reafirma durante la materialización diferida del
+  historial y después el control se oculta.
   Las reacciones conservan su emoji aunque el mensaje objetivo esté fuera de la
   página cargada o la app arranque desde una caché anterior; los stickers se
   reconocen como imagen en vez de degradarse al texto genérico `Mensaje`.
@@ -197,7 +201,9 @@ solo en capa flotante; copy en español.
   por multipart directo a storage/CDN con fallback legacy fuera del hilo visual.
 - **Calidad operativa**: `mxSignpost` agregado por `MetricKit`, `OSLog`, ring local
   sanitizado, unit tests, XCUITest sin red, smoke real opt-in y soak de
-  10,000-50,000 filas mediante scripts en `ios/app/scripts/`.
+  10,000-50,000 filas mediante scripts en `ios/app/scripts/`. El harness de hilo
+  largo verifica que un flick con inercia seguido de un único toque en **Bajar al
+  final** presenta el último mensaje y oculta la flecha.
 
 ## Pendientes / brechas conocidas
 
