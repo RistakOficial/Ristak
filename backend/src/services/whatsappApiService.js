@@ -39,6 +39,7 @@ import {
 } from '../utils/whatsappAttribution.js'
 import { resolveWhatsAppProtocolMessageKey } from '../utils/whatsappProtocolIdentity.js'
 import { logger } from '../utils/logger.js'
+import { trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { normalizeYCloudApiKeyInput } from '../utils/ycloudApiKey.js'
 import {
   GENERIC_WHATSAPP_API_CONTACT_NAME,
@@ -52,6 +53,10 @@ import { verifyInstallerSignedRequest } from './installerSignatureService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { claimInboundChatMessage } from './chatReadStateService.js'
+import {
+  CHAT_DELIVERY_JOB_KIND,
+  enqueueChatDeliveryJob
+} from './chatDeliveryOutboxService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import {
@@ -98,6 +103,8 @@ const PROVIDER_NAME = WHATSAPP_PROVIDER_YCLOUD
 const META_DIRECT_PROVIDER_NAME = WHATSAPP_PROVIDER_META_DIRECT
 const DEFAULT_INSTALLER_PUBLIC_URL = 'https://www.ristak.com'
 const META_EMBEDDED_SIGNUP_TIMEOUT_MS = 20_000
+const META_DIRECT_GRAPH_TIMEOUT_MS = 20_000
+const META_DIRECT_INBOUND_MEDIA_TIMEOUT_MS = 8_000
 const WEBHOOK_DESCRIPTION = 'Ristak WhatsApp API'
 const GENERIC_CONTACT_NAME = GENERIC_WHATSAPP_API_CONTACT_NAME
 const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_CONFIG_KEY = 'whatsapp_protocol_identity_repair_version'
@@ -105,6 +112,7 @@ const WHATSAPP_PROTOCOL_IDENTITY_REPAIR_VERSION = '2026-07-12-v2'
 const WHATSAPP_IMAGE_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-images')
 let ycloudFetch = nodeFetch
 let metaDirectFetch = nodeFetch
+let metaDirectInboundMediaHydratorForTest = null
 
 export function setYCloudFetchForTest(fetchImpl) {
   ycloudFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
@@ -112,6 +120,10 @@ export function setYCloudFetchForTest(fetchImpl) {
 
 export function setMetaDirectFetchForTest(fetchImpl) {
   metaDirectFetch = typeof fetchImpl === 'function' ? fetchImpl : nodeFetch
+}
+
+export function setMetaDirectInboundMediaHydratorForTest(hydrator) {
+  metaDirectInboundMediaHydratorForTest = typeof hydrator === 'function' ? hydrator : null
 }
 
 // PostgreSQL exige un objetivo para DO UPDATE. Cuando ya conocemos la fila
@@ -5791,7 +5803,15 @@ function buildInboundMediaFilename({ mediaId = '', messageType = '', mimeType = 
   return `whatsapp-${type}-${suffix}.${extension}`
 }
 
-async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = '', messageType = '', mimeType = '', filename = '' } = {}) {
+async function downloadMetaDirectInboundMedia({
+  mediaId,
+  messageId = '',
+  token,
+  phoneNumberId = '',
+  messageType = '',
+  mimeType = '',
+  filename = ''
+} = {}) {
   const cleanMediaId = cleanString(mediaId)
   if (!cleanMediaId) return null
   const cleanMessageType = cleanString(messageType).toLowerCase()
@@ -5799,6 +5819,7 @@ async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = 
 
   const mediaInfo = await metaDirectGraphRequest(`/${encodeURIComponent(cleanMediaId)}`, {
     token,
+    timeoutMs: META_DIRECT_INBOUND_MEDIA_TIMEOUT_MS,
     query: {
       fields: 'url,mime_type,file_size',
       ...(phoneNumberId ? { phone_number_id: phoneNumberId } : {})
@@ -5812,14 +5833,27 @@ async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = 
     throw new Error('El archivo recibido excede el tamaño máximo permitido')
   }
 
-  const response = await nodeFetch(mediaUrl, {
-    headers: { Authorization: `Bearer ${cleanString(token)}` }
-  })
-  if (!response.ok) {
-    throw new Error(`Meta no permitió descargar el archivo recibido (${response.status})`)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), META_DIRECT_INBOUND_MEDIA_TIMEOUT_MS)
+  let response
+  let buffer
+  try {
+    response = await metaDirectFetch(mediaUrl, {
+      headers: { Authorization: `Bearer ${cleanString(token)}` },
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      throw new Error(`Meta no permitió descargar el archivo recibido (${response.status})`)
+    }
+    buffer = Buffer.from(await response.arrayBuffer())
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Meta no entregó el archivo en ${META_DIRECT_INBOUND_MEDIA_TIMEOUT_MS / 1000} segundos`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
-
-  const buffer = Buffer.from(await response.arrayBuffer())
   if (!buffer.length) throw new Error('Meta devolvió un archivo vacío')
   if (buffer.length > maxBytes) throw new Error('El archivo recibido excede el tamaño máximo permitido')
 
@@ -5844,6 +5878,10 @@ async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = 
     mimeType: finalMimeType,
     filename: finalFilename,
     module: 'chat',
+    moduleEntityId: cleanString(messageId) || null,
+    clientUploadId: cleanString(messageId)
+      ? `meta-direct-inbound:${cleanString(messageId)}:${cleanMediaId}`
+      : '',
     isPublic: true,
     skipCompression: true,
     metadata: {
@@ -5862,7 +5900,19 @@ async function downloadMetaDirectInboundMedia({ mediaId, token, phoneNumberId = 
   }
 }
 
-async function hydrateInboundMessageMedia(normalizedMessage = {}, media = {}, { businessPhoneNumberId = '' } = {}) {
+async function hydrateInboundMessageMedia(
+  normalizedMessage = {},
+  media = {},
+  { businessPhoneNumberId = '', messageId = '', throwOnError = false } = {}
+) {
+  if (metaDirectInboundMediaHydratorForTest) {
+    return metaDirectInboundMediaHydratorForTest({
+      normalizedMessage,
+      media,
+      businessPhoneNumberId,
+      throwOnError
+    })
+  }
   if (media.mediaUrl) return media
   const messageType = cleanString(normalizedMessage.type).toLowerCase()
   if (!['audio', 'voice', 'image', 'video', 'document', 'sticker'].includes(messageType)) return media
@@ -5875,6 +5925,7 @@ async function hydrateInboundMessageMedia(normalizedMessage = {}, media = {}, { 
     const config = await loadMetaDirectConfig({ includeSecrets: true })
     const downloaded = await downloadMetaDirectInboundMedia({
       mediaId,
+      messageId,
       token: config.systemUserToken,
       phoneNumberId: cleanString(normalizedMessage.phoneNumberId || businessPhoneNumberId || config.phoneNumberId),
       messageType,
@@ -5904,6 +5955,7 @@ async function hydrateInboundMessageMedia(normalizedMessage = {}, media = {}, { 
     }
   } catch (error) {
     logger.warn(`[Meta directo] No se pudo preparar media entrante ${mediaId}: ${error.message}`)
+    if (throwOnError) throw error
     return media
   }
 }
@@ -6239,26 +6291,42 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
     // ID propio de Ristak: el teléfono/perfil de WhatsApp queda como referencia
     // (contacts.phone y whatsapp_api_contacts), nunca como primary key.
     const contactId = generateContactId()
-    await db.run(`
-      INSERT INTO contacts (
-        id, phone, full_name, first_name, source, attribution_url, attribution_session_source,
-        attribution_medium, attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    `, [
-      contactId,
-      canonicalPhone,
-      fullName,
-      contactName || null,
-      SOURCE_NAME,
-      attribution.sourceUrl || null,
-      attribution.sourceApp || attribution.entryPoint || SOURCE_NAME,
-      attribution.sourceType || 'whatsapp_api',
-      attribution.ctwaClid || null,
-      attributionAdName || null,
-      attributionAdId || null,
-      cleanMessageTimestamp || nowIso()
-    ])
+    try {
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, attribution_url, attribution_session_source,
+          attribution_medium, attribution_ctwa_clid, attribution_ad_name, attribution_ad_id,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `, [
+        contactId,
+        canonicalPhone,
+        fullName,
+        contactName || null,
+        SOURCE_NAME,
+        attribution.sourceUrl || null,
+        attribution.sourceApp || attribution.entryPoint || SOURCE_NAME,
+        attribution.sourceType || 'whatsapp_api',
+        attribution.ctwaClid || null,
+        attributionAdName || null,
+        attributionAdId || null,
+        cleanMessageTimestamp || nowIso()
+      ])
+    } catch (error) {
+      if (/unique|duplicate|contacts\.phone/i.test(error?.message || '')) {
+        const racedContact = await findContactByPhoneCandidates(canonicalPhone)
+        if (racedContact?.id) {
+          return upsertLocalContact({
+            contactId: cleanContactId,
+            phone,
+            profileName,
+            messageTimestamp,
+            attribution
+          })
+        }
+      }
+      throw error
+    }
 
     await recordContactPhoneNumber({
       contactId,
@@ -6392,7 +6460,8 @@ async function upsertWhatsAppApiContact({
   lastSeenAt,
   profilePictureUrl,
   profilePictureSource = 'whatsapp_api',
-  messageCountDelta = 1
+  messageCountDelta = 1,
+  deferProfilePicture = false
 }) {
   const canonicalPhone = normalizePhoneForStorage(phone) || cleanString(phone)
   if (!canonicalPhone) return null
@@ -6411,11 +6480,15 @@ async function upsertWhatsAppApiContact({
   const cleanProfilePictureUrl = cleanString(profilePictureUrl) || findProfilePictureUrlInValue(rawProfile)
   // Rehospedar el avatar al Bunny (una vez por contacto) para que no caduque.
   // Best-effort: si falla o no hay Bunny, cae a la URL cruda como antes.
-  const storedPictureUrl = await rehostApiAvatarUrl({
-    incomingUrl: cleanProfilePictureUrl,
-    currentUrl: existingApiContact?.profile_picture_url,
-    canonicalPhone
-  })
+  // En ingesta inbound el mensaje manda: el raw profile se guarda ahora y el
+  // refresh ya existente rehospeda la foto después de persistence/SSE/push.
+  const storedPictureUrl = deferProfilePicture
+    ? ''
+    : await rehostApiAvatarUrl({
+        incomingUrl: cleanProfilePictureUrl,
+        currentUrl: existingApiContact?.profile_picture_url,
+        canonicalPhone
+      })
   const cleanProfilePictureSource = storedPictureUrl
     ? cleanString(profilePictureSource) || 'whatsapp_api'
     : null
@@ -7547,9 +7620,85 @@ export async function repairWhatsAppProtocolMessageIdentities({ force = false } 
   }, { pinConnection: false })
 }
 
-async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api', contactId = null, historyImport = false }) {
+async function persistWhatsAppAttributionRow({
+  messageId,
+  apiContactId = '',
+  contactId = '',
+  phone = '',
+  ycloudMessageId = '',
+  wamid = '',
+  attribution = {},
+  normalizedMessage = {},
+  messageTimestamp = '',
+  database = db
+} = {}) {
+  if (!attribution?.hasAttribution) return null
+  const attributionId = hashId('waapi_attr', `${messageId}|${attribution.sourceId}|${attribution.ctwaClid}`)
+  await database.run(`
+    INSERT INTO whatsapp_api_attribution (
+      id, whatsapp_api_message_id, whatsapp_api_contact_id, contact_id, phone,
+      ycloud_message_id, wamid, detected_ctwa_clid, detected_source_id,
+      detected_source_url, detected_source_type, detected_source_app,
+      detected_entry_point, detected_headline, detected_body,
+      detected_conversion_data, detected_ctwa_payload, referral_json,
+      raw_payload_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      contact_id = COALESCE(excluded.contact_id, whatsapp_api_attribution.contact_id),
+      detected_ctwa_clid = COALESCE(NULLIF(excluded.detected_ctwa_clid, ''), whatsapp_api_attribution.detected_ctwa_clid),
+      detected_source_id = COALESCE(NULLIF(excluded.detected_source_id, ''), whatsapp_api_attribution.detected_source_id),
+      detected_source_url = COALESCE(NULLIF(excluded.detected_source_url, ''), whatsapp_api_attribution.detected_source_url),
+      detected_source_type = COALESCE(NULLIF(excluded.detected_source_type, ''), whatsapp_api_attribution.detected_source_type),
+      detected_source_app = COALESCE(NULLIF(excluded.detected_source_app, ''), whatsapp_api_attribution.detected_source_app),
+      detected_entry_point = COALESCE(NULLIF(excluded.detected_entry_point, ''), whatsapp_api_attribution.detected_entry_point),
+      detected_headline = COALESCE(NULLIF(excluded.detected_headline, ''), whatsapp_api_attribution.detected_headline),
+      detected_body = COALESCE(NULLIF(excluded.detected_body, ''), whatsapp_api_attribution.detected_body),
+      detected_conversion_data = COALESCE(NULLIF(excluded.detected_conversion_data, ''), whatsapp_api_attribution.detected_conversion_data),
+      detected_ctwa_payload = COALESCE(NULLIF(excluded.detected_ctwa_payload, ''), whatsapp_api_attribution.detected_ctwa_payload),
+      referral_json = COALESCE(NULLIF(whatsapp_api_attribution.referral_json, 'null'), excluded.referral_json),
+      raw_payload_json = excluded.raw_payload_json
+  `, [
+    attributionId,
+    messageId,
+    apiContactId || null,
+    contactId || null,
+    phone || null,
+    ycloudMessageId || null,
+    wamid || null,
+    attribution.ctwaClid || null,
+    attribution.sourceId || null,
+    attribution.sourceUrl || null,
+    attribution.sourceType || null,
+    attribution.sourceApp || null,
+    attribution.entryPoint || null,
+    attribution.headline || null,
+    attribution.body || null,
+    attribution.conversionData || null,
+    attribution.ctwaPayload || null,
+    safeJson(attribution.referral || null),
+    safeJson(normalizedMessage),
+    messageTimestamp || nowIso()
+  ])
+  return attributionId
+}
+
+async function upsertMessage({
+  payload,
+  message,
+  direction,
+  businessPhoneHints = [],
+  transport = 'api',
+  contactId = null,
+  historyImport = false,
+  deferInboundProfilePicture = false,
+  onInboundPersisted = null
+}) {
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
+  const incomingProvider = cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME
+  const deferMetaInboundEnrichment = identity.direction === 'inbound' &&
+    incomingProvider === META_DIRECT_PROVIDER_NAME &&
+    !historyImport
   const contactIdHint = cleanString(
     contactId ||
     normalizedMessage.contactId ||
@@ -7637,11 +7786,12 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     profileName,
     rawProfile,
     profilePictureUrl,
-    seenAt: messageTimestamp
+    seenAt: messageTimestamp,
+    deferProfilePicture: identity.direction === 'inbound' && deferInboundProfilePicture === true
   })
 
   const identifiers = resolveWhatsAppMessageIdentifiers({
-    provider: cleanString(normalizedMessage.provider || payload.provider) || PROVIDER_NAME,
+    provider: incomingProvider,
     transport: cleanTransport,
     messageId: cleanString(normalizedMessage.id),
     wamid: cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
@@ -7680,7 +7830,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     messageText = cleanString(existingMessage?.message_text) || messageText
   }
   let messageId = existingMessage?.id || computedMessageId
-  if (attribution.imageUrl || attribution.thumbnailUrl) {
+  const shouldHydrateAttributionPreview = Boolean(attribution.imageUrl || attribution.thumbnailUrl)
+  if (shouldHydrateAttributionPreview && !deferMetaInboundEnrichment) {
     attribution = await persistWhatsAppAttributionPreview(attribution, messageId).catch(error => {
       logger.warn(`[WhatsApp API] No se pudo persistir el preview del anuncio ${messageId}: ${error.message}`)
       return attribution
@@ -7709,11 +7860,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const errorMessage = cleanString(error?.message || error?.title || normalizedMessage.errorMessage)
   const messageType = cleanString(normalizedMessage.type) || 'unknown'
   const buttonReply = extractButtonReply(normalizedMessage)
-  const media = await hydrateInboundMessageMedia(
-    normalizedMessage,
-    extractMessageMedia(normalizedMessage),
-    { businessPhoneNumberId }
-  )
+  let media = extractMessageMedia(normalizedMessage)
+  if (!deferMetaInboundEnrichment) {
+    media = await hydrateInboundMessageMedia(
+      normalizedMessage,
+      media,
+      { businessPhoneNumberId, messageId }
+    )
+  }
   const businessEcho = identity.direction === 'business_echo' || normalizedMessage.businessEcho === true || normalizedMessage.business_echo === true
   const relayEventId = cleanString(payload.relayEventId || payload.relay_event_id)
   const storedTransport = existingQrFallbackApplied ? 'qr' : cleanTransport
@@ -7883,6 +8037,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   let insertedByThisCall = false
   let canonicalMessage = null
   let inboundClaim = null
+  let chatDeliveryJobWasEnqueued = false
   const persistCanonicalMessageAndClaim = async (transactionDatabase = db) => {
     const initialPersistenceResult = await persistWhatsAppMessage({
       targetMessageId: messageId,
@@ -7938,6 +8093,63 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
         database: transactionDatabase
       })
       : null
+
+    await persistWhatsAppAttributionRow({
+      messageId,
+      apiContactId,
+      contactId: localContact.id,
+      phone: identity.phone,
+      ycloudMessageId,
+      wamid,
+      attribution,
+      normalizedMessage,
+      messageTimestamp,
+      database: transactionDatabase
+    })
+
+    if (deferMetaInboundEnrichment && canonicalMessage?.id) {
+      if (inboundClaim?.claimed) {
+        await enqueueChatDeliveryJob({
+          jobKind: CHAT_DELIVERY_JOB_KIND.PUSH,
+          messageId,
+          contactId: localContact.id,
+          provider: META_DIRECT_PROVIDER_NAME,
+          payload: {
+            contactId: localContact.id,
+            contactName: localContact.contactName,
+            phone: identity.phone,
+            profileName,
+            text: messageText,
+            messageType,
+            mediaUrl: media.mediaUrl || '',
+            mediaFilename: media.mediaFilename || '',
+            mediaDurationMs: media.mediaDurationMs || null,
+            voice: Boolean(media.mediaIsVoice),
+            messageId,
+            timestamp: messageTimestamp
+          },
+          database: transactionDatabase
+        })
+        chatDeliveryJobWasEnqueued = true
+      }
+
+      if (shouldHydrateAttributionPreview || getMessageMediaId(normalizedMessage)) {
+        await enqueueChatDeliveryJob({
+          jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+          messageId,
+          contactId: localContact.id,
+          provider: META_DIRECT_PROVIDER_NAME,
+          payload: {
+            attribution,
+            businessPhoneNumberId,
+            shouldHydrateAttributionPreview,
+            hasMedia: Boolean(getMessageMediaId(normalizedMessage))
+          },
+          database: transactionDatabase
+        })
+        chatDeliveryJobWasEnqueued = true
+      }
+    }
   }
   const isSubstantiveInbound = identity.direction === 'inbound' &&
     !['reaction', 'sticker'].includes(messageType.toLowerCase())
@@ -7948,6 +8160,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       contactId: localContact.id,
       channel: cleanTransport
     }, persistCanonicalMessageAndClaim)
+  } else if (deferMetaInboundEnrichment) {
+    // Reacciones/stickers no participan en el lock conversacional, pero Meta
+    // todavía necesita confirmar fila + claim + outbox como una sola unidad.
+    await db.transaction(persistCanonicalMessageAndClaim)
   } else {
     await persistCanonicalMessageAndClaim()
   }
@@ -8033,53 +8249,22 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     })
   }
 
-  if (attribution.hasAttribution) {
-    const attributionId = hashId('waapi_attr', `${messageId}|${attribution.sourceId}|${attribution.ctwaClid}`)
-    await db.run(`
-      INSERT INTO whatsapp_api_attribution (
-        id, whatsapp_api_message_id, whatsapp_api_contact_id, contact_id, phone,
-        ycloud_message_id, wamid, detected_ctwa_clid, detected_source_id,
-        detected_source_url, detected_source_type, detected_source_app,
-        detected_entry_point, detected_headline, detected_body,
-        detected_conversion_data, detected_ctwa_payload, referral_json,
-        raw_payload_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        contact_id = COALESCE(excluded.contact_id, whatsapp_api_attribution.contact_id),
-        detected_ctwa_clid = COALESCE(NULLIF(excluded.detected_ctwa_clid, ''), whatsapp_api_attribution.detected_ctwa_clid),
-        detected_source_id = COALESCE(NULLIF(excluded.detected_source_id, ''), whatsapp_api_attribution.detected_source_id),
-        detected_source_url = COALESCE(NULLIF(excluded.detected_source_url, ''), whatsapp_api_attribution.detected_source_url),
-        detected_source_type = COALESCE(NULLIF(excluded.detected_source_type, ''), whatsapp_api_attribution.detected_source_type),
-        detected_source_app = COALESCE(NULLIF(excluded.detected_source_app, ''), whatsapp_api_attribution.detected_source_app),
-        detected_entry_point = COALESCE(NULLIF(excluded.detected_entry_point, ''), whatsapp_api_attribution.detected_entry_point),
-        detected_headline = COALESCE(NULLIF(excluded.detected_headline, ''), whatsapp_api_attribution.detected_headline),
-        detected_body = COALESCE(NULLIF(excluded.detected_body, ''), whatsapp_api_attribution.detected_body),
-        detected_conversion_data = COALESCE(NULLIF(excluded.detected_conversion_data, ''), whatsapp_api_attribution.detected_conversion_data),
-        detected_ctwa_payload = COALESCE(NULLIF(excluded.detected_ctwa_payload, ''), whatsapp_api_attribution.detected_ctwa_payload),
-        referral_json = COALESCE(NULLIF(excluded.referral_json, 'null'), whatsapp_api_attribution.referral_json),
-        raw_payload_json = excluded.raw_payload_json
-    `, [
-      attributionId,
-      messageId,
-      apiContactId,
-      localContact.id,
-      identity.phone || null,
-      ycloudMessageId || null,
-      wamid || null,
-      attribution.ctwaClid || null,
-      attribution.sourceId || null,
-      attribution.sourceUrl || null,
-      attribution.sourceType || null,
-      attribution.sourceApp || null,
-      attribution.entryPoint || null,
-      attribution.headline || null,
-      attribution.body || null,
-      attribution.conversionData || null,
-      attribution.ctwaPayload || null,
-      safeJson(attribution.referral || null),
-      safeJson(normalizedMessage),
-      messageTimestamp
-    ])
+  if (deferMetaInboundEnrichment && !cleanString(media.mediaUrl) && cleanString(existingMessage?.media_url)) {
+    media = {
+      ...media,
+      mediaUrl: cleanString(existingMessage.media_url),
+      mediaMimeType: cleanString(existingMessage.media_mime_type) || media.mediaMimeType,
+      mediaFilename: cleanString(existingMessage.media_filename) || media.mediaFilename,
+      mediaDurationMs: existingMessage.media_duration_ms || media.mediaDurationMs
+    }
+  }
+
+  if (chatDeliveryJobWasEnqueued) {
+    void import('../jobs/metaDirectChatDelivery.cron.js')
+      .then(worker => worker.requestMetaDirectChatDeliveryDrain('meta-direct-webhook'))
+      .catch(error => {
+        logger.warn(`[Meta directo] No se pudo despertar el outbox de chat ${messageId}: ${error.message}`)
+      })
   }
 
   const existingRenderableMessage = Boolean(
@@ -8089,32 +8274,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ? Boolean(inboundClaim?.claimed)
     : (insertedByThisCall || !existingRenderableMessage)
 
-  if (identity.direction !== 'inbound' || isNewMessage) {
-    publishChatMessageEvent({
-      contactId: localContact.id,
-      messageId,
-      channel: 'whatsapp',
-      provider,
-      transport: finalTransport,
-      sourceAdapter: finalSourceAdapter,
-      direction: identity.direction,
-      messageType,
-      messageTimestamp,
-      isNew: isNewMessage,
-      historyImport: historyImport === true
-    })
-  }
-  if (isNewMessage && identity.direction === 'inbound') {
-    await captureContactIdentityFromMessage({
-      contactId: localContact.id,
-      text: messageText,
-      source: 'whatsapp_inbound_message',
-      allowEmail: true,
-      allowPhone: false
-    })
-  }
-
-  return {
+  const buildResult = () => ({
     messageId,
     contactId: localContact.id,
     apiContactId,
@@ -8150,7 +8310,161 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     buttonReplyType: buttonReply?.type || '',
     isNew: isNewMessage,
     messageTimestamp
+  })
+
+  if (identity.direction !== 'inbound' || isNewMessage) {
+    publishChatMessageEvent({
+      contactId: localContact.id,
+      messageId,
+      channel: 'whatsapp',
+      provider,
+      transport: finalTransport,
+      sourceAdapter: finalSourceAdapter,
+      direction: identity.direction,
+      messageType,
+      messageTimestamp,
+      isNew: isNewMessage,
+      historyImport: historyImport === true
+    })
   }
+
+  // Meta inbound se confirma en dos fases. En este punto la misma fila, unread
+  // y SSE ya son durables: el relay puede iniciar push sin esperar Graph,
+  // descarga binaria ni Storage. Un retry no vuelve a llamar el callback porque
+  // el claim anterior deja isNew=false.
+  if (
+    isNewMessage &&
+    identity.direction === 'inbound' &&
+    !historyImport &&
+    typeof onInboundPersisted === 'function'
+  ) {
+    try {
+      onInboundPersisted(buildResult())
+    } catch (error) {
+      logger.warn(`[WhatsApp API] Callback post-persistencia falló para ${messageId}: ${error.message}`)
+    }
+  }
+
+  if (isNewMessage && identity.direction === 'inbound') {
+    await captureContactIdentityFromMessage({
+      contactId: localContact.id,
+      text: messageText,
+      source: 'whatsapp_inbound_message',
+      allowEmail: true,
+      allowPhone: false
+    })
+  }
+
+  return buildResult()
+}
+
+export async function processMetaDirectInboundEnrichmentJob({ messageId = '', payload = {} } = {}) {
+  const cleanMessageId = cleanString(messageId)
+  if (!cleanMessageId) throw new Error('El enriquecimiento Meta requiere messageId')
+
+  let stored = await db.get(`
+    SELECT *
+    FROM whatsapp_api_messages
+    WHERE id = ?
+    LIMIT 1
+  `, [cleanMessageId])
+  if (!stored) return { skipped: true, reason: 'message_missing' }
+  if (
+    cleanString(stored.provider) !== META_DIRECT_PROVIDER_NAME ||
+    cleanString(stored.direction).toLowerCase() !== 'inbound'
+  ) {
+    return { skipped: true, reason: 'not_meta_direct_inbound' }
+  }
+
+  const normalizedMessage = normalizeWebhookMessage(parseJsonValue(stored.raw_payload_json, {}) || {})
+  let enrichmentChanged = false
+  let attribution = isPlainObject(payload.attribution) ? payload.attribution : {}
+
+  if (payload.shouldHydrateAttributionPreview === true) {
+    await persistWhatsAppAttributionRow({
+      messageId: cleanMessageId,
+      apiContactId: stored.whatsapp_api_contact_id,
+      contactId: stored.contact_id,
+      phone: stored.phone,
+      ycloudMessageId: stored.ycloud_message_id,
+      wamid: stored.wamid,
+      attribution,
+      normalizedMessage,
+      messageTimestamp: stored.message_timestamp
+    })
+    const enrichedAttribution = await persistWhatsAppAttributionPreview(attribution, cleanMessageId)
+    if (
+      cleanString(enrichedAttribution.imageUrl) !== cleanString(attribution.imageUrl) ||
+      cleanString(enrichedAttribution.thumbnailUrl) !== cleanString(attribution.thumbnailUrl)
+    ) {
+      attribution = enrichedAttribution
+      const referralJson = safeJson(attribution.referral || null)
+      await db.transaction(async transactionDatabase => {
+        await transactionDatabase.run(
+          'UPDATE whatsapp_api_messages SET referral_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [referralJson, cleanMessageId]
+        )
+        await transactionDatabase.run(
+          'UPDATE whatsapp_api_attribution SET referral_json = ? WHERE whatsapp_api_message_id = ?',
+          [referralJson, cleanMessageId]
+        )
+      })
+      enrichmentChanged = true
+    }
+  }
+
+  stored = await db.get('SELECT * FROM whatsapp_api_messages WHERE id = ? LIMIT 1', [cleanMessageId]) || stored
+  if (payload.hasMedia === true && !cleanString(stored.media_url) && getMessageMediaId(normalizedMessage)) {
+    const existingRawPayload = parseJsonValue(stored.raw_payload_json, {}) || {}
+    const existingMedia = extractMessageMedia(normalizedMessage)
+    const hydratedMedia = await hydrateInboundMessageMedia(
+      normalizedMessage,
+      existingMedia,
+      {
+        businessPhoneNumberId: cleanString(payload.businessPhoneNumberId || stored.business_phone_number_id),
+        messageId: cleanMessageId,
+        throwOnError: true
+      }
+    )
+    if (cleanString(hydratedMedia.mediaUrl)) {
+      const result = await db.run(`
+        UPDATE whatsapp_api_messages
+        SET media_url = ?,
+            media_mime_type = COALESCE(NULLIF(?, ''), media_mime_type),
+            media_filename = COALESCE(NULLIF(?, ''), media_filename),
+            media_duration_ms = COALESCE(?, media_duration_ms),
+            raw_payload_json = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND COALESCE(media_url, '') = ''
+      `, [
+        hydratedMedia.mediaUrl,
+        hydratedMedia.mediaMimeType || '',
+        hydratedMedia.mediaFilename || '',
+        hydratedMedia.mediaDurationMs,
+        safeJson({ ...existingRawPayload, ...normalizedMessage }),
+        cleanMessageId
+      ])
+      enrichmentChanged = Number(result?.changes || 0) === 1 || enrichmentChanged
+    }
+  }
+
+  if (enrichmentChanged) {
+    publishChatMessageEvent({
+      contactId: stored.contact_id,
+      messageId: cleanMessageId,
+      channel: 'whatsapp',
+      provider: META_DIRECT_PROVIDER_NAME,
+      transport: cleanString(stored.transport) || 'api',
+      sourceAdapter: cleanString(stored.source_adapter) || META_DIRECT_PROVIDER_NAME,
+      direction: 'inbound',
+      messageType: cleanString(stored.message_type) || 'unknown',
+      messageTimestamp: stored.message_timestamp,
+      isNew: false,
+      historyImport: false
+    })
+  }
+
+  return { skipped: false, changed: enrichmentChanged, messageId: cleanMessageId }
 }
 
 // (WA-009) Persiste en el chat un envío saliente por API que falló y NO tuvo
@@ -8294,7 +8608,8 @@ export async function captureQrChatMessage({
     direction: cleanDirection,
     businessPhoneHints: [cleanBusinessPhone].filter(Boolean),
     transport: 'qr',
-    historyImport
+    historyImport,
+    deferInboundProfilePicture: cleanDirection === 'inbound' && !historyImport
   })
 
   if (!result.businessPhoneNumberId && phoneRow?.id && result.messageId) {
@@ -8307,6 +8622,26 @@ export async function captureQrChatMessage({
 
   if (cleanDirection === 'inbound' && result.isNew && !historyImport) {
     scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'whatsapp_qr')
+
+    // El mensaje, unread y SSE ya estan confirmados. La alerta debe arrancar
+    // antes de citas/automatizaciones/agente: cualquiera de esas rutas puede
+    // esperar proveedores externos y no forma parte de la entrega del chat.
+    void sendChatMessageNotification({
+      contactId: result.contactId,
+      contactName: result.contactName,
+      phone: result.phone,
+      profileName: result.profileName,
+      text: result.messageText,
+      messageType: result.messageType,
+      mediaUrl: result.mediaUrl || result.media_url || '',
+      mediaFilename: result.mediaFilename || result.media_filename || '',
+      mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
+      voice: result.mediaIsVoice || result.media_is_voice || false,
+      messageId: result.messageId,
+      timestamp: result.messageTimestamp
+    }).catch(error => {
+      logger.warn(`[Push] No se pudo avisar mensaje WhatsApp QR ${result.messageId || ''}: ${error.message}`)
+    })
 
     // Ventana de confirmación con IA: registrar mensaje y determinar si se deben
     // pausar otros agentes/automatizaciones durante la espera de 3 minutos.
@@ -8357,22 +8692,6 @@ export async function captureQrChatMessage({
         })
     }
 
-    await sendChatMessageNotification({
-      contactId: result.contactId,
-      contactName: result.contactName,
-      phone: result.phone,
-      profileName: result.profileName,
-      text: result.messageText,
-      messageType: result.messageType,
-      mediaUrl: result.mediaUrl || result.media_url || '',
-      mediaFilename: result.mediaFilename || result.media_filename || '',
-      mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
-      voice: result.mediaIsVoice || result.media_is_voice || false,
-      messageId: result.messageId,
-      timestamp: result.messageTimestamp
-    }).catch(error => {
-      logger.warn(`[Push] No se pudo avisar mensaje WhatsApp QR ${result.messageId || ''}: ${error.message}`)
-    })
   }
 
   return { skipped: false, ...result }
@@ -8660,7 +8979,11 @@ async function getKnownBusinessPhoneHints(config = {}) {
   ].filter(Boolean)
 }
 
-async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneHints = [] } = {}) {
+async function processWhatsAppMessageEventPayload({
+  payload = {},
+  businessPhoneHints = [],
+  deferInboundProfilePicture = false
+} = {}) {
   const payloadBusinessPhone = getHistoryBusinessPhoneFromObject(payload)
   const effectiveBusinessPhoneHints = [
     ...businessPhoneHints,
@@ -8676,7 +8999,8 @@ async function processWhatsAppMessageEventPayload({ payload = {}, businessPhoneH
       message: candidate.message,
       direction: candidate.direction,
       businessPhoneHints: effectiveBusinessPhoneHints,
-      historyImport
+      historyImport,
+      deferInboundProfilePicture: deferInboundProfilePicture === true && !historyImport
     }))
   }
 
@@ -9290,7 +9614,11 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
     const messageResults = MESSAGE_EVENT_TYPES.has(cleanString(payload?.type)) ||
       payload?.whatsappInboundMessage ||
       payload?.whatsappMessage
-      ? await processWhatsAppMessageEventPayload({ payload, businessPhoneHints })
+      ? await processWhatsAppMessageEventPayload({
+          payload,
+          businessPhoneHints,
+          deferInboundProfilePicture: true
+        })
       : []
 
     const inboundResults = messageResults.filter(result =>
@@ -9299,6 +9627,27 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
       result?.historyImport !== true
     )
     inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'ycloud_webhook'))
+
+    // Entrega primero: citas, automatizaciones y agente pueden usar servicios
+    // externos, pero nunca deben retrasar el aviso de un mensaje ya persistido.
+    inboundResults.forEach(result => {
+      void sendChatMessageNotification({
+        contactId: result.contactId,
+        contactName: result.contactName,
+        phone: result.phone,
+        profileName: result.profileName,
+        text: result.messageText,
+        messageType: result.messageType,
+        mediaUrl: result.mediaUrl || result.media_url || '',
+        mediaFilename: result.mediaFilename || result.media_filename || '',
+        mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
+        voice: result.mediaIsVoice || result.media_is_voice || false,
+        messageId: result.messageId,
+        timestamp: result.messageTimestamp
+      }).catch(error => {
+        logger.warn(`[Push] No se pudo avisar mensaje WhatsApp ${result?.messageId || ''}: ${error.message}`)
+      })
+    })
 
     // Ventanas de confirmación con IA: registrar mensajes y obtener estado de bypass.
     const confirmWindows = new Map()
@@ -9365,24 +9714,6 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
         .catch(error => {
           logger.warn(`[Agente conversacional] No se pudo atender el mensaje entrante: ${error.message}`)
         }))).catch(() => {})
-
-    await Promise.all(inboundResults
-      .map(result => sendChatMessageNotification({
-        contactId: result.contactId,
-        contactName: result.contactName,
-        phone: result.phone,
-        profileName: result.profileName,
-        text: result.messageText,
-        messageType: result.messageType,
-        mediaUrl: result.mediaUrl || result.media_url || '',
-        mediaFilename: result.mediaFilename || result.media_filename || '',
-        mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
-        voice: result.mediaIsVoice || result.media_is_voice || false,
-        messageId: result.messageId,
-        timestamp: result.messageTimestamp
-      }).catch(error => {
-        logger.warn(`[Push] No se pudo avisar mensaje WhatsApp ${result?.messageId || ''}: ${error.message}`)
-      })))
 
     if (payload?.whatsappPhoneNumber) {
       await syncPhoneNumbers([payload.whatsappPhoneNumber], {
@@ -9763,7 +10094,15 @@ async function markMetaDirectAuthorizationRequired({ error, phoneNumberId = '' }
   return true
 }
 
-async function metaDirectGraphRequest(path, { method = 'GET', token, query, body, operational = false, phoneNumberId = '' } = {}) {
+async function metaDirectGraphRequest(path, {
+  method = 'GET',
+  token,
+  query,
+  body,
+  operational = false,
+  phoneNumberId = '',
+  timeoutMs = META_DIRECT_GRAPH_TIMEOUT_MS
+} = {}) {
   const cleanToken = cleanString(token)
   if (!cleanToken) throw new Error('Falta el token de Meta directo')
   const url = new URL(`${META_GRAPH_BASE_URL}${path}`)
@@ -9771,15 +10110,46 @@ async function metaDirectGraphRequest(path, { method = 'GET', token, query, body
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
   }
 
-  const response = await metaDirectFetch(url.toString(), {
-    method,
-    headers: {
-      Authorization: `Bearer ${cleanToken}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {})
-    },
-    ...(body ? { body: JSON.stringify(body) } : {})
-  })
-  const data = await response.json().catch(() => ({}))
+  const controller = new AbortController()
+  const safeTimeoutMs = Math.max(1, Number(timeoutMs) || META_DIRECT_GRAPH_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), safeTimeoutMs)
+  let response
+  let responseText = ''
+  let responseData = null
+  try {
+    response = await metaDirectFetch(url.toString(), {
+      method,
+      headers: {
+        Authorization: `Bearer ${cleanToken}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal
+    })
+    if (typeof response.text === 'function') {
+      responseText = await response.text()
+    } else if (typeof response.json === 'function') {
+      responseData = await response.json()
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(`Meta Graph no respondió ${path} en ${Math.round(safeTimeoutMs / 1000)} segundos`)
+      timeoutError.name = 'MetaDirectGraphTimeoutError'
+      timeoutError.code = 'META_GRAPH_TIMEOUT'
+      throw timeoutError
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+  let data = responseData || {}
+  if (responseData == null) {
+    try {
+      data = responseText ? JSON.parse(responseText) : {}
+    } catch {
+      data = {}
+    }
+  }
   if (!response.ok || data?.error) {
     const graphError = data?.error || {}
     const error = new Error(graphError.message || `Meta Graph respondió ${response.status}`)
@@ -10142,7 +10512,11 @@ async function reconcileMetaDirectMessageStatus({ item } = {}) {
   }
 }
 
-export async function processMetaDirectWebhookPayload({ payload = {}, eventRowId = '' } = {}) {
+export async function processMetaDirectWebhookPayload({
+  payload = {},
+  eventRowId = '',
+  onInboundPersisted = null
+} = {}) {
   const config = await loadMetaDirectConfig()
   const businessPhoneHints = await getKnownBusinessPhoneHints({
     senderPhone: config.displayPhoneNumber,
@@ -10168,7 +10542,9 @@ export async function processMetaDirectWebhookPayload({ payload = {}, eventRowId
         direction: item.direction,
         businessPhoneHints,
         transport: 'api',
-        historyImport: item.historyImport === true
+        historyImport: item.historyImport === true,
+        deferInboundProfilePicture: item.historyImport !== true,
+        onInboundPersisted
       })
     results.push(result)
   }
@@ -10207,6 +10583,69 @@ export async function processMetaDirectWebhookPayload({ payload = {}, eventRowId
   return results
 }
 
+async function processMetaDirectInboundSideEffects(inboundResults = []) {
+  const confirmWindows = new Map()
+
+  await Promise.all(inboundResults.map(result => handleInboundForConfirmation({
+    contactId: result.contactId,
+    text: result.messageText
+  }).then(window => {
+    confirmWindows.set(result.contactId, window)
+  }).catch(error => {
+    logger.warn(`[Citas] Error en ventana Meta directo: ${error.message}`)
+  })))
+
+  await Promise.all(inboundResults.map(result => {
+    const window = confirmWindows.get(result.contactId)
+    if (window?.windowActive) return Promise.resolve()
+    return maybeConfirmAppointmentFromReply({
+      contactId: result.contactId,
+      text: result.messageText
+    }).catch(error => logger.warn(`[Citas] No se pudo evaluar Meta directo: ${error.message}`))
+  }))
+
+  const shouldRunAutomations = result => {
+    const window = confirmWindows.get(result.contactId)
+    return !(window?.windowActive && window?.bypassAutomations)
+  }
+
+  await Promise.all([
+    ...inboundResults
+      .filter(shouldRunAutomations)
+      .map(result => import('./automationEngine.js')
+        .then(engine => engine.handleIncomingMessage({
+          contactId: result.contactId,
+          phone: result.phone,
+          contactName: result.contactName,
+          text: result.messageText,
+          messageType: result.messageType,
+          buttonId: result.buttonId,
+          buttonPayload: result.buttonPayload,
+          buttonTitle: result.buttonTitle,
+          buttonReplyType: result.buttonReplyType,
+          channel: 'whatsapp',
+          businessPhoneNumberId: result.businessPhoneNumberId || null
+        }))
+        .catch(error => logger.warn(`[Automatizaciones] Meta directo no pudo procesar mensaje: ${error.message}`))),
+    ...inboundResults
+      .filter(result => result?.contactId)
+      .filter(shouldRunAutomations)
+      .map(result => import('../agents/conversational/runner.js')
+        .then(runner => runner.handleInboundMessageForConversationalAgent({
+          contactId: result.contactId,
+          phone: result.phone,
+          messageId: result.messageId
+        }))
+        .catch(error => logger.warn(`[Agente conversacional] Meta directo no pudo atender: ${error.message}`)))
+  ])
+}
+
+let metaDirectInboundSideEffectsForTest = null
+
+export function setMetaDirectInboundSideEffectsForTest(handler) {
+  metaDirectInboundSideEffectsForTest = typeof handler === 'function' ? handler : null
+}
+
 export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = '', headers = {} } = {}) {
   await verifyInstallerSignedRequest({ rawBody, headers, purpose: 'meta_webhook_relay' })
   const eventRowId = await saveWebhookEvent({
@@ -10224,89 +10663,34 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
   })
 
   try {
-    const messageResults = await processMetaDirectWebhookPayload({ payload, eventRowId })
+    const onInboundPersisted = (result) => {
+      scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'meta_direct_webhook')
+    }
+    const messageResults = await processMetaDirectWebhookPayload({
+      payload,
+      eventRowId,
+      onInboundPersisted
+    })
     const inboundResults = messageResults.filter(result =>
       result?.direction === 'inbound' &&
       result?.isNew !== false &&
       result?.historyImport !== true
     )
-    inboundResults.forEach(result => scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'meta_direct_webhook'))
-    const confirmWindows = new Map()
-
-    await Promise.all(inboundResults.map(result => handleInboundForConfirmation({
-      contactId: result.contactId,
-      text: result.messageText
-    }).then(w => { confirmWindows.set(result.contactId, w) }).catch(error => {
-      logger.warn(`[Citas] Error en ventana Meta directo: ${error.message}`)
-    })))
-
-    await Promise.all(inboundResults.map(result => {
-      const win = confirmWindows.get(result.contactId)
-      if (win?.windowActive) return Promise.resolve()
-      return maybeConfirmAppointmentFromReply({
-        contactId: result.contactId,
-        text: result.messageText
-      }).catch(error => logger.warn(`[Citas] No se pudo evaluar Meta directo: ${error.message}`))
-    }))
-
-    Promise.all(inboundResults
-      .filter(result => {
-        const win = confirmWindows.get(result.contactId)
-        return !(win?.windowActive && win?.bypassAutomations)
-      })
-      .map(result => import('./automationEngine.js')
-        .then(engine => engine.handleIncomingMessage({
-          contactId: result.contactId,
-          phone: result.phone,
-          contactName: result.contactName,
-          text: result.messageText,
-          messageType: result.messageType,
-          buttonId: result.buttonId,
-          buttonPayload: result.buttonPayload,
-          buttonTitle: result.buttonTitle,
-          buttonReplyType: result.buttonReplyType,
-          channel: 'whatsapp',
-          businessPhoneNumberId: result.businessPhoneNumberId || null
-        }))
-        .catch(error => logger.warn(`[Automatizaciones] Meta directo no pudo procesar mensaje: ${error.message}`)))).catch(() => {})
-
-    Promise.all(inboundResults
-      .filter(result => result?.contactId)
-      .filter(result => {
-        const win = confirmWindows.get(result.contactId)
-        return !(win?.windowActive && win?.bypassAutomations)
-      })
-      .map(result => import('../agents/conversational/runner.js')
-        .then(runner => runner.handleInboundMessageForConversationalAgent({
-          contactId: result.contactId,
-          phone: result.phone,
-          messageId: result.messageId
-        }))
-        .catch(error => logger.warn(`[Agente conversacional] Meta directo no pudo atender: ${error.message}`)))).catch(() => {})
-
-    await Promise.all(inboundResults.map(result => sendChatMessageNotification({
-      contactId: result.contactId,
-      contactName: result.contactName,
-      phone: result.phone,
-      profileName: result.profileName,
-      text: result.messageText,
-      messageType: result.messageType,
-      mediaUrl: result.mediaUrl || result.media_url || '',
-      mediaFilename: result.mediaFilename || result.media_filename || '',
-      mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
-      voice: result.mediaIsVoice || result.media_is_voice || false,
-      messageId: result.messageId,
-      timestamp: result.messageTimestamp
-    }).catch(error => {
-      logger.warn(`[Push] No se pudo avisar mensaje Meta directo ${result?.messageId || ''}: ${error.message}`)
-    })))
-
     await db.run(`
       UPDATE whatsapp_api_webhook_events
       SET processed_status = 'processed', processed_error = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [eventRowId])
     await setAppConfig(CONFIG_KEYS.metaLastRelayReceivedAt, nowIso())
+
+    const sideEffectsRunner = metaDirectInboundSideEffectsForTest || processMetaDirectInboundSideEffects
+    void trackDeployDrainWork(
+      'meta-direct-inbound-side-effects',
+      () => sideEffectsRunner(inboundResults),
+      eventRowId
+    ).catch(error => {
+      logger.warn(`[Meta directo] Efectos post-ACK fallaron: ${error.message}`)
+    })
 
     return { processed: true, eventId: eventRowId, messages: messageResults.length }
   } catch (error) {

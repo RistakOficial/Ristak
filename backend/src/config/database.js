@@ -2615,8 +2615,10 @@ async function initTablesUnlocked() {
     try {
       await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_enabled ON push_subscriptions(enabled)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_enabled_user ON push_subscriptions(enabled, user_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_enabled ON mobile_push_devices(enabled)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_user ON mobile_push_devices(user_id)')
+      await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_enabled_user ON mobile_push_devices(enabled, user_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_platform ON mobile_push_devices(platform)')
       await ensureTableColumns('mobile_push_devices', [
         ['client_type', 'TEXT'],
@@ -4961,6 +4963,35 @@ async function initTablesUnlocked() {
     `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_chat_inbound_message_claims_contact ON chat_inbound_message_claims (contact_id)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS chat_delivery_outbox (
+        id TEXT PRIMARY KEY,
+        job_kind TEXT NOT NULL CHECK (job_kind IN ('push', 'meta_enrichment')),
+        message_id TEXT NOT NULL,
+        contact_id TEXT,
+        provider TEXT,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        available_at TEXT NOT NULL,
+        lease_owner TEXT,
+        lease_expires_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        failed_at TEXT,
+        UNIQUE (job_kind, message_id)
+      )
+    `)
+    await ensureTableColumns('chat_delivery_outbox', [
+      ['failed_at', 'TEXT']
+    ])
+    await db.run('CREATE INDEX IF NOT EXISTS idx_chat_delivery_outbox_ready ON chat_delivery_outbox (status, available_at, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_chat_delivery_outbox_lease ON chat_delivery_outbox (status, lease_expires_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_chat_delivery_outbox_completed ON chat_delivery_outbox (status, completed_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_chat_delivery_outbox_failed ON chat_delivery_outbox (status, failed_at)')
+
     for (const [columnName, columnType] of [
       ['provider', "TEXT DEFAULT 'ycloud'"],
       ['source_adapter', "TEXT DEFAULT 'ycloud'"],
@@ -5398,6 +5429,7 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_chat_messages_contact ON scheduled_chat_messages(contact_id, status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_chat_messages_due ON scheduled_chat_messages(status, scheduled_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_contact ON whatsapp_api_attribution(contact_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_attribution_message ON whatsapp_api_attribution(whatsapp_api_message_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_source ON whatsapp_api_attribution(detected_source_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_attr_ctwa ON whatsapp_api_attribution(detected_ctwa_clid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_events_type_created ON whatsapp_api_webhook_events(event_type, created_at)')

@@ -36,14 +36,16 @@ test('Android fija desde el boton inferior el mismo preferred WhatsApp del conta
 })
 
 test('iOS vuelve a mostrar el boton inferior y guarda la preferencia compartida', async () => {
-  const [composer, viewModel] = await Promise.all([
+  const [composer, routing, viewModel] = await Promise.all([
     readSource('ios/app/Ristak/Features/Chats/Composer/ComposerView.swift'),
+    readSource('ios/app/Ristak/Features/Chats/Thread/ConversationChannelRouting.swift'),
     readSource('ios/app/Ristak/Features/Chats/Thread/ConversationViewModel.swift')
   ])
 
   assert.match(composer, /ComposerChannelIconView\(channel: viewModel\.selectedChannel, size: 22\)/)
   assert.match(composer, /viewModel\.isComposerChannelSheetPresented = true/)
   assert.match(composer, /ChannelPickerSheet\(viewModel: viewModel\)/)
-  assert.match(viewModel, /for \(index, phone\) in whatsAppPhones\.enumerated\(\)/)
+  assert.match(routing, /for \(index, phone\) in whatsAppPhones\.enumerated\(\)/)
+  assert.match(viewModel, /ConversationChannelOptionsBuilder\.build\(/)
   assert.match(viewModel, /contactsService\.setPreferredWhatsAppPhoneNumber\([\s\S]*?routingReason: "Cambio desde selector inferior o ficha del chat"/)
 })

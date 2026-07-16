@@ -272,12 +272,33 @@ function readPrincipalState(email) {
   return state
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = LICENSE_PORTAL_TIMEOUT_MS) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = LICENSE_PORTAL_TIMEOUT_MS, consumeResponse = null) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let timer = null
+  const timeoutPromise = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      const timeoutError = new Error(`El portal central excedió ${timeoutMs} ms`)
+      timeoutError.code = 'license_portal_timeout'
+      reject(timeoutError)
+    }, timeoutMs)
+  })
   timer.unref?.()
+  const requestPromise = Promise.resolve().then(async () => {
+    const response = await fetch(url, { ...options, signal: controller.signal })
+    return typeof consumeResponse === 'function'
+      ? consumeResponse(response)
+      : response
+  })
   try {
-    return await fetch(url, { ...options, signal: controller.signal })
+    return await Promise.race([requestPromise, timeoutPromise])
+  } catch (error) {
+    if (controller.signal.aborted && error?.code !== 'license_portal_timeout') {
+      const timeoutError = new Error(`El portal central excedió ${timeoutMs} ms`)
+      timeoutError.code = 'license_portal_timeout'
+      throw timeoutError
+    }
+    throw error
   } finally {
     clearTimeout(timer)
   }
@@ -431,15 +452,35 @@ async function callLicenseServer(path, body = {}, { timeoutMs = LICENSE_PORTAL_T
 
   let response, data
   try {
-    response = await fetchWithTimeout(`${config.licenseServerUrl}${path}`, {
+    const result = await fetchWithTimeout(`${config.licenseServerUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(await buildInstalledAppPayload(body))
-    }, timeoutMs)
-    data = await response.json().catch(() => ({}))
+    }, timeoutMs, async portalResponse => {
+      let portalData = {}
+      try {
+        portalData = await portalResponse.json()
+      } catch (error) {
+        if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
+        if (portalResponse.ok) {
+          const invalidResponseError = new Error('El portal central respondió con JSON inválido')
+          invalidResponseError.code = 'license_portal_invalid_response'
+          invalidResponseError.retryable = true
+          invalidResponseError.cause = error
+          throw invalidResponseError
+        }
+      }
+      return { response: portalResponse, data: portalData }
+    })
+    response = result.response
+    data = result.data
   } catch (error) {
     logger.error(`No se pudo contactar al portal central: ${error.message}`)
-    throw new Error('No se pudo contactar al portal central. Intenta de nuevo en unos minutos.')
+    const portalError = new Error('No se pudo contactar al portal central. Intenta de nuevo en unos minutos.')
+    portalError.code = error?.code || 'license_portal_unavailable'
+    portalError.retryable = true
+    portalError.cause = error
+    throw portalError
   }
 
   if (!response.ok || data?.success === false) {
@@ -1030,11 +1071,14 @@ export async function getCentralMobilePushStatus() {
   }
 }
 
-export async function sendCentralMobilePushNotifications({ devices = [], payload = {} } = {}) {
+export async function sendCentralMobilePushNotifications(
+  { devices = [], payload = {} } = {},
+  { timeoutMs = LICENSE_PORTAL_TIMEOUT_MS } = {}
+) {
   return callLicenseServer('/api/license/mobile-push/send', {
     devices,
     payload
-  })
+  }, { timeoutMs })
 }
 
 async function readAccountCancellationSnapshot() {

@@ -399,6 +399,7 @@ export async function completeMetaDirectEmbeddedSignupView(req, res) {
       signupData: req.body?.signupData || req.body?.signup_data || {}
     })
     await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'meta-direct-connected' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error finalizando Embedded Signup de Meta: ${error.message}`)
@@ -418,6 +419,7 @@ export async function completeMetaDirectConnectionView(req, res) {
       headers: getInstallerSignatureHeaders(req)
     })
     await ensureDefaultTemplatesForActiveWhatsAppProvider(req)
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'meta-direct-connected' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error completando Meta directo: ${error.message}`)
@@ -507,6 +509,7 @@ export async function syncMetaDirectHistoryView(req, res) {
 export async function disconnectMetaDirectConnectionView(req, res) {
   try {
     const data = await disconnectMetaDirectConnection()
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'meta-direct-disconnected' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error desconectando Meta directo: ${error.message}`)

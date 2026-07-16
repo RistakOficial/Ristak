@@ -11,8 +11,36 @@ import {
   sendCalendarAppointmentNotification,
   sendChatMessageNotification,
   sendAppNotificationPayload,
-  setAppNotificationPayloadSenderForTest
+  setAppNotificationPayloadSenderForTest,
+  setPushContactVisibilityCheckerForTest
 } from '../src/services/pushNotificationsService.js'
+
+test('un fallo de visibilidad reintenta push durable y conserva fail-closed best-effort', async () => {
+  const visibilityError = new Error('DB temporalmente no disponible')
+  try {
+    setPushContactVisibilityCheckerForTest(async () => { throw visibilityError })
+
+    await assert.rejects(
+      sendChatMessageNotification({
+        contactId: `visibility-durable-${randomUUID()}`,
+        messageId: `visibility-message-${randomUUID()}`,
+        text: 'Contenido que no debe filtrarse',
+        durableDelivery: true
+      }),
+      error => error?.code === 'push_contact_visibility_unavailable' && error?.retryable === true
+    )
+
+    const bestEffort = await sendChatMessageNotification({
+      contactId: `visibility-best-effort-${randomUUID()}`,
+      messageId: `visibility-message-${randomUUID()}`,
+      text: 'Contenido que no debe filtrarse'
+    })
+    assert.equal(bestEffort.skipped, true)
+    assert.equal(bestEffort.reason, 'hidden_contact')
+  } finally {
+    setPushContactVisibilityCheckerForTest(null)
+  }
+})
 
 test('normaliza payloads push para no usar Ristak/Reistack como titulo', () => {
   assert.deepEqual(
@@ -637,7 +665,8 @@ test('payload FCM Android Play Expo incluye alerta visible y conserva data de na
   assert.equal(requestBody.message.notification.body, 'Hola desde Play Store')
   assert.equal(requestBody.message.android.priority, 'HIGH')
   assert.equal(requestBody.message.android.notification.channel_id, 'ristak_alerts')
-  assert.equal(requestBody.message.android.notification.tag, 'chat-con_1')
+  assert.equal(requestBody.message.android.collapse_key, 'chat-message-1')
+  assert.equal(requestBody.message.android.notification.tag, 'chat-message-1')
   assert.equal(requestBody.message.android.notification.notification_priority, 'PRIORITY_HIGH')
   assert.equal(requestBody.message.data.title, 'Paciente Demo')
   assert.equal(requestBody.message.data.body, 'Hola desde Play Store')

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { databaseDialect, db } from '../src/config/database.js'
 import { runChatActivityProjectionBackfill } from '../src/services/chatActivityProjectionService.js'
@@ -8,6 +9,8 @@ import {
   getChatContacts,
   getContactConversation,
   getContactJourney,
+  createContactConversationAbortScope,
+  setContactConversationDeadlineMsForTest,
   setProfilePictureWarmupRunnerForTest,
   updateContact,
   waitForProfilePictureWarmupsForTest
@@ -19,7 +22,8 @@ test.before(async () => {
     '095za_chat_activity_whatsapp_version.sqlite.sql',
     '095zb_chat_activity_meta_version.sqlite.sql',
     '095zc_chat_activity_email_version.sqlite.sql',
-    '096_chat_activity_projection.sqlite.sql'
+    '096_chat_activity_projection.sqlite.sql',
+    '121_chat_conversation_cursor.sqlite.sql'
   ]) {
     await db.exec(await readFile(
       new URL(`../migrations/versioned/${migration}`, import.meta.url),
@@ -33,12 +37,17 @@ function createMockResponse() {
   return {
     statusCode: 200,
     body: null,
+    jsonCalls: 0,
+    headersSent: false,
+    writableEnded: false,
     status(code) {
       this.statusCode = code
       return this
     },
     json(payload) {
       this.body = payload
+      this.headersSent = true
+      this.jsonCalls += 1
       return this
     }
   }
@@ -108,6 +117,319 @@ async function insertRow(table, values) {
     columns.map(column => values[column])
   )
 }
+
+test('contact conversation abort scope distinguishes deadline from client disconnect', async () => {
+  const deadlineResponse = new EventEmitter()
+  deadlineResponse.writableEnded = false
+  const deadlineScope = createContactConversationAbortScope(deadlineResponse, { timeoutMs: 5 })
+  try {
+    await new Promise(resolve => setTimeout(resolve, 15))
+    assert.equal(deadlineScope.signal.aborted, true)
+    assert.equal(deadlineScope.reason, 'deadline')
+  } finally {
+    deadlineScope.cleanup()
+  }
+
+  const disconnectedResponse = new EventEmitter()
+  disconnectedResponse.writableEnded = false
+  const disconnectedScope = createContactConversationAbortScope(disconnectedResponse, { timeoutMs: 1000 })
+  try {
+    disconnectedResponse.emit('close')
+    assert.equal(disconnectedScope.signal.aborted, true)
+    assert.equal(disconnectedScope.reason, 'disconnect')
+  } finally {
+    disconnectedScope.cleanup()
+  }
+})
+
+test('contact conversation deadline reaches the database signal and answers once', async () => {
+  const originalGet = db.get
+  let observedSignal = null
+  db.get = function interceptedGet(sql, params, options) {
+    if (String(sql).includes('FROM chat_activity_projection_state')) {
+      observedSignal = options?.signal || null
+      return new Promise((resolve, reject) => {
+        const abort = () => {
+          const error = new Error('cancelled query')
+          error.name = 'AbortError'
+          reject(error)
+        }
+        if (observedSignal?.aborted) abort()
+        else observedSignal?.addEventListener('abort', abort, { once: true })
+      })
+    }
+    return originalGet.call(db, sql, params, options)
+  }
+  setContactConversationDeadlineMsForTest(5)
+  const res = createMockResponse()
+  const keepEventLoopAlive = setInterval(() => undefined, 1000)
+
+  try {
+    await getContactConversation({ params: { id: `timeout_${randomUUID()}` }, query: {} }, res)
+    assert.ok(observedSignal)
+    assert.equal(observedSignal.aborted, true)
+    assert.equal(res.statusCode, 504)
+    assert.equal(res.body?.code, 'CHAT_CONVERSATION_TIMEOUT')
+    assert.equal(res.jsonCalls, 1)
+  } finally {
+    clearInterval(keepEventLoopAlive)
+    db.get = originalGet
+    setContactConversationDeadlineMsForTest()
+  }
+})
+
+test('contact conversation ready projection selects globally then hydrates only winning message ids', async () => {
+  const id = randomUUID()
+  const contactId = `conversation_projection_ready_${id}`
+  const phone = `+52811${Date.now().toString().slice(-7)}`
+  const olderMessageId = `api_projection_older_${id}`
+  const newestMessageId = `api_projection_newest_${id}`
+  const originalAll = db.all
+  const calls = []
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente proyeccion lista',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2098-01-01T10:00:00.000Z',
+      updated_at: '2098-01-01T10:00:00.000Z'
+    })
+    for (const [messageId, text, timestamp] of [
+      [olderMessageId, 'Mensaje viejo no hidratado', '2098-01-01T10:01:00.000Z'],
+      [newestMessageId, 'Mensaje nuevo hidratado', '2098-01-01T10:02:00.000Z']
+    ]) {
+      await insertRow('whatsapp_api_messages', {
+        id: messageId,
+        contact_id: contactId,
+        phone,
+        from_phone: phone,
+        to_phone: '+526561000000',
+        business_phone: '+526561000000',
+        transport: 'api',
+        direction: 'inbound',
+        message_type: 'text',
+        message_text: text,
+        message_timestamp: timestamp,
+        created_at: timestamp
+      })
+    }
+    await runChatActivityProjectionBackfill()
+
+    db.all = function interceptedAll(sql, params, options) {
+      calls.push({ sql: String(sql), params: [...(params || [])], options })
+      return originalAll.call(db, sql, params, options)
+    }
+    const conversation = await readConversation(contactId, { messageLimit: '1' })
+
+    assert.deepEqual(conversation.map(event => event.data.message_text), ['Mensaje nuevo hidratado'])
+    const selection = calls.find(call => call.sql.includes('FROM chat_message_activity'))
+    assert.ok(selection)
+    const selectionPlan = await originalAll.call(
+      db,
+      `EXPLAIN QUERY PLAN ${selection.sql}`,
+      selection.params
+    )
+    assert.ok(selectionPlan.some(row => (
+      String(row.detail || '').includes('idx_chat_message_activity_conversation_cursor')
+    )))
+    const hydration = calls.find(call => call.sql.includes('recent_whatsapp_api_messages'))
+    assert.ok(hydration)
+    assert.match(hydration.sql, /WHERE msg\.id IN \(\?\)/)
+    assert.ok(hydration.params.includes(newestMessageId))
+    assert.equal(hydration.params.includes(olderMessageId), false)
+    assert.ok(hydration.options?.signal)
+  } finally {
+    db.all = originalAll
+    await cleanup(contactId, phone)
+    await runChatActivityProjectionBackfill()
+  }
+})
+
+test('contact conversation falls back to legacy phone matching while projection is not ready', async () => {
+  const id = randomUUID()
+  const contactId = `conversation_projection_fallback_${id}`
+  const phone = `+52812${Date.now().toString().slice(-7)}`
+  const messageId = `api_projection_fallback_${id}`
+  const originalAll = db.all
+  const calls = []
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente fallback legacy',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2098-01-02T10:00:00.000Z',
+      updated_at: '2098-01-02T10:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: messageId,
+      contact_id: null,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Mensaje recuperado por telefono',
+      message_timestamp: '2098-01-02T10:01:00.000Z',
+      created_at: '2098-01-02T10:01:00.000Z'
+    })
+    await db.run("UPDATE chat_activity_projection_state SET status = 'dirty' WHERE singleton_id = 1")
+    await db.run('DELETE FROM chat_message_activity WHERE source_kind = ? AND source_message_id = ?', ['whatsapp', messageId])
+
+    db.all = function interceptedAll(sql, params, options) {
+      calls.push({ sql: String(sql), params: [...(params || [])], options })
+      return originalAll.call(db, sql, params, options)
+    }
+    const conversation = await readConversation(contactId)
+
+    assert.ok(conversation.some(event => event.data.message_text === 'Mensaje recuperado por telefono'))
+    assert.equal(calls.some(call => call.sql.includes('FROM chat_message_activity')), false)
+    const hydration = calls.find(call => call.sql.includes('recent_whatsapp_api_messages'))
+    assert.ok(hydration)
+    assert.equal(hydration.sql.includes('WHERE msg.id IN ('), false)
+    assert.ok(hydration.params.includes(phone))
+    assert.ok(hydration.options?.signal)
+  } finally {
+    db.all = originalAll
+    await cleanup(contactId, phone)
+    await runChatActivityProjectionBackfill()
+  }
+})
+
+test('contact conversation preserves legacy WhatsApp attribution beside projected messages', async () => {
+  const id = randomUUID()
+  const contactId = `conversation_projection_aux_${id}`
+  const phone = `+52813${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con rama auxiliar',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2098-01-03T10:00:00.000Z',
+      updated_at: '2098-01-03T10:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_projection_aux_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Mensaje proyectado',
+      message_timestamp: '2098-01-03T10:01:00.000Z',
+      created_at: '2098-01-03T10:01:00.000Z'
+    })
+    await insertRow('whatsapp_attribution', {
+      contact_id: contactId,
+      phone,
+      message_content: 'Mensaje auxiliar de atribucion',
+      referral_source_type: 'ad',
+      referral_source_id: `ad_${id}`,
+      created_at: '2098-01-03T10:02:00.000Z'
+    })
+    await runChatActivityProjectionBackfill()
+
+    const conversation = await readConversation(contactId, { messageLimit: '5' })
+    assert.deepEqual(
+      conversation.map(event => event.data.message_text),
+      ['Mensaje proyectado', 'Mensaje auxiliar de atribucion']
+    )
+    assert.ok(conversation.some(event => event.cursorKey.startsWith('whatsapp_api:')))
+    assert.ok(conversation.some(event => event.cursorKey.startsWith('whatsapp_attribution:')))
+  } finally {
+    await cleanup(contactId, phone)
+    await runChatActivityProjectionBackfill()
+  }
+})
+
+test('contact conversation includes linked social history resolved by one identity join', async () => {
+  const id = randomUUID()
+  const contactId = `conversation_social_main_${id}`
+  const linkedContactId = `conversation_social_linked_${id}`
+  const phone = `+52814${Date.now().toString().slice(-7)}`
+  const linkedPhone = `+52815${Date.now().toString().slice(-7)}`
+  const metaUserId = `ig_user_${id}`
+  const mainIdentityId = `meta_identity_main_${id}`
+  const linkedIdentityId = `meta_identity_linked_${id}`
+
+  await cleanup(contactId, phone)
+  await cleanup(linkedContactId, linkedPhone)
+  try {
+    for (const [rowId, rowPhone, name] of [
+      [contactId, phone, 'Cliente social principal'],
+      [linkedContactId, linkedPhone, 'Cliente social enlazado']
+    ]) {
+      await insertRow('contacts', {
+        id: rowId,
+        phone: rowPhone,
+        full_name: name,
+        first_name: 'Cliente',
+        source: 'Meta',
+        created_at: '2098-01-04T10:00:00.000Z',
+        updated_at: '2098-01-04T10:00:00.000Z'
+      })
+    }
+    await insertRow('meta_social_contacts', {
+      id: mainIdentityId,
+      contact_id: contactId,
+      platform: 'instagram',
+      sender_id: `ig_sender_main_${id}`,
+      meta_user_id: metaUserId,
+      profile_name: 'Perfil principal'
+    })
+    await insertRow('meta_social_contacts', {
+      id: linkedIdentityId,
+      contact_id: linkedContactId,
+      platform: 'instagram',
+      sender_id: `ig_sender_linked_${id}`,
+      meta_user_id: metaUserId,
+      profile_name: 'Perfil enlazado'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_linked_message_${id}`,
+      platform: 'instagram',
+      meta_message_id: `meta_provider_linked_${id}`,
+      meta_social_contact_id: linkedIdentityId,
+      contact_id: linkedContactId,
+      sender_id: `ig_sender_linked_${id}`,
+      recipient_id: 'ig_business',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Mensaje del contacto social enlazado',
+      message_timestamp: '2098-01-04T10:01:00.000Z',
+      created_at: '2098-01-04T10:01:00.000Z'
+    })
+    await runChatActivityProjectionBackfill()
+
+    const conversation = await readConversation(contactId)
+    const linkedMessage = conversation.find(event => event.data.message_text === 'Mensaje del contacto social enlazado')
+    assert.ok(linkedMessage)
+    assert.equal(linkedMessage.data.profile_name, 'Perfil enlazado')
+  } finally {
+    await db.run('DELETE FROM meta_social_messages WHERE contact_id IN (?, ?)', [contactId, linkedContactId]).catch(() => undefined)
+    await db.run('DELETE FROM meta_social_contacts WHERE id IN (?, ?)', [mainIdentityId, linkedIdentityId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+    await cleanup(linkedContactId, linkedPhone)
+    await runChatActivityProjectionBackfill()
+  }
+})
 
 test('contact journey enriches WhatsApp messages that only carry rstkad_id marker text', async () => {
   const id = randomUUID()
@@ -1473,6 +1795,11 @@ test('contact conversation compound cursor paginates equal timestamps without om
         created_at: tiedTimestamp
       })
     }
+    await runChatActivityProjectionBackfill()
+    const projectionState = await db.get(
+      'SELECT status FROM chat_activity_projection_state WHERE singleton_id = 1'
+    )
+    assert.equal(projectionState?.status, 'ready')
 
     const collectedEvents = []
     let beforeMessageDate
@@ -1511,6 +1838,7 @@ test('contact conversation compound cursor paginates equal timestamps without om
     assert.deepEqual(legacyPage, [])
   } finally {
     await cleanup(contactId, phone)
+    await runChatActivityProjectionBackfill()
   }
 })
 
@@ -1574,6 +1902,7 @@ test('contact conversation includes appointment confirmation cards without full 
       created_at: '2026-06-19T10:01:00.000Z',
       updated_at: '2026-06-19T10:02:00.000Z'
     })
+    await runChatActivityProjectionBackfill()
 
     const journey = await readConversation(contactId)
 
@@ -1590,6 +1919,7 @@ test('contact conversation includes appointment confirmation cards without full 
     assert.deepEqual(olderJourney.map(event => event.type), ['whatsapp_message'])
   } finally {
     await cleanup(contactId, phone)
+    await runChatActivityProjectionBackfill()
   }
 })
 

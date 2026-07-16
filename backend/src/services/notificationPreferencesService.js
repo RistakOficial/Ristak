@@ -145,7 +145,7 @@ export async function resolvePushNotificationTargetForEvent(eventKey = '') {
 // El push de chat re-exponía nombre + mensaje de contactos ocultos en la pantalla de bloqueo;
 // antes de enviar verificamos visibilidad reutilizando la misma condición SQL de los listados.
 // Fail-safe: ante error o datos faltantes asumimos OCULTO (no enviar) para no filtrar datos sensibles.
-export async function isContactHiddenFromNotifications(contactId = '') {
+export async function isContactHiddenFromNotifications(contactId = '', { throwOnError = false } = {}) {
   const normalizedContactId = String(contactId || '').trim()
   if (!normalizedContactId) {
     // Sin contacto no podemos verificar visibilidad: tratamos como oculto para no arriesgar fuga.
@@ -172,6 +172,7 @@ export async function isContactHiddenFromNotifications(contactId = '') {
     return !row
   } catch (error) {
     // Ante cualquier error de DB preferimos no enviar el push de un contacto potencialmente oculto.
+    if (throwOnError) throw error
     return true
   }
 }

@@ -107,6 +107,7 @@ import { getEmailStatus } from '../services/emailService.js'
 import { hasFeature } from '../services/licenseService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
+import { performance } from 'node:perf_hooks'
 import { extractConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 import {
   listContactAppointmentsPage,
@@ -116,6 +117,15 @@ import {
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
 const PROVIDER_READ_RECEIPT_TIMEOUT_MS = 3500
+const CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS = 8000
+let contactConversationDeadlineMs = CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS
+
+export function setContactConversationDeadlineMsForTest(value = null) {
+  contactConversationDeadlineMs = Number.isFinite(Number(value)) && Number(value) > 0
+    ? Number(value)
+    : CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS
+}
+
 const CONTACT_ADVANCED_FILTER_FEATURES = [
   {
     feature: 'automations',
@@ -616,6 +626,101 @@ const compareJourneyMessagesByCursor = (left, right) => {
   const rightCursor = cleanString(right?.cursorKey)
   if (leftCursor === rightCursor) return 0
   return leftCursor < rightCursor ? -1 : 1
+}
+
+const projectedConversationCursorSqlExpression = () => {
+  const identity = `CASE source_kind
+    WHEN 'whatsapp' THEN 'whatsapp_api:' || CAST(source_message_id AS TEXT)
+    WHEN 'meta' THEN 'meta_social:' || CAST(source_message_id AS TEXT)
+    WHEN 'email' THEN 'email:' || CAST(source_message_id AS TEXT)
+    ELSE source_kind || ':' || CAST(source_message_id AS TEXT)
+  END`
+  return isPostgresDatabase
+    ? `((${identity}) COLLATE "C")`
+    : `((${identity}) COLLATE BINARY)`
+}
+
+const loadLinkedMetaPersonContactIds = async (contactId, options = {}) => {
+  const linkedRows = await db.all(
+    `SELECT DISTINCT linked.contact_id
+       FROM meta_social_contacts own
+       JOIN meta_social_contacts linked
+         ON linked.platform = own.platform
+        AND linked.meta_user_id = own.meta_user_id
+      WHERE own.contact_id = ?
+        AND COALESCE(own.meta_user_id, '') <> ''
+        AND linked.contact_id IS NOT NULL`,
+    [contactId],
+    options?.signal ? { signal: options.signal } : undefined
+  )
+  return [...new Set([
+    contactId,
+    ...linkedRows.map(row => cleanString(row.contact_id)).filter(Boolean)
+  ])]
+}
+
+const loadProjectedConversationSelection = async ({
+  contactId,
+  messageLimit,
+  beforeDate,
+  beforeCursor,
+  includeBusinessMessages,
+  signal
+}) => {
+  const databaseOptions = signal ? { signal } : undefined
+  const metaPersonContactIds = await loadLinkedMetaPersonContactIds(contactId, databaseOptions)
+  const metaContactIdPlaceholders = metaPersonContactIds.map(() => '?').join(', ')
+  const contactScopeClause = metaPersonContactIds.length === 1
+    ? 'contact_id = ?'
+    : `(
+          (source_kind = 'meta' AND contact_id IN (${metaContactIdPlaceholders}))
+          OR (source_kind <> 'meta' AND contact_id = ?)
+        )`
+  const contactScopeParams = metaPersonContactIds.length === 1
+    ? [contactId]
+    : [...metaPersonContactIds, contactId]
+  const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
+  const cursorIdentityExpression = projectedConversationCursorSqlExpression()
+  const beforeClause = beforeDate
+    ? beforeCursor
+      ? `AND (message_sort, ${cursorIdentityExpression}) < (${timestampSortParameterExpression()}, ?)`
+      : `AND message_sort < ${timestampSortParameterExpression()}`
+    : ''
+  const beforeParams = beforeDate
+    ? beforeCursor ? [beforeDate, beforeCursor] : [beforeDate]
+    : []
+
+  const rows = await db.all(
+    `SELECT source_kind, source_message_id
+      FROM chat_message_activity
+      WHERE included = 1
+        AND ${contactScopeClause}
+        AND (
+          ? = 1
+          OR LOWER(COALESCE(direction, CASE WHEN source_kind = 'email' THEN 'outbound' ELSE 'inbound' END))
+             NOT IN (${outboundMessageDirectionPlaceholders})
+        )
+        ${beforeClause}
+      ORDER BY message_sort DESC, ${cursorIdentityExpression} DESC
+      LIMIT ?`,
+    [
+      ...contactScopeParams,
+      includeBusinessMessages ? 1 : 0,
+      ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS,
+      ...beforeParams,
+      messageLimit
+    ],
+    databaseOptions
+  )
+
+  const sourceMessageIds = { whatsapp: [], meta: [], email: [] }
+  rows.forEach(row => {
+    if (sourceMessageIds[row.source_kind]) {
+      sourceMessageIds[row.source_kind].push(cleanString(row.source_message_id))
+    }
+  })
+
+  return { metaPersonContactIds, sourceMessageIds }
 }
 
 const appendOptionalLimitParam = (params, limit) => (
@@ -2689,7 +2794,7 @@ const buildWhatsAppReferralPreviewData = (row = {}) => {
   }
 }
 
-const loadMetaAdsByAdIds = async (adIds = []) => {
+const loadMetaAdsByAdIds = async (adIds = [], options = {}) => {
   const uniqueIds = [...new Set(adIds.map(cleanString).filter(Boolean))]
   const byAdId = new Map()
   if (uniqueIds.length === 0) return byAdId
@@ -2711,7 +2816,8 @@ const loadMetaAdsByAdIds = async (adIds = []) => {
      FROM meta_ads
      WHERE ad_id IN (${uniqueIds.map(() => '?').join(', ')})
      ORDER BY ${timestampSortExpression('date')} DESC`,
-    uniqueIds
+    uniqueIds,
+    options?.signal ? { signal: options.signal } : undefined
   )
 
   rows.forEach(row => {
@@ -2724,7 +2830,7 @@ const loadMetaAdsByAdIds = async (adIds = []) => {
   return byAdId
 }
 
-const enrichMessagingJourneyEventsWithMetaAds = async (events = []) => {
+const enrichMessagingJourneyEventsWithMetaAds = async (events = [], options = {}) => {
   const getAdId = (data = {}) => {
     const detected = detectWhatsAppAttributionFields({ data }, [
       data.message_text,
@@ -2740,7 +2846,7 @@ const enrichMessagingJourneyEventsWithMetaAds = async (events = []) => {
     const data = event?.data || {}
     return [getAdId(data)]
   })
-  const metaByAdId = await loadMetaAdsByAdIds(adIds)
+  const metaByAdId = await loadMetaAdsByAdIds(adIds, options)
   if (metaByAdId.size === 0) return events
 
   return events.map(event => {
@@ -6080,6 +6186,10 @@ export const getContactsChart = async (req, res) => {
 export const getContactJourney = async (req, res) => {
   try {
     const { id } = req.params
+    const databaseSignal = req.databaseSignal || null
+    const databaseOptions = databaseSignal ? { signal: databaseSignal } : undefined
+    const conversationProjection = req.contactConversationProjection || null
+    const dedicatedConversationRequest = Boolean(req.dedicatedContactConversation)
     const includeBusinessMessages = String(req.query?.includeBusinessMessages || '').toLowerCase() === 'true'
     const chatMessagesOnly = isTruthyQueryValue(
       req.query?.chatMessagesOnly ?? req.query?.chatOnly ?? req.query?.messagesOnly
@@ -6111,7 +6221,7 @@ export const getContactJourney = async (req, res) => {
 
     // (SEC-005 / ACL-002) No exponer el journey de un contacto oculto: si cae bajo un
     // filtro de ocultos, tratarlo como inexistente (404).
-    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenFilters = await getHiddenContactFilters(databaseOptions)
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
 
     // Verificar que el contacto existe y obtener info de atribución completa
@@ -6128,7 +6238,7 @@ export const getContactJourney = async (req, res) => {
       WHERE contacts.id = ?${hiddenCondition ? ` AND ${hiddenCondition}` : ''}
       ORDER BY ${timestampSortExpression('meta_ads.date')} DESC
       LIMIT 1
-    `, [id])
+    `, [id], databaseOptions)
     if (!contact) {
       return res.status(404).json({
         success: false,
@@ -6234,11 +6344,21 @@ export const getContactJourney = async (req, res) => {
       return res.json({ success: true, data: activityJourney })
     }
 
-    const contactPhoneValues = await getContactPhoneValues(id, contact.phone)
+    const contactPhoneValues = conversationProjection
+      ? []
+      : await getContactPhoneValues(id, contact.phone, databaseOptions)
     const contactPhoneCandidates = contactPhoneValues.length
       ? contactPhoneValues
       : buildContactPhoneCandidates(contact.phone)
-    const whatsappApiMessageContactMatch = buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
+    const projectedWhatsAppMessageIds = conversationProjection?.sourceMessageIds?.whatsapp || []
+    const whatsappApiMessageContactMatch = conversationProjection
+      ? {
+          condition: projectedWhatsAppMessageIds.length
+            ? `msg.id IN (${projectedWhatsAppMessageIds.map(() => '?').join(', ')})`
+            : '1 = 0',
+          params: projectedWhatsAppMessageIds
+        }
+      : buildWhatsAppApiMessageContactMatch(id, contactPhoneCandidates)
 
     // (Social enlazado) La misma persona puede vivir como DOS contactos separados
     // (DM y comentario) enlazados por (platform, meta_user_id). Para que el chat
@@ -6246,35 +6366,65 @@ export const getContactJourney = async (req, res) => {
     // sin cambiar de filtro, juntamos los ids de los contactos enlazados y
     // consultamos meta_social_messages para todos ellos. Falla-seguro: si algo
     // truena, se queda solo con [id] (comportamiento anterior).
-    let metaPersonContactIds = [id]
+    let metaPersonContactIds = conversationProjection?.metaPersonContactIds || [id]
     try {
-      const ownSocialRows = await db.all(
-        `SELECT platform, meta_user_id
-           FROM meta_social_contacts
-          WHERE contact_id = ? AND COALESCE(meta_user_id, '') <> ''`,
-        [id]
-      )
-      const linkedContactIds = new Set()
-      for (const row of ownSocialRows) {
-        const linkedRows = await db.all(
-          `SELECT DISTINCT contact_id
+      if (conversationProjection) {
+        metaPersonContactIds = conversationProjection.metaPersonContactIds || [id]
+      } else if (dedicatedConversationRequest) {
+        metaPersonContactIds = await loadLinkedMetaPersonContactIds(id, databaseOptions)
+      } else {
+        const ownSocialRows = await db.all(
+          `SELECT platform, meta_user_id
              FROM meta_social_contacts
-            WHERE platform = ? AND meta_user_id = ?
-              AND contact_id IS NOT NULL AND contact_id <> ?`,
-          [row.platform, row.meta_user_id, id]
+            WHERE contact_id = ? AND COALESCE(meta_user_id, '') <> ''`,
+          [id]
         )
-        for (const linked of linkedRows) {
-          if (linked.contact_id) linkedContactIds.add(String(linked.contact_id))
+        const linkedContactIds = new Set()
+        for (const row of ownSocialRows) {
+          const linkedRows = await db.all(
+            `SELECT DISTINCT contact_id
+               FROM meta_social_contacts
+              WHERE platform = ? AND meta_user_id = ?
+                AND contact_id IS NOT NULL AND contact_id <> ?`,
+            [row.platform, row.meta_user_id, id]
+          )
+          for (const linked of linkedRows) {
+            if (linked.contact_id) linkedContactIds.add(String(linked.contact_id))
+          }
+        }
+        if (linkedContactIds.size > 0) {
+          metaPersonContactIds = [id, ...linkedContactIds]
         }
       }
-      if (linkedContactIds.size > 0) {
-        metaPersonContactIds = [id, ...linkedContactIds]
-      }
     } catch (linkErr) {
+      if (databaseSignal && (databaseSignal.aborted || linkErr?.name === 'AbortError' || linkErr?.code === 'ABORT_ERR')) {
+        throw linkErr
+      }
       logger.warn(`No se pudieron resolver contactos sociales enlazados para ${id}: ${linkErr.message}`)
       metaPersonContactIds = [id]
     }
     const metaContactIdPlaceholders = metaPersonContactIds.map(() => '?').join(', ')
+    const projectedMetaMessageIds = conversationProjection?.sourceMessageIds?.meta || []
+    const metaSocialMessageMatch = conversationProjection
+      ? {
+          condition: projectedMetaMessageIds.length
+            ? `msg.id IN (${projectedMetaMessageIds.map(() => '?').join(', ')})`
+            : '1 = 0',
+          params: projectedMetaMessageIds
+        }
+      : {
+          condition: `msg.contact_id IN (${metaContactIdPlaceholders})`,
+          params: metaPersonContactIds
+        }
+    const projectedEmailMessageIds = conversationProjection?.sourceMessageIds?.email || []
+    const emailMessageMatch = conversationProjection
+      ? {
+          condition: projectedEmailMessageIds.length
+            ? `id IN (${projectedEmailMessageIds.map(() => '?').join(', ')})`
+            : '1 = 0',
+          params: projectedEmailMessageIds
+        }
+      : { condition: 'contact_id = ?', params: [id] }
 
     const journey = []
 
@@ -6289,7 +6439,8 @@ export const getContactJourney = async (req, res) => {
        WHERE ${successfulPaymentsCondition}
        ORDER BY ${timestampSortExpression('date')} ASC, ${timestampSortExpression('created_at')} ASC, id ASC
        LIMIT 1`,
-      [id]
+      [id],
+      databaseOptions
     )
     const rawFirstPaymentTime = firstPayment?.date ? parseSortableTimestamp(firstPayment.date) : null
     const firstPaymentTime = Number.isFinite(rawFirstPaymentTime) ? rawFirstPaymentTime : null
@@ -6412,7 +6563,8 @@ export const getContactJourney = async (req, res) => {
           journeyMessageBeforeCursor
         ),
         journeyMessageLimit
-      )
+      ),
+      databaseOptions
     )
 
     whatsappMessages.forEach(msg => {
@@ -6528,7 +6680,8 @@ export const getContactJourney = async (req, res) => {
           journeyMessageBeforeCursor
         ),
         journeyMessageLimit
-      )
+      ),
+      databaseOptions
     )
 
     whatsappApiMessages.forEach(msg => {
@@ -6610,7 +6763,10 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    const enrichedWhatsAppJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(whatsappJourneyEvents)
+    const enrichedWhatsAppJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(
+      whatsappJourneyEvents,
+      databaseOptions
+    )
     addWhatsAppJourneyEvents(enrichedWhatsAppJourneyEvents)
 
     const metaSocialMessageTimestamp = 'COALESCE(msg.message_timestamp, msg.created_at)'
@@ -6653,7 +6809,7 @@ export const getContactJourney = async (req, res) => {
        FROM meta_social_messages msg
        LEFT JOIN meta_social_contacts profile ON profile.id = msg.meta_social_contact_id
        LEFT JOIN meta_social_posts post ON post.id = COALESCE(NULLIF(msg.post_id, ''), msg.media_id)
-       WHERE msg.contact_id IN (${metaContactIdPlaceholders})
+       WHERE ${metaSocialMessageMatch.condition}
          AND (
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
@@ -6672,12 +6828,13 @@ export const getContactJourney = async (req, res) => {
                 ${journeyMessageCursorSqlExpression('meta_social', 'meta_social_message_id')} ASC`,
       appendOptionalLimitParam(
         appendJourneyMessageBeforeParams(
-          [...metaPersonContactIds, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+          [...metaSocialMessageMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
           journeyMessageBefore,
           journeyMessageBeforeCursor
         ),
         journeyMessageLimit
-      )
+      ),
+      databaseOptions
     )
 
     // El GET usa únicamente previews persistidos. Renovarlos implica una llamada
@@ -6761,7 +6918,10 @@ export const getContactJourney = async (req, res) => {
       })
 	    })
 
-    const enrichedMetaSocialJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(metaSocialJourneyEvents)
+    const enrichedMetaSocialJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(
+      metaSocialJourneyEvents,
+      databaseOptions
+    )
     journey.push(...enrichedMetaSocialJourneyEvents)
 
 	    const emailMessageTimestamp = 'COALESCE(message_timestamp, created_at)'
@@ -6787,7 +6947,7 @@ export const getContactJourney = async (req, res) => {
 	          ${emailMessageTimestamp} as journey_message_date,
 	          ${losslessTimestampCursorProjection(emailMessageTimestamp)} AS journey_message_cursor_date
 	       FROM email_messages
-	       WHERE contact_id = ?
+	       WHERE ${emailMessageMatch.condition}
 	         AND (
 	           ? = 1
 	           OR LOWER(COALESCE(direction, 'outbound')) NOT IN (${outboundMessageDirectionPlaceholders})
@@ -6806,12 +6966,13 @@ export const getContactJourney = async (req, res) => {
 	                ${journeyMessageCursorSqlExpression('email', 'email_message_id')} ASC`,
 	      appendOptionalLimitParam(
 	        appendJourneyMessageBeforeParams(
-	          [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
+	          [...emailMessageMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
 	          journeyMessageBefore,
 	          journeyMessageBeforeCursor
 	        ),
 	        journeyMessageLimit
-	      )
+	      ),
+	      databaseOptions
 	    )
 
     emailMessages.forEach(msg => {
@@ -6885,8 +7046,14 @@ export const getContactJourney = async (req, res) => {
           journeyMessageBeforeCursor
         ),
         journeyMessageLimit
-      )
-    ).catch(() => [])
+      ),
+      databaseOptions
+    ).catch(error => {
+      if (databaseSignal && (databaseSignal.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR')) {
+        throw error
+      }
+      return []
+    })
 
     appointmentConfirmationCards.forEach(card => {
       journey.push({
@@ -7070,6 +7237,9 @@ export const getContactJourney = async (req, res) => {
     })
 
   } catch (error) {
+    if (req.databaseSignal && (req.databaseSignal.aborted || error?.name === 'AbortError' || error?.code === 'ABORT_ERR')) {
+      throw error
+    }
     logger.error(`Error obteniendo journey del contacto ${req.params.id}: ${error.message}`)
     res.status(500).json({
       success: false,
@@ -7078,16 +7248,126 @@ export const getContactJourney = async (req, res) => {
   }
 }
 
-export const getContactConversation = async (req, res) => {
-  const conversationReq = {
-    ...req,
-    query: {
-      ...req.query,
-      includeBusinessMessages: 'true',
-      refreshExternalStatuses: req.query?.refreshExternalStatuses ?? 'false',
-      chatMessagesOnly: 'true'
+export function createContactConversationAbortScope(
+  res,
+  { timeoutMs = contactConversationDeadlineMs } = {}
+) {
+  const controller = new AbortController()
+  let reason = null
+  const abort = (nextReason) => {
+    if (controller.signal.aborted) return
+    reason = nextReason
+    controller.abort(new Error(nextReason === 'deadline'
+      ? 'Contact conversation deadline exceeded'
+      : 'Contact conversation client disconnected'))
+  }
+  const handleClose = () => {
+    if (!res?.writableEnded) abort('disconnect')
+  }
+  if (typeof res?.once === 'function') res.once('close', handleClose)
+  const normalizedTimeoutMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : contactConversationDeadlineMs
+  const deadline = setTimeout(() => abort('deadline'), Math.max(1, normalizedTimeoutMs))
+  deadline.unref?.()
+
+  return {
+    signal: controller.signal,
+    get reason() {
+      return reason
+    },
+    cleanup() {
+      clearTimeout(deadline)
+      if (typeof res?.off === 'function') res.off('close', handleClose)
+      else if (typeof res?.removeListener === 'function') res.removeListener('close', handleClose)
     }
   }
+}
 
-  return getContactJourney(conversationReq, res)
+export const getContactConversation = async (req, res) => {
+  const requestScope = createContactConversationAbortScope(res)
+  const requestStartedAt = performance.now()
+  let conversationPath = 'legacy'
+  let projectionSourceStatus = 'unknown'
+  try {
+    const contactId = cleanString(req.params?.id)
+    const messageLimit = parseJourneyMessageLimit(
+      req.query?.messageLimit ??
+      req.query?.messagesLimit ??
+      req.query?.conversationMessageLimit ??
+      req.query?.limit
+    ) || CONVERSATION_DEFAULT_PAGE_LIMIT
+    const beforeDate = parseJourneyMessageBefore(
+      req.query?.beforeMessageDate ??
+      req.query?.messageBeforeDate ??
+      req.query?.beforeMessage ??
+      req.query?.beforeEventDate
+    )
+    const beforeCursor = beforeDate
+      ? parseJourneyMessageCursor(
+        req.query?.beforeMessageCursor ??
+        req.query?.messageBeforeCursor ??
+        req.query?.beforeCursor ??
+        req.query?.beforeEventCursor
+      )
+      : null
+    const projectionStatus = await getChatActivityProjectionStatus({ signal: requestScope.signal })
+    conversationPath = projectionStatus.ready ? 'projected' : 'legacy'
+    projectionSourceStatus = cleanString(projectionStatus.sourceStatus || projectionStatus.status || 'unknown')
+    const conversationProjection = projectionStatus.ready
+      ? await loadProjectedConversationSelection({
+          contactId,
+          messageLimit,
+          beforeDate,
+          beforeCursor,
+          includeBusinessMessages: true,
+          signal: requestScope.signal
+        })
+      : null
+    const conversationReq = {
+      ...req,
+      databaseSignal: requestScope.signal,
+      contactConversationProjection: conversationProjection,
+      dedicatedContactConversation: true,
+      query: {
+        ...req.query,
+        includeBusinessMessages: 'true',
+        refreshExternalStatuses: req.query?.refreshExternalStatuses ?? 'false',
+        chatMessagesOnly: 'true'
+      }
+    }
+
+    const result = await getContactJourney(conversationReq, res)
+    logger.info(
+      `[ChatConversation] path=${conversationPath} projection_status=${projectionSourceStatus} ` +
+      `duration_ms=${Math.round(performance.now() - requestStartedAt)}`
+    )
+    return result
+  } catch (error) {
+    if (requestScope.reason === 'disconnect' || res?.writableEnded) return undefined
+    if (requestScope.reason === 'deadline') {
+      if (res?.headersSent) return undefined
+      logger.warn(
+        `[ChatConversation] path=${conversationPath} projection_status=${projectionSourceStatus} ` +
+        `outcome=timeout duration_ms=${Math.round(performance.now() - requestStartedAt)}`
+      )
+      return res.status(504).json({
+        success: false,
+        error: 'La conversación tardó demasiado en responder',
+        code: 'CHAT_CONVERSATION_TIMEOUT'
+      })
+    }
+    if (res?.headersSent) return undefined
+    logger.error(
+      `[ChatConversation] path=${conversationPath} projection_status=${projectionSourceStatus} ` +
+      `outcome=error duration_ms=${Math.round(performance.now() - requestStartedAt)} ` +
+      `error_kind=${cleanString(error?.code || error?.name || 'unknown')}`
+    )
+    return res.status(500).json({
+      success: false,
+      error: 'Error obteniendo conversación del contacto'
+    })
+  } finally {
+    requestScope.cleanup()
+  }
 }

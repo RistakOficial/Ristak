@@ -15,7 +15,10 @@ const migrationsUrl = new URL('../migrations/versioned/', import.meta.url)
 
 async function postgresProjectionMigrationNames() {
   return (await readdir(migrationsUrl))
-    .filter(name => /^(?:095z|096).*chat_activity.*\.postgres\.sql$/.test(name))
+    .filter(name => (
+      /^(?:095z|096).*chat_activity.*\.postgres\.sql$/.test(name) ||
+      /^121a_chat_conversation_cursor\.postgres\.sql$/.test(name)
+    ))
     .sort()
 }
 
@@ -97,6 +100,7 @@ async function createSourceSchema(client) {
 async function applyProjectionMigrations(client) {
   const names = await postgresProjectionMigrationNames()
   assert.ok(names.includes('096a_chat_activity_projection.postgres.sql'))
+  assert.ok(names.includes('121a_chat_conversation_cursor.postgres.sql'))
 
   for (const name of names) {
     const sql = await readFile(new URL(name, migrationsUrl), 'utf8')
@@ -108,6 +112,7 @@ async function applyProjectionMigrations(client) {
 test('migraciones PostgreSQL de Chat separan trabajo concurrente y conservan sentinel/scope', async () => {
   const names = await postgresProjectionMigrationNames()
   assert.ok(names.includes('096a_chat_activity_projection.postgres.sql'))
+  assert.ok(names.includes('121a_chat_conversation_cursor.postgres.sql'))
 
   for (const name of names) {
     const sql = await readFile(new URL(name, migrationsUrl), 'utf8')
@@ -127,6 +132,15 @@ test('migraciones PostgreSQL de Chat separan trabajo concurrente y conservan sen
   assert.match(base, /SKIP LOCKED|chat_projection_version/i)
   assert.match(base, /ristak_chat_unresolved_phone_exists/i)
   assert.doesNotMatch(base, /(?:OLD|NEW)\.phone\s+IN\s*\(msg\.phone/i)
+
+  const conversationCursor = await readFile(
+    new URL('121a_chat_conversation_cursor.postgres.sql', migrationsUrl),
+    'utf8'
+  )
+  assert.match(conversationCursor, /message_sort\s+DESC/i)
+  assert.match(conversationCursor, /whatsapp_api:|meta_social:|email:/i)
+  assert.match(conversationCursor, /COLLATE\s+"C"/i)
+  assert.match(conversationCursor, /CREATE\s+INDEX\s+CONCURRENTLY/i)
 })
 
 test('PostgreSQL real mantiene exactitud incremental y planes proporcionales a pagina', {
@@ -277,6 +291,20 @@ test('PostgreSQL real mantiene exactitud incremental y planes proporcionales a p
         'inbound', 5000000000 + series, 5000000000 + series,
         '2101-01-01 00:00:00'
       FROM generate_series(1, 50000) series;
+
+      -- Fuerza un empate grande de timestamp. El cursor publico necesita ordenar
+      -- por la identidad prefijada, no por created_sort ni por el orden fisico.
+      INSERT INTO chat_message_activity(
+        source_kind, source_message_id, included, contact_id, scope_key, direction,
+        message_sort, created_sort, message_at
+      )
+      SELECT
+        CASE series % 3 WHEN 0 THEN 'whatsapp' WHEN 1 THEN 'meta' ELSE 'email' END,
+        'cursor-message-' || LPAD(series::text, 7, '0'),
+        1, 'identity-direct', 'id:business-a', 'inbound',
+        6000000000, series,
+        '2102-01-01 00:00:00'
+      FROM generate_series(1, 20000) series;
     `)
     await client.query(`ALTER TABLE contacts ENABLE TRIGGER USER`)
     await client.query(`ALTER TABLE whatsapp_api_messages ENABLE TRIGGER USER`)
@@ -460,6 +488,49 @@ test('PostgreSQL real mantiene exactitud incremental y planes proporcionales a p
       'latest/first inbound debe usar ledger indexado sólo para los 50 ranked contacts'
     )
     assert.ok(Number(handlerShapePlan['Execution Time']) < 1000, `handler shape tardo ${handlerShapePlan['Execution Time']}ms`)
+
+    const conversationCursorPlanResult = await client.query(`
+      EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, COSTS OFF)
+      SELECT source_kind, source_message_id
+      FROM chat_message_activity
+      WHERE included = 1
+        AND contact_id = 'identity-direct'
+        AND (
+          message_sort,
+          ((CASE source_kind
+            WHEN 'whatsapp' THEN 'whatsapp_api:' || source_message_id
+            WHEN 'meta' THEN 'meta_social:' || source_message_id
+            WHEN 'email' THEN 'email:' || source_message_id
+            ELSE source_kind || ':' || source_message_id
+          END) COLLATE "C")
+        ) < (
+          6000000001::numeric,
+          'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
+        )
+      ORDER BY
+        message_sort DESC,
+        ((CASE source_kind
+          WHEN 'whatsapp' THEN 'whatsapp_api:' || source_message_id
+          WHEN 'meta' THEN 'meta_social:' || source_message_id
+          WHEN 'email' THEN 'email:' || source_message_id
+          ELSE source_kind || ':' || source_message_id
+        END) COLLATE "C") DESC
+      LIMIT 50
+    `)
+    const conversationCursorPlan = conversationCursorPlanResult.rows[0]['QUERY PLAN'][0]
+    const conversationCursorNodes = collectPlanNodes(conversationCursorPlan.Plan)
+    assert.ok(
+      conversationCursorNodes.some(node => (
+        /Index/.test(node['Node Type'] || '') &&
+        node['Index Name'] === 'idx_chat_message_activity_conversation_cursor'
+      )),
+      `el cursor de conversacion debe usar su indice exacto: ${JSON.stringify(conversationCursorNodes)}`
+    )
+    assert.equal(Number(conversationCursorPlan.Plan['Actual Rows']), 50)
+    assert.ok(
+      Number(conversationCursorPlan['Execution Time']) < 1000,
+      `cursor de conversacion tardo ${conversationCursorPlan['Execution Time']}ms`
+    )
 
     const scopedPlanResult = await client.query(`
       EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON, COSTS OFF)

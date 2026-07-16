@@ -25,9 +25,11 @@ import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversation
 import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
 import { startConversationalAgentPauseExpiryCron } from './jobs/conversationalAgentPauseExpiry.cron.js'
+import { startChatPushDeliveryCron, stopChatPushDeliveryCron } from './jobs/metaDirectChatDelivery.cron.js'
 import { startAutomationReviewProjectionScheduler } from './jobs/automationReviewProjection.cron.js'
 import { startReadModelProjectionMaintenanceScheduler } from './jobs/readModelProjectionMaintenance.cron.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
+import { stopIntegrationCrons } from './jobs/integrationCronRuntime.js'
 import { isMetaConnected, isMetaSocialConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
@@ -723,6 +725,7 @@ async function startRuntimeServices() {
     startConversationalAppointmentTestCleanupCron() // Elimina citas reales de prueba tras cinco minutos
     startConversationalAgentTestAssignmentsCleanup() // Restaura asignaciones temporales y respeta cambios humanos posteriores
     startConversationalAgentPauseExpiryCron() // Reactiva pausas vencidas fuera de los GET de métricas/listados
+    startChatPushDeliveryCron() // Recupera push durable y limpia terminales aunque Meta se desconecte
     startConversationGoalEffectsRecoveryScheduler() // Recupera leases/fallos de metas sin depender de un reinicio
     await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
   }
@@ -764,6 +767,8 @@ function handleShutdown(signal) {
   // No apagar startupState.ready: /health ya falla por shuttingDown, pero los
   // requests normales deben seguir pasando mientras la instancia vieja drena.
   markDeployShutdownStarted()
+  stopChatPushDeliveryCron()
+  stopIntegrationCrons()
   logger.warn(
     `[Shutdown] ${signal} recibido. Drenando ${activeRequests} request(s) activa(s), ` +
       `${activeUploadRequests} upload(s) protegido(s), ${activeDrainAllowedRequests} request(s) critico(s), ` +

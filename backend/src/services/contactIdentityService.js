@@ -266,7 +266,7 @@ async function syncContactPhoneColumns(contactId, canonicalPhone) {
   }
 }
 
-export async function listContactPhoneNumbers(contactId) {
+export async function listContactPhoneNumbers(contactId, options = {}) {
   const id = cleanString(contactId)
   if (!id) return []
 
@@ -275,8 +275,12 @@ export async function listContactPhoneNumbers(contactId) {
      FROM contact_phone_numbers
      WHERE contact_id = ?
      ORDER BY is_primary DESC, created_at ASC, phone ASC`,
-    [id]
-  ).catch(() => [])
+    [id],
+    options?.signal ? { signal: options.signal } : undefined
+  ).catch(error => {
+    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
+    return []
+  })
 
   return rows.map(row => ({
     id: row.id,
@@ -290,7 +294,7 @@ export async function listContactPhoneNumbers(contactId) {
   }))
 }
 
-export async function getContactPhoneValues(contactId, primaryPhone = null) {
+export async function getContactPhoneValues(contactId, primaryPhone = null, options = {}) {
   const values = new Set()
   const addCandidates = (value) => {
     buildPhoneMatchCandidates(value).forEach(candidate => {
@@ -301,7 +305,7 @@ export async function getContactPhoneValues(contactId, primaryPhone = null) {
 
   addCandidates(primaryPhone)
 
-  const rows = await listContactPhoneNumbers(contactId)
+  const rows = await listContactPhoneNumbers(contactId, options)
   rows.forEach(row => addCandidates(row.phone))
 
   return [...values]

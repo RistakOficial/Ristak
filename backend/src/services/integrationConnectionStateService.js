@@ -250,6 +250,37 @@ export async function isWhatsAppApiHistoryBackfillPending() {
     cleanString(raw.whatsapp_api_history_direction_repair_version) !== YCLOUD_HISTORY_BACKFILL_VERSION
 }
 
+export async function isMetaDirectWhatsAppConnected() {
+  const raw = await getAppConfigRows([
+    'whatsapp_api_enabled',
+    'whatsapp_meta_direct_status',
+    'whatsapp_meta_direct_system_user_token_encrypted',
+    'whatsapp_meta_direct_waba_id',
+    'whatsapp_meta_direct_phone_number_id'
+  ])
+  if (
+    !enabledFlag(raw.whatsapp_api_enabled, true) ||
+    cleanString(raw.whatsapp_meta_direct_status).toLowerCase() !== 'connected' ||
+    !cleanString(raw.whatsapp_meta_direct_system_user_token_encrypted) ||
+    !cleanString(raw.whatsapp_meta_direct_waba_id) ||
+    !cleanString(raw.whatsapp_meta_direct_phone_number_id)
+  ) {
+    return false
+  }
+
+  const phone = await db.get(`
+    SELECT id
+    FROM whatsapp_api_phone_numbers
+    WHERE provider = 'meta_direct'
+      AND api_send_enabled = 1
+      AND id = ?
+    LIMIT 1
+  `, [
+    cleanString(raw.whatsapp_meta_direct_phone_number_id)
+  ]).catch(() => null)
+  return Boolean(phone?.id)
+}
+
 export async function isEmailInboundConnected() {
   const rows = await getAppConfigRows([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY])
   const config = parseJson(rows[EMAIL_CONFIG_KEY], null)

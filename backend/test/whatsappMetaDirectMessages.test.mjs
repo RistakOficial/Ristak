@@ -1,19 +1,33 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
+import { getDeployDrainSnapshot } from '../src/utils/deployDrainTracker.js'
 import { getContactConversation } from '../src/controllers/contactsController.js'
 import { markLatestInboundWhatsAppQrMessageReadForContact } from '../src/services/whatsappQrService.js'
 import {
   getWhatsAppApiConfigKeys,
   markLatestInboundWhatsAppApiMessageReadForContact,
   processMetaDirectWebhookPayload,
+  processMetaDirectWebhookRelay,
+  processMetaDirectInboundEnrichmentJob,
   sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTextMessage,
+  setMetaDirectInboundMediaHydratorForTest,
+  setMetaDirectInboundSideEffectsForTest,
   setMetaDirectFetchForTest
 } from '../src/services/whatsappApiService.js'
+import {
+  CHAT_DELIVERY_JOB_KIND,
+  getChatDeliveryJob
+} from '../src/services/chatDeliveryOutboxService.js'
+import {
+  drainMetaDirectChatDeliveryJobs,
+  resetMetaDirectChatDeliveryHandlersForTest,
+  setMetaDirectChatDeliveryHandlersForTest
+} from '../src/jobs/metaDirectChatDelivery.cron.js'
 
 function graphResponse(body, status = 200) {
   return {
@@ -82,6 +96,10 @@ async function readConversation(contactId) {
 
 async function withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, callback) {
   await initializeMasterKey()
+  setMetaDirectChatDeliveryHandlersForTest({
+    connectionChecker: async () => false,
+    pushSender: async () => ({ sent: 1, attempted: 1, retryableFailures: 0 })
+  })
   const keys = getWhatsAppApiConfigKeys()
   const touchedKeys = [
     keys.provider,
@@ -128,6 +146,7 @@ async function withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, ca
         ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value, updated_at = CURRENT_TIMESTAMP
       `, [row.config_key, row.config_value])
     }
+    resetMetaDirectChatDeliveryHandlersForTest()
   }
 }
 
@@ -518,9 +537,606 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
     })
   } finally {
     setMetaDirectFetchForTest(null)
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR detected_source_id = ?', [contactId || '', adId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid IN (?, ?, ?)', [contactId || '', inboundWamid, outboundWamid, failedWamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+  }
+})
+
+test('Meta direct confirma fila y callback antes de hidratar media, luego actualiza la misma burbuja', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_media_phone_${suffix}`
+  const wabaId = `meta_media_waba_${suffix}`
+  const businessPhone = `+1556${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5256${Date.now().toString().slice(-8)}`
+  const wamid = `wamid.meta.media.${suffix}`
+  const mediaId = `meta_media_${suffix}`
+  let contactId = ''
+  let callbackCount = 0
+  let releaseHydration
+  let reportHydrationStarted
+  let hydrationCallCount = 0
+  const hydrationGate = new Promise(resolve => { releaseHydration = resolve })
+  const hydrationStarted = new Promise(resolve => { reportHydrationStarted = resolve })
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      setMetaDirectChatDeliveryHandlersForTest({
+        connectionChecker: async () => false,
+        pushSender: async () => ({ sent: 1 })
+      })
+      setMetaDirectInboundMediaHydratorForTest(async ({ media }) => {
+        hydrationCallCount += 1
+        reportHydrationStarted()
+        await hydrationGate
+        return {
+          ...media,
+          mediaUrl: `/media/assets/${mediaId}/file`,
+          mediaMimeType: 'image/jpeg',
+          mediaFilename: 'foto-meta.jpg'
+        }
+      })
+
+      let resolvePersisted
+      const persisted = new Promise(resolve => { resolvePersisted = resolve })
+      const payload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Media Meta' } }],
+        messages: [{
+          id: wamid,
+          from: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'image',
+          image: { id: mediaId, mime_type: 'image/jpeg', caption: 'Mira esta foto' }
+        }]
+      })
+
+      const processing = processMetaDirectWebhookPayload({
+        payload,
+        eventRowId: `evt-media-${suffix}`,
+        onInboundPersisted: (result) => {
+          callbackCount += 1
+          resolvePersisted(result)
+        }
+      })
+
+      const preliminary = await persisted
+      contactId = preliminary.contactId
+      assert.ok(contactId)
+      assert.equal(preliminary.mediaUrl, '')
+
+      const [completed] = await Promise.race([
+        processing,
+        new Promise((resolve, reject) => setTimeout(
+          () => reject(new Error('El ACK local esperó indebidamente la hidratación de Meta')),
+          250
+        ))
+      ])
+      assert.equal(completed.messageId, preliminary.messageId)
+      assert.equal(completed.mediaUrl, '')
+      assert.equal(hydrationCallCount, 0)
+
+      const beforeHydration = await db.get(
+        'SELECT id, media_url, message_text FROM whatsapp_api_messages WHERE wamid = ?',
+        [wamid]
+      )
+      assert.ok(beforeHydration?.id)
+      assert.equal(beforeHydration.media_url, null)
+      assert.equal(beforeHydration.message_text, 'Mira esta foto')
+      assert.equal(callbackCount, 1)
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM chat_inbound_message_claims WHERE message_id = ?', [beforeHydration.id])).total,
+        1
+      )
+
+      const pendingJob = await getChatDeliveryJob({
+        jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+        messageId: beforeHydration.id
+      })
+      assert.equal(pendingJob?.status, 'pending')
+      assert.doesNotMatch(
+        JSON.stringify(pendingJob?.payload || {}),
+        /system.?user.?token|authorization|secret/i,
+        'el outbox nunca debe persistir credenciales Meta'
+      )
+
+      const draining = drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0
+      })
+      await hydrationStarted
+      releaseHydration()
+      const drainResult = await draining
+      assert.equal(drainResult.completed, 1)
+      assert.equal(hydrationCallCount, 1)
+
+      const afterHydration = await db.get(
+        'SELECT id, media_url, media_mime_type, media_filename FROM whatsapp_api_messages WHERE wamid = ?',
+        [wamid]
+      )
+      assert.deepEqual(afterHydration, {
+        id: beforeHydration.id,
+        media_url: `/media/assets/${mediaId}/file`,
+        media_mime_type: 'image/jpeg',
+        media_filename: 'foto-meta.jpg'
+      })
+
+      await processMetaDirectWebhookPayload({
+        payload,
+        eventRowId: `evt-media-retry-${suffix}`,
+        onInboundPersisted: () => { callbackCount += 1 }
+      })
+      assert.equal(callbackCount, 1)
+      assert.equal(hydrationCallCount, 1)
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE wamid = ?', [wamid])).total,
+        1
+      )
+    })
+  } finally {
+    resetMetaDirectChatDeliveryHandlersForTest()
+    setMetaDirectInboundMediaHydratorForTest(null)
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId || '', wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+  }
+})
+
+test('el relay Meta responde ACK después del claim y antes de descargar media', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_relay_phone_${suffix}`
+  const wabaId = `meta_relay_waba_${suffix}`
+  const businessPhone = `+1559${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5259${Date.now().toString().slice(-8)}`
+  const wamid = `wamid.meta.relay.${suffix}`
+  const mediaId = `meta_relay_media_${suffix}`
+  const licenseKey = `license-${suffix}`
+  const installationId = `installation-${suffix}`
+  let contactId = ''
+  let hydrationCallCount = 0
+  let releaseHydration
+  let reportHydrationStarted
+  let releaseSideEffects
+  let reportSideEffectsStarted
+  const hydrationGate = new Promise(resolve => { releaseHydration = resolve })
+  const hydrationStarted = new Promise(resolve => { reportHydrationStarted = resolve })
+  const sideEffectsGate = new Promise(resolve => { releaseSideEffects = resolve })
+  const sideEffectsStarted = new Promise(resolve => { reportSideEffectsStarted = resolve })
+  const previousIdentity = await db.all(`
+    SELECT config_key, config_value
+    FROM app_config
+    WHERE config_key IN ('license_key', 'installation_id')
+  `)
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      await setAppConfig('license_key', licenseKey)
+      await setAppConfig('installation_id', installationId)
+      setMetaDirectChatDeliveryHandlersForTest({
+        connectionChecker: async () => false,
+        pushSender: async () => ({ sent: 1 })
+      })
+      setMetaDirectInboundSideEffectsForTest(async () => {
+        reportSideEffectsStarted()
+        await sideEffectsGate
+      })
+      setMetaDirectFetchForTest(async () => graphResponse({ data: [] }))
+      setMetaDirectInboundMediaHydratorForTest(async ({ media }) => {
+        hydrationCallCount += 1
+        reportHydrationStarted()
+        await hydrationGate
+        return {
+          ...media,
+          mediaUrl: `/media/assets/${mediaId}/file`,
+          mediaMimeType: 'image/jpeg',
+          mediaFilename: 'relay.jpg'
+        }
+      })
+
+      const payload = {
+        id: `relay-event-${suffix}`,
+        ...webhookEnvelope({
+          wabaId,
+          phoneNumberId,
+          businessPhone,
+          contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Relay Meta' } }],
+          messages: [{
+            id: wamid,
+            from: customerPhone,
+            timestamp: String(Math.floor(Date.now() / 1000)),
+            type: 'image',
+            image: { id: mediaId, mime_type: 'image/jpeg' }
+          }]
+        })
+      }
+      const rawBody = JSON.stringify(payload)
+      const signatureTimestamp = String(Date.now())
+      const signatureNonce = `nonce-${suffix}`
+      const signature = createHmac('sha256', licenseKey)
+        .update(`${signatureTimestamp}.${signatureNonce}.${rawBody}`)
+        .digest('hex')
+
+      const relayResult = await Promise.race([
+        processMetaDirectWebhookRelay({
+          payload,
+          rawBody,
+          headers: { signature, signatureTimestamp, signatureNonce, installationId }
+        }),
+        new Promise((resolve, reject) => setTimeout(
+          () => reject(new Error('El relay no respondió antes de la hidratación')),
+          250
+        ))
+      ])
+      assert.equal(relayResult.processed, true)
+      assert.equal(hydrationCallCount, 0)
+      await sideEffectsStarted
+      assert.equal(getDeployDrainSnapshot().byKind['meta-direct-inbound-side-effects'], 1)
+
+      const stored = await db.get(
+        'SELECT id, contact_id, media_url FROM whatsapp_api_messages WHERE wamid = ?',
+        [wamid]
+      )
+      assert.ok(stored?.id)
+      contactId = stored.contact_id
+      assert.equal(stored.media_url, null)
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM chat_inbound_message_claims WHERE message_id = ?', [stored.id])).total,
+        1
+      )
+      assert.equal(
+        (await getChatDeliveryJob({
+          jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+          messageId: stored.id
+        }))?.status,
+        'pending'
+      )
+
+      const draining = drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0
+      })
+      await hydrationStarted
+      assert.equal(hydrationCallCount, 1)
+      releaseHydration()
+      assert.equal((await draining).completed, 1)
+      releaseSideEffects()
+      await new Promise(resolve => setImmediate(resolve))
+    })
+  } finally {
+    releaseHydration?.()
+    releaseSideEffects?.()
+    resetMetaDirectChatDeliveryHandlersForTest()
+    setMetaDirectInboundSideEffectsForTest(null)
+    setMetaDirectInboundMediaHydratorForTest(null)
+    setMetaDirectFetchForTest(null)
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_webhook_events WHERE id = ?', [`relay-event-${suffix}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_meta_direct_nonces WHERE nonce = ?', [`nonce-${suffix}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId || '', wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run("DELETE FROM app_config WHERE config_key IN ('license_key', 'installation_id')")
+    for (const row of previousIdentity) {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(config_key) DO UPDATE SET config_value = excluded.config_value, updated_at = CURRENT_TIMESTAMP
+      `, [row.config_key, row.config_value])
+    }
+  }
+})
+
+test('enrichment reconstruye attribution si el worker encuentra la fila base ausente', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_attr_race_phone_${suffix}`
+  const wabaId = `meta_attr_race_waba_${suffix}`
+  const businessPhone = `+1560${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5260${Date.now().toString().slice(-8)}`
+  const wamid = `wamid.meta.attr.race.${suffix}`
+  const adId = `ad-race-${suffix}`
+  let contactId = ''
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      setMetaDirectChatDeliveryHandlersForTest({
+        connectionChecker: async () => false,
+        pushSender: async () => ({ sent: 1 })
+      })
+      const payload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Attribution Race' } }],
+        messages: [{
+          id: wamid,
+          from: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'text',
+          text: { body: 'Vengo del anuncio' },
+          referral: {
+            source_id: adId,
+            source_type: 'ad',
+            headline: 'Anuncio durable',
+            image_url: 'https://example.test/preview-no-remoto.jpg'
+          }
+        }]
+      })
+      const [result] = await processMetaDirectWebhookPayload({
+        payload,
+        eventRowId: `evt-attr-race-${suffix}`
+      })
+      contactId = result.contactId
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ?', [result.messageId])).total,
+        1,
+        'la attribution base debe confirmarse dentro del mismo commit que el outbox'
+      )
+
+      await db.run('DELETE FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ?', [result.messageId])
+      const drained = await drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0
+      })
+      assert.equal(drained.completed, 1)
+      const rebuilt = await db.get(`
+        SELECT detected_source_id, detected_headline
+        FROM whatsapp_api_attribution
+        WHERE whatsapp_api_message_id = ?
+      `, [result.messageId])
+      assert.deepEqual(rebuilt, {
+        detected_source_id: adId,
+        detected_headline: 'Anuncio durable'
+      })
+    })
+  } finally {
+    resetMetaDirectChatDeliveryHandlersForTest()
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ? OR detected_source_id = ?', [contactId || '', adId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId || '', wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+  }
+})
+
+test('retry de media Meta recupera la misma fila sin duplicar claim ni callback push', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_media_retry_phone_${suffix}`
+  const wabaId = `meta_media_retry_waba_${suffix}`
+  const businessPhone = `+1557${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5257${Date.now().toString().slice(-8)}`
+  const wamid = `wamid.meta.media.retry.${suffix}`
+  const mediaId = `meta_media_retry_${suffix}`
+  let contactId = ''
+  let callbackCount = 0
+  let hydrationCallCount = 0
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      setMetaDirectChatDeliveryHandlersForTest({
+        connectionChecker: async () => false,
+        pushSender: async () => ({ sent: 1 })
+      })
+      const payload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Retry Meta' } }],
+        messages: [{
+          id: wamid,
+          from: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'document',
+          document: { id: mediaId, mime_type: 'application/pdf', filename: 'cotizacion.pdf' }
+        }]
+      })
+
+      setMetaDirectInboundMediaHydratorForTest(async () => {
+        hydrationCallCount += 1
+        throw new Error('Graph temporalmente no disponible')
+      })
+      const [acknowledged] = await processMetaDirectWebhookPayload({
+        payload,
+        eventRowId: `evt-media-failed-${suffix}`,
+        onInboundPersisted: (result) => {
+          callbackCount += 1
+          contactId = result.contactId
+        }
+      })
+      assert.ok(acknowledged.messageId)
+
+      const firstRow = await db.get(
+        'SELECT id, contact_id, media_url FROM whatsapp_api_messages WHERE wamid = ?',
+        [wamid]
+      )
+      assert.ok(firstRow?.id)
+      contactId = firstRow.contact_id
+      assert.equal(firstRow.media_url, null)
+      assert.equal(callbackCount, 1)
+
+      const failedDrain = await drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0,
+        maxJobs: 1
+      })
+      assert.equal(failedDrain.failed, 1)
+      const pendingRetry = await getChatDeliveryJob({
+        jobKind: CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT,
+        messageId: firstRow.id
+      })
+      assert.equal(pendingRetry?.status, 'pending')
+      assert.match(pendingRetry?.last_error || '', /Graph temporalmente no disponible/)
+
+      setMetaDirectInboundMediaHydratorForTest(async ({ media }) => {
+        hydrationCallCount += 1
+        return {
+          ...media,
+          mediaUrl: `/media/assets/${mediaId}/file`,
+          mediaMimeType: 'application/pdf',
+          mediaFilename: 'cotizacion.pdf'
+        }
+      })
+      const recoveredDrain = await drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0
+      })
+      assert.equal(recoveredDrain.completed, 1)
+
+      const [retried] = await processMetaDirectWebhookPayload({
+        payload,
+        eventRowId: `evt-media-retry-${suffix}`,
+        onInboundPersisted: () => { callbackCount += 1 }
+      })
+
+      assert.equal(retried.messageId, firstRow.id)
+      assert.equal(retried.isNew, false)
+      assert.equal(retried.mediaUrl, `/media/assets/${mediaId}/file`)
+      assert.equal(callbackCount, 1)
+      assert.equal(hydrationCallCount, 2)
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE wamid = ?', [wamid])).total,
+        1
+      )
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM chat_inbound_message_claims WHERE message_id = ?', [firstRow.id])).total,
+        1
+      )
+    })
+  } finally {
+    resetMetaDirectChatDeliveryHandlersForTest()
+    setMetaDirectInboundMediaHydratorForTest(null)
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId || '', wamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+  }
+})
+
+test('duplicados concurrentes Meta crean un solo job y una sola hidratación durable', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_media_concurrent_phone_${suffix}`
+  const wabaId = `meta_media_concurrent_waba_${suffix}`
+  const businessPhone = `+1558${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5258${Date.now().toString().slice(-8)}`
+  const wamid = `wamid.meta.media.concurrent.${suffix}`
+  const mediaId = `meta_media_concurrent_${suffix}`
+  let contactId = ''
+  let callbackCount = 0
+  let hydrationCallCount = 0
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      setMetaDirectChatDeliveryHandlersForTest({
+        connectionChecker: async () => false,
+        pushSender: async () => ({ sent: 1 })
+      })
+      setMetaDirectInboundMediaHydratorForTest(async ({ media }) => {
+        hydrationCallCount += 1
+        return {
+          ...media,
+          mediaUrl: `/media/assets/${mediaId}/file`,
+          mediaMimeType: 'image/jpeg',
+          mediaFilename: 'concurrente.jpg'
+        }
+      })
+
+      const payload = webhookEnvelope({
+        wabaId,
+        phoneNumberId,
+        businessPhone,
+        contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Concurrente Meta' } }],
+        messages: [{
+          id: wamid,
+          from: customerPhone,
+          timestamp: String(Math.floor(Date.now() / 1000)),
+          type: 'image',
+          image: { id: mediaId, mime_type: 'image/jpeg' }
+        }]
+      })
+
+      const [firstResults, secondResults] = await Promise.all([
+        processMetaDirectWebhookPayload({
+          payload,
+          eventRowId: `evt-concurrent-a-${suffix}`,
+          onInboundPersisted: result => {
+            callbackCount += 1
+            contactId = result.contactId
+          }
+        }),
+        processMetaDirectWebhookPayload({
+          payload,
+          eventRowId: `evt-concurrent-b-${suffix}`,
+          onInboundPersisted: result => {
+            callbackCount += 1
+            contactId = result.contactId
+          }
+        })
+      ])
+
+      const messageId = firstResults[0]?.messageId || secondResults[0]?.messageId
+      contactId = firstResults[0]?.contactId || secondResults[0]?.contactId || contactId
+      assert.ok(messageId)
+      assert.equal(callbackCount, 1)
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_messages WHERE wamid = ?', [wamid])).total,
+        1
+      )
+      assert.equal(
+        (await db.get('SELECT COUNT(*) AS total FROM chat_inbound_message_claims WHERE message_id = ?', [messageId])).total,
+        1
+      )
+      assert.equal(
+        (await db.get(`
+          SELECT COUNT(*) AS total
+          FROM chat_delivery_outbox
+          WHERE job_kind = 'meta_enrichment' AND message_id = ?
+        `, [messageId])).total,
+        1
+      )
+
+      const drained = await drainMetaDirectChatDeliveryJobs({
+        requireConnected: false,
+        jobKinds: [CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT],
+        retryDelayMs: 0
+      })
+      assert.equal(drained.completed, 1)
+      assert.equal(hydrationCallCount, 1)
+
+      const rerun = await processMetaDirectInboundEnrichmentJob({
+        messageId,
+        payload: {
+          attribution: {},
+          shouldHydrateAttributionPreview: false,
+          hasMedia: true,
+          businessPhoneNumberId: phoneNumberId
+        }
+      })
+      assert.equal(rerun.changed, false)
+      assert.equal(hydrationCallCount, 1, 'un mensaje ya hidratado debe ser no-op')
+    })
+  } finally {
+    resetMetaDirectChatDeliveryHandlersForTest()
+    setMetaDirectInboundMediaHydratorForTest(null)
+    await db.run('DELETE FROM chat_delivery_outbox WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR wamid = ?', [contactId || '', wamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
     await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)

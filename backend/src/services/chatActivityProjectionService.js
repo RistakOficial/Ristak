@@ -20,12 +20,15 @@ function placeholders(values) {
   return values.map(() => '?').join(', ')
 }
 
-export async function readChatActivityProjectionState(database = db) {
+export async function readChatActivityProjectionState(database = db, options = {}) {
   return database.get(`
     SELECT singleton_id, projection_version, status, revision, last_error
     FROM chat_activity_projection_state
     WHERE singleton_id = 1
-  `).catch(() => null)
+  `, [], options?.signal ? { signal: options.signal } : undefined).catch(error => {
+    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
+    return null
+  })
 }
 
 function chatActivityProjectionStateIsReady(state) {
@@ -67,8 +70,8 @@ export async function isChatActivityProjectionReady() {
   }
 }
 
-export async function getChatActivityProjectionStatus() {
-  const state = await readChatActivityProjectionState()
+export async function getChatActivityProjectionStatus(options = {}) {
+  const state = await readChatActivityProjectionState(db, options)
   if (!state || Number(state.projection_version) !== CHAT_ACTIVITY_PROJECTION_VERSION) {
     return { available: false, ready: false, status: 'unavailable' }
   }

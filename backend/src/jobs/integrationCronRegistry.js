@@ -9,6 +9,7 @@ import {
   isMetaSocialConnected,
   isRebillConnected,
   isStripeConnected,
+  isMetaDirectWhatsAppConnected,
   isWhatsAppApiHistoryBackfillPending,
   isWhatsAppQrConnected
 } from '../services/integrationConnectionStateService.js'
@@ -31,6 +32,7 @@ import { startMetaVersionCron, stopMetaVersionCron } from './metaVersionCron.js'
 import { startRebillPaymentPlansCron, stopRebillPaymentPlansCron } from './rebillPaymentPlans.cron.js'
 import { startStripePaymentPlansCron, stopStripePaymentPlansCron } from './stripePaymentPlans.cron.js'
 import { startWhatsAppApiHistoryBackfillCron, stopWhatsAppApiHistoryBackfillCron } from './whatsappApiHistoryBackfill.cron.js'
+import { startMetaDirectChatDeliveryCron, stopMetaDirectChatDeliveryCron } from './metaDirectChatDelivery.cron.js'
 import { startWhatsAppQrWatchdogCron, stopWhatsAppQrWatchdogCron } from './whatsappQrWatchdog.cron.js'
 import {
   registerIntegrationCron,
@@ -141,6 +143,15 @@ export function registerIntegrationCrons() {
     isEnabled: isWhatsAppApiHistoryBackfillPending,
     start: startWhatsAppApiHistoryBackfillCron,
     stop: stopWhatsAppApiHistoryBackfillCron
+  })
+
+  registerIntegrationCron({
+    name: 'meta-direct-chat-delivery',
+    label: 'WhatsApp Meta directo: enriquecimiento de media',
+    provider: 'whatsapp-api',
+    isEnabled: isMetaDirectWhatsAppConnected,
+    start: startMetaDirectChatDeliveryCron,
+    stop: stopMetaDirectChatDeliveryCron
   })
 
   registerIntegrationCron({

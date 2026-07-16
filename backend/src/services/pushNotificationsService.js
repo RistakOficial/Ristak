@@ -57,9 +57,14 @@ const ANDROID_CHANNELS = {
   silent: 'ristak_silent'
 }
 let appNotificationPayloadSenderForTest = null
+let contactVisibilityCheckerForTest = null
 
 export function setAppNotificationPayloadSenderForTest(sender) {
   appNotificationPayloadSenderForTest = typeof sender === 'function' ? sender : null
+}
+
+export function setPushContactVisibilityCheckerForTest(checker) {
+  contactVisibilityCheckerForTest = typeof checker === 'function' ? checker : null
 }
 
 async function resolveWebPushKeys() {
@@ -126,9 +131,88 @@ const fcmConfigured = Boolean(FCM_PROJECT_ID && (FCM_SERVICE_ACCOUNT_JSON || FCM
 const apnsConfigured = Boolean(APNS_KEY_ID && APNS_TEAM_ID && APNS_BUNDLE_ID && (APNS_PRIVATE_KEY || APNS_PRIVATE_KEY_FILE))
 const nativePushConfigured = fcmConfigured || apnsConfigured
 const CENTRAL_MOBILE_PUSH_STATUS_TTL_MS = 60_000
+const DEFAULT_NATIVE_PUSH_PROVIDER_TIMEOUT_MS = 8_000
+let nativePushProviderTimeoutMs = DEFAULT_NATIVE_PUSH_PROVIDER_TIMEOUT_MS
+let pushProviderFetch = (...args) => fetch(...args)
+let webPushSendNotification = (...args) => webPush.sendNotification(...args)
 let fcmAccessTokenCache = { token: '', expiresAt: 0 }
 let apnsJwtCache = { token: '', expiresAt: 0 }
 let centralMobilePushStatusCache = { status: null, expiresAt: 0 }
+
+async function fetchPushProvider(url, options = {}, consumeResponse = null) {
+  const controller = new AbortController()
+  let timeoutId = null
+  const timeoutPromise = new Promise((resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort()
+      const timeoutError = new Error(`Proveedor push excedió ${nativePushProviderTimeoutMs} ms`)
+      timeoutError.code = 'push_provider_timeout'
+      reject(timeoutError)
+    }, nativePushProviderTimeoutMs)
+  })
+  const requestPromise = Promise.resolve().then(async () => {
+    const response = await pushProviderFetch(url, {
+      ...options,
+      signal: controller.signal
+    })
+    return typeof consumeResponse === 'function'
+      ? consumeResponse(response)
+      : response
+  })
+  try {
+    return await Promise.race([requestPromise, timeoutPromise])
+  } catch (error) {
+    if (controller.signal.aborted && error?.code !== 'push_provider_timeout') {
+      const timeoutError = new Error(`Proveedor push excedió ${nativePushProviderTimeoutMs} ms`)
+      timeoutError.code = 'push_provider_timeout'
+      throw timeoutError
+    }
+    throw error
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+}
+
+async function fetchPushProviderJson(url, options = {}) {
+  return fetchPushProvider(url, options, async response => {
+    let data = {}
+    try {
+      data = await response.json()
+    } catch (error) {
+      if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
+      if (response?.ok) {
+        const invalidResponseError = new Error(
+          `Proveedor push respondió ${response?.status || '2xx'} con JSON inválido`
+        )
+        invalidResponseError.code = 'push_provider_invalid_response'
+        invalidResponseError.retryable = true
+        invalidResponseError.cause = error
+        throw invalidResponseError
+      }
+    }
+    return { response, data }
+  })
+}
+
+export function setPushProviderTransportForTest({ fetchImpl = null, webPushImpl = null, timeoutMs = null } = {}) {
+  pushProviderFetch = typeof fetchImpl === 'function' ? fetchImpl : (...args) => fetch(...args)
+  webPushSendNotification = typeof webPushImpl === 'function'
+    ? webPushImpl
+    : (...args) => webPush.sendNotification(...args)
+  nativePushProviderTimeoutMs = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    ? Number(timeoutMs)
+    : DEFAULT_NATIVE_PUSH_PROVIDER_TIMEOUT_MS
+}
+
+export function resetPushProviderTransportForTest() {
+  pushProviderFetch = (...args) => fetch(...args)
+  webPushSendNotification = (...args) => webPush.sendNotification(...args)
+  nativePushProviderTimeoutMs = DEFAULT_NATIVE_PUSH_PROVIDER_TIMEOUT_MS
+}
+
+export async function fetchPushProviderJsonForTest(url, options = {}) {
+  return fetchPushProviderJson(url, options)
+}
 const APP_NAME_TEXT_PATTERN = '(?:Ristak|Ristack|Reistak|Reistack)'
 const APP_NAME_NOTIFICATION_TEXTS = new Set([
   'ristak',
@@ -251,13 +335,15 @@ function safeJsonParse(value, fallback) {
   }
 }
 
-function emptyCentralMobilePushStatus(reason = '') {
+function emptyCentralMobilePushStatus(reason = '', { transientFailure = false } = {}) {
   return {
     configured: false,
     nativeConfigured: false,
     iosConfigured: false,
     androidConfigured: false,
-    reason
+    reason,
+    status: transientFailure ? 'unknown' : 'known',
+    transientFailure
   }
 }
 
@@ -276,7 +362,9 @@ async function getCentralMobilePushStatusCached({ force = false } = {}) {
       iosConfigured: status?.iosConfigured === true || status?.ios?.configured === true,
       androidConfigured: status?.androidConfigured === true || status?.android?.configured === true,
       ios: status?.ios || null,
-      android: status?.android || null
+      android: status?.android || null,
+      status: 'known',
+      transientFailure: false
     }
     centralMobilePushStatusCache = {
       status: normalized,
@@ -284,7 +372,15 @@ async function getCentralMobilePushStatusCached({ force = false } = {}) {
     }
     return normalized
   } catch (error) {
-    const status = emptyCentralMobilePushStatus('central_unavailable')
+    const staleStatus = centralMobilePushStatusCache.status
+    const status = staleStatus
+      ? {
+          ...staleStatus,
+          reason: 'central_unavailable_stale',
+          status: 'stale',
+          transientFailure: true
+        }
+      : emptyCentralMobilePushStatus('central_unavailable', { transientFailure: true })
     centralMobilePushStatusCache = {
       status,
       expiresAt: Date.now() + Math.min(10_000, CENTRAL_MOBILE_PUSH_STATUS_TTL_MS)
@@ -292,6 +388,10 @@ async function getCentralMobilePushStatusCached({ force = false } = {}) {
     logger.warn(`[Push] No se pudo leer push movil central: ${error.message}`)
     return status
   }
+}
+
+export function resetCentralMobilePushStatusCacheForTest() {
+  centralMobilePushStatusCache = { status: null, expiresAt: 0 }
 }
 
 async function getEffectivePushTransportStatus() {
@@ -318,6 +418,16 @@ function normalizeCalendarIds(value = []) {
 function normalizeUserIds(value = []) {
   if (!Array.isArray(value)) return []
   return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))]
+}
+
+function normalizeDeliveryTargets(value = {}) {
+  const normalizeIds = ids => Array.isArray(ids)
+    ? [...new Set(ids.map(item => String(item || '').trim()).filter(Boolean))]
+    : []
+  return {
+    webSubscriptionIds: normalizeIds(value?.webSubscriptionIds),
+    mobileDeviceIds: normalizeIds(value?.mobileDeviceIds)
+  }
 }
 
 function normalizePlatform(value = '') {
@@ -431,7 +541,7 @@ async function getFcmAccessToken() {
     algorithm: 'RSA-SHA256'
   })
 
-  const response = await fetch('https://oauth2.googleapis.com/token', {
+  const { response, data } = await fetchPushProviderJson('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -440,7 +550,6 @@ async function getFcmAccessToken() {
     })
   })
 
-  const data = await response.json().catch(() => ({}))
   if (!response.ok || !data.access_token) {
     throw new Error(data.error_description || data.error || 'No se pudo obtener permiso FCM')
   }
@@ -1553,6 +1662,14 @@ function getNotificationThreadId(payload = {}) {
   return threadId.slice(0, 64) || 'ristak'
 }
 
+function getNotificationCollapseId(payload = {}) {
+  const raw = cleanNotificationText(payload.messageId || payload.tag || payload.eventKey || '')
+  if (!raw) return ''
+  const ascii = raw.replace(/[^a-z0-9._-]+/gi, '_')
+  if (ascii.length <= 64) return ascii
+  return `ristak_${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 56)}`
+}
+
 function getApnsCategory(payload = {}) {
   return getNotificationCategory(payload)
     .replace(/[^a-z0-9_]+/gi, '_')
@@ -1733,14 +1850,14 @@ async function getSubscriptionsForCalendar(calendarId) {
 }
 
 async function getEnabledSubscriptions(userIds = null) {
-  const rows = await db.all(`
+  const normalizedUserIds = Array.isArray(userIds) ? normalizeUserIds(userIds) : null
+  if (normalizedUserIds && normalizedUserIds.length === 0) return []
+  return db.all(`
     SELECT id, user_id, endpoint, subscription_json
     FROM push_subscriptions
     WHERE enabled = 1
-  `)
-  if (!Array.isArray(userIds)) return rows
-  const allowed = new Set(normalizeUserIds(userIds))
-  return rows.filter((row) => allowed.has(String(row.user_id || '').trim()))
+      ${normalizedUserIds ? `AND user_id IN (${normalizedUserIds.map(() => '?').join(', ')})` : ''}
+  `, normalizedUserIds || [])
 }
 
 async function getMobileDevicesForCalendar(calendarId) {
@@ -1757,19 +1874,18 @@ async function getMobileDevicesForCalendar(calendarId) {
 }
 
 async function getEnabledMobileDevices(userIds = null) {
-  const rows = await db.all(`
+  const normalizedUserIds = Array.isArray(userIds) ? normalizeUserIds(userIds) : null
+  if (normalizedUserIds && normalizedUserIds.length === 0) return []
+  return db.all(`
     SELECT id, user_id, platform, token, client_type, app_package, calendar_ids_json
     FROM mobile_push_devices
     WHERE enabled = 1
-  `)
-  if (!Array.isArray(userIds)) return rows
-  const allowed = new Set(normalizeUserIds(userIds))
-  return rows.filter((row) => allowed.has(String(row.user_id || '').trim()))
+      ${normalizedUserIds ? `AND user_id IN (${normalizedUserIds.map(() => '?').join(', ')})` : ''}
+  `, normalizedUserIds || [])
 }
 
 async function markSubscriptionError(row, error) {
-  const statusCode = error?.statusCode || error?.status
-  const shouldDisable = statusCode === 404 || statusCode === 410
+  const shouldDisable = isPermanentWebPushError(error)
 
   await db.run(
     `UPDATE push_subscriptions
@@ -1779,15 +1895,24 @@ async function markSubscriptionError(row, error) {
   ).catch(() => {})
 }
 
+function isPermanentWebPushError(error) {
+  const statusCode = Number(error?.statusCode || error?.status || 0)
+  return statusCode === 404 || statusCode === 410
+}
+
+function isPermanentMobilePushError(error) {
+  const reason = [error?.code, error?.reason, error?.errorCode, error?.error]
+    .map(value => String(value || '').toUpperCase().replace(/[^A-Z0-9]+/g, ''))
+    .filter(Boolean)
+    .join(' ')
+  return reason.includes('UNREGISTERED') ||
+    reason.includes('BADDEVICETOKEN') ||
+    reason.includes('DEVICENOTREGISTERED') ||
+    reason.includes('REGISTRATIONTOKENNOTREGISTERED')
+}
+
 async function markMobileDeviceError(row, error) {
-  const statusCode = error?.statusCode || error?.status
-  const code = String(error?.code || error?.reason || '').toUpperCase()
-  const shouldDisable = statusCode === 400 ||
-    statusCode === 404 ||
-    statusCode === 410 ||
-    code.includes('UNREGISTERED') ||
-    code.includes('BADDEVICETOKEN') ||
-    code.includes('UNREGISTERED')
+  const shouldDisable = isPermanentMobilePushError(error)
 
   await db.run(
     `UPDATE mobile_push_devices
@@ -1799,26 +1924,54 @@ async function markMobileDeviceError(row, error) {
 
 async function sendNotificationRows(rows = [], payload = {}) {
   let sent = 0
+  let retryableFailures = 0
+  let permanentFailures = 0
+  const retrySubscriptionIds = []
   await Promise.all(rows.map(async (row) => {
     const subscription = safeJsonParse(row.subscription_json, null)
-    if (!subscription) return
+    if (!subscription) {
+      permanentFailures += 1
+      await markSubscriptionError(row, {
+        statusCode: 410,
+        message: 'Suscripción web push corrupta'
+      })
+      return
+    }
 
     try {
-      await webPush.sendNotification(subscription, JSON.stringify(payload))
+      await webPushSendNotification(subscription, JSON.stringify(payload), {
+        timeout: nativePushProviderTimeoutMs
+      })
       sent += 1
     } catch (error) {
+      if (isPermanentWebPushError(error)) permanentFailures += 1
+      else {
+        retryableFailures += 1
+        retrySubscriptionIds.push(String(row.id))
+      }
       logger.warn(`[Push] No se pudo enviar notificación a ${row.id}: ${error.message}`)
       await markSubscriptionError(row, error)
     }
   }))
 
-  return sent
+  return {
+    sent,
+    attempted: rows.length,
+    retryableFailures,
+    permanentFailures,
+    acceptedSkips: 0,
+    retryTargets: {
+      webSubscriptionIds: [...new Set(retrySubscriptionIds.filter(Boolean))],
+      mobileDeviceIds: []
+    }
+  }
 }
 
 export function buildFcmMessageBody(row, payload = {}, experience = {}) {
   const notificationTitle = getNotificationTitle(payload)
   const notificationBody = getNotificationBody(payload)
   const channelId = getAndroidChannelId(experience)
+  const collapseId = getNotificationCollapseId(payload) || getNotificationThreadId(payload)
   const data = {
     ...getNotificationData(payload),
     title: notificationTitle,
@@ -1834,7 +1987,7 @@ export function buildFcmMessageBody(row, payload = {}, experience = {}) {
     data,
     android: {
       priority: 'HIGH',
-      collapse_key: getNotificationThreadId(payload)
+      collapse_key: collapseId
     }
   }
 
@@ -1845,7 +1998,7 @@ export function buildFcmMessageBody(row, payload = {}, experience = {}) {
     }
     message.android.notification = {
       channel_id: channelId,
-      tag: getNotificationThreadId(payload),
+      tag: collapseId,
       notification_priority: 'PRIORITY_HIGH'
     }
   }
@@ -1863,20 +2016,22 @@ async function sendFcmNotification(row, payload = {}, experience = {}) {
   }
 
   const accessToken = await getFcmAccessToken()
-  const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify(buildFcmMessageBody(row, payload, experience))
-  })
+  const { response, data } = await fetchPushProviderJson(
+    `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(buildFcmMessageBody(row, payload, experience))
+    }
+  )
 
-  const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     const error = new Error(data?.error?.message || `FCM respondió ${response.status}`)
     error.statusCode = response.status
-    error.code = data?.error?.status || data?.error?.details?.[0]?.errorCode || ''
+    error.code = data?.error?.details?.find?.(detail => detail?.errorCode)?.errorCode || data?.error?.status || ''
     throw error
   }
 }
@@ -1918,6 +2073,7 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
   return new Promise((resolve, reject) => {
     let statusCode = 0
     let responseText = ''
+    let settled = false
     const request = client.request({
       ':method': 'POST',
       ':path': `/3/device/${row.token}`,
@@ -1925,9 +2081,29 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
       'apns-topic': APNS_BUNDLE_ID,
       'apns-push-type': 'alert',
       'apns-priority': '10',
+      ...(getNotificationCollapseId(payload) ? { 'apns-collapse-id': getNotificationCollapseId(payload) } : {}),
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(requestBody)
     })
+
+    const finish = (error = null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (error) {
+        client.destroy()
+        reject(error)
+        return
+      }
+      client.close()
+      resolve()
+    }
+    const timeout = setTimeout(() => {
+      const error = new Error(`APNs excedió ${nativePushProviderTimeoutMs} ms`)
+      error.code = 'push_provider_timeout'
+      request.close()
+      finish(error)
+    }, nativePushProviderTimeoutMs)
 
     request.setEncoding('utf8')
     request.on('response', (headers) => {
@@ -1937,13 +2113,11 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
       responseText += chunk
     })
     request.on('error', (error) => {
-      client.close()
-      reject(error)
+      finish(error)
     })
     request.on('end', () => {
-      client.close()
       if (statusCode >= 200 && statusCode < 300) {
-        resolve()
+        finish()
         return
       }
 
@@ -1956,8 +2130,9 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
       const error = new Error(parsed.reason || `APNs respondió ${statusCode}`)
       error.statusCode = statusCode
       error.reason = parsed.reason || ''
-      reject(error)
+      finish(error)
     })
+    client.on('error', finish)
 
     request.end(requestBody)
   })
@@ -1973,17 +2148,27 @@ async function resolveExperienceForRow(experience, row) {
 }
 
 function shouldDisableMobileDeviceFromCentralResult(result = {}) {
-  const statusCode = Number(result.statusCode || result.status || 0)
-  const reason = String(result.reason || result.error || '').toUpperCase()
-  return statusCode === 400 ||
-    statusCode === 404 ||
-    statusCode === 410 ||
-    reason.includes('BADDEVICETOKEN') ||
-    reason.includes('UNREGISTERED')
+  return isPermanentMobilePushError(result)
+}
+
+function isRetryableCentralMobilePushSkip(result = {}) {
+  const reason = String(result?.reason || result?.error || result?.code || '')
+    .trim()
+    .toLowerCase()
+  return reason === 'apns_not_configured' ||
+    reason === 'fcm_not_configured' ||
+    reason === 'mobile_push_not_configured'
 }
 
 async function markCentralMobileDeviceResults(rowsById, results = []) {
-  await Promise.all(results.map(async (result) => {
+  const seenIds = new Set()
+  const uniqueResults = results.filter(result => {
+    const id = String(result?.id || '').trim()
+    if (!id || seenIds.has(id)) return false
+    seenIds.add(id)
+    return true
+  })
+  await Promise.all(uniqueResults.map(async (result) => {
     if (result?.success || result?.skipped) return
     const row = rowsById.get(String(result?.id || '').trim())
     if (!row) return
@@ -2002,6 +2187,11 @@ async function markCentralMobileDeviceResults(rowsById, results = []) {
 
 async function sendMobileNotificationRows(rows = [], payload = {}, experience = {}, transport = {}) {
   let sent = 0
+  let attempted = 0
+  let retryableFailures = 0
+  let permanentFailures = 0
+  let acceptedSkips = 0
+  const retryMobileDeviceIds = []
   const centralDevices = []
   const centralRowsById = new Map()
 
@@ -2029,36 +2219,109 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
       return
     }
 
-    if (platform === 'android' && !fcmConfigured) return
-    if (platform === 'ios' && !apnsConfigured) return
+    if (platform === 'android' && !fcmConfigured) {
+      if (transport?.central?.transientFailure === true) {
+        attempted += 1
+        retryableFailures += 1
+        retryMobileDeviceIds.push(String(row.id))
+      }
+      return
+    }
+    if (platform === 'ios' && !apnsConfigured) {
+      if (transport?.central?.transientFailure === true) {
+        attempted += 1
+        retryableFailures += 1
+        retryMobileDeviceIds.push(String(row.id))
+      }
+      return
+    }
 
     try {
       if (platform === 'android') {
+        attempted += 1
         await sendFcmNotification(row, payload, rowExperience)
       } else if (platform === 'ios') {
+        attempted += 1
         await sendApnsNotification(row, payload, rowExperience)
       } else {
         return
       }
       sent += 1
     } catch (error) {
+      if (isPermanentMobilePushError(error)) permanentFailures += 1
+      else {
+        retryableFailures += 1
+        retryMobileDeviceIds.push(String(row.id))
+      }
       logger.warn(`[Push] No se pudo enviar notificación nativa a ${row.id}: ${error.message}`)
       await markMobileDeviceError(row, error)
     }
   }))
 
   if (centralDevices.length > 0) {
+    attempted += centralDevices.length
     try {
       const result = await sendCentralMobilePushNotifications({ devices: centralDevices, payload })
-      sent += Number(result?.sent || 0)
-      await markCentralMobileDeviceResults(centralRowsById, Array.isArray(result?.results) ? result.results : [])
+      const centralSent = Math.min(centralDevices.length, Math.max(0, Number(result?.sent || 0)))
+      sent += centralSent
+      const centralResults = Array.isArray(result?.results) ? result.results : []
+      await markCentralMobileDeviceResults(centralRowsById, centralResults)
+      if (centralResults.length) {
+        const seenIds = new Set()
+        for (const centralResult of centralResults) {
+          const id = String(centralResult?.id || '').trim()
+          if (!id || !centralRowsById.has(id) || seenIds.has(id)) continue
+          seenIds.add(id)
+          if (centralResult?.success) {
+            continue
+          }
+          if (centralResult?.skipped) {
+            if (isRetryableCentralMobilePushSkip(centralResult)) {
+              retryableFailures += 1
+              retryMobileDeviceIds.push(id)
+            } else {
+              acceptedSkips += 1
+            }
+            continue
+          }
+          if (isPermanentMobilePushError(centralResult)) permanentFailures += 1
+          else {
+            retryableFailures += 1
+            retryMobileDeviceIds.push(id)
+          }
+        }
+        for (const device of centralDevices) {
+          const id = String(device.id || '').trim()
+          if (seenIds.has(id)) continue
+          // Un total agregado no identifica qué target fue aceptado. Reintentar los
+          // IDs omitidos conserva at-least-once sin volver a tocar éxitos conocidos.
+          retryableFailures += 1
+          retryMobileDeviceIds.push(id)
+        }
+      } else if (centralSent < centralDevices.length) {
+        // Sin resultados por target, un parcial es ambiguo: se reintentan todos.
+        retryableFailures += centralDevices.length
+        retryMobileDeviceIds.push(...centralDevices.map(device => String(device.id)))
+      }
     } catch (error) {
+      retryableFailures += centralDevices.length
+      retryMobileDeviceIds.push(...centralDevices.map(device => String(device.id)))
       logger.warn(`[Push] No se pudo enviar notificacion nativa por Installer central: ${error.message}`)
       await Promise.all(Array.from(centralRowsById.values()).map((row) => markMobileDeviceError(row, error)))
     }
   }
 
-  return sent
+  return {
+    sent,
+    attempted,
+    retryableFailures,
+    permanentFailures,
+    acceptedSkips,
+    retryTargets: {
+      webSubscriptionIds: [],
+      mobileDeviceIds: [...new Set(retryMobileDeviceIds.filter(Boolean))]
+    }
+  }
 }
 
 // (MOB-006) Filtra filas (web + nativas) por la preferencia del USUARIO destinatario:
@@ -2085,28 +2348,57 @@ async function filterRowsByUserPreference(rows, { enabledKey = '', calendarId = 
 
 // (MOB-006) enabledKey: clave on/off del evento para resolver la preferencia POR
 // usuario destinatario (con fallback al global). Si se omite, no se filtra por usuario.
-export async function sendAppNotificationPayload(payload = {}, { calendarId = '', userIds = null, enabledKey = '', excludeUserIds = null } = {}) {
+export async function sendAppNotificationPayload(payload = {}, {
+  calendarId = '',
+  userIds = null,
+  enabledKey = '',
+  excludeUserIds = null,
+  deliveryTargets = null,
+  durableDelivery = false
+} = {}) {
   const normalizedPayload = await enrichNotificationPayloadForDelivery(payload)
   if (appNotificationPayloadSenderForTest) {
-    return appNotificationPayloadSenderForTest(normalizedPayload, { calendarId, userIds, enabledKey, excludeUserIds })
+    return appNotificationPayloadSenderForTest(normalizedPayload, {
+      calendarId,
+      userIds,
+      enabledKey,
+      excludeUserIds,
+      deliveryTargets,
+      durableDelivery
+    })
   }
 
   const transport = await getEffectivePushTransportStatus()
-  if (!pushConfigured && !transport.nativeConfigured) {
-    return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'not_configured' }
+  const probeUnknownCentralTargets = durableDelivery === true && transport?.central?.transientFailure === true
+  if (!pushConfigured && !transport.nativeConfigured && !probeUnknownCentralTargets) {
+    return {
+      sent: 0,
+      webSent: 0,
+      nativeSent: 0,
+      skipped: true,
+      reason: 'not_configured',
+      retryTargets: { webSubscriptionIds: [], mobileDeviceIds: [] }
+    }
   }
 
   const filterByUser = Array.isArray(userIds)
   const normalizedUserIds = filterByUser ? normalizeUserIds(userIds) : null
   if (filterByUser && normalizedUserIds.length === 0) {
-    return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'missing_recipients' }
+    return {
+      sent: 0,
+      webSent: 0,
+      nativeSent: 0,
+      skipped: true,
+      reason: 'missing_recipients',
+      retryTargets: { webSubscriptionIds: [], mobileDeviceIds: [] }
+    }
   }
 
   const [webRows, nativeRows] = await Promise.all([
     pushConfigured
-      ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions())
+      ? (calendarId ? getSubscriptionsForCalendar(calendarId) : getEnabledSubscriptions(normalizedUserIds))
       : Promise.resolve([]),
-    transport.nativeConfigured
+    (transport.nativeConfigured || probeUnknownCentralTargets)
       ? (calendarId ? getMobileDevicesForCalendar(calendarId) : getEnabledMobileDevices(normalizedUserIds))
       : Promise.resolve([])
   ])
@@ -2122,15 +2414,31 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
     ? rows.filter((row) => {
         const rowUserId = String(row.user_id || '').trim()
         return !rowUserId || !excludeSet.has(rowUserId)
-      })
+    })
     : rows)
 
-  const matrixWebRows = applyExclude(filterByUser
+  const normalizedDeliveryTargets = deliveryTargets && typeof deliveryTargets === 'object'
+    ? normalizeDeliveryTargets(deliveryTargets)
+    : null
+  const webTargetSet = normalizedDeliveryTargets
+    ? new Set(normalizedDeliveryTargets.webSubscriptionIds)
+    : null
+  const mobileTargetSet = normalizedDeliveryTargets
+    ? new Set(normalizedDeliveryTargets.mobileDeviceIds)
+    : null
+  const filterWebTargets = rows => webTargetSet
+    ? rows.filter(row => webTargetSet.has(String(row.id || '').trim()))
+    : rows
+  const filterMobileTargets = rows => mobileTargetSet
+    ? rows.filter(row => mobileTargetSet.has(String(row.id || '').trim()))
+    : rows
+
+  const matrixWebRows = filterWebTargets(applyExclude(filterByUser
     ? webRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
-    : webRows)
-  const matrixNativeRows = applyExclude(filterByUser
+    : webRows))
+  const matrixNativeRows = filterMobileTargets(applyExclude(filterByUser
     ? nativeRows.filter((row) => normalizedUserIds.includes(String(row.user_id || '').trim()))
-    : nativeRows)
+    : nativeRows))
 
   // (MOB-006) Tercer eje: override por-usuario de las 7 claves. La entrega final llega a
   // un device del user U solo si (matrix permite a U) AND (preferencia de U on/off true,
@@ -2142,21 +2450,46 @@ export async function sendAppNotificationPayload(payload = {}, { calendarId = ''
   ])
 
   if (filteredWebRows.length === 0 && filteredNativeRows.length === 0) {
-    return { sent: 0, webSent: 0, nativeSent: 0, skipped: true, reason: 'no_subscriptions' }
+    return {
+      sent: 0,
+      webSent: 0,
+      nativeSent: 0,
+      skipped: true,
+      reason: 'no_subscriptions',
+      retryTargets: { webSubscriptionIds: [], mobileDeviceIds: [] }
+    }
   }
 
   // (MOB-006) Sonido/vibración por dueño del device (resolver cacheado por user_id).
   const experienceResolver = createUserExperienceResolver()
 
-  const [webSent, nativeSent] = await Promise.all([
-    pushConfigured ? sendNotificationRows(filteredWebRows, normalizedPayload) : Promise.resolve(0),
-    transport.nativeConfigured ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experienceResolver, transport) : Promise.resolve(0)
+  const emptyDelivery = {
+    sent: 0,
+    attempted: 0,
+    retryableFailures: 0,
+    permanentFailures: 0,
+    acceptedSkips: 0,
+    retryTargets: { webSubscriptionIds: [], mobileDeviceIds: [] }
+  }
+  const [webDelivery, nativeDelivery] = await Promise.all([
+    pushConfigured ? sendNotificationRows(filteredWebRows, normalizedPayload) : Promise.resolve(emptyDelivery),
+    (transport.nativeConfigured || probeUnknownCentralTargets)
+      ? sendMobileNotificationRows(filteredNativeRows, normalizedPayload, experienceResolver, transport)
+      : Promise.resolve(emptyDelivery)
   ])
 
   return {
-    sent: webSent + nativeSent,
-    webSent,
-    nativeSent,
+    sent: webDelivery.sent + nativeDelivery.sent,
+    webSent: webDelivery.sent,
+    nativeSent: nativeDelivery.sent,
+    attempted: webDelivery.attempted + nativeDelivery.attempted,
+    retryableFailures: webDelivery.retryableFailures + nativeDelivery.retryableFailures,
+    permanentFailures: webDelivery.permanentFailures + nativeDelivery.permanentFailures,
+    acceptedSkips: webDelivery.acceptedSkips + nativeDelivery.acceptedSkips,
+    retryTargets: {
+      webSubscriptionIds: [...new Set(webDelivery.retryTargets?.webSubscriptionIds || [])],
+      mobileDeviceIds: [...new Set(nativeDelivery.retryTargets?.mobileDeviceIds || [])]
+    },
     skipped: false
   }
 }
@@ -2320,7 +2653,17 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
 }
 
 export async function sendChatMessageNotification(message = {}) {
-  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
+  const durableDelivery = message.durableDelivery === true
+  const initialTransport = await getEffectivePushTransportStatus()
+  const canProbeUnknownCentral = durableDelivery && initialTransport?.central?.transientFailure === true
+  if (!initialTransport.webConfigured && !initialTransport.nativeConfigured && !canProbeUnknownCentral) {
+    return {
+      sent: 0,
+      skipped: true,
+      reason: 'not_configured',
+      retryTargets: { webSubscriptionIds: [], mobileDeviceIds: [] }
+    }
+  }
 
   // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
   const suppressByAgent = await shouldSuppressChatNotificationForConversationalAgent(message.contactId).catch((error) => {
@@ -2331,8 +2674,15 @@ export async function sendChatMessageNotification(message = {}) {
     return { sent: 0, skipped: true, reason: 'conversational_agent_attending' }
   }
   // (MOB-002 / NOTI-004) No exponer nombre ni texto de contactos ocultos en el push de chat
-  const hidden = await isContactHiddenFromNotifications(message.contactId).catch((error) => {
+  const visibilityChecker = contactVisibilityCheckerForTest || isContactHiddenFromNotifications
+  const hidden = await visibilityChecker(message.contactId, { throwOnError: durableDelivery }).catch((error) => {
     logger.warn(`[Push] No se pudo verificar contacto oculto para chat: ${error.message}`)
+    if (durableDelivery) {
+      const retryableError = error instanceof Error ? error : new Error(String(error || 'Error de visibilidad'))
+      retryableError.code = retryableError.code || 'push_contact_visibility_unavailable'
+      retryableError.retryable = true
+      throw retryableError
+    }
     return true // fail-safe: ante error no enviamos para evitar fuga
   })
   if (hidden) {
@@ -2421,7 +2771,11 @@ export async function sendChatMessageNotification(message = {}) {
   return sendAppNotificationPayload(payload, {
     ...baseOptions,
     userIds: recipientUserIds,
-    excludeUserIds: viewingUserIds
+    excludeUserIds: viewingUserIds,
+    deliveryTargets: message.deliveryTargets && typeof message.deliveryTargets === 'object'
+      ? message.deliveryTargets
+      : null,
+    durableDelivery
   })
 }
 
