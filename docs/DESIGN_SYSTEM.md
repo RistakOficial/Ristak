@@ -83,6 +83,10 @@ Semántico:    --pos --pos-soft   --neg --neg-soft   --warn --warn-soft   --info
 Marca:        --brand-ristak-blue  --brand-ristak-blue-rgb
 Canales:      --brand-channel-whatsapp-api  --brand-channel-whatsapp-qr
               --brand-channel-instagram  --brand-channel-messenger
+Globos chat:  --chat-bubble-inbound  --chat-bubble-outbound-neutral
+              --chat-bubble-outbound-whatsapp-api  --chat-bubble-outbound-whatsapp-qr
+              --chat-bubble-outbound-instagram  --chat-bubble-outbound-messenger
+              --chat-bubble-text  --chat-bubble-meta
 Forma:        --radius-card  --radius-ctl  --radius-pill
 Sombra:       --shadow-card  --shadow-xs  --shadow-pop
 Tipografía:   --font-display  --font-body  --font-mono  --num-font  --label-font
@@ -95,12 +99,14 @@ Los tokens viejos (`--color-text-primary`, `--color-primary`, `--design-*`,
 los nuevos. **Jamás** declares un alias nuevo en `:root` que apunte a un token
 temado (se congela con el default oscuro); decláralo en `body` si hace falta.
 
-Los cuatro tokens de canal son colores de marca fijos y se usan solamente como
-tinte de globos e identificadores de mensajeria. WhatsApp API usa verde,
-WhatsApp QR un verde ligeramente mas oscuro, Messenger/Facebook azul e Instagram
-morado rosita. Correo y SMS no tienen token de marca: sus globos permanecen
-neutrales. El fondo final siempre mezcla el color con `--surface`; no se usa el
-color solido como fondo del texto.
+Los cuatro tokens `--brand-channel-*` conservan los colores de marca para iconos,
+badges y bordes. Los globos usan una paleta pastel separada y direccional: todo
+mensaje entrante usa `--chat-bubble-inbound` blanco, sin importar plataforma; solo
+los salientes pueden usar color. WhatsApp API usa verde claro, WhatsApp QR un
+verde apenas mas oscuro, Messenger/Facebook azul e Instagram morado rosita.
+Correo, SMS y canal desconocido usan `--chat-bubble-outbound-neutral`. Esta paleta
+es clara tambien dentro de temas oscuros, por eso texto y metadatos usan siempre
+`--chat-bubble-text` y `--chat-bubble-meta`.
 
 ---
 

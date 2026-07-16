@@ -1699,13 +1699,14 @@ avatar de la nota de voz alterna velocidad `1x`/`2x`/`4x` y muestra el badge de
 velocidad sobre el avatar; en movil el motor nativo puede capar la velocidad
 real al maximo soportado por la plataforma.
 
-El tinte del globo sigue el canal real en `/movil`, React Native Android e iOS:
-WhatsApp API es verde, WhatsApp QR usa un verde ligeramente mas oscuro,
-Messenger/Facebook es azul e Instagram morado rosita. Correo y SMS conservan el
-fondo neutral. La plataforma social tiene prioridad sobre transportes genericos
-como `api`; API/QR solo separa los dos verdes de WhatsApp. Los programados
-conservan el borde punteado teñido y un mensaje fallido siempre usa el estado de
-error por encima del color del canal.
+El color del globo sigue direccion y canal real en `/movil`, React Native Android
+e iOS. Todo mensaje entrante es blanco, aunque venga de WhatsApp, Messenger o
+Instagram. Solo los salientes usan color: WhatsApp API es verde claro, WhatsApp
+QR usa un verde apenas mas oscuro, Messenger/Facebook es azul e Instagram morado
+rosita. Correo, SMS y canal desconocido conservan el fondo neutral. La plataforma
+social tiene prioridad sobre transportes genericos como `api`; API/QR solo separa
+los dos verdes de WhatsApp. Los programados conservan el borde punteado y un
+mensaje fallido siempre usa el estado de error por encima del color del canal.
 
 Las razones tecnicas de ruteo como `Capturado desde la sesión de WhatsApp Web.`
 o `Capturado desde la sesión API.` no deben renderizarse como texto ni como nota

@@ -9487,7 +9487,7 @@ export const DesktopChat: React.FC = () => {
                                 {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                                 <article
                                   className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
-                                  data-chat-channel={getChatBubbleColorChannel(messageChannel)}
+                                  data-chat-channel={getChatBubbleColorChannel(messageChannel, message.direction)}
                                   onContextMenu={(event) => handleMessageReactionContextMenu(message, event)}
                                 >
                                   {message.isComment ? (
