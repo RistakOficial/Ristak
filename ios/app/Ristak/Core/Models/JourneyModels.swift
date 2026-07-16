@@ -154,6 +154,73 @@ enum ChatMessageReceiptStatus: String, Sendable {
     case sent
 }
 
+enum ChatMessageChannelKind: String, Sendable, CaseIterable {
+    case whatsappAPI = "whatsapp_api"
+    case whatsappQR = "whatsapp_qr"
+    case instagram
+    case messenger
+    case sms
+    case email
+
+    static func resolve(
+        eventType: String? = nil,
+        channel: String? = nil,
+        transport: String? = nil,
+        provider: String? = nil,
+        platform: String? = nil,
+        commentPlatform: String? = nil,
+        messageType: String? = nil,
+        hasEmail: Bool = false
+    ) -> ChatMessageChannelKind? {
+        let eventType = normalize(eventType)
+        let channel = normalize(channel)
+        let transport = normalize(transport)
+        let provider = normalize(provider)
+        let platform = normalize(platform)
+        let commentPlatform = normalize(commentPlatform)
+        let messageType = normalize(messageType)
+        let explicitProbe = [commentPlatform, platform, channel, provider, transport]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        if hasEmail || eventType == "email_message" || messageType == "email" ||
+            containsAny(explicitProbe, ["email", "e-mail", "gmail", "smtp", "mailgun"]) {
+            return .email
+        }
+        if commentPlatform == "instagram" || containsAny(explicitProbe, ["instagram", "instagram_comment"]) {
+            return .instagram
+        }
+        if commentPlatform == "messenger" || containsAny(explicitProbe, ["messenger", "facebook", "facebook_comment"]) {
+            return .messenger
+        }
+        if eventType == "sms_message" || messageType == "sms" ||
+            containsAny(explicitProbe, ["sms", "text_message", "lc_phone"]) {
+            return .sms
+        }
+
+        let isWhatsApp = eventType == "whatsapp_message" ||
+            containsAny(explicitProbe, ["whatsapp", "waba", "ycloud", "baileys"]) ||
+            ["api", "qr", "native", "whatsapp_api"].contains(channel) ||
+            ["api", "qr", "baileys", "web"].contains(transport)
+        guard isWhatsApp else { return nil }
+
+        let qrProbe = "\(channel) \(transport) \(provider)"
+        let usesQR = containsAny(qrProbe, ["baileys", "whatsapp_web", "whatsapp_qr"]) ||
+            ["qr", "web"].contains(channel) ||
+            ["qr", "web", "baileys"].contains(transport) ||
+            ["qr", "baileys"].contains(provider)
+        return usesQR ? .whatsappQR : .whatsappAPI
+    }
+
+    private static func normalize(_ value: String?) -> String {
+        (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func containsAny(_ value: String, _ needles: [String]) -> Bool {
+        needles.contains { value.contains($0) }
+    }
+}
+
 /// Modelo de mensaje del hilo (port de `mobile/src/types.ts:160-220`).
 struct ChatMessage: Sendable, Equatable, Identifiable {
     /// Estable entre polls/páginas — ver `ChatJourneyParser.stableMessageId`.
@@ -416,8 +483,16 @@ enum ChatJourneyParser {
         }
 
         let direction = normalizeDirection(readString(data, ["direction"]))
-        let channel = readString(data, ["transport", "social_platform", "source"])
-        let resolvedChannel = channel.isEmpty ? event.type : channel
+        let transport = readString(data, ["transport", "social_platform", "source"])
+        let resolvedChannel = ChatMessageChannelKind.resolve(
+            eventType: event.type,
+            channel: readString(data, ["channel"]),
+            transport: transport,
+            provider: readString(data, ["provider", "message_provider", "source_provider"]),
+            platform: readString(data, ["social_platform", "platform"]),
+            messageType: messageType,
+            hasEmail: emailDetails != nil
+        )?.rawValue ?? (transport.isEmpty ? event.type : transport)
         let id = stableMessageId(
             data: data,
             eventType: event.type,
@@ -437,7 +512,7 @@ enum ChatJourneyParser {
             text: text,
             channel: resolvedChannel,
             status: status.isEmpty ? nil : status,
-            transport: resolvedChannel,
+            transport: transport.isEmpty ? resolvedChannel : transport,
             errorReason: nonEmpty(readString(data, [
                 // Lista completa de /movil (audit doc 04 §3.1.12).
                 "error_reason", "errorReason", "error", "message_error",
@@ -532,7 +607,13 @@ enum ChatJourneyParser {
             let status = item.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !scheduledHiddenStatuses.contains(status) else { return nil }
             let identity = item.id.isEmpty ? item.externalId : item.id
-            let channel = !item.channel.isEmpty ? item.channel : (!item.transport.isEmpty ? item.transport : "whatsapp_api")
+            let rawChannel = !item.channel.isEmpty ? item.channel : (!item.transport.isEmpty ? item.transport : "whatsapp_api")
+            let channel = ChatMessageChannelKind.resolve(
+                channel: rawChannel,
+                transport: item.transport,
+                provider: item.provider,
+                messageType: item.messageType
+            )?.rawValue ?? rawChannel
             return ChatMessage(
                 id: "scheduled-\(identity)",
                 contactId: contactId,

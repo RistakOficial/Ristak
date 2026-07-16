@@ -242,6 +242,7 @@ struct MessageRowView: View, Equatable {
             .modifier(RistakChatBubbleStyle(
                 side: isOutbound ? .outbound : .inbound,
                 fill: bubbleFillOverride,
+                channelColor: message.failed ? nil : bubbleChannelColor,
                 dashed: message.isScheduled
             ))
             .overlay(alignment: .bottom) {
@@ -282,6 +283,22 @@ struct MessageRowView: View, Equatable {
     /// los resuelve `RistakChatBubbleStyle` (dashed / inbound / outbound).
     private var bubbleFillOverride: Color? {
         message.failed ? RistakTheme.bubbleFailed : nil
+    }
+
+    private var bubbleChannelColor: Color? {
+        let channel = ChatMessageChannelKind.resolve(
+            channel: message.channel,
+            transport: message.transport,
+            messageType: message.messageType,
+            hasEmail: message.emailDetails != nil
+        )
+        switch channel {
+        case .whatsappAPI: return RistakTheme.chatChannelWhatsAppAPI
+        case .whatsappQR: return RistakTheme.chatChannelWhatsAppQR
+        case .instagram: return RistakTheme.chatChannelInstagram
+        case .messenger: return RistakTheme.chatChannelMessenger
+        case .sms, .email, nil: return nil
+        }
     }
 
     // MARK: Piezas

@@ -26,6 +26,8 @@
     --accent:#4c8dff; --accent-2:#7aa9ff; --on-accent:#ffffff; --accent-soft:rgba(76,141,255,0.16);
     --pos:#48c98a; --pos-soft:rgba(72,201,138,0.15); --neg:#ef6a6a; --neg-soft:rgba(239,106,106,0.15);
     --warn:#e0a64b; --warn-soft:rgba(224,166,75,0.16); --info:#38b2c4; --info-soft:rgba(56,178,196,0.16);
+    --brand-channel-whatsapp-api:#25d366; --brand-channel-whatsapp-qr:#1fae57;
+    --brand-channel-instagram:#c13584; --brand-channel-messenger:#1877f2;
     --sidebar:#070a0e; --topbar:rgba(11,14,19,0.82); --chart-grid:rgba(255,255,255,0.06);
   }
   body[data-dir='a'][data-mode='light'] {
@@ -245,8 +247,14 @@
   [data-msg] { justify-content: flex-start; }
   [data-msg][data-from='me'] { justify-content: flex-end; }
   [data-msg] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 14px 4px; }
-  [data-msg][data-from='me'] .bubble { background: var(--accent); color: var(--on-accent); border-radius: 14px 14px 4px 14px; }
-  [data-msg][data-from='me'] .bubble .btime { color: var(--on-accent); opacity: 0.8; }
+  [data-msg][data-from='me'] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 4px 14px; }
+  [data-msg][data-channel='whatsapp_api'] { --message-channel-color: var(--brand-channel-whatsapp-api); }
+  [data-msg][data-channel='whatsapp_qr'] { --message-channel-color: var(--brand-channel-whatsapp-qr); }
+  [data-msg][data-channel='instagram'] { --message-channel-color: var(--brand-channel-instagram); }
+  [data-msg][data-channel='messenger'] { --message-channel-color: var(--brand-channel-messenger); }
+  [data-msg]:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 82%, var(--message-channel-color) 18%); }
+  [data-msg][data-from='me']:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 70%, var(--message-channel-color) 30%); }
+  [data-msg][data-from='me'] .bubble .btime { color: var(--text-dim); }
   [data-chip]:hover { border-color: var(--border-strong); color: var(--text); }
   [data-icon-btn]:hover { background: var(--surface-hover); color: var(--text); }
   [data-site-card]:hover { border-color: var(--accent); transform: translateY(-2px); }
@@ -1506,7 +1514,7 @@
               </header>
               <div data-scroll style="flex:1; min-height:0; overflow-y:auto; padding:20px 18px; background:var(--bg-soft);">
                 <sc-for list="{{ chatMessages }}" as="m" hint-placeholder-count="5">
-                  <div data-msg data-from="{{ m.from }}" style="display:flex; margin-bottom:10px;">
+                  <div data-msg data-from="{{ m.from }}" data-channel="{{ m.channel }}" style="display:flex; margin-bottom:10px;">
                     <div class="bubble" style="max-width:74%; padding:9px 13px; font-size:13.5px; line-height:1.45;">{{ m.text }}<div class="btime" style="font-size:10px; color:var(--text-mute); margin-top:4px; text-align:right;">{{ m.time }}</div></div>
                   </div>
                 </sc-for>
@@ -2584,6 +2592,14 @@
   <div style="position:fixed; bottom:18px; left:50%; transform:translateX(-50%); z-index:40; display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px; padding:9px 13px; border-radius:22px; max-width:min(96vw,1240px); background:var(--surface); border:1px solid var(--border-strong); box-shadow:0 18px 50px -18px rgba(0,0,0,0.5); backdrop-filter:blur(12px);">
     <span style="font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; color:var(--text-mute); padding-left:2px;">Diseño</span>
     <div style="display:flex; align-items:center; gap:6px;">
+      <span style="font-family:var(--font-mono); font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-mute);">Nimbus</span>
+      <div style="display:flex; gap:2px; padding:3px; border-radius:999px; background:var(--surface-2);">
+        <sc-for list="{{ designNimbus }}" as="d" hint-placeholder-count="1">
+          <span onClick="{{ d.go }}" data-segdir data-on="{{ d.on }}" style="font-size:11.5px; font-weight:700; padding:5px 10px; border-radius:999px; cursor:pointer; color:var(--text-dim); transition:.15s; white-space:nowrap;">{{ d.label }}</span>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px;">
       <span style="font-family:var(--font-mono); font-size:9.5px; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-mute);">Aurora</span>
       <div style="display:flex; gap:2px; padding:3px; border-radius:999px; background:var(--surface-2);">
         <sc-for list="{{ designAurora }}" as="d" hint-placeholder-count="4">
@@ -3348,11 +3364,11 @@ class Component extends DCLogic {
       { name: 'Roberto Aguilar', msg: 'Quedo atento, saludos', time: 'Lun', unread: 0, channel: 'Instagram', on: false }
     ].map((c) => ({ ...c, initials: ini(c.name) }));
     const chatMessages = [
-      { from: 'them', text: 'Hola, vi su anuncio en Facebook y me interesa saber más sobre el programa.', time: '10:08' },
-      { from: 'me', text: '¡Hola María! Claro que sí. El programa premium incluye acompañamiento 1 a 1 durante 12 semanas.', time: '10:10' },
-      { from: 'them', text: '¿Y cuál es la inversión?', time: '10:14' },
-      { from: 'me', text: 'La inversión es de $18,400 MXN, con opción a 3 mensualidades. ¿Te gustaría agendar una llamada?', time: '10:16' },
-      { from: 'them', text: 'Perfecto, agendo para mañana entonces 🙌', time: '10:24' }
+      { from: 'them', channel: 'messenger', text: 'Hola, vi su anuncio en Facebook y me interesa saber más sobre el programa.', time: '10:08' },
+      { from: 'me', channel: 'instagram', text: '¡Hola María! Claro que sí. El programa premium incluye acompañamiento 1 a 1 durante 12 semanas.', time: '10:10' },
+      { from: 'them', channel: 'whatsapp_api', text: '¿Y cuál es la inversión?', time: '10:14' },
+      { from: 'me', channel: 'whatsapp_qr', text: 'La inversión es de $18,400 MXN, con opción a 3 mensualidades. ¿Te gustaría agendar una llamada?', time: '10:16' },
+      { from: 'them', channel: 'email', text: 'Perfecto, agendo para mañana entonces 🙌', time: '10:24' }
     ];
     const chatContact = { name: 'María Fernanda Ruiz', phone: '+52 55 1842 0093', email: 'mafer.ruiz@gmail.com', source: 'Meta Ads', ltv: '$18,400', tags: [{ label: 'Lead caliente', tone: 'error' }, { label: 'Meta Ads', tone: 'info' }, { label: 'Premium', tone: 'success' }], initials: 'MR' };
     const chatChannelFilters = [
@@ -3669,6 +3685,7 @@ class Component extends DCLogic {
       dirA: this.state.dir === 'a' ? 'true' : undefined,
       dirB: this.state.dir === 'b' ? 'true' : undefined,
       dirC: this.state.dir === 'c' ? 'true' : undefined,
+      designNimbus: [['a','Clásico']].map(([id,label]) => ({ id, label, on: this.state.dir === id ? 'true' : undefined, go: () => this.setState({ dir: id }, () => this.applyTheme()) })),
       designAurora: [['e','Violeta'],['en','Neutral'],['eb','Azul'],['em','Sobria']].map(([id,label]) => ({ id, label, on: this.state.dir === id ? 'true' : undefined, go: () => this.setState({ dir: id }, () => this.applyTheme()) })),
       designBrut: [['d','Rojo'],['db','Azul'],['dl','Lima'],['dm','Magenta']].map(([id,label]) => ({ id, label, on: this.state.dir === id ? 'true' : undefined, go: () => this.setState({ dir: id }, () => this.applyTheme()) })),
       designOnyx: [['c','Esmeralda'],['cb','Azul'],['cv','Violeta'],['ca','Ámbar']].map(([id,label]) => ({ id, label, on: this.state.dir === id ? 'true' : undefined, go: () => this.setState({ dir: id }, () => this.applyTheme()) })),

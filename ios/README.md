@@ -14,6 +14,9 @@ entitlements, targets ni codigo nativo Apple.
 - Mínimo: iOS 26.0 · Xcode 26+ · Swift 5 mode · **cero dependencias externas**
 - Universal: iPhone (tab bar compacta) + iPad (sidebar adaptable, split views,
   popovers), vertical y horizontal, claro/oscuro, Dynamic Type.
+- Los globos de chat conservan el canal real en claro y oscuro: WhatsApp API
+  verde, WhatsApp QR verde mas oscuro, Messenger/Facebook azul, Instagram
+  morado rosita y correo/SMS neutrales.
 - Icono del launcher: `ios/app/Ristak/Assets.xcassets/AppIcon.appiconset`
   contiene las variantes oficiales `icon-light.png`, `icon-dark.png` e
   `icon-tinted.png` en 1024x1024 RGB sin transparencia para validacion iOS.

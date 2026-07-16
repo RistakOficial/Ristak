@@ -34,13 +34,15 @@ struct RistakChatBubble<Content: View>: View {
     /// Relleno explícito (fallido = rojo, imagen, etc.). Si es `nil`, se deriva
     /// del lado (o de `bubbleScheduled` cuando `dashed`).
     var fill: Color? = nil
+    /// Tinte de marca del canal. Correo/SMS lo omiten y conservan base neutra.
+    var channelColor: Color? = nil
     /// Borde punteado + fondo de mensaje programado.
     var dashed: Bool = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         content()
-            .modifier(RistakChatBubbleStyle(side: side, fill: fill, dashed: dashed))
+            .modifier(RistakChatBubbleStyle(side: side, fill: fill, channelColor: channelColor, dashed: dashed))
     }
 }
 
@@ -49,6 +51,7 @@ struct RistakChatBubble<Content: View>: View {
 struct RistakChatBubbleStyle: ViewModifier {
     let side: RistakBubbleSide
     var fill: Color? = nil
+    var channelColor: Color? = nil
     var dashed: Bool = false
 
     func body(content: Content) -> some View {
@@ -61,11 +64,19 @@ struct RistakChatBubbleStyle: ViewModifier {
             .padding(.top, 7)
             .padding(.horizontal, 9)
             .padding(.bottom, 5)
-            .background(backgroundFill, in: shape)
+            .background {
+                shape
+                    .fill(backgroundFill)
+                    .overlay {
+                        if fill == nil, let channelColor {
+                            shape.fill(channelColor.opacity(channelOpacity))
+                        }
+                    }
+            }
             .overlay {
                 if dashed {
                     shape.strokeBorder(
-                        RistakTheme.bubbleScheduledBorder,
+                        channelColor?.opacity(0.72) ?? RistakTheme.bubbleScheduledBorder,
                         style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
                     )
                 }
@@ -77,6 +88,11 @@ struct RistakChatBubbleStyle: ViewModifier {
         if let fill { return fill }
         if dashed { return RistakTheme.bubbleScheduled }
         return side == .inbound ? RistakTheme.bubbleInbound : RistakTheme.bubbleOutbound
+    }
+
+    private var channelOpacity: Double {
+        if dashed { return 0.24 }
+        return side == .outbound ? 0.30 : 0.18
     }
 }
 

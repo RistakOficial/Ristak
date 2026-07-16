@@ -109,7 +109,7 @@ enum RistakTheme {
         dark: rgba(28, 28, 30, 0.96)
     )
 
-    /// Burbuja saliente (neutra, nunca verde): `#e9eaee` / `rgba(58,58,60,0.92)`.
+    /// Base neutra de burbuja saliente antes de aplicar el tinte del canal.
     static let bubbleOutgoing = dynamic(
         light: rgb(0xE9, 0xEA, 0xEE),
         dark: rgba(58, 58, 60, 0.92)
@@ -119,6 +119,13 @@ enum RistakTheme {
     /// entrante = `bubbleIncoming`, saliente = `bubbleOutgoing`.
     static let bubbleInbound = bubbleIncoming
     static let bubbleOutbound = bubbleOutgoing
+
+    /// Colores de marca aplicados como tinte de canal sobre la base del globo.
+    /// Correo y SMS no tienen color: permanecen neutrales.
+    static let chatChannelWhatsAppAPI = Color(uiColor: rgb(0x25, 0xD3, 0x66))
+    static let chatChannelWhatsAppQR = Color(uiColor: rgb(0x1F, 0xAE, 0x57))
+    static let chatChannelInstagram = Color(uiColor: rgb(0xC1, 0x35, 0x84))
+    static let chatChannelMessenger = Color(uiColor: rgb(0x18, 0x77, 0xF2))
 
     /// Texto dentro de la burbuja (igual entrante/saliente en mobile/):
     /// `COLORS.text` (#1d1d1f) claro / `#f5f5f7` oscuro.

@@ -101,6 +101,7 @@ import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
+import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -1324,7 +1325,9 @@ interface ChatMessage {
   readAt?: string
   businessPhone?: string
   businessPhoneNumberId?: string
+  channel?: string
   transport?: 'api' | 'qr' | string
+  provider?: string
   routingReason?: string
   sentByAgent?: boolean
   agentId?: string
@@ -3656,6 +3659,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     const body = normalizeEmailBodyText(String(eventData.message_text || '')) || htmlToPlainEmailText(String(eventData.html_body || ''))
     const direction = normalizeWhatsAppBusinessDirection(eventData.direction)
     const transport = String(eventData.transport || '').trim()
+    const provider = String(eventData.provider || eventData.message_provider || eventData.source_provider || '').trim()
     const agentMetadata = getJourneyAgentMessageMetadata(eventData)
 
     return {
@@ -3669,6 +3673,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
       deliveredAt: pickMessageTimestamp(eventData, ['delivered_at', 'deliveredAt', 'message_timestamp', 'messageTimestamp']),
       readAt: pickMessageTimestamp(eventData, ['read_at', 'readAt', 'seen_at', 'seenAt']),
       transport: transport || 'email',
+      provider,
+      channel: 'email',
       ...agentMetadata,
       messageType: 'email',
       emailDetails: {
@@ -3707,6 +3713,17 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   if (!text && !messageType && !attachment && !location) return null
 
   const direction = normalizeWhatsAppBusinessDirection(event.data?.direction)
+  const transport = String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api'))
+  const provider = String(eventData.provider || eventData.message_provider || eventData.source_provider || '').trim()
+  const platform = String(eventData.social_platform || eventData.platform || '').trim()
+  const channel = resolveChatMessageChannel({
+    eventType: event.type,
+    channel: eventData.channel,
+    transport,
+    provider,
+    platform,
+    messageType
+  })
 
   return {
     id: String(
@@ -3753,7 +3770,9 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     ]),
     businessPhone: String(event.data?.business_phone || ''),
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
-    transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
+    channel: channel === 'unknown' ? String(eventData.channel || transport || '').trim() : channel,
+    transport,
+    provider,
     routingReason: String(event.data?.routing_reason || event.data?.routingReason || event.data?.fallbackReason || ''),
     ...agentMetadata,
     messageType,
@@ -3763,7 +3782,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     isComment: isCommentMessageType(messageType),
     commentReplyMode: normalizedMessageType === 'comment_reply_public' ? 'public' : normalizedMessageType === 'comment_reply_private' ? 'private' : undefined,
     commentId: String(eventData.comment_id || eventData.commentId || '').trim() || undefined,
-    commentPlatform: String(eventData.social_platform || eventData.platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
+    commentPlatform: platform.toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
     commentPost: (isCommentMessageType(messageType) && (eventData.post_message || eventData.post_image_url || eventData.post_permalink || postDeleted))
       ? {
           message: String(eventData.post_message || (postDeleted ? 'Publicación eliminada' : '')).trim(),
@@ -3797,7 +3816,14 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessa
     templateLanguage: message.templateLanguage || '',
     businessPhone: message.fromPhone || '',
     businessPhoneNumberId: message.businessPhoneNumberId || '',
-    transport: message.transport || (message.provider === 'highlevel' ? message.channel || 'ghl_whatsapp' : 'api')
+    channel: resolveChatMessageChannel({
+      channel: message.channel,
+      transport: message.transport,
+      provider: message.provider,
+      messageType: message.messageType
+    }),
+    transport: message.transport || (message.provider === 'highlevel' ? message.channel || 'ghl_whatsapp' : 'api'),
+    provider: message.provider
   }
 }
 
@@ -16556,6 +16582,14 @@ export const PhoneChat: React.FC = () => {
     if (!messageActionMenu || !messageActionMenuMessage) return null
 
     const message = messageActionMenuMessage
+    const messageChannel = resolveChatMessageChannel({
+      channel: message.channel,
+      transport: message.transport,
+      provider: message.provider,
+      commentPlatform: message.commentPlatform,
+      messageType: message.messageType,
+      hasEmail: Boolean(message.emailDetails)
+    })
     const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
     const starred = starredMessageIdSet.has(message.id)
     const scheduledMessageId = scheduled ? getScheduledMessageActionId(message) : ''
@@ -16590,7 +16624,7 @@ export const PhoneChat: React.FC = () => {
           aria-modal="true"
           aria-label={scheduled ? 'Acciones de mensaje programado' : 'Acciones del mensaje'}
         >
-          <div className={previewClassName}>
+          <div className={previewClassName} data-chat-channel={getChatBubbleColorChannel(messageChannel)}>
             {renderMessageActionPreviewContent(message)}
           </div>
 
@@ -16956,6 +16990,14 @@ export const PhoneChat: React.FC = () => {
               const searchTargetId = `message-${message.id}`
               const isSearchMatch = conversationSearchMatchIdSet.has(searchTargetId)
               const isActiveSearchMatch = activeConversationSearchTargetId === searchTargetId
+              const messageChannel = resolveChatMessageChannel({
+                channel: message.channel,
+                transport: message.transport,
+                provider: message.provider,
+                commentPlatform: message.commentPlatform,
+                messageType: message.messageType,
+                hasEmail: Boolean(message.emailDetails)
+              })
 
               return (
                 <div
@@ -16978,6 +17020,7 @@ export const PhoneChat: React.FC = () => {
                     {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                     <div
                       className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
+                      data-chat-channel={getChatBubbleColorChannel(messageChannel)}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
                       style={messageSwipeTransform ? { transform: messageSwipeTransform } : undefined}
