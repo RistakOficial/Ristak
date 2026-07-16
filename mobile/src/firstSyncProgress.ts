@@ -1,7 +1,5 @@
 export type MobileFirstSyncStage =
   | 'account'
-  | 'settings'
-  | 'contacts'
   | 'conversations'
   | 'localCopy'
   | 'complete';
@@ -17,11 +15,9 @@ export const MOBILE_FIRST_SYNC_STAGES: Array<{
   title: string;
   fraction: number;
 }> = [
-  { id: 'account', title: 'Conectando tu cuenta', fraction: 0.10 },
-  { id: 'settings', title: 'Cargando configuración', fraction: 0.28 },
-  { id: 'contacts', title: 'Preparando contactos', fraction: 0.50 },
-  { id: 'conversations', title: 'Preparando conversaciones', fraction: 0.78 },
-  { id: 'localCopy', title: 'Guardando copia rápida', fraction: 0.94 },
+  { id: 'account', title: 'Conectando tu cuenta', fraction: 0.15 },
+  { id: 'conversations', title: 'Preparando conversaciones', fraction: 0.72 },
+  { id: 'localCopy', title: 'Guardando copia rápida', fraction: 0.92 },
   { id: 'complete', title: 'Todo listo', fraction: 1 },
 ];
 

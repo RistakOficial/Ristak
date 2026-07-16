@@ -24,7 +24,6 @@ export const MOBILE_CACHE_KEYS = {
   settingsAIAgent: 'settings:ai-agent',
   chatFilterCatalog: 'chat:filter-catalog',
   firstSyncCompleted: 'mobile:first-sync:completed',
-  firstSyncContacts: 'mobile:first-sync:contacts',
 } as const;
 
 export function paymentRecentCacheKey(period: string, startDate: string, endDate: string): string {

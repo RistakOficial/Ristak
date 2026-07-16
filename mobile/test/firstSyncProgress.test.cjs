@@ -15,17 +15,22 @@ test('el progreso inicial avanza por etapas reales y termina en 100%', () => {
 
   assert.deepEqual(fractions, [...fractions].sort((left, right) => left - right));
   assert.equal(fractions.at(-1), 1);
-  for (const stage of ['account', 'settings', 'contacts', 'conversations', 'localCopy', 'complete']) {
+  for (const stage of ['account', 'conversations', 'localCopy', 'complete']) {
     assert.match(progressSource, new RegExp(`id: '${stage}'`));
   }
+  assert.doesNotMatch(progressSource, /id: 'settings'/);
+  assert.doesNotMatch(progressSource, /id: 'contacts'/);
 });
 
-test('la pantalla guarda una copia útil antes de salir, incluso si la bandeja falla', () => {
-  const contactsWrite = appSource.indexOf('writeCacheNow(MOBILE_CACHE_KEYS.firstSyncContacts');
-  const degradedBranch = appSource.indexOf('if (!loadedChats)');
+test('la primera sincronizacion pide el inbox primero y no bloquea por directorio/config', () => {
+  const syncStart = appSource.indexOf('const runFirstSync = useCallback(async () => {');
+  const syncEnd = appSource.indexOf('\n  useEffect(() => {', syncStart);
+  const syncSource = appSource.slice(syncStart, syncEnd);
+  const inboxLoad = syncSource.indexOf('const loadedChats = await loadChats(false)');
+  const degradedBranch = syncSource.indexOf('if (!loadedChats)');
   const degradedCompletionWrite = appSource.indexOf(
     'writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted',
-    degradedBranch,
+    syncStart + degradedBranch,
   );
   const inboxWrite = appSource.indexOf('writeCacheNow(NATIVE_INBOX_CACHE_KEY', degradedCompletionWrite);
   const successCompletionWrite = appSource.indexOf(
@@ -34,11 +39,15 @@ test('la pantalla guarda una copia útil antes de salir, incluso si la bandeja f
   );
   const completeStage = appSource.indexOf("stage: 'complete'", successCompletionWrite);
 
-  assert.ok(contactsWrite >= 0);
-  assert.ok(degradedBranch > contactsWrite);
-  assert.ok(degradedCompletionWrite > degradedBranch);
+  assert.ok(syncStart >= 0);
+  assert.ok(inboxLoad >= 0);
+  assert.ok(degradedBranch > inboxLoad);
+  assert.ok(degradedCompletionWrite > syncStart + degradedBranch);
   assert.ok(inboxWrite >= 0);
   assert.ok(successCompletionWrite > inboxWrite);
   assert.ok(completeStage > successCompletionWrite);
+  assert.doesNotMatch(syncSource, /getPickerContacts/);
+  assert.doesNotMatch(syncSource, /firstSyncContacts/);
+  assert.doesNotMatch(syncSource, /getConfig/);
   assert.match(appSource, /Las conversaciones seguirán cargando en segundo plano/);
 });

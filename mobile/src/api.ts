@@ -121,9 +121,17 @@ export type ChatLiveMessageEvent = {
   receivedAt?: string;
 };
 
+export type ChatLiveConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+
 type ChatLiveSubscribeOptions = {
   onMessage: (event: ChatLiveMessageEvent) => void;
   onError?: (error: unknown) => void;
+  onStatusChange?: (status: ChatLiveConnectionStatus) => void;
+};
+
+type VerifyRequestOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 type SseFrame = {
@@ -473,10 +481,12 @@ export class RistakApiClient {
     });
   }
 
-  verify(token: string) {
+  verify(token: string, options: VerifyRequestOptions = {}) {
     return new RistakApiClient(this.baseUrl).request<VerifyResponse>('/auth/verify', {
       method: 'POST',
       body: JSON.stringify({ token }),
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
     });
   }
 
@@ -541,6 +551,7 @@ export class RistakApiClient {
     if (typeof XMLHttpRequest === 'undefined') return () => undefined;
 
     let stopped = false;
+    let connectionStatus: ChatLiveConnectionStatus = 'disconnected';
     let reconnectMs = CHAT_STREAM_INITIAL_RECONNECT_MS;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let activeRequest: XMLHttpRequest | null = null;
@@ -551,8 +562,15 @@ export class RistakApiClient {
       reconnectTimer = null;
     };
 
+    const updateConnectionStatus = (status: ChatLiveConnectionStatus) => {
+      if (connectionStatus === status) return;
+      connectionStatus = status;
+      options.onStatusChange?.(status);
+    };
+
     const scheduleReconnect = () => {
       if (stopped || reconnectTimer) return;
+      updateConnectionStatus('disconnected');
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
@@ -562,6 +580,7 @@ export class RistakApiClient {
 
     const connect = () => {
       if (stopped) return;
+      updateConnectionStatus('connecting');
 
       let responseOffset = 0;
       let frameBuffer = '';
@@ -581,6 +600,7 @@ export class RistakApiClient {
         finished = true;
         clearInterval(watchdog);
         if (activeRequest === request) activeRequest = null;
+        updateConnectionStatus('disconnected');
         if (shouldReconnect) scheduleReconnect();
       };
 
@@ -612,6 +632,7 @@ export class RistakApiClient {
 
         if (request.readyState === XHR_HEADERS_RECEIVED && request.status === 200) {
           reconnectMs = CHAT_STREAM_INITIAL_RECONNECT_MS;
+          updateConnectionStatus('connected');
         }
 
         if (request.readyState === XHR_LOADING || request.readyState === XHR_DONE) {
@@ -658,6 +679,7 @@ export class RistakApiClient {
       clearReconnectTimer();
       activeRequest?.abort();
       activeRequest = null;
+      updateConnectionStatus('disconnected');
     };
   }
 
@@ -729,12 +751,13 @@ export class RistakApiClient {
     });
   }
 
-  getContactJourney(contactId: string, signal?: AbortSignal) {
+  getContactJourney(contactId: string, signal?: AbortSignal, chatActivityOnly = false) {
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
       timeoutMs: 15_000,
       signal,
       params: {
         refreshExternalStatuses: false,
+        chatActivityOnly: chatActivityOnly || undefined,
       },
     });
   }

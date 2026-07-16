@@ -9,6 +9,7 @@
 //   writeCache('chats', chats)           // debounced, fire-and-forget
 //   clearAllCache()                      // on logout / account switch
 import * as FileSystem from 'expo-file-system/legacy';
+import { shouldDeletePreloadCandidate } from './cachePreloadPolicy';
 
 const CACHE_ROOT = `${FileSystem.documentDirectory ?? ''}ristak-cache-v1/`;
 
@@ -16,6 +17,7 @@ let namespace = 'default';
 let dirReady: Promise<void> | null = null;
 let cacheEpoch = 0;
 const activeWrites = new Set<Promise<void>>();
+const activeWritePathCounts = new Map<string, number>();
 let cacheClearing: Promise<void> | null = null;
 const memory = new Map<string, unknown>();
 
@@ -26,7 +28,13 @@ const memory = new Map<string, unknown>();
 // lookup while the network revalidates in the background.
 const MAX_PRELOADED_ENTRIES = 180;
 const MAX_PRELOADED_BYTES = 32 * 1024 * 1024;
+const MAX_BOOTSTRAP_PRELOADED_BYTES = 4 * 1024 * 1024;
 const MAX_CACHE_AGE_MS = 45 * 24 * 60 * 60 * 1000;
+const CACHE_PRELOAD_BATCH_SIZE = 4;
+
+function yieldCachePreload(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function sanitize(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'default';
@@ -73,6 +81,52 @@ type CacheFileInfo = {
   modificationTime?: number;
 };
 
+type CachePreloadEntry = {
+  path: string;
+  size: number;
+  modifiedAt: number;
+};
+
+function normalizeCacheFileSnapshot(info: CacheFileInfo): { size: number; modifiedAt: number } {
+  return {
+    size: Math.max(0, Number(info.size) || 0),
+    modifiedAt: Math.max(0, Number(info.modificationTime) || 0) * 1000,
+  };
+}
+
+function beginCachePathWrite(path: string): void {
+  activeWritePathCounts.set(path, (activeWritePathCounts.get(path) || 0) + 1);
+}
+
+function finishCachePathWrite(path: string): void {
+  const remaining = (activeWritePathCounts.get(path) || 0) - 1;
+  if (remaining > 0) activeWritePathCounts.set(path, remaining);
+  else activeWritePathCounts.delete(path);
+}
+
+function cachePathHasActiveOwner(path: string): boolean {
+  return memory.has(path) || (activeWritePathCounts.get(path) || 0) > 0;
+}
+
+async function deletePreloadCandidateIfUnchanged(entry: CachePreloadEntry): Promise<void> {
+  // Foreground reads/debounced writes populate RAM synchronously; immediate
+  // writes are covered by the active-path counter. Either one owns this path,
+  // even if the preload stat ran before its network response arrived.
+  if (cachePathHasActiveOwner(entry.path)) return;
+
+  try {
+    const currentInfo = await FileSystem.getInfoAsync(entry.path) as CacheFileInfo;
+    const currentSnapshot = currentInfo.exists ? normalizeCacheFileSnapshot(currentInfo) : null;
+    if (!shouldDeletePreloadCandidate(entry, currentSnapshot, cachePathHasActiveOwner(entry.path))) return;
+    // No await occurs between this final ownership check and scheduling delete,
+    // so a foreground write cannot slip through the JS side of the guard.
+    if (cachePathHasActiveOwner(entry.path)) return;
+    await FileSystem.deleteAsync(entry.path, { idempotent: true });
+  } catch {
+    // Cache cleanup is best-effort and must never affect the live screen.
+  }
+}
+
 function readEnvelope(raw: string): unknown {
   if (!raw) return undefined;
   const parsed = JSON.parse(raw) as { v?: unknown };
@@ -94,9 +148,63 @@ export function hasCachedValue(key: string): boolean {
 }
 
 /**
+ * Loads only the small set of snapshots needed for the first useful paint.
+ * Unlike the general preload, this never enumerates the cache directory and
+ * never parses more than a strict bootstrap budget before the shell opens.
+ */
+export async function preloadCacheKeys(keys: readonly string[], expectedNamespace = ''): Promise<void> {
+  if (!CACHE_ROOT || cacheClearing || !keys.length) return;
+  const requiredNamespace = expectedNamespace ? sanitize(expectedNamespace) : namespace;
+  if (requiredNamespace !== namespace) return;
+  const preloadEpoch = cacheEpoch;
+
+  try {
+    await ensureDir();
+    if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+    const now = Date.now();
+    const candidates = await Promise.all([...new Set(keys)].map(async (key) => {
+      const path = pathFor(key, requiredNamespace);
+      const info = await FileSystem.getInfoAsync(path) as CacheFileInfo;
+      if (!info.exists) return null;
+      const snapshot = normalizeCacheFileSnapshot(info);
+      return {
+        path,
+        ...snapshot,
+      };
+    }));
+
+    let selectedBytes = 0;
+    const selected = candidates.filter((entry): entry is { path: string; size: number; modifiedAt: number } => {
+      if (!entry) return false;
+      const expired = entry.modifiedAt > 0 && now - entry.modifiedAt > MAX_CACHE_AGE_MS;
+      if (expired) {
+        void deletePreloadCandidateIfUnchanged(entry);
+        return false;
+      }
+      if (selectedBytes + entry.size > MAX_BOOTSTRAP_PRELOADED_BYTES) return false;
+      selectedBytes += entry.size;
+      return true;
+    });
+
+    await Promise.all(selected.map(async (entry) => {
+      try {
+        const value = readEnvelope(await FileSystem.readAsStringAsync(entry.path));
+        if (value === undefined) return;
+        if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+        if (!memory.has(entry.path)) memory.set(entry.path, value);
+      } catch {
+        void deletePreloadCandidateIfUnchanged(entry);
+      }
+    }));
+  } catch {
+    // A missing/corrupt bootstrap snapshot falls back to the normal screen load.
+  }
+}
+
+/**
  * Preloads a bounded set of the active account's newest snapshots into RAM.
- * It is intentionally called during bootstrap, before the shell is rendered;
- * stale or invalid files are fail-soft and never delay login on a network call.
+ * It runs after the shell's initial interactions; bounded batches yield back to
+ * the UI and stale or invalid files stay fail-soft.
  */
 export async function preloadCache(expectedNamespace = ''): Promise<void> {
   if (!CACHE_ROOT || cacheClearing) return;
@@ -110,39 +218,66 @@ export async function preloadCache(expectedNamespace = ''): Promise<void> {
     const files = await FileSystem.readDirectoryAsync(CACHE_ROOT);
     const prefix = `${sanitize(requiredNamespace)}__`;
     const now = Date.now();
-    const entries = (await Promise.all(files.map(async (filename) => {
-      if (!filename.startsWith(prefix) || !filename.endsWith('.json')) return null;
-      const path = `${CACHE_ROOT}${filename}`;
-      const info = await FileSystem.getInfoAsync(path) as CacheFileInfo;
-      if (!info.exists) return null;
-      return {
-        path,
-        size: Math.max(0, Number(info.size) || 0),
-        modifiedAt: Math.max(0, Number(info.modificationTime) || 0) * 1000,
-      };
-    }))).filter((entry): entry is { path: string; size: number; modifiedAt: number } => Boolean(entry));
+    const cacheFiles = files.filter((filename) => filename.startsWith(prefix) && filename.endsWith('.json'));
+    const entries: CachePreloadEntry[] = [];
+    for (let batchStart = 0; batchStart < cacheFiles.length; batchStart += CACHE_PRELOAD_BATCH_SIZE) {
+      if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+      const metadataBatch = await Promise.all(cacheFiles
+        .slice(batchStart, batchStart + CACHE_PRELOAD_BATCH_SIZE)
+        .map(async (filename) => {
+          try {
+            const path = `${CACHE_ROOT}${filename}`;
+            const info = await FileSystem.getInfoAsync(path) as CacheFileInfo;
+            if (!info.exists) return null;
+            const snapshot = normalizeCacheFileSnapshot(info);
+            return {
+              path,
+              ...snapshot,
+            };
+          } catch {
+            // One file may disappear between directory enumeration and stat.
+            return null;
+          }
+        }));
+      entries.push(...metadataBatch.filter((entry): entry is { path: string; size: number; modifiedAt: number } => Boolean(entry)));
+      if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+      await yieldCachePreload();
+    }
 
     entries.sort((left, right) => right.modifiedAt - left.modifiedAt);
     let loadedBytes = 0;
-    for (const [index, entry] of entries.entries()) {
-      const expired = entry.modifiedAt > 0 && now - entry.modifiedAt > MAX_CACHE_AGE_MS;
-      const overBudget = index >= MAX_PRELOADED_ENTRIES || loadedBytes + entry.size > MAX_PRELOADED_BYTES;
-      if (expired || overBudget) {
-        void FileSystem.deleteAsync(entry.path, { idempotent: true }).catch(() => undefined);
-        continue;
-      }
-      try {
-        const value = readEnvelope(await FileSystem.readAsStringAsync(entry.path));
-        if (value === undefined) continue;
-        if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
-        // A foreground write can win while preload is reading. Never replace
-        // that fresher in-memory value with an older disk snapshot.
-        if (!memory.has(entry.path)) memory.set(entry.path, value);
+    for (let batchStart = 0; batchStart < entries.length; batchStart += CACHE_PRELOAD_BATCH_SIZE) {
+      if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+      const batch = entries.slice(batchStart, batchStart + CACHE_PRELOAD_BATCH_SIZE);
+      const operations = batch.map(async (entry, batchOffset) => {
+        const index = batchStart + batchOffset;
+        const expired = entry.modifiedAt > 0 && now - entry.modifiedAt > MAX_CACHE_AGE_MS;
+        const overBudget = index >= MAX_PRELOADED_ENTRIES || loadedBytes + entry.size > MAX_PRELOADED_BYTES;
+        if (expired || overBudget) {
+          await deletePreloadCandidateIfUnchanged(entry);
+          return;
+        }
+
+        // Reserve the bounded budget before parallel reads in this small batch;
+        // a corrupt file may make the accounting conservative, never unbounded.
         loadedBytes += entry.size;
-      } catch {
-        // A corrupt snapshot is disposable; fresh network data will replace it.
-        void FileSystem.deleteAsync(entry.path, { idempotent: true }).catch(() => undefined);
-      }
+        try {
+          const value = readEnvelope(await FileSystem.readAsStringAsync(entry.path));
+          if (value === undefined) return;
+          if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+          // A foreground write can win while preload is reading. Never replace
+          // that fresher in-memory value with an older disk snapshot.
+          if (!memory.has(entry.path)) memory.set(entry.path, value);
+        } catch {
+          // A corrupt snapshot is disposable; fresh network data will replace it.
+          await deletePreloadCandidateIfUnchanged(entry);
+        }
+      });
+      await Promise.allSettled(operations);
+      if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+      // Yield after every batch, including batches that only expired or exceeded
+      // the budget, so cleanup cannot flood the bridge while the shell is live.
+      await yieldCachePreload();
     }
   } catch {
     // Offline-first is an enhancement, never a reason to block the shell.
@@ -186,6 +321,7 @@ export function writeCache<T>(key: string, value: T, debounceMs = 450): void {
   const timer = setTimeout(() => {
     pendingWrites.delete(scopedKey);
     const writePromise = (async () => {
+      beginCachePathWrite(targetPath);
       try {
         await ensureDir();
         if (writeEpoch !== cacheEpoch) return;
@@ -193,6 +329,8 @@ export function writeCache<T>(key: string, value: T, debounceMs = 450): void {
         await FileSystem.writeAsStringAsync(targetPath, payload);
       } catch {
         // Best-effort: a failed cache write must never break the app.
+      } finally {
+        finishCachePathWrite(targetPath);
       }
     })();
     activeWrites.add(writePromise);
@@ -220,6 +358,7 @@ export async function writeCacheNow<T>(key: string, value: T, expectedNamespace 
     pendingWrites.delete(scopedKey);
   }
   const writePromise = (async () => {
+    beginCachePathWrite(targetPath);
     try {
       await ensureDir();
       if (
@@ -233,6 +372,8 @@ export async function writeCacheNow<T>(key: string, value: T, expectedNamespace 
       }
     } catch {
       // Best-effort.
+    } finally {
+      finishCachePathWrite(targetPath);
     }
   })();
   activeWrites.add(writePromise);

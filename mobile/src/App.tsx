@@ -47,8 +47,8 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import type { AudioSource } from 'expo-audio';
-import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import {
   Archive,
   Activity,
@@ -135,7 +135,7 @@ import {
   writeAuthToken,
   writeJsonValue,
 } from './storage';
-import { hasCachedValue, peekCache, preloadCache, readCache, writeCache, writeCacheNow, clearAllCache, setCacheNamespace } from './cache';
+import { hasCachedValue, peekCache, preloadCache, preloadCacheKeys, readCache, writeCache, writeCacheNow, clearAllCache, setCacheNamespace } from './cache';
 import {
   analyticsChartCacheKey,
   analyticsFunnelCacheKey,
@@ -169,6 +169,15 @@ import {
   sortChatContactsByRecency,
 } from './chatListState';
 import { toggleVisibleChatSelectionIds } from './chatSelectionState';
+import {
+  CHAT_FALLBACK_REFRESH_INTERVAL_MS,
+  CHAT_TRAILING_REFRESH_DELAY_MS,
+  ChatReconnectReconciliationGate,
+  ChatRefreshBurstGate,
+  runChatRefreshBurst,
+  runInitialConnectedRecovery,
+  shouldRunChatReconciliation,
+} from './chatRefreshPolicy';
 import {
   getOldestConversationHistoryCursor,
   hasNewRenderableConversationHistoryMessage,
@@ -466,18 +475,6 @@ type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'ag
 type ContactInfoPanel = 'main' | 'payments' | 'appointments' | 'archives' | 'journey' | 'agent_history';
 type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null;
 
-function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label}_timeout`));
-    }, timeoutMs);
-
-    promise
-      .then(resolve)
-      .catch(reject)
-      .finally(() => clearTimeout(timer));
-  });
-}
 type ContactInfoArchiveTab = 'media' | 'documents' | 'links';
 type NativeContentFocusKind = 'image' | 'video' | 'document' | 'file' | 'link';
 type NativeContentFocusItem = {
@@ -855,7 +852,6 @@ const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const PINNED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.pinnedIds.v1';
 const MANUAL_UNREAD_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.manualUnreadIds.v1';
 const CHAT_ROW_SWIPE_ACTION_WIDTH = 184;
-const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000;
 const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
 // El backend protege sus consultas con 15 s. El cliente debe darle margen para
 // devolver un error real en redes móviles lentas, no abortar una respuesta sana
@@ -892,11 +888,10 @@ function setConversationMessageMemCache(api: RistakApiClient, contactId: string,
     accountCache.delete(oldestContactId);
   }
 }
-const CONVERSATION_REFRESH_INTERVAL_MS = 4000;
 // Emitted when a push notification is received while the app is in the
 // foreground, so the inbox and open conversation can refresh instantly.
 const CHAT_REFRESH_EVENT = 'ristak:chat-refresh';
-const CHAT_CONVERSATION_MESSAGE_LIMIT = 100;
+const CHAT_CONVERSATION_MESSAGE_LIMIT = 50;
 const CHAT_CONVERSATION_EMPTY_HISTORY_PREFETCH_LIMIT = 5;
 const CHAT_ROW_MIN_HEIGHT = 86;
 const CHAT_AVATAR_SIZE = 58;
@@ -1327,11 +1322,52 @@ export default function RistakNativeApp() {
   const activeSessionTokenRef = useRef('');
   activeSessionTokenRef.current = session.token;
   const sessionVerifyInFlightRef = useRef<Promise<void> | null>(null);
+  const sessionLifecycleEpochRef = useRef(0);
+  const sessionVerifyRequestRef = useRef<{
+    baseUrl: string;
+    token: string;
+    controller: AbortController;
+    promise: ReturnType<RistakApiClient['verify']>;
+  } | null>(null);
+  const cancelSessionVerification = useCallback(() => {
+    sessionLifecycleEpochRef.current += 1;
+    sessionVerifyRequestRef.current?.controller.abort();
+    sessionVerifyRequestRef.current = null;
+    sessionVerifyInFlightRef.current = null;
+  }, []);
   const commitSession = useCallback((nextSession: SessionState) => {
+    const current = activeSessionRef.current;
+    if (current.baseUrl !== nextSession.baseUrl || current.token !== nextSession.token) {
+      cancelSessionVerification();
+    }
     activeSessionRef.current = nextSession;
     activeSessionTokenRef.current = nextSession.token;
     setSession(nextSession);
-  }, []);
+  }, [cancelSessionVerification]);
+  const isCurrentSessionOperation = useCallback((baseUrl: string, token: string, epoch: number) => (
+    sessionLifecycleEpochRef.current === epoch
+    && activeSessionRef.current.baseUrl === baseUrl
+    && activeSessionRef.current.token === token
+  ), []);
+  const requestSessionVerification = useCallback((baseUrl: string, token: string) => {
+    const current = sessionVerifyRequestRef.current;
+    if (current?.baseUrl === baseUrl && current.token === token) return current.promise;
+
+    if (current) cancelSessionVerification();
+    const controller = new AbortController();
+    const promise = new RistakApiClient(baseUrl).verify(token, {
+      signal: controller.signal,
+      timeoutMs: BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS,
+    });
+    sessionVerifyRequestRef.current = { baseUrl, token, controller, promise };
+    const clear = () => {
+      if (sessionVerifyRequestRef.current?.promise === promise) {
+        sessionVerifyRequestRef.current = null;
+      }
+    };
+    void promise.then(clear, clear);
+    return promise;
+  }, [cancelSessionVerification]);
   const licenseAlertShownRef = useRef(false);
   const unauthorizedAlertShownRef = useRef(false);
   const rootThemePreferenceRef = useRef<PhoneThemePreference>('system');
@@ -1407,6 +1443,23 @@ export default function RistakNativeApp() {
     }
   }, [session.token]);
 
+  const clearVerifiedSessionIfCurrent = useCallback(async (
+    baseUrl: string,
+    token: string,
+    operationEpoch: number,
+  ) => {
+    if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return false;
+    await clearAuthToken();
+    if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return false;
+    await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
+    if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return false;
+    await clearAllCache();
+    if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return false;
+    commitSession({ baseUrl, token: '', user: null });
+    setScreen('login');
+    return true;
+  }, [commitSession, isCurrentSessionOperation]);
+
   const bootstrap = useCallback(async () => {
     const [storedBaseUrl, storedToken, cachedUserRecord] = await Promise.all([
       readApiBaseUrl(),
@@ -1432,60 +1485,61 @@ export default function RistakNativeApp() {
     }
 
     const cachedUser = getCachedVerifiedUser(cachedUserRecord, storedBaseUrl, storedToken);
-    // iOS preloads every recent account snapshot before it exposes the shell.
-    // Do the same here: all screen initializers can now synchronously paint
-    // their last known state instead of queuing one disk read per tab.
+    // Only hydrate the snapshots needed for the first useful paint. Parsing the
+    // whole account cache here used to hold the boot screen for up to 32 MiB.
     const sessionNamespace = getSessionCacheNamespace(storedBaseUrl, storedToken);
     if (sessionNamespace) {
       setCacheNamespace(sessionNamespace);
-      await preloadCache(sessionNamespace);
+      await preloadCacheKeys([
+        NATIVE_INBOX_CACHE_KEY,
+        MOBILE_CACHE_KEYS.firstSyncCompleted,
+        SHELL_APP_CONFIG_CACHE_KEY,
+        SHELL_CUSTOM_LABELS_CACHE_KEY,
+        MOBILE_CACHE_KEYS.chatFilterCatalog,
+      ], sessionNamespace);
     }
     commitSession({ baseUrl: storedBaseUrl, token: storedToken, user: cachedUser });
     setScreen('shell');
+    if (sessionNamespace) {
+      InteractionManager.runAfterInteractions(() => {
+        void preloadCache(sessionNamespace);
+      });
+    }
 
+    const verification = requestSessionVerification(storedBaseUrl, storedToken);
+    const operationEpoch = sessionLifecycleEpochRef.current;
     try {
-      const verifier = new RistakApiClient(storedBaseUrl);
-      const verified = await withStartupTimeout(
-        verifier.verify(storedToken),
-        BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS,
-        'native_session_verify',
-      );
+      const verified = await verification;
+      if (!isCurrentSessionOperation(storedBaseUrl, storedToken, operationEpoch)) return;
       if (verified.success && verified.user) {
         const cacheRecord = createVerifiedUserCacheRecord(storedBaseUrl, storedToken, verified.user);
         if (cacheRecord) {
+          if (!isCurrentSessionOperation(storedBaseUrl, storedToken, operationEpoch)) return;
           await writeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY, cacheRecord).catch(() => undefined);
         }
-        if (
-          activeSessionRef.current.baseUrl !== storedBaseUrl
-          || activeSessionRef.current.token !== storedToken
-        ) return;
+        if (!isCurrentSessionOperation(storedBaseUrl, storedToken, operationEpoch)) return;
         commitSession({ baseUrl: storedBaseUrl, token: storedToken, user: verified.user });
       } else {
-        await clearAuthToken();
-        await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
-        await clearAllCache();
-        commitSession({ baseUrl: storedBaseUrl, token: '', user: null });
-        setScreen('login');
+        await clearVerifiedSessionIfCurrent(storedBaseUrl, storedToken, operationEpoch);
       }
       return;
     } catch (error) {
+      if (!isCurrentSessionOperation(storedBaseUrl, storedToken, operationEpoch)) return;
       const rejection = getSessionVerifyRejection(error);
       if (rejection) {
-        if (
-          activeSessionRef.current.baseUrl !== storedBaseUrl
-          || activeSessionRef.current.token !== storedToken
-        ) return;
-        await clearAuthToken();
-        await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
-        await clearAllCache();
-        commitSession({ baseUrl: storedBaseUrl, token: '', user: null });
-        setScreen('login');
+        await clearVerifiedSessionIfCurrent(storedBaseUrl, storedToken, operationEpoch);
         return;
       }
       console.warn('[RistakNative] session verify skipped during startup', error);
       return;
     }
-  }, [applyStoredThemePreference, commitSession]);
+  }, [
+    applyStoredThemePreference,
+    clearVerifiedSessionIfCurrent,
+    commitSession,
+    isCurrentSessionOperation,
+    requestSessionVerification,
+  ]);
 
   const revalidateCurrentSession = useCallback(() => {
     const snapshot = activeSessionRef.current;
@@ -1494,15 +1548,11 @@ export default function RistakNativeApp() {
 
     const { baseUrl, token } = snapshot;
     const revalidation = (async () => {
+      const verification = requestSessionVerification(baseUrl, token);
+      const operationEpoch = sessionLifecycleEpochRef.current;
       try {
-        const verifier = new RistakApiClient(baseUrl);
-        const verified = await withStartupTimeout(
-          verifier.verify(token),
-          BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS,
-          'native_session_reverify',
-        );
-        const current = activeSessionRef.current;
-        if (current.baseUrl !== baseUrl || current.token !== token) return;
+        const verified = await verification;
+        if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return;
         if (!verified.success || !verified.user) {
           handleUnauthorized(token);
           return;
@@ -1510,13 +1560,13 @@ export default function RistakNativeApp() {
 
         const cacheRecord = createVerifiedUserCacheRecord(baseUrl, token, verified.user);
         if (cacheRecord) {
+          if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return;
           await writeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY, cacheRecord).catch(() => undefined);
         }
-        if (activeSessionRef.current.baseUrl !== baseUrl || activeSessionRef.current.token !== token) return;
+        if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return;
         commitSession({ baseUrl, token, user: verified.user });
       } catch (error) {
-        const current = activeSessionRef.current;
-        if (current.baseUrl !== baseUrl || current.token !== token) return;
+        if (!isCurrentSessionOperation(baseUrl, token, operationEpoch)) return;
         const rejection = getSessionVerifyRejection(error);
         if (rejection === 'unauthorized') handleUnauthorized(token);
         else if (rejection === 'license_blocked') handleLicenseBlocked(token);
@@ -1525,17 +1575,26 @@ export default function RistakNativeApp() {
     })();
 
     sessionVerifyInFlightRef.current = revalidation;
-    void revalidation.finally(() => {
+    const clearRevalidation = () => {
       if (sessionVerifyInFlightRef.current === revalidation) {
         sessionVerifyInFlightRef.current = null;
       }
-    });
+    };
+    void revalidation.then(clearRevalidation, clearRevalidation);
     return revalidation;
-  }, [commitSession, handleLicenseBlocked, handleUnauthorized]);
+  }, [
+    commitSession,
+    handleLicenseBlocked,
+    handleUnauthorized,
+    isCurrentSessionOperation,
+    requestSessionVerification,
+  ]);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => () => cancelSessionVerification(), [cancelSessionVerification]);
 
   useEffect(() => {
     if (screen !== 'shell' || !session.baseUrl || !session.token) return undefined;
@@ -1570,6 +1629,9 @@ export default function RistakNativeApp() {
   }, [applyRootThemePreference, screen, themeRenderVersion]);
 
   const handleLogin = async (email: string, password: string) => {
+    // Invalidate every continuation from the previous credentials before the
+    // login network round-trip can yield back to an old verify response.
+    cancelSessionVerification();
     const response = await loginWithResolvedTenant(email, password);
     // A fresh authentication can belong to another operator on the same
     // server. Never let that session hydrate the previous user's offline data.
@@ -1589,6 +1651,7 @@ export default function RistakNativeApp() {
   };
 
   const logout = async () => {
+    cancelSessionVerification();
     await unsubscribeFromNativePushNotifications(api);
     await clearAuthToken();
     await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
@@ -1601,6 +1664,7 @@ export default function RistakNativeApp() {
   };
 
   const resetServer = async () => {
+    cancelSessionVerification();
     await unsubscribeFromNativePushNotifications(api);
     await clearRuntimeState();
     await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
@@ -2805,6 +2869,8 @@ function ChatScreen({
   const [chatListOffset, setChatListOffset] = useState(0);
   const [chatListViewportHeight, setChatListViewportHeight] = useState(0);
   const [chatListHeaderHeight, setChatListHeaderHeight] = useState(0);
+  const [chatLiveConnected, setChatLiveConnected] = useState(false);
+  const [chatReconnectVersion, setChatReconnectVersion] = useState(0);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<ChatContact | null>(null);
   const [conversationClosing, setConversationClosing] = useState(false);
@@ -2818,13 +2884,24 @@ function ChatScreen({
   const chatListLoadedScopeRef = useRef(hasCanonicalInboxSnapshot ? canonicalInboxScopeKey : '');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
+  const chatLiveConnectedRef = useRef(false);
+  const chatReconnectReconciliationGateRef = useRef(new ChatReconnectReconciliationGate());
+  const chatInitialConnectedRecoveryStartedRef = useRef(false);
+  const chatReconnectVersionRef = useRef(chatReconnectVersion);
+  const chatApiReconnectBaselineVersionRef = useRef(chatReconnectVersion);
+  const firstSyncProgressRef = useRef(firstSyncProgress);
+  const chatLastInboxReconcileAtRef = useRef(0);
   const chatRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chatRealtimeRefreshInFlightRef = useRef(false);
-  const chatRealtimeRefreshQueuedRef = useRef(false);
+  const chatRefreshBurstGateRef = useRef(new ChatRefreshBurstGate());
+  const chatRefreshExecutorRef = useRef<() => void>(() => undefined);
   const chatListRequestAbortRef = useRef<AbortController | null>(null);
+  const chatListRequestSettledRef = useRef<Promise<void> | null>(null);
+  const chatLoadLatestRef = useRef<(silent?: boolean) => Promise<ChatContact[] | null>>(async () => null);
   const firstSyncRunningRef = useRef(false);
   const skipNextStandardLoadRef = useRef(false);
   const scheduleIntentRef = useRef<{ signature: string; scheduledId: string } | null>(null);
+  chatReconnectVersionRef.current = chatReconnectVersion;
+  firstSyncProgressRef.current = firstSyncProgress;
   useEffect(() => {
     chatsRef.current = chats;
     // Solo la bandeja sin búsqueda alimenta la caché de remontaje.
@@ -2895,9 +2972,22 @@ function ChatScreen({
       clearTimeout(chatRealtimeRefreshTimeoutRef.current);
       chatRealtimeRefreshTimeoutRef.current = null;
     }
+    chatRefreshBurstGateRef.current.finish();
+    chatRefreshBurstGateRef.current = new ChatRefreshBurstGate();
     chatListRequestAbortRef.current?.abort();
     chatListRequestAbortRef.current = null;
   }, []);
+
+  useEffect(() => () => {
+    if (chatRealtimeRefreshTimeoutRef.current) {
+      clearTimeout(chatRealtimeRefreshTimeoutRef.current);
+      chatRealtimeRefreshTimeoutRef.current = null;
+    }
+    chatRefreshBurstGateRef.current.finish();
+    chatRefreshBurstGateRef.current = new ChatRefreshBurstGate();
+    chatListRequestAbortRef.current?.abort();
+    chatListRequestAbortRef.current = null;
+  }, [api]);
 
   useEffect(() => {
     onDockHiddenChange?.(assistantOpen || Boolean(selected));
@@ -2953,6 +3043,11 @@ function ChatScreen({
     chatListRequestAbortRef.current?.abort();
     const controller = new AbortController();
     chatListRequestAbortRef.current = controller;
+    let resolveRequestSettled: () => void = () => undefined;
+    const requestSettled = new Promise<void>((resolve) => {
+      resolveRequestSettled = resolve;
+    });
+    chatListRequestSettledRef.current = requestSettled;
     let timedOut = false;
     const requestTimeout = setTimeout(() => {
       timedOut = true;
@@ -2968,6 +3063,7 @@ function ChatScreen({
       });
       if (!chatMountedRef.current) return null;
       if (generation !== chatListGenerationRef.current) return null;
+      chatLastInboxReconcileAtRef.current = Date.now();
       chatListLoadedQueryRef.current = requestQuery;
       chatListLoadedScopeRef.current = requestScopeKey;
       const nextChats = Array.isArray(data) ? data : [];
@@ -3012,48 +3108,34 @@ function ChatScreen({
     } finally {
       clearTimeout(requestTimeout);
       if (chatListRequestAbortRef.current === controller) chatListRequestAbortRef.current = null;
+      if (chatListRequestSettledRef.current === requestSettled) {
+        chatListRequestSettledRef.current = null;
+      }
+      resolveRequestSettled();
       if (chatMountedRef.current && generation === chatListGenerationRef.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
   }, [api, canonicalInboxScopeKey, chatListPhoneFilterParams, currentChatListScopeKey, query]);
+  chatLoadLatestRef.current = loadChats;
 
   const runFirstSync = useCallback(async () => {
     if (firstSyncRunningRef.current || !chatMountedRef.current) return;
     firstSyncRunningRef.current = true;
     setFirstSyncProgress({
-      stage: 'settings',
-      detail: 'Consultando preferencias y configuración de la cuenta.',
+      stage: 'conversations',
+      detail: 'Cargando primero tus conversaciones recientes.',
     });
 
     try {
-      await api.getConfig(['account_timezone', 'account_currency', 'mobile_chat_sort_mode']);
-      if (!chatMountedRef.current) return;
-
-      setFirstSyncProgress({
-        stage: 'contacts',
-        detail: 'Descargando el directorio inicial de contactos.',
-      });
-      const contacts = await api.getPickerContacts(100);
-      const directory = Array.isArray(contacts) ? contacts : [];
-      await writeCacheNow(MOBILE_CACHE_KEYS.firstSyncContacts, directory);
-      if (!chatMountedRef.current) return;
-
-      setFirstSyncProgress({
-        stage: 'conversations',
-        detail: directory.length
-          ? `${directory.length} contactos listos. Cargando la bandeja y el historial reciente.`
-          : 'El directorio está listo. Buscando conversaciones.',
-      });
       const loadedChats = await loadChats(false);
       if (!loadedChats) {
-        // El directorio ya quedó guardado. Un timeout de la bandeja no debe
-        // bloquear todo el producto: terminamos el bootstrap degradado y el
-        // efecto normal de inbox reintenta en segundo plano al cerrar el overlay.
+        // Un timeout de la bandeja no debe bloquear todo el producto: el efecto
+        // normal de inbox reintenta en segundo plano al cerrar el overlay.
         setFirstSyncProgress({
           stage: 'localCopy',
-          detail: 'Tus contactos ya están disponibles. Las conversaciones seguirán cargando en segundo plano.',
+          detail: 'Ristak abrirá ahora. Las conversaciones seguirán cargando en segundo plano.',
         });
         await writeCacheNow(MOBILE_CACHE_KEYS.firstSyncCompleted, true);
         if (!chatMountedRef.current) return;
@@ -3090,14 +3172,14 @@ function ChatScreen({
         ? syncError.message
         : 'La descarga se interrumpió. Revisa tu conexión e intenta de nuevo.';
       setFirstSyncProgress((current) => ({
-        stage: current?.stage || 'settings',
+        stage: current?.stage || 'conversations',
         detail: 'La descarga se interrumpió.',
         error: message,
       }));
     } finally {
       firstSyncRunningRef.current = false;
     }
-  }, [api, loadChats]);
+  }, [loadChats]);
 
   useEffect(() => {
     if (hasCanonicalInboxSnapshot && !hasCachedValue(MOBILE_CACHE_KEYS.firstSyncCompleted)) {
@@ -3111,31 +3193,46 @@ function ChatScreen({
     void runFirstSync();
   }, [firstSyncProgress, inboxCacheHydrated, runFirstSync]);
 
+  const executeSilentInboxRefresh = useCallback(() => {
+    if (!chatMountedRef.current) return;
+    const gate = chatRefreshBurstGateRef.current;
+    void runChatRefreshBurst(
+      gate,
+      chatListRequestSettledRef.current,
+      // Always start a request after the latest nudge. Returning a request that
+      // replaced the captured one can still return a pre-nudge snapshot.
+      () => chatLoadLatestRef.current(true),
+    ).then(({ trailingNeeded }) => {
+      if (
+        !trailingNeeded
+        || !chatMountedRef.current
+        || gate !== chatRefreshBurstGateRef.current
+        || chatRealtimeRefreshTimeoutRef.current
+      ) return;
+      chatRealtimeRefreshTimeoutRef.current = setTimeout(() => {
+        chatRealtimeRefreshTimeoutRef.current = null;
+        chatRefreshExecutorRef.current();
+      }, CHAT_TRAILING_REFRESH_DELAY_MS);
+    }).catch((refreshError) => {
+      console.warn('[RistakNative][chat] bounded inbox refresh failed', refreshError);
+    });
+  }, []);
+  chatRefreshExecutorRef.current = executeSilentInboxRefresh;
+
   const requestSilentInboxRefresh = useCallback(() => {
     if (!chatMountedRef.current) return;
-    if (chatRealtimeRefreshTimeoutRef.current) {
-      // Keep the first scheduled refresh. A trailing-only debounce can starve
-      // forever while messages arrive continuously.
+    const gate = chatRefreshBurstGateRef.current;
+    if (gate.isInFlight) {
+      gate.beginOrQueue();
       return;
     }
+    if (chatRealtimeRefreshTimeoutRef.current) return;
 
     chatRealtimeRefreshTimeoutRef.current = setTimeout(() => {
       chatRealtimeRefreshTimeoutRef.current = null;
-      if (chatRealtimeRefreshInFlightRef.current) {
-        chatRealtimeRefreshQueuedRef.current = true;
-        return;
-      }
-
-      chatRealtimeRefreshInFlightRef.current = true;
-      void loadChats(true).finally(() => {
-        chatRealtimeRefreshInFlightRef.current = false;
-        if (chatRealtimeRefreshQueuedRef.current) {
-          chatRealtimeRefreshQueuedRef.current = false;
-          requestSilentInboxRefresh();
-        }
-      });
+      chatRefreshExecutorRef.current();
     }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
-  }, [loadChats]);
+  }, []);
 
   const handleInboxRefreshEvent = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
     // Reorder and update the row from the SSE metadata immediately. The REST
@@ -3156,10 +3253,16 @@ function ChatScreen({
     requestSilentInboxRefresh();
   }, [requestSilentInboxRefresh]);
 
-  // SSE gives the fast path; the interval stays as reconciliation if the stream
-  // drops or the app wakes up after being suspended.
+  // SSE gives the fast path. Poll every 30 s only while disconnected; with a
+  // healthy stream, one 2-minute reconciliation is enough as a safety net.
   useEffect(() => {
-    const interval = setInterval(requestSilentInboxRefresh, CHAT_INBOX_REFRESH_INTERVAL_MS);
+    const interval = setInterval(() => {
+      if (!shouldRunChatReconciliation(
+        chatLiveConnectedRef.current,
+        chatLastInboxReconcileAtRef.current,
+      )) return;
+      requestSilentInboxRefresh();
+    }, CHAT_FALLBACK_REFRESH_INTERVAL_MS);
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') requestSilentInboxRefresh();
     });
@@ -3171,14 +3274,43 @@ function ChatScreen({
     };
   }, [handleInboxRefreshEvent, requestSilentInboxRefresh]);
 
-  useEffect(() => api.subscribeToChatLiveEvents({
-    onMessage: (event: ChatLiveMessageEvent) => {
-      DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, event);
-    },
-    onError: (error) => {
-      console.warn('[RistakNative][chat] live stream unavailable', error);
-    },
-  }), [api]);
+  useEffect(() => {
+    let mounted = true;
+    chatLiveConnectedRef.current = false;
+    chatLastInboxReconcileAtRef.current = 0;
+    chatInitialConnectedRecoveryStartedRef.current = false;
+    chatApiReconnectBaselineVersionRef.current = chatReconnectVersionRef.current;
+    chatReconnectReconciliationGateRef.current.reset();
+    setChatLiveConnected(false);
+    const unsubscribe = api.subscribeToChatLiveEvents({
+      onMessage: (event: ChatLiveMessageEvent) => {
+        DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, event);
+      },
+      onError: (error) => {
+        console.warn('[RistakNative][chat] live stream unavailable', error);
+      },
+      onStatusChange: (status) => {
+        if (!mounted) return;
+        const connected = status === 'connected';
+        const shouldReconcileGap = chatReconnectReconciliationGateRef.current.observe(status);
+        chatLiveConnectedRef.current = connected;
+        setChatLiveConnected(connected);
+        if (shouldReconcileGap) {
+          // Inbox and open thread reconcile independently: either one may have
+          // succeeded while the other failed. The version is only for the open
+          // thread; this direct nudge owns the inbox.
+          requestSilentInboxRefresh();
+          setChatReconnectVersion((current) => current + 1);
+        }
+      },
+    });
+    return () => {
+      mounted = false;
+      chatLiveConnectedRef.current = false;
+      chatReconnectReconciliationGateRef.current.reset();
+      unsubscribe();
+    };
+  }, [api, requestSilentInboxRefresh]);
 
   useEffect(() => {
     if (!selected) {
@@ -3255,6 +3387,43 @@ function ChatScreen({
     }, query.trim() ? 240 : 0);
     return () => clearTimeout(timer);
   }, [firstSyncProgress, inboxCacheHydrated, loadChats, query]);
+
+  useEffect(() => {
+    if (
+      !chatLiveConnected
+      || !inboxCacheHydrated
+      || chatInitialConnectedRecoveryStartedRef.current
+    ) return undefined;
+
+    chatInitialConnectedRecoveryStartedRef.current = true;
+    if (chatReconnectVersion > chatApiReconnectBaselineVersionRef.current) {
+      // A real reconnect already scheduled the inbox nudge. It also covers an
+      // initial load that was still waiting for disk hydration at that moment.
+      return undefined;
+    }
+    let cancelled = false;
+    // The standard inbox effect above schedules its no-query load with a zero
+    // delay. Yield one turn so we capture that request instead of racing it.
+    const timer = setTimeout(() => {
+      if (cancelled || !chatMountedRef.current) return;
+      const initialRequest = chatListRequestSettledRef.current;
+      // If this is the first-account overlay, its normal post-overlay load would
+      // duplicate this recovery. The recovery becomes that one retry instead.
+      if (firstSyncProgressRef.current) skipNextStandardLoadRef.current = true;
+      void runInitialConnectedRecovery(
+        initialRequest,
+        () => cancelled || !chatMountedRef.current || chatLastInboxReconcileAtRef.current > 0,
+        () => chatLoadLatestRef.current(true),
+      ).catch((recoveryError) => {
+        console.warn('[RistakNative][chat] initial connected inbox recovery failed', recoveryError);
+      });
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [api, chatLiveConnected, chatReconnectVersion, inboxCacheHydrated]);
 
  useEffect(() => {
     let cancelled = false;
@@ -4657,6 +4826,8 @@ function ChatScreen({
             archived={archivedChatIds.includes(selected.id)}
             businessPhones={businessPhones}
             customLabels={customLabels}
+            chatLiveConnected={chatLiveConnected}
+            chatReconnectVersion={chatReconnectVersion}
             integrationsStatus={integrationsStatus}
             muted={mutedChatIds.includes(selected.id)}
             timezone={businessTimezone}
@@ -22198,6 +22369,8 @@ function NativeConversationScreen({
   appBaseUrl = '',
   archived,
   businessPhones = [],
+  chatLiveConnected = false,
+  chatReconnectVersion = 0,
   contact,
   customLabels = DEFAULT_CUSTOM_LABELS,
   integrationsStatus,
@@ -22219,6 +22392,8 @@ function NativeConversationScreen({
   appBaseUrl?: string;
   archived: boolean;
   businessPhones?: WhatsAppApiPhoneNumber[];
+  chatLiveConnected?: boolean;
+  chatReconnectVersion?: number;
   contact: ChatContact;
   customLabels?: CustomLabels;
   integrationsStatus?: IntegrationsStatus | null;
@@ -22311,9 +22486,13 @@ function NativeConversationScreen({
   const conversationParallaxY = useRef(new Animated.Value(0)).current;
   const loadRequestRef = useRef(0);
   const conversationRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const conversationRealtimeRefreshInFlightRef = useRef(false);
-  const conversationRealtimeRefreshQueuedRef = useRef(false);
-  const conversationForegroundLoadInFlightRef = useRef(false);
+  const conversationRefreshBurstGateRef = useRef(new ChatRefreshBurstGate());
+  const conversationRefreshExecutorRef = useRef<() => void>(() => undefined);
+  const conversationPrimaryRequestSettledRef = useRef<Promise<void> | null>(null);
+  const conversationLoadLatestRef = useRef<(silent?: boolean, background?: boolean) => Promise<void>>(async () => undefined);
+  const conversationLastReconcileAtRef = useRef(0);
+  const conversationInitialConnectedRecoveryStartedRef = useRef(false);
+  const conversationHandledReconnectVersionRef = useRef(chatReconnectVersion);
   const conversationRefreshKickRef = useRef<(event?: Partial<ChatLiveMessageEvent>) => void>(() => undefined);
   const activeConversationContactIdRef = useRef(contact.id);
   const onContactPatchRef = useRef(onContactPatch);
@@ -22424,6 +22603,9 @@ function NativeConversationScreen({
     conversationHistoryCursorRef.current = null;
     conversationHistoryExhaustedContactIdRef.current = null;
     scheduledMessagesLastLoadedAtRef.current = 0;
+    conversationLastReconcileAtRef.current = 0;
+    conversationInitialConnectedRecoveryStartedRef.current = false;
+    conversationHandledReconnectVersionRef.current = chatReconnectVersion;
     setOlderMessagesLoading(false);
     setPaymentLinkDraftPreview(null);
     setConversationCacheHydrated(
@@ -22445,8 +22627,11 @@ function NativeConversationScreen({
     conversationPrimaryAbortRef.current?.abort();
     const primaryAbortController = new AbortController();
     conversationPrimaryAbortRef.current = primaryAbortController;
-    const foregroundLoad = !silent && !background;
-    if (foregroundLoad) conversationForegroundLoadInFlightRef.current = true;
+    let resolveRequestSettled: () => void = () => undefined;
+    const requestSettled = new Promise<void>((resolve) => {
+      resolveRequestSettled = resolve;
+    });
+    conversationPrimaryRequestSettledRef.current = requestSettled;
     // Si ya hay mensajes en pantalla (caché hidratada), refrescamos sin spinner:
     // la lista anterior se queda visible y se reemplaza cuando llega lo nuevo.
     if (!silent && !background && !messagesRef.current.length) {
@@ -22463,6 +22648,7 @@ function NativeConversationScreen({
         { signal: primaryAbortController.signal },
       );
       if (requestId !== loadRequestRef.current || activeConversationContactIdRef.current !== contactId) return;
+      conversationLastReconcileAtRef.current = Date.now();
       const journeyMessages = buildMessagesFromJourney(contactId, journey, appBaseUrl);
       const receivedFullPage = Array.isArray(journey) && journey.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
       const recentPageHistoryCursor = getOldestConversationHistoryCursor(journey);
@@ -22539,7 +22725,7 @@ function NativeConversationScreen({
         void Promise.all([
           background
             ? Promise.resolve(null)
-            : api.getContactJourney(contactId, supplementalAbortController.signal).catch(() => null),
+            : api.getContactJourney(contactId, supplementalAbortController.signal, true).catch(() => null),
           shouldRefreshScheduled
             ? api.getScheduledMessages(contactId, supplementalAbortController.signal).catch(() => null)
             : Promise.resolve(null),
@@ -22589,18 +22775,16 @@ function NativeConversationScreen({
       if (conversationPrimaryAbortRef.current === primaryAbortController) {
         conversationPrimaryAbortRef.current = null;
       }
+      if (conversationPrimaryRequestSettledRef.current === requestSettled) {
+        conversationPrimaryRequestSettledRef.current = null;
+      }
+      resolveRequestSettled();
       if (requestId === loadRequestRef.current) {
         setLoading(false);
       }
-      if (foregroundLoad) {
-        conversationForegroundLoadInFlightRef.current = false;
-        if (conversationRealtimeRefreshQueuedRef.current) {
-          conversationRealtimeRefreshQueuedRef.current = false;
-          conversationRefreshKickRef.current();
-        }
-      }
     }
   }, [api, appBaseUrl, contact.id]);
+  conversationLoadLatestRef.current = loadConversation;
 
   const loadOlderConversationMessages = useCallback(async () => {
     if (loading || olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return;
@@ -22704,36 +22888,101 @@ function NativeConversationScreen({
     void loadConversation();
   }, [conversationCacheHydrated, loadConversation]);
 
+  useEffect(() => {
+    if (
+      !chatLiveConnected
+      || !conversationCacheHydrated
+      || conversationInitialConnectedRecoveryStartedRef.current
+    ) return undefined;
+
+    conversationInitialConnectedRecoveryStartedRef.current = true;
+    // A real reconnect already increments the parent version and schedules one
+    // canonical thread refresh below. Do not layer the first-connect recovery on
+    // top of that same transition when the thread was opened while offline.
+    if (chatReconnectVersion > conversationHandledReconnectVersionRef.current) {
+      return undefined;
+    }
+    let cancelled = false;
+    const initialRequest = conversationPrimaryRequestSettledRef.current;
+    void runInitialConnectedRecovery(
+      initialRequest,
+      () => (
+        cancelled
+        || activeConversationContactIdRef.current !== contact.id
+        || conversationLastReconcileAtRef.current > 0
+      ),
+      () => conversationLoadLatestRef.current(true, true),
+    ).catch((recoveryError) => {
+      console.warn('[RistakNative][chat] initial connected conversation recovery failed', recoveryError);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, chatLiveConnected, chatReconnectVersion, contact.id, conversationCacheHydrated]);
+
+  const executeSilentConversationRefresh = useCallback(() => {
+    const gate = conversationRefreshBurstGateRef.current;
+    void runChatRefreshBurst(
+      gate,
+      conversationPrimaryRequestSettledRef.current,
+      // Force a post-nudge snapshot even if another foreground request replaced
+      // the one captured when this burst started.
+      () => conversationLoadLatestRef.current(true, true),
+    ).then(({ trailingNeeded }) => {
+      if (
+        !trailingNeeded
+        || gate !== conversationRefreshBurstGateRef.current
+        || conversationRealtimeRefreshTimeoutRef.current
+      ) return;
+      conversationRealtimeRefreshTimeoutRef.current = setTimeout(() => {
+        conversationRealtimeRefreshTimeoutRef.current = null;
+        conversationRefreshExecutorRef.current();
+      }, CHAT_TRAILING_REFRESH_DELAY_MS);
+    }).catch((refreshError) => {
+      console.warn('[RistakNative][chat] bounded conversation refresh failed', refreshError);
+    });
+  }, []);
+  conversationRefreshExecutorRef.current = executeSilentConversationRefresh;
+
   const requestSilentConversationRefresh = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
     const eventContactId = String(event?.contactId || '').trim();
     if (eventContactId && eventContactId !== contact.id) return;
 
-    if (conversationRealtimeRefreshTimeoutRef.current) {
+    const gate = conversationRefreshBurstGateRef.current;
+    if (gate.isInFlight) {
+      gate.beginOrQueue();
       return;
     }
+    if (conversationRealtimeRefreshTimeoutRef.current) return;
 
     conversationRealtimeRefreshTimeoutRef.current = setTimeout(() => {
       conversationRealtimeRefreshTimeoutRef.current = null;
-      if (conversationForegroundLoadInFlightRef.current || conversationRealtimeRefreshInFlightRef.current) {
-        conversationRealtimeRefreshQueuedRef.current = true;
-        return;
-      }
-
-      conversationRealtimeRefreshInFlightRef.current = true;
-      void loadConversation(true, true).finally(() => {
-        conversationRealtimeRefreshInFlightRef.current = false;
-        if (conversationRealtimeRefreshQueuedRef.current) {
-          conversationRealtimeRefreshQueuedRef.current = false;
-          requestSilentConversationRefresh();
-        }
-      });
+      conversationRefreshExecutorRef.current();
     }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
-  }, [contact.id, loadConversation]);
+  }, [contact.id]);
   conversationRefreshKickRef.current = requestSilentConversationRefresh;
 
-  // SSE is the fast path; polling/app-state remains the reconciliation fallback.
   useEffect(() => {
-    const interval = setInterval(requestSilentConversationRefresh, CONVERSATION_REFRESH_INTERVAL_MS);
+    const handledVersion = conversationHandledReconnectVersionRef.current;
+    if (chatReconnectVersion <= handledVersion) {
+      conversationHandledReconnectVersionRef.current = chatReconnectVersion;
+      return;
+    }
+    conversationHandledReconnectVersionRef.current = chatReconnectVersion;
+    requestSilentConversationRefresh();
+  }, [chatReconnectVersion, requestSilentConversationRefresh]);
+
+  // SSE/push refresh immediately. Poll every 30 s only while disconnected and
+  // reconcile every 2 minutes while the stream remains healthy.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!shouldRunChatReconciliation(
+        chatLiveConnected,
+        conversationLastReconcileAtRef.current,
+      )) return;
+      requestSilentConversationRefresh();
+    }, CHAT_FALLBACK_REFRESH_INTERVAL_MS);
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') requestSilentConversationRefresh();
     });
@@ -22743,7 +22992,7 @@ function NativeConversationScreen({
       appStateSub.remove();
       pushSub.remove();
     };
-  }, [requestSilentConversationRefresh]);
+  }, [chatLiveConnected, requestSilentConversationRefresh]);
 
   const refreshAgentStates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setAgentLoading(true);
@@ -22772,7 +23021,20 @@ function NativeConversationScreen({
       clearTimeout(conversationRealtimeRefreshTimeoutRef.current);
       conversationRealtimeRefreshTimeoutRef.current = null;
     }
+    conversationRefreshBurstGateRef.current.finish();
+    conversationRefreshBurstGateRef.current = new ChatRefreshBurstGate();
   }, []);
+
+  useEffect(() => () => {
+    if (conversationRealtimeRefreshTimeoutRef.current) {
+      clearTimeout(conversationRealtimeRefreshTimeoutRef.current);
+      conversationRealtimeRefreshTimeoutRef.current = null;
+    }
+    conversationRefreshBurstGateRef.current.finish();
+    conversationRefreshBurstGateRef.current = new ChatRefreshBurstGate();
+    conversationPrimaryAbortRef.current?.abort();
+    conversationPrimaryAbortRef.current = null;
+  }, [api, contact.id]);
 
   const clearSheetCloseTimer = useCallback(() => {
     if (sheetCloseTimerRef.current) {
