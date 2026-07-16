@@ -113,9 +113,10 @@ export function publishChatMessageEvent(input = {}) {
 
 export function publishChatDataChangedEvent(input = {}) {
   const contactId = cleanString(input.contactId)
+  const supportedDomains = new Set(['appointments', 'scheduled_messages'])
   const domains = [...new Set((Array.isArray(input.domains) ? input.domains : [])
     .map(cleanString)
-    .filter(domain => domain === 'appointments'))]
+    .filter(domain => supportedDomains.has(domain)))]
   if (!contactId || domains.length === 0 || clients.size === 0) return
 
   const payload = {

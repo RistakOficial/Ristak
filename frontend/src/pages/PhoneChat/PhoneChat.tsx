@@ -9629,6 +9629,9 @@ export const PhoneChat: React.FC = () => {
       onMessage: (event) => {
         refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
       },
+      onDataChanged: (event) => {
+        refreshChatInboxNow({ contactId: event.contactId }).catch(() => undefined)
+      },
       onStatusChange: (status) => {
         chatLiveConnectedRef.current = status === 'connected'
       }

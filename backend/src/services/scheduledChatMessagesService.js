@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
+import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
 
 const DISPATCH_BATCH_SIZE = 20
 const STALE_SENDING_MS = 10 * 60 * 1000
@@ -139,6 +140,18 @@ function normalizeScheduledMessageRow(row = {}) {
   }
 }
 
+function publishScheduledMessagesChanged(row = {}) {
+  const contactId = cleanString(row.contactId || row.contact_id)
+  const entityId = cleanString(row.id)
+  if (!contactId || !entityId) return
+
+  publishChatDataChangedEvent({
+    contactId,
+    domains: ['scheduled_messages'],
+    entityId
+  })
+}
+
 async function getContact(contactId) {
   const id = cleanString(contactId)
   if (!id) throw createServiceError('Elige un contacto para programar el mensaje.')
@@ -265,7 +278,9 @@ export async function createScheduledChatMessage(payload = {}) {
   ])
 
   const row = await db.get('SELECT * FROM scheduled_chat_messages WHERE id = ?', [id])
-  return normalizeScheduledMessageRow(row)
+  const scheduledMessage = normalizeScheduledMessageRow(row)
+  publishScheduledMessagesChanged(scheduledMessage)
+  return scheduledMessage
 }
 
 export async function listScheduledChatMessages({ contactId, statuses = ['scheduled', 'sending', 'error'] } = {}) {
@@ -317,7 +332,9 @@ export async function cancelScheduledChatMessage({ id, contactId } = {}) {
   }
 
   const row = await db.get('SELECT * FROM scheduled_chat_messages WHERE id = ?', [scheduledId])
-  return normalizeScheduledMessageRow(row)
+  const scheduledMessage = normalizeScheduledMessageRow(row)
+  publishScheduledMessagesChanged(scheduledMessage)
+  return scheduledMessage
 }
 
 async function markScheduledMessageStatus(id, patch = {}) {
@@ -340,6 +357,9 @@ async function markScheduledMessageStatus(id, patch = {}) {
     updatedAt,
     id
   ])
+
+  const row = await db.get('SELECT id, contact_id FROM scheduled_chat_messages WHERE id = ?', [id])
+  publishScheduledMessagesChanged(row)
 }
 
 async function claimScheduledMessage(id) {
@@ -444,7 +464,7 @@ async function dispatchScheduledRow(row) {
 export async function dispatchDueScheduledChatMessages({ limit = DISPATCH_BATCH_SIZE } = {}) {
   const staleCutoffMs = Date.now() - STALE_SENDING_MS
   const sendingRows = await db.all(`
-    SELECT id, last_attempt_at, updated_at, created_at
+    SELECT id, contact_id, last_attempt_at, updated_at, created_at
     FROM scheduled_chat_messages
     WHERE status = 'sending'
   `).catch(error => {
@@ -461,7 +481,7 @@ export async function dispatchDueScheduledChatMessages({ limit = DISPATCH_BATCH_
     // y se REENVIABA, sin poder verificar con el proveedor si ya se entregó: el contacto podía
     // recibirlo dos veces. Como no podemos confirmar la entrega, lo marcamos como 'error'
     // (visible en la UI y reintentable manualmente) en vez de reenviar a ciegas.
-    await db.run(`
+    const result = await db.run(`
       UPDATE scheduled_chat_messages
       SET status = 'error',
           error_message = 'El envío quedó interrumpido y no se pudo confirmar si el mensaje llegó. Revísalo y reenvíalo manualmente si es necesario.',
@@ -470,7 +490,9 @@ export async function dispatchDueScheduledChatMessages({ limit = DISPATCH_BATCH_
         AND status = 'sending'
     `, [releaseNow, row.id]).catch(error => {
       logger.warn(`[Mensajes programados] No se pudo liberar ${row.id}: ${error.message}`)
+      return null
     })
+    if (Number(result?.changes || 0) > 0) publishScheduledMessagesChanged(row)
   }
 
   const dueRows = await db.all(`

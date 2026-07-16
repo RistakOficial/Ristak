@@ -74,6 +74,8 @@ test('mutaciones y eventos vivos invalidan sólo los módulos que realmente depe
   assert.match(chatLive, /CHAT_LIVE_CACHE_PATHS[\s\S]*invalidateRistakApiReadCache\(\{\s*pathPrefixes: CHAT_LIVE_CACHE_PATHS,\s*abortInflight: false\s*\}\)[\s\S]*options\.onMessage/)
   assert.match(chatLive, /CHAT_APPOINTMENT_CACHE_PATHS[\s\S]*parsed\.event === 'chat_data_changed'[\s\S]*payload\.domains\.includes\('appointments'\)[\s\S]*invalidateRistakApiReadCache\(\{\s*pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS,\s*abortInflight: false\s*\}\)/)
   assert.match(chatLive, /CHAT_APPOINTMENT_CACHE_PATHS = \[[\s\S]*?'\/api\/calendars'/)
+  assert.match(chatLive, /CHAT_SCHEDULED_MESSAGE_CACHE_PATHS[\s\S]*payload\.domains\.includes\('scheduled_messages'\)[\s\S]*invalidateRistakApiReadCache\(\{\s*pathPrefixes: CHAT_SCHEDULED_MESSAGE_CACHE_PATHS,\s*abortInflight: false\s*\}\)[\s\S]*options\.onDataChanged/)
+  assert.match(chatLive, /CHAT_SCHEDULED_MESSAGE_CACHE_PATHS = \[[\s\S]*?'\/api\/whatsapp-api\/messages\/scheduled'/)
   assert.doesNotMatch(paymentsLive, /PAYMENT_LIVE_CACHE_PATHS = \[[\s\S]*?'\/api\/sites'/)
   assert.doesNotMatch(chatLive, /CHAT_LIVE_CACHE_PATHS = \[[\s\S]*?'\/api\/sites'/)
 })

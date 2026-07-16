@@ -119,7 +119,7 @@ import {
   type JourneyEvent
 } from '@/services/contactsService'
 import { createDesktopChatConversationRequestCoordinator } from '@/services/desktopChatConversationRequest'
-import { subscribeToChatLiveEvents, reportViewing, type ChatLiveMessageEvent } from '@/services/chatLiveEventsService'
+import { subscribeToChatLiveEvents, reportViewing, type ChatLiveEvent } from '@/services/chatLiveEventsService'
 import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel, type HighLevelPhoneNumber } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -4919,7 +4919,7 @@ export const DesktopChat: React.FC = () => {
     return () => window.clearInterval(intervalId)
   }, [loadChats, loadConversation])
 
-  const refreshFromLiveChatEvent = useCallback((event?: ChatLiveMessageEvent) => {
+  const refreshFromLiveChatEvent = useCallback((event?: ChatLiveEvent) => {
     if (chatLiveRefreshTimeoutRef.current !== null) {
       window.clearTimeout(chatLiveRefreshTimeoutRef.current)
     }
@@ -4958,6 +4958,7 @@ export const DesktopChat: React.FC = () => {
   useEffect(() => {
     return subscribeToChatLiveEvents({
       onMessage: refreshFromLiveChatEvent,
+      onDataChanged: refreshFromLiveChatEvent,
       onStatusChange: (status) => {
         chatLiveConnectedRef.current = status === 'connected'
       }

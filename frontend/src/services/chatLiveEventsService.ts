@@ -15,8 +15,19 @@ export interface ChatLiveMessageEvent {
   receivedAt?: string
 }
 
+export interface ChatLiveDataChangedEvent {
+  type: 'chat_data_changed'
+  contactId: string
+  domains: string[]
+  entityId?: string
+  changedAt?: string
+}
+
+export type ChatLiveEvent = ChatLiveMessageEvent | ChatLiveDataChangedEvent
+
 interface SubscribeOptions {
   onMessage: (event: ChatLiveMessageEvent) => void
+  onDataChanged?: (event: ChatLiveDataChangedEvent) => void
   onError?: (error: unknown) => void
   onStatusChange?: (status: ChatLiveConnectionStatus) => void
 }
@@ -46,6 +57,9 @@ const CHAT_APPOINTMENT_CACHE_PATHS = [
   '/api/dashboard',
   '/api/reports',
   '/api/tracking/analytics'
+]
+const CHAT_SCHEDULED_MESSAGE_CACHE_PATHS = [
+  '/api/whatsapp-api/messages/scheduled'
 ]
 
 // Presencia: le avisa al backend qué contacto tiene abierto este usuario y si la
@@ -117,13 +131,23 @@ function dispatchFrame(frame: string, options: SubscribeOptions) {
     if (
       parsed.event === 'chat_data_changed' &&
       payload?.type === 'chat_data_changed' &&
-      Array.isArray(payload.domains) &&
-      payload.domains.includes('appointments')
+      typeof payload.contactId === 'string' &&
+      payload.contactId.trim() &&
+      Array.isArray(payload.domains)
     ) {
-      invalidateRistakApiReadCache({
-        pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS,
-        abortInflight: false
-      })
+      if (payload.domains.includes('appointments')) {
+        invalidateRistakApiReadCache({
+          pathPrefixes: CHAT_APPOINTMENT_CACHE_PATHS,
+          abortInflight: false
+        })
+      }
+      if (payload.domains.includes('scheduled_messages')) {
+        invalidateRistakApiReadCache({
+          pathPrefixes: CHAT_SCHEDULED_MESSAGE_CACHE_PATHS,
+          abortInflight: false
+        })
+      }
+      options.onDataChanged?.(payload as ChatLiveDataChangedEvent)
       return
     }
     if (parsed.event !== 'chat_message') return

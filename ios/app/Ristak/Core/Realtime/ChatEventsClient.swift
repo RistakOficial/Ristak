@@ -39,6 +39,30 @@ struct ChatMessageRealtimeEvent: Decodable, Sendable, Equatable {
     }
 }
 
+/// Invalida datos secundarios de una conversación sin fingir que apareció un
+/// mensaje nuevo. `scheduled_messages` cubre crear, editar, cancelar y cambios
+/// de estado del scheduler; el cliente vuelve a leer el estado canónico por REST.
+struct ChatDataChangedRealtimeEvent: Decodable, Sendable, Equatable {
+    let type: String
+    let contactId: String
+    let domains: [String]
+    let entityId: String
+    let changedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case type, contactId, domains, entityId, changedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = container.flexibleString(forKey: .type) ?? ""
+        contactId = container.flexibleString(forKey: .contactId) ?? ""
+        domains = (try? container.decode([String].self, forKey: .domains)) ?? []
+        entityId = container.flexibleString(forKey: .entityId) ?? ""
+        changedAt = container.flexibleString(forKey: .changedAt) ?? ""
+    }
+}
+
 /// Evento tipado del stream de chat.
 enum ChatRealtimeEvent: Sendable {
     /// Evento inicial `connected` (`{ connected: true, serverTime }`).
@@ -48,6 +72,9 @@ enum ChatRealtimeEvent: Sendable {
     /// `chat_message` — es solo un «nudge»: NO trae texto; disparar refresh
     /// REST coalescido de bandeja/hilo (merge por id).
     case message(ChatMessageRealtimeEvent)
+    /// `chat_data_changed` — datos secundarios del contacto cambiaron. El frame
+    /// sólo despierta la lectura REST del dominio afectado.
+    case dataChanged(ChatDataChangedRealtimeEvent)
 
     /// Mapea un frame SSE crudo; frames desconocidos/incompletos → nil.
     init?(frame: RistakServerSentEvent) {
@@ -70,6 +97,17 @@ enum ChatRealtimeEvent: Sendable {
                 !payload.contactId.isEmpty
             else { return nil }
             self = .message(payload)
+        case "chat_data_changed":
+            guard
+                let payload = try? JSONDecoder().decode(
+                    ChatDataChangedRealtimeEvent.self,
+                    from: Data(frame.data.utf8)
+                ),
+                payload.type == "chat_data_changed",
+                !payload.contactId.isEmpty,
+                !payload.domains.isEmpty
+            else { return nil }
+            self = .dataChanged(payload)
         default:
             return nil
         }

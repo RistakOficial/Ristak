@@ -194,6 +194,16 @@ test('los envios secundarios conservan identidad estable y Analiticas no disfraz
   assert.doesNotMatch(appSource, /getOriginDistribution\([^\n]+\)\.catch\(\(\) => EMPTY_ORIGIN_DATA\)/);
 });
 
+test('los cambios realtime de mensajes programados fuerzan reconciliacion inmediata', () => {
+  const apiSource = fs.readFileSync(require.resolve('../src/api.ts'), 'utf8');
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+
+  assert.match(apiSource, /parsed\.event === 'chat_data_changed'/);
+  assert.match(apiSource, /options\.onDataChanged\?\.\(payload as ChatLiveDataChangedEvent\)/);
+  assert.match(appSource, /onDataChanged: \(event\) => \{\s+DeviceEventEmitter\.emit\(CHAT_REFRESH_EVENT, event\)/);
+  assert.match(appSource, /event\.domains\.includes\('scheduled_messages'\)[\s\S]{0,500}scheduledMessagesLastLoadedAtRef\.current = 0/);
+});
+
 test('solo un rechazo definitivo invalida la sesion durante revalidacion', () => {
   assert.equal(getSessionVerifyRejection({ status: 401 }), 'unauthorized');
   assert.equal(getSessionVerifyRejection({ status: 403, code: 'license_blocked' }), 'license_blocked');

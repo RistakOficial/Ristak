@@ -2308,6 +2308,15 @@ despues de la persistencia inicial. Citas, automatizaciones y agente corren
 post-ACK como best-effort registrado en deploy drain; un crash abrupto aun puede
 cortar esos side effects sin deshacer el mensaje confirmado.
 
+Los cambios que afectan datos secundarios del hilo usan el mismo stream con el
+evento `chat_data_changed`; no se disfrazan como mensajes nuevos. Para mensajes
+programados, el backend publica el dominio `scheduled_messages` solamente
+despues de persistir una creacion, edicion, cancelacion o cambio de estado del
+scheduler. Desktop, `/movil`, Android e iOS invalidan la lista programada del
+contacto y la leen de nuevo inmediatamente. Este nudge no mueve la conversacion,
+no suma no leidos y, en Android, salta exclusivamente el throttle de 30 segundos
+de programados sin convertir el journey completo en una consulta frecuente.
+
 La app SwiftUI `ios/app` usa los metadatos minimos del SSE y de cada envio
 optimista para promover de inmediato la fila del contacto al inicio, incluso si
 el hilo esta cubriendo la bandeja en iPhone. Deduplica la misma actividad cuando
@@ -2474,7 +2483,10 @@ permanece mientras la API esté disponible y una hora futura fuera de ventana
 exige plantilla. `transport='qr'` sólo corresponde a un número QR standalone o
 a una API ya indisponible. SMS usa `provider='highlevel'` con
 `channel='sms_qr'`; Messenger, Instagram y correo no se programan desde la app
-nativa hasta tener scheduler real para esos canales.
+nativa hasta tener scheduler real para esos canales. Toda mutacion confirmada y
+todo cambio final `sent`/`error` publica la invalidacion realtime
+`scheduled_messages` despues de escribir la base, para que las demas sesiones
+retiren o actualicen el globo programado usando la lectura canonica.
 
 En `/chat` desktop, el campo `Fecha` del modal para programar o editar un mensaje
 usa el `<DatePicker>` común y abre un calendario propio de Ristak al hacer clic en

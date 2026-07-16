@@ -1199,6 +1199,11 @@ export function ContactDetailsModal({
         if (!event?.contactId || event.contactId === contactId) {
           void loadContactChat(contactId, { silent: true })
         }
+      },
+      onDataChanged: (event) => {
+        if (!event?.contactId || event.contactId === contactId) {
+          void loadContactChat(contactId, { silent: true })
+        }
       }
     })
   }, [isOpen, loadContactChat, selectedContact?.id])

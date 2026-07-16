@@ -340,7 +340,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     hilo usan maximo dos GET inmediatos por rafaga; actividad durante el segundo
     produce un trailing unico a 500 ms. El polling queda como respaldo adaptativo,
     nunca como loop fijo de 12 s/4 s; ninguna superficie sondea Meta para
-    refrescar el hilo.
+    refrescar el hilo. Crear, editar, cancelar, enviar o fallar un mensaje
+    programado publica
+    `chat_data_changed/scheduled_messages`; web, Android e iOS releen de inmediato
+    la lista canonica del contacto sin promover la fila ni sumar no leidos.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
 - [x] Aislar y aligerar sincronizacion de conversaciones.

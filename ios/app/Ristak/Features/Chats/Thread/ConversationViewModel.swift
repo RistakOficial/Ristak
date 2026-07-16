@@ -953,6 +953,19 @@ final class ConversationViewModel {
                     if shouldReconcileConnection || belongsToVisibleThread {
                         await self.refreshSilently()
                     }
+                case .dataChanged(let payload):
+                    // Igual que `chat_message`, un cambio de datos confirma que
+                    // el stream esta vivo. Solo el contacto visible relee sus
+                    // programados, salvo que debamos cerrar un hueco de reconexion.
+                    let transition = self.setRealtimeConnected(true)
+                    let shouldReconcileConnection = ConversationRealtimeRefreshDecision
+                        .shouldReconcile(
+                            transition: transition,
+                            initialAttemptFinished: self.realtimeBootstrapGate.initialAttemptFinished
+                        )
+                    if shouldReconcileConnection || payload.contactId == self.contactID {
+                        await self.refreshSilently()
+                    }
                 }
             }
             // Fin NATURAL del stream (p. ej. 401/403 de módulo que el engine trata

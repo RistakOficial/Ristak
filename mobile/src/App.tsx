@@ -151,7 +151,7 @@ import {
 } from './cacheKeys';
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
-import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveMessageEvent } from './api';
+import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveEvent, type ChatLiveMessageEvent } from './api';
 import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess } from './access';
 import {
   createVerifiedUserCacheRecord,
@@ -3234,16 +3234,18 @@ function ChatScreen({
     }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
   }, []);
 
-  const handleInboxRefreshEvent = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
+  const handleInboxRefreshEvent = useCallback((event?: ChatLiveEvent) => {
     // Reorder and update the row from the SSE metadata immediately. The REST
     // refresh remains canonical, but the user no longer waits for avatar
     // warming/network latency before the active conversation moves to the top.
-    setChats((current) => applyChatLiveEvent(current, event, selected?.id || ''));
-    setSelected((current) => {
-      if (!current) return current;
-      const next = applyChatLiveEvent([current], event, current.id);
-      return next[0] || current;
-    });
+    if (event?.type === 'chat_message') {
+      setChats((current) => applyChatLiveEvent(current, event, selected?.id || ''));
+      setSelected((current) => {
+        if (!current) return current;
+        const next = applyChatLiveEvent([current], event, current.id);
+        return next[0] || current;
+      });
+    }
     requestSilentInboxRefresh();
   }, [requestSilentInboxRefresh, selected?.id]);
 
@@ -3284,6 +3286,9 @@ function ChatScreen({
     setChatLiveConnected(false);
     const unsubscribe = api.subscribeToChatLiveEvents({
       onMessage: (event: ChatLiveMessageEvent) => {
+        DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, event);
+      },
+      onDataChanged: (event) => {
         DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, event);
       },
       onError: (error) => {
@@ -22493,7 +22498,7 @@ function NativeConversationScreen({
   const conversationLastReconcileAtRef = useRef(0);
   const conversationInitialConnectedRecoveryStartedRef = useRef(false);
   const conversationHandledReconnectVersionRef = useRef(chatReconnectVersion);
-  const conversationRefreshKickRef = useRef<(event?: Partial<ChatLiveMessageEvent>) => void>(() => undefined);
+  const conversationRefreshKickRef = useRef<(event?: ChatLiveEvent) => void>(() => undefined);
   const activeConversationContactIdRef = useRef(contact.id);
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
@@ -22945,9 +22950,15 @@ function NativeConversationScreen({
   }, []);
   conversationRefreshExecutorRef.current = executeSilentConversationRefresh;
 
-  const requestSilentConversationRefresh = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
+  const requestSilentConversationRefresh = useCallback((event?: ChatLiveEvent) => {
     const eventContactId = String(event?.contactId || '').trim();
     if (eventContactId && eventContactId !== contact.id) return;
+    if (event?.type === 'chat_data_changed' && event.domains.includes('scheduled_messages')) {
+      // El poll normal limita programados a una lectura cada 30 s. Una mutacion
+      // confirmada por SSE debe saltarse ese throttle y reconciliar el estado
+      // canonico de inmediato (crear, editar, cancelar, enviar o fallar).
+      scheduledMessagesLastLoadedAtRef.current = 0;
+    }
 
     const gate = conversationRefreshBurstGateRef.current;
     if (gate.isInFlight) {

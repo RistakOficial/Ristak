@@ -123,8 +123,19 @@ export type ChatLiveMessageEvent = {
 
 export type ChatLiveConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
+export type ChatLiveDataChangedEvent = {
+  type: 'chat_data_changed';
+  contactId: string;
+  domains: string[];
+  entityId?: string;
+  changedAt?: string;
+};
+
+export type ChatLiveEvent = ChatLiveMessageEvent | ChatLiveDataChangedEvent;
+
 type ChatLiveSubscribeOptions = {
   onMessage: (event: ChatLiveMessageEvent) => void;
+  onDataChanged?: (event: ChatLiveDataChangedEvent) => void;
   onError?: (error: unknown) => void;
   onStatusChange?: (status: ChatLiveConnectionStatus) => void;
 };
@@ -302,12 +313,22 @@ function parseSseFrame(frame: string): SseFrame | null {
 
 function dispatchChatSseFrame(frame: string, options: ChatLiveSubscribeOptions) {
   const parsed = parseSseFrame(frame);
-  if (!parsed || parsed.event !== 'chat_message') return;
+  if (!parsed) return;
 
   try {
-    const payload = JSON.parse(parsed.data) as Partial<ChatLiveMessageEvent>;
-    if (payload?.type === 'chat_message' && typeof payload.contactId === 'string' && payload.contactId.trim()) {
+    const payload = JSON.parse(parsed.data) as Partial<ChatLiveEvent>;
+    if (parsed.event === 'chat_message' && payload?.type === 'chat_message' && typeof payload.contactId === 'string' && payload.contactId.trim()) {
       options.onMessage(payload as ChatLiveMessageEvent);
+      return;
+    }
+    if (
+      parsed.event === 'chat_data_changed'
+      && payload?.type === 'chat_data_changed'
+      && typeof payload.contactId === 'string'
+      && payload.contactId.trim()
+      && Array.isArray(payload.domains)
+    ) {
+      options.onDataChanged?.(payload as ChatLiveDataChangedEvent);
     }
   } catch (error) {
     options.onError?.(error);

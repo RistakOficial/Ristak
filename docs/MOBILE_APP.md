@@ -171,6 +171,15 @@ cambiar contacto, API, sesion o cuenta. Todo refresh es silencioso, conserva
 cache/scroll y no calienta avatares externos. El hilo no vuelve a descargar el
 journey completo ni manda `mark-read` si no aparecio un entrante nuevo; los
 programados se reconcilian con una frecuencia menor.
+
+Crear, editar, cancelar, enviar o marcar con error un mensaje programado publica
+`chat_data_changed` con el dominio `scheduled_messages` despues de persistir el
+estado. `/movil`, `mobile/` e `ios/app` deben tratarlo como una invalidacion del
+contacto: descartar la lectura cacheada de programados y pedir de inmediato la
+lista canonica, incluso si el poll normal de Android todavia esta dentro de su
+limite de 30 segundos. El evento no promueve la fila, no incrementa no leidos y
+no finge que el mensaje ya fue enviado.
+
 Al abrir una conversacion, `/contacts/:id/conversation` es la ruta critica y sus
 ultimos mensajes se pintan en cuanto responde. El journey completo y los
 mensajes programados cargan despues con cancelacion/generacion propia; nunca

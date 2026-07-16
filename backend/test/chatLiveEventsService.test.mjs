@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import {
   getChatLiveClientCount,
+  publishChatDataChangedEvent,
   publishChatMessageEvent,
   subscribeChatLiveEvents
 } from '../src/services/chatLiveEventsService.js'
@@ -58,6 +59,27 @@ test('streams chat message events to subscribed clients', () => {
   assert.match(output, /event: chat_message/)
   assert.match(output, /"contactId":"contact_123"/)
   assert.match(output, /"messageId":"message_123"/)
+
+  cleanup()
+  assert.equal(getChatLiveClientCount(), 0)
+})
+
+test('streams scheduled message data changes to subscribed clients', () => {
+  const req = new EventEmitter()
+  const res = new FakeResponse()
+  const cleanup = subscribeChatLiveEvents(req, res)
+
+  publishChatDataChangedEvent({
+    contactId: 'contact_456',
+    domains: ['scheduled_messages'],
+    entityId: 'scheduled_456'
+  })
+
+  const output = res.chunks.join('')
+  assert.match(output, /event: chat_data_changed/)
+  assert.match(output, /"contactId":"contact_456"/)
+  assert.match(output, /"domains":\["scheduled_messages"\]/)
+  assert.match(output, /"entityId":"scheduled_456"/)
 
   cleanup()
   assert.equal(getChatLiveClientCount(), 0)

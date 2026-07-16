@@ -1115,6 +1115,11 @@ final class InboxViewModel {
                     self.setRealtimeConnected(true)
                     self.applyActivity(ChatInboxActivity(event: payload))
                     self.requestSilentRefresh()
+                case .dataChanged:
+                    // No altera orden ni no leidos; solo reconcilia datos
+                    // secundarios, como mensajes programados del contacto.
+                    self.setRealtimeConnected(true)
+                    self.requestSilentRefresh()
                 }
             }
             guard let self, !Task.isCancelled else { return }
