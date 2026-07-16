@@ -85,7 +85,7 @@ test('el tema privado espera login y descarta respuestas de una cuenta anterior'
   assert.match(theme, /localStorage\.getItem\('auth_token'\)/)
   assert.match(theme, /AUTH_PRINCIPAL_CHANGED_EVENT/)
   assert.match(theme, /requestVersion !== syncRequestVersion/)
-  assert.match(theme, /response\.status === 401/)
+  assert.match(theme, /\(error as Error & \{ status\?: number \}\)\.status === 401/)
   assert.match(theme, /setThemeDirState\(configuredDir \|\| DEFAULT_THEME_DIR\)/)
   assert.match(theme, /handleAuthPrincipalChanged[\s\S]*?setThemeDirState\(DEFAULT_THEME_DIR\)/)
   assert.match(theme, /handleAuthPrincipalChanged[\s\S]*?if \(authenticated\) void syncThemeConfig\(\)/)
