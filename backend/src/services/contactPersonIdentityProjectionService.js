@@ -229,7 +229,7 @@ export function scheduleContactPersonIdentityProjectionBackfill() {
   return { scheduled: queued.scheduled, ready: false }
 }
 
-export async function getContactPersonIdentityProjectionStatus({ schedule = true, signal } = {}) {
+export async function getContactPersonIdentityProjectionStatus({ schedule = false, signal } = {}) {
   if (projectionReady) return { available: true, ready: true, status: 'ready' }
   const state = await readContactPersonIdentityProjectionState(db, { signal })
   if (!state) return { available: false, ready: false, status: 'unavailable' }

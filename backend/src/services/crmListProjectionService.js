@@ -14,6 +14,7 @@ const CONTACT_PROJECTION_KEYS = [
   'contact_attendance'
 ]
 const BACKFILL_JOB_KEY = 'crm-list-projections'
+export const CRM_LIST_PROJECTION_VERSION = 1
 
 const PROJECTIONS = Object.freeze([
   {
@@ -289,13 +290,38 @@ async function areProjectionKeysReady(keys) {
 }
 
 /**
+ * Snapshot O(1) para el watchdog global. Los GET nunca usan este helper para
+ * arrancar trabajo; el scheduler es el unico dueño de reintentar un backfill
+ * que no alcanzó a terminar durante startup.
+ */
+export async function readCrmListProjectionState(database = db) {
+  try {
+    const keys = PROJECTIONS.map(projection => projection.key)
+    const placeholders = keys.map(() => '?').join(', ')
+    const rows = await database.all(`
+      SELECT projection_key, status
+      FROM crm_list_projection_state
+      WHERE projection_key IN (${placeholders})
+    `, keys)
+    const ready = rows.length === keys.length && rows.every(row => row.status === 'ready')
+    return {
+      projection_version: CRM_LIST_PROJECTION_VERSION,
+      status: ready ? 'ready' : 'backfilling'
+    }
+  } catch (error) {
+    if (isProjectionSchemaUnavailable(error)) return null
+    throw error
+  }
+}
+
+/**
  * Distingue tres estados que un booleano no puede representar durante un
  * despliegue: esquema ausente, proyeccion calentando y proyeccion exacta. Los
  * GET pueden leer el modelo acotado desde el primer lote sin volver a barrer
  * tablas historicas; `coverageReady` habilita el INNER JOIN/index scan una vez
  * que existe exactamente una fila liviana por contacto.
  */
-export async function getContactListProjectionStatus({ schedule = true } = {}) {
+export async function getContactListProjectionStatus({ schedule = false } = {}) {
   try {
     const placeholders = CONTACT_PROJECTION_KEYS.map(() => '?').join(', ')
     const rows = await db.all(`
@@ -318,18 +344,18 @@ export async function getContactListProjectionStatus({ schedule = true } = {}) {
   }
 }
 
-export async function isContactListProjectionReady({ schedule = true } = {}) {
+export async function isContactListProjectionReady({ schedule = false } = {}) {
   if (contactProjectionReady) return true
   const status = await getContactListProjectionStatus({ schedule })
   return status.ready
 }
 
-export async function isContactListProjectionAvailable({ schedule = true } = {}) {
+export async function isContactListProjectionAvailable({ schedule = false } = {}) {
   const status = await getContactListProjectionStatus({ schedule })
   return status.available
 }
 
-export async function isPaymentListProjectionReady({ schedule = true } = {}) {
+export async function isPaymentListProjectionReady({ schedule = false } = {}) {
   if (paymentListProjectionReady) return true
   const ready = await areProjectionKeysReady(['payment_list'])
   if (ready === null) return false

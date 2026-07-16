@@ -3,6 +3,36 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import { createReadModelProjectionMaintenanceScheduler } from '../src/jobs/readModelProjectionMaintenance.cron.js'
+import {
+  CRM_LIST_PROJECTION_VERSION,
+  readCrmListProjectionState
+} from '../src/services/crmListProjectionService.js'
+
+test('el watchdog de listas CRM distingue ready de backfill sin iniciar trabajo', async () => {
+  const keys = [
+    'contact_rows',
+    'contact_payments',
+    'contact_appointments',
+    'contact_attendance',
+    'payment_list'
+  ]
+  let rows = keys.map(projection_key => ({ projection_key, status: 'ready' }))
+  const database = {
+    async all() {
+      return rows
+    }
+  }
+
+  assert.deepEqual(await readCrmListProjectionState(database), {
+    projection_version: CRM_LIST_PROJECTION_VERSION,
+    status: 'ready'
+  })
+  rows = rows.map((row, index) => index === 0 ? { ...row, status: 'backfilling' } : row)
+  assert.deepEqual(await readCrmListProjectionState(database), {
+    projection_version: CRM_LIST_PROJECTION_VERSION,
+    status: 'backfilling'
+  })
+})
 
 test('el scheduler agenda solo proyecciones pendientes y no trabaja al apagar', async () => {
   const calls = []
@@ -104,12 +134,18 @@ test('una proyección incremental continuous se revisa aunque su último estado 
   assert.deepEqual(result.scheduled, [{ key: 'tracking-analytics', queued: true }])
 })
 
-test('los tres read paths no convierten GET en comando de backfill', async () => {
-  const [contacts, metrics, firstSeen, origin, server] = await Promise.all([
+test('los read paths no convierten GET en comando de backfill', async () => {
+  const [contacts, tracking, trackingVisitor, metrics, firstSeen, origin, contactOrigin, identity, crm, maintenance, server] = await Promise.all([
     readFile(new URL('../src/controllers/contactsController.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/controllers/trackingController.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/trackingVisitorProjectionService.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/services/conversationalAgentMetricsProjectionService.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/services/messageFirstSeenProjectionService.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/services/originDistributionService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/contactOriginProjectionService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/contactPersonIdentityProjectionService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/services/crmListProjectionService.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/jobs/readModelProjectionMaintenance.cron.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/server.js', import.meta.url), 'utf8')
   ])
   const chatGet = contacts.slice(
@@ -128,10 +164,26 @@ test('los tres read paths no convierten GET en comando de backfill', async () =>
     origin.indexOf('async function getMessageFirstSeenCount'),
     origin.indexOf('async function getMessageConnectionStatus')
   )
+  const trackingVisitors = tracking.slice(
+    tracking.indexOf('export async function getVisitorsList'),
+    tracking.indexOf('export async function getContactsByDate')
+  )
+  const pinnedOrigin = contactOrigin.slice(
+    contactOrigin.indexOf('async function withPinnedGeneration'),
+    contactOrigin.indexOf('async function areContactDependenciesReady')
+  )
 
   assert.doesNotMatch(chatGet, /scheduleChatActivityProjectionBackfill|legacyMessageStatsRowsSql/)
   assert.doesNotMatch(metricsGet, /scheduleConversationalAgentMetricsProjectionBackfill|GROUP BY\s+agent_id/i)
   assert.doesNotMatch(firstSeenGet, /scheduleMessageFirstSeenProjectionBackfill/)
   assert.doesNotMatch(originFirstSeen, /GROUP BY\s+identity|FROM\s+whatsapp_api_messages/i)
+  assert.match(trackingVisitors, /getTrackingVisitorProjectionStatus\(\{[\s\S]*?schedule:\s*false/)
+  assert.doesNotMatch(trackingVisitor, /schedule\s*=\s*true/)
+  assert.doesNotMatch(pinnedOrigin, /schedule:\s*true/)
+  assert.doesNotMatch(identity, /schedule\s*=\s*true/)
+  assert.doesNotMatch(crm, /schedule\s*=\s*true/)
+  assert.match(maintenance, /key:\s*'crm-list-projections'/)
+  assert.match(maintenance, /readState:\s*readCrmListProjectionState/)
+  assert.match(maintenance, /schedule:\s*scheduleCrmListProjectionBackfill/)
   assert.match(server, /startReadModelProjectionMaintenanceScheduler\(\)/)
 })

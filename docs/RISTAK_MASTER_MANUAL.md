@@ -368,6 +368,14 @@ publica hasta ser exacto. Ningun GET reconstruye el historial dentro del request
 Los snapshots `100*` de Reportes y `101*` de Publicidad se hidratan bajo demanda y
 no pertenecen a esta cola de backfill.
 
+Las lecturas de readiness de listas CRM, origen de contactos, identidad de
+personas y visitantes de Tracking son puras: nunca encolan ni arrancan un
+backfill. Startup y el watchdog de sistema de 30 segundos son los unicos dueños
+de agendar esos workers; `crm-list-projections` tambien esta registrado en ese
+watchdog. Mientras un modelo calienta, cada superficie responde segun su
+contrato: cobertura parcial explicita o `warming`/503 reintentable con
+`Retry-After`, sin convertir la lectura en una orden de reconstruccion.
+
 El estado local de WhatsApp que comparten Chats, Contactos y Configuracion no
 ejecuta `COUNT(*)` ni `GROUP BY` sobre mensajes, contactos, eventos o ruteos al
 abrir una pantalla. Las migraciones `102*` construyen doce contadores exactos

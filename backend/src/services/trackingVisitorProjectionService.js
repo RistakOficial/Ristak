@@ -487,7 +487,7 @@ export function scheduleTrackingVisitorProjectionBackfill() {
 
 /** Compatibilidad para callers existentes; la comprobación ya no toca sessions. */
 export async function isTrackingVisitorProjectionReady({
-  schedule = true
+  schedule = false
 } = {}) {
   return (await getTrackingVisitorProjectionStatus({ schedule })).ready
 }

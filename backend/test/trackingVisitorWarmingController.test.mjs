@@ -4,6 +4,7 @@ import test from 'node:test'
 
 import { databaseDialect, db } from '../src/config/database.js'
 import { getVisitorsList } from '../src/controllers/trackingController.js'
+import { getBackfillJobCoordinatorSnapshot } from '../src/jobs/backfillJobCoordinator.js'
 import { readTrackingVisitorProjectionState } from '../src/services/trackingVisitorProjectionService.js'
 
 async function ensureProjectionSchema() {
@@ -78,6 +79,20 @@ test('visitors responde warming explícito y reintentable en vez de ejecutar el 
     assert.equal(response.body?.coverage?.status, 'warming')
     assert.equal(response.headers['retry-after'], '1')
 
+    const persistedSession = await db.get(`
+      SELECT visitor_projection_version
+      FROM sessions
+      WHERE id = ?
+    `, [id])
+    const persistedState = await readTrackingVisitorProjectionState()
+    assert.equal(Number(persistedSession?.visitor_projection_version), 0)
+    assert.equal(persistedState?.status, 'backfilling')
+    assert.equal(
+      getBackfillJobCoordinatorSnapshot().jobs.some(job => job.key === 'tracking-visitor-projection'),
+      false,
+      'un GET no debe encolar el writer de visitantes'
+    )
+
     const controllerSource = await readFile(
       new URL('../src/controllers/trackingController.js', import.meta.url),
       'utf8'
@@ -87,15 +102,12 @@ test('visitors responde warming explícito y reintentable en vez de ejecutar el 
       visitorsHandlerStart,
       controllerSource.indexOf('export async function getContactsByDate', visitorsHandlerStart)
     )
+    assert.match(
+      visitorsHandler,
+      /getTrackingVisitorProjectionStatus\(\{[\s\S]*?schedule:\s*false/
+    )
     assert.match(visitorsHandler, /throw trackingProjectionWarmingError\(visitorCoverage\)/)
     assert.doesNotMatch(visitorsHandler, /ranked_raw_visitors/i)
-
-    const deadline = Date.now() + 10_000
-    let state = await readTrackingVisitorProjectionState()
-    while (state?.status !== 'ready' && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 50))
-      state = await readTrackingVisitorProjectionState()
-    }
   } finally {
     await db.run('DELETE FROM sessions WHERE id = ?', [id]).catch(() => undefined)
     await db.run(`

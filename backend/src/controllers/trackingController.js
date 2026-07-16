@@ -2734,7 +2734,7 @@ export async function getVisitorsList(req, res) {
       }
 
       const projectionStatus = await getTrackingVisitorProjectionStatus({
-        schedule: true,
+        schedule: false,
         signal: requestScope.signal
       })
       visitorCoverage = trackingVisitorProjectionCoverage(projectionStatus, {

@@ -237,7 +237,7 @@ export async function getContactOriginProjectionStatus({ range = null, signal, s
 async function withPinnedGeneration(range, signal, operation) {
   const timezone = resolveTimezone(range?.appliedTimezone || await getAccountTimezone({ signal }))
   if (databaseDialect !== 'postgres') {
-    const status = await readStatusFromDatabase(db, timezone, { signal, schedule: true })
+    const status = await readStatusFromDatabase(db, timezone, { signal, schedule: false })
     return operation(db, status)
   }
   return db.transaction(async transaction => {
@@ -245,7 +245,7 @@ async function withPinnedGeneration(range, signal, operation) {
     await transaction.run(`SET LOCAL statement_timeout = '${QUERY_DEADLINE_MS}ms'`)
     const status = await readStatusFromDatabase(transaction, timezone, {
       signal,
-      schedule: true,
+      schedule: false,
       lock: true
     })
     return operation(transaction, status)

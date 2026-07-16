@@ -4,6 +4,11 @@ import {
   scheduleChatActivityProjectionBackfill
 } from '../services/chatActivityProjectionService.js'
 import {
+  CRM_LIST_PROJECTION_VERSION,
+  readCrmListProjectionState,
+  scheduleCrmListProjectionBackfill
+} from '../services/crmListProjectionService.js'
+import {
   CONVERSATIONAL_AGENT_METRICS_PROJECTION_VERSION,
   readConversationalAgentMetricsProjectionState,
   scheduleConversationalAgentMetricsProjectionBackfill
@@ -49,6 +54,12 @@ import { logger as defaultLogger } from '../utils/logger.js'
 const DEFAULT_INTERVAL_MS = 30_000
 
 const defaultProjections = Object.freeze([
+  {
+    key: 'crm-list-projections',
+    version: CRM_LIST_PROJECTION_VERSION,
+    readState: readCrmListProjectionState,
+    schedule: scheduleCrmListProjectionBackfill
+  },
   {
     key: 'contact-person-identity',
     version: CONTACT_PERSON_IDENTITY_PROJECTION_VERSION,
