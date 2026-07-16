@@ -33,8 +33,13 @@ struct RistakApp: App {
             Group {
                 #if DEBUG
                 if let testConfiguration = RistakUITestConfiguration.current {
-                    RistakUITestHarnessView(configuration: testConfiguration)
-                        .reportsRistakUIReady()
+                    if testConfiguration.showsRealInboxPresentation {
+                        RistakInboxPresentationUITestHarnessView()
+                            .reportsRistakUIReady()
+                    } else {
+                        RistakUITestHarnessView(configuration: testConfiguration)
+                            .reportsRistakUIReady()
+                    }
                 } else {
                     RootView()
                 }

@@ -17,6 +17,9 @@ entitlements, targets ni codigo nativo Apple.
 - Los globos recibidos son siempre blancos. Solo los enviados conservan el canal
   real: WhatsApp API verde claro, WhatsApp QR apenas mas oscuro,
   Messenger/Facebook azul, Instagram morado rosita y correo/SMS neutrales.
+- La bandeja de Chats abre desde el tope nativo con `Buscar chats` visible; el
+  modo automatico de Apple no debe arrancar el campo colapsado como si el usuario
+  ya hubiera desplazado la lista.
 - Icono del launcher: `ios/app/Ristak/Assets.xcassets/AppIcon.appiconset`
   contiene las variantes oficiales `icon-light.png`, `icon-dark.png` e
   `icon-tinted.png` en 1024x1024 RGB sin transparencia para validacion iOS.
@@ -60,11 +63,13 @@ RISTAK_SOAK_CHAT_COUNT=10000 RISTAK_SOAK_ITERATIONS=250 \
 ios/app/scripts/run-ios-live-smoke.sh
 ```
 
-La suite UI normal y el soak usan fixtures sintéticos, no requieren sesión y no
-tocan la red; `APIClient` bloquea el transporte cuando el harness declara red
-deshabilitada. Los unit tests también ejercitan el reductor real del inbox con
-10,000 contactos y promociones repetidas. El smoke real es opt-in y solo reutiliza la sesión/configuración
-que ya exista en el destino; no recibe credenciales por argumentos ni entorno.
+La suite UI normal y el soak usan fixtures sintéticos, y la regresión de
+presentación monta el `InboxScreen` real con un modelo vacío controlado. Ninguno
+requiere sesión ni toca la red; `APIClient` bloquea el transporte cuando el
+harness declara red deshabilitada. Los unit tests también ejercitan el reductor
+real del inbox con 10,000 contactos y promociones repetidas. El smoke real es
+opt-in y solo reutiliza la sesión/configuración que ya exista en el destino; no
+recibe credenciales por argumentos ni entorno.
 Puedes cambiar el simulador con `RISTAK_IOS_DESTINATION` y cada script deja su
 `.xcresult` bajo el directorio temporal para inspección, con `DerivedData`
 aislado y validación de la ruta antes de limpiar un resultado anterior.
