@@ -8,6 +8,15 @@ import {
   getTrackingAnalyticsCacheRevision,
   invalidateTrackingAnalyticsCache
 } from './trackingAnalyticsCache.js'
+import {
+  canUseTrackingAnalyticsProjection,
+  queryTrackingAnalyticsProjectionSessionMetrics
+} from './trackingAnalyticsProjectionQueryService.js'
+import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
+import {
+  getTrackingConversionProjectionStatus,
+  queryTrackingConversionProjection
+} from './trackingConversionProjectionService.js'
 
 const TRACKING_VIEW_EVENTS = ['session_start', 'page_view', 'native_site_view']
 const INACTIVE_APPOINTMENT_STATUSES = [
@@ -23,6 +32,28 @@ const INACTIVE_APPOINTMENT_STATUSES = [
   'void',
   'voided'
 ]
+
+function trackingAnalyticsProjectionWarmingError(projectionStatus) {
+  const error = new Error(
+    'Las métricas de Analíticas se están preparando en segundo plano. Reintenta en unos segundos.'
+  )
+  error.code = 'tracking_analytics_projection_warming'
+  error.status = 503
+  error.retryable = true
+  error.projectionStatus = projectionStatus?.status || 'warming'
+  return error
+}
+
+function trackingConversionProjectionWarmingError(projectionStatus) {
+  const error = new Error(
+    'Las conversiones de Analíticas se están preparando en segundo plano. Reintenta en unos segundos.'
+  )
+  error.code = 'tracking_conversion_projection_warming'
+  error.status = 503
+  error.retryable = true
+  error.projectionStatus = projectionStatus?.status || 'warming'
+  return error
+}
 const ATTENDED_APPOINTMENT_STATUSES = ['show', 'showed', 'completed', 'complete', 'attended']
 const ALLOWED_GROUPS = new Set(['day', 'month', 'year'])
 const MESSAGE_ONLY_FILTERS = new Set(['message_channel', 'message_source', 'status'])
@@ -1486,7 +1517,7 @@ function finalizeMetrics(sessionMetrics, conversionMetrics) {
   return metrics
 }
 
-async function computeTrackingAnalyticsSummary({
+async function computeLegacyTrackingAnalyticsSummary({
   start,
   end,
   requestedGroupBy,
@@ -1607,6 +1638,128 @@ async function computeTrackingAnalyticsSummary({
   }
 }
 
+async function computeProjectedTrackingAnalyticsSummary({
+  start,
+  end,
+  requestedGroupBy,
+  normalizedFilters,
+  range,
+  appliedGroupBy,
+  signal
+}) {
+  const previousRange = previousRangeFor(range)
+  const projectionStatus = await getTrackingAnalyticsProjectionStatus({
+    schedule: false,
+    signal
+  })
+  if (
+    !projectionStatus.available
+    || projectionStatus.timezone !== range.timezone
+    || !canUseTrackingAnalyticsProjection(normalizedFilters)
+  ) {
+    // El core web nunca vuelve a sessions/contacts crudos. Si 113 todavía no
+    // cubre el rango, timezone o filtros, el caller recibe warming y reintenta.
+    throw trackingAnalyticsProjectionWarmingError(projectionStatus)
+  }
+
+  const conversionStatus = await getTrackingConversionProjectionStatus({
+    schedule: false,
+    signal
+  })
+  if (!conversionStatus.available || conversionStatus.timezone !== range.timezone) {
+    throw trackingConversionProjectionWarmingError(conversionStatus)
+  }
+
+  const siblingController = new AbortController()
+  const linkedScope = createLinkedSummaryAbortScope([signal, siblingController.signal])
+  const runQuery = callback => withTrackingSummaryQuerySlot(linkedScope.signal, callback)
+
+  // Dos carriles y ningún raw fallback: sesiones current/previous usan 113 y
+  // conversiones current/previous/serie usan 116. La cancelación del request o
+  // de un hermano llega hasta la consulta real de base.
+  const sessionLane = (async () => ({
+    current: await runQuery(() => queryTrackingAnalyticsProjectionSessionMetrics(
+      range,
+      normalizedFilters,
+      appliedGroupBy,
+      { includeSeries: true, signal: linkedScope.signal }
+    )),
+    previous: await runQuery(() => queryTrackingAnalyticsProjectionSessionMetrics(
+      previousRange,
+      normalizedFilters,
+      appliedGroupBy,
+      { includeSeries: false, signal: linkedScope.signal }
+    ))
+  }))()
+  const conversionLane = runQuery(() => queryTrackingConversionProjection({
+    currentRange: range,
+    previousRange,
+    filters: normalizedFilters,
+    groupBy: appliedGroupBy,
+    signal: linkedScope.signal
+  }))
+
+  let sessions
+  let conversions
+  try {
+    [sessions, conversions] = await Promise.all([sessionLane, conversionLane])
+  } catch (error) {
+    if (!siblingController.signal.aborted) siblingController.abort(error)
+    await Promise.allSettled([sessionLane, conversionLane])
+    throw error
+  } finally {
+    linkedScope.cleanup()
+  }
+
+  const currentSessions = sessions.current
+  const previousSessions = sessions.previous
+  const currentConversions = conversions.current
+  const previousConversions = conversions.previous
+  const current = finalizeMetrics(currentSessions.metrics, currentConversions.metrics)
+  const previous = finalizeMetrics(previousSessions.metrics, previousConversions.metrics)
+  const trends = Object.fromEntries(
+    Object.keys(current).map(key => [key, trendValue(current[key], previous[key])])
+  )
+
+  return {
+    range: {
+      start,
+      end,
+      previousStart: previousRange.startDate,
+      previousEnd: previousRange.endDate,
+      timezone: range.timezone,
+      requestedGroupBy,
+      groupBy: appliedGroupBy
+    },
+    metrics: { current, previous, trends },
+    trafficSeries: currentSessions.series,
+    conversionSeries: currentConversions.series,
+    distributions: {},
+    facets: {
+      conversions: [
+        { value: 'prospect', label: 'Prospectos', count: current.prospects },
+        { value: 'appointment_scheduled', label: 'Citas agendadas', count: currentConversions.stageCounts.appointmentScheduled },
+        { value: 'appointment_attended', label: 'Citas atendidas', count: currentConversions.stageCounts.appointmentAttended },
+        { value: 'customer', label: 'Clientes', count: current.customers }
+      ]
+    },
+    performance: {
+      sessionReadModel: currentSessions.readPath || 'tracking_analytics_projection',
+      conversionReadModel: conversions.readPath || 'tracking_conversion_projection',
+      projection: projectionStatus,
+      conversionProjection: conversions.projection || conversionStatus
+    }
+  }
+}
+
+async function computeTrackingAnalyticsSummary(options) {
+  // Compatibilidad deliberada: callers antiguos que todavía piden todas las
+  // facetas conservan por ahora el camino legacy. Sólo el contrato web real
+  // includeFacets:false queda cortado a proyecciones y libre de scans crudos.
+  if (options.includeFacets) return computeLegacyTrackingAnalyticsSummary(options)
+  return computeProjectedTrackingAnalyticsSummary(options)
+}
+
 function stableFilterCacheKey(filters) {
   return Object.keys(filters)
     .sort()
@@ -1637,7 +1790,7 @@ function trackingSnapshotMetadata({
   }
 }
 
-function readSummaryCache(key, revision) {
+function readSummaryCache(key, revision, { projectionPending = false } = {}) {
   const cached = summaryCache.get(key)
   if (!cached) return null
   const age = Date.now() - cached.fetchedAt
@@ -1650,14 +1803,17 @@ function readSummaryCache(key, revision) {
   summaryCache.delete(key)
   summaryCache.set(key, cached)
   const metadata = trackingSnapshotMetadata({
-    exactAtBuiltAt: cached.exactAtBuiltAt,
+    // Las colas 113/116 pueden cambiar por webhooks externos. Mientras exista
+    // trabajo pendiente, el snapshot sigue siendo útil para SWR pero no puede
+    // venderse como exacto aunque su revisión y TTL sigan iguales.
+    exactAtBuiltAt: cached.exactAtBuiltAt && !projectionPending,
     builtAt: cached.fetchedAt,
     builtRevision: cached.revision,
     currentRevision: revision
   })
-  const data = age < SUMMARY_CACHE_TTL_MS && cached.revision === revision
-    ? cached.data
-    : { ...cached.data, snapshot: metadata }
+  const data = metadata.stale
+    ? { ...cached.data, snapshot: metadata }
+    : cached.data
   return {
     data,
     stale: metadata.stale,
@@ -2065,6 +2221,35 @@ export async function getTrackingAnalyticsSummary({
   throwIfTrackingSummaryAborted(signal)
   const requestedGroupBy = ALLOWED_GROUPS.has(groupBy) ? groupBy : 'day'
   const appliedGroupBy = effectiveGroupBy(requestedGroupBy, range)
+  const projectedCore = includeFacets === false
+  let sessionProjectionStatus = null
+  let conversionProjectionStatus = null
+  if (projectedCore) {
+    // Probes O(1) antes del cache: no se sirve un snapshot "exacto" si una cola
+    // durable tiene cambios ni se reactiva el SQL raw durante un rollout.
+    sessionProjectionStatus = await getTrackingAnalyticsProjectionStatus({
+      schedule: false,
+      signal
+    })
+    if (
+      !sessionProjectionStatus.available
+      || sessionProjectionStatus.timezone !== range.timezone
+      || !canUseTrackingAnalyticsProjection(normalizedFilters)
+    ) {
+      throw trackingAnalyticsProjectionWarmingError(sessionProjectionStatus)
+    }
+    conversionProjectionStatus = await getTrackingConversionProjectionStatus({
+      schedule: false,
+      signal
+    })
+    if (
+      !conversionProjectionStatus.available
+      || conversionProjectionStatus.timezone !== range.timezone
+    ) {
+      throw trackingConversionProjectionWarmingError(conversionProjectionStatus)
+    }
+    throwIfTrackingSummaryAborted(signal)
+  }
   const revision = getTrackingAnalyticsCacheRevision()
   const cacheKey = JSON.stringify({
     start,
@@ -2074,11 +2259,16 @@ export async function getTrackingAnalyticsSummary({
     includeFacets: includeFacets !== false,
     filters: stableFilterCacheKey(normalizedFilters)
   })
-  const cached = readSummaryCache(cacheKey, revision)
+  const cached = readSummaryCache(cacheKey, revision, {
+    projectionPending: Boolean(
+      projectedCore
+      && (sessionProjectionStatus?.pending || conversionProjectionStatus?.pending)
+    )
+  })
   // Una reconstruccion que cruza escrituras nunca se declara exacta, pero
   // tampoco vuelve a dispararse en cada request. Durante 30 s se sirve como
   // moving-window; despues, una sola lectura compartida intenta avanzarla.
-  if (cached && !cached.refreshDue) {
+  if (cached && !cached.refreshDue && (allowStale || !cached.data?.snapshot?.stale)) {
     return cached.data
   }
 
@@ -2121,14 +2311,35 @@ export async function getTrackingAnalyticsSummary({
         includeFacets: includeFacets !== false,
         signal: linkedScope.signal
       })
-    )).then((data) => {
+    )).then(async (data) => {
       const completedRevision = getTrackingAnalyticsCacheRevision()
       const changedDuringBuild = completedRevision !== revision
+      let projectionPending = false
+      if (projectedCore) {
+        const [completedSessionProjection, completedConversionProjection] = await Promise.all([
+          getTrackingAnalyticsProjectionStatus({ schedule: false, signal: linkedScope.signal }),
+          getTrackingConversionProjectionStatus({ schedule: false, signal: linkedScope.signal })
+        ])
+        if (!completedSessionProjection.available) {
+          throw trackingAnalyticsProjectionWarmingError(completedSessionProjection)
+        }
+        if (!completedConversionProjection.available) {
+          throw trackingConversionProjectionWarmingError(completedConversionProjection)
+        }
+        projectionPending = Boolean(
+          sessionProjectionStatus?.pending
+          || conversionProjectionStatus?.pending
+          || data.performance?.projection?.pending
+          || data.performance?.conversionProjection?.pending
+          || completedSessionProjection.pending
+          || completedConversionProjection.pending
+        )
+      }
       // No declarar fresco un agregado que cruzó escrituras. Se conserva como
       // snapshot SWR para pintar sin bloquear. Si el stream sigue escribiendo,
       // el siguiente intento queda coalescido por una ventana acotada.
       return writeSummaryCache(cacheKey, data, completedRevision, {
-        exactAtBuiltAt: !changedDuringBuild
+        exactAtBuiltAt: !changedDuringBuild && !projectionPending
       })
     }).catch((error) => {
       if (deadline.signal.aborted && !record.controller.signal.aborted) {

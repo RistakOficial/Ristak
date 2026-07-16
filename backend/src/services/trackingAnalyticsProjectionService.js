@@ -17,10 +17,12 @@ import {
   applyTrackingAnalyticsDailyMutation,
   applyTrackingAnalyticsRangeMutation,
   repairTrackingAnalyticsReturningVisitors,
-  runTrackingAnalyticsRangeCompilationBatch
+  runTrackingAnalyticsRangeCompilationBatch,
+  TRACKING_ANALYTICS_EMPTY_CONTACT_KEY,
+  TRACKING_ANALYTICS_EMPTY_SESSION_KEY
 } from './trackingAnalyticsRangeRollupService.js'
 
-export const TRACKING_ANALYTICS_PROJECTION_VERSION = 3
+export const TRACKING_ANALYTICS_PROJECTION_VERSION = 4
 
 const PROJECTION_STATE_ID = 1
 const BACKFILL_JOB_KEY = 'tracking-analytics-projection'
@@ -85,6 +87,7 @@ const DIMENSION_COLUMNS = Object.freeze([
   'dimension_key',
   'page_value',
   'traffic_source',
+  'source_filter_value',
   'utm_campaign',
   'utm_medium',
   'utm_content',
@@ -181,6 +184,34 @@ function trafficSource(row) {
   return dimensionValue(normalizeTrafficSource(row))
 }
 
+// Congela la expresión histórica usada por facetas/filtros web. Origin puede
+// seguir mostrando la categoría normalizada (`traffic_source`), mientras
+// `utm_source` conserva aliases exactos como newsletter/fb sin ensancharlos a
+// todos los valores que terminan en Email/Facebook.
+function sourceFilterValue(row) {
+  const referrer = textValue(row.referrer_url).toLowerCase()
+  if (referrer.includes('google.')) return 'Google'
+  if (referrer.includes('facebook.') || referrer.includes('fb.com')) return 'Facebook'
+  if (referrer.includes('instagram.')) return 'Instagram'
+  if (referrer.includes('tiktok.')) return 'TikTok'
+  return dimensionValue(firstText(
+    row.site_source_name,
+    row.utm_source,
+    row.source_platform,
+    'Directo'
+  ))
+}
+
+function projectedContactKey(value) {
+  if (value === null || value === undefined) return ''
+  return textValue(value) || TRACKING_ANALYTICS_EMPTY_CONTACT_KEY
+}
+
+function projectedSessionKey(value) {
+  if (value === null || value === undefined) return ''
+  return textValue(value) || TRACKING_ANALYTICS_EMPTY_SESSION_KEY
+}
+
 function normalizedChannel(value) {
   const channel = textValue(value).toLowerCase()
   if (!channel) return 'direct'
@@ -237,6 +268,7 @@ function buildDimension(row) {
   const dimension = {
     page_value: pageValue(row.page_url),
     traffic_source: dimensionValue(trafficSource(row)),
+    source_filter_value: sourceFilterValue(row),
     utm_campaign: dimensionValue(row.utm_campaign),
     utm_medium: dimensionValue(row.utm_medium),
     utm_content: dimensionValue(row.utm_content),
@@ -289,8 +321,8 @@ function normalizeSourceFact(row, timezone) {
       business_date: normalizeDateOnlyInTimezone(startedAt, timezone),
       dimension_key: dimension.dimension_key,
       visitor_key: identity,
-      session_key: textValue(row.session_id),
-      contact_key: textValue(row.contact_id),
+      session_key: projectedSessionKey(row.session_id),
+      contact_key: projectedContactKey(row.contact_id),
       event_count: 1,
       view_count: VIEW_EVENTS.has(textValue(row.event_name).toLowerCase()) ? 1 : 0,
       started_at: startedAt
@@ -569,7 +601,7 @@ export async function readTrackingAnalyticsProjectionState(database = db, { sign
         last_applied_at,
         last_error,
         updated_at
-      FROM tracking_analytics_projection_state
+      FROM tracking_analytics_projection_state_v4
       WHERE singleton_id = ?
     `, [PROJECTION_STATE_ID], { signal })
   } catch (error) {
@@ -661,7 +693,7 @@ async function lockProjectionState(transaction) {
       last_applied_at,
       last_error,
       updated_at
-    FROM tracking_analytics_projection_state
+    FROM tracking_analytics_projection_state_v4
     WHERE singleton_id = ?
     ${databaseDialect === 'postgres' ? 'FOR UPDATE' : ''}
   `, [PROJECTION_STATE_ID])
@@ -688,7 +720,7 @@ async function ensureProjectionTimezone(timezone) {
     await transaction.run('DELETE FROM tracking_analytics_event_fact')
     await transaction.run('DELETE FROM tracking_analytics_dimensions')
     await transaction.run(`
-      UPDATE tracking_analytics_projection_state
+      UPDATE tracking_analytics_projection_state_v4
       SET projection_version = ?,
           account_timezone = ?,
           status = 'backfilling',
@@ -740,7 +772,7 @@ async function runBackfillBatch(batchSize, timezone) {
 
     if (!rows.length) {
       await transaction.run(`
-        UPDATE tracking_analytics_projection_state
+        UPDATE tracking_analytics_projection_state_v4
         SET status = 'backfilling',
             backfill_complete = ?,
             last_error = NULL,
@@ -754,7 +786,7 @@ async function runBackfillBatch(batchSize, timezone) {
     const projected = await projectRows(transaction, rows, ids, timezone, { maintainRanges: false })
     const complete = rows.length < batchSize
     await transaction.run(`
-      UPDATE tracking_analytics_projection_state
+      UPDATE tracking_analytics_projection_state_v4
       SET status = ?,
           backfill_cursor = ?,
           backfill_complete = ?,
@@ -805,7 +837,7 @@ async function runQueueBatch(batchSize, timezone) {
       WHERE ${revisionConditions}
     `, queuedRows.flatMap(row => [textValue(row.session_row_id), Number(row.revision)]))
     await transaction.run(`
-      UPDATE tracking_analytics_projection_state
+      UPDATE tracking_analytics_projection_state_v4
       SET status = 'replaying',
           last_applied_at = CURRENT_TIMESTAMP,
           last_error = NULL,
@@ -853,7 +885,7 @@ async function settleProjectionState() {
     const nextStatus = ready ? 'ready' : (rangesComplete ? 'replaying' : 'backfilling')
     if (textValue(state.status).toLowerCase() !== nextStatus || state.last_error) {
       await transaction.run(`
-        UPDATE tracking_analytics_projection_state
+        UPDATE tracking_analytics_projection_state_v4
         SET status = ?, last_error = NULL, updated_at = CURRENT_TIMESTAMP
         WHERE singleton_id = ?
       `, [nextStatus, PROJECTION_STATE_ID])
@@ -869,7 +901,7 @@ async function settleProjectionState() {
 async function persistProjectionFailure(error) {
   try {
     await db.run(`
-      UPDATE tracking_analytics_projection_state
+      UPDATE tracking_analytics_projection_state_v4
       SET status = 'failed',
           last_error = ?,
           updated_at = CURRENT_TIMESTAMP

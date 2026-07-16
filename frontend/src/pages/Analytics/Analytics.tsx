@@ -1612,7 +1612,7 @@ const Analytics: React.FC = () => {
   // El navegador recibe agregados acotados; nunca el historial crudo de tracking.
   useEffect(() => {
     const controller = new AbortController()
-    let staleRevalidationTimer: ReturnType<typeof setTimeout> | null = null
+    let staleRevalidationTimer: ReturnType<typeof scheduleTrackingAnalyticsStaleRevalidation> = null
     const requestId = ++analyticsRequestIdRef.current
     const cachedSummary = hasWebAnalyticsAccess
       ? peekTrackingAnalyticsSummary(analyticsSummaryInput)

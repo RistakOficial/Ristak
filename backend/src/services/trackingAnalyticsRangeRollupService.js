@@ -15,7 +15,11 @@ const FACET_COLUMNS = Object.freeze(Array.from(new Set(
   Object.values(TRACKING_ANALYTICS_FAST_FACETS).flat()
 )))
 const RANGE_ORIGIN = '0001-01-01'
-const ANONYMOUS_CONTACT_KEY = '__anonymous__'
+// `contact_id = ''` sí cuenta una vez en el SQL legacy; NULL no cuenta. El
+// sentinel permite conservar esa diferencia dentro de presence sin hacer el
+// campo nullable ni confundir tráfico anónimo con un contacto identificado.
+export const TRACKING_ANALYTICS_EMPTY_CONTACT_KEY = '__empty_contact__'
+export const TRACKING_ANALYTICS_EMPTY_SESSION_KEY = '__empty_session__'
 const RETURNING_REPAIR_BATCH_SIZE = 25
 const RANGE_COMPILE_VISITOR_BATCH_SIZE = 25
 const SQLITE_PARAMETER_BUDGET = 900
@@ -873,11 +877,10 @@ export function trackingAnalyticsIdentityMembershipSql() {
     WHERE view_count > 0 AND session_key != ''
     GROUP BY session_key, business_date
     UNION ALL
-    SELECT 'contact', COALESCE(NULLIF(contact_key, ''), '${ANONYMOUS_CONTACT_KEY}'), business_date,
-      SUM(view_count), CURRENT_TIMESTAMP
+    SELECT 'contact', contact_key, business_date, SUM(view_count), CURRENT_TIMESTAMP
     FROM tracking_analytics_presence
-    WHERE view_count > 0
-    GROUP BY COALESCE(NULLIF(contact_key, ''), '${ANONYMOUS_CONTACT_KEY}'), business_date
+    WHERE view_count > 0 AND contact_key != ''
+    GROUP BY contact_key, business_date
   `
 }
 
@@ -918,7 +921,7 @@ async function prepareRangeCompilation(transaction) {
   await transaction.run(compileIdentitySql())
   await transaction.run(compileFacetSql())
   await transaction.run(`
-    UPDATE tracking_analytics_projection_state
+    UPDATE tracking_analytics_projection_state_v4
     SET range_status = 'compiling_ranges', range_compile_cursor = NULL,
         range_backfill_complete = ?, status = 'backfilling',
         updated_at = CURRENT_TIMESTAMP
@@ -932,7 +935,7 @@ export async function runTrackingAnalyticsRangeCompilationBatch(
 ) {
   const state = await transaction.get(`
     SELECT range_status, range_compile_cursor, range_backfill_complete
-    FROM tracking_analytics_projection_state
+    FROM tracking_analytics_projection_state_v4
     WHERE singleton_id = 1
   `)
   if (!state) return { unavailable: true, complete: false, processedVisitors: 0 }
@@ -942,7 +945,7 @@ export async function runTrackingAnalyticsRangeCompilationBatch(
   if (state.range_status !== 'compiling_ranges') await prepareRangeCompilation(transaction)
 
   const refreshed = await transaction.get(`
-    SELECT range_compile_cursor FROM tracking_analytics_projection_state WHERE singleton_id = 1
+    SELECT range_compile_cursor FROM tracking_analytics_projection_state_v4 WHERE singleton_id = 1
   `)
   const cursor = textValue(refreshed?.range_compile_cursor)
   const visitorRows = await transaction.all(`
@@ -969,7 +972,7 @@ export async function runTrackingAnalyticsRangeCompilationBatch(
     : null
   const complete = !nextVisitor
   await transaction.run(`
-    UPDATE tracking_analytics_projection_state
+    UPDATE tracking_analytics_projection_state_v4
     SET range_compile_cursor = ?,
         range_status = ?,
         range_backfill_complete = ?,
@@ -1017,13 +1020,13 @@ export async function applyTrackingAnalyticsRangeMutation(
     const businessDate = dateOnlyValue(row.business_date)
     const visitorKey = textValue(row.visitor_key)
     const sessionKey = textValue(row.session_key)
-    const contactKey = textValue(row.contact_key) || ANONYMOUS_CONTACT_KEY
+    const contactKey = textValue(row.contact_key)
     const viewDelta = Number(row.view_count || 0)
     const eventDelta = Number(row.event_count || 0)
     if (businessDate && visitorKey && viewDelta) {
       for (const [entityType, identityKey] of [
         ['visitor', visitorKey],
-        ['contact', contactKey],
+        ...(contactKey ? [['contact', contactKey]] : []),
         ...(sessionKey ? [['session', sessionKey]] : [])
       ]) {
         addCounterDelta(identityDeltas, [entityType, identityKey, businessDate], {

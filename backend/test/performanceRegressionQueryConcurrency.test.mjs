@@ -188,12 +188,12 @@ test('un snapshot que cruza una revisión queda stale y se reconstruye antes de 
     assert.equal(crossedRevision.snapshot.consistency, 'moving-window')
     const firstBuildCalls = observedQueries
 
-    const coalesced = await getTrackingAnalyticsSummary(input)
-    assert.equal(observedQueries, firstBuildCalls, 'waitForFresh no debe reconstruir sin límite durante un stream activo')
+    const coalesced = await getTrackingAnalyticsSummary({ ...input, allowStale: true })
+    assert.equal(observedQueries, firstBuildCalls, 'allowStale debe coalescer durante un stream activo')
     assert.equal(coalesced.snapshot.stale, true)
 
     now += TRACKING_ANALYTICS_BUILD_LIMITS.coalesceWindowMs + 1
-    const rebuilt = await getTrackingAnalyticsSummary(input)
+    const rebuilt = await getTrackingAnalyticsSummary({ ...input, allowStale: false })
     assert.ok(observedQueries > firstBuildCalls, 'el snapshot stale no debe cerrar el cache como fresco')
     assert.equal(rebuilt.snapshot.stale, false)
 
@@ -253,7 +253,7 @@ test('un stream continuo coalesce varios builds de Analíticas sin declarar exac
       assert.ok(Date.parse(moving.snapshot.revalidateAfter) > now)
 
       const callsAfterBuild = observedQueries
-      const coalesced = await getTrackingAnalyticsSummary(input)
+      const coalesced = await getTrackingAnalyticsSummary({ ...input, allowStale: true })
       assert.equal(coalesced.snapshot.stale, true)
       assert.equal(observedQueries, callsAfterBuild, 'la ventana debe evitar un rebuild por cada request')
 
@@ -262,7 +262,7 @@ test('un stream continuo coalesce varios builds de Analíticas sin declarar exac
 
     assert.equal(mutations, 3)
     mutateNextBuild = false
-    const exact = await getTrackingAnalyticsSummary(input)
+    const exact = await getTrackingAnalyticsSummary({ ...input, allowStale: false })
     assert.equal(exact.snapshot.stale, false)
     assert.equal(exact.snapshot.exactAtBuiltAt, true)
     assert.equal(exact.snapshot.consistency, 'exact')

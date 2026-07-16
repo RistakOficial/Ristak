@@ -10,6 +10,23 @@ interface ApiRequestOptions extends RequestInit {
   showFeatureNotAvailableToast?: boolean
 }
 
+export type ApiRequestError = Error & {
+  status?: number
+  body?: unknown
+  retryAfterMs?: number
+}
+
+export function parseRetryAfterMs(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined
+
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000)
+
+  const retryAt = Date.parse(value)
+  if (!Number.isFinite(retryAt)) return undefined
+  return Math.max(0, retryAt - now)
+}
+
 class ApiClient {
   private baseURL: string
 
@@ -91,9 +108,10 @@ class ApiClient {
       // (CNT-001) Conservar status y body en el error para que el caller pueda
       // reaccionar a respuestas accionables (p. ej. 409 merge_confirmation_required
       // con el contacto en conflicto) sin perder compatibilidad con error.message.
-      const apiError = new Error(message) as Error & { status?: number; body?: unknown }
+      const apiError = new Error(message) as ApiRequestError
       apiError.status = response.status
       apiError.body = json
+      apiError.retryAfterMs = parseRetryAfterMs(response.headers.get('Retry-After'))
 
       // (LIC-005) Cuando el backend bloquea un módulo premium fuera del plan
       // devuelve 403 con code "feature_not_available". Sólo mostramos el toast

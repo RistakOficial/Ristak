@@ -1631,15 +1631,28 @@ export async function getTrackingAnalyticsSummaryHandler(req, res) {
     }
     if (isTrackingRequestAbort(error, requestScope.signal)) return
     const status = Number(error?.status) || 500
+    const retryableCodes = [
+      'tracking_analytics_deadline',
+      'tracking_analytics_busy',
+      'tracking_analytics_projection_warming',
+      'tracking_conversion_projection_warming'
+    ]
+    if (
+      error?.code === 'tracking_analytics_projection_warming'
+      || error?.code === 'tracking_conversion_projection_warming'
+    ) {
+      res.setHeader?.('Retry-After', '2')
+    }
     logger.error(`Error obteniendo resumen acotado de tracking: ${error.message}`)
     res.status(status).json({
-      error: ['tracking_analytics_deadline', 'tracking_analytics_busy'].includes(error?.code)
+      error: retryableCodes.includes(error?.code)
         ? error.message
         : status < 500
           ? error.message
           : 'Internal server error',
       ...(error?.code ? { code: error.code } : {}),
-      ...(['tracking_analytics_deadline', 'tracking_analytics_busy'].includes(error?.code) ? { retryable: true } : {})
+      ...(retryableCodes.includes(error?.code) ? { retryable: true } : {}),
+      ...(error?.projectionStatus ? { projectionStatus: error.projectionStatus } : {})
     })
   } finally {
     requestScope.cleanup()

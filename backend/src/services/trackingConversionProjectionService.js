@@ -38,7 +38,7 @@ const VIEW_FILTER_FIELDS = new Map([
   ['utm_campaign', 'utm_campaign'],
   ['utm_medium', 'utm_medium'],
   ['utm_content', 'utm_content'],
-  ['utm_source', 'traffic_source'],
+  ['utm_source', 'source_filter_value'],
   ['device_type', 'device_type'],
   ['browser', 'browser'],
   ['os', 'os'],
@@ -155,12 +155,7 @@ function normalizedConversionStages(filters) {
     : []
   return [...new Set((Array.isArray(raw) ? raw : [raw])
     .map(value => textValue(value))
-    .filter(value => [
-      'prospect',
-      'appointment_scheduled',
-      'appointment_attended',
-      'customer'
-    ].includes(value)))]
+    .filter(Boolean))]
 }
 
 function isBackfillComplete(value) {
@@ -1008,7 +1003,7 @@ export async function queryTrackingConversionProjection({
   assertRange(previousRange, 'previousRange')
   if (!supportsTrackingConversionProjectionFilters(filters)) throw unsupportedFilterError(filters)
 
-  const status = await getTrackingConversionProjectionStatus({ schedule: true, signal })
+  const status = await getTrackingConversionProjectionStatus({ schedule: false, signal })
   signal?.throwIfAborted?.()
   if (!status.available) throw projectionWarmingError(status)
 
@@ -1017,7 +1012,7 @@ export async function queryTrackingConversionProjection({
   const stages = normalizedConversionStages(filters)
   const filtered = hasProjectedWebFilters(filters)
   if (filtered) {
-    const sessionProjection = await getTrackingAnalyticsProjectionStatus({ schedule: true, signal })
+    const sessionProjection = await getTrackingAnalyticsProjectionStatus({ schedule: false, signal })
     if (!sessionProjection.available) throw projectionWarmingError({ conversion: status, sessions: sessionProjection })
   }
   const rows = filtered

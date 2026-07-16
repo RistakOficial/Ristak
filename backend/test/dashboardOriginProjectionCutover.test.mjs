@@ -5,7 +5,10 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 import { db, setAppConfig } from '../src/config/database.js'
-import { getOriginDistribution } from '../src/controllers/dashboardController.js'
+import {
+  getMobileAnalyticsSnapshot,
+  getOriginDistribution
+} from '../src/controllers/dashboardController.js'
 import { runMessageAnalyticsProjectionBackfill } from '../src/services/messageAnalyticsProjectionService.js'
 import { runTrackingAnalyticsProjectionBackfill } from '../src/services/trackingAnalyticsProjectionService.js'
 import {
@@ -63,7 +66,8 @@ async function installProjectionSchemas() {
     '114_message_analytics_projection.sqlite.sql',
     '115_message_analytics_range_rollup.sqlite.sql',
     '118_message_analytics_phone_projection.sqlite.sql',
-    '119_tracking_analytics_hot_identity.sqlite.sql'
+    '119_tracking_analytics_hot_identity.sqlite.sql',
+    '120_tracking_analytics_identity_source_parity.sqlite.sql'
   ]) {
     await db.exec(await readFile(
       new URL(`../migrations/versioned/${migrationName}`, import.meta.url),
@@ -103,9 +107,119 @@ async function convergeProjections() {
 async function cleanup(prefix) {
   await db.run('DELETE FROM hidden_contact_filters WHERE filter_text LIKE ?', [`${prefix}%`]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_messages WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
   await db.run('DELETE FROM sessions WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
 }
+
+test('phone breakdown usa sólo su proyección y respeta el override aunque WhatsApp esté apagado', async () => {
+  const prefix = `phone_projection_${randomUUID().replaceAll('-', '')}`
+  const timestamp = '2192-08-18T12:00:00.000Z'
+  const phoneId = `${prefix}_phone`
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, phone_number, display_phone_number, verified_name,
+        api_send_enabled, qr_send_enabled, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, 1, 0, ?)
+    `, [phoneId, '5215550101010', '+52 1 555 010 1010', `${prefix} principal`, timestamp])
+    await insertMessageContact({
+      id: `${prefix}_contact`,
+      fullName: `${prefix}_visible`,
+      phone: '5215550202020',
+      timestamp
+    })
+    await db.run(`
+      UPDATE whatsapp_api_messages
+      SET business_phone_number_id = ?, business_phone = ?, updated_at = ?
+      WHERE id = ?
+    `, [phoneId, '5215550101010', timestamp, `${prefix}_contact_message`])
+    await convergeProjections()
+
+    const originals = { all: db.all, get: db.get }
+    const queries = []
+    for (const method of ['all', 'get']) {
+      db[method] = async function observedPhoneProjectionRead(...args) {
+        queries.push(String(args[0] || ''))
+        return originals[method].apply(this, args)
+      }
+    }
+
+    let response
+    try {
+      response = await requestOrigin({
+        startDate: '2192-08-01',
+        endDate: '2192-08-31',
+        includeWeb: '0',
+        includeWhatsapp: '0',
+        includeBreakdowns: '0',
+        includePhoneBreakdown: '1',
+        dimension: 'sources'
+      })
+    } finally {
+      db.all = originals.all
+      db.get = originals.get
+    }
+
+    assert.equal(response.statusCode, 200)
+    const expectedPhoneRows = [{
+      name: `${prefix} principal`,
+      value: 1,
+      phoneNumberId: phoneId,
+      phoneNumber: '5215550101010',
+      displayPhoneNumber: '+52 1 555 010 1010',
+      status: null,
+      apiSendEnabled: true,
+      qrSendEnabled: false
+    }]
+    assert.deepEqual(response.payload.data.whatsappNumbers, expectedPhoneRows)
+    assert.equal(
+      queries.some(sql => /FROM\s+whatsapp_api_messages\b/i.test(sql)),
+      false,
+      queries.join('\n---\n')
+    )
+
+    const omittedByCompatibility = await requestOrigin({
+      startDate: '2192-08-01',
+      endDate: '2192-08-31',
+      includeWeb: '0',
+      includeWhatsapp: '1',
+      includeBreakdowns: '0',
+      dimension: 'sources'
+    })
+    assert.deepEqual(omittedByCompatibility.payload.data.whatsappNumbers, [])
+
+    const legacySnapshot = new ResponseRecorder()
+    await getMobileAnalyticsSnapshot({
+      query: {
+        startDate: '2192-08-01',
+        endDate: '2192-08-31',
+        includeWeb: '0',
+        funnelScope: 'all',
+        financialScope: 'all'
+      }
+    }, legacySnapshot)
+    assert.equal(legacySnapshot.statusCode, 200)
+    assert.deepEqual(legacySnapshot.payload.data.origin.whatsappNumbers, expectedPhoneRows)
+
+    const newSnapshot = new ResponseRecorder()
+    await getMobileAnalyticsSnapshot({
+      query: {
+        startDate: '2192-08-01',
+        endDate: '2192-08-31',
+        includeWeb: '0',
+        funnelScope: 'all',
+        financialScope: 'all',
+        includePhoneBreakdown: '0'
+      }
+    }, newSnapshot)
+    assert.equal(newSnapshot.statusCode, 200)
+    assert.deepEqual(newSnapshot.payload.data.origin.whatsappNumbers, [])
+  } finally {
+    await cleanup(prefix)
+  }
+})
 
 async function insertSession({ id, visitorId, source, timestamp }) {
   await db.run(`
@@ -249,7 +363,7 @@ test('origin sources combina ambos ledgers y aplica ocultos sin tocar historiale
 
 test('origin sources falla cerrado con Retry-After si tracking no está disponible', async () => {
   await db.run(`
-    UPDATE tracking_analytics_projection_state
+    UPDATE tracking_analytics_projection_state_v4
     SET account_timezone = 'America/New_York'
     WHERE singleton_id = 1
   `)
@@ -262,7 +376,7 @@ test('origin sources falla cerrado con Retry-After si tracking no está disponib
     assert.equal(response.headers.get('retry-after'), '2')
   } finally {
     await db.run(`
-      UPDATE tracking_analytics_projection_state
+      UPDATE tracking_analytics_projection_state_v4
       SET account_timezone = 'UTC'
       WHERE singleton_id = 1
     `)
@@ -339,6 +453,13 @@ test('el fast path de Edge queda aislado de los scans legacy y no agenda backfil
   assert.doesNotMatch(trackingQuery, /FROM\s+sessions\b/)
   assert.match(messageOrigin, /schedule = false/)
   assert.match(messageOrigin, /\}, \{ schedule \}\)/)
+  const phoneProjection = messageProjection.slice(
+    messageProjection.indexOf('export async function queryMessageAnalyticsProjectionPhoneNumbers'),
+    messageProjection.indexOf('export const MESSAGE_ANALYTICS_PROJECTION_LIMITS')
+  )
+  assert.match(phoneProjection, /schedule = false/)
+  assert.match(phoneProjection, /\}, \{ schedule \}\)/)
+  assert.match(handler, /includePhoneBreakdown === undefined[\s\S]*String\(includeBreakdowns\) !== '0' && shouldIncludeWhatsapp/)
   assert.match(handler, /X-Ristak-Read-Path/)
   assert.match(handler, /tracking_analytics_projection_warming/)
   assert.match(handler, /Retry-After[\s\S]*status\(503\)/)

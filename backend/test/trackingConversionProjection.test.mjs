@@ -509,6 +509,22 @@ test('la proyeccion conserva la semantica del SQL legacy para actual, anterior y
       conversionStages: ['customer']
     })
     assert.deepEqual(projectedCustomers.current, legacyCustomers)
+
+    const projectedInvalidStage = await queryTrackingConversionProjection({
+      currentRange,
+      previousRange,
+      groupBy: 'day',
+      filters: { conversion_stage: ['bogus'] }
+    })
+    const legacyInvalidStage = await queryLegacyConversionSql(currentRange, {
+      groupBy: 'day',
+      includeSeries: true,
+      conversionStages: ['bogus']
+    })
+    assert.deepEqual(projectedInvalidStage.current, legacyInvalidStage)
+    assert.deepEqual(projectedInvalidStage.current.metrics, emptyMetrics())
+    assert.deepEqual(projectedInvalidStage.current.series, [])
+
     assert.equal(projected.current.metrics.registrations, 8, 'el contacto manual sin fuente analitica queda fuera')
     assert.equal(projected.current.metrics.purchases, 2, 'test, failed y monto cero no cuentan')
   } finally {
@@ -673,16 +689,16 @@ test('los filtros web usan facts 113+116 y respetan started_at posterior al regi
   try {
     await insertContact({ id: contactId, timestamp: '2098-04-10T12:00:00.000Z' })
     const sessions = [
-      [randomUUID(), `${prefix}_before`, '2098-04-10T11:00:00.000Z', 'antes'],
-      [randomUUID(), `${prefix}_after`, '2098-04-10T13:00:00.000Z', 'despues']
+      [randomUUID(), `${prefix}_before`, '2098-04-10T11:00:00.000Z', 'antes', 'newsletter'],
+      [randomUUID(), `${prefix}_after`, '2098-04-10T13:00:00.000Z', 'despues', 'fb']
     ]
-    for (const [id, sessionId, startedAt, campaign] of sessions) {
+    for (const [id, sessionId, startedAt, campaign, source] of sessions) {
       await db.run(`
         INSERT INTO sessions(
           id, session_id, visitor_id, contact_id, event_name, started_at,
-          page_url, utm_campaign, device_type
-        ) VALUES (?, ?, ?, ?, 'page_view', ?, 'https://example.test/landing', ?, 'mobile')
-      `, [id, sessionId, `${prefix}_visitor`, contactId, startedAt, campaign])
+          page_url, utm_campaign, utm_source, device_type
+        ) VALUES (?, ?, ?, ?, 'page_view', ?, 'https://example.test/landing', ?, ?, 'mobile')
+      `, [id, sessionId, `${prefix}_visitor`, contactId, startedAt, campaign, source])
     }
 
     await convergeTrackingProjection()
@@ -699,9 +715,20 @@ test('los filtros web usan facts 113+116 y respetan started_at posterior al regi
     const after = await queryTrackingConversionProjection({
       currentRange,
       previousRange,
-      filters: { utm_campaign: ['despues'], device_type: ['mobile'] }
+      filters: { utm_campaign: ['despues'], utm_source: ['fb'], device_type: ['mobile'] }
     })
     assert.equal(after.current.metrics.registrations, 1)
+
+    const broadenedSource = await queryTrackingConversionProjection({
+      currentRange,
+      previousRange,
+      filters: { utm_campaign: ['despues'], utm_source: ['Facebook'] }
+    })
+    assert.equal(
+      broadenedSource.current.metrics.registrations,
+      0,
+      'el alias exacto fb no se ensancha a toda la categoría Facebook'
+    )
 
     const unfiltered = await queryTrackingConversionProjection({ currentRange, previousRange })
     assert.equal(unfiltered.readPath, 'tracking_conversion_daily_rollup')

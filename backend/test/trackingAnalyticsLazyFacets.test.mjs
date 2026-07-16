@@ -10,6 +10,10 @@ import {
   TRACKING_ANALYTICS_FACET_LIMITS
 } from '../src/services/trackingAnalyticsService.js'
 import { invalidateTrackingAnalyticsCache } from '../src/services/trackingAnalyticsCache.js'
+import { runTrackingAnalyticsProjectionBackfill } from '../src/services/trackingAnalyticsProjectionService.js'
+import { runTrackingConversionProjectionBackfill } from '../src/services/trackingConversionProjectionService.js'
+import { runCrmListProjectionBackfill } from '../src/services/crmListProjectionService.js'
+import { runVersionedMigrations } from '../src/startup/runMigrations.js'
 
 const serviceSource = readFileSync(
   new URL('../src/services/trackingAnalyticsService.js', import.meta.url),
@@ -36,8 +40,42 @@ function uniqueFilter(label) {
   return { utm_campaign: [`${label}-${process.pid}-${Date.now()}-${Math.random()}`] }
 }
 
+async function convergeTrackingSummaryReadModels() {
+  await runVersionedMigrations()
+  await runCrmListProjectionBackfill({ batchSize: 500, yieldMs: 0 })
+
+  let trackingResult = null
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    trackingResult = await runTrackingAnalyticsProjectionBackfill({
+      batchSize: 100,
+      queueBatchSize: 100,
+      maxBatches: 100,
+      maxQueueBatches: 100,
+      maxRangeBatches: 100,
+      maxReturningRepairBatches: 100,
+      yieldMs: 0
+    })
+    if (trackingResult.ready) break
+  }
+  assert.equal(trackingResult?.ready, true, 'read model 113 no convergió')
+
+  let conversionResult = null
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    conversionResult = await runTrackingConversionProjectionBackfill({
+      batchSize: 100,
+      queueBatchSize: 100,
+      maxBatches: 100,
+      maxQueueBatches: 100,
+      yieldMs: 0
+    })
+    if (conversionResult.ready) break
+  }
+  assert.equal(conversionResult?.ready, true, 'read model 116 no convergió')
+}
+
 test('el core puede omitir facetas sin cambiar métricas ni series', { concurrency: false }, async () => {
   clearTrackingAnalyticsSummaryCache()
+  await convergeTrackingSummaryReadModels()
   const originals = { all: db.all, get: db.get }
   const capturedSql = []
   const input = {
@@ -70,7 +108,14 @@ test('el core puede omitir facetas sin cambiar métricas ni series', { concurren
 
     capturedSql.length = 0
     await getTrackingAnalyticsSummary({ ...input, includeFacets: false })
-    assert.equal(capturedSql.length, 0, 'includeFacets forma parte de la llave y conserva su snapshot propio')
+    const hotCacheSql = capturedSql.join('\n')
+    assert.match(hotCacheSql, /tracking_analytics_projection_state/i)
+    assert.match(hotCacheSql, /tracking_conversion_projection_state/i)
+    assert.doesNotMatch(
+      hotCacheSql,
+      /\bFROM\s+(?:sessions|tracking_analytics_range_delta|tracking_analytics_presence|tracking_conversion_daily)\b/i,
+      'el snapshot caliente sólo permite probes O(1) de estado'
+    )
   } finally {
     db.all = originals.all
     db.get = originals.get
@@ -341,9 +386,17 @@ test('el deadline interno cancela la lectura real y responde como error reintent
 })
 
 test('endpoint, allowlist, deadline y arquitectura singular quedan cerrados por contrato', () => {
-  const coreSource = sourceBetween(
+  const summaryRouterSource = sourceBetween(
     'async function computeTrackingAnalyticsSummary',
     '\nfunction stableFilterCacheKey'
+  )
+  const legacyCoreSource = sourceBetween(
+    'async function computeLegacyTrackingAnalyticsSummary',
+    '\nasync function computeProjectedTrackingAnalyticsSummary'
+  )
+  const projectedCoreSource = sourceBetween(
+    'async function computeProjectedTrackingAnalyticsSummary',
+    '\nasync function computeTrackingAnalyticsSummary'
   )
   const singularPostgresSource = sourceBetween(
     'async function queryPostgresSingleSessionFacetWithoutConversionFilter',
@@ -354,8 +407,14 @@ test('endpoint, allowlist, deadline y arquitectura singular quedan cerrados por 
     '\nasync function queryTrackingAnalyticsFacet'
   )
 
-  assert.match(coreSource, /if \(includeFacets\)/)
-  assert.match(coreSource, /distributions: includeFacets/)
+  assert.match(summaryRouterSource, /if \(options\.includeFacets\)/)
+  assert.match(summaryRouterSource, /computeLegacyTrackingAnalyticsSummary/)
+  assert.match(summaryRouterSource, /computeProjectedTrackingAnalyticsSummary/)
+  assert.match(legacyCoreSource, /distributions: includeFacets/)
+  assert.match(projectedCoreSource, /distributions: \{\}/)
+  assert.match(projectedCoreSource, /queryTrackingAnalyticsProjectionSessionMetrics/)
+  assert.match(projectedCoreSource, /queryTrackingConversionProjection/)
+  assert.doesNotMatch(projectedCoreSource, /querySessionMetrics\(|queryConversionMetrics\(/)
   assert.doesNotMatch(singularPostgresSource, /UNION\s+ALL/i)
   assert.doesNotMatch(singularFallbackSource, /UNION\s+ALL/i)
   assert.match(serviceSource, /const FACET_QUERY_DEADLINE_MS = 18_000/)

@@ -1,4 +1,4 @@
-import apiClient from './apiClient'
+import apiClient, { type ApiRequestError } from './apiClient'
 import {
   getAuthScopedCacheRevision,
   registerAuthScopedCacheInvalidator,
@@ -182,6 +182,13 @@ export function scheduleTrackingAnalyticsStaleRevalidation(
 const TRACKING_ANALYTICS_CACHE_TTL_MS = 30_000
 const TRACKING_ANALYTICS_CACHE_MAX_ENTRIES = 24
 const ANALYTICS_REQUEST_TIMEOUT_MS = 20_000
+export const TRACKING_ANALYTICS_WARMING_MAX_ATTEMPTS = 3
+export const TRACKING_ANALYTICS_WARMING_DELAY_CAP_MS = 10_000
+const TRACKING_ANALYTICS_WARMING_DEFAULT_DELAY_MS = 2_000
+const TRACKING_ANALYTICS_WARMING_CODES = new Set([
+  'tracking_analytics_projection_warming',
+  'tracking_conversion_projection_warming'
+])
 const trackingAnalyticsCache = new Map<string, { data: TrackingAnalyticsSummary; fetchedAt: number }>()
 const trackingAnalyticsInflight = new Map<string, Promise<TrackingAnalyticsSummary>>()
 const TRACKING_ANALYTICS_FACET_CACHE_MAX_ENTRIES = 64
@@ -257,6 +264,72 @@ export function peekTrackingAnalyticsSummary(input: TrackingAnalyticsSummaryInpu
   return cached.data
 }
 
+function analyticsAbortError(signal: AbortSignal) {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('La consulta de Analíticas fue cancelada', 'AbortError')
+}
+
+export function isTrackingAnalyticsProjectionWarmingError(error: unknown): error is ApiRequestError {
+  const apiError = error as ApiRequestError | null
+  if (apiError?.status !== 503 || !apiError.body || typeof apiError.body !== 'object') return false
+  const code = (apiError.body as { code?: unknown }).code
+  return typeof code === 'string' && TRACKING_ANALYTICS_WARMING_CODES.has(code)
+}
+
+export function getTrackingAnalyticsWarmingRetryDelayMs(error: ApiRequestError) {
+  const requestedDelay = Number.isFinite(error.retryAfterMs)
+    ? Number(error.retryAfterMs)
+    : TRACKING_ANALYTICS_WARMING_DEFAULT_DELAY_MS
+  return Math.min(
+    TRACKING_ANALYTICS_WARMING_DELAY_CAP_MS,
+    Math.max(0, requestedDelay)
+  )
+}
+
+export function waitForTrackingAnalyticsRetry(delayMs: number, signal: AbortSignal) {
+  if (signal.aborted) return Promise.reject(analyticsAbortError(signal))
+  return new Promise<void>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => finish(resolve), Math.max(0, delayMs))
+    const onAbort = () => finish(() => reject(analyticsAbortError(signal)))
+    const finish = (callback: () => void) => {
+      globalThis.clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      callback()
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+  })
+}
+
+async function requestTrackingAnalyticsSummary(
+  input: TrackingAnalyticsSummaryInput,
+  waitForFresh: boolean,
+  signal: AbortSignal
+) {
+  for (let attempt = 1; attempt <= TRACKING_ANALYTICS_WARMING_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await apiClient.post<TrackingAnalyticsSummary>(
+        '/tracking/analytics/summary',
+        waitForFresh ? { ...input, waitForFresh: true } : input,
+        { signal }
+      )
+    } catch (error) {
+      if (
+        attempt >= TRACKING_ANALYTICS_WARMING_MAX_ATTEMPTS
+        || !isTrackingAnalyticsProjectionWarmingError(error)
+      ) {
+        throw error
+      }
+      await waitForTrackingAnalyticsRetry(
+        getTrackingAnalyticsWarmingRetryDelayMs(error),
+        signal
+      )
+    }
+  }
+  throw new Error('No se pudo obtener el resumen de Analíticas')
+}
+
 /**
  * Resumen agregado de Analíticas. Nunca descarga eventos crudos; la caché corta
  * permite volver a la vista sin repetir la consulta, mientras AbortSignal evita
@@ -286,10 +359,10 @@ export async function getTrackingAnalyticsSummary(
         timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
         timeoutMessage: 'El resumen de Analíticas tardó demasiado. Reintenta la carga.',
         signal: sharedSignal,
-        request: signal => apiClient.post<TrackingAnalyticsSummary>(
-          '/tracking/analytics/summary',
-          options.waitForFresh ? { ...input, waitForFresh: true } : input,
-          { signal }
+        request: signal => requestTrackingAnalyticsSummary(
+          input,
+          options.waitForFresh === true,
+          signal
         )
       })
 

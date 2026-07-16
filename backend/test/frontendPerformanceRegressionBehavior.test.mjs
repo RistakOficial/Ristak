@@ -264,6 +264,11 @@ async function importAnalyticsServiceModule() {
   return importTypeScriptSource(source, 'analyticsService.behavior.ts')
 }
 
+async function importApiClientModule() {
+  const source = stripImports(await repoFile('frontend/src/services/apiClient.ts'))
+  return importTypeScriptSource(`const getApiBaseUrl = () => ''\n${source}`, 'apiClient.behavior.ts')
+}
+
 async function importDashboardServiceModule() {
   const [dashboardSource, sharedRequestSource, requestTimeoutSource] = await Promise.all([
     repoFile('frontend/src/services/dashboardService.ts'),
@@ -421,6 +426,98 @@ test('el resumen de Analíticas comparte el request en vuelo y reutiliza el snap
     else globalThis.__ristakAnalyticsTestApiClient = previousClient
     if (previousRevision === undefined) delete globalThis.__ristakAnalyticsTestRevision
     else globalThis.__ristakAnalyticsTestRevision = previousRevision
+    if (previousInvalidators === undefined) delete globalThis.__ristakAnalyticsTestInvalidators
+    else globalThis.__ristakAnalyticsTestInvalidators = previousInvalidators
+  }
+})
+
+test('Analíticas reintenta warming máximo tres veces y nunca reintenta busy/deadline', async () => {
+  const previousClient = globalThis.__ristakAnalyticsTestApiClient
+  const previousRevision = globalThis.__ristakAnalyticsTestRevision
+  const previousInvalidators = globalThis.__ristakAnalyticsTestInvalidators
+  globalThis.__ristakAnalyticsTestRevision = 0
+  globalThis.__ristakAnalyticsTestInvalidators = []
+  let calls = 0
+  globalThis.__ristakAnalyticsTestApiClient = {
+    post: () => {
+      calls += 1
+      return Promise.reject(Object.assign(new Error('warming'), {
+        status: 503,
+        body: { code: 'tracking_analytics_projection_warming', retryable: true },
+        retryAfterMs: 0
+      }))
+    },
+    get: () => Promise.reject(new Error('GET inesperado'))
+  }
+
+  try {
+    const { getTrackingAnalyticsSummary } = await importAnalyticsServiceModule()
+    await assert.rejects(
+      getTrackingAnalyticsSummary({
+        start: '2026-07-01',
+        end: '2026-07-16',
+        groupBy: 'day',
+        includeFacets: false
+      }),
+      error => error?.body?.code === 'tracking_analytics_projection_warming'
+    )
+    assert.equal(calls, 3)
+
+    calls = 0
+    globalThis.__ristakAnalyticsTestApiClient.post = () => {
+      calls += 1
+      return Promise.reject(Object.assign(new Error('busy'), {
+        status: 503,
+        body: { code: 'tracking_analytics_busy', retryable: true },
+        retryAfterMs: 0
+      }))
+    }
+    const freshModule = await importAnalyticsServiceModule()
+    await assert.rejects(
+      freshModule.getTrackingAnalyticsSummary({
+        start: '2026-07-02',
+        end: '2026-07-16',
+        groupBy: 'day',
+        includeFacets: false
+      }),
+      error => error?.body?.code === 'tracking_analytics_busy'
+    )
+    assert.equal(calls, 1)
+  } finally {
+    if (previousClient === undefined) delete globalThis.__ristakAnalyticsTestApiClient
+    else globalThis.__ristakAnalyticsTestApiClient = previousClient
+    if (previousRevision === undefined) delete globalThis.__ristakAnalyticsTestRevision
+    else globalThis.__ristakAnalyticsTestRevision = previousRevision
+    if (previousInvalidators === undefined) delete globalThis.__ristakAnalyticsTestInvalidators
+    else globalThis.__ristakAnalyticsTestInvalidators = previousInvalidators
+  }
+})
+
+test('Retry-After se normaliza y la espera de warming es abortable', async () => {
+  const { parseRetryAfterMs } = await importApiClientModule()
+  assert.equal(parseRetryAfterMs('2'), 2_000)
+  assert.equal(
+    parseRetryAfterMs('Thu, 16 Jul 2026 12:00:05 GMT', Date.parse('Thu, 16 Jul 2026 12:00:00 GMT')),
+    5_000
+  )
+  assert.equal(parseRetryAfterMs('no-es-fecha'), undefined)
+
+  const previousClient = globalThis.__ristakAnalyticsTestApiClient
+  const previousInvalidators = globalThis.__ristakAnalyticsTestInvalidators
+  globalThis.__ristakAnalyticsTestApiClient = {
+    post: () => Promise.reject(new Error('POST inesperado')),
+    get: () => Promise.reject(new Error('GET inesperado'))
+  }
+  globalThis.__ristakAnalyticsTestInvalidators = []
+  try {
+    const { waitForTrackingAnalyticsRetry } = await importAnalyticsServiceModule()
+    const controller = new AbortController()
+    const waiting = waitForTrackingAnalyticsRetry(10_000, controller.signal)
+    controller.abort()
+    await assert.rejects(waiting, error => error?.name === 'AbortError')
+  } finally {
+    if (previousClient === undefined) delete globalThis.__ristakAnalyticsTestApiClient
+    else globalThis.__ristakAnalyticsTestApiClient = previousClient
     if (previousInvalidators === undefined) delete globalThis.__ristakAnalyticsTestInvalidators
     else globalThis.__ristakAnalyticsTestInvalidators = previousInvalidators
   }
