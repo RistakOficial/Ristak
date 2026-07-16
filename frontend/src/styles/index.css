@@ -35,6 +35,14 @@
   --brand-channel-whatsapp-qr: #1fae57;
   --brand-channel-instagram: #c13584;
   --brand-channel-messenger: #1877f2;
+  --chat-bubble-inbound: #ffffff;
+  --chat-bubble-outbound-neutral: #f0f1f4;
+  --chat-bubble-outbound-whatsapp-api: #d9fdd3;
+  --chat-bubble-outbound-whatsapp-qr: #c6efbd;
+  --chat-bubble-outbound-instagram: #f2d7e6;
+  --chat-bubble-outbound-messenger: #dbeafe;
+  --chat-bubble-text: #1d1d1f;
+  --chat-bubble-meta: #6e6e73;
   --color-bg-primary: var(--color-background-primary);
   --app-page-max: 104rem;
   --app-page-wide-max: var(--app-page-max);
@@ -2553,10 +2561,10 @@ body[data-design-preset][data-phone-chat-theme='active'] {
   --phone-channel-whatsapp-qr: var(--brand-channel-whatsapp-qr);
   --phone-channel-instagram: var(--brand-channel-instagram);
   --phone-channel-messenger: var(--brand-channel-messenger);
-  --phone-chat-inbound: var(--surface);
-  --phone-chat-outbound: color-mix(in srgb, var(--accent) 22%, var(--surface));
-  --phone-chat-outbound-text: var(--text);
-  --phone-chat-outbound-meta: var(--text-dim);
+  --phone-chat-inbound: var(--chat-bubble-inbound);
+  --phone-chat-outbound: var(--chat-bubble-outbound-neutral);
+  --phone-chat-outbound-text: var(--chat-bubble-text);
+  --phone-chat-outbound-meta: var(--chat-bubble-meta);
   --phone-chat-system: color-mix(in srgb, var(--surface) 82%, transparent);
   --phone-chat-composer-bg: var(--surface);
   --phone-chat-input-placeholder: var(--text-mute);
@@ -2942,15 +2950,14 @@ body[data-phone-chat-theme='active'] [class*='chatSwipeContent'] {
   [data-autorow]:hover { border-color: var(--accent); }
   [data-msg] { justify-content: flex-start; }
   [data-msg][data-from='me'] { justify-content: flex-end; }
-  [data-msg] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 14px 4px; }
-  [data-msg][data-from='me'] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 4px 14px; }
-  [data-msg][data-channel='whatsapp_api'] { --message-channel-color: var(--brand-channel-whatsapp-api); }
-  [data-msg][data-channel='whatsapp_qr'] { --message-channel-color: var(--brand-channel-whatsapp-qr); }
-  [data-msg][data-channel='instagram'] { --message-channel-color: var(--brand-channel-instagram); }
-  [data-msg][data-channel='messenger'] { --message-channel-color: var(--brand-channel-messenger); }
-  [data-msg]:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 82%, var(--message-channel-color) 18%); }
-  [data-msg][data-from='me']:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 70%, var(--message-channel-color) 30%); }
-  [data-msg][data-from='me'] .bubble .btime { color: var(--text-dim); }
+  [data-msg] .bubble { background: var(--chat-bubble-inbound); color: var(--chat-bubble-text); border-radius: 14px 14px 14px 4px; }
+  [data-msg][data-from='me'] .bubble { background: var(--chat-bubble-outbound-neutral); border-radius: 14px 14px 4px 14px; }
+  [data-msg][data-channel='whatsapp_api'] { --message-channel-bubble: var(--chat-bubble-outbound-whatsapp-api); }
+  [data-msg][data-channel='whatsapp_qr'] { --message-channel-bubble: var(--chat-bubble-outbound-whatsapp-qr); }
+  [data-msg][data-channel='instagram'] { --message-channel-bubble: var(--chat-bubble-outbound-instagram); }
+  [data-msg][data-channel='messenger'] { --message-channel-bubble: var(--chat-bubble-outbound-messenger); }
+  [data-msg][data-from='me']:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: var(--message-channel-bubble); }
+  [data-msg] .bubble .btime { color: var(--chat-bubble-meta); }
   [data-chip]:hover { border-color: var(--border-strong); color: var(--text); }
   [data-icon-btn]:hover { background: var(--surface-hover); color: var(--text); }
   [data-site-card]:hover { border-color: var(--accent); transform: translateY(-2px); }

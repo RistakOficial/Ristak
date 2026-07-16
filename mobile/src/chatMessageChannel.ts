@@ -11,6 +11,18 @@ export type ChatMessageChannelSignals = {
   hasEmail?: boolean;
 };
 
+export const CHAT_MESSAGE_OUTBOUND_BUBBLE_COLORS: Partial<Record<ChatMessageChannelKind, string>> = {
+  whatsapp_api: '#d9fdd3',
+  whatsapp_qr: '#c6efbd',
+  instagram: '#f2d7e6',
+  messenger: '#dbeafe',
+};
+
+export function getChatMessageBubbleBackground(channel: ChatMessageChannelKind, outbound: boolean) {
+  if (!outbound) return undefined;
+  return CHAT_MESSAGE_OUTBOUND_BUBBLE_COLORS[channel];
+}
+
 function normalizeSignal(value: unknown) {
   return String(value || '').trim().toLowerCase();
 }

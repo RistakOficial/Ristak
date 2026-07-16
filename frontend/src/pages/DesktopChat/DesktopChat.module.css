@@ -1287,6 +1287,9 @@
 
 .messageBubble {
   --desktop-chat-message-text-size: var(--font-size-base);
+  --text: var(--chat-bubble-text);
+  --text-dim: var(--chat-bubble-meta);
+  --text-mute: var(--chat-bubble-meta);
   min-width: 0;
   max-width: 100%;
   padding: 6px 10px 5px;
@@ -1437,36 +1440,38 @@
 
 .messageInbound {
   align-self: flex-start;
+  background: var(--chat-bubble-inbound);
+  color: var(--chat-bubble-text);
 }
 
 .messageOutbound {
   align-self: flex-end;
-  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
-  color: var(--text);
-}
-
-.messageBubble[data-chat-channel] {
-  background: color-mix(in srgb, var(--message-channel-color) 18%, var(--surface));
+  background: var(--chat-bubble-outbound-neutral);
+  color: var(--chat-bubble-text);
 }
 
 .messageOutbound[data-chat-channel] {
-  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--surface));
+  background: var(--message-channel-bubble);
 }
 
 .messageBubble[data-chat-channel='whatsapp_api'] {
   --message-channel-color: var(--chat-channel-whatsapp-api);
+  --message-channel-bubble: var(--chat-bubble-outbound-whatsapp-api);
 }
 
 .messageBubble[data-chat-channel='whatsapp_qr'] {
   --message-channel-color: var(--chat-channel-whatsapp-qr);
+  --message-channel-bubble: var(--chat-bubble-outbound-whatsapp-qr);
 }
 
 .messageBubble[data-chat-channel='instagram'] {
   --message-channel-color: var(--chat-channel-instagram);
+  --message-channel-bubble: var(--chat-bubble-outbound-instagram);
 }
 
 .messageBubble[data-chat-channel='messenger'] {
   --message-channel-color: var(--chat-channel-messenger);
+  --message-channel-bubble: var(--chat-bubble-outbound-messenger);
 }
 
 .messageReactionButton {
@@ -1834,11 +1839,11 @@
 
 .messageComment[data-chat-channel] {
   border-color: var(--message-channel-color);
-  background: color-mix(in srgb, var(--message-channel-color) 20%, var(--surface));
+  background: var(--chat-bubble-inbound);
 }
 
 .messageComment.messageOutbound[data-chat-channel] {
-  background: color-mix(in srgb, var(--message-channel-color) 30%, var(--surface));
+  background: var(--message-channel-bubble);
 }
 
 .messageComment.messageOutbound {
@@ -2215,7 +2220,7 @@
 
 .messageScheduled[data-chat-channel] {
   border-color: color-mix(in srgb, var(--message-channel-color) 72%, var(--border-strong));
-  background: color-mix(in srgb, var(--message-channel-color) 24%, var(--surface));
+  background: var(--message-channel-bubble);
 }
 
 .scheduledActions {

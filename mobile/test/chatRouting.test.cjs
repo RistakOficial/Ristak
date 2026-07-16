@@ -28,7 +28,7 @@ const {
   normalizeNativeWhatsAppSenderRoute,
   readLocalCatalogWithRetry,
 } = require('../src/chatRouting.ts');
-const { resolveChatMessageChannel } = require('../src/chatMessageChannel.ts');
+const { getChatMessageBubbleBackground, resolveChatMessageChannel } = require('../src/chatMessageChannel.ts');
 
 test('los globos distinguen WhatsApp API de QR y dejan correo/SMS neutrales', () => {
   assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'api' }), 'whatsapp_api');
@@ -39,6 +39,14 @@ test('los globos distinguen WhatsApp API de QR y dejan correo/SMS neutrales', ()
   assert.equal(resolveChatMessageChannel({ eventType: 'email_message', transport: 'smtp' }), 'email');
   assert.equal(resolveChatMessageChannel({ channel: 'sms_qr', transport: 'qr' }), 'sms');
   assert.equal(resolveChatMessageChannel({ eventType: 'sms_message' }), 'sms');
+});
+
+test('solo los mensajes salientes reciben color y los dos verdes siguen claros', () => {
+  assert.equal(getChatMessageBubbleBackground('whatsapp_api', false), undefined);
+  assert.equal(getChatMessageBubbleBackground('messenger', false), undefined);
+  assert.equal(getChatMessageBubbleBackground('whatsapp_api', true), '#d9fdd3');
+  assert.equal(getChatMessageBubbleBackground('whatsapp_qr', true), '#c6efbd');
+  assert.equal(getChatMessageBubbleBackground('email', true), undefined);
 });
 
 test('Instagram y Facebook/Messenger ganan sobre un transporte API generico', () => {

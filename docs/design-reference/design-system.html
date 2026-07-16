@@ -28,6 +28,10 @@
     --warn:#e0a64b; --warn-soft:rgba(224,166,75,0.16); --info:#38b2c4; --info-soft:rgba(56,178,196,0.16);
     --brand-channel-whatsapp-api:#25d366; --brand-channel-whatsapp-qr:#1fae57;
     --brand-channel-instagram:#c13584; --brand-channel-messenger:#1877f2;
+    --chat-bubble-inbound:#ffffff; --chat-bubble-outbound-neutral:#f0f1f4;
+    --chat-bubble-outbound-whatsapp-api:#d9fdd3; --chat-bubble-outbound-whatsapp-qr:#c6efbd;
+    --chat-bubble-outbound-instagram:#f2d7e6; --chat-bubble-outbound-messenger:#dbeafe;
+    --chat-bubble-text:#1d1d1f; --chat-bubble-meta:#6e6e73;
     --sidebar:#070a0e; --topbar:rgba(11,14,19,0.82); --chart-grid:rgba(255,255,255,0.06);
   }
   body[data-dir='a'][data-mode='light'] {
@@ -246,15 +250,14 @@
   [data-autorow]:hover { border-color: var(--accent); }
   [data-msg] { justify-content: flex-start; }
   [data-msg][data-from='me'] { justify-content: flex-end; }
-  [data-msg] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 14px 4px; }
-  [data-msg][data-from='me'] .bubble { background: var(--surface-2); color: var(--text); border-radius: 14px 14px 4px 14px; }
-  [data-msg][data-channel='whatsapp_api'] { --message-channel-color: var(--brand-channel-whatsapp-api); }
-  [data-msg][data-channel='whatsapp_qr'] { --message-channel-color: var(--brand-channel-whatsapp-qr); }
-  [data-msg][data-channel='instagram'] { --message-channel-color: var(--brand-channel-instagram); }
-  [data-msg][data-channel='messenger'] { --message-channel-color: var(--brand-channel-messenger); }
-  [data-msg]:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 82%, var(--message-channel-color) 18%); }
-  [data-msg][data-from='me']:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: color-mix(in srgb, var(--surface) 70%, var(--message-channel-color) 30%); }
-  [data-msg][data-from='me'] .bubble .btime { color: var(--text-dim); }
+  [data-msg] .bubble { background: var(--chat-bubble-inbound); color: var(--chat-bubble-text); border-radius: 14px 14px 14px 4px; }
+  [data-msg][data-from='me'] .bubble { background: var(--chat-bubble-outbound-neutral); border-radius: 14px 14px 4px 14px; }
+  [data-msg][data-channel='whatsapp_api'] { --message-channel-bubble: var(--chat-bubble-outbound-whatsapp-api); }
+  [data-msg][data-channel='whatsapp_qr'] { --message-channel-bubble: var(--chat-bubble-outbound-whatsapp-qr); }
+  [data-msg][data-channel='instagram'] { --message-channel-bubble: var(--chat-bubble-outbound-instagram); }
+  [data-msg][data-channel='messenger'] { --message-channel-bubble: var(--chat-bubble-outbound-messenger); }
+  [data-msg][data-from='me']:is([data-channel='whatsapp_api'], [data-channel='whatsapp_qr'], [data-channel='instagram'], [data-channel='messenger']) .bubble { background: var(--message-channel-bubble); }
+  [data-msg] .bubble .btime { color: var(--chat-bubble-meta); }
   [data-chip]:hover { border-color: var(--border-strong); color: var(--text); }
   [data-icon-btn]:hover { background: var(--surface-hover); color: var(--text); }
   [data-site-card]:hover { border-color: var(--accent); transform: translateY(-2px); }
@@ -3365,9 +3368,11 @@ class Component extends DCLogic {
     ].map((c) => ({ ...c, initials: ini(c.name) }));
     const chatMessages = [
       { from: 'them', channel: 'messenger', text: 'Hola, vi su anuncio en Facebook y me interesa saber más sobre el programa.', time: '10:08' },
-      { from: 'me', channel: 'instagram', text: '¡Hola María! Claro que sí. El programa premium incluye acompañamiento 1 a 1 durante 12 semanas.', time: '10:10' },
-      { from: 'them', channel: 'whatsapp_api', text: '¿Y cuál es la inversión?', time: '10:14' },
-      { from: 'me', channel: 'whatsapp_qr', text: 'La inversión es de $18,400 MXN, con opción a 3 mensualidades. ¿Te gustaría agendar una llamada?', time: '10:16' },
+      { from: 'me', channel: 'whatsapp_api', text: '¡Hola María! Claro que sí. El programa premium incluye acompañamiento 1 a 1 durante 12 semanas.', time: '10:10' },
+      { from: 'them', channel: 'whatsapp_qr', text: '¿Y cuál es la inversión?', time: '10:14' },
+      { from: 'me', channel: 'whatsapp_qr', text: 'La inversión es de $18,400 MXN y el QR se distingue apenas más oscuro.', time: '10:16' },
+      { from: 'me', channel: 'instagram', text: 'También puedo continuar esta conversación por Instagram.', time: '10:18' },
+      { from: 'me', channel: 'messenger', text: 'O responderte por Messenger si lo prefieres.', time: '10:20' },
       { from: 'them', channel: 'email', text: 'Perfecto, agendo para mañana entonces 🙌', time: '10:24' }
     ];
     const chatContact = { name: 'María Fernanda Ruiz', phone: '+52 55 1842 0093', email: 'mafer.ruiz@gmail.com', source: 'Meta Ads', ltv: '$18,400', tags: [{ label: 'Lead caliente', tone: 'error' }, { label: 'Meta Ads', tone: 'info' }, { label: 'Premium', tone: 'success' }], initials: 'MR' };

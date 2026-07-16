@@ -245,6 +245,9 @@ struct MessageRowView: View, Equatable {
                 channelColor: message.failed ? nil : bubbleChannelColor,
                 dashed: message.isScheduled
             ))
+            // Los globos son superficies claras aun cuando el shell use modo
+            // oscuro; el contenido debe resolver texto e iconos como light.
+            .environment(\.colorScheme, .light)
             .overlay(alignment: .bottom) {
                 reactionChips
                     .offset(y: 12)
@@ -286,6 +289,7 @@ struct MessageRowView: View, Equatable {
     }
 
     private var bubbleChannelColor: Color? {
+        guard isOutbound else { return nil }
         let channel = ChatMessageChannelKind.resolve(
             channel: message.channel,
             transport: message.transport,

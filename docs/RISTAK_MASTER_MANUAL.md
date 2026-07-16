@@ -1809,15 +1809,16 @@ badge inferior derecho usando los mismos assets WebP de canal que `mobile/` e
 como iconos libres sin disco, borde, brillo ni contenedor circular extra.
 
 El color del globo se resuelve por mensaje con el mismo contrato en `/chat`,
-`/movil`, React Native Android e iOS. WhatsApp API usa verde; WhatsApp QR usa un
-verde ligeramente mas oscuro para distinguir el transporte de un vistazo;
-Messenger y Facebook usan azul; Instagram usa morado rosita. Correo y SMS se
-mantienen neutrales. `api`, `qr` o `smtp` no se interpretan como plataforma por
-si solos: primero se considera el canal social real y despues, solo para
-WhatsApp, el transporte API/QR. El color se aplica como tinte sobre la superficie
-del tema para conservar contraste en claro y oscuro; mensajes programados
-mantienen ademas su borde punteado y los fallidos conservan prioridad visual de
-error.
+`/movil`, React Native Android e iOS. Todo mensaje entrante es blanco y nunca se
+tiñe con el canal. Solo los salientes usan color: WhatsApp API lleva un verde
+claro, WhatsApp QR un verde apenas mas oscuro para distinguir el transporte sin
+oscurecer el globo, Messenger/Facebook azul e Instagram morado rosita. Correo,
+SMS y canal desconocido se mantienen neutrales. `api`, `qr` o `smtp` no se
+interpretan como plataforma por si solos: primero se considera el canal social
+real y despues, solo para WhatsApp, el transporte API/QR. La paleta de globos es
+clara y conserva texto oscuro legible tanto en temas claros como oscuros;
+mensajes programados mantienen ademas su borde punteado y los fallidos conservan
+prioridad visual de error.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de

@@ -34,7 +34,7 @@ struct RistakChatBubble<Content: View>: View {
     /// Relleno explícito (fallido = rojo, imagen, etc.). Si es `nil`, se deriva
     /// del lado (o de `bubbleScheduled` cuando `dashed`).
     var fill: Color? = nil
-    /// Tinte de marca del canal. Correo/SMS lo omiten y conservan base neutra.
+    /// Relleno pastel del canal para globos salientes. Los entrantes lo ignoran.
     var channelColor: Color? = nil
     /// Borde punteado + fondo de mensaje programado.
     var dashed: Bool = false
@@ -67,16 +67,11 @@ struct RistakChatBubbleStyle: ViewModifier {
             .background {
                 shape
                     .fill(backgroundFill)
-                    .overlay {
-                        if fill == nil, let channelColor {
-                            shape.fill(channelColor.opacity(channelOpacity))
-                        }
-                    }
             }
             .overlay {
                 if dashed {
                     shape.strokeBorder(
-                        channelColor?.opacity(0.72) ?? RistakTheme.bubbleScheduledBorder,
+                        RistakTheme.bubbleScheduledBorder,
                         style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])
                     )
                 }
@@ -86,13 +81,9 @@ struct RistakChatBubbleStyle: ViewModifier {
 
     private var backgroundFill: Color {
         if let fill { return fill }
+        if side == .outbound, let channelColor { return channelColor }
         if dashed { return RistakTheme.bubbleScheduled }
         return side == .inbound ? RistakTheme.bubbleInbound : RistakTheme.bubbleOutbound
-    }
-
-    private var channelOpacity: Double {
-        if dashed { return 0.24 }
-        return side == .outbound ? 0.30 : 0.18
     }
 }
 

@@ -332,7 +332,7 @@ import type {
   WhatsAppNumberOriginDatum,
 } from './types';
 import { buildUserCustomFieldRows, isUserCustomFieldDefinition } from './contactCustomFields';
-import { resolveChatMessageChannel, type ChatMessageChannelKind } from './chatMessageChannel';
+import { getChatMessageBubbleBackground, resolveChatMessageChannel, type ChatMessageChannelKind } from './chatMessageChannel';
 
 type NativeThemeTone = 'light' | 'dark';
 type NativeColorPalette = {
@@ -1328,7 +1328,7 @@ const CHANNEL_BADGE_COLORS: Record<ChannelBadgeKind, string> = {
   unknown: '#8e8e93',
 };
 
-const CHANNEL_BUBBLE_COLORS: Partial<Record<ChatMessageChannelKind, string>> = {
+const CHANNEL_BUBBLE_BORDER_COLORS: Partial<Record<ChatMessageChannelKind, string>> = {
   whatsapp_api: '#25d366',
   whatsapp_qr: '#1fae57',
   instagram: '#c13584',
@@ -1343,21 +1343,14 @@ function getNativeMessageChannelBubbleStyle(message: ChatMessage, outbound: bool
     messageType: message.messageType,
     hasEmail: Boolean(message.emailDetails),
   });
-  const channelColor = CHANNEL_BUBBLE_COLORS[channel];
-  if (!channelColor) return undefined;
+  const backgroundColor = getChatMessageBubbleBackground(channel, outbound);
+  if (!backgroundColor) return undefined;
 
-  const light = activeNativeThemeTone === 'light';
-  const baseColor = scheduled
-    ? (light ? '#f0f1f4' : '#48484a')
-    : outbound
-      ? (light ? '#e9eaee' : '#3a3a3c')
-      : (light ? '#ffffff' : '#1c1c1e');
-  const tintWeight = scheduled ? 0.24 : outbound ? 0.30 : 0.18;
   const style: ViewStyle = {
-    backgroundColor: mixHexColors(baseColor, channelColor, tintWeight),
+    backgroundColor,
   };
   if (scheduled) {
-    style.borderColor = mixHexColors(light ? '#d1d1d6' : '#636366', channelColor, 0.72);
+    style.borderColor = CHANNEL_BUBBLE_BORDER_COLORS[channel];
   }
   return style;
 }
@@ -28550,14 +28543,14 @@ function createAppStyles() {
   const avatarFallbackBackground = isLight ? 'rgba(60,60,67,0.10)' : 'rgba(255,255,255,0.12)';
   const avatarInitialTextColor = COLORS.text;
   const replySwipeGlyphBackground = isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.12)';
-  const inboundBubbleBackground = isLight ? COLORS.white : 'rgba(28,28,30,0.96)';
-  const outboundBubbleBackground = isLight ? '#e9eaee' : 'rgba(58,58,60,0.92)';
-  const messageBubbleTextColor = isLight ? COLORS.text : '#f5f5f7';
-  const messageBubbleMetaColor = isLight ? COLORS.muted : 'rgba(235,235,245,0.78)';
+  const inboundBubbleBackground = '#ffffff';
+  const outboundBubbleBackground = '#f0f1f4';
+  const messageBubbleTextColor = '#1d1d1f';
+  const messageBubbleMetaColor = '#6e6e73';
   const messageBubbleShadowColor = isLight ? 'rgba(60,60,67,0.28)' : '#000000';
-  const scheduledBubbleBackground = isLight ? '#f0f1f4' : 'rgba(72,72,74,0.48)';
-  const scheduledBubbleBorder = isLight ? 'rgba(60,60,67,0.18)' : 'rgba(235,235,245,0.22)';
-  const failedBubbleBackground = isLight ? COLORS.dangerSoft : 'rgba(127,29,29,0.58)';
+  const scheduledBubbleBackground = '#f0f1f4';
+  const scheduledBubbleBorder = 'rgba(60,60,67,0.22)';
+  const failedBubbleBackground = '#ffe4e8';
   const starredBackground = isLight ? 'rgba(118,118,128,0.10)' : 'rgba(255,255,255,0.08)';
   const voiceComposerBackground = composerShellBackground;
   const voiceComposerTrackBackground = composerInputBackground;

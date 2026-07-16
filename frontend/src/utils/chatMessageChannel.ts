@@ -70,8 +70,8 @@ export function resolveChatMessageChannel(signals: ChatMessageChannelSignals): C
   return 'unknown'
 }
 
-export function getChatBubbleColorChannel(channel: ChatMessageChannelKind) {
-  return channel === 'whatsapp_api' || channel === 'whatsapp_qr' || channel === 'instagram' || channel === 'messenger'
+export function getChatBubbleColorChannel(channel: ChatMessageChannelKind, direction: unknown) {
+  return direction === 'outbound' && (channel === 'whatsapp_api' || channel === 'whatsapp_qr' || channel === 'instagram' || channel === 'messenger')
     ? channel
     : undefined
 }

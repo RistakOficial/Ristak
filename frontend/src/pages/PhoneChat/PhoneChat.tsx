@@ -16624,7 +16624,7 @@ export const PhoneChat: React.FC = () => {
           aria-modal="true"
           aria-label={scheduled ? 'Acciones de mensaje programado' : 'Acciones del mensaje'}
         >
-          <div className={previewClassName} data-chat-channel={getChatBubbleColorChannel(messageChannel)}>
+          <div className={previewClassName} data-chat-channel={getChatBubbleColorChannel(messageChannel, message.direction)}>
             {renderMessageActionPreviewContent(message)}
           </div>
 
@@ -17020,7 +17020,7 @@ export const PhoneChat: React.FC = () => {
                     {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                     <div
                       className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
-                      data-chat-channel={getChatBubbleColorChannel(messageChannel)}
+                      data-chat-channel={getChatBubbleColorChannel(messageChannel, message.direction)}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
                       style={messageSwipeTransform ? { transform: messageSwipeTransform } : undefined}
