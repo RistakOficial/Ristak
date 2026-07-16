@@ -209,6 +209,21 @@ final class RistakSnapshotCache {
         )
     }
 
+    /// Verifica el nombre estable de cuenta sin exponerlo fuera de la caché.
+    /// El refresh en background lo usa para negarse a cambiar una sesión que
+    /// ya está activa en foreground.
+    func isConfigured(for rawNamespace: String) -> Bool {
+        currentNamespace == Self.sanitize(rawNamespace)
+    }
+
+    /// Confirma que una operación larga todavía pertenece a la sesión exacta
+    /// que la inició. La generación también cambia al salir y volver a entrar a
+    /// la misma cuenta, por lo que comparar sólo el nombre no sería suficiente.
+    func isCurrent(_ token: NamespaceToken) -> Bool {
+        currentNamespace == token.namespace
+            && namespaceGeneration == token.generation
+    }
+
     /// Lectura de una entrada efímera con TTL deslizante solo en su timestamp
     /// LRU. Expirada se elimina inmediatamente y nunca llega a disco.
     func volatileRawData(for key: String) -> Data? {
@@ -247,14 +262,15 @@ final class RistakSnapshotCache {
 
     /// Guarda solo si el encode todavía pertenece a la misma sesión que lo
     /// inició. Evita escribir el hilo de A dentro del namespace de B.
+    @discardableResult
     func storeRaw(
         _ data: Data,
         for key: String,
         ifCurrent token: NamespaceToken
-    ) {
-        guard currentNamespace == token.namespace,
-              namespaceGeneration == token.generation else { return }
+    ) -> Bool {
+        guard isCurrent(token) else { return false }
         storeRaw(data, for: key)
+        return true
     }
 
     /// Guarda datos solo en RAM bajo un LRU acotado. Se usa para resultados de
@@ -345,6 +361,16 @@ final class RistakSnapshotCache {
             try? fm.removeItem(at: dir)
         }
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    /// Espera todos los commits ya programados. Los refreshes de background la
+    /// usan antes de llamar al completion handler de iOS: así el sistema puede
+    /// suspender el proceso inmediatamente sin perder el snapshot recién bajado.
+    func flushPendingWrites() async {
+        while !pendingWrites.isEmpty {
+            let tasks = Array(pendingWrites.values)
+            for task in tasks { await task.value }
+        }
     }
 
     // MARK: - Escritura debounced

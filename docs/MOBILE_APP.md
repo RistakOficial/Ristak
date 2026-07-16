@@ -123,7 +123,7 @@ mismo fondo del composer, igual que en las demas pantallas con avoidance
 
 Arquitectura del hilo de conversacion nativo: el FlatList del hilo es
 INVERTIDO (data[0] = mensaje mas reciente, `inverted` +
-`maintainVisibleContentPosition {minIndexForVisible: 1, autoscrollToTopThreshold}`
+`maintainVisibleContentPosition {minIndexForVisible: 0, autoscrollToTopThreshold}`
 + `onEndReached` para cargar historial, spinner de historial en
 `ListFooterComponent`). El anclaje al ultimo mensaje y la compensacion al
 recibir mensajes lo hace el nativo; NO reintroduzcas coreografia JS de scroll
@@ -142,6 +142,18 @@ altura. Las filas (`NativeMessageBubble`, `ChatRow`) van en `React.memo` con
 callbacks de identidad estable. Cada intento conserva un `externalId` estable
 al reintentar despues de timeout/ACK perdido. Los adjuntos se leen y envian uno
 por uno; si falla solo una parte, no se reenvian los archivos ya confirmados.
+
+La unica excepcion de apertura es un gate de una sola ejecucion: cuando aparecen
+las primeras filas reales, `onContentSizeChange` lleva el offset invertido a
+cero exactamente una vez. Ese gate no vuelve a reaccionar a imagenes, prepends o
+polls y por eso no pelea con el dedo del usuario. La lista no rebota ni aplica
+overscroll; el mensaje mas reciente queda junto al composer. Antes de montar un
+hilo, Android precarga solo su archivo de cache si existe para que el primer
+frame ya tenga mensajes. Un timeout o `5xx` sin snapshot produce error inline,
+sin abrir `/journey` ni iniciar reintentos ocultos, y deja un boton manual;
+nunca se presenta como `Aun no hay mensajes`. Un `200 []` contradictorio con el
+preview/conteo del inbox intenta una sola recuperacion por journey y jamas borra
+un snapshot visible.
 
 Recepcion viva del chat nativo: `mobile/` debe suscribirse a
 `/api/chat-events/stream` con la misma sesion bearer que usa para REST. Cada
@@ -231,11 +243,22 @@ es autoritativa y reemplaza el snapshot. Esa copia vive en `expo-file-system`
 bajo el namespace del servidor/cuenta conectada; `SecureStore` queda solo para
 token/base URL y preferencias chicas. El primer render no debe mostrar un
 spinner circular ni vaciar la pantalla si ya hay datos guardados. El task
-`ristak-inbox-refresh` puede refrescar la bandeja cacheada cuando Android le da
-ventana de background, pero es best-effort; la fuente de verdad sigue siendo el
-backend al reconectar. Si ese refresh responde correctamente con cero chats,
-tambien persiste `[]` como resultado autoritativo para no revivir filas viejas
-en el siguiente arranque offline. Los catalogos y eventos de calendario tambien viven en
+`ristak-inbox-refresh` refresca la bandeja y, con concurrencia dos, hasta seis
+hilos recientes ausentes o atrasados cuando Android concede una ventana. El
+task headless `ristak-chat-notification-refresh-v1` hace una ruta distinta y
+acotada: da al hilo del `contactId` un presupuesto maximo de 1.8 s, confirma su
+escritura si alcanza, publica una sola alerta local deduplicada y despues
+refresca una pagina de inbox. Si vence el presupuesto aborta ese GET y alerta de
+inmediato. La precarga exclusiva no puede persistir despues del abort; un warmup
+compartido o commit atomico que ya empezo puede concluir solo en su namespace
+capturado y revalida la sesion, sin contaminar otra cuenta. Nunca pide journey ni
+hace fan-out de recientes dentro de un push. Ambos son best-effort:
+Doze, ahorro de bateria o cierre forzado pueden posponerlos, y la fuente de
+verdad sigue siendo el backend al reconectar. Antes de escribir vuelven a
+verificar namespace y credenciales para que un logout/cambio de cuenta descarte
+respuestas viejas. Si el refresh del inbox responde correctamente con cero chats, tambien persiste `[]` como
+resultado autoritativo para no revivir filas viejas en el siguiente arranque
+offline. Los catalogos y eventos de calendario tambien viven en
 esa cache de archivos; no se guardan arreglos grandes dentro de `SecureStore`.
 La ultima identidad verificada y su ACL se conserva en un registro pequeno
 en `SecureStore`, ligado al servidor y token de esa sesion sin guardar el bearer
@@ -268,8 +291,9 @@ chats tambien puede completar. iOS guarda la misma marca cuando obtiene estado
 primario utilizable de inbox o directorio. Logout o cambio de cuenta limpia la
 marca junto con sus snapshots.
 
-Android prepara el indice reciente de conversaciones; iOS puede precalentar
-tambien el directorio. Ninguno descarga todos los mensajes de todos los hilos.
+Android e iOS precalientan un lote acotado de hasta seis conversaciones recientes
+y priorizan el hilo señalado por SSE/push; iOS tambien puede precalentar el
+directorio. Ninguno descarga todos los mensajes de todos los hilos.
 El historial detallado se pagina al abrir cada chat, como exige el limite de
 almacenamiento y privacidad.
 Las listas nunca esperan consultas externas de fotos: devuelven inmediatamente
@@ -777,9 +801,12 @@ inicio":
   `frontend/android/app/src/main/res/mipmap-night-*/ic_launcher*.png` y los
   fondos adaptive en `frontend/android/app/src/main/res/values*/ic_launcher_background.xml`.
   Las notificaciones Android usan `@drawable/ic_stat_ristak` como small icon
-  del sistema. El backend FCM no debe mandar un bloque visual `notification`
-  para Android: debe mandar data-only para que `RistakFirebaseMessagingService`
-  pinte el avatar, logo y previews con el renderer nativo propio.
+  del sistema. Para el Android legacy Capacitor, el backend FCM no debe mandar
+  un bloque visual `notification`: debe mandar data-only para que
+  `RistakFirebaseMessagingService` pinte el avatar, logo y previews con el
+  renderer nativo propio. Android Expo conserva alerta remota en clientes
+  `expo`; solo chat con capacidad `expo_background_v1` cambia a data-only y
+  genera su alerta local despues de precargar, como define la seccion de push.
 - Web/PWA general: `frontend/public/ristak-icon-192.png`,
   `frontend/public/ristak-icon-512.png`, `frontend/public/apple-touch-icon.png`
   y las variantes transparentes `frontend/public/ristak-app-mark-*.webp` usadas
@@ -925,11 +952,17 @@ En Android hay dos contratos de push y no se deben mezclar:
   `message.notification` porque Firebase tomaria el control visual y se pierde
   el renderer custom.
 - Android Play/Expo (`mobile/`, paquete `com.ristak.android`) registra el token
-  con `clientType=expo` y `appPackage=com.ristak.android`. Para ese cliente FCM
-  debe mandar `message.notification` con titulo/cuerpo visibles y mantener toda
-  la data de navegacion en `message.data`. Asi Android muestra la alerta cuando
-  la app esta cerrada, y `mobile/src/notifications.ts` puede abrir el chat,
-  calendario, pagos o seccion correcta al tocarla.
+  legacy con `clientType=expo`; ese cliente conserva `message.notification`
+  visible mas toda la navegacion en `message.data`. El binario con precarga
+  headless registra `clientType=expo_background_v1` solo despues de confirmar el
+  task nativo: exclusivamente para push de chat con esa capacidad FCM manda
+  data-only, sin las llaves reservadas `title`/`body`/`message`; titulo y cuerpo
+  viajan como `ristakRelayTitle`/`ristakRelayBody`. El task actualiza cache y
+  agenda una sola alerta local marcada `ristakBackgroundRelay=1`; el handler de
+  foreground oculta solo la remota headless y conserva visible ese relay. Citas,
+  pagos y otros eventos siguen usando alerta remota visible. No cambies por
+  paquete solamente ni retires el bloque visible a builds `expo` anteriores,
+  porque dejarian de alertar con la app cerrada.
 
 En Android Play/Expo, permiso del sistema y registro del token en
 `mobile_push_devices` son estados distintos. La app solo puede mostrar
@@ -949,6 +982,19 @@ En iOS/APNs, cualquier payload, extension de notificaciones, capability o perfil
 de firma pertenece a la app Apple bajo `ios/app`, no a `mobile/`. Si hace falta
 mantener Communication Notifications, avatars o attachments en iPhone/iPad,
 documentalo y desarrollalo en la ruta Apple nativa.
+
+Las push APNs de `category=chat` combinan alerta visible,
+`mutable-content=1` y `content-available=1`. La app principal usa esa ventana
+para precargar inbox y el hilo señalado y no completa el fetch hasta vaciar las
+escrituras pendientes. `BGAppRefreshTask` y el tiempo residual al entrar en
+background mantienen un lote reciente como respaldo oportunista. Todo resultado
+queda atado al token de namespace/generacion y a un permiso monotónico por hilo
+reservado antes del GET; una sesion que cambio o una respuesta vieja no puede
+contaminar ni atrasar la cache nueva. El single-flight usa leases cancelables:
+al expirar la ventana de iOS reporta completion una sola vez y cancela la red si
+ya no existe otro consumidor. La extension de notificaciones descarga avatar y
+media en paralelo y entrega el texto en un maximo interno de 1.8 s aunque esos
+adornos sigan lentos.
 
 ## Tema visual móvil
 
@@ -1559,12 +1605,15 @@ ubicaciones. El auto-scroll de la conversacion solo debe llevar al ultimo
 mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
 usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
 debe devolverlo forzosamente al ultimo mensaje.
-En iOS, el ancla inferior por defecto se usa solo para la posición inicial, no
-para cada cambio de tamaño del `ScrollView`. Al abrir, cerrar o redimensionar el
-teclado, la conversación captura si el usuario estaba abajo antes del relayout y
-reafirma el centinela inferior al inicio y al final de la animación reportada por
-UIKit. Así el `LazyVStack` conserva materializadas las burbujas visibles; nunca
-debe quedar el fondo vacío hasta cerrar y volver a abrir el teclado.
+En iOS, durante la apertura el ancla inferior observa el timeline completo y la
+altura del contenido: vuelve a reafirmar el ultimo mensaje mientras se asienta la
+carga primaria y se detiene en cuanto termina esa fase o el usuario inicia su
+primer gesto vertical. Después conserva la posicion del usuario. Al abrir,
+cerrar o redimensionar el teclado, la conversación captura si el usuario estaba
+abajo antes del relayout y reafirma el centinela inferior al inicio y al final de
+la animación reportada por UIKit. Así el `LazyVStack` conserva materializadas las
+burbujas visibles; nunca debe quedar el fondo vacío hasta cerrar y volver a abrir
+el teclado.
 Las fotos, videos, documentos, archivos y enlaces tocados desde el hilo o desde
 `Archivos del chat` no deben abrir Safari/Chrome en el primer tap: deben abrir el
 modal de enfoque propio de Ristak. Imagenes y videos se presentan dentro del
@@ -1805,9 +1854,10 @@ El archive de App Store firma dos targets: `com.ristak.app` y
 `com.ristak.app.NotificationService`. Ambos perfiles se validan y refrescan
 desde Ristak Installer antes de disparar el workflow `mobile-store-release`.
 La Notification Service Extension serializa su estado para entregar una sola
-vez el mejor contenido disponible, cancela al expirar, usa timeouts de 6–7 s y
-limita avatar a 5 MB y media adjunta a 12 MB. Si un recurso excede esos limites,
-la notificacion se entrega sin ese enriquecimiento en vez de atorarse.
+vez el mejor contenido disponible, cancela al expirar y descarga avatar/media
+en paralelo con un presupuesto visual total de 1.8 s. Limita avatar a 5 MB y
+media adjunta a 12 MB. Si un recurso excede esos limites o no llega a tiempo, la
+notificacion se entrega sin ese enriquecimiento en vez de atorarse.
 
 Solo una instalacion standalone que de verdad no use Installer debe configurar
 APNs localmente:

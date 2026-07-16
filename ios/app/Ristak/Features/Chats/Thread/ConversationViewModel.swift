@@ -313,6 +313,13 @@ final class ConversationViewModel {
             hasLoadedOnce = true
             allowsSilentRecovery = true
             performanceOutcome = .success
+        } catch is ConversationHistoryTemporarilyUnavailableError {
+            // Inbox y conversación todavía discrepan. No declares éxito ni
+            // muestres un vacío falso: queda un estado reintentable y el gate
+            // permite una recuperación silenciosa acotada por SSE/fallback.
+            allowsSilentRecovery = true
+            loadErrorMessage = "Los mensajes todavía se están sincronizando. Reintenta en un momento."
+            performanceOutcome = .unavailable
         } catch let error as RistakAPIError {
             if error.isAccessDenied {
                 accessDenied = true
@@ -493,10 +500,7 @@ final class ConversationViewModel {
         let needsMarkers = reset || lastActivityFetch == nil
             || Date().timeIntervalSince(lastActivityFetch!) > 30
 
-        async let eventsTask = journeyService.fetchConversationEvents(
-            contactId: contactID,
-            limit: JourneyService.defaultMessageLimit
-        )
+        async let recentTask = fetchRecentConversationWithEmptyRecovery(enabled: reset)
         async let scheduledTask = fetchScheduledSafely()
         // Los markers (pagos/citas) viven en una SEGUNDA
         // petición; lánzala EN PARALELO a la de eventos —no en serie después del
@@ -504,15 +508,25 @@ final class ConversationViewModel {
         // reacomode el hilo una vez más al entrar.
         async let markersTask = fetchMarkersIfNeeded(needsMarkers)
 
-        let events = try await eventsTask
-        let appBaseURL = await journeyService.currentBaseURL()
-        let fresh = ChatJourneyParser.buildMessages(contactId: contactID, events: events, appBaseURL: appBaseURL)
+        let recent = try await recentTask
+        let events = recent.events
+        let fresh = recent.messages
         var freshContexts = ConversationTimelineBuilder.buildCommentContexts(from: events)
 
         let merged: [ChatMessage]
         if reset {
-            merged = fresh
-            oldestPageExhausted = fresh.count < JourneyService.defaultMessageLimit
+            if ConversationInitialEmptyResponsePolicy.shouldPreserveExisting(
+                freshMessageCount: fresh.count,
+                existingMessageCount: serverMessages.count
+            ) {
+                // Un `200 []` transitorio nunca convierte un hilo cacheado en una
+                // pantalla vacía. El siguiente SSE/poll vuelve a confirmar.
+                merged = serverMessages
+                freshContexts = commentContexts
+            } else {
+                merged = fresh
+                oldestPageExhausted = fresh.count < JourneyService.defaultMessageLimit
+            }
         } else {
             merged = ChatJourneyParser.mergeById(serverMessages + fresh)
         }
@@ -524,7 +538,11 @@ final class ConversationViewModel {
         // Primer pintado: los mensajes visibles no deben esperar al journey
         // completo ni a programados. En un contacto sin caché esta suspensión
         // permite que SwiftUI pinte el hilo apenas responde `/conversation`.
-        applyServerMessages(merged, contexts: freshContexts)
+        applyServerMessages(
+            merged,
+            contexts: freshContexts,
+            cacheWritePermit: recent.writePermit
+        )
         hasOlderMessages = !oldestPageExhausted && serverMessages.count >= JourneyService.defaultMessageLimit
         await Task.yield()
 
@@ -544,6 +562,62 @@ final class ConversationViewModel {
 
         applyScheduled(scheduled)
         rebuildTimeline()
+    }
+
+    private struct RecentConversationResult {
+        let events: [JourneyEvent]
+        let messages: [ChatMessage]
+        let writePermit: ChatThreadSnapshotCache.WritePermit?
+    }
+
+    /// La proyección del inbox puede ver un mensaje apenas confirmado y la ruta
+    /// del hilo responder `[]` durante una ventana corta. Reintenta una sola vez
+    /// si la bandeja/caché demuestra que sí existe historial; nunca entra en loop
+    /// ni penaliza conversaciones realmente nuevas.
+    private func fetchRecentConversationWithEmptyRecovery(
+        enabled: Bool
+    ) async throws -> RecentConversationResult {
+        // Se reserva antes del primer GET (y cubre su retry). Una respuesta de
+        // apertura lenta no puede sobrescribir una precarga/push posterior.
+        let writePermit = ChatThreadSnapshotCache.beginWrite(contactID: contactID)
+
+        func fetch() async throws -> RecentConversationResult {
+            let payload = try await ChatRecentConversationLoader.shared.load(
+                contactID: contactID
+            )
+            return RecentConversationResult(
+                events: payload.events,
+                messages: ChatJourneyParser.buildMessages(
+                    contactId: contactID,
+                    events: payload.events,
+                    appBaseURL: payload.appBaseURL
+                ),
+                writePermit: writePermit
+            )
+        }
+
+        let first = try await fetch()
+        guard enabled else { return first }
+        let shouldRetry = ConversationInitialEmptyResponsePolicy.shouldRetry(
+            freshMessageCount: first.messages.count,
+            existingMessageCount: serverMessages.count,
+            seedMessageCount: seedContact?.messageCount ?? 0,
+            seedHasLastMessageDate: seedContact?.lastMessageDate != nil
+        )
+        guard shouldRetry, !Task.isCancelled else { return first }
+
+        try await Task.sleep(for: .milliseconds(180))
+        let retry = try await fetch()
+        guard retry.messages.isEmpty else { return retry }
+        if ConversationInitialEmptyResponsePolicy.shouldFailAsTemporarilyUnavailable(
+            finalFreshMessageCount: retry.messages.count,
+            existingMessageCount: serverMessages.count,
+            seedMessageCount: seedContact?.messageCount ?? 0,
+            seedHasLastMessageDate: seedContact?.lastMessageDate != nil
+        ) {
+            throw ConversationHistoryTemporarilyUnavailableError()
+        }
+        return first
     }
 
     private func fetchScheduledSafely() async -> [ScheduledChatMessage]? {
@@ -586,8 +660,14 @@ final class ConversationViewModel {
 
     /// Guarda los últimos mensajes del servidor (nunca optimistas) para reabrir
     /// el hilo al instante la próxima vez.
-    private func persistThreadCache() {
-        ChatThreadSnapshotCache.save(serverMessages, contactID: contactID)
+    private func persistThreadCache(
+        using writePermit: ChatThreadSnapshotCache.WritePermit? = nil
+    ) {
+        ChatThreadSnapshotCache.save(
+            serverMessages,
+            contactID: contactID,
+            using: writePermit
+        )
     }
 
     /// Hidrata el estado del agente desde la caché instantánea para pintar el
@@ -611,7 +691,11 @@ final class ConversationViewModel {
 
     /// Aplica mensajes del servidor con identidad preservada + reconciliación
     /// de optimistas (ventana ±4 min, RN `NATIVE_OPTIMISTIC_RECONCILE_WINDOW_MS`).
-    private func applyServerMessages(_ messages: [ChatMessage], contexts: [String: CommentPostContext]) {
+    private func applyServerMessages(
+        _ messages: [ChatMessage],
+        contexts: [String: CommentPostContext],
+        cacheWritePermit: ChatThreadSnapshotCache.WritePermit? = nil
+    ) {
         let messagesChanged = messages != serverMessages
         let contextsChanged = contexts != commentContexts
 
@@ -627,7 +711,7 @@ final class ConversationViewModel {
         if messagesChanged {
             serverMessages = messages
             refreshSelectedHighLevelWhatsAppRouteIfNeeded()
-            persistThreadCache()
+            persistThreadCache(using: cacheWritePermit)
         }
         if contextsChanged {
             commentContexts = contexts

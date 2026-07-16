@@ -24,6 +24,10 @@ struct ConversationScreen: View {
     @State private var showsPaymentForContact = false
     /// Invalida reposicionamientos tardíos de una animación anterior del teclado.
     @State private var keyboardReanchorGeneration = 0
+    /// Mantiene cerrada la paginación superior hasta que la apertura quedó
+    /// materializada exactamente en el fondo.
+    @State private var openingScrollState = ConversationOpeningScrollState()
+    @State private var openingBottomTask: Task<Void, Never>?
 
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(AccessStore.self) private var access
@@ -81,6 +85,8 @@ struct ConversationScreen: View {
                 presence.startViewing(contactID: viewModel.contactID)
             }
             .onDisappear {
+                openingBottomTask?.cancel()
+                openingBottomTask = nil
                 viewModel.stopPolling()
                 presence.stopViewing()
             }
@@ -203,7 +209,9 @@ struct ConversationScreen: View {
                                 // Respiro inferior del grupo: sumado al inset de
                                 // la siguiente cabecera da ~18 pt entre días
                                 // (paridad `.messageDayGroup + { margin-top:18px }`).
-                                Color.clear.frame(height: 10)
+                                if group.id != dayGroups.last?.id {
+                                    Color.clear.frame(height: 10)
+                                }
                             } header: {
                                 dayGroupHeader(group)
                             }
@@ -223,6 +231,10 @@ struct ConversationScreen: View {
             // tamaño, la animación del teclado puede enviar el LazyVStack a una
             // región todavía no materializada y dejar el hilo visualmente vacío.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
+            // Cuando el historial es más corto que el viewport, el aire sobrante
+            // va ARRIBA. El último globo queda pegado al composer, no flotando en
+            // medio de la pantalla.
+            .defaultScrollAnchor(.bottom, for: .alignment)
             // El teclado se cierra al arrastrar el hilo…
             .scrollDismissesKeyboard(.interactively)
             // …y también al tocar fuera del composer/campo de texto (paridad
@@ -231,11 +243,29 @@ struct ConversationScreen: View {
             .simultaneousGesture(
                 TapGesture().onEnded { KeyboardDismisser.dismiss() }
             )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6).onChanged { value in
+                    guard abs(value.translation.height) > abs(value.translation.width),
+                          openingScrollState.tracksOpeningLayout else { return }
+                    openingBottomTask?.cancel()
+                    openingBottomTask = nil
+                    openingScrollState.userDidBeginScrolling()
+                }
+            )
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height
                     >= geometry.contentSize.height - 140
             } action: { _, isNearBottom in
                 viewModel.isNearBottom = isNearBottom
+            }
+            .onScrollGeometryChange(for: Int.self) { geometry in
+                Int(geometry.contentSize.height.rounded())
+            } action: { _, _ in
+                scheduleOpeningBottomAnchor(
+                    hasContent: !viewModel.timeline.isEmpty,
+                    primaryContentSettled: openingContentSettled,
+                    proxy: proxy
+                )
             }
             .refreshable {
                 await viewModel.refreshSilently()
@@ -253,9 +283,20 @@ struct ConversationScreen: View {
                 }
             }
             .onChange(of: viewModel.scrollToBottomSignal) { _, _ in
-                withAnimation(.snappy(duration: 0.25)) {
+                if openingScrollState.isAnchoring {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                } else {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+                    }
                 }
+            }
+            .onChange(of: openingContentSettled, initial: true) { _, settled in
+                scheduleOpeningBottomAnchor(
+                    hasContent: !viewModel.timeline.isEmpty,
+                    primaryContentSettled: settled,
+                    proxy: proxy
+                )
             }
             .onChange(of: viewModel.pendingScrollAnchorID) { _, anchorID in
                 guard let anchorID else { return }
@@ -279,6 +320,11 @@ struct ConversationScreen: View {
             // markers) para saber cuál audio encadenar al terminar el actual.
             .onChange(of: viewModel.timeline, initial: true) { _, timeline in
                 audioCascade.updateOrder(cascadeEntries(from: timeline))
+                scheduleOpeningBottomAnchor(
+                    hasContent: !timeline.isEmpty,
+                    primaryContentSettled: openingContentSettled,
+                    proxy: proxy
+                )
             }
             .environment(audioCascade)
         }
@@ -287,6 +333,50 @@ struct ConversationScreen: View {
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Buscar en este chat"
         )
+    }
+
+    /// `defaultScrollAnchor` decide el offset inicial, pero no basta cuando un
+    /// `LazyVStack`, el composer y las imágenes terminan su layout en turnos
+    /// distintos. Reafirmamos el mismo fondo en unas cuantas ventanas de layout
+    /// muy cortas; cualquier gesto del usuario invalida inmediatamente la tarea.
+    private func scheduleOpeningBottomAnchor(
+        hasContent: Bool,
+        primaryContentSettled: Bool,
+        proxy: ScrollViewProxy
+    ) {
+        guard let generation = openingScrollState.contentDidChange(hasContent: hasContent) else {
+            return
+        }
+        openingBottomTask?.cancel()
+        openingBottomTask = Task { @MainActor in
+            let delays: [UInt64] = [0, 16_000_000, 64_000_000, 160_000_000, 320_000_000]
+            for delay in delays {
+                if delay == 0 {
+                    await Task.yield()
+                } else {
+                    do {
+                        try await Task.sleep(nanoseconds: delay)
+                    } catch {
+                        return
+                    }
+                }
+                guard openingScrollState.shouldContinueAnchoring(generation: generation) else {
+                    return
+                }
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+            openingScrollState.didEstablishBottom(generation: generation)
+            if primaryContentSettled {
+                openingScrollState.didFinishOpeningTracking(generation: generation)
+            }
+            openingBottomTask = nil
+        }
+    }
+
+    private var openingContentSettled: Bool {
+        viewModel.hasLoadedOnce
+            || viewModel.loadErrorMessage != nil
+            || viewModel.accessDenied
     }
 
     /// Conserva visible el final si el usuario estaba abajo antes de que el
@@ -404,7 +494,8 @@ struct ConversationScreen: View {
                 .controlSize(.small)
                 .padding(.vertical, RistakTheme.Spacing.sm)
                 .frame(maxWidth: .infinity)
-        } else if viewModel.hasOlderMessages {
+        } else if viewModel.hasOlderMessages,
+                  openingScrollState.canLoadOlderMessages {
             Color.clear
                 .frame(height: 26)
                 .onAppear {

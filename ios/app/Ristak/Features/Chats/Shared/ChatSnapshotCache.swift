@@ -17,6 +17,13 @@ enum ChatSnapshotKey {
     /// Últimos mensajes del hilo de un contacto.
     static func thread(_ contactID: String) -> String { "chat:thread:\(contactID)" }
 
+    /// Instante de la última página reciente confirmada y guardada. Permite que
+    /// la precarga de bandeja sea stale-while-revalidate sin volver a bajar los
+    /// mismos seis hilos en cada poll del inbox.
+    static func threadUpdatedAt(_ contactID: String) -> String {
+        "chat:thread:updated-at:\(contactID)"
+    }
+
     /// Markers de actividad (pagos/citas) del hilo de un contacto. Se cachean
     /// aparte de los mensajes para que el primer pintado ya los incluya y no haya
     /// una segunda pasada de red que reacomode el hilo al entrar.

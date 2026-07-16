@@ -352,7 +352,15 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     El poll de fondo ya no descarga journey completo, no marca leido sin un
     entrante nuevo y consulta programados como maximo cada 30 segundos. La carga
     fria pinta primero los ultimos mensajes y deja journey/programados como
-    solicitudes secundarias que no retienen el spinner.
+    solicitudes secundarias que no retienen el spinner. Android precarga el
+    snapshot del contacto antes de montar, se ancla una sola vez al mensaje mas
+    reciente y nunca convierte timeout/`5xx` en un chat vacio; su worker y el
+    push headless mantienen un lote reciente. iOS bloquea la paginacion historica
+    hasta establecer el fondo, vuelve a anclar si cambia el timeline/altura antes
+    de terminar la apertura, y el primer gesto cancela esa automatizacion. Dos
+    vacios contradictorios muestran reintento en vez de un hilo falsamente vacio;
+    push/BGAppRefresh precalientan el contacto señalado y recientes con escrituras
+    ordenadas por hilo.
 - [ ] Validar en Android real.
 
 ### 3. Menus y sheets

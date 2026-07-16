@@ -149,7 +149,11 @@ import {
   conversationCacheKey,
   paymentRecentCacheKey,
 } from './cacheKeys';
-import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
+import {
+  prefetchRecentConversationCaches,
+  registerInboxBackgroundTask,
+  unregisterInboxBackgroundTask,
+} from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveEvent, type ChatLiveMessageEvent } from './api';
 import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess } from './access';
@@ -168,6 +172,13 @@ import {
   patchChatContactList,
   sortChatContactsByRecency,
 } from './chatListState';
+import {
+  areNativeMessageArraysIdentical,
+  hasNewInboundNativeMessage,
+  mergeNativeChatMessages,
+  mergeNativeChatMessagesAuthoritatively,
+  stripNativeMessageTransientCacheData,
+} from './chatMessageMerge';
 import { toggleVisibleChatSelectionIds } from './chatSelectionState';
 import {
   CHAT_FALLBACK_REFRESH_INTERVAL_MS,
@@ -182,17 +193,22 @@ import {
   getOldestConversationHistoryCursor,
   hasNewRenderableConversationHistoryMessage,
   isConversationHistoryCursorOlder,
-  isNativeLocalMessageId,
-  makeUnreconciledNativePendingMessagesRetryable,
   retainNativeLocalOutboxMessages,
 } from './conversationReliability';
+import {
+  contactSummaryExpectsMessages,
+  ConversationLatestAnchorGate,
+  loadConversationWithSuccessfulEmptyRecovery,
+  shouldPreserveConversationSnapshot,
+  shouldRecoverEmptyConversation,
+} from './conversationOpeningPolicy';
+import { resolveNotificationChatContact } from './notificationChatRouting';
 import {
   buildNativeWhatsAppSenderRoute,
   getNativeApiReplyWindowOpen,
   getLastHighLevelWhatsAppBusinessPhone,
   getNativeLastReplyWindowInboundTime,
   getNativeWhatsAppPhoneValue,
-  getOutboundMessageChannelFamily,
   getOutboundProviderMessageId,
   getOutboundSendResultState,
   getPreferredWhatsAppPhoneId,
@@ -259,7 +275,6 @@ import {
   isoToBusinessDateTimeFields,
   localBusinessDateTimeToUTCISOString,
   parseSortableDateValue,
-  resolveChatMessageReactions,
   resolveBusinessTimezone,
   todayDateOnlyInBusinessTimezone,
 } from './format';
@@ -293,6 +308,7 @@ import type {
   DashboardMetrics,
   HighLevelPhoneNumber,
   IntegrationsStatus,
+  JourneyEvent as MessageJourneyEvent,
   LicenseStatusResponse,
   OriginDistributionData,
   PaymentGatewayProvider,
@@ -502,6 +518,15 @@ type JourneyEvent = {
   data?: Record<string, unknown> | null;
   [key: string]: unknown;
 };
+
+function normalizeJourneyEventsForMessages(events: JourneyEvent[]): MessageJourneyEvent[] {
+  return events.map((event) => ({
+    type: event.type,
+    date: event.date,
+    ...(typeof event.cursorKey === 'string' ? { cursorKey: event.cursorKey } : {}),
+    ...(event.data && typeof event.data === 'object' ? { data: event.data } : {}),
+  }));
+}
 type CalendarViewMode = 'day' | 'week' | 'month' | 'year' | 'years';
 type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
 type AppointmentFormMode = 'create' | 'edit';
@@ -2928,6 +2953,7 @@ function ChatScreen({
   const chatListLoadedScopeRef = useRef(hasCanonicalInboxSnapshot ? canonicalInboxScopeKey : '');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
+  const selectedChatRef = useRef(selected);
   const chatLiveConnectedRef = useRef(false);
   const chatReconnectReconciliationGateRef = useRef(new ChatReconnectReconciliationGate());
   const chatInitialConnectedRecoveryStartedRef = useRef(false);
@@ -2941,6 +2967,7 @@ function ChatScreen({
   const chatListRequestAbortRef = useRef<AbortController | null>(null);
   const chatListRequestSettledRef = useRef<Promise<void> | null>(null);
   const chatLoadLatestRef = useRef<(silent?: boolean) => Promise<ChatContact[] | null>>(async () => null);
+  const conversationOpenRequestRef = useRef(0);
   const firstSyncRunningRef = useRef(false);
   const skipNextStandardLoadRef = useRef(false);
   const scheduleIntentRef = useRef<{ signature: string; scheduledId: string } | null>(null);
@@ -2959,6 +2986,7 @@ function ChatScreen({
       writeCache(NATIVE_INBOX_CACHE_KEY, chats.slice(0, NATIVE_INBOX_CACHE_LIMIT));
     }
   }, [api, canonicalInboxScopeKey, chats, currentChatListScopeKey]);
+  selectedChatRef.current = selected;
   // Hidratar la bandeja desde disco en frío: la caché en memoria se pierde al
   // cerrar la app, así que si arrancamos vacíos leemos la copia local guardada.
   useEffect(() => {
@@ -3011,6 +3039,7 @@ function ChatScreen({
 
   useEffect(() => () => {
     chatMountedRef.current = false;
+    conversationOpenRequestRef.current += 1;
     chatListGenerationRef.current += 1;
     if (chatRealtimeRefreshTimeoutRef.current) {
       clearTimeout(chatRealtimeRefreshTimeoutRef.current);
@@ -3042,11 +3071,25 @@ function ChatScreen({
     // Cierra el teclado del buscador antes de traspasar la propiedad del
     // teclado del frame de la lista al frame de la conversación.
     Keyboard.dismiss();
-    conversationRouteProgress.stopAnimation();
-    conversationRouteProgress.setValue(0);
-    setConversationClosing(false);
-    setSelected(contact);
-  }, [conversationRouteProgress]);
+    const requestId = conversationOpenRequestRef.current + 1;
+    conversationOpenRequestRef.current = requestId;
+    const mountConversation = () => {
+      if (!chatMountedRef.current || requestId !== conversationOpenRequestRef.current) return;
+      conversationRouteProgress.stopAnimation();
+      conversationRouteProgress.setValue(0);
+      setConversationClosing(false);
+      setSelected(contact);
+    };
+    const cacheKey = conversationCacheKey(contact.id);
+    if (hasCachedValue(cacheKey) || getConversationMessageMemCache(api, contact.id).length) {
+      mountConversation();
+      return;
+    }
+    // The critical bootstrap intentionally does not parse every thread file.
+    // Load just the tapped snapshot before mounting so useState can paint it on
+    // frame one instead of showing an avoidable hydration loader.
+    void preloadCacheKeys([cacheKey]).finally(mountConversation);
+  }, [api, conversationRouteProgress]);
 
   const closeChatConversation = useCallback(() => {
     if (!selected || conversationClosing) return;
@@ -3135,6 +3178,16 @@ function ChatScreen({
         });
         setChatListOffset(nextChats.length);
         setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
+      }
+      if (requestScopeKey === canonicalInboxScopeKey && !requestQuery) {
+        // Keep the newest threads hot before the operator taps them. The helper
+        // skips snapshots already at the inbox timestamp and caps concurrency.
+        const openContactId = String(selectedChatRef.current?.id || '').trim();
+        void prefetchRecentConversationCaches(
+          nextChats,
+          [],
+          openContactId ? [openContactId] : [],
+        ).catch(() => undefined);
       }
       return nextChats;
     } catch (err) {
@@ -3289,6 +3342,15 @@ function ChatScreen({
         const next = applyChatLiveEvent([current], event, current.id);
         return next[0] || current;
       });
+    }
+    const eventContactId = String(event?.contactId || '').trim();
+    const openContactId = String(selectedChatRef.current?.id || '').trim();
+    if (eventContactId && eventContactId !== openContactId) {
+      void prefetchRecentConversationCaches(
+        chatsRef.current,
+        [eventContactId],
+        openContactId ? [openContactId] : [],
+      ).catch(() => undefined);
     }
     requestSilentInboxRefresh();
   }, [requestSilentInboxRefresh, selected?.id]);
@@ -3771,7 +3833,6 @@ function ChatScreen({
     if (!contactId) return;
 
     let cancelled = false;
-    onNotificationHandled?.();
 
     const openNotificationContact = async () => {
       setAssistantOpen(false);
@@ -3784,25 +3845,25 @@ function ChatScreen({
       setClosingSheet(null);
       setSheetContact(null);
 
-      const existingContact = chats.find((contact) => contact.id === contactId);
-      if (existingContact) {
-        if (!cancelled) openChatConversation(existingContact);
-        return;
-      }
-
-      const fetchedContact = await api.getContact(contactId);
-      if (cancelled) return;
+      const resolvedContact = await resolveNotificationChatContact(
+        contactId,
+        chatsRef.current,
+        (id) => api.getContact(id),
+      );
+      if (cancelled || !resolvedContact) return;
       setChats((current) => (
-        current.some((contact) => contact.id === fetchedContact.id)
+        current.some((contact) => contact.id === resolvedContact.id)
           ? current
-          : [fetchedContact, ...current]
+          : [resolvedContact, ...current]
       ));
-      openChatConversation(fetchedContact);
+      openChatConversation(resolvedContact);
+      onNotificationHandled?.();
     };
 
     void openNotificationContact()
       .catch((err) => {
         if (!cancelled) {
+          onNotificationHandled?.();
           Alert.alert('Notificación', err instanceof Error ? err.message : 'No pude abrir este chat.');
         }
       });
@@ -3810,7 +3871,7 @@ function ChatScreen({
     return () => {
       cancelled = true;
     };
-  }, [api, chats, notificationContactId, onNotificationHandled, openChatConversation]);
+  }, [api, notificationContactId, onNotificationHandled, openChatConversation]);
 
   useEffect(() => {
     if (!pendingDraft?.contact?.id || (!pendingDraft.text.trim() && !pendingDraft.paymentPreview && !pendingDraft.activityMarker && !pendingDraft.successNotice)) return;
@@ -22470,6 +22531,7 @@ function NativeConversationScreen({
   const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
   const [loading, setLoading] = useState(() => !hasCachedConversationSnapshot);
+  const [conversationLoadError, setConversationLoadError] = useState('');
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -22529,6 +22591,7 @@ function NativeConversationScreen({
   const audioRecorder = useAudioRecorder({ ...RecordingPresets.LOW_QUALITY, isMeteringEnabled: true });
   const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
   const listRef = useRef<FlatList<ConversationListItem>>(null);
+  const conversationLatestAnchorGateRef = useRef(new ConversationLatestAnchorGate());
   const composerInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationParallaxX = useRef(new Animated.Value(0)).current;
@@ -22544,6 +22607,8 @@ function NativeConversationScreen({
   const conversationHandledReconnectVersionRef = useRef(chatReconnectVersion);
   const conversationRefreshKickRef = useRef<(event?: ChatLiveEvent) => void>(() => undefined);
   const activeConversationContactIdRef = useRef(contact.id);
+  const conversationContactSummaryRef = useRef(contact);
+  conversationContactSummaryRef.current = contact;
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
   const chatReadPendingRef = useRef(Number(contact.unreadCount || 0) > 0);
@@ -22648,6 +22713,7 @@ function NativeConversationScreen({
     chatReadInFlightRef.current = false;
     chatReadVersionRef.current = 0;
     setSending(false);
+    setConversationLoadError('');
     conversationHasOlderMessagesRef.current = false;
     conversationHistoryCursorRef.current = null;
     conversationHistoryExhaustedContactIdRef.current = null;
@@ -22691,16 +22757,43 @@ function NativeConversationScreen({
         || Date.now() - scheduledMessagesLastLoadedAtRef.current >= 30_000;
       // Los mensajes son la ruta crítica: se pintan primero. La actividad completa
       // y los programados se reconcilian después, sin retener el spinner del chat.
-      const journey = await api.getConversation(
-        contactId,
-        CHAT_CONVERSATION_MESSAGE_LIMIT,
-        { signal: primaryAbortController.signal },
+      const contactSummary = conversationContactSummaryRef.current;
+      let primaryJourneyMessages: ChatMessage[] = [];
+      const openingResult = await loadConversationWithSuccessfulEmptyRecovery(
+        () => api.getConversation(
+          contactId,
+          CHAT_CONVERSATION_MESSAGE_LIMIT,
+          { signal: primaryAbortController.signal },
+        ),
+        (primaryJourney) => {
+          const normalizedPrimary = normalizeJourneyEventsForMessages(primaryJourney);
+          primaryJourneyMessages = buildMessagesFromJourney(contactId, normalizedPrimary, appBaseUrl);
+          return shouldRecoverEmptyConversation(
+            contactSummary,
+            messagesRef.current,
+            primaryJourneyMessages,
+          );
+        },
+        () => api.getContactJourney(contactId, primaryAbortController.signal, false),
       );
       if (requestId !== loadRequestRef.current || activeConversationContactIdRef.current !== contactId) return;
+      const journey = openingResult.items;
+      const usedFullJourneyRecovery = openingResult.usedRecovery;
+      const messageJourney = normalizeJourneyEventsForMessages(journey);
+      const journeyMessages = usedFullJourneyRecovery
+        ? buildMessagesFromJourney(contactId, messageJourney, appBaseUrl)
+        : primaryJourneyMessages;
+      if (!journeyMessages.length && !messagesRef.current.length && contactSummaryExpectsMessages(contactSummary)) {
+        throw new Error('El servidor no entregó el historial de este chat. Toca “Reintentar ahora”.');
+      }
       conversationLastReconcileAtRef.current = Date.now();
-      const journeyMessages = buildMessagesFromJourney(contactId, journey, appBaseUrl);
-      const receivedFullPage = Array.isArray(journey) && journey.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
-      const recentPageHistoryCursor = getOldestConversationHistoryCursor(journey);
+      const historyJourney = usedFullJourneyRecovery
+        ? messageJourney.filter((event) => ['whatsapp_message', 'meta_message', 'email_message'].includes(event.type))
+        : messageJourney;
+      const receivedFullPage = usedFullJourneyRecovery
+        ? journeyMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT
+        : Array.isArray(journey) && journey.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
+      const recentPageHistoryCursor = getOldestConversationHistoryCursor(historyJourney);
       // Un poll trae otra vez solo la ventana reciente. Si el usuario ya cargo
       // paginas antiguas, conservar su limite evita obligarlo a recorrerlas de
       // nuevo (los merges deduplicarian, pero la experiencia se sentiria trabada).
@@ -22720,6 +22813,7 @@ function NativeConversationScreen({
       if (hasUnreadSummary || hasNewInbound) chatReadVersionRef.current += 1;
       const shouldMarkRead = chatReadPendingRef.current || hasUnreadSummary || hasNewInbound;
       setMessages((current) => {
+        if (shouldPreserveConversationSnapshot(contactSummary, current, journeyMessages)) return current;
         if (!silent && !background) {
           const retainedOutboxMessages = retainNativeLocalOutboxMessages(current);
           const foregroundMessages = mergeNativeChatMessagesAuthoritatively(
@@ -22733,6 +22827,7 @@ function NativeConversationScreen({
         const next = mergeNativeChatMessages(current, journeyMessages);
         return areNativeMessageArraysIdentical(current, next) ? current : next;
       });
+      setConversationLoadError('');
       setLoading(false);
       if (shouldMarkRead) {
         chatReadPendingRef.current = true;
@@ -22816,9 +22911,10 @@ function NativeConversationScreen({
       }
     } catch (err) {
       if (primaryAbortController.signal.aborted || requestId !== loadRequestRef.current) return;
-      // A background poll must never interrupt the user with an alert.
-      if (!background) {
-        Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
+      // A rejected primary request never falls through to /journey and never
+      // starts hidden retry loops. Keep cache visible or expose one manual retry.
+      if (!background && !messagesRef.current.length) {
+        setConversationLoadError(err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
       }
     } finally {
       if (conversationPrimaryAbortRef.current === primaryAbortController) {
@@ -25002,28 +25098,47 @@ function NativeConversationScreen({
 
       <View style={styles.conversationBody}>
         <ChatWallpaper parallaxX={conversationParallaxX} parallaxY={conversationParallaxY} />
-        {loading ? (
+        {loading && !messages.length ? (
           <View style={styles.centerState}>
             <Text style={styles.caption}>Preparando conversación...</Text>
+          </View>
+        ) : conversationLoadError && !messages.length ? (
+          <View style={styles.centerState}>
+            <Text style={styles.errorText}>{conversationLoadError}</Text>
+            <SecondaryButton
+              label="Reintentar ahora"
+              onPress={() => {
+                setConversationLoadError('');
+                setLoading(true);
+                void conversationLoadLatestRef.current(false, false);
+              }}
+            />
           </View>
         ) : (
           <FlatList
             ref={listRef}
+            style={styles.conversationMessageScroller}
             data={conversationRenderItems}
             keyExtractor={conversationKeyExtractor}
             inverted
             scrollsToTop={false}
-            alwaysBounceVertical
-            bounces
+            alwaysBounceVertical={false}
+            bounces={false}
+            overScrollMode="never"
             contentContainerStyle={styles.conversationMessageList}
             keyboardShouldPersistTaps="handled"
             // Anclaje nativo estilo WhatsApp: en una lista invertida el "top"
             // lógico es el mensaje más reciente, así que autoscrollToTopThreshold
             // revela mensajes nuevos solo si el usuario ya está pegado abajo y
             // nunca mueve el viewport cuando está leyendo historial.
-            maintainVisibleContentPosition={{ minIndexForVisible: 1, autoscrollToTopThreshold: 10 }}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 24 }}
             removeClippedSubviews={false}
             initialNumToRender={20}
+            onContentSizeChange={() => {
+              if (conversationLatestAnchorGateRef.current.consume(conversationRenderItems.length)) {
+                scrollConversationToLatest(false);
+              }
+            }}
             onEndReached={() => {
               void loadOlderConversationMessages();
             }}
@@ -27791,172 +27906,6 @@ function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessa
 
 function getNativeMessageSortTime(value?: string | null) {
   return parseSortableDateValue(value);
-}
-
-function isSameNativeChatMessage(left: ChatMessage, right: ChatMessage) {
-  try {
-    return JSON.stringify(left) === JSON.stringify(right);
-  } catch {
-    return false;
-  }
-}
-
-function stripNativeMessageTransientCacheData(message: ChatMessage): ChatMessage {
-  if (!message.attachment?.dataUrl) return message;
-  const { dataUrl: _dataUrl, ...attachment } = message.attachment;
-  return { ...message, attachment };
-}
-
-function hasNewInboundNativeMessage(current: ChatMessage[], incoming: ChatMessage[]) {
-  const knownIds = new Set(current
-    .filter((message) => message.direction === 'inbound')
-    .map((message) => message.id));
-  return incoming.some((message) => message.direction === 'inbound' && !knownIds.has(message.id));
-}
-
-// Ventana hacia adelante para emparejar un mensaje optimista con su copia del
-// servidor. Hacia atrás solo se tolera sesgo de reloj: la copia del servidor
-// no puede ser muy anterior al envío local, y una ventana simétrica absorbería
-// un mensaje viejo idéntico ("ok" repetido en pocos minutos).
-const NATIVE_OPTIMISTIC_RECONCILE_FORWARD_MS = 4 * 60 * 1000;
-const NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS = 60 * 1000;
-
-function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow: ChatMessage): ChatMessage {
-  const localAttachment = localRow.attachment;
-  const serverAttachment = serverRow.attachment;
-  const attachment: ChatAttachment | undefined = serverAttachment
-    ? {
-      ...localAttachment,
-      ...serverAttachment,
-      // El preview local ya está pintado. Mantenerlo evita una segunda carga y
-      // conserva exactamente las dimensiones del globo durante el refresh.
-      ...(localAttachment?.dataUrl ? { dataUrl: localAttachment.dataUrl } : {}),
-      ...(localAttachment?.url && !serverAttachment?.url ? { url: localAttachment.url } : {}),
-    }
-    : localAttachment;
-
-  const serverState = getOutboundSendResultState(serverRow);
-  return {
-    ...localRow,
-    ...serverRow,
-    id: localRow.id,
-    optimisticId: localRow.optimisticId || localRow.id,
-    serverMessageId: serverRow.serverMessageId || localRow.serverMessageId || serverRow.id,
-    providerMessageId: serverRow.providerMessageId || localRow.providerMessageId,
-    date: localRow.date || serverRow.date,
-    text: serverRow.text || localRow.text,
-    pending: serverRow.pending ?? serverState.pending,
-    failed: serverRow.failed ?? serverState.failed,
-    errorReason: serverRow.errorReason || serverState.errorReason,
-    ...(attachment ? { attachment } : {}),
-  };
-}
-
-// El poll trae la copia persistida con otra identidad. La fusionamos DENTRO del
-// globo local y retiramos la fila remota duplicada; borrar el local provocaba un
-// unmount/remount, otra descarga de la foto y saltos de scroll.
-function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>, includeUnsettledLocal = false) {
-  const localRows: ChatMessage[] = [];
-  const serverRows: ChatMessage[] = [];
-  byId.forEach((message) => {
-    if (message.direction !== 'outbound' || message.reactionEmoji || isScheduledMessage(message)) return;
-    if (message.optimisticId || isNativeLocalMessageId(message.id)) {
-      // Las filas pending siguen esperando el ack de send(): quitarlas antes
-      // de tiempo rompería el marcado de error si el envío falla. La carga
-      // inicial sí puede reconciliarlas porque ya viene de una nueva instancia.
-      if (includeUnsettledLocal || (!message.failed && !message.pending)) localRows.push(message);
-    } else {
-      serverRows.push(message);
-    }
-  });
-  if (!localRows.length || !serverRows.length) return;
-
-  const consumedServerIds = new Set<string>();
-  localRows
-    .sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date))
-    .forEach((localRow) => {
-      const localTime = getNativeMessageSortTime(localRow.date);
-      const localText = String(localRow.text || '').trim();
-      const localFamily = getOutboundMessageChannelFamily(localRow);
-      let match: ChatMessage | null = null;
-      let matchDistance = Number.POSITIVE_INFINITY;
-      serverRows.forEach((serverRow) => {
-        if (consumedServerIds.has(serverRow.id)) return;
-        const exactServerId = Boolean(localRow.serverMessageId) && serverRow.id === localRow.serverMessageId;
-        const exactProviderId = Boolean(localRow.providerMessageId) && serverRow.providerMessageId === localRow.providerMessageId;
-        if (exactServerId || exactProviderId) {
-          match = serverRow;
-          matchDistance = -1;
-          return;
-        }
-        if (matchDistance < 0) return;
-        const serverTime = getNativeMessageSortTime(serverRow.date);
-        if (serverTime < localTime - NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS) return;
-        const distance = Math.abs(serverTime - localTime);
-        if (distance > NATIVE_OPTIMISTIC_RECONCILE_FORWARD_MS || distance >= matchDistance) return;
-        const serverFamily = getOutboundMessageChannelFamily(serverRow);
-        if (localFamily !== 'other' && serverFamily !== 'other' && localFamily !== serverFamily) return;
-        const serverText = String(serverRow.text || '').trim();
-        const textMatches = Boolean(localText) && localText === serverText;
-        const attachmentMatches = Boolean(localRow.attachment) && Boolean(serverRow.attachment)
-          && String(localRow.attachment?.type || '').toLowerCase() === String(serverRow.attachment?.type || '').toLowerCase()
-          && (!localText || localText === serverText);
-        const locationMatches = Boolean(localRow.location) && Boolean(serverRow.location) && !localText && !localRow.attachment;
-        if (!textMatches && !attachmentMatches && !locationMatches) return;
-        match = serverRow;
-        matchDistance = distance;
-      });
-      if (match) {
-        const serverMatch = match as ChatMessage;
-        consumedServerIds.add(serverMatch.id);
-        byId.delete(serverMatch.id);
-        byId.set(localRow.id, mergeNativeServerMessageIntoOptimistic(localRow, serverMatch));
-      }
-    });
-}
-
-function mergeNativeChatMessageGroups(groups: ChatMessage[][], includeUnsettledLocal = false) {
-  const byId = new Map<string, ChatMessage>();
-  groups.forEach((group) => {
-    group.forEach((message) => {
-      if (!message?.id) return;
-      const existing = byId.get(message.id);
-      if (!existing) {
-        byId.set(message.id, message);
-        return;
-      }
-      if (existing === message) return;
-      const merged = { ...existing, ...message };
-      // Conservar la referencia previa cuando el contenido no cambió evita
-      // re-renderizar todas las burbujas en cada poll de fondo.
-      byId.set(message.id, isSameNativeChatMessage(existing, merged) ? existing : merged);
-    });
-  });
-  reconcileNativeOptimisticMessages(byId, includeUnsettledLocal);
-  return resolveChatMessageReactions(Array.from(byId.values()));
-}
-
-function mergeNativeChatMessages(...groups: ChatMessage[][]) {
-  return mergeNativeChatMessageGroups(groups);
-}
-
-function mergeNativeChatMessagesAuthoritatively(
-  makePendingRetryable: boolean,
-  ...groups: ChatMessage[][]
-) {
-  const reconciled = mergeNativeChatMessageGroups(groups, true);
-  return makeUnreconciledNativePendingMessagesRetryable(reconciled, makePendingRetryable);
-}
-
-// true cuando ambos arrays contienen exactamente las mismas referencias en el
-// mismo orden: permite que un poll sin cambios sea un no-op de React.
-function areNativeMessageArraysIdentical(left: ChatMessage[], right: ChatMessage[]) {
-  if (left === right) return true;
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
 }
 
 function getNativeJourneyEventKey(event: JourneyEvent) {
@@ -34409,6 +34358,9 @@ function createAppStyles() {
   conversationComposerDock: {
     backgroundColor: composerShellBackground,
     overflow: 'hidden',
+  },
+  conversationMessageScroller: {
+    flex: 1,
   },
   chatWallpaper: {
     position: 'absolute',

@@ -1137,7 +1137,7 @@ export type WebPushPublicConfig = {
 export type SaveMobilePushDevicePayload = {
   token: string;
   platform: 'android';
-  clientType?: 'expo' | 'native';
+  clientType?: 'expo' | 'expo_background_v1' | 'native';
   appPackage?: string;
   calendarIds?: string[];
   appVersion?: string;

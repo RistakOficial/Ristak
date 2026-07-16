@@ -29,16 +29,32 @@ enum ChatInboxDiskCache {
     /// Guarda el snapshot (memoria inmediata + disco debounced).
     @MainActor
     static func save(_ rows: [ChatContact]) {
+        guard let namespace = RistakSnapshotCache.shared.namespaceToken() else { return }
+        _ = save(rows, ifCurrent: namespace)
+    }
+
+    /// Variante para respuestas de red largas: la bandeja sólo aterriza si la
+    /// cuenta/sesión que inició el GET sigue siendo exactamente la activa.
+    @MainActor
+    @discardableResult
+    static func save(
+        _ rows: [ChatContact],
+        ifCurrent namespace: RistakSnapshotCache.NamespaceToken
+    ) -> Bool {
         // Nunca DEGRADAR un snapshot bueno a []: un `[]` transitorio no debe pisar
         // la bandeja guardada que se usa para el arranque en frío. El vaciado real
         // (logout) tiene su propio camino explícito: `clear()`.
-        guard !rows.isEmpty else { return }
+        guard !rows.isEmpty else { return false }
         let snapshot = rows.prefix(maxRows).map(serialize)
         guard JSONSerialization.isValidJSONObject(snapshot),
               let data = try? JSONSerialization.data(withJSONObject: snapshot) else {
-            return
+            return false
         }
-        RistakSnapshotCache.shared.storeRaw(data, for: ChatSnapshotKey.inbox)
+        return RistakSnapshotCache.shared.storeRaw(
+            data,
+            for: ChatSnapshotKey.inbox,
+            ifCurrent: namespace
+        )
     }
 
     @MainActor

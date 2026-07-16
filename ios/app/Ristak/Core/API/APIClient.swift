@@ -41,6 +41,10 @@ actor APIClient {
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    /// El cliente foreground tolera hasta dos 503 de arranque. Clientes con un
+    /// presupuesto corto de sistema (push/background) pueden pedir cero para
+    /// garantizar que entreguen su completion antes de que iOS los suspenda.
+    private let maxStartupRetries: Int
 
     /// Rutas que manejan sus propios 401/403 (login muestra el error inline;
     /// verify lo maneja SessionStore.bootstrap). No disparan hooks globales.
@@ -49,7 +53,8 @@ actor APIClient {
         "/api/auth/verify",
     ]
 
-    init() {
+    init(maxStartupRetries: Int = 2) {
+        self.maxStartupRetries = max(0, maxStartupRetries)
         let configuration = URLSessionConfiguration.default
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 120
@@ -365,7 +370,6 @@ actor APIClient {
         timeout: TimeInterval
     ) async throws -> Data {
         try assertNetworkAccessAllowedForTests()
-        let maxStartupRetries = 2
         var attempt = 0
         let context = try requestContext()
         let normalizedMethod = method.uppercased()

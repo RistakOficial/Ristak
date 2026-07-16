@@ -19,7 +19,13 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
   automatically through the installer mobile resolver.
 - Secure token and resolved installation URL storage using Expo SecureStore.
 - Native push registration for Android, notification tap handling, and
-  device-level alert activation from Settings.
+  device-level alert activation from Settings. The current binary advertises
+  `expo_background_v1` only after its headless task is ready: chat data-only FCM
+  gives the target thread a hard 1.8 s cache budget, relays one deduplicated local
+  alert, then refreshes one inbox page; a slow target request is aborted so the
+  alert does not wait for the transport timeout. Recent-thread fan-out remains
+  periodic/foreground. Legacy
+  `expo` installs and non-chat events keep a visible remote notification.
 - Chat inbox from `/api/contacts/chats`.
 - First connection without a local snapshot shows real, retryable progress for
   account setup, configuration, contacts, conversations, and local cache; later
@@ -36,7 +42,10 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
   appointment form, and business-timezone grouping.
 - Native payments, analytics, settings, bottom dock, and notification parity
   passes from the mobile migration worktrees.
-- Conversation view from `/api/contacts/:id/journey`.
+- Conversation view that paints a per-contact disk snapshot first, opens at the
+  latest message, treats transport failures as retryable errors instead of an
+  empty chat, and reconciles through `/api/contacts/:id/conversation` with a
+  bounded journey recovery only for contradictory empty results.
 - Text sending through `/api/whatsapp-api/messages/text`.
 - Native chat/conversation pass with row swipe actions (**More → Archive** to
   the left, **Unread → Pin** to the right), reusable bottom sheets,

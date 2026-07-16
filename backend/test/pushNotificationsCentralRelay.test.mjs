@@ -117,7 +117,7 @@ async function startCentralPushServer({
   }
 }
 
-test('delega Android al Installer central cuando FCM local no esta configurado', async () => {
+test('delega la capacidad Android background v1 al Installer central sin degradarla', async () => {
   const envSnapshot = snapshotEnv()
   const central = await startCentralPushServer()
   let db = null
@@ -146,7 +146,7 @@ test('delega Android al Installer central cuando FCM local no esta configurado',
     await db.run(`
       INSERT INTO mobile_push_devices (
         id, user_id, platform, token, client_type, app_package, calendar_ids_json, enabled, created_at, updated_at
-      ) VALUES (?, ?, 'android', ?, 'expo', 'com.ristak.android', '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ) VALUES (?, ?, 'android', ?, 'expo_background_v1', 'com.ristak.android', '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `, [deviceId, userId, token])
 
     const result = await pushService.sendAppNotificationPayload({
@@ -167,7 +167,7 @@ test('delega Android al Installer central cuando FCM local no esta configurado',
       id: deviceId,
       platform: 'android',
       token,
-      clientType: 'expo',
+      clientType: 'expo_background_v1',
       appPackage: 'com.ristak.android',
       experience: {
         soundEnabled: true,

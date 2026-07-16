@@ -4,6 +4,9 @@ import * as Notifications from 'expo-notifications';
 import type { Notification, NotificationResponse } from 'expo-notifications';
 import type { RistakApiClient } from './api';
 import type { WebPushPublicConfig } from './types';
+import { chatNotificationBackgroundTaskReady } from './background';
+import { shouldSuppressHeadlessRemoteNotification } from './backgroundChatPolicy';
+import { createAndroidNotificationChannels } from './notificationChannels';
 import { getNativePushRegistrationRetryDelay } from './pushRegistrationReliability';
 
 export type NativePushPermissionStatus = 'granted' | 'denied' | 'prompt' | 'unsupported';
@@ -33,16 +36,16 @@ type PermissionStatusProbe = {
 };
 
 const ANDROID_EXPO_APP_PACKAGE = 'com.ristak.android';
-const ANDROID_EXPO_CLIENT_TYPE = 'expo';
+// Capability contract with the central broker: this client can receive a
+// data-only FCM, wake TaskManager and relay exactly one local notification.
+const ANDROID_EXPO_BACKGROUND_CLIENT_TYPE = 'expo_background_v1';
+const ANDROID_EXPO_LEGACY_CLIENT_TYPE = 'expo';
 let lastRegisteredNativePushToken = '';
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => getNativeNotificationPresentationBehavior(
+    getNotificationData(notification),
+  ),
 });
 
 function isNativeMobilePlatform() {
@@ -108,6 +111,16 @@ function getNotificationData(notification: Notification) {
   };
 }
 
+export function getNativeNotificationPresentationBehavior(data: unknown) {
+  const suppressRemoteHeadless = shouldSuppressHeadlessRemoteNotification(data);
+  return {
+    shouldShowBanner: !suppressRemoteHeadless,
+    shouldShowList: !suppressRemoteHeadless,
+    shouldPlaySound: !suppressRemoteHeadless,
+    shouldSetBadge: false,
+  };
+}
+
 function buildNotificationIntent(notification: Notification, source: NativeNotificationIntent['source']): NativeNotificationIntent {
   const data = getNotificationData(notification);
   const url = getNotificationPath(data);
@@ -121,49 +134,6 @@ function buildNotificationIntent(notification: Notification, source: NativeNotif
     source,
     url,
   };
-}
-
-export async function createAndroidNotificationChannels() {
-  if (Platform.OS !== 'android') return;
-
-  await Promise.all([
-    Notifications.setNotificationChannelAsync('ristak_alerts', {
-      name: 'Alertas con sonido y vibración',
-      description: 'Mensajes, citas, pagos y avisos importantes',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
-      enableVibrate: true,
-      enableLights: true,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-    }),
-    Notifications.setNotificationChannelAsync('ristak_sound', {
-      name: 'Alertas con sonido',
-      description: 'Notificaciones de Ristak con sonido y sin vibración',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
-      enableVibrate: false,
-      enableLights: true,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-    }),
-    Notifications.setNotificationChannelAsync('ristak_vibrate', {
-      name: 'Alertas con vibración',
-      description: 'Notificaciones de Ristak con vibración y sin sonido',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: null,
-      enableVibrate: true,
-      enableLights: true,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-    }),
-    Notifications.setNotificationChannelAsync('ristak_silent', {
-      name: 'Alertas silenciosas',
-      description: 'Notificaciones de Ristak sin sonido ni vibración',
-      importance: Notifications.AndroidImportance.DEFAULT,
-      sound: null,
-      enableVibrate: false,
-      enableLights: false,
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-    }),
-  ].map((task) => task.catch(() => undefined)));
 }
 
 export async function getNativePushPermissionStatus(): Promise<NativePushPermissionStatus> {
@@ -215,11 +185,14 @@ async function saveNativePushToken(
   if (!normalizedToken) {
     throw new Error('Android no entregó una llave de notificaciones para este celular.');
   }
+  const backgroundTaskReady = await chatNotificationBackgroundTaskReady;
 
   const saved = await api.saveMobilePushDevice({
     token: normalizedToken,
     platform: 'android',
-    clientType: ANDROID_EXPO_CLIENT_TYPE,
+    clientType: backgroundTaskReady
+      ? ANDROID_EXPO_BACKGROUND_CLIENT_TYPE
+      : ANDROID_EXPO_LEGACY_CLIENT_TYPE,
     appPackage: ANDROID_EXPO_APP_PACKAGE,
     calendarIds,
     appVersion: '',

@@ -172,8 +172,8 @@ test('la cache de datos usa el mismo limite de sesion y rechaza resultados backg
 test('el refresh background revalida la sesion y fija el namespace al escribir incluso vacio', () => {
   const source = fs.readFileSync(require.resolve('../src/background.ts'), 'utf8');
 
-  assert.match(source, /isCurrentSessionCacheNamespace\(sessionNamespace, currentBaseUrl, currentToken\)/);
-  assert.match(source, /writeCacheNow\([\s\S]*NATIVE_INBOX_CACHE_KEY,[\s\S]*chats\.slice\(0, NATIVE_INBOX_CACHE_LIMIT\),[\s\S]*sessionNamespace/);
+  assert.match(source, /isCurrentSessionCacheNamespace\(session\.namespace, currentBaseUrl, currentToken\)/);
+  assert.match(source, /writeCacheNow\([\s\S]*NATIVE_INBOX_CACHE_KEY,[\s\S]*chats\.slice\(0, NATIVE_INBOX_CACHE_LIMIT\),[\s\S]*session\.namespace/);
   assert.doesNotMatch(source, /if \(chats\.length\)/);
   assert.doesNotMatch(source, /setCacheNamespace/);
 });
@@ -368,14 +368,15 @@ test('un pending rehidratado queda fallido y reintentable si el servidor no lo r
 
 test('la carga canonica conserva el outbox y la cache escribe vacio solo despues de hidratar', () => {
   const source = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  const mergeSource = fs.readFileSync(require.resolve('../src/chatMessageMerge.ts'), 'utf8');
 
   assert.match(source, /if \(!conversationCacheHydrated\) return;/);
   assert.match(source, /writeCache\(conversationCacheKey\(contact\.id\), latestMessages\)/);
   assert.match(source, /retainNativeLocalOutboxMessages\(current\)/);
   assert.match(source, /mergeNativeChatMessagesAuthoritatively\([\s\S]*!sendLockedRef\.current,[\s\S]*retainedOutboxMessages/);
-  assert.match(source, /reconcileNativeOptimisticMessages\(byId, includeUnsettledLocal\)/);
-  assert.match(source, /const serverState = getOutboundSendResultState\(serverRow\)/);
-  assert.match(source, /pending: serverRow\.pending \?\? serverState\.pending,[\s\S]{0,120}failed: serverRow\.failed \?\? serverState\.failed/);
+  assert.match(mergeSource, /reconcileNativeOptimisticMessages\(byId, includeUnsettledLocal\)/);
+  assert.match(mergeSource, /const serverState = getOutboundSendResultState\(serverRow\)/);
+  assert.match(mergeSource, /pending: serverRow\.pending \?\? serverState\.pending,[\s\S]{0,120}failed: serverRow\.failed \?\? serverState\.failed/);
   assert.doesNotMatch(source, /if \(messages\.length\) \{[\s\S]{0,300}conversationCacheKey\(contact\.id\)/);
 });
 

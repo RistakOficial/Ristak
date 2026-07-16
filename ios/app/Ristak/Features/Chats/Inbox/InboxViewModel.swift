@@ -149,6 +149,12 @@ final class InboxViewModel {
     /// Mientras lo esté, su realtime propio se suspende para no correr un SSE
     /// duplicado del que ya abre el hilo ni re-bajar la bandeja entera detrás.
     private var isCoveredByThread = false
+    /// Precarga acotada de los hilos que encabezan el inbox.
+    private var routineThreadPrewarmTask: Task<Void, Never>?
+    private var routineThreadPrewarmTaskID: UUID?
+    /// Ráfagas SSE por contacto se debouncean antes de actualizar su snapshot.
+    private var activityThreadPrewarmTasks: [String: Task<Void, Never>] = [:]
+    private var activityThreadPrewarmTaskIDs: [String: UUID] = [:]
 
     // MARK: Búsqueda (instantánea local + servidor en paralelo)
 
@@ -310,6 +316,7 @@ final class InboxViewModel {
         directoryPrewarmNamespace = nil
         directoryPrewarmTask?.cancel()
         directoryPrewarmTask = nil
+        cancelThreadPrewarming()
     }
 
     private func invalidateSatelliteContextLoad() {
@@ -663,6 +670,7 @@ final class InboxViewModel {
             persistCacheSnapshot()
             syncUnreadBadge()
             prefetchAvatars(rows)
+            scheduleRoutineThreadPrewarm()
             // Si la peticion salio antes de una actividad local/SSE, el overlay
             // ya protege la UI; aun asi pedimos una vuelta fresca para confirmar
             // pronto y retirar el estado provisional.
@@ -692,6 +700,61 @@ final class InboxViewModel {
         let urls = contacts.prefix(limit).compactMap { $0.profilePhotoUrl.flatMap(URL.init(string:)) }
         guard !urls.isEmpty else { return }
         Task { await RistakImageLoader.shared.prefetch(urls) }
+    }
+
+    private func scheduleRoutineThreadPrewarm() {
+        guard namespace != nil,
+              routineThreadPrewarmTask == nil,
+              let namespaceToken = RistakSnapshotCache.shared.namespaceToken() else { return }
+        let contactIDs = ChatThreadPrewarmPolicy.candidateContactIDs(from: rows)
+        guard !contactIDs.isEmpty else { return }
+        let taskID = UUID()
+        routineThreadPrewarmTaskID = taskID
+        routineThreadPrewarmTask = Task { [weak self] in
+            _ = await ChatThreadPrewarmer.prewarm(
+                contactIDs: contactIDs,
+                ifCurrent: namespaceToken
+            )
+            guard let self, self.routineThreadPrewarmTaskID == taskID else { return }
+            self.routineThreadPrewarmTask = nil
+            self.routineThreadPrewarmTaskID = nil
+        }
+    }
+
+    private func scheduleActivityThreadPrewarm(contactID: String) {
+        guard namespace != nil,
+              let namespaceToken = RistakSnapshotCache.shared.namespaceToken() else { return }
+        activityThreadPrewarmTasks[contactID]?.cancel()
+        let expectedNamespace = namespace
+        let taskID = UUID()
+        activityThreadPrewarmTaskIDs[contactID] = taskID
+        activityThreadPrewarmTasks[contactID] = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(220))
+            } catch {
+                return
+            }
+            guard let self,
+                  self.namespace == expectedNamespace,
+                  self.activityThreadPrewarmTaskIDs[contactID] == taskID else { return }
+            _ = await ChatThreadPrewarmer.prewarm(
+                contactIDs: [contactID],
+                forceContactID: contactID,
+                ifCurrent: namespaceToken
+            )
+            guard self.activityThreadPrewarmTaskIDs[contactID] == taskID else { return }
+            self.activityThreadPrewarmTasks[contactID] = nil
+            self.activityThreadPrewarmTaskIDs[contactID] = nil
+        }
+    }
+
+    private func cancelThreadPrewarming() {
+        routineThreadPrewarmTask?.cancel()
+        routineThreadPrewarmTask = nil
+        routineThreadPrewarmTaskID = nil
+        for task in activityThreadPrewarmTasks.values { task.cancel() }
+        activityThreadPrewarmTasks.removeAll()
+        activityThreadPrewarmTaskIDs.removeAll()
     }
 
     /// Scroll infinito: dispara la siguiente página cuando el centinela del final
@@ -747,6 +810,7 @@ final class InboxViewModel {
     func applyActivity(_ activity: ChatInboxActivity) {
         guard configured, !activity.contactID.isEmpty else { return }
         guard activityMatchesActivePhoneFilter(activity) else { return }
+        scheduleActivityThreadPrewarm(contactID: activity.contactID)
 
         let seed = navigationSeedContacts[activity.contactID]
             ?? directoryContactByID[activity.contactID]
@@ -1154,7 +1218,13 @@ final class InboxViewModel {
 
     /// scenePhase: pausar polls y cortar SSE en background; al volver,
     /// reconectar y disparar un refresh inmediato.
-    func setScenePaused(_ paused: Bool) {
+    func setScenePaused(_ paused: Bool, enteredBackground: Bool = false) {
+        if enteredBackground {
+            ChatBackgroundRefreshCoordinator.shared
+                .finishRecentThreadsAfterEnteringBackground(
+                    contactIDs: ChatThreadPrewarmPolicy.candidateContactIDs(from: rows)
+                )
+        }
         guard isScenePaused != paused else { return }
         isScenePaused = paused
         if paused {

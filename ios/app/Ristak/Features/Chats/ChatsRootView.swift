@@ -48,16 +48,7 @@ struct ChatsRootView: View {
     /// `layout` + arranque + cableado de realtime (escena, cobertura por hilo,
     /// clase de tamaño). Ver nota en `body` sobre por qué se divide la cadena.
     private var realtimeWiredLayout: some View {
-        layout
-            .task {
-                await bootstrap()
-            }
-            .onChange(of: session.user?.id) {
-                refreshIdentityNamespace()
-            }
-            .onChange(of: scenePhase) { _, phase in
-                viewModel.setScenePaused(phase != .active)
-            }
+        bootstrappedLayout
             .onChange(of: path) { _, newPath in
                 // Compacto (iPhone): un hilo abierto TAPA la bandeja → suspende su
                 // realtime (evita SSE duplicado + re-bajar la bandeja detrás). En
@@ -69,6 +60,25 @@ struct ChatsRootView: View {
                 // Rotación/multitarea: al pasar a regular la bandeja vuelve a estar
                 // visible, así que se destapa aunque el stack siga con un hilo.
                 viewModel.setCoveredByThread(newClass == .compact && !path.isEmpty)
+            }
+    }
+
+    /// SwiftUI genera un tipo nuevo por modificador. Mantener el arranque y el
+    /// ciclo de vida en otro tramo evita que el type-checker se ahogue al sumar
+    /// el callback de background al cableado que ya tenía esta raíz.
+    private var bootstrappedLayout: some View {
+        layout
+            .task {
+                await bootstrap()
+            }
+            .onChange(of: session.user?.id) {
+                refreshIdentityNamespace()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                viewModel.setScenePaused(
+                    phase != .active,
+                    enteredBackground: phase == .background
+                )
             }
     }
 

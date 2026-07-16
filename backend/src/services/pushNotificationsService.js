@@ -1649,7 +1649,17 @@ function getAndroidChannelId({ soundEnabled = true, vibrationEnabled = true } = 
 function isExpoAndroidPushDevice(row = {}) {
   const clientType = String(row.client_type || row.clientType || '').trim().toLowerCase()
   const appPackage = String(row.app_package || row.appPackage || '').trim().toLowerCase()
-  return clientType === 'expo' || appPackage === 'com.ristak.android'
+  return clientType === 'expo' || clientType === 'expo_background_v1' || appPackage === 'com.ristak.android'
+}
+
+function supportsExpoHeadlessBackgroundPush(row = {}) {
+  const clientType = String(row.client_type || row.clientType || '').trim().toLowerCase()
+  return clientType === 'expo_background_v1'
+}
+
+function shouldUseExpoHeadlessBackgroundPush(row = {}, payload = {}) {
+  return supportsExpoHeadlessBackgroundPush(row) &&
+    getNotificationCategory(payload).toLowerCase() === 'chat'
 }
 
 function getNotificationCategory(payload = {}) {
@@ -1780,7 +1790,9 @@ export async function saveMobilePushDevice({
   const id = getNativeDeviceId(normalizedPlatform, normalizedToken)
   const normalizedCalendarIds = normalizeCalendarIds(calendarIds)
   const rawClientType = String(clientType || '').trim().toLowerCase()
-  const normalizedClientType = ['expo', 'native'].includes(rawClientType) ? rawClientType : ''
+  const normalizedClientType = ['expo', 'expo_background_v1', 'native'].includes(rawClientType)
+    ? rawClientType
+    : ''
   const normalizedAppPackage = String(appPackage || '').trim().toLowerCase().slice(0, 128)
 
   await db.run(`
@@ -1972,10 +1984,26 @@ export function buildFcmMessageBody(row, payload = {}, experience = {}) {
   const notificationBody = getNotificationBody(payload)
   const channelId = getAndroidChannelId(experience)
   const collapseId = getNotificationCollapseId(payload) || getNotificationThreadId(payload)
+  const useHeadlessBackgroundPush = shouldUseExpoHeadlessBackgroundPush(row, payload)
+  const notificationData = getNotificationData(payload)
+  if (useHeadlessBackgroundPush) {
+    // expo-notifications auto-presenta un data-only que contenga las llaves
+    // reservadas `title`/`message`. Usa nombres privados para que sólo nuestro
+    // task publique la alerta después de preparar el caché.
+    delete notificationData.title
+    delete notificationData.body
+  }
   const data = {
-    ...getNotificationData(payload),
-    title: notificationTitle,
-    body: notificationBody,
+    ...notificationData,
+    ...(useHeadlessBackgroundPush
+      ? {
+          ristakRelayTitle: notificationTitle,
+          ristakRelayBody: notificationBody
+        }
+      : {
+          title: notificationTitle,
+          body: notificationBody
+        }),
     channelId,
     androidChannelId: channelId,
     soundEnabled: String(experience.soundEnabled !== false),
@@ -1991,7 +2019,10 @@ export function buildFcmMessageBody(row, payload = {}, experience = {}) {
     }
   }
 
-  if (isExpoAndroidPushDevice(row)) {
+  // Las versiones Expo anteriores necesitan `notification` para que Android pinte
+  // la alerta. La app que anuncia `expo_background_v1` registra un headless task:
+  // debe recibir data-only para precargar el chat y publicar una sola alerta local.
+  if (isExpoAndroidPushDevice(row) && !useHeadlessBackgroundPush) {
     message.notification = {
       title: notificationTitle,
       body: notificationBody
@@ -2007,6 +2038,36 @@ export function buildFcmMessageBody(row, payload = {}, experience = {}) {
     message: {
       ...message
     }
+  }
+}
+
+export function buildApnsMessageBody(payload = {}, experience = {}) {
+  const aps = {
+    alert: {
+      title: getNotificationTitle(payload),
+      body: getNotificationBody(payload)
+    },
+    'thread-id': getNotificationThreadId(payload),
+    category: getApnsCategory(payload)
+  }
+  if (shouldUseNotificationServiceExtension(payload)) {
+    aps['mutable-content'] = 1
+  }
+  if (getNotificationCategory(payload).toLowerCase() === 'chat') {
+    // La alerta sigue siendo visible, pero iOS también concede una ventana corta
+    // de ejecución para dejar inbox/hilo listos antes de que el usuario abra.
+    aps['content-available'] = 1
+  }
+  if (experience.soundEnabled) {
+    aps.sound = 'default'
+  }
+  if (Number.isFinite(Number(payload.badge))) {
+    aps.badge = Math.max(0, Number(payload.badge))
+  }
+
+  return {
+    aps,
+    ...getNotificationData(payload)
   }
 }
 
@@ -2041,34 +2102,12 @@ async function sendApnsNotification(row, payload = {}, experience = {}) {
     throw new Error('Faltan credenciales APNs para notificaciones iPhone')
   }
 
-  const notificationTitle = getNotificationTitle(payload)
-  const notificationBody = getNotificationBody(payload)
   const host = APNS_ENV === 'development' || APNS_ENV === 'sandbox'
     ? 'api.sandbox.push.apple.com'
     : 'api.push.apple.com'
   const authToken = await getApnsJwt()
   const client = http2.connect(`https://${host}`)
-  const aps = {
-    alert: {
-      title: notificationTitle,
-      body: notificationBody
-    },
-    'thread-id': getNotificationThreadId(payload),
-    category: getApnsCategory(payload)
-  }
-  if (shouldUseNotificationServiceExtension(payload)) {
-    aps['mutable-content'] = 1
-  }
-  if (experience.soundEnabled) {
-    aps.sound = 'default'
-  }
-  if (Number.isFinite(Number(payload.badge))) {
-    aps.badge = Math.max(0, Number(payload.badge))
-  }
-  const requestBody = JSON.stringify({
-    aps,
-    ...getNotificationData(payload)
-  })
+  const requestBody = JSON.stringify(buildApnsMessageBody(payload, experience))
 
   return new Promise((resolve, reject) => {
     let statusCode = 0

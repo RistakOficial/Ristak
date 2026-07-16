@@ -10,8 +10,27 @@ final class RistakAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        ChatBackgroundRefreshCoordinator.shared.register()
         RistakObservability.recordPush(.delegateReady)
         return true
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        ChatBackgroundRefreshCoordinator.shared.scheduleNextRefresh()
+    }
+
+    /// APNs de chat con `content-available=1`: bajar el hilo concreto y confirmar
+    /// únicamente cuando inbox + snapshot ya quedaron persistidos.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task { @MainActor in
+            let result = await ChatBackgroundRefreshCoordinator.shared
+                .refreshForRemoteNotification(userInfo: userInfo)
+            completionHandler(result)
+        }
     }
 
     func application(

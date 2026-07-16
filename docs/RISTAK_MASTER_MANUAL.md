@@ -6565,6 +6565,19 @@ la ultima agenda con aviso y bloquea cambios de fecha hasta tener timezone
 valida. Pagos bloquea creacion si no puede confirmar moneda y zona horaria, y
 mantiene features avanzadas en fail-closed.
 
+La apertura de un hilo Android precarga su snapshot puntual antes de montar la
+ruta, se ancla una sola vez al mensaje mas reciente y distingue error transitorio
+de un `200 []` realmente autoritativo. Un preview/conteo de inbox incompatible
+con un hilo vacio activa una recuperacion acotada; timeout/`5xx` conserva cache,
+ofrece reintento manual y nunca muestra falsamente que no hay mensajes; no hace
+loops ni reintentos ocultos. En background,
+WorkManager mantiene bandeja y hasta seis hilos recientes, mientras el task
+headless de push da hasta 1.8 s al contacto notificado para persistir, deja una
+sola alerta local y despues actualiza una pagina de inbox. Si la red no alcanza,
+aborta la precarga y alerta sin esperar el timeout largo. No usa journey ni
+fan-out por push. Es oportunista y siempre valida namespace/sesion antes de
+persistir y antes de programar la alerta.
+
 El bootstrap Android precarga antes del shell solo los cinco snapshots de
 primera pintura (bandeja, first-sync, configuracion/labels y filtros), con un
 presupuesto conjunto de 4 MiB. La precarga general del namespace corre despues
@@ -6660,8 +6673,20 @@ concedido no significa token registrado. La app exige la confirmacion de
 5/15/60/300 s y al volver a foreground, y solo entonces muestra
 `Alertas activas`. La renovacion del token tambien reintenta su persistencia.
 La Notification Service Extension serializa tareas/callbacks para finalizar una
-sola vez, descarga con timeouts de 6–7 s y limita el avatar a 5 MB y la media
-adjunta a 12 MB; si no puede enriquecer, entrega la notificacion base.
+sola vez, descarga avatar y media en paralelo con presupuesto visual total de
+1.8 s y limita el avatar a 5 MB y la media adjunta a 12 MB; si no puede
+enriquecer a tiempo, entrega inmediatamente la notificacion base. Cada push de
+chat lleva ademas `content-available=1`: la app principal precarga el hilo
+notificado y el inbox, fuerza el commit de snapshots y usa BGAppRefresh/tiempo
+residual como respaldo best-effort. iOS decide cuando concede esas ventanas; un
+cierre forzado no permite prometer ejecucion continua.
+La apertura iOS sigue cambios del timeline y de la altura hasta terminar la
+primera carga; un gesto del usuario cancela de inmediato el anclaje automatico.
+Dos respuestas vacias que contradicen al inbox producen un error reintentable,
+no un chat vacio exitoso. Las escrituras de hilo llevan version monotónica por
+namespace/contacto y las cargas compartidas usan leases cancelables, de modo que
+una respuesta vieja, un cambio de cuenta o la expiracion de BGTask no dejan red
+ni cache obsoletas vivas.
 El login de `com.ristak.app` muestra el isotipo Ristak libre de contenedores y el
 wordmark oficial adaptado a claro/oscuro dentro de una cabecera pequena y
 compacta. `Iniciar sesion` se presenta como subtitulo ligero, y la separacion
@@ -6674,9 +6699,14 @@ del cliente.
 En Android hay dos contratos: el legacy Capacitor (`frontend/android`,
 `com.ristak.app`) sigue usando FCM data-only para que
 `RistakFirebaseMessagingService` dibuje la notificacion nativa; la app Play/Expo
-(`mobile/`, `com.ristak.android`) registra el token con `clientType=expo` y debe
-recibir `message.notification` visible mas `message.data` completa para
-navegacion. Ristak Installer guarda cifrado el `google-services.json` de
+(`mobile/`, `com.ristak.android`) conserva `clientType=expo` para builds legacy,
+que reciben `message.notification` visible mas `message.data`. El build que
+confirma su task headless usa `clientType=expo_background_v1` y solo los push de
+chat para esa capacidad reciben FCM data-only; citas, pagos y demas eventos
+conservan alerta remota visible. El payload de chat evita las llaves reservadas
+de Expo y usa `ristakRelayTitle`/`ristakRelayBody`; el task precarga y emite una
+alerta local deduplicada marcada para que el handler no la suprima. Ristak
+Installer guarda cifrado el `google-services.json` de
 Firebase para `com.ristak.android` como `mobile_android_google_services_json` y
 lo entrega temporalmente al workflow de tienda; no se commitea en este repo.
 Si el portal central reporta Android configurado, la instalacion cliente delega

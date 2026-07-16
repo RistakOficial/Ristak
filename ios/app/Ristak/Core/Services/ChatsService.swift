@@ -22,7 +22,8 @@ struct ChatsService: Sendable {
         offset: Int = 0,
         businessPhoneNumberId: String? = nil,
         businessPhone: String? = nil,
-        warmProfilePictures: Bool = true
+        warmProfilePictures: Bool = true,
+        timeout: TimeInterval = APIClient.dashboardTimeout
     ) async throws -> [ChatContact] {
         try await client.get(
             "/contacts/chats",
@@ -34,7 +35,7 @@ struct ChatsService: Sendable {
                 "businessPhone": businessPhone,
                 "warmProfilePictures": warmProfilePictures ? "true" : "false",
             ],
-            timeout: APIClient.dashboardTimeout
+            timeout: timeout
         )
     }
 

@@ -306,6 +306,35 @@ export async function readCache<T>(key: string, fallback: T): Promise<T> {
   }
 }
 
+// Headless tasks must never mutate the process-global foreground namespace.
+// This explicit read is the counterpart of writeCacheNow(..., namespace): it
+// lets a notification/background worker merge a durable snapshot safely.
+export async function readCacheForNamespace<T>(
+  key: string,
+  fallback: T,
+  expectedNamespace: string,
+): Promise<T> {
+  if (!CACHE_ROOT || cacheClearing || !expectedNamespace) return fallback;
+  const requiredNamespace = sanitize(expectedNamespace);
+  const targetPath = pathFor(key, requiredNamespace);
+  if (memory.has(targetPath)) return memory.get(targetPath) as T;
+  const readEpoch = cacheEpoch;
+  try {
+    await ensureDir();
+    if (readEpoch !== cacheEpoch || cacheClearing) return fallback;
+    const info = await FileSystem.getInfoAsync(targetPath);
+    if (!info.exists) return fallback;
+    const raw = await FileSystem.readAsStringAsync(targetPath);
+    if (readEpoch !== cacheEpoch || cacheClearing || !raw) return fallback;
+    const value = readEnvelope(raw);
+    if (value === undefined) return fallback;
+    if (namespace === requiredNamespace) memory.set(targetPath, value);
+    return value as T;
+  } catch {
+    return fallback;
+  }
+}
+
 const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
 
 // Debounced so rapid state updates (e.g. a burst of message merges) collapse into

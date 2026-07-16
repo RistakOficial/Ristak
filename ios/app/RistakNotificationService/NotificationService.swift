@@ -8,9 +8,17 @@ final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttemptContent: UNNotificationContent?
     private var activeTasks: [Int: URLSessionTask] = [:]
+    private var baseEnhancementContent: UNNotificationContent?
+    private var mediaEnhancementContent: UNNotificationContent?
+    private var senderEnhancementContent: UNNotificationContent?
+    private var completedEnhancementBranches = 0
+    private var enhancementDeadline: DispatchWorkItem?
 
     private static let maxAvatarBytes = 5 * 1024 * 1024
     private static let maxAttachmentBytes = 12 * 1024 * 1024
+    /// El texto de una notificación nunca espera más que este presupuesto por
+    /// adornos. Media y avatar corren en paralelo dentro de la misma ventana.
+    private static let enhancementBudget: TimeInterval = 1.8
     private static let downloadSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 6
@@ -32,37 +40,98 @@ final class NotificationService: UNNotificationServiceExtension {
             self.contentHandler = contentHandler
             self.bestAttemptContent = mutableContent
             self.activeTasks.removeAll()
+            self.baseEnhancementContent = mutableContent
+            self.mediaEnhancementContent = nil
+            self.senderEnhancementContent = nil
+            self.completedEnhancementBranches = 0
+            self.enhancementDeadline?.cancel()
         }
         let userInfo = request.content.userInfo
 
-        attachNotificationMedia(to: mutableContent, userInfo: userInfo) { [weak self] contentWithMedia in
-            guard let self else {
-                contentHandler(contentWithMedia)
-                return
-            }
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.finishEnhancements()
+        }
+        stateQueue.sync { enhancementDeadline = deadline }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + Self.enhancementBudget,
+            execute: deadline
+        )
 
-            self.applyCommunicationSender(to: contentWithMedia, userInfo: userInfo) { [weak self] finalContent in
-                self?.finish(with: finalContent)
-            }
+        // Dos copias independientes: ambas descargas arrancan YA y nunca mutan el
+        // mismo UNMutableNotificationContent desde callbacks concurrentes.
+        let mediaCopy = (mutableContent.mutableCopy() as? UNMutableNotificationContent) ?? mutableContent
+        attachNotificationMedia(to: mediaCopy, userInfo: userInfo) { [weak self] contentWithMedia in
+            self?.recordEnhancement(contentWithMedia, branch: .media)
+        }
+
+        let senderCopy = (mutableContent.mutableCopy() as? UNMutableNotificationContent) ?? mutableContent
+        applyCommunicationSender(to: senderCopy, userInfo: userInfo) { [weak self] senderContent in
+            self?.recordEnhancement(senderContent, branch: .sender)
         }
     }
 
     override func serviceExtensionTimeWillExpire() {
-        let snapshot: (tasks: [URLSessionTask], content: UNNotificationContent?) = stateQueue.sync {
-            (Array(activeTasks.values), bestAttemptContent)
-        }
-        snapshot.tasks.forEach { $0.cancel() }
-        if let content = snapshot.content { finish(with: content) }
+        finishEnhancements()
     }
 
-    private func finish(with content: UNNotificationContent) {
-        let handler: ((UNNotificationContent) -> Void)? = stateQueue.sync {
-            guard let contentHandler else { return nil }
-            self.contentHandler = nil
-            self.bestAttemptContent = content
-            return contentHandler
+    private enum EnhancementBranch {
+        case media
+        case sender
+    }
+
+    private func recordEnhancement(
+        _ content: UNNotificationContent,
+        branch: EnhancementBranch
+    ) {
+        let allFinished: Bool = stateQueue.sync {
+            guard contentHandler != nil else { return false }
+            switch branch {
+            case .media:
+                mediaEnhancementContent = content
+            case .sender:
+                senderEnhancementContent = content
+            }
+            completedEnhancementBranches += 1
+            return completedEnhancementBranches >= 2
         }
-        handler?(content)
+        if allFinished { finishEnhancements() }
+    }
+
+    private func finishEnhancements() {
+        let snapshot: (
+            handler: ((UNNotificationContent) -> Void),
+            base: UNNotificationContent,
+            media: UNNotificationContent?,
+            sender: UNNotificationContent?,
+            tasks: [URLSessionTask]
+        )? = stateQueue.sync {
+            guard let contentHandler,
+                  let base = baseEnhancementContent ?? bestAttemptContent else { return nil }
+            self.contentHandler = nil
+            enhancementDeadline?.cancel()
+            enhancementDeadline = nil
+            let tasks = Array(activeTasks.values)
+            activeTasks.removeAll()
+            return (
+                contentHandler,
+                base,
+                mediaEnhancementContent,
+                senderEnhancementContent,
+                tasks
+            )
+        }
+        guard let snapshot else { return }
+        snapshot.tasks.forEach { $0.cancel() }
+
+        let decorated = snapshot.sender ?? snapshot.base
+        let finalContent = (decorated.mutableCopy() as? UNMutableNotificationContent)
+            ?? ((snapshot.base.mutableCopy() as? UNMutableNotificationContent))
+        if let attachments = snapshot.media?.attachments, !attachments.isEmpty {
+            finalContent?.attachments = attachments
+        }
+        let delivered = finalContent ?? decorated
+        stateQueue.sync { bestAttemptContent = delivered }
+        snapshot.handler(delivered)
     }
 
     private func attachNotificationMedia(

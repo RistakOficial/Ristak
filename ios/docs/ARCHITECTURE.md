@@ -188,8 +188,16 @@ terminar cambio el filtro de calendarios.
   `com.ristak.app.NotificationService`; procesa `mutable-content`, descarga
   avatar/media pública y entrega Communication Notifications con el remitente
   correcto. Su estado y callbacks se serializan para finalizar una sola vez;
-  usa timeouts de 6–7 s y rechaza avatares mayores a 5 MB o adjuntos mayores a
-  12 MB.
+  avatar y media arrancan en paralelo y comparten un deadline visual de 1.8 s;
+  rechaza avatares mayores a 5 MB o adjuntos mayores a 12 MB.
+- `ChatBackgroundRefreshCoordinator`: registra
+  `com.ristak.app.chat-refresh`, atiende `content-available=1`, aprovecha el
+  tiempo residual al entrar en background y precarga inbox + un lote acotado de
+  hilos. Captura namespace/generacion y un permiso monotónico de escritura antes
+  de la red, descarta respuestas viejas o de otra sesion y espera
+  `flushPendingWrites()` antes del completion normal de iOS. El loader compartido
+  usa leases por consumidor; al expirar BGTask completa una sola vez y cancela
+  el request cuando ya no quedan consumidores.
 - Logout explícito hace `DELETE /api/push/mobile-devices` best-effort y luego
   limpia registro/APNs local. En 401, licencia revocada o cierre sin credencial,
   la limpieza local ocurre de inmediato aunque el DELETE ya no sea posible.

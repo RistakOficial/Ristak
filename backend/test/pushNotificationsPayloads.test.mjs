@@ -4,16 +4,40 @@ import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import {
+  buildApnsMessageBody,
   buildFcmMessageBody,
   buildPaymentNotificationPayload,
   normalizeNotificationPayload,
   renderNotificationInitialsAvatarPng,
+  saveMobilePushDevice,
   sendCalendarAppointmentNotification,
   sendChatMessageNotification,
   sendAppNotificationPayload,
   setAppNotificationPayloadSenderForTest,
   setPushContactVisibilityCheckerForTest
 } from '../src/services/pushNotificationsService.js'
+
+test('persiste la capacidad Android background v1 sin degradarla a cliente desconocido', async () => {
+  const token = `android-background-${randomUUID()}`
+  try {
+    const saved = await saveMobilePushDevice({
+      token,
+      platform: 'android',
+      clientType: 'expo_background_v1',
+      appPackage: 'com.ristak.android'
+    })
+
+    assert.equal(saved.clientType, 'expo_background_v1')
+    const row = await db.get(
+      'SELECT client_type, app_package FROM mobile_push_devices WHERE token = ?',
+      [token]
+    )
+    assert.equal(row.client_type, 'expo_background_v1')
+    assert.equal(row.app_package, 'com.ristak.android')
+  } finally {
+    await db.run('DELETE FROM mobile_push_devices WHERE token = ?', [token]).catch(() => undefined)
+  }
+})
 
 test('un fallo de visibilidad reintenta push durable y conserva fail-closed best-effort', async () => {
   const visibilityError = new Error('DB temporalmente no disponible')
@@ -674,4 +698,90 @@ test('payload FCM Android Play Expo incluye alerta visible y conserva data de na
   assert.equal(requestBody.message.data.contactId, 'con_1')
   assert.equal(requestBody.message.data.channelId, 'ristak_alerts')
   assert.equal(requestBody.message.data.androidChannelId, 'ristak_alerts')
+})
+
+test('payload FCM Android Expo background v1 es data-only para precargar antes de alertar', () => {
+  const requestBody = buildFcmMessageBody(
+    {
+      token: 'android-token-background',
+      client_type: 'expo_background_v1',
+      app_package: 'com.ristak.android'
+    },
+    {
+      title: 'Paciente Demo',
+      body: 'Mensaje para precarga',
+      url: '/movil?contact=con_2',
+      category: 'chat',
+      tag: 'chat-message-2',
+      threadId: 'chat-con_2',
+      contactId: 'con_2'
+    },
+    { soundEnabled: true, vibrationEnabled: true }
+  )
+
+  assert.equal(requestBody.message.token, 'android-token-background')
+  assert.equal(requestBody.message.notification, undefined)
+  assert.equal(requestBody.message.android.notification, undefined)
+  assert.equal(requestBody.message.android.priority, 'HIGH')
+  assert.equal(requestBody.message.android.collapse_key, 'chat-message-2')
+  assert.equal(requestBody.message.data.contactId, 'con_2')
+  assert.equal(requestBody.message.data.title, undefined)
+  assert.equal(requestBody.message.data.body, undefined)
+  assert.equal(requestBody.message.data.message, undefined)
+  assert.equal(requestBody.message.data.ristakRelayTitle, 'Paciente Demo')
+  assert.equal(requestBody.message.data.ristakRelayBody, 'Mensaje para precarga')
+})
+
+test('payload FCM Android Expo background v1 conserva alerta remota fuera de chat', () => {
+  const requestBody = buildFcmMessageBody(
+    {
+      token: 'android-token-background-event',
+      client_type: 'expo_background_v1',
+      app_package: 'com.ristak.android'
+    },
+    {
+      title: 'Cita actualizada',
+      body: 'Tu agenda cambió',
+      category: 'appointment',
+      eventKey: 'appointment-1'
+    },
+    { soundEnabled: true, vibrationEnabled: true }
+  )
+
+  assert.equal(requestBody.message.notification.title, '📅 Cita actualizada')
+  assert.equal(requestBody.message.notification.body, 'Tu agenda cambió')
+  assert.equal(requestBody.message.android.notification.channel_id, 'ristak_alerts')
+  assert.equal(requestBody.message.data.category, 'appointment')
+})
+
+test('payload APNs de chat despierta la app para precarga sin perder la alerta visible', () => {
+  const requestBody = buildApnsMessageBody(
+    {
+      title: 'Paciente Demo',
+      body: 'Mensaje para iPhone',
+      category: 'chat',
+      threadId: 'chat-con_3',
+      contactId: 'con_3',
+      messageId: 'message-3'
+    },
+    { soundEnabled: true }
+  )
+
+  assert.equal(requestBody.aps.alert.title, 'Paciente Demo')
+  assert.equal(requestBody.aps.alert.body, 'Mensaje para iPhone')
+  assert.equal(requestBody.aps['mutable-content'], 1)
+  assert.equal(requestBody.aps['content-available'], 1)
+  assert.equal(requestBody.aps.sound, 'default')
+  assert.equal(requestBody.contactId, 'con_3')
+  assert.equal(requestBody.messageId, 'message-3')
+})
+
+test('payload APNs que no es chat no solicita ejecución silenciosa', () => {
+  const requestBody = buildApnsMessageBody({
+    title: 'Cita actualizada',
+    body: 'Tu agenda cambió',
+    category: 'appointment'
+  })
+
+  assert.equal(requestBody.aps['content-available'], undefined)
 })

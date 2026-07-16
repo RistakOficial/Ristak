@@ -13,6 +13,23 @@ enum ChatThreadSnapshotCache {
     /// Tope de mensajes cacheados por hilo (los más recientes).
     static let maxMessages = 100
 
+    /// Permiso monotónico reservado ANTES de iniciar un request. Dos cargas del
+    /// mismo hilo pueden terminar fuera de orden; una respuesta antigua sólo
+    /// puede persistir mientras ninguna respuesta más nueva haya hecho commit.
+    struct WritePermit: Sendable {
+        fileprivate let namespace: RistakSnapshotCache.NamespaceToken
+        fileprivate let contactID: String
+        fileprivate let version: UInt64
+    }
+
+    private struct WriteLane {
+        var nextVersion: UInt64 = 0
+        var committedVersion: UInt64 = 0
+    }
+
+    @MainActor private static var writeLaneNamespace: RistakSnapshotCache.NamespaceToken?
+    @MainActor private static var writeLanes: [String: WriteLane] = [:]
+
     /// Los data URLs son el fallback legacy de transporte, no un formato de
     /// caché. Persistirlos duplica archivos en base64 y puede convertir 100
     /// mensajes en decenas o cientos de MB. URLs normales se conservan por
@@ -41,18 +58,128 @@ enum ChatThreadSnapshotCache {
     }
 
     @MainActor
-    static func save(_ messages: [ChatMessage], contactID: String) {
+    static func lastUpdatedAt(contactID: String) -> Date? {
+        RistakSnapshotCache.shared.value(
+            Date.self,
+            for: ChatSnapshotKey.threadUpdatedAt(contactID)
+        )
+    }
+
+    /// Reserva el orden de una futura respuesta. `ifCurrent` evita que una
+    /// tarea de la cuenta anterior siquiera obtenga turno en la cuenta actual.
+    @MainActor
+    static func beginWrite(
+        contactID: String,
+        ifCurrent expectedNamespace: RistakSnapshotCache.NamespaceToken? = nil
+    ) -> WritePermit? {
+        guard let namespace = RistakSnapshotCache.shared.namespaceToken(),
+              expectedNamespace == nil || expectedNamespace == namespace,
+              RistakSnapshotCache.shared.isCurrent(namespace) else { return nil }
+
+        if writeLaneNamespace != namespace {
+            writeLaneNamespace = namespace
+            writeLanes.removeAll(keepingCapacity: true)
+        }
+        var lane = writeLanes[contactID] ?? WriteLane()
+        lane.nextVersion &+= 1
+        writeLanes[contactID] = lane
+        return WritePermit(
+            namespace: namespace,
+            contactID: contactID,
+            version: lane.nextVersion
+        )
+    }
+
+    @MainActor
+    static func save(
+        _ messages: [ChatMessage],
+        contactID: String,
+        using suppliedPermit: WritePermit? = nil
+    ) {
         // Construir los DTOs en main es barato (copia de valores). El encode de
         // hasta 100 mensajes (con adjuntos/reacciones/email) sí pesa, así que se
         // hace fuera del hilo principal para no provocar un stall al llegar cada
         // mensaje nuevo; luego se vuelve a main para escribir en la caché.
+        guard let permit = suppliedPermit ?? beginWrite(contactID: contactID),
+              permit.contactID == contactID else { return }
         let capped = messages.suffix(maxMessages).map(ThreadMessageDTO.init)
-        let key = ChatSnapshotKey.thread(contactID)
-        guard let namespace = RistakSnapshotCache.shared.namespaceToken() else { return }
         Task.detached(priority: .utility) {
-            guard let data = try? JSONEncoder().encode(capped) else { return }
-            await RistakSnapshotCache.shared.storeRaw(data, for: key, ifCurrent: namespace)
+            let encoder = JSONEncoder()
+            guard let data = try? encoder.encode(capped),
+                  let timestamp = try? encoder.encode(Date()) else { return }
+            await MainActor.run {
+                _ = commitEncoded(
+                    messagesData: data,
+                    timestampData: timestamp,
+                    using: permit
+                )
+            }
         }
+    }
+
+    /// Variante awaitable para precarga activa/background. El método no retorna
+    /// hasta que la memoria ya contiene el hilo; con `flushToDisk` tampoco retorna
+    /// hasta que el rename atómico de los snapshots terminó.
+    @MainActor
+    static func savePrepared(
+        _ messages: [ChatMessage],
+        contactID: String,
+        flushToDisk: Bool,
+        using permit: WritePermit
+    ) async -> Bool {
+        guard permit.contactID == contactID else { return false }
+        let capped = messages.suffix(maxMessages).map(ThreadMessageDTO.init)
+        guard RistakSnapshotCache.shared.isCurrent(permit.namespace) else { return false }
+        let encoded = await Task.detached(priority: .utility) { () -> (Data, Data)? in
+            let encoder = JSONEncoder()
+            guard let messagesData = try? encoder.encode(capped),
+                  let timestampData = try? encoder.encode(Date()) else { return nil }
+            return (messagesData, timestampData)
+        }.value
+        guard !Task.isCancelled, let encoded else { return false }
+
+        guard commitEncoded(
+            messagesData: encoded.0,
+            timestampData: encoded.1,
+            using: permit
+        ) else { return false }
+        if flushToDisk {
+            await RistakSnapshotCache.shared.flushPendingWrites()
+            guard RistakSnapshotCache.shared.isCurrent(permit.namespace) else { return false }
+        }
+        return true
+    }
+
+    /// Commit indivisible desde MainActor: valida cuenta + versión antes de
+    /// tocar memoria. Reservar una versión nueva no invalida una vieja por sí
+    /// solo (el request nuevo podría fallar); únicamente un commit más nuevo la
+    /// vuelve obsoleta.
+    @MainActor
+    private static func commitEncoded(
+        messagesData: Data,
+        timestampData: Data,
+        using permit: WritePermit
+    ) -> Bool {
+        guard RistakSnapshotCache.shared.isCurrent(permit.namespace),
+              writeLaneNamespace == permit.namespace,
+              var lane = writeLanes[permit.contactID],
+              permit.version <= lane.nextVersion,
+              permit.version > lane.committedVersion else { return false }
+
+        let storedMessages = RistakSnapshotCache.shared.storeRaw(
+            messagesData,
+            for: ChatSnapshotKey.thread(permit.contactID),
+            ifCurrent: permit.namespace
+        )
+        let storedTimestamp = RistakSnapshotCache.shared.storeRaw(
+            timestampData,
+            for: ChatSnapshotKey.threadUpdatedAt(permit.contactID),
+            ifCurrent: permit.namespace
+        )
+        guard storedMessages, storedTimestamp else { return false }
+        lane.committedVersion = permit.version
+        writeLanes[permit.contactID] = lane
+        return true
     }
 
     // MARK: - Markers de actividad (pagos/citas)
