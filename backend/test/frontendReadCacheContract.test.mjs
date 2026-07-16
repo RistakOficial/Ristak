@@ -18,23 +18,33 @@ test('authFetch no clona, materializa ni cachea globalmente las respuestas GET',
   assert.match(source, /pathPrefixesOverlap/)
 })
 
-test('config deduplica únicamente JSON pequeño con cache acotado por cuenta', async () => {
-  const [authFetch, configService, configHook] = await Promise.all([
+test('config agrupa JSON pequeño por llave con cache acotado por cuenta', async () => {
+  const [authFetch, configService, configHook, themeContext] = await Promise.all([
     repoFile('frontend/src/services/authFetch.ts'),
     repoFile('frontend/src/services/appConfigService.ts'),
-    repoFile('frontend/src/hooks/useAppConfig.ts')
+    repoFile('frontend/src/hooks/useAppConfig.ts'),
+    repoFile('frontend/src/contexts/ThemeContext.tsx')
   ])
 
   assert.match(configService, /APP_CONFIG_CACHE_TTL_MS = 60_000/)
   assert.match(configService, /APP_CONFIG_CACHE_MAX_ENTRIES = 128/)
   assert.match(configService, /APP_CONFIG_REQUEST_TIMEOUT_MS = 20_000/)
   assert.match(configService, /getOrCreateSharedRequest\(\{/)
+  assert.match(configService, /queueMicrotask\(\(\) =>/)
+  assert.match(configService, /appConfigKeyInflight/)
+  assert.match(configService, /keysToEnqueue/)
   assert.match(configService, /createRequest: sharedSignal => withRequestTimeout\(\{/)
   assert.match(configService, /registerAuthScopedCacheInvalidator\(clearAppConfigReadCache\)/)
   assert.match(configService, /pathPrefixes: \['\/api\/config'\]/)
-  assert.match(configService, /requestAuthRevision === getAuthScopedCacheRevision\(\)/)
+  assert.match(configService, /batch\.authRevision === getAuthScopedCacheRevision\(\)/)
+  assert.match(configService, /batch\.cacheRevision === appConfigCacheRevision/)
   assert.doesNotMatch(configService, /Response\.clone|response\.clone|arrayBuffer/)
   assert.match(configHook, /getAppConfigValues\(\[key\]\)/)
+  assert.match(themeContext, /getAppConfigValues\(\[\s*THEME_COLOR_CONFIG_KEY,\s*THEME_DIR_CONFIG_KEY\s*\]\)/)
+  assert.doesNotMatch(
+    themeContext,
+    /fetch\(apiUrl\(`\/api\/config\?keys=\$\{THEME_COLOR_CONFIG_KEY\},\$\{THEME_DIR_CONFIG_KEY\}`\)\)/
+  )
   assert.match(
     configHook,
     /if \(!response\.ok\)[\s\S]*?throw new Error\('Failed to save config'\)[\s\S]*?clearAppConfigReadCache\(\)[\s\S]*?dispatchEvent/,

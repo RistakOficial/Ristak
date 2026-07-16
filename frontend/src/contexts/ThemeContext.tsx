@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { apiUrl } from '@/services/apiBaseUrl'
+import { getAppConfigValues } from '@/services/appConfigService'
 import { AUTH_PRINCIPAL_CHANGED_EVENT } from '@/services/authPrincipalCache'
 import { themes, sharedTokens } from '@/theme/tokens'
 
@@ -324,17 +325,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       try {
-        const response = await fetch(apiUrl(`/api/config?keys=${THEME_COLOR_CONFIG_KEY},${THEME_DIR_CONFIG_KEY}`))
-
-        if (!response.ok) {
-          // La sesión pudo cerrarse mientras la petición estaba en vuelo. No es
-          // un error de tema ni debe ensuciar la consola de login.
-          if (response.status === 401) return
-          throw new Error('Failed to fetch theme config')
-        }
-
-        const data = await response.json()
-        const config = data.config ?? {}
+        const config = await getAppConfigValues([
+          THEME_COLOR_CONFIG_KEY,
+          THEME_DIR_CONFIG_KEY
+        ])
         const configuredTheme = getConfigTheme(config[THEME_COLOR_CONFIG_KEY])
         const configuredDir = getConfigThemeDir(config[THEME_DIR_CONFIG_KEY])
         const legacyTheme = getLegacyTheme()
@@ -371,6 +365,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             console.error('Error migrating legacy theme config:', error)
           })
       } catch (error) {
+        // La sesión pudo cerrarse mientras la petición estaba en vuelo. No es
+        // un error de tema ni debe ensuciar la consola de login.
+        if ((error as Error & { status?: number }).status === 401) return
         console.error('Error loading theme config:', error)
       }
     }

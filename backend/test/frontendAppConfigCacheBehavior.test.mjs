@@ -122,7 +122,7 @@ async function withAppConfigService(fetchImpl, run) {
   }
 }
 
-test('config comparte una sola lectura simultánea y reutiliza el JSON fresco', async () => {
+test('config agrupa llaves simultáneas distintas y reutiliza cada valor fresco', async () => {
   const networkResponse = deferred()
   const calls = []
 
@@ -132,30 +132,116 @@ test('config comparte una sola lectura simultánea y reutiliza el JSON fresco', 
       return networkResponse.promise
     },
     async ({ getAppConfigValues }, { apiInvalidators }) => {
-      const first = getAppConfigValues(['table_transactions', 'account_currency'])
-      const second = getAppConfigValues(['account_currency', 'table_transactions'])
-      const third = getAppConfigValues([' table_transactions ', 'account_currency', 'account_currency'])
+      const first = getAppConfigValues(['table_transactions'])
+      const second = getAppConfigValues(['account_currency'])
+      const third = getAppConfigValues([' table_transactions ', 'theme_dir', 'theme_dir'])
 
+      assert.equal(calls.length, 0, 'la tanda espera un microtask para reunir llaves hermanas')
+      await Promise.resolve()
       assert.equal(calls.length, 1)
-      assert.equal(calls[0].url, '/api/config?keys=account_currency%2Ctable_transactions')
+      assert.equal(calls[0].url, '/api/config?keys=account_currency%2Ctable_transactions%2Ctheme_dir')
       assert.equal(calls[0].options.headers.Authorization, 'Bearer principal-a')
       assert.equal(apiInvalidators.length, 1)
       assert.deepEqual(apiInvalidators[0].options, { pathPrefixes: ['/api/config'] })
 
       const expected = {
         account_currency: 'MXN',
-        table_transactions: '[{"id":"date","visible":true}]'
+        table_transactions: '[{"id":"date","visible":true}]',
+        theme_dir: 'en'
       }
       networkResponse.resolve(jsonResponse({ success: true, config: expected }))
 
-      assert.deepEqual(await first, expected)
-      assert.deepEqual(await second, expected)
-      assert.deepEqual(await third, expected)
+      assert.deepEqual(await first, { table_transactions: expected.table_transactions })
+      assert.deepEqual(await second, { account_currency: expected.account_currency })
+      assert.deepEqual(await third, {
+        table_transactions: expected.table_transactions,
+        theme_dir: expected.theme_dir
+      })
       assert.deepEqual(
         await getAppConfigValues(['account_currency', 'table_transactions']),
-        expected
+        {
+          account_currency: expected.account_currency,
+          table_transactions: expected.table_transactions
+        }
       )
       assert.equal(calls.length, 1, 'el snapshot fresco no repite red')
+    }
+  )
+})
+
+test('config pide sólo las llaves que faltan cuando una consulta mezcla cache y red', async () => {
+  const calls = []
+
+  await withAppConfigService(
+    async url => {
+      calls.push(url)
+      const keys = new URL(url, 'https://ristak.test').searchParams.get('keys')?.split(',') || []
+      return jsonResponse({
+        success: true,
+        config: Object.fromEntries(keys.map(key => [key, `${key}-value`]))
+      })
+    },
+    async ({ getAppConfigValues }) => {
+      assert.deepEqual(await getAppConfigValues(['a', 'b']), {
+        a: 'a-value',
+        b: 'b-value'
+      })
+      assert.deepEqual(await getAppConfigValues(['b', 'c']), {
+        b: 'b-value',
+        c: 'c-value'
+      })
+      assert.deepEqual(calls, [
+        '/api/config?keys=a%2Cb',
+        '/api/config?keys=c'
+      ])
+    }
+  )
+})
+
+test('config recuerda una llave ausente sin volver a pedirla en cada montaje', async () => {
+  let calls = 0
+
+  await withAppConfigService(
+    async () => {
+      calls += 1
+      return jsonResponse({ success: true, config: {} })
+    },
+    async ({ getAppConfigValues }) => {
+      assert.deepEqual(await getAppConfigValues(['optional_key']), { optional_key: undefined })
+      assert.deepEqual(await getAppConfigValues(['optional_key']), { optional_key: undefined })
+      assert.equal(calls, 1)
+    }
+  )
+})
+
+test('una invalidación suave separa lectores nuevos sin abortar ni recachear la respuesta vieja', async () => {
+  const oldResponse = deferred()
+  let calls = 0
+  let oldSignal
+
+  await withAppConfigService(
+    async (_url, options) => {
+      calls += 1
+      if (calls === 1) {
+        oldSignal = options.signal
+        return oldResponse.promise
+      }
+      return jsonResponse({ success: true, config: { account_currency: 'USD' } })
+    },
+    async ({ getAppConfigValues }, { apiInvalidators }) => {
+      const oldRead = getAppConfigValues(['account_currency'])
+      await Promise.resolve()
+
+      apiInvalidators[0].invalidator({ abortInflight: false })
+      const currentRead = getAppConfigValues(['account_currency'])
+      assert.equal((await currentRead).account_currency, 'USD')
+      assert.equal(calls, 2, 'el lector nuevo no comparte la tanda anterior a la invalidación')
+      assert.equal(oldSignal.aborted, false)
+
+      oldResponse.resolve(jsonResponse({ success: true, config: { account_currency: 'MXN' } }))
+      assert.equal((await oldRead).account_currency, 'MXN')
+      assert.equal((await getAppConfigValues(['account_currency'])).account_currency, 'USD')
+      assert.equal(calls, 2, 'la respuesta vieja no reemplaza el snapshot vigente')
     }
   )
 })
@@ -203,6 +289,7 @@ test('config no cachea errores ni respuestas tardías de la cuenta anterior', as
     },
     async ({ getAppConfigValues }, { authInvalidators, storage }) => {
       const oldRead = getAppConfigValues(['account_currency'])
+      await Promise.resolve()
       storage.set('auth_token', 'principal-b')
       globalThis.__ristakConfigTestAuthRevision += 1
       authInvalidators[0]()
@@ -233,6 +320,7 @@ test('invalidar config cancela la lectura compartida activa', async () => {
     },
     async ({ getAppConfigValues }, { apiInvalidators }) => {
       const request = getAppConfigValues(['table_contacts_v2'])
+      await Promise.resolve()
       apiInvalidators[0].invalidator({ abortInflight: true })
 
       await assert.rejects(request, error => error?.name === 'AbortError')

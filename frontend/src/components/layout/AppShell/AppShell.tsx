@@ -7,9 +7,10 @@ import { SyncProgressBar } from '@/components/common/SyncProgressBar'
 import { Loading } from '@/components/common/Loading'
 import { useAuth } from '@/contexts/AuthContext'
 import { InitializationProvider } from '@/contexts/InitializationContext'
-import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync } from '@/hooks'
+import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync, useIntegrationsStatus } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
+import { isHighLevelSyncProgressPollingAllowed } from '@/utils/highLevelSyncProgress'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
 import styles from './AppShell.module.css'
@@ -86,25 +87,66 @@ export const AppShell: React.FC = () => {
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
   const aiAgentAvailability = useAIAgentAvailability()
   const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && hasLicenseFeature(user, ['app_assistant_ai', 'ai']) && aiAgentAvailability.configured
+  const hasHighLevelSyncProgressFeature = hasLicenseFeature(user, ['highlevel_integration'])
+  const hasHighLevelSyncProgressPermission = hasModuleAccess(user, 'settings_integrations', 'read')
+  const canAccessHighLevelSyncProgress = hasHighLevelSyncProgressFeature && hasHighLevelSyncProgressPermission
+  const { status: integrationsStatus } = useIntegrationsStatus({ enabled: canAccessHighLevelSyncProgress })
+  const highLevelSyncProgressPollingAllowed = isHighLevelSyncProgressPollingAllowed({
+    hasFeature: hasHighLevelSyncProgressFeature,
+    hasPermission: hasHighLevelSyncProgressPermission,
+    connected: Boolean(integrationsStatus?.highlevel?.connected)
+  })
   const aiAgentRouteSuppressed = isAIAgentSuppressedRoute(location.pathname)
   const shouldShowAIAgent = canUseAIAgent && !sitesEditorActive && !aiAgentRouteSuppressed
   const resizePointerIdRef = useRef<number | null>(null)
   const aiAgentWidthRef = useRef(aiAgentWidth)
   const lastSavedAIAgentWidthRef = useRef(aiAgentWidth)
+  const highLevelSyncProgressPollingWasAllowedRef = useRef(false)
 
   // Asegurar que las configuraciones sensibles al dominio estén sincronizadas
   useDomainFeatureSync()
 
-  // Detectar cuando el panel de progreso está activo. El caso normal lo cubre
-  // el evento que dispara highLevelService.syncAllData al iniciar una sync
-  // manual; el sondeo queda solo como respaldo lento (p. ej. sync iniciada en
-  // otra pestaña) para no golpear el backend cada 2 segundos.
+  // El caso normal no necesita polling: la sincronización manual publica este
+  // evento en la misma pestaña.
   useEffect(() => {
+    const handleSyncStarted = () => setSyncProgressVisible(true)
+    window.addEventListener(HIGHLEVEL_SYNC_STARTED_EVENT, handleSyncStarted)
+    return () => window.removeEventListener(HIGHLEVEL_SYNC_STARTED_EVENT, handleSyncStarted)
+  }, [])
+
+  // Una pestaña distinta todavía necesita un respaldo lento, pero sólo cuando
+  // la licencia, el permiso y la conexión coinciden con el contrato del backend.
+  useEffect(() => {
+    if (!highLevelSyncProgressPollingAllowed) return undefined
+
     let cancelled = false
+    let pollingDisabled = false
+    let activeController: AbortController | null = null
+    let interval: number | null = null
+
+    const stopPolling = () => {
+      pollingDisabled = true
+      if (interval !== null) {
+        window.clearInterval(interval)
+        interval = null
+      }
+    }
 
     const checkSyncProgress = async () => {
+      if (cancelled || pollingDisabled || activeController) return
+      const controller = new AbortController()
+      activeController = controller
+
       try {
-        const response = await fetch(apiUrl('/api/highlevel/sync/progress'))
+        const response = await fetch(apiUrl('/api/highlevel/sync/progress'), {
+          signal: controller.signal
+        })
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+          stopPolling()
+          return
+        }
+        if (!response.ok) return
+
         const data = await response.json()
         if (cancelled) return
         // Solo mostrar si está sincronizando Y el origen es 'manual' (no cron)
@@ -116,21 +158,30 @@ export const AppShell: React.FC = () => {
         }
       } catch (error) {
         // Silencioso: la barra simplemente no se muestra
+      } finally {
+        if (activeController === controller) activeController = null
       }
     }
 
-    const handleSyncStarted = () => setSyncProgressVisible(true)
-
-    checkSyncProgress()
-    const interval = setInterval(checkSyncProgress, 30000)
-    window.addEventListener(HIGHLEVEL_SYNC_STARTED_EVENT, handleSyncStarted)
+    void checkSyncProgress()
+    interval = window.setInterval(() => {
+      void checkSyncProgress()
+    }, 30000)
 
     return () => {
       cancelled = true
-      clearInterval(interval)
-      window.removeEventListener(HIGHLEVEL_SYNC_STARTED_EVENT, handleSyncStarted)
+      activeController?.abort()
+      if (interval !== null) window.clearInterval(interval)
     }
-  }, [])
+  }, [highLevelSyncProgressPollingAllowed])
+
+  useEffect(() => {
+    const wasAllowed = highLevelSyncProgressPollingWasAllowedRef.current
+    highLevelSyncProgressPollingWasAllowedRef.current = highLevelSyncProgressPollingAllowed
+    if (wasAllowed && !highLevelSyncProgressPollingAllowed) {
+      setSyncProgressVisible(false)
+    }
+  }, [highLevelSyncProgressPollingAllowed])
 
   useEffect(() => {
     if (syncProgressVisible && aiAgentOpen) {

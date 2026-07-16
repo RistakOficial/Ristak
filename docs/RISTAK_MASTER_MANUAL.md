@@ -206,6 +206,11 @@ HighLevel, Google Calendar, OpenAI o una pasarela revalida el snapshot y repinta
 onboarding, permisos operativos y selectores dependientes sin recargar la ruta.
 Las respuestas anteriores a una revalidacion mas nueva se descartan. Al cerrar
 sesion se limpia tambien este snapshot para no heredar conexiones de otra sesion.
+El shell escucha el evento local de una sincronizacion manual de HighLevel; su
+sondeo de respaldo cada 30 segundos solo existe cuando coinciden licencia,
+permiso `settings_integrations` y conexion local activa. Nunca solapa dos
+requests, se cancela al desmontar y se apaga ante `401`, `403` o `404`. Una
+cuenta desconectada o sin permiso no consulta `/api/highlevel/sync/progress`.
 
 ### Contrato transversal de rendimiento
 
@@ -236,17 +241,22 @@ cancela cuando se va el ultimo consumidor. Listas paginadas, binarios, streams y
 fuentes vivas no se guardan como Responses globales.
 
 La configuracion pequeña que consumen tablas y preferencias es la excepcion
-especializada, no una vuelta al cache global. `appConfigService` comparte solo
-JSON de `/api/config` para el conjunto exacto de llaves, durante 60 segundos y
-con un LRU de 128 entradas aislado por cuenta. Nunca conserva `Response`,
-binarios ni cuerpos arbitrarios. Un POST confirmado o un cambio de cuenta limpia
-ese snapshot; un POST fallido conserva el valor anterior. La tabla dueña debe
-montarse una sola vez durante la primera carga: Contactos empieza en estado de
-carga real y no monta, desmonta y vuelve a montar `table_contacts_v2`, mientras
-Transacciones y Reportes reutilizan las lecturas concurrentes de moneda y
-configuracion de columnas. La lectura compartida tiene un deadline de 20 segundos:
-un servidor o transporte colgado aborta el fetch real, libera el single-flight y
-permite reintentar en vez de dejar consumidores esperando indefinidamente.
+especializada, no una vuelta al cache global. `appConfigService` reune en un
+micro-batch las llaves distintas solicitadas durante el mismo montaje y hace un
+solo `GET /api/config`; despues conserva cada llave —incluidas las ausentes—
+durante 60 segundos en un LRU de 128 entradas aislado por cuenta. Theme,
+preferencias del shell, tablas y modulos comparten ese mismo lector. Nunca
+conserva `Response`, binarios ni cuerpos arbitrarios. Un POST confirmado o un
+cambio de cuenta limpia el snapshot; un POST fallido conserva el valor anterior.
+Una invalidacion suave separa lectores nuevos sin abortar a quienes ya esperan,
+y una respuesta de la cuenta anterior nunca repuebla el cache vigente. La tabla
+dueña debe montarse una sola vez durante la primera carga: Contactos empieza en
+estado de carga real y no monta, desmonta y vuelve a montar
+`table_contacts_v2`, mientras Transacciones y Reportes reutilizan las lecturas
+concurrentes de moneda y configuracion de columnas. La lectura compartida tiene
+un deadline de 20 segundos: un servidor o transporte colgado aborta el fetch
+real, libera el single-flight y permite reintentar en vez de dejar consumidores
+esperando indefinidamente.
 
 La configuracion del asistente AI sigue el mismo principio especializado:
 `aiAgentService` comparte un unico `GET /api/ai-agent/config` entre disponibilidad
