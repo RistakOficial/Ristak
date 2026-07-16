@@ -48,6 +48,7 @@ interface CustomSelectProps {
   dropdownMinWidth?: number
   dropdownMinHeight?: number
   iconOnly?: boolean
+  placeholderIcon?: React.ReactNode
   size?: 'default' | 'large'
   name?: string
   id?: string
@@ -135,6 +136,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   dropdownMinWidth,
   dropdownMinHeight,
   iconOnly = false,
+  placeholderIcon,
   size = 'default',
   name,
   id,
@@ -405,6 +407,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     </div>
   ) : null
   const selectedIcon = selectedOption?.icon
+  const triggerIcon = selectedIcon || placeholderIcon
 
   return (
     <div
@@ -435,9 +438,9 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
         data-ristak-dropdown-trigger
       >
         <span className={selectedOption ? styles.selected : styles.placeholder}>
-          {iconOnly && selectedIcon ? (
+          {iconOnly && triggerIcon ? (
             <>
-              <span className={styles.triggerIcon} aria-hidden="true">{selectedIcon}</span>
+              <span className={styles.triggerIcon} aria-hidden="true">{triggerIcon}</span>
               <span className={styles.srOnly}>{selectedOption?.label || placeholder}</span>
             </>
           ) : selectedOption && selectedContent ? selectedContent : selectedOption?.label || placeholder}

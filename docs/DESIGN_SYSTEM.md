@@ -141,6 +141,11 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Header / contenedor de página | `<PageHeader>` / `<PageContainer>` | un header a mano |
 | Inputs nativos | ya están skineados globalmente; un `<input>` plano hereda el sistema | re-estilizarlos |
 
+En un `<CustomSelect iconOnly>` cuyo valor puede quedar temporalmente sin una
+opción coincidente, pasa `placeholderIcon` y un `placeholder` accesible. El
+trigger compacto nunca debe renderizar el texto del placeholder dentro de su
+ancho fijo ni dejar que se desborde sobre controles vecinos.
+
 **Separador único de página.** El encabezado es el dueño de la línea que separa
 el título del contenido. La primera sección que aparece inmediatamente después
 no debe volver a pintar `border-top`; las secciones posteriores sí pueden usar

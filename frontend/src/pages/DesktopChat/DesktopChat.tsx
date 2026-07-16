@@ -9682,6 +9682,8 @@ export const DesktopChat: React.FC = () => {
 	                          portal
 	                          dropdownPlacement="top"
 	                          iconOnly
+	                          placeholder="Canal de envío"
+	                          placeholderIcon={renderComposerChannelIcon(composerChannel)}
 	                          dropdownMinWidth={240}
 		                          aria-label="Canal de envío"
 		                        />
@@ -9747,6 +9749,8 @@ export const DesktopChat: React.FC = () => {
 	                        onValueChange={handleComposerChannelChange}
 	                        portal
 	                        iconOnly
+	                        placeholder="Canal de envío"
+	                        placeholderIcon={renderComposerChannelIcon(composerChannel)}
 	                        dropdownMinWidth={240}
 	                        aria-label="Canal de envío"
 	                      />
