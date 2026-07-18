@@ -903,7 +903,7 @@ export const WhatsAppSettings: React.FC = () => {
           loading={metaConnecting}
         >
           <Link2 size={17} />
-              Conectar WhatsApp API con Meta
+          Conectar WhatsApp
         </Button>
       </div>
       <p className={styles.metaSignupNote}>

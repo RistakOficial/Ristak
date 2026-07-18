@@ -396,9 +396,10 @@ nuevo sigue el flujo estándar de Cloud API.
 ## Embedded Signup centralizado
 
 La pantalla `Configuración > WhatsApp` prepara el onboarding con Ristak
-Installer por llamadas backend-to-backend. El botón navega la misma pestaña a
-`/meta/whatsapp/connect` en el dominio central autorizado; ahí se ejecuta el SDK
-y se abre únicamente la ventana oficial de Meta. Al terminar, la pestaña regresa
+Installer por llamadas backend-to-backend. El botón **Conectar WhatsApp** navega
+la misma pestaña a `/meta/whatsapp/connect` en el dominio central autorizado;
+ahí se ejecuta el SDK y se abre únicamente la ventana oficial de Meta. Al
+terminar, la pestaña regresa
 al mismo origen y a `/settings/whatsapp/numbers`, conservando la sesión desde la
 que inició el usuario aunque la instalación tenga dominio personalizado y dominio
 Render. El origen se toma del request, se firma en `state` y Installer lo valida

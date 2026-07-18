@@ -1714,7 +1714,7 @@ residuo `status` para que una fila antigua vacía no vuelva a aparecer como
 `Mensaje`.
 
 En `Configuración > WhatsApp`, la opción **WhatsApp API** ofrece conexiones
-separadas. **Conectar directo con Meta** precarga Embedded Signup v4 desde el
+separadas. El botón **Conectar WhatsApp** precarga Embedded Signup v4 desde el
 backend del tenant. Meta detecta automáticamente el flujo por el número: si ya
 está activo en WhatsApp Business usa Coexistence y conserva la app; si es nuevo
 lo registra directo en Cloud API. Ambos casos usan la
