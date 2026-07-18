@@ -145,8 +145,11 @@ solo en capa flotante; copy en español.
   reconocen como imagen en vez de degradarse al texto genérico `Mensaje`.
   Fotos y videos ocupan el globo completo, con puntita visible y hora/acuse
   superpuestos; video agrega duración dentro del contenido. Ambos reservan desde
-  el primer render un canvas fijo 4:3, por lo que pasar de placeholder a bitmap o
-  thumbnail nunca cambia la altura ni mueve el scroll.
+  el primer render un canvas fijo 4:3, incluso si el primer payload solo trae
+  `messageType` y la URL aparece en el refresh siguiente; pasar de placeholder a
+  bitmap o thumbnail nunca cambia la altura ni mueve el scroll. La miniatura de
+  video se genera y prepara fuera del hilo visual, se reutiliza al reciclar la
+  fila y el estado de espera es estático para evitar tirones o destellos.
   El teclado conserva materializadas las burbujas al primer enfoque: el ancla al
   fondo es solo inicial y los cambios de frame se estabilizan con la duración de UIKit.
   Composer: cámara directa junto al micrófono para foto/video (se oculta al

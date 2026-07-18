@@ -130,6 +130,8 @@ struct RistakActivityMarkersUITestHarnessView: View {
 /// al cargar y conservar una captura visual revisable sin sesión ni red.
 struct RistakChatAppearanceUITestHarnessView: View {
     private let formatters = BusinessFormatters(timeZone: .gmt, currencyCode: "MXN")
+    @State private var messages = Self.initialMessages
+    @State private var mediaHydrationCount = 0
 
     private static let sampleImageData: Data? = {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 600))
@@ -143,9 +145,8 @@ struct RistakChatAppearanceUITestHarnessView: View {
         }.jpegData(compressionQuality: 0.9)
     }()
 
-    private var messages: [ChatMessage] {
-        [
-            ChatMessage(
+    private static let initialMessages: [ChatMessage] = [
+        ChatMessage(
                 id: "night-inbound",
                 contactId: "fixture",
                 date: "2026-07-17T20:01:00.000Z",
@@ -153,8 +154,8 @@ struct RistakChatAppearanceUITestHarnessView: View {
                 text: "Así descansa la vista en modo noche.",
                 channel: "whatsapp",
                 status: "delivered"
-            ),
-            ChatMessage(
+        ),
+        ChatMessage(
                 id: "night-outbound",
                 contactId: "fixture",
                 date: "2026-07-17T20:02:00.000Z",
@@ -163,40 +164,29 @@ struct RistakChatAppearanceUITestHarnessView: View {
                 channel: "whatsapp",
                 status: "read",
                 transport: "api"
-            ),
-            ChatMessage(
+        ),
+        ChatMessage(
                 id: "night-image",
                 contactId: "fixture",
                 date: "2026-07-17T20:03:00.000Z",
                 direction: .inbound,
-                text: "",
+                text: "Foto",
                 channel: "whatsapp",
                 status: "delivered",
-                attachment: ChatAttachment(
-                    type: .image,
-                    localPreviewData: Self.sampleImageData,
-                    name: "Foto de muestra",
-                    mimeType: "image/jpeg"
-                )
-            ),
-            ChatMessage(
+                messageType: "image"
+        ),
+        ChatMessage(
                 id: "night-video",
                 contactId: "fixture",
                 date: "2026-07-17T20:04:00.000Z",
                 direction: .outbound,
-                text: "",
+                text: "Video",
                 channel: "instagram",
                 status: "read",
                 transport: "meta",
-                attachment: ChatAttachment(
-                    type: .video,
-                    name: "Video de muestra",
-                    mimeType: "video/mp4",
-                    durationMs: 72_000
-                )
-            )
-        ]
-    }
+                messageType: "video"
+        )
+    ]
 
     var body: some View {
         NavigationStack {
@@ -224,9 +214,44 @@ struct RistakChatAppearanceUITestHarnessView: View {
             }
             .navigationTitle("Paty")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cargar media") {
+                        hydrateMedia()
+                    }
+                    .accessibilityIdentifier("chat-appearance-hydrate-media")
+                }
+            }
         }
         .preferredColorScheme(.dark)
         .accessibilityIdentifier("chat-appearance-harness-root")
+    }
+
+    private func hydrateMedia() {
+        guard mediaHydrationCount == 0 else { return }
+        for index in messages.indices {
+            switch messages[index].id {
+            case "night-image":
+                messages[index].text = ""
+                messages[index].attachment = ChatAttachment(
+                    type: .image,
+                    localPreviewData: Self.sampleImageData,
+                    name: "Foto de muestra",
+                    mimeType: "image/jpeg"
+                )
+            case "night-video":
+                messages[index].text = ""
+                messages[index].attachment = ChatAttachment(
+                    type: .video,
+                    name: "Video de muestra",
+                    mimeType: "video/mp4",
+                    durationMs: 72_000
+                )
+            default:
+                continue
+            }
+        }
+        mediaHydrationCount = 1
     }
 
     private var noOpActions: MessageRowActions {

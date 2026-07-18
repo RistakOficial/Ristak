@@ -42,7 +42,8 @@ struct ChatRemoteImage: View {
             } else {
                 ZStack {
                     RistakTheme.controlRest
-                    ProgressView()
+                    Image(systemName: "photo")
+                        .foregroundStyle(RistakTheme.textMute)
                 }
             }
         }
@@ -72,6 +73,57 @@ struct ChatRemoteImage: View {
 /// exactamente los mismos puntos, así que el scroll jamás cambia de geometría.
 enum ChatVisualMediaLayout {
     static let size = CGSize(width: 252, height: 189)
+}
+
+/// Decide la geometría de foto/video antes de que el servidor entregue la URL.
+/// Algunos eventos llegan primero con `messageType` y el adjunto se materializa
+/// en el siguiente refresh. La fila debe nacer con su tamaño definitivo para no
+/// empujar el timeline cuando ese segundo payload aparezca.
+enum ChatVisualMediaPresentation {
+    static func kind(attachment: ChatAttachment?, messageType: String?) -> ChatAttachment.Kind? {
+        if let type = attachment?.type {
+            return type == .image || type == .video ? type : nil
+        }
+
+        let inferred = ChatJourneyParser.attachmentType(
+            messageType: messageType ?? "",
+            mimeType: "",
+            filename: "",
+            mediaUrl: ""
+        )
+        guard inferred == .image || inferred == .video else { return nil }
+        return inferred
+    }
+
+    static func attachment(
+        actual: ChatAttachment?,
+        messageType: String?
+    ) -> ChatAttachment? {
+        if let actual { return actual }
+        guard let kind = kind(attachment: nil, messageType: messageType) else { return nil }
+        return ChatAttachment(
+            type: kind,
+            name: kind == .image ? "Foto" : "Video"
+        )
+    }
+
+    static func caption(_ text: String, kind: ChatAttachment.Kind?) -> String {
+        guard let kind else { return text }
+        let normalized = text
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let generatedFallbacks: Set<String>
+        switch kind {
+        case .image:
+            generatedFallbacks = ["foto", "imagen", "image", "photo", "gif", "sticker"]
+        case .video:
+            generatedFallbacks = ["video"]
+        case .audio, .document, .file:
+            return text
+        }
+        return generatedFallbacks.contains(normalized) ? "" : text
+    }
 }
 
 struct ImageAttachmentView: View {
@@ -294,8 +346,9 @@ struct VideoAttachmentView: View {
                         .resizable()
                         .scaledToFill()
                 } else if videoURL != nil {
-                    ProgressView()
-                        .tint(.white)
+                    Image(systemName: "video")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.76))
                 } else {
                     Image(systemName: "video.slash")
                         .font(.title2)
@@ -357,18 +410,42 @@ struct VideoAttachmentView: View {
         return BusinessFormatters.audioDuration(milliseconds: milliseconds)
     }
 
-    @MainActor
     private func loadPreview(from url: URL) async {
-        let asset = AVURLAsset(url: url)
+        let preview = await ChatVideoPreviewLoader.shared.preview(for: url)
+        guard !Task.isCancelled else { return }
+        if attachment.durationMs == nil {
+            measuredDurationMs = preview.durationMs
+        }
+        thumbnail = preview.image
+    }
+}
 
-        if attachment.durationMs == nil,
-           let duration = try? await asset.load(.duration),
+/// AVFoundation y la preparación del bitmap corren en el actor, nunca en el
+/// hilo principal que está desplazando el chat. También evita regenerar la misma
+/// miniatura cuando SwiftUI recicla una fila.
+private struct ChatVideoPreview: @unchecked Sendable {
+    let image: UIImage?
+    let durationMs: Double?
+}
+
+private actor ChatVideoPreviewLoader {
+    static let shared = ChatVideoPreviewLoader()
+
+    private var cache: [String: ChatVideoPreview] = [:]
+    private let maximumEntryCount = 80
+
+    func preview(for url: URL) async -> ChatVideoPreview {
+        let key = url.absoluteString
+        if let cached = cache[key] { return cached }
+
+        let asset = AVURLAsset(url: url)
+        var durationMs: Double?
+        if let duration = try? await asset.load(.duration),
            duration.seconds.isFinite,
            duration.seconds > 0 {
-            measuredDurationMs = duration.seconds * 1_000
+            durationMs = duration.seconds * 1_000
         }
 
-        guard !Task.isCancelled else { return }
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 756, height: 567)
@@ -376,10 +453,20 @@ struct VideoAttachmentView: View {
         generator.requestedTimeToleranceAfter = .positiveInfinity
 
         let requestTime = CMTime(seconds: 0.15, preferredTimescale: 600)
-        guard let result = try? await generator.image(at: requestTime),
-              !Task.isCancelled else { return }
-        let image = UIImage(cgImage: result.image)
-        thumbnail = image.preparingForDisplay() ?? image
+        let image: UIImage?
+        if let result = try? await generator.image(at: requestTime) {
+            let decoded = UIImage(cgImage: result.image)
+            image = decoded.preparingForDisplay() ?? decoded
+        } else {
+            image = nil
+        }
+
+        let preview = ChatVideoPreview(image: image, durationMs: durationMs)
+        if cache.count >= maximumEntryCount, let oldestKey = cache.keys.first {
+            cache.removeValue(forKey: oldestKey)
+        }
+        cache[key] = preview
+        return preview
     }
 }
 

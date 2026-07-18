@@ -77,4 +77,43 @@ final class ChatMessageChannelKindTests: XCTestCase {
     func testVisualMediaCanvasIsStableBeforeTheFileLoads() {
         XCTAssertEqual(ChatVisualMediaLayout.size, CGSize(width: 252, height: 189))
     }
+
+    func testVisualMediaKindIsKnownBeforeAttachmentHydrates() {
+        XCTAssertEqual(
+            ChatVisualMediaPresentation.kind(attachment: nil, messageType: "image"),
+            .image
+        )
+        XCTAssertEqual(
+            ChatVisualMediaPresentation.kind(attachment: nil, messageType: "video"),
+            .video
+        )
+        XCTAssertNil(
+            ChatVisualMediaPresentation.kind(attachment: nil, messageType: "text")
+        )
+        XCTAssertNil(
+            ChatVisualMediaPresentation.kind(
+                attachment: ChatAttachment(type: .audio),
+                messageType: "video"
+            )
+        )
+    }
+
+    func testVisualMediaPlaceholderUsesTheFinalAttachmentKind() {
+        let image = ChatVisualMediaPresentation.attachment(actual: nil, messageType: "photo")
+        let video = ChatVisualMediaPresentation.attachment(actual: nil, messageType: "video_message")
+
+        XCTAssertEqual(image?.type, .image)
+        XCTAssertEqual(image?.name, "Foto")
+        XCTAssertEqual(video?.type, .video)
+        XCTAssertEqual(video?.name, "Video")
+    }
+
+    func testGeneratedMediaFallbackDoesNotBecomeASecondFooter() {
+        XCTAssertEqual(ChatVisualMediaPresentation.caption("Foto", kind: .image), "")
+        XCTAssertEqual(ChatVisualMediaPresentation.caption("Vídeo", kind: .video), "")
+        XCTAssertEqual(
+            ChatVisualMediaPresentation.caption("Mira esto", kind: .image),
+            "Mira esto"
+        )
+    }
 }

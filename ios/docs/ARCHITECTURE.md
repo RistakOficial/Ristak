@@ -227,7 +227,12 @@ terminar cambio el filtro de calendarios.
   en memoria.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y
   disco. Foto y video comparten un canvas inmutable 252x189 desde el placeholder
-  hasta el contenido final; la carga nunca cambia geometría ni desplaza el hilo.
+  hasta el contenido final. `ChatVisualMediaPresentation` infiere ese canvas del
+  `messageType` aunque el primer payload todavía no incluya `attachment` o URL;
+  la hidratación posterior conserva el mismo ID y exactamente la misma geometría.
+  Los fallbacks generados (`Foto`, `Video`, etc.) no crean un footer temporal.
+  `ChatVideoPreviewLoader` genera, prepara y cachea miniaturas fuera del
+  `MainActor`; la carga nunca cambia geometría, bloquea el scroll ni desplaza el hilo.
   La media se recorta `scaledToFill` y forma el globo full-bleed, mientras
   hora/acuse y la duración del video se dibujan encima con degradado de contraste.
   Visor pantalla completa con zoom, player audio con velocidades y scrubber

@@ -203,10 +203,22 @@ struct MessageRowView: View, Equatable {
     private let replyThreshold: CGFloat = 38
 
     private var isOutbound: Bool { message.direction == .outbound }
-    private var hasVisualMedia: Bool {
-        guard let type = message.attachment?.type else { return false }
-        return type == .image || type == .video
+    private var visualMediaKind: ChatAttachment.Kind? {
+        ChatVisualMediaPresentation.kind(
+            attachment: message.attachment,
+            messageType: message.messageType
+        )
     }
+    private var visualMediaAttachment: ChatAttachment? {
+        ChatVisualMediaPresentation.attachment(
+            actual: message.attachment,
+            messageType: message.messageType
+        )
+    }
+    private var visualMediaCaption: String {
+        ChatVisualMediaPresentation.caption(message.displayText, kind: visualMediaKind)
+    }
+    private var hasVisualMedia: Bool { visualMediaKind != nil }
 
     var body: some View {
         if message.direction == .system {
@@ -328,7 +340,7 @@ struct MessageRowView: View, Equatable {
                     .padding(.bottom, 6)
             }
 
-            attachmentBlock
+            visualMediaAttachmentBlock
                 .overlay(alignment: .bottom) {
                     LinearGradient(
                         colors: [.clear, .black.opacity(0.64)],
@@ -349,7 +361,7 @@ struct MessageRowView: View, Equatable {
                     locationBlock
                     commentContextBlock
                     emailBlock
-                    textBlock
+                    visualMediaTextBlock
                     routingReasonBlock
                 }
                 .padding(.top, 7)
@@ -367,7 +379,7 @@ struct MessageRowView: View, Equatable {
         message.location != nil
             || message.isComment
             || message.emailDetails != nil
-            || !message.displayText.isEmpty
+            || !visualMediaCaption.isEmpty
             || !(message.routingReason ?? "").isEmpty
     }
 
@@ -461,6 +473,20 @@ struct MessageRowView: View, Equatable {
     }
 
     @ViewBuilder
+    private var visualMediaAttachmentBlock: some View {
+        if let attachment = visualMediaAttachment {
+            switch attachment.type {
+            case .image:
+                ImageAttachmentView(attachment: attachment)
+            case .video:
+                VideoAttachmentView(attachment: attachment)
+            case .audio, .document, .file:
+                EmptyView()
+            }
+        }
+    }
+
+    @ViewBuilder
     private var locationBlock: some View {
         if let location = message.location {
             LocationMessageView(location: location)
@@ -538,6 +564,18 @@ struct MessageRowView: View, Equatable {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
         if message.emailDetails == nil, !message.displayText.isEmpty {
             WhatsAppFormattedMessageText(text: message.displayText)
+                .foregroundStyle(
+                    message.failed
+                        ? RistakTheme.neg
+                        : (isOutbound ? RistakTheme.bubbleTextOutbound : RistakTheme.bubbleTextInbound)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private var visualMediaTextBlock: some View {
+        if message.emailDetails == nil, !visualMediaCaption.isEmpty {
+            WhatsAppFormattedMessageText(text: visualMediaCaption)
                 .foregroundStyle(
                     message.failed
                         ? RistakTheme.neg

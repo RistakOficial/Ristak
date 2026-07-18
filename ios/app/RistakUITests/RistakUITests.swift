@@ -216,8 +216,12 @@ final class RistakUITests: XCTestCase {
 
         let initialImageFrame = imageRow.frame
         let initialVideoFrame = videoRow.frame
-        let settled = expectation(description: "La media terminó de materializarse")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { settled.fulfill() }
+        let hydrate = app.buttons["chat-appearance-hydrate-media"]
+        XCTAssertTrue(hydrate.waitForExistence(timeout: 3))
+        hydrate.tap()
+
+        let settled = expectation(description: "La media terminó de hidratarse y decodificarse")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { settled.fulfill() }
         wait(for: [settled], timeout: 2)
 
         XCTAssertEqual(imageRow.frame, initialImageFrame)

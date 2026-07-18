@@ -1842,8 +1842,12 @@ en la cache diaria de la conversacion y se reconcilia en refresh silenciosos.
 El layout de media del timeline es estable antes de descargar: las superficies
 web reservan imagenes 4:3, videos 16:9 y audios/archivos de altura fija; iOS usa
 un canvas visual unico 252x189 para foto y video desde el placeholder hasta el
-contenido final. La miniatura se ajusta dentro de ese espacio y el original se
-abre en el visor interno. `/chat` y `/movil` desactivan el scroll anchoring
+contenido final. Si el primer payload iOS solo declara `messageType=image|video`
+y todavia no incluye `attachment` o URL, el globo ya debe reservar ese canvas;
+el refresh que materializa el archivo conserva la geometria y no agrega un pie
+temporal con `Foto` o `Video`. La miniatura se prepara fuera del hilo principal,
+se reutiliza al reciclar la fila, se ajusta dentro de ese espacio y el original
+se abre en el visor interno. `/chat` y `/movil` desactivan el scroll anchoring
 automatico del navegador y mantienen el
 anclaje inferior mientras se hidrata el chat; un gesto real del usuario hacia
 arriba libera el anclaje inmediatamente. Cargar fuentes, fotos, audio o previews
