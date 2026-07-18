@@ -1650,7 +1650,7 @@ export async function refreshMetaOAuthConnectionStatus() {
   }
 }
 
-export async function createMetaOAuthConnectionUrl({ returnPath = '/settings/meta-ads/token' } = {}) {
+export async function createMetaOAuthConnectionUrl({ returnPath = '/settings/meta-ads/cuenta' } = {}) {
   const result = await centralClient.createConnectUrl({ returnPath })
   const connectUrl = cleanString(result?.connectUrl || result?.connect_url)
   if (!connectUrl) {
@@ -1712,7 +1712,7 @@ export async function prepareMetaOAuthConnection({
   code = '',
   configId = '',
   handoffToken = '',
-  returnPath = '/settings/meta-ads/token'
+  returnPath = '/settings/meta-ads/cuenta'
 } = {}) {
   let token = cleanString(handoffToken)
   let connectMeta = {}

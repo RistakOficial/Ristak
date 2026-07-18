@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button, Icon, MetaBrandMark, Modal, CustomSelect, PageHeader, SegmentTabs, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
-import { Activity, ArrowLeft, ArrowRight, CheckCircle, Copy, ExternalLink, FlaskConical, Megaphone, MessageCircle, Pencil, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2 } from 'lucide-react'
+import { Activity, CheckCircle, Copy, ExternalLink, FlaskConical, Megaphone, MessageCircle, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency, useAppConfig } from '@/hooks'
 import {
@@ -92,12 +92,6 @@ type MetaTestIdentityParameterKey =
   | 'igSid'
   | 'instagramAccountId'
 type MetaTestStringParameterKey = Exclude<keyof MetaTestEventParameters, 'custom'>
-
-interface MetaWebhookInfo {
-  webhookUrl: string
-  verifyToken: string
-  fields: string[]
-}
 
 interface MetaDeveloperSetup {
   appId: string
@@ -519,7 +513,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaTestResult, setMetaTestResult] = useState<MetaTestEventResponse | null>(null)
   const [activeStep, setActiveStep] = useState(routeStep)
   const [activeMetaTab, setActiveMetaTab] = useState<MetaConnectedTab>(routeConnectedTab || 'cuenta')
-  const [metaWebhookInfo, setMetaWebhookInfo] = useState<MetaWebhookInfo | null>(null)
   const [metaDeveloperSetup, setMetaDeveloperSetup] = useState<MetaDeveloperSetup | null>(null)
   const [messengerUserToken, setMessengerUserToken] = useState('')
   const [isSavingMessengerUserToken, setIsSavingMessengerUserToken] = useState(false)
@@ -527,7 +520,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const handledMetaOAuthHandoffs = useRef(new Set<string>())
   const credentialsLoadVersion = useRef(0)
   const metaStatusLoadVersion = useRef(0)
-  const loadedManualMetaHelp = useRef(false)
 
   const { showToast } = useNotification()
   const [includeMetaPixel, setIncludeMetaPixel, savingPixelPref] = useAppConfig('include_meta_pixel', true)
@@ -547,18 +539,6 @@ export const MetaAdsIntegration: React.FC = () => {
 
       await navigator.clipboard.writeText(META_AD_UTM_PARAMETERS)
       showToast('success', 'UTM copiado', 'Pégalo en Parámetros de URL del anuncio en Meta.')
-    } catch {
-      showToast('error', 'No se pudo copiar', 'Selecciona el texto y cópialo manualmente.')
-    }
-  }
-
-  const handleCopyValue = async (value: string, label: string) => {
-    try {
-      if (!value || !navigator.clipboard?.writeText) {
-        throw new Error('Clipboard unavailable')
-      }
-      await navigator.clipboard.writeText(value)
-      showToast('success', `${label} copiado`, 'Pégalo en Meta Developers.')
     } catch {
       showToast('error', 'No se pudo copiar', 'Selecciona el texto y cópialo manualmente.')
     }
@@ -669,51 +649,6 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  // La ayuda de Developers sólo existe para la conexión manual. Cargarla desde
-  // Meta Ads o durante OAuth era ruido y, en configuraciones heredadas sin
-  // IDs guardados, podía provocar validaciones de Graph que el usuario no pidió.
-  useEffect(() => {
-    const usingOAuthSocial = metaOAuthStatus?.oauth.connected === true
-      || credentials.hasSplitSocial
-      || (
-        metaOAuthStatus === null
-        && !credentials.hasSplitAds
-        && !credentials.hasSplitSocial
-        && (metaConnectionMode === 'oauth_user' || metaConnectionMode === 'oauth_bisu')
-      )
-    if (activeMetaTab !== 'social' || isLoading || usingOAuthSocial || loadedManualMetaHelp.current) return
-
-    loadedManualMetaHelp.current = true
-    let cancelled = false
-    const loadManualMetaHelp = async () => {
-      try {
-        const [webhookResponse] = await Promise.all([
-          fetch('/api/meta/webhook-info'),
-          loadMetaDeveloperSetup()
-        ])
-        const data = await webhookResponse.json()
-        if (!cancelled && data?.success && data.data) {
-          setMetaWebhookInfo({
-            webhookUrl: data.data.webhookUrl || '',
-            verifyToken: data.data.verifyToken || '',
-            fields: Array.isArray(data.data.fields) ? data.data.fields : []
-          })
-        }
-      } catch {
-        // La ayuda manual simplemente queda oculta si sus datos no cargan.
-      }
-    }
-    void loadManualMetaHelp()
-    return () => { cancelled = true }
-  }, [
-    activeMetaTab,
-    credentials.hasSplitAds,
-    credentials.hasSplitSocial,
-    isLoading,
-    metaConnectionMode,
-    metaOAuthStatus
-  ])
-
   const goToMetaStep = (stepIndex: number, options?: { replace?: boolean }) => {
     const nextStep = Math.max(0, Math.min(stepIndex, metaStepSlugs.length - 1))
     setActiveStep(nextStep)
@@ -742,7 +677,10 @@ export const MetaAdsIntegration: React.FC = () => {
       && !hasSplitSocialConnection
       && (metaConnectionMode === 'oauth_bisu' || metaConnectionMode === 'oauth_user'))
   const isOAuthConnection = isLegacyOAuthConnection || hasSplitAdsConnection || hasSplitSocialConnection
-  const isSocialOAuthConnection = isLegacyOAuthConnection || hasSplitSocialConnection
+  // Configuración ya no ofrece un transporte manual para redes sociales. Una
+  // conexión OAuth de Ads anterior puede seguir visible durante la migración,
+  // pero nunca debe reabrir campos de token ni la guía de Meta Developers.
+  const isSocialOAuthConnection = isOAuthConnection
 
   const buildUnavailableMetaOAuthStatus = (error: unknown): MetaOAuthStatus => ({
     available: false,
@@ -1039,7 +977,7 @@ export const MetaAdsIntegration: React.FC = () => {
       window.location.assign(connect.connectUrl)
     } catch (error) {
       setIsConnectingMetaOAuth(false)
-      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Usa la conexión manual mientras revisamos el Installer.')
+      showToast('error', 'No se pudo abrir Meta', error instanceof Error ? error.message : 'Reintenta cuando el servicio de conexión esté disponible.')
     }
   }
 
@@ -1565,7 +1503,6 @@ export const MetaAdsIntegration: React.FC = () => {
           previousResults.push(await metaOAuthService.disconnectPreviousIntegration('ads'))
         }
 
-        const restoredLegacy = previousResults.some(result => result.restoredLegacy === true)
         const runtimeWarning = previousResults
           .flatMap(result => result.runtimeWarnings || (result.runtimeWarning ? [result.runtimeWarning] : []))
           .find(Boolean) || ''
@@ -1587,13 +1524,11 @@ export const MetaAdsIntegration: React.FC = () => {
           ])
         }
         setIsDisconnectModalOpen(false)
-        await Promise.all([loadCredentials(), loadMetaDeveloperSetup(), loadMetaOAuthStatus()])
+        await Promise.all([loadCredentials(), loadMetaOAuthStatus()])
         showToast(
           runtimeWarning ? 'warning' : 'success',
           runtimeWarning ? 'Conexión anterior desconectada con una tarea pendiente' : 'Conexión anterior desconectada',
-          restoredLegacy
-            ? 'Ristak volvió al método manual que ya tenías guardado.'
-            : runtimeWarning || 'La conexión OAuth anterior se eliminó sin tocar el nuevo login unificado.'
+          runtimeWarning || 'La conexión OAuth anterior se eliminó sin tocar el nuevo login unificado.'
         )
         return
       }
@@ -1635,18 +1570,21 @@ export const MetaAdsIntegration: React.FC = () => {
         setIsDisconnectModalOpen(false)
         await Promise.all([
           loadCredentials(),
-          loadMetaDeveloperSetup(),
           loadMetaOAuthStatus()
         ])
         const runtimeWarning = data.data?.runtimeWarning || data.data?.runtimeWarnings?.[0] || ''
         showToast(
           runtimeWarning ? 'warning' : 'success',
-          runtimeWarning ? 'Conexión anterior restaurada con una tarea pendiente' : 'Conexión anterior restaurada',
+          runtimeWarning
+            ? 'Meta desconectado con una tarea pendiente'
+            : data.data?.restoredSplitSocial
+              ? 'Conexión OAuth anterior restaurada'
+              : 'Meta desconectado',
           runtimeWarning
             ? `El login unificado se quitó, pero falta terminar una limpieza automática: ${runtimeWarning}`
-            : data.data?.restoredManual
-              ? 'Ristak volvió a tu método manual anterior y las funciones de Meta siguen disponibles.'
-              : 'Ristak volvió temporalmente a la conexión anterior de Facebook e Instagram.'
+            : data.data?.restoredSplitSocial
+              ? 'Ristak volvió temporalmente a la conexión OAuth anterior de Facebook e Instagram.'
+              : 'Para volver a usar Meta, conéctala otra vez con OAuth desde esta pantalla.'
         )
         return
       }
@@ -1664,7 +1602,6 @@ export const MetaAdsIntegration: React.FC = () => {
     } catch (error) {
       await Promise.all([
         loadCredentials().catch(() => undefined),
-        loadMetaDeveloperSetup().catch(() => undefined),
         loadMetaOAuthStatus().catch(() => undefined)
       ])
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo desconectar Meta')
@@ -2038,15 +1975,6 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
-    if (newValue && !isInstagram && !isSocialOAuthConnection && !metaDeveloperSetup?.messengerUserTokenConfigured) {
-      showToast(
-        'warning',
-        'Falta el User Token de Messenger',
-        'Guárdalo en esta misma sección antes de activar Messenger para poder responder a personas externas.'
-      )
-      return
-    }
-
     if (newValue && isInstagram && !hasInstagramAccount) {
       showToast(
         'warning',
@@ -2072,7 +2000,7 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast(
           'success',
           `${platformLabel} activado`,
-          'Ristak usará el System User token y la Página enlazada para recibir nombres, fotos y responder DMs.'
+          'Ristak usará la autorización OAuth y la Página enlazada para recibir nombres, fotos y responder DMs.'
         )
         return
       }
@@ -2248,10 +2176,10 @@ export const MetaAdsIntegration: React.FC = () => {
   const canEnableMessengerComments = hasPageId && (isSocialOAuthConnection || Boolean(credentials.accessToken))
   const canEnableInstagramMessaging = hasPageId && hasInstagramAccount && (isSocialOAuthConnection || Boolean(credentials.accessToken))
   const canEnableInstagramComments = hasPageId && hasInstagramAccount && (isSocialOAuthConnection || Boolean(credentials.accessToken))
-  const isMetaConfigured = isUnifiedOAuthConnected
-    || hasSplitAdsConnection
-    || hasSplitSocialConnection
-    || Boolean(credentials.accessToken && (credentials.adAccountId || credentials.pageId))
+  // Sólo OAuth representa una conexión vigente en producto. Las credenciales
+  // manuales heredadas pueden permanecer cifradas durante la migración, pero no
+  // habilitan pestañas, estados ni formularios en Configuración.
+  const isMetaConfigured = isOAuthConnection
   const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
   const normalizedMetaTestEventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, normalizedMetaTestEventName)
   const metaTestEventFieldKeys = getMetaTestEventFieldsForEvent(normalizedMetaTestEventName)
@@ -2271,14 +2199,6 @@ export const MetaAdsIntegration: React.FC = () => {
       ? []
       : [createDefaultMetaTestCustomParameter()])
   ]
-  const isManualWizardRoute = metaStepSlugs.includes(
-    getMetaAdsRouteSegment(location.pathname) as typeof metaStepSlugs[number]
-  )
-  const shouldShowWizard = isMetaConfigured && activeMetaTab === 'cuenta' && (
-    showManualConnection
-    || isEditingMetaConfig
-    || isManualWizardRoute
-  )
   const shouldShowAccessTokenAction = Boolean(
     credentials.accessToken &&
     !isMaskedSecretValue(credentials.accessToken) &&
@@ -2920,7 +2840,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 </span>
                 <div className={styles.metaConnectCopy}>
                   <h3 id="meta-connect-title">Conecta tu cuenta de Meta</h3>
-                  <p>Autoriza Meta una sola vez. Después podrás elegir qué usar en anuncios y redes sociales.</p>
+                  <p>Conecta con OAuth oficial, sin copiar tokens. Después podrás elegir qué usar en anuncios y redes sociales.</p>
                 </div>
                 <Button
                   type="button"
@@ -2935,7 +2855,7 @@ export const MetaAdsIntegration: React.FC = () => {
               </section>
             )}
 
-            {!shouldShowWizard && activeMetaTab === 'cuenta' && isMetaConfigured && (
+            {activeMetaTab === 'cuenta' && isMetaConfigured && (
               <section className={styles.tabPanel}>
                 <div className={styles.sectionHeader}>
                   <div>
@@ -2957,10 +2877,6 @@ export const MetaAdsIntegration: React.FC = () => {
                     >
                       {isConnectingMetaOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={17} />}
                       {isConnectingMetaOAuth ? 'Abriendo Meta' : 'Autorizar nuevos activos'}
-                    </Button>}
-                    {!isUnifiedOAuthConnected && !hasSplitAdsConnection && !hasSplitSocialConnection && <Button type="button" variant="secondary" onClick={handleEditMetaConfig}>
-                      <Pencil size={16} />
-                      Editar
                     </Button>}
                     <Button type="button" variant="danger" onClick={() => setIsDisconnectModalOpen(true)}>
                       <Power size={16} />
@@ -3125,48 +3041,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       </div>
                     )}
 
-                    {!isSocialOAuthConnection ? (
-                    <div className={styles.webhookField}>
-                      <span className={styles.webhookFieldLabel}>User Token de Messenger</span>
-                      <div className={styles.webhookFieldRow}>
-                        <input
-                          className={styles.secretTokenInput}
-                          type="password"
-                          autoComplete="off"
-                          value={messengerUserToken}
-                          onChange={(event) => setMessengerUserToken(event.target.value)}
-                          placeholder={metaDeveloperSetup?.messengerUserTokenConfigured ? '•••••••• conectado' : 'Pega el User Token que generaste en Meta'}
-                          aria-label="User Token de Messenger"
-                          disabled={!hasPageId || isSavingMessengerUserToken}
-                        />
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={handleSaveMessengerUserToken}
-                          disabled={!hasPageId || !messengerUserToken.trim() || isSavingMessengerUserToken}
-                        >
-                          <Save size={16} />
-                          {isSavingMessengerUserToken ? 'Validando' : metaDeveloperSetup?.messengerUserTokenConfigured ? 'Cambiar' : 'Guardar'}
-                        </Button>
-                      </div>
-                      <p className={styles.connectedPagesDescription}>
-                        {metaDeveloperSetup?.messengerUserTokenConfigured
-                          ? 'Está guardado cifrado. Sólo se usa para derivar el token de Página de Messenger.'
-                          : 'Ristak no lo muestra después de guardarlo y valida que tenga acceso a la Página seleccionada.'}
-                      </p>
-                    </div>
-                    ) : null}
-
-                    {!isSocialOAuthConnection && <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => window.open(metaDeveloperSetup?.messengerUrl, '_blank', 'noopener,noreferrer')}
-                      disabled={!metaDeveloperSetup?.messengerUrl}
-                    >
-                      <ExternalLink size={16} />
-                      Configurar Messenger y Webhooks en Meta
-                    </Button>}
-
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
@@ -3256,16 +3130,6 @@ export const MetaAdsIntegration: React.FC = () => {
                       </div>
                     )}
 
-                    {!isSocialOAuthConnection && <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => window.open(metaDeveloperSetup?.instagramUrl, '_blank', 'noopener,noreferrer')}
-                      disabled={!metaDeveloperSetup?.instagramUrl}
-                    >
-                      <ExternalLink size={16} />
-                      Configurar Instagram y Webhooks en Meta
-                    </Button>}
-
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
@@ -3320,178 +3184,9 @@ export const MetaAdsIntegration: React.FC = () => {
                   </div>
                 ) : null}
 
-                {!isSocialOAuthConnection && <div className={styles.webhookGuide}>
-                  <div className={styles.connectedPagesHeader}>
-                    <h4 className={styles.connectedPagesTitle}>Webhooks en Meta Developers</h4>
-                    <p className={styles.connectedPagesDescription}>
-                      Usa estos valores en cada caso de uso de Meta que actives. La misma URL y el mismo token sirven para Pages, Messenger, Instagram y WhatsApp; Meta separa la configuración por producto.
-                    </p>
-                  </div>
-
-                  <div className={styles.webhookFields}>
-                    <div className={styles.webhookField}>
-                      <span className={styles.webhookFieldLabel}>URL de devolución de llamada</span>
-                      <div className={styles.webhookFieldRow}>
-                        <code className={styles.webhookFieldValue}>{metaWebhookInfo?.webhookUrl || 'Cargando…'}</code>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => handleCopyValue(metaWebhookInfo?.webhookUrl || '', 'URL')}
-                          disabled={!metaWebhookInfo?.webhookUrl}
-                        >
-                          <Copy size={16} />
-                          Copiar
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className={styles.webhookField}>
-                      <span className={styles.webhookFieldLabel}>Token de verificación</span>
-                      <div className={styles.webhookFieldRow}>
-                        <code className={styles.webhookFieldValue}>{metaWebhookInfo?.verifyToken || 'Cargando…'}</code>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => handleCopyValue(metaWebhookInfo?.verifyToken || '', 'Token')}
-                          disabled={!metaWebhookInfo?.verifyToken}
-                        >
-                          <Copy size={16} />
-                          Copiar
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <figure className={styles.webhookTutorialItem}>
-                    <p className={styles.webhookTutorialTitle}>Casos de uso en Meta</p>
-                    <p className={styles.webhookTutorialDescription}>
-                      En cada caso de uso entra a <strong>Personalizar</strong> → <strong>Webhooks</strong>, selecciona el producto correspondiente y pega la URL y el token de arriba.
-                    </p>
-                    <img
-                      src="/meta-use-cases-pages.png"
-                      alt="Pantalla de casos de uso de Meta para administrar páginas, Messenger, Instagram y WhatsApp"
-                      className={styles.webhookTutorialImage}
-                      loading="lazy"
-                    />
-                  </figure>
-
-                  <ol className={styles.webhookSteps}>
-                    <li><strong>Administrar páginas:</strong> configura el producto <strong>Page</strong> para comentarios y eventos de la página.</li>
-                    <li><strong>Messenger e Instagram:</strong> configura los productos que correspondan a los casos de uso activos. Usa la misma URL y el mismo token.</li>
-                    <li><strong>WhatsApp:</strong> configura el producto <strong>WhatsApp Business Account</strong> si vas a recibir mensajes de WhatsApp Cloud API.</li>
-                    <li><strong>Ristak:</strong> después guarda el System User token actualizado y selecciona la Page/Instagram desde este wizard.</li>
-                  </ol>
-                </div>}
               </section>
             )}
-            {shouldShowWizard && (
-            <section className={`${styles.section} ${styles.wizardSection}`}>
-              <div className={styles.sectionHeader}>
-                <div>
-                  <h3 className={styles.sectionTitle}>Configuración manual de Meta</h3>
-                  <p className={styles.sectionDescription}>
-                    Usa tu System User Token y selecciona la cuenta publicitaria, Dataset, Facebook Page e Instagram que utilizará Ristak.
-                  </p>
-                </div>
-                <div className={styles.connectedActions}>
-                  <span className={styles.stepCount}>{completedMetaSetupSteps}/{metaSetupSteps.length} listo</span>
-                  {isMetaConfigured && <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setShowManualConnection(false)
-                      setIsEditingMetaConfig(false)
-                      setActiveStep(0)
-                      navigate(buildMetaAdsConnectedTabPath('cuenta'), { replace: true })
-                    }}
-                  >
-                    Volver a Meta Ads
-                  </Button>}
-                </div>
-              </div>
-
-              <div className={styles.wizardShell}>
-                <div className={styles.progressList} aria-label="Progreso de configuración de Meta">
-                  {metaSetupSteps.map((step, index) => (
-                    <button
-                      key={step.title}
-                      type="button"
-                      className={[
-                        styles.progressItem,
-                        step.done ? styles.progressDone : '',
-                        index === activeStep ? styles.progressActive : '',
-                        !step.unlocked ? styles.progressLocked : ''
-                      ].filter(Boolean).join(' ')}
-                      onClick={() => handleSelectStep(index)}
-                      disabled={!step.unlocked}
-                    >
-                      <span className={styles.progressDot}>
-                        {step.done ? <CheckCircle size={13} /> : index + 1}
-                      </span>
-                      <span className={styles.progressCopy}>
-                        <span className={styles.progressLabel}>{step.title}</span>
-                        <span className={styles.progressDescription}>{step.description}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                <div className={styles.stepPanel}>
-                  {isLoading ? (
-                    <div className={styles.loadingState} role="status" aria-live="polite" aria-label="Cargando credenciales">
-                      <RefreshCw size={18} className={styles.spinning} aria-hidden="true" />
-                    </div>
-                  ) : (
-                    <>
-                      {renderStepContent()}
-
-                      {shouldShowStepActions && (
-                        <div className={[
-                          styles.stepActions,
-                          activeStep === 0 ? styles.stepActionsEnd : ''
-                        ].filter(Boolean).join(' ')}>
-                          {activeStep > 0 && (
-                            <Button type="button" variant="secondary" onClick={handlePreviousStep}>
-                              <ArrowLeft size={16} />
-                              Atrás
-                            </Button>
-                          )}
-                          {activeStep < metaSetupSteps.length - 1 && (
-                            <Button type="button" variant="secondary" onClick={handleNextStep}>
-                              {activeStep === 2 && !hasPixel ? 'Saltar a Page' : 'Siguiente'}
-                              <ArrowRight size={16} />
-                            </Button>
-                          )}
-                          {activeStep === metaSetupSteps.length - 1 && (
-                            <Button
-                              type="button"
-                              variant="primary"
-                              onClick={handleFinishWizard}
-                              disabled={!hasAdAccount || isSavingWizardConfig || Boolean(metaOAuthSession?.permissions.missing.length)}
-                            >
-                              {isSavingWizardConfig ? (
-                                <>
-                                  Guardando
-                                  <RefreshCw size={16} className={styles.spinning} />
-                                </>
-                              ) : (
-                                <>
-                                  Terminar
-                                  <CheckCircle size={16} />
-                                </>
-                              )}
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            </section>
-            )}
-
-            {!shouldShowWizard && isMetaConfigured && activeMetaTab === 'rastreo' && (
+            {isMetaConfigured && activeMetaTab === 'rastreo' && (
               <section className={styles.tabPanel}>
                 <div className={styles.utmBlock}>
                   <div className={styles.sectionHeader}>
@@ -3548,7 +3243,7 @@ export const MetaAdsIntegration: React.FC = () => {
               </section>
             )}
 
-            {!shouldShowWizard && isMetaConfigured && activeMetaTab === 'pruebas' && (
+            {isMetaConfigured && activeMetaTab === 'pruebas' && (
               <section className={styles.tabPanel}>
                 <div className={styles.sectionHeader}>
                   <div>
@@ -3866,14 +3561,10 @@ export const MetaAdsIntegration: React.FC = () => {
         }}
         title="Desconectar Meta"
         message={hasSplitAdsConnection || hasSplitSocialConnection
-          ? 'Se desconectarán las conexiones anteriores que todavía estén activas. La conexión principal permanecerá disponible.'
-          : isOAuthConnection && metaOAuthStatus?.manualBackupAvailable
-          ? 'Se desconectará Meta y Ristak restaurará la conexión anterior que ya tenías guardada.'
-          : isOAuthConnection
-            ? 'Se desconectarán anuncios, Dataset, Facebook e Instagram de esta cuenta. Esta acción no se puede deshacer.'
-            : 'Se eliminará el token, la cuenta de anuncios, el Dataset, la Página e Instagram, y se apagarán Messenger, Instagram DM y comentarios. Esta acción no se puede deshacer.'}
+          ? 'Se desconectarán las conexiones OAuth anteriores que todavía estén activas. Esta acción no se puede deshacer.'
+          : 'Se desconectarán anuncios, Dataset, Facebook e Instagram de esta cuenta. Para volver a usarlos tendrás que conectar Meta otra vez. Esta acción no se puede deshacer.'}
         type="confirm"
-        typeToConfirm={isOAuthConnection ? 'DESCONECTAR' : 'ELIMINAR'}
+        typeToConfirm="DESCONECTAR"
         confirmText={isDisconnectingMeta
           ? 'Procesando...'
           : 'Desconectar Meta'}

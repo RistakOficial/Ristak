@@ -15,6 +15,10 @@ import {
   getMetaWebhookInfo,
   getPages,
   getPixels,
+  revealMetaToken,
+  saveAndSyncMeta,
+  saveConfig,
+  saveMetaMessengerUserToken,
   getSocialProfiles,
   getSyncSettings,
   syncFromHighLevel,
@@ -212,6 +216,49 @@ test('Configuración Meta pinta sólo desde estado local y cada GET pasivo deja 
     assert.equal(installerCalls, 2, 'sólo las dos acciones explícitas verifican Installer')
     assert.equal(await databaseFingerprint(), before, 'verificar status remoto tampoco reconcilia la base')
   })
+})
+
+test('Configuración trata un System User Token heredado como no conectado y ofrece sólo OAuth', async () => {
+  await initializeMasterKey()
+  await withIsolatedMetaSettings(async () => {
+    await db.run(
+      `INSERT INTO meta_config (
+         ad_account_id, access_token, connection_mode, pixel_id, page_id,
+         instagram_account_id, oauth_connected, oauth_validated
+       ) VALUES (?, ?, 'manual_system_user', ?, ?, ?, 0, 0)`,
+      ['manual-ad', 'manual-token', 'manual-pixel', 'manual-page', 'manual-instagram']
+    )
+
+    const before = await databaseFingerprint()
+    const valuesResponse = responseRecorder()
+    await getMetaCustomValues(passiveRequest(), valuesResponse)
+    assert.equal(valuesResponse.statusCode, 200)
+    assert.equal(valuesResponse.payload?.data?.accessToken, '')
+    assert.equal(valuesResponse.payload?.data?.adAccountId, '')
+    assert.equal(valuesResponse.payload?.data?.pageId, '')
+
+    const configResponse = responseRecorder()
+    await getConfig(passiveRequest(), configResponse)
+    assert.equal(configResponse.statusCode, 200)
+    assert.equal(configResponse.payload?.configured, false)
+    assert.equal(await databaseFingerprint(), before, 'la migración visual no borra ni modifica el respaldo cifrado')
+  })
+})
+
+test('endpoints manuales de Meta exigen OAuth y no aceptan tokens nuevos', async () => {
+  for (const controller of [
+    saveConfig,
+    saveAndSyncMeta,
+    saveMetaMessengerUserToken,
+    syncFromHighLevel,
+    revealMetaToken
+  ]) {
+    const res = responseRecorder()
+    await controller(passiveRequest(), res)
+    assert.equal(res.statusCode, 410, `${controller.name} debe retirar el flujo manual`)
+    assert.equal(res.payload?.code, 'META_OAUTH_REQUIRED')
+    assert.match(res.payload?.error || '', /Conectar con Meta/)
+  }
 })
 
 test('snapshot manual conserva metadata, aísla tokens e invalida sin guardar secretos', async () => {

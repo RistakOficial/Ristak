@@ -3738,7 +3738,7 @@ prueba. No la debilites por comodidad.
 
 Ristak usa Meta en varias areas:
 
-### Conexion OAuth y convivencia manual
+### Conexion OAuth y retirada del metodo manual
 
 - `Configuracion > Meta` recomienda **Conectar con Meta**; el flujo OAuth sigue siendo unico para
   anuncios, Dataset/CAPI, Facebook, Instagram, mensajes y comentarios.
@@ -3755,7 +3755,9 @@ Ristak usa Meta en varias areas:
   Redes sociales contiene **Facebook y Messenger** con el dropdown **Página**,
   Instagram y los switches de mensajes/comentarios. Ads y social tienen botones
   Guardar independientes; un borrador de una seccion no se aplica al guardar la
-  otra. Las credenciales manuales sólo aparecen en instalaciones heredadas.
+  otra. Las credenciales manuales no aparecen en ninguna instalación: si sólo
+  existe un `manual_system_user` heredado, la pantalla se considera desconectada
+  y ofrece **Conectar con Meta**.
 - El Config ID unificado pide `ads_read`, `business_management`,
   `pages_show_list`, `pages_manage_metadata`, `pages_messaging`,
   `pages_read_engagement`, `pages_read_user_content`,
@@ -3775,12 +3777,14 @@ Ristak usa Meta en varias areas:
   `meta_oauth_pending_sessions`. La allowlist completa y todos los Page
   tokens/proofs viven cifrados en `meta_oauth_authorized_assets`, lo que permite
   usar los dropdowns de la tabla sin repetir OAuth. Las filas separadas anteriores en
-  `meta_oauth_integrations` y el System User Token manual se conservan como
-  fallbacks, no se borran al iniciar OAuth.
+  `meta_oauth_integrations` y el System User Token manual se conservan cifrados
+  para migración y continuidad heredada, pero el token manual ya no cuenta como
+  conexión visible ni puede guardarse, revelarse o importarse desde producto.
 - Las rutas canonicas son
   `/api/meta/oauth/{status,connect-url,complete,finalize,disconnect}`. Los
   endpoints `/api/meta/oauth/:integrationKind/*` siguen disponibles solo para
-  compatibilidad con instalaciones que ya usaron la etapa separada.
+  compatibilidad con instalaciones que ya usaron la etapa separada. Las rutas
+  manuales de guardado/revelado/importación responden `410 META_OAUTH_REQUIRED`.
 - Ristak reclama el handoff server-to-server y termina la conexión en esa misma
   petición. Installer ya clasificó `USER|SYSTEM_USER` con `debug_token` y validó
   permisos, activos y `granular_scopes.target_ids`; Ristak no repite esas
@@ -3885,8 +3889,10 @@ Ristak usa Meta en varias areas:
   Messenger requiere `page_scoped_user_id` + `page_id`; Instagram requiere
   `ig_sid` + `ig_account_id`. Dataset/token principal y Page/Page Token salen de
   la misma
-  conexion unificada, cada uno con su proof correcto; las conexiones separadas
-  y manuales siguen como fallback.
+  conexion unificada, cada uno con su proof correcto. Las conexiones OAuth
+  separadas y los secretos manuales previos pueden seguir como compatibilidad
+  interna durante la migración, pero no vuelven a presentarse como método de
+  conexión.
   `Purchase (Messaging)` se envia a Meta como `event_name=Purchase` y usa por
   default la moneda de la cuenta (`app_config.account_currency`).
 - Conversions API resuelve primero el OAuth unificado activo de `meta_config`;
@@ -3897,9 +3903,8 @@ Ristak usa Meta en varias areas:
   sólo su runtime social y backfill. Messenger/comentarios se habilitan al elegir
   Page y DMs/comentarios de Instagram al elegir la cuenta enlazada. Ristak no
   pide un token separado de Instagram.
-- En OAuth la suscripcion de Page/webhooks es programatica y la UI no pide
-  copiar valores manuales. En modo manual, **Redes sociales** conserva las
-  credenciales y la guia de Meta Developers. La suscripcion canonica del inbox pide
+- La suscripcion de Page/webhooks es programatica y la UI nunca pide copiar
+  tokens ni valores de Developers. La suscripcion canonica del inbox pide
   `messages`, `message_echoes`, `message_edits`, `message_reactions`,
   `message_reads`, `message_deliveries`, `messaging_postbacks`,
   `messaging_referrals` y `feed`: los primeros ocho mantienen DMs, estados y
@@ -3912,21 +3917,12 @@ Ristak usa Meta en varias areas:
   El webhook entrega eventos futuros. El historial previo se importa de forma
   separada por Conversations API y se deduplica por ID de mensaje; no depende de
   que Meta vuelva a emitir los mensajes viejos por Webhook.
-- **Messenger externo** depende del modo. En manual usa un User Token humano
-  distinto del System User Token: el usuario lo pega en
-  `Configuracion > Meta > Redes sociales`, Ristak valida la Page y lo cifra en
-  `meta_config.messenger_user_token`. En OAuth unificado, Installer entrega el
-  Page Token y su proof; no aparece un segundo campo. Ads/CAPI usan el User
+- **Messenger externo** usa el Page Token y su proof entregados por Installer;
+  no aparece un segundo campo ni se acepta un User Token humano. Ads/CAPI usan el User
   Access Token de larga duración (`oauth_user`; BISU sólo en legado) y
   Messenger/Instagram/comentarios usan el Page Token. El toggle solo se
-  habilita cuando existe la credencial requerida por el modo.
-- En modo manual, las tarjetas de Messenger e Instagram muestran botones de Meta Developers que
-  arman con el App ID y el portafolio de la integración guardada; nunca con un
-  ID hardcodeado de Ristak. Si una conexión antigua no tenía esos IDs, Ristak
-  los recupera del System User Token y los conserva en `meta_config.app_id` y
-  `meta_config.meta_business_id` antes de abrir el caso de uso correcto para
-  generar token/configurar Webhooks. En OAuth esos botones y campos no aparecen:
-  la app y el webhook pertenecen al Installer central.
+  habilita cuando existe el activo OAuth requerido. Las tarjetas no muestran
+  botones de Meta Developers: la app y el webhook pertenecen al Installer central.
 - El bloque **Perfil de red social** del editor de Sites lee primero el OAuth
   unificado activo de `meta_config`, despues la conexion Social separada y al
   final los campos manuales `page_id`, `instagram_account_id` y `access_token`.

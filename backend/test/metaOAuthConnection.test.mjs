@@ -162,7 +162,7 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
       }),
       createConnectUrl: async ({ returnPath }) => {
         createUrlCalls += 1
-        assert.equal(returnPath, '/settings/meta-ads/token')
+        assert.equal(returnPath, '/settings/meta-ads/cuenta')
         return { connectUrl: 'https://installer.test/meta/connect', mode: 'redirect' }
       },
       claimHandoff: async () => ({ payload: { meta: { ...handoffMeta, scopes: handoffScopes } } }),

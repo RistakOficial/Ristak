@@ -946,7 +946,7 @@ export async function getCentralMetaOAuthStatus({ integrationKind = '' } = {}) {
   return data.meta || data.connection || data || {}
 }
 
-export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings/meta-ads/token', integrationKind = '' } = {}) {
+export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings/meta-ads/cuenta', integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/connect-url', {
     return_path: returnPath,
     ...(integrationKind ? { integration_kind: integrationKind } : {})
@@ -958,7 +958,7 @@ export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings
   }
 }
 
-export async function connectCentralMetaOAuth({ code = '', configId = '', returnPath = '/settings/meta-ads/token', integrationKind = '' } = {}) {
+export async function connectCentralMetaOAuth({ code = '', configId = '', returnPath = '/settings/meta-ads/cuenta', integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/connect', {
     code,
     config_id: configId,

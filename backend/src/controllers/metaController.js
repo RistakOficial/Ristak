@@ -621,6 +621,23 @@ function hasUsableLocalMetaConfig(metaConfig) {
   return Boolean(metaConfig?.access_token);
 }
 
+function hasUsableMetaOAuthConfig(metaConfig) {
+  const connectionMode = cleanString(metaConfig?.connection_mode).toLowerCase();
+  return Boolean(
+    metaConfig?.access_token &&
+    ['oauth_user', 'oauth_bisu'].includes(connectionMode) &&
+    Number(metaConfig?.oauth_connected) === 1
+  );
+}
+
+function rejectMetaManualConnection(res) {
+  return res.status(410).json({
+    success: false,
+    code: 'META_OAUTH_REQUIRED',
+    error: 'La conexión manual de Meta ya no está disponible. Usa “Conectar con Meta” para autorizarla con OAuth.'
+  });
+}
+
 function toMaskedMetaCredentials(metaConfig = {}, whatsappBusinessAccountId = '', socialConfig = null) {
   const social = socialConfig || metaConfig
   const adsMode = cleanString(metaConfig?.connection_mode) || null
@@ -877,6 +894,9 @@ async function hydrateMissingCreativeMedia(rows = []) {
  * USA System User Token (no requiere App ID ni App Secret)
  */
 export const saveConfig = async (req, res) => {
+  return rejectMetaManualConnection(res);
+
+  /* istanbul ignore next -- compatibilidad histórica inaccesible desde producto */
   try {
     const { ad_account_id, access_token, pixel_id, page_id, instagram_account_id } = req.body;
 
@@ -942,7 +962,7 @@ export const getConfig = async (req, res) => {
     );
     const config = await getMetaConfig({ migratePlaintext: false });
 
-    if (!config) {
+    if (!hasUsableMetaOAuthConfig(config)) {
       return res.json({
         success: true,
         configured: false,
@@ -1554,6 +1574,9 @@ function renderMetaPixelTestPageHtml({ pixelId, eventName, method, hasServer, to
  * Solo se usa cuando el frontend necesita hacer llamadas a Meta API
  */
 export const revealMetaToken = async (req, res) => {
+  return rejectMetaManualConnection(res);
+
+  /* istanbul ignore next -- compatibilidad histórica inaccesible desde producto */
   try {
     const metaConfig = await getMetaConfig();
 
@@ -1672,6 +1695,9 @@ export const getMetaSocialMessagingSetup = async (req, res) => {
  * derivar un Page Token para la Página seleccionada.
  */
 export const saveMetaMessengerUserToken = async (req, res) => {
+  return rejectMetaManualConnection(res);
+
+  /* istanbul ignore next -- compatibilidad histórica inaccesible desde producto */
   try {
     const userToken = cleanString(req.body?.userToken);
     if (userToken.length < 40) {
@@ -3327,7 +3353,10 @@ export const getMetaCustomValues = async (req, res) => {
       getAppConfig('meta_whatsapp_business_account_id').catch(() => null)
     ]);
 
-    if (metaDisconnected && !hasUsableLocalMetaConfig(localMetaConfig) && !hasUsableLocalMetaConfig(localSocialConfig)) {
+    const visibleMetaConfig = hasUsableMetaOAuthConfig(localMetaConfig) ? localMetaConfig : null;
+    const visibleSocialConfig = hasUsableMetaOAuthConfig(localSocialConfig) ? localSocialConfig : null;
+
+    if (metaDisconnected && !visibleMetaConfig && !visibleSocialConfig) {
       return res.json({
         success: true,
         data: null,
@@ -3340,13 +3369,13 @@ export const getMetaCustomValues = async (req, res) => {
       });
     }
 
-    if (hasUsableLocalMetaConfig(localMetaConfig) || hasUsableLocalMetaConfig(localSocialConfig)) {
+    if (visibleMetaConfig || visibleSocialConfig) {
       return res.json({
         success: true,
         data: toMaskedMetaCredentials(
-          localMetaConfig || {},
+          visibleMetaConfig || {},
           whatsappBusinessAccountId,
-          localSocialConfig
+          visibleSocialConfig
         ),
         source: 'local',
         reconciliation: {
@@ -3384,6 +3413,9 @@ export const getMetaCustomValues = async (req, res) => {
  * USA System User Token (no requiere App ID ni App Secret)
  */
 export const saveAndSyncMeta = async (req, res) => {
+  return rejectMetaManualConnection(res);
+
+  /* istanbul ignore next -- compatibilidad histórica inaccesible desde producto */
   try {
     const { adAccountId, accessToken, pixelId, pageId, instagramAccountId, whatsappBusinessAccountId } = req.body;
 
@@ -3624,6 +3656,9 @@ export const saveAndSyncMeta = async (req, res) => {
  * valida que funcionen y luego inicia sincronización de anuncios
  */
 export const syncFromHighLevel = async (req, res) => {
+  return rejectMetaManualConnection(res);
+
+  /* istanbul ignore next -- compatibilidad histórica inaccesible desde producto */
   try {
     logger.info('Iniciando sincronización de Meta desde HighLevel custom values...');
 

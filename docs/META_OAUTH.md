@@ -24,8 +24,10 @@ Instagram profesional. Una conexion nueva empieza sin activos operativos. Cada
 seccion conserva sus cambios como borrador y los aplica únicamente al pulsar su
 boton **Guardar**; guardar Ads no arrastra un borrador social ni viceversa. Si la
 misma conexion OAuth se vuelve a autorizar, Ristak conserva las selecciones que
-sigan permitidas. OAuth sustituye la conexion visible y conserva el metodo
-anterior como fallback cifrado.
+sigan permitidas. OAuth es el unico metodo de conexion visible y aceptado por
+Configuracion. Un secreto manual anterior puede conservarse cifrado durante la
+migracion para no destruir datos, pero nunca marca la cuenta como conectada ni
+vuelve a mostrar campos de token.
 
 Los dropdowns de la tabla reutilizan el inventario autorizado sin volver a abrir
 OAuth ni relistar el portafolio. **Autorizar nuevos activos** se usa sólo cuando
@@ -34,9 +36,12 @@ la persona eligió “actuales y futuros”, el permiso puede cubrir activos nue
 pero Ristak vuelve a pasar por el callback central para obtener el inventario
 actualizado y los Page tokens/proofs sin exponer el App Secret.
 
-La migracion es gradual y no elimina lo que ya funciona:
+La migracion es gradual y no destruye secretos existentes:
 
-- `manual_system_user` sigue disponible como metodo heredado;
+- `manual_system_user` deja de ser un metodo de conexion: una instalacion que
+  solo tenga ese registro ve **Conectar con Meta** y debe autorizar OAuth;
+- los endpoints que guardaban, revelaban o importaban tokens manuales responden
+  `410 META_OAUTH_REQUIRED` y no aceptan nuevas credenciales;
 - las conexiones OAuth separadas `social|ads` desplegadas anteriormente quedan
   como fallback interno, pero la UI nueva ya no inicia esos dos flujos;
 - una autorizacion cancelada, expirada o incompleta no sustituye la conexion
@@ -48,15 +53,13 @@ La migracion es gradual y no elimina lo que ya funciona:
 `Configuracion > Meta` se divide por funcion, no por credencial:
 
 1. **Meta Ads**: cuenta publicitaria y Dataset de conversiones opcionales, con
-   dropdowns buscables y un solo boton **Guardar** para esa seccion. El wizard de
-   System User queda sólo como ruta heredada para instalaciones que ya dependan
-   de él.
+   dropdowns buscables y un solo boton **Guardar** para esa seccion. No existe
+   wizard de System User ni ruta visible para pegar tokens.
 2. **Redes sociales**: **Facebook y Messenger** permite elegir la **Página** y
    controlar Messenger/comentarios; Instagram permite elegir su cuenta y
    controlar DMs/comentarios. Página e Instagram son opcionales y comparten un
-   boton **Guardar**. La credencial de Messenger y la guia de Developers aparecen
-   sólo en modo manual; OAuth ya incluye el acceso de Page y no presenta esos
-   detalles al usuario final.
+   boton **Guardar**. OAuth incluye el Page Token y el relay central; la UI nunca
+   pide una credencial de Messenger ni muestra una guia de Meta Developers.
    Cuando todavía no hay una selección, cada dropdown OAuth guía con
    **Selecciona tu cuenta publicitaria**, **Selecciona tu Dataset o pixel**,
    **Selecciona tu página** o **Selecciona tu cuenta de Instagram** en lugar de
@@ -69,8 +72,9 @@ La migracion es gradual y no elimina lo que ya funciona:
 `/ads` es alias de `/settings/meta-ads/cuenta`; `/social` y `/mensajes` son
 aliases de `/settings/meta-ads/redes-sociales`. Ninguna ruta debe volver a
 presentar dos botones OAuth. Una cuenta sin configurar no ve pestañas, estados
-vacíos ni formularios: ve directamente **Conectar con Meta**; el wizard manual
-no se abre por defecto ni compite con el flujo oficial.
+vacíos ni formularios: ve directamente **Conectar con Meta**. Esto también aplica
+si la base conserva un `manual_system_user` heredado; las rutas antiguas del
+wizard muestran la misma pantalla OAuth y no reactivan el método manual.
 
 ## WhatsApp Embedded Signup especializado
 
@@ -345,7 +349,9 @@ El cambio conserva tres capas sin mezclarlas:
 
 - conexion unificada nueva en `meta_config`;
 - conexiones OAuth separadas anteriores en `meta_oauth_integrations`;
-- System User Token manual respaldado de forma cifrada.
+- System User Token manual respaldado de forma cifrada, sólo como dato de
+  migracion y continuidad heredada; no es una conexion visible ni admite nuevas
+  escrituras desde producto.
 
 Al conectar:
 
@@ -360,7 +366,9 @@ Al conectar:
 Al desconectar el login unificado:
 
 - Installer restaura la ruta Social separada que servia de fallback, si existe;
-- Ristak restaura la configuracion manual cifrada, si existe;
+- Ristak puede conservar/restaurar internamente la configuracion manual cifrada
+  para no destruir el respaldo, pero Configuracion la trata como desconectada y
+  vuelve a mostrar **Conectar con Meta**;
 - las filas separadas no se eliminan;
 - los crons se recalculan segun la conexion que realmente quede activa.
 
@@ -379,6 +387,12 @@ Ristak instalado, autenticado y protegido por el modulo `campaigns`:
 - `POST /api/meta/oauth/disconnect`;
 - `POST /api/meta/social-profiles/refresh`;
 - `POST /webhooks/meta/installer-relay`, publico, firmado y anti-replay.
+
+Las rutas heredadas `POST /api/meta/config`,
+`POST /api/meta/save-and-sync`, `POST /api/meta/sync-from-highlevel`,
+`POST /api/meta/social/messaging/user-token` y
+`GET /api/meta/config/reveal/access_token` ya no son metodos de conexion:
+responden `410 META_OAUTH_REQUIRED` para dirigir al login oficial.
 
 Los endpoints `/api/meta/oauth/:integrationKind/*` con `social|ads` se conservan
 solo para migracion/regresiones de instalaciones que ya los usaron. La UI nueva
@@ -462,10 +476,11 @@ Installer, autenticado por licencia salvo callbacks publicos:
    backfill sin usar el token Ads como Page Token.
 10. Handoff ajeno, activo granular incorrecto, firma invalida y replay se
    rechazan.
-11. Reconectar o fallar no borra el System User Token manual ni los fallbacks
+11. Reconectar o fallar no borra el respaldo cifrado ni los fallbacks OAuth
     separados.
-12. Desconectar restaura la ruta Social/manual correspondiente, tanto para la
-    misma Page como para una Page distinta.
+12. Una instalacion con sólo `manual_system_user` se presenta como desconectada,
+    no muestra tokens/webhooks manuales y ofrece **Conectar con Meta**; los
+    endpoints manuales responden `410 META_OAUTH_REQUIRED`.
 13. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
     mezclan con el login ni los controles sociales.
 14. Las dos secciones son los unicos selectores internos. **Autorizar nuevos
