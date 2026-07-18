@@ -1812,14 +1812,14 @@ El color del globo se resuelve por mensaje con el mismo contrato de identidad en
 `/chat`, `/movil`, React Native Android e iOS. En tema claro, todo mensaje
 entrante es blanco y solo los salientes usan color: WhatsApp API lleva un verde
 claro, WhatsApp QR un verde apenas mas oscuro, Messenger/Facebook azul e
-Instagram morado rosita. En tema oscuro, la app iOS pinta entrantes en carbón y
-usa equivalentes profundos para cada canal saliente; texto, hora y estados pasan
-a una paleta clara de contraste y nunca se fuerza internamente `colorScheme`
-claro. Correo, SMS y canal desconocido se mantienen neutrales. `api`, `qr` o
-`smtp` no se interpretan como plataforma por si solos: primero se considera el
-canal social real y despues, solo para WhatsApp, el transporte API/QR. Mensajes
-programados mantienen ademas su borde punteado y los fallidos conservan prioridad
-visual de error.
+Instagram morado rosita. En tema oscuro, las cuatro superficies pintan entrantes
+en carbon y usan equivalentes profundos para cada canal saliente; texto, hora y
+estados pasan a una paleta clara de contraste y nunca se fuerza internamente
+`colorScheme` claro. Correo, SMS y canal desconocido se mantienen neutrales.
+`api`, `qr` o `smtp` no se interpretan como plataforma por si solos: primero se
+considera el canal social real y despues, solo para WhatsApp, el transporte
+API/QR. Mensajes programados mantienen ademas su borde punteado y los fallidos
+conservan prioridad visual de error.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de

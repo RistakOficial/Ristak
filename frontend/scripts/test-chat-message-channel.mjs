@@ -29,5 +29,13 @@ const globalStyles = await readFile(new URL('../src/styles/index.css', import.me
 assert.match(globalStyles, /--chat-bubble-inbound:\s*#ffffff;/)
 assert.match(globalStyles, /--chat-bubble-outbound-whatsapp-api:\s*#d9fdd3;/)
 assert.match(globalStyles, /--chat-bubble-outbound-whatsapp-qr:\s*#c6efbd;/)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-inbound:\s*#242527;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-outbound-neutral:\s*#303135;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-outbound-whatsapp-api:\s*#0b4939;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-outbound-whatsapp-qr:\s*#124f3b;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-outbound-instagram:\s*#4a263d;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-outbound-messenger:\s*#1b3c66;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-text:\s*#f5f5f7;/s)
+assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-meta:\s*#b7b7bd;/s)
 
 console.log('chat message channel colors OK')

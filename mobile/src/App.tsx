@@ -332,7 +332,12 @@ import type {
   WhatsAppNumberOriginDatum,
 } from './types';
 import { buildUserCustomFieldRows, isUserCustomFieldDefinition } from './contactCustomFields';
-import { getChatMessageBubbleBackground, resolveChatMessageChannel, type ChatMessageChannelKind } from './chatMessageChannel';
+import {
+  getChatMessageBubbleBackground,
+  getChatMessageBubblePalette,
+  resolveChatMessageChannel,
+  type ChatMessageChannelKind,
+} from './chatMessageChannel';
 
 type NativeThemeTone = 'light' | 'dark';
 type NativeColorPalette = {
@@ -1335,7 +1340,12 @@ const CHANNEL_BUBBLE_BORDER_COLORS: Partial<Record<ChatMessageChannelKind, strin
   messenger: '#1877f2',
 };
 
-function getNativeMessageChannelBubbleStyle(message: ChatMessage, outbound: boolean, scheduled: boolean): ViewStyle | undefined {
+function getNativeMessageChannelBubbleStyle(
+  message: ChatMessage,
+  outbound: boolean,
+  scheduled: boolean,
+  themeTone: NativeThemeTone,
+): ViewStyle | undefined {
   const channel = resolveChatMessageChannel({
     channel: message.channel,
     transport: message.transport,
@@ -1343,7 +1353,7 @@ function getNativeMessageChannelBubbleStyle(message: ChatMessage, outbound: bool
     messageType: message.messageType,
     hasEmail: Boolean(message.emailDetails),
   });
-  const backgroundColor = getChatMessageBubbleBackground(channel, outbound);
+  const backgroundColor = getChatMessageBubbleBackground(channel, outbound, themeTone);
   if (!backgroundColor) return undefined;
 
   const style: ViewStyle = {
@@ -25962,7 +25972,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   starred,
   // El tema vive en un objeto global de estilos que se intercambia al vuelo;
   // recibir el tono como prop hace que React.memo re-renderice al cambiarlo.
-  themeTone: _themeTone,
+  themeTone = activeNativeThemeTone,
   timezone,
   onCommentReply,
   onLongPress,
@@ -25975,7 +25985,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   searchActive?: boolean;
   scheduledCountdownNow?: number;
   starred?: boolean;
-  themeTone?: string;
+  themeTone?: NativeThemeTone;
   timezone: string;
   onCommentReply?: (message: ChatMessage) => void;
   onLongPress?: (message: ChatMessage) => void;
@@ -25989,8 +25999,8 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   const status = getMessageReceiptStatus(message);
   const scheduled = isScheduledMessage(message);
   const channelBubbleStyle = useMemo(
-    () => getNativeMessageChannelBubbleStyle(message, outbound, scheduled),
-    [message.channel, message.commentPlatform, message.emailDetails, message.messageType, message.transport, outbound, scheduled, _themeTone],
+    () => getNativeMessageChannelBubbleStyle(message, outbound, scheduled, themeTone),
+    [message.channel, message.commentPlatform, message.emailDetails, message.messageType, message.transport, outbound, scheduled, themeTone],
   );
   const linkPreview = useMemo(() => getNativeMessageLinkPreview(message), [message]);
   const visibleMessageText = linkPreview?.displayText ?? message.text;
@@ -28543,14 +28553,15 @@ function createAppStyles() {
   const avatarFallbackBackground = isLight ? 'rgba(60,60,67,0.10)' : 'rgba(255,255,255,0.12)';
   const avatarInitialTextColor = COLORS.text;
   const replySwipeGlyphBackground = isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.12)';
-  const inboundBubbleBackground = '#ffffff';
-  const outboundBubbleBackground = '#f0f1f4';
-  const messageBubbleTextColor = '#1d1d1f';
-  const messageBubbleMetaColor = '#6e6e73';
+  const messageBubblePalette = getChatMessageBubblePalette(activeNativeThemeTone);
+  const inboundBubbleBackground = messageBubblePalette.inbound;
+  const outboundBubbleBackground = messageBubblePalette.outboundNeutral;
+  const messageBubbleTextColor = messageBubblePalette.text;
+  const messageBubbleMetaColor = messageBubblePalette.meta;
   const messageBubbleShadowColor = isLight ? 'rgba(60,60,67,0.28)' : '#000000';
-  const scheduledBubbleBackground = '#f0f1f4';
-  const scheduledBubbleBorder = 'rgba(60,60,67,0.22)';
-  const failedBubbleBackground = '#ffe4e8';
+  const scheduledBubbleBackground = messageBubblePalette.scheduled;
+  const scheduledBubbleBorder = messageBubblePalette.scheduledBorder;
+  const failedBubbleBackground = messageBubblePalette.failed;
   const starredBackground = isLight ? 'rgba(118,118,128,0.10)' : 'rgba(255,255,255,0.08)';
   const voiceComposerBackground = composerShellBackground;
   const voiceComposerTrackBackground = composerInputBackground;

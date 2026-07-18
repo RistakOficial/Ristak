@@ -100,13 +100,15 @@ los nuevos. **Jamás** declares un alias nuevo en `:root` que apunte a un token
 temado (se congela con el default oscuro); decláralo en `body` si hace falta.
 
 Los cuatro tokens `--brand-channel-*` conservan los colores de marca para iconos,
-badges y bordes. Los globos usan una paleta pastel separada y direccional: todo
-mensaje entrante usa `--chat-bubble-inbound` blanco, sin importar plataforma; solo
-los salientes pueden usar color. WhatsApp API usa verde claro, WhatsApp QR un
+badges y bordes. Los globos usan una paleta separada, direccional y sensible al
+modo. En claro, todo mensaje entrante usa `--chat-bubble-inbound` blanco y solo
+los salientes pueden usar tonos suaves: WhatsApp API verde claro, WhatsApp QR un
 verde apenas mas oscuro, Messenger/Facebook azul e Instagram morado rosita.
-Correo, SMS y canal desconocido usan `--chat-bubble-outbound-neutral`. Esta paleta
-es clara tambien dentro de temas oscuros, por eso texto y metadatos usan siempre
-`--chat-bubble-text` y `--chat-bubble-meta`.
+Correo, SMS y canal desconocido usan `--chat-bubble-outbound-neutral`. En oscuro,
+el entrante cambia a carbon y cada saliente usa el equivalente profundo de su
+canal; `--chat-bubble-text` y `--chat-bubble-meta` cambian a tonos claros de
+contraste. Este contrato debe mantenerse igual en `/chat`, `/movil`, Android e
+iOS.
 
 ---
 

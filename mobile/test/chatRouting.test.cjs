@@ -28,7 +28,11 @@ const {
   normalizeNativeWhatsAppSenderRoute,
   readLocalCatalogWithRetry,
 } = require('../src/chatRouting.ts');
-const { getChatMessageBubbleBackground, resolveChatMessageChannel } = require('../src/chatMessageChannel.ts');
+const {
+  getChatMessageBubbleBackground,
+  getChatMessageBubblePalette,
+  resolveChatMessageChannel,
+} = require('../src/chatMessageChannel.ts');
 
 test('los globos distinguen WhatsApp API de QR y dejan correo/SMS neutrales', () => {
   assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'api' }), 'whatsapp_api');
@@ -47,6 +51,30 @@ test('solo los mensajes salientes reciben color y los dos verdes siguen claros',
   assert.equal(getChatMessageBubbleBackground('whatsapp_api', true), '#d9fdd3');
   assert.equal(getChatMessageBubbleBackground('whatsapp_qr', true), '#c6efbd');
   assert.equal(getChatMessageBubbleBackground('email', true), undefined);
+});
+
+test('los globos nativos cambian a una paleta profunda y legible en modo oscuro', () => {
+  assert.equal(getChatMessageBubbleBackground('whatsapp_api', true, 'dark'), '#0b4939');
+  assert.equal(getChatMessageBubbleBackground('whatsapp_qr', true, 'dark'), '#124f3b');
+  assert.equal(getChatMessageBubbleBackground('instagram', true, 'dark'), '#4a263d');
+  assert.equal(getChatMessageBubbleBackground('messenger', true, 'dark'), '#1b3c66');
+  assert.equal(getChatMessageBubbleBackground('whatsapp_api', false, 'dark'), undefined);
+  assert.equal(getChatMessageBubbleBackground('email', true, 'dark'), undefined);
+  assert.deepEqual(getChatMessageBubblePalette('dark'), {
+    inbound: '#242527',
+    outboundNeutral: '#303135',
+    outboundByChannel: {
+      whatsapp_api: '#0b4939',
+      whatsapp_qr: '#124f3b',
+      instagram: '#4a263d',
+      messenger: '#1b3c66',
+    },
+    text: '#f5f5f7',
+    meta: '#b7b7bd',
+    scheduled: '#303135',
+    scheduledBorder: 'rgba(235,235,245,0.32)',
+    failed: '#55202a',
+  });
 });
 
 test('Instagram y Facebook/Messenger ganan sobre un transporte API generico', () => {

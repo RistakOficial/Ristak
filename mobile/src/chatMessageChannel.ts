@@ -1,4 +1,5 @@
 export type ChatMessageChannelKind = 'whatsapp_api' | 'whatsapp_qr' | 'instagram' | 'messenger' | 'sms' | 'email' | 'unknown';
+export type ChatMessageBubbleTone = 'light' | 'dark';
 
 export type ChatMessageChannelSignals = {
   eventType?: unknown;
@@ -11,16 +12,63 @@ export type ChatMessageChannelSignals = {
   hasEmail?: boolean;
 };
 
-export const CHAT_MESSAGE_OUTBOUND_BUBBLE_COLORS: Partial<Record<ChatMessageChannelKind, string>> = {
-  whatsapp_api: '#d9fdd3',
-  whatsapp_qr: '#c6efbd',
-  instagram: '#f2d7e6',
-  messenger: '#dbeafe',
+export type ChatMessageBubblePalette = {
+  inbound: string;
+  outboundNeutral: string;
+  outboundByChannel: Partial<Record<ChatMessageChannelKind, string>>;
+  text: string;
+  meta: string;
+  scheduled: string;
+  scheduledBorder: string;
+  failed: string;
 };
 
-export function getChatMessageBubbleBackground(channel: ChatMessageChannelKind, outbound: boolean) {
+export const CHAT_MESSAGE_BUBBLE_PALETTES: Record<ChatMessageBubbleTone, ChatMessageBubblePalette> = {
+  light: {
+    inbound: '#ffffff',
+    outboundNeutral: '#f0f1f4',
+    outboundByChannel: {
+      whatsapp_api: '#d9fdd3',
+      whatsapp_qr: '#c6efbd',
+      instagram: '#f2d7e6',
+      messenger: '#dbeafe',
+    },
+    text: '#1d1d1f',
+    meta: '#6e6e73',
+    scheduled: '#f0f1f4',
+    scheduledBorder: 'rgba(60,60,67,0.22)',
+    failed: '#ffe4e8',
+  },
+  dark: {
+    inbound: '#242527',
+    outboundNeutral: '#303135',
+    outboundByChannel: {
+      whatsapp_api: '#0b4939',
+      whatsapp_qr: '#124f3b',
+      instagram: '#4a263d',
+      messenger: '#1b3c66',
+    },
+    text: '#f5f5f7',
+    meta: '#b7b7bd',
+    scheduled: '#303135',
+    scheduledBorder: 'rgba(235,235,245,0.32)',
+    failed: '#55202a',
+  },
+};
+
+export const CHAT_MESSAGE_OUTBOUND_BUBBLE_COLORS = CHAT_MESSAGE_BUBBLE_PALETTES.light.outboundByChannel;
+
+export function getChatMessageBubblePalette(tone: ChatMessageBubbleTone = 'light') {
+  return CHAT_MESSAGE_BUBBLE_PALETTES[tone];
+}
+
+export function getChatMessageBubbleBackground(
+  channel: ChatMessageChannelKind,
+  outbound: boolean,
+  tone: ChatMessageBubbleTone = 'light',
+) {
   if (!outbound) return undefined;
-  return CHAT_MESSAGE_OUTBOUND_BUBBLE_COLORS[channel];
+  return CHAT_MESSAGE_BUBBLE_PALETTES[tone].outboundByChannel[channel];
 }
 
 function normalizeSignal(value: unknown) {
