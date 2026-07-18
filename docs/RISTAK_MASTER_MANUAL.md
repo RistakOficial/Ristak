@@ -2848,9 +2848,11 @@ Reglas base:
   Google Calendar` y conserva la acción para abrir la conexión.
 - Cada hora del editor semanal se elige en un menú de tres columnas
   (hora, minuto y AM/PM). La selección sólo cambia el rango al pulsar
-  `De acuerdo`; cerrar el menú o usar Escape descarta el borrador. El botón de
-  copiar abre un selector de varios días, mantiene marcado y bloqueado el día
-  origen y copia todos sus rangos únicamente al pulsar `Aplicar`.
+  `De acuerdo`; cerrar el menú o usar Escape descarta el borrador. Los botones
+  `De acuerdo` y `Aplicar` conservan el contraste de texto del botón primario en
+  todas las familias y modos del tema. El botón de copiar abre un selector de
+  varios días, mantiene marcado y bloqueado el día origen y copia todos sus
+  rangos únicamente al pulsar `Aplicar`.
 - Al guardar, la UI adopta primero el calendario canónico devuelto por el PUT y
   después espera la recarga del listado. Una respuesta vieja o un GET fallido no
   debe volver a pintar el horario anterior ni convertir el listado en vacío.

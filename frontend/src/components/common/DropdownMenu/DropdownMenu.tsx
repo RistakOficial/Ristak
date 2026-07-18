@@ -89,7 +89,8 @@ const DropdownMenuItem = React.forwardRef<
     className={unstyled
       ? className
       : `${styles.item} ${inset ? styles.inset : ''} ${className || ''}`}
-    data-ristak-dropdown-item
+    data-ristak-dropdown-item={unstyled ? undefined : ''}
+    data-ristak-unstyled={unstyled ? '' : undefined}
     {...props}
   />
 ))

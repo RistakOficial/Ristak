@@ -234,9 +234,11 @@ El wizard usa ocho pasos: `Detalles`, `Disponibilidad`, `URL y Datos`, `Cobro`,
 
 En el editor semanal, cada control de hora abre columnas separadas para hora,
 minuto y AM/PM. El valor se confirma con `De acuerdo`; Escape o cerrar el menú
-descarta el cambio temporal. `Copiar horarios` abre un menú de selección múltiple
-para elegir días destino y `Aplicar` clona todos los rangos del día origen sin
-alterar los días no seleccionados.
+descarta el cambio temporal. Los CTA `De acuerdo` y `Aplicar` mantienen el color
+de texto con contraste del botón primario en todas las familias y modos del
+tema. `Copiar horarios` abre un menú de selección múltiple para elegir días
+destino y `Aplicar` clona todos los rangos del día origen sin alterar los días no
+seleccionados.
 
 El guardado incorpora inmediatamente la respuesta canónica del PUT y luego
 espera una recarga estricta del listado. Las recargas anteriores se ignoran y un
