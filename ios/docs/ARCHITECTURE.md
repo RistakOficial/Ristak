@@ -226,9 +226,13 @@ terminar cambio el filtro de calendarios.
   multipart se transmite desde disco para no coexistir con otra copia completa
   en memoria.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y
-  disco. Visor pantalla completa con zoom, player audio con velocidades y
-  scrubber alineado a los extremos sin parecer recortado, QuickLook para
-  documentos, mapa para ubicación.
+  disco. Foto y video comparten un canvas inmutable 252x189 desde el placeholder
+  hasta el contenido final; la carga nunca cambia geometría ni desplaza el hilo.
+  La media se recorta `scaledToFill` y forma el globo full-bleed, mientras
+  hora/acuse y la duración del video se dibujan encima con degradado de contraste.
+  Visor pantalla completa con zoom, player audio con velocidades y scrubber
+  alineado a los extremos sin parecer recortado, QuickLook para documentos, mapa
+  para ubicación.
 
 ## Rendimiento y diagnostico
 

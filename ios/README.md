@@ -14,9 +14,10 @@ entitlements, targets ni codigo nativo Apple.
 - Mínimo: iOS 26.0 · Xcode 26+ · Swift 5 mode · **cero dependencias externas**
 - Universal: iPhone (tab bar compacta) + iPad (sidebar adaptable, split views,
   popovers), vertical y horizontal, claro/oscuro, Dynamic Type.
-- Los globos recibidos son siempre blancos. Solo los enviados conservan el canal
-  real: WhatsApp API verde claro, WhatsApp QR apenas mas oscuro,
-  Messenger/Facebook azul, Instagram morado rosita y correo/SMS neutrales.
+- Los globos siguen la apariencia elegida. En claro, los recibidos son blancos y
+  los enviados conservan el pastel del canal; en oscuro, los recibidos usan
+  carbón y los enviados tonos profundos de WhatsApp, Messenger o Instagram, con
+  texto y metadatos claros. Correo/SMS permanecen neutrales en ambos temas.
 - La bandeja de Chats abre desde el tope nativo con `Buscar chats` visible; el
   modo automatico de Apple no debe arrancar el campo colapsado como si el usuario
   ya hubiera desplazado la lista.
@@ -142,6 +143,10 @@ solo en capa flotante; copy en español.
   Las reacciones conservan su emoji aunque el mensaje objetivo esté fuera de la
   página cargada o la app arranque desde una caché anterior; los stickers se
   reconocen como imagen en vez de degradarse al texto genérico `Mensaje`.
+  Fotos y videos ocupan el globo completo, con puntita visible y hora/acuse
+  superpuestos; video agrega duración dentro del contenido. Ambos reservan desde
+  el primer render un canvas fijo 4:3, por lo que pasar de placeholder a bitmap o
+  thumbnail nunca cambia la altura ni mueve el scroll.
   El teclado conserva materializadas las burbujas al primer enfoque: el ancla al
   fondo es solo inicial y los cambios de frame se estabilizan con la duración de UIKit.
   Composer: cámara directa junto al micrófono para foto/video (se oculta al

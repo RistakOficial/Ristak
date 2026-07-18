@@ -15,17 +15,13 @@ import UIKit
 struct ChatRemoteImage: View {
     let url: URL
     var contentMode: ContentMode = .fill
-    /// Notifica el tamaño natural (px) al cargar, para que el contenedor pueda
-    /// reservar la altura exacta y evitar saltos de layout (jank #8).
-    var onLoad: ((CGSize) -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
 
-    init(url: URL, contentMode: ContentMode = .fill, onLoad: ((CGSize) -> Void)? = nil) {
+    init(url: URL, contentMode: ContentMode = .fill) {
         self.url = url
         self.contentMode = contentMode
-        self.onLoad = onLoad
         // Pintado síncrono desde memoria: si ya está cacheada, sin spinner ni flash
         // aunque la fila recicle al hacer scroll.
         _image = State(initialValue: RistakImageLoader.shared.cachedImage(for: url))
@@ -56,14 +52,12 @@ struct ChatRemoteImage: View {
             if let cached = RistakImageLoader.shared.cachedImage(for: url) {
                 if image !== cached { image = cached }
                 failed = false
-                onLoad?(cached.size)
                 return
             }
             if image != nil { image = nil }
             failed = false
             if let loaded = await RistakImageLoader.shared.imageIfAvailable(for: url) {
                 image = loaded
-                onLoad?(loaded.size)
             } else {
                 failed = true
             }
@@ -73,97 +67,11 @@ struct ChatRemoteImage: View {
 
 // MARK: - Imagen
 
-/// Caché del tamaño de PRESENTACIÓN (acotado) ya resuelto de cada imagen, por
-/// URL, para reservar su altura EXACTA ANTES de que el bitmap descargue — así la
-/// burbuja nace con su altura final y no salta del placeholder 4:3 al tamaño real
-/// (jank #8), ni al entrar en frío ni al subir por el historial.
-///
-/// Fronted en memoria y PERSISTIDA a disco: una foto medida una vez conserva su
-/// altura para siempre, incluido el arranque en frío (paridad con la caché de
-/// dimensiones medidas por URL de /movil). Acceso solo desde main (vistas
-/// SwiftUI); el encode/escritura a disco ocurre fuera del hilo principal.
-/// `nonisolated(unsafe)` silencia el chequeo de concurrencia sobre el estado
-/// estático, cuya mutación se mantiene exclusivamente en main.
-enum ChatImageSizeCache {
-    nonisolated(unsafe) private static var sizes: [String: CGSize] = [:]
-    nonisolated(unsafe) private static var loaded = false
-    nonisolated(unsafe) private static var saveScheduled = false
-
-    private static let fileURL: URL? = FileManager.default
-        .urls(for: .cachesDirectory, in: .userDomainMask).first?
-        .appendingPathComponent("ristak-chat-image-sizes.json")
-
-    /// Normaliza la URL a host+path (descarta query/fragment) para que una URL
-    /// firmada con token rotatorio siga acertando la misma foto.
-    private static func key(for raw: String) -> String {
-        guard let comps = URLComponents(string: raw) else { return raw }
-        let normalized = (comps.host ?? "") + comps.path
-        return normalized.isEmpty ? raw : normalized
-    }
-
-    private static func loadIfNeeded() {
-        guard !loaded else { return }
-        loaded = true
-        guard let fileURL, let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([String: CGSize].self, from: data) else { return }
-        sizes = decoded
-    }
-
-    static func size(for raw: String) -> CGSize? {
-        loadIfNeeded()
-        return sizes[key(for: raw)]
-    }
-
-    static func store(_ size: CGSize, for raw: String) {
-        loadIfNeeded()
-        guard size.width > 0, size.height > 0 else { return }
-        let k = key(for: raw)
-        guard sizes[k] != size else { return }
-        sizes[k] = size
-        scheduleSave()
-    }
-
-    /// Limpieza en logout (paridad con `RistakImageLoader.removeAll`).
-    static func removeAll() {
-        sizes = [:]
-        loaded = true
-        if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
-    }
-
-    /// Precarga el diccionario desde disco FUERA de main (en el arranque), para que
-    /// el `init` de la primera burbuja de foto no bloquee el hilo principal con la
-    /// lectura síncrona. Idempotente con `loadIfNeeded()`: si una vista ya cargó
-    /// síncronamente, no pisa lo cargado.
-    static func preloadIntoMemory() {
-        Task.detached(priority: .utility) {
-            guard let fileURL,
-                  let data = try? Data(contentsOf: fileURL),
-                  let decoded = try? JSONDecoder().decode([String: CGSize].self, from: data) else {
-                await MainActor.run { loaded = true }
-                return
-            }
-            await MainActor.run {
-                if !loaded { sizes = decoded }
-                loaded = true
-            }
-        }
-    }
-
-    /// Escritura a disco coalescida (500 ms) y fuera de main: un burst de fotos
-    /// que resuelven su tamaño al entrar genera UNA sola escritura.
-    private static func scheduleSave() {
-        guard !saveScheduled else { return }
-        saveScheduled = true
-        Task.detached(priority: .utility) {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            let snapshot: [String: CGSize] = await MainActor.run {
-                saveScheduled = false
-                return sizes
-            }
-            guard let fileURL, let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? data.write(to: fileURL, options: .atomic)
-        }
-    }
+/// Canvas inmutable de foto/video dentro del timeline. No depende de que la red
+/// revele después el aspecto del archivo: placeholder y contenido final ocupan
+/// exactamente los mismos puntos, así que el scroll jamás cambia de geometría.
+enum ChatVisualMediaLayout {
+    static let size = CGSize(width: 252, height: 189)
 }
 
 struct ImageAttachmentView: View {
@@ -171,34 +79,6 @@ struct ImageAttachmentView: View {
 
     @State private var showsViewer = false
     @State private var localImage: UIImage?
-    /// Tamaño reservado del hueco de la imagen. Se inicializa con el tamaño en
-    /// caché (si ya se vio) o un default 4:3, para que la fila tenga altura
-    /// estable ANTES de que la foto termine de descargar.
-    @State private var displaySize: CGSize
-
-    /// Topes de tamaño idénticos a /movil (`MESSAGE_IMAGE_MAX_WIDTH/HEIGHT`).
-    nonisolated private static let maxWidth: CGFloat = 252
-    nonisolated private static let maxHeight: CGFloat = 318
-    /// Default mientras no se conocen las dimensiones (paridad /movil: 252×189).
-    nonisolated private static let defaultSize = CGSize(width: 252, height: 189)
-
-    init(attachment: ChatAttachment) {
-        self.attachment = attachment
-        _displaySize = State(initialValue: Self.seedSize(for: attachment))
-    }
-
-    /// Semilla de altura para que la burbuja nazca con su tamaño final y no haya
-    /// reflow al resolver el bitmap: (1) el tamaño ya resuelto en caché
-    /// (memoria/disco); (2) si no, la imagen que el loader ya tiene en memoria
-    /// (pintado síncrono, sin salto); (3) si tampoco, el default 4:3.
-    private static func seedSize(for attachment: ChatAttachment) -> CGSize {
-        guard let raw = attachment.url else { return defaultSize }
-        if let cached = ChatImageSizeCache.size(for: raw) { return cached }
-        if let url = URL(string: raw), let image = RistakImageLoader.shared.cachedImage(for: url) {
-            return boundedSize(image.size)
-        }
-        return defaultSize
-    }
 
     private var remoteURL: URL? {
         guard let raw = attachment.url, let url = URL(string: raw) else { return nil }
@@ -207,9 +87,9 @@ struct ImageAttachmentView: View {
 
     var body: some View {
         content
-            .frame(width: displaySize.width, height: displaySize.height)
-            .clipShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.small))
-            .contentShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.small))
+            .frame(width: ChatVisualMediaLayout.size.width, height: ChatVisualMediaLayout.size.height)
+            .clipped()
+            .contentShape(Rectangle())
             .onTapGesture {
                 if remoteURL != nil || localImage != nil { showsViewer = true }
             }
@@ -221,7 +101,7 @@ struct ImageAttachmentView: View {
                 // El binario optimista se decodifica fuera de main sin convertirlo
                 // primero a un String base64. `dataUrl` queda solo para mensajes
                 // legacy recibidos del servidor.
-                let decoded = await Task.detached(priority: .userInitiated) { () -> (UIImage, CGSize)? in
+                let decoded = await Task.detached(priority: .userInitiated) { () -> UIImage? in
                     let image: UIImage?
                     if let previewData {
                         image = UIImage(data: previewData)
@@ -230,13 +110,11 @@ struct ImageAttachmentView: View {
                     } else {
                         image = nil
                     }
-                    guard let img = image else { return nil }
-                    let prepared = img.preparingForDisplay() ?? img
-                    return (prepared, Self.boundedSize(prepared.size))
+                    guard let image else { return nil }
+                    return image.preparingForDisplay() ?? image
                 }.value
-                guard let (image, size) = decoded, !Task.isCancelled else { return }
+                guard let image = decoded, !Task.isCancelled else { return }
                 localImage = image
-                displaySize = size
             }
             .fullScreenCover(isPresented: $showsViewer) {
                 FullScreenImageViewer(remoteURL: remoteURL, localImage: localImage)
@@ -258,11 +136,7 @@ struct ImageAttachmentView: View {
                 .resizable()
                 .scaledToFill()
         } else if let remoteURL {
-            ChatRemoteImage(url: remoteURL) { natural in
-                let bounded = Self.boundedSize(natural)
-                displaySize = bounded
-                if let raw = attachment.url { ChatImageSizeCache.store(bounded, for: raw) }
-            }
+            ChatRemoteImage(url: remoteURL)
         } else {
             unavailablePlaceholder
         }
@@ -277,22 +151,6 @@ struct ImageAttachmentView: View {
         .foregroundStyle(RistakTheme.textDim)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RistakTheme.controlRest)
-    }
-
-    /// Escala las dimensiones naturales dentro de los topes conservando el aspecto
-    /// (paridad /movil `getBoundedMediaSize`, con piso de 96 pt). `nonisolated`:
-    /// función pura, se invoca desde el `Task.detached` del decode base64.
-    nonisolated static func boundedSize(_ natural: CGSize) -> CGSize {
-        let w = natural.width
-        let h = natural.height
-        guard w.isFinite, h.isFinite, w > 0, h > 0 else {
-            return CGSize(width: maxWidth, height: (maxWidth * 0.72).rounded())
-        }
-        let scale = min(maxWidth / w, maxHeight / h, 1)
-        return CGSize(
-            width: max(96, (w * scale).rounded()),
-            height: max(96, (h * scale).rounded())
-        )
     }
 
     nonisolated static func decodeDataURL(_ dataUrl: String) -> UIImage? {
@@ -414,9 +272,10 @@ struct FullScreenImageViewer: View {
 
 struct VideoAttachmentView: View {
     let attachment: ChatAttachment
-    let isOutbound: Bool
 
     @State private var showsPlayer = false
+    @State private var thumbnail: UIImage?
+    @State private var measuredDurationMs: Double?
 
     private var videoURL: URL? {
         guard let raw = attachment.url else { return nil }
@@ -427,40 +286,100 @@ struct VideoAttachmentView: View {
         Button {
             if videoURL != nil { showsPlayer = true }
         } label: {
-            HStack(spacing: RistakTheme.Spacing.sm) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: RistakTheme.Radius.small)
-                        .fill(RistakTheme.controlRest)
-                        .frame(width: 52, height: 52)
-                    Image(systemName: "play.fill")
-                        .font(.headline)
-                        .foregroundStyle(RistakTheme.textPrimary)
+            ZStack {
+                Color.black
+
+                if let thumbnail {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                } else if videoURL != nil {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "video.slash")
+                        .font(.title2)
+                        .foregroundStyle(.white.opacity(0.76))
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(attachment.name ?? "Video")
-                        .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
-                    if let durationMs = attachment.durationMs, durationMs > 0 {
-                        Text(BusinessFormatters.audioDuration(milliseconds: durationMs))
-                            .font(.caption)
-                            .foregroundStyle(RistakTheme.textDim)
-                    } else {
-                        Text("Video")
-                            .font(.caption)
-                            .foregroundStyle(RistakTheme.textDim)
+
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.66)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+
+                Circle()
+                    .fill(.black.opacity(0.5))
+                    .frame(width: 54, height: 54)
+                    .overlay {
+                        Image(systemName: "play.fill")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .offset(x: 2)
                     }
+
+                HStack(spacing: 5) {
+                    Image(systemName: "video.fill")
+                        .font(.caption2.weight(.semibold))
+                    Text(durationLabel)
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
                 }
-                Spacer(minLength: 0)
+                .foregroundStyle(RistakTheme.bubbleMediaMeta)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(.black.opacity(0.5), in: Capsule())
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .padding(9)
             }
-            .padding(RistakTheme.Spacing.xs)
+            .frame(width: ChatVisualMediaLayout.size.width, height: ChatVisualMediaLayout.size.height)
+            .clipped()
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(videoURL == nil)
+        .task(id: videoURL) {
+            guard let videoURL else { return }
+            await loadPreview(from: videoURL)
+        }
         .sheet(isPresented: $showsPlayer) {
             if let videoURL {
                 VideoPlayerSheet(url: videoURL)
             }
         }
+        .accessibilityLabel(attachment.name ?? "Video")
+        .accessibilityValue("Duración \(durationLabel)")
+    }
+
+    private var durationLabel: String {
+        let milliseconds = attachment.durationMs ?? measuredDurationMs ?? 0
+        guard milliseconds > 0 else { return "--:--" }
+        return BusinessFormatters.audioDuration(milliseconds: milliseconds)
+    }
+
+    @MainActor
+    private func loadPreview(from url: URL) async {
+        let asset = AVURLAsset(url: url)
+
+        if attachment.durationMs == nil,
+           let duration = try? await asset.load(.duration),
+           duration.seconds.isFinite,
+           duration.seconds > 0 {
+            measuredDurationMs = duration.seconds * 1_000
+        }
+
+        guard !Task.isCancelled else { return }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 756, height: 567)
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+
+        let requestTime = CMTime(seconds: 0.15, preferredTimescale: 600)
+        guard let result = try? await generator.image(at: requestTime),
+              !Task.isCancelled else { return }
+        let image = UIImage(cgImage: result.image)
+        thumbnail = image.preparingForDisplay() ?? image
     }
 }
 

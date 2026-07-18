@@ -36,6 +36,9 @@ struct RistakApp: App {
                     if testConfiguration.showsConversationScroll {
                         RistakConversationScrollUITestHarnessView()
                             .reportsRistakUIReady()
+                    } else if testConfiguration.showsChatAppearance {
+                        RistakChatAppearanceUITestHarnessView()
+                            .reportsRistakUIReady()
                     } else if testConfiguration.showsActivityMarkers {
                         RistakActivityMarkersUITestHarnessView()
                             .reportsRistakUIReady()

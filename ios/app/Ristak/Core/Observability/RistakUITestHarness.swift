@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import UIKit
 
 /// Configuración sintética activada exclusivamente por XCUITest. Al reemplazar
 /// `RootView`, este modo no abre sesión, no lee datos reales y no toca la red.
@@ -9,6 +10,7 @@ struct RistakUITestConfiguration: Sendable {
     let showsPersonalAssistantChat: Bool
     let showsActivityMarkers: Bool
     let showsConversationScroll: Bool
+    let showsChatAppearance: Bool
 
     static var current: RistakUITestConfiguration? {
         let process = ProcessInfo.processInfo
@@ -18,7 +20,7 @@ struct RistakUITestConfiguration: Sendable {
         let mode = process.environment["RISTAK_UI_TEST_MODE"]
         guard [
             "synthetic", "inbox-presentation", "personal-assistant-chat", "activity-markers",
-            "conversation-scroll",
+            "conversation-scroll", "chat-appearance",
         ].contains(mode) else {
             return nil
         }
@@ -31,7 +33,8 @@ struct RistakUITestConfiguration: Sendable {
             showsRealInboxPresentation: mode == "inbox-presentation",
             showsPersonalAssistantChat: mode == "personal-assistant-chat",
             showsActivityMarkers: mode == "activity-markers",
-            showsConversationScroll: mode == "conversation-scroll"
+            showsConversationScroll: mode == "conversation-scroll",
+            showsChatAppearance: mode == "chat-appearance"
         )
     }
 }
@@ -119,6 +122,129 @@ struct RistakActivityMarkersUITestHarnessView: View {
             }
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+/// Monta burbujas reales de producción en tema oscuro, incluida media que pasa
+/// de placeholder a bitmap local. Permite comprobar que la geometría no cambia
+/// al cargar y conservar una captura visual revisable sin sesión ni red.
+struct RistakChatAppearanceUITestHarnessView: View {
+    private let formatters = BusinessFormatters(timeZone: .gmt, currencyCode: "MXN")
+
+    private static let sampleImageData: Data? = {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 600))
+        return renderer.image { context in
+            UIColor(red: 0.10, green: 0.19, blue: 0.30, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 800, height: 600))
+            UIColor(red: 0.12, green: 0.72, blue: 0.53, alpha: 1).setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 180, y: 80, width: 440, height: 440))
+            UIColor.white.withAlphaComponent(0.9).setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 332, y: 232, width: 136, height: 136))
+        }.jpegData(compressionQuality: 0.9)
+    }()
+
+    private var messages: [ChatMessage] {
+        [
+            ChatMessage(
+                id: "night-inbound",
+                contactId: "fixture",
+                date: "2026-07-17T20:01:00.000Z",
+                direction: .inbound,
+                text: "Así descansa la vista en modo noche.",
+                channel: "whatsapp",
+                status: "delivered"
+            ),
+            ChatMessage(
+                id: "night-outbound",
+                contactId: "fixture",
+                date: "2026-07-17T20:02:00.000Z",
+                direction: .outbound,
+                text: "Y cada canal conserva su identidad sin brillar de más.",
+                channel: "whatsapp",
+                status: "read",
+                transport: "api"
+            ),
+            ChatMessage(
+                id: "night-image",
+                contactId: "fixture",
+                date: "2026-07-17T20:03:00.000Z",
+                direction: .inbound,
+                text: "",
+                channel: "whatsapp",
+                status: "delivered",
+                attachment: ChatAttachment(
+                    type: .image,
+                    localPreviewData: Self.sampleImageData,
+                    name: "Foto de muestra",
+                    mimeType: "image/jpeg"
+                )
+            ),
+            ChatMessage(
+                id: "night-video",
+                contactId: "fixture",
+                date: "2026-07-17T20:04:00.000Z",
+                direction: .outbound,
+                text: "",
+                channel: "instagram",
+                status: "read",
+                transport: "meta",
+                attachment: ChatAttachment(
+                    type: .video,
+                    name: "Video de muestra",
+                    mimeType: "video/mp4",
+                    durationMs: 72_000
+                )
+            )
+        ]
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                ChatWallpaperBackground()
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        DaySeparatorView(label: "Hoy")
+                        ForEach(messages) { message in
+                            MessageRowView(
+                                message: message,
+                                formatters: formatters,
+                                contactName: "Paty",
+                                scheduledCountdown: nil,
+                                actions: noOpActions
+                            )
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Burbuja visual \(message.id)")
+                            .accessibilityIdentifier("chat-appearance-row-\(message.id)")
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 16)
+                }
+            }
+            .navigationTitle("Paty")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("chat-appearance-harness-root")
+    }
+
+    private var noOpActions: MessageRowActions {
+        MessageRowActions(
+            reply: { _ in },
+            react: { _, _ in },
+            copy: { _ in },
+            info: { _ in },
+            retry: { _ in },
+            editScheduled: { _ in },
+            deleteScheduled: { _ in },
+            scrollTo: { _ in },
+            reactionCapability: { _ in
+                .blocked(title: "No disponible", message: "Fixture visual")
+            },
+            findReplyTarget: { _ in nil },
+            commentContext: { _ in nil }
+        )
     }
 }
 

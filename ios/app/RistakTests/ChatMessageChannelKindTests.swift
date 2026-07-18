@@ -56,10 +56,25 @@ final class ChatMessageChannelKindTests: XCTestCase {
         XCTAssertEqual(ChatMessageChannelKind.resolve(eventType: "sms_message"), .sms)
     }
 
-    func testIncomingIsWhiteAndWhatsAppOutgoingGreensStayLight() {
+    func testChatBubblesUseLightPaletteInDayMode() {
         assertColor(RistakTheme.bubbleInbound, equals: (255, 255, 255), style: .light)
-        assertColor(RistakTheme.bubbleInbound, equals: (255, 255, 255), style: .dark)
-        assertColor(RistakTheme.chatChannelWhatsAppAPI, equals: (217, 253, 211))
-        assertColor(RistakTheme.chatChannelWhatsAppQR, equals: (198, 239, 189))
+        assertColor(RistakTheme.bubbleOutbound, equals: (240, 241, 244), style: .light)
+        assertColor(RistakTheme.chatChannelWhatsAppAPI, equals: (217, 253, 211), style: .light)
+        assertColor(RistakTheme.chatChannelWhatsAppQR, equals: (198, 239, 189), style: .light)
+    }
+
+    func testChatBubblesUseDeepPaletteInNightMode() {
+        assertColor(RistakTheme.bubbleInbound, equals: (36, 37, 39), style: .dark)
+        assertColor(RistakTheme.bubbleOutbound, equals: (48, 49, 53), style: .dark)
+        assertColor(RistakTheme.chatChannelWhatsAppAPI, equals: (11, 73, 57), style: .dark)
+        assertColor(RistakTheme.chatChannelWhatsAppQR, equals: (18, 79, 59), style: .dark)
+        assertColor(RistakTheme.chatChannelInstagram, equals: (74, 38, 61), style: .dark)
+        assertColor(RistakTheme.chatChannelMessenger, equals: (27, 60, 102), style: .dark)
+        assertColor(RistakTheme.bubbleTextInbound, equals: (245, 245, 247), style: .dark)
+        assertColor(RistakTheme.bubbleMeta, equals: (183, 183, 189), style: .dark)
+    }
+
+    func testVisualMediaCanvasIsStableBeforeTheFileLoads() {
+        XCTAssertEqual(ChatVisualMediaLayout.size, CGSize(width: 252, height: 189))
     }
 }

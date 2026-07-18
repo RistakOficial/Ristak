@@ -203,6 +203,10 @@ struct MessageRowView: View, Equatable {
     private let replyThreshold: CGFloat = 38
 
     private var isOutbound: Bool { message.direction == .outbound }
+    private var hasVisualMedia: Bool {
+        guard let type = message.attachment?.type else { return false }
+        return type == .image || type == .video
+    }
 
     var body: some View {
         if message.direction == .system {
@@ -255,18 +259,20 @@ struct MessageRowView: View, Equatable {
     // MARK: Globo
 
     private var bubbleContent: some View {
-        bubbleInner
+        bubbleBody
             // Vestido de globo con la geometría exacta de mobile/ (radio 11,
-            // colita a 4, padding 7/9/5, sombra sutil). ABRAZA el texto.
+            // puntita visible y sombra sutil). En foto/video no hay marco: el
+            // contenido llega hasta el borde y la propia media forma el globo.
             .modifier(RistakChatBubbleStyle(
                 side: isOutbound ? .outbound : .inbound,
                 fill: bubbleFillOverride,
                 channelColor: message.failed ? nil : bubbleChannelColor,
-                dashed: message.isScheduled
+                dashed: message.isScheduled,
+                contentInsets: hasVisualMedia
+                    ? EdgeInsets()
+                    : EdgeInsets(top: 7, leading: 9, bottom: 5, trailing: 9),
+                clipsContent: hasVisualMedia
             ))
-            // Los globos son superficies claras aun cuando el shell use modo
-            // oscuro; el contenido debe resolver texto e iconos como light.
-            .environment(\.colorScheme, .light)
             .overlay(alignment: .bottom) {
                 reactionChips
                     .offset(y: 12)
@@ -280,6 +286,15 @@ struct MessageRowView: View, Equatable {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
+    }
+
+    @ViewBuilder
+    private var bubbleBody: some View {
+        if hasVisualMedia {
+            visualMediaBubbleInner
+        } else {
+            bubbleInner
+        }
     }
 
     /// Columna de contenido del globo. La meta (hora + acuse) se reserva como
@@ -299,6 +314,61 @@ struct MessageRowView: View, Equatable {
         .overlay(alignment: .bottomTrailing) {
             metaRow
         }
+    }
+
+    /// Foto/video full-bleed. La geometría se conoce desde el primer render; el
+    /// bitmap o thumbnail sólo reemplaza el placeholder sin cambiar un punto la
+    /// altura. Hora, canal y acuse viven dentro del contenido visual.
+    private var visualMediaBubbleInner: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if hasReplyContext {
+                quoteBlock
+                    .padding(.top, 7)
+                    .padding(.horizontal, 9)
+                    .padding(.bottom, 6)
+            }
+
+            attachmentBlock
+                .overlay(alignment: .bottom) {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.64)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 64)
+                    .allowsHitTesting(false)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    mediaMetaRow
+                        .padding(.horizontal, 9)
+                        .padding(.bottom, 8)
+                }
+
+            if hasVisualMediaFooter {
+                VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs + 2) {
+                    locationBlock
+                    commentContextBlock
+                    emailBlock
+                    textBlock
+                    routingReasonBlock
+                }
+                .padding(.top, 7)
+                .padding(.horizontal, 9)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
+    private var hasReplyContext: Bool {
+        message.replyToMessageId != nil || message.replyToProviderMessageId != nil
+    }
+
+    private var hasVisualMediaFooter: Bool {
+        message.location != nil
+            || message.isComment
+            || message.emailDetails != nil
+            || !message.displayText.isEmpty
+            || !(message.routingReason ?? "").isEmpty
     }
 
     /// Relleno explícito solo cuando falló (rojo). Programado y lados normales
@@ -374,7 +444,7 @@ struct MessageRowView: View, Equatable {
             case .image:
                 ImageAttachmentView(attachment: attachment)
             case .video:
-                VideoAttachmentView(attachment: attachment, isOutbound: isOutbound)
+                VideoAttachmentView(attachment: attachment)
             case .audio:
                 AudioMessageView(
                     attachment: attachment,
@@ -468,7 +538,11 @@ struct MessageRowView: View, Equatable {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
         if message.emailDetails == nil, !message.displayText.isEmpty {
             WhatsAppFormattedMessageText(text: message.displayText)
-                .foregroundStyle(message.failed ? RistakTheme.neg : RistakTheme.bubbleTextInbound)
+                .foregroundStyle(
+                    message.failed
+                        ? RistakTheme.neg
+                        : (isOutbound ? RistakTheme.bubbleTextOutbound : RistakTheme.bubbleTextInbound)
+                )
         }
     }
 
@@ -484,30 +558,48 @@ struct MessageRowView: View, Equatable {
     // MARK: Meta + palomitas
 
     private var metaRow: some View {
-        HStack(spacing: RistakTheme.Spacing.xxs) {
+        messageMetaRow(onMedia: false)
+    }
+
+    private var mediaMetaRow: some View {
+        messageMetaRow(onMedia: true)
+    }
+
+    private func messageMetaRow(onMedia: Bool) -> some View {
+        let metaColor = onMedia ? RistakTheme.bubbleMediaMeta : RistakTheme.bubbleMeta
+        return HStack(spacing: RistakTheme.Spacing.xxs) {
             if let badge = MessageTransportBadge.label(for: message) {
                 Text(badge)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(RistakTheme.bubbleMeta)
+                    .foregroundStyle(metaColor)
             }
 
             if message.isScheduled {
                 Image(systemName: "clock")
                     .font(.system(size: 10))
-                    .foregroundStyle(RistakTheme.bubbleMeta)
-                Text("Programado para \(formatters.messageTime(fromISO: message.scheduledAt ?? message.date))")
+                    .foregroundStyle(metaColor)
+                Text(
+                    onMedia
+                        ? formatters.messageTime(fromISO: message.scheduledAt ?? message.date)
+                        : "Programado para \(formatters.messageTime(fromISO: message.scheduledAt ?? message.date))"
+                )
                     .font(.caption2)
-                    .foregroundStyle(RistakTheme.bubbleMeta)
+                    .foregroundStyle(metaColor)
             } else {
                 Text(metaLabel)
                     .font(.caption2)
                     .monospacedDigit()
-                    .foregroundStyle(RistakTheme.bubbleMeta)
+                    .foregroundStyle(metaColor)
                 if isOutbound {
-                    MessageReceiptView(status: message.receiptStatus)
+                    MessageReceiptView(
+                        status: message.receiptStatus,
+                        neutralColor: onMedia ? metaColor : RistakTheme.textMute,
+                        readColor: onMedia ? metaColor : RistakTheme.accent
+                    )
                 }
             }
         }
+        .shadow(color: onMedia ? .black.opacity(0.8) : .clear, radius: 1, x: 0, y: 1)
     }
 
     private var metaLabel: String {
@@ -701,6 +793,8 @@ struct MessageRowView: View, Equatable {
 /// Palomitas de acuse (doc 04 §7.2): derivadas SOLO de `status`.
 struct MessageReceiptView: View {
     let status: ChatMessageReceiptStatus
+    var neutralColor = RistakTheme.textMute
+    var readColor = RistakTheme.accent
 
     var body: some View {
         switch status {
@@ -716,13 +810,13 @@ struct MessageReceiptView: View {
         case .sent:
             Image(systemName: "checkmark")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(RistakTheme.textMute)
+                .foregroundStyle(neutralColor)
                 .accessibilityLabel("Enviado")
         case .delivered:
-            doubleCheck(color: RistakTheme.textMute)
+            doubleCheck(color: neutralColor)
                 .accessibilityLabel("Entregado")
         case .read:
-            doubleCheck(color: RistakTheme.accent)
+            doubleCheck(color: readColor)
                 .accessibilityLabel("Leído")
         }
     }

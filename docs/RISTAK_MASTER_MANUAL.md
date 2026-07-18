@@ -1808,17 +1808,18 @@ badge inferior derecho usando los mismos assets WebP de canal que `mobile/` e
 `ios/app` (`whatsapp`, `facebook`, `messenger`, `instagram`, `gmail`), pintados
 como iconos libres sin disco, borde, brillo ni contenedor circular extra.
 
-El color del globo se resuelve por mensaje con el mismo contrato en `/chat`,
-`/movil`, React Native Android e iOS. Todo mensaje entrante es blanco y nunca se
-tiñe con el canal. Solo los salientes usan color: WhatsApp API lleva un verde
-claro, WhatsApp QR un verde apenas mas oscuro para distinguir el transporte sin
-oscurecer el globo, Messenger/Facebook azul e Instagram morado rosita. Correo,
-SMS y canal desconocido se mantienen neutrales. `api`, `qr` o `smtp` no se
-interpretan como plataforma por si solos: primero se considera el canal social
-real y despues, solo para WhatsApp, el transporte API/QR. La paleta de globos es
-clara y conserva texto oscuro legible tanto en temas claros como oscuros;
-mensajes programados mantienen ademas su borde punteado y los fallidos conservan
-prioridad visual de error.
+El color del globo se resuelve por mensaje con el mismo contrato de identidad en
+`/chat`, `/movil`, React Native Android e iOS. En tema claro, todo mensaje
+entrante es blanco y solo los salientes usan color: WhatsApp API lleva un verde
+claro, WhatsApp QR un verde apenas mas oscuro, Messenger/Facebook azul e
+Instagram morado rosita. En tema oscuro, la app iOS pinta entrantes en carbón y
+usa equivalentes profundos para cada canal saliente; texto, hora y estados pasan
+a una paleta clara de contraste y nunca se fuerza internamente `colorScheme`
+claro. Correo, SMS y canal desconocido se mantienen neutrales. `api`, `qr` o
+`smtp` no se interpretan como plataforma por si solos: primero se considera el
+canal social real y despues, solo para WhatsApp, el transporte API/QR. Mensajes
+programados mantienen ademas su borde punteado y los fallidos conservan prioridad
+visual de error.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de
@@ -1838,10 +1839,12 @@ ligera que consulta en paralelo solo pagos, citas y confirmaciones; no recorre
 sesiones, video, atribucion ni el historial de mensajes. El resultado se conserva
 en la cache diaria de la conversacion y se reconcilia en refresh silenciosos.
 
-El layout de media del timeline es estable antes de descargar: imagenes usan un
-cuadro 4:3 reservado, videos 16:9 y audios/archivos alturas fijas. La miniatura se
-ajusta dentro de ese espacio y el original se abre en el visor interno. `/chat` y
-`/movil` desactivan el scroll anchoring automatico del navegador y mantienen el
+El layout de media del timeline es estable antes de descargar: las superficies
+web reservan imagenes 4:3, videos 16:9 y audios/archivos de altura fija; iOS usa
+un canvas visual unico 252x189 para foto y video desde el placeholder hasta el
+contenido final. La miniatura se ajusta dentro de ese espacio y el original se
+abre en el visor interno. `/chat` y `/movil` desactivan el scroll anchoring
+automatico del navegador y mantienen el
 anclaje inferior mientras se hidrata el chat; un gesto real del usuario hacia
 arriba libera el anclaje inmediatamente. Cargar fuentes, fotos, audio o previews
 no debe cambiar la posicion visible ni disparar correcciones temporizadas.
@@ -2039,10 +2042,13 @@ burbuja, visor o archivo compartido; `Image`/`URL(string:)` no deben recibir
 rutas sin host. En
 `/chat` desktop, las burbujas de media deben mostrar solo el contenido principal:
 foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
-En iOS, el scrubber de las notas de voz usa holgura lateral para que la bolita en
-0:00 y al final no parezca adelantada ni recortada dentro del globo.
-La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
-la burbuja para no crear columnas internas. Los errores de envio no se escriben
+En iOS, foto y video son full-bleed: el contenido forma la superficie completa
+del globo, conserva una puntita visible y superpone hora, transporte y acuse en
+la esquina inferior; video superpone tambien su duración. El scrubber de las
+notas de voz usa holgura lateral para que la bolita en 0:00 y al final no parezca
+adelantada ni recortada dentro del globo. En las superficies web, la hora,
+etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de la
+burbuja para no crear columnas internas. Los errores de envio no se escriben
 dentro del globo: se muestran como icono externo con detalle en tooltip. En
 Messenger/Instagram nativo, el chat desktop y `/movil` envian por Meta texto,
 imagen, video y audio/nota de voz; Messenger tambien admite documentos. Se

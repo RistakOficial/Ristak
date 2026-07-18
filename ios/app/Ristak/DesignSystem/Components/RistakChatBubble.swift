@@ -38,11 +38,23 @@ struct RistakChatBubble<Content: View>: View {
     var channelColor: Color? = nil
     /// Borde punteado + fondo de mensaje programado.
     var dashed: Bool = false
+    /// Media visual usa cero inset para que la foto/video SEA el globo.
+    var contentInsets = EdgeInsets(top: 7, leading: 9, bottom: 5, trailing: 9)
+    /// Recorta el contenido contra la silueta principal. Se activa para media
+    /// full-bleed; el tail se pinta aparte para que siga sobresaliendo.
+    var clipsContent = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         content()
-            .modifier(RistakChatBubbleStyle(side: side, fill: fill, channelColor: channelColor, dashed: dashed))
+            .modifier(RistakChatBubbleStyle(
+                side: side,
+                fill: fill,
+                channelColor: channelColor,
+                dashed: dashed,
+                contentInsets: contentInsets,
+                clipsContent: clipsContent
+            ))
     }
 }
 
@@ -53,6 +65,8 @@ struct RistakChatBubbleStyle: ViewModifier {
     var fill: Color? = nil
     var channelColor: Color? = nil
     var dashed: Bool = false
+    var contentInsets = EdgeInsets(top: 7, leading: 9, bottom: 5, trailing: 9)
+    var clipsContent = false
 
     func body(content: Content) -> some View {
         let shape = UnevenRoundedRectangle(
@@ -60,13 +74,24 @@ struct RistakChatBubbleStyle: ViewModifier {
             style: .continuous
         )
 
-        content
-            .padding(.top, 7)
-            .padding(.horizontal, 9)
-            .padding(.bottom, 5)
+        Group {
+            if clipsContent {
+                content
+                    .padding(contentInsets)
+                    .clipShape(shape)
+            } else {
+                content
+                    .padding(contentInsets)
+            }
+        }
             .background {
-                shape
-                    .fill(backgroundFill)
+                ZStack(alignment: side == .inbound ? .bottomLeading : .bottomTrailing) {
+                    RistakChatBubbleTail(side: side)
+                        .fill(backgroundFill)
+                        .frame(width: 9, height: 12)
+                        .offset(x: side == .inbound ? -4 : 4, y: -1)
+                    shape.fill(backgroundFill)
+                }
             }
             .overlay {
                 if dashed {
@@ -84,6 +109,45 @@ struct RistakChatBubbleStyle: ViewModifier {
         if side == .outbound, let channelColor { return channelColor }
         if dashed { return RistakTheme.bubbleScheduled }
         return side == .inbound ? RistakTheme.bubbleInbound : RistakTheme.bubbleOutbound
+    }
+}
+
+/// Puntita visible del globo. Vive fuera de la silueta redondeada para que siga
+/// siendo legible incluso cuando foto/video recortan su contenido full-bleed.
+private struct RistakChatBubbleTail: Shape {
+    let side: RistakBubbleSide
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        if side == .inbound {
+            path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: rect.minX, y: rect.maxY),
+                control1: CGPoint(x: rect.minX + rect.width * 0.65, y: rect.maxY),
+                control2: CGPoint(x: rect.minX, y: rect.maxY)
+            )
+            path.addCurve(
+                to: CGPoint(x: rect.maxX, y: rect.minY),
+                control1: CGPoint(x: rect.minX + rect.width * 0.55, y: rect.minY + rect.height * 0.72),
+                control2: CGPoint(x: rect.minX + rect.width * 0.82, y: rect.minY + rect.height * 0.25)
+            )
+        } else {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: rect.maxX, y: rect.maxY),
+                control1: CGPoint(x: rect.width * 0.35, y: rect.maxY),
+                control2: CGPoint(x: rect.maxX, y: rect.maxY)
+            )
+            path.addCurve(
+                to: CGPoint(x: rect.minX, y: rect.minY),
+                control1: CGPoint(x: rect.minX + rect.width * 0.45, y: rect.minY + rect.height * 0.72),
+                control2: CGPoint(x: rect.minX + rect.width * 0.18, y: rect.minY + rect.height * 0.25)
+            )
+        }
+        path.closeSubpath()
+        return path
     }
 }
 

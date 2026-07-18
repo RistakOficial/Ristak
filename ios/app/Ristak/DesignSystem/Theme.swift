@@ -103,16 +103,16 @@ enum RistakTheme {
 
     // MARK: - Chat (paleta doc 14 §2.3, para el módulo de conversación)
 
-    /// Burbuja entrante: blanca en claro y oscuro; nunca hereda color del canal.
+    /// Burbuja entrante: blanca en claro y carbón en oscuro.
     static let bubbleIncoming = dynamic(
         light: rgb(0xFF, 0xFF, 0xFF),
-        dark: rgb(0xFF, 0xFF, 0xFF)
+        dark: rgb(0x24, 0x25, 0x27)
     )
 
     /// Base neutra de burbuja saliente para correo, SMS o canal desconocido.
     static let bubbleOutgoing = dynamic(
         light: rgb(0xF0, 0xF1, 0xF4),
-        dark: rgb(0xF0, 0xF1, 0xF4)
+        dark: rgb(0x30, 0x31, 0x35)
     )
 
     /// Alias canónicos usados por `RistakChatBubble` (paridad mobile/):
@@ -120,30 +120,47 @@ enum RistakTheme {
     static let bubbleInbound = bubbleIncoming
     static let bubbleOutbound = bubbleOutgoing
 
-    /// Rellenos pastel usados solamente en globos salientes.
-    /// WhatsApp QR queda apenas mas oscuro que API; correo/SMS son neutrales.
-    static let chatChannelWhatsAppAPI = Color(uiColor: rgb(0xD9, 0xFD, 0xD3))
-    static let chatChannelWhatsAppQR = Color(uiColor: rgb(0xC6, 0xEF, 0xBD))
-    static let chatChannelInstagram = Color(uiColor: rgb(0xF2, 0xD7, 0xE6))
-    static let chatChannelMessenger = Color(uiColor: rgb(0xDB, 0xEA, 0xFE))
+    /// Rellenos por canal usados solamente en globos salientes. En tema oscuro
+    /// conservan la identidad del canal con tonos profundos, no con pasteles que
+    /// encandilan sobre el wallpaper negro.
+    static let chatChannelWhatsAppAPI = dynamic(
+        light: rgb(0xD9, 0xFD, 0xD3),
+        dark: rgb(0x0B, 0x49, 0x39)
+    )
+    static let chatChannelWhatsAppQR = dynamic(
+        light: rgb(0xC6, 0xEF, 0xBD),
+        dark: rgb(0x12, 0x4F, 0x3B)
+    )
+    static let chatChannelInstagram = dynamic(
+        light: rgb(0xF2, 0xD7, 0xE6),
+        dark: rgb(0x4A, 0x26, 0x3D)
+    )
+    static let chatChannelMessenger = dynamic(
+        light: rgb(0xDB, 0xEA, 0xFE),
+        dark: rgb(0x1B, 0x3C, 0x66)
+    )
 
-    /// Las burbujas son superficies claras incluso con tema oscuro.
+    /// Texto principal dentro del globo, con contraste real en ambos temas.
     static let bubbleTextInbound = dynamic(
         light: rgb(0x1D, 0x1D, 0x1F),
-        dark: rgb(0x1D, 0x1D, 0x1F)
+        dark: rgb(0xF5, 0xF5, 0xF7)
     )
     static let bubbleTextOutbound = bubbleTextInbound
 
-    /// Meta de la burbuja (hora, estado) sobre superficie clara.
+    /// Meta de la burbuja (hora, estado).
     static let bubbleMeta = dynamic(
         light: rgb(0x6E, 0x6E, 0x73),
-        dark: rgb(0x6E, 0x6E, 0x73)
+        dark: rgb(0xB7, 0xB7, 0xBD)
     )
+
+    /// Meta superpuesta sobre foto/video; siempre clara y respaldada por el
+    /// degradado del media para conservar contraste con cualquier contenido.
+    static let bubbleMediaMeta = Color.white.opacity(0.94)
 
     /// Borde punteado de burbuja programada sobre superficie clara.
     static let bubbleScheduledBorder = dynamic(
         light: rgba(60, 60, 67, 0.22),
-        dark: rgba(60, 60, 67, 0.22)
+        dark: rgba(235, 235, 245, 0.32)
     )
 
     /// Color efectivo de la sombra de burbuja: en mobile/ es
@@ -157,13 +174,13 @@ enum RistakTheme {
     /// Burbuja neutral de mensaje programado.
     static let bubbleScheduled = dynamic(
         light: rgb(0xF0, 0xF1, 0xF4),
-        dark: rgb(0xF0, 0xF1, 0xF4)
+        dark: rgb(0x30, 0x31, 0x35)
     )
 
-    /// Burbuja clara de mensaje fallido.
+    /// Burbuja de mensaje fallido, clara u oscura según el tema.
     static let bubbleFailed = dynamic(
         light: rgb(0xFF, 0xE4, 0xE8),
-        dark: rgb(0xFF, 0xE4, 0xE8)
+        dark: rgb(0x55, 0x20, 0x2A)
     )
 
     /// Fondo del composer: `#f5f5f7` / panel `#111114` (doc 14).

@@ -190,6 +190,47 @@ final class RistakUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testNightChatMediaKeepsItsFrameWhileContentLoads() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-ristak-ui-testing",
+            "-AppleLanguages", "(es)",
+            "-AppleLocale", "es_MX",
+            "-AppleInterfaceStyle", "Dark"
+        ]
+        app.launchEnvironment = [
+            "RISTAK_UI_TEST_MODE": "chat-appearance",
+            "RISTAK_NETWORK_ACCESS": "disabled"
+        ]
+        launchedApp = app
+        app.launch()
+
+        XCTAssertTrue(
+            element(in: app, identifier: "chat-appearance-harness-root")
+                .waitForExistence(timeout: 8)
+        )
+        let imageRow = element(in: app, identifier: "chat-appearance-row-night-image")
+        let videoRow = element(in: app, identifier: "chat-appearance-row-night-video")
+        XCTAssertTrue(imageRow.waitForExistence(timeout: 3))
+        XCTAssertTrue(videoRow.waitForExistence(timeout: 3))
+
+        let initialImageFrame = imageRow.frame
+        let initialVideoFrame = videoRow.frame
+        let settled = expectation(description: "La media terminó de materializarse")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { settled.fulfill() }
+        wait(for: [settled], timeout: 2)
+
+        XCTAssertEqual(imageRow.frame, initialImageFrame)
+        XCTAssertEqual(videoRow.frame, initialVideoFrame)
+        XCTAssertGreaterThan(initialImageFrame.height, 180)
+        XCTAssertGreaterThan(initialVideoFrame.height, 180)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Chat iOS oscuro con media full-bleed y geometría estable"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testScrollToBottomWinsWithOneTapWhileHistoryStillHasMomentum() {
         let app = XCUIApplication()
         app.launchArguments = [

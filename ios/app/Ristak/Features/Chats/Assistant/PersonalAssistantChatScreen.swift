@@ -147,7 +147,6 @@ struct PersonalAssistantChatScreen: View {
                     clarificationOptions(message)
                 }
             }
-            .environment(\.colorScheme, .light)
         }
         .padding(.vertical, 3)
     }
@@ -164,7 +163,6 @@ struct PersonalAssistantChatScreen: View {
                         .foregroundStyle(RistakTheme.bubbleMeta)
                 }
             }
-            .environment(\.colorScheme, .light)
         }
         .padding(.vertical, 3)
         .accessibilityIdentifier("ristak-personal-assistant-thinking")
