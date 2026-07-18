@@ -9906,8 +9906,6 @@ export const DesktopChat: React.FC = () => {
                 </div>
               </div>
 
-              {contactInfoLoading ? <div className={styles.stateBlock}><Loader2 size={16} className={styles.spin} /> Actualizando datos...</div> : null}
-
               <div className={styles.infoSection}>
                 <h3>Contacto</h3>
                 <dl className={styles.detailList}>

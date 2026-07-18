@@ -1834,6 +1834,9 @@ La apertura de una conversacion prioriza siempre `GET /contacts/:id/conversation
 en cuanto llegan los ultimos 50 mensajes se pinta el hilo y se fija el ultimo
 mensaje sin animacion. Mensajes programados, perfil, estados/resumenes del agente
 y marcadores de negocio se hidratan despues y no pueden retener ese primer paint.
+El panel derecho conserva la ficha disponible del contacto mientras esa
+hidratacion termina en segundo plano: no inserta avisos temporales de
+`Actualizando` ni cambia la geometria del panel al cambiar de conversacion.
 Pagos/citas usan `GET /contacts/:id/journey?chatActivityOnly=true`, una lectura
 ligera que consulta en paralelo solo pagos, citas y confirmaciones; no recorre
 sesiones, video, atribucion ni el historial de mensajes. El resultado se conserva
