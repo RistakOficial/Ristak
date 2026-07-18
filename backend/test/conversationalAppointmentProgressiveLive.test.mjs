@@ -1793,7 +1793,7 @@ test('live ledger: sin la confirmación inbound actual no agenda aunque la ofert
   }
 })
 
-test('live ledger: una oferta expirada falla cerrado aunque su entrega exacta esté completed', async () => {
+test('live ledger: una oferta legacy con expiresAt pasado sigue pendiente y revalida al confirmar', async () => {
   const fixture = await createFixture('ledger_expired_offer')
   try {
     await selectDate(fixture)
@@ -1803,14 +1803,10 @@ test('live ledger: una oferta expirada falla cerrado aunque su entrega exacta es
       sourceMessageId: exact.ctx.executionId,
       reply: exact.offered.visibleReply
     })
-    const confirmation = await truncatedLedgerConfirmationContext(
-      fixture,
-      `confirm-expired-ledger-${fixture.suffix}`
-    )
-    const offerEventId = confirmation.appointmentOfferDecision.offerEventId
     const offerRow = await db.get(
-      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
-      [offerEventId]
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [fixture.contactId, fixture.agentId]
     )
     await db.run(
       'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
@@ -1819,19 +1815,22 @@ test('live ledger: una oferta expirada falla cerrado aunque su entrega exacta es
           ...JSON.parse(offerRow.detail_json),
           expiresAt: new Date(Date.now() - 60_000).toISOString()
         }),
-        offerEventId,
+        offerRow.id,
         offerRow.detail_json
       ]
+    )
+    const confirmation = await truncatedLedgerConfirmationContext(
+      fixture,
+      `confirm-expired-ledger-${fixture.suffix}`
     )
     const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify(acceptOfferInput()))
 
-    assert.equal(result.ok, false, JSON.stringify(result))
-    assert.equal(result.code, 'appointment_offer_expired')
+    assert.equal(result.ok, true, JSON.stringify(result))
     assert.equal(Number((await db.get(
       'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
       [fixture.calendarId, fixture.contactId]
-    )).total), 0)
+    )).total), 1)
   } finally {
     await cleanupFixture(fixture)
   }
@@ -2121,7 +2120,7 @@ test('live rolling: una oferta creada por origin/main acepta “sí”, agenda u
   }
 })
 
-test('live: si otro contacto ocupa el slot después de ofrecerlo, accept no crea ni confirma otra cita', async () => {
+test('live: si otro contacto ocupa el slot sin empalmes, accept consulta y ofrece alternativas reales', async () => {
   const fixture = await createFixture('occupied_after_offer')
   const competitorId = `contact_competitor_${fixture.suffix}`
   try {
@@ -2158,6 +2157,10 @@ test('live: si otro contacto ocupa el slot después de ofrecerlo, accept no crea
 
     assert.equal(blocked.ok, false, JSON.stringify(blocked))
     assert.equal(blocked.actionCompleted, false)
+    assert.equal(blocked.terminal, false)
+    assert.equal(blocked.visibleReply, null)
+    assert.match(blocked.continueWith, /get_free_slots/)
+    assert.match(blocked.continueWith, /offer_appointment_options/)
     assert.doesNotMatch(String(blocked.visibleReply || ''), /cita quedó confirmada/i)
     assert.equal(Number((await db.get(
       'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
@@ -2415,7 +2418,7 @@ test('live: una oferta que no alcanzó a salir se cierra por ejecución, conserv
   }
 })
 
-test('live: un replay tardío de la misma ejecución no vuelve a mostrar una oferta con TTL vencido', async () => {
+test('live: un replay tardío de la misma ejecución conserva la misma oferta aunque el campo legacy haya vencido', async () => {
   const fixture = await createFixture('expired_exact_replay')
   try {
     await selectDate(fixture)
@@ -2441,8 +2444,8 @@ test('live: un replay tardío de la misma ejecución no vuelve a mostrar una ofe
       startTime: exact.startTime,
       appointmentId: null
     }))
-    assert.equal(replay.ok, false, JSON.stringify(replay))
-    assert.doesNotMatch(
+    assert.equal(replay.ok, true, JSON.stringify(replay))
+    assert.match(
       String(replay.visibleReply || ''),
       /¿(?:Te funciona ese horario|Confirmas que te agende en ese horario)\?/i
     )
@@ -2450,7 +2453,7 @@ test('live: un replay tardío de la misma ejecución no vuelve a mostrar una ofe
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [offerAction.outcome.offerEventId]
     )).detail_json)
-    assert.notEqual(stored.status, 'active')
+    assert.equal(stored.status, 'active')
   } finally {
     await cleanupFixture(fixture)
   }
@@ -2571,63 +2574,41 @@ test('live: una oferta vieja idéntica no autoriza otra oferta que nunca se most
   }
 })
 
-test('live: si la oferta vence entre aceptar y ejecutar la terminal, no agenda y recupera el día de inmediato', async () => {
-  const fixture = await createFixture('expiry_during_resolver')
+test('live: la oferta individual nueva se guarda sin fecha de vencimiento', async () => {
+  const fixture = await createFixture('offer_without_expiry')
   try {
     await selectDate(fixture)
-    const exact = await offerExactTime(fixture, '15:00')
-    const confirmation = await confirmationContext(
-      fixture,
-      exact.offered,
-      `confirm-expiry-during-resolver-${fixture.suffix}`
+    await offerExactTime(fixture, '15:00')
+    const row = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
+      [fixture.contactId, fixture.agentId]
     )
-    setNativeAppointmentBeforeResolverTerminalHookForTest(async ({ offerEventId }) => {
-      const row = await db.get(
-        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
-        [offerEventId]
-      )
-      await db.run(
-        'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
-        [
-          JSON.stringify({
-            ...JSON.parse(row.detail_json),
-            expiresAt: new Date(Date.now() - 60_000).toISOString()
-          }),
-          offerEventId,
-          row.detail_json
-        ]
-      )
-    })
+    const detail = JSON.parse(row.detail_json)
+    assert.equal(detail.status, 'active')
+    assert.equal(detail.expiresAt, null)
 
-    const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
-      .invoke(null, JSON.stringify(acceptOfferInput()))
-    assert.equal(result.ok, false, JSON.stringify(result))
-    assert.equal(result.code, 'appointment_offer_expired')
-    assert.match(result.visibleReply, /conservé el día/i)
-    assert.equal(Number((await db.get(
-      'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
-      [fixture.calendarId, fixture.contactId]
-    )).total), 0)
-    const progress = await loadConversationalAppointmentSelectionProgressContext({
-      ctx: confirmation,
+    const nextCtx = liveContext({ fixture, executionId: `later-confirmation-${fixture.suffix}` })
+    const authority = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: nextCtx,
       config: fixture.config
     })
-    assert.equal(progress?.selectedDate, fixture.localDate)
+    assert.equal(authority?.active, true)
+    assert.equal(authority?.startTime, detail.startTime)
   } finally {
-    setNativeAppointmentBeforeResolverTerminalHookForTest(null)
     await cleanupFixture(fixture)
   }
 })
 
-test('live: si la oferta vence antes de entrar al resolver, conserva el día y no vuelve a pedir la fecha', async () => {
-  const fixture = await createFixture('expiry_before_resolver')
+test('live: cambiar el contrato durable de la oferta después de hidratarlo falla cerrado', async () => {
+  const fixture = await createFixture('offer_contract_changed')
   try {
     await selectDate(fixture)
     const exact = await offerExactTime(fixture, '14:00')
     const confirmation = await confirmationContext(
       fixture,
       exact.offered,
-      `confirm-expiry-before-resolver-${fixture.suffix}`
+      `confirm-contract-change-${fixture.suffix}`
     )
     const row = await db.get(
       'SELECT id, detail_json FROM conversational_agent_events WHERE id = ?',
@@ -2638,7 +2619,7 @@ test('live: si la oferta vence antes de entrar al resolver, conserva el día y n
       [
         JSON.stringify({
           ...JSON.parse(row.detail_json),
-          expiresAt: new Date(Date.now() - 60_000).toISOString()
+          localLabel: 'Contrato manipulado'
         }),
         row.id,
         row.detail_json
@@ -2648,110 +2629,11 @@ test('live: si la oferta vence antes de entrar al resolver, conserva el día y n
     const result = await toolNamed(confirmation, 'resolve_active_appointment_offer')
       .invoke(null, JSON.stringify(acceptOfferInput()))
     assert.equal(result.ok, false, JSON.stringify(result))
-    assert.equal(result.code, 'appointment_offer_expired')
-    assert.match(result.visibleReply, /conservé el día/i)
-    assert.match(result.visibleReply, /dime la hora/i)
-    assert.doesNotMatch(result.visibleReply, /qué fecha|qué día/i)
+    assert.equal(result.code, 'appointment_offer_scope_changed')
     assert.equal(Number((await db.get(
       'SELECT COUNT(*) AS total FROM appointments WHERE calendar_id = ? AND contact_id = ?',
       [fixture.calendarId, fixture.contactId]
     )).total), 0)
-    const progress = await loadConversationalAppointmentSelectionProgressContext({
-      ctx: confirmation,
-      config: fixture.config
-    })
-    assert.equal(progress?.selectedDate, fixture.localDate)
-  } finally {
-    await cleanupFixture(fixture)
-  }
-})
-
-test('live: una oferta individual expirada deja de ser autoridad, recupera la fecha y conserva la referencia más reciente', async () => {
-  const fixture = await createFixture('expired_offer_progress')
-  try {
-    await selectDate(fixture)
-    const exact = await offerExactTime(fixture, '15:00')
-    const row = await db.get(
-      `SELECT id, detail_json, created_at FROM conversational_agent_events
-       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_slot_offer_created'`,
-      [fixture.contactId, fixture.agentId]
-    )
-    const currentDetail = JSON.parse(row.detail_json)
-    const olderLocalDate = DateTime.fromISO(fixture.localDate, { zone: fixture.timezone })
-      .plus({ days: 7 })
-      .toISODate()
-    const olderStartTime = DateTime.fromISO(`${olderLocalDate}T16:00:00`, { zone: fixture.timezone })
-      .toUTC()
-      .toISO()
-    const olderOfferId = `zz_older_expired_offer_${fixture.suffix}`
-    await db.run(
-      `INSERT INTO conversational_agent_events
-        (id, contact_id, agent_id, event_type, detail_json, created_at)
-       VALUES (?, ?, ?, 'appointment_slot_offer_created', ?, ?)`,
-      [
-        olderOfferId,
-        fixture.contactId,
-        fixture.agentId,
-        JSON.stringify({
-          ...currentDetail,
-          startTime: olderStartTime,
-          executionId: `older-expired-${fixture.suffix}`,
-          offeredAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-          expiresAt: new Date(Date.now() - 30 * 60 * 1000).toISOString()
-        }),
-        row.created_at
-      ]
-    )
-    const expired = {
-      ...currentDetail,
-      expiresAt: new Date(Date.now() - 60_000).toISOString()
-    }
-    await db.run(
-      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ? AND detail_json = ?',
-      [JSON.stringify(expired), row.id, row.detail_json]
-    )
-
-    const nextCtx = liveContext({ fixture, executionId: `after-expiry-${fixture.suffix}` })
-    nextCtx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
-      ctx: nextCtx,
-      config: fixture.config
-    })
-    nextCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
-      ctx: nextCtx,
-      config: fixture.config
-    })
-    assert.equal(nextCtx.appointmentOfferDecision, null)
-    assert.equal(nextCtx.appointmentSelectionProgress?.selectedDate, fixture.localDate)
-    const stored = JSON.parse((await db.get(
-      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
-      [row.id]
-    )).detail_json)
-    assert.equal(stored.status, 'superseded')
-    assert.equal(stored.resolution, 'appointment_offer_expired')
-    assert.equal((stored.rejectedStartTimes || []).includes(exact.startTime), false)
-    const olderStored = JSON.parse((await db.get(
-      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
-      [olderOfferId]
-    )).detail_json)
-    assert.equal(olderStored.status, 'superseded')
-    assert.equal(olderStored.resolution, 'appointment_offer_expired')
-    assert.notEqual(nextCtx.appointmentSelectionProgress?.selectedDate, olderLocalDate)
-
-    const relativeCtx = liveContext({ fixture, executionId: `after-expiry-relative-${fixture.suffix}` })
-    relativeCtx.appointmentOfferDecision = null
-    relativeCtx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
-      ctx: relativeCtx,
-      config: fixture.config
-    })
-    const later = await toolNamed(relativeCtx, 'get_free_slots').invoke(null, JSON.stringify(
-      freeSlotsInput(fixture.localDate, { relativeToPreviousOffer: 'later' })
-    ))
-    assert.equal(later.ok, true, JSON.stringify(later))
-    assert.deepEqual(
-      later.slots.flatMap((item) => item.options.map((option) => option.localTime)),
-      ['16:00'],
-      'la oferta expirada más reciente sigue siendo la referencia; no revive la lista ni otra oferta vieja'
-    )
   } finally {
     await cleanupFixture(fixture)
   }

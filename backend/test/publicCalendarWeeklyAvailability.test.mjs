@@ -78,7 +78,7 @@ function nextTuesdayInBusinessTimezone() {
   return base.plus({ days: (2 - base.weekday + 7) % 7 })
 }
 
-async function createWeeklyFixture(label, { appointmentLimit = 1 } = {}) {
+async function createWeeklyFixture(label, { appointmentLimit = 1, allowOverlaps = false } = {}) {
   const suffix = randomUUID()
   const businessDay = nextTuesdayInBusinessTimezone()
   const slug = `public-weekly-${label}-${suffix}`
@@ -91,6 +91,7 @@ async function createWeeklyFixture(label, { appointmentLimit = 1 } = {}) {
     slotInterval: 60,
     slotIntervalUnit: 'mins',
     appoinmentPerSlot: appointmentLimit,
+    allowOverlaps,
     ghlCalendarId: appointmentLimit > 1 ? `ghl-public-weekly-${suffix}` : null,
     allowBookingAfter: 0,
     allowBookingAfterUnit: 'hours',
@@ -276,7 +277,7 @@ test('las superficies por defecto fijan cupo 1 aunque el espejo GHL permita más
   const protectedSlots = (protectedSlotsResponse.body?.data || []).flatMap(day => day?.slots || [])
   assert.equal(protectedSlots.some(slot => new Date(slot).getTime() === startMs), false)
 
-  const agentOverlapResponse = createJsonResponse()
+  const agentOverrideResponse = createJsonResponse()
   await getFreeSlots({
     [INTERNAL_CONTROLLER_CONTEXT]: {
       availabilityOptions: {
@@ -290,11 +291,15 @@ test('las superficies por defecto fijan cupo 1 aunque el espejo GHL permita más
       endDate: fixture.dateKey,
       timezone: BUSINESS_TIMEZONE
     }
-  }, agentOverlapResponse)
+  }, agentOverrideResponse)
 
-  assert.equal(agentOverlapResponse.statusCode, 200)
-  const agentSlots = (agentOverlapResponse.body?.data || []).flatMap(day => day?.slots || [])
-  assert.equal(agentSlots.some(slot => new Date(slot).getTime() === startMs), true)
+  assert.equal(agentOverrideResponse.statusCode, 200)
+  const agentSlots = (agentOverrideResponse.body?.data || []).flatMap(day => day?.slots || [])
+  assert.equal(
+    agentSlots.some(slot => new Date(slot).getTime() === startMs),
+    false,
+    'ni el contexto interno puede habilitar empalmes si el switch del calendario está apagado'
+  )
 
   const bookingResponse = createJsonResponse()
   await createPublicAppointment(createPublicRequest(fixture.slug, {
@@ -349,6 +354,46 @@ test('dos POST públicos concurrentes al mismo slot dejan una sola cita', async 
   )
   assert.equal(stored.length, 1)
   assert.equal(new Date(stored[0].start_time).getTime(), start.toMillis())
+})
+
+test('dos POST públicos concurrentes al mismo slot se aceptan cuando el calendario permite empalmes', async (t) => {
+  const fixture = await createWeeklyFixture('race-overlap', {
+    appointmentLimit: 1,
+    allowOverlaps: true
+  })
+  t.after(() => cleanupWeeklyFixture(fixture))
+  const start = fixture.businessDay.set({ hour: 13 })
+  const firstResponse = createJsonResponse()
+  const secondResponse = createJsonResponse()
+
+  await Promise.all([
+    createPublicAppointment(createPublicRequest(fixture.slug, {
+      body: publicBookingBody(fixture, {
+        start,
+        email: `public-weekly-overlap-a-${randomUUID()}@example.test`,
+        name: 'Reserva Empalmada A',
+        phone: '6565559215'
+      })
+    }), firstResponse),
+    createPublicAppointment(createPublicRequest(fixture.slug, {
+      body: publicBookingBody(fixture, {
+        start,
+        email: `public-weekly-overlap-b-${randomUUID()}@example.test`,
+        name: 'Reserva Empalmada B',
+        phone: '6565559216'
+      })
+    }), secondResponse)
+  ])
+
+  assert.deepEqual(
+    [firstResponse.statusCode, secondResponse.statusCode].sort((a, b) => a - b),
+    [201, 201]
+  )
+  const stored = await db.all(
+    'SELECT id FROM appointments WHERE calendar_id = ?',
+    [fixture.calendarId]
+  )
+  assert.equal(stored.length, 2)
 })
 
 test('la URL pública cubre el salto máximo de dos fechas entre UTC-12 y UTC+14', async (t) => {

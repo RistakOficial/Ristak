@@ -1778,6 +1778,7 @@ test('allowOverlaps aplica igual al ofrecer y al confirmar una cita', async () =
       source: 'ristak',
       slotDuration: 60,
       slotInterval: 60,
+      allowOverlaps: true,
       openHours: [{ daysOfTheWeek: [1], hours: [{ openHour: 10, openMinute: 0, closeHour: 13, closeMinute: 0 }] }]
     }, { source: 'ristak', syncStatus: 'synced' })
     await db.run(
@@ -1793,7 +1794,7 @@ test('allowOverlaps aplica igual al ofrecer y al confirmar una cita', async () =
       [`appointment_overlap_competitor_${suffix}`, calendarId, competitorId, startTime, slot.plus({ hours: 1 }).toUTC().toISO()]
     )
     const ctx = v2Context([
-      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: true }
+      { id: 'schedule_appointment', enabled: true, calendarId, allowOverlaps: false }
     ], { contactId, agentId, dryRun: false, executionId: `message_overlap_${suffix}` })
     ctx.config.id = agentId
     const book = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')

@@ -18,7 +18,7 @@ import {
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
 
-test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', async () => {
+test('getLocalFreeSlots usa el switch persistido como única política de empalmes', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_overlap_${suffix}`
   const ghlCalendarId = `ghl_cal_overlap_${suffix}`
@@ -32,7 +32,7 @@ test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', asyn
   const expectedSlot = slotStart.toISO()
 
   try {
-    await upsertLocalCalendar({
+    const savedCalendar = await upsertLocalCalendar({
       id: calendarId,
       ghlCalendarId,
       locationId: 'loc_overlap_test',
@@ -43,6 +43,7 @@ test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', asyn
       slotDuration: 60,
       slotInterval: 60,
       appoinmentPerSlot: 2,
+      allowOverlaps: true,
       openHours: [
         {
           daysOfTheWeek: [1],
@@ -72,14 +73,13 @@ test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', asyn
     let slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
     assert.ok(
       slots[0]?.slots.includes(expectedSlot),
-      'un calendario HighLevel con cupo 2 debe conservar el slot tras una cita'
+      'el switch de empalmes debe conservar el slot tras una cita'
     )
 
     slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC', { appointmentLimit: 1 })
-    assert.equal(
+    assert.ok(
       slots[0]?.slots.includes(expectedSlot),
-      false,
-      'el agente puede forzar horarios únicos aunque el calendario permita cupo mayor'
+      'un override legacy no puede contradecir el switch persistido del calendario'
     )
 
     await createLocalAppointment({
@@ -97,17 +97,34 @@ test('getLocalFreeSlots respeta el cupo por slot en calendarios HighLevel', asyn
     })
 
     slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
-    assert.equal(
-      slots[0]?.slots.includes(expectedSlot),
-      false,
-      'el slot se oculta cuando alcanza el cupo importado de HighLevel'
-    )
-
-    slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC', { ignoreAppointmentConflicts: true })
     assert.ok(
       slots[0]?.slots.includes(expectedSlot),
-      'el agente puede permitir empalmes y conservar el horario aunque ya tenga citas'
+      'el switch conserva el horario aunque el cupo legacy de HighLevel ya se alcanzó'
     )
+
+    assert.equal(savedCalendar.allowOverlaps, true)
+    const disabledCalendar = await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId,
+      source: 'ghl',
+      allowOverlaps: false
+    }, {
+      source: 'ghl',
+      ghlCalendarId,
+      syncStatus: 'synced'
+    })
+    assert.equal(disabledCalendar.allowOverlaps, false)
+
+    slots = await getLocalFreeSlots(calendarId, dateKey, dateKey, 'UTC')
+    assert.equal(slots[0]?.slots.includes(expectedSlot), false)
+    const conflict = await checkSlotAvailability(
+      calendarId,
+      slotStart.toISO(),
+      slotEnd.toISO(),
+      { timezone: 'UTC', enforceCalendarRules: true }
+    )
+    assert.equal(conflict.available, false)
+    assert.equal(conflict.reason, 'slot_conflict')
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
@@ -798,7 +815,7 @@ test('la lista y el candado final respetan máximo diario y buffers antes/despu�
   }
 })
 
-test('el buffer bloquea horarios vecinos aunque un calendario HighLevel permita dos citas por slot', async () => {
+test('sin empalmes, el buffer bloquea el mismo horario y sus vecinos aunque HighLevel anuncie más cupo', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_capacity_buffer_${suffix}`
   const appointmentId = `rstk_appt_capacity_buffer_${suffix}`
@@ -818,6 +835,7 @@ test('el buffer bloquea horarios vecinos aunque un calendario HighLevel permita 
       slotBuffer: 15,
       slotBufferUnit: 'mins',
       appoinmentPerSlot: 2,
+      allowOverlaps: false,
       allowBookingFor: 365,
       allowBookingForUnit: 'days',
       openHours: [{
@@ -845,8 +863,8 @@ test('el buffer bloquea horarios vecinos aunque un calendario HighLevel permita 
     const starts = slots[0]?.slots || []
     assert.equal(
       starts.includes(now.set({ hour: 10 }).toISO()),
-      true,
-      'la segunda plaza del mismo horario conserva el cupo'
+      false,
+      'el cupo legacy no puede contradecir el switch apagado'
     )
     assert.equal(
       starts.includes(now.set({ hour: 11 }).toISO()),

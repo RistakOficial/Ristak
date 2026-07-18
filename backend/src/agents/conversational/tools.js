@@ -1649,7 +1649,7 @@ async function resolveNativeScheduleCalendar(capability = {}) {
     `SELECT id, ghl_calendar_id, name, slot_duration, slot_duration_unit,
             slot_interval, slot_interval_unit, slot_buffer, slot_buffer_unit,
             pre_buffer, pre_buffer_unit, is_active, source, open_hours,
-            availability_schedule_configured, appoinment_per_slot, appoinment_per_day,
+            availability_schedule_configured, appoinment_per_slot, allow_overlaps, appoinment_per_day,
             allow_booking_after, allow_booking_after_unit,
             allow_booking_for, allow_booking_for_unit,
             allow_reschedule, allow_cancellation
@@ -1681,6 +1681,10 @@ function nativeAppointmentIsCancelled(row = {}) {
 
 function nativeCalendarPermissionEnabled(value) {
   return !['0', 'false', 'off', 'no'].includes(String(value ?? '1').trim().toLowerCase())
+}
+
+function nativeCalendarAllowsOverlaps(calendar = {}) {
+  return calendar?.allowOverlaps === true || Number(calendar?.allow_overlaps) === 1
 }
 
 function canonicalNativeAppointmentFingerprintValue(value) {
@@ -1722,6 +1726,7 @@ function nativeAppointmentCalendarFingerprint(calendar = null) {
       calendar.availability_schedule_configured ?? calendar.availabilityScheduleConfigured
     ),
     appointmentsPerSlot: Number(calendar.appoinment_per_slot ?? calendar.appoinmentPerSlot ?? 0),
+    allowOverlaps: nativeCalendarAllowsOverlaps(calendar),
     appointmentsPerDay: Number(calendar.appoinment_per_day ?? calendar.appoinmentPerDay ?? 0),
     allowBookingAfter: Number(calendar.allow_booking_after ?? calendar.allowBookingAfter ?? 0),
     allowBookingAfterUnit: String(calendar.allow_booking_after_unit ?? calendar.allowBookingAfterUnit ?? '').trim().toLowerCase(),
@@ -2907,7 +2912,6 @@ async function loadNativeAppointmentRelativeReference({
     const resolution = String(detail.resolution || '')
     const resolvedAtMs = Date.parse(String(detail.resolvedAt || ''))
     const offeredAtMs = Date.parse(String(detail.offeredAt || ''))
-    const expiresAtMs = Date.parse(String(detail.expiresAt || ''))
     const rejectedForOtherOptions = Boolean(
       status === 'superseded' &&
       resolution === 'request_other_options' &&
@@ -2915,26 +2919,9 @@ async function loadNativeAppointmentRelativeReference({
       resolvedAtMs <= now &&
       now - resolvedAtMs <= NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS
     )
-    const expiredActiveOffer = Boolean(
-      status === 'active' &&
-      Number.isFinite(offeredAtMs) &&
-      offeredAtMs <= now &&
-      now - offeredAtMs <= NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS &&
-      Number.isFinite(expiresAtMs) &&
-      expiresAtMs <= now
-    )
-    const expiredSupersededOffer = Boolean(
-      status === 'superseded' &&
-      resolution === 'appointment_offer_expired' &&
-      Number.isFinite(offeredAtMs) &&
-      offeredAtMs <= now &&
-      now - offeredAtMs <= NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS &&
-      Number.isFinite(resolvedAtMs) &&
-      resolvedAtMs <= now
-    )
     if (
       row.event_type !== individualEventType ||
-      (!rejectedForOtherOptions && !expiredActiveOffer && !expiredSupersededOffer) ||
+      !rejectedForOtherOptions ||
       nativeAppointmentEpochMinute(detail.startTime) === null
     ) continue
     const offerTimezone = resolveTimezone(detail.timezone, timezone)
@@ -3132,15 +3119,12 @@ async function lockAndDetectPendingNativeAppointmentOffer({ ctx, config } = {}) 
 
   return (rows || []).some((row) => {
     const detail = parseNativeEventDetail(row?.detail_json)
-    const expiresAtMs = Date.parse(String(detail.expiresAt || ''))
     return row?.event_type === eventType &&
       String(row?.contact_id || '') === contactId &&
       String(row?.agent_id || '') === agentId &&
       nativeAppointmentEventMatchesChannel(detail, channel) &&
       (!previewScopeId || String(detail.previewScopeId || '') === previewScopeId) &&
-      ['active', 'resolving_handoff'].includes(String(detail.status || '')) &&
-      Number.isFinite(expiresAtMs) &&
-      expiresAtMs > Date.now()
+      ['active', 'resolving_handoff'].includes(String(detail.status || ''))
   })
 }
 
@@ -3695,7 +3679,9 @@ async function persistNativeAppointmentOffer({
     status: 'active',
     phase: 'awaiting_decision',
     offeredAt: new Date().toISOString(),
-    expiresAt: new Date(Date.now() + NATIVE_APPOINTMENT_SELECTION_COLLECTION_TTL_MS).toISOString(),
+    // Una oferta individual no vence por tiempo. Su horario siempre se vuelve
+    // a comprobar contra el calendario justo antes de guardar la cita.
+    expiresAt: null,
     ...(previewScopeId ? { previewScopeId } : {})
   }
 
@@ -3738,12 +3724,9 @@ async function persistNativeAppointmentOffer({
           )
           const currentDetail = parseNativeEventDetail(current?.detail_json)
           const currentStatus = String(currentDetail.status || '')
-          const currentExpiresAtMs = Date.parse(String(currentDetail.expiresAt || ''))
-          const currentActiveAndUnexpired = currentStatus === 'active' &&
-            Number.isFinite(currentExpiresAtMs) &&
-            currentExpiresAtMs > Date.now()
+          const currentActive = currentStatus === 'active'
           const exactReplay = Boolean(
-            currentActiveAndUnexpired &&
+            currentActive &&
             String(currentDetail.executionId || '') === executionId &&
             String(currentDetail.calendarId || '') === String(calendarId) &&
             String(currentDetail.startTime || '') === String(startTime) &&
@@ -3762,7 +3745,7 @@ async function persistNativeAppointmentOffer({
               String(current?.agent_id || '') !== agentId ||
               String(currentDetail.previewScopeId || '') !== previewScopeId ||
               (String(currentDetail.channel || '') && String(currentDetail.channel || '') !== String(detail.channel || '')) ||
-              currentActiveAndUnexpired ||
+              currentActive ||
               currentStatus === 'resolving_handoff' ||
               ['accepted', 'materializing', 'materialized'].includes(currentStatus)
             ) {
@@ -3809,8 +3792,6 @@ async function persistNativeAppointmentOffer({
           const prior = parseNativeEventDetail(row.detail_json)
           return row.id !== eventId &&
             ['active', 'resolving_handoff'].includes(String(prior.status || '')) &&
-            Number.isFinite(Date.parse(prior.expiresAt || '')) &&
-            Date.parse(prior.expiresAt || '') > Date.now() &&
             nativeAppointmentEventMatchesChannel(prior, channel)
         })
         if (pendingOffer) {
@@ -3829,15 +3810,12 @@ async function persistNativeAppointmentOffer({
             [eventId]
           )
           const currentDetail = parseNativeEventDetail(current?.detail_json)
-          const currentExpiresAtMs = Date.parse(String(currentDetail.expiresAt || ''))
-          const currentActiveAndUnexpired = String(currentDetail.status || '') === 'active' &&
-            Number.isFinite(currentExpiresAtMs) &&
-            currentExpiresAtMs > Date.now()
+          const currentActive = String(currentDetail.status || '') === 'active'
           const exactReplay = Boolean(
             current?.event_type === eventType &&
             String(current?.contact_id || '') === contactId &&
             String(current?.agent_id || '') === agentId &&
-            currentActiveAndUnexpired &&
+            currentActive &&
             String(currentDetail.executionId || '') === executionId &&
             String(currentDetail.calendarId || '') === String(calendarId) &&
             String(currentDetail.startTime || '') === String(startTime) &&
@@ -3979,7 +3957,6 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
   const eventType = previewScopeId
     ? CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT
     : NATIVE_APPOINTMENT_OFFER_EVENT
-  const recentOfferCutoff = new Date(Date.now() - NATIVE_APPOINTMENT_REJECTED_SLOT_TTL_MS).toISOString()
   const rows = previewScopeId
     ? [await db.get(
         `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
@@ -3990,13 +3967,11 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
         `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
          FROM conversational_agent_events
          WHERE contact_id = ? AND agent_id = ? AND event_type = ?
-           AND created_at >= ${process.env.DATABASE_URL ? '?' : 'datetime(?)'}
          ORDER BY created_at DESC, id DESC`,
-        [contactId, agentId, eventType, recentOfferCutoff]
+        [contactId, agentId, eventType]
       )
 
   const eligible = []
-  const expiredActiveOffers = []
   let sameExecution = false
   let unresolvedTransitionCount = 0
   for (const row of rows || []) {
@@ -4009,11 +3984,6 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
       !nativeAppointmentEventMatchesChannel(detail, channel)
     ) continue
     const status = String(detail.status || '')
-    const expiresAtMs = Date.parse(detail.expiresAt || '')
-    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
-      if (status === 'active') expiredActiveOffers.push({ ...row, detail })
-      continue
-    }
     if (status === 'resolving_handoff') {
       unresolvedTransitionCount += 1
       continue
@@ -4047,39 +4017,16 @@ async function loadNativeAppointmentOfferCandidate({ ctx, config } = {}) {
       String(selectionDetail.executionId || '') === executionId
     ) eligible.push({ ...row, detail })
   }
-  const orderedExpiredActiveOffers = [...expiredActiveOffers].sort((left, right) => {
-    const leftOfferedAtMs = Date.parse(String(left?.detail?.offeredAt || ''))
-    const rightOfferedAtMs = Date.parse(String(right?.detail?.offeredAt || ''))
-    if (Number.isFinite(leftOfferedAtMs) || Number.isFinite(rightOfferedAtMs)) {
-      if (!Number.isFinite(leftOfferedAtMs)) return 1
-      if (!Number.isFinite(rightOfferedAtMs)) return -1
-      if (leftOfferedAtMs !== rightOfferedAtMs) return rightOfferedAtMs - leftOfferedAtMs
-    }
-    const createdAtOrder = String(right?.created_at || '').localeCompare(String(left?.created_at || ''))
-    if (createdAtOrder) return createdAtOrder
-    return String(right?.id || '').localeCompare(String(left?.id || ''))
-  })
   if (eligible.length !== 1 || unresolvedTransitionCount > 0) {
-    const expired = orderedExpiredActiveOffers.length > 0
     return {
       ...appointmentSelectionError(
-      expired
-        ? 'La oferta de horario expiró. Consulta disponibilidad y ofrece un horario nuevo.'
-        : sameExecution
-          ? 'La oferta necesita una respuesta nueva de la persona en otro turno antes de poder confirmarse.'
-        : 'No hay una única oferta estructurada vigente. Ofrece un solo horario con offer_appointment_slot.',
-      expired
-        ? 'appointment_offer_expired'
-        : (sameExecution ? 'appointment_confirmation_turn_required' : 'appointment_offer_required')
+      sameExecution
+        ? 'La oferta necesita una respuesta nueva de la persona en otro turno antes de poder confirmarse.'
+        : 'No hay una única oferta estructurada pendiente. Ofrece un solo horario con offer_appointment_slot.',
+      sameExecution ? 'appointment_confirmation_turn_required' : 'appointment_offer_required'
       ),
       eligibleOfferCount: eligible.length,
-      unresolvedTransitionCount,
-      ...(orderedExpiredActiveOffers.length
-        ? {
-            expiredOffer: orderedExpiredActiveOffers[0],
-            expiredOffers: orderedExpiredActiveOffers
-          }
-        : {})
+      unresolvedTransitionCount
     }
   }
   return { ok: true, offer: eligible[0], preview: Boolean(previewScopeId) }
@@ -4155,7 +4102,6 @@ async function reconcileNativeAppointmentOfferWithSelectionProgress({
     }
 
     const offerDetail = parseNativeEventDetail(currentOffer.detail_json)
-    const offerExpiresAtMs = Date.parse(String(offerDetail.expiresAt || ''))
     const offeredAtMs = Date.parse(String(offerDetail.offeredAt || ''))
     const startTimeMs = Date.parse(String(offerDetail.startTime || ''))
     const canonical = buildCanonicalAppointmentSlotOption(
@@ -4209,10 +4155,7 @@ async function reconcileNativeAppointmentOfferWithSelectionProgress({
       canonical.timezone === currentTimezone &&
       Number.isFinite(startTimeMs) &&
       startTimeMs > Date.now() &&
-      Number.isFinite(offeredAtMs) &&
-      Number.isFinite(offerExpiresAtMs) &&
-      offerExpiresAtMs > Date.now() &&
-      offerExpiresAtMs > offeredAtMs
+      Number.isFinite(offeredAtMs)
     )
 
     const closeOfferForProgress = async ({ reason, blocked = false } = {}) => {
@@ -4433,7 +4376,7 @@ async function reconcileNativeAppointmentOfferWithSelectionProgress({
 /**
  * Hidrata el hecho durable de que existe una oferta pendiente antes de llamar
  * al modelo. No interpreta el mensaje del cliente: comprueba identidad, canal,
- * expiración y que calendario, zona y responsable sigan siendo los mismos.
+ * y que calendario, zona y responsable sigan siendo los mismos.
  */
 export async function loadConversationalAppointmentOfferDecisionContext({ ctx, config } = {}) {
   const candidate = await loadNativeAppointmentOfferCandidate({ ctx, config })
@@ -4449,52 +4392,6 @@ export async function loadConversationalAppointmentOfferDecisionContext({ ctx, c
         new Error('Hay más de una oferta de horario vigente para el mismo hilo; se bloquearon las acciones hasta resolver el estado.'),
         { code: 'appointment_offer_state_ambiguous', statusCode: 409 }
       )
-    }
-    if (candidate?.code === 'appointment_offer_expired' && candidate.expiredOffer?.id) {
-      const expiredOffers = (Array.isArray(candidate.expiredOffers)
-        ? candidate.expiredOffers
-        : [candidate.expiredOffer]
-      ).filter((offer) => offer?.id)
-      const expiredOffer = expiredOffers[0]
-      let restoreSameDate = false
-      try {
-        const scheduleCapability = getNativeCapability(ctx, config, 'schedule_appointment')
-        const calendar = scheduleCapability
-          ? await resolveNativeScheduleCalendar(scheduleCapability)
-          : null
-        const timezone = resolveTimezone(await getAccountTimezone())
-        const canonical = buildCanonicalAppointmentSlotOption(
-          expiredOffer.detail?.startTime,
-          expiredOffer.detail?.timezone
-        )
-        restoreSameDate = Boolean(
-          calendar?.id &&
-          String(expiredOffer.detail?.calendarId || '') === String(calendar.id) &&
-          resolveTimezone(expiredOffer.detail?.timezone) === timezone &&
-          canonical?.localDate &&
-          canonical.localDate >= businessTodayDateOnly(timezone)
-        )
-      } catch {
-        restoreSameDate = false
-      }
-      // Cierra primero las viejas y restaura como máximo la fecha de la oferta
-      // expirada más reciente. Así una fila antigua nunca revive otro día.
-      for (const expiredCandidate of [...expiredOffers].reverse()) {
-        const offerFingerprint = createHash('sha256')
-          .update(String(expiredCandidate.detail_json || ''))
-          .digest('hex')
-        await supersedeUnavailableNativeAppointmentOffer({
-          ctx,
-          config,
-          candidate: { offer: expiredCandidate },
-          expected: { offerFingerprint },
-          restoreSameDate: expiredCandidate.id === expiredOffer.id && restoreSameDate,
-          rejectStartTime: false,
-          reason: 'appointment_offer_expired'
-        }).catch((error) => {
-          logger.error(`[Agente conversacional] No se pudo cerrar la oferta expirada: ${error.message}`)
-        })
-      }
     }
     return null
   }
@@ -4760,10 +4657,6 @@ async function verifyNativeAppointmentOfferEvent({ ctx, config, calendarId, star
     String(offer.detail.startTime || '') !== String(startTime || '') ||
     String(offer.detail.localLabel || '') !== String(evidence?.localLabel || '') ||
     (evidence?.offerEventId && String(evidence.offerEventId) !== String(offer.id)) ||
-    (
-      String(offer.detail.status || '') === 'active' &&
-      (!Number.isFinite(Date.parse(offer.detail.expiresAt || '')) || Date.parse(offer.detail.expiresAt || '') <= Date.now())
-    ) ||
     offerTurnText !== expectedText && !durableOfferDelivery
   ) {
     return appointmentSelectionError('La respuesta no confirma la oferta estructurada vigente o el agente agregó otro horario. Reofrece uno solo.', 'appointment_offer_mismatch')
@@ -5829,7 +5722,7 @@ async function validateNativeAppointmentDepositIntent({
       windowStart: normalizeDateOnlyInTimezone(new Date(startMs - 86400000).toISOString(), timezone),
       windowEnd: normalizeDateOnlyInTimezone(new Date(startMs + 86400000).toISOString(), timezone),
       lookupSlots: lookupVerifiedAppointmentSlots,
-      ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
+      ignoreAppointmentConflicts: nativeCalendarAllowsOverlaps(configuredCalendar)
     })
     if (!slotValidation.ok) {
       return appointmentSelectionError(
@@ -8263,9 +8156,7 @@ export function createConversationalTools(ctx) {
   const getFreeSlotsForAgentTool = tool({
     name: 'get_free_slots',
     description: [
-      scheduleCapability?.allowOverlaps
-        ? 'Obtiene horarios reales del calendario blindado. El negocio permite empalmar citas dentro de sus horas de atención.'
-        : 'Obtiene horarios reales y libres del calendario blindado; no devuelve horarios ocupados.',
+      'Obtiene horarios reales del calendario blindado y aplica su regla actual de empalme al momento de consultar.',
       'Filtra aquí mismo por días y horas cuando la persona diga cosas como "miércoles o viernes", "después de las 5" o "más tarde".',
       'Cada opción incluye localLabel/localDate/localTime ya calculados en la zona del negocio: NO conviertas el horario por tu cuenta.',
       'Si pidió opciones amplias, llama offer_appointment_options. Si eligió o propuso una fecha y hora exactas, pasa options[].startTime sin modificar a offer_appointment_slot. Para reagendar manda también el appointmentId exacto.'
@@ -8290,7 +8181,7 @@ export function createConversationalTools(ctx) {
       relativeToPreviousOffer: z.preprocess(
         (value) => value ?? null,
         z.enum(['later', 'earlier']).nullable()
-      ).describe('later o earlier cuando pidió algo más tarde/temprano que la última lista mostrada o el horario individual rechazado o vencido; null en los demás casos'),
+      ).describe('later o earlier cuando pidió algo más tarde/temprano que la última lista mostrada o el horario individual rechazado; null en los demás casos'),
       progressDateAction: z.preprocess(
         (value) => value ?? 'keep_selected_date',
         z.enum(['keep_selected_date', 'replace_selected_date'])
@@ -8313,7 +8204,7 @@ export function createConversationalTools(ctx) {
         return { ok: false, total: 0, slots: [], error: 'El calendario blindado de la capacidad no existe o ya no está activo. Pasa la conversación a una persona.' }
       }
       await hydrateNativeRejectedAppointmentStartTimes({ ctx, config, calendarId: effectiveCalendarId })
-      const overlapsAllowed = scheduleCapability?.allowOverlaps === true
+      const overlapsAllowed = nativeCalendarAllowsOverlaps(nativeCalendar)
       const accountTimezone = await getAccountTimezone()
       const cleanEarliestLocalTime = normalizeNativeAvailabilityTime(earliestLocalTime)
       const cleanLatestLocalTime = normalizeNativeAvailabilityTime(latestLocalTime)
@@ -8503,7 +8394,6 @@ export function createConversationalTools(ctx) {
       }
       const availabilityOptions = {
         ignoreAppointmentConflicts: overlapsAllowed,
-        appointmentLimit: overlapsAllowed ? undefined : 1,
         allowDefaultOpenHours: false,
         durationMinutes: rescheduledAppointment
           ? durationMs / 60000
@@ -9013,7 +8903,7 @@ export function createConversationalTools(ctx) {
         windowStart: normalizeDateOnlyInTimezone(new Date(startMs - 86400000).toISOString(), timezone),
         windowEnd: normalizeDateOnlyInTimezone(new Date(startMs + 86400000).toISOString(), timezone),
         lookupSlots: verifiedSlotLookup,
-        ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
+        ignoreAppointmentConflicts: nativeCalendarAllowsOverlaps(nativeCalendar)
       })
       if (!slotValidation.ok) return slotValidation
       const canonicalStartTime = new Date(slotValidation.matchedStartTime).toISOString()
@@ -9231,7 +9121,7 @@ export function createConversationalTools(ctx) {
       }
 
       const nativeExecutionId = String(ctx.executionId || '').trim()
-      const nativeOverlapsAllowed = scheduleCapability?.allowOverlaps === true
+      const nativeOverlapsAllowed = nativeCalendarAllowsOverlaps(nativeCalendar)
       const nativeDurationMinutes = calendarDurationToMinutes(
         nativeCalendar?.slot_duration,
         nativeCalendar?.slot_duration_unit,
@@ -9892,6 +9782,9 @@ export function createConversationalTools(ctx) {
             ...(result.payload?.code
               ? { code: result.payload.code }
               : {}),
+            ...(authorityFenceData.reason
+              ? { availabilityReason: String(authorityFenceData.reason) }
+              : {}),
             statusCode: result.statusCode,
             error: `No se pudo agendar la cita y no debes afirmar que quedó confirmada.${toolResult.error ? ` ${toolResult.error}` : ''}`
           }
@@ -10183,7 +10076,7 @@ export function createConversationalTools(ctx) {
       windowStart: normalizeDateOnlyInTimezone(new Date(targetStartMs - 86400000).toISOString(), businessTimezone),
       windowEnd: normalizeDateOnlyInTimezone(new Date(targetStartMs + 86400000).toISOString(), businessTimezone),
       lookupSlots: verifiedRescheduleSlotLookup({ appointmentId: appointment.id, durationMs }),
-      ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
+      ignoreAppointmentConflicts: nativeCalendarAllowsOverlaps(nativeCalendar)
     })
     if (!slotValidation.ok) return slotValidation
     const canonicalStart = new Date(slotValidation.matchedStartTime).toISOString()
@@ -10530,7 +10423,7 @@ export function createConversationalTools(ctx) {
         windowStart: slotWindowStart,
         windowEnd: slotWindowEnd,
         lookupSlots: lookupVerifiedAppointmentSlots,
-        ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
+        ignoreAppointmentConflicts: nativeCalendarAllowsOverlaps(nativeCalendar)
       })
       if (!slotValidation.ok) return slotValidation
       start.setTime(new Date(slotValidation.matchedStartTime).getTime())
@@ -11089,7 +10982,7 @@ export function createConversationalTools(ctx) {
         windowStart: normalizeDateOnlyInTimezone(new Date(targetStartMs - 86400000).toISOString(), timezone),
         windowEnd: normalizeDateOnlyInTimezone(new Date(targetStartMs + 86400000).toISOString(), timezone),
         lookupSlots: verifiedRescheduleSlotLookup({ appointmentId: appointment.id, durationMs }),
-        ignoreAppointmentConflicts: scheduleCapability?.allowOverlaps === true
+        ignoreAppointmentConflicts: nativeCalendarAllowsOverlaps(calendar)
       })
       if (!slotValidation.ok) return slotValidation
       const canonicalStart = new Date(slotValidation.matchedStartTime).toISOString()
@@ -11150,7 +11043,7 @@ export function createConversationalTools(ctx) {
         appointmentId: appointment.id,
         preCommitAuthority
       })
-      const currentOverlapsAllowed = preCommitAuthority.scheduleCapability?.allowOverlaps === true
+      const currentOverlapsAllowed = nativeCalendarAllowsOverlaps(preCommitAuthority.calendar)
       const response = await invokeController(updateAppointment, {
         params: { id: appointment.id },
         body: {
@@ -12927,23 +12820,6 @@ export function createConversationalTools(ctx) {
         }
       }
 
-      const expiredOfferRestoredDateResult = () => {
-        const progress = ctx.appointmentSelectionProgress
-        const restoredInThisExecution = progress?.active === true &&
-          String(progress.sourceExecutionId || '') === String(ctx.executionId || '').trim() &&
-          String(progress.selectedDate || '').trim() &&
-          Array.isArray(progress.missingFields) &&
-          progress.missingFields.length === 1 &&
-          progress.missingFields[0] === 'time'
-        if (!restoredInThisExecution) return null
-        return {
-          ok: false,
-          actionCompleted: false,
-          terminal: true,
-          code: 'appointment_offer_expired',
-          visibleReply: 'ese horario ya expiró. conservé el día; dime la hora otra vez y la reviso sin agendar nada todavía'
-        }
-      }
       const currentAuthority = await loadConversationalAppointmentOfferDecisionContext({ ctx, config })
       if (
         !expected?.active ||
@@ -12951,8 +12827,6 @@ export function createConversationalTools(ctx) {
         String(currentAuthority.offerEventId || '') !== String(expected.offerEventId || '') ||
         String(currentAuthority.offerFingerprint || '') !== String(expected.offerFingerprint || '')
       ) {
-        const expiredResult = expiredOfferRestoredDateResult()
-        if (expiredResult) return expiredResult
         return {
           ok: false,
           actionCompleted: false,
@@ -12962,11 +12836,6 @@ export function createConversationalTools(ctx) {
         }
       }
       const candidate = await loadNativeAppointmentOfferCandidate({ ctx, config })
-      if (candidate?.code === 'appointment_offer_expired') {
-        await loadConversationalAppointmentOfferDecisionContext({ ctx, config })
-        const expiredResult = expiredOfferRestoredDateResult()
-        if (expiredResult) return expiredResult
-      }
       const candidateFingerprint = createHash('sha256')
         .update(String(candidate?.offer?.detail_json || ''))
         .digest('hex')
@@ -13362,53 +13231,16 @@ export function createConversationalTools(ctx) {
             visibleReply: 'no pude comprobar que la oferta anterior sí te llegó. conservé el día; dime la hora otra vez y la reviso sin agendar nada todavía'
           }
         }
-        if (bookingResult?.code === 'appointment_offer_expired') {
-          let superseded = false
-          const expiredOffer = bookingResult?.expiredOffer?.id === candidate.offer.id
-            ? bookingResult.expiredOffer
-            : null
-          try {
-            if (expiredOffer) {
-              superseded = await supersedeUnavailableNativeAppointmentOffer({
-                ctx,
-                config,
-                candidate: { offer: expiredOffer },
-                expected: {
-                  offerFingerprint: createHash('sha256')
-                    .update(String(expiredOffer.detail_json || ''))
-                    .digest('hex')
-                },
-                restoreSameDate: true,
-                rejectStartTime: false,
-                reason: 'appointment_offer_expired'
-              })
-            }
-          } catch (error) {
-            logger.error(`[Agente conversacional] No se pudo cerrar la oferta que expiró durante la confirmación: ${error.message}`)
-          }
-          await refreshNativeAppointmentConversationAuthority({ ctx, config })
-          if (!superseded) {
-            return appointmentAuthorityConflictTerminalResult({
-              ctx,
-              fallback: 'ese horario expiró mientras lo confirmaba. dime la hora otra vez y la reviso sin agendar nada todavía'
-            })
-          }
-          return {
-            ...bookingResult,
-            ok: false,
-            actionCompleted: false,
-            terminal: true,
-            code: 'appointment_offer_expired',
-            visibleReply: 'ese horario expiró mientras lo confirmaba. conservé el día; dime la hora otra vez y la reviso sin agendar nada todavía'
-          }
-        }
         const definitiveOfferFailure = bookingResult?.invalidSlot === true ||
           bookingResult?.appointmentOfferInvalidated === true
         if (definitiveOfferFailure) {
           const supersededByNewerInbound = bookingResult?.code === 'appointment_request_superseded_by_newer_inbound'
           const terminalAuthorityLost = bookingResult?.code === 'appointment_request_authority_lost'
           const terminalPreempted = supersededByNewerInbound || terminalAuthorityLost
-          const restoreSameDate = bookingResult?.invalidSlot === true ||
+          const slotBecameUnavailable = bookingResult?.invalidSlot === true ||
+            bookingResult?.code === 'slot_unavailable' ||
+            bookingResult?.code === 'appointment_slot_unavailable'
+          const restoreSameDate = slotBecameUnavailable ||
             bookingResult?.appointmentOfferRestoreSameDate === true
           let superseded = false
           try {
@@ -13433,6 +13265,19 @@ export function createConversationalTools(ctx) {
               ctx,
               fallback: 'ese horario cambió mientras lo revisaba. dime qué fecha u hora quieres consultar'
             })
+          }
+          if (slotBecameUnavailable && !terminalPreempted) {
+            return {
+              ...bookingResult,
+              ok: false,
+              actionCompleted: false,
+              terminal: false,
+              code: 'appointment_offer_slot_unavailable',
+              visibleReply: null,
+              continueWith: bookingResult?.availabilityReason === 'slot_conflict'
+                ? 'Alguien más ocupó el horario ofrecido y el calendario no permite empalmes. No le pidas al cliente que vuelva a elegir a ciegas: informa brevemente que ese espacio ya no está disponible, llama ahora get_free_slots para consultar disponibilidad fresca empezando por el día conservado y los días siguientes permitidos, y termina con offer_appointment_options mostrando alternativas reales. No vuelvas a ofrecer el horario rechazado.'
+                : 'El horario ofrecido dejó de estar disponible según el calendario. No le pidas al cliente que vuelva a elegir a ciegas: informa brevemente que ya no está disponible, llama ahora get_free_slots para consultar disponibilidad fresca empezando por el día conservado y los días siguientes permitidos, y termina con offer_appointment_options mostrando alternativas reales. No vuelvas a ofrecer el horario rechazado.'
+            }
           }
           return {
             ...bookingResult,

@@ -367,8 +367,8 @@ function normalizeCapabilityItem(input, legacyTestMode = DEFAULT_CONVERSATIONAL_
       handoffUserId: bookingOwner === 'human' ? cleanId(input.handoffUserId, 160) : '',
       handoffUserName: bookingOwner === 'human' ? cleanText(input.handoffUserName, 180) : '',
       testMode: normalizeCapabilityTestMode(input.testMode, legacyTestMode),
-      // Sólo esta capacidad blindada puede autorizar empalmes; goalWorkflow y
-      // el texto editable nunca amplían por sí mismos la política del calendario.
+      // Compatibilidad de lectura con agentes anteriores. La agenda persistida,
+      // no esta capacidad, es la única fuente de verdad para empalmes.
       allowOverlaps: toBoolean(input.allowOverlaps)
     }
   }

@@ -2858,13 +2858,14 @@ Reglas base:
   debe volver a pintar el horario anterior ni convertir el listado en vacío.
 - El mismo horario semanal gobierna `free-slots`, URL pública, calendarios
   embebidos/Sites, agente conversacional y los modales web, Android e iOS cuando
-  usan el modo `Por defecto`. Ese modo siempre exige un espacio sin otra cita y
-  no acepta banderas de sobreagenda enviadas por el cliente, aunque lleguen
-  mezcladas en la solicitud. Tampoco hereda un cupo mayor de
-  `appoinmentPerSlot` desde un espejo HighLevel: URL pública, Sites, pagos y
-  selectores normales conservan cupo uno. La única excepción es el agente
-  conversacional cuando su configuración interna verificable tiene
-  `allowOverlaps=true`.
+  usan el modo `Por defecto`. En el paso `Disponibilidad`, el switch
+  `Permitir empalme de citas` persiste `allow_overlaps`: apagado exige un espacio
+  sin otra cita y encendido permite varias citas en la misma hora. Esa decisión
+  gobierna por igual URL pública, Sites, pagos, selectores normales y agente
+  conversacional; ni una bandera del cliente ni un contexto interno puede
+  ampliarla. `appoinmentPerSlot` queda sólo como dato legacy y no habilita
+  empalmes aunque sea mayor a uno: manda exclusivamente el switch local y un
+  refresh de HighLevel no lo pisa.
   El modo `Personalizado` es el override intencional para capturar una hora
   manual y sí puede empalmar otra cita; no puede atravesar una ausencia o
   `blocked_slot` explícito ni crear un rango inválido.
@@ -2873,11 +2874,13 @@ Reglas base:
   no desplaza el horario ni se usa para calcular qué espacios existen.
 - Toda creación usa el candado/transacción del calendario, incluida una captura
   `Personalizado` que permita empalmar otra cita. Toda reserva pública vuelve a
-  validar dentro de ese candado el calendario, horario semanal, ventana, cupo
-  diario, buffers, bloqueos y choques justo antes del INSERT. Dos solicitudes
-  simultáneas al mismo espacio no pueden terminar en dos citas. Los flujos con
-  cobro aplican esa validación cuando finalmente intentan crear la cita; el pago
-  pendiente no reserva el espacio.
+  validar dentro de ese candado el calendario, horario semanal, ventana, máximo
+  diario, bloqueos y política de empalme justo antes del INSERT. Con el switch
+  apagado, dos solicitudes simultáneas al mismo espacio no pueden terminar en
+  dos citas; encendido, el conflicto con otra cita deja de bloquear, pero no se
+  saltan horarios, bloqueos ni máximos diarios. Los flujos con cobro aplican esa
+  validación cuando finalmente intentan crear la cita; el pago pendiente no
+  reserva el espacio.
 - Los calendarios espejados desde HighLevel siguen siendo calendarios locales
   utilizables aunque HighLevel se desconecte. Sus URLs publicas, disponibilidad
   y bookings deben resolverse contra la DB de Ristak; las citas nuevas,
@@ -5739,15 +5742,17 @@ nunca un booleano escrito por el modelo.
   no cuenta como posterior o anterior. El instante sólo desempata dos horas
   repetidas del mismo dia y la misma zona durante un cambio DST. Si despues se
   rechaza una oferta individual, esa referencia mas reciente manda sobre la lista
-  anterior. Una oferta individual vencida deja de ser confirmable: el loader la
-  cierra por CAS, recupera el dia como `collecting_time` cuando calendario y zona
-  siguen vigentes y no veta el slot, porque expirar no equivale a que la persona
-  lo rechazara. Si habia varias expiradas, `offeredAt` con precision de
-  milisegundos decide cual fue realmente la mas reciente aunque `created_at` empate;
-  se cierran de la mas vieja a la mas nueva y solo la mas reciente puede restaurar el dia. Ya cerrada, la oferta
-  expirada conserva durante 24 horas su instante como referencia semantica para
-  interpretar "mas tarde" o "mas temprano" sin caer de nuevo en una lista u
-  oferta anterior.
+  anterior. Una oferta individual no vence por tiempo: las nuevas guardan
+  `expiresAt=null` y el loader ignora el vencimiento de ofertas legacy. Esto no
+  reserva el espacio. Al recibir la confirmación, el backend vuelve a comprobar
+  el instante ofrecido contra el calendario vigente y sólo entonces crea o
+  reagenda. Si el horario ya pasó, cambió de alcance o dejó de estar disponible,
+  la oferta se cierra por CAS. Cuando el conflicto es otra cita y
+  `allow_overlaps` está apagado, conserva el día, consulta `get_free_slots` y
+  termina con `offer_appointment_options` para mostrar alternativas reales sin
+  pedir que la persona adivine otra hora. Una oferta rechazada sí conserva
+  durante 24 horas su instante como referencia semántica para interpretar
+  "más tarde" o "más temprano" sin caer de nuevo en una lista anterior.
 
   Incluso si el cliente propone dia y hora exactos, el agente debe consultar
   `get_free_slots` y llamar `offer_appointment_slot` con un solo `startTime`.
@@ -6096,12 +6101,13 @@ nunca un booleano escrito por el modelo.
   Google tenga un solo dueño local; una liga duplicada legacy falla antes de
   escribir. Un tombstone viejo de otro calendario proveedor tampoco puede rotar
   ni perder la referencia del espejo vigente.
-  La opcion blindada `allowOverlaps` se aplica igual en consulta, oferta,
-  validacion previa al cobro, confirmacion automatica y solicitud humana; apagada
-  exige slot libre y encendida permite el empalme sin saltarse horas de atencion.
-  En confirmacion y reagendamiento estrictos, el override de conflictos sólo se
-  acepta desde el contexto interno del agente que leyó esa configuración; una
-  bandera `ignoreAppointmentConflicts` enviada por un cliente no lo autoriza.
+  La opción persistida del calendario `allow_overlaps` se aplica igual en
+  consulta, oferta, validación previa al cobro, confirmación automática y
+  solicitud humana; apagada exige slot libre y encendida permite el empalme sin
+  saltarse horas de atención, bloqueos ni máximo diario. La configuración legacy
+  `allowOverlaps` de la capacidad del agente ya no autoriza excepciones: el
+  calendario es la única fuente de verdad y una bandera
+  `ignoreAppointmentConflicts` enviada por un cliente tampoco puede ampliarla.
   El contacto solicitante de la cita es siempre el contacto canonico del hilo.
   `appointment_participants` conserva snapshots separados para `requester`,
   `primary_attendee` y cualquier cantidad acotada de `guest`; nombre es el unico

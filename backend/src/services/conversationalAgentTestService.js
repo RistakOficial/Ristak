@@ -1090,8 +1090,9 @@ async function verifyTestAppointmentAction(action, scheduleCapability, { allowCa
   )
   const availability = await getLocalFreeSlots(calendarId, windowStart, windowEnd, timezone, {
     allowDefaultOpenHours: false,
-    ignoreAppointmentConflicts: false,
-    appointmentLimit: 1
+    // La política persistida del calendario manda también en el tester:
+    // sin empalmes el cupo es uno; con empalmes el slot sigue disponible.
+    ignoreAppointmentConflicts: false
   })
   const stillFree = (Array.isArray(availability) ? availability : [])
     .flatMap((day) => Array.isArray(day?.slots) ? day.slots : [])
@@ -1402,8 +1403,7 @@ async function claimPreviewAppointmentOfferForTestEffect({ runContext, request, 
     cleanString(detail.previewScopeId) === previewScopeId &&
     cleanString(detail.calendarId) === cleanString(request?.calendarId) &&
     cleanString(detail.startTime) === cleanString(request?.startTime) &&
-    cleanString(request?.confirmationEvidence?.selectedStartTime) === cleanString(request?.startTime) &&
-    Date.parse(detail.expiresAt || '') > Date.now()
+    cleanString(request?.confirmationEvidence?.selectedStartTime) === cleanString(request?.startTime)
   )
   const materializationReplay = Boolean(
     baseIdentityMatches &&
@@ -1884,7 +1884,6 @@ async function resolveTestAppointmentOfferBinding(runContext, capabilitiesConfig
     cleanString(detail.previewScopeId) === previewScopeId &&
     cleanString(detail.status) === 'accepted' &&
     cleanString(detail.acceptedExecutionId) === cleanString(runContext?.executionId) &&
-    Date.parse(detail.expiresAt || '') > Date.now() &&
     Number.isFinite(Date.parse(detail.startTime || '')) &&
     calendarMatches &&
     terminalBindingMatches
@@ -2683,8 +2682,7 @@ export async function getConversationalAgentTestVerifiedPaymentEvidence({ runCon
       cleanString(detail.acceptedExecutionId) === cleanString(binding.acceptedExecutionId) &&
       cleanString(detail.bookingOwner) === cleanString(binding.bookingOwner) &&
       cleanString(detail.terminalToolName) === cleanString(binding.terminalToolName) &&
-      sha256(offer.detail_json) === cleanString(binding.offerFingerprint) &&
-      Date.parse(detail.expiresAt || '') > Date.now()
+      sha256(offer.detail_json) === cleanString(binding.offerFingerprint)
     )
     if (!valid) continue
     return {

@@ -858,15 +858,6 @@ function addDateOnlyDays(dateOnly, days) {
   ].join('-');
 }
 
-function getCalendarSlotLimit(calendar = {}) {
-  const value = Number(calendar.appoinmentPerSlot ?? calendar.appointmentPerSlot ?? calendar.appoinment_per_slot ?? 1);
-  return Number.isFinite(value) ? Math.max(1, Math.trunc(value)) : 1;
-}
-
-function shouldUseLocalAvailabilityForOverlaps(calendar = {}) {
-  return getCalendarSlotLimit(calendar) > 1;
-}
-
 async function getSavedHighLevelOnlyContext() {
   const saved = await getSavedHighLevelConfig().catch(() => null);
   return {
@@ -911,10 +902,7 @@ async function getCalendarFreeSlotsForPublic(calendar, { startDate, endDate }) {
     addDateOnlyDays(endDate, 2),
     businessTimezone,
     {
-      allowDefaultOpenHours: false,
-      // La URL pública siempre representa el modo Por defecto: un solo
-      // compromiso por espacio, aunque el espejo GHL anuncie más capacidad.
-      appointmentLimit: 1
+      allowDefaultOpenHours: false
     }
   );
 }
@@ -2205,8 +2193,7 @@ export async function createPublicAppointment(req, res) {
         {
           enforceCalendarRules: true,
           timezone: businessTimezone,
-          // La reserva pública nunca es un override personalizado.
-          appointmentLimit: 1
+          // La política de empalme vive en el calendario; el navegador no puede ampliarla.
         }
       );
       if (!availability.available) {
@@ -2436,12 +2423,13 @@ export async function getFreeSlots(req, res) {
     const requestedAvailabilityOptions = internalAvailability.availabilityOptions && typeof internalAvailability.availabilityOptions === 'object'
       ? internalAvailability.availabilityOptions
       : {};
-    // El GET protegido alimenta por defecto los selectores normales de horario.
-    // Sólo el contexto interno del agente puede pedir explícitamente ignorar
-    // conflictos cuando su configuración verificada permite empalmes.
-    const availabilityOptions = requestedAvailabilityOptions.ignoreAppointmentConflicts === true
-      ? requestedAvailabilityOptions
-      : { ...requestedAvailabilityOptions, appointmentLimit: 1 };
+    // El GET protegido alimenta selectores y agente. Ningún caller amplía la
+    // política: el switch persistido del calendario decide los empalmes.
+    const availabilityOptions = {
+      ...requestedAvailabilityOptions,
+      // La política persistida del calendario manda también para callers internos.
+      ignoreAppointmentConflicts: false
+    };
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -2711,11 +2699,6 @@ export async function createAppointment(req, res) {
       || appointmentData.source === 'conversational_agent_v2';
     const forceDoubleBooking = appointmentData.ignoreAppointmentConflicts === true
       || appointmentData.confirmDoubleBooking === true;
-    const strictConflictOverrideAuthorized = (
-      strictAvailabilityCheck
-      && internalAppointmentContext.conversationalAgentAppointment === true
-      && internalAppointmentContext.allowAppointmentOverlaps === true
-    );
     const depositFenceProvided = Boolean(
       depositReservationEventId || depositReservationClaimToken || depositReservationAgentId ||
       depositReservationRequestDraftHash
@@ -2857,11 +2840,9 @@ export async function createAppointment(req, res) {
             strictAvailabilityCheck
               ? {
                   enforceCalendarRules: true,
-                  // Los flags del payload jamás autorizan el empalme estricto.
-                  // Sólo el contexto interno del agente puede hacerlo después
-                  // de comprobar su capacidad `allowOverlaps` configurada.
-                  ignoreAppointmentConflicts: strictConflictOverrideAuthorized,
-                  ...(strictConflictOverrideAuthorized ? {} : { appointmentLimit: 1 }),
+                  // Ni el payload ni un contexto interno amplían esta regla:
+                  // checkSlotAvailability usa la política persistida del calendario.
+                  ignoreAppointmentConflicts: false,
                   timezone: localAppointmentData.timeZone || localAppointmentData.timezone
                 }
               : {
@@ -3190,11 +3171,6 @@ export async function updateAppointment(req, res) {
       : null;
     const strictAvailabilityCheck = updateData.strictAvailabilityCheck === true;
     const ignoreAppointmentConflicts = updateData.ignoreAppointmentConflicts === true;
-    const strictConflictOverrideAuthorized = (
-      strictAvailabilityCheck
-      && internalAppointmentContext.conversationalAgentAppointment === true
-      && internalAppointmentContext.allowAppointmentOverlaps === true
-    );
     const expectedStartTime = updateData.expectedStartTime || updateData.expected_start_time || null;
     const expectedEndTime = updateData.expectedEndTime || updateData.expected_end_time || null;
     const expectedAppointmentStatus = cleanString(
@@ -3366,12 +3342,11 @@ export async function updateAppointment(req, res) {
             {
               excludeAppointmentId: current.id,
               ignoreAppointmentConflicts: strictAvailabilityCheck
-                ? strictConflictOverrideAuthorized
+                ? false
                 : ignoreAppointmentConflicts,
               ...(strictAvailabilityCheck
                 ? {
                     enforceCalendarRules: true,
-                    ...(strictConflictOverrideAuthorized ? {} : { appointmentLimit: 1 }),
                     timezone: updateData.timeZone || updateData.timezone || current.timeZone || current.time_zone
                   }
                 : {})

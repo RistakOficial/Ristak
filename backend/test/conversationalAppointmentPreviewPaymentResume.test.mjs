@@ -505,7 +505,7 @@ test('preview con anticipo reanuda desde evidencia sandbox durable y materializa
     })
     assert.equal(paymentEffects.length, 1, JSON.stringify(paymentEffects))
     assert.equal(paymentEffects[0].type, 'payment')
-    assert.equal(paymentEffects[0].status, 'prepared')
+    assert.equal(paymentEffects[0].status, 'prepared', JSON.stringify(paymentEffects))
     paymentEffectId = paymentEffects[0].id
 
     await db.run(

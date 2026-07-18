@@ -929,8 +929,8 @@ function normalizeCapabilityItem(value: unknown, legacyTestMode = DEFAULT_CONVER
       id,
       enabled,
       calendarId: String(raw.calendarId || '').trim().slice(0, 160),
-      // V2 siempre vuelve a comprobar un espacio libre. El campo sólo conserva
-      // compatibilidad de lectura con agentes anteriores.
+      // Compatibilidad de lectura con agentes anteriores. La política vigente
+      // se configura y se lee directamente desde el calendario.
       allowOverlaps: false,
       bookingOwner: raw.bookingOwner === 'human' ? 'human' : 'ai',
       handoffUserId: String(raw.handoffUserId || '').trim().slice(0, 160),

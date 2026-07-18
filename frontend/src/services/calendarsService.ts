@@ -170,6 +170,7 @@ export interface Calendar {
   preBuffer?: number;
   preBufferUnit?: string;
   appoinmentPerSlot: number;
+  allowOverlaps?: boolean;
   appoinmentPerDay: number;
   allowBookingAfter?: number;
   allowBookingAfterUnit?: string;

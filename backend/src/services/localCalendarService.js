@@ -1367,6 +1367,18 @@ function hasExplicitCalendarOpenHours(value = {}) {
   )
 }
 
+function hasExplicitCalendarOverlapSetting(value = {}) {
+  const calendar = calendarAvailabilityRecord(value)
+  return Boolean(
+    calendar
+    && typeof calendar === 'object'
+    && (
+      Object.prototype.hasOwnProperty.call(calendar, 'allowOverlaps')
+      || Object.prototype.hasOwnProperty.call(calendar, 'allow_overlaps')
+    )
+  )
+}
+
 function calendarAvailabilityInputError(message) {
   const error = new Error(message)
   error.status = 400
@@ -1495,6 +1507,7 @@ function calendarRowToApi(row = {}) {
     preBuffer: toInt(row.pre_buffer, 0),
     preBufferUnit: row.pre_buffer_unit || 'mins',
     appoinmentPerSlot: toInt(row.appoinment_per_slot, 1),
+    allowOverlaps: Number(row.allow_overlaps) === 1,
     appoinmentPerDay: toInt(row.appoinment_per_day, 0),
     allowBookingAfter: toInt(row.allow_booking_after, 0),
     allowBookingAfterUnit: row.allow_booking_after_unit || 'hours',
@@ -1568,7 +1581,14 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
     slotBufferUnit: cleanString(calendar.slotBufferUnit || calendar.slot_buffer_unit || 'mins') || 'mins',
     preBuffer: toInt(calendar.preBuffer ?? calendar.pre_buffer, 0),
     preBufferUnit: cleanString(calendar.preBufferUnit || calendar.pre_buffer_unit || 'mins') || 'mins',
-    appoinmentPerSlot: toInt(calendar.appoinmentPerSlot ?? calendar.appoinment_per_slot ?? calendar.appointmentPerSlot, 1),
+    appoinmentPerSlot: toInt(
+      calendar.appoinmentPerSlot ?? calendar.appoinment_per_slot ?? calendar.appointmentPerSlot,
+      1
+    ),
+    allowOverlaps: toBoolInt(
+      calendar.allowOverlaps ?? calendar.allow_overlaps,
+      false
+    ),
     appoinmentPerDay: toInt(calendar.appoinmentPerDay ?? calendar.appoinment_per_day ?? calendar.appointmentPerDay, 0),
     allowBookingAfter: toInt(calendar.allowBookingAfter ?? calendar.allow_booking_after, 0),
     allowBookingAfterUnit: cleanString(calendar.allowBookingAfterUnit || calendar.allow_booking_after_unit || 'hours') || 'hours',
@@ -1694,6 +1714,13 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
     ) ? 1 : 0
   }
 
+  if (
+    existingById
+    && !hasExplicitCalendarOverlapSetting(raw)
+  ) {
+    normalized.allowOverlaps = Number(existingById.allow_overlaps) === 1 ? 1 : 0
+  }
+
   if (existingById && !hasExplicitGoogleCalendarLinkInput(raw, options)) {
     preserveExistingGoogleCalendarMetadata(normalized, existingById)
   }
@@ -1723,13 +1750,13 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       calendar_type, widget_type, event_title, event_color, is_active,
       team_members, location_configurations, slot_duration, slot_duration_unit,
       slot_interval, slot_interval_unit, slot_buffer, slot_buffer_unit,
-      pre_buffer, pre_buffer_unit, appoinment_per_slot, appoinment_per_day,
+      pre_buffer, pre_buffer_unit, appoinment_per_slot, allow_overlaps, appoinment_per_day,
       allow_booking_after, allow_booking_after_unit, allow_booking_for,
       allow_booking_for_unit, open_hours, availability_schedule_configured,
       auto_confirm, allow_reschedule,
       allow_cancellation, notes, availability_type, anti_tracking_enabled, source, sync_status,
       sync_error, last_synced_at, raw_json, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT (id) DO UPDATE SET
       ghl_calendar_id = COALESCE(excluded.ghl_calendar_id, calendars.ghl_calendar_id),
       location_id = COALESCE(excluded.location_id, calendars.location_id),
@@ -1753,6 +1780,7 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
       pre_buffer = excluded.pre_buffer,
       pre_buffer_unit = excluded.pre_buffer_unit,
       appoinment_per_slot = excluded.appoinment_per_slot,
+      allow_overlaps = excluded.allow_overlaps,
       appoinment_per_day = excluded.appoinment_per_day,
       allow_booking_after = excluded.allow_booking_after,
       allow_booking_after_unit = excluded.allow_booking_after_unit,
@@ -1799,6 +1827,7 @@ export async function upsertLocalCalendar(raw = {}, options = {}) {
     normalized.preBuffer,
     normalized.preBufferUnit,
     normalized.appoinmentPerSlot,
+    normalized.allowOverlaps,
     normalized.appoinmentPerDay,
     normalized.allowBookingAfter,
     normalized.allowBookingAfterUnit,
@@ -7246,18 +7275,13 @@ function isHighLevelCalendar(calendar = {}) {
 }
 
 function getSlotAppointmentLimit(calendar = {}) {
-  if (!isHighLevelCalendar(calendar)) return 1
-  return Math.max(1, toInt(calendar.appoinmentPerSlot ?? calendar.appointmentPerSlot ?? calendar.appoinment_per_slot, 1))
+  return Number(calendar.allowOverlaps ?? calendar.allow_overlaps) === 1 || calendar.allowOverlaps === true
+    ? Number.POSITIVE_INFINITY
+    : 1
 }
 
 function getEffectiveSlotAppointmentLimit(calendar = {}, options = {}) {
   if (options.ignoreAppointmentConflicts) return Number.POSITIVE_INFINITY
-
-  const overrideLimit = Number(options.appointmentLimit)
-  if (Number.isFinite(overrideLimit) && overrideLimit > 0) {
-    return Math.max(1, Math.trunc(overrideLimit))
-  }
-
   return getSlotAppointmentLimit(calendar)
 }
 

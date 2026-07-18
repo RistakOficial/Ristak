@@ -903,7 +903,7 @@ test('controller/frontend sin ids conserva fecha -> hora -> oferta -> sí y mate
       actions: third.result.actions
     })
     assert.equal(materialized.length, 1)
-    assert.equal(materialized[0].status, 'recorded')
+    assert.equal(materialized[0].status, 'recorded', JSON.stringify(materialized))
     assert.equal(materialized[0].payload.appointmentCreated, true)
     assert.equal(materialized[0].payload.controllerAttempts, 2)
     assert.equal(materialized[0].payload.retried, true)
@@ -1384,8 +1384,12 @@ test('dos previews del mismo contacto serializan el slot: gana uno y el otro con
     }))
     const winner = raced.find((entry) => entry.testEffects[0]?.status === 'recorded')
     const loser = raced.find((entry) => entry.testEffects[0]?.status === 'failed')
-    assert.ok(winner, JSON.stringify(raced))
-    assert.ok(loser, JSON.stringify(raced))
+    const raceEffectSummary = raced.map((entry) => ({
+      key: entry.key,
+      effects: entry.testEffects.map((effect) => ({ status: effect.status, code: effect.code }))
+    }))
+    assert.ok(winner, JSON.stringify(raceEffectSummary))
+    assert.ok(loser, JSON.stringify(raceEffectSummary))
     assert.notEqual(winner.key, loser.key)
     assert.equal(winner.testEffects.length, 1)
     assert.equal(winner.testEffects[0].payload.startTime, slotA.toUTC().toISO())

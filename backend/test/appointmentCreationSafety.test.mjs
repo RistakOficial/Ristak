@@ -1648,7 +1648,7 @@ test('el endpoint conversacional v2 falla cerrado si el calendario configurado n
   }
 })
 
-test('los flags admin no fuerzan el modo estricto y sólo allowOverlaps interno autoriza el empalme', async () => {
+test('los flags admin e internos no fuerzan empalmes; sólo el switch persistido del calendario los autoriza', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
   const calendarId = `calendar_strict_wins_${suffix}`
   const startTime = '2099-07-22T15:00:00.000Z'
@@ -1661,6 +1661,7 @@ test('los flags admin no fuerzan el modo estricto y sólo allowOverlaps interno 
       source: 'ristak',
       ghlCalendarId: `ghl_${calendarId}`,
       appoinmentPerSlot: 5,
+      allowOverlaps: false,
       allowBookingFor: 36500,
       allowBookingForUnit: 'days',
       openHours: [{
@@ -1697,7 +1698,7 @@ test('los flags admin no fuerzan el modo estricto y sólo allowOverlaps interno 
     )
     assert.equal(Number(stored?.total || 0), 1)
 
-    const authorizedResponse = createResponse()
+    const blockedInternalResponse = createResponse()
     await createAppointmentController({
       [INTERNAL_CONTROLLER_CONTEXT]: {
         conversationalAgentAppointment: true,
@@ -1713,6 +1714,21 @@ test('los flags admin no fuerzan el modo estricto y sólo allowOverlaps interno 
         ignoreAppointmentConflicts: true,
         confirmDoubleBooking: true
       }
+    }, blockedInternalResponse)
+
+    assert.equal(blockedInternalResponse.statusCode, 409)
+    await db.run('UPDATE calendars SET allow_overlaps = 1 WHERE id = ?', [calendarId])
+
+    const authorizedResponse = createResponse()
+    await createAppointmentController({
+      body: {
+        calendarId,
+        title: 'Empalme autorizado por el calendario',
+        startTime,
+        endTime,
+        strictAvailabilityCheck: true,
+        source: 'conversational_agent_v2'
+      }
     }, authorizedResponse)
 
     assert.equal(authorizedResponse.statusCode, 201, JSON.stringify(authorizedResponse.body))
@@ -1727,7 +1743,7 @@ test('los flags admin no fuerzan el modo estricto y sólo allowOverlaps interno 
   }
 })
 
-test('una reagenda estricta tampoco hereda el cupo mayor del espejo GHL', async () => {
+test('una reagenda estricta sólo empalma cuando el switch del calendario está encendido', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
   const calendarId = `calendar_strict_reschedule_${suffix}`
   const originalStart = '2099-07-22T13:00:00.000Z'
@@ -1744,6 +1760,7 @@ test('una reagenda estricta tampoco hereda el cupo mayor del espejo GHL', async 
       slotDuration: 60,
       slotInterval: 60,
       appoinmentPerSlot: 5,
+      allowOverlaps: false,
       allowBookingFor: 36500,
       allowBookingForUnit: 'days',
       openHours: [{
@@ -1789,7 +1806,7 @@ test('una reagenda estricta tampoco hereda el cupo mayor del espejo GHL', async 
     assert.equal(unchanged?.start_time, originalStart)
     assert.equal(unchanged?.end_time, originalEnd)
 
-    const authorizedResponse = createResponse()
+    const blockedInternalResponse = createResponse()
     await updateAppointmentController({
       params: { id: movable.id },
       [INTERNAL_CONTROLLER_CONTEXT]: {
@@ -1800,6 +1817,18 @@ test('una reagenda estricta tampoco hereda el cupo mayor del espejo GHL', async 
         endTime: occupiedEnd,
         strictAvailabilityCheck: true,
         ignoreAppointmentConflicts: true
+      }
+    }, blockedInternalResponse)
+
+    assert.equal(blockedInternalResponse.statusCode, 409)
+    await db.run('UPDATE calendars SET allow_overlaps = 1 WHERE id = ?', [calendarId])
+
+    const authorizedResponse = createResponse()
+    await updateAppointmentController({
+      params: { id: movable.id },
+      body: {
+        endTime: occupiedEnd,
+        strictAvailabilityCheck: true
       }
     }, authorizedResponse)
 

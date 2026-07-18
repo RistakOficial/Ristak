@@ -331,6 +331,43 @@ test('una respuesta remota que omite openHours no borra la agenda semanal local'
   }
 })
 
+test('un refresh remoto no pisa la decisión local de permitir empalmes', async () => {
+  const calendarId = `rstk_cal_overlap_setting_${randomUUID()}`
+  const ghlCalendarId = `ghl_cal_overlap_setting_${randomUUID()}`
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId,
+      name: 'Agenda con política local de empalmes',
+      source: 'ghl',
+      appoinmentPerSlot: 5,
+      allowOverlaps: false,
+      openHours: DEFAULT_WEEKLY_AVAILABILITY
+    }, { source: 'ghl', ghlCalendarId, syncStatus: 'synced' })
+
+    const refreshed = await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId,
+      name: 'Agenda refrescada',
+      source: 'ghl',
+      appoinmentPerSlot: 8
+    }, { source: 'ghl', ghlCalendarId, syncStatus: 'synced' })
+    assert.equal(refreshed.allowOverlaps, false)
+
+    const enabled = await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId,
+      name: 'Agenda refrescada',
+      source: 'ghl',
+      allowOverlaps: true
+    }, { source: 'ghl', ghlCalendarId, syncStatus: 'synced' })
+    assert.equal(enabled.allowOverlaps, true)
+  } finally {
+    await deleteCalendar(calendarId)
+  }
+})
+
 test('un refresh remoto explícito no pisa una agenda local pendiente de sincronizar', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_weekly_pending_${suffix}`

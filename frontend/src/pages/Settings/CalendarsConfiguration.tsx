@@ -880,6 +880,7 @@ export const CalendarsConfiguration: React.FC = () => {
     slotInterval: 60,
     slotIntervalUnit: 'mins',
     appoinmentPerSlot: 1,
+    allowOverlaps: false,
     appoinmentPerDay: 0,
     allowBookingAfter: 0,
     allowBookingAfterUnit: 'hours',
@@ -1923,6 +1924,7 @@ export const CalendarsConfiguration: React.FC = () => {
         openHours: weeklyAvailabilityToOpenHours(weeklyAvailability),
         availabilityScheduleConfigured: true,
         appoinmentPerSlot: selectedCalendar.appoinmentPerSlot,
+        allowOverlaps: selectedCalendar.allowOverlaps === true,
         appoinmentPerDay: selectedCalendar.appoinmentPerDay,
         autoConfirm: selectedCalendar.autoConfirm !== false,
         bookingForm,
@@ -3355,15 +3357,19 @@ export const CalendarsConfiguration: React.FC = () => {
                 </div>
               </label>
 
-              <label className={pageStyles.editorField}>
-                <span>Citas por horario</span>
-                <NumberInput
-                  className={styles.input}
-                  value={selectedCalendar.appoinmentPerSlot}
-                  onValueChange={(value) => updateSelectedCalendar({ appoinmentPerSlot: Math.trunc(value) || 1 })}
-                  min="1"
+              <div className={`${pageStyles.eventSwitchRow} ${pageStyles.editorFieldWide}`}>
+                <div>
+                  <span>Permitir empalme de citas</span>
+                  <small>
+                    Permite agendar más de una cita en el mismo horario. Si está apagado, cuando alguien ocupe el espacio Ristak ofrecerá otras opciones disponibles.
+                  </small>
+                </div>
+                <Switch
+                  checked={selectedCalendar.allowOverlaps === true}
+                  onChange={(enabled) => updateSelectedCalendar({ allowOverlaps: enabled })}
+                  aria-label="Permitir empalme de citas"
                 />
-              </label>
+              </div>
 
               <label className={pageStyles.editorField}>
                 <span>Máximo de citas por día</span>

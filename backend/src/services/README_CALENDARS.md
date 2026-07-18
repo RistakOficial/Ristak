@@ -175,18 +175,19 @@ Reglas del contrato:
 - Las horas se interpretan en `account_timezone`; el `timezone` del visitante
   sólo sirve para presentar los instantes ya calculados.
 - URL pública, Sites, agente conversacional y creación admin/móvil en modo
-  `Por defecto` consumen esta misma disponibilidad. `Por defecto` nunca permite
-  otra cita empalmada por una bandera enviada por el cliente, incluso si el
-  payload la mezcla con el candado estricto. Sólo el agente conversacional puede
-  hacerlo cuando el contexto interno demuestra `allowOverlaps=true`. El modo
-  `Personalizado` manda el override manual para ignorar exclusivamente conflictos
-  con otras citas; los `blocked_slots`, ausencias y rangos inválidos siguen
-  rechazándose.
+  `Por defecto` consumen esta misma disponibilidad. La columna persistida
+  `allow_overlaps` es la única política de empalme para esos flujos: apagada
+  exige un espacio libre y encendida permite varias citas en el mismo horario.
+  Ninguna bandera del cliente ni contexto interno puede ampliar esa decisión.
+  El modo `Personalizado` conserva su override manual para ignorar exclusivamente
+  conflictos con otras citas; los `blocked_slots`, ausencias y rangos inválidos
+  siguen rechazándose.
 - La creación pública realiza la comprobación final dentro de la transacción y
   el candado del calendario. Además del horario aplica ventana de reserva,
-  límite estricto de una cita por espacio, cupo diario, buffers, bloqueos y
-  citas existentes. Un `appoinmentPerSlot` mayor importado desde HighLevel no
-  amplía el cupo de URL pública, Sites, pagos ni selectores `Por defecto`.
+  política de empalme, cupo diario, buffers, bloqueos y citas existentes. El
+  campo legacy `appoinmentPerSlot` no habilita empalmes aunque su valor sea
+  mayor a uno; manda exclusivamente el switch local `allow_overlaps` y un
+  refresh de HighLevel no lo pisa.
 - La creación admin personalizada también conserva la transacción y el candado:
   permitir un empalme no autoriza saltarse la protección de concurrencia.
 

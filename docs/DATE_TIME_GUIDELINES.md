@@ -154,6 +154,11 @@ Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
 - Calendarios públicos y embebidos: si el visitante elige otra zona, amplía la
   consulta de fechas lo necesario para cubrir el borde visual, calcula los slots
   con la zona del negocio y luego agrúpalos/muéstralos en la zona del visitante.
+- Las ofertas individuales del agente no caducan por tiempo. Conservan el
+  instante UTC ofrecido y, cuando la persona confirma, vuelven a validar ese
+  instante contra la zona y las reglas actuales del calendario antes de guardar.
+  Si el horario ya pasó o dejó de existir, la oferta se cierra y se consultan
+  alternativas; no se recalcula otro instante a partir del texto histórico.
 - Stripe, Conekta, Rebill y Mercado Pago: las fechas internas del plan se calculan con la
   zona del negocio; los cargos reales se ejecutan como instantes UTC.
 - En planes Stripe, Conekta y Rebill, una fecha programada sin hora usa las 10:00

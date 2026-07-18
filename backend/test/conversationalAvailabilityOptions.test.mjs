@@ -598,7 +598,7 @@ test('un horario individual rechazado más recientemente manda sobre la lista an
   }
 })
 
-test('una oferta preview activa pero vencida no bloquea el siguiente horario', async () => {
+test('una oferta preview ignora un vencimiento legacy y no puede ser reemplazada', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_expired_preview_${suffix}`
   const agentId = `agent_expired_preview_${suffix}`
@@ -643,8 +643,9 @@ test('una oferta preview activa pero vencida no bloquea el siguiente horario', a
       day.toISODate(),
       { earliestLocalTime: '09:00', latestLocalTime: '09:00' }
     )))
+    const firstStartTime = firstAvailability.slots[0].options[0].startTime
     const firstOffer = await toolByName(firstCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
-      startTime: firstAvailability.slots[0].options[0].startTime,
+      startTime: firstStartTime,
       appointmentId: null
     }))
     assert.equal(firstOffer.ok, true, JSON.stringify(firstOffer))
@@ -663,23 +664,18 @@ test('una oferta preview activa pero vencida no bloquea el siguiente horario', a
       [JSON.stringify(expiredDetail), stored.id]
     )
 
-    const relativeCtx = previewContext({
+    const legacyOfferCtx = previewContext({
       config,
       contactId,
       previewScopeId,
       executionId: `execution_relative_after_expiry_${suffix}`
     })
-    const relativeAvailability = await toolByName(relativeCtx, 'get_free_slots').invoke(null, JSON.stringify(freeSlotsInput(
-      day.toISODate(),
-      day.toISODate(),
-      { relativeToPreviousOffer: 'later' }
-    )))
-    assert.equal(relativeAvailability.ok, true, JSON.stringify(relativeAvailability))
-    assert.deepEqual(
-      relativeAvailability.slots.flatMap((item) => item.options.map((option) => option.localTime)),
-      ['10:00', '11:00'],
-      'la oferta vencida ya no se puede aceptar, pero conserva por 24 horas el significado de “más tarde”'
-    )
+    legacyOfferCtx.appointmentOfferDecision = await loadConversationalAppointmentOfferDecisionContext({
+      ctx: legacyOfferCtx,
+      config
+    })
+    assert.equal(legacyOfferCtx.appointmentOfferDecision?.active, true)
+    assert.equal(legacyOfferCtx.appointmentOfferDecision?.startTime, firstStartTime)
 
     const secondCtx = previewContext({
       config,
@@ -693,19 +689,21 @@ test('una oferta preview activa pero vencida no bloquea el siguiente horario', a
       { earliestLocalTime: '10:00', latestLocalTime: '10:00' }
     )))
     const secondStartTime = secondAvailability.slots[0].options[0].startTime
+    secondCtx.appointmentOfferDecision = legacyOfferCtx.appointmentOfferDecision
     const secondOffer = await toolByName(secondCtx, 'offer_appointment_slot').invoke(null, JSON.stringify({
       startTime: secondStartTime,
       appointmentId: null
     }))
-    assert.equal(secondOffer.ok, true, JSON.stringify(secondOffer))
+    assert.equal(secondOffer.ok, false, JSON.stringify(secondOffer))
+    assert.equal(secondOffer.code, 'appointment_offer_resolution_required')
 
     const replaced = JSON.parse((await db.get(
       'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
       [stored.id]
     )).detail_json)
     assert.equal(replaced.status, 'active')
-    assert.equal(replaced.startTime, secondStartTime)
-    assert.equal(replaced.executionId, secondCtx.executionId)
+    assert.equal(replaced.startTime, firstStartTime)
+    assert.equal(replaced.executionId, firstCtx.executionId)
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
