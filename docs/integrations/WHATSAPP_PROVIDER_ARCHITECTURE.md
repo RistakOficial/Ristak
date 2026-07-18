@@ -344,6 +344,13 @@ credenciales de Meta/YCloud y no debe consumir sus webhooks. Mientras la API
 oficial del mismo número esté operativa, `captureQrChatMessage` omite todo el
 tráfico vivo inbound/outbound. Sólo HistorySync puede importarse en paralelo.
 
+El botón manual de conexión también es la autoridad sobre el backoff de pairing.
+Si existe un timer de reconexión sin socket activo, el clic conserva el lease, el
+deferred y la condición de emparejamiento fresco del intento anterior, cancela la
+espera y abre el siguiente socket de inmediato. No debe responder con un estado
+`reconnecting` viejo que deje el modal sin código, ni cerrar/reemplazar un socket
+sano o uno que ya esté generando QR.
+
 ## Reglas de Coexistence
 
 En Embedded Signup v4, Meta activa este flujo automáticamente cuando el usuario

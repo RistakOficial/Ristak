@@ -892,6 +892,56 @@ test('un QR fresco conserva ese estado durante los reintentos 428 y no hereda la
   })
 })
 
+test('pedir QR durante el backoff cancela la espera y genera el siguiente código de inmediato', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'qr_repair_required' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, { authRegistered: false }))
+    setWhatsAppQrReconnectDelayForTest(60_000)
+
+    const firstStart = startWhatsAppQrConnection({
+      phoneNumberId,
+      acceptedRisk: true,
+      acceptedBy: 'test'
+    })
+
+    while (sockets.length < 1) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    await sockets[0].emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Closed',
+          output: { statusCode: 428 }
+        }
+      }
+    })
+
+    const firstSession = await firstStart
+    assert.equal(firstSession.status, 'reconnecting')
+    assert.equal(sockets.length, 1)
+
+    const manualRestart = startWhatsAppQrConnection({
+      phoneNumberId,
+      acceptedRisk: true,
+      acceptedBy: 'test'
+    })
+
+    while (sockets.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    await sockets[1].emit('connection.update', { qr: 'manual-retry-qr' })
+    const restartedSession = await manualRestart
+
+    assert.equal(sockets.length, 2)
+    assert.equal(restartedSession.status, 'qr_pending')
+    assert.match(restartedSession.qrCodeDataUrl, /^data:image\/png;base64,/)
+  })
+})
+
 test('volver a conectar un QR sano no reemplaza ni cierra su socket vivo', async () => {
   const sockets = []
 

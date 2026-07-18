@@ -2632,9 +2632,17 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
           logger.warn(`[WhatsApp QR] Reconexion fallida ${phone.id}: ${error.message}`)
         })
       }
-      const reconnectTimer = setTimeout(() => {
+      let reconnectStarted = false
+      let reconnectTimer = null
+      const resumeReconnect = () => {
+        if (reconnectStarted) return
+
         const pendingLive = liveSessions.get(phone.id)
-        if (pendingLive?.reconnectTimer !== reconnectTimer) return
+        if (!pendingLive || pendingLive.resumeReconnect !== resumeReconnect) return
+
+        reconnectStarted = true
+        if (reconnectTimer) clearTimeout(reconnectTimer)
+        pendingLive.reconnectTimer = null
 
         openSocket(phone, {
           requireConsent: false,
@@ -2646,7 +2654,8 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
           // válido y corta el QR nuevo al tercer 428.
           freshPairing
         }).catch(nextOpenDeferred.reject)
-      }, reconnectDelay)
+      }
+      reconnectTimer = setTimeout(resumeReconnect, reconnectDelay)
 
       liveSessions.set(phone.id, {
         sock: null,
@@ -2654,7 +2663,8 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         connected: false,
         reconnectTimer,
         lease: reconnectLease,
-        leaseHeartbeat: reconnectLeaseHeartbeat
+        leaseHeartbeat: reconnectLeaseHeartbeat,
+        resumeReconnect
       })
     }
   })
@@ -2784,8 +2794,35 @@ export async function startWhatsAppQrConnection({ phoneNumberId, acceptedRisk, a
   const live = liveSessions.get(phone.id)
 
   // Un clic repetido no debe cerrar un socket sano ni pelearse con un intento
-  // que ya está en curso. Eso era una fuente innecesaria de desconexiones.
-  if (live?.connected || live?.sock || live?.reconnectTimer) {
+  // que ya está generando QR. Eso era una fuente innecesaria de desconexiones.
+  if (live?.connected || live?.sock) {
+    return mapSessionForResponse(existing || await waitForSessionReady(phone.id))
+  }
+
+  // Si el usuario pide el QR mientras el backoff automático está esperando,
+  // su acción explícita manda: cancelamos la espera y abrimos el siguiente
+  // socket de inmediato. El callback conserva el mismo lease, deferred y
+  // freshPairing del intento anterior, por lo que no duplica sockets ni revive
+  // credenciales rechazadas.
+  if (live?.reconnectTimer && typeof live.resumeReconnect === 'function') {
+    clearTimeout(live.reconnectTimer)
+    live.reconnectTimer = null
+    const acceptedAt = nowIso()
+    await upsertSession(phone, {
+      status: 'starting',
+      consentAccepted: 1,
+      consentText: QR_CONSENT_TEXT,
+      consentAcceptedAt: acceptedAt,
+      consentAcceptedBy: cleanString(acceptedBy) || 'usuario',
+      qrCode: null,
+      qrCodeDataUrl: null,
+      lastError: null
+    })
+    live.resumeReconnect()
+    return mapSessionForResponse(await waitForSessionReady(phone.id))
+  }
+
+  if (live?.reconnectTimer) {
     return mapSessionForResponse(existing || await waitForSessionReady(phone.id))
   }
 
