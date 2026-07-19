@@ -201,7 +201,7 @@ function dataRequirementsSection(config = {}, capabilityManifest = [], { followU
   }
 
   if (fields.length && requirements.updateContact?.enabled) {
-    lines.push('Cuando quien escribe confirme un dato suyo, usa save_contact_data. Esa herramienta actualiza únicamente al contacto solicitante del hilo: nunca guardes ahí el nombre, teléfono o correo del titular distinto ni de un invitado. El servidor puede llenar vacíos o reemplazar nombres provisionales; un dato válido distinto se conserva como alternativo para revisión y nunca se sobrescribe sólo porque tú envíes un booleano de confirmación.')
+    lines.push('Cuando quien escribe confirme un dato suyo, usa save_contact_data. Esa herramienta actualiza únicamente al contacto solicitante del hilo: nunca guardes ahí el nombre, teléfono o correo del titular distinto ni de un invitado. El servidor puede llenar vacíos o reemplazar nombres provisionales, incluidos teléfonos, emojis, símbolos y etiquetas genéricas del canal; un dato válido distinto se conserva como alternativo para revisión y nunca se sobrescribe sólo porque tú envíes un booleano de confirmación.')
   } else if (fields.length) {
     lines.push('Cuando quien escribe confirme un dato suyo necesario para la acción, usa save_contact_data. En esta configuración la herramienta sólo conserva el dato durante la vuelta actual para completar la acción y no modifica la ficha del contacto.')
   }

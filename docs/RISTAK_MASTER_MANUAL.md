@@ -5225,10 +5225,13 @@ cuando corresponda. Un nombre, telefono o correo valido que ya sea distinto no
 se reemplaza por un booleano emitido por la IA: se conserva como dato alternativo
 para revision. Vacios y nombres provisionales sí pueden completarse segun la
 politica configurada. Nombres automaticos de canal como `Usuario de WhatsApp`,
-`WhatsApp User`, sus equivalentes de Instagram/Facebook/Messenger y valores que
-son solamente un telefono se consideran provisionales: no satisfacen
-`full_name` requerido y `replace_placeholders` puede sustituirlos por el nombre
-confirmado. Cuando la cita es para otra persona, `primaryAttendee` es tambien la
+`WhatsApp User`, sus equivalentes de Instagram/Facebook/Messenger, valores que
+son solamente un telefono y perfiles formados o decorados con emojis o sólo
+simbolos se consideran provisionales: no satisfacen `full_name` requerido y
+`replace_placeholders` puede sustituirlos por el nombre humano confirmado. El
+servidor tambien rechaza como nombre nuevo esos mismos valores no humanos para
+que la IA no cambie un placeholder por otro. Cuando la cita es para otra persona,
+`primaryAttendee` es tambien la
 fuente canonica del nombre y relacion usados en titulo/notas, tanto para
 `book_appointment` como para `request_human_booking`; los campos legacy pueden
 venir en `null` sin perder a la persona titular.

@@ -114,7 +114,7 @@ async function cleanupSafetyContact(contactId) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
 }
 
-test('nombres genéricos de canal y teléfonos no cuentan como identidad confirmada', () => {
+test('nombres genéricos, teléfonos, emojis y símbolos no cuentan como identidad confirmada', () => {
   const placeholders = [
     'Usuario de WhatsApp',
     'Usuario WhatsApp',
@@ -123,7 +123,10 @@ test('nombres genéricos de canal y teléfonos no cuentan como identidad confirm
     'Usuario de Facebook',
     'Usuario de Messenger',
     '6567426612',
-    '+52 (656) 742-6612'
+    '+52 (656) 742-6612',
+    '🔥🔥',
+    '💸 123',
+    '***'
   ]
   const dataRequirements = {
     enabled: true,
@@ -141,7 +144,9 @@ test('nombres genéricos de canal y teléfonos no cuentan como identidad confirm
     assert.deepEqual(validation.requiredFields, [{ field: 'full_name', label: 'nombre completo' }])
   }
 
-  assert.equal(__conversationalToolsTestHooks.isPlaceholderContactName('Paty Jiménez'), false)
+  for (const fullName of ['Paty Jiménez', "María-José O'Connor", 'Studio 54']) {
+    assert.equal(__conversationalToolsTestHooks.isPlaceholderContactName(fullName), false, fullName)
+  }
   const participant = __conversationalToolsTestHooks.buildAppointmentParticipant({
     contact: { full_name: 'Raúl Gómez' },
     title: null,
@@ -775,6 +780,70 @@ test('save_contact_data sólo guarda campos autorizados y valida teléfono/corre
     assert.equal(invalidEmail.ok, false)
     assert.match(invalidEmail.error, /formato válido/i)
     assert.equal((await db.get('SELECT email FROM contacts WHERE id = ?', [contactId])).email, null)
+  } finally {
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
+test('save_contact_data reemplaza nombres numéricos o con emojis y conserva nombres humanos', async () => {
+  const fields = [{ field: 'full_name', level: 'required', scope: 'appointment' }]
+  const cases = [
+    { currentName: '6567426612', shouldReplace: true },
+    { currentName: '🔥 Cliente 🔥', shouldReplace: true },
+    { currentName: 'Paty Jiménez', shouldReplace: false }
+  ]
+
+  for (const [index, scenario] of cases.entries()) {
+    const contactId = `contact_name_replace_${index}_${randomUUID()}`
+    await db.run(
+      `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, scenario.currentName, uniquePhone()]
+    )
+
+    try {
+      const saveTool = createConversationalTools(buildContext(contactId, fields))
+        .find((item) => item.name === 'save_contact_data')
+      const result = await saveTool.invoke(null, JSON.stringify(contactDataPayload({ fullName: 'Raúl Gómez' })))
+      const saved = await db.get('SELECT full_name, custom_fields FROM contacts WHERE id = ?', [contactId])
+
+      assert.equal(result.ok, true, scenario.currentName)
+      if (scenario.shouldReplace) {
+        assert.deepEqual(result.changedFields, ['full_name'], scenario.currentName)
+        assert.equal(saved.full_name, 'Raúl Gómez', scenario.currentName)
+      } else {
+        assert.ok(result.preservedFields.includes('full_name'), scenario.currentName)
+        assert.equal(saved.full_name, scenario.currentName, scenario.currentName)
+        assert.match(String(saved.custom_fields), /Raúl Gómez/, scenario.currentName)
+      }
+    } finally {
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  }
+})
+
+test('save_contact_data rechaza como nombre humano un teléfono, emojis o símbolos', async () => {
+  const contactId = `contact_name_candidate_${randomUUID()}`
+  await db.run(
+    `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+     VALUES (?, 'Usuario de WhatsApp', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, uniquePhone()]
+  )
+
+  try {
+    const saveTool = createConversationalTools(buildContext(contactId, [
+      { field: 'full_name', level: 'required', scope: 'appointment' }
+    ])).find((item) => item.name === 'save_contact_data')
+
+    for (const invalidName of ['6567426612', '🔥🔥', '***']) {
+      const result = await saveTool.invoke(null, JSON.stringify(contactDataPayload({ fullName: invalidName })))
+      assert.equal(result.ok, false, invalidName)
+      assert.match(result.error, /nombre de persona/i, invalidName)
+    }
+    assert.equal(
+      (await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId])).full_name,
+      'Usuario de WhatsApp'
+    )
   } finally {
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }

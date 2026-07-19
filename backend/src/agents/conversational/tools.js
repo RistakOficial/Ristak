@@ -585,6 +585,12 @@ function isPlaceholderContactName(value = '') {
   if (/^(?:usuario(?: de)? (?:whatsapp|instagram|facebook|messenger)|(?:whatsapp|instagram|facebook|messenger) (?:user|usuario))$/.test(normalized)) {
     return true
   }
+  // Los perfiles de canal pueden traer sólo emojis/símbolos o un nombre
+  // decorado con ellos. Esos valores no son una identidad humana confirmada y
+  // deben poder sustituirse cuando la persona comparte su nombre real.
+  if (/\p{Extended_Pictographic}/u.test(normalized) || !/\p{L}/u.test(normalized)) {
+    return true
+  }
   const phoneLike = normalized.replace(/(?:ext\.?|extension|x)\s*\d+$/i, '').trim()
   return /\d/.test(phoneLike) && /^[+\d().\s-]+$/.test(phoneLike)
 }
@@ -7881,6 +7887,13 @@ export function createConversationalTools(ctx) {
       const cleanPhone = phone ? normalizePhoneForStorage(phone) : ''
       const cleanAlternatePhone = alternatePhone ? normalizePhoneForStorage(alternatePhone) : ''
       const cleanEmail = cleanAppointmentText(email, 240).toLowerCase()
+      if (cleanFullName && isPlaceholderContactName(cleanFullName)) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          error: 'El nombre confirmado debe parecer un nombre de persona; no puede ser sólo un teléfono, emojis, símbolos o una etiqueta genérica del canal.'
+        }
+      }
       if (phone && (cleanPhone.replace(/\D/g, '').length < 7 || cleanPhone.replace(/\D/g, '').length > 15)) {
         return { ok: false, actionCompleted: false, error: 'El teléfono confirmado no tiene un formato válido.' }
       }
