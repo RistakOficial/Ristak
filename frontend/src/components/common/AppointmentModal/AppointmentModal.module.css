@@ -938,11 +938,9 @@
 }
 
 .guestToggleChips .guestToggleChipActive {
-  /* Regla base (también escritorio): se queda con el verde fijo original; el token
-     de contraste en oscuro se aplica solo en la variante móvil (.mobileSheetContainer). */
-  color: #165c40;
-  border-color: rgba(var(--phone-chat-accent-rgb, 37, 211, 102), 0.28);
-  background: color-mix(in srgb, var(--phone-chat-accent, #25d366) 18%, var(--color-background-secondary));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--color-border));
+  background: var(--accent-soft);
 }
 
 .mobileSheetContainer .guestToggleChips button {

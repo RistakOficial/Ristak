@@ -11,7 +11,7 @@ import { formatTimeLabel } from '@/components/phone/ui/PhoneTimeField';
 import { PhoneDurationField, formatDurationLabel } from '@/components/phone/ui/PhoneDurationField';
 import { PhoneSegmentedTabs, PhoneSheet } from '@/components/phone/ui';
 import { calendarDurationToMinutes } from '../WeeklyAvailabilityEditor';
-import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBlockedSlot, type CreateAppointmentPayload } from '@/services/calendarsService';
+import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBlockedSlot, type AppointmentParticipant, type CreateAppointmentPayload } from '@/services/calendarsService';
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
@@ -1089,19 +1089,28 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
         }
 
         // Modo crear: enviar payload completo
-        const guestsNotes = appointmentGuests.length > 0
-          ? `Invitados:\n${appointmentGuests.map((guest) => `- ${guest.name}: ${guest.contact}`).join('\n')}`
-          : '';
-        const notesWithGuests = [formData.notes.trim(), guestsNotes].filter(Boolean).join('\n\n');
+        const participants: AppointmentParticipant[] = [
+          { role: 'requester', contactId: formData.contactId },
+          { role: 'primary_attendee', contactId: formData.contactId },
+          ...appointmentGuests.map((guest) => ({
+            role: 'guest' as const,
+            contactId: guest.contactId || null,
+            name: guest.name,
+            ...(guest.contact.includes('@')
+              ? { email: guest.contact }
+              : { phone: guest.contact })
+          }))
+        ];
 
         const payload: CreateAppointmentPayload = {
           calendarId: calendar.id,
           title: formData.title.trim(),
           appointmentStatus: formData.appointmentStatus,
-          notes: notesWithGuests,
+          notes: formData.notes.trim(),
           address: formData.address,
           timeZone: saveTimezone,
-          contactId: formData.contactId // SIEMPRE incluir contactId
+          contactId: formData.contactId, // SIEMPRE incluir contactId
+          participants
         };
 
         if (scheduleMode === 'default') {
@@ -1494,14 +1503,11 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   };
 
   const isRoundRobinCalendar = calendar?.calendarType === 'round_robin';
-  const shouldInlineGuests = isPhoneSurface && showGuestsSection;
-  const shouldShowAssignmentPanel = (!shouldInlineGuests && showGuestsSection) || (
-    showContactAssignment && (
-      (isCreateMode && (isRoundRobinCalendar || loadingUsers || users.length > 0)) ||
-      (!isCreateMode && Boolean(formData.assignedUserId))
-    )
+  const shouldInlineGuests = showGuestsSection;
+  const shouldShowAssignmentPanel = showContactAssignment && (
+    (isCreateMode && (isRoundRobinCalendar || loadingUsers || users.length > 0)) ||
+    (!isCreateMode && Boolean(formData.assignedUserId))
   );
-  const assignmentPanelTitle = !shouldInlineGuests && showGuestsSection ? 'Invitados' : 'Asignación';
 
   const renderContactField = () => {
     if (!showContactAssignment) return null;
@@ -1912,15 +1918,14 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           </section>
         ) : (
 		        <div className={`${styles.appointmentFormLayout} ${shouldShowAssignmentPanel ? '' : styles.appointmentFormLayoutSingle}`}>
-	          {/* Panel lateral: invitados o asignación del equipo */}
+	          {/* El panel lateral queda reservado para la asignación del equipo. */}
 	          {shouldShowAssignmentPanel && (
 	          <aside className={styles.assignmentPanel}>
 	            <h4 className={styles.columnTitle}>
 	              <UserPlus size={18} />
-	              {assignmentPanelTitle}
+	              Asignación
 	            </h4>
 
-	            {!shouldInlineGuests && renderGuestsSection()}
 	            {renderAssignmentSection()}
 	          </aside>
 	          )}

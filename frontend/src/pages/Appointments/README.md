@@ -86,8 +86,15 @@ Eliminar cita:
 calendarsService.deleteEvent(eventId, accessToken)
 ```
 
-`AppointmentModal` maneja contacto, usuario asignado, título, estado, fechas,
-ubicación y notas. Al crear siempre incluye el `calendarId` seleccionado; el
+`AppointmentModal` es el formulario canónico compartido por `/appointments` y
+el agendado desde DesktopChat: Chat sólo le pasa el contacto y el calendario del
+contexto, no mantiene otro modal paralelo. Maneja contacto, usuario asignado,
+título, estado, fechas, ubicación, invitados y notas. En creación, Invitados
+aparece dentro del flujo principal justo después de Ubicación y antes de Notas;
+el panel derecho se reserva exclusivamente para asignar a la persona del equipo
+cuando el calendario lo requiere. Los invitados se guardan en
+`appointment_participants` con rol `guest`, no concatenados dentro del texto de
+Notas. Al crear siempre incluye el `calendarId` seleccionado; el
 backend rechaza una alta sin calendario antes de guardar una cita huérfana.
 Al crear una cita, el modo `Por defecto` manda una validación estricta para que
 la hora pertenezca al horario semanal y cumpla las reglas del calendario. El

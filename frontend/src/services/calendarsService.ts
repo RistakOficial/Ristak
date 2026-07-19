@@ -248,6 +248,19 @@ export interface CalendarEvent {
   source?: 'ristak' | 'ghl' | 'google';
   syncStatus?: 'pending' | 'synced' | 'error';
   syncError?: string | null;
+  participants?: AppointmentParticipant[];
+}
+
+export interface AppointmentParticipant {
+  id?: string;
+  appointmentId?: string;
+  role: 'requester' | 'primary_attendee' | 'guest';
+  position?: number;
+  contactId?: string | null;
+  name?: string;
+  phone?: string;
+  email?: string;
+  relation?: string;
 }
 
 export interface CreateAppointmentPayload extends Partial<CalendarEvent> {

@@ -2746,6 +2746,7 @@ export const Appointments: React.FC = () => {
         defaultTimeZone={createDefaults.timeZone}
         defaultTitle={createDefaults.title}
         defaultScheduleMode={createScheduleMode}
+        enableGuests
         accessToken={accessToken ?? undefined}
         locationId={locationId ?? undefined}
         onSave={handleCreateAppointment}

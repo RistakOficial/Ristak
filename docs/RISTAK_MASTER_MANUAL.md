@@ -2988,6 +2988,12 @@ Reglas base:
   o mutacion mas nueva. Crear o editar pinta solo la respuesta ya confirmada por
   backend y despues espera el refetch canonico; eliminar quita la fila confirmada
   inmediatamente y tambien revalida eventos y proximas citas.
+- `/appointments` y DesktopChat crean citas con el mismo `AppointmentModal`
+  compartido; Chat sólo inyecta el contacto y calendario del hilo. En ambos, el
+  bloque de Invitados vive en la columna principal entre Ubicación y Notas, y el
+  panel lateral queda reservado para asignar equipo. Cada invitado se persiste
+  como participante estructurado con rol `guest`, sin contaminar el texto de
+  Notas.
 - `/appointments` no consulta proveedores externos para abrir la vista. Los GET
   de calendarios y eventos leen el espejo local y tampoco escriben para crear
   defaults. El calendario semilla se inicializa antes de habilitar tráfico, con
