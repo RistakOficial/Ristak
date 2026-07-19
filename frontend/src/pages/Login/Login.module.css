@@ -298,6 +298,16 @@ body.light .error {
   font-weight: 500;
 }
 
+.setupHint {
+  margin: 1.5rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-mute);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
 .phoneLoginBox .header {
   margin-bottom: 2.25rem;
 }

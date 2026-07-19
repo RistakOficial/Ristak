@@ -4,12 +4,14 @@ import http from 'node:http'
 
 import { db } from '../src/config/database.js'
 import { login, verifyTokenEndpoint } from '../src/controllers/authController.js'
-import { hashPassword, verifyToken } from '../src/utils/auth.js'
+import { hashPassword, verifyPassword, verifyToken } from '../src/utils/auth.js'
 import { requireAuth } from '../src/middleware/authMiddleware.js'
 import { resetLicenseCache } from '../src/services/licenseService.js'
 
 let licenseServer
 let licenseServerUrl
+const bootstrapOwnerEmail = 'bootstrap-owner@example.com'
+const bootstrapOwnerPassword = 'OwnerPortalPass123'
 
 before(async () => {
   licenseServer = http.createServer((req, res) => {
@@ -20,12 +22,19 @@ before(async () => {
       res.setHeader('Content-Type', 'application/json')
 
       if (req.url === '/api/owner-credentials/verify') {
-        if (body.email === 'support-owner@example.com' && body.password === 'InstallerAdminPass123') {
+        if (body.email === bootstrapOwnerEmail && body.password === bootstrapOwnerPassword) {
+          res.end(JSON.stringify({ valid: true, password_hash: hashPassword(bootstrapOwnerPassword) }))
+        } else if (body.email === 'support-owner@example.com' && body.password === 'InstallerAdminPass123') {
           res.end(JSON.stringify({ valid: true, support_access: true }))
         } else {
           res.statusCode = 403
           res.end(JSON.stringify({ valid: false, reason: 'wrong_password' }))
         }
+        return
+      }
+
+      if (req.url === '/api/license/users/refresh') {
+        res.end(JSON.stringify({ success: true }))
         return
       }
 
@@ -198,6 +207,97 @@ test('login backfills legacy users that stored email in username', async () => {
   } finally {
     await db.run('DELETE FROM users WHERE username = ? OR email = ?', [email, email])
   }
+})
+
+test('login creates the first managed owner from the existing Installer credentials', async () => {
+  await db.run('DELETE FROM users WHERE email = ?', [bootstrapOwnerEmail])
+  const usersBefore = await db.get('SELECT COUNT(*) AS total FROM users')
+  assert.equal(Number(usersBefore.total), 0)
+
+  process.env.LICENSE_SERVER_URL = licenseServerUrl
+  process.env.CLIENT_ID = 'cli_bootstrap'
+  process.env.LICENSE_KEY = 'RSTK-BOOTSTRAP-0001'
+  process.env.INSTALLATION_ID = 'inst_bootstrap'
+  process.env.OWNER_EMAIL = bootstrapOwnerEmail
+  resetLicenseCache()
+
+  try {
+    const res = createMockResponse()
+    await login({
+      body: {
+        email: ` ${bootstrapOwnerEmail.toUpperCase()} `,
+        password: bootstrapOwnerPassword
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.user.email, bootstrapOwnerEmail)
+    assert.equal(res.payload.user.role, 'admin')
+    assert.match(res.payload.apiToken, /^ristak_live_/)
+
+    const stored = await db.get('SELECT * FROM users WHERE email = ?', [bootstrapOwnerEmail])
+    assert.ok(stored?.id)
+    assert.equal(verifyPassword(bootstrapOwnerPassword, stored.password_hash), true)
+
+    const payload = verifyToken(res.payload.token)
+    assert.equal(payload.userId, stored.id)
+    assert.equal(payload.email, bootstrapOwnerEmail)
+    assert.equal(payload.supportAccess, undefined)
+  } finally {
+    await db.run('DELETE FROM users WHERE email = ?', [bootstrapOwnerEmail])
+  }
+})
+
+test('login does not create the first managed owner with a wrong password', async () => {
+  await db.run('DELETE FROM users WHERE email = ?', [bootstrapOwnerEmail])
+  const usersBefore = await db.get('SELECT COUNT(*) AS total FROM users')
+  assert.equal(Number(usersBefore.total), 0)
+
+  process.env.LICENSE_SERVER_URL = licenseServerUrl
+  process.env.CLIENT_ID = 'cli_bootstrap'
+  process.env.LICENSE_KEY = 'RSTK-BOOTSTRAP-0001'
+  process.env.INSTALLATION_ID = 'inst_bootstrap'
+  process.env.OWNER_EMAIL = bootstrapOwnerEmail
+  resetLicenseCache()
+
+  const res = createMockResponse()
+  await login({
+    body: {
+      email: bootstrapOwnerEmail,
+      password: 'WrongOwnerPassword123'
+    }
+  }, res)
+
+  assert.equal(res.statusCode, 401)
+  assert.equal(res.payload.success, false)
+  assert.equal(await db.get('SELECT id FROM users WHERE email = ?', [bootstrapOwnerEmail]), null)
+})
+
+test('login does not bootstrap a customer account with the global support password', async () => {
+  const email = 'support-owner@example.com'
+  await db.run('DELETE FROM users WHERE email = ?', [email])
+  const usersBefore = await db.get('SELECT COUNT(*) AS total FROM users')
+  assert.equal(Number(usersBefore.total), 0)
+
+  process.env.LICENSE_SERVER_URL = licenseServerUrl
+  process.env.CLIENT_ID = 'cli_support'
+  process.env.LICENSE_KEY = 'RSTK-SUPPORT-0001'
+  process.env.INSTALLATION_ID = 'inst_support'
+  process.env.OWNER_EMAIL = email
+  resetLicenseCache()
+
+  const res = createMockResponse()
+  await login({
+    body: {
+      email,
+      password: 'InstallerAdminPass123'
+    }
+  }, res)
+
+  assert.equal(res.statusCode, 401)
+  assert.equal(res.payload.success, false)
+  assert.equal(await db.get('SELECT id FROM users WHERE email = ?', [email]), null)
 })
 
 test('login acepta la contraseña del admin del Installer y deja una sesión de soporte sin expiración', async () => {

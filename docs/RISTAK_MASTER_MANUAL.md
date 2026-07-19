@@ -1171,7 +1171,12 @@ salida explícita sin inventar credenciales ni valores de prueba.
 
 Rutas publicas:
 
-- `/setup`: configuracion inicial.
+- `/setup`: configuracion inicial. En instalaciones administradas consume el enlace de un solo
+  uso, reutiliza de forma automática la contraseña elegida en Installer y abre sesión sin pedir
+  otra contraseña. Los fallos transitorios del portal se reintentan. Si el enlace falta, expiró
+  o no es válido, muestra el ingreso con las credenciales vigentes del dueño en Installer; nunca
+  cae al formulario que inventa una contraseña local. Ese formulario manual solo existe en
+  instalaciones independientes sin servidor central.
 - `/login`, `/sso`, `/reset-password`.
 - `/login` usa el isotipo nuevo de Ristak (`RistakAppMark`) con nombre visible
   y contexto de inicio de sesion. Los estados de carga inicial del CRM en
@@ -1283,6 +1288,16 @@ La contraseña del admin nunca vive en la base del cliente, variables de entorno
 ni documentación. Solo su hash permanece en `admin_users.password_hash` del
 Installer y cada autorización se audita centralmente como
 `support_login_authorized`.
+
+Una instalación administrada sin usuarios también acepta el primer ingreso con
+el correo y la contraseña vigentes del dueño en Ristak Installer. La app valida
+ambas credenciales contra `/api/owner-credentials/verify`, comprueba la licencia
+y crea de forma atómica el primer administrador local con el hash del dueño que
+devuelve el portal. La contraseña nunca se guarda en texto plano. El enlace de
+setup de un solo uso sigue funcionando como acceso automático, pero ya no es un
+requisito: si falta o expiró, `/setup` presenta el mismo formulario de correo y
+contraseña. La credencial global de soporte no puede activar este primer acceso
+ni crear una identidad local.
 
 `requireModuleAccess(moduleKey)` tambien valida la feature comercial del modulo
 con `hasModuleFeature(...)`. Un admin local con permiso `write` no puede abrir

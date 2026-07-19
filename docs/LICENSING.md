@@ -162,11 +162,15 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
 4. La app crea el usuario owner automáticamente con **las mismas credenciales que el cliente
    usó en el instalador**, consume el token, valida la licencia y abre sesión directa al
    dashboard (sin formularios). La sesión dura 30 días, hasta cerrar sesión o limpiar caché.
-5. Fallback: si el servidor central no comparte el hash (`password_required`), se muestra el
-   formulario clásico de crear contraseña con el email precargado.
+5. Si Render o el portal central todavía están estabilizándose, backend y frontend reintentan
+   automáticamente sin sacar al cliente de **Preparando tu cuenta**.
+6. En una instalación gestionada nunca se muestra un formulario para **crear otra contraseña**.
+   Si el enlace expiró o falta, el dueño puede ingresar con el mismo correo y contraseña vigentes
+   del Installer; la app valida ambos datos contra el portal y crea el primer usuario con ese hash.
+   La contraseña global de soporte no puede activar una cuenta de cliente.
 
-Sin servidor central configurado, el setup clásico (usuario + contraseña, solo si no existen
-usuarios) sigue funcionando igual.
+Sin servidor central configurado, el setup clásico independiente (usuario + contraseña, solo si
+no existen usuarios) sigue funcionando igual.
 
 ## Health check
 

@@ -7,6 +7,7 @@ let server
 let baseUrl
 let requestCount = 0
 let accountCancellationRequestCount = 0
+let setupTokenRequestCount = 0
 let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_calendar_payment_false | allow_partial_features | allow_without_features | block | down
 let lastRequestBody = null
 
@@ -213,9 +214,18 @@ function startMockServer() {
         }
 
         if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
+          setupTokenRequestCount += 1
           const { token } = lastRequestBody || {}
           if (token === 'good-token') {
             res.end(JSON.stringify({ valid: true, email: 'dueno@clinica.com', password_hash: 'salt:hash-portal' }))
+          } else if (token === 'flaky-token' && setupTokenRequestCount < 3) {
+            res.statusCode = 503
+            res.end(JSON.stringify({ valid: false, message: 'Deploy en curso' }))
+          } else if (token === 'flaky-token') {
+            res.end(JSON.stringify({ valid: true, email: 'dueno@clinica.com', password_hash: 'salt:hash-portal' }))
+          } else if (token === 'unavailable-token') {
+            res.statusCode = 503
+            res.end(JSON.stringify({ valid: false, message: 'Deploy en curso' }))
           } else {
             res.statusCode = 403
             res.end(JSON.stringify({ valid: false, message: 'El enlace de configuración no es válido o ya expiró.' }))
@@ -274,6 +284,7 @@ beforeEach(() => {
   serverMode = 'allow'
   requestCount = 0
   accountCancellationRequestCount = 0
+  setupTokenRequestCount = 0
   lastRequestBody = null
   configureManagedInstall()
   licenseService.resetLicenseCache()
@@ -688,6 +699,24 @@ test('setup token inválido falla con mensaje claro', async () => {
   const result = await licenseService.consumeSetupToken('bad-token')
   assert.equal(result.valid, false)
   assert.ok(result.message)
+  assert.equal(setupTokenRequestCount, 1)
+})
+
+test('setup token reintenta respuestas transitorias del portal antes de rendirse', async () => {
+  const result = await licenseService.verifySetupToken('flaky-token')
+
+  assert.equal(result.valid, true)
+  assert.equal(result.email, 'dueno@clinica.com')
+  assert.equal(setupTokenRequestCount, 3)
+})
+
+test('setup token distingue una caída temporal después de agotar sus reintentos', async () => {
+  const result = await licenseService.verifySetupToken('unavailable-token')
+
+  assert.equal(result.valid, false)
+  assert.equal(result.retryable, true)
+  assert.equal(result.code, 'setup_temporarily_unavailable')
+  assert.equal(setupTokenRequestCount, 3)
 })
 
 test('el setup token comparte el hash de credenciales del portal (setup automático)', async () => {

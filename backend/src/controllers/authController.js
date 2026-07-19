@@ -24,7 +24,8 @@ import {
   verifyOwnerCredentialsWithServer,
   verifySetupToken,
   consumeSetupToken,
-  createCentralGoogleLoginUrl
+  createCentralGoogleLoginUrl,
+  requestPortalUserRefresh
 } from '../services/licenseService.js'
 import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
 import { getEffectiveAccessConfig } from '../utils/userAccess.js'
@@ -219,7 +220,71 @@ export async function login(req, res) {
 
     // El correo es la única credencial de login. El username solo se usa como
     // puente de migración cuando una instalación vieja guardó el correo ahí.
-    const user = await findUserByLoginEmail(loginEmail)
+    let user = await findUserByLoginEmail(loginEmail)
+    let credentialsValidatedByPortal = false
+    let bootstrapLicenseState = null
+    let bootstrapApiToken = null
+
+    if (!user) {
+      // Una instalación gestionada recién creada todavía no tiene usuarios
+      // locales. En ese único estado, las credenciales vigentes del dueño en el
+      // Installer crean la primera cuenta sin depender del enlace de setup.
+      // `support_access` nunca sirve para este bootstrap: la contraseña global
+      // del administrador no debe crear ni persistir una identidad de cliente.
+      if (isLicenseEnforced()) {
+        const existingUser = await db.get('SELECT id FROM users LIMIT 1')
+
+        if (!existingUser) {
+          const sync = await verifyOwnerCredentialsWithServer(loginEmail, password)
+
+          if (sync.valid && sync.support_access !== true && sync.password_hash) {
+            if (!verifyPassword(password, sync.password_hash)) {
+              throw new Error('El Installer devolvió un hash de dueño que no coincide con las credenciales validadas')
+            }
+
+            bootstrapLicenseState = await verifyLicenseWithServer(loginEmail)
+
+            if (!bootstrapLicenseState.allowed) {
+              logger.warn(`⚠️  Primer acceso bloqueado por licencia (${bootstrapLicenseState.reason}) para "${loginEmail}"`)
+              return sendLicenseBlocked(res, bootstrapLicenseState)
+            }
+
+            const username = buildDefaultInternalUsername(loginEmail)
+            const result = await db.run(
+              `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+               SELECT ?, ?, ?, ?, ?, ?
+               WHERE NOT EXISTS (SELECT 1 FROM users)`,
+              [username, loginEmail, sync.password_hash, username, 'admin', 1]
+            )
+
+            if (Number(result?.changes || 0) > 0) {
+              user = result.lastID
+                ? await db.get('SELECT * FROM users WHERE id = ?', [result.lastID])
+                : await findUserByLoginEmail(loginEmail)
+
+              if (!user?.id) {
+                throw new Error('No se pudo resolver el usuario creado durante el primer acceso')
+              }
+
+              const rotatedApiToken = await rotateApiTokenForUser(user.id)
+              bootstrapApiToken = rotatedApiToken.token
+              credentialsValidatedByPortal = true
+              void requestPortalUserRefresh()
+              logger.success(`✅ Primer acceso creado desde las credenciales del Installer: ${loginEmail}`)
+            } else {
+              // Otra petición ganó la carrera. Solo continuamos si creó al mismo
+              // dueño que el portal acaba de validar.
+              user = await findUserByLoginEmail(loginEmail)
+              credentialsValidatedByPortal = Boolean(user)
+            }
+          }
+        }
+      }
+
+      if (user && credentialsValidatedByPortal && !verifyPassword(password, user.password_hash)) {
+        throw new Error('El hash entregado por el Installer no coincide con las credenciales validadas')
+      }
+    }
 
     if (!user) {
       logger.warn(`⚠️  Intento de login fallido: correo "${loginEmail}" no encontrado`)
@@ -239,13 +304,14 @@ export async function login(req, res) {
     }
 
     // Verificar password
-    let isValidPassword = verifyPassword(password, user.password_hash)
+    let isValidPassword = credentialsValidatedByPortal || verifyPassword(password, user.password_hash)
     let supportAccess = false
 
     // En instalaciones gestionadas, el portal central resuelve dos casos sin
     // compartir secretos: sincroniza la contraseña vigente del dueño o confirma
     // la contraseña del admin principal como acceso global de soporte.
     const shouldCheckCentralCredentials = isLicenseEnforced()
+      && !credentialsValidatedByPortal
       && (!isValidPassword || isManagedOwnerEmail(user.email))
 
     if (shouldCheckCentralCredentials) {
@@ -277,7 +343,7 @@ export async function login(req, res) {
     // comercial contra el servidor central de licencias (si está configurado).
     let licenseState = null
     if (isLicenseEnforced()) {
-      licenseState = await verifyLicenseWithServer(user.email)
+      licenseState = bootstrapLicenseState || await verifyLicenseWithServer(user.email)
 
       if (!licenseState.allowed) {
         logger.warn(`⚠️  Login bloqueado por licencia (${licenseState.reason}) para "${loginEmail}"`)
@@ -318,6 +384,7 @@ export async function login(req, res) {
       token,
       supportAccess,
       appId,
+      apiToken: bootstrapApiToken || undefined,
       apiTokenMetadata,
       user: serializeAuthUser(user, licenseState)
     })
@@ -1092,14 +1159,19 @@ export async function setupInfo(req, res) {
     }
 
     if (!token) {
-      return res.status(400).json({ success: false, message: 'Falta el enlace de configuración' })
+      return res.status(400).json({
+        success: false,
+        code: 'setup_token_missing',
+        message: 'Falta el enlace de configuración'
+      })
     }
 
     const result = await verifySetupToken(token)
 
     if (!result.valid) {
-      return res.status(403).json({
+      return res.status(result.retryable ? 503 : 403).json({
         success: false,
+        code: result.retryable ? 'setup_temporarily_unavailable' : 'setup_token_invalid',
         message: result.message || 'El enlace de configuración no es válido o ya expiró.'
       })
     }
@@ -1138,6 +1210,7 @@ export async function setup(req, res) {
       if (!token) {
         return res.status(403).json({
           success: false,
+          code: 'setup_token_missing',
           message: 'Necesitas el enlace de configuración que te dio el instalador para crear tu acceso.'
         })
       }
@@ -1145,8 +1218,9 @@ export async function setup(req, res) {
       const tokenResult = await verifySetupToken(token)
 
       if (!tokenResult.valid) {
-        return res.status(403).json({
+        return res.status(tokenResult.retryable ? 503 : 403).json({
           success: false,
+          code: tokenResult.retryable ? 'setup_temporarily_unavailable' : 'setup_token_invalid',
           message: tokenResult.message || 'El enlace de configuración no es válido o ya fue usado.'
         })
       }
@@ -1165,7 +1239,7 @@ export async function setup(req, res) {
         return res.status(400).json({
           success: false,
           code: 'password_required',
-          message: 'Crea una contraseña para tu cuenta.'
+          message: 'Tu acceso del Installer todavía no tiene una contraseña lista. Recupera tu acceso central y abre un enlace nuevo.'
         })
       }
     }
@@ -1216,8 +1290,9 @@ export async function setup(req, res) {
       const consumed = await consumeSetupToken(token)
 
       if (!consumed.valid) {
-        return res.status(403).json({
+        return res.status(consumed.retryable ? 503 : 403).json({
           success: false,
+          code: consumed.retryable ? 'setup_temporarily_unavailable' : 'setup_token_invalid',
           message: consumed.message || 'El enlace de configuración no es válido o ya fue usado.'
         })
       }

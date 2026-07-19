@@ -222,6 +222,8 @@ let verifiedAppBaseUrlResolver = getVerifiedAppBaseUrl
 
 const LICENSE_VERIFY_TIMEOUT_MS = 3000
 const LICENSE_PORTAL_TIMEOUT_MS = 5000
+const SETUP_TOKEN_MAX_ATTEMPTS = 3
+const SETUP_TOKEN_RETRY_BASE_DELAY_MS = 200
 const ACCOUNT_CANCELLATION_SNAPSHOT_KEY = 'license_account_cancellation_snapshot_v1'
 const ACCOUNT_CANCELLATION_FRESH_MS = 60 * 1000
 const ACCOUNT_CANCELLATION_STALE_MS = 24 * 60 * 60 * 1000
@@ -1259,19 +1261,52 @@ async function callSetupTokenEndpoint(action, token) {
     return { valid: false, message: 'Esta instalación no tiene servidor central configurado.' }
   }
 
-  try {
-    const response = await fetchWithTimeout(`${config.licenseServerUrl}/api/setup-token/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token,
-        installation_id: config.installationId
+  let lastError = null
+
+  for (let attempt = 1; attempt <= SETUP_TOKEN_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await fetchWithTimeout(`${config.licenseServerUrl}/api/setup-token/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token,
+          installation_id: config.installationId
+        })
+      }, LICENSE_PORTAL_TIMEOUT_MS, async (response) => {
+        let data = null
+        try {
+          data = await response.json()
+        } catch {
+          // Una respuesta incompleta durante un deploy es transitoria igual que un 5xx.
+        }
+        return { ok: response.ok, status: response.status, data }
       })
-    }, LICENSE_PORTAL_TIMEOUT_MS)
-    const data = await response.json()
-    return data || { valid: false }
-  } catch (error) {
-    logger.error(`No se pudo validar el setup token: ${error.message}`)
-    return { valid: false, message: 'No se pudo validar el enlace de configuración. Intenta de nuevo.' }
+
+      const retryableStatus = result.status === 408
+        || result.status === 425
+        || result.status === 429
+        || result.status >= 500
+      const malformedSuccess = result.ok && !result.data
+
+      if (!retryableStatus && !malformedSuccess) {
+        return result.data || { valid: false }
+      }
+
+      lastError = new Error(`El portal central respondió ${result.status || 'sin datos'}`)
+    } catch (error) {
+      lastError = error
+    }
+
+    if (attempt < SETUP_TOKEN_MAX_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, SETUP_TOKEN_RETRY_BASE_DELAY_MS * attempt))
+    }
+  }
+
+  logger.error(`No se pudo validar el setup token después de ${SETUP_TOKEN_MAX_ATTEMPTS} intentos: ${lastError?.message || 'error desconocido'}`)
+  return {
+    valid: false,
+    retryable: true,
+    code: 'setup_temporarily_unavailable',
+    message: 'El portal está terminando de preparar tu acceso. Intenta de nuevo en unos segundos.'
   }
 }

@@ -31,7 +31,8 @@ export const Setup: React.FC = () => {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  const { isAuthenticated, setupAccount, needsSetup } = useAuth()
+  const { isAuthenticated, login, setupAccount, needsSetup } = useAuth()
+  const setupAccountRef = useRef(setupAccount)
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -43,6 +44,10 @@ export const Setup: React.FC = () => {
   )
   const detectedAccountLocale = useMemo(getDetectedAccountLocaleDefaults, [])
 
+  useEffect(() => {
+    setupAccountRef.current = setupAccount
+  }, [setupAccount])
+
   const [tokenState, setTokenState] = useState<TokenState>({
     loading: true,
     requiresToken: false,
@@ -51,97 +56,144 @@ export const Setup: React.FC = () => {
     message: ''
   })
 
-  // En instalaciones gestionadas, primero se intenta el setup automático:
-  // el portal central comparte las credenciales y el dueño entra directo.
-  const [autoSetup, setAutoSetup] = useState<'pending' | 'running' | 'manual'>('pending')
-  const autoSetupAttemptedRef = useRef(false)
-
   useEffect(() => {
-    autoSetupAttemptedRef.current = false
-    setAutoSetup('pending')
     setError('')
   }, [setupToken])
 
-  // Si la app fue instalada por el portal central, el setup requiere el enlace
-  // con token de un solo uso y el email del dueño viene precargado.
+  // Si la app fue instalada por el portal central, el enlace de un solo uso
+  // intenta el acceso automático. Sin enlace, el dueño puede ingresar con las
+  // credenciales que ya registró en el Installer.
   useEffect(() => {
+    let cancelled = false
+
+    const waitBeforeRetry = (attempt: number) => new Promise<void>(resolve => {
+      window.setTimeout(resolve, Math.min(1000 * attempt, 5000))
+    })
+
     const checkToken = async () => {
-      try {
-        const setupRes = await fetch(apiUrl('/api/auth/setup'))
-        const setupData = await setupRes.json()
-        const requiresToken = !!setupData.requiresToken
+      let attempt = 0
 
-        if (!requiresToken) {
-          setTokenState({ loading: false, requiresToken: false, valid: false, email: '', message: '' })
+      while (!cancelled) {
+        try {
+          const setupRes = await fetch(apiUrl('/api/auth/setup'))
+          const setupData = await setupRes.json()
+          if (!setupRes.ok) throw new Error(setupData.message || 'No se pudo consultar el estado de la cuenta')
+          const requiresToken = !!setupData.requiresToken
+
+          if (!requiresToken) {
+            if (!cancelled) setTokenState({ loading: false, requiresToken: false, valid: false, email: '', message: '' })
+            return
+          }
+
+          if (!setupToken) {
+            if (!cancelled) {
+              setTokenState({
+                loading: false,
+                requiresToken: true,
+                valid: false,
+                email: '',
+                message: 'Para crear tu acceso necesitas el enlace de configuración que te dio el instalador. Revisa tu pantalla de instalación o pide uno nuevo al administrador.'
+              })
+            }
+            return
+          }
+
+          const infoRes = await fetch(apiUrl(`/api/auth/setup-info?token=${encodeURIComponent(setupToken)}`))
+          const infoData = await infoRes.json()
+
+          if (infoRes.ok && infoData.success) {
+            if (!cancelled) {
+              setEmail(current => current || infoData.email || '')
+              setTokenState({ loading: false, requiresToken: true, valid: true, email: infoData.email || '', message: '' })
+            }
+            return
+          }
+
+          if (infoData.code === 'setup_temporarily_unavailable' || infoRes.status >= 500) {
+            throw new Error(infoData.message || 'El portal todavía está preparando el acceso')
+          }
+
+          if (!cancelled) {
+            setTokenState({
+              loading: false,
+              requiresToken: true,
+              valid: false,
+              email: '',
+              message: infoData.message || 'El enlace de configuración no es válido o ya expiró.'
+            })
+          }
           return
+        } catch {
+          attempt += 1
+          await waitBeforeRetry(attempt)
         }
-
-        if (!setupToken) {
-          setTokenState({
-            loading: false,
-            requiresToken: true,
-            valid: false,
-            email: '',
-            message: 'Para crear tu acceso necesitas el enlace de configuración que te dio el instalador. Revisa tu pantalla de instalación o pide uno nuevo al administrador.'
-          })
-          return
-        }
-
-        const infoRes = await fetch(apiUrl(`/api/auth/setup-info?token=${encodeURIComponent(setupToken)}`))
-        const infoData = await infoRes.json()
-
-        if (infoRes.ok && infoData.success) {
-          setTokenState({ loading: false, requiresToken: true, valid: true, email: infoData.email || '', message: '' })
-        } else {
-          setTokenState({
-            loading: false,
-            requiresToken: true,
-            valid: false,
-            email: '',
-            message: infoData.message || 'El enlace de configuración no es válido o ya expiró.'
-          })
-        }
-      } catch {
-        setTokenState({
-          loading: false,
-          requiresToken: false,
-          valid: false,
-          email: '',
-          message: ''
-        })
       }
     }
 
-    checkToken()
+    void checkToken()
+
+    return () => {
+      cancelled = true
+    }
   }, [setupToken])
 
   const tokenModeReady = !tokenState.loading && tokenState.requiresToken && tokenState.valid
 
   useEffect(() => {
-    if (!tokenModeReady || autoSetup !== 'pending' || !needsSetup || autoSetupAttemptedRef.current) return
+    if (!tokenModeReady || !needsSetup) return
 
-    autoSetupAttemptedRef.current = true
-    setAutoSetup('running')
+    let cancelled = false
 
     const runAutoSetup = async () => {
-      try {
-        await setupAccount(tokenState.email, '', setupToken, detectedAccountLocale)
-        window.location.replace(redirectPath)
-      } catch (err: any) {
-        if (err.code === 'license_blocked') {
-          navigate('/license-blocked', { replace: true, state: { message: err.message } })
+      let attempt = 0
+
+      while (!cancelled) {
+        try {
+          await setupAccountRef.current(tokenState.email, '', setupToken, detectedAccountLocale)
+          if (!cancelled) window.location.replace(redirectPath)
           return
-        }
-        // El portal no compartió credenciales: pedir que cree su contraseña aquí.
-        setAutoSetup('manual')
-        if (err.code !== 'password_required') {
-          setError(err.message || 'No se pudo preparar tu cuenta automáticamente. Crea tu contraseña para continuar.')
+        } catch (err: any) {
+          if (cancelled) return
+
+          if (err.code === 'license_blocked') {
+            navigate('/license-blocked', { replace: true, state: { message: err.message } })
+            return
+          }
+          if (err.code === 'setup_already_completed') {
+            navigate(getLoginPathForRoute(fromLocation?.pathname || location.pathname), { replace: true })
+            return
+          }
+          if (err.code === 'password_required') {
+            setTokenState(current => ({
+              ...current,
+              valid: false,
+              message: 'Tu acceso del Installer todavía no tiene una contraseña lista. Recupera tu contraseña en el Installer y abre un enlace nuevo para entrar.'
+            }))
+            return
+          }
+          if (err.code === 'setup_token_invalid' || err.code === 'setup_token_missing') {
+            setTokenState(current => ({
+              ...current,
+              valid: false,
+              message: err.message || 'El enlace de configuración no es válido o ya expiró.'
+            }))
+            return
+          }
+
+          attempt += 1
+          await new Promise<void>(resolve => {
+            window.setTimeout(resolve, Math.min(1000 * attempt, 5000))
+          })
         }
       }
     }
 
-    runAutoSetup()
-  }, [tokenModeReady, autoSetup, needsSetup, setupAccount, tokenState.email, setupToken, detectedAccountLocale, navigate, redirectPath])
+    void runAutoSetup()
+
+    return () => {
+      cancelled = true
+    }
+  }, [tokenModeReady, needsSetup, tokenState.email, setupToken, detectedAccountLocale, navigate, redirectPath, fromLocation?.pathname, location.pathname])
 
   // Si el setup ya terminó, mandar a la pantalla correcta sin pedir los datos otra vez.
   if (!needsSetup) {
@@ -151,6 +203,7 @@ export const Setup: React.FC = () => {
   }
 
   const tokenMode = tokenState.requiresToken && tokenState.valid
+  const installerLoginMode = tokenState.requiresToken && !tokenState.valid
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -159,8 +212,8 @@ export const Setup: React.FC = () => {
     const effectiveEmail = (tokenMode ? tokenState.email : email).trim()
 
     // Validaciones
-    if (!effectiveEmail || !password || !confirmPassword) {
-      setError('Por favor llena todos los campos')
+    if (!effectiveEmail || !password || (!installerLoginMode && !confirmPassword)) {
+      setError(installerLoginMode ? 'Ingresa tu correo y contraseña' : 'Por favor llena todos los campos')
       return
     }
 
@@ -169,12 +222,12 @@ export const Setup: React.FC = () => {
       return
     }
 
-    if (password.length < 6) {
+    if (!installerLoginMode && password.length < 6) {
       setError('La contraseña debe tener al menos 6 caracteres')
       return
     }
 
-    if (password !== confirmPassword) {
+    if (!installerLoginMode && password !== confirmPassword) {
       setError('Las contraseñas no coinciden')
       return
     }
@@ -182,20 +235,24 @@ export const Setup: React.FC = () => {
     setIsLoading(true)
 
     try {
-      await setupAccount(effectiveEmail, password, tokenMode ? setupToken : undefined, detectedAccountLocale)
+      if (installerLoginMode) {
+        await login(effectiveEmail, password)
+      } else {
+        await setupAccount(effectiveEmail, password, tokenMode ? setupToken : undefined, detectedAccountLocale)
+      }
       window.location.replace(redirectPath)
     } catch (err: any) {
       if (err.code === 'license_blocked') {
         navigate('/license-blocked', { replace: true, state: { message: err.message } })
         return
       }
-      setError(err.message || 'Error al crear usuario')
+      setError(err.message || (installerLoginMode ? 'Correo o contraseña incorrectos' : 'Error al crear usuario'))
     } finally {
       setIsLoading(false)
     }
   }
 
-  if (tokenState.loading || (tokenModeReady && autoSetup !== 'manual')) {
+  if (tokenState.loading || tokenModeReady) {
     return (
       <div className={styles.container}>
         <div className={styles.authBrand}>
@@ -210,22 +267,6 @@ export const Setup: React.FC = () => {
     )
   }
 
-  // Instalación gestionada sin enlace válido: no se puede crear el acceso.
-  if (tokenState.requiresToken && !tokenState.valid) {
-    return (
-      <div className={styles.container}>
-        <div className={styles.authBrand}>
-          <Logo size="md" className={styles.authLogo} />
-        </div>
-        <div className={styles.loginBox}>
-          <div className={styles.header}>
-            <p className={styles.subtitle}>{tokenState.message}</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className={styles.container}>
       <div className={styles.authBrand}>
@@ -234,7 +275,11 @@ export const Setup: React.FC = () => {
       <div className={styles.loginBox}>
         <div className={styles.header}>
           <p className={styles.subtitle}>
-            {tokenMode ? 'Crea tu contraseña para empezar' : 'Configura tu acceso'}
+            {installerLoginMode
+              ? 'Ingresa con el mismo correo y contraseña que usaste para crear tu cuenta.'
+              : tokenMode
+                ? 'Crea tu contraseña para empezar'
+                : 'Configura tu acceso'}
           </p>
         </div>
 
@@ -290,32 +335,34 @@ export const Setup: React.FC = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 className={styles.input}
                 placeholder="••••••••"
-                autoComplete="new-password"
+                autoComplete={installerLoginMode ? 'current-password' : 'new-password'}
                 disabled={isLoading}
-                minLength={6}
+                minLength={installerLoginMode ? undefined : 6}
               />
             </div>
           </div>
 
-          <div className={styles.inputGroup}>
-            <label htmlFor="confirmPassword" className={styles.label}>
-              Confirmar contraseña
-            </label>
-            <div className={styles.inputWrapper}>
-              <Lock size={18} className={styles.inputIcon} />
-              <input
-                id="confirmPassword"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className={styles.input}
-                placeholder="••••••••"
-                autoComplete="new-password"
-                disabled={isLoading}
-                minLength={6}
-              />
+          {!installerLoginMode && (
+            <div className={styles.inputGroup}>
+              <label htmlFor="confirmPassword" className={styles.label}>
+                Confirmar contraseña
+              </label>
+              <div className={styles.inputWrapper}>
+                <Lock size={18} className={styles.inputIcon} />
+                <input
+                  id="confirmPassword"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className={styles.input}
+                  placeholder="••••••••"
+                  autoComplete="new-password"
+                  disabled={isLoading}
+                  minLength={6}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {error && (
             <div className={styles.error}>
@@ -330,22 +377,15 @@ export const Setup: React.FC = () => {
             loading={isLoading}
             className={styles.submitButton}
           >
-            Crear mi acceso
+            {installerLoginMode ? 'Ingresar' : 'Crear mi acceso'}
           </Button>
         </form>
 
-        <div style={{
-          marginTop: '1.5rem',
-          padding: '1rem',
-          background: 'rgba(100, 116, 139, 0.08)',
-          borderRadius: '0.75rem',
-          fontSize: '0.8125rem',
-          color: 'var(--color-text-secondary)',
-          textAlign: 'center',
-          lineHeight: '1.6'
-        }}>
-          ✨ Esta es la única vez que crearás tu usuario. Después ingresas con estas credenciales.
-        </div>
+        <p className={styles.setupHint}>
+          {installerLoginMode
+            ? 'En tu primer ingreso prepararemos la cuenta automáticamente. Después entrarás igual que siempre.'
+            : 'Esta es la única vez que crearás tu usuario. Después ingresas con estas credenciales.'}
+        </p>
       </div>
     </div>
   )
