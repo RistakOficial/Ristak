@@ -22,7 +22,7 @@ La pantalla "Analíticas" muestra, para un rango de fechas elegido por el usuari
 5. **Origen por número de WhatsApp** (solo si hay ≥ 2 números detectados), cruzando
    `origin-distribution.whatsappNumbers` con `GET /api/whatsapp-api/status`.
 
-Textos "Interesados"/"Clientes" son **labels personalizables** (`GET /api/highlevel/custom-labels`).
+Textos "Interesados"/"Clientes" son **labels personalizables** (`GET /api/settings/contact-labels`).
 
 ---
 
@@ -38,10 +38,10 @@ Textos "Interesados"/"Clientes" son **labels personalizables** (`GET /api/highle
   (`backend/src/middleware/userAccessMiddleware.js`).
 - `GET /api/whatsapp-api/status` solo requiere `requireAuth` (sin gate de módulo)
   (`backend/src/routes/whatsappApi.routes.js:56-58`).
-- `GET /api/highlevel/custom-labels` requiere auth; el POST de labels es `requireAdmin`.
+- `GET /api/settings/contact-labels` requiere auth; el POST exige el permiso `settings_account`.
 - **Envelopes mixtos** (¡ojo en el decoder Swift!):
   - `/dashboard/metrics` y las series (`/visitors`, `/leads`, `/appointments`, `/attendances`, `/sales`, `/roas`, `/new-customers`, `/chart-data`) devuelven el **payload "pelado"** (objeto o array directo, sin `success/data`).
-  - `/dashboard/financial-overview`, `/dashboard/funnel`, `/dashboard/origin-distribution`, `/dashboard/traffic-sources`, `/highlevel/custom-labels` devuelven `{ "success": true, "data": ... }`.
+  - `/dashboard/financial-overview`, `/dashboard/funnel`, `/dashboard/origin-distribution`, `/dashboard/traffic-sources`, `/settings/contact-labels` devuelven `{ "success": true, "data": ... }`.
   - `/api/config` devuelve `{ "success": true, "config": {...} }` (clave `config`, NO `data`).
   - El cliente Expo desenvuelve automáticamente cuando el payload tiene `success` **y** `data` (`mobile/src/api.ts:319-325`). Replicar esa regla.
 - **Errores**: los endpoints con envelope devuelven `{ success:false, error: "<mensaje ES>" }` con status 400/500.
@@ -114,7 +114,7 @@ Opciones del selector (`PhoneAnalytics.tsx:71-76`, `App.tsx:1044-1050`):
 | 8 | GET | `/api/dashboard/funnel` | `startDate`, `endDate`, `scope` | `{success,data}` | `[{stage,value}]` (5 etapas) |
 | 9 | GET | `/api/dashboard/origin-distribution` | `startDate`, `endDate` | `{success,data}` | ver §4.5 |
 | 10 | GET | `/api/whatsapp-api/status` | — | pelado | objeto de estado WhatsApp (subset usado, §4.6) |
-| 11 | GET | `/api/highlevel/custom-labels` | — | `{success,data}` | `{customer,customers,lead,leads}` |
+| 11 | GET | `/api/settings/contact-labels` | — | `{success,data}` | `{customer,customers,lead,leads}` |
 | 12 | GET | `/api/config?keys=account_timezone,account_currency` | `keys` CSV | `{success,config}` | `{account_timezone,account_currency}` |
 
 Endpoints de dashboard que existen pero **NO usa /movil** (solo escritorio): `GET /api/dashboard/chart-data`, `/roas`, `/new-customers`, `/storage-status`, `/traffic-sources` (ver §8).
@@ -281,9 +281,9 @@ phoneNumbers: Array<{
 
 (`frontend/src/services/whatsappApiService.ts:3-27`, `mobile/src/types.ts:394-434`). Si la llamada falla se ignora (catch → lista vacía).
 
-### 4.8 `GET /api/highlevel/custom-labels`
+### 4.8 `GET /api/settings/contact-labels`
 
-`highlevelController.js:1617-1652`.
+`settingsController.js` (`getContactLabels`).
 
 ```json
 { "success": true, "data": { "customer": "Cliente", "customers": "Clientes", "lead": "Interesado", "leads": "Interesados" } }
@@ -457,7 +457,7 @@ Config exacta (`PhoneAnalytics.tsx:484-493`, `App.tsx:10792-10801`):
 
 ### 7.7 Carga, refresco y errores (orquestación)
 
-- **Al cambiar rango/periodo**: en paralelo `metrics` + `origin-distribution` + `whatsapp-api/status` (esta última con catch silencioso). En Expo, al montar también `config` + `custom-labels` (una sola vez).
+- **Al cambiar rango/periodo**: en paralelo `metrics` + `origin-distribution` + `whatsapp-api/status` (esta última con catch silencioso). En Expo, al montar también `config` + `contact-labels` (una sola vez).
 - **Al cambiar `funnelScope` o rango**: solo `funnel`.
 - **Al cambiar `chartView`/`financialScope`/`groupBy`/rango**: solo la gráfica.
 - Los efectos usan flag de cancelación (ignorar respuestas obsoletas).

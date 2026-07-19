@@ -16,6 +16,38 @@ import {
   updateContactCustomFieldFolder,
   upsertContactCustomFieldDefinition
 } from '../services/contactCustomFieldDefinitionsService.js';
+import { getCrmLabels, setCrmLabels } from '../services/crmLabelsService.js';
+
+export const getContactLabels = async (req, res) => {
+  try {
+    const labels = await getCrmLabels({ migrateLegacy: true });
+    res.json({ success: true, data: labels });
+  } catch (error) {
+    logger.error(`Error en getContactLabels: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al obtener los nombres de contactos'
+    });
+  }
+};
+
+export const setContactLabels = async (req, res) => {
+  try {
+    const labels = await setCrmLabels(req.body || {});
+    logger.info('Nombres de contactos actualizados en la configuración de la cuenta');
+    res.json({
+      success: true,
+      message: 'Nombres de contactos actualizados correctamente',
+      data: labels
+    });
+  } catch (error) {
+    logger.error(`Error en setContactLabels: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Error al guardar los nombres de contactos'
+    });
+  }
+};
 
 /**
  * Obtiene la zona horaria efectiva de la cuenta.

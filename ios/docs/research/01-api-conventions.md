@@ -453,7 +453,7 @@ La app RN **no consume SSE**: hace polling — bandeja cada **20 s** (`CHAT_INBO
 | `getDashboardSeries(kind, start, end, groupBy)` | `GET /api/dashboard/{visitors|leads|appointments|attendances|sales}?…&groupBy=day|month` | Series |
 | `getFunnelData(start, end, scope)` | `GET /api/dashboard/funnel` | Embudo |
 | `getOriginDistribution(start, end)` | `GET /api/dashboard/origin-distribution` | Origen por fuente |
-| `getCustomLabels()` | `GET /api/highlevel/custom-labels` | Labels custom (nombres de etapas) |
+| `getCustomLabels()` | `GET /api/settings/contact-labels` | Labels custom (nombres de etapas) |
 
 **Calendarios/Citas**
 | `getCalendars()` | `GET /api/calendars` → `CalendarItem[] | {calendars}` | Lista |
@@ -510,7 +510,7 @@ La app RN **no consume SSE**: hace polling — bandeja cada **20 s** (`CHAT_INBO
 ## 16. Resumen del contrato `docs/MOBILE_APP.md` (secciones normativas para la app nativa)
 
 1. **Paridad obligatoria**: cualquier cambio de producto móvil se revisa en `/movil` y `mobile/`; el resultado visible debe ser idéntico (secciones, orden, nombres, flujos, permisos, estados). Brechas → `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
-2. **Analíticas**: consumir exactamente `/api/dashboard/metrics`, `financial-overview`, `visitors|leads|appointments|attendances|sales`, `funnel`, `origin-distribution`, `/api/whatsapp-api/status`, `/api/highlevel/custom-labels`. Rangos `30d/60d/180d/year/custom` calculados con `account_timezone`; importes con `account_currency`; custom con `YYYY-MM-DD` aplicado a todo.
+2. **Analíticas**: consumir exactamente `/api/dashboard/metrics`, `financial-overview`, `visitors|leads|appointments|attendances|sales`, `funnel`, `origin-distribution`, `/api/whatsapp-api/status`, `/api/settings/contact-labels`. Rangos `30d/60d/180d/year/custom` calculados con `account_timezone`; importes con `account_currency`; custom con `YYYY-MM-DD` aplicado a todo.
 3. **Bandeja**: `/contacts/chats` con `limit/offset` (lotes de 50, merge por `contact.id`); filtro por número manda `businessPhoneNumberId`/`businessPhone` al server (no filtrar localmente); preferencias en `app_config` (`mobile_chat_ai_agent_enabled`, `mobile_chat_show_archived`, `mobile_chat_sort_mode`, `mobile_chat_show_last_preview`, `mobile_chat_show_unread_indicators`, `mobile_chat_selected_whatsapp_phone_id`, `mobile_chat_filter_chip_ids`, `mobile_chat_custom_filter_presets`).
 4. **Conversación**: journey con `chatMessagesOnly`+`messageLimit`; envío por los endpoints de §13.2; respuestas con `replyToMessageId`/`replyToProviderMessageId`; reacciones Meta sólo corazón; leído vía `/contacts/chats/:id/read` (acuse externo apagable con `chat_send_read_receipts_enabled`).
 5. **Programados**: `scheduledAt` UTC derivado de la zona del negocio, validado futuro; WhatsApp→`whatsapp_api/api`, SMS→`highlevel/sms_qr`; Messenger/IG/email no programables.

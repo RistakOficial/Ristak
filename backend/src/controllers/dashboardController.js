@@ -20,6 +20,7 @@ import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { buildTransactionListWhere } from '../services/transactionQueryService.js';
 import { isContactListProjectionAvailable } from '../services/crmListProjectionService.js';
 import { getLocalWhatsAppAnalyticsPhoneNumbers } from '../services/whatsappApiService.js';
+import { getCrmLabels } from '../services/crmLabelsService.js';
 
 const isPostgres = databaseDialect === 'postgres';
 const DASHBOARD_OPERATIONAL_SNAPSHOT_LIMIT = 5;
@@ -1924,23 +1925,6 @@ export const getFinancialOverview = async (req, res) => {
  *    - all: Contactos cuyo PRIMER pago está en el rango (MIN(date) FROM payments)
  *    - attribution/campaigns: COUNT(DISTINCT) WHERE created_at BETWEEN start AND end AND purchases_count > 0
  */
-const DEFAULT_DASHBOARD_LABELS = Object.freeze({
-  customer: 'Cliente',
-  customers: 'Clientes',
-  lead: 'Interesado',
-  leads: 'Interesados'
-});
-
-function parseDashboardLabels(hlConfig) {
-  if (!hlConfig?.custom_labels) return DEFAULT_DASHBOARD_LABELS;
-  try {
-    return { ...DEFAULT_DASHBOARD_LABELS, ...JSON.parse(hlConfig.custom_labels) };
-  } catch {
-    logger.warn('Error parsing custom_labels, usando valores por defecto');
-    return DEFAULT_DASHBOARD_LABELS;
-  }
-}
-
 async function computeFunnelData(range, {
   scope = 'all',
   includeWeb = true,
@@ -1951,12 +1935,12 @@ async function computeFunnelData(range, {
 } = {}) {
   const isAttributed = scope === 'campaigns' || scope === 'attributed';
   const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution';
-  const [hlConfig, resolvedHiddenFilters, configuredCalendarIds] = await Promise.all([
-    labels ? null : db.get('SELECT custom_labels FROM highlevel_config LIMIT 1', [], { signal }),
+  const [configuredLabels, resolvedHiddenFilters, configuredCalendarIds] = await Promise.all([
+    labels ? null : getCrmLabels({ signal }),
     hiddenFilters || getHiddenContactFilters({ signal }),
     attributionCalendarIds || getAttributionCalendarIds({ signal })
   ]);
-  const resolvedLabels = labels || parseDashboardLabels(hlConfig);
+  const resolvedLabels = labels || configuredLabels;
   const calendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
   const hiddenConditionC = buildHiddenContactsCondition(resolvedHiddenFilters, 'c', false);
   const attributedContactCondition = isAttributed
@@ -2189,15 +2173,13 @@ export const getMobileAnalyticsSnapshot = async (req, res) => {
     const resolvedFunnelScope = normalizeDashboardScope(funnelScope);
     const resolvedFinancialScope = normalizeDashboardScope(financialScope);
     const runContextRead = createDashboardReadLimiter(requestScope.signal, 2);
-    const [hiddenFilters, configuredCalendarIds, hlConfig, whatsappPhoneNumbers] = await Promise.all([
+    const [hiddenFilters, configuredCalendarIds, labels, whatsappPhoneNumbers] = await Promise.all([
       runContextRead(() => getHiddenContactFilters({ signal: requestScope.signal })),
       runContextRead(() => getAttributionCalendarIds({ signal: requestScope.signal })),
-      runContextRead(() => db.get('SELECT custom_labels FROM highlevel_config LIMIT 1', [], { signal: requestScope.signal })),
+      runContextRead(() => getCrmLabels({ signal: requestScope.signal })),
       runContextRead(() => getLocalWhatsAppAnalyticsPhoneNumbers({ signal: requestScope.signal }))
     ]);
     const attributionCalendarIds = Array.isArray(configuredCalendarIds) ? configuredCalendarIds : [];
-    const labels = parseDashboardLabels(hlConfig);
-
     // El snapshot móvil antes disparaba cuatro familias de agregados pesados al
     // mismo tiempo. En una sola CPU eso produjo presión de pool sin paralelismo
     // útil; resolverlas por carril protege también las vistas de escritorio.

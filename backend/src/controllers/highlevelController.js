@@ -61,6 +61,7 @@ import { buildConversationalAgentMessageMetadata } from '../utils/conversational
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js';
 import { getCachedPaymentListSummary } from '../services/paymentListSummaryCacheService.js';
 import { isHighLevelConversationContactNotFoundError } from '../utils/highLevelConversationErrors.js';
+import { getCrmLabels, setCrmLabels } from '../services/crmLabelsService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -1810,26 +1811,7 @@ export const deleteConfig = async (req, res) => {
  */
 export const getCustomLabels = async (req, res) => {
   try {
-    const config = await db.get('SELECT custom_labels FROM highlevel_config LIMIT 1');
-
-    // Valores por defecto
-    const defaultLabels = {
-      customer: 'Cliente',
-      customers: 'Clientes',
-      lead: 'Interesado',
-      leads: 'Interesados'
-    };
-
-    let labels = defaultLabels;
-
-    if (config && config.custom_labels) {
-      try {
-        const parsed = JSON.parse(config.custom_labels);
-        labels = { ...defaultLabels, ...parsed };
-      } catch (error) {
-        logger.warn('Error parsing custom_labels, usando valores por defecto');
-      }
-    }
+    const labels = await getCrmLabels({ migrateLegacy: true });
 
     res.json({
       success: true,
@@ -1850,32 +1832,7 @@ export const getCustomLabels = async (req, res) => {
  */
 export const updateCustomLabels = async (req, res) => {
   try {
-    const { customer, customers, lead, leads } = req.body;
-
-    const labels = {
-      customer: customer || 'Cliente',
-      customers: customers || 'Clientes',
-      lead: lead || 'Interesado',
-      leads: leads || 'Interesados'
-    };
-
-    // Verificar si existe una configuración
-    const existingConfig = await db.get('SELECT id FROM highlevel_config LIMIT 1');
-
-    if (existingConfig) {
-      // Actualizar
-      await db.run(
-        'UPDATE highlevel_config SET custom_labels = ? WHERE id = ?',
-        [JSON.stringify(labels), existingConfig.id]
-      );
-    } else {
-      // Crear una nueva configuración básica solo con labels
-      // Usar NULL en location_id y api_token si no se han configurado
-      await db.run(
-        'INSERT INTO highlevel_config (location_id, api_token, custom_labels) VALUES (?, ?, ?)',
-        [null, null, JSON.stringify(labels)]
-      );
-    }
+    const labels = await setCrmLabels(req.body || {});
 
     logger.info('Labels personalizados actualizados');
 

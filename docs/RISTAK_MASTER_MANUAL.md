@@ -159,6 +159,7 @@ Rutas protegidas por auth y/o feature flags:
 - `/api/payment-events`: stream interno SSE para refrescar pantallas de pagos.
 - `/api/stripe`, `/api/conekta`, `/api/mercadopago`, `/api/clip`, `/api/rebill`: pasarelas.
 - `/api/highlevel`: conexion, sync, invoices, productos, calendarios y conversaciones.
+- `/api/settings`: configuracion general de cuenta, incluidos zona horaria y nombres visibles del CRM.
 - `/api/meta`: Meta Ads, pixel, CAPI, social messaging y campaign builder.
 - `/api/automations`: carpetas, flujos, ejecuciones y assets.
 - `/api/appointment-reminders`: recordatorios de citas.
@@ -1413,6 +1414,21 @@ Capacidades:
   `Clientes`, `Prospecto` o `Prospectos` en copy visible nuevo; si una superficie
   no puede leer labels todavia, usar `contacto/persona` como fallback visible y
   conservar las llaves internas (`customer`, `lead`) solo para logica.
+- La fuente de verdad de esos cuatro nombres es `app_config.crm_labels`, no
+  `highlevel_config`: deben funcionar aunque HighLevel no este conectado, no
+  exista en el plan o el usuario no tenga acceso a Integraciones. Todos los
+  usuarios autenticados pueden leerlos con `GET /api/settings/contact-labels`;
+  cambiarlos con `POST /api/settings/contact-labels` exige permiso
+  `settings_account`. El frontend solo confirma "Guardado" despues de recibir
+  una respuesta exitosa y vuelve a cargarlos cuando cambia la sesion/cuenta.
+  `highlevel_config.custom_labels` queda unicamente como compatibilidad legacy:
+  la primera lectura desde Configuracion migra su valor a `app_config`, y la
+  ruta historica de HighLevel delega a la misma fuente mientras existan
+  clientes anteriores.
+- La app nativa Apple y las superficies web/movil leen la misma ruta general de
+  Settings. Dashboard, embudos y etiquetas internas del sistema consumen el
+  mismo servicio de nombres; no deben abrir lecturas paralelas directas a
+  `highlevel_config`.
 - Telefonos normalizados. Cuando un formulario separa la region del numero, el
   selector visible muestra solo bandera y codigo internacional (`🇲🇽 +52`), sin
   repetir el nombre del pais. Este contrato aplica al alta/edicion de contactos,

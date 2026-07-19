@@ -4,9 +4,11 @@ import {
   createCustomField,
   createCustomFieldFolder,
   deleteCustomField,
+  getContactLabels,
   getTimezone,
   listCustomFields,
   setTimezone,
+  setContactLabels,
   updateCustomField,
   updateCustomFieldFolder
 } from '../controllers/settingsController.js';
@@ -61,6 +63,11 @@ const requirePaymentsAccess = requireModuleAccess('settings_payments');
 router.get('/payments/receipt-preview-session/:token', previewPaymentReceiptSessionView);
 
 router.use(requireAuth);
+
+// Nombres de CRM: cualquier usuario autenticado puede leerlos porque se usan
+// en toda la app; sólo quien administra la cuenta puede cambiarlos.
+router.get('/contact-labels', getContactLabels);
+router.post('/contact-labels', requireAccountAccess, setContactLabels);
 
 // GET /api/settings/timezone
 router.get('/timezone', requireAccountAccess, getTimezone);

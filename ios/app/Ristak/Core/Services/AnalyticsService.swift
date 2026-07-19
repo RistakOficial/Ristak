@@ -167,9 +167,9 @@ enum AnalyticsService {
 
     // MARK: - Custom labels
 
-    /// `GET /api/highlevel/custom-labels` → `{customer, customers, lead, leads}`
+    /// `GET /api/settings/contact-labels` → `{customer, customers, lead, leads}`
     /// ya saneados (trim + defaults).
     static func customLabels() async throws -> DashboardCustomLabels {
-        try await APIClient.shared.get("/api/highlevel/custom-labels")
+        try await APIClient.shared.get("/api/settings/contact-labels")
     }
 }

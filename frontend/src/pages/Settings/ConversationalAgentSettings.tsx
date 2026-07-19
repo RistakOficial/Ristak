@@ -68,7 +68,7 @@ import { ACCOUNT_CURRENCY_CONFIG_KEY, getDetectedAccountLocaleDefaults } from '@
 import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import apiClient from '@/services/apiClient'
-import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelSentence } from '@/utils/crmLabels'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
 import styles from './AIAgentSettings.module.css'
@@ -1258,6 +1258,8 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   onFlushSave
 }) => {
   const { showToast } = useNotification()
+  const { labels } = useLabels()
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const capabilities = agent.capabilitiesConfig || DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
   const [paymentSettingsOpen, setPaymentSettingsOpen] = useState(false)
   const [savingPaymentSettings, setSavingPaymentSettings] = useState(false)
@@ -1935,9 +1937,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
                   ...handoffCapability,
                   pastClientsToHuman
                 })}
-                aria-label="Pasar clientes existentes al equipo"
+                aria-label={`Pasar ${customersLowerLabel} existentes al equipo`}
               />
-              Clientes existentes van con tu equipo
+              {formatCrmLabelSentence(labels.customers, DEFAULT_CRM_LABELS.customers)} existentes van con tu equipo
             </label>
           </div>
           <p className={styles.helper}>Ristak comprueba pagos o citas anteriores antes de aplicar esta regla; no se decide por una palabra suelta.</p>

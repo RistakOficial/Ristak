@@ -249,7 +249,7 @@ silenciar NO tienen endpoint backend: son estado 100% local por dispositivo.**
   número y para resolver el filtro de número.
 - `GET /api/contacts/custom-fields` → definiciones de campos personalizados
   (para el builder de filtros condicionales; se excluyen `archived`).
-- `GET /api/highlevel/custom-labels` → labels personalizables
+- `GET /api/settings/contact-labels` → labels personalizables
   (`customer/customers/lead/leads`) que renombran los chips `Clientes`/`Leads`
   y las etiquetas internas.
 - Agente conversacional (`/api/conversational-agent/...`): estados por contacto
@@ -639,7 +639,7 @@ selección = toggle (no abre chat).
    reiniciar la app.
 10. Fechas SIEMPRE con `account_timezone`.
 11. Labels `Clientes`/`Leads`/etiquetas internas se renombran con
-    `GET /api/highlevel/custom-labels`.
+    `GET /api/settings/contact-labels`.
 12. Etiquetas internas (`client/booked/lead`) no se guardan en `contacts.tags`
     ni se pueden crear/editar/borrar (400 del backend).
 13. Toda mutación exitosa se confirma con cambio visible en pantalla, no con

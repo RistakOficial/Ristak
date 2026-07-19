@@ -340,7 +340,7 @@ struct OriginDistributionSnapshot: Decodable, Sendable, Equatable {
 
 // MARK: - Custom labels (doc 09 §4.8)
 
-/// `GET /api/highlevel/custom-labels` → `data`. Saneo: trim + fallback al
+/// `GET /api/settings/contact-labels` → `data`. Saneo: trim + fallback al
 /// default si viene vacío.
 struct DashboardCustomLabels: Decodable, Sendable, Equatable {
     let customer: String

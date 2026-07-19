@@ -105,6 +105,7 @@ import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/ch
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { DEFAULT_CRM_LABELS, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
 import {
   dateOnlyToLocalDate,
   formatDateOnlyFromDate,
@@ -5375,6 +5376,7 @@ export const PhoneChat: React.FC = () => {
   const customersLabel = labels.customers?.trim() || 'Clientes'
   const leadsLabel = labels.leads?.trim() || 'Interesados'
   const customerSentenceLabel = formatSentenceLabel(customerLabel)
+  const customerWithPlainArticle = formatCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CRM_LABELS.customer, 'none')
   const customersSentenceLabel = formatSentenceLabel(customersLabel)
   const leadsSentenceLabel = formatSentenceLabel(leadsLabel)
   const { showToast, showConfirm } = useNotification()
@@ -21167,7 +21169,7 @@ export const PhoneChat: React.FC = () => {
                     buttonClassName={styles.agentMenuSelectButton}
                   />
                 </label>
-                <p className={styles.agentMenuHint}>La IA muestra horarios reales. Cuando el cliente confirma una cita nueva o un cambio, vuelve a comprobarlo y entrega el chat con la fecha exacta; no crea ni modifica la cita.</p>
+                <p className={styles.agentMenuHint}>La IA muestra horarios reales. Cuando {customerWithPlainArticle} confirma una cita nueva o un cambio, vuelve a comprobarlo y entrega el chat con la fecha exacta; no crea ni modifica la cita.</p>
               </>
             ) : (
               <p className={styles.agentMenuHint}>La IA vuelve a comprobar el horario elegido, crea la cita y sólo entonces la confirma.</p>
@@ -21469,11 +21471,11 @@ export const PhoneChat: React.FC = () => {
                     }
                   })}
                   onBlur={() => saveNativeCapability(paymentCapability)}
-                  placeholder="Banco, beneficiario, CLABE o cuenta y referencia que debe usar el cliente."
+                  placeholder={`Banco, beneficiario, CLABE o cuenta y referencia que debe usar ${customerWithPlainArticle}.`}
                   rows={4}
                   disabled={agentConfigSaving}
                 />
-                <p className={styles.agentMenuHint}>El cliente manda una foto o captura de su propia app bancaria. La IA analiza el comprobante, pero el pago queda pendiente de revisión; una imagen nunca confirma fondos por sí sola.</p>
+                <p className={styles.agentMenuHint}>{formatSentenceLabel(customerWithPlainArticle)} manda una foto o captura de su propia app bancaria. La IA analiza el comprobante, pero el pago queda pendiente de revisión; una imagen nunca confirma fondos por sí sola.</p>
               </>
             ) : (
               <>
@@ -21687,7 +21689,7 @@ export const PhoneChat: React.FC = () => {
                 })}
               />
               <span>
-                <strong>Clientes existentes van con tu equipo</strong>
+                <strong>{formatSentenceLabel(customersLabel)} existentes van con tu equipo</strong>
                 <small>Usa citas anteriores o pagos confirmados de Ristak; no se basa sólo en lo que diga el mensaje.</small>
               </span>
             </label>

@@ -1,6 +1,7 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { getCrmLabels } from './crmLabelsService.js'
 
 /**
  * Catálogo de etiquetas de contactos.
@@ -25,13 +26,6 @@ export const SYSTEM_TAGS = SYSTEM_TAG_DEFINITIONS.map((tag) => ({
   name: tag.fallback
 }))
 
-const DEFAULT_CUSTOM_LABELS = {
-  customer: 'Cliente',
-  customers: 'Clientes',
-  lead: 'Interesado',
-  leads: 'Interesados'
-}
-
 /** IDs viejos de las internas (configs guardadas antes del cambio a slugs) */
 export const LEGACY_SYSTEM_TAG_ALIASES = {
   tag_sys_customer: 'client',
@@ -55,35 +49,8 @@ export function isSystemTagId(id) {
   return SYSTEM_TAG_IDS.has(clean) || Boolean(LEGACY_SYSTEM_TAG_ALIASES[clean])
 }
 
-async function parseCustomLabelsFromDb() {
-  let row
-  try {
-    row = await db.get('SELECT custom_labels FROM highlevel_config LIMIT 1')
-  } catch (error) {
-    logger.warn(`No se pudo leer highlevel_config, usando labels por defecto: ${error.message}`)
-    return DEFAULT_CUSTOM_LABELS
-  }
-
-  if (!row?.custom_labels) return DEFAULT_CUSTOM_LABELS
-
-  try {
-    const parsed = typeof row.custom_labels === 'object'
-      ? row.custom_labels
-      : JSON.parse(row.custom_labels)
-
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return DEFAULT_CUSTOM_LABELS
-    }
-
-    return { ...DEFAULT_CUSTOM_LABELS, ...parsed }
-  } catch (error) {
-    logger.warn(`No se pudieron leer custom_labels del account config: ${error.message}`)
-    return DEFAULT_CUSTOM_LABELS
-  }
-}
-
 export async function getSystemTagDefinitions() {
-  const labels = await parseCustomLabelsFromDb()
+  const labels = await getCrmLabels()
   return SYSTEM_TAG_DEFINITIONS.map((definition) => ({
     ...definition,
     name: String(labels[definition.labelKey] || definition.fallback).trim() || definition.fallback
