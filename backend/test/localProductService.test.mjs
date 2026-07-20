@@ -14,16 +14,21 @@ import {
 
 const cleanupProductIds = new Set()
 const cleanupPaymentIds = new Set()
+const cleanupContactIds = new Set()
 
 afterEach(async () => {
   for (const paymentId of cleanupPaymentIds) {
     await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => undefined)
+  }
+  for (const contactId of cleanupContactIds) {
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
   for (const productId of cleanupProductIds) {
     await db.run('DELETE FROM product_prices WHERE product_id = ?', [productId]).catch(() => undefined)
     await db.run('DELETE FROM products WHERE id = ?', [productId]).catch(() => undefined)
   }
   cleanupPaymentIds.clear()
+  cleanupContactIds.clear()
   cleanupProductIds.clear()
 })
 
@@ -159,32 +164,46 @@ describe('local product catalog', () => {
           body: {
             campaign: 'paid-product',
             nested: { source: 'product-modal' },
+            email: 'estatico@example.test',
+            SKU: 'STATIC-SKU',
             product: { shouldNotOverrideCoreProduct: true }
           }
         }
       ],
       prices: [
-        { name: 'Base', amount: 1500, currency: 'MXN', sku: 'HOOK-BASE' }
+        { name: 'Base', amount: 1500, currency: 'MXN', sku: 'HOOK-BASE' },
+        { name: 'Premium', amount: 2500, currency: 'MXN', sku: 'HOOK-PREMIUM' }
       ]
     }, { sync: false })
     cleanupProductIds.add(product.localId)
 
-    const price = product.prices[0]
+    const price = product.prices.find((item) => item.sku === 'HOOK-BASE')
+    assert.ok(price?.localId)
     const paymentId = `payment_webhook_${Date.now()}`
+    const contactId = `contact_webhook_${Date.now()}`
     cleanupPaymentIds.add(paymentId)
+    cleanupContactIds.add(contactId)
+
+    await db.run(
+      `INSERT INTO contacts (
+        id, email, phone, full_name, first_name, last_name, source, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, 'alumno@example.com', '+5216561234567', 'Raúl Gómez', 'Raúl', 'Gómez', 'test']
+    )
 
     await db.run(
       `INSERT INTO payments (
-        id, contact_id, amount, currency, status, payment_method, payment_provider,
+        id, contact_id, amount, currency, status, payment_method, payment_mode, payment_provider,
         title, description, date, metadata_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [
         paymentId,
-        null,
+        contactId,
         1500,
         'MXN',
         'paid',
-        'stripe',
+        'bank_transfer',
+        'test',
         'stripe',
         product.name,
         product.description,
@@ -232,16 +251,28 @@ describe('local product catalog', () => {
       assert.equal(calls[0].options.method, 'POST')
       assert.equal(calls[0].options.headers.Authorization, 'Bearer webhook-token')
       assert.equal(calls[0].options.headers['X-Webhook-Test'], 'ok')
+      assert.equal(calls[0].options.headers['X-Ristak-Webhook-Schema'], 'ristak.product-payment.v1')
+      assert.equal(calls[0].body.schemaVersion, 'ristak.product-payment.v1')
       assert.equal(calls[0].body.event, 'payment.paid')
       assert.equal(calls[0].body.campaign, 'paid-product')
       assert.deepEqual(calls[0].body.nested, { source: 'product-modal' })
       assert.equal(calls[0].body.previousStatus, 'pending')
+      assert.equal(calls[0].body.email, 'alumno@example.com')
+      assert.equal(calls[0].body.name, 'Raúl Gómez')
+      assert.equal(calls[0].body.phone, '+5216561234567')
+      assert.equal(calls[0].body.SKU, 'HOOK-BASE')
+      assert.equal(calls[0].body.payment_id, paymentId)
+      assert.equal(calls[0].body.payment_status, 'paid')
+      assert.equal(calls[0].body.payment_mode, 'test')
+      assert.equal(calls[0].body.payment_method, 'bank_transfer')
+      assert.equal(calls[0].body.provider, 'stripe')
       assert.equal(calls[0].body.payment.id, paymentId)
       assert.equal(calls[0].body.payment.amount, 1500)
       assert.equal(calls[0].body.payment.metadata.source, 'test')
       assert.equal(Object.hasOwn(calls[0].body.payment, 'mercadoPagoPaymentId'), false)
       assert.equal(Object.hasOwn(calls[0].body.payment, 'clipPaymentId'), false)
       assert.equal(Object.hasOwn(calls[0].body.payment, 'rebillPaymentId'), false)
+      assert.equal(calls[0].body.price.sku, 'HOOK-BASE')
       assert.equal(calls[0].body.product.localId, product.localId)
       assert.equal(calls[0].body.product.name, product.name)
       assert.equal(calls[0].body.product.shouldNotOverrideCoreProduct, undefined)

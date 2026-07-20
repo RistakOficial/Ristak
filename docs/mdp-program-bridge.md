@@ -11,6 +11,23 @@ Ristak solo hace tres cosas:
 
 MDP sigue siendo la fuente de verdad de cursos, mentorias, recursos, pestañas internas y permisos internos.
 
+## Alta comercial desde productos Ristak
+
+Un producto puede apuntar su webhook POST a `/api/webhooks/mdp` de Cursos y
+guardar el token de MDP como `Authorization: Bearer ...`. Cada precio del
+producto debe tener el mismo SKU configurado en el paquete activo de MDP.
+
+Ristak envía el contrato `ristak.product-payment.v1`: mantiene el sobre completo
+del pago y además publica `email`, `payment_id`, `payment_mode` y el `SKU` del
+precio exacto como campos de raíz. MDP también entiende el sobre anidado anterior
+(`contact.email`, `payment.id`, `lineItem.priceId` y `product.prices`) para que el
+orden de despliegue entre los dos servicios no corte las altas.
+
+Los pagos `test|sandbox` sirven para validar autorización, contacto, SKU, paquete
+y oferta privada. MDP responde `test_validated`, pero no crea alumnos ni activa
+productos. Sólo los pagos `live|production` preparan el acceso comercial y los
+módulos empiezan su vigencia en el primer ingreso del alumno.
+
 ## Variables
 
 ```env

@@ -5,6 +5,7 @@ import { priceRowToApi, productRowToApi } from './localProductService.js'
 
 const PRODUCT_POST_WEBHOOK_TIMEOUT_MS = 8000
 const MAX_DELIVERY_LOG_ENTRIES = 80
+const PRODUCT_POST_WEBHOOK_SCHEMA = 'ristak.product-payment.v1'
 
 const PAYMENT_PROVIDER_METADATA_PREFIXES = {
   stripe: ['stripe'],
@@ -157,7 +158,8 @@ function hashWebhookConfig(webhook = {}) {
       url: webhook.url || '',
       authorization: webhook.authorization || '',
       headers: webhook.headers || {},
-      body: webhook.body || {}
+      body: webhook.body || {},
+      schema: PRODUCT_POST_WEBHOOK_SCHEMA
     }))
     .digest('hex')
     .slice(0, 16)
@@ -224,25 +226,40 @@ function priceCandidatesFromLineItem(item = {}) {
 }
 
 async function findProductForLineItem(item = {}) {
+  let resolvedProduct = null
   const productCandidates = productCandidatesFromLineItem(item)
   for (const productId of productCandidates) {
     const product = await db.get(
       'SELECT * FROM products WHERE id = ? OR ghl_product_id = ? LIMIT 1',
       [productId, productId]
     )
-    if (product?.id) return { product, price: null }
+    if (product?.id) {
+      resolvedProduct = product
+      break
+    }
   }
 
+  let resolvedPrice = null
   const priceCandidates = priceCandidatesFromLineItem(item)
   for (const priceId of priceCandidates) {
     const price = await db.get(
       'SELECT * FROM product_prices WHERE id = ? OR ghl_price_id = ? LIMIT 1',
       [priceId, priceId]
     )
-    if (!price?.product_id) continue
+    if (price?.product_id) {
+      resolvedPrice = price
+      break
+    }
+  }
 
-    const product = await db.get('SELECT * FROM products WHERE id = ? LIMIT 1', [price.product_id])
-    if (product?.id) return { product, price }
+  if (resolvedProduct?.id) {
+    const price = resolvedPrice?.product_id === resolvedProduct.id ? resolvedPrice : null
+    return { product: resolvedProduct, price }
+  }
+
+  if (resolvedPrice?.product_id) {
+    const product = await db.get('SELECT * FROM products WHERE id = ? LIMIT 1', [resolvedPrice.product_id])
+    if (product?.id) return { product, price: resolvedPrice }
   }
 
   return { product: null, price: null }
@@ -335,14 +352,35 @@ function serializeContact(row = {}) {
 }
 
 function buildPayload({ event, status, previousStatus, payment, contact, metadata, lineItems, lineItem, product, price, webhook }) {
+  const serializedPayment = serializePayment(payment, metadata)
+  const serializedContact = serializeContact(contact)
+  const sku = cleanString(price?.sku || lineItem?.SKU || lineItem?.sku)
+  const canonicalFields = {
+    payment_id: cleanString(serializedPayment.id),
+    payment_status: status,
+    payment_mode: cleanString(serializedPayment.paymentMode),
+    product_name: cleanString(product?.name),
+    amount: serializedPayment.amount,
+    currency: cleanString(serializedPayment.currency),
+    payment_method: cleanString(serializedPayment.paymentMethod),
+    paid_at: cleanString(serializedPayment.paidAt),
+    due_at: cleanString(serializedPayment.dueDate),
+    provider: cleanString(serializedPayment.paymentProvider),
+    ...(serializedContact?.email ? { email: serializedContact.email } : {}),
+    ...(serializedContact?.name ? { name: serializedContact.name } : {}),
+    ...(serializedContact?.phone ? { phone: serializedContact.phone } : {}),
+    ...(sku ? { SKU: sku } : {})
+  }
   const payload = compactWebhookValue({
+    schemaVersion: PRODUCT_POST_WEBHOOK_SCHEMA,
+    ...canonicalFields,
     event,
     eventType: 'payment',
     status,
     previousStatus,
     occurredAt: new Date().toISOString(),
-    payment: serializePayment(payment, metadata),
-    contact: serializeContact(contact),
+    payment: serializedPayment,
+    contact: serializedContact,
     product,
     price,
     lineItem,
@@ -368,6 +406,7 @@ function buildHeaders(webhook = {}, event = '', paymentId = '') {
     'User-Agent': 'Ristak-Product-Webhook/1.0',
     'X-Ristak-Event': event,
     'X-Ristak-Payment-Id': paymentId,
+    'X-Ristak-Webhook-Schema': PRODUCT_POST_WEBHOOK_SCHEMA,
     ...webhook.headers
   }
 

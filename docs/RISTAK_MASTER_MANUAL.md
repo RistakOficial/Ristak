@@ -3345,6 +3345,25 @@ de esas pasarelas. `payment.metadata` conserva datos comunes y valores válidos
 como `0` o `false`, pero elimina ramas de otras pasarelas y
 `productPostWebhookDeliveries`.
 
+El contrato actual usa `schemaVersion: ristak.product-payment.v1` y conserva el
+sobre detallado (`payment`, `contact`, `product`, `price`, `lineItem` y
+`lineItems`). Además expone en la raíz los campos canónicos para receptores de
+compras: `email`, `name`, `phone`, `payment_id`, `payment_status`,
+`payment_mode`, `SKU`, `product_name`, `amount`, `currency`, `payment_method`,
+`paid_at`, `due_at` y `provider`. El header
+`X-Ristak-Webhook-Schema` identifica la misma versión.
+
+`price` y `SKU` deben corresponder al precio exacto señalado por el `priceId` del
+`lineItem`. Si el producto tiene varias opciones, nunca se toma el primer precio
+por conveniencia. Los campos canónicos calculados por Ristak ganan sobre campos
+estáticos del body cuando existe evidencia real del pago; esto evita que una
+configuración vieja mande el SKU o contacto equivocado.
+
+`payment_mode` siempre viaja para separar `test|sandbox` de `live`. Un receptor
+que otorgue productos o membresías debe validar los webhooks test sin conceder
+acceso productivo. Para MDP, la respuesta esperada es `test_validated` con
+`accessPrepared: false`; sólo un pago live puede preparar al alumno.
+
 `post_webhooks` y los campos fiscales Gigstack son configuración local de
 Ristak. La sincronización de catálogo desde HighLevel puede refrescar nombre,
 descripción, IDs y precios remotos, pero nunca debe vaciar ni reemplazar esos
