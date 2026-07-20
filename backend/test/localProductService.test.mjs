@@ -239,6 +239,9 @@ describe('local product catalog', () => {
       assert.equal(calls[0].body.payment.id, paymentId)
       assert.equal(calls[0].body.payment.amount, 1500)
       assert.equal(calls[0].body.payment.metadata.source, 'test')
+      assert.equal(Object.hasOwn(calls[0].body.payment, 'mercadoPagoPaymentId'), false)
+      assert.equal(Object.hasOwn(calls[0].body.payment, 'clipPaymentId'), false)
+      assert.equal(Object.hasOwn(calls[0].body.payment, 'rebillPaymentId'), false)
       assert.equal(calls[0].body.product.localId, product.localId)
       assert.equal(calls[0].body.product.name, product.name)
       assert.equal(calls[0].body.product.shouldNotOverrideCoreProduct, undefined)
@@ -251,6 +254,157 @@ describe('local product catalog', () => {
       })
       assert.equal(second.attempted, 0)
       assert.equal(calls.length, 1)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('sends only populated fields for the payment gateway that actually processed the charge', async () => {
+    const suffix = Date.now()
+    const product = await createLocalProduct({
+      name: `Producto webhook por pasarela ${suffix}`,
+      description: 'Producto para validar payloads simples por pasarela',
+      productType: 'digital',
+      currency: 'MXN',
+      postWebhooks: [
+        {
+          id: 'gateway_specific_hook',
+          url: 'https://example.test/ristak/gateway-specific'
+        }
+      ],
+      prices: [
+        { name: 'Base', amount: 100, currency: 'MXN', sku: `GATEWAY-${suffix}` }
+      ]
+    }, { sync: false })
+    cleanupProductIds.add(product.localId)
+
+    const price = product.prices[0]
+    const providerFields = [
+      'stripePaymentIntentId',
+      'stripeChargeId',
+      'mercadoPagoPaymentId',
+      'mercadoPagoPreferenceId',
+      'conektaOrderId',
+      'conektaChargeId',
+      'clipPaymentId',
+      'clipReceiptNo',
+      'rebillPaymentId',
+      'rebillSubscriptionId',
+      'rebillCustomerId',
+      'rebillCardId'
+    ]
+    const cases = [
+      {
+        provider: 'stripe',
+        metadataKey: 'stripe',
+        expectedFields: ['stripePaymentIntentId', 'stripeChargeId']
+      },
+      {
+        provider: 'mercadopago',
+        metadataKey: 'mercadoPago',
+        expectedFields: ['mercadoPagoPaymentId', 'mercadoPagoPreferenceId']
+      },
+      {
+        provider: 'conekta',
+        metadataKey: 'conekta',
+        expectedFields: ['conektaOrderId', 'conektaChargeId']
+      },
+      {
+        provider: 'clip',
+        metadataKey: 'clip',
+        expectedFields: ['clipPaymentId', 'clipReceiptNo']
+      },
+      {
+        provider: 'rebill',
+        metadataKey: 'rebill',
+        expectedFields: ['rebillPaymentId', 'rebillSubscriptionId', 'rebillCustomerId', 'rebillCardId']
+      }
+    ]
+
+    const originalFetch = globalThis.fetch
+    const calls = []
+    globalThis.fetch = async (url, options = {}) => {
+      calls.push({ url, body: JSON.parse(options.body) })
+      return {
+        ok: true,
+        status: 202,
+        text: async () => 'accepted'
+      }
+    }
+
+    try {
+      for (const [index, testCase] of cases.entries()) {
+        const paymentId = `payment_gateway_${testCase.provider}_${suffix}`
+        cleanupPaymentIds.add(paymentId)
+        const metadata = {
+          lineItems: [
+            {
+              name: product.name,
+              localProductId: product.localId,
+              priceId: price.localId,
+              amount: 100,
+              currency: 'MXN'
+            }
+          ],
+          source: 'gateway-matrix-test',
+          keepZero: 0,
+          keepFalse: false,
+          emptyText: '',
+          emptyObject: {},
+          gatewayContext: {
+            stripe: { id: 'pi_metadata' },
+            mercadoPago: { id: 'mp_metadata' },
+            conekta: { id: 'ord_metadata' },
+            clip: { id: 'clip_metadata' },
+            rebill: { id: 'rebill_metadata' },
+            highLevel: { id: 'ghl_metadata' }
+          },
+          productPostWebhookDeliveries: {
+            historical: { attemptedAt: '2026-01-01T00:00:00.000Z', ok: true }
+          }
+        }
+
+        await db.run(
+          `INSERT INTO payments (
+            id, amount, currency, status, payment_method, payment_mode, payment_provider,
+            title, date, stripe_payment_intent_id, stripe_charge_id,
+            mercadopago_payment_id, mercadopago_preference_id,
+            conekta_order_id, conekta_charge_id, clip_payment_id, clip_receipt_no,
+            rebill_payment_id, rebill_subscription_id, rebill_customer_id, rebill_card_id,
+            metadata_json, created_at, updated_at
+          ) VALUES (
+            ?, 100, 'MXN', 'paid', ?, 'live', ?, ?, CURRENT_TIMESTAMP,
+            'pi_actual', 'ch_actual', 'mp_actual', 'pref_actual',
+            'ord_actual', 'charge_actual', 'clip_actual', 'receipt_actual',
+            'rebill_actual', 'rebill_sub_actual', 'rebill_customer_actual', 'rebill_card_actual',
+            ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          )`,
+          [paymentId, testCase.provider, testCase.provider, product.name, JSON.stringify(metadata)]
+        )
+
+        const result = await dispatchProductPostWebhooksForPayment(paymentId, { status: 'paid' })
+        assert.equal(result.sent, 1)
+
+        const payload = calls[index].body
+        assert.equal(payload.payment.paymentProvider, testCase.provider)
+        assert.equal(payload.payment.metadata.source, 'gateway-matrix-test')
+        assert.equal(payload.payment.metadata.keepZero, 0)
+        assert.equal(payload.payment.metadata.keepFalse, false)
+        assert.equal(Object.hasOwn(payload.payment.metadata, 'emptyText'), false)
+        assert.equal(Object.hasOwn(payload.payment.metadata, 'emptyObject'), false)
+        assert.equal(Object.hasOwn(payload.payment.metadata, 'productPostWebhookDeliveries'), false)
+        assert.deepEqual(Object.keys(payload.payment.metadata.gatewayContext), [testCase.metadataKey])
+
+        for (const field of providerFields) {
+          assert.equal(
+            Object.hasOwn(payload.payment, field),
+            testCase.expectedFields.includes(field),
+            `${field} no corresponde al pago procesado por ${testCase.provider}`
+          )
+        }
+      }
+
+      assert.equal(calls.length, cases.length)
     } finally {
       globalThis.fetch = originalFetch
     }

@@ -3336,6 +3336,15 @@ configuración; los intentos quedan en `payments.metadata_json` bajo
 webhooks entrantes y las sincronizaciones de invoices deben respetar la misma
 regla. Una sincronización posterior no debe duplicar una entrega ya confirmada.
 
+El payload es disperso: omite valores vacíos, objetos sin contenido y datos
+internos de entrega. Dentro de `payment` sólo expone los IDs de la pasarela que
+realmente procesó el cobro, según `payments.payment_provider`. Por ejemplo, un
+pago Stripe puede incluir `stripePaymentIntentId` y `stripeChargeId`, pero nunca
+campos de Mercado Pago, Conekta, CLIP o Rebill; la misma regla aplica a cada una
+de esas pasarelas. `payment.metadata` conserva datos comunes y valores válidos
+como `0` o `false`, pero elimina ramas de otras pasarelas y
+`productPostWebhookDeliveries`.
+
 `post_webhooks` y los campos fiscales Gigstack son configuración local de
 Ristak. La sincronización de catálogo desde HighLevel puede refrescar nombre,
 descripción, IDs y precios remotos, pero nunca debe vaciar ni reemplazar esos

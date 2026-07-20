@@ -6,6 +6,19 @@ import { priceRowToApi, productRowToApi } from './localProductService.js'
 const PRODUCT_POST_WEBHOOK_TIMEOUT_MS = 8000
 const MAX_DELIVERY_LOG_ENTRIES = 80
 
+const PAYMENT_PROVIDER_METADATA_PREFIXES = {
+  stripe: ['stripe'],
+  mercadopago: ['mercadopago'],
+  conekta: ['conekta'],
+  clip: ['clip'],
+  rebill: ['rebill'],
+  highlevel: ['highlevel', 'ghl']
+}
+
+const INTERNAL_PAYMENT_METADATA_KEYS = new Set([
+  'productpostwebhookdeliveries'
+])
+
 function cleanString(value) {
   return String(value ?? '').trim()
 }
@@ -22,6 +35,69 @@ function parseJson(value, fallback = {}) {
 
 function isPlainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function normalizePaymentProvider(value) {
+  const normalized = cleanString(value).toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (normalized.startsWith('stripe')) return 'stripe'
+  if (normalized.startsWith('mercadopago')) return 'mercadopago'
+  if (normalized.startsWith('conekta')) return 'conekta'
+  if (normalized.startsWith('clip')) return 'clip'
+  if (normalized.startsWith('rebill')) return 'rebill'
+  if (normalized.startsWith('highlevel') || normalized.startsWith('ghl')) return 'highlevel'
+  if (normalized.startsWith('manual')) return 'manual'
+  return normalized
+}
+
+function paymentProviderForMetadataKey(key) {
+  const normalizedKey = cleanString(key).toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (!normalizedKey) return ''
+
+  for (const [provider, prefixes] of Object.entries(PAYMENT_PROVIDER_METADATA_PREFIXES)) {
+    if (prefixes.some(prefix => normalizedKey.startsWith(prefix))) return provider
+  }
+
+  return ''
+}
+
+function compactWebhookValue(value, options = {}, depth = 0) {
+  if (value === undefined || value === null || typeof value === 'function' || typeof value === 'symbol') {
+    return undefined
+  }
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string') {
+    const normalized = value.trim()
+    return normalized || undefined
+  }
+  if (Array.isArray(value)) {
+    if (depth >= 8) return undefined
+    const normalized = value
+      .map(item => compactWebhookValue(item, options, depth + 1))
+      .filter(item => item !== undefined)
+    return normalized.length ? normalized : undefined
+  }
+  if (isPlainObject(value)) {
+    if (depth >= 8) return undefined
+    const normalized = Object.entries(value).reduce((acc, [key, item]) => {
+      const normalizedKey = cleanString(key).toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (!normalizedKey || options.omitInternalMetadata && INTERNAL_PAYMENT_METADATA_KEYS.has(normalizedKey)) {
+        return acc
+      }
+
+      if (options.filterProviderMetadata) {
+        const keyProvider = paymentProviderForMetadataKey(key)
+        if (keyProvider && keyProvider !== options.paymentProvider) return acc
+      }
+
+      const compacted = compactWebhookValue(item, options, depth + 1)
+      if (compacted !== undefined) acc[key] = compacted
+      return acc
+    }, {})
+    return Object.keys(normalized).length ? normalized : undefined
+  }
+  const normalized = cleanString(value)
+  return normalized || undefined
 }
 
 function normalizeWebhookBodyValue(value, depth = 0) {
@@ -187,59 +263,83 @@ function sanitizeProduct(product, prices = []) {
 }
 
 function serializePayment(row = {}, metadata = {}) {
-  return {
-    id: row.id || '',
-    contactId: row.contact_id || '',
-    amount: row.amount,
-    currency: row.currency || '',
-    status: row.status || '',
-    paymentMethod: row.payment_method || '',
-    paymentMode: row.payment_mode || '',
-    paymentProvider: row.payment_provider || '',
-    reference: row.reference || '',
-    title: row.title || '',
-    description: row.description || '',
-    date: row.date || '',
-    dueDate: row.due_date || '',
-    sentAt: row.sent_at || '',
-    paidAt: row.paid_at || '',
-    publicPaymentId: row.public_payment_id || '',
-    paymentUrl: row.payment_url || '',
-    invoiceId: row.ghl_invoice_id || '',
-    invoiceNumber: row.invoice_number || '',
-    stripePaymentIntentId: row.stripe_payment_intent_id || '',
-    stripeChargeId: row.stripe_charge_id || '',
-    mercadoPagoPaymentId: row.mercadopago_payment_id || '',
-    mercadoPagoPreferenceId: row.mercadopago_preference_id || '',
-    conektaOrderId: row.conekta_order_id || '',
-    conektaChargeId: row.conekta_charge_id || '',
-    clipPaymentId: row.clip_payment_id || '',
-    clipReceiptNo: row.clip_receipt_no || '',
-    metadata,
-    createdAt: row.created_at || '',
-    updatedAt: row.updated_at || ''
+  const paymentProvider = normalizePaymentProvider(row.payment_provider || row.payment_method)
+  const providerFields = {
+    stripe: {
+      stripePaymentIntentId: row.stripe_payment_intent_id,
+      stripeChargeId: row.stripe_charge_id
+    },
+    mercadopago: {
+      mercadoPagoPaymentId: row.mercadopago_payment_id,
+      mercadoPagoPreferenceId: row.mercadopago_preference_id
+    },
+    conekta: {
+      conektaOrderId: row.conekta_order_id,
+      conektaChargeId: row.conekta_charge_id
+    },
+    clip: {
+      clipPaymentId: row.clip_payment_id,
+      clipReceiptNo: row.clip_receipt_no
+    },
+    rebill: {
+      rebillPaymentId: row.rebill_payment_id,
+      rebillSubscriptionId: row.rebill_subscription_id,
+      rebillCustomerId: row.rebill_customer_id,
+      rebillCardId: row.rebill_card_id
+    }
   }
+  const safeMetadata = compactWebhookValue(metadata, {
+    filterProviderMetadata: true,
+    omitInternalMetadata: true,
+    paymentProvider
+  })
+
+  return compactWebhookValue({
+    id: row.id,
+    contactId: row.contact_id,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    paymentMethod: row.payment_method,
+    paymentMode: row.payment_mode,
+    paymentProvider: row.payment_provider || paymentProvider,
+    reference: row.reference,
+    title: row.title,
+    description: row.description,
+    date: row.date,
+    dueDate: row.due_date,
+    sentAt: row.sent_at,
+    paidAt: row.paid_at,
+    publicPaymentId: row.public_payment_id,
+    paymentUrl: row.payment_url,
+    invoiceId: row.ghl_invoice_id,
+    invoiceNumber: row.invoice_number,
+    ...(providerFields[paymentProvider] || {}),
+    metadata: safeMetadata,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }) || {}
 }
 
 function serializeContact(row = {}) {
   if (!row?.id) return null
-  return {
+  return compactWebhookValue({
     id: row.id,
-    ghlContactId: row.ghl_contact_id || '',
-    name: row.name || row.full_name || '',
-    firstName: row.first_name || '',
-    lastName: row.last_name || '',
-    email: row.email || '',
-    phone: row.phone || ''
-  }
+    ghlContactId: row.ghl_contact_id,
+    name: row.name || row.full_name,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    email: row.email,
+    phone: row.phone
+  }) || null
 }
 
 function buildPayload({ event, status, previousStatus, payment, contact, metadata, lineItems, lineItem, product, price, webhook }) {
-  const payload = {
+  const payload = compactWebhookValue({
     event,
     eventType: 'payment',
     status,
-    previousStatus: previousStatus || '',
+    previousStatus,
     occurredAt: new Date().toISOString(),
     payment: serializePayment(payment, metadata),
     contact: serializeContact(contact),
@@ -255,7 +355,7 @@ function buildPayload({ event, status, previousStatus, payment, contact, metadat
       app: 'ristak',
       feature: 'product_post_webhooks'
     }
-  }
+  }) || {}
 
   return Object.keys(webhook.body || {}).length
     ? { ...webhook.body, ...payload }
