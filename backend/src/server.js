@@ -136,6 +136,7 @@ import {
   markDeployShutdownStarted,
   trackDeployDrainWork
 } from './utils/deployDrainTracker.js'
+import { PRODUCT_POST_WEBHOOK_SCHEMA } from './contracts/productPostWebhookContract.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -393,7 +394,10 @@ app.get('/api/health', (req, res) => {
     startup: getStartupStatus(),
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    version: process.env.APP_VERSION || '0.0.0'
+    version: process.env.APP_VERSION || '0.0.0',
+    contracts: {
+      productPostWebhook: PRODUCT_POST_WEBHOOK_SCHEMA
+    }
   })
 })
 

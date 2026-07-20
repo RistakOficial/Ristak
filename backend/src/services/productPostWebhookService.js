@@ -1,12 +1,11 @@
 import crypto from 'crypto'
 import { db } from '../config/database.js'
+import { PRODUCT_POST_WEBHOOK_SCHEMA } from '../contracts/productPostWebhookContract.js'
 import { logger } from '../utils/logger.js'
 import { priceRowToApi, productRowToApi } from './localProductService.js'
 
 const PRODUCT_POST_WEBHOOK_TIMEOUT_MS = 8000
 const MAX_DELIVERY_LOG_ENTRIES = 80
-const PRODUCT_POST_WEBHOOK_SCHEMA = 'ristak.product-payment.v1'
-
 const PAYMENT_PROVIDER_METADATA_PREFIXES = {
   stripe: ['stripe'],
   mercadopago: ['mercadopago'],

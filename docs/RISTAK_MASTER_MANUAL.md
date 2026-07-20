@@ -3352,6 +3352,8 @@ compras: `email`, `name`, `phone`, `payment_id`, `payment_status`,
 `payment_mode`, `SKU`, `product_name`, `amount`, `currency`, `payment_method`,
 `paid_at`, `due_at` y `provider`. El header
 `X-Ristak-Webhook-Schema` identifica la misma versión.
+El health público `/api/health` expone el valor en
+`contracts.productPostWebhook` para comprobar qué contrato está desplegado.
 
 `price` y `SKU` deben corresponder al precio exacto señalado por el `priceId` del
 `lineItem`. Si el producto tiene varias opciones, nunca se toma el primer precio
