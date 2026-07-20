@@ -1049,6 +1049,7 @@
 .messagePane {
   --chat-message-surface-gap: 14px;
   --chat-message-surface-padding: 18px 18px 12px;
+  --chat-message-surface-grid-size: 28px;
   min-width: 0;
   max-width: 100%;
   overscroll-behavior-x: none;

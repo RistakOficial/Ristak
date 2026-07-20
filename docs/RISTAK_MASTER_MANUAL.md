@@ -1841,6 +1841,9 @@ el historial, composer ni acciones rapidas del chat. El asistente interno sigue
 disponible desde la pestaña principal `Chatbot`, seccion `Configuracion`, y
 desde `Configuración > Inteligencia Artificial`.
 
+El historial de `/chat` conserva una textura punteada ligera, con los puntos
+espaciados para que el fondo se sienta limpio y no compita con los mensajes.
+
 Los avisos flotantes de `/chat` desktop se anclan al lado izquierdo y deben
 ajustar textos largos sin aumentar el ancho del documento. El historial de la
 conversacion solo admite desplazamiento vertical: globos, errores, menus y
