@@ -4187,6 +4187,15 @@ En el editor visual, los bloques de calendario embebido eligen el calendario y
 la accion posterior a la cita desde la barra superior del editor. El inspector
 derecho solo muestra el estado del calendario seleccionado y los controles de
 diseno/estilo, para no duplicar la misma decision en dos superficies.
+Cada bloque o elemento editable incluye en el inspector derecho la categoria
+`Visibilidad`, con dos controles independientes: `Computadora` y `Celular`.
+Ambos nacen activos para mantener el comportamiento historico. Apagar uno oculta
+el elemento solo en ese tipo de dispositivo; apagar los dos equivale a ocultarlo
+por completo. El ojo del panel izquierdo representa ese estado global: aparece
+apagado cuando ningun dispositivo esta activo y, al volver a mostrar el elemento
+desde ahi, reactiva ambos. El canvas conserva atenuados los elementos ocultos en
+la vista seleccionada para que sigan siendo editables, mientras preview y
+publicado los eliminan realmente del layout en el breakpoint correspondiente.
 Las acciones de formularios, calendarios, pagos y botones pueden avanzar a la
 siguiente pagina, redirigir a una URL o ir a una pagina especifica del mismo
 proyecto usando el selector de paginas de esa landing.

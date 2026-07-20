@@ -157,7 +157,9 @@ import {
   getSectionColumns,
   buildBlockStyleVars,
   buildBlockStyleClassName,
-  buildBlocksResponsiveCss
+  buildBlocksResponsiveCss,
+  blockHasStyleWrapper,
+  blockIsUserHidden
 } from '../../../shared/sites/renderContract.js'
 
 // FIELD_BLOCK_TYPES vive en el contrato compartido; se re-exporta para los
@@ -15874,7 +15876,7 @@ function renderVideoActionTargetAttribute(block = {}, context = {}) {
 const COUNTDOWN_COMPLETION_ACTIONS = new Set(['none', 'redirect', 'hide_target', 'show_target', 'hide_self', 'restart'])
 
 function isBlockHiddenBySettings(block = {}) {
-  return block?.settings?.hidden === true || normalizeBoolean(block?.settings?.hidden) === 1
+  return blockIsUserHidden(block)
 }
 
 function normalizeCountdownMode(value) {
@@ -22260,7 +22262,7 @@ function renderBlockBackgroundVideo(block) {
 function wrapRenderedBlock(block, html, context = {}) {
   const style = renderBlockStyleVars(block, context)
   const className = renderBlockStyleClassName(block)
-  const hasClassOnlyStyle = block?.settings?.blockFullWidth === true
+  const hasClassOnlyStyle = blockHasStyleWrapper(block, context)
   const backgroundVideo = renderBlockBackgroundVideo(block)
   const videoActionTargetAttr = renderVideoActionTargetAttribute(block, context)
   const countdownActionTargetAttr = renderCountdownActionTargetAttribute(block, context)

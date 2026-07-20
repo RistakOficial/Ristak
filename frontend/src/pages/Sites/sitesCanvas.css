@@ -887,6 +887,22 @@ html body .rstkCanvas .rstk-mp-pay:disabled { opacity: 1; }
   box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--rstk-muted) 55%, transparent);
 }
 
+/* Visibilidad por dispositivo: el publicado elimina el bloque con @media, pero
+   el editor lo conserva atenuado para que siga siendo seleccionable y reversible. */
+@container rstk-canvas (min-width: 641px) {
+  .rstkCanvas .rstkDeviceDesktopHidden:not(.rstkHiddenBlock) {
+    opacity: .48;
+    filter: saturate(.72);
+  }
+}
+
+@container rstk-canvas (max-width: 640px) {
+  .rstkCanvas .rstkDeviceMobileHidden:not(.rstkHiddenBlock) {
+    opacity: .48;
+    filter: saturate(.72);
+  }
+}
+
 /* ============================================================
  * Animated selection — "marching ants": the same flowing dashes used by the
  * Automatizaciones connectors, just a touch wider. Reads blue on light pages

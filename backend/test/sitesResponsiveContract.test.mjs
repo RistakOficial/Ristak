@@ -3,11 +3,43 @@ import assert from 'node:assert/strict'
 
 import {
   resolveDeviceBlockSettings,
+  resolveBlockVisibility,
   buildBlockResponsiveCss,
   buildBlocksResponsiveCss,
+  buildBlockStyleClassName,
+  blockHasStyleWrapper,
   buildBlockStyleVars,
   RESPONSIVE_DEVICE_MAX_WIDTH
 } from '../../shared/sites/renderContract.js'
+
+test('visibilidad por dispositivo nace activa y conserva compatibilidad con hidden', () => {
+  assert.deepEqual(resolveBlockVisibility({ settings: {} }), { desktop: true, mobile: true })
+  assert.deepEqual(resolveBlockVisibility({ settings: { hidden: true } }), { desktop: false, mobile: false })
+  assert.deepEqual(resolveBlockVisibility({ settings: { hidden: 'true' } }), { desktop: false, mobile: false })
+  assert.deepEqual(resolveBlockVisibility({
+    settings: { visibleOnDesktop: true, visibleOnMobile: false, hidden: false }
+  }), { desktop: true, mobile: false })
+})
+
+test('visibilidad por dispositivo genera CSS público y conserva wrapper editable', () => {
+  const desktopOnly = {
+    id: 'desktop-only',
+    blockType: 'text',
+    settings: { visibleOnDesktop: true, visibleOnMobile: false }
+  }
+  assert.match(buildBlockResponsiveCss(desktopOnly, { queryType: 'media' }), /@media \(max-width:640px\).*display:none!important/)
+  assert.equal(buildBlockResponsiveCss(desktopOnly, { queryType: 'container' }), '')
+  assert.match(buildBlockStyleClassName(desktopOnly), /rstkDeviceMobileHidden/)
+  assert.equal(blockHasStyleWrapper(desktopOnly), true)
+
+  const mobileOnly = {
+    id: 'mobile-only',
+    blockType: 'text',
+    settings: { visibleOnDesktop: false, visibleOnMobile: true }
+  }
+  assert.match(buildBlockResponsiveCss(mobileOnly, { queryType: 'media' }), /@media \(min-width:641px\).*display:none!important/)
+  assert.match(buildBlockStyleClassName(mobileOnly), /rstkDeviceDesktopHidden/)
+})
 
 test('resolveDeviceBlockSettings aplica la cascada desktop -> tablet -> mobile', () => {
   const settings = {
@@ -153,4 +185,40 @@ test('render público: sitio SIN responsive no emite el style de responsive (ret
   }
   const html = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: true })
   assert.doesNotMatch(html, /data-rstk-responsive/)
+})
+
+test('render público: bloque solo escritorio se oculta en celular y mantiene su identidad', async () => {
+  const { renderPublicSiteHtml } = await import('../src/services/sitesService.js')
+  const site = {
+    id: 'site_visibility', name: 'V', title: 'V', description: '', slug: 'v',
+    siteType: 'landing_page', status: 'published',
+    theme: { template: 'ristak', pages: [{ id: 'page-1', title: 'P', sortOrder: 0 }] },
+    blocks: [{
+      id: 'desktop-title', siteId: 'site_visibility', blockType: 'title', label: 'T',
+      content: 'Solo escritorio', options: [], sortOrder: 0,
+      settings: { pageId: 'page-1', visibleOnDesktop: true, visibleOnMobile: false },
+      createdAt: '', updatedAt: ''
+    }]
+  }
+  const html = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.match(html, /class="[^"]*rstkDeviceMobileHidden[^"]*" data-rstk-block-id="desktop-title"/)
+  assert.match(html, /@media \(max-width:640px\)\{\[data-rstk-block-id="desktop-title"\]\{display:none!important\}\}/)
+})
+
+test('render público: ambos dispositivos apagados equivalen a oculto global', async () => {
+  const { renderPublicSiteHtml } = await import('../src/services/sitesService.js')
+  const site = {
+    id: 'site_hidden', name: 'H', title: 'H', description: '', slug: 'h',
+    siteType: 'landing_page', status: 'published',
+    theme: { template: 'ristak', pages: [{ id: 'page-1', title: 'P', sortOrder: 0 }] },
+    blocks: [{
+      id: 'hidden-title', siteId: 'site_hidden', blockType: 'title', label: 'T',
+      content: 'Oculto', options: [], sortOrder: 0,
+      settings: { pageId: 'page-1', visibleOnDesktop: false, visibleOnMobile: false },
+      createdAt: '', updatedAt: ''
+    }]
+  }
+  const html = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: true })
+  assert.match(html, /data-rstk-user-hidden="true" hidden aria-hidden="true"/)
+  assert.match(html, /\[data-rstk-block-id="hidden-title"\]\{display:none!important\}/)
 })

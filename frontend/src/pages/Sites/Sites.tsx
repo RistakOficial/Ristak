@@ -231,6 +231,7 @@ import {
   buildBlockStyleClassName,
   buildBlockStyleVars,
   buildBlocksResponsiveCss,
+  resolveBlockVisibility,
   resolveDeviceBlockSettings,
   buildEmbeddedFormProxyVars,
   buildEmbeddedFormTheme,
@@ -2781,7 +2782,22 @@ const fieldUsesPlaceholder = (blockType: SiteBlockType) =>
 const nativeBorderBlockTypes = new Set<SiteBlockType>(['hero', 'section', 'cta', 'benefits', 'testimonials', 'services', 'faq', 'form_embed', 'image', 'video', 'countdown', 'embed', 'calendar_embed', 'payment'])
 const surfaceSelectionBlockTypes = new Set<SiteBlockType>(['form_embed', 'calendar_embed', 'embed', 'image', 'video'])
 
-const isBlockHidden = (block?: SiteBlock | null) => block?.settings?.hidden === true
+const getBlockVisibility = (block?: SiteBlock | null) => (
+  resolveBlockVisibility(block || {}) as { desktop: boolean; mobile: boolean }
+)
+
+const isBlockHidden = (block?: SiteBlock | null) => {
+  const visibility = getBlockVisibility(block)
+  return !visibility.desktop && !visibility.mobile
+}
+
+const getBlockVisibilityPatch = (
+  nextVisibility: { desktop: boolean; mobile: boolean }
+) => ({
+  visibleOnDesktop: nextVisibility.desktop,
+  visibleOnMobile: nextVisibility.mobile,
+  hidden: !nextVisibility.desktop && !nextVisibility.mobile
+})
 
 const isLanding = (site?: PublicSite | null) => site?.siteType === 'landing_page'
 const isStandardForm = (site?: PublicSite | null) => site?.siteType === 'standard_form'
@@ -8213,6 +8229,61 @@ const AccordionSection: React.FC<{
   )
 }
 
+const BlockVisibilityControls: React.FC<{
+  block: SiteBlock
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ block, onPatchSettings, onSave }) => {
+  const visibility = getBlockVisibility(block)
+  const summary = visibility.desktop && visibility.mobile
+    ? 'Visible en computadora y celular.'
+    : visibility.desktop
+      ? 'Visible solo en computadora.'
+      : visibility.mobile
+        ? 'Visible solo en celular.'
+        : 'Oculto en todos los dispositivos.'
+
+  const toggleDevice = (device: DeviceMode) => {
+    const nextVisibility = {
+      ...visibility,
+      [device]: !visibility[device]
+    }
+    onPatchSettings(getBlockVisibilityPatch(nextVisibility))
+    window.setTimeout(onSave, 0)
+  }
+
+  const renderDeviceButton = (device: DeviceMode, label: string, icon: React.ReactNode) => {
+    const selected = visibility[device]
+    return (
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={selected}
+        aria-label={`Visible en ${label.toLowerCase()}`}
+        data-testid={`site-visibility-${device}`}
+        className={`${styles.visibilityDeviceButton} ${selected ? styles.visibilityDeviceButtonActive : ''}`}
+        onClick={() => toggleDevice(device)}
+      >
+        <span className={styles.visibilityDeviceIcon} aria-hidden="true">{icon}</span>
+        <span>{label}</span>
+        <span className={styles.visibilityDeviceCheck} aria-hidden="true">
+          {selected ? <Check size={13} /> : null}
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <AccordionSection id="block-visibility" title="Visibilidad">
+      <div className={styles.visibilityDeviceGrid} role="group" aria-label="Visibilidad por dispositivo">
+        {renderDeviceButton('desktop', 'Computadora', <Monitor size={18} />)}
+        {renderDeviceButton('mobile', 'Celular', <Smartphone size={18} />)}
+      </div>
+      <p className={styles.visibilitySummary} data-testid="site-visibility-summary">{summary}</p>
+    </AccordionSection>
+  )
+}
+
 function FormEmbedEditorPanel({
   site,
   block,
@@ -8650,6 +8721,13 @@ function FormEmbedEditorPanel({
               </AccordionSection>
             )}
           </>
+        )}
+        {activeField && (
+          <BlockVisibilityControls
+            block={activeField}
+            onPatchSettings={patchActiveFieldSettings}
+            onSave={onSave}
+          />
         )}
       </AccordionGroup>
     </div>
@@ -13883,7 +13961,10 @@ export const Sites: React.FC = () => {
   }
 
   const toggleBlockVisibility = (block: SiteBlock) => {
-    patchBlockSettingsLocal(block, { hidden: !isBlockHidden(block) })
+    const nextVisibility = isBlockHidden(block)
+      ? { desktop: true, mobile: true }
+      : { desktop: false, mobile: false }
+    patchBlockSettingsLocal(block, getBlockVisibilityPatch(nextVisibility))
     window.setTimeout(() => void handleSaveBlock(block.id), 0)
   }
 
@@ -14117,7 +14198,10 @@ export const Sites: React.FC = () => {
   }
 
   const toggleEmbeddedFormFieldVisibility = (field: SiteBlock) => {
-    patchEmbeddedFormFieldSettings(field, { hidden: !isBlockHidden(field) })
+    const nextVisibility = isBlockHidden(field)
+      ? { desktop: true, mobile: true }
+      : { desktop: false, mobile: false }
+    patchEmbeddedFormFieldSettings(field, getBlockVisibilityPatch(nextVisibility))
   }
 
   const getCurrentVideoFormGateContext = () => {
@@ -14227,7 +14311,10 @@ export const Sites: React.FC = () => {
   }
 
   const toggleVideoFormGateBlockVisibility = (block: SiteBlock) => {
-    patchVideoFormGateBlockSettings(block, { hidden: !isBlockHidden(block) })
+    const nextVisibility = isBlockHidden(block)
+      ? { desktop: true, mobile: true }
+      : { desktop: false, mobile: false }
+    patchVideoFormGateBlockSettings(block, getBlockVisibilityPatch(nextVisibility))
     if (videoFormGateEditBlock) {
       window.setTimeout(() => { void handleSaveBlock(videoFormGateEditBlock.id) }, 0)
     }
@@ -38199,10 +38286,12 @@ const blockHasBackgroundVideo = (block: SiteBlock) => {
 
 const blockNeedsStaticPreviewWrapper = (block: SiteBlock, style: React.CSSProperties) => {
   const settings = block.settings || {}
+  const visibility = getBlockVisibility(block)
   return Object.keys(style).length > 0 ||
     getSettingBoolean(settings, 'blockFullWidth') ||
     blockHasBackgroundVideo(block) ||
-    isBlockHidden(block)
+    !visibility.desktop ||
+    !visibility.mobile
 }
 
 const EmbeddedFormStaticBlockPreview: React.FC<{
@@ -42153,6 +42242,8 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       )}
 
       {blockHasExtraSettingsContent && settingsContent}
+
+      <BlockVisibilityControls block={block} onPatchSettings={onPatchSettings} onSave={onSave} />
     </AccordionGroup>
   )
 
@@ -43704,6 +43795,12 @@ const VideoFormGateSettingsPanel: React.FC<{
                     )}
                   </>
                 )}
+
+                <BlockVisibilityControls
+                  block={activeQuestion}
+                  onPatchSettings={(patch) => patchQuestionSettings(activeQuestion, patch)}
+                  onSave={onSave}
+                />
               </div>
               ) : null
               if (!videoFormGateElementEditor) {

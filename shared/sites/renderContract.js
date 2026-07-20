@@ -2543,6 +2543,34 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isTruthySetting(value) {
+  if (value === true || value === 1) return true
+  if (typeof value !== 'string') return false
+  return ['1', 'true', 'yes', 'on', 'enabled'].includes(value.trim().toLowerCase())
+}
+
+function isVisibleSetting(value) {
+  if (value === undefined || value === null || value === '') return true
+  if (value === false || value === 0) return false
+  if (typeof value !== 'string') return true
+  return !['0', 'false', 'no', 'off', 'disabled'].includes(value.trim().toLowerCase())
+}
+
+// Visibilidad editorial por dispositivo. Los sitios históricos no guardan estas
+// keys, así que ambos dispositivos son visibles por default. `hidden` conserva
+// compatibilidad como apagado global y siempre gana sobre los dos checks.
+function resolveBlockVisibility(blockOrSettings = {}) {
+  const source = isPlainObject(blockOrSettings) ? blockOrSettings : {}
+  const settings = isPlainObject(source.settings)
+    ? source.settings
+    : source
+  if (isTruthySetting(settings.hidden)) return { desktop: false, mobile: false }
+  return {
+    desktop: isVisibleSetting(settings.visibleOnDesktop),
+    mobile: isVisibleSetting(settings.visibleOnMobile)
+  }
+}
+
 // Devuelve los settings efectivos para un dispositivo aplicando la cascada
 // desktop -> tablet -> mobile sobre settings.responsive. Puro y testeable.
 function resolveDeviceBlockSettings(settings = {}, device = 'desktop') {
@@ -2563,26 +2591,42 @@ function resolveDeviceBlockSettings(settings = {}, device = 'desktop') {
 //   queryType 'media'     -> sitio publicado (@media)
 //   queryType 'container' -> canvas del editor (@container rstk-canvas)
 function buildBlockResponsiveCss(block, { queryType = 'media', containerName = 'rstk-canvas' } = {}, ctx = {}) {
-  if (!block || !isPlainObject(block.settings) || !isPlainObject(block.settings.responsive)) return ''
+  if (!block || !isPlainObject(block.settings)) return ''
   const blockId = cleanString(block.id)
   if (!blockId) return ''
-  const baseVars = buildBlockStyleVars(block, ctx)
   const blocks = []
-  for (const device of RESPONSIVE_DEVICES) {
-    const overrides = block.settings.responsive[device]
-    if (!isPlainObject(overrides) || !Object.keys(overrides).length) continue
-    const deviceSettings = resolveDeviceBlockSettings(block.settings, device)
-    const deviceVars = buildBlockStyleVars({ ...block, settings: deviceSettings }, ctx)
-    const decls = []
-    for (const [name, value] of Object.entries(deviceVars)) {
-      if (baseVars[name] !== value) decls.push(`${name}:${value}`)
+  if (isPlainObject(block.settings.responsive)) {
+    const baseVars = buildBlockStyleVars(block, ctx)
+    for (const device of RESPONSIVE_DEVICES) {
+      const overrides = block.settings.responsive[device]
+      if (!isPlainObject(overrides) || !Object.keys(overrides).length) continue
+      const deviceSettings = resolveDeviceBlockSettings(block.settings, device)
+      const deviceVars = buildBlockStyleVars({ ...block, settings: deviceSettings }, ctx)
+      const decls = []
+      for (const [name, value] of Object.entries(deviceVars)) {
+        if (baseVars[name] !== value) decls.push(`${name}:${value}`)
+      }
+      if (!decls.length) continue
+      const maxWidth = RESPONSIVE_DEVICE_MAX_WIDTH[device]
+      const query = queryType === 'container'
+        ? `@container ${containerName} (max-width:${maxWidth}px)`
+        : `@media (max-width:${maxWidth}px)`
+      blocks.push(`${query}{[data-rstk-block-id="${blockId}"]{${decls.join(';')}}}`)
     }
-    if (!decls.length) continue
-    const maxWidth = RESPONSIVE_DEVICE_MAX_WIDTH[device]
-    const query = queryType === 'container'
-      ? `@container ${containerName} (max-width:${maxWidth}px)`
-      : `@media (max-width:${maxWidth}px)`
-    blocks.push(`${query}{[data-rstk-block-id="${blockId}"]{${decls.join(';')}}}`)
+  }
+
+  // En el publicado, los checks de visibilidad se vuelven reglas reales de
+  // display. El canvas NO las emite: conserva el bloque editable y lo representa
+  // atenuado mediante las clases compartidas + @container de sitesCanvas.css.
+  if (queryType === 'media') {
+    const visibility = resolveBlockVisibility(block)
+    const selector = `[data-rstk-block-id="${blockId}"]`
+    if (!visibility.desktop && !visibility.mobile) {
+      blocks.push(`${selector}{display:none!important}`)
+    } else {
+      if (!visibility.desktop) blocks.push(`@media (min-width:641px){${selector}{display:none!important}}`)
+      if (!visibility.mobile) blocks.push(`@media (max-width:640px){${selector}{display:none!important}}`)
+    }
   }
   return blocks.join('\n')
 }
@@ -2610,6 +2654,7 @@ function blockHasExplicitBorder(settings) {
 
 function buildBlockStyleClassName(block) {
   const settings = (block && block.settings) || {}
+  const visibility = resolveBlockVisibility(block)
   const classes = [
     'rstk-block-style',
     blockHasExplicitBg(settings) ? 'rstkBlockBgSet' : '',
@@ -2633,6 +2678,8 @@ function buildBlockStyleClassName(block) {
     settings.lineHeight !== undefined && cleanString(settings.lineHeight) ? 'rstkLineHeightOverride' : '',
     block.blockType === 'text' && blockTextListStyle(settings.textListStyle) ? 'rstkListStyleOverride' : '',
     settings.textStrokeWidth !== undefined ? 'rstkStrokeOverride' : '',
+    !visibility.desktop ? 'rstkDeviceDesktopHidden' : '',
+    !visibility.mobile ? 'rstkDeviceMobileHidden' : '',
     // Contrato form-fields #5: la clase de "ancho por campo" solo existe cuando
     // el bloque trae un fieldWidth VÁLIDO (misma condición que la variable
     // --rstk-field-width). La regla de RSTK_BASE_CSS cuelga de esta clase, así
@@ -2655,16 +2702,19 @@ function blockHasBackgroundVideo(block) {
 }
 
 function blockIsUserHidden(block) {
-  const hidden = block && block.settings ? block.settings.hidden : undefined
-  if (hidden === true || hidden === 1) return true
-  if (typeof hidden === 'string') return ['1', 'true', 'yes', 'on', 'enabled'].includes(hidden.trim().toLowerCase())
-  return false
+  const visibility = resolveBlockVisibility(block)
+  return !visibility.desktop && !visibility.mobile
 }
 
 function blockHasResponsiveOverrides(block) {
   const responsive = block?.settings?.responsive
   if (!isPlainObject(responsive)) return false
   return RESPONSIVE_DEVICES.some(device => isPlainObject(responsive[device]) && Object.keys(responsive[device]).length)
+}
+
+function blockHasDeviceVisibilityOverrides(block) {
+  const visibility = resolveBlockVisibility(block)
+  return !visibility.desktop || !visibility.mobile
 }
 
 function blockHasStyleWrapper(block, ctx = {}) {
@@ -2676,6 +2726,7 @@ function blockHasStyleWrapper(block, ctx = {}) {
     settings.blockFullWidth === true ||
     blockHasBackgroundVideo(block) ||
     blockIsUserHidden(block) ||
+    blockHasDeviceVisibilityOverrides(block) ||
     // Con overrides responsive el bloque necesita su wrapper + data-rstk-block-id
     // para que el CSS por dispositivo ([data-rstk-block-id="X"]) lo alcance.
     blockHasResponsiveOverrides(block) ||
@@ -3198,9 +3249,11 @@ export {
   buildBlockStyleVars,
   buildBlockStyleClassName,
   resolveDeviceBlockSettings,
+  resolveBlockVisibility,
   buildBlockResponsiveCss,
   buildBlocksResponsiveCss,
   blockHasResponsiveOverrides,
+  blockHasDeviceVisibilityOverrides,
   RESPONSIVE_DEVICE_MAX_WIDTH,
   blockHasBackgroundVideo,
   blockIsUserHidden,
