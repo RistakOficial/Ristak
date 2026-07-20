@@ -159,7 +159,9 @@ const splitFallbackName = (value = '') => {
   }
 }
 
-export const AccountSettings: React.FC = () => {
+type AccountSettingsView = 'all' | 'profile' | 'business'
+
+const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view }) => {
   const { user, logout, updateProfile } = useAuth()
   const { labels, updateLabels } = useLabels()
   const { showToast } = useNotification()
@@ -258,6 +260,9 @@ export const AccountSettings: React.FC = () => {
     (!hasStoredBusinessProfile && Boolean(user?.businessName))
   const businessProfileSaving = savingBusinessProfile || savingBusinessProfileConfig
   const usernameChanged = newUsername.trim() && newUsername.trim() !== currentUsername
+  const usernameDisplayValue = !isEditingUsername && accountEmail && currentUsername === accountEmail
+    ? 'Igual al correo de login'
+    : (isEditingUsername ? newUsername : currentUsername)
   const storagePercent = Math.max(0, Math.min(100, storageStatus?.percentUsed ?? 0))
   const timezoneOptions = useMemo(
     () => ALL_TIMEZONES.map((tz) => buildTimezoneDisplayInfo(tz, timezoneClock)),
@@ -275,6 +280,8 @@ export const AccountSettings: React.FC = () => {
   const canManageAccountCancellation = user?.role === 'admin' && user?.licenseEnforced
   const cancellationReasons = cancellationStatus?.reasons || []
   const selectedReasonRequiresDetails = selectedCancellationReason === 'other'
+  const showProfileSettings = view !== 'business'
+  const showBusinessSettings = view !== 'profile'
 
   useEffect(() => {
     setCustomLabels({
@@ -874,31 +881,41 @@ export const AccountSettings: React.FC = () => {
         <div className={styles.panelHeader}>
           <div className={styles.panelHeaderLeft}>
             <div className={styles.iconBox}>
-              <User size={22} />
+              {view === 'business' ? <Building2 size={22} /> : <User size={22} />}
             </div>
             <div>
-              <h2 className={styles.panelTitle}>Cuenta</h2>
+              <h2 className={styles.panelTitle}>
+                {view === 'profile' ? 'Tu perfil' : view === 'business' ? 'Negocio' : 'Cuenta'}
+              </h2>
               <p className={styles.panelDescription}>
-                Administra correo de login, contraseña, perfil y datos del negocio.
+                {view === 'profile'
+                  ? 'Tus datos personales, correo de acceso y contraseña.'
+                  : view === 'business'
+                    ? 'Identidad, preferencias y administración de la cuenta del negocio.'
+                    : 'Administra correo de login, contraseña, perfil y datos del negocio.'}
               </p>
             </div>
           </div>
-          <div className={styles.panelHeaderActions}>
-            <Badge variant="success">
-              <CheckCircle size={15} />
-              {currentRoleLabel}
-            </Badge>
-          </div>
+          {showProfileSettings && (
+            <div className={styles.panelHeaderActions}>
+              <Badge variant="success">
+                <CheckCircle size={15} />
+                {currentRoleLabel}
+              </Badge>
+            </div>
+          )}
         </div>
 
         <div className={styles.panelSection}>
           <div className={styles.accountGrid}>
+            {showProfileSettings && (
+              <>
             <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
               <div className={styles.accountSectionHeader}>
                 <div>
-                  <h3 className={styles.accountSectionTitle}>Acceso de login</h3>
+                  <h3 className={styles.accountSectionTitle}>Acceso y seguridad</h3>
                   <p className={styles.accountSectionDescription}>
-                    Lo primero: la entrada a Ristak usa el correo de login y la contraseña. El identificador interno no es la llave principal de acceso.
+                    Tu correo y contraseña abren Ristak. El identificador interno sólo sirve como referencia técnica.
                   </p>
                 </div>
               </div>
@@ -936,7 +953,7 @@ export const AccountSettings: React.FC = () => {
                         <input
                           className={`${styles.input} ${!isEditingUsername ? styles.inputReadOnly : ''}`}
                           type="text"
-                          value={isEditingUsername ? newUsername : currentUsername}
+                          value={usernameDisplayValue}
                           onChange={(event) => {
                             if (isEditingUsername) {
                               setNewUsername(event.target.value)
@@ -1061,9 +1078,9 @@ export const AccountSettings: React.FC = () => {
             <section className={styles.accountSection}>
               <div className={styles.accountSectionHeader}>
                 <div>
-                  <h3 className={styles.accountSectionTitle}>Perfil administrador</h3>
+                  <h3 className={styles.accountSectionTitle}>Foto de perfil</h3>
                   <p className={styles.accountSectionDescription}>
-                    Foto visible para identificar la cuenta interna.
+                    Te identifica dentro del equipo sin repetir tus datos de acceso.
                   </p>
                 </div>
               </div>
@@ -1081,12 +1098,7 @@ export const AccountSettings: React.FC = () => {
                       <User size={26} />
                     )}
                   </div>
-                  <div className={styles.profileText}>
-                    <strong>{user?.name || 'Usuario'}</strong>
-                    <span>@{currentUsername}</span>
-                  </div>
                 </div>
-                <span className={styles.adminRole}>{currentRoleLabel}</span>
               </div>
 
               <input
@@ -1142,9 +1154,9 @@ export const AccountSettings: React.FC = () => {
             <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
               <div className={styles.accountSectionHeader}>
                 <div>
-                  <h3 className={styles.accountSectionTitle}>Datos de cuenta</h3>
+                  <h3 className={styles.accountSectionTitle}>Información personal</h3>
                   <p className={styles.accountSectionDescription}>
-                    Datos visibles del administrador dentro de Ristak.
+                    Tu nombre y teléfono dentro de Ristak.
                   </p>
                 </div>
               </div>
@@ -1204,6 +1216,12 @@ export const AccountSettings: React.FC = () => {
                 </Button>
               </div>
             </section>
+
+              </>
+            )}
+
+            {showBusinessSettings && (
+              <>
 
             <section className={`${styles.accountSection} ${styles.accountSectionWide}`}>
               <div className={styles.accountSectionHeader}>
@@ -1645,6 +1663,8 @@ export const AccountSettings: React.FC = () => {
                 </div>
               </section>
             )}
+              </>
+            )}
           </div>
         </div>
       </Card>
@@ -1660,6 +1680,7 @@ export const AccountSettings: React.FC = () => {
         size="lg"
         confirmText={cancellationStep === 'reasons' ? 'Cancelar cuenta' : undefined}
         cancelText="Volver"
+        typeToConfirm={cancellationStep === 'reasons' ? 'CANCELAR' : undefined}
         onConfirm={cancellationStep === 'reasons' ? handleCancelAccount : undefined}
         closeOnBackdropClick={!cancellingAccount && !savingRetentionOffer}
         closeOnEscape={!cancellingAccount && !savingRetentionOffer}
@@ -1773,3 +1794,11 @@ export const AccountSettings: React.FC = () => {
     </div>
   )
 }
+
+export const ProfileSettings: React.FC = () => <AccountSettingsContent view="profile" />
+
+export const BusinessAccountSettings: React.FC = () => <AccountSettingsContent view="business" />
+
+// La app móvil conserva su pantalla combinada. La separación nueva aplica al
+// navegador de Configuración de escritorio.
+export const AccountSettings: React.FC = () => <AccountSettingsContent view="all" />

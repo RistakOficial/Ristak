@@ -2439,7 +2439,7 @@ export const PaymentsConfiguration: React.FC = () => {
         {checked && (
           <div className={styles.logoUploadActions}>
             <Button type="button" variant="ghost" size="sm" onClick={() => navigate('/settings/account')}>
-              Editar en cuenta
+              Editar negocio
             </Button>
           </div>
         )}
@@ -2462,8 +2462,8 @@ export const PaymentsConfiguration: React.FC = () => {
         </div>
 
         {renderBusinessProfileSource(
-          'Usar logo y soporte de Cuenta',
-          'El logo, correo y teléfono de soporte salen de Configuración > Cuenta > Datos del negocio.',
+          'Usar logo y soporte de Negocio',
+          'El logo, correo y teléfono de soporte salen de Configuración > Negocio.',
           checkout.useBusinessProfile !== false,
           (next) => setCheckoutValue('useBusinessProfile', next)
         )}
@@ -2510,7 +2510,7 @@ export const PaymentsConfiguration: React.FC = () => {
                   accept="image/*"
                   onChange={handleCheckoutLogoUpload}
                 />
-                <small>{checkout.useBusinessProfile === false ? 'Se guarda en Media y aparece en la parte superior del link de cobro.' : 'Heredado desde los datos del negocio en Cuenta.'}</small>
+                <small>{checkout.useBusinessProfile === false ? 'Se guarda en Media y aparece en la parte superior del link de cobro.' : 'Heredado desde Configuración > Negocio.'}</small>
                 {effectiveCheckout.logoUrl && (
                   <input
                     type="url"
@@ -2578,7 +2578,7 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
 
           {renderBusinessProfileSource(
-            'Usar datos del negocio de Cuenta',
+            'Usar datos de Negocio',
             'Nombre, contacto, web, dirección y términos se toman del perfil de negocio.',
             receipt.useBusinessProfile !== false,
             (next) => setReceiptValue('useBusinessProfile', next)
@@ -2920,7 +2920,7 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
 
           {renderBusinessProfileSource(
-            'Usar datos del negocio de Cuenta',
+            'Usar datos de Negocio',
             'Logo, nombre, contacto, web, dirección y términos se toman del perfil de negocio.',
             receipt.useBusinessProfile !== false,
             (next) => setReceiptValue('useBusinessProfile', next)
@@ -2968,7 +2968,7 @@ export const PaymentsConfiguration: React.FC = () => {
                     accept="image/*"
                     onChange={handleReceiptLogoUpload}
                   />
-                  <small>{receipt.useBusinessProfile === false ? 'Se guarda en Media y se usa en la hoja PDF del comprobante.' : 'Heredado desde los datos del negocio en Cuenta.'}</small>
+                  <small>{receipt.useBusinessProfile === false ? 'Se guarda en Media y se usa en la hoja PDF del comprobante.' : 'Heredado desde Configuración > Negocio.'}</small>
                   {effectiveReceipt.logoUrl && (
                     <input
                       type="url"

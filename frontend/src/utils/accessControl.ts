@@ -93,10 +93,10 @@ export const ACCESS_MODULES = [
   },
   {
     key: 'settings_account',
-    label: 'Cuenta',
-    description: 'Perfil propio, contraseña y ajustes personales.',
+    label: 'Perfil y negocio',
+    description: 'Perfil propio, acceso y configuración del negocio.',
     group: 'Configuración',
-    path: '/settings/account'
+    path: '/settings/profile'
   },
   {
     key: 'settings_mobile',
@@ -421,6 +421,7 @@ export function hasModuleAccess(
 export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> = [
   { prefix: '/settings/users-access', moduleKey: 'settings_users' },
   { prefix: '/settings/hidden-contacts', moduleKey: 'contacts' },
+  { prefix: '/settings/profile', moduleKey: 'settings_account' },
   { prefix: '/settings/account', moduleKey: 'settings_account' },
   { prefix: '/settings/mobile-app', moduleKey: 'settings_mobile' },
   { prefix: '/settings/calendars', moduleKey: 'settings_calendars' },

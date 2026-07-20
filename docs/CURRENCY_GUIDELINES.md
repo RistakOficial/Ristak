@@ -21,7 +21,7 @@ Fuente de verdad:
   - `normalizeCurrencyCode(...)`
   - `useAccountCurrency()` desde `frontend/src/hooks/useAccountCurrency.ts`
 - Persistencia: `app_config.account_currency`.
-- UI de usuario: Configuracion > Cuenta, dentro de pais/lada/moneda.
+- UI de usuario: Configuracion > Negocio, dentro de pais/lada/moneda.
 
 No crees una variable de entorno, Render secret, Docker secret o config manual
 externa para elegir la moneda default de la aplicacion.

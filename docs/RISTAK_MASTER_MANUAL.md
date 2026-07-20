@@ -1237,7 +1237,13 @@ la ruta vuelve a seleccionar ese item sobre el snapshot ya recibido; no repite
 
 Configuracion se organiza en:
 
-- Cuenta: cuenta, usuarios, notificaciones, privacidad, aplicacion movil.
+- Cuenta: Perfil (`/settings/profile`) concentra datos personales, correo de
+  acceso, identificador interno, foto y contraseña. Negocio
+  (`/settings/account`) concentra identidad comercial, logo, contacto,
+  nombres de contactos, zona horaria, país, lada, moneda, almacenamiento y
+  cancelación. También incluye usuarios, notificaciones, privacidad y
+  aplicación móvil. Los datos personales y comerciales no deben volver a
+  mezclarse en una sola pantalla.
 - Contactos: contactos ocultos. Esta pagina es independiente de HighLevel y de
   cualquier otra integracion; solo los administradores pueden agregar o eliminar
   reglas de ocultamiento.
@@ -2441,7 +2447,7 @@ personalizados se construye exclusivamente desde definiciones activas creadas o
 configuradas por el usuario; valores huérfanos y definiciones de sistema o de
 integraciones no se presentan aunque existan dentro del JSON del contacto. El
 nombre del negocio (`business_name`, `business.name` o “Nombre del negocio”) es
-perfil de la cuenta —se administra en Configuración > Cuenta/Perfil del negocio—
+perfil de la cuenta —se administra en Configuración > Negocio—
 y nunca se presenta como campo personalizado del contacto, aunque un catálogo
 legacy omita sus banderas de sistema. La
 acción para inscribir en una automatización publicada vive inmediatamente debajo
@@ -3479,7 +3485,7 @@ de HighLevel cuando `payment_plans.source='rebill'`.
 ### Moneda de cuenta
 
 La moneda default de Ristak siempre es la configurada en la cuenta. La fuente de
-verdad es `app_config.account_currency`, expuesta en Configuracion > Cuenta y
+verdad es `app_config.account_currency`, expuesta en Configuracion > Negocio y
 resuelta con `backend/src/utils/accountLocale.js` y
 `frontend/src/hooks/useAccountCurrency.ts`.
 
@@ -4217,7 +4223,7 @@ Sites. Siempre responde una Privacy Policy publica para Meta/Facebook/Instagram
 antes de resolver el dashboard, calendarios o paginas editables del usuario, por
 lo que ningun Site, slug o pagina personalizada puede sobrescribirla. El
 contenido toma nombre, email, telefono, direccion y sitio web desde
-`account_business_profile` (Configuracion > Cuenta) y usa el usuario admin activo
+`account_business_profile` (Configuracion > Negocio) y usa el usuario admin activo
 solo como respaldo para nombre/email; no depende de secrets externos.
 Configuracion > Dominios separa la lista de dominios publicos de la configuracion
 de cada dominio: el usuario agrega dominios con "Agregar dominio", el modal

@@ -2659,7 +2659,7 @@ class Component extends DCLogic {
     screen: 'dashboard', dir: 'eb', mode: 'dark', dateOpen: true,
     adsTab: 'classic', adsExpanded: { c0: true, 'c0-a0': true }, adsFilters: false,
     sitesTab: 'landings', reportsTab: 'historico', autoView: 'home',
-    selContacts: {}, cfgKey: 'account', aiTab: 'general', siteEditor: false, analyticsTab: 'overview', dashVisitors: true,
+    selContacts: {}, cfgKey: 'profile', aiTab: 'general', siteEditor: false, analyticsTab: 'overview', dashVisitors: true,
     repSeg: 'all', repColsOpen: false, repCpa: false, repTicket: false, repView: 'month', modal: null, anFilter: false,
     remType: 'reminder', remSender: 'contact', remNoConfirm: 'no_action', remOverflow: 'before'
   };
@@ -2735,7 +2735,7 @@ class Component extends DCLogic {
     const tag = String.fromCharCode(60) + 'script src="https://t.ristak.io/r.js" data-id="aurora-8842" async>' + String.fromCharCode(60) + '/script>';
 
     const groups = [
-      { group: 'Cuenta', items: [['account', 'Cuenta'], ['users-access', 'Usuarios y accesos'], ['privacy', 'Privacidad'], ['mobile-app', 'Aplicación móvil']] },
+      { group: 'Cuenta', items: [['profile', 'Perfil'], ['account', 'Negocio'], ['users-access', 'Usuarios y accesos'], ['privacy', 'Privacidad'], ['mobile-app', 'Aplicación móvil']] },
       { group: 'Integraciones', items: [['highlevel', 'HighLevel'], ['meta-ads', 'Meta'], ['whatsapp', 'WhatsApp'], ['email', 'Correos'], ['payments', 'Pagos'], ['calendars', 'Calendarios']] },
       { group: 'Datos y rastreo', items: [['tracking', 'Rastreo Web'], ['domains', 'Dominios'], ['costs', 'Costos'], ['media', 'Media']] },
       { group: 'Personalización', items: [['custom-fields', 'Campos personalizados'], ['variable-fields', 'Campos variables'], ['trigger-links', 'Enlaces de disparo'], ['tags', 'Etiquetas']] },
@@ -2743,20 +2743,29 @@ class Component extends DCLogic {
     ];
 
     const C = {
-      'account': { title: 'Cuenta', desc: 'Tu perfil, negocio y preferencias personales.', cards: [
-        card('Perfil del negocio', 'Información que se muestra en tu espacio de trabajo.', [
-          F('Nombre del negocio', 'Aurora Marketing'),
-          F('Nombre de contacto', 'Raúl Gómez'),
-          F('Correo electrónico', 'raul@auroramkt.mx'),
-          F('Teléfono', '+52 55 1842 0093'),
-          SEL('Zona horaria', '(GMT-6) Ciudad de México'),
-          SEL('Idioma', 'Español (MX)')
+      'profile': { title: 'Tu perfil', desc: 'Tus datos personales, correo de acceso y contraseña.', cards: [
+        card('Información personal', 'Tu identidad dentro de Ristak.', [
+          F('Nombre', 'Raúl'),
+          F('Apellido', 'Gómez'),
+          F('Teléfono', '+52 55 1842 0093')
         ], { label: 'Guardar cambios', v: 'primary' }),
-        card('Seguridad', 'Contraseña y acceso a tu cuenta.', [
+        card('Acceso y seguridad', 'Credenciales para entrar a Ristak.', [
+          F('Correo de login', 'raul@auroramkt.mx'),
+          F('Identificador interno', 'Igual al correo de login'),
           F('Contraseña', '••••••••••', 'Última actualización hace 3 meses'),
           T('Autenticación en dos pasos', 'Pide un código al iniciar sesión.', false),
           BTNS([{ label: 'Cambiar contraseña', v: 'secondary' }])
         ])
+      ]},
+      'account': { title: 'Negocio', desc: 'Identidad, contacto y preferencias de la cuenta del negocio.', cards: [
+        card('Identidad y contacto', 'Información comercial usada por el espacio de trabajo y los cobros.', [
+          F('Nombre del negocio', 'Aurora Marketing'),
+          F('Correo del negocio', 'hola@auroramkt.mx'),
+          F('Teléfono', '+52 55 1842 0093'),
+          F('Sitio web', 'https://auroramkt.mx'),
+          SEL('Zona horaria', '(GMT-6) Ciudad de México'),
+          SEL('Moneda', 'MXN · Peso mexicano')
+        ], { label: 'Guardar negocio', v: 'primary' })
       ]},
       'users-access': { title: 'Usuarios y accesos', desc: 'Personas, roles y permisos por módulo.', cards: [
         card('Miembros del equipo', '', [
@@ -3474,7 +3483,7 @@ class Component extends DCLogic {
 
     // ---- Configuración ----
     const settingsSections = [
-      'Cuenta', 'Usuarios y accesos', 'Privacidad', 'Aplicación móvil', 'Calendarios', 'Pagos', 'HighLevel',
+      'Perfil', 'Negocio', 'Usuarios y accesos', 'Privacidad', 'Aplicación móvil', 'Calendarios', 'Pagos', 'HighLevel',
       'Meta', 'WhatsApp', 'Correos', 'Rastreo Web', 'Dominios', 'Costos', 'Media',
       'Campos personalizados', 'Campos variables', 'Enlaces de disparo', 'Etiquetas', 'Developers'
     ].map((label) => ({ label, active: label === 'Meta' }));

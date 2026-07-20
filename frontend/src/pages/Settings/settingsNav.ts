@@ -30,7 +30,8 @@ export interface SettingsNavItem {
 }
 
 export const settingsNavigation: SettingsNavItem[] = [
-  { to: '/settings/account', label: 'Cuenta', group: 'Cuenta', permissionKey: 'settings_account' },
+  { to: '/settings/profile', label: 'Perfil', group: 'Cuenta', permissionKey: 'settings_account' },
+  { to: '/settings/account', label: 'Negocio', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/users-access', label: 'Usuarios', group: 'Cuenta', permissionKey: 'settings_users' },
   { to: '/settings/notifications', label: 'Notificaciones', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/privacy', label: 'Privacidad', group: 'Cuenta', permissionKey: 'settings_account' },

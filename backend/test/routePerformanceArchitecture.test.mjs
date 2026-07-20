@@ -81,3 +81,20 @@ test('cada panel de Configuracion queda aislado en su propio chunk', async () =>
   assert.match(settings, /import\('\.\/AccountSettings'\)/)
   assert.match(settings, /<React\.Suspense[\s\S]*?<Routes>[\s\S]*?<\/React\.Suspense>/)
 })
+
+test('Configuracion separa el perfil personal de la cuenta del negocio', async () => {
+  const [settings, settingsNav, accountSettings, accessControl] = await Promise.all([
+    repoFile('frontend/src/pages/Settings/Settings.tsx'),
+    repoFile('frontend/src/pages/Settings/settingsNav.ts'),
+    repoFile('frontend/src/pages/Settings/AccountSettings.tsx'),
+    repoFile('frontend/src/utils/accessControl.ts')
+  ])
+
+  assert.match(settingsNav, /to: '\/settings\/profile', label: 'Perfil'/)
+  assert.match(settingsNav, /to: '\/settings\/account', label: 'Negocio'/)
+  assert.match(settings, /path="profile"[\s\S]*?<ProfileSettings \/>/)
+  assert.match(settings, /path="account"[\s\S]*?<BusinessAccountSettings \/>/)
+  assert.match(accountSettings, /export const ProfileSettings[\s\S]*?view="profile"/)
+  assert.match(accountSettings, /export const BusinessAccountSettings[\s\S]*?view="business"/)
+  assert.match(accessControl, /prefix: '\/settings\/profile', moduleKey: 'settings_account'/)
+})

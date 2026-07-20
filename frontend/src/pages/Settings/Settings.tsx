@@ -4,6 +4,7 @@ import {
   BellRing,
   BadgeDollarSign,
   Bot,
+  Building2,
   CalendarDays,
   CheckCheck,
   Code2,
@@ -72,7 +73,8 @@ const whatsAppSettingsPage = createLazySettingsPage(() => import('./WhatsAppSett
 const emailSettingsPage = createLazySettingsPage(() => import('./EmailSettings'), 'EmailSettings')
 const webTrackingPage = createLazySettingsPage(() => import('./WebTracking'), 'WebTracking')
 const calendarsConfigurationPage = createLazySettingsPage(() => import('./CalendarsConfiguration'), 'CalendarsConfiguration')
-const accountSettingsPage = createLazySettingsPage(() => import('./AccountSettings'), 'AccountSettings')
+const profileSettingsPage = createLazySettingsPage(() => import('./AccountSettings'), 'ProfileSettings')
+const businessAccountSettingsPage = createLazySettingsPage(() => import('./AccountSettings'), 'BusinessAccountSettings')
 const userAccessSettingsPage = createLazySettingsPage(() => import('./UserAccessSettings'), 'UserAccessSettings')
 const apiAccessSettingsPage = createLazySettingsPage(() => import('./APIAccessSettings'), 'APIAccessSettings')
 const domainsPage = createLazySettingsPage(() => import('./Domains'), 'Domains')
@@ -95,7 +97,8 @@ const WhatsAppSettings = whatsAppSettingsPage.Component
 const EmailSettings = emailSettingsPage.Component
 const WebTracking = webTrackingPage.Component
 const CalendarsConfiguration = calendarsConfigurationPage.Component
-const AccountSettings = accountSettingsPage.Component
+const ProfileSettings = profileSettingsPage.Component
+const BusinessAccountSettings = businessAccountSettingsPage.Component
 const UserAccessSettings = userAccessSettingsPage.Component
 const APIAccessSettings = apiAccessSettingsPage.Component
 const Domains = domainsPage.Component
@@ -119,7 +122,8 @@ const settingsPageRegistry = [
   { path: '/settings/email', preload: emailSettingsPage.preload },
   { path: '/settings/tracking', preload: webTrackingPage.preload },
   { path: '/settings/calendars', preload: calendarsConfigurationPage.preload },
-  { path: '/settings/account', preload: accountSettingsPage.preload },
+  { path: '/settings/profile', preload: profileSettingsPage.preload },
+  { path: '/settings/account', preload: businessAccountSettingsPage.preload },
   { path: '/settings/users-access', preload: userAccessSettingsPage.preload },
   { path: '/settings/developers', preload: apiAccessSettingsPage.preload },
   { path: '/settings/domains', preload: domainsPage.preload },
@@ -167,7 +171,8 @@ const SettingsAccessGate: React.FC<{ moduleKey: PermissionKey; featureKeys?: rea
 type SettingsIcon = React.ComponentType<{ size?: number; className?: string }>
 
 const settingsIcons: Record<string, SettingsIcon> = {
-  '/settings/account': User,
+  '/settings/profile': User,
+  '/settings/account': Building2,
   '/settings/users-access': Users,
   '/settings/notifications': BellRing,
   '/settings/mobile-app': MonitorSmartphone,
@@ -282,7 +287,8 @@ export const Settings: React.FC = () => {
                 <Route path="privacy" element={<SettingsAccessGate moduleKey="settings_account"><PrivacySettings /></SettingsAccessGate>} />
                 <Route path="hidden-contacts" element={<SettingsAccessGate moduleKey="contacts" adminOnly><HiddenContactsSettings /></SettingsAccessGate>} />
                 <Route path="users-access" element={<SettingsAccessGate moduleKey="settings_users"><UserAccessSettings /></SettingsAccessGate>} />
-                <Route path="account" element={<SettingsAccessGate moduleKey="settings_account"><AccountSettings /></SettingsAccessGate>} />
+                <Route path="profile" element={<SettingsAccessGate moduleKey="settings_account"><ProfileSettings /></SettingsAccessGate>} />
+                <Route path="account" element={<SettingsAccessGate moduleKey="settings_account"><BusinessAccountSettings /></SettingsAccessGate>} />
                 </Routes>
               </React.Suspense>
             </LazyLoadErrorBoundary>
