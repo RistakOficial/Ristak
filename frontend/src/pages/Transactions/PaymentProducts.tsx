@@ -1419,9 +1419,25 @@ export const PaymentProducts: React.FC = () => {
                       <div className={styles.webhookList}>
                         {productForm.postWebhooks.map((webhook, index) => (
                           <div className={styles.webhookRow} key={webhook.formId}>
-                            <div className={styles.webhookIndex}>{index + 1}</div>
+                            <div className={styles.webhookRowHeader}>
+                              <div className={styles.webhookRowTitle}>
+                                <span className={styles.webhookIndex}>{index + 1}</span>
+                                <span>Webhook</span>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                iconOnly
+                                aria-label="Quitar webhook"
+                                title="Quitar webhook"
+                                leftIcon={<Trash2 size={16} />}
+                                onClick={() => removeProductWebhook(webhook.formId)}
+                              />
+                            </div>
+
                             <div className={styles.webhookFields}>
-                              <div className={`${styles.formGroup} ${styles.webhookUrlField}`}>
+                              <div className={styles.formGroup}>
                                 <label>Ruta POST</label>
                                 <input
                                   value={webhook.url}
@@ -1437,9 +1453,12 @@ export const PaymentProducts: React.FC = () => {
                                   placeholder="Bearer token..."
                                 />
                               </div>
-                              <div className={`${styles.formGroup} ${styles.webhookHeadersField}`}>
-                                <div className={styles.webhookHeadersHeader}>
-                                  <label>Headers</label>
+                            </div>
+
+                            <div className={styles.webhookSubsection}>
+                              <div className={styles.webhookSubHeader}>
+                                <label>Headers</label>
+                                <div className={styles.webhookModeSelect}>
                                   <CustomSelect
                                     value={webhook.headersMode}
                                     onValueChange={(value) => setProductWebhookHeadersMode(
@@ -1452,65 +1471,69 @@ export const PaymentProducts: React.FC = () => {
                                     ]}
                                   />
                                 </div>
-
-                                {webhook.headersMode === 'json' ? (
-                                  <textarea
-                                    rows={2}
-                                    value={webhook.headersJson}
-                                    onChange={(event) => patchProductWebhook(webhook.formId, 'headersJson', event.target.value)}
-                                    placeholder='{"X-Secret": "valor"}'
-                                  />
-                                ) : (
-                                  <div className={styles.webhookHeadersList}>
-                                    {webhook.headerRows.map((header) => (
-                                      <div className={styles.webhookHeaderRow} key={header.formId}>
-                                        <input
-                                          value={header.key}
-                                          onChange={(event) => patchProductWebhookHeader(
-                                            webhook.formId,
-                                            header.formId,
-                                            'key',
-                                            event.target.value
-                                          )}
-                                          placeholder="Nombre"
-                                        />
-                                        <input
-                                          value={header.value}
-                                          onChange={(event) => patchProductWebhookHeader(
-                                            webhook.formId,
-                                            header.formId,
-                                            'value',
-                                            event.target.value
-                                          )}
-                                          placeholder="Valor"
-                                        />
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          iconOnly
-                                          aria-label="Quitar header"
-                                          title="Quitar header"
-                                          leftIcon={<Trash2 size={14} />}
-                                          onClick={() => removeProductWebhookHeader(webhook.formId, header.formId)}
-                                        />
-                                      </div>
-                                    ))}
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      leftIcon={<Plus size={14} />}
-                                      onClick={() => addProductWebhookHeader(webhook.formId)}
-                                    >
-                                      Agregar header
-                                    </Button>
-                                  </div>
-                                )}
                               </div>
-                              <div className={`${styles.formGroup} ${styles.webhookHeadersField}`}>
-                                <div className={styles.webhookHeadersHeader}>
-                                  <label>Body</label>
+
+                              {webhook.headersMode === 'json' ? (
+                                <textarea
+                                  rows={2}
+                                  value={webhook.headersJson}
+                                  onChange={(event) => patchProductWebhook(webhook.formId, 'headersJson', event.target.value)}
+                                  placeholder='{"X-Secret": "valor"}'
+                                />
+                              ) : (
+                                <div className={styles.webhookKvList}>
+                                  {webhook.headerRows.map((header) => (
+                                    <div className={styles.webhookKvRow} key={header.formId}>
+                                      <input
+                                        value={header.key}
+                                        onChange={(event) => patchProductWebhookHeader(
+                                          webhook.formId,
+                                          header.formId,
+                                          'key',
+                                          event.target.value
+                                        )}
+                                        placeholder="Nombre"
+                                      />
+                                      <input
+                                        value={header.value}
+                                        onChange={(event) => patchProductWebhookHeader(
+                                          webhook.formId,
+                                          header.formId,
+                                          'value',
+                                          event.target.value
+                                        )}
+                                        placeholder="Valor"
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        iconOnly
+                                        aria-label="Quitar header"
+                                        title="Quitar header"
+                                        leftIcon={<Trash2 size={14} />}
+                                        onClick={() => removeProductWebhookHeader(webhook.formId, header.formId)}
+                                      />
+                                    </div>
+                                  ))}
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    className={styles.webhookAddBtn}
+                                    leftIcon={<Plus size={14} />}
+                                    onClick={() => addProductWebhookHeader(webhook.formId)}
+                                  >
+                                    Agregar header
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className={styles.webhookSubsection}>
+                              <div className={styles.webhookSubHeader}>
+                                <label>Body</label>
+                                <div className={styles.webhookModeSelect}>
                                   <CustomSelect
                                     value={webhook.bodyMode}
                                     onValueChange={(value) => setProductWebhookBodyMode(
@@ -1523,73 +1546,64 @@ export const PaymentProducts: React.FC = () => {
                                     ]}
                                   />
                                 </div>
-
-                                {webhook.bodyMode === 'json' ? (
-                                  <textarea
-                                    rows={3}
-                                    value={webhook.bodyJson}
-                                    onChange={(event) => patchProductWebhook(webhook.formId, 'bodyJson', event.target.value)}
-                                    placeholder='{"campaign": "lanzamiento"}'
-                                  />
-                                ) : (
-                                  <div className={styles.webhookHeadersList}>
-                                    {webhook.bodyRows.map((bodyField) => (
-                                      <div className={styles.webhookHeaderRow} key={bodyField.formId}>
-                                        <input
-                                          value={bodyField.key}
-                                          onChange={(event) => patchProductWebhookBody(
-                                            webhook.formId,
-                                            bodyField.formId,
-                                            'key',
-                                            event.target.value
-                                          )}
-                                          placeholder="Nombre"
-                                        />
-                                        <input
-                                          value={bodyField.value}
-                                          onChange={(event) => patchProductWebhookBody(
-                                            webhook.formId,
-                                            bodyField.formId,
-                                            'value',
-                                            event.target.value
-                                          )}
-                                          placeholder="Valor"
-                                        />
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          iconOnly
-                                          aria-label="Quitar campo del body"
-                                          title="Quitar campo del body"
-                                          leftIcon={<Trash2 size={14} />}
-                                          onClick={() => removeProductWebhookBodyField(webhook.formId, bodyField.formId)}
-                                        />
-                                      </div>
-                                    ))}
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      leftIcon={<Plus size={14} />}
-                                      onClick={() => addProductWebhookBodyField(webhook.formId)}
-                                    >
-                                      Agregar campo
-                                    </Button>
-                                  </div>
-                                )}
                               </div>
+
+                              {webhook.bodyMode === 'json' ? (
+                                <textarea
+                                  rows={3}
+                                  value={webhook.bodyJson}
+                                  onChange={(event) => patchProductWebhook(webhook.formId, 'bodyJson', event.target.value)}
+                                  placeholder='{"campaign": "lanzamiento"}'
+                                />
+                              ) : (
+                                <div className={styles.webhookKvList}>
+                                  {webhook.bodyRows.map((bodyField) => (
+                                    <div className={styles.webhookKvRow} key={bodyField.formId}>
+                                      <input
+                                        value={bodyField.key}
+                                        onChange={(event) => patchProductWebhookBody(
+                                          webhook.formId,
+                                          bodyField.formId,
+                                          'key',
+                                          event.target.value
+                                        )}
+                                        placeholder="Nombre"
+                                      />
+                                      <input
+                                        value={bodyField.value}
+                                        onChange={(event) => patchProductWebhookBody(
+                                          webhook.formId,
+                                          bodyField.formId,
+                                          'value',
+                                          event.target.value
+                                        )}
+                                        placeholder="Valor"
+                                      />
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        iconOnly
+                                        aria-label="Quitar campo del body"
+                                        title="Quitar campo del body"
+                                        leftIcon={<Trash2 size={14} />}
+                                        onClick={() => removeProductWebhookBodyField(webhook.formId, bodyField.formId)}
+                                      />
+                                    </div>
+                                  ))}
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    className={styles.webhookAddBtn}
+                                    leftIcon={<Plus size={14} />}
+                                    onClick={() => addProductWebhookBodyField(webhook.formId)}
+                                  >
+                                    Agregar campo
+                                  </Button>
+                                </div>
+                              )}
                             </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              iconOnly
-                              aria-label="Quitar webhook"
-                              title="Quitar webhook"
-                              leftIcon={<Trash2 size={16} />}
-                              onClick={() => removeProductWebhook(webhook.formId)}
-                            />
                           </div>
                         ))}
                       </div>
@@ -1599,6 +1613,7 @@ export const PaymentProducts: React.FC = () => {
                       type="button"
                       variant="secondary"
                       size="sm"
+                      className={styles.webhookAddWebhookBtn}
                       leftIcon={<Plus size={14} />}
                       onClick={addProductWebhook}
                     >
