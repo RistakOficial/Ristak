@@ -3,14 +3,22 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
-import { clearHighLevelMirrorDataForLocationChange } from '../src/controllers/highlevelController.js'
+import {
+  clearHighLevelMirrorDataForLocationChange,
+  recordPayment as recordHighLevelInvoicePayment
+} from '../src/controllers/highlevelController.js'
 import {
   __transactionsControllerTestHooks,
   recordPayment as recordTransactionPayment
 } from '../src/controllers/transactionsController.js'
 import GHLClient from '../src/services/ghlClient.js'
 import { handlePaymentWebhook } from '../src/controllers/webhooksController.js'
-import { __invoicesSyncTestHooks, syncAllInvoices, syncLocalPaymentsToHighLevel } from '../src/services/invoicesSyncService.js'
+import {
+  __invoicesSyncTestHooks,
+  syncAllInvoices,
+  syncLocalPaymentsToHighLevel,
+  syncSingleInvoice
+} from '../src/services/invoicesSyncService.js'
 import { createInstallmentPaymentFlow } from '../src/services/paymentFlowService.js'
 
 function createResponse() {
@@ -37,7 +45,9 @@ function idsFor(name) {
     stripePaymentId: `stripe_payment_pit_${name}_${suffix}`,
     highLevelInvoiceId: `pit_ghl_invoice_${name}_${suffix}`,
     highLevelInvoiceId2: `pit_ghl_invoice2_${name}_${suffix}`,
-    webhookPaymentId: `pit_ghl_payment_${name}_${suffix}`
+    webhookPaymentId: `pit_ghl_payment_${name}_${suffix}`,
+    productId: `pit_product_${name}_${suffix}`,
+    priceId: `pit_price_${name}_${suffix}`
   }
 }
 
@@ -89,6 +99,8 @@ async function cleanup(ids) {
     'DELETE FROM contacts WHERE id IN (?, ?) OR ghl_contact_id = ?',
     [ids.contactId, ids.ghlContactId, ids.ghlContactId]
   ).catch(() => undefined)
+  await db.run('DELETE FROM product_prices WHERE product_id = ?', [ids.productId]).catch(() => undefined)
+  await db.run('DELETE FROM products WHERE id = ?', [ids.productId]).catch(() => undefined)
 }
 
 async function replaceHighLevelConfigForTest(config, callback) {
@@ -163,6 +175,68 @@ async function seedLegacyHighLevelContactAlias(ids) {
   )
 }
 
+async function seedProductWebhookInvoice(ids, { status = 'draft' } = {}) {
+  const webhookUrl = `https://example.test/product-payment/${ids.productId}`
+  await db.run(
+    `INSERT INTO products (
+      id, ghl_product_id, name, description, product_type, currency, post_webhooks,
+      source, sync_status, sync_origin, created_at, updated_at
+    ) VALUES (?, ?, ?, 'Producto con webhook', 'SERVICE', 'MXN', ?, 'ristak', 'synced', 'ristak', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      ids.productId,
+      `ghl_${ids.productId}`,
+      `Producto ${ids.productId}`,
+      JSON.stringify([{ id: 'payment_hook', url: webhookUrl }])
+    ]
+  )
+  await db.run(
+    `INSERT INTO product_prices (
+      id, product_id, ghl_price_id, ghl_product_id, name, type, currency, amount,
+      source, sync_status, sync_origin, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'Precio base', 'one_time', 'MXN', 100, 'ristak', 'synced', 'ristak', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [ids.priceId, ids.productId, `ghl_${ids.priceId}`, `ghl_${ids.productId}`]
+  )
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, date, ghl_invoice_id,
+      invoice_number, metadata_json, created_at, updated_at
+    ) VALUES (?, ?, 100, 'MXN', ?, NULL, 'test', 'highlevel', NULL, 'Pago', 'Precio base',
+      CURRENT_TIMESTAMP, ?, 'PIT-WEBHOOK', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      ids.highLevelInvoiceId,
+      ids.contactId,
+      status,
+      ids.highLevelInvoiceId,
+      JSON.stringify({
+        lineItems: [
+          {
+            name: `Producto ${ids.productId}`,
+            localProductId: ids.productId,
+            productId: `ghl_${ids.productId}`,
+            priceId: `ghl_${ids.priceId}`,
+            amount: 100,
+            currency: 'MXN'
+          }
+        ]
+      })
+    ]
+  )
+  return webhookUrl
+}
+
+async function waitForProductWebhookDelivery(paymentId, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const row = await db.get('SELECT metadata_json FROM payments WHERE id = ?', [paymentId])
+    const metadata = JSON.parse(row?.metadata_json || '{}')
+    const deliveries = Object.values(metadata.productPostWebhookDeliveries || {})
+    if (deliveries.length > 0) return deliveries
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  throw new Error(`El webhook del pago ${paymentId} no se despachó a tiempo`)
+}
+
 async function seedManualPayment(ids, overrides = {}) {
   await db.run(
     `INSERT INTO payments (
@@ -222,6 +296,109 @@ test('record-payment conserva modo test en pagos locales aunque HighLevel esté 
     assert.equal(payment.payment_mode, 'test')
   } finally {
     await db.run('DELETE FROM highlevel_config WHERE location_id = ?', [`pit_location_${ids.contactId}`]).catch(() => undefined)
+    await cleanup(ids)
+  }
+})
+
+test('registro manual de invoice HighLevel dispara el webhook local del producto', async () => {
+  const ids = idsFor('highlevel_manual_product_webhook')
+  await cleanup(ids)
+  await seedContact(ids)
+  const webhookUrl = await seedProductWebhookInvoice(ids)
+  const originalFetch = globalThis.fetch
+  const calls = []
+
+  mock.method(GHLClient.prototype, 'recordPayment', async function recordPayment() {
+    return { success: true }
+  })
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options })
+    return { ok: true, status: 202, text: async () => 'accepted' }
+  }
+
+  try {
+    await replaceHighLevelConfigForTest({
+      locationId: `pit_location_${ids.contactId}`,
+      invoiceMode: 'test'
+    }, async () => {
+      const res = createResponse()
+      await recordHighLevelInvoicePayment({
+        params: { invoiceId: ids.highLevelInvoiceId },
+        body: {
+          amount: 100,
+          currency: 'MXN',
+          paymentDate: '2026-07-20T21:11:36.238Z',
+          paymentMethod: 'cash'
+        }
+      }, res)
+      assert.equal(res.statusCode, 200)
+    })
+
+    const deliveries = await waitForProductWebhookDelivery(ids.highLevelInvoiceId)
+    const webhookCalls = calls.filter(call => call.url === webhookUrl)
+    assert.equal(webhookCalls.length, 1)
+    const payload = JSON.parse(webhookCalls[0].options.body)
+    assert.equal(payload.status, 'paid')
+    assert.equal(payload.previousStatus, 'draft')
+    assert.equal(deliveries.length, 1)
+    assert.equal(deliveries[0].ok, true)
+    assert.equal(deliveries[0].event, 'payment.paid')
+  } finally {
+    globalThis.fetch = originalFetch
+    mock.restoreAll()
+    await cleanup(ids)
+  }
+})
+
+test('sincronización de invoice HighLevel dispara el webhook al detectar cambio de estado', async () => {
+  const ids = idsFor('highlevel_sync_product_webhook')
+  await cleanup(ids)
+  await seedContact(ids)
+  const webhookUrl = await seedProductWebhookInvoice(ids, { status: 'pending' })
+  const originalFetch = globalThis.fetch
+  const calls = []
+
+  mock.method(GHLClient.prototype, 'getInvoice', async function getInvoice() {
+    return {
+      invoice: {
+        id: ids.highLevelInvoiceId,
+        contactId: ids.ghlContactId,
+        invoiceNumber: 'PIT-WEBHOOK',
+        title: 'Pago',
+        description: 'Precio base',
+        total: 100,
+        currency: 'MXN',
+        status: 'paid',
+        paymentMode: 'cash',
+        liveMode: false
+      }
+    }
+  })
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options })
+    return { ok: true, status: 202, text: async () => 'accepted' }
+  }
+
+  try {
+    await replaceHighLevelConfigForTest({
+      locationId: `pit_location_${ids.contactId}`,
+      invoiceMode: 'test'
+    }, async () => {
+      const result = await syncSingleInvoice(ids.highLevelInvoiceId)
+      assert.equal(result.status, 'paid')
+    })
+
+    const deliveries = await waitForProductWebhookDelivery(ids.highLevelInvoiceId)
+    const webhookCalls = calls.filter(call => call.url === webhookUrl)
+    assert.equal(webhookCalls.length, 1)
+    const payload = JSON.parse(webhookCalls[0].options.body)
+    assert.equal(payload.status, 'paid')
+    assert.equal(payload.previousStatus, 'pending')
+    assert.equal(deliveries.length, 1)
+    assert.equal(deliveries[0].status, 'paid')
+  } finally {
+    globalThis.fetch = originalFetch
+    mock.restoreAll()
     await cleanup(ids)
   }
 })

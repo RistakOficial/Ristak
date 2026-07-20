@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import { afterEach, describe, it } from 'node:test'
+import { afterEach, describe, it, mock } from 'node:test'
 
 import { db } from '../src/config/database.js'
+import GHLClient from '../src/services/ghlClient.js'
 import {
   createLocalProduct,
+  syncHighLevelProductsToLocal,
   updateLocalProduct
 } from '../src/services/localProductService.js'
 import {
@@ -251,6 +253,69 @@ describe('local product catalog', () => {
       assert.equal(calls.length, 1)
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+
+  it('preserves Ristak-only webhooks when HighLevel refreshes the product mirror', async () => {
+    const locationId = `location_product_webhook_${Date.now()}`
+    const remoteProductId = `ghl_product_webhook_${Date.now()}`
+    const product = await createLocalProduct({
+      name: `Producto webhook sincronizado ${Date.now()}`,
+      description: 'El espejo remoto no debe borrar configuración local',
+      productType: 'service',
+      currency: 'MXN',
+      gigstackProductKey: '80141600',
+      postWebhooks: [
+        {
+          id: 'preserved_webhook',
+          url: 'https://example.test/ristak/preserved-webhook',
+          headers: { 'X-Preserved': 'yes' }
+        }
+      ],
+      prices: [
+        { name: 'Base', amount: 100, currency: 'MXN', sku: 'PRESERVE-100' }
+      ]
+    }, { sync: false })
+    cleanupProductIds.add(product.localId)
+
+    await db.run(
+      `UPDATE products
+       SET ghl_product_id = ?, location_id = ?, sync_status = 'synced', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [remoteProductId, locationId, product.localId]
+    )
+
+    mock.method(GHLClient.prototype, 'listProducts', async function listProducts() {
+      return {
+        products: [
+          {
+            _id: remoteProductId,
+            name: product.name,
+            description: 'Descripción actualizada desde HighLevel',
+            productType: 'SERVICE',
+            currency: 'MXN',
+            locationId
+          }
+        ]
+      }
+    })
+    mock.method(GHLClient.prototype, 'listPrices', async function listPrices() {
+      return { prices: [] }
+    })
+
+    try {
+      const result = await syncHighLevelProductsToLocal(locationId, 'test-token')
+      assert.equal(result.savedProducts, 1)
+
+      const refreshed = await db.get('SELECT * FROM products WHERE id = ?', [product.localId])
+      const webhooks = JSON.parse(refreshed.post_webhooks)
+      assert.equal(refreshed.description, 'Descripción actualizada desde HighLevel')
+      assert.equal(refreshed.gigstack_product_key, '80141600')
+      assert.equal(webhooks.length, 1)
+      assert.equal(webhooks[0].id, 'preserved_webhook')
+      assert.equal(webhooks[0].url, 'https://example.test/ristak/preserved-webhook')
+    } finally {
+      mock.restoreAll()
     }
   })
 })

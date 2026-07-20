@@ -3318,6 +3318,26 @@ payload trae email o telefono, Ristak crea uno nuevo con source
 resolver contacto; si la resolucion falla, se conserva el pago y se registra un
 warning para reintento/diagnostico posterior.
 
+### Webhooks POST configurados por producto
+
+Los webhooks POST guardados en `products.post_webhooks` pertenecen al producto
+local de Ristak. No pertenecen a HighLevel, Stripe, Conekta, Mercado Pago, CLIP,
+Rebill ni a ninguna otra pasarela. Por eso, cualquier transición real de estado
+de un pago con `lineItems` enlazados al producto debe pasar por
+`productPostWebhookService.js`, sin importar qué integración creó o confirmó el
+pago.
+
+La entrega es idempotente por pago, estado, producto, webhook y versión de la
+configuración; los intentos quedan en `payments.metadata_json` bajo
+`productPostWebhookDeliveries`. El registro manual de invoices HighLevel, los
+webhooks entrantes y las sincronizaciones de invoices deben respetar la misma
+regla. Una sincronización posterior no debe duplicar una entrega ya confirmada.
+
+`post_webhooks` y los campos fiscales Gigstack son configuración local de
+Ristak. La sincronización de catálogo desde HighLevel puede refrescar nombre,
+descripción, IDs y precios remotos, pero nunca debe vaciar ni reemplazar esos
+campos locales sólo porque HighLevel no los conoce.
+
 ### Push de estado de pagos
 
 Las notificaciones push de pagos deben comunicar el resultado real del cobro, no

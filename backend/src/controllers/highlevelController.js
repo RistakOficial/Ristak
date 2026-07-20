@@ -10,6 +10,7 @@ import { getGHLClient } from '../services/ghlClient.js';
 import { buildInvoicePaymentUrl } from '../utils/paymentUrl.js';
 import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js';
 import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js';
+import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
 import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
 import { renderTemplateVariables } from '../services/templateVariablesService.js';
@@ -2288,6 +2289,10 @@ export const recordPayment = async (req, res) => {
     const paymentMode = liveMode ? 'live' : 'test';
     const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE);
     const resolvedPaymentDate = resolvePaymentTimestamp(paymentDate, accountTimezone);
+    const previousPayment = await db.get(
+      'SELECT id, status FROM payments WHERE ghl_invoice_id = ? LIMIT 1',
+      [invoiceId]
+    );
 
     const noteParts = [
       `Pago registrado desde Ristak`,
@@ -2367,6 +2372,10 @@ export const recordPayment = async (req, res) => {
       );
 
       if (savedPayment?.id) {
+        dispatchProductPostWebhooksForPaymentInBackground(savedPayment.id, {
+          status: 'paid',
+          previousStatus: previousPayment?.status || ''
+        });
         registerGigstackPaymentForTransactionInBackground(savedPayment.id);
       }
 

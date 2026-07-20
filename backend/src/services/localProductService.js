@@ -585,20 +585,21 @@ export async function upsertLocalProduct(raw = {}, options = {}) {
     ? await findUnlinkedProductByName(normalized.name)
     : null
   const existing = existingByGhl || existingByName
+  const preserveRistakFields = options.preserveRistakFields === true
 
   if (existing?.id) {
     normalized.id = existing.id
     normalized.source = existing.source || normalized.source
-    if (!hasEditableField(productInput, 'gigstackProductKey', 'gigstack_product_key')) {
+    if (preserveRistakFields || !hasEditableField(productInput, 'gigstackProductKey', 'gigstack_product_key')) {
       normalized.gigstackProductKey = existing.gigstack_product_key || ''
     }
-    if (!hasEditableField(productInput, 'gigstackUnitKey', 'gigstack_unit_key')) {
+    if (preserveRistakFields || !hasEditableField(productInput, 'gigstackUnitKey', 'gigstack_unit_key')) {
       normalized.gigstackUnitKey = existing.gigstack_unit_key || ''
     }
-    if (!hasEditableField(productInput, 'gigstackUnitName', 'gigstack_unit_name')) {
+    if (preserveRistakFields || !hasEditableField(productInput, 'gigstackUnitName', 'gigstack_unit_name')) {
       normalized.gigstackUnitName = existing.gigstack_unit_name || ''
     }
-    if (!hasEditableField(productInput, 'postWebhooks', 'post_webhooks')) {
+    if (preserveRistakFields || !hasEditableField(productInput, 'postWebhooks', 'post_webhooks')) {
       normalized.postWebhooks = normalizePostWebhookConfig(existing.post_webhooks)
     }
   }
@@ -1241,7 +1242,8 @@ export async function syncProductRowToHighLevel(productRow, client, locationId) 
           source: 'ghl',
           locationId,
           syncStatus: 'synced',
-          syncOrigin: row.source || 'ristak'
+          syncOrigin: row.source || 'ristak',
+          preserveRistakFields: true
         })
         return { product: matched, action: 'matched' }
       }
@@ -1376,7 +1378,8 @@ export async function syncHighLevelProductsToLocal(locationId, apiToken) {
         locationId,
         syncStatus: 'synced',
         syncOrigin: 'ghl',
-        rawJson: remoteProduct
+        rawJson: remoteProduct,
+        preserveRistakFields: true
       })
       savedProducts += 1
 

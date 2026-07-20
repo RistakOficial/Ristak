@@ -32,6 +32,7 @@ import {
 } from '../utils/invoiceIdentity.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
+import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 
 const PAID_INVOICE_STATUSES = new Set(['paid', 'succeeded', 'completed'])
 const PAID_STATUS_DOWNGRADE_PROTECTED_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'payment_processing'])
@@ -60,6 +61,19 @@ const LOCAL_EXPORT_METHOD_TO_GHL_MODE = {
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function dispatchSyncedInvoiceProductWebhooks({ existing, paymentId, status } = {}) {
+  const cleanPaymentId = cleanString(paymentId)
+  const nextStatus = cleanString(status).toLowerCase()
+  const previousStatus = cleanString(existing?.status).toLowerCase()
+  if (!cleanPaymentId || !nextStatus || previousStatus === nextStatus) return false
+
+  dispatchProductPostWebhooksForPaymentInBackground(cleanPaymentId, {
+    status: nextStatus,
+    previousStatus
+  })
+  return true
 }
 
 function cleanInvoiceContactName(value, ...phones) {
@@ -1095,6 +1109,12 @@ export async function syncInvoices({ limit = 100, offset = 0, contactId, exportL
 
         await activatePaymentFlowFromPaidInvoice(ghlInvoiceId, savedInvoiceData)
 
+        dispatchSyncedInvoiceProductWebhooks({
+          existing,
+          paymentId: existing?.id || ghlInvoiceId,
+          status: savedInvoiceStatus
+        })
+
         const transitionedToPaid = invoiceData.contact_id &&
           isSuccessfulPaymentStatus(savedInvoiceStatus) &&
           existing &&
@@ -1323,6 +1343,12 @@ export async function syncAllInvoices({ contactId, exportLocal = false } = {}) {
 
         await activatePaymentFlowFromPaidInvoice(ghlInvoiceId, savedInvoiceData)
 
+        dispatchSyncedInvoiceProductWebhooks({
+          existing,
+          paymentId: existing?.id || ghlInvoiceId,
+          status: savedInvoiceStatus
+        })
+
         const transitionedToPaid = invoiceData.contact_id &&
           isSuccessfulPaymentStatus(savedInvoiceStatus) &&
           existing &&
@@ -1509,6 +1535,12 @@ export async function syncSingleInvoice(invoiceId) {
     })
 
     await activatePaymentFlowFromPaidInvoice(ghlInvoiceId, savedInvoiceData)
+
+    dispatchSyncedInvoiceProductWebhooks({
+      existing,
+      paymentId: existing?.id || ghlInvoiceId,
+      status: savedInvoiceStatus
+    })
 
     const transitionedToPaid = invoiceData.contact_id &&
       isSuccessfulPaymentStatus(savedInvoiceStatus) &&
