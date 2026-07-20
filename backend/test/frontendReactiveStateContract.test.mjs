@@ -93,24 +93,33 @@ test('el tema privado espera login y descarta respuestas de una cuenta anterior'
   assert.match(principalCache, /dispatchEvent\(new CustomEvent\(AUTH_PRINCIPAL_CHANGED_EVENT/)
 })
 
-test('inicializacion manda Meta al selector seguro y conecta Google Calendar y OpenAI en sitio', async () => {
-  const [page, context, metaService, calendarsService] = await Promise.all([
+test('inicializacion muestra WhatsApp antes de Meta Ads y conserva los flujos reales de conexión', async () => {
+  const [page, context, metaService, calendarsService, integrationsController] = await Promise.all([
     readSource('frontend/src/pages/Initialization/Initialization.tsx'),
     readSource('frontend/src/contexts/InitializationContext.tsx'),
     readSource('frontend/src/services/metaOAuthService.ts'),
-    readSource('frontend/src/services/calendarsService.ts')
+    readSource('frontend/src/services/calendarsService.ts'),
+    readSource('backend/src/controllers/integrationsController.js')
   ])
 
+  assert.match(context, /\{ id: 'whatsapp', required: true/)
   assert.match(context, /\{ id: 'meta', required: true/)
   assert.match(context, /\{ id: 'google-calendar', required: true/)
   assert.match(context, /\{ id: 'openai', required: true/)
+  assert.ok(
+    context.indexOf("{ id: 'whatsapp'") < context.indexOf("{ id: 'meta'"),
+    'WhatsApp debe aparecer antes que Meta'
+  )
   assert.doesNotMatch(context, /facebook-page|meta-app|whatsapp-api/)
+  assert.match(page, /navigate\('\/settings\/whatsapp'\)/)
   assert.match(page, /navigate\('\/settings\/meta-ads\/cuenta'\)/)
   assert.match(page, /calendarsService\.getGoogleConnectUrl\('\/initialization'\)/)
   assert.match(page, /conversationalAgentService\.connectAIProvider\('openai', apiKey\)/)
   assert.match(page, /metaOAuthService\.complete\(\{ handoffToken: metaHandoff \}\)/)
   assert.match(page, /calendarsService\.claimGoogleOAuth\(googleHandoff\)/)
   assert.doesNotMatch(page, /metaOAuthService\.createConnectUrl\('\/initialization'\)/)
+  assert.match(integrationsController, /isMetaDirectWhatsAppConnected\(\)/)
+  assert.match(integrationsController, /isWhatsAppQrConnected\(\)/)
   assert.match(metaService, /createConnectUrl: \(returnPath = '\/settings\/meta-ads\/cuenta'\)/)
   assert.match(calendarsService, /getGoogleConnectUrl\(returnPath = ''\)/)
 })

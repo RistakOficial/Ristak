@@ -5,6 +5,7 @@ import type { IntegrationsStatus } from '@/services/integrationsService'
 import { hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
 
 export type InitStepId =
+  | 'whatsapp'
   | 'meta'
   | 'openai'
   | 'google-calendar'
@@ -34,6 +35,7 @@ interface InitializationContextValue {
 const InitializationContext = createContext<InitializationContextValue | null>(null)
 
 const STEP_PERMISSION_KEYS: Record<InitStepId, PermissionKey> = {
+  whatsapp: 'settings_whatsapp',
   meta: 'campaigns',
   openai: 'ai_agent',
   'google-calendar': 'settings_calendars'
@@ -41,6 +43,7 @@ const STEP_PERMISSION_KEYS: Record<InitStepId, PermissionKey> = {
 
 function buildSteps(status: IntegrationsStatus | null): InitStep[] {
   return [
+    { id: 'whatsapp', required: true, done: Boolean(status?.whatsapp?.connected) },
     { id: 'meta', required: true, done: Boolean(status?.meta?.connected) },
     { id: 'google-calendar', required: true, done: Boolean(status?.googleCalendar?.connected) },
     { id: 'openai', required: true, done: Boolean(status?.openai?.configured) },

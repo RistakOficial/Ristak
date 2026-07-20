@@ -10,6 +10,10 @@ import { getConektaPaymentConfig } from '../services/conektaPaymentService.js';
 import { getClipPaymentConfig } from '../services/clipPaymentService.js';
 import { getRebillPaymentConfig } from '../services/rebillPaymentService.js';
 import { getMetaConfig, getMetaSocialConfig } from '../services/metaAdsService.js';
+import {
+  isMetaDirectWhatsAppConnected,
+  isWhatsAppQrConnected
+} from '../services/integrationConnectionStateService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -134,16 +138,22 @@ export const getStatus = async (req, res) => {
         getMetaSocialConfig().catch(() => null)
       ]),
       resolveLocalIntegrationStatus('WhatsApp', { configured: false, connected: false }, async () => {
-        const waRows = await db.all(
-          `SELECT config_key, config_value FROM app_config
-           WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_ycloud_api_key_encrypted', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
-        );
+        const [waRows, metaDirectConnected, qrConnected] = await Promise.all([
+          db.all(
+            `SELECT config_key, config_value FROM app_config
+             WHERE config_key IN ('whatsapp_api_enabled', 'whatsapp_api_ycloud_api_key_encrypted', 'whatsapp_api_key', 'whatsapp_api_webhook_endpoint_id')`
+          ),
+          isMetaDirectWhatsAppConnected(),
+          isWhatsAppQrConnected()
+        ]);
         const wa = {};
         for (const row of waRows || []) wa[row.config_key] = row.config_value;
         const enabled = wa['whatsapp_api_enabled'] !== '0';
         const hasApiKey = Boolean(wa['whatsapp_api_ycloud_api_key_encrypted'] || wa['whatsapp_api_key']);
         const hasWebhook = Boolean(wa['whatsapp_api_webhook_endpoint_id']);
-        return { configured: hasApiKey, connected: Boolean(enabled && hasApiKey && hasWebhook) };
+        const ycloudConnected = Boolean(enabled && hasApiKey && hasWebhook);
+        const connected = ycloudConnected || metaDirectConnected || qrConnected;
+        return { configured: connected || hasApiKey, connected };
       }),
       resolveLocalIntegrationStatus('OpenAI', { configured: false, connected: false }, async () => {
         const aiStatus = await getAIAgentStatus({});

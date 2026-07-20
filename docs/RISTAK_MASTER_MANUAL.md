@@ -1149,13 +1149,20 @@ el frontend transporte el secret.
 
 `/initialization` es la entrada rápida para administradores nuevos. La pantalla
 no replica toda la configuracion ni presenta una checklist tecnica: muestra solo
-las conexiones disponibles por permiso para **Meta**, **Google Calendar** y
-**OpenAI**. Cada boton inicia o completa el flujo real en esa misma ruta:
+las conexiones disponibles por permiso para **WhatsApp**, **Meta**, **Google
+Calendar** y **OpenAI**, en ese orden.
 
-- Meta crea el Business Login oficial con retorno a `/initialization`, reclama
-  el handoff opaco y deja la cuenta OAuth autorizada. La seleccion operativa de
-  Page, Instagram, cuenta publicitaria y Dataset sigue siendo opcional y vive en
-  la seccion Meta cuando el negocio la necesite.
+- WhatsApp aparece primero y abre su superficie canonica en
+  `/settings/whatsapp`, donde el administrador elige entre la conexion oficial
+  disponible para su licencia o una sesion mediante QR. Al volver a
+  Inicializacion, el progreso reconoce YCloud, Meta directo o QR conectado; no
+  obliga a repetir la configuracion ni confunde WhatsApp con la conexion general
+  de Meta.
+- Meta Ads aparece despues de WhatsApp y abre `/settings/meta-ads/cuenta`, donde
+  el administrador conecta el acceso publicitario ya aprobado y elige su cuenta
+  publicitaria. Facebook e Instagram se habilitan aparte cuando Meta termine la
+  revision correspondiente; Inicializacion ya no abre el login combinado
+  anterior para cuentas nuevas.
 - Google Calendar abre el OAuth central con retorno permitido a
   `/initialization`, reclama el handoff y guarda el refresh token cifrado. Elegir
   calendarios concretos o combinar citas es configuracion posterior, no requisito

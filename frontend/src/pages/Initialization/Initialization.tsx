@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Bot, CalendarDays, Check, EyeOff, RefreshCw, ShieldCheck } from 'lucide-react'
+import { SiWhatsapp } from 'react-icons/si'
 import { Badge } from '@/components/common/Badge'
 import { Button } from '@/components/common/Button'
 import { Card } from '@/components/common/Card'
@@ -26,6 +27,12 @@ interface ConnectionMeta {
 }
 
 const CONNECTION_META: Record<InitStepId, ConnectionMeta> = {
+  whatsapp: {
+    title: 'WhatsApp',
+    description: 'Conecta el número que usarás para recibir y responder conversaciones desde Ristak.',
+    buttonLabel: 'Configurar WhatsApp',
+    icon: SiWhatsapp
+  },
   meta: {
     title: 'Meta Ads',
     description: 'Conecta tus cuentas publicitarias con el acceso ya aprobado. Facebook e Instagram se habilitarán aparte cuando Meta termine su revisión.',
@@ -207,6 +214,10 @@ export const Initialization: React.FC = () => {
   }
 
   const handleConnection = (id: InitStepId) => {
+    if (id === 'whatsapp') {
+      navigate('/settings/whatsapp')
+      return
+    }
     if (id === 'meta') {
       void handleConnectMeta()
       return
@@ -228,7 +239,7 @@ export const Initialization: React.FC = () => {
       <PageHeader
         eyebrow="Inicialización"
         title="Conecta tus cuentas"
-        subtitle="Tres conexiones y listo. Todo se autoriza desde aquí, sin brincar a Configuración."
+        subtitle="Cuatro conexiones y listo. Empieza por WhatsApp y sigue con Meta Ads, Google Calendar y OpenAI."
         actions={(
           <>
             <Button
@@ -301,7 +312,7 @@ export const Initialization: React.FC = () => {
 
         <div className={styles.securityNote}>
           <ShieldCheck size={18} aria-hidden="true" />
-          <p>Meta y Google abren su autorización oficial. Las credenciales que Ristak necesita conservar se guardan cifradas.</p>
+          <p>WhatsApp te permite elegir conexión oficial o QR. Meta y Google abren su autorización oficial, y las credenciales que Ristak conserva se guardan cifradas.</p>
         </div>
 
         <div className={styles.footer}>
