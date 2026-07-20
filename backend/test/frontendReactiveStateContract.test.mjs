@@ -42,6 +42,7 @@ test('mutaciones de proveedores revalidan el estado global', async () => {
   assert.match(whatsapp, /connect: [\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(whatsapp, /disconnectPhoneNumber:[\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(meta, /finalize:[\s\S]*?refreshIntegrationsStatusAfter/)
+  assert.match(meta, /finalizeIntegration:[\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(meta, /disconnectPreviousIntegration:[\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(calendars, /claimGoogleOAuth[\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(calendars, /deleteGoogleIntegration[\s\S]*?refreshIntegrationsStatusAfter/)
@@ -92,7 +93,7 @@ test('el tema privado espera login y descarta respuestas de una cuenta anterior'
   assert.match(principalCache, /dispatchEvent\(new CustomEvent\(AUTH_PRINCIPAL_CHANGED_EVENT/)
 })
 
-test('inicializacion conecta Meta, Google Calendar y OpenAI sin mandar a Configuracion', async () => {
+test('inicializacion manda Meta al selector seguro y conecta Google Calendar y OpenAI en sitio', async () => {
   const [page, context, metaService, calendarsService] = await Promise.all([
     readSource('frontend/src/pages/Initialization/Initialization.tsx'),
     readSource('frontend/src/contexts/InitializationContext.tsx'),
@@ -104,12 +105,12 @@ test('inicializacion conecta Meta, Google Calendar y OpenAI sin mandar a Configu
   assert.match(context, /\{ id: 'google-calendar', required: true/)
   assert.match(context, /\{ id: 'openai', required: true/)
   assert.doesNotMatch(context, /facebook-page|meta-app|whatsapp-api/)
-  assert.match(page, /metaOAuthService\.createConnectUrl\('\/initialization'\)/)
+  assert.match(page, /navigate\('\/settings\/meta-ads\/cuenta'\)/)
   assert.match(page, /calendarsService\.getGoogleConnectUrl\('\/initialization'\)/)
   assert.match(page, /conversationalAgentService\.connectAIProvider\('openai', apiKey\)/)
   assert.match(page, /metaOAuthService\.complete\(\{ handoffToken: metaHandoff \}\)/)
   assert.match(page, /calendarsService\.claimGoogleOAuth\(googleHandoff\)/)
-  assert.doesNotMatch(page, /<Link|to=['"]\/settings/)
+  assert.doesNotMatch(page, /metaOAuthService\.createConnectUrl\('\/initialization'\)/)
   assert.match(metaService, /createConnectUrl: \(returnPath = '\/settings\/meta-ads\/cuenta'\)/)
   assert.match(calendarsService, /getGoogleConnectUrl\(returnPath = ''\)/)
 })

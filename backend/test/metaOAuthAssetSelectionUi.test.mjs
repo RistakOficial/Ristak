@@ -8,11 +8,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..')
 const readSource = relativePath => readFile(join(repoRoot, relativePath), 'utf8')
 
-test('Meta oculta pestañas sin conexión y guarda Ads y redes sociales sólo al confirmar cada sección', async () => {
-  const [screen, styles, select] = await Promise.all([
+test('Meta usa OAuth separado, habilita Ads aprobado y guarda activos sólo al confirmar cada sección', async () => {
+  const [screen, styles, select, oauthService] = await Promise.all([
     readSource('frontend/src/pages/Settings/MetaAdsIntegration.tsx'),
     readSource('frontend/src/pages/Settings/MetaAdsIntegration.module.css'),
-    readSource('frontend/src/components/common/CustomSelect/CustomSelect.tsx')
+    readSource('frontend/src/components/common/CustomSelect/CustomSelect.tsx'),
+    readSource('frontend/src/services/metaOAuthService.ts')
   ])
 
   assert.match(screen, /Buscar cuenta publicitaria…/)
@@ -21,7 +22,8 @@ test('Meta oculta pestañas sin conexión y guarda Ads y redes sociales sólo al
   assert.match(screen, /Buscar cuenta de Instagram…/)
   assert.match(screen, /label: 'Meta Ads'/)
   assert.match(screen, /Facebook y Messenger/)
-  assert.match(screen, /<span className=\{styles\.formLabel\}>Página \(Opcional\)<\/span>/)
+  assert.match(screen, /<span className=\{styles\.connectedListLabel\}>Cuenta publicitaria<\/span>/)
+  assert.match(screen, /<span className=\{styles\.formLabel\}>Página<\/span>/)
   assert.match(screen, /isMetaConfigured && <SegmentTabs/)
   assert.match(screen, /!isLoading && !isMetaConfigured/)
   assert.match(screen, /metaConnectEmptyState/)
@@ -29,6 +31,18 @@ test('Meta oculta pestañas sin conexión y guarda Ads y redes sociales sólo al
   assert.match(screen, /saveMetaOAuthAssetSection\('ads'\)/)
   assert.match(screen, /saveMetaOAuthAssetSection\('social'\)/)
   assert.match(screen, /const sectionPatch = section === 'ads'/)
+  assert.match(screen, /metaOAuthService\.completeIntegration\(integrationKind/)
+  assert.match(screen, /metaOAuthService\.finalizeIntegration\(metaOAuthSessionKind, nextSelection\)/)
+  assert.match(screen, /startMetaAuthorization\('ads'\)/)
+  assert.match(screen, /isSocialReviewPending/)
+  assert.match(screen, /Pendiente de aprobación/)
+  assert.match(screen, /startMetaAuthorization\('social'\)/)
+  assert.match(oauthService, /`\/api\/meta\/oauth\/\$\{integrationKind\}\/connect-url`/)
+  assert.match(oauthService, /`\/api\/meta\/oauth\/\$\{integrationKind\}\/complete`/)
+  assert.match(oauthService, /`\/api\/meta\/oauth\/\$\{integrationKind\}\/finalize`/)
+  assert.match(screen, /isLegacyOAuthConnection[\s\S]*?hasSplitAdsConnection[\s\S]*?hasSplitSocialConnection/)
+  assert.match(screen, /const isSocialOAuthConnection = isLegacyOAuthConnection[\s\S]*?hasSplitSocialConnection/)
+  assert.doesNotMatch(screen, /const isSocialOAuthConnection = isOAuthConnection/)
   assert.match(screen, /const \[savedMetaOAuthSelection, setSavedMetaOAuthSelection\]/)
   assert.match(screen, /const availableOAuthDatasets = selectedOAuthAdAccount\?\.pixels \|\| \[\]/)
   assert.match(screen, /\{availableOAuthDatasets\.map\(dataset => \(/)
@@ -70,7 +84,8 @@ test('Meta oculta pestañas sin conexión y guarda Ads y redes sociales sólo al
   assert.doesNotMatch(screen, /Desconectar Meta OAuth|Desconectar OAuth/)
   assert.match(styles, /\.metaHeader\[data-ristak-page-header\][\s\S]*?border-bottom: 0/)
   assert.match(screen, /const isMetaConfigured = isOAuthConnection/)
-  assert.match(screen, /Conecta con OAuth oficial, sin copiar tokens/)
+  assert.match(screen, /Usa el acceso oficial ya aprobado por Meta/)
+  assert.match(screen, /todavía faltan los accesos de mensajes, comentarios y webhooks/)
   assert.doesNotMatch(screen, /const isManualWizardRoute/)
   const renderedScreen = screen.slice(screen.indexOf('\n  return ('))
   assert.doesNotMatch(renderedScreen, /User Token de Messenger/)

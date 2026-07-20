@@ -27,9 +27,9 @@ interface ConnectionMeta {
 
 const CONNECTION_META: Record<InitStepId, ConnectionMeta> = {
   meta: {
-    title: 'Meta',
-    description: 'Autoriza tu portafolio una sola vez para usar Facebook, Instagram y tus cuentas publicitarias.',
-    buttonLabel: 'Conectar Meta',
+    title: 'Meta Ads',
+    description: 'Conecta tus cuentas publicitarias con el acceso ya aprobado. Facebook e Instagram se habilitarán aparte cuando Meta termine su revisión.',
+    buttonLabel: 'Configurar Meta Ads',
     icon: MetaBrandMark
   },
   'google-calendar': {
@@ -168,20 +168,8 @@ export const Initialization: React.FC = () => {
     }
   }
 
-  const handleConnectMeta = async () => {
-    setActiveAction('meta')
-    try {
-      const status = await metaOAuthService.getStatus()
-      if (!status.available || status.mode !== 'redirect') {
-        throw new Error(status.error || 'La conexión segura con Meta todavía no está disponible.')
-      }
-      const connection = await metaOAuthService.createConnectUrl('/initialization')
-      if (!connection.connectUrl) throw new Error('Meta no devolvió una URL segura de conexión.')
-      window.location.assign(connection.connectUrl)
-    } catch (error) {
-      setActiveAction(null)
-      showToast('error', 'No pudimos abrir Meta', error instanceof Error ? error.message : 'Intenta de nuevo en un momento.')
-    }
+  const handleConnectMeta = () => {
+    navigate('/settings/meta-ads/cuenta')
   }
 
   const handleConnectGoogle = async () => {

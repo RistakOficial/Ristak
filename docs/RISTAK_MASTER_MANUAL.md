@@ -3799,59 +3799,50 @@ prueba. No la debilites por comodidad.
 
 Ristak usa Meta en varias areas:
 
-### Conexion OAuth y retirada del metodo manual
+### Conexión OAuth, App Review y retirada del método manual
 
-- `Configuracion > Meta` recomienda **Conectar con Meta**; el flujo OAuth sigue siendo unico para
-  anuncios, Dataset/CAPI, Facebook, Instagram, mensajes y comentarios.
-- **Conectar con Meta** abre directamente el dialogo oficial. Meta controla la
-  elección y la persona autoriza libremente sus activos; Ristak no muestra una
-  guía intermedia ni intenta preseleccionar opciones. Al volver, la conexión se
-  completa en la misma petición y la pantalla se actualiza sin recargarse. Antes
-  de conectar no aparecen pestañas: sólo titulo, subtitulo y el boton centrado.
-  Una conexion nueva no elige activos operativos. Después aparecen dropdowns
-  buscables y cada seccion aplica sus cambios únicamente al pulsar **Guardar**.
-  Los activos futuros requieren **Autorizar nuevos activos**.
-- La interfaz conectada se divide en **Meta Ads**, **Redes sociales**, **Rastreo
-  web** y **Dataset Test**. Meta Ads contiene solamente Ad Account y Dataset.
-  Redes sociales contiene **Facebook y Messenger** con el dropdown **Página**,
-  Instagram y los switches de mensajes/comentarios. Ads y social tienen botones
-  Guardar independientes; un borrador de una seccion no se aplica al guardar la
-  otra. Las credenciales manuales no aparecen en ninguna instalación: si sólo
-  existe un `manual_system_user` heredado, la pantalla se considera desconectada
-  y ofrece **Conectar con Meta**.
-- El Config ID unificado pide `ads_read`, `business_management`,
-  `pages_show_list`, `pages_manage_metadata`, `pages_messaging`,
-  `pages_read_engagement`, `pages_read_user_content`,
-  `pages_manage_engagement`, `instagram_basic`,
-  `instagram_manage_messages` e `instagram_manage_comments`.
-  `ads_management` no se pide mientras el Campaign Builder siga en preview y
-  no publique/edite campañas reales.
-- Installer es el unico dueno de `meta_app_secret` y
-  `meta_business_login_config_id`. Los Config IDs `social|ads` anteriores se
-  conservan solo para migracion. El alias interno `integration_kind=legacy`
-  identifica al contrato unificado sin segmento; no significa que la
-  experiencia visible sea vieja o manual.
-- La conexion unificada nueva usa un User Access Token ampliado por Installer y
-  vive cifrada en `meta_config` con `connection_mode=oauth_user`;
-  `oauth_bisu` queda como compatibilidad para System User anteriores. Su sesion
-  temporal vive en
-  `meta_oauth_pending_sessions`. La allowlist completa y todos los Page
-  tokens/proofs viven cifrados en `meta_oauth_authorized_assets`, lo que permite
-  usar los dropdowns de la tabla sin repetir OAuth. Las filas separadas anteriores en
-  `meta_oauth_integrations` y el System User Token manual se conservan cifrados
-  para migración y continuidad heredada, pero el token manual ya no cuenta como
-  conexión visible ni puede guardarse, revelarse o importarse desde producto.
-- Las rutas canonicas son
-  `/api/meta/oauth/{status,connect-url,complete,finalize,disconnect}`. Los
-  endpoints `/api/meta/oauth/:integrationKind/*` siguen disponibles solo para
-  compatibilidad con instalaciones que ya usaron la etapa separada. Las rutas
-  manuales de guardado/revelado/importación responden `410 META_OAUTH_REQUIRED`.
-- Ristak reclama el handoff server-to-server y termina la conexión en esa misma
-  petición. Installer ya clasificó `USER|SYSTEM_USER` con `debug_token` y validó
-  permisos, activos y `granular_scopes.target_ids`; Ristak no repite esas
-  llamadas. La sesión cifrada con TTL sólo protege el commit interno y nunca se
-  vuelve un paso visible. Cancelar, expirar o fallar deja intacta la conexion
-  anterior.
+- Desde el **20 de julio de 2026**, las conexiones nuevas usan OAuth separado
+  por capacidad. **Meta Ads** está disponible con `ads_read`; **Redes sociales**
+  queda detrás de `meta_oauth_review_mode` mientras Meta termina Advanced Access
+  para mensajes, comentarios y webhooks.
+- La app central ya tiene aprobados `ads_read`, `business_management`,
+  `pages_show_list`, `pages_read_engagement`, `public_profile`,
+  `whatsapp_business_management` y `whatsapp_business_messaging`. Los permisos
+  base de Pages no bastan para el inbox: siguen faltando
+  `pages_manage_metadata`, `pages_read_user_content`,
+  `pages_manage_engagement`, `pages_messaging`, `instagram_basic`,
+  `instagram_manage_comments` e `instagram_manage_messages`.
+- Una cuenta nueva ve **Conectar Meta Ads**. El botón usa
+  `/api/meta/oauth/ads/*`, vuelve a Meta Ads y exige elegir una cuenta
+  publicitaria antes de **Guardar**; el Dataset es opcional. `/initialization`
+  manda a esa pantalla para no perder la sesión de selección.
+- Cuando sólo Ads está conectado, la pestaña **Redes sociales** muestra
+  **Pendiente de aprobación** y no expone OAuth ni switches falsamente
+  funcionales. Al cambiar `meta_oauth_review_mode=false` en Installer, la misma
+  pantalla habilita **Conectar Facebook e Instagram** mediante
+  `/api/meta/oauth/social/*`.
+- Installer es el único dueño de `meta_app_secret`,
+  `meta_ads_login_config_id`, `meta_social_login_config_id`,
+  `meta_business_login_config_id` y la compuerta de revisión. Los secretos nunca
+  se copian a una instalación.
+- Las conexiones separadas activas viven cifradas por `ads|social` en
+  `meta_oauth_integrations`; sus sesiones one-time viven en
+  `meta_oauth_integration_sessions`. La conexión combinada anterior permanece en
+  `meta_config` como `legacy`, y sus sesiones/allowlist permanecen en
+  `meta_oauth_pending_sessions` y `meta_oauth_authorized_assets`.
+- Las rutas canónicas para cuentas nuevas son
+  `/api/meta/oauth/:integrationKind/{status,status/refresh,connect-url,complete,finalize,disconnect}`.
+  Los endpoints sin segmento siguen sólo para conexiones combinadas legacy. Las
+  rutas manuales de guardado/revelado/importación responden
+  `410 META_OAUTH_REQUIRED`.
+- Ristak reclama cada handoff server-to-server, valida que
+  `integration_kind=ads|social|legacy` coincida y mantiene la conexión anterior
+  hasta que el nuevo tipo termina su `finalize`. Un fallo Ads no toca Social y
+  viceversa.
+- Para liberar Social: verificar permisos completos y Config ID en App
+  Dashboard, probar Page/Instagram/relay/mensajes/comentarios, cambiar
+  `meta_oauth_review_mode` a `false` en Installer y completar una conexión real
+  antes de anunciarla. El procedimiento completo vive en `docs/META_OAUTH.md`.
 - Al iniciar OAuth, Ristak convierte la ruta de regreso en una URL absoluta del
   host publico que origino la solicitud. Installer valida ese origin contra la
   instalacion antes de guardarlo en `state`; asi el callback central no manda al
@@ -3948,18 +3939,16 @@ Ristak usa Meta en varias areas:
   `action_source=business_messaging` y permiten probar WhatsApp, Messenger o
   Instagram DM desde la UI. WhatsApp requiere `ctwa_clid` + `page_id`;
   Messenger requiere `page_scoped_user_id` + `page_id`; Instagram requiere
-  `ig_sid` + `ig_account_id`. Dataset/token principal y Page/Page Token salen de
-  la misma
-  conexion unificada, cada uno con su proof correcto. Las conexiones OAuth
-  separadas y los secretos manuales previos pueden seguir como compatibilidad
-  interna durante la migración, pero no vuelven a presentarse como método de
-  conexión.
+  `ig_sid` + `ig_account_id`. Dataset/token principal salen de Ads; Page/Page
+  Token salen de Social o del login combinado legacy, cada uno con su proof
+  correcto. Los secretos manuales previos pueden seguir como compatibilidad
+  interna, pero no vuelven a presentarse como método de conexión.
   `Purchase (Messaging)` se envia a Meta como `event_name=Purchase` y usa por
   default la moneda de la cuenta (`app_config.account_currency`).
-- Conversions API resuelve primero el OAuth unificado activo de `meta_config`;
-  exige `ads_read` y un Dataset validado. Despues cae a OAuth Ads separado,
-  System User Token manual y `META_ACCESS_TOKEN` solo como compatibilidad. Una
-  conexion sin Dataset sigue valida para reportes/social y deja CAPI apagado.
+- Conversions API acepta OAuth Ads separado o el OAuth combinado legacy activo;
+  exige `ads_read` y un Dataset validado. System User Token manual y
+  `META_ACCESS_TOKEN` quedan sólo como compatibilidad. Una conexión Ads sin
+  Dataset sigue válida para reportes y deja CAPI apagado.
 - Elegir una Ad Account arranca Ads sync; elegir una Page o Instagram prepara
   sólo su runtime social y backfill. Messenger/comentarios se habilitan al elegir
   Page y DMs/comentarios de Instagram al elegir la cuenta enlazada. Ristak no
@@ -6829,7 +6818,7 @@ Registro de ubicacion:
 | Base de datos produccion | `DATABASE_URL` | Si en Render/Postgres | SQLite local si no existe |
 | URL publica/CORS | `APP_URL`, `PUBLIC_URL`, `RENDER_EXTERNAL_URL`, `CORS_ALLOWED_ORIGINS` | No siempre | Necesaria para webhooks y links correctos |
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
-| Meta Ads/Dataset/social | OAuth unificado cifrado en `meta_config`; allowlist y Page credentials cifrados en `meta_oauth_authorized_assets`; sesion en `meta_oauth_pending_sessions`; fallbacks separados en `meta_oauth_integrations`; App Secret y Config IDs en DB de Installer | No | Un solo login; cambiar activos autorizados no repite OAuth. Manual y OAuth `social|ads` anteriores sobreviven como fallback. Env solo es compatibilidad y `meta_test_event_code` activa Test Events |
+| Meta Ads/Dataset/social | OAuth `ads|social` cifrado en `meta_oauth_integrations` y sesiones en `meta_oauth_integration_sessions`; login combinado legacy en `meta_config` con allowlist/sesiones propias; App Secret, Config IDs y `meta_oauth_review_mode` en DB de Installer | No | Ads se conecta con permisos aprobados; Social se habilita al terminar App Review. Manual queda como compatibilidad y `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |

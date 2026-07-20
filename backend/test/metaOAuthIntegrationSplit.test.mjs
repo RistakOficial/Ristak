@@ -719,7 +719,7 @@ test('disconnect sólo reporta fallback restaurado cuando el método heredado ti
   })
 })
 
-test('custom-values expone los fallbacks split efectivos sin mezclar sus activos', async () => {
+test('custom-values expone split efectivo sin mezclar activos ni revivir el token manual', async () => {
   await initializeMasterKey()
   await withIsolatedSplitMeta(async () => {
     await db.run(
@@ -787,12 +787,12 @@ test('custom-values expone los fallbacks split efectivos sin mezclar sus activos
 
     await db.run('DELETE FROM meta_oauth_integrations')
     await getMetaCustomValues({}, response)
-    assert.equal(response.body?.data?.adAccountId, 'legacy-ad')
-    assert.equal(response.body?.data?.pageId, 'legacy-page')
-    assert.equal(response.body?.data?.instagramAccountId, 'legacy-ig')
-    assert.equal(response.body?.data?.connectionMode, 'manual_system_user')
-    assert.equal(response.body?.data?.hasSplitAds, false)
-    assert.equal(response.body?.data?.hasSplitSocial, false)
+    assert.equal(response.body?.data?.adAccountId, '')
+    assert.equal(response.body?.data?.pageId, '')
+    assert.equal(response.body?.data?.instagramAccountId, '')
+    assert.equal(response.body?.data?.connectionMode || null, null)
+    assert.equal(response.body?.data?.hasSplitAds === true, false)
+    assert.equal(response.body?.data?.hasSplitSocial === true, false)
   })
 })
 

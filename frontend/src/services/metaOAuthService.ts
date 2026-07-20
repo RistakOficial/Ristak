@@ -1,8 +1,10 @@
 import { refreshIntegrationsStatusAfter } from './integrationsService'
 
 export type MetaOAuthConnectionMode = 'manual_system_user' | 'oauth_bisu' | 'oauth_user' | null
+export type MetaOAuthIntegrationKind = 'ads' | 'social'
 
 export interface MetaOAuthStatus {
+  integrationKind?: MetaOAuthIntegrationKind
   available: boolean
   mode: 'redirect' | 'js_sdk'
   connectUrl: string
@@ -84,6 +86,7 @@ export interface MetaOAuthPage {
 }
 
 export interface MetaOAuthSession {
+  integrationKind?: MetaOAuthIntegrationKind
   sessionId: string
   expiresAt: string
   connectionMode: 'oauth_bisu' | 'oauth_user'
@@ -116,6 +119,7 @@ export interface MetaOAuthFinalizeSelection {
 }
 
 export interface MetaOAuthFinalizeResult {
+  integrationKind?: MetaOAuthIntegrationKind
   connectionMode: 'oauth_bisu' | 'oauth_user'
   connected: boolean
   validated: boolean
@@ -228,6 +232,68 @@ export const metaOAuthService = {
     }>(`/api/meta/oauth/${integrationKind}/disconnect`, {
       method: 'POST',
       body: JSON.stringify({})
+    }))
+  ),
+
+  getIntegrationStatus: (integrationKind: MetaOAuthIntegrationKind) => (
+    requestMetaOAuth<MetaOAuthStatus>(`/api/meta/oauth/${integrationKind}/status`)
+  ),
+
+  refreshIntegrationStatus: (integrationKind: MetaOAuthIntegrationKind) => (
+    requestMetaOAuth<MetaOAuthStatus>(`/api/meta/oauth/${integrationKind}/status/refresh`, {
+      method: 'POST',
+      body: JSON.stringify({ integrationKind })
+    })
+  ),
+
+  createIntegrationConnectUrl: (integrationKind: MetaOAuthIntegrationKind) => (
+    requestMetaOAuth<{ connectUrl: string; redirectUri?: string; expiresAt?: string }>(
+      `/api/meta/oauth/${integrationKind}/connect-url`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          integrationKind,
+          returnPath: integrationKind === 'social'
+            ? '/settings/meta-ads/redes-sociales'
+            : '/settings/meta-ads/cuenta'
+        })
+      }
+    )
+  ),
+
+  completeIntegration: (
+    integrationKind: MetaOAuthIntegrationKind,
+    input: { handoffToken?: string; code?: string; configId?: string }
+  ) => requestMetaOAuth<MetaOAuthSession>(`/api/meta/oauth/${integrationKind}/complete`, {
+    method: 'POST',
+    body: JSON.stringify({
+      integrationKind,
+      handoffToken: input.handoffToken || undefined,
+      code: input.code || undefined,
+      configId: input.configId || undefined
+    })
+  }),
+
+  finalizeIntegration: (
+    integrationKind: MetaOAuthIntegrationKind,
+    selection: MetaOAuthFinalizeSelection
+  ) => refreshIntegrationsStatusAfter(requestMetaOAuth<MetaOAuthFinalizeResult>(
+    `/api/meta/oauth/${integrationKind}/finalize`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ integrationKind, ...selection })
+    }
+  )),
+
+  disconnectIntegration: (integrationKind: MetaOAuthIntegrationKind) => (
+    refreshIntegrationsStatusAfter(requestMetaOAuth<{
+      disconnected: boolean
+      restoredLegacy?: boolean
+      runtimeWarning?: string | null
+      runtimeWarnings?: string[]
+    }>(`/api/meta/oauth/${integrationKind}/disconnect`, {
+      method: 'POST',
+      body: JSON.stringify({ integrationKind })
     }))
   )
 }
