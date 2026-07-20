@@ -418,7 +418,12 @@ test('Stripe live parity: webhook manual live valida con el signing secret guard
     stripeMock.state.webhookMode = 'test'
     await assert.rejects(
       () => handleStripeWebhookEvent(Buffer.from('{}'), 'sig_test'),
-      /Firma test no corresponde/
+      (error) => {
+        assert.match(error.message, /Firma test no corresponde/)
+        assert.equal(error.status, 400)
+        assert.equal(error.code, 'stripe_webhook_signature_invalid')
+        return true
+      }
     )
     assert.equal(stripeMock.calls.webhooksConstructEvent.length, 2)
   })

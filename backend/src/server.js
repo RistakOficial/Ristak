@@ -30,7 +30,7 @@ import { startAutomationReviewProjectionScheduler } from './jobs/automationRevie
 import { startReadModelProjectionMaintenanceScheduler } from './jobs/readModelProjectionMaintenance.cron.js'
 import { syncRegisteredIntegrationCrons } from './jobs/integrationCronRegistry.js'
 import { stopIntegrationCrons } from './jobs/integrationCronRuntime.js'
-import { isMetaConnected, isMetaSocialConnected } from './services/integrationConnectionStateService.js'
+import { isMetaConnected, isMetaSocialConnected, isStripeConnected } from './services/integrationConnectionStateService.js'
 import { initializeVersion } from './services/metaVersionService.js'
 import { verifyAndUpdateWebhooks } from './startup/webhookVerification.js'
 import { runVersionedMigrations } from './startup/runMigrations.js'
@@ -48,6 +48,7 @@ import { scheduleAutomationTriggerIndexBootstrap } from './services/automationTr
 import { scheduleTrackingVisitorProjectionBackfill } from './services/trackingVisitorProjectionService.js'
 import { scheduleCrmListProjectionBackfill } from './services/crmListProjectionService.js'
 import { startWhatsAppStatusProjectionScheduler } from './services/whatsappStatusProjectionService.js'
+import { reconcileStripeWebhookConfiguration } from './services/stripePaymentService.js'
 
 // Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
 // apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
@@ -672,6 +673,22 @@ async function startRuntimeServices() {
       return result
     },
     'No se pudo reconciliar la suscripción Meta de Messenger al arrancar'
+  )
+
+  // Stripe entrega un signing secret distinto para cada endpoint. Si el dominio
+  // cambió o el endpoint fue eliminado desde Stripe, el secret anterior ya no
+  // puede validar eventos. Reconciliamos sólo instalaciones conectadas, en
+  // segundo plano y de forma idempotente, sin bloquear el healthcheck.
+  runStartupDrainTask(
+    'startup:stripe-webhook-reconciliation',
+    async () => {
+      if (!(await isStripeConnected())) {
+        logger.info('Webhook Stripe omitido: Stripe no está conectado')
+        return { skipped: true, reason: 'stripe-disconnected' }
+      }
+      return reconcileStripeWebhookConfiguration()
+    },
+    'No se pudo reconciliar el webhook de Stripe al arrancar'
   )
 
   // (CRON-006) Verificar y actualizar webhooks en producción SIN bloquear el boot:

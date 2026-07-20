@@ -66,6 +66,7 @@ const STRIPE_WEBHOOK_EVENTS = [
 ]
 const STRIPE_WEBHOOK_DESCRIPTION = 'Ristak - Pagos'
 const STRIPE_WEBHOOK_METADATA = { ristak: 'payment_webhook' }
+const STRIPE_WEBHOOK_PATH = '/api/stripe/webhook'
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const DEFAULT_PAYMENT_TIMEZONE = ACCOUNT_DEFAULT_TIMEZONE
 const STRIPE_PLAN_STATES = {
@@ -129,6 +130,34 @@ function sameEventSet(left = [], right = []) {
     if (!rightSet.has(item)) return false
   }
   return true
+}
+
+function getStripeWebhookInstallationId() {
+  return cleanString(
+    process.env.RISTAK_INSTALLATION_ID ||
+    process.env.INSTALLATION_ID ||
+    process.env.RENDER_SERVICE_ID
+  )
+}
+
+function getStripeWebhookMetadata(mode) {
+  const installationId = getStripeWebhookInstallationId()
+  return {
+    ...STRIPE_WEBHOOK_METADATA,
+    mode: normalizeMode(mode),
+    ...(installationId ? { installation_id: installationId } : {})
+  }
+}
+
+function getCanonicalStripeWebhookUrl() {
+  const baseUrl = cleanString(
+    process.env.RENDER_EXTERNAL_URL ||
+    process.env.PUBLIC_APP_URL ||
+    process.env.APP_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    process.env.APP_URL
+  ).replace(/\/+$/, '')
+  return baseUrl ? normalizeWebhookUrl(`${baseUrl}${STRIPE_WEBHOOK_PATH}`) : ''
 }
 
 function shouldIgnorePendingWebhookRegression(payment = {}, nextStatus = '') {
@@ -813,29 +842,34 @@ async function syncStripeWebhookForConnection(connection = {}, webhookUrl = '') 
   const stripe = getStripeInstance(assertStripeSecret(connection.secretKey))
   const existingList = await stripe.webhookEndpoints.list({ limit: 100 })
   const endpoints = existingList?.data || []
+  const expectedMetadata = getStripeWebhookMetadata(connection.mode)
+  const storedEndpointId = cleanString(connection.webhookEndpointId)
   const sameUrl = (endpoint) => cleanString(endpoint?.url).replace(/\/+$/, '').toLowerCase() === normalizedUrl.toLowerCase()
-  const sameRistakWebhook = (endpoint) => (
+  const sameRistakMode = (endpoint) => (
     endpoint?.metadata?.ristak === STRIPE_WEBHOOK_METADATA.ristak &&
     endpoint?.metadata?.mode === normalizeMode(connection.mode)
   )
-  const existing = endpoints.find((endpoint) => cleanString(endpoint?.id) === cleanString(connection.webhookEndpointId)) ||
-    endpoints.find((endpoint) => sameUrl(endpoint) && sameRistakWebhook(endpoint)) ||
-    (connection.webhookSecret ? endpoints.find(sameUrl) : null)
+  const hasExpectedMetadata = (endpoint) => Object.entries(expectedMetadata)
+    .every(([key, value]) => cleanString(endpoint?.metadata?.[key]) === cleanString(value))
+  const existing = endpoints.find((endpoint) => cleanString(endpoint?.id) === storedEndpointId)
 
-  if (existing?.id) {
+  // Stripe sólo entrega el signing secret al crear el endpoint. Reutilizar uno
+  // encontrado por URL o metadata cuando el ID guardado desapareció conserva un
+  // whsec de otro endpoint y hace que todas las firmas fallen. Sólo es seguro
+  // reutilizar el ID exacto si también conservamos su secret.
+  if (existing?.id && connection.webhookSecret) {
     const needsEventUpdate = !sameEventSet(existing.enabled_events, STRIPE_WEBHOOK_EVENTS)
     const needsUrlUpdate = cleanString(existing.url).replace(/\/+$/, '') !== normalizedUrl
-    const needsMetadataUpdate = !sameRistakWebhook(existing)
-    if (needsEventUpdate || needsUrlUpdate || existing.description !== STRIPE_WEBHOOK_DESCRIPTION || needsMetadataUpdate) {
-      await stripe.webhookEndpoints.update(existing.id, {
+    const needsMetadataUpdate = !hasExpectedMetadata(existing)
+    const needsStatusUpdate = cleanString(existing.status).toLowerCase() !== 'enabled'
+    let canonicalEndpoint = existing
+    if (needsEventUpdate || needsUrlUpdate || needsStatusUpdate || existing.description !== STRIPE_WEBHOOK_DESCRIPTION || needsMetadataUpdate) {
+      canonicalEndpoint = await stripe.webhookEndpoints.update(existing.id, {
         url: normalizedUrl,
         enabled_events: STRIPE_WEBHOOK_EVENTS,
         disabled: false,
         description: STRIPE_WEBHOOK_DESCRIPTION,
-        metadata: {
-          ...STRIPE_WEBHOOK_METADATA,
-          mode: normalizeMode(connection.mode)
-        }
+        metadata: expectedMetadata
       })
     }
 
@@ -843,7 +877,7 @@ async function syncStripeWebhookForConnection(connection = {}, webhookUrl = '') 
       ...connection,
       webhookEndpointId: existing.id,
       webhookUrl: normalizedUrl,
-      webhookStatus: existing.status || 'enabled',
+      webhookStatus: cleanString(canonicalEndpoint?.status || 'enabled'),
       webhookSyncedAt: new Date().toISOString(),
       webhookLastError: ''
     }
@@ -853,30 +887,64 @@ async function syncStripeWebhookForConnection(connection = {}, webhookUrl = '') 
     url: normalizedUrl,
     enabled_events: STRIPE_WEBHOOK_EVENTS,
     description: STRIPE_WEBHOOK_DESCRIPTION,
-    metadata: {
-      ...STRIPE_WEBHOOK_METADATA,
-      mode: normalizeMode(connection.mode)
-    }
+    metadata: expectedMetadata
   })
+  const createdSecret = cleanString(created?.secret)
+  if (!createdSecret) {
+    const error = new Error(`Stripe no devolvió el signing secret del webhook nuevo en modo ${normalizeMode(connection.mode)}.`)
+    error.status = 502
+    throw error
+  }
+
+  const cleanupErrors = []
+  if (expectedMetadata.installation_id) {
+    const staleEndpoints = endpoints.filter((endpoint) => {
+      if (!endpoint?.id || endpoint.id === created.id || !sameRistakMode(endpoint)) return false
+      const endpointInstallationId = cleanString(endpoint?.metadata?.installation_id)
+      const belongsToInstallation = endpointInstallationId === expectedMetadata.installation_id
+      const legacySameDestination = !endpointInstallationId && sameUrl(endpoint)
+      return belongsToInstallation || legacySameDestination
+    })
+
+    for (const staleEndpoint of staleEndpoints) {
+      try {
+        await stripe.webhookEndpoints.update(staleEndpoint.id, { disabled: true })
+        logger.info(`[Stripe webhook] Endpoint reemplazado desactivado (${normalizeMode(connection.mode)}): ${staleEndpoint.id}`)
+      } catch (error) {
+        cleanupErrors.push(`No se pudo desactivar ${staleEndpoint.id}: ${error.message}`)
+        logger.warn(`[Stripe webhook] No se pudo desactivar endpoint reemplazado ${staleEndpoint.id}: ${error.message}`)
+      }
+    }
+  }
 
   return {
     ...connection,
-    webhookSecret: cleanString(created?.secret) || connection.webhookSecret,
+    webhookSecret: createdSecret,
     webhookEndpointId: cleanString(created?.id),
     webhookUrl: normalizedUrl,
     webhookStatus: cleanString(created?.status || 'enabled'),
     webhookSyncedAt: new Date().toISOString(),
-    webhookLastError: ''
+    webhookLastError: cleanupErrors.join(' | ')
   }
 }
 
-async function syncStripeWebhooksForConnections(connections = {}, webhookUrl = '') {
+async function persistStripeManualModeConnections(connections = {}) {
+  await setAppConfig(CONFIG_KEYS.manualModeConnections, JSON.stringify({
+    test: serializeManualModeConnection(connections.test),
+    live: serializeManualModeConnection(connections.live)
+  }))
+}
+
+async function syncStripeWebhooksForConnections(connections = {}, webhookUrl = '', { onModeSynced } = {}) {
   const next = { ...connections }
 
   for (const mode of STRIPE_MODES) {
     const connection = next[mode]
     if (!connection?.publishableKey || !connection?.secretKey) continue
     next[mode] = await syncStripeWebhookForConnection(connection, webhookUrl)
+    if (typeof onModeSynced === 'function') {
+      await onModeSynced(next, mode)
+    }
   }
 
   return next
@@ -934,6 +1002,56 @@ export async function getStripePaymentConfig({ includeSecrets = false, mode: mod
   }
 }
 
+export async function reconcileStripeWebhookConfiguration({ webhookUrl = getCanonicalStripeWebhookUrl() } = {}) {
+  const current = await getStripePaymentConfig({ includeSecrets: true })
+  if (!current.enabled) {
+    return { reconciled: false, skipped: true, reason: 'stripe-disabled' }
+  }
+
+  const currentManualModes = current.manualModes || {
+    test: normalizeStoredManualConnection({}, 'test'),
+    live: normalizeStoredManualConnection({}, 'live')
+  }
+  const configuredModes = STRIPE_MODES.filter((mode) => (
+    currentManualModes[mode]?.publishableKey && currentManualModes[mode]?.secretKey
+  ))
+  if (!configuredModes.length) {
+    return { reconciled: false, skipped: true, reason: 'stripe-not-configured' }
+  }
+
+  const normalizedWebhookUrl = normalizeWebhookUrl(webhookUrl)
+  if (!normalizedWebhookUrl) {
+    return { reconciled: false, skipped: true, reason: 'public-webhook-url-missing' }
+  }
+
+  const nextManualModes = await syncStripeWebhooksForConnections(
+    currentManualModes,
+    normalizedWebhookUrl,
+    { onModeSynced: persistStripeManualModeConnections }
+  )
+  await persistStripeManualModeConnections(nextManualModes)
+
+  const activeMode = chooseManualMode(nextManualModes, current.mode)
+  const activeConnection = nextManualModes[activeMode]
+  if (activeConnection?.webhookSecret) {
+    await setAppConfig(CONFIG_KEYS.webhookSecret, encrypt(activeConnection.webhookSecret))
+  }
+
+  return {
+    reconciled: true,
+    webhookUrl: normalizedWebhookUrl,
+    modes: Object.fromEntries(configuredModes.map((mode) => {
+      const connection = nextManualModes[mode]
+      return [mode, {
+        webhookEndpointId: cleanString(connection.webhookEndpointId),
+        webhookUrl: cleanString(connection.webhookUrl),
+        webhookStatus: cleanString(connection.webhookStatus),
+        webhookLastError: cleanString(connection.webhookLastError)
+      }]
+    }))
+  }
+}
+
 export async function saveStripePaymentConfig(input = {}, options = {}) {
   const current = await getStripePaymentConfig({ includeSecrets: true })
   const accountCurrency = await getConfiguredCurrency()
@@ -956,7 +1074,11 @@ export async function saveStripePaymentConfig(input = {}, options = {}) {
   }
 
   if (Object.prototype.hasOwnProperty.call(options, 'webhookUrl')) {
-    nextManualModes = await syncStripeWebhooksForConnections(nextManualModes, options.webhookUrl)
+    nextManualModes = await syncStripeWebhooksForConnections(
+      nextManualModes,
+      options.webhookUrl,
+      { onModeSynced: persistStripeManualModeConnections }
+    )
   }
 
   const activeMode = chooseManualMode(nextManualModes, input.mode || 'live')
@@ -973,10 +1095,7 @@ export async function saveStripePaymentConfig(input = {}, options = {}) {
   await setAppConfig(CONFIG_KEYS.publishableKey, activeConnection.publishableKey)
   await setAppConfig(CONFIG_KEYS.defaultCurrency, accountCurrency)
   await setAppConfig(CONFIG_KEYS.accountLabel, cleanString(input.accountLabel || current.accountLabel || 'Stripe'))
-  await setAppConfig(CONFIG_KEYS.manualModeConnections, JSON.stringify({
-    test: serializeManualModeConnection(nextManualModes.test),
-    live: serializeManualModeConnection(nextManualModes.live)
-  }))
+  await persistStripeManualModeConnections(nextManualModes)
   await db.run('DELETE FROM app_config WHERE config_key = ?', [CONFIG_KEYS.disconnectedAt])
 
   if (activeConnection.secretKey) {
@@ -5757,7 +5876,10 @@ export async function handleStripeWebhookEvent(rawBody, signature) {
   }
 
   if (!verified) {
-    throw lastError || new Error('No se pudo verificar la firma del webhook de Stripe.')
+    const error = lastError || new Error('No se pudo verificar la firma del webhook de Stripe.')
+    error.status = 400
+    error.code = error.code || 'stripe_webhook_signature_invalid'
+    throw error
   }
 
   const { stripe, config, requestOptions, event } = verified

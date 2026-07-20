@@ -9,6 +9,7 @@ import { savePaymentSettings } from '../src/services/paymentSettingsService.js'
 import {
   deleteStripePaymentConfig,
   getStripePaymentConfig,
+  reconcileStripeWebhookConfiguration,
   saveStripePaymentConfig,
   setStripeFactoryForTest,
   testStripePaymentConfig
@@ -19,7 +20,10 @@ const STRIPE_ENV_KEYS = [
   'PUBLIC_APP_URL',
   'APP_PUBLIC_URL',
   'FRONTEND_URL',
-  'APP_URL'
+  'APP_URL',
+  'INSTALLATION_ID',
+  'RISTAK_INSTALLATION_ID',
+  'RENDER_SERVICE_ID'
 ]
 
 async function snapshotStripeConfig(callback) {
@@ -271,6 +275,205 @@ test('Stripe manual: al guardar llaves crea webhook automático con la URL públ
 
     const withSecrets = await getStripePaymentConfig({ includeSecrets: true, mode: 'test' })
     assert.equal(withSecrets.manualModes.test.webhookSecret, 'whsec_ristak_auto')
+  })
+})
+
+test('Stripe webhook: si el endpoint guardado desapareció crea uno nuevo y reemplaza el secret', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    process.env.INSTALLATION_ID = 'inst_stripe_recovery'
+
+    setStripeFactoryForTest(() => ({
+      webhookEndpoints: {
+        list: async () => ({ data: [] }),
+        create: async () => ({
+          id: 'we_deleted_after_creation',
+          secret: 'whsec_deleted_endpoint',
+          status: 'enabled'
+        }),
+        update: async (id, payload) => ({ id, ...payload, status: payload.disabled ? 'disabled' : 'enabled' })
+      }
+    }))
+
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_recovery_public',
+          secretKey: 'sk_test_recovery_secret'
+        }
+      }
+    }, { webhookUrl: 'https://payments.example.com/api/stripe/webhook' })
+
+    const created = []
+    const updated = []
+    setStripeFactoryForTest(() => ({
+      webhookEndpoints: {
+        list: async () => ({
+          data: [{
+            id: 'we_legacy_same_url',
+            url: 'https://payments.example.com/api/stripe/webhook',
+            status: 'enabled',
+            description: 'Ristak - Pagos',
+            enabled_events: ['payment_intent.succeeded'],
+            metadata: { ristak: 'payment_webhook', mode: 'test' }
+          }]
+        }),
+        create: async (payload) => {
+          created.push(payload)
+          return {
+            id: 'we_recovered',
+            secret: 'whsec_recovered',
+            status: 'enabled'
+          }
+        },
+        update: async (id, payload) => {
+          updated.push({ id, payload })
+          return { id, ...payload, status: payload.disabled ? 'disabled' : 'enabled' }
+        }
+      }
+    }))
+
+    const result = await reconcileStripeWebhookConfiguration({
+      webhookUrl: 'https://payments.example.com/api/stripe/webhook'
+    })
+
+    assert.equal(result.reconciled, true)
+    assert.equal(created.length, 1)
+    assert.equal(created[0].metadata.installation_id, 'inst_stripe_recovery')
+    assert.deepEqual(updated, [{ id: 'we_legacy_same_url', payload: { disabled: true } }])
+
+    const recovered = await getStripePaymentConfig({ includeSecrets: true, mode: 'test' })
+    assert.equal(recovered.webhookEndpointId, 'we_recovered')
+    assert.equal(recovered.webhookSecret, 'whsec_recovered')
+    assert.equal(recovered.webhookUrl, 'https://payments.example.com/api/stripe/webhook')
+  })
+})
+
+test('Stripe webhook: conserva el secret cuando actualiza el endpoint exacto a otra URL', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    process.env.INSTALLATION_ID = 'inst_stripe_move'
+
+    setStripeFactoryForTest(() => ({
+      webhookEndpoints: {
+        list: async () => ({ data: [] }),
+        create: async () => ({
+          id: 'we_moved_endpoint',
+          secret: 'whsec_moved_endpoint',
+          status: 'enabled'
+        }),
+        update: async (id, payload) => ({ id, ...payload, status: 'enabled' })
+      }
+    }))
+
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'test',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_move_public',
+          secretKey: 'sk_test_move_secret'
+        }
+      }
+    }, { webhookUrl: 'https://old.example.com/api/stripe/webhook' })
+
+    const created = []
+    const updated = []
+    setStripeFactoryForTest(() => ({
+      webhookEndpoints: {
+        list: async () => ({
+          data: [{
+            id: 'we_moved_endpoint',
+            url: 'https://old.example.com/api/stripe/webhook',
+            status: 'disabled',
+            description: 'Ristak - Pagos',
+            enabled_events: [],
+            metadata: { ristak: 'payment_webhook', mode: 'test' }
+          }]
+        }),
+        create: async (payload) => {
+          created.push(payload)
+          return { id: 'unexpected', secret: 'whsec_unexpected', status: 'enabled' }
+        },
+        update: async (id, payload) => {
+          updated.push({ id, payload })
+          return { id, ...payload, status: 'enabled' }
+        }
+      }
+    }))
+
+    await reconcileStripeWebhookConfiguration({
+      webhookUrl: 'https://new.example.com/api/stripe/webhook'
+    })
+
+    assert.equal(created.length, 0)
+    assert.equal(updated.length, 1)
+    assert.equal(updated[0].id, 'we_moved_endpoint')
+    assert.equal(updated[0].payload.url, 'https://new.example.com/api/stripe/webhook')
+    assert.equal(updated[0].payload.disabled, false)
+    assert.equal(updated[0].payload.metadata.installation_id, 'inst_stripe_move')
+
+    const moved = await getStripePaymentConfig({ includeSecrets: true, mode: 'test' })
+    assert.equal(moved.webhookEndpointId, 'we_moved_endpoint')
+    assert.equal(moved.webhookSecret, 'whsec_moved_endpoint')
+    assert.equal(moved.webhookStatus, 'enabled')
+    assert.equal(moved.webhookUrl, 'https://new.example.com/api/stripe/webhook')
+  })
+})
+
+test('Stripe webhook: persiste el secret nuevo aunque falle la otra modalidad', async () => {
+  await initializeMasterKey()
+
+  await snapshotStripeConfig(async () => {
+    process.env.INSTALLATION_ID = 'inst_stripe_partial_recovery'
+    await saveStripePaymentConfig({
+      enabled: true,
+      mode: 'live',
+      manualModes: {
+        test: {
+          publishableKey: 'pk_test_partial_public',
+          secretKey: 'sk_test_partial_secret',
+          webhookSecret: 'whsec_test_stale'
+        },
+        live: {
+          publishableKey: 'pk_live_partial_public',
+          secretKey: 'sk_live_partial_secret',
+          webhookSecret: 'whsec_live_existing'
+        }
+      }
+    })
+
+    setStripeFactoryForTest((secretKey) => ({
+      webhookEndpoints: {
+        list: async () => {
+          if (secretKey === 'sk_live_partial_secret') {
+            throw new Error('Stripe live temporalmente no disponible')
+          }
+          return { data: [] }
+        },
+        create: async () => ({
+          id: 'we_test_partial_recovered',
+          secret: 'whsec_test_partial_recovered',
+          status: 'enabled'
+        }),
+        update: async (id, payload) => ({ id, ...payload, status: 'enabled' })
+      }
+    }))
+
+    await assert.rejects(
+      () => reconcileStripeWebhookConfiguration({
+        webhookUrl: 'https://payments.example.com/api/stripe/webhook'
+      }),
+      /Stripe live temporalmente no disponible/
+    )
+
+    const recoveredTest = await getStripePaymentConfig({ includeSecrets: true, mode: 'test' })
+    assert.equal(recoveredTest.webhookEndpointId, 'we_test_partial_recovered')
+    assert.equal(recoveredTest.webhookSecret, 'whsec_test_partial_recovered')
   })
 })
 

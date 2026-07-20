@@ -3144,6 +3144,35 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Webhooks Stripe por instalación
+
+Cada modalidad Stripe (`test` y `live`) conserva en
+`app_config.stripe_manual_mode_connections` su endpoint, URL y signing secret
+cifrados. El signing secret pertenece a un solo endpoint: Ristak nunca debe
+adoptar por URL o metadata un endpoint cuyo ID no coincida con el guardado,
+porque Stripe no vuelve a revelar el secret de endpoints existentes.
+
+Al guardar Stripe y durante el arranque, una reconciliación best-effort se
+ejecuta únicamente si la integración está conectada. Usa primero la URL directa
+del servicio Render y aplica estas reglas:
+
+- Si el endpoint guardado todavía existe y conserva su signing secret, actualiza
+  URL, eventos, estado y metadata sin recrearlo.
+- Si el endpoint fue eliminado o falta su secret, crea uno nuevo y persiste el
+  nuevo secret antes de continuar con la otra modalidad.
+- La metadata incluye `installation_id` para que instalaciones distintas que
+  compartan una cuenta Stripe no se pisen.
+- Después de crear el reemplazo, sólo desactiva endpoints anteriores atribuibles
+  a la misma instalación; para endpoints legacy sin `installation_id`, exige
+  además la misma URL.
+- La reconciliación corre en segundo plano y nunca bloquea readiness si Stripe
+  no responde. Un fallo de firma entrante responde `400`; no se registra el
+  evento ni se ejecutan efectos de pago.
+
+La lectura de Configuración > Pagos sigue siendo local y no sincroniza Stripe.
+La reparación ocurre al conectar/guardar o en la tarea de arranque, no desde un
+GET de pantalla.
+
 Cuando un webhook, retorno de pasarela o accion interna cambia un pago o una
 suscripcion, el backend emite un evento por `/api/payment-events/stream`. Las
 pantallas de Transacciones, Planes de pago y Suscripciones escuchan ese stream y
