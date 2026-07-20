@@ -115,6 +115,10 @@ import {
   normalizeCurrencyCode
 } from '@/utils/accountLocale'
 import { hasCalendarPaymentsAccess, hasLicenseFeature } from '@/utils/accessControl'
+import {
+  getNextCommercialReportCalendarIds,
+  isCalendarIncludedInCommercialReports
+} from '@/utils/calendarCommercialReports'
 import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './HighLevelIntegration.module.css'
 import pageStyles from './CalendarsConfiguration.module.css'
@@ -1440,7 +1444,10 @@ export const CalendarsConfiguration: React.FC = () => {
     const promptKey = googleDefaultPromptKey(importedCalendar)
     if (!promptKey || googleDefaultPromptHandledIds.includes(promptKey)) return false
 
-    const alreadyConfigured = defaultCalendarId === importedCalendar.id && attributionCalendarIds.includes(importedCalendar.id)
+    const alreadyConfigured = defaultCalendarId === importedCalendar.id && isCalendarIncludedInCommercialReports(
+      attributionCalendarIds,
+      importedCalendar.id
+    )
     if (alreadyConfigured) return false
 
     setGoogleDefaultPromptCalendar(importedCalendar)
@@ -1572,7 +1579,7 @@ export const CalendarsConfiguration: React.FC = () => {
     try {
       await setDefaultCalendarId(googleDefaultPromptCalendar.id)
 
-      if (!attributionCalendarIds.includes(googleDefaultPromptCalendar.id)) {
+      if (!isCalendarIncludedInCommercialReports(attributionCalendarIds, googleDefaultPromptCalendar.id)) {
         await setAttributionCalendarIds([...attributionCalendarIds, googleDefaultPromptCalendar.id])
       }
 
@@ -1705,13 +1712,21 @@ export const CalendarsConfiguration: React.FC = () => {
 
   // Guardado automático: Toggle individual de atribución
   const handleAttributionToggle = async (calendarId: string) => {
-    const newSelection = attributionCalendarIds.includes(calendarId)
-      ? attributionCalendarIds.filter(id => id !== calendarId)
-      : [...attributionCalendarIds, calendarId]
+    const newSelection = getNextCommercialReportCalendarIds(
+      attributionCalendarIds,
+      calendarId,
+      calendars.map(calendar => calendar.id)
+    )
 
     try {
       await setAttributionCalendarIds(newSelection)
-      showToast('success', 'Reportes comerciales actualizados', `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} incluido${newSelection.length !== 1 ? 's' : ''}`)
+      showToast(
+        'success',
+        'Reportes comerciales actualizados',
+        newSelection.length === 0
+          ? 'Todos los calendarios están incluidos'
+          : `${newSelection.length} calendario${newSelection.length !== 1 ? 's' : ''} incluido${newSelection.length !== 1 ? 's' : ''}`
+      )
     } catch (error: any) {
       showToast('error', 'Error al guardar', error.message)
     }
@@ -2523,7 +2538,10 @@ export const CalendarsConfiguration: React.FC = () => {
     )
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
-    const selectedCalendarAttributed = attributionCalendarIds.includes(selectedCalendar.id)
+    const selectedCalendarAttributed = isCalendarIncludedInCommercialReports(
+      attributionCalendarIds,
+      selectedCalendar.id
+    )
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
     const selectedCustomFormHasPayment = hasCalendarPaymentAccess && siteHasPaymentGateEnabled(selectedCustomForm)
     const selectedCustomFormName = getSiteDisplayName(selectedCustomForm)
@@ -4323,7 +4341,6 @@ export const CalendarsConfiguration: React.FC = () => {
   ) : null
 
   const renderCalendarRow = (calendar: CalendarType) => {
-    const isAttributed = attributionCalendarIds.includes(calendar.id)
     const isDefault = defaultCalendarId === calendar.id
     const availabilitySummary = summarizeWeeklyAvailability(openHoursToWeeklyAvailability(calendar.openHours, {
       fallbackToDefault: calendar.availabilityScheduleConfigured !== true

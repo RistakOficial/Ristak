@@ -2875,6 +2875,10 @@ Reglas base:
   `Eventos` y `Estilos y diseños`. `Disponibilidad` contiene primero el editor
   semanal y debajo duración, cadencia, reglas y espacios entre citas. `URL y
   Datos` reúne el enlace público, formulario y acción posterior al agendado.
+- En `Detalles`, `Incluir en reportes comerciales` nace encendido para todos los
+  calendarios. Una lista vacía en `app_config.attribution_calendar_ids` significa
+  todos —incluidos los que se creen o sincronicen después— y la UI debe mostrar
+  ese estado como activo; una lista con IDs es una selección explícita.
 - La cabecera de Configuración > Calendarios refleja el estado real de Google:
   cuando la integración está activa muestra un check y `Conectado a Google
   Calendar` sobre un botón verde; cuando no está activa muestra `Conectar con

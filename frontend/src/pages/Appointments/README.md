@@ -232,6 +232,8 @@ En `/settings/calendars`:
 
 - `default_calendar_id`: calendario seleccionado por defecto en `/appointments`.
 - `attribution_calendar_ids`: calendarios que cuentan para atribución/marketing.
+  Una lista vacía significa todos los calendarios y el switch de cada calendario
+  debe mostrarse activo; una lista con IDs limita la inclusión a esa selección.
 - `openHours`: horario semanal por calendario, con días activables y varios
   rangos por día. Un arreglo vacío configurado significa calendario cerrado.
 - `allowOverlaps`: switch `Permitir empalme de citas` del paso
