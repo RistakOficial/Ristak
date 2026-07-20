@@ -1171,13 +1171,15 @@ salida explícita sin inventar credenciales ni valores de prueba.
 
 Rutas publicas:
 
-- `/setup`: configuracion inicial. En instalaciones administradas consume el enlace de un solo
-  uso, reutiliza de forma automática la contraseña elegida en Installer y abre sesión sin pedir
-  otra contraseña. Los fallos transitorios del portal se reintentan. Si el enlace falta, expiró
-  o no es válido, muestra el ingreso con las credenciales vigentes del dueño en Installer; nunca
-  cae al formulario que inventa una contraseña local. Ese formulario manual solo existe en
-  instalaciones independientes sin servidor central.
-- `/login`, `/sso`, `/reset-password`.
+- `/setup`: configuracion inicial. En instalaciones administradas el enlace SSO crea al dueño y
+  abre su sesión automáticamente. Si la cuenta tiene contraseña en Installer reutiliza su hash; si
+  usa solamente Google crea una credencial local aleatoria que nadie conoce y nunca recibe ni guarda
+  la contraseña de Google. Si el enlace falta, expiró o no es válido, conserva **Continuar con
+  Google** y también permite ingresar con las credenciales vigentes del dueño en Installer. El
+  formulario manual solo existe en instalaciones independientes sin servidor central.
+- `/login`, `/sso`, `/reset-password`. El login de una instalación administrada inicia Google en
+  el portal central y regresa a la app mediante una llave SSO de un solo uso; la instalación no
+  recibe ni almacena la contraseña de Google.
 - `/login` usa el isotipo nuevo de Ristak (`RistakAppMark`) con nombre visible
   y contexto de inicio de sesion. Los estados de carga inicial del CRM en
   escritorio y movil usan `AppStartupLoader`/`PhoneStartupLoader` sin logo ni

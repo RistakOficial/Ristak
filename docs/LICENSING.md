@@ -152,22 +152,21 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
 - Crons de sistema e integraciones llaman `canRunBackgroundJob(...)` antes de
   enviar mensajes, sincronizar integraciones o cobrar parcialidades.
 
-## Setup inicial del dueño (automático, mismas credenciales del portal)
+## Setup inicial del dueño (automático desde el portal)
 
 1. El instalador termina el deploy y genera un **setup token de un solo uso**.
-2. El cliente llega a `https://su-app.onrender.com/setup?token=...`.
-3. La app valida el token contra el servidor central; la respuesta incluye el **hash PBKDF2
-   de la contraseña del portal** (mismo formato que usa la app — nunca viaja la contraseña
-   en claro).
-4. La app crea el usuario owner automáticamente con **las mismas credenciales que el cliente
-   usó en el instalador**, consume el token, valida la licencia y abre sesión directa al
-   dashboard (sin formularios). La sesión dura 30 días, hasta cerrar sesión o limpiar caché.
+2. El cliente llega a `https://su-app.onrender.com/sso?token=...`.
+3. La app valida el token contra el servidor central. Si el dueño tiene contraseña en el portal,
+   la respuesta incluye únicamente su **hash PBKDF2**; la contraseña en claro nunca viaja.
+4. La app crea al owner, consume el token, valida la licencia y abre el dashboard. Si la cuenta
+   usa solamente Google, genera una credencial local aleatoria que nadie conoce: Ristak no pide,
+   recibe ni guarda la contraseña de Google.
 5. Si Render o el portal central todavía están estabilizándose, backend y frontend reintentan
    automáticamente sin sacar al cliente de **Preparando tu cuenta**.
 6. En una instalación gestionada nunca se muestra un formulario para **crear otra contraseña**.
-   Si el enlace expiró o falta, el dueño puede ingresar con el mismo correo y contraseña vigentes
-   del Installer; la app valida ambos datos contra el portal y crea el primer usuario con ese hash.
-   La contraseña global de soporte no puede activar una cuenta de cliente.
+   Si el enlace expiró o falta, el dueño puede usar **Continuar con Google** o el correo y la
+   contraseña vigentes del Installer. La contraseña global de soporte no puede activar una cuenta
+   de cliente.
 
 Sin servidor central configurado, el setup clásico independiente (usuario + contraseña, solo si
 no existen usuarios) sigue funcionando igual.

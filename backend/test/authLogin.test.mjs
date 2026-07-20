@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 
 import { db } from '../src/config/database.js'
-import { login, verifyTokenEndpoint } from '../src/controllers/authController.js'
+import { login, ssoLogin, verifyTokenEndpoint } from '../src/controllers/authController.js'
 import { hashPassword, verifyPassword, verifyToken } from '../src/utils/auth.js'
 import { requireAuth } from '../src/middleware/authMiddleware.js'
 import { resetLicenseCache } from '../src/services/licenseService.js'
@@ -12,6 +12,8 @@ let licenseServer
 let licenseServerUrl
 const bootstrapOwnerEmail = 'bootstrap-owner@example.com'
 const bootstrapOwnerPassword = 'OwnerPortalPass123'
+const googleOwnerEmail = 'google-owner@example.com'
+const googleOwnerSetupToken = 'google-owner-setup-token'
 
 before(async () => {
   licenseServer = http.createServer((req, res) => {
@@ -29,6 +31,20 @@ before(async () => {
         } else {
           res.statusCode = 403
           res.end(JSON.stringify({ valid: false, reason: 'wrong_password' }))
+        }
+        return
+      }
+
+      if (req.url === '/api/setup-token/verify' || req.url === '/api/setup-token/consume') {
+        if (body.token === googleOwnerSetupToken && body.installation_id === 'inst_google_bootstrap') {
+          res.end(JSON.stringify({
+            valid: true,
+            email: googleOwnerEmail,
+            password_hash: null
+          }))
+        } else {
+          res.statusCode = 403
+          res.end(JSON.stringify({ valid: false, message: 'Token inválido' }))
         }
         return
       }
@@ -246,6 +262,41 @@ test('login creates the first managed owner from the existing Installer credenti
     assert.equal(payload.supportAccess, undefined)
   } finally {
     await db.run('DELETE FROM users WHERE email = ?', [bootstrapOwnerEmail])
+  }
+})
+
+test('SSO creates the first managed owner when the Installer account only uses Google', async () => {
+  await db.run('DELETE FROM users WHERE email = ?', [googleOwnerEmail])
+  const usersBefore = await db.get('SELECT COUNT(*) AS total FROM users')
+  assert.equal(Number(usersBefore.total), 0)
+
+  process.env.LICENSE_SERVER_URL = licenseServerUrl
+  process.env.CLIENT_ID = 'cli_google_bootstrap'
+  process.env.LICENSE_KEY = 'RSTK-GOOGLE-BOOTSTRAP-0001'
+  process.env.INSTALLATION_ID = 'inst_google_bootstrap'
+  process.env.OWNER_EMAIL = googleOwnerEmail
+  resetLicenseCache()
+
+  try {
+    const res = createMockResponse()
+    await ssoLogin({ body: { token: googleOwnerSetupToken } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.user.email, googleOwnerEmail)
+    assert.equal(res.payload.user.role, 'admin')
+    assert.match(res.payload.apiToken, /^ristak_live_/)
+
+    const stored = await db.get('SELECT * FROM users WHERE email = ?', [googleOwnerEmail])
+    assert.ok(stored?.id)
+    assert.ok(stored.password_hash)
+    assert.equal(verifyPassword('LaContraseñaDeGoogleNoSeGuardaAquí', stored.password_hash), false)
+
+    const payload = verifyToken(res.payload.token)
+    assert.equal(payload.userId, stored.id)
+    assert.equal(payload.email, googleOwnerEmail)
+  } finally {
+    await db.run('DELETE FROM users WHERE email = ?', [googleOwnerEmail])
   }
 })
 

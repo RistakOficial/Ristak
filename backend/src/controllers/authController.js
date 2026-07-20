@@ -1048,8 +1048,8 @@ export async function changeUsername(req, res) {
  * POST /api/auth/sso
  * Entrada directa desde el portal central: el portal genera un token de un
  * solo uso y el usuario queda autenticado aquí sin volver a escribir su
- * contraseña. Si la app aún no tiene usuarios, se redirige al setup con el
- * mismo token (sin consumirlo).
+ * contraseña. Si la app aún no tiene usuarios, crea al dueño desde la
+ * identidad que el Installer ya verificó y abre la sesión en el mismo paso.
  */
 export async function ssoLogin(req, res) {
   try {
@@ -1063,8 +1063,7 @@ export async function ssoLogin(req, res) {
       return res.status(404).json({ success: false, message: 'No disponible' })
     }
 
-    // Primero verificar sin consumir: si la app no tiene usuarios todavía,
-    // el mismo token sirve para el setup inicial.
+    // Primero verificar sin consumir para no quemar un enlace inválido.
     const peeked = await verifySetupToken(token)
 
     if (!peeked.valid || !peeked.email) {
@@ -1074,19 +1073,75 @@ export async function ssoLogin(req, res) {
       })
     }
 
-    const user = await findUserByLoginEmail(cleanLoginEmail(peeked.email))
+    const ownerEmail = cleanLoginEmail(peeked.email)
+    let user = await findUserByLoginEmail(ownerEmail)
+    let apiToken = null
+    let license = null
 
     if (!user) {
-      return res.status(409).json({ success: false, code: 'needs_setup' })
+      const existingUser = await db.get('SELECT id FROM users LIMIT 1')
+      if (existingUser) {
+        return res.status(403).json({
+          success: false,
+          message: 'Este acceso no corresponde a un usuario de esta app.'
+        })
+      }
+
+      // El SSO del Installer ya confirmó la identidad del dueño. En la primera
+      // entrada creamos su usuario local sin pedir otra contraseña. Si el portal
+      // tiene contraseña reutilizamos su hash; si la cuenta es solo Google
+      // guardamos una credencial aleatoria imposible de conocer.
+      license = await verifyLicenseWithServer(ownerEmail)
+      if (!license.allowed) {
+        return sendLicenseBlocked(res, license, 'Tu licencia de Ristak no está activa.')
+      }
+
+      const consumed = await consumeSetupToken(token)
+      if (!consumed.valid) {
+        return res.status(403).json({ success: false, message: 'El enlace de acceso ya fue usado. Vuelve a entrar con Google.' })
+      }
+
+      const username = buildDefaultInternalUsername(ownerEmail)
+      const passwordHash = peeked.password_hash || hashPassword(crypto.randomBytes(32).toString('base64url'))
+      const result = await db.run(
+        `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+         SELECT ?, ?, ?, ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM users)`,
+        [username, ownerEmail, passwordHash, username, 'admin', 1]
+      )
+      const ownerCreated = Number(result?.changes || 0) > 0
+
+      user = ownerCreated && result.lastID
+        ? await db.get('SELECT * FROM users WHERE id = ?', [result.lastID])
+        : await findUserByLoginEmail(ownerEmail)
+
+      if (!user?.id) {
+        return res.status(409).json({
+          success: false,
+          message: 'La cuenta terminó de configurarse en otra sesión. Vuelve a entrar con Google.'
+        })
+      }
+
+      if (ownerCreated) {
+        const rotatedApiToken = await rotateApiTokenForUser(user.id)
+        apiToken = rotatedApiToken.token
+        try {
+          await saveAccountLocaleSettings({})
+        } catch (localeError) {
+          logger.warn(`No se pudo guardar el locale inicial durante SSO: ${localeError.message}`)
+        }
+        void requestPortalUserRefresh()
+        logger.success(`✅ Primer usuario creado desde acceso seguro del Installer: ${ownerEmail}`)
+      }
+    } else {
+      // Usuario existente: consumir el token (un solo uso) y abrir sesión.
+      const consumed = await consumeSetupToken(token)
+      if (!consumed.valid) {
+        return res.status(403).json({ success: false, message: 'El enlace de acceso ya fue usado. Inicia sesión con tu correo y contraseña.' })
+      }
+      license = await verifyLicenseWithServer(user.email || user.username)
     }
 
-    // Usuario existente: consumir el token (un solo uso) y abrir sesión
-    const consumed = await consumeSetupToken(token)
-    if (!consumed.valid) {
-      return res.status(403).json({ success: false, message: 'El enlace de acceso ya fue usado. Inicia sesión con tu correo y contraseña.' })
-    }
-
-    const license = await verifyLicenseWithServer(user.email || user.username)
     if (!license.allowed) {
       return sendLicenseBlocked(res, license, 'Tu licencia de Ristak no está activa.')
     }
@@ -1112,6 +1167,7 @@ export async function ssoLogin(req, res) {
       success: true,
       token: sessionToken,
       appId,
+      ...(apiToken ? { apiToken } : {}),
       apiTokenMetadata,
       user: serializeAuthUser(user, license)
     })

@@ -9,7 +9,8 @@ import styles from './Login.module.css'
 /**
  * Entrada directa desde el portal central: /sso?token=...
  * Canjea el token de un solo uso por una sesión local y entra al dashboard
- * sin pedir contraseña. Si la app aún no tiene usuarios, manda al setup.
+ * sin pedir contraseña. Si la app aún no tiene usuarios, el backend crea al
+ * dueño desde la identidad ya verificada por el Installer.
  */
 export const Sso: React.FC = () => {
   const navigate = useNavigate()
@@ -50,7 +51,7 @@ export const Sso: React.FC = () => {
         }
 
         if (data.code === 'needs_setup') {
-          // La app todavía no tiene usuarios: el mismo token sirve para el setup
+          // Compatibilidad con versiones anteriores del backend.
           const setupParams = new URLSearchParams({
             token,
             return_path: redirectPath

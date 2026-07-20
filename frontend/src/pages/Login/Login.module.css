@@ -120,45 +120,6 @@ body.light .phoneLoginBox {
   gap: 1rem;
 }
 
-.googleButton {
-  width: 100%;
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  border: 1px solid var(--design-control-border);
-  border-radius: 8px !important;
-  background: var(--color-background-secondary);
-  color: var(--color-text-primary);
-  font-family: Roboto, Arial, sans-serif;
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1;
-  cursor: pointer;
-  transition: background-color 160ms ease, border-color 160ms ease, opacity 160ms ease;
-}
-
-.googleButton:hover:not(:disabled) {
-  background: var(--color-background-tertiary);
-}
-
-.googleButton:focus-visible {
-  outline: 2px solid #4285f4;
-  outline-offset: 2px;
-}
-
-.googleButton:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
-.googleIcon {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-}
-
 .divider {
   position: relative;
   display: flex;

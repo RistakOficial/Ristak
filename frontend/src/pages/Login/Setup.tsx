@@ -1,9 +1,10 @@
 import React, { useMemo, useState, useEffect, FormEvent, useRef } from 'react'
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Lock, Mail } from 'lucide-react'
-import { Button, Logo } from '@/components/common'
+import { Button, GoogleLoginButton, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl } from '@/services/apiBaseUrl'
+import { requestGoogleLoginUrl } from '@/services/googleLoginService'
 import { getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
 import { getLoginPathForRoute, getPostAuthRedirectPath, sanitizeAuthRedirectPath, type RedirectLocation } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
@@ -30,6 +31,7 @@ export const Setup: React.FC = () => {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
 
   const { isAuthenticated, login, setupAccount, needsSetup } = useAuth()
   const setupAccountRef = useRef(setupAccount)
@@ -205,6 +207,18 @@ export const Setup: React.FC = () => {
   const tokenMode = tokenState.requiresToken && tokenState.valid
   const installerLoginMode = tokenState.requiresToken && !tokenState.valid
 
+  const handleGoogleLogin = async () => {
+    setError('')
+    setGoogleLoading(true)
+
+    try {
+      window.location.href = await requestGoogleLoginUrl(redirectPath)
+    } catch (err: any) {
+      setGoogleLoading(false)
+      setError(err.message || 'No se pudo iniciar sesión con Google')
+    }
+  }
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
@@ -276,7 +290,7 @@ export const Setup: React.FC = () => {
         <div className={styles.header}>
           <p className={styles.subtitle}>
             {installerLoginMode
-              ? 'Ingresa con el mismo correo y contraseña que usaste para crear tu cuenta.'
+              ? 'Continúa con Google o usa el correo y la contraseña que creaste en Ristak.'
               : tokenMode
                 ? 'Crea tu contraseña para empezar'
                 : 'Configura tu acceso'}
@@ -284,6 +298,19 @@ export const Setup: React.FC = () => {
         </div>
 
         <form onSubmit={handleSubmit} className={styles.form}>
+          {installerLoginMode && (
+            <>
+              <GoogleLoginButton
+                onClick={handleGoogleLogin}
+                loading={googleLoading}
+                disabled={isLoading}
+              />
+              <div className={styles.divider}>
+                <span>o usa tu contraseña de Ristak</span>
+              </div>
+            </>
+          )}
+
           {tokenMode ? (
             <div className={styles.inputGroup}>
               <label htmlFor="email" className={styles.label}>
@@ -316,7 +343,7 @@ export const Setup: React.FC = () => {
                   className={styles.input}
                   placeholder="tu@correo.com"
                   autoComplete="email"
-                  disabled={isLoading}
+                  disabled={isLoading || googleLoading}
                 />
               </div>
             </div>
@@ -336,7 +363,7 @@ export const Setup: React.FC = () => {
                 className={styles.input}
                 placeholder="••••••••"
                 autoComplete={installerLoginMode ? 'current-password' : 'new-password'}
-                disabled={isLoading}
+                disabled={isLoading || googleLoading}
                 minLength={installerLoginMode ? undefined : 6}
               />
             </div>
@@ -357,7 +384,7 @@ export const Setup: React.FC = () => {
                   className={styles.input}
                   placeholder="••••••••"
                   autoComplete="new-password"
-                  disabled={isLoading}
+                  disabled={isLoading || googleLoading}
                   minLength={6}
                 />
               </div>
@@ -375,6 +402,7 @@ export const Setup: React.FC = () => {
             variant="primary"
             fullWidth
             loading={isLoading}
+            disabled={googleLoading}
             className={styles.submitButton}
           >
             {installerLoginMode ? 'Ingresar' : 'Crear mi acceso'}
@@ -383,7 +411,7 @@ export const Setup: React.FC = () => {
 
         <p className={styles.setupHint}>
           {installerLoginMode
-            ? 'En tu primer ingreso prepararemos la cuenta automáticamente. Después entrarás igual que siempre.'
+            ? 'La contraseña de este formulario es la que creaste en Ristak, no la contraseña de tu cuenta de Google.'
             : 'Esta es la única vez que crearás tu usuario. Después ingresas con estas credenciales.'}
         </p>
       </div>
