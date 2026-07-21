@@ -13294,6 +13294,12 @@ export const Sites: React.FC = () => {
       return
     }
 
+    const openEditorSiteId = selectedSiteRef.current?.id || ''
+    if (openEditorSiteId && hasPendingEditorSaveWork(openEditorSiteId)) {
+      const saved = await flushPendingEditorSaves({ silent: true })
+      if (!saved) return
+    }
+
     setCreating(true)
     try {
       const metaConnected = await loadMetaConfiguration()
@@ -15204,6 +15210,22 @@ export const Sites: React.FC = () => {
       onRenamePage={renameEmbeddedFormPage}
     />
   ) : null
+  const editorUploadPagesButton = editorSite ? (
+    <Button
+      type="button"
+      variant="secondary"
+      size="md"
+      className={styles.editorUploadPagesButton}
+      onClick={() => handleOpenImportHtml(editorSite.siteType)}
+      disabled={editorAIGenerating || creating}
+      loading={creating}
+      aria-label="Subir páginas HTML o ZIP"
+      title="Subir páginas HTML o ZIP"
+    >
+      <Upload size={15} />
+      <span className={styles.editorActionLabel}>Subir páginas</span>
+    </Button>
+  ) : null
   const editorToolbarSettingsSite = editorSite
   const activeLibraryPage = section === 'landings' || section === 'forms' ? libraryPages[section] : null
   const activeLibraryFilter = section === 'landings' || section === 'forms' ? libraryFilters[section] : null
@@ -15308,6 +15330,7 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
+                      {editorUploadPagesButton}
                       {editorFormPageSelector && (
                         <div className={styles.editorPageSelectorSlot}>
                           {editorFormPageSelector}
@@ -15339,6 +15362,7 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
+                      {editorUploadPagesButton}
                       <CalendarToolbarConfigSlot
                         block={calendarEditBlock}
                         calendars={calendars}
@@ -15362,6 +15386,7 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
+                      {editorUploadPagesButton}
                       <PaymentToolbarConfigSlot
                         block={paymentEditBlock}
                         pages={pages}
@@ -15378,6 +15403,7 @@ export const Sites: React.FC = () => {
                           {editorPageSelector}
                         </div>
                       )}
+                      {editorUploadPagesButton}
                       {canConfigurePopup && (
                         <button
                           type="button"

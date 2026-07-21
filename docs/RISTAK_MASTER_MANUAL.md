@@ -4488,6 +4488,13 @@ completo modificado. El codigo de cada pagina se puede pegar y editar
 directamente; el preview no modifica copy, imagenes, botones, campos o secciones
 por si solo y solo permite seleccionar slots funcionales de Ristak.
 
+Con el editor ya abierto, la barra superior mantiene `Subir paginas` junto al
+selector de paginas. El control acepta HTML o ZIP y reutiliza el mismo flujo de
+importacion: guarda primero cualquier cambio pendiente del sitio abierto, crea
+el nuevo proyecto importado con el mismo tipo de sitio y lo abre directamente en
+el editor. No mezcla silenciosamente codigo externo con los bloques del proyecto
+que estaba abierto.
+
 Las tres entradas del editor HTML —`Pegar código HTML`, `Subir HTML o ZIP` y
 `Diseñar con ChatGPT o Claude`— terminan en el mismo contrato visible de reglas
 HTML. Al entrar al editor, la guía abre por default y exige una versión móvil

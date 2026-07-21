@@ -21293,7 +21293,7 @@
   max-width: none;
 }
 
-.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton) {
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton, .editorUploadPagesButton) {
   height: var(--editor-control-h, 40px);
   min-height: var(--editor-control-h, 40px);
   display: inline-flex;
@@ -21318,20 +21318,20 @@
   text-align: left;
 }
 
-.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton):hover:not(:disabled),
-.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton):focus-visible,
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton, .editorUploadPagesButton):hover:not(:disabled),
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton, .editorUploadPagesButton):focus-visible,
 .pageFrame .containerFocused:has(.builder) .editorToolbarTools .pagesDropdownOpen .pagesDropdownTrigger {
   border-color: var(--sites-editor-tool-border-hover);
   background: var(--sites-editor-tool-bg-hover);
   color: var(--sites-editor-tool-color-hover);
 }
 
-.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton):focus-visible {
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton, .editorUploadPagesButton):focus-visible {
   outline: none;
   box-shadow: var(--ristak-focus-ring, 0 0 0 3px var(--accent-soft));
 }
 
-.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton) > svg {
+.pageFrame .containerFocused:has(.builder) .editorToolbarTools :is(.pagesDropdownTrigger, .seoToolbarButton, .editorSettingsButton, .editorUploadPagesButton) > svg {
   flex: 0 0 auto;
   color: var(--color-text-tertiary);
 }
