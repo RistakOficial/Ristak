@@ -3007,6 +3007,11 @@ Reglas base:
   cualquier identificador inmutable porque HighLevel v3 los rechaza en el PUT.
   Cuando el reintento termina bien, también se limpia el error remoto anterior
   para que la agenda no siga mostrando una falla que ya fue resuelta.
+- La enumeración completa de contactos usa `POST /contacts/search` con el
+  contrato `v3`. Además de paginar en lotes de 100 con reintentos, esa versión
+  entrega `customFields` explícito por contacto; así Ristak conserva los campos
+  personalizados sin disparar un GET individual por cada ficha durante una
+  sincronización masiva.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque

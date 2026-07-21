@@ -27,7 +27,7 @@ test('contact sync uses POST search pagination and retries HighLevel request tim
     requests.push({ url, options, body })
     if (body.page === 1) {
       return response(200, {
-        contacts: [{ id: 'c1' }, { id: 'c2' }],
+        contacts: [{ id: 'c1', customFields: [] }, { id: 'c2', customFields: [] }],
         total: 4
       })
     }
@@ -36,7 +36,7 @@ test('contact sync uses POST search pagination and retries HighLevel request tim
       return response(400, { message: 'Request Timeout after 30000ms' })
     }
     return response(200, {
-      contacts: [{ id: 'c3' }, { id: 'c4' }],
+      contacts: [{ id: 'c3', customFields: [] }, { id: 'c4', customFields: [] }],
       total: 4
     })
   }
@@ -57,7 +57,8 @@ test('contact sync uses POST search pagination and retries HighLevel request tim
   assert.deepEqual(requests.map(request => request.body.page), [1, 2, 2])
   assert.ok(requests.every(request => request.url.endsWith('/contacts/search')))
   assert.ok(requests.every(request => request.options.method === 'POST'))
-  assert.ok(requests.every(request => request.options.headers.Version === '2021-07-28'))
+  assert.ok(requests.every(request => request.options.headers.Version === 'v3'))
+  assert.ok(pages.flatMap(page => page.contacts).every(contact => Array.isArray(contact.customFields)))
   assert.deepEqual(waits, [1000])
 })
 

@@ -2,7 +2,7 @@ import fetch from 'node-fetch'
 import { logger } from '../utils/logger.js'
 
 const HIGHLEVEL_CONTACT_SEARCH_URL = 'https://services.leadconnectorhq.com/contacts/search'
-const HIGHLEVEL_CONTACTS_API_VERSION = '2021-07-28'
+const HIGHLEVEL_CONTACTS_API_VERSION = 'v3'
 const DEFAULT_PAGE_LIMIT = 100
 const DEFAULT_REQUEST_TIMEOUT_MS = 45_000
 const DEFAULT_MAX_ATTEMPTS = 4
