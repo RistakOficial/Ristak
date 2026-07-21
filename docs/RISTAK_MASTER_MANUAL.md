@@ -1750,6 +1750,26 @@ Los inbounds sincronizados guardan `from_phone`, `to_phone` y `business_phone`
 desde el payload HighLevel para que selector, ventana y ultimo remitente
 compartan la misma identidad.
 
+Para un mismo contacto, WhatsApp y SMS de HighLevel forman una sola decisión de
+salida del agente conversacional. La última selección manual de **WhatsApp ·
+HighLevel** o **SMS · HighLevel** hecha en el selector de `/chat` o `/movil` se
+persiste por contacto en `contact_conversational_channel_preferences`; un envío
+manual por una de esas rutas también actualiza la preferencia. `GET/PUT
+/api/contacts/:id/chat-channel-preference` exponen esa elección al chat. La
+preferencia manual manda hasta que el usuario elija el otro medio, sin que una
+respuesta automática del agente la reescriba.
+
+Si no existe selección manual, la ruta automática usa WhatsApp cuando hay un
+inbound real `ghl_whatsapp` del mismo teléfono ocurrido hace menos de 24 horas;
+al vencer esa ventana usa SMS. Un inbound que llegó sólo por SMS no se descarta:
+el agente conserva ese mensaje como contexto, pero entrega la respuesta por
+WhatsApp si la ventana sigue abierta. Si HighLevel materializa el mismo inbound
+en `ghl_whatsapp` y `ghl_sms` con el mismo teléfono y contenido dentro de 90
+segundos, el agente procesa únicamente la fila del medio ganador. La copia
+WhatsApp de ese par no puede reabrir por sí sola una ventana vencida. El runner
+revalida esta decisión después de su debounce y otra vez justo antes de entregar,
+incluidos los seguimientos, para impedir una salida simultánea por ambos medios.
+
 Un webhook sólo concilia estado y puede marcar la API como restringida para
 solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
 acciones masivas usan `allowQrFallback=false`: si la API falla, el lote registra
