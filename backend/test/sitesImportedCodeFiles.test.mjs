@@ -545,6 +545,12 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /disqualifyOutcome="specific_page"/)
   assert.match(instructions, /data-rstk-conversion-condition="qualified_only"/)
   assert.match(instructions, /solo manda Pixel\/CAPI cuando el resultado sea calificado/)
+  assert.match(instructions, /@media \(max-width: 640px\)/)
+  assert.match(instructions, /viewport de 390px/)
+  assert.match(instructions, /no debe existir scroll horizontal/)
+  assert.match(instructions, /al menos 44px de alto/)
+  assert.match(instructions, /font-size de al menos 16px/)
+  assert.match(instructions, /No simules móvil con zoom, transform: scale/)
   assert.doesNotMatch(instructions, /no agregues acciones para descalificar/i)
   assert.doesNotMatch(instructions, /Clinica secreta del negocio/)
   assert.doesNotMatch(instructions, /Mercado privado guardado/)
@@ -555,7 +561,7 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
 
 test('external AI compatibility instructions reject forms without stable Ristak IDs', async () => {
   const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
-  const guideMatch = source.match(/const IMPORTED_HTML_AI_GUIDE = `[\s\S]*?`\n\n/)
+  const guideMatch = source.match(/const IMPORTED_HTML_AI_GUIDE = `[\s\S]*?const IMPORTED_HTML_MOBILE_PREVIEW_STYLE/)
   const builderMatch = source.match(/const buildExternalAICompatibilityText[\s\S]*?\nconst copyTextToClipboard/)
 
   assert.ok(guideMatch, 'No se encontró la guía del editor HTML')
@@ -570,6 +576,38 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(builder, /No entregues el HTML si falta uno solo/)
   assert.match(builder, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
   assert.match(builder, /Si falta cualquiera de esas claves, la entrega está incompleta/)
+})
+
+test('HTML mobile rules are shared by every creation path and the code preview uses a real phone viewport', async () => {
+  const {
+    IMPORTED_HTML_MOBILE_BREAKPOINT_PX,
+    IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
+    IMPORTED_HTML_MOBILE_RULES,
+    buildImportedHtmlMobileRulesText
+  } = await import('../../shared/sites/importedHtmlContract.js')
+  const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
+  const styles = await readFile(new URL('../../frontend/src/pages/Sites/Sites.module.css', import.meta.url), 'utf8')
+
+  assert.equal(IMPORTED_HTML_MOBILE_BREAKPOINT_PX, 640)
+  assert.equal(IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX, 390)
+  assert.ok(IMPORTED_HTML_MOBILE_RULES.length >= 8)
+
+  const mobileGuide = buildImportedHtmlMobileRulesText()
+  assert.match(mobileGuide, /@media \(max-width: 640px\)/)
+  assert.match(mobileGuide, /viewport de 390px/)
+  assert.match(mobileGuide, /scroll horizontal/)
+  assert.match(mobileGuide, /al menos 44px/)
+  assert.match(mobileGuide, /al menos 16px/)
+  assert.match(mobileGuide, /No simules móvil con zoom, transform: scale/)
+
+  const sharedPromptUses = source.match(/buildImportedHtmlMobileRulesText\(/g) || []
+  assert.ok(sharedPromptUses.length >= 5, 'La guía móvil debe llegar a creación, edición y asistentes HTML')
+  assert.match(source, /\.\.\.IMPORTED_HTML_MOBILE_RULES\.map/)
+  assert.match(source, /<details className=\{styles\.importedCodeGuide\} open>/)
+  assert.match(source, /data-preview-device=\{device\}/)
+
+  assert.match(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame[\s\S]*?width: min\(var\(--imported-html-mobile-preview-width, 390px\), 100%\)/)
+  assert.doesNotMatch(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame\s*\{\s*width:\s*100%/)
 })
 
 test('AI HTML editor sends uploaded references as multimodal input parts', async () => {

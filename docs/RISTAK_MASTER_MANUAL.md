@@ -4395,6 +4395,19 @@ completo modificado. El codigo de cada pagina se puede pegar y editar
 directamente; el preview no modifica copy, imagenes, botones, campos o secciones
 por si solo y solo permite seleccionar slots funcionales de Ristak.
 
+Las tres entradas del editor HTML —`Pegar código HTML`, `Subir HTML o ZIP` y
+`Diseñar con ChatGPT o Claude`— terminan en el mismo contrato visible de reglas
+HTML. Al entrar al editor, la guía abre por default y exige una versión móvil
+real: `meta viewport`, layout fluido, un `@media (max-width: 640px)` con cambios
+concretos, controles táctiles de al menos 44 px, campos de al menos 16 px y cero
+scroll horizontal a 390 px. El mismo bloque se incluye en las instrucciones
+copiables para IA externa, en creación con IA y en cada edición del asistente de
+código; editar escritorio nunca autoriza borrar o romper las media queries.
+El botón de dispositivo no escala una captura de escritorio: en `Móvil`, tanto
+la vista normal del HTML como la vista partida código/preview montan el documento
+en un iframe con viewport real de hasta 390 px, de modo que sus media queries se
+activen igual que en un celular.
+
 El Panel de contenido muestra lo que ya declaro el HTML; no existe una accion
 "Agregar al HTML" ni un flujo que obligue a subir multimedia antes de escribir
 el codigo. Un `data-rstk-asset-id` o `data-rstk-background-asset-id` con clave no

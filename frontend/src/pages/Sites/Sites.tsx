@@ -257,6 +257,11 @@ import {
 import type { SiteLike, SiteBlockLike } from '../../../../shared/sites/renderContract.js'
 import { MSI_INSTALLMENT_CHOICES, msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.js'
+import {
+  IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
+  IMPORTED_HTML_MOBILE_RULES,
+  buildImportedHtmlMobileRulesText
+} from '../../../../shared/sites/importedHtmlContract.js'
 
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
@@ -2526,7 +2531,13 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Las claves multimedia son globales al sitio: usa una clave única por contenido y repítela solo si varias zonas deben mostrar exactamente el mismo archivo. Nunca sustituyas una clave por la URL física de Storage o Bunny.
 - Para video configurable, reproductor, acciones y formularios sobre video usa siempre el slot nativo de video. Un video HTML propio queda opaco y no se configura desde Ristak.
 - Secciones que sean targets de video deben usar id y data-rstk-video-action-target únicos.
-- Evita navegación automática, submits automáticos y window.open.`.trim()
+- Evita navegación automática, submits automáticos y window.open.
+
+${buildImportedHtmlMobileRulesText()}`.trim()
+
+const IMPORTED_HTML_MOBILE_PREVIEW_STYLE = {
+  '--imported-html-mobile-preview-width': `${IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX}px`
+} as React.CSSProperties
 
 const BLANK_IMPORTED_HTML = `<!doctype html>
 <html lang="es">
@@ -13099,7 +13110,9 @@ export const Sites: React.FC = () => {
         '- Si algún texto necesita ser largo, ajusta font-size, line-height y ancho para que no rompa el diseño.',
         '- Usa fotos HTTPS visibles cuando ayuden al objetivo.',
         '- Marca textos e imágenes editables con los atributos internos de Ristak.',
-        '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.'
+        '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.',
+        '',
+        buildImportedHtmlMobileRulesText()
       ].join('\n')
     ].filter(Boolean)
     const messages: SitesAICreationMessage[] = [{ role: 'user', content: promptParts.join('\n\n') }]
@@ -20537,6 +20550,8 @@ Reglas para esta edición:
 - Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte más sólida/legible sin cambiar contenido.
 - Si la solicitud pide un video configurable, agrega un slot nativo de video. Un video HTML propio queda bajo control exclusivo del código.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
+
+${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
   `.trim()
 }
 
@@ -20566,6 +20581,8 @@ Reglas para esta edición:
 - Conserva formularios, campos, rutas de datos, tracking y acciones de botones salvo que el usuario pida cambiarlos.
 - Si el usuario pide cambiar copy, layout, video, contraste, imágenes o botones, aplica el cambio directamente con el HTML actual.
 - Usa needs_more_info solo si no hay una acción concreta que ejecutar.
+
+${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
 `.trim()
 
 const normalizeImportedAIRegionPreviewHtml = (html = '') => (
@@ -23127,6 +23144,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       popupCodeActive ? 'Superficie activa: Pop up.' : `Página activa: ${activeImportedPage?.title || 'Página actual'}.`,
       selectedContext,
       contentAssetsCatalog,
+      buildImportedHtmlMobileRulesText('Contrato responsive obligatorio para esta edición:'),
       buildCodeAssistantAttachmentNotes(codeAssistantAttachments),
       'Usa los archivos adjuntos solo como referencia para modificar el HTML activo. No insertes respuestas, resúmenes ni explicaciones del asistente dentro de la página salvo que el usuario lo pida explícitamente.',
       `Solicitud del usuario: ${prompt}`
@@ -25833,7 +25851,8 @@ const ImportedHtmlEditorPanel: React.FC<{
         ].filter(Boolean).join(' ')}
         style={{
           '--imported-code-source-width': `${codeEditorSourceWidth}%`,
-          '--imported-code-source-track': codeEditorSourceTrack
+          '--imported-code-source-track': codeEditorSourceTrack,
+          ...IMPORTED_HTML_MOBILE_PREVIEW_STYLE
         } as React.CSSProperties}
       >
         <section
@@ -25877,10 +25896,10 @@ const ImportedHtmlEditorPanel: React.FC<{
               </div>
             </div>
           </div>
-          <details className={styles.importedCodeGuide}>
+          <details className={styles.importedCodeGuide} open>
             <summary>
               <Sparkles size={13} />
-              Claves para IA externa
+              Reglas HTML y versión móvil
             </summary>
             <pre>{IMPORTED_HTML_AI_GUIDE}</pre>
           </details>
@@ -26090,7 +26109,10 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>{codePreviewNotice}</span>
             </div>
           )}
-          <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
+          <div
+            className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}
+            data-preview-device={device}
+          >
             {previewLoading && !activeCodePreviewHtml ? (
               <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
                 <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
@@ -26143,7 +26165,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }
 
   return (
-    <div className={styles.importedEditorPanel}>
+    <div className={styles.importedEditorPanel} style={IMPORTED_HTML_MOBILE_PREVIEW_STYLE}>
       <section className={styles.importedPreviewPane}>
         <div className={`${styles.importedPreviewStage} ${device === 'mobile' ? styles.importedPreviewStageMobile : ''}`}>
           {previewError && (
@@ -28064,6 +28086,9 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     '- Si generas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.',
     '- Usa data-rstk-section="Hero|Formulario|Agenda|Pago|Gracias" para que el editor ubique rápido cada zona.',
     '- Evita navegación automática, window.open, submits automáticos o scripts que intenten saltarse el editor de Ristak.',
+    '',
+    'Versión móvil obligatoria:',
+    ...IMPORTED_HTML_MOBILE_RULES.map(rule => `- ${rule}`),
     ''
   ]
 

@@ -64,6 +64,7 @@ import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
 import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
+import { buildImportedHtmlMobileRulesText } from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
 // Contrato de render compartido con el editor (fuente única de templates,
 // variables --rstk-*, stylesheet público y helpers de tema/color).
@@ -7090,6 +7091,8 @@ Reglas duras:
 - No escondas campos importantes ni uses inputs sin name.
 - No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquía y aire visual.
 - Tipo solicitado: ${targetSiteType}.
+
+${buildImportedHtmlMobileRulesText()}
 
 Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
 - EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma acción. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una página de page.pages enlazada con data-rstk-button-page-id.
