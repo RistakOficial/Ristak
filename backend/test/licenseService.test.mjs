@@ -8,7 +8,7 @@ let baseUrl
 let requestCount = 0
 let accountCancellationRequestCount = 0
 let setupTokenRequestCount = 0
-let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_calendar_payment_false | allow_partial_features | allow_without_features | block | down
+let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_basic_web_analytics | allow_calendar_payment_false | allow_partial_features | allow_without_features | block | down
 let lastRequestBody = null
 
 let licenseService
@@ -50,6 +50,7 @@ function startMockServer() {
             serverMode === 'allow_split_sites' ||
             serverMode === 'allow_split_calendar' ||
             serverMode === 'allow_basic_calendar' ||
+            serverMode === 'allow_basic_web_analytics' ||
             serverMode === 'allow_calendar_payment_false' ||
             serverMode === 'allow_partial_features' ||
             serverMode === 'allow_without_features'
@@ -57,9 +58,11 @@ function startMockServer() {
             const payload = {
               allowed: true,
               client_id: 'cli_1',
-              plan: serverMode === 'allow_basic_calendar' ? 'basic' : 'pro',
+              plan: serverMode === 'allow_basic_calendar' || serverMode === 'allow_basic_web_analytics' ? 'basic' : 'pro',
               ...(serverMode === 'allow_without_features' ? {} : {
-                features: serverMode === 'allow_split_ai'
+                features: serverMode === 'allow_basic_web_analytics'
+                ? { analytics: true, web_analytics: true }
+                : serverMode === 'allow_split_ai'
                 ? { app_assistant_ai: true, conversational_ai: false }
                 : serverMode === 'allow_split_sites'
                   ? { sites: false, settings_media: true, settings_tracking: false, settings_domains: true }
@@ -324,6 +327,16 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(lastRequestBody.version, '1.2.3')
 })
 
+test('la verificación apaga analítica web cuando el portal la manda en Básico', async () => {
+  serverMode = 'allow_basic_web_analytics'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.plan, 'basic')
+  assert.equal(state.features.analytics, true)
+  assert.equal(state.features.web_analytics, false)
+})
+
 test('features premium faltantes en una respuesta parcial quedan apagadas', async () => {
   serverMode = 'allow_partial_features'
 
@@ -565,6 +578,21 @@ test('hasFeature respeta los feature flags del plan', async () => {
   assert.equal(await licenseService.hasFeature('app_assistant_ai'), false)
   assert.equal(await licenseService.hasFeature('conversational_ai'), false)
   assert.equal(await licenseService.hasFeature('feature_inexistente'), false)
+})
+
+test('analítica web exige plan Profesional aunque el flag llegue activo', async () => {
+  const state = (plan, enabled = true) => ({
+    allowed: true,
+    enforced: true,
+    plan,
+    features: { web_analytics: enabled }
+  })
+
+  assert.equal(await licenseService.hasFeature('web_analytics', { state: state('basic') }), false)
+  assert.equal(await licenseService.hasFeature('web_analytics', { state: state('medium') }), false)
+  assert.equal(await licenseService.hasFeature('web_analytics', { state: state('professional') }), true)
+  assert.equal(await licenseService.hasFeature('web_analytics', { state: state('premium') }), true)
+  assert.equal(await licenseService.hasFeature('web_analytics', { state: state('professional', false) }), false)
 })
 
 test('features premium omitidos por el portal central quedan apagados', async () => {

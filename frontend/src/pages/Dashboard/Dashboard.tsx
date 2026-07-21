@@ -35,7 +35,7 @@ import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasWebAnalyticsAccess as canAccessWebAnalytics } from '@/utils/accessControl'
 import { useNotification } from '@/contexts/NotificationContext'
 
 const LazyContactDetailsModal = React.lazy(async () => {
@@ -526,7 +526,7 @@ export const Dashboard: React.FC = () => {
   const { labels } = useLabels()
   const { formatLocalDateTime, timezone } = useTimezone()
   const { showToast } = useNotification()
-  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
+  const hasWebAnalyticsAccess = canAccessWebAnalytics(user)
   const businessToday = React.useMemo(
     () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
     [timezone]

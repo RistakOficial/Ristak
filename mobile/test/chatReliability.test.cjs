@@ -37,7 +37,7 @@ const {
   makeUnreconciledNativePendingMessagesRetryable,
   retainNativeLocalOutboxMessages,
 } = require('../src/conversationReliability.ts');
-const { PHONE_SECTION_MODULE, hasPhoneSectionAccess } = require('../src/access.ts');
+const { PHONE_SECTION_MODULE, hasPhoneSectionAccess, hasWebAnalyticsAccess } = require('../src/access.ts');
 const {
   createVerifiedUserCacheRecord,
   getCachedVerifiedUser,
@@ -132,6 +132,22 @@ test('Analiticas movil usa el mismo permiso Dashboard que sus endpoints', () => 
   assert.equal(hasPhoneSectionAccess(dashboardInPlanUser, 'analytics'), true);
   assert.equal(hasPhoneSectionAccess(dashboardMissingFromPlanUser, 'analytics'), false);
   assert.equal(hasPhoneSectionAccess(dashboardWithInvalidFeatureSourceUser, 'analytics'), false);
+});
+
+test('Analiticas movil solo muestra metricas web en Profesional', () => {
+  const licensedUser = (licensePlan, webAnalytics = true) => ({
+    role: 'admin',
+    licenseEnforced: true,
+    licensePlan,
+    licenseFeatures: { web_analytics: webAnalytics },
+  });
+
+  assert.equal(hasWebAnalyticsAccess(licensedUser('basic')), false);
+  assert.equal(hasWebAnalyticsAccess(licensedUser('medium')), false);
+  assert.equal(hasWebAnalyticsAccess(licensedUser('professional')), true);
+  assert.equal(hasWebAnalyticsAccess(licensedUser('premium')), true);
+  assert.equal(hasWebAnalyticsAccess(licensedUser('professional', false)), false);
+  assert.equal(hasWebAnalyticsAccess({ licenseEnforced: false }), true);
 });
 
 test('un usuario sin verificar nunca abre secciones por default', () => {

@@ -63,7 +63,8 @@ const CALENDAR_PAYMENT_FEATURE_KEYS = [
 const PROFESSIONAL_PLAN_KEYS = new Set([
   'pro',
   'professional',
-  'profesional'
+  'profesional',
+  'premium'
 ])
 
 // (LIC-003) Features de pago que el backend bloquea con requireFeature(...). Si el
@@ -206,7 +207,25 @@ export function hasProfessionalPlan(plan = '') {
 
   if (!normalized) return false
   if (PROFESSIONAL_PLAN_KEYS.has(normalized)) return true
-  return normalized.endsWith('_pro') || normalized.endsWith('_professional') || normalized.endsWith('_profesional')
+  return normalized.endsWith('_pro') ||
+    normalized.endsWith('_professional') ||
+    normalized.endsWith('_profesional') ||
+    normalized.endsWith('_premium')
+}
+
+function applyPlanFeatureConstraints(features = {}, plan = '') {
+  const constrained = { ...features }
+
+  // Analítica web pertenece exclusivamente a Profesional. El plan manda incluso
+  // si un portal viejo o un override heredado todavía envía web_analytics=true.
+  if (!hasProfessionalPlan(plan)) constrained.web_analytics = false
+
+  return constrained
+}
+
+function readPlanBoundFeatureValue(state = {}, featureKey = '') {
+  if (featureKey === 'web_analytics' && !hasProfessionalPlan(state.plan)) return false
+  return readFeatureValue(state.features, featureKey)
 }
 
 // El runtime de fondo necesita un estado de instalación estable, mientras que
@@ -707,11 +726,16 @@ async function performLicenseVerification(targetEmail, generation) {
     if (!hasValidFeatures) {
       logger.warn('[Licencia] El servidor respondió allowed sin un objeto "features" válido: se aplican features mínimas (premium apagado).')
     }
+    const plan = data.plan || null
+    const features = applyPlanFeatureConstraints(
+      hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
+      plan
+    )
     const nextState = {
       allowed: true,
       enforced: true,
-      plan: data.plan || null,
-      features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
+      plan,
+      features,
       featuresSourceValid: hasValidFeatures,
       limits: normalizeLicenseLimits(data.limits),
       externalModules: normalizeExternalModules(data.external_modules),
@@ -841,7 +865,7 @@ export async function hasFeature(featureKey, { state: suppliedState = null, emai
   const state = suppliedState || await getLicenseState({ email })
   if (!state.allowed) return false
   if (!state.enforced) return true
-  return readFeatureValue(state.features, featureKey)
+  return readPlanBoundFeatureValue(state, featureKey)
 }
 
 async function resolveModuleFeature(moduleKey, { state: suppliedState = null, email = null } = {}) {
@@ -889,7 +913,7 @@ export async function canRunBackgroundJob(featureKey = null) {
   if (!state.enforced) return true
   if (!featureKey) return true
 
-  return readFeatureValue(state.features, featureKey)
+  return readPlanBoundFeatureValue(state, featureKey)
 }
 
 export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/settings/calendars/google', appUrl = '' } = {}) {

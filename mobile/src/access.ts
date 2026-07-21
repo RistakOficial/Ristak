@@ -56,6 +56,28 @@ export function hasLicenseFeature(
   return featureKeys.some((featureKey) => features[featureKey] === true);
 }
 
+export function hasProfessionalPlan(plan?: string | null) {
+  const normalized = String(plan || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+
+  if (!normalized) return false;
+  if (['pro', 'professional', 'profesional', 'premium'].includes(normalized)) return true;
+
+  return normalized.endsWith('_pro') ||
+    normalized.endsWith('_professional') ||
+    normalized.endsWith('_profesional') ||
+    normalized.endsWith('_premium');
+}
+
+export function hasWebAnalyticsAccess(user: RistakUser | null | undefined) {
+  if (!user?.licenseEnforced) return true;
+  if (user.licenseFeaturesSourceValid === false) return false;
+
+  return hasProfessionalPlan(user.licensePlan) && hasLicenseFeature(user, ['web_analytics']);
+}
+
 function hasLicenseFeatureAccess(user: RistakUser | null | undefined, moduleKey: NativeModuleKey) {
   if (!user?.licenseEnforced) return true;
   if (user.licenseFeaturesSourceValid === false) return false;

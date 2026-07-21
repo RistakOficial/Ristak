@@ -350,6 +350,30 @@ export function hasLicenseFeature(
   return featureKeys.some((featureKey) => features[featureKey] === true)
 }
 
+export function hasProfessionalPlan(plan?: string | null) {
+  const normalized = String(plan || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+
+  if (!normalized) return false
+  if (normalized === 'pro' || normalized === 'professional' || normalized === 'profesional' || normalized === 'premium') {
+    return true
+  }
+
+  return normalized.endsWith('_pro') ||
+    normalized.endsWith('_professional') ||
+    normalized.endsWith('_profesional') ||
+    normalized.endsWith('_premium')
+}
+
+export function hasWebAnalyticsAccess(user: AccessControlledUser | null | undefined) {
+  if (!user?.licenseEnforced) return true
+  if (user.licenseFeaturesSourceValid === false) return false
+
+  return hasProfessionalPlan(user.licensePlan) && hasLicenseFeature(user, ['web_analytics'])
+}
+
 export function hasCalendarPaymentsAccess(user: AccessControlledUser | null | undefined) {
   if (!user?.licenseEnforced) return true
   const features = user.licenseFeatures || {}
@@ -359,14 +383,7 @@ export function hasCalendarPaymentsAccess(user: AccessControlledUser | null | un
   }
   if (user.licenseFeaturesSourceValid === false) return false
 
-  const plan = String((user as { licensePlan?: string | null })?.licensePlan || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-  const isProfessionalPlan = plan === 'pro' || plan === 'professional' || plan === 'profesional' ||
-    plan.endsWith('_pro') || plan.endsWith('_professional') || plan.endsWith('_profesional')
-
-  return features.google_calendar === true || isProfessionalPlan
+  return features.google_calendar === true || hasProfessionalPlan(user.licensePlan)
 }
 
 export function hasLicenseFeatureAccess(

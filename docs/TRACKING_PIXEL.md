@@ -380,6 +380,11 @@ El rango se resuelve con el timezone configurado en Ristak. Si HighLevel está c
 
 Contrato agregado y acotado para la pagina Analytics. Body:
 
+La lectura privada de analítica web requiere simultáneamente la feature
+`web_analytics` y un plan Profesional (`professional`/`pro`; `premium` como alias
+superior). Los planes `basic` y `medium` reciben `403 feature_not_available` y
+sus interfaces no deben solicitar ni mostrar estos datos.
+
 ```json
 {
   "start": "2026-05-01",

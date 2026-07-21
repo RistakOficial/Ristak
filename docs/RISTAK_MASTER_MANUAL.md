@@ -412,7 +412,13 @@ la UI conserva la lista vacia hasta que el usuario conecta/refresca o ejecuta el
 POST de sincronizacion; nunca dispara `refresh` por el simple hecho de abrir el
 editor.
 
-Analytics usa dos contratos protegidos por `analytics` + `web_analytics`:
+Analytics usa dos contratos protegidos por `analytics` + `web_analytics`. La
+analítica web sólo pertenece al plan Profesional: `basic` y `medium` no muestran
+ni solicitan sesiones, visitantes, páginas vistas, tráfico o distribuciones web,
+aunque una configuración heredada todavía marque `web_analytics=true`. El gate
+se repite en backend para que ocultar la interfaz no sea la única protección.
+
+Los contratos son:
 
 - `POST /api/tracking/analytics/summary`: recibe `start`, `end`, `groupBy` y
   filtros. Devuelve metricas actual/anterior, tendencias y series; nunca filas de
@@ -6764,9 +6770,9 @@ principal, embudo, distribucion de origen y origen por numero de WhatsApp. Los
 rangos se calculan con `account_timezone`, el rango personalizado usa fechas
 `YYYY-MM-DD`, y los importes se formatean con `account_currency`. Si no se pueden
 confirmar ambos valores, la pantalla falla cerrada y ofrece reintento en vez de
-mostrar cifras o periodos con defaults inventados. Si la licencia
-no incluye `web_analytics`, Android manda `includeWeb=0` al embudo/origen y no
-muestra visitantes ni trafico web.
+mostrar cifras o periodos con defaults inventados. Si la licencia no incluye
+`web_analytics` o el plan no es Profesional, Android y `/movil` mandan
+`includeWeb=0` al embudo/origen y no muestran visitantes ni trafico web.
 
 En `/movil`, la apertura de `PhoneAnalytics` usa el snapshot unificado de
 Dashboard para evitar el fan-out de metricas, origen, funnel, financiera y

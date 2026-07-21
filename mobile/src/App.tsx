@@ -156,7 +156,7 @@ import {
 } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveEvent, type ChatLiveMessageEvent } from './api';
-import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess } from './access';
+import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess, hasWebAnalyticsAccess } from './access';
 import {
   createVerifiedUserCacheRecord,
   getCachedVerifiedUser,
@@ -2148,7 +2148,7 @@ function PhoneShell({
               <AnalyticsSection
                 api={api}
                 customLabels={customLabels}
-                hasWebAnalyticsAccess={hasLicenseFeature(user, ['web_analytics'])}
+                hasWebAnalyticsAccess={hasWebAnalyticsAccess(user)}
               />
             </AppFrame>
           ) : null}

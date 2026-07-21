@@ -37,7 +37,7 @@ import {
 } from '@/services/campaignsService'
 import { contactsService } from '@/services/contactsService'
 import { useAppConfig, useMetaTimezone, useUrlDateRangeSync } from '@/hooks'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasWebAnalyticsAccess } from '@/utils/accessControl'
 import styles from './Campaigns.module.css'
 
 interface AdData {
@@ -334,7 +334,7 @@ export const Campaigns: React.FC = () => {
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
 
   const visitorSource = visitorSourceConfig
-  const analyticsEnabled = hasLicenseFeature(user, ['web_analytics']) && parseAnalyticsFlag(showAnalyticsConfig)
+  const analyticsEnabled = hasWebAnalyticsAccess(user) && parseAnalyticsFlag(showAnalyticsConfig)
 
   // Detectar discrepancia de timezone
   const timezoneInfo = useMetaTimezone()

@@ -37,7 +37,7 @@ import { trackingService, trackingVisitorsCoverageNotice } from '@/services/trac
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasWebAnalyticsAccess } from '@/utils/accessControl'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { readNumberParam, setSearchParam } from '@/utils/urlState'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
@@ -1877,7 +1877,7 @@ export const Reports: React.FC = () => {
   )
 
   const visitorSource = visitorSourceConfig
-  const analyticsEnabled = hasLicenseFeature(user, ['web_analytics']) && parseAnalyticsFlag(showAnalyticsConfig)
+  const analyticsEnabled = hasWebAnalyticsAccess(user) && parseAnalyticsFlag(showAnalyticsConfig)
 
   const [reportType, setReportType] = useState<ReportType>(routeState.reportType)
   const reportTypeRef = React.useRef<ReportType>(reportType)

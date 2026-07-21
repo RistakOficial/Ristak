@@ -32,7 +32,7 @@ import {
 import type { WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { formatDate } from '@/utils/format'
 import { formatCurrency, formatNumber, formatRoas } from '@/utils/format'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasWebAnalyticsAccess as canAccessWebAnalytics } from '@/utils/accessControl'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneAnalytics.module.css'
 
@@ -301,7 +301,7 @@ export const PhoneAnalytics: React.FC = () => {
   const { labels } = useLabels()
   const { timezone } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
-  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
+  const hasWebAnalyticsAccess = canAccessWebAnalytics(user)
   usePhoneElasticScroll()
 
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d')

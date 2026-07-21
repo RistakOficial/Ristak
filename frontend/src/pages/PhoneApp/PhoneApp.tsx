@@ -34,7 +34,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSnapshotSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateTime as formatBusinessDateTime, formatDateToISO, formatNumber, formatRoas, getBusinessDateRangeTimestamps, normalizeDateInputToLocalDate } from '@/utils/format'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasLicenseFeature, hasWebAnalyticsAccess as canAccessWebAnalytics } from '@/utils/accessControl'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { PHONE_APP_PREFIX, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
@@ -369,7 +369,7 @@ function toTrendFromReports(data: ReportMetricRow[], key: keyof ReportMetricRow,
 export const PhoneApp: React.FC = () => {
   const params = useParams<{ section?: string }>()
   const { user, locationId, accessToken } = useAuth()
-  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
+  const hasWebAnalyticsAccess = canAccessWebAnalytics(user)
   const canUseDashboard = hasLicenseFeature(user, ['dashboard'])
   const canUseAppointments = hasLicenseFeature(user, ['appointments', 'google_calendar'])
   const canUsePayments = hasLicenseFeature(user, ['payments'])

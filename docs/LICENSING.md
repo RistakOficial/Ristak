@@ -78,6 +78,13 @@ Features principales: `dashboard`, `contacts`, `chat`, `appointments`, `payments
 `subscriptions`, `web_analytics` y las variantes de cobro de calendarios
 (`calendar_payments`, `calendar_payment`, `calendar_booking_payments`).
 
+`web_analytics` tiene además una restricción comercial por plan: sólo se
+considera habilitada en `professional`/`pro` (y el alias superior `premium`).
+`basic` y `medium` no muestran ni consultan sesiones, visitantes, páginas vistas,
+tráfico u otras métricas web, aunque un flag heredado llegue accidentalmente en
+`true`. El frontend aplica la misma regla para no pintar esos bloques y el
+backend la vuelve a validar antes de entregar datos.
+
 Subfeatures que no deben heredarse del módulo general: `payment_checkout`,
 `payment_gateways`, `payment_automations`, `highlevel_integration`,
 `whatsapp_api`, `whatsapp_templates` y `trigger_links`.

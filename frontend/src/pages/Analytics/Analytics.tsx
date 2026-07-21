@@ -48,7 +48,7 @@ import { formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, f
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '../../utils/timezone'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 import { readNumberParam, setSearchParam } from '../../utils/urlState'
-import { hasLicenseFeature } from '../../utils/accessControl'
+import { hasWebAnalyticsAccess as canAccessWebAnalytics } from '../../utils/accessControl'
 import { useNotification } from '../../contexts/NotificationContext'
 
 type ViewType = 'day' | 'month' | 'year'
@@ -1320,7 +1320,7 @@ const Analytics: React.FC = () => {
   const { labels: appLabels } = useLabels()
   const { user } = useAuth()
   const { showToast } = useNotification()
-  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
+  const hasWebAnalyticsAccess = canAccessWebAnalytics(user)
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
