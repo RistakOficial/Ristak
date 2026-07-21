@@ -521,6 +521,8 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /primero declara la zona en el HTML/)
   assert.match(instructions, /data-rstk-native-element="video"/)
   assert.match(instructions, /Un video HTML propio queda opaco/)
+  assert.match(instructions, /El slot nativo de video NO define la geometria del reproductor/)
+  assert.match(instructions, /padding porcentual/)
   assert.match(instructions, /data-rstk-video-rules/)
   assert.match(instructions, /timeline_reached/)
   assert.match(instructions, /playback_seconds/)
@@ -573,9 +575,12 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
   assert.match(guide, /Un HTML que omita cualquiera de esas claves está incompleto para Ristak/)
   assert.match(guide, /data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva"/)
+  assert.match(guide, /El slot nativo de video no controla la geometría/)
+  assert.match(guide, /Ristak detecta la orientación real del archivo/)
   assert.match(builder, /No entregues el HTML si falta uno solo/)
   assert.match(builder, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
   assert.match(builder, /Si falta cualquiera de esas claves, la entrega está incompleta/)
+  assert.match(builder, /No pongas width\/max-width, height\/min-height\/max-height, aspect-ratio/)
 })
 
 test('HTML mobile rules are shared by every creation path and the code preview uses a real phone viewport', async () => {

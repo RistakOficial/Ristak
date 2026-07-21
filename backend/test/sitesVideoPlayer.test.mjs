@@ -235,6 +235,8 @@ test('video player portrait format uses vertical ratio and contained desktop wid
   assert.doesNotMatch(signature.classes, /\brstk-video-landscape\b/)
   assert.match(signature.style, /--rstk-video-aspect-ratio:9 \/ 16/)
   assert.match(signature.style, /--rstk-media-width:44%/)
+  assert.match(html, /data-rstk-video-orientation-mode="portrait"/)
+  assert.match(html, /if \(orientationMode === 'portrait' \|\| orientationMode === 'landscape'\) return;/)
   assert.match(html, /\.rstk-video\{aspect-ratio:var\(--rstk-video-aspect-ratio,16\/9\)/)
   assert.match(html, /\.rstk-video-portrait\{aspect-ratio:var\(--rstk-video-aspect-ratio,9\/16\)/)
   assert.match(html, /@media \(max-width:760px\)\{\.rstk-block-style \.rstk-video-portrait\{width:100%;margin-left:auto;margin-right:auto\}\}/)

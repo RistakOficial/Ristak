@@ -4506,6 +4506,15 @@ no quede UI falsa atras o encima del embed. La excepcion es `calendar` con
 `data-rstk-native-render="custom"`, porque ahi el frontend importado si es el
 calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
 
+El slot nativo de `video` tampoco es dueño de su geometria. No debe declarar
+`width`/`max-width`, `height`/`min-height`/`max-height`, `aspect-ratio`, padding
+porcentual, `overflow` recortado ni una clase que fuerce orientación vertical u
+horizontal. Si el diseño necesita columna, ancho de sección o posicionamiento,
+eso vive en un contenedor padre externo. Al montar el bloque, Ristak neutraliza
+esas restricciones legacy del slot, detecta la orientación real por metadata o
+por las dimensiones cargadas del archivo y aplica la proporción, ancho responsive
+y controles configurados en el editor.
+
 - `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
   exclusivamente un formulario ya existente, reglas "Al enviar", estilo del
   bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;
@@ -4545,6 +4554,11 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
   colores, barra, controles, acciones y formulario configurados. Editor y
   preview mantienen tracking apagado; publicado envía los eventos first-party
   de video y conserva los ids del asset y de Stream.
+  El HTML importado inyecta el mismo stylesheet y el mismo runtime de reproductor
+  que el sitio construido en el editor: preview silencioso en loop, detección de
+  orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
+  aviso de sonido y formulario sobre video. El runtime de acciones por tiempo es
+  adicional y no sustituye al runtime del reproductor.
   Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
   previa del video`; abrir el editor o crear una preview-session autenticada
   dispara automáticamente la creación de su espejo de Storage. El proceso está

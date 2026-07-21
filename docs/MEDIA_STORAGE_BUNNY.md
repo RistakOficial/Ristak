@@ -193,6 +193,11 @@ another account.
   This preserves the complete Sites player configuration and the Storage preview
   and published-player contract. A code-owned `<video>` is kept only as
   HTML/legacy media and does not gain the native player's customization contract.
+  The native slot itself must not own player geometry (`width`, fixed heights,
+  `aspect-ratio`, percentage padding, clipped overflow, or forced orientation);
+  layout belongs on an outer parent. Imported preview/live rendering neutralizes
+  legacy slot geometry, detects the real media orientation, and mounts the same
+  responsive stylesheet and player runtime used by the normal Sites editor.
 - Editor, canvas, preview-session and published/live native video blocks use the
   Bunny Storage URL with the customizable Ristak player. Publishing never swaps
   a ready Storage-backed native video to the Bunny Stream iframe, so the saved

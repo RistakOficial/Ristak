@@ -583,9 +583,22 @@ test('imported HTML native video slots render the real Ristak player and video a
     const site = await createImportedNativeSite(`
       <!doctype html>
       <html>
+        <head>
+          <style>
+            .ai-video-slot {
+              width: 360px !important;
+              max-width: 360px !important;
+              height: 640px !important;
+              min-height: 640px !important;
+              aspect-ratio: 9 / 16 !important;
+              overflow: hidden !important;
+              padding-top: 177% !important;
+            }
+          </style>
+        </head>
         <body>
           <main>
-            <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+            <section class="ai-video-slot" style="height:640px;aspect-ratio:9/16" data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
             <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>
           </main>
         </body>
@@ -625,16 +638,27 @@ test('imported HTML native video slots render the real Ristak player and video a
 
     assert.match(html, /data-rstk-native-slot-id="video-principal"/)
     assert.match(html, /class="rstk-video[^"]*rstk-video-player/)
+    assert.match(html, /data-rstk-video-orientation-mode="auto"/)
     assert.match(html, /data-rstk-video-src="https:\/\/cdn\.example\.test\/video\.mp4"/)
     assert.match(html, /data-rstk-video-actions=/)
     assert.match(html, /https:\/\/example\.test\/gracias/)
     assert.match(html, /window\.ristakVideoActionsRuntimeLoaded/)
+    assert.match(html, /const previewEnabled = video\.getAttribute\('data-rstk-video-preview'\) === 'true'/)
+    assert.match(html, /const startPreviewLoop = \(\) =>/)
+    assert.match(html, /const syncVideoOrientation = \(host, video\) =>/)
+    assert.equal((html.match(/const HLS_SCRIPT_URL/g) || []).length, 1)
+    assert.match(html, /\.rstk-imported-native-video\[data-rstk-native-mounted="true"\]\{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var\(--rstk-native-slot-padding,0\)!important;background-color:var\(--rstk-native-slot-background,transparent\)!important;box-shadow:none!important\}/)
+    assert.match(html, /\.rstk-imported-native-video > \.rstk-video\{width:var\(--rstk-media-width,100%\);margin-left:var\(--rstk-media-margin-left,auto\);margin-right:var\(--rstk-media-margin-right,auto\)\}/)
+    assert.match(html, /style data-rstk-imported-native-theme/)
+    assert.match(html, /\.rstk-imported-native-slot \.rstk-video-form-gate/)
     assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-target="cta-final"/)
     assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
     assert.doesNotMatch(html, /Configura el video de Ristak/)
 
     const previewHtml = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: true })
     assert.match(previewHtml, /const PREVIEW_SAFE = true;/)
+    assert.match(previewHtml, /data-rstk-video-preview="true"/)
+    assert.match(previewHtml, /startPreviewLoop\(\)/)
     assert.match(previewHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)

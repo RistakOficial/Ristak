@@ -7106,6 +7106,7 @@ Contrato de código cerrado y contenido:
 - Un descargable puede asociar cualquier archivo de Media: imagen, audio, video, PDF o ZIP. No pongas data-rstk-asset-id en div o picture; usa los tags canonicos anteriores para que Ristak pueda escribir la URL real.
 - Nunca reemplaces una clave por una URL física. No esperes un catálogo previo: primero declara la zona en el HTML y Ristak permitirá asociar el archivo después.
 - Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
+- El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
@@ -7144,6 +7145,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">. Ese formulario tambien cumple el contrato obligatorio: nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre", email usa data-rstk-calendar-email data-rstk-field-id="agenda-email" y telefono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". El mensaje usa data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
+- El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
@@ -22432,6 +22434,9 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const speed = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1
   const fit = ['cover', 'contain', 'fill'].includes(cleanString(settings.videoFit)) ? cleanString(settings.videoFit) : 'cover'
   const orientation = normalizeVideoOrientation(settings, getVideoOrientationFromAsset(options.tracking?.asset))
+  const orientationMode = ['portrait', 'landscape'].includes(cleanString(settings.videoOrientation))
+    ? cleanString(settings.videoOrientation)
+    : 'auto'
   const playerColor = getVideoPlayerButtonColor(settings)
   const playColor = getVideoPlayIconColor(settings)
   const controlPanelRadius = normalizeVideoControlPanelRadius(settings)
@@ -22490,6 +22495,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-render-preview="${renderPreviewMode ? 'true' : 'false'}"`,
+    `data-rstk-video-orientation-mode="${escapeHtml(orientationMode)}"`,
     `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
     `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
     `data-rstk-video-preview-end="${escapeHtml(String(previewRange.end))}"`,
@@ -25128,220 +25134,467 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-speed-control option{color:#111827}
 </style>`
 
-function buildImportedVideoPlayerRuntimeScript() {
+function buildVideoPlayerRuntimeScript() {
   return `<script>
-    (() => {
-      if (window.ristakImportedVideoPlayerRuntimeLoaded) return;
-      window.ristakImportedVideoPlayerRuntimeLoaded = true;
-      const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
-      let hlsLoader = null;
-      const isHlsSource = src => /\\.m3u8(?:[?#]|$)/i.test(String(src || ''));
-      const loadHls = () => {
-        if (window.Hls) return Promise.resolve(window.Hls);
-        if (hlsLoader) return hlsLoader;
-        hlsLoader = new Promise(resolve => {
-          const script = document.createElement('script');
-          script.src = HLS_SCRIPT_URL;
-          script.async = true;
-          script.dataset.rstkHlsPlayer = 'true';
-          script.onload = () => resolve(window.Hls || null);
-          script.onerror = () => resolve(null);
-          document.head.appendChild(script);
-        });
-        return hlsLoader;
-      };
-      const canPlayNativeHls = video => {
-        try { return Boolean(video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL')); } catch (_) { return false; }
-      };
-      const attach = host => {
-        if (!host || host.dataset.rstkImportedVideoAttached === 'true') return;
-        const video = host.querySelector('video');
-        if (!video) return;
-        host.dataset.rstkImportedVideoAttached = 'true';
-        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
-        if (source && isHlsSource(source) && !canPlayNativeHls(video)) {
-          video.removeAttribute('src');
-          video.load();
-          loadHls().then(Hls => {
-            if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
-              video.src = source;
-              video.load();
-              return;
-            }
-            const hls = new Hls({ enableWorker: true });
-            hls.loadSource(source);
-            hls.attachMedia(video);
-          }).catch(() => {
-            video.src = source;
-            video.load();
-          });
-        }
-        const progress = host.querySelector('[data-rstk-video-progress]');
-        const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
-        const timecode = host.querySelector('[data-rstk-video-timecode]');
-        const timeElapsed = host.querySelector('[data-rstk-video-time-elapsed]');
-        const timeRemaining = host.querySelector('[data-rstk-video-time-remaining]');
-        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
-        const overlay = host.querySelector('[data-rstk-video-overlay]');
-        const toggles = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
-        const mutes = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
-        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
-        const hasControlBar = Boolean(controlBar);
-        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
-        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
-        let hasUserPlayed = Boolean(video.autoplay);
-        let controlsTimer = 0;
-        const shouldBlockControlsBeforePlayback = () => hasControlBar && !hasUserPlayed;
-        const syncControlBarAccess = () => {
-          if (!hasControlBar) return;
-          const blocked = shouldBlockControlsBeforePlayback();
-          controlBar.toggleAttribute('aria-hidden', blocked);
-          controlFocusTargets.forEach(target => {
-            target.tabIndex = blocked ? -1 : 0;
-          });
-        };
-        const markUserPlayback = () => {
-          hasUserPlayed = true;
-          video.dataset.rstkVideoRealPlayed = 'true';
-          syncControlBarAccess();
-          return true;
-        };
-        const formatTimecode = value => {
-          const totalSeconds = Math.max(0, Math.floor(Number.isFinite(Number(value)) ? Number(value) : 0));
-          const minutes = Math.floor(totalSeconds / 60);
-          const seconds = totalSeconds % 60;
-          return minutes + ':' + String(seconds).padStart(2, '0');
-        };
-        const syncTimecode = duration => {
-          if (!timecode && !timeElapsed && !timeRemaining) return;
-          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
-          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(video.currentTime) ? video.currentTime : 0));
-          const remaining = Math.max(0, safeDuration - elapsed);
-          const elapsedLabel = formatTimecode(elapsed);
-          const remainingLabel = formatTimecode(remaining);
-          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
-          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
-          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
-        };
-        const sync = () => {
-          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-          const ratio = duration > 0 ? Math.max(0, Math.min(1, video.currentTime / duration)) : 0;
-          if (progress) progress.style.width = (ratio * 100).toFixed(3) + '%';
-          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
-          syncTimecode(duration);
-          host.classList.toggle('rstk-video-is-playing', !video.paused);
-          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
-          toggles.forEach(button => button.setAttribute('aria-label', video.paused ? 'Reproducir video' : 'Pausar video'));
-          mutes.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
-        };
-        const setControlsVisible = visible => {
-          if (!hasControlBar) return;
-          const nextVisible = Boolean(visible) && !shouldBlockControlsBeforePlayback();
-          host.classList.toggle('rstk-video-controls-visible', nextVisible);
-          host.classList.toggle('rstk-video-controls-hidden', !nextVisible);
-          syncControlBarAccess();
-        };
-        const showControls = () => {
-          if (shouldBlockControlsBeforePlayback()) {
-            setControlsVisible(false);
-            return;
-          }
-          setControlsVisible(true);
-          window.clearTimeout(controlsTimer);
-          if (!video.paused) controlsTimer = window.setTimeout(() => setControlsVisible(false), ${VIDEO_CONTROLS_IDLE_MS});
-        };
-        const play = unmute => {
-          markUserPlayback();
-          if (unmute) {
-            video.muted = false;
-            if (video.volume === 0) video.volume = 1;
-          }
-          if (video.paused) video.play().catch(() => {});
-          else video.pause();
-          if (startVisibleAfterPlay) showControls();
-          else setControlsVisible(false);
-          window.setTimeout(sync, 0);
-        };
-        overlay?.addEventListener('click', event => {
-          event.preventDefault();
-          event.stopPropagation();
-          play(true);
-        });
-        toggles.forEach(button => button.addEventListener('click', event => {
-          event.preventDefault();
-          event.stopPropagation();
-          play(false);
-        }));
-        mutes.forEach(button => button.addEventListener('click', event => {
-          event.preventDefault();
-          event.stopPropagation();
-          video.muted = !(video.muted || video.volume === 0);
-          if (!video.muted && video.volume === 0) video.volume = 1;
-          showControls();
-          sync();
-        }));
-        if (progressTrack) {
-          const seek = clientX => {
-            if (!hasUserPlayed) {
-              setControlsVisible(false);
-              return;
-            }
-            const rect = progressTrack.getBoundingClientRect();
-            if (!rect.width || !Number.isFinite(video.duration) || video.duration <= 0) return;
-            video.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * video.duration;
-            sync();
-          };
-          progressTrack.addEventListener('pointerdown', event => {
-            event.preventDefault();
-            event.stopPropagation();
-            seek(event.clientX);
-          });
-        }
-        if (speedSelect) {
-          const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
-          video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
-          speedSelect.value = String(video.playbackRate);
-          speedSelect.addEventListener('change', event => {
-            const nextSpeed = Number(event.target.value);
-            if (!Number.isFinite(nextSpeed)) return;
-            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));
-            showControls();
-          });
-        }
-        video.addEventListener('play', () => {
-          markUserPlayback();
-          if (startVisibleAfterPlay) showControls();
-          sync();
-        });
-        ['pause','timeupdate','volumechange','loadedmetadata','ended'].forEach(eventName => video.addEventListener(eventName, sync));
-        ['pointermove','pointerenter','touchstart','focusin'].forEach(eventName => host.addEventListener(eventName, showControls, { passive: true }));
-        if (hasControlBar) setControlsVisible(hasUserPlayed && host.classList.contains('rstk-video-controls-visible'));
-        else syncControlBarAccess();
-        sync();
-      };
-      const attachAll = () => document.querySelectorAll('.rstk-video-player').forEach(attach);
-      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attachAll, { once: true });
-      else attachAll();
-      new MutationObserver(attachAll).observe(document.documentElement, { childList: true, subtree: true });
-    })();
-  </script>`
+	    (() => {
+	      const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+	      let hlsLoader = null;
+	      const isHlsSource = src => {
+	        const raw = String(src || '').split('#')[0] || '';
+	        const withoutQuery = raw.split('?')[0] || raw;
+	        return /\.m3u8$/i.test(withoutQuery);
+	      };
+	      const canPlayNativeHls = video => {
+	        try {
+	          return Boolean(video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'));
+	        } catch (_) {
+	          return false;
+	        }
+	      };
+	      const loadHls = () => {
+	        if (window.Hls) return Promise.resolve(window.Hls);
+	        if (hlsLoader) return hlsLoader;
+	        hlsLoader = new Promise(resolve => {
+	          const existing = document.querySelector('script[data-rstk-hls-player="true"]');
+	          if (existing) {
+	            existing.addEventListener('load', () => resolve(window.Hls || null), { once: true });
+	            existing.addEventListener('error', () => resolve(null), { once: true });
+	            return;
+	          }
+	          const script = document.createElement('script');
+	          script.src = HLS_SCRIPT_URL;
+	          script.async = true;
+	          script.dataset.rstkHlsPlayer = 'true';
+	          script.onload = () => resolve(window.Hls || null);
+	          script.onerror = () => resolve(null);
+	          document.head.appendChild(script);
+	        });
+	        return hlsLoader;
+	      };
+	      const previewStep = 0.25;
+	      const previewMaxSpan = 40;
+	      const controlsIdleMs = ${VIDEO_CONTROLS_IDLE_MS};
+	      const controlsLeaveIdleMs = ${VIDEO_CONTROLS_LEAVE_IDLE_MS};
+	      const roundPreviewSecond = value => Math.round(value / previewStep) * previewStep;
+	      const normalizePreviewRange = video => {
+	        const rawDuration = Number(video.duration);
+	        const maxSeconds = Number.isFinite(rawDuration) && rawDuration > 0
+	          ? Math.max(previewStep, roundPreviewSecond(rawDuration))
+	          : previewMaxSpan;
+	        const minSpan = Math.min(1, Math.max(previewStep, maxSeconds));
+	        const maxSpan = Math.min(previewMaxSpan, maxSeconds);
+	        const fallbackEnd = Math.min(previewMaxSpan, maxSeconds);
+	        const rawStart = Number(video.getAttribute('data-rstk-video-preview-start') || '0');
+	        const rawEnd = Number(video.getAttribute('data-rstk-video-preview-end') || fallbackEnd);
+	        const start = Math.min(
+	          Math.max(0, roundPreviewSecond(Number.isFinite(rawStart) ? rawStart : 0)),
+	          Math.max(0, maxSeconds - minSpan)
+	        );
+	        const end = Math.min(
+	          Math.max(start + minSpan, roundPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
+	          maxSeconds,
+	          start + maxSpan
+	        );
+	        return { start, end };
+	      };
+	      const syncVideoOrientation = (host, video) => {
+	        const orientationMode = String(video.getAttribute('data-rstk-video-orientation-mode') || 'auto');
+	        if (orientationMode === 'portrait' || orientationMode === 'landscape') return;
+	        const width = Number(video.videoWidth);
+	        const height = Number(video.videoHeight);
+	        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+	        const orientation = height > width ? 'portrait' : 'landscape';
+	        host.classList.toggle('rstk-video-portrait', orientation === 'portrait');
+	        host.classList.toggle('rstk-video-landscape', orientation === 'landscape');
+	        host.style.setProperty('--rstk-video-aspect-ratio', orientation === 'portrait' ? '9 / 16' : '16 / 9');
+	        const parentStyle = host.closest('.rstk-block-style')?.style;
+	        const hasConfiguredWidth = Boolean(host.style.getPropertyValue('--rstk-media-width') || parentStyle?.getPropertyValue('--rstk-media-width'));
+	        if (orientation === 'portrait' && !hasConfiguredWidth) {
+	          host.style.setProperty('--rstk-media-width', '${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%');
+	        }
+	      };
+	      document.querySelectorAll('.rstk-video-player').forEach(host => {
+	        const video = host.querySelector('video');
+	        if (!video) return;
+	        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
+	        if (source && isHlsSource(source)) {
+	          if (canPlayNativeHls(video)) {
+	            video.src = source;
+	            video.load();
+	          } else {
+	            video.removeAttribute('src');
+	            video.load();
+	            loadHls().then(Hls => {
+	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
+	                video.src = source;
+	                video.load();
+	                return;
+	              }
+	              const hls = new Hls({ enableWorker: true });
+	              host.rstkHls = hls;
+	              hls.loadSource(source);
+	              hls.attachMedia(video);
+	            }).catch(() => {
+	              video.src = source;
+	              video.load();
+	            });
+	          }
+	        }
+	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
+	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
+	        const progress = host.querySelector('[data-rstk-video-progress]');
+	        const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
+	        const timecode = host.querySelector('[data-rstk-video-timecode]');
+	        const timeElapsed = host.querySelector('[data-rstk-video-time-elapsed]');
+	        const timeRemaining = host.querySelector('[data-rstk-video-time-remaining]');
+	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
+	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
+	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
+	        const soundNotice = host.querySelector('.rstk-video-sound');
+	        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
+	        const hasControlBar = Boolean(controlBar);
+	        const startsWithHiddenControls = hasControlBar && host.classList.contains('rstk-video-controls-hidden');
+	        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
+	        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
+	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
+	        let previewing = false;
+	        let hasUserPlayed = Boolean(video.autoplay);
+	        let controlsAreVisible = Boolean(hasUserPlayed && !startsWithHiddenControls);
+	        let controlsHideTimer = 0;
+	        let progressFrame = 0;
+	        const formatProgressPercent = ratio => {
+	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+	          return Number((safeRatio * 100).toFixed(3)) + '%';
+	        };
+	        const setProgressRatio = ratio => {
+	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+	          if (progress) progress.style.width = formatProgressPercent(safeRatio);
+	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(safeRatio * 100)));
+	        };
+	        const formatTimecode = value => {
+	          const totalSeconds = Math.max(0, Math.floor(Number.isFinite(Number(value)) ? Number(value) : 0));
+	          const minutes = Math.floor(totalSeconds / 60);
+	          const seconds = totalSeconds % 60;
+	          return minutes + ':' + String(seconds).padStart(2, '0');
+	        };
+	        const syncTimecode = duration => {
+	          if (!timecode && !timeElapsed && !timeRemaining) return;
+	          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
+	          const rawElapsed = previewing && !hasUserPlayed ? 0 : video.currentTime;
+	          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(rawElapsed) ? rawElapsed : 0));
+	          const remaining = Math.max(0, safeDuration - elapsed);
+	          const elapsedLabel = formatTimecode(elapsed);
+	          const remainingLabel = formatTimecode(remaining);
+	          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
+	          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
+	          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
+	        };
+	        const syncProgress = () => {
+	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	          setProgressRatio(duration > 0 ? video.currentTime / duration : 0);
+	          syncTimecode(duration);
+	        };
+	        const stopProgressFrame = () => {
+	          if (!progressFrame) return;
+	          window.cancelAnimationFrame(progressFrame);
+	          progressFrame = 0;
+	        };
+	        const startProgressFrame = () => {
+	          if (progressFrame) return;
+	          progressFrame = window.requestAnimationFrame(() => {
+	            progressFrame = 0;
+	            syncProgress();
+	            if (!video.paused) startProgressFrame();
+	          });
+	        };
+	        const shouldHideControlsAtStart = () => hasControlBar && !hasUserPlayed;
+	        const syncControlBarAccess = () => {
+	          if (!hasControlBar) return;
+	          const blocked = shouldHideControlsAtStart();
+	          controlBar.toggleAttribute('aria-hidden', blocked);
+	          controlFocusTargets.forEach(target => {
+	            target.tabIndex = blocked ? -1 : 0;
+	          });
+	        };
+	        const setControlsVisible = visible => {
+	          if (!hasControlBar) return;
+	          controlsAreVisible = Boolean(visible) && !shouldHideControlsAtStart();
+	          host.classList.toggle('rstk-video-controls-visible', controlsAreVisible);
+	          host.classList.toggle('rstk-video-controls-hidden', !controlsAreVisible);
+	          syncControlBarAccess();
+	        };
+	        const clearControlsHideTimer = () => {
+	          if (!controlsHideTimer) return;
+	          window.clearTimeout(controlsHideTimer);
+	          controlsHideTimer = 0;
+	        };
+	        const hideControlsAfter = delay => {
+	          clearControlsHideTimer();
+	          if (!hasControlBar) return;
+	          if (shouldHideControlsAtStart()) {
+	            setControlsVisible(false);
+	            return;
+	          }
+	          if (video.paused || previewing) return;
+	          controlsHideTimer = window.setTimeout(() => {
+	            setControlsVisible(false);
+	            controlsHideTimer = 0;
+	          }, Number.isFinite(delay) ? delay : controlsIdleMs);
+	        };
+	        const showControlsTemporarily = delay => {
+	          if (!hasControlBar) return;
+	          if (shouldHideControlsAtStart()) {
+	            clearControlsHideTimer();
+	            setControlsVisible(false);
+	            return;
+	          }
+	          setControlsVisible(true);
+	          hideControlsAfter(Number.isFinite(delay) ? delay : controlsIdleMs);
+	        };
+	        const handlePlayerActivity = () => showControlsTemporarily();
+	        const handlePlayerLeave = event => {
+	          if (event && event.relatedTarget && host.contains(event.relatedTarget)) return;
+	          hideControlsAfter(controlsLeaveIdleMs);
+	        };
+	        if (hasControlBar) {
+	          setControlsVisible(controlsAreVisible);
+	          ['pointerenter', 'pointermove', 'touchstart', 'focusin'].forEach(eventName => host.addEventListener(eventName, handlePlayerActivity, { passive: true }));
+	          ['pointerleave', 'focusout'].forEach(eventName => host.addEventListener(eventName, handlePlayerLeave));
+	          controlBar.addEventListener('click', event => {
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	          });
+	        }
+	        const hideSoundNotice = () => {
+	          if (!hasUserPlayed) return;
+	          host.classList.remove('rstk-video-sound-hint');
+	          if (soundNotice) soundNotice.hidden = true;
+	        };
+	        const markUserPlayback = () => {
+	          if (previewing) return false;
+	          hasUserPlayed = true;
+	          video.dataset.rstkVideoRealPlayed = 'true';
+	          hideSoundNotice();
+	          syncControlBarAccess();
+	          return true;
+	        };
+	        const stopPreviewLoop = () => {
+	          previewing = false;
+	          delete video.dataset.rstkVideoPreviewing;
+	          host.classList.remove('rstk-video-is-previewing');
+	        };
+	        const restartFromBeginningForUserPlayback = () => {
+	          if (hasUserPlayed) return;
+	          const currentTime = Number(video.currentTime || 0);
+	          if (!Number.isFinite(currentTime) || currentTime <= 0.01) return;
+	          video.currentTime = 0;
+	          setProgressRatio(0);
+	        };
+	        const startPreviewLoop = () => {
+	          if (!previewEnabled || hasUserPlayed) return;
+	          const range = normalizePreviewRange(video);
+	          previewing = true;
+	          video.dataset.rstkVideoPreviewing = 'true';
+	          video.muted = true;
+	          if (video.currentTime < range.start || video.currentTime >= range.end) video.currentTime = range.start;
+	          video.play().then(sync).catch(() => {
+	            stopPreviewLoop();
+	            sync();
+	          });
+	          sync();
+	        };
+	        const seekToProgressRatio = ratio => {
+	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	          if (duration <= 0) return false;
+	          if (!hasUserPlayed) {
+	            setControlsVisible(false);
+	            return false;
+	          }
+	          if (previewing) stopPreviewLoop();
+	          const nextProgress = Math.max(0, Math.min(1, ratio));
+	          video.currentTime = nextProgress * duration;
+	          setProgressRatio(nextProgress);
+	          sync();
+	          return true;
+	        };
+	        const seekToClientPosition = (clientX, track) => {
+	          const targetTrack = track || progressTrack;
+	          if (!targetTrack || !targetTrack.getBoundingClientRect) return false;
+	          const rect = targetTrack.getBoundingClientRect();
+	          if (!rect.width) return false;
+	          return seekToProgressRatio((clientX - rect.left) / rect.width);
+	        };
+	        const sync = () => {
+	          if (previewing) {
+	            const range = normalizePreviewRange(video);
+	            if (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25)) {
+	              video.currentTime = range.start;
+	            }
+	            if (video.paused && !hasUserPlayed) {
+	              video.play().catch(() => stopPreviewLoop());
+	            }
+	          }
+	          host.classList.toggle('rstk-video-is-playing', !video.paused && !previewing);
+	          host.classList.toggle('rstk-video-is-previewing', !video.paused && previewing);
+	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
+	          syncProgress();
+	          if (!video.paused) startProgressFrame();
+	          else stopProgressFrame();
+	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
+	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
+	          if (hasControlBar) {
+	            if (shouldHideControlsAtStart()) {
+	              clearControlsHideTimer();
+	              setControlsVisible(false);
+	            } else if (!video.paused && !previewing) {
+	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
+	            } else {
+	              clearControlsHideTimer();
+	              if (controlsAreVisible) setControlsVisible(true);
+	              else syncControlBarAccess();
+	            }
+	          }
+	          hideSoundNotice();
+	        };
+	        const togglePlayback = unmute => {
+	          const wasPreviewing = previewing;
+	          if (wasPreviewing) stopPreviewLoop();
+	          restartFromBeginningForUserPlayback();
+	          const wasUserPlayed = hasUserPlayed;
+	          markUserPlayback();
+	          if (startVisibleAfterPlay || wasUserPlayed) showControlsTemporarily();
+	          else setControlsVisible(false);
+	          if (unmute) {
+	            video.muted = false;
+	            if (video.volume === 0) video.volume = 1;
+	          }
+	          if (video.paused || wasPreviewing) {
+	            video.play().catch(() => {
+	              if (!unmute) return;
+	              video.muted = true;
+	              video.play().catch(() => {});
+	            }).finally(() => window.setTimeout(sync, 0));
+	          } else {
+	            video.pause();
+	            setControlsVisible(true);
+	            sync();
+	          }
+	        };
+	        const overlay = host.querySelector('[data-rstk-video-overlay]');
+	        if (overlay) {
+	          overlay.addEventListener('click', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            if (host.classList.contains('rstk-video-controls-hidden') && !video.paused && !previewing) {
+	              showControlsTemporarily();
+	              return;
+	            }
+	            showControlsTemporarily();
+	            togglePlayback(true);
+	          });
+	        }
+	        toggleButtons.forEach(button => {
+	          button.addEventListener('click', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            togglePlayback(false);
+	          });
+	        });
+	        muteButtons.forEach(button => {
+	          button.addEventListener('click', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            const shouldUnmute = video.muted || video.volume === 0;
+	            video.muted = !shouldUnmute;
+	            if (shouldUnmute && video.volume === 0) video.volume = 1;
+	            sync();
+	          });
+	        });
+	        if (progressTrack) {
+	          progressTrack.addEventListener('pointerdown', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            if (progressTrack.setPointerCapture) progressTrack.setPointerCapture(event.pointerId);
+	            showControlsTemporarily();
+	            seekToClientPosition(event.clientX, progressTrack);
+	          });
+	          progressTrack.addEventListener('pointermove', event => {
+	            if (!progressTrack.hasPointerCapture || !progressTrack.hasPointerCapture(event.pointerId)) return;
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            seekToClientPosition(event.clientX, progressTrack);
+	          });
+	          ['pointerup', 'pointercancel'].forEach(eventName => {
+	            progressTrack.addEventListener(eventName, event => {
+	              event.preventDefault();
+	              event.stopPropagation();
+	              if (progressTrack.hasPointerCapture && progressTrack.hasPointerCapture(event.pointerId)) {
+	                progressTrack.releasePointerCapture(event.pointerId);
+	              }
+	              showControlsTemporarily();
+	            });
+	          });
+	          progressTrack.addEventListener('keydown', event => {
+	            const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	            if (duration <= 0) return;
+	            const stepSeconds = event.shiftKey ? 10 : 5;
+	            let nextTime = video.currentTime;
+	            if (event.key === 'ArrowLeft') nextTime -= stepSeconds;
+	            else if (event.key === 'ArrowRight') nextTime += stepSeconds;
+	            else if (event.key === 'Home') nextTime = 0;
+	            else if (event.key === 'End') nextTime = duration;
+	            else return;
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            seekToProgressRatio(nextTime / duration);
+	          });
+	        }
+	        if (speedSelect) {
+	          speedSelect.value = String(video.playbackRate);
+	          speedSelect.addEventListener('change', event => {
+	            showControlsTemporarily();
+	            const nextSpeed = Number(event.target.value);
+	            if (!Number.isFinite(nextSpeed)) return;
+	            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));
+	          });
+	        }
+	        video.addEventListener('play', () => {
+	          if (!previewing) {
+	            const wasUserPlayed = hasUserPlayed;
+	            markUserPlayback();
+	            if (startVisibleAfterPlay && !wasUserPlayed) showControlsTemporarily();
+	          }
+	          sync();
+	        });
+	        video.addEventListener('loadedmetadata', () => {
+	          syncVideoOrientation(host, video);
+	          startPreviewLoop();
+	        });
+	        video.addEventListener('canplay', startPreviewLoop);
+	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
+	        if (video.readyState >= 1) {
+	          syncVideoOrientation(host, video);
+	          startPreviewLoop();
+	        }
+	        sync();
+	      });
+	    })();
+	  </script>`
 }
-
 function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, actionsPreviewSafe = false } = {}) {
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
-  // Runtime del reproductor: se usa EXACTAMENTE el mismo del editor de sitios
-  // (buildVideoActionsRuntimeScript, ~21KB — controles, sonido, ocultar/mostrar barra,
-  // progreso, velocidad, autoplay y acciones por tiempo). Antes el importado usaba un runtime
-  // REDUCIDO propio (buildImportedVideoPlayerRuntimeScript, ~9.8KB) que no replicaba el
-  // comportamiento del editor de sitios (por eso el play/sonido/ocultar-controles se sentían
-  // rotos). Con el runtime completo, el reproductor importado se comporta idéntico al nativo.
   const hasPlayer = /\brstk-video-player\b/.test(source)
   const hasActions = actionsEnabled && /data-rstk-video-actions=/.test(source)
   return [
     IMPORTED_VIDEO_PLAYER_CSS,
-    (hasPlayer || hasActions) ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
+    hasPlayer ? buildVideoPlayerRuntimeScript() : '',
+    hasActions ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
   ].filter(Boolean).join('')
 }
 
@@ -25805,10 +26058,21 @@ function buildImportedNativeSlotStyle(block, slotType = '') {
   if (vars['--rstk-block-align']) decls.push(`text-align:${vars['--rstk-block-align']}`)
   const framesOwnBox = slotType === 'payment' || slotType === 'calendar'
   if (!framesOwnBox) {
-    if (vars['--rstk-block-pad']) decls.push(`padding:${vars['--rstk-block-pad']}`)
+    if (slotType === 'video') {
+      if (vars['--rstk-media-width']) decls.push(`--rstk-media-width:${vars['--rstk-media-width']}`)
+      if (vars['--rstk-media-margin-left']) decls.push(`--rstk-media-margin-left:${vars['--rstk-media-margin-left']}`)
+      if (vars['--rstk-media-margin-right']) decls.push(`--rstk-media-margin-right:${vars['--rstk-media-margin-right']}`)
+    }
+    if (vars['--rstk-block-pad']) {
+      if (slotType === 'video') decls.push(`--rstk-native-slot-padding:${vars['--rstk-block-pad']}`)
+      else decls.push(`padding:${vars['--rstk-block-pad']}`)
+    }
     if (vars['--rstk-block-radius']) decls.push(`border-radius:${vars['--rstk-block-radius']}`)
     const bgColor = vars['--rstk-block-bg-color'] || vars['--rstk-block-bg']
-    if (bgColor) decls.push(`background-color:${bgColor}`)
+    if (bgColor) {
+      if (slotType === 'video') decls.push(`--rstk-native-slot-background:${bgColor}`)
+      else decls.push(`background-color:${bgColor}`)
+    }
     if (vars['--rstk-block-bg-image']) {
       const layers = [vars['--rstk-block-bg-layer'], vars['--rstk-block-bg-image']].filter(Boolean).join(',')
       decls.push(`background-image:${layers}`)
@@ -26391,6 +26655,7 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::before,
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
+.rstk-imported-native-video[data-rstk-native-mounted="true"]{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var(--rstk-native-slot-padding,0)!important;background-color:var(--rstk-native-slot-background,transparent)!important;box-shadow:none!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:140px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
@@ -26437,6 +26702,13 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 @keyframes rstkCheckoutSpin{to{transform:rotate(360deg)}}
 </style>`
 
+// Va después del stylesheet completo del editor. Así la caja importada obtiene la misma
+// alineación/anchura de `.rstk-block-style > .rstk-video` aunque el slot nativo no use ese
+// wrapper, sin permitir que el CSS generado por IA vuelva a imponer su geometría.
+const IMPORTED_NATIVE_VIDEO_LAYOUT_CSS = `<style data-rstk-imported-native-video-layout>
+.rstk-imported-native-video > .rstk-video{width:var(--rstk-media-width,100%);margin-left:var(--rstk-media-margin-left,auto);margin-right:var(--rstk-media-margin-right,auto)}
+</style>`
+
 // Tematiza los elementos nativos importados IGUAL que el editor de sitios: inyecta el
 // stylesheet base del sitio (RSTK_BASE_CSS + :root de tema) pero ESCOPADO a
 // .rstk-imported-native-slot con el mismo motor que usa el canvas del editor
@@ -26448,12 +26720,11 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 function buildImportedNativeThemeStyle(site) {
   try {
     const state = computeSitePageRenderState(site)
-    // El slot de VIDEO se EXCLUYE del tema base: ya tiene su CSS dedicado y completo
-    // (IMPORTED_VIDEO_PLAYER_CSS: aspecto, reproductor, barra, botón play). Inyectar las reglas
-    // base de .rstk-video encima (con más especificidad) lo rompía — borde/radio/fondo/aspecto
-    // distintos. Solo tematizamos pago/calendario/formulario, que no tenían CSS propio; el video
-    // usa sus propios tokens --rstk-video-* inline y no necesita el :root del tema.
-    const scope = '.rstk-imported-native-slot:not(.rstk-imported-native-video)'
+    // El video usa el MISMO stylesheet del editor normal, escopado al slot. El CSS reducido
+    // de IMPORTED_VIDEO_PLAYER_CSS queda solo como compatibilidad para videos HTML editables;
+    // en el elemento nativo gana este contrato completo (orientación, controles responsive,
+    // formulario dentro del video y todos los estados del reproductor).
+    const scope = '.rstk-imported-native-slot'
     const scoped = rescopeSiteCssForCanvas(buildStyleSheet(state), { scope })
     if (!scoped || !scoped.trim()) return ''
     return `<style data-rstk-imported-native-theme>\n${scope}{container-type:inline-size;container-name:rstk-canvas}\n${scoped}\n</style>`
@@ -26470,6 +26741,7 @@ function buildImportedNativeElementRuntimeInjection(runtimeState = {}, site = nu
     // El tema escopado va DESPUÉS del CSS base importado: ante conflictos de igual
     // especificidad gana el tema del usuario (adiós a los fallbacks CanvasText).
     site ? buildImportedNativeThemeStyle(site) : '',
+    runtimeState.hasVideo ? IMPORTED_NATIVE_VIDEO_LAYOUT_CSS : '',
     runtimeState.hasNativeElements ? `<script>
     (() => {
       window.addEventListener('message', event => {
@@ -27044,453 +27316,7 @@ export async function renderPublicSiteHtml(site, {
       });
     })();
   </script>
-	  <script>
-	    (() => {
-	      const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
-	      let hlsLoader = null;
-	      const isHlsSource = src => {
-	        const raw = String(src || '').split('#')[0] || '';
-	        const withoutQuery = raw.split('?')[0] || raw;
-	        return /\.m3u8$/i.test(withoutQuery);
-	      };
-	      const canPlayNativeHls = video => {
-	        try {
-	          return Boolean(video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'));
-	        } catch (_) {
-	          return false;
-	        }
-	      };
-	      const loadHls = () => {
-	        if (window.Hls) return Promise.resolve(window.Hls);
-	        if (hlsLoader) return hlsLoader;
-	        hlsLoader = new Promise(resolve => {
-	          const existing = document.querySelector('script[data-rstk-hls-player="true"]');
-	          if (existing) {
-	            existing.addEventListener('load', () => resolve(window.Hls || null), { once: true });
-	            existing.addEventListener('error', () => resolve(null), { once: true });
-	            return;
-	          }
-	          const script = document.createElement('script');
-	          script.src = HLS_SCRIPT_URL;
-	          script.async = true;
-	          script.dataset.rstkHlsPlayer = 'true';
-	          script.onload = () => resolve(window.Hls || null);
-	          script.onerror = () => resolve(null);
-	          document.head.appendChild(script);
-	        });
-	        return hlsLoader;
-	      };
-	      const previewStep = 0.25;
-	      const previewMaxSpan = 40;
-	      const controlsIdleMs = ${VIDEO_CONTROLS_IDLE_MS};
-	      const controlsLeaveIdleMs = ${VIDEO_CONTROLS_LEAVE_IDLE_MS};
-	      const roundPreviewSecond = value => Math.round(value / previewStep) * previewStep;
-	      const normalizePreviewRange = video => {
-	        const rawDuration = Number(video.duration);
-	        const maxSeconds = Number.isFinite(rawDuration) && rawDuration > 0
-	          ? Math.max(previewStep, roundPreviewSecond(rawDuration))
-	          : previewMaxSpan;
-	        const minSpan = Math.min(1, Math.max(previewStep, maxSeconds));
-	        const maxSpan = Math.min(previewMaxSpan, maxSeconds);
-	        const fallbackEnd = Math.min(previewMaxSpan, maxSeconds);
-	        const rawStart = Number(video.getAttribute('data-rstk-video-preview-start') || '0');
-	        const rawEnd = Number(video.getAttribute('data-rstk-video-preview-end') || fallbackEnd);
-	        const start = Math.min(
-	          Math.max(0, roundPreviewSecond(Number.isFinite(rawStart) ? rawStart : 0)),
-	          Math.max(0, maxSeconds - minSpan)
-	        );
-	        const end = Math.min(
-	          Math.max(start + minSpan, roundPreviewSecond(Number.isFinite(rawEnd) ? rawEnd : fallbackEnd)),
-	          maxSeconds,
-	          start + maxSpan
-	        );
-	        return { start, end };
-	      };
-	      const syncVideoOrientation = (host, video) => {
-	        const width = Number(video.videoWidth);
-	        const height = Number(video.videoHeight);
-	        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-	        const orientation = height > width ? 'portrait' : 'landscape';
-	        host.classList.toggle('rstk-video-portrait', orientation === 'portrait');
-	        host.classList.toggle('rstk-video-landscape', orientation === 'landscape');
-	        host.style.setProperty('--rstk-video-aspect-ratio', orientation === 'portrait' ? '9 / 16' : '16 / 9');
-	        const parentStyle = host.closest('.rstk-block-style')?.style;
-	        const hasConfiguredWidth = Boolean(host.style.getPropertyValue('--rstk-media-width') || parentStyle?.getPropertyValue('--rstk-media-width'));
-	        if (orientation === 'portrait' && !hasConfiguredWidth) {
-	          host.style.setProperty('--rstk-media-width', '${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%');
-	        }
-	      };
-	      document.querySelectorAll('.rstk-video-player').forEach(host => {
-	        const video = host.querySelector('video');
-	        if (!video) return;
-	        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
-	        if (source && isHlsSource(source)) {
-	          if (canPlayNativeHls(video)) {
-	            video.src = source;
-	            video.load();
-	          } else {
-	            video.removeAttribute('src');
-	            video.load();
-	            loadHls().then(Hls => {
-	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
-	                video.src = source;
-	                video.load();
-	                return;
-	              }
-	              const hls = new Hls({ enableWorker: true });
-	              host.rstkHls = hls;
-	              hls.loadSource(source);
-	              hls.attachMedia(video);
-	            }).catch(() => {
-	              video.src = source;
-	              video.load();
-	            });
-	          }
-	        }
-	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
-	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
-	        const progress = host.querySelector('[data-rstk-video-progress]');
-	        const progressTrack = host.querySelector('[data-rstk-video-progress-track]');
-	        const timecode = host.querySelector('[data-rstk-video-timecode]');
-	        const timeElapsed = host.querySelector('[data-rstk-video-time-elapsed]');
-	        const timeRemaining = host.querySelector('[data-rstk-video-time-remaining]');
-	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
-	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
-	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
-	        const soundNotice = host.querySelector('.rstk-video-sound');
-	        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
-	        const hasControlBar = Boolean(controlBar);
-	        const startsWithHiddenControls = hasControlBar && host.classList.contains('rstk-video-controls-hidden');
-	        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
-	        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
-	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
-	        let previewing = false;
-	        let hasUserPlayed = Boolean(video.autoplay);
-	        let controlsAreVisible = Boolean(hasUserPlayed && !startsWithHiddenControls);
-	        let controlsHideTimer = 0;
-	        let progressFrame = 0;
-	        const formatProgressPercent = ratio => {
-	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
-	          return Number((safeRatio * 100).toFixed(3)) + '%';
-	        };
-	        const setProgressRatio = ratio => {
-	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
-	          if (progress) progress.style.width = formatProgressPercent(safeRatio);
-	          if (progressTrack) progressTrack.setAttribute('aria-valuenow', String(Math.round(safeRatio * 100)));
-	        };
-	        const formatTimecode = value => {
-	          const totalSeconds = Math.max(0, Math.floor(Number.isFinite(Number(value)) ? Number(value) : 0));
-	          const minutes = Math.floor(totalSeconds / 60);
-	          const seconds = totalSeconds % 60;
-	          return minutes + ':' + String(seconds).padStart(2, '0');
-	        };
-	        const syncTimecode = duration => {
-	          if (!timecode && !timeElapsed && !timeRemaining) return;
-	          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
-	          const rawElapsed = previewing && !hasUserPlayed ? 0 : video.currentTime;
-	          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(rawElapsed) ? rawElapsed : 0));
-	          const remaining = Math.max(0, safeDuration - elapsed);
-	          const elapsedLabel = formatTimecode(elapsed);
-	          const remainingLabel = formatTimecode(remaining);
-	          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
-	          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
-	          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
-	        };
-	        const syncProgress = () => {
-	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-	          setProgressRatio(duration > 0 ? video.currentTime / duration : 0);
-	          syncTimecode(duration);
-	        };
-	        const stopProgressFrame = () => {
-	          if (!progressFrame) return;
-	          window.cancelAnimationFrame(progressFrame);
-	          progressFrame = 0;
-	        };
-	        const startProgressFrame = () => {
-	          if (progressFrame) return;
-	          progressFrame = window.requestAnimationFrame(() => {
-	            progressFrame = 0;
-	            syncProgress();
-	            if (!video.paused) startProgressFrame();
-	          });
-	        };
-	        const shouldHideControlsAtStart = () => hasControlBar && !hasUserPlayed;
-	        const syncControlBarAccess = () => {
-	          if (!hasControlBar) return;
-	          const blocked = shouldHideControlsAtStart();
-	          controlBar.toggleAttribute('aria-hidden', blocked);
-	          controlFocusTargets.forEach(target => {
-	            target.tabIndex = blocked ? -1 : 0;
-	          });
-	        };
-	        const setControlsVisible = visible => {
-	          if (!hasControlBar) return;
-	          controlsAreVisible = Boolean(visible) && !shouldHideControlsAtStart();
-	          host.classList.toggle('rstk-video-controls-visible', controlsAreVisible);
-	          host.classList.toggle('rstk-video-controls-hidden', !controlsAreVisible);
-	          syncControlBarAccess();
-	        };
-	        const clearControlsHideTimer = () => {
-	          if (!controlsHideTimer) return;
-	          window.clearTimeout(controlsHideTimer);
-	          controlsHideTimer = 0;
-	        };
-	        const hideControlsAfter = delay => {
-	          clearControlsHideTimer();
-	          if (!hasControlBar) return;
-	          if (shouldHideControlsAtStart()) {
-	            setControlsVisible(false);
-	            return;
-	          }
-	          if (video.paused || previewing) return;
-	          controlsHideTimer = window.setTimeout(() => {
-	            setControlsVisible(false);
-	            controlsHideTimer = 0;
-	          }, Number.isFinite(delay) ? delay : controlsIdleMs);
-	        };
-	        const showControlsTemporarily = delay => {
-	          if (!hasControlBar) return;
-	          if (shouldHideControlsAtStart()) {
-	            clearControlsHideTimer();
-	            setControlsVisible(false);
-	            return;
-	          }
-	          setControlsVisible(true);
-	          hideControlsAfter(Number.isFinite(delay) ? delay : controlsIdleMs);
-	        };
-	        const handlePlayerActivity = () => showControlsTemporarily();
-	        const handlePlayerLeave = event => {
-	          if (event && event.relatedTarget && host.contains(event.relatedTarget)) return;
-	          hideControlsAfter(controlsLeaveIdleMs);
-	        };
-	        if (hasControlBar) {
-	          setControlsVisible(controlsAreVisible);
-	          ['pointerenter', 'pointermove', 'touchstart', 'focusin'].forEach(eventName => host.addEventListener(eventName, handlePlayerActivity, { passive: true }));
-	          ['pointerleave', 'focusout'].forEach(eventName => host.addEventListener(eventName, handlePlayerLeave));
-	          controlBar.addEventListener('click', event => {
-	            event.stopPropagation();
-	            showControlsTemporarily();
-	          });
-	        }
-	        const hideSoundNotice = () => {
-	          if (!hasUserPlayed) return;
-	          host.classList.remove('rstk-video-sound-hint');
-	          if (soundNotice) soundNotice.hidden = true;
-	        };
-	        const markUserPlayback = () => {
-	          if (previewing) return false;
-	          hasUserPlayed = true;
-	          video.dataset.rstkVideoRealPlayed = 'true';
-	          hideSoundNotice();
-	          syncControlBarAccess();
-	          return true;
-	        };
-	        const stopPreviewLoop = () => {
-	          previewing = false;
-	          delete video.dataset.rstkVideoPreviewing;
-	          host.classList.remove('rstk-video-is-previewing');
-	        };
-	        const restartFromBeginningForUserPlayback = () => {
-	          if (hasUserPlayed) return;
-	          const currentTime = Number(video.currentTime || 0);
-	          if (!Number.isFinite(currentTime) || currentTime <= 0.01) return;
-	          video.currentTime = 0;
-	          setProgressRatio(0);
-	        };
-	        const startPreviewLoop = () => {
-	          if (!previewEnabled || hasUserPlayed) return;
-	          const range = normalizePreviewRange(video);
-	          previewing = true;
-	          video.dataset.rstkVideoPreviewing = 'true';
-	          video.muted = true;
-	          if (video.currentTime < range.start || video.currentTime >= range.end) video.currentTime = range.start;
-	          video.play().then(sync).catch(() => {
-	            stopPreviewLoop();
-	            sync();
-	          });
-	          sync();
-	        };
-	        const seekToProgressRatio = ratio => {
-	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-	          if (duration <= 0) return false;
-	          if (!hasUserPlayed) {
-	            setControlsVisible(false);
-	            return false;
-	          }
-	          if (previewing) stopPreviewLoop();
-	          const nextProgress = Math.max(0, Math.min(1, ratio));
-	          video.currentTime = nextProgress * duration;
-	          setProgressRatio(nextProgress);
-	          sync();
-	          return true;
-	        };
-	        const seekToClientPosition = (clientX, track) => {
-	          const targetTrack = track || progressTrack;
-	          if (!targetTrack || !targetTrack.getBoundingClientRect) return false;
-	          const rect = targetTrack.getBoundingClientRect();
-	          if (!rect.width) return false;
-	          return seekToProgressRatio((clientX - rect.left) / rect.width);
-	        };
-	        const sync = () => {
-	          if (previewing) {
-	            const range = normalizePreviewRange(video);
-	            if (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25)) {
-	              video.currentTime = range.start;
-	            }
-	            if (video.paused && !hasUserPlayed) {
-	              video.play().catch(() => stopPreviewLoop());
-	            }
-	          }
-	          host.classList.toggle('rstk-video-is-playing', !video.paused && !previewing);
-	          host.classList.toggle('rstk-video-is-previewing', !video.paused && previewing);
-	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
-	          syncProgress();
-	          if (!video.paused) startProgressFrame();
-	          else stopProgressFrame();
-	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
-	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
-	          if (hasControlBar) {
-	            if (shouldHideControlsAtStart()) {
-	              clearControlsHideTimer();
-	              setControlsVisible(false);
-	            } else if (!video.paused && !previewing) {
-	              if (controlsAreVisible && !controlsHideTimer) hideControlsAfter(controlsIdleMs);
-	            } else {
-	              clearControlsHideTimer();
-	              if (controlsAreVisible) setControlsVisible(true);
-	              else syncControlBarAccess();
-	            }
-	          }
-	          hideSoundNotice();
-	        };
-	        const togglePlayback = unmute => {
-	          const wasPreviewing = previewing;
-	          if (wasPreviewing) stopPreviewLoop();
-	          restartFromBeginningForUserPlayback();
-	          const wasUserPlayed = hasUserPlayed;
-	          markUserPlayback();
-	          if (startVisibleAfterPlay || wasUserPlayed) showControlsTemporarily();
-	          else setControlsVisible(false);
-	          if (unmute) {
-	            video.muted = false;
-	            if (video.volume === 0) video.volume = 1;
-	          }
-	          if (video.paused || wasPreviewing) {
-	            video.play().catch(() => {
-	              if (!unmute) return;
-	              video.muted = true;
-	              video.play().catch(() => {});
-	            }).finally(() => window.setTimeout(sync, 0));
-	          } else {
-	            video.pause();
-	            setControlsVisible(true);
-	            sync();
-	          }
-	        };
-	        const overlay = host.querySelector('[data-rstk-video-overlay]');
-	        if (overlay) {
-	          overlay.addEventListener('click', event => {
-	            event.preventDefault();
-	            event.stopPropagation();
-	            if (host.classList.contains('rstk-video-controls-hidden') && !video.paused && !previewing) {
-	              showControlsTemporarily();
-	              return;
-	            }
-	            showControlsTemporarily();
-	            togglePlayback(true);
-	          });
-	        }
-	        toggleButtons.forEach(button => {
-	          button.addEventListener('click', event => {
-	            event.preventDefault();
-	            event.stopPropagation();
-	            showControlsTemporarily();
-	            togglePlayback(false);
-	          });
-	        });
-	        muteButtons.forEach(button => {
-	          button.addEventListener('click', event => {
-	            event.preventDefault();
-	            event.stopPropagation();
-	            showControlsTemporarily();
-	            const shouldUnmute = video.muted || video.volume === 0;
-	            video.muted = !shouldUnmute;
-	            if (shouldUnmute && video.volume === 0) video.volume = 1;
-	            sync();
-	          });
-	        });
-	        if (progressTrack) {
-	          progressTrack.addEventListener('pointerdown', event => {
-	            event.preventDefault();
-	            event.stopPropagation();
-	            if (progressTrack.setPointerCapture) progressTrack.setPointerCapture(event.pointerId);
-	            showControlsTemporarily();
-	            seekToClientPosition(event.clientX, progressTrack);
-	          });
-	          progressTrack.addEventListener('pointermove', event => {
-	            if (!progressTrack.hasPointerCapture || !progressTrack.hasPointerCapture(event.pointerId)) return;
-	            event.preventDefault();
-	            event.stopPropagation();
-	            showControlsTemporarily();
-	            seekToClientPosition(event.clientX, progressTrack);
-	          });
-	          ['pointerup', 'pointercancel'].forEach(eventName => {
-	            progressTrack.addEventListener(eventName, event => {
-	              event.preventDefault();
-	              event.stopPropagation();
-	              if (progressTrack.hasPointerCapture && progressTrack.hasPointerCapture(event.pointerId)) {
-	                progressTrack.releasePointerCapture(event.pointerId);
-	              }
-	              showControlsTemporarily();
-	            });
-	          });
-	          progressTrack.addEventListener('keydown', event => {
-	            const duration = Number.isFinite(video.duration) ? video.duration : 0;
-	            if (duration <= 0) return;
-	            const stepSeconds = event.shiftKey ? 10 : 5;
-	            let nextTime = video.currentTime;
-	            if (event.key === 'ArrowLeft') nextTime -= stepSeconds;
-	            else if (event.key === 'ArrowRight') nextTime += stepSeconds;
-	            else if (event.key === 'Home') nextTime = 0;
-	            else if (event.key === 'End') nextTime = duration;
-	            else return;
-	            event.preventDefault();
-	            event.stopPropagation();
-	            showControlsTemporarily();
-	            seekToProgressRatio(nextTime / duration);
-	          });
-	        }
-	        if (speedSelect) {
-	          speedSelect.value = String(video.playbackRate);
-	          speedSelect.addEventListener('change', event => {
-	            showControlsTemporarily();
-	            const nextSpeed = Number(event.target.value);
-	            if (!Number.isFinite(nextSpeed)) return;
-	            video.playbackRate = Math.min(4, Math.max(0.25, nextSpeed));
-	          });
-	        }
-	        video.addEventListener('play', () => {
-	          if (!previewing) {
-	            const wasUserPlayed = hasUserPlayed;
-	            markUserPlayback();
-	            if (startVisibleAfterPlay && !wasUserPlayed) showControlsTemporarily();
-	          }
-	          sync();
-	        });
-	        video.addEventListener('loadedmetadata', () => {
-	          syncVideoOrientation(host, video);
-	          startPreviewLoop();
-	        });
-	        video.addEventListener('canplay', startPreviewLoop);
-	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
-	        if (video.readyState >= 1) {
-	          syncVideoOrientation(host, video);
-	          startPreviewLoop();
-	        }
-	        sync();
-	      });
-	    })();
-	  </script>
+  ${buildVideoPlayerRuntimeScript()}
   <script>
     (() => {
       const form = document.querySelector('[data-site-form]');
