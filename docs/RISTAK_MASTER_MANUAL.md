@@ -4574,7 +4574,11 @@ selector de paginas. El control acepta HTML o ZIP y reutiliza el mismo flujo de
 importacion: guarda primero cualquier cambio pendiente del sitio abierto, crea
 el nuevo proyecto importado con el mismo tipo de sitio y lo abre directamente en
 el editor. No mezcla silenciosamente codigo externo con los bloques del proyecto
-que estaba abierto.
+que estaba abierto. La transicion queda fijada al ID del proyecto importado: el
+sincronizador de la URL no puede restaurar el sitio anterior mientras cambia la
+ruta y cualquier carga pendiente de ese sitio se descarta. Por eso la lista de
+paginas no debe alternar ni parpadear entre el proyecto fuente y el recien
+importado.
 
 Dentro del editor HTML, la guía `Reglas HTML y versión móvil` inicia plegada y el
 usuario puede abrirla u ocultarla sin perder contenido. Exige una versión móvil

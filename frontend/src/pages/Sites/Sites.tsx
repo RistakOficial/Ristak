@@ -405,6 +405,12 @@ type CompletedAIGenerationRedirect = {
   editorPath: string
 } | null
 
+type PendingImportedSiteRedirect = {
+  sourceSiteId: string
+  siteId: string
+  editorPath: string
+} | null
+
 type SitesAICreationModalSubmit = {
   siteKind: SitesAICreationKind
   prompt: string
@@ -9167,6 +9173,8 @@ export const Sites: React.FC = () => {
   const librarySettingsSiteRef = useRef<PublicSite | null>(null)
   const pendingAIGenerationSiteRef = useRef<PublicSite | null>(null)
   const completedAIGenerationRedirectRef = useRef<CompletedAIGenerationRedirect>(null)
+  const pendingImportedSiteRedirectRef = useRef<PendingImportedSiteRedirect>(null)
+  const editorOpenRequestRef = useRef(0)
   const importFileInputRef = useRef<HTMLInputElement | null>(null)
   const pendingImportSiteTypeRef = useRef<SiteType>('landing_page')
   const paletteDragPayloadRef = useRef<PaletteDragPayload | null>(null)
@@ -11808,8 +11816,13 @@ export const Sites: React.FC = () => {
   }, [dateRange.end, dateRange.start, section, selectedAnalyticsVideo, sitesAnalyticsSiteType])
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
+    const requestId = editorOpenRequestRef.current + 1
+    editorOpenRequestRef.current = requestId
     try {
       const site = await loadSiteDetail(siteId)
+      if (editorOpenRequestRef.current !== requestId) return
+      const pendingImportedRedirect = pendingImportedSiteRedirectRef.current
+      if (pendingImportedRedirect && pendingImportedRedirect.siteId !== siteId) return
       upsertSiteInEditorList(site)
       const nextPages = normalizeFunnelPages(site)
       const nextPageId = nextPages.some(page => page.id === pageId) ? pageId! : nextPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
@@ -11841,6 +11854,20 @@ export const Sites: React.FC = () => {
     setSection(current => current === routeState.section ? current : routeState.section)
     setDevice(current => current === routeState.device ? current : routeState.device)
     setCreateFlow(current => current === routeState.createFlow ? current : routeState.createFlow)
+
+    const pendingImportedRedirect = pendingImportedSiteRedirectRef.current
+    if (pendingImportedRedirect) {
+      if (routeState.siteId === pendingImportedRedirect.siteId) {
+        pendingImportedSiteRedirectRef.current = null
+      } else if (routeState.siteId === pendingImportedRedirect.sourceSiteId) {
+        // La importacion ya selecciono el proyecto nuevo, pero React Router aun
+        // expone la URL anterior. No vuelvas a abrir el sitio fuente durante
+        // ese render intermedio: hacerlo dispara el parpadeo entre ambos sitios.
+        return
+      } else {
+        pendingImportedSiteRedirectRef.current = null
+      }
+    }
 
     if (routeState.siteId) {
       if (suppressEditorRouteRestoreRef.current) return
@@ -13349,6 +13376,20 @@ export const Sites: React.FC = () => {
       })
       const site = normalizeSiteForEditor(result.site)
       const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+      const editorPath = buildSitesEditorPath({
+        section: getSiteSection(site),
+        siteId: site.id,
+        pageId: nextPageId,
+        device
+      })
+      pendingImportedSiteRedirectRef.current = {
+        sourceSiteId: openEditorSiteId,
+        siteId: site.id,
+        editorPath
+      }
+      // Invalida cualquier GET del restaurador de ruta que siga esperando al
+      // sitio anterior. Una respuesta vieja nunca debe reemplazar el importado.
+      editorOpenRequestRef.current += 1
       upsertSiteInEditorList(site)
       setSelectedSite(site)
       selectedSiteRef.current = site
@@ -13358,12 +13399,7 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      navigate(buildSitesEditorPath({
-        section: getSiteSection(site),
-        siteId: site.id,
-        pageId: nextPageId,
-        device
-      }))
+      navigate(editorPath)
       showToast(
         'success',
         'HTML importado',

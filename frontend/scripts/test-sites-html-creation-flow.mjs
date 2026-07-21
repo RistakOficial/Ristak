@@ -83,4 +83,39 @@ assert.match(
   'el panel del asistente solo debe montarse cuando el usuario lo abra'
 )
 
+const importedFileHandlerSource = sourceBetween(
+  'const handleImportHtmlFile = async',
+  'const handleImportedContentUpdated ='
+)
+assert.match(
+  importedFileHandlerSource,
+  /pendingImportedSiteRedirectRef\.current = \{[\s\S]*?sourceSiteId: openEditorSiteId,[\s\S]*?siteId: site\.id,[\s\S]*?editorPath/,
+  'subir paginas desde un editor debe registrar la transicion antes de seleccionar el sitio importado'
+)
+assert.match(
+  importedFileHandlerSource,
+  /editorOpenRequestRef\.current \+= 1[\s\S]*?setSelectedSite\(site\)[\s\S]*?navigate\(editorPath\)/,
+  'la importacion debe invalidar cargas viejas antes de abrir el proyecto nuevo'
+)
+
+const routeRestoreSource = sourceBetween(
+  'const pendingImportedRedirect = pendingImportedSiteRedirectRef.current',
+  'if (routeState.siteId) {'
+)
+assert.match(
+  routeRestoreSource,
+  /routeState\.siteId === pendingImportedRedirect\.sourceSiteId[\s\S]*?return/,
+  'el restaurador de URL no debe reabrir el sitio anterior durante la transicion importada'
+)
+
+const openSiteSource = sourceBetween(
+  'const openSite = async',
+  'const selectSite ='
+)
+assert.match(
+  openSiteSource,
+  /editorOpenRequestRef\.current !== requestId\) return/,
+  'una carga vieja del editor no debe reemplazar una seleccion mas reciente'
+)
+
 console.log('Sites HTML creation flow contract OK')
