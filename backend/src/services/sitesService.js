@@ -132,7 +132,6 @@ import {
   getVisibleVideoBorderColor,
   normalizeVideoOrientation,
   getVideoAspectRatio,
-  shouldUseDefaultPortraitMediaWidth,
   buildVideoFrameStyleVars,
   safeUrl,
   safeHref,
@@ -7107,6 +7106,7 @@ Contrato de código cerrado y contenido:
 - Nunca reemplaces una clave por una URL física. No esperes un catálogo previo: primero declara la zona en el HTML y Ristak permitirá asociar el archivo después.
 - Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
 - El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
+- No fabriques franjas laterales, marcos negros ni una relacion de aspecto falsa alrededor del slot. En modo automatico, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en movil conservando 9:16; el usuario tambien puede elegir ancho completo o manual por vista desde el panel.
 - Para un perfil social diseñado por ti pero alimentado por Ristak usa un contenedor con data-rstk-native-element="social-profile", data-rstk-native-id estable y data-rstk-native-render="custom". Dentro conserva estos hooks: data-rstk-social-avatar en un <img>, data-rstk-social-name, data-rstk-social-followers y data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle. Diseña libremente el markup y CSS alrededor de esos hooks; Ristak inyecta foto, nombre, red, texto y seguidores del perfil elegido, y oculta el elemento completo data-rstk-social-verified cuando el usuario apaga el verificado.
 - No inventes seguidores, foto, nombre ni estado verificado y no llames Meta desde el navegador. Ristak resuelve el perfil conectado del editor y actualiza los datos publicados desde backend.
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
@@ -7149,6 +7149,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
 - Perfil social con diseño propio: <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal"><img data-rstk-social-avatar alt=""><span data-rstk-social-name></span><span data-rstk-social-verified aria-label="Perfil verificado">✓</span><span data-rstk-social-followers></span></section>. Los hooks de avatar, nombre, seguidores y verificado son obligatorios; data-rstk-social-platform y data-rstk-social-subtitle son opcionales. Ristak conserva el diseño HTML, llena los datos del perfil conectado y el elemento data-rstk-social-verified completo se muestra u oculta según la opción del editor.
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
+- No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
@@ -17863,7 +17864,8 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
     gateMarkup ? 'rstk-video-player' : '',
     'rstk-video-stream-frame',
     gateMarkup ? 'rstk-video-has-form-gate' : '',
-    `rstk-video-${orientation}`
+    `rstk-video-${orientation}`,
+    getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings))
   ].filter(Boolean).join(' ')
   const trackingAttrs = buildVideoTrackingAttributes({
     enabled: tracking.enabled,
@@ -23255,7 +23257,7 @@ function renderContentBlock(block, context = {}) {
       }
 
       const iframeOrientation = normalizeVideoOrientation(settings)
-      return `<div class="rstk-video rstk-video-embed-frame rstk-video-${iframeOrientation}" style="${renderVideoFrameStyle(settings, iframeOrientation)}"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
+      return `<div class="rstk-video rstk-video-embed-frame rstk-video-${iframeOrientation} ${getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings))}" style="${renderVideoFrameStyle(settings, iframeOrientation)}"><iframe src="${escapeHtml(embedVideoUrl)}" loading="lazy" allow="${escapeHtml(DEFAULT_EMBED_ALLOW)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe></div>`
     }
 
     return `<div class="rstk-media rstk-media-empty rstk-media-empty-mock rstk-media-empty-video"><span class="rstk-play">${RSTK_ICONS.play}</span><span>Agrega la URL del video</span></div>`
@@ -25216,11 +25218,6 @@ function buildVideoPlayerRuntimeScript() {
 	        host.classList.toggle('rstk-video-portrait', orientation === 'portrait');
 	        host.classList.toggle('rstk-video-landscape', orientation === 'landscape');
 	        host.style.setProperty('--rstk-video-aspect-ratio', orientation === 'portrait' ? '9 / 16' : '16 / 9');
-	        const parentStyle = host.closest('.rstk-block-style')?.style;
-	        const hasConfiguredWidth = Boolean(host.style.getPropertyValue('--rstk-media-width') || parentStyle?.getPropertyValue('--rstk-media-width'));
-	        if (orientation === 'portrait' && !hasConfiguredWidth) {
-	          host.style.setProperty('--rstk-media-width', '${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%');
-	        }
 	      };
 	      document.querySelectorAll('.rstk-video-player').forEach(host => {
 	        const video = host.querySelector('video');
@@ -26824,6 +26821,9 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 // wrapper, sin permitir que el CSS generado por IA vuelva a imponer su geometría.
 const IMPORTED_NATIVE_VIDEO_LAYOUT_CSS = `<style data-rstk-imported-native-video-layout>
 .rstk-imported-native-video > .rstk-video{width:var(--rstk-media-width,100%);margin-left:var(--rstk-media-margin-left,auto);margin-right:var(--rstk-media-margin-right,auto)}
+.rstk-imported-native-video > .rstk-video-portrait{width:var(--rstk-media-width,${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%)}
+.rstk-imported-native-video > .rstk-video-portrait.rstk-video-fill-width:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}
+@media (max-width:760px){.rstk-imported-native-video > .rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}}
 </style>`
 
 // Tematiza los elementos nativos importados IGUAL que el editor de sitios: inyecta el
@@ -26968,6 +26968,10 @@ async function renderImportedPublicSiteHtml(site, {
     videoStreamAssetsByStorageUrl,
     videoStorageAssetsByStreamVideoId
   })
+  const importedResponsiveCss = buildBlocksResponsiveCss(site.blocks || [], { queryType: 'media' }, importedNativeRenderContext)
+  const importedResponsiveStyle = importedResponsiveCss
+    ? `<style data-rstk-responsive>${importedResponsiveCss}</style>`
+    : ''
   html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
   const importedNativeRender = await replaceImportedNativeElementSlots(
     html,
@@ -26993,7 +26997,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${injection.head}`
+    `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedResponsiveStyle}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -27057,6 +27061,10 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       videoStreamAssetsByStorageUrl,
       videoStorageAssetsByStreamVideoId
     })
+    const importedResponsiveCss = buildBlocksResponsiveCss(site.blocks || [], { queryType: 'media' }, importedNativeRenderContext)
+    const importedResponsiveStyle = importedResponsiveCss
+      ? `<style data-rstk-responsive>${importedResponsiveCss}</style>`
+      : ''
     html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
     const importedNativeRender = await replaceImportedNativeElementSlots(
       html,
@@ -27077,7 +27085,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
-      `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${injection.head}`
+      `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedResponsiveStyle}${injection.head}`
     )
 
     return {

@@ -652,7 +652,7 @@ test('buildVideoFrameStyleVars: defaults y modo retrato (content #1)', () => {
 
   const portrait = buildVideoFrameStyleVars({ videoOrientation: 'portrait' }, '')
   assert.equal(portrait['--rstk-video-aspect-ratio'], '9 / 16')
-  assert.equal(portrait['--rstk-media-width'], '44%')
+  assert.equal(portrait['--rstk-media-width'], undefined)
 
   const styled = buildVideoFrameStyleVars({ videoPlayerBackground: '#112233', videoPlayerRadius: 200, videoPlayerBorderColor: '#38bdf8', videoPlayerBorderWidth: 30 })
   assert.equal(styled['--rstk-video-bg'], '#112233')

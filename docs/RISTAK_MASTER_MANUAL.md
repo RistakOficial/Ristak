@@ -4618,6 +4618,14 @@ esas restricciones legacy del slot, detecta la orientación real por metadata o
 por las dimensiones cargadas del archivo y aplica la proporción, ancho responsive
 y controles configurados en el editor.
 
+El panel define tres comportamientos para el ancho de un video vertical. En
+`Automático`, el reproductor queda centrado y contenido en computadora y ocupa
+todo el ancho disponible en móvil, siempre conservando 9:16. `Completo` ocupa
+todo el ancho en todas las vistas. `Manual` respeta el porcentaje configurado
+por separado en computadora, tablet y móvil. El HTML importado no debe fabricar
+franjas laterales, un marco negro ni otra relación de aspecto: el slot permanece
+neutro y el reproductor nativo resuelve su geometría.
+
 - `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
   exclusivamente un formulario ya existente, reglas "Al enviar", estilo del
   bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;

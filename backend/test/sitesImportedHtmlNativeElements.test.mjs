@@ -705,6 +705,7 @@ test('imported HTML native video slots render the real Ristak player and video a
         importedHtmlNativeRenderMode: 'ristak',
         mediaUrl: 'https://cdn.example.test/video.mp4',
         videoControlsMode: 'overlay',
+        responsive: { mobile: { mediaWidth: 78 } },
         videoActions: [{
           id: 'action-1',
           timeSeconds: 2,
@@ -737,7 +738,10 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.equal((html.match(/const HLS_SCRIPT_URL/g) || []).length, 1)
     assert.match(html, /\.rstk-imported-native-video\[data-rstk-native-mounted="true"\]\{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var\(--rstk-native-slot-padding,0\)!important;background-color:var\(--rstk-native-slot-background,transparent\)!important;box-shadow:none!important\}/)
     assert.match(html, /\.rstk-imported-native-video > \.rstk-video\{width:var\(--rstk-media-width,100%\);margin-left:var\(--rstk-media-margin-left,auto\);margin-right:var\(--rstk-media-margin-right,auto\)\}/)
+    assert.match(html, /\.rstk-imported-native-video > \.rstk-video-portrait\{width:var\(--rstk-media-width,44%\)\}/)
+    assert.match(html, /@media \(max-width:760px\)\{\.rstk-imported-native-video > \.rstk-video-portrait\.rstk-video-wauto:not\(\.rstk-video-form-gate-fit-wide\)\{width:100%;margin-left:auto;margin-right:auto\}\}/)
     assert.match(html, /style data-rstk-imported-native-theme/)
+    assert.match(html, /<style data-rstk-responsive>@media \(max-width:640px\)\{\[data-rstk-block-id="[^"]+"\]\{--rstk-media-width:78%!important\}\}<\/style>/)
     assert.match(html, /\.rstk-imported-native-slot \.rstk-video-form-gate/)
     assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-target="cta-final"/)
     assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)

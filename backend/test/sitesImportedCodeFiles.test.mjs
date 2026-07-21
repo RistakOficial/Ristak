@@ -584,6 +584,8 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva"/)
   assert.match(guide, /El slot nativo de video no controla la geometría/)
   assert.match(guide, /Ristak detecta la orientación real del archivo/)
+  assert.match(guide, /ocupa todo el ancho disponible en móvil conservando 9:16/)
+  assert.match(guide, /No fabriques franjas laterales, marcos negros/)
   assert.match(guide, /data-rstk-native-element="social-profile"/)
   assert.match(guide, /data-rstk-social-avatar/)
   assert.match(guide, /data-rstk-social-verified/)
@@ -591,11 +593,25 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(builder, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
   assert.match(builder, /Si falta cualquiera de esas claves, la entrega está incompleta/)
   assert.match(builder, /No pongas width\/max-width, height\/min-height\/max-height, aspect-ratio/)
+  assert.match(builder, /No dibujes franjas laterales ni un marco negro falso/)
+  assert.match(builder, /ancho completo y ancho manual por vista se configuran en el panel/)
   assert.match(builder, /Perfil de red social:/)
   assert.match(builder, /ChatGPT, Claude o Codex diseñarán el perfil/)
   assert.match(builder, /No inventes nombre, foto, seguidores ni verificado/)
   assert.match(source, /invalidSocialProfileDeclarations/)
   assert.match(source, /Perfiles sociales incompletos/)
+})
+
+test('video design panel exposes responsive portrait sizing without storing the mode in a device override', async () => {
+  const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
+
+  assert.match(source, /Automático · completo en móvil/)
+  assert.match(source, /Completo · todas las vistas/)
+  assert.match(source, /Manual · ancho por vista/)
+  assert.match(source, /Ancho video · \$\{device === 'desktop' \? 'computadora' : device === 'mobile' \? 'móvil' : 'tablet'\}/)
+  assert.match(source, /value=\{getVideoPortraitWidthMode\(rawSettings\)\}/)
+  assert.match(source, /onPatchSettingsProp\(\{ videoPortraitWidthMode: next \}\)/)
+  assert.match(source, /En automático, un video vertical usa todo el ancho en móvil/)
 })
 
 test('HTML mobile rules are shared by every creation path and the code preview uses a real phone viewport', async () => {

@@ -198,6 +198,11 @@ another account.
   layout belongs on an outer parent. Imported preview/live rendering neutralizes
   legacy slot geometry, detects the real media orientation, and mounts the same
   responsive stylesheet and player runtime used by the normal Sites editor.
+  Portrait width has three explicit behaviors in the video panel: `auto` keeps
+  the player contained on desktop and expands it to the full available width on
+  mobile while preserving 9:16; `fill` uses the full width on every viewport;
+  and `framed` respects the media-width value saved for each desktop/tablet/mobile
+  view. The slot must not fake side bands or a black aspect-ratio frame.
 - Editor, canvas, preview-session and published/live native video blocks use the
   Bunny Storage URL with the customizable Ristak player. Publishing never swaps
   a ready Storage-backed native video to the Bunny Stream iframe, so the saved

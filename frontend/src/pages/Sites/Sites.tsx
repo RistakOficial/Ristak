@@ -1093,9 +1093,9 @@ const videoOrientationOptions = [
 ] as const
 type VideoOrientation = typeof videoOrientationOptions[number]['value']
 const videoPortraitWidthModeOptions = [
-  { value: 'auto', label: 'Automático' },
-  { value: 'fill', label: 'Ocupar todo el bloque' },
-  { value: 'framed', label: 'Mantener márgenes' }
+  { value: 'auto', label: 'Automático · completo en móvil' },
+  { value: 'fill', label: 'Completo · todas las vistas' },
+  { value: 'framed', label: 'Manual · ancho por vista' }
 ] as const
 type VideoPortraitWidthMode = typeof videoPortraitWidthModeOptions[number]['value']
 const DEFAULT_VIDEO_PORTRAIT_WIDTH_MODE: VideoPortraitWidthMode = 'auto'
@@ -2544,6 +2544,7 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
+- No fabriques franjas laterales, marcos negros ni una falsa relación de aspecto alrededor del slot. En modo automático, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en móvil conservando 9:16; el usuario también puede elegir ancho completo o manual por vista desde el panel.
 - Para que la IA diseñe un perfil social conectado usa <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal">. Dentro son obligatorios <img data-rstk-social-avatar alt="">, un elemento data-rstk-social-name, otro data-rstk-social-followers y el badge completo con data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle. Cierra el section después del diseño.
 - Diseña libremente ese perfil alrededor de los hooks, pero no inventes foto, nombre, seguidores ni verificado y no llames Meta desde el navegador. Ristak inyecta los datos del perfil elegido y oculta el elemento completo data-rstk-social-verified cuando el usuario apaga esa opción.
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
@@ -28295,6 +28296,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>.',
       '- Ristak configurará el video real, controles, diseño, acciones y eventos desde el editor.',
       '- No pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que fuercen orientación en el slot. Para ubicarlo usa un contenedor padre; Ristak detecta la orientación real del archivo y controla su proporción y ancho responsive.',
+      '- No dibujes franjas laterales ni un marco negro falso. En automático, el video vertical queda contenido en computadora y usa todo el ancho disponible en móvil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.',
       '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',
       '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (seek y buffering no cuentan) y unique_watched_percent para "vio X% real" (solo fragmentos distintos; repetir no infla). triggerValue usa segundos en las dos primeras (3 minutos = 180) y de 1 a 100 en porcentaje.',
       '- Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules=\'[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]\'></div>.',
@@ -35501,7 +35503,7 @@ const InlineBlockStyleControls: React.FC<{
           />
           <div className={styles.twoColumn}>
             <DimensionField
-              label={block.blockType === 'image' ? 'Ancho imagen' : 'Ancho video'}
+              label={block.blockType === 'image' ? 'Ancho imagen' : `Ancho video · ${device === 'desktop' ? 'computadora' : device === 'mobile' ? 'móvil' : 'tablet'}`}
               value={getSettingNumber(settings, 'mediaWidth', 100, 30, 100)}
               min={30}
               max={100}
@@ -35520,12 +35522,14 @@ const InlineBlockStyleControls: React.FC<{
           </div>
           {block.blockType === 'video' && (
             <label className={styles.field}>
-              <span>Video vertical (ancho)</span>
+              <span>Video vertical · comportamiento</span>
               <CustomSelect
-                value={getVideoPortraitWidthMode(settings)}
+                value={getVideoPortraitWidthMode(rawSettings)}
                 onChange={(event) => {
                   const next = event.target.value === 'fill' || event.target.value === 'framed' ? event.target.value : DEFAULT_VIDEO_PORTRAIT_WIDTH_MODE
-                  onPatchSettings({ videoPortraitWidthMode: next })
+                  // Es un modo de comportamiento, no un valor visual por dispositivo.
+                  // El ancho manual sí se guarda en la vista activa con el control anterior.
+                  onPatchSettingsProp({ videoPortraitWidthMode: next })
                 }}
                 onBlur={onSave}
               >
@@ -35534,6 +35538,9 @@ const InlineBlockStyleControls: React.FC<{
                 ))}
               </CustomSelect>
             </label>
+          )}
+          {block.blockType === 'video' && device === 'mobile' && getVideoPortraitWidthMode(rawSettings) === 'auto' && (
+            <p className={styles.customFieldHint}>En automático, un video vertical usa todo el ancho en móvil. Elige “Manual” si quieres estrecharlo en esta vista.</p>
           )}
         </AccordionSection>
       )}
@@ -36451,10 +36458,6 @@ const VideoPlayerPreview: React.FC<{
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const resolvedOrientation = getResolvedVideoOrientation(settings, detectedOrientation)
   const aspectRatio = getVideoAspectRatio(resolvedOrientation)
-  const hasConfiguredMediaWidth = Number.isFinite(Number(settings.mediaWidth))
-  const portraitMediaWidth = resolvedOrientation === 'portrait' && !hasConfiguredMediaWidth
-    ? `${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%`
-    : ''
   const playerBackground = getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND
   const playerRadius = `${getSettingNumber(settings, 'videoPlayerRadius', 18, 0, 80)}px`
   const playerBorderColor = visibleVideoBorderColor(getSettingString(settings, 'videoPlayerBorderColor') || DEFAULT_VIDEO_TRANSPARENT)
@@ -37149,7 +37152,6 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-border-color' as string]: playerBorderColor,
         ['--rstk-video-border-width' as string]: playerBorderWidth,
         ['--rstk-video-aspect-ratio' as string]: aspectRatio,
-        ...(portraitMediaWidth ? { ['--rstk-media-width' as string]: portraitMediaWidth } : {}),
         ['--rstk-video-player-color' as string]: playerColor,
         ['--rstk-video-play-color' as string]: playColor,
         ['--rstk-video-control-radius' as string]: controlPanelRadius,
@@ -37978,7 +37980,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             // Paridad content #1: mismo marco que el publicado para iframes de
             // video (clases rstk-video-embed-frame/orientación + vars --rstk-video-*).
             <div
-              className={`rstk-video rstk-video-embed-frame rstk-video-${normalizeVideoOrientation(settings)}`}
+              className={`rstk-video rstk-video-embed-frame rstk-video-${normalizeVideoOrientation(settings)} ${getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings))}`}
               style={buildVideoFrameStyleVars(settings) as React.CSSProperties}
               data-rstk-selection-surface="true"
             >

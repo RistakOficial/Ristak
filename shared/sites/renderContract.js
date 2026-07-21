@@ -915,7 +915,7 @@ const RSTK_BASE_CSS = `
   .rstk-media,.rstk-video{width:var(--rstk-media-width,100%);margin-top:0;margin-bottom:0;margin-left:var(--rstk-media-margin-left,0);margin-right:var(--rstk-media-margin-right,0);overflow:hidden;border:var(--rstk-block-border-width,1px) solid var(--rstk-block-border,var(--rstk-border));border-radius:var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius)));background:var(--rstk-block-bg,var(--rstk-surface2))}
   .rstk-media img,.rstk-video iframe,.rstk-video video{width:100%;display:block;border:0}
   .rstk-video{aspect-ratio:var(--rstk-video-aspect-ratio,16/9);position:relative;border-width:var(--rstk-video-border-width,var(--rstk-block-border-width,1px));border-color:var(--rstk-video-border-color,var(--rstk-block-border,var(--rstk-border)));border-radius:var(--rstk-video-radius,var(--rstk-media-radius,var(--rstk-block-radius,var(--rstk-radius))));background:var(--rstk-video-bg,var(--rstk-block-bg,var(--rstk-surface2)))}
-	  .rstk-video-portrait{aspect-ratio:var(--rstk-video-aspect-ratio,9/16)}
+	  .rstk-video-portrait{width:var(--rstk-media-width,44%);aspect-ratio:var(--rstk-video-aspect-ratio,9/16)}
 	  .rstk-kind-form .rstk-video.rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}
 	  .rstk-video.rstk-video-portrait.rstk-video-fill-width:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}
 	  .rstk-video iframe,.rstk-video video{height:100%}
@@ -1013,7 +1013,7 @@ const RSTK_BASE_CSS = `
 		  @media (max-width:760px){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{width:min(100%,var(--rstk-video-form-gate-fit-width,100%));margin-inline:auto}}
 		  @supports not (height:1svh){.rstk-video-form-gate-fit-expanded,.rstk-video-gate-active.rstk-video-form-gate-fit-expanded{min-height:var(--rstk-video-form-gate-fit-height,min(760px,max(520px,86vh)))}}
 	  @supports (width:1cqw){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(72px,min(15cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(104px,min(22cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(42px,min(9cqw,calc(100% - 20px))))}.rstk-video-control-bar{left:max(6px,min(12px,2cqw));right:max(6px,min(12px,2cqw));bottom:max(6px,min(12px,2cqw));gap:max(4px,min(8px,1.4cqw));padding:max(5px,min(7px,1.2cqw))}.rstk-video-control-button{width:max(24px,min(30px,5cqw));height:max(24px,min(30px,5cqw))}.rstk-video-timecode{min-width:max(76px,min(98px,16cqw));height:max(24px,min(30px,5cqw));gap:max(3px,min(5px,1cqw));padding-inline:max(7px,min(10px,1.7cqw));font-size:max(.62rem,min(.72rem,1.4cqw))}.rstk-video-speed-control{min-width:max(54px,min(66px,11cqw));height:max(24px,min(30px,5cqw));padding-inline:max(6px,min(8px,1.5cqw)) max(18px,min(20px,3cqw))}@media (max-width:760px){.rstk-video-play-dot{width:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))));height:min(var(--rstk-video-play-size,160px),max(60px,min(12cqw,calc(100% - 32px))))}.rstk-video-play-shape-rectangle .rstk-video-play-dot{width:min(var(--rstk-video-play-width,232px),max(88px,min(18cqw,calc(100% - 32px))))}.rstk-video-play-dot svg{width:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))));height:min(var(--rstk-video-play-icon-size,95px),max(36px,min(7cqw,calc(100% - 20px))))}}}
-	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait{width:100%;margin-left:auto;margin-right:auto}}
+	  @media (max-width:760px){.rstk-block-style .rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}}
 		  @keyframes rstkVideoSoundNotice{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px)}10%,18%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0)}28%,70%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0)}86%{max-width:var(--rstk-video-sound-size,58px);opacity:1;transform:translateY(0)}100%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px)}}
 		  @keyframes rstkVideoSoundNoticeOpen{0%{max-width:var(--rstk-video-sound-size,58px);opacity:0;transform:translateY(-4px)}45%{opacity:1;transform:translateY(0)}100%{max-width:min(calc(100% - 44px),360px);opacity:1;transform:translateY(0)}}
 		  @keyframes rstkVideoSoundText{0%,17%,76%,100%{opacity:0;transform:translateX(10px)}26%,68%{opacity:1;transform:translateX(0)}}
@@ -1887,6 +1887,9 @@ function getVideoAspectRatio(orientation) {
   return orientation === 'portrait' ? DEFAULT_VIDEO_PORTRAIT_ASPECT_RATIO : DEFAULT_VIDEO_LANDSCAPE_ASPECT_RATIO
 }
 
+// Compatibilidad del contrato público: el ancho automático de retrato sigue
+// siendo 44% en escritorio, pero ahora lo resuelve el fallback CSS para que los
+// overrides responsive heredados no queden bloqueados por una variable inline.
 function shouldUseDefaultPortraitMediaWidth(settings = {}, orientation = '') {
   const mediaWidth = Number(settings.mediaWidth)
   return orientation === 'portrait' && !Number.isFinite(mediaWidth)
@@ -1909,8 +1912,7 @@ function buildVideoFrameStyleVars(settings = {}, detectedOrientation = '') {
     '--rstk-video-radius': `${playerRadius}px`,
     '--rstk-video-border-color': playerBorderColor,
     '--rstk-video-border-width': `${playerBorderWidth}px`,
-    '--rstk-video-aspect-ratio': getVideoAspectRatio(orientation),
-    ...(shouldUseDefaultPortraitMediaWidth(settings, orientation) ? { '--rstk-media-width': `${DEFAULT_VIDEO_PORTRAIT_MEDIA_WIDTH}%` } : {})
+    '--rstk-video-aspect-ratio': getVideoAspectRatio(orientation)
   }
 }
 
@@ -2604,7 +2606,11 @@ function buildBlockResponsiveCss(block, { queryType = 'media', containerName = '
       const deviceVars = buildBlockStyleVars({ ...block, settings: deviceSettings }, ctx)
       const decls = []
       for (const [name, value] of Object.entries(deviceVars)) {
-        if (baseVars[name] !== value) decls.push(`${name}:${value}`)
+        // El wrapper publicado lleva las variables base inline. Sin !important,
+        // esas variables ganan siempre y el override responsive queda guardado
+        // pero visualmente inerte. La declaración sigue limitada al bloque y al
+        // breakpoint exactos, así que solo reemplaza el valor base correspondiente.
+        if (baseVars[name] !== value) decls.push(`${name}:${value}!important`)
       }
       if (!decls.length) continue
       const maxWidth = RESPONSIVE_DEVICE_MAX_WIDTH[device]

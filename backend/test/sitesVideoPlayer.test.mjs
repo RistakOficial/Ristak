@@ -232,14 +232,33 @@ test('video player portrait format uses vertical ratio and contained desktop wid
   const signature = getVideoPlayerVisualSignature(html)
 
   assert.match(signature.classes, /\brstk-video-portrait\b/)
+  assert.match(signature.classes, /\brstk-video-wauto\b/)
   assert.doesNotMatch(signature.classes, /\brstk-video-landscape\b/)
   assert.match(signature.style, /--rstk-video-aspect-ratio:9 \/ 16/)
-  assert.match(signature.style, /--rstk-media-width:44%/)
+  assert.doesNotMatch(signature.style, /--rstk-media-width:44%/)
   assert.match(html, /data-rstk-video-orientation-mode="portrait"/)
   assert.match(html, /if \(orientationMode === 'portrait' \|\| orientationMode === 'landscape'\) return;/)
   assert.match(html, /\.rstk-video\{aspect-ratio:var\(--rstk-video-aspect-ratio,16\/9\)/)
-  assert.match(html, /\.rstk-video-portrait\{aspect-ratio:var\(--rstk-video-aspect-ratio,9\/16\)/)
-  assert.match(html, /@media \(max-width:760px\)\{\.rstk-block-style \.rstk-video-portrait\{width:100%;margin-left:auto;margin-right:auto\}\}/)
+  assert.match(html, /\.rstk-video-portrait\{width:var\(--rstk-media-width,44%\);aspect-ratio:var\(--rstk-video-aspect-ratio,9\/16\)/)
+  assert.match(html, /@media \(max-width:760px\)\{\.rstk-block-style \.rstk-video-portrait\.rstk-video-wauto:not\(\.rstk-video-form-gate-fit-wide\)\{width:100%;margin-left:auto;margin-right:auto\}\}/)
+})
+
+test('video player manual portrait width keeps per-view media overrides editable', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoOrientation: 'portrait',
+    videoPortraitWidthMode: 'framed',
+    mediaWidth: 44,
+    responsive: { mobile: { mediaWidth: 78 } }
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.doesNotMatch(signature.classes, /\brstk-video-wauto\b/)
+  assert.doesNotMatch(signature.classes, /\brstk-video-fill-width\b/)
+  assert.match(html, /@media \(max-width:640px\)\{\[data-rstk-block-id="video-block"\]\{--rstk-media-width:78%!important\}\}/)
 })
 
 test('video player custom bar can hide individual controls and keep editable panel radius', async () => {
@@ -1170,7 +1189,8 @@ test('video player auto orientation uses portrait dimensions from storage assets
     assert.doesNotMatch(html, /rstk-video-stream-frame/)
     assert.doesNotMatch(html, /rstk-video-player[^"]*rstk-video-landscape/)
     assert.match(html, /--rstk-video-aspect-ratio:9 \/ 16/)
-    assert.match(html, /--rstk-media-width:44%/)
+    assert.doesNotMatch(html, /--rstk-media-width:44%/)
+    assert.match(html, /\.rstk-video-portrait\{width:var\(--rstk-media-width,44%\)/)
     assert.match(html, new RegExp(`data-rstk-media-asset-id="${escapeRegExp(assetId)}"`))
     assert.match(html, new RegExp(`data-rstk-stream-video-id="${escapeRegExp(streamVideoId)}"`))
   } finally {

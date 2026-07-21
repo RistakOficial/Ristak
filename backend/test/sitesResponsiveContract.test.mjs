@@ -95,7 +95,7 @@ test('buildBlockResponsiveCss (media) emite solo las variables que cambian, por 
   // fontSize -> --rstk-block-size (verificado contra buildBlockStyleVars)
   const mobileVars = buildBlockStyleVars({ ...block, settings: { fontSize: 16 } })
   assert.ok(mobileVars['--rstk-block-size'] === '16px')
-  assert.match(css, /@media \(max-width:640px\)\{\[data-rstk-block-id="b1"\]\{--rstk-block-size:16px\}\}/)
+  assert.match(css, /@media \(max-width:640px\)\{\[data-rstk-block-id="b1"\]\{--rstk-block-size:16px!important\}\}/)
   // no incluye tablet (no hay override de tablet)
   assert.doesNotMatch(css, /max-width:1024px/)
 })
@@ -107,8 +107,8 @@ test('buildBlockResponsiveCss (container) usa @container rstk-canvas para el edi
     settings: { fontSize: 30, responsive: { tablet: { fontSize: 24 }, mobile: { fontSize: 16 } } }
   }
   const css = buildBlockResponsiveCss(block, { queryType: 'container' })
-  assert.match(css, /@container rstk-canvas \(max-width:1024px\)\{\[data-rstk-block-id="b1"\]\{--rstk-block-size:24px\}\}/)
-  assert.match(css, /@container rstk-canvas \(max-width:640px\)\{\[data-rstk-block-id="b1"\]\{--rstk-block-size:16px\}\}/)
+  assert.match(css, /@container rstk-canvas \(max-width:1024px\)\{\[data-rstk-block-id="b1"\]\{--rstk-block-size:24px!important\}\}/)
+  assert.match(css, /@container rstk-canvas \(max-width:640px\)\{\[data-rstk-block-id="b1"\]\{--rstk-block-size:16px!important\}\}/)
 })
 
 test('un override igual al desktop no emite nada (diff vacío)', () => {
@@ -129,7 +129,7 @@ test('buildBlocksResponsiveCss concatena solo los bloques con overrides', () => 
   const css = buildBlocksResponsiveCss(blocks, { queryType: 'media' })
   assert.match(css, /\[data-rstk-block-id="b1"\]/)
   assert.doesNotMatch(css, /\[data-rstk-block-id="b2"\]/)
-  assert.match(css, /\[data-rstk-block-id="b3"\]\{--rstk-media-width:60%\}/)
+  assert.match(css, /\[data-rstk-block-id="b3"\]\{--rstk-media-width:60%!important\}/)
 })
 
 test('breakpoints declarados', () => {
@@ -168,7 +168,7 @@ test('render público: un bloque con override responsive emite @media + wrapper 
   assert.match(html, /data-rstk-block-id="title-1"/)
   // y el override responsive va en un @media 640
   assert.match(html, /<style data-rstk-responsive>/)
-  assert.match(html, /@media \(max-width:640px\)\{\[data-rstk-block-id="title-1"\]\{--rstk-block-size:22px\}\}/)
+  assert.match(html, /@media \(max-width:640px\)\{\[data-rstk-block-id="title-1"\]\{--rstk-block-size:22px!important\}\}/)
 })
 
 test('render público: sitio SIN responsive no emite el style de responsive (retrocompat)', async () => {
