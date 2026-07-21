@@ -7636,7 +7636,7 @@ export async function getLocalFreeSlots(calendarId, startDate, endDate, timezone
   return slotsByDate
 }
 
-function buildHighLevelCalendarPayload(calendar = {}, locationId) {
+export function buildHighLevelCalendarPayload(calendar = {}, locationId) {
   const teamMembers = normalizeTeamMembers(calendar.teamMembers)
   const locationConfigurations = normalizeLocationConfigurations(calendar.locationConfigurations)
   const payload = {
@@ -7663,7 +7663,13 @@ function buildHighLevelCalendarPayload(calendar = {}, locationId) {
 
   if (teamMembers.length) payload.teamMembers = teamMembers
   if (locationConfigurations.length) payload.locationConfigurations = locationConfigurations
-  const openHours = normalizeOpenHours(calendar.openHours)
+  // HighLevel v3 exige días 0..6 y rangos completos. Los calendarios locales
+  // pueden conservar formatos legacy tolerados en lectura (incluido domingo=7),
+  // así que se canonizan justo antes de cruzar la frontera del proveedor.
+  const rawOpenHours = normalizeOpenHours(calendar.openHours)
+  const openHours = rawOpenHours.length
+    ? normalizeCalendarOpenHoursForWrite(rawOpenHours)
+    : []
   if (
     calendar.availabilityScheduleConfigured === true
     || Number(calendar.availability_schedule_configured) === 1

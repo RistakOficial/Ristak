@@ -1,7 +1,11 @@
 import crypto from 'crypto';
 import fetch from 'node-fetch';
 import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js';
-import { syncHighLevelData, getSyncProgress } from '../services/highlevelSyncService.js';
+import {
+  getSyncProgress,
+  isHighLevelDataSyncRunning,
+  syncHighLevelData
+} from '../services/highlevelSyncService.js';
 import { syncSingleInvoice } from '../services/invoicesSyncService.js';
 import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
@@ -1437,7 +1441,10 @@ export const syncData = async (req, res) => {
       });
     }
 
-    logger.info('Iniciando sincronización de datos desde HighLevel');
+    const alreadyRunning = isHighLevelDataSyncRunning();
+    logger.info(alreadyRunning
+      ? 'La sincronización de HighLevel ya estaba en curso; se reutiliza la ejecución activa'
+      : 'Iniciando sincronización de datos desde HighLevel');
 
     // Iniciar sincronización (no esperar a que termine)
     syncHighLevelData(config.location_id, config.api_token).catch(error => {
@@ -1446,7 +1453,10 @@ export const syncData = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Sincronización iniciada. Usa getSyncProgress para ver el progreso.'
+      alreadyRunning,
+      message: alreadyRunning
+        ? 'La sincronización ya estaba en curso. Se mantendrá una sola ejecución.'
+        : 'Sincronización iniciada. Usa getSyncProgress para ver el progreso.'
     });
 
   } catch (error) {

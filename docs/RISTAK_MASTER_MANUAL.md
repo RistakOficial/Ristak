@@ -2999,6 +2999,10 @@ Reglas base:
   pendiente no bloquea una edición local posterior: si un PUT trae `openHours`
   explícito, reemplaza el horario guardado; el horario anterior sólo se conserva
   cuando la escritura realmente omite el campo.
+- El espejo saliente de calendarios usa el contrato vigente `v3` de HighLevel.
+  Antes de crear o actualizar el calendario remoto, `openHours` se canoniza al
+  formato de días `0..6` y rangos completos; el domingo legacy `7` se convierte
+  en `0` y nunca se manda un horario local ambiguo al proveedor.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque
@@ -5351,6 +5355,14 @@ Crons de integracion que deben pasar por registry y detector local:
 Regla: un cron de integracion externa no arranca solo porque el backend arranco.
 Debe activarse por estado local de conexion y sincronizarse al conectar,
 desconectar o cambiar modo relevante.
+
+La sincronización completa de HighLevel tiene single-flight por proceso para que
+guardar la conexión, el botón manual y el cron no dupliquen simultáneamente el
+mismo trabajo. Los contactos se enumeran con `POST /contacts/search`, páginas de
+100 y detección de página repetida; timeouts, rate limits y fallos 5xx se
+reintentan con espera acotada, mientras errores permanentes fallan de inmediato.
+El borrado suave de contactos faltantes sólo ocurre después de terminar toda la
+enumeración remota sin errores.
 
 Ademas, cada tick que pueda enviar mensajes, sincronizar datos premium o cobrar
 debe validar `canRunBackgroundJob(feature)`. Ejemplos: mensajes programados y

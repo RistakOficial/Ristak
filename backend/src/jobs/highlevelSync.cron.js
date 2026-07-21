@@ -66,12 +66,12 @@ async function isHighLevelConnected(config) {
     // y la sync incremental los necesitan. Si falta alguno, lo dejamos claro en
     // los logs PERO no abortamos: el resto de la sync (contactos, pagos) sí debe
     // correr. Versiones por endpoint consistentes con el resto del código:
-    //   /calendars        -> 2021-04-15 (igual que fetchCalendarEventsByCalendar)
+    //   /calendars        -> v3 (contrato vigente para listar/crear calendarios)
     //   /conversations    -> 2021-07-28 (versión estándar del cliente, ver GHL-008)
     const calendarsUrl = `${API_URLS.HIGHLEVEL_CALENDARS}?locationId=${encodeURIComponent(locationId)}`
     const conversationsUrl = `${API_URLS.HIGHLEVEL_BASE}/conversations/search?locationId=${encodeURIComponent(locationId)}&limit=1`
 
-    await probeHighLevelScope({ url: calendarsUrl, apiToken, version: '2021-04-15', scopeLabel: 'calendarios' })
+    await probeHighLevelScope({ url: calendarsUrl, apiToken, version: 'v3', scopeLabel: 'calendarios' })
     await probeHighLevelScope({ url: conversationsUrl, apiToken, version: '2021-07-28', scopeLabel: 'conversaciones' })
 
     return true

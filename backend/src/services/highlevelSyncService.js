@@ -34,6 +34,8 @@ import {
   upsertLocalCalendar
 } from './localCalendarService.js'
 import { syncProductsWithHighLevel } from './localProductService.js'
+import { iterateHighLevelContactPages } from './highlevelContactSearchService.js'
+import { createSingleFlightRunner } from '../utils/singleFlight.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -49,6 +51,9 @@ const META_CUSTOM_VALUE_FIELDS = [
 const HIGHLEVEL_CONVERSATION_BACKGROUND_THRESHOLD = 100
 
 let backgroundConversationSyncRunning = false
+const runHighLevelSyncSingleFlight = createSingleFlightRunner({
+  onDuplicate: () => logger.info('[HighLevel Sync] Ya hay una sincronización completa en curso; se reutiliza la ejecución activa')
+})
 
 // Variable global para trackear el estado de sincronización
 let syncProgress = {
@@ -991,70 +996,23 @@ async function softDeleteMissingHighLevelContacts(seenGhlIds) {
 async function syncHighLevelContacts(locationId, apiToken) {
   logger.info('Sincronizando contactos desde HighLevel...')
 
-  let allContacts = []
-  let nextPageUrl = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}`
-  let pageCount = 0
-
-  // Paginar hasta obtener todos los contactos
+  const allContacts = []
+  let totalKnown = 0
   updateContacts(0, 0, 'running', 'Obteniendo contactos de HighLevel...')
 
-  const MAX_429_RETRIES = 5
-  const DEFAULT_RETRY_WAIT_MS = 60000 // 60 segundos por defecto si no hay Retry-After
-
-  while (nextPageUrl) {
-    pageCount++
-    logger.info(`Obteniendo página ${pageCount}...`)
-
-    let response = null
-    let retries429 = 0
-
-    while (retries429 <= MAX_429_RETRIES) {
-      response = await fetch(nextPageUrl, {
-        headers: {
-          'Authorization': `Bearer ${apiToken}`,
-          'Version': '2021-07-28'
-        }
-      })
-
-      if (response.status === 429) {
-        if (retries429 >= MAX_429_RETRIES) {
-          let errorBody = ''
-          try { errorBody = await response.text() } catch (_) {}
-          throw new Error(`Error ${response.status} obteniendo contactos: ${response.statusText}. Detalle: ${errorBody}`)
-        }
-
-        const retryAfterHeader = response.headers.get('Retry-After')
-        const waitMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : DEFAULT_RETRY_WAIT_MS
-        const waitSec = Math.round(waitMs / 1000)
-
-        retries429++
-        logger.warn(`Rate limit alcanzado (429) en página ${pageCount}. Esperando ${waitSec}s antes de reintentar (intento ${retries429}/${MAX_429_RETRIES})...`)
-        updateContacts(0, allContacts.length, 'running', `Rate limit de HighLevel. Esperando ${waitSec}s... (intento ${retries429})`)
-
-        await new Promise(resolve => setTimeout(resolve, waitMs))
-        continue
-      }
-
-      break // Respuesta distinta de 429, salir del loop de reintentos
-    }
-
-    if (!response.ok) {
-      let errorBody = ''
-      try { errorBody = await response.text() } catch (_) {}
-      throw new Error(`Error ${response.status} obteniendo contactos: ${response.statusText}. Detalle: ${errorBody}`)
-    }
-
-    const data = await response.json()
-    const contacts = data.contacts || []
-    allContacts = allContacts.concat(contacts)
-
-    logger.info(`Página ${pageCount}: ${contacts.length} contactos (total acumulado: ${allContacts.length})`)
-
-    // Actualizar progreso en tiempo real
-    updateContacts(0, allContacts.length, 'running', `Obteniendo contactos... ${allContacts.length} encontrados`)
-
-    // Verificar si hay más páginas
-    nextPageUrl = data.meta?.nextPageUrl || null
+  for await (const page of iterateHighLevelContactPages({ locationId, apiToken })) {
+    allContacts.push(...page.contacts)
+    totalKnown = Math.max(totalKnown, page.total || 0, allContacts.length)
+    logger.info(
+      `[GHL Contacts] Página ${page.pagesRead}: ${page.contacts.length} contactos ` +
+      `(acumulado: ${allContacts.length}${page.total ? `/${page.total}` : ''})`
+    )
+    updateContacts(
+      0,
+      totalKnown,
+      'running',
+      `Obteniendo contactos... ${allContacts.length}${page.total ? `/${page.total}` : ''}`
+    )
   }
 
   logger.info(`Total de contactos obtenidos: ${allContacts.length}`)
@@ -2154,7 +2112,7 @@ export async function cleanupPhoneLikeContactNames() {
  * @param {string} apiToken - Token de API de HighLevel
  * @param {string} triggerSource - 'manual' o 'cron' - indica si se debe mostrar en UI
  */
-export async function syncHighLevelData(locationId, apiToken, triggerSource = 'manual') {
+async function runHighLevelDataSync(locationId, apiToken, triggerSource = 'manual') {
   try {
     syncProgress = {
       status: 'running',
@@ -2463,4 +2421,14 @@ export async function syncHighLevelData(locationId, apiToken, triggerSource = 'm
     syncProgress.message = `Error: ${error.message}`
     throw error
   }
+}
+
+export function isHighLevelDataSyncRunning() {
+  return runHighLevelSyncSingleFlight.isRunning()
+}
+
+export function syncHighLevelData(locationId, apiToken, triggerSource = 'manual') {
+  return runHighLevelSyncSingleFlight(
+    () => runHighLevelDataSync(locationId, apiToken, triggerSource)
+  )
 }

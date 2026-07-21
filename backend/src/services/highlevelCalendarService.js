@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 const API_VERSION = '2021-04-15';
-const CALENDARS_API_VERSION = '2023-02-21';
+const CALENDARS_API_VERSION = 'v3';
 const REQUEST_TIMEOUT = 15000; // 15 segundos timeout
 
 /**
@@ -177,7 +177,7 @@ export async function getCalendar(calendarId, accessToken) {
 
 /**
  * Crear un calendario en HighLevel.
- * Endpoint oficial: POST /calendars/ con Version 2023-02-21.
+ * Endpoint oficial: POST /calendars/ con Version v3.
  * @param {Object} calendarData - Configuración completa del calendario
  * @param {string} accessToken - Token de acceso OAuth / Private Integration Token
  * @returns {Promise<Object>} Calendario creado
@@ -882,7 +882,7 @@ export async function updateCalendar(calendarId, updateData, accessToken) {
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
-          'Version': API_VERSION,
+          'Version': CALENDARS_API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         },
         body: JSON.stringify(updateData)
