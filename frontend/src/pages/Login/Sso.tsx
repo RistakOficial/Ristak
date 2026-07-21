@@ -10,12 +10,15 @@ import styles from './Login.module.css'
  * Entrada directa desde el portal central: /sso?token=...
  * Canjea el token de un solo uso por una sesión local y entra al dashboard
  * sin pedir contraseña. Si la app aún no tiene usuarios, el backend crea al
- * dueño desde la identidad ya verificada por el Installer.
+ * usuario desde la identidad verificada por el portal central, tanto en una
+ * instalación gestionada como en una instalación standalone con broker.
  */
 export const Sso: React.FC = () => {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token') || ''
+  const googleHandoffToken = searchParams.get('google_handoff_token') || ''
+  const googleError = searchParams.get('google_error_message') || ''
   const redirectPath = sanitizeAuthRedirectPath(searchParams.get('return_path'), '/dashboard')
   const isPhoneReturn = isPhoneAppPath(redirectPath)
   const [error, setError] = useState('')
@@ -26,8 +29,8 @@ export const Sso: React.FC = () => {
     startedRef.current = true
 
     const run = async () => {
-      if (!token) {
-        setError('Este enlace no es válido.')
+      if (!token && !googleHandoffToken) {
+        setError(googleError || 'Este enlace no es válido.')
         return
       }
 
@@ -35,7 +38,9 @@ export const Sso: React.FC = () => {
         const response = await fetch(apiUrl('/api/auth/sso'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token })
+          body: JSON.stringify(googleHandoffToken
+            ? { google_handoff_token: googleHandoffToken }
+            : { token })
         })
         const data = await response.json()
 
@@ -72,7 +77,7 @@ export const Sso: React.FC = () => {
     }
 
     run()
-  }, [token, navigate, redirectPath])
+  }, [token, googleHandoffToken, googleError, navigate, redirectPath])
 
   return (
     <div className={`${styles.container} ${isPhoneReturn ? styles.phoneContainer : ''}`}>

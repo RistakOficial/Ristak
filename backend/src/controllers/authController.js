@@ -24,11 +24,13 @@ import {
   verifyOwnerCredentialsWithServer,
   verifySetupToken,
   consumeSetupToken,
+  claimCentralOAuthHandoff,
   createCentralGoogleLoginUrl,
   requestPortalUserRefresh
 } from '../services/licenseService.js'
 import { saveAccountLocaleSettings } from '../utils/accountLocale.js'
 import { getEffectiveAccessConfig } from '../utils/userAccess.js'
+import { getRequestBaseUrl } from '../utils/publicUrl.js'
 
 function sanitizeAuthReturnPath(value, fallbackPath = '/dashboard') {
   const fallback = typeof fallbackPath === 'string'
@@ -469,16 +471,14 @@ export async function localDevSession(req, res) {
  */
 export async function startGoogleLogin(req, res) {
   try {
-    if (!isLicenseEnforced()) {
-      return res.status(503).json({
-        success: false,
-        code: 'central_login_not_configured',
-        message: 'Google solo está disponible cuando esta instalación está conectada al portal central.'
-      })
-    }
-
     const returnPath = sanitizeAuthReturnPath(req.body?.return_path || req.body?.returnPath)
-    const data = await createCentralGoogleLoginUrl({ returnPath })
+    const appUrl = getRequestBaseUrl(req) || process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || ''
+    const callback = new URL('/sso', `${appUrl}/`)
+    callback.searchParams.set('return_path', returnPath)
+    const data = await createCentralGoogleLoginUrl({
+      returnPath: callback.toString(),
+      appUrl
+    })
     if (!data.url) {
       return res.status(502).json({
         success: false,
@@ -1053,7 +1053,84 @@ export async function changeUsername(req, res) {
  */
 export async function ssoLogin(req, res) {
   try {
-    const { token } = req.body
+    const { token, google_handoff_token: googleHandoffToken } = req.body
+
+    if (googleHandoffToken) {
+      const handoff = await claimCentralOAuthHandoff({
+        provider: 'google_login',
+        handoffToken: googleHandoffToken
+      })
+      const profile = handoff?.payload?.profile || {}
+      const googleEmail = cleanLoginEmail(profile.email)
+      if (!googleEmail || profile.email_verified !== true) {
+        return res.status(403).json({
+          success: false,
+          message: 'Google no confirmó un correo válido para esta cuenta.'
+        })
+      }
+
+      let user = await findUserByLoginEmail(googleEmail)
+      let apiToken = null
+      if (!user) {
+        const existingUser = await db.get('SELECT id FROM users LIMIT 1')
+        if (existingUser) {
+          return res.status(403).json({
+            success: false,
+            message: 'Esta cuenta de Google no pertenece a un usuario de esta app.'
+          })
+        }
+
+        const username = buildDefaultInternalUsername(googleEmail)
+        const passwordHash = hashPassword(crypto.randomBytes(32).toString('base64url'))
+        const result = await db.run(
+          `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+           SELECT ?, ?, ?, ?, ?, ?
+           WHERE NOT EXISTS (SELECT 1 FROM users)`,
+          [username, googleEmail, passwordHash, profile.name || username, 'admin', 1]
+        )
+        user = Number(result?.changes || 0) > 0 && result.lastID
+          ? await db.get('SELECT * FROM users WHERE id = ?', [result.lastID])
+          : await findUserByLoginEmail(googleEmail)
+        if (!user?.id) {
+          return res.status(409).json({
+            success: false,
+            message: 'La cuenta terminó de configurarse en otra sesión. Vuelve a entrar con Google.'
+          })
+        }
+
+        const rotatedApiToken = await rotateApiTokenForUser(user.id)
+        apiToken = rotatedApiToken.token
+        await saveAccountLocaleSettings({}).catch(error => {
+          logger.warn(`No se pudo guardar el locale inicial durante Google: ${error.message}`)
+        })
+        void requestPortalUserRefresh()
+      }
+
+      if (!user.is_active) {
+        return res.status(403).json({ success: false, message: 'Usuario inactivo. Contacta al administrador.' })
+      }
+
+      await db.run('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', [user.id])
+      const sessionToken = generateToken({
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        tokenVersion: user.token_version ?? 0
+      })
+      const [apiTokenMetadata, appId] = await Promise.all([
+        getApiTokenMetadataForUser(user.id),
+        getExternalApiAppId()
+      ])
+      return res.json({
+        success: true,
+        token: sessionToken,
+        appId,
+        ...(apiToken ? { apiToken } : {}),
+        apiTokenMetadata,
+        user: serializeAuthUser(user)
+      })
+    }
 
     if (!token) {
       return res.status(400).json({ success: false, message: 'Falta el enlace de acceso' })

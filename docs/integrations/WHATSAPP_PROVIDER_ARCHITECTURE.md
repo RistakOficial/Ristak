@@ -416,6 +416,13 @@ un destino arbitrario enviado por el navegador. El SDK nunca corre desde dominio
 JSSDK en la app de Meta. La instalación crea un `state` firmado con su licencia y
 TTL de 15 minutos; el navegador no recibe tokens ni App Secret.
 
+Si el tenant nació directamente desde el Blueprint y no tiene licencia ni variables de
+Installer, crea una identidad técnica central con prueba Ed25519 de su URL pública y usa esa
+credencial para este mismo onboarding. No se muestra un paso extra, no se copian secrets al
+servicio y el token de Meta sigue terminando cifrado únicamente en la base del tenant. Una
+instalación gestionada siempre reutiliza su `license_key` e `installation_id`; el fallback no
+duplica la conexión ni altera el contrato de relay.
+
 Installer es dueño de `meta_app_id`, `meta_app_secret`,
 `whatsapp_business_login_config_id`,
 `whatsapp_business_login_config_v4_id` y del webhook central. La clave sin

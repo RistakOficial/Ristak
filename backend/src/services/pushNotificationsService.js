@@ -9,7 +9,6 @@ import { getAccountCurrency } from '../utils/accountLocale.js'
 import { getAccountTimezone, normalizeToUtcIso, resolveTimezone } from '../utils/dateUtils.js'
 import {
   getCentralMobilePushStatus,
-  isLicenseEnforced,
   sendCentralMobilePushNotifications
 } from './licenseService.js'
 import { shouldSuppressChatNotificationForConversationalAgent } from './conversationalAgentService.js'
@@ -348,8 +347,6 @@ function emptyCentralMobilePushStatus(reason = '', { transientFailure = false } 
 }
 
 async function getCentralMobilePushStatusCached({ force = false } = {}) {
-  if (!isLicenseEnforced()) return emptyCentralMobilePushStatus('standalone')
-
   if (!force && centralMobilePushStatusCache.status && centralMobilePushStatusCache.expiresAt > Date.now()) {
     return centralMobilePushStatusCache.status
   }

@@ -14840,7 +14840,7 @@ function firstRuntimeEnv(...keys) {
   return ''
 }
 
-function getDomainVerificationIdentity() {
+async function getDomainVerificationIdentity() {
   const installationId = firstRuntimeEnv('INSTALLATION_ID', 'RISTAK_INSTALLATION_ID')
   if (installationId) {
     return {
@@ -14859,10 +14859,29 @@ function getDomainVerificationIdentity() {
     }
   }
 
+  const { resolveCentralBrokerConfig } = await import('./centralBrokerService.js')
+  const broker = await resolveCentralBrokerConfig({
+    appUrl: firstRuntimeEnv('RENDER_EXTERNAL_URL', 'APP_URL')
+  }).catch(() => null)
+  if (broker?.installationId) {
+    return {
+      field: 'installation_id',
+      value: broker.installationId,
+      label: 'instalacion'
+    }
+  }
+  if (broker?.clientId) {
+    return {
+      field: 'client_id',
+      value: broker.clientId,
+      label: 'cliente'
+    }
+  }
+
   return null
 }
 
-function verifyDomainHealthPayload(payload) {
+function verifyDomainHealthPayload(payload, identity) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return { ok: false, code: 'invalid_health', error: 'respondio health invalido' }
   }
@@ -14871,7 +14890,6 @@ function verifyDomainHealthPayload(payload) {
     return { ok: false, code: 'not_ristak', error: 'respondio health, pero no es Ristak' }
   }
 
-  const identity = getDomainVerificationIdentity()
   if (!identity) {
     return {
       ok: false,
@@ -14900,7 +14918,7 @@ function verifyDomainHealthPayload(payload) {
   return { ok: true, identityField: identity.field }
 }
 
-async function checkDomainHealth(domain, protocol) {
+async function checkDomainHealth(domain, protocol, identity) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), PUBLIC_DOMAIN_VERIFY_TIMEOUT_MS)
   const url = `${protocol}://${domain}/health`
@@ -14915,7 +14933,7 @@ async function checkDomainHealth(domain, protocol) {
       signal: controller.signal
     })
     const payload = await response.json().catch(() => null)
-    const payloadVerification = verifyDomainHealthPayload(payload)
+    const payloadVerification = verifyDomainHealthPayload(payload, identity)
 
     if (response.ok && payloadVerification.ok) {
       return {
@@ -14949,7 +14967,8 @@ export async function verifyPublicDomainConnection(domainValue) {
     return { verified: false, error: 'Dominio inválido' }
   }
 
-  if (!getDomainVerificationIdentity()) {
+  const identity = await getDomainVerificationIdentity()
+  if (!identity) {
     return {
       verified: false,
       error: 'Esta instalacion no tiene INSTALLATION_ID ni CLIENT_ID para validar dominios sin falsos positivos',
@@ -14965,7 +14984,7 @@ export async function verifyPublicDomainConnection(domainValue) {
 
   for (const protocol of ['https', 'http']) {
     for (const candidate of candidates) {
-      const check = await checkDomainHealth(candidate, protocol)
+      const check = await checkDomainHealth(candidate, protocol, identity)
       if (check.ok) {
         return {
           verified: true,

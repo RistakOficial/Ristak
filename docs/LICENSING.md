@@ -33,6 +33,34 @@ en la cuenta de Render de cada cliente desde el portal central
 Si `LICENSE_SERVER_URL`, `CLIENT_ID` o `LICENSE_KEY` faltan, la app corre en **modo standalone**
 (desarrollo local o instalación propia): no exige licencia y todas las features quedan activas.
 
+### Standalone no significa aislado de las integraciones centrales
+
+Licencia comercial e identidad técnica son contratos distintos. Una instalación creada
+directamente desde `render.yaml`, sin variables de Installer, no valida plan ni suspensión,
+pero puede usar el broker central para Google, Meta, WhatsApp, Mercado Pago, push, Bunny,
+directorio móvil y dominios de Sites.
+
+En el primer uso de una capacidad central, el backend:
+
+1. genera una identidad Ed25519 propia y la guarda cifrada en `app_config`;
+2. registra la URL pública ante `https://www.ristak.com` (o el broker central opcional);
+3. responde un challenge recibido por `/api/central-broker/registration-proof` y firma un
+   manifiesto ligado a esa URL y a la llave pública;
+4. recibe credenciales técnicas de broker y las conserva cifradas en la misma base.
+
+La URL central valida HTTPS, DNS y direcciones públicas antes de llamar al tenant. Un registro
+de broker sólo autoriza rutas de integraciones: no sirve en `/api/license/verify`, no habilita
+cancelación comercial ni administración de Render y no aparece como cliente o instalación de
+negocio en los tableros de Installer. Si una instalación ya tiene `LICENSE_KEY` e
+`INSTALLATION_ID`, esas credenciales administradas conservan prioridad y no se crea otra
+identidad.
+
+No hay un secret manual de enrolamiento ni una dependencia de arranque con Installer. Si el
+broker central está temporalmente caído, el CRM, sus datos locales y las integraciones ya
+materializadas continúan funcionando; una conexión OAuth nueva, una renovación que necesite al
+proveedor central o la obtención inicial de configuración compartida espera a que vuelva el
+servicio. El estado técnico se expone sanitizado en `/health`, sin llaves ni tokens.
+
 ## Stripe en instalaciones gestionadas
 
 Stripe no se configura desde el portal central ni con OAuth. En cada instalación,
@@ -178,6 +206,11 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
 Sin servidor central configurado, el setup clásico independiente (usuario + contraseña, solo si
 no existen usuarios) sigue funcionando igual.
 
+Además, **Continuar con Google** funciona en modo standalone. El callback central devuelve a
+`/sso` un handoff de un solo uso con el perfil verificado: si no existen usuarios crea al primer
+administrador; si ya existen, sólo permite entrar a un usuario local activo con el mismo correo.
+La instalación nunca recibe la contraseña de Google ni el client secret central.
+
 ## Health check
 
 `GET /health` responde:
@@ -214,5 +247,6 @@ la promoción manual desde Installer. El instalador elige la imagen vía `RISTAK
 cd backend && npm test
 ```
 
-Cubren el cliente de licencias: modo standalone, licencia activa/suspendida, cache con token
-temporal, política estricta sin red, feature flags, contrato de `/health` y setup tokens.
+Cubren el cliente de licencias: modo standalone, registro técnico independiente, licencia
+activa/suspendida, cache con token temporal, política estricta sin red, feature flags, contrato
+de `/health`, login Google por handoff y setup tokens.

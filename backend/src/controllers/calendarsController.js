@@ -20,7 +20,6 @@ import { normalizePhoneForAccount } from '../utils/accountLocale.js';
 import {
   hasCalendarPaymentsFeature,
   hasFeature,
-  isLicenseEnforced,
   createCentralGoogleCalendarConnectUrl,
   disconnectCentralGoogleCalendar
 } from '../services/licenseService.js';
@@ -802,7 +801,7 @@ function googleCalendarIntegrationStatus(config = {}) {
   return {
     ...config,
     connectionMode: 'oauth',
-    configured: isLicenseEnforced(),
+    configured: true,
     connected: config.connectionMode === 'oauth' ? Boolean(config.connected) : false
   };
 }
@@ -1145,13 +1144,6 @@ export async function getGoogleCalendarIntegration(req, res) {
  */
 export async function getGoogleCalendarConnectUrl(req, res) {
   try {
-    if (!isLicenseEnforced()) {
-      return res.status(400).json({
-        success: false,
-        error: 'OAuth de Google Calendar requiere el portal de Ristak configurado.'
-      });
-    }
-
     const data = await createCentralGoogleCalendarConnectUrl({
       returnPath: sanitizeGoogleCalendarReturnPath(req.body?.returnPath || req.body?.return_path),
       appUrl: getGoogleCalendarOAuthAppUrl(req)
@@ -1380,21 +1372,9 @@ export async function mergeGoogleCalendarAppointments(req, res) {
  */
 export async function deleteGoogleCalendarIntegration(req, res) {
   try {
-    if (isLicenseEnforced()) {
-      await disconnectCentralGoogleCalendar().catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo limpiar metadata central de Google: ${error.message}`);
-      });
-      await googleCalendarService.deleteGoogleCalendarConfig();
-      await localCalendarService.reconcileCalendarDefaults().catch(error => {
-        logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google central: ${error.message}`);
-      });
-      await syncRegisteredIntegrationCronsForProvider('google-calendar', { reason: 'google-calendar-disconnected' });
-      return res.json({
-        success: true,
-        data: await googleCalendarService.getGoogleCalendarConfig()
-      });
-    }
-
+    await disconnectCentralGoogleCalendar().catch(error => {
+      logger.warn(`[Calendars Controller] No se pudo limpiar metadata central de Google: ${error.message}`);
+    });
     await googleCalendarService.deleteGoogleCalendarConfig();
     await localCalendarService.reconcileCalendarDefaults().catch(error => {
       logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras desconectar Google: ${error.message}`);

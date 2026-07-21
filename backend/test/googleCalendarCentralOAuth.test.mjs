@@ -237,13 +237,12 @@ async function startLicenseServer(requests) {
     assert.equal(payload.license_key, 'RSTK-GOOGLE-TEST')
     assert.equal(payload.installation_id, 'inst_google_oauth')
 
-    if (req.url === '/api/auth/google/start') {
+    if (req.url === '/api/license/google-login/connect-url') {
       requests.push({ path: req.url, body: payload })
-      assert.equal(payload.mode, 'login')
       return json(res, 200, {
         success: true,
         url: 'https://accounts.google.test/oauth',
-        mode: 'login',
+        mode: 'installed_login',
         redirect_uri: 'https://portal.test/api/auth/google/callback'
       })
     }
@@ -342,14 +341,14 @@ test('Google Login central conserva return_path móvil y limpia rutas inseguras'
     const mobile = await callStart({ return_path: '/movil' })
     assert.equal(mobile.statusCode, 200)
     assert.equal(mobile.responseBody.url, 'https://accounts.google.test/oauth')
-    assert.equal(requests[0].path, '/api/auth/google/start')
-    assert.equal(requests[0].body.return_path, '/movil')
+    assert.equal(requests[0].path, '/api/license/google-login/connect-url')
+    assert.equal(requests[0].body.return_path, 'https://demo.onrender.com/sso?return_path=%2Fmovil')
 
     await callStart({ return_path: '/phone/chat' })
-    assert.equal(requests[1].body.return_path, '/phone/chat')
+    assert.equal(requests[1].body.return_path, 'https://demo.onrender.com/sso?return_path=%2Fphone%2Fchat')
 
     await callStart({ return_path: 'https://evil.test/steal' })
-    assert.equal(requests[2].body.return_path, '/dashboard')
+    assert.equal(requests[2].body.return_path, 'https://demo.onrender.com/sso?return_path=%2Fdashboard')
   } finally {
     server.closeAllConnections?.()
     server.close()

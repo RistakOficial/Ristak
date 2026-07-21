@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { db, getAppConfig } from '../config/database.js'
+import { getStoredCentralBrokerConfig } from './centralBrokerService.js'
 
 const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000
 const NONCE_RETENTION_MS = 30 * 60 * 1000
@@ -36,17 +37,19 @@ export function getInstallerSignatureHeaders(req) {
 }
 
 async function getInstallerRuntimeIdentity() {
-  const [storedLicenseKey, storedInstallationId] = await Promise.all([
+  const [storedLicenseKey, storedInstallationId, broker] = await Promise.all([
     getAppConfig('license_key').catch(() => ''),
-    getAppConfig('installation_id').catch(() => '')
+    getAppConfig('installation_id').catch(() => ''),
+    getStoredCentralBrokerConfig().catch(() => null)
   ])
 
   return {
-    secret: cleanString(storedLicenseKey || process.env.RISTAK_LICENSE_KEY || process.env.LICENSE_KEY),
+    secret: cleanString(storedLicenseKey || process.env.RISTAK_LICENSE_KEY || process.env.LICENSE_KEY || broker?.licenseKey),
     installationId: cleanString(
       storedInstallationId ||
       process.env.RISTAK_INSTALLATION_ID ||
       process.env.INSTALLATION_ID ||
+      broker?.installationId ||
       process.env.RENDER_SERVICE_ID
     )
   }

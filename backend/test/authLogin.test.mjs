@@ -54,6 +54,30 @@ before(async () => {
         return
       }
 
+      if (req.url === '/api/license/oauth-handoff/claim' && body.provider === 'google_login') {
+        if (body.handoff_token === 'google-local-login-handoff') {
+          res.end(JSON.stringify({
+            success: true,
+            handoff: {
+              provider: 'google_login',
+              payload: {
+                profile: {
+                  sub: 'google-local-sub',
+                  email: googleOwnerEmail,
+                  name: 'Google Owner',
+                  picture_url: 'https://images.test/google-owner.png',
+                  email_verified: true
+                }
+              }
+            }
+          }))
+        } else {
+          res.statusCode = 410
+          res.end(JSON.stringify({ success: false, message: 'Handoff inválido' }))
+        }
+        return
+      }
+
       if (req.url === '/api/license/verify') {
         res.end(JSON.stringify({
           allowed: true,
@@ -297,6 +321,36 @@ test('SSO creates the first managed owner when the Installer account only uses G
     assert.equal(payload.email, googleOwnerEmail)
   } finally {
     await db.run('DELETE FROM users WHERE email = ?', [googleOwnerEmail])
+  }
+})
+
+test('handoff de Google crea el primer usuario local y entrega sesión sin contraseña compartida', async () => {
+  await db.run('DELETE FROM users')
+  process.env.LICENSE_SERVER_URL = licenseServerUrl
+  process.env.CLIENT_ID = 'cli_google_handoff'
+  process.env.LICENSE_KEY = 'RSTK-GOOGLE-HANDOFF-0001'
+  process.env.INSTALLATION_ID = 'inst_google_handoff'
+  process.env.APP_URL = 'https://google-handoff.onrender.com'
+  resetLicenseCache()
+
+  try {
+    const res = createMockResponse()
+    await ssoLogin({ body: { google_handoff_token: 'google-local-login-handoff' } }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.user.email, googleOwnerEmail)
+    assert.equal(res.payload.user.role, 'admin')
+    assert.match(res.payload.apiToken, /^ristak_live_/)
+
+    const stored = await db.get('SELECT * FROM users WHERE email = ?', [googleOwnerEmail])
+    assert.ok(stored?.id)
+    assert.equal(stored.full_name, 'Google Owner')
+    assert.equal(verifyPassword('LaContraseñaDeGoogleNoSeGuardaAquí', stored.password_hash), false)
+    assert.equal(verifyToken(res.payload.token).userId, stored.id)
+  } finally {
+    await db.run('DELETE FROM users WHERE email = ?', [googleOwnerEmail])
+    delete process.env.APP_URL
   }
 })
 

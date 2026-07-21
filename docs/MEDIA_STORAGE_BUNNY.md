@@ -4,7 +4,12 @@ Ristak stores new user-uploaded media through `mediaStorageService`. The databas
 
 ## Render variables
 
-Required for Bunny Storage:
+En una instalación gestionada o en un Blueprint standalone, la configuración central de Bunny
+se obtiene por backend usando la identidad de licencia existente o el registro técnico automático
+del tenant. No se deben copiar llaves Bunny a Render. Las variables siguientes describen el
+contrato de una configuración explícita/local y conservan prioridad cuando existen.
+
+Required for an explicit Bunny Storage configuration:
 
 - `MEDIA_STORAGE_PROVIDER=bunny`
 - `MEDIA_COMPRESSION_ENABLED=true`
@@ -35,7 +40,8 @@ Optional:
 Los tres últimos son opcionales y tienen comportamiento seguro sin configuración
 manual. Son parámetros de infraestructura del proceso, no ajustes por negocio.
 
-Do not store Bunny API keys in the database or committed files.
+Do not store Bunny API keys in committed files. En el modo central, la configuración técnica y la
+identidad del broker sólo se conservan cifradas en `app_config`; jamás se devuelven al frontend.
 
 ## Endpoints
 
@@ -59,7 +65,7 @@ Public file fallback:
 - `GET /media/assets/:id/file`
 - `GET /media/assets/:id/thumbnail`
 
-Installer/admin panel endpoints:
+Installer/admin panel endpoints (sólo instalaciones gestionadas con token interno explícito):
 
 - `GET /internal/storage/usage`
 - `GET /internal/storage/diagnostics`

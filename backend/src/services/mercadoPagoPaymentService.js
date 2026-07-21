@@ -557,7 +557,8 @@ async function refreshMercadoPagoLocalToken(raw = {}) {
 
 export async function getMercadoPagoPaymentConfig({ includeSecrets = false, mode: modeOverride = '' } = {}) {
   let raw = await readRawConfig()
-  if (isLicenseEnforced() && raw[CONFIG_KEYS.accessToken] && shouldSyncToken(raw)) {
+  const current = mapConfig(raw, { includeSecrets: true, mode: modeOverride })
+  if (current.managedByPortal && current.accessToken && shouldSyncToken(raw)) {
     try {
       await refreshMercadoPagoLocalToken(raw)
       raw = await readRawConfig()
@@ -651,12 +652,6 @@ export async function createMercadoPagoOAuthUrl({ mode = '', appUrl = '', return
 }
 
 export async function syncMercadoPagoFromCentral({ handoffToken = '' } = {}) {
-  if (!isLicenseEnforced()) {
-    const error = new Error('Esta instalación no está conectada al portal central.')
-    error.status = 400
-    throw error
-  }
-
   if (!cleanString(handoffToken)) {
     const error = new Error('Falta el handoff de Mercado Pago. Intenta conectar otra vez desde el botón de Mercado Pago.')
     error.status = 400
@@ -687,7 +682,8 @@ export async function setMercadoPagoActiveMode(mode = 'live') {
 }
 
 export async function deleteMercadoPagoPaymentConfig() {
-  if (isLicenseEnforced()) {
+  const current = await getMercadoPagoPaymentConfig({ includeSecrets: true })
+  if (current.managedByPortal) {
     try {
       await disconnectCentralMercadoPago()
     } catch (error) {

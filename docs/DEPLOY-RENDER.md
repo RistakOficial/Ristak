@@ -15,13 +15,27 @@ El Blueprint actual define:
 - `DATABASE_URL` conectado desde esa base.
 - `JWT_SECRET` generado por Render.
 - Storage autoscaling habilitado para la base.
+- Registro automático con el broker central cuando se usa por primera vez una integración
+  compartida.
 
 No define:
 
 - Cron jobs separados de Render.
 - `APP_URL`.
 - `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID` ni `HIGHLEVEL_API_KEY`.
+- Credenciales de Installer, Bunny, Google, Meta, Mercado Pago o push.
 - Servicios frontend/backend separados.
+
+La URL pública se obtiene de `RENDER_EXTERNAL_URL`. El tenant genera su identidad técnica,
+demuestra control de esa URL mediante un challenge firmado y recibe la configuración central
+por backend. Por eso aplicar el Blueprint crudo sólo requiere la base y el `JWT_SECRET` generado:
+no hay que copiar secrets desde Installer ni sincronizar manualmente variables de Bunny.
+
+Esta autonomía cubre el runtime del producto: Google Login/Calendar, Meta OAuth, WhatsApp Meta
+Direct, Mercado Pago, notificaciones push, Bunny multimedia, directorio móvil y dominios de
+Sites. Las operaciones administrativas de infraestructura —actualizar una instalación,
+promover versiones, consentimiento de disco, cancelación y releases de tiendas— siguen siendo
+funciones de Installer y no forman parte del runtime del CRM.
 
 Define:
 
@@ -82,6 +96,10 @@ Crons de integración actuales:
 2. Selecciona el repo.
 3. Render lee `render.yaml`.
 4. Aplica el Blueprint.
+
+5. Abre la URL pública y completa `/setup`, o usa **Continuar con Google**. La primera acción que
+   requiera una integración central registra automáticamente la instalación; no existe un paso
+   manual para enlazarla con Installer.
 
 No cambies nombres ni URLs en esta guía. Si necesitas renombrar servicios o base, hazlo directamente en `render.yaml` con cuidado porque el nombre de `fromDatabase.name` debe coincidir con la DB declarada.
 

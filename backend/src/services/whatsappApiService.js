@@ -84,6 +84,7 @@ import {
 } from './whatsapp/providers/providerRegistry.js'
 import { normalizeMetaDirectWebhookPayload } from './whatsapp/providers/metaDirectWebhookAdapter.js'
 import { disconnectCentralWhatsAppMeta } from './licenseService.js'
+import { resolveCentralBrokerConfig } from './centralBrokerService.js'
 import { getWhatsAppStatusProjectionSnapshot } from './whatsappStatusProjectionService.js'
 import {
   buildMetaDirectTemplateCreatePayload,
@@ -2253,14 +2254,22 @@ async function getLicenseRuntimeConfig({ appUrl } = {}) {
     })
   ])
 
+  const resolvedAppUrl = normalizePublicBaseUrl(appUrl || verifiedAppBaseUrl || savedAppUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL || 'http://localhost:5173')
+  const explicitLicenseKey = cleanString(licenseKey || process.env.RISTAK_LICENSE_KEY || process.env.LICENSE_KEY)
+  const explicitInstallationId = cleanString(installationId || process.env.RISTAK_INSTALLATION_ID || process.env.INSTALLATION_ID)
+  const broker = explicitLicenseKey && explicitInstallationId
+    ? null
+    : await resolveCentralBrokerConfig({ appUrl: resolvedAppUrl })
+
   return {
-    licenseKey: cleanString(licenseKey || process.env.RISTAK_LICENSE_KEY || process.env.LICENSE_KEY),
-    clientId: cleanString(clientId || process.env.RISTAK_CLIENT_ID || process.env.CLIENT_ID || process.env.RENDER_SERVICE_ID || 'local'),
-    installationId: cleanString(installationId || process.env.RISTAK_INSTALLATION_ID || process.env.INSTALLATION_ID || process.env.RENDER_SERVICE_ID || 'local'),
+    licenseKey: cleanString(explicitLicenseKey || broker?.licenseKey),
+    clientId: cleanString(clientId || process.env.RISTAK_CLIENT_ID || process.env.CLIENT_ID || broker?.clientId || process.env.RENDER_SERVICE_ID || 'local'),
+    installationId: cleanString(explicitInstallationId || broker?.installationId || process.env.RENDER_SERVICE_ID || 'local'),
+    brokerUrl: cleanString(broker?.brokerUrl),
     // En flujos interactivos debe mandar el origen exacto de la solicitud para
     // regresar a la misma sesión. El dominio app verificado queda como fallback
     // para procesos sin request (jobs, callbacks o compatibilidad anterior).
-    appUrl: normalizePublicBaseUrl(appUrl || verifiedAppBaseUrl || savedAppUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL || 'http://localhost:5173')
+    appUrl: resolvedAppUrl
   }
 }
 
@@ -9776,6 +9785,7 @@ export async function createMetaDirectConnectUrl({ appUrl } = {}) {
   const installerUrl = normalizePublicBaseUrl(
     process.env.META_WHATSAPP_PORTAL_URL ||
     process.env.META_WHATSAPP_PUBLIC_URL ||
+    runtime.brokerUrl ||
     DEFAULT_INSTALLER_PUBLIC_URL
   )
   const url = new URL('/meta/whatsapp/connect', installerUrl)
@@ -9794,10 +9804,12 @@ function metaEmbeddedSignupError(message, code = 'whatsapp_embedded_signup_error
   return error
 }
 
-function getMetaEmbeddedSignupInstallerUrl() {
+async function getMetaEmbeddedSignupInstallerUrl() {
+  const broker = await resolveCentralBrokerConfig({ autoRegister: false })
   const baseUrl = normalizePublicBaseUrl(
     process.env.META_WHATSAPP_PORTAL_URL ||
     process.env.META_WHATSAPP_PUBLIC_URL ||
+    broker?.brokerUrl ||
     DEFAULT_INSTALLER_PUBLIC_URL
   )
   let parsed
@@ -9817,7 +9829,7 @@ async function callMetaEmbeddedSignupInstaller(path, body = {}) {
   let response
   let data
   try {
-    response = await metaDirectFetch(new URL(path, getMetaEmbeddedSignupInstallerUrl()), {
+    response = await metaDirectFetch(new URL(path, await getMetaEmbeddedSignupInstallerUrl()), {
       method: 'POST',
       redirect: 'error',
       headers: { 'Content-Type': 'application/json' },

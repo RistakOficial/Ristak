@@ -159,6 +159,12 @@ crea un candidato central. El handoff es cifrado, one-time y ligado a cliente e
 instalacion. El App Secret nunca se copia a una instalacion ni llega al
 navegador.
 
+Una instalación standalone obtiene antes una identidad técnica del broker mediante challenge
+Ed25519 sobre su URL pública. Esa identidad puede iniciar y reclamar los mismos handoffs de Meta,
+pero no es una licencia, no aparece en métricas comerciales y no autoriza ninguna ruta de plan,
+cancelación o administración de infraestructura. Las instalaciones gestionadas conservan sus
+credenciales existentes con prioridad.
+
 ### Ristak instalado
 
 Las conexiones nuevas viven cifradas en:
@@ -226,7 +232,8 @@ https://www.facebook.com/v25.0/dialog/oauth
 2. **Conectar Meta Ads** solicita
    `POST /api/meta/oauth/ads/connect-url`. Social sólo solicita su URL si
    `reviewPending=false`; el frontend y el backend mantienen tipos separados.
-3. Installer valida el origin de la instalación, crea un `state` con TTL y abre
+3. El broker central valida el origin de la instalación —con licencia gestionada o con identidad
+   técnica standalone—, crea un `state` con TTL y abre
    el Config ID de ese tipo. `config_id` sustituye a `scope`; no se mandan ambos.
 4. Meta vuelve al callback único de Installer. Installer consume el `state`,
    canjea el code y valida identidad, App ID, expiraciones, permisos y

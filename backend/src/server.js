@@ -107,11 +107,12 @@ import automationsRoutes from './routes/automations.routes.js'
 import appointmentRemindersRoutes from './routes/appointmentReminders.routes.js'
 import pushRoutes from './routes/push.routes.js'
 import licenseRoutes from './routes/license.routes.js'
+import centralBrokerRoutes from './routes/centralBroker.routes.js'
 import mdpProgramRoutes from './routes/mdpProgram.routes.js'
 import chatEventsRoutes from './routes/chatEvents.routes.js'
 import paymentEventsRoutes from './routes/paymentEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
-import { getHealthInfo, requestPortalUserRefresh } from './services/licenseService.js'
+import { getCentralBrokerHealthInfo, getHealthInfo, requestPortalUserRefresh } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
 // (LIC-002) requireAuth se aplica ANTES de requireFeature en los mounts gateados
 // para que el tráfico no autenticado reciba 401 sin tocar el license server.
@@ -403,15 +404,24 @@ app.get('/api/health', (req, res) => {
 
 // Health check de instalación (lo consulta el portal instalador para saber
 // si la app ya está lista). Debe ir antes del host router de Sites.
-app.get('/health', (req, res) => {
-  const readiness = getRuntimeReadiness()
-
-  res.status(readiness.statusCode).json({
-    ...getHealthInfo(),
-    ok: readiness.ok,
-    startup: getStartupStatus()
-  })
+app.get('/health', async (req, res, next) => {
+  try {
+    const readiness = getRuntimeReadiness()
+    res.status(readiness.statusCode).json({
+      ...getHealthInfo(),
+      ...(await getCentralBrokerHealthInfo()),
+      ok: readiness.ok,
+      startup: getStartupStatus()
+    })
+  } catch (error) {
+    next(error)
+  }
 })
+
+// El broker central confirma el control de la URL mientras el runtime todavía
+// termina de arrancar. La identidad ya vive cifrada en la DB y la ruta sólo
+// firma retos ligados al mismo origen público que recibió la petición.
+app.use('/api/central-broker', centralBrokerRoutes)
 
 app.use((req, res, next) => {
   if (startupState.ready) {
@@ -601,7 +611,7 @@ async function startRuntimeServices() {
 
   // Publica el directorio de usuarios al portal para que el login móvil pueda
   // enrutar a dueño y empleados por su correo (best-effort, no bloquea el boot).
-  requestPortalUserRefresh()
+  requestPortalUserRefresh({ autoRegister: false })
 
   // Inicializar versión de Meta API desde BD
   await initializeVersion()

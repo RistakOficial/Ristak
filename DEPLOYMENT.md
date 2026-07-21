@@ -30,6 +30,13 @@ Render creará:
 - `DATABASE_URL` apuntando a la base creada.
 - `JWT_SECRET` generado por Render desde el Blueprint.
 
+Eso es suficiente para arrancar el producto completo. Cuando Google, Meta, WhatsApp Meta
+Direct, Mercado Pago, push, Bunny, directorio móvil o dominios de Sites necesitan el servicio
+central, la instalación se registra sola mediante una prueba criptográfica de control de su URL.
+No se copian credenciales de Installer al Blueprint ni se requieren variables manuales de Bunny.
+Este registro técnico no crea una licencia comercial ni habilita tareas administrativas de
+Installer sobre la cuenta de Render.
+
 ### Storage De Postgres
 
 El Blueprint fija `diskSizeGB: 1` y habilita `storageAutoscalingEnabled`.
@@ -95,6 +102,9 @@ META_API_VERSION=<version fija opcional, ej. v25.0>
 
 Normalmente no necesitas declarar credenciales de HighLevel, Meta Ads o Stripe en Render. Stripe se configura manualmente desde Settings con la cuenta propia del usuario, usando Secret keys guardadas cifradas en el backend.
 
+`CENTRAL_BROKER_URL` es opcional y sólo existe para apuntar a otro broker en desarrollo o una
+infraestructura privada. Si falta, producción usa el portal central oficial. No es un secret.
+
 Si defines `META_API_VERSION`, la app queda fijada en esa versión y no hace auto-update de versión Meta. Déjala vacía para que use la DB y las revisiones automáticas.
 
 ## Primer Acceso
@@ -102,6 +112,8 @@ Si defines `META_API_VERSION`, la app queda fijada en esa versión y no hace aut
 1. Abre la URL del servicio, por ejemplo `https://ristak-app.onrender.com`.
 2. Si no hay usuarios, la app redirige a `/setup`.
 3. Crea el primer usuario.
+   También puedes usar **Continuar con Google**: el portal central verifica la cuenta y devuelve
+   un handoff de un solo uso; si la instalación está vacía crea al primer administrador.
 4. Entra a **Configuración -> HighLevel** y guarda `Access Token` + `Location ID`.
 5. Conecta Meta Ads, pagos, calendarios y tracking desde las pestañas de Settings.
 

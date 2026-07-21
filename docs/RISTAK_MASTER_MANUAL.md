@@ -1151,6 +1151,26 @@ reconexion explicitos. Los endpoints de Calendario obtienen la credencial
 guardada dentro del backend cuando necesitan sincronizar, sin depender de que
 el frontend transporte el secret.
 
+### Runtime autónomo sin Installer
+
+Una instalación creada directamente desde `render.yaml` funciona sin quedar enlazada de forma
+administrativa a Ristak Installer. `DATABASE_URL` y el `JWT_SECRET` generado por Render bastan
+para arrancar. En el primer uso de una capacidad compartida, el backend genera una identidad
+Ed25519 cifrada, demuestra control de su URL pública contra un challenge del broker central y
+recibe una credencial técnica limitada.
+
+Esa identidad habilita Google Login/Calendar, Meta OAuth, WhatsApp Meta Direct, Mercado Pago,
+push, Bunny multimedia, directorio móvil y dominios de Sites. No equivale a una licencia
+comercial: no activa verificación de plan, cancelación, autoscaling, despliegues ni releases de
+tiendas y sus filas técnicas se excluyen de clientes, instalaciones y estadísticas comerciales
+de Installer. Si existen credenciales gestionadas, tienen prioridad y nunca se abre un registro
+paralelo.
+
+La prueba central exige HTTPS público, valida DNS contra SSRF y liga la firma a la URL y llave
+pública. Los handoffs OAuth son de un solo uso y los callbacks conservan HMAC. La caída temporal
+del broker no bloquea el CRM ni los datos locales; sólo deja pendientes las operaciones nuevas
+que realmente requieren a ese servicio central.
+
 ### Inicializacion de cuentas
 
 `/initialization` es la entrada rápida para administradores nuevos. La pantalla
@@ -1190,6 +1210,9 @@ Rutas publicas:
   la contraseña de Google. Si el enlace falta, expiró o no es válido, conserva **Continuar con
   Google** y también permite ingresar con las credenciales vigentes del dueño en Installer. El
   formulario manual solo existe en instalaciones independientes sin servidor central.
+- En una instalación standalone, **Continuar con Google** registra la identidad técnica, vuelve
+  a `/sso` con un handoff de un solo uso y crea al primer admin si la base está vacía. Con usuarios
+  existentes sólo inicia sesión cuando el correo Google coincide con un usuario local activo.
 - `/login`, `/sso`, `/reset-password`. El login de una instalación administrada inicia Google en
   el portal central y regresa a la app mediante una llave SSO de un solo uso; la instalación no
   recibe ni almacena la contraseña de Google.

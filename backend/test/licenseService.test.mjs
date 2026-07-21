@@ -119,10 +119,10 @@ function startMockServer() {
           return
         }
 
-        if (req.url === '/api/auth/google/start') {
+        if (req.url === '/api/license/google-login/connect-url') {
           res.end(JSON.stringify({
             url: 'https://central.ristak.test/oauth/google',
-            mode: lastRequestBody?.mode || 'login',
+            mode: 'installed_login',
             redirect_uri: 'https://central.ristak.test/auth/google/callback'
           }))
           return
@@ -393,7 +393,6 @@ test('dominio de app verificado se usa al crear links centrales de Google', asyn
   const login = await licenseService.createCentralGoogleLoginUrl({ returnPath: '/dashboard' })
 
   assert.equal(login.url, 'https://central.ristak.test/oauth/google')
-  assert.equal(lastRequestBody.mode, 'login')
   assert.equal(lastRequestBody.return_path, '/dashboard')
   assert.equal(lastRequestBody.app_url, 'https://app.ristak.test')
 

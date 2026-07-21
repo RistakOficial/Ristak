@@ -1,5 +1,9 @@
 import { logger } from '../utils/logger.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
+import {
+  getStoredCentralBrokerConfig,
+  resolveCentralBrokerConfig
+} from './centralBrokerService.js'
 
 /**
  * Cliente del license server central (ristak-installer).
@@ -431,8 +435,7 @@ async function resolveManagedAppUrl(fallbackUrl = '') {
   return normalizeBaseUrl(fallbackUrl)
 }
 
-async function buildInstalledAppPayload(extra = {}) {
-  const config = getConfig()
+async function buildInstalledAppPayload(extra = {}, config = getConfig()) {
   return {
     client_id: config.clientId,
     license_key: config.licenseKey,
@@ -464,10 +467,28 @@ export function isManagedOwnerEmail(email) {
   return !!ownerEmail && !!candidate && ownerEmail === candidate
 }
 
-async function callLicenseServer(path, body = {}, { timeoutMs = LICENSE_PORTAL_TIMEOUT_MS } = {}) {
-  const config = getConfig()
+async function callLicenseServer(path, body = {}, {
+  timeoutMs = LICENSE_PORTAL_TIMEOUT_MS,
+  connectionMode = 'license',
+  autoRegister = true
+} = {}) {
+  const commercialConfig = getConfig()
+  let config = commercialConfig
 
-  if (!isLicenseEnforced()) {
+  if (connectionMode === 'broker') {
+    const requestedAppUrl = normalizeAppBaseUrl(body?.app_url) || await resolveManagedAppUrl(commercialConfig.appUrl)
+    const brokerConfig = await resolveCentralBrokerConfig({ appUrl: requestedAppUrl, autoRegister })
+    if (!brokerConfig) {
+      throw new Error('Esta instalación todavía no tiene identidad técnica para usar el broker central.')
+    }
+    config = {
+      licenseServerUrl: brokerConfig.brokerUrl,
+      clientId: brokerConfig.clientId,
+      licenseKey: brokerConfig.licenseKey,
+      installationId: brokerConfig.installationId,
+      appUrl: requestedAppUrl || brokerConfig.appUrl
+    }
+  } else if (!isLicenseEnforced()) {
     throw new Error('Esta instalación no está conectada al portal central.')
   }
 
@@ -476,7 +497,7 @@ async function callLicenseServer(path, body = {}, { timeoutMs = LICENSE_PORTAL_T
     const result = await fetchWithTimeout(`${config.licenseServerUrl}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(await buildInstalledAppPayload(body))
+      body: JSON.stringify(await buildInstalledAppPayload(body, config))
     }, timeoutMs, async portalResponse => {
       let portalData = {}
       try {
@@ -528,8 +549,8 @@ async function callLicenseServer(path, body = {}, { timeoutMs = LICENSE_PORTAL_T
  * lanzar: si tras agotar los reintentos no se logra, se loguea como error pero no
  * rompe la operación que lo disparó (creación de empleado, etc.).
  */
-export async function requestPortalUserRefresh() {
-  if (!isLicenseEnforced()) return
+export async function requestPortalUserRefresh({ autoRegister = true } = {}) {
+  if (!isLicenseEnforced() && !autoRegister && !(await getStoredCentralBrokerConfig())) return
 
   // (AUTH-009) Reintento acotado con backoff corto para fallos transitorios del portal.
   const maxAttempts = 3
@@ -537,7 +558,10 @@ export async function requestPortalUserRefresh() {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await callLicenseServer('/api/license/users/refresh', {})
+      await callLicenseServer('/api/license/users/refresh', {}, {
+        connectionMode: 'broker',
+        autoRegister
+      })
       return
     } catch (error) {
       // (AUTH-009) Si aún quedan intentos, esperamos un backoff creciente y reintentamos.
@@ -560,6 +584,15 @@ export function getHealthInfo() {
     ok: true,
     app: 'ristak',
     version: config.appVersion,
+    client_id: config.clientId || null,
+    installation_id: config.installationId || null
+  }
+}
+
+export async function getCentralBrokerHealthInfo() {
+  const config = await getStoredCentralBrokerConfig()
+  if (!config) return {}
+  return {
     client_id: config.clientId || null,
     installation_id: config.installationId || null
   }
@@ -926,7 +959,7 @@ export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/set
     payload.app_url = normalizedAppUrl
   }
 
-  const data = await callLicenseServer('/api/license/google-calendar/connect-url', payload)
+  const data = await callLicenseServer('/api/license/google-calendar/connect-url', payload, { connectionMode: 'broker' })
   return {
     url: data.url || '',
     mode: data.mode || 'calendar',
@@ -934,11 +967,11 @@ export async function createCentralGoogleCalendarConnectUrl({ returnPath = '/set
   }
 }
 
-export async function createCentralGoogleLoginUrl({ returnPath = '/dashboard' } = {}) {
-  const data = await callLicenseServer('/api/auth/google/start', {
-    mode: 'login',
-    return_path: returnPath
-  })
+export async function createCentralGoogleLoginUrl({ returnPath = '/sso', appUrl = '' } = {}) {
+  const payload = { return_path: returnPath }
+  const normalizedAppUrl = normalizeAppBaseUrl(appUrl)
+  if (normalizedAppUrl) payload.app_url = normalizedAppUrl
+  const data = await callLicenseServer('/api/license/google-login/connect-url', payload, { connectionMode: 'broker' })
   return {
     url: data.url || '',
     mode: data.mode || 'login',
@@ -947,7 +980,7 @@ export async function createCentralGoogleLoginUrl({ returnPath = '/dashboard' } 
 }
 
 export async function disconnectCentralGoogleCalendar() {
-  const data = await callLicenseServer('/api/license/google-calendar/disconnect')
+  const data = await callLicenseServer('/api/license/google-calendar/disconnect', {}, { connectionMode: 'broker' })
   return data.calendar || {}
 }
 
@@ -955,7 +988,7 @@ export async function claimCentralOAuthHandoff({ provider, handoffToken } = {}) 
   const data = await callLicenseServer('/api/license/oauth-handoff/claim', {
     provider,
     handoff_token: handoffToken
-  })
+  }, { connectionMode: 'broker' })
   return data.handoff || {}
 }
 
@@ -968,7 +1001,7 @@ export async function claimCentralOAuthHandoff({ provider, handoffToken } = {}) 
 export async function getCentralMetaOAuthStatus({ integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/status', integrationKind
     ? { integration_kind: integrationKind }
-    : {})
+    : {}, { connectionMode: 'broker' })
   return data.meta || data.connection || data || {}
 }
 
@@ -976,7 +1009,7 @@ export async function createCentralMetaOAuthConnectUrl({ returnPath = '/settings
   const data = await callLicenseServer('/api/license/meta/connect-url', {
     return_path: returnPath,
     ...(integrationKind ? { integration_kind: integrationKind } : {})
-  })
+  }, { connectionMode: 'broker' })
   const meta = data.meta || data || {}
   return {
     ...meta,
@@ -990,7 +1023,7 @@ export async function connectCentralMetaOAuth({ code = '', configId = '', return
     config_id: configId,
     return_path: returnPath,
     ...(integrationKind ? { integration_kind: integrationKind } : {})
-  })
+  }, { connectionMode: 'broker' })
   return {
     meta: data.meta || {},
     handoffToken: data.handoff_token || data.handoffToken || data.handoff?.token || '',
@@ -999,7 +1032,7 @@ export async function connectCentralMetaOAuth({ code = '', configId = '', return
 }
 
 export async function disconnectCentralWhatsAppMeta() {
-  const data = await callLicenseServer('/api/license/whatsapp/meta/disconnect')
+  const data = await callLicenseServer('/api/license/whatsapp/meta/disconnect', {}, { connectionMode: 'broker' })
   return data.whatsapp || data || {}
 }
 
@@ -1018,7 +1051,7 @@ export async function updateCentralMetaWebhookSubscription({
     page_id: pageId || null,
     instagram_account_id: instagramAccountId || null,
     webhook_url: webhookUrl || null
-  })
+  }, { connectionMode: 'broker' })
   return data.meta || data.subscription || data || {}
 }
 
@@ -1033,14 +1066,14 @@ export async function finalizeCentralMetaOAuth({
     connection_id: connectionId,
     ad_account_id: adAccountId,
     dataset_id: datasetId || null
-  })
+  }, { connectionMode: 'broker' })
   return data.meta || data.connection || data || {}
 }
 
 export async function disconnectCentralMetaOAuth({ integrationKind = '' } = {}) {
   const data = await callLicenseServer('/api/license/meta/disconnect', integrationKind
     ? { integration_kind: integrationKind }
-    : {})
+    : {}, { connectionMode: 'broker' })
   return {
     disconnected: data.disconnected === true,
     meta: data.meta || null
@@ -1050,7 +1083,7 @@ export async function disconnectCentralMetaOAuth({ integrationKind = '' } = {}) 
 export async function refreshCentralGoogleCalendarToken({ refreshToken } = {}) {
   const data = await callLicenseServer('/api/license/google-calendar/refresh-token', {
     refresh_token: refreshToken
-  })
+  }, { connectionMode: 'broker' })
   return data.token || {}
 }
 
@@ -1064,7 +1097,7 @@ export async function createCentralMercadoPagoConnectUrl({ mode = 'test', return
     payload.app_url = appUrl
   }
 
-  const data = await callLicenseServer('/api/license/mercadopago/connect-url', payload)
+  const data = await callLicenseServer('/api/license/mercadopago/connect-url', payload, { connectionMode: 'broker' })
   return {
     url: data.url || '',
     mode: data.mode === 'live' ? 'live' : 'test',
@@ -1075,7 +1108,7 @@ export async function createCentralMercadoPagoConnectUrl({ mode = 'test', return
 }
 
 export async function disconnectCentralMercadoPago() {
-  const data = await callLicenseServer('/api/license/mercadopago/disconnect')
+  const data = await callLicenseServer('/api/license/mercadopago/disconnect', {}, { connectionMode: 'broker' })
   return data.connection || {}
 }
 
@@ -1083,12 +1116,12 @@ export async function refreshCentralMercadoPagoToken({ mode = 'test', refreshTok
   const data = await callLicenseServer('/api/license/mercadopago/refresh-token', {
     mode: mode === 'live' ? 'live' : 'test',
     refresh_token: refreshToken
-  })
+  }, { connectionMode: 'broker' })
   return data.token || {}
 }
 
 export async function getCentralMobilePushStatus() {
-  const data = await callLicenseServer('/api/license/mobile-push/status')
+  const data = await callLicenseServer('/api/license/mobile-push/status', {}, { connectionMode: 'broker' })
   return data.push || {
     configured: false,
     nativeConfigured: false,
@@ -1104,7 +1137,7 @@ export async function sendCentralMobilePushNotifications(
   return callLicenseServer('/api/license/mobile-push/send', {
     devices,
     payload
-  }, { timeoutMs })
+  }, { timeoutMs, connectionMode: 'broker' })
 }
 
 async function readAccountCancellationSnapshot() {

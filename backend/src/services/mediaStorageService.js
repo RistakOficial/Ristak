@@ -16,6 +16,7 @@ import {
   assertSafeOutboundMediaUrl,
   createSafeOutboundMediaHttpsAgent
 } from './outboundMediaReferenceService.js'
+import { resolveCentralBrokerConfig } from './centralBrokerService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -759,19 +760,18 @@ function buildStorageRuntimeConfig(row) {
   return config
 }
 
-function centralStorageRequestConfig() {
-  const licenseServerUrl = normalizeBaseUrl(process.env.LICENSE_SERVER_URL || '')
-  const clientId = cleanString(process.env.CLIENT_ID)
-  const licenseKey = cleanString(process.env.LICENSE_KEY)
-  const installationId = cleanString(process.env.INSTALLATION_ID)
-  if (!licenseServerUrl || !clientId || !licenseKey || !installationId) return null
+async function centralStorageRequestConfig() {
+  const broker = await resolveCentralBrokerConfig({
+    appUrl: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || ''
+  })
+  if (!broker) return null
   return {
-    licenseServerUrl,
+    licenseServerUrl: broker.brokerUrl,
     body: {
-      client_id: clientId,
-      license_key: licenseKey,
-      installation_id: installationId,
-      app_url: process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '',
+      client_id: broker.clientId,
+      license_key: broker.licenseKey,
+      installation_id: broker.installationId,
+      app_url: broker.appUrl || process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || '',
       version: process.env.APP_VERSION || ''
     }
   }
@@ -783,6 +783,9 @@ function readCentralStorageConfigValue(config, snakeKey, envKey) {
 
 function normalizeCentralStorageEnv(config = {}) {
   return {
+    RISTAK_CLIENT_ACCOUNT_ID: readCentralStorageConfigValue(config, 'ristak_business_id', 'RISTAK_BUSINESS_ID') ||
+      readCentralStorageConfigValue(config, 'ristak_installation_id', 'RISTAK_INSTALLATION_ID') ||
+      readCentralStorageConfigValue(config, 'ristak_client_id', 'RISTAK_CLIENT_ID'),
     MEDIA_STORAGE_PROVIDER: readCentralStorageConfigValue(config, 'media_storage_provider', 'MEDIA_STORAGE_PROVIDER') || 'bunny',
     MEDIA_STORAGE_REQUIRE_BUNNY: readCentralStorageConfigValue(config, 'media_storage_require_bunny', 'MEDIA_STORAGE_REQUIRE_BUNNY') || 'true',
     MEDIA_COMPRESSION_ENABLED: readCentralStorageConfigValue(config, 'media_compression_enabled', 'MEDIA_COMPRESSION_ENABLED') || 'true',
@@ -806,9 +809,6 @@ function normalizeCentralStorageEnv(config = {}) {
 }
 
 async function fetchCentralStorageConfig() {
-  const requestConfig = centralStorageRequestConfig()
-  if (!requestConfig) return null
-
   if (centralStorageConfigCache.env && centralStorageConfigCache.expiresAt > Date.now()) {
     return centralStorageConfigCache.env
   }
@@ -816,6 +816,8 @@ async function fetchCentralStorageConfig() {
 
   centralStorageConfigCache.promise = (async () => {
     try {
+      const requestConfig = await centralStorageRequestConfig()
+      if (!requestConfig) return null
       const response = await fetch(`${requestConfig.licenseServerUrl}/api/license/storage-config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -825,13 +827,13 @@ async function fetchCentralStorageConfig() {
       const payload = await response.json().catch(() => null)
       if (!response.ok || !payload?.success || !payload?.config) {
         const reason = payload?.reason || payload?.message || response.statusText
-        logger.warn(`[MediaStorage] Installer no entregó configuración Bunny (${response.status}): ${reason}`)
+        logger.warn(`[MediaStorage] El broker central no entregó configuración Bunny (${response.status}): ${reason}`)
         return null
       }
 
       const env = normalizeCentralStorageEnv(payload.config)
       if (!env.BUNNY_STORAGE_ZONE || !env.BUNNY_STORAGE_API_KEY || !env.BUNNY_CDN_BASE_URL) {
-        logger.warn('[MediaStorage] Installer entregó configuración Bunny incompleta.')
+        logger.warn('[MediaStorage] El broker central entregó configuración Bunny incompleta.')
         return null
       }
 
@@ -839,7 +841,7 @@ async function fetchCentralStorageConfig() {
       centralStorageConfigCache.expiresAt = Date.now() + CENTRAL_STORAGE_CONFIG_TTL_MS
       return env
     } catch (error) {
-      logger.warn(`[MediaStorage] No se pudo recuperar configuración Bunny desde Installer: ${error.message}`)
+      logger.warn(`[MediaStorage] No se pudo recuperar configuración Bunny desde el broker central: ${error.message}`)
       return null
     } finally {
       centralStorageConfigCache.promise = null

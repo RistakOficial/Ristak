@@ -32,28 +32,8 @@ services:
         value: "5"
       - key: MEDIA_STORAGE_REQUIRE_BUNNY
         value: "true"
-      - key: RISTAK_CLIENT_ACCOUNT_ID
-        sync: false
-      - key: BUNNY_STORAGE_ZONE
-        sync: false
-      - key: BUNNY_STORAGE_REGION
-        sync: false
-      - key: BUNNY_STORAGE_ENDPOINT
-        sync: false
-      - key: BUNNY_STORAGE_API_KEY
-        sync: false
-      - key: BUNNY_CDN_BASE_URL
-        sync: false
-      - key: BUNNY_STREAM_LIBRARY_ID
-        sync: false
-      - key: BUNNY_STREAM_API_KEY
-        sync: false
-      - key: BUNNY_STREAM_COLLECTION_ID
-        sync: false
       - key: BUNNY_STREAM_COLLECTION_NAME
         value: Ristak Sites & Forms
-      - key: INTERNAL_INSTALLER_TOKEN
-        sync: false
 
 databases:
   - name: ristak-db
