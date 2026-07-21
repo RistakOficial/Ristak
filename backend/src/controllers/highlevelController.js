@@ -63,6 +63,7 @@ import { resolveOutboundChatMediaReference } from '../services/outboundMediaRefe
 import { getCachedPaymentListSummary } from '../services/paymentListSummaryCacheService.js';
 import { isHighLevelConversationContactNotFoundError } from '../utils/highLevelConversationErrors.js';
 import { getCrmLabels, setCrmLabels } from '../services/crmLabelsService.js';
+import { setHighLevelConversationalChannelPreference } from '../services/highLevelConversationalChannelRoutingService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -3061,6 +3062,19 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   }
 
   if (markHumanTakeover) {
+    const manuallySelectedPhoneChannel = effectiveChannel.key === 'whatsapp_api'
+      ? 'whatsapp'
+      : effectiveChannel.key === 'sms_qr'
+        ? 'sms'
+        : null;
+    if (manuallySelectedPhoneChannel) {
+      await setHighLevelConversationalChannelPreference(contact.id, manuallySelectedPhoneChannel, {
+        selectedByUserId: req?.user?.userId || req?.user?.id || null,
+        source: 'manual_send'
+      }).catch(error => {
+        logger.warn(`[HighLevel Conversations] El mensaje salió, pero no se pudo guardar el canal manual: ${error.message}`);
+      });
+    }
     markHumanTakeoverIfActive(contact.id, { updatedBy: 'human' }).catch(error => {
       logger.warn(`[Agente conversacional] No se pudo marcar toma humana desde HighLevel: ${error.message}`);
     });

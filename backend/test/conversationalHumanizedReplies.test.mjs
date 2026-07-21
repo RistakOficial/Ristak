@@ -115,6 +115,44 @@ test('recuperacion de pendientes cubre todos los canales conversacionales', () =
   assert.deepEqual(RECOVERABLE_CONVERSATIONAL_CHANNELS, ['whatsapp', 'instagram', 'messenger', 'sms', 'webchat', 'email'])
 })
 
+test('la entrega conserva el contexto SMS pero puede salir por el WhatsApp elegido', async () => {
+  const sends = []
+  const result = await sendReplyParts({
+    contactId: 'contacto_ruta_ghl',
+    phone: '+526561111111',
+    latest: {
+      id: 'mensaje_sms_origen',
+      channel: 'sms',
+      transport: 'ghl_sms',
+      phone: '+526561111111',
+      business_phone: '+19155550001'
+    },
+    agentConfig: {
+      id: 'agente_ruta_ghl',
+      replyDelivery: { mode: 'single', splitMessagesEnabled: false }
+    },
+    reply: 'Respuesta única',
+    channel: 'sms',
+    deliveryChannel: 'whatsapp',
+    deliveryFromNumber: '+19155550002',
+    dependencies: {
+      sendTextMessage: async (payload) => {
+        sends.push(payload)
+        return { messageId: 'respuesta_ghl' }
+      },
+      loadNewerInbound: async () => null,
+      recordEvent: async () => undefined,
+      markReplyComplete: async () => undefined
+    }
+  })
+
+  assert.equal(result.sentParts, 1)
+  assert.equal(sends.length, 1)
+  assert.equal(sends[0].channel, 'whatsapp')
+  assert.equal(sends[0].from, '+19155550002')
+  assert.equal(sends[0].text, 'Respuesta única')
+})
+
 test('responde por HighLevel cuando el WhatsApp entrante viene de GHL', () => {
   assert.equal(
     shouldSendConversationalReplyThroughHighLevel({

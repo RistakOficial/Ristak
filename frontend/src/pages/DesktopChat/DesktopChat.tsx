@@ -3370,6 +3370,7 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
+  const composerChannelPreferenceRequestRef = useRef(0)
   const [contentFocusItem, setContentFocusItem] = useState<ContentFocusItem | null>(null)
   // Responder PÚBLICO a un comentario puede venir del canal de comentario
   // seleccionado o del botón de la tarjeta, que fija el target exacto.
@@ -3619,6 +3620,26 @@ export const DesktopChat: React.FC = () => {
     setEmailBodyHtml('')
     setEmailIncludeSignature(true)
   }, [activeContact?.id, defaultComposerBusinessPhone?.id, defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected])
+  useEffect(() => {
+    if (!activeContact?.id || !highLevelConnected) return
+    const requestId = composerChannelPreferenceRequestRef.current + 1
+    composerChannelPreferenceRequestRef.current = requestId
+    let cancelled = false
+
+    void contactsService.getConversationalChannelPreference(activeContact.id)
+      .then((preference) => {
+        if (cancelled || composerChannelPreferenceRequestRef.current !== requestId || !preference?.channel) return
+        setCommentReplyTarget(null)
+        setComposerChannel(preference.channel)
+        setComposerBusinessPhoneId(HIGHLEVEL_WHATSAPP_COMPOSER_PHONE_ID)
+        setComposerHighLevelFromNumber(
+          preference.channel === 'sms' ? defaultHighLevelPhoneNumber?.phoneNumber || '' : ''
+        )
+      })
+      .catch(() => undefined)
+
+    return () => { cancelled = true }
+  }, [activeContact?.id, defaultHighLevelPhoneNumber?.phoneNumber, highLevelConnected])
   useEffect(() => {
     setComposerBusinessPhoneId((current) => {
       if (!activeContact) return ''
@@ -5735,6 +5756,22 @@ export const DesktopChat: React.FC = () => {
       ? value.slice(HIGHLEVEL_SMS_COMPOSER_VALUE_PREFIX.length)
       : ''
     const nextChannel = highLevelSmsPhoneId ? 'sms' : normalizeComposerChannel(value)
+    const preferredHighLevelPhoneChannel = nextChannel === 'sms'
+      ? 'sms'
+      : value === HIGHLEVEL_WHATSAPP_COMPOSER_VALUE
+        ? 'whatsapp'
+        : null
+    if (activeContact?.id && preferredHighLevelPhoneChannel) {
+      composerChannelPreferenceRequestRef.current += 1
+      void contactsService.updateConversationalChannelPreference(activeContact.id, preferredHighLevelPhoneChannel)
+        .catch((error: any) => {
+          showToast(
+            'warning',
+            'Canal elegido sólo por ahora',
+            error?.message || 'No se pudo guardar este canal para las siguientes respuestas del agente.'
+          )
+        })
+    }
     if (!isCommentComposerChannel(nextChannel)) {
       setCommentReplyTarget(null)
     }
@@ -5770,7 +5807,7 @@ export const DesktopChat: React.FC = () => {
       setVoiceDraft(null)
       setVoiceElapsedMs(0)
     }
-  }, [closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, defaultHighLevelPhoneNumber, emailBodyHtml, handleUpdatePreferredWhatsAppPhoneNumber, highLevelPhoneNumbers])
+  }, [activeContact?.id, closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, defaultHighLevelPhoneNumber, emailBodyHtml, handleUpdatePreferredWhatsAppPhoneNumber, highLevelPhoneNumbers, showToast])
 
   const handleOpenTemplatePanel = useCallback(() => {
     setComposerMenuOpen(false)

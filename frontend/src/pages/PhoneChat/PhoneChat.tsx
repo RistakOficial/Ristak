@@ -6161,6 +6161,25 @@ export const PhoneChat: React.FC = () => {
   const conversationVisible = conversationOpen && (aiAgentConversationOpen || Boolean(activeContact))
 
   useEffect(() => {
+    if (!activeContact?.id || !highLevelConnected) return
+    const contactId = activeContact.id
+    let cancelled = false
+
+    void contactsService.getConversationalChannelPreference(contactId)
+      .then((preference) => {
+        if (cancelled || !preference?.channel) return
+        const preferredChannel: HighLevelChatChannel = preference.channel === 'sms' ? 'sms_qr' : 'whatsapp_api'
+        setContactHighLevelChannelOverrides((current) => ({
+          ...current,
+          [contactId]: preferredChannel
+        }))
+      })
+      .catch(() => undefined)
+
+    return () => { cancelled = true }
+  }, [activeContact?.id, highLevelConnected])
+
+  useEffect(() => {
     contactJourneyRef.current = contactJourney
   }, [contactJourney])
 
@@ -17466,6 +17485,22 @@ export const PhoneChat: React.FC = () => {
       ...current,
       [contactId]: nextChannel as HighLevelChatChannel
     }))
+    const preferredHighLevelPhoneChannel = nextChannel === 'sms_qr'
+      ? 'sms'
+      : value === 'whatsapp_api'
+        ? 'whatsapp'
+        : null
+    if (preferredHighLevelPhoneChannel) {
+      try {
+        await contactsService.updateConversationalChannelPreference(contactId, preferredHighLevelPhoneChannel)
+      } catch (error: any) {
+        showToast(
+          'warning',
+          'Canal elegido sólo por ahora',
+          error?.message || 'No se pudo guardar este canal para las siguientes respuestas del agente.'
+        )
+      }
+    }
     if (isWhatsAppComposerRoute(value)) {
       const routePhoneId = getComposerRoutePhoneId(value)
       setContactBusinessPhoneOverrides((current) => ({

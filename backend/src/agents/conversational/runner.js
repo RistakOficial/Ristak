@@ -93,6 +93,7 @@ import {
   getActiveConversationalAgentPreventiveMeasure,
   withConversationalAgentSafetyLock
 } from '../../services/conversationalAgentSafetyService.js'
+import { resolveHighLevelConversationalPhoneRoute } from '../../services/highLevelConversationalChannelRoutingService.js'
 
 const HISTORY_LIMIT = 20
 export const TOOL_CALLING_V2_HISTORY_BYTE_BUDGET = 64 * 1024
@@ -3240,6 +3241,8 @@ async function sendConversationalChannelTextMessage({
   text,
   externalId,
   agentId,
+  forceHighLevel = false,
+  replyFromNumber = null,
   commentReplyMode = 'private'
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel || latest.channel)
@@ -3277,13 +3280,13 @@ async function sendConversationalChannelTextMessage({
     })
   }
 
-  if (shouldSendConversationalReplyThroughHighLevel({ channel: normalizedChannel, latest })) {
+  if (forceHighLevel || shouldSendConversationalReplyThroughHighLevel({ channel: normalizedChannel, latest })) {
     const { sendHighLevelConversationMessageCore } = await import('../../controllers/highlevelController.js')
     return sendHighLevelConversationMessageCore({
       contactId,
       channel: getHighLevelReplyChannel({ channel: normalizedChannel, latest }),
       message: text,
-      fromNumber: latest.business_phone || undefined,
+      fromNumber: replyFromNumber || latest.business_phone || undefined,
       toNumber: phone || latest.phone || undefined,
       externalId,
       agentId
@@ -3483,6 +3486,29 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       return
     }
 
+    const highLevelPhoneRoute = await resolveHighLevelConversationalPhoneRoute({
+      contactId,
+      inboundMessageId: latest.id,
+      inboundChannel: normalizedChannel
+    })
+    if (highLevelPhoneRoute.applies && !highLevelPhoneRoute.shouldHandle) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: highLevelPhoneRoute.reason,
+          replyChannel: highLevelPhoneRoute.replyChannel,
+          winningMessageId: highLevelPhoneRoute.winningMessageId
+        }
+      }).catch(() => {})
+      return
+    }
+
     const delivery = await sendReplyParts({
       contactId,
       phone,
@@ -3492,6 +3518,9 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       apiKey: openAIFallbackApiKey,
       model,
       channel: normalizedChannel,
+      deliveryChannel: highLevelPhoneRoute.applies ? highLevelPhoneRoute.replyChannel : normalizedChannel,
+      deliveryFromNumber: highLevelPhoneRoute.replyFromNumber || null,
+      forceHighLevel: highLevelPhoneRoute.applies,
       externalIdPrefix: `convagent_followup${followUpIndex}`,
       dependencies: {
         splitter: splitMessageIntoBubbles,
@@ -3657,6 +3686,9 @@ export async function sendReplyParts({
   apiKey,
   model,
   channel = 'whatsapp',
+  deliveryChannel = null,
+  deliveryFromNumber = null,
+  forceHighLevel = false,
   externalIdPrefix = 'convagent',
   dependencies = {}
 }) {
@@ -3685,6 +3717,7 @@ export async function sendReplyParts({
   } = dependencies || {}
 
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
+  const normalizedDeliveryChannel = normalizeConversationalChannel(deliveryChannel || normalizedChannel)
   const fallbackReply = String(reply || '').trim()
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
   const planIdentity = {
@@ -3792,7 +3825,9 @@ export async function sendReplyParts({
     contactId,
     latest,
     phone,
-    channel: normalizedChannel,
+    channel: normalizedDeliveryChannel,
+    forceHighLevel,
+    replyFromNumber: deliveryFromNumber,
     commentReplyMode: getCommentReplyModeForAgent(agentConfig, normalizedChannel)
   }))
 
@@ -3804,6 +3839,7 @@ export async function sendReplyParts({
         messageId: latest.id,
         agentId: agentConfig.id || null,
         channel: normalizedChannel,
+        deliveryChannel: normalizedDeliveryChannel,
         source: splitResult.source,
         reason: splitResult.reason,
         partCount: parts.length,
@@ -3928,9 +3964,9 @@ export async function sendReplyParts({
         }
 
         const sendResult = await sendMessage({
-          channel: normalizedChannel,
+          channel: normalizedDeliveryChannel,
           to: phone || latest.phone,
-          from: latest.business_phone || undefined,
+          from: deliveryFromNumber || latest.business_phone || undefined,
           phoneNumberId: latest.business_phone_number_id || undefined,
           text: parts[index],
           externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
@@ -4058,6 +4094,7 @@ async function handleToolCallingV2InboundTurn({
   aiProvider,
   splitterApiKey,
   channel,
+  highLevelPhoneRoute = null,
   traceMessage,
   inboundClaim = null,
   settleActiveClaim
@@ -4228,6 +4265,33 @@ async function handleToolCallingV2InboundTurn({
     await recordConversationalObservabilityEvents(preventedQuestionEvent ? [preventedQuestionEvent] : [])
   }
 
+  let deliveryRoute = highLevelPhoneRoute
+  if (deliveryRoute?.applies) {
+    deliveryRoute = await resolveHighLevelConversationalPhoneRoute({
+      contactId,
+      inboundMessageId: latest.id,
+      inboundChannel: normalizedChannel
+    })
+    if (!deliveryRoute.shouldHandle) {
+      await closeUndeliveredAppointmentOffer('offer_reply_suppressed_by_highlevel_phone_routing', { beforeDelivery: true })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'run_suppressed_highlevel_phone_channel',
+        detail: {
+          messageId: latest.id,
+          agentId: agentConfig.id || null,
+          channel: normalizedChannel,
+          replyChannel: deliveryRoute.replyChannel,
+          winningMessageId: deliveryRoute.winningMessageId,
+          reason: deliveryRoute.reason,
+          phase: 'before_delivery'
+        }
+      }).catch(() => {})
+      await settleActiveClaim({ status: 'completed', answered: false })
+      return { sent: false, reason: 'highlevel_phone_channel_suppressed', turn }
+    }
+  }
+
   // sendReplyParts reserva el plan durable antes del primer intento al proveedor.
   // Si ese intento falla con cero partes, el plan queda pending y el retry debe
   // conservar tanto el texto como la oferta que ese texto confirma. Cerrar aquí
@@ -4241,6 +4305,9 @@ async function handleToolCallingV2InboundTurn({
     apiKey: splitterApiKey,
     model,
     channel: normalizedChannel,
+    deliveryChannel: deliveryRoute?.applies ? deliveryRoute.replyChannel : normalizedChannel,
+    deliveryFromNumber: deliveryRoute?.replyFromNumber || null,
+    forceHighLevel: deliveryRoute?.applies === true,
     dependencies: {
       splitter: splitMessageIntoBubbles,
       forceSingleMessage: replyGuardResult?.prevented === true || hasServerVisibleAppointmentAvailability(ctx.actions),
@@ -5123,6 +5190,27 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       let latest = await loadLatestInboundMessage(contactId, normalizedChannel)
       if (!latest) return
 
+      let highLevelPhoneRoute = await resolveHighLevelConversationalPhoneRoute({
+        contactId,
+        inboundMessageId: latest.id,
+        inboundChannel: normalizedChannel
+      })
+      if (highLevelPhoneRoute.applies && !highLevelPhoneRoute.shouldHandle) {
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'run_suppressed_highlevel_phone_channel',
+          detail: {
+            messageId: latest.id,
+            channel: normalizedChannel,
+            replyChannel: highLevelPhoneRoute.replyChannel,
+            winningMessageId: highLevelPhoneRoute.winningMessageId,
+            reason: highLevelPhoneRoute.reason,
+            phase: 'after_debounce'
+          }
+        }).catch(() => {})
+        return
+      }
+
 	      // Resolver qué agente atiende esta conversación: el ya asignado o el
 	      // primero cuyas reglas factuales de entrada coincidan con el contacto/canal.
       let ruleContext = await buildRuleContext({
@@ -5171,6 +5259,26 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       if (!waitResult.latest) return
       if (waitResult.latest.id !== latest.id) {
         latest = waitResult.latest
+        highLevelPhoneRoute = await resolveHighLevelConversationalPhoneRoute({
+          contactId,
+          inboundMessageId: latest.id,
+          inboundChannel: normalizedChannel
+        })
+        if (highLevelPhoneRoute.applies && !highLevelPhoneRoute.shouldHandle) {
+          await recordConversationalAgentEvent({
+            contactId,
+            eventType: 'run_suppressed_highlevel_phone_channel',
+            detail: {
+              messageId: latest.id,
+              channel: normalizedChannel,
+              replyChannel: highLevelPhoneRoute.replyChannel,
+              winningMessageId: highLevelPhoneRoute.winningMessageId,
+              reason: highLevelPhoneRoute.reason,
+              phase: 'after_response_wait'
+            }
+          }).catch(() => {})
+          return
+        }
         ruleContext = await buildRuleContext({
           contactId,
           post: postContext,
@@ -5257,6 +5365,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           aiProvider,
           splitterApiKey: openAIFallbackApiKey,
           channel: normalizedChannel,
+          highLevelPhoneRoute,
           traceMessage,
           inboundClaim: activeClaim,
           settleActiveClaim

@@ -46,7 +46,7 @@ test('HighLevel conversational agent preserves the inbound business number when 
     'utf8'
   )
 
-  assert.match(source, /fromNumber: latest\.business_phone \|\| undefined/)
+  assert.match(source, /fromNumber: replyFromNumber \|\| latest\.business_phone \|\| undefined/)
 })
 
 test('HighLevel conversation sender supports explicit WhatsApp, SMS, Messenger, Instagram and Email routes', async () => {

@@ -34,6 +34,8 @@ import {
   getContactConversation,
   getContactJourney,
   getContactWhatsAppRoutingEvents,
+  getContactConversationalChannelPreference,
+  updateContactConversationalChannelPreference,
   refreshContactExternalData,
   bulkUpdateContactCustomFields
 } from '../controllers/contactsController.js'
@@ -87,6 +89,8 @@ router.get('/:id/payment-link-delivery-options', getContactPaymentLinkDeliveryOp
 router.get('/:id/payments', getContactPayments)
 router.get('/:id/appointments', getContactAppointments)
 router.get('/:id/conversation', requireModuleAccess('chat'), getContactConversation)
+router.get('/:id/chat-channel-preference', requireModuleAccess('chat'), getContactConversationalChannelPreference)
+router.put('/:id/chat-channel-preference', requireModuleAccess('chat'), updateContactConversationalChannelPreference)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.post('/:id/refresh', refreshContactExternalData)

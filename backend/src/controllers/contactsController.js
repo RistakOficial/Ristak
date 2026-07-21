@@ -113,11 +113,54 @@ import {
   listContactAppointmentsPage,
   listContactPaymentsPage
 } from '../services/contactDetailPaginationService.js'
+import {
+  getHighLevelConversationalChannelPreference,
+  setHighLevelConversationalChannelPreference
+} from '../services/highLevelConversationalChannelRoutingService.js'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
 const PROVIDER_READ_RECEIPT_TIMEOUT_MS = 3500
 const CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS = 8000
+
+export const getContactConversationalChannelPreference = async (req, res) => {
+  try {
+    const contactId = cleanString(req.params?.id)
+    const contact = await db.get('SELECT id FROM contacts WHERE id = ? LIMIT 1', [contactId])
+    if (!contact) return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
+
+    const preference = await getHighLevelConversationalChannelPreference(contactId)
+    res.json({ success: true, data: preference })
+  } catch (error) {
+    logger.error(`Error obteniendo canal conversacional del contacto: ${error.message}`)
+    res.status(500).json({ success: false, error: 'No se pudo obtener el canal de respuesta' })
+  }
+}
+
+export const updateContactConversationalChannelPreference = async (req, res) => {
+  try {
+    const preference = await setHighLevelConversationalChannelPreference(
+      req.params?.id,
+      req.body?.channel,
+      {
+        selectedByUserId: req.user?.userId || req.user?.id || null,
+        source: 'manual'
+      }
+    )
+    res.json({ success: true, data: preference })
+  } catch (error) {
+    const status = error.code === 'CONTACT_NOT_FOUND'
+      ? 404
+      : error.code === 'INVALID_HIGHLEVEL_CONVERSATIONAL_CHANNEL'
+        ? 400
+        : 500
+    if (status === 500) logger.error(`Error guardando canal conversacional del contacto: ${error.message}`)
+    res.status(status).json({
+      success: false,
+      error: status === 500 ? 'No se pudo guardar el canal de respuesta' : error.message
+    })
+  }
+}
 let contactConversationDeadlineMs = CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS
 
 export function setContactConversationDeadlineMsForTest(value = null) {

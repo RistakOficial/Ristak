@@ -88,6 +88,14 @@ interface ChatReadStateResult {
   updated?: number
 }
 
+export interface ContactConversationalChannelPreference {
+  contactId: string
+  channel: 'whatsapp' | 'sms'
+  selectedAt?: string | null
+  selectedByUserId?: string | null
+  source?: string
+}
+
 function normalizeJourneyEvents(data: unknown): JourneyEvent[] {
   if (!Array.isArray(data)) {
     return []
@@ -558,6 +566,22 @@ export const contactsService = {
 
     const data = await apiClient.put<Contact>(`/contacts/${id}`, payload)
     return normalizeContact(data)
+  },
+
+  async getConversationalChannelPreference(id: string): Promise<ContactConversationalChannelPreference | null> {
+    return apiClient.get<ContactConversationalChannelPreference | null>(
+      `/contacts/${encodeURIComponent(id)}/chat-channel-preference`
+    )
+  },
+
+  async updateConversationalChannelPreference(
+    id: string,
+    channel: ContactConversationalChannelPreference['channel']
+  ): Promise<ContactConversationalChannelPreference> {
+    return apiClient.put<ContactConversationalChannelPreference>(
+      `/contacts/${encodeURIComponent(id)}/chat-channel-preference`,
+      { channel }
+    )
   },
 
   async deleteContact(id: string): Promise<void> {
