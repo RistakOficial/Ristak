@@ -1311,15 +1311,15 @@ Hay tres capas distintas:
    por modulo.
 
 En instalaciones administradas existe un acceso global de soporte desde el
-login normal. El operador escribe el correo dueño del cliente y la contraseña
-vigente del admin principal de Ristak Installer. La app consulta
+login normal. El operador escribe su propio correo y contraseña vigentes de
+administrador de Ristak Installer. La app consulta
 `/api/owner-credentials/verify` con su `client_id`, licencia e instalación; el
-Installer valida que el correo sea exactamente el dueño y responde
+Installer valida ambas credenciales contra `admin_users` y responde
 `support_access: true` sin entregar ni copiar el hash del admin.
-Para el `OWNER_EMAIL` administrado, esta comprobacion ocurre antes de cerrar el
-login local: si por casualidad la contraseña del cliente y la del admin son
-iguales, gana la sesión persistente de soporte. Los empleados con contraseña
-local correcta no hacen esta consulta extra.
+Aunque ese correo no exista entre los usuarios del cliente, la app toma la
+identidad administrativa local configurada en `OWNER_EMAIL`; nunca crea ni
+guarda al administrador central dentro de la base del cliente. Si la instalación
+todavía no tiene un administrador local, el acceso global no crea uno.
 
 Ese acceso genera un JWT local con `supportAccess=true` y sin `exp`, guardado en
 el mismo `localStorage` de una sesión normal. No se invalida cuando el cliente

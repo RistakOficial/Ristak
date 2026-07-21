@@ -489,8 +489,12 @@ export function isLicenseEnforced() {
  * para priorizar la validación global de soporte incluso cuando, por casualidad,
  * la contraseña del admin también coincide con el hash local del dueño.
  */
+export function getManagedOwnerEmail() {
+  return String(getConfig().ownerEmail || '').trim().toLowerCase()
+}
+
 export function isManagedOwnerEmail(email) {
-  const ownerEmail = String(getConfig().ownerEmail || '').trim().toLowerCase()
+  const ownerEmail = getManagedOwnerEmail()
   const candidate = String(email || '').trim().toLowerCase()
   return !!ownerEmail && !!candidate && ownerEmail === candidate
 }
@@ -1295,8 +1299,8 @@ export async function decideCentralDatabaseStorage({
 /**
  * Verifica credenciales contra el portal central. Puede devolver el hash vigente
  * del dueño para sincronizar la copia local o `support_access: true` cuando la
- * contraseña corresponde al admin principal del Installer. El hash del admin
- * nunca se devuelve ni se guarda en esta instalación.
+ * el correo y la contraseña corresponden a un administrador del Installer. El
+ * hash del admin nunca se devuelve ni se guarda en esta instalación.
  */
 export async function verifyOwnerCredentialsWithServer(email, password) {
   const config = getConfig()

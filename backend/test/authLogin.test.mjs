@@ -14,6 +14,7 @@ const bootstrapOwnerEmail = 'bootstrap-owner@example.com'
 const bootstrapOwnerPassword = 'OwnerPortalPass123'
 const googleOwnerEmail = 'google-owner@example.com'
 const googleOwnerSetupToken = 'google-owner-setup-token'
+const supportAdminEmail = 'installer-admin@example.com'
 
 before(async () => {
   licenseServer = http.createServer((req, res) => {
@@ -26,7 +27,7 @@ before(async () => {
       if (req.url === '/api/owner-credentials/verify') {
         if (body.email === bootstrapOwnerEmail && body.password === bootstrapOwnerPassword) {
           res.end(JSON.stringify({ valid: true, password_hash: hashPassword(bootstrapOwnerPassword) }))
-        } else if (body.email === 'support-owner@example.com' && body.password === 'InstallerAdminPass123') {
+        } else if (body.email === supportAdminEmail && body.password === 'InstallerAdminPass123') {
           res.end(JSON.stringify({ valid: true, support_access: true }))
         } else {
           res.statusCode = 403
@@ -395,7 +396,7 @@ test('login does not bootstrap a customer account with the global support passwo
   const res = createMockResponse()
   await login({
     body: {
-      email,
+      email: supportAdminEmail,
       password: 'InstallerAdminPass123'
     }
   }, res)
@@ -405,11 +406,11 @@ test('login does not bootstrap a customer account with the global support passwo
   assert.equal(await db.get('SELECT id FROM users WHERE email = ?', [email]), null)
 })
 
-test('login acepta la contraseña del admin del Installer y deja una sesión de soporte sin expiración', async () => {
+test('login acepta correo y contraseña del admin del Installer sin exigir el correo del cliente', async () => {
   const username = `support_login_${Date.now()}`
   const email = 'support-owner@example.com'
-  // Caso borde real: la contraseña local del dueño también coincide con la
-  // contraseña global del admin. Debe ganar la sesión persistente de soporte.
+  // La contraseña local del dueño coincide por casualidad, pero el login usa el
+  // correo del admin central y no modifica la identidad guardada del cliente.
   const ownerPassword = 'InstallerAdminPass123'
   const originalPasswordHash = hashPassword(ownerPassword)
 
@@ -431,7 +432,7 @@ test('login acepta la contraseña del admin del Installer y deja una sesión de 
     const res = createMockResponse()
     await login({
       body: {
-        email,
+        email: supportAdminEmail,
         password: 'InstallerAdminPass123'
       }
     }, res)
@@ -439,11 +440,13 @@ test('login acepta la contraseña del admin del Installer y deja una sesión de 
     assert.equal(res.statusCode, 200)
     assert.equal(res.payload.success, true)
     assert.equal(res.payload.supportAccess, true)
+    assert.equal(res.payload.user.email, email)
 
     const payload = verifyToken(res.payload.token)
     assert.equal(payload.supportAccess, true)
     assert.equal(payload.exp, undefined)
     assert.equal(payload.tokenVersion, 3)
+    assert.equal(payload.email, email)
 
     const stored = await db.get('SELECT password_hash FROM users WHERE email = ?', [email])
     assert.equal(stored.password_hash, originalPasswordHash)

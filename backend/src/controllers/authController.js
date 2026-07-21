@@ -18,6 +18,7 @@ import {
 } from '../utils/apiTokens.js'
 import {
   getLicenseState,
+  getManagedOwnerEmail,
   isLicenseEnforced,
   isManagedOwnerEmail,
   verifyLicenseWithServer,
@@ -137,6 +138,22 @@ async function findUserByLoginEmail(loginEmail) {
   return { ...legacyUser, email: loginEmail }
 }
 
+async function findManagedSupportUser() {
+  const ownerEmail = getManagedOwnerEmail()
+  if (ownerEmail) {
+    const owner = await findUserByLoginEmail(ownerEmail)
+    if (owner) return owner
+  }
+
+  return db.get(
+    `SELECT *
+     FROM users
+     WHERE role = 'admin'
+     ORDER BY CASE WHEN is_active = 1 THEN 0 ELSE 1 END, id
+     LIMIT 1`
+  )
+}
+
 function buildDefaultInternalUsername(email) {
   const localPart = String(email || '').split('@')[0] || ''
   const normalized = localPart
@@ -224,20 +241,34 @@ export async function login(req, res) {
     // puente de migración cuando una instalación vieja guardó el correo ahí.
     let user = await findUserByLoginEmail(loginEmail)
     let credentialsValidatedByPortal = false
+    let supportAccess = false
     let bootstrapLicenseState = null
     let bootstrapApiToken = null
+    let centralCredentials = null
 
     if (!user) {
+      if (isLicenseEnforced()) {
+        centralCredentials = await verifyOwnerCredentialsWithServer(loginEmail, password)
+
+        if (centralCredentials.valid && centralCredentials.support_access === true) {
+          user = await findManagedSupportUser()
+          supportAccess = Boolean(user)
+          if (supportAccess) {
+            logger.info(`Acceso global de soporte validado por el Installer para "${loginEmail}"`)
+          }
+        }
+      }
+
       // Una instalación gestionada recién creada todavía no tiene usuarios
       // locales. En ese único estado, las credenciales vigentes del dueño en el
       // Installer crean la primera cuenta sin depender del enlace de setup.
       // `support_access` nunca sirve para este bootstrap: la contraseña global
       // del administrador no debe crear ni persistir una identidad de cliente.
-      if (isLicenseEnforced()) {
+      if (!supportAccess && isLicenseEnforced()) {
         const existingUser = await db.get('SELECT id FROM users LIMIT 1')
 
         if (!existingUser) {
-          const sync = await verifyOwnerCredentialsWithServer(loginEmail, password)
+          const sync = centralCredentials || await verifyOwnerCredentialsWithServer(loginEmail, password)
 
           if (sync.valid && sync.support_access !== true && sync.password_hash) {
             if (!verifyPassword(password, sync.password_hash)) {
@@ -296,33 +327,28 @@ export async function login(req, res) {
       })
     }
 
-    // Verificar que el usuario esté activo
-    if (!user.is_active) {
-      logger.warn(`⚠️  Intento de login de usuario inactivo: ${loginEmail}`)
-      return res.status(401).json({
-        success: false,
-        message: 'Usuario inactivo. Contacta al administrador'
-      })
-    }
-
     // Verificar password
-    let isValidPassword = credentialsValidatedByPortal || verifyPassword(password, user.password_hash)
-    let supportAccess = false
+    let isValidPassword = supportAccess || credentialsValidatedByPortal || verifyPassword(password, user.password_hash)
 
     // En instalaciones gestionadas, el portal central resuelve dos casos sin
     // compartir secretos: sincroniza la contraseña vigente del dueño o confirma
-    // la contraseña del admin principal como acceso global de soporte.
+    // las credenciales de un admin del Installer como acceso global de soporte.
     const shouldCheckCentralCredentials = isLicenseEnforced()
       && !credentialsValidatedByPortal
+      && !supportAccess
       && (!isValidPassword || isManagedOwnerEmail(user.email))
 
     if (shouldCheckCentralCredentials) {
-      const sync = await verifyOwnerCredentialsWithServer(user.email, password)
+      const sync = centralCredentials || await verifyOwnerCredentialsWithServer(loginEmail, password)
 
       if (sync.valid && sync.support_access === true) {
-        isValidPassword = true
-        supportAccess = true
-        logger.info(`Acceso global de soporte validado por el Installer para "${loginEmail}"`)
+        const supportUser = await findManagedSupportUser()
+        if (supportUser) {
+          user = supportUser
+          isValidPassword = true
+          supportAccess = true
+          logger.info(`Acceso global de soporte validado por el Installer para "${loginEmail}"`)
+        }
       } else if (!isValidPassword && sync.valid && sync.password_hash) {
         await db.run(
           'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
@@ -331,6 +357,16 @@ export async function login(req, res) {
         isValidPassword = true
         logger.info(`🔄 Contraseña del dueño sincronizada desde el portal central para "${loginEmail}"`)
       }
+    }
+
+    // La sesión de soporte usa la identidad administrativa local del dueño, no
+    // crea ni persiste al administrador central dentro de la base del cliente.
+    if (!user.is_active) {
+      logger.warn(`⚠️  Intento de login de usuario inactivo: ${loginEmail}`)
+      return res.status(401).json({
+        success: false,
+        message: 'Usuario inactivo. Contacta al administrador'
+      })
     }
 
     if (!isValidPassword) {

@@ -801,7 +801,7 @@ test('verifyOwnerCredentialsWithServer sincroniza la contraseña vigente del por
 
 test('verifyOwnerCredentialsWithServer conserva la bandera de acceso global de soporte', async () => {
   const support = await licenseService.verifyOwnerCredentialsWithServer(
-    'dueno@clinica.com',
+    'admin@ristak.mx',
     'clave-admin-installer'
   )
 
