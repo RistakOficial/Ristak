@@ -609,10 +609,15 @@ usar `action="disqualify"`:
 `disqualifyOutcome` acepta `message` + `buttonMessage`, `specific_page` +
 `buttonPageId`, o `url` + `buttonUrl`. El backend guarda la submission y el
 contacto con estado `disqualified`, pero omite tanto CAPI como el Pixel del
-navegador. En la configuracion Meta del formulario, `SUBMITTED` conserva el
-evento para todos los envios y `QUALIFIED` lo limita a quienes no fueron
-descalificados. Un HTML importado no debe llamar `fbq`, `gtag` o `dataLayer` por
-su cuenta: Ristak dispara la conversion despues de conocer el veredicto.
+navegador. En HTML importado, el editor no expone un selector `SUBMITTED` frente
+a `QUALIFIED`: muestra `Enviar cuando · Formulario enviado` como texto fijo y
+deja que el contrato del propio HTML decida la calificacion. Sin
+`data-rstk-conversion-condition`, el evento aplica a todo envio; con
+`data-rstk-conversion-condition="qualified_only"`, solo aplica a quien no fue
+descalificado. El selector `Evento al terminar` permanece disponible, incluida
+la opcion `Sin evento (solo PageView)`. Un HTML importado no debe llamar `fbq`,
+`gtag` o `dataLayer` por su cuenta: Ristak dispara la conversion despues de
+conocer el veredicto.
 
 ### Elementos Nativos Ristak En HTML Importado
 

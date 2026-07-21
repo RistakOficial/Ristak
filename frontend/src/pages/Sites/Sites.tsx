@@ -31743,6 +31743,7 @@ const MetaFormSubmitSettingsPanel: React.FC<{
     : 'none'
   const active = metaEnabled && activeEventName !== 'none'
   const submitParameters = site.theme?.metaEventParameters
+  const importedHtmlForm = isImportedHtmlSite(site)
   const submitCondition = normalizeMetaSubmitCondition(
     site.theme?.metaSubmitCondition ||
     (site.theme as (SiteTheme & { meta_submit_condition?: unknown }) | undefined)?.meta_submit_condition
@@ -31788,20 +31789,27 @@ const MetaFormSubmitSettingsPanel: React.FC<{
           </CustomSelect>
         </label>
 
-        <label className={styles.editorSettingsField}>
-          <span>Enviar cuando</span>
-          <CustomSelect
-            value={submitCondition}
-            disabled={disabled || !active}
-            portal
-            onChange={(event) => patchSubmitCondition(event.target.value as SiteMetaSubmitCondition)}
-            onBlur={saveSoon}
-          >
-            {metaSubmitConditionOptions.map(option => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </CustomSelect>
-        </label>
+        {importedHtmlForm ? (
+          <div className={styles.editorSettingsField}>
+            <span>Enviar cuando</span>
+            <div className={styles.editorSettingsStaticValue}>Formulario enviado</div>
+          </div>
+        ) : (
+          <label className={styles.editorSettingsField}>
+            <span>Enviar cuando</span>
+            <CustomSelect
+              value={submitCondition}
+              disabled={disabled || !active}
+              portal
+              onChange={(event) => patchSubmitCondition(event.target.value as SiteMetaSubmitCondition)}
+              onBlur={saveSoon}
+            >
+              {metaSubmitConditionOptions.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
       </div>
 
       <button

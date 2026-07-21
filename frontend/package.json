@@ -9,6 +9,7 @@
     "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
+    "test:sites-imported-form-meta-trigger": "node scripts/test-sites-imported-form-meta-trigger.mjs",
     "test:appointment-modal-contract": "node scripts/test-appointment-modal-contract.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
     "test:highlevel-chat-send": "node scripts/test-highlevel-chat-send.mjs",

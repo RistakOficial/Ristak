@@ -15593,6 +15593,17 @@
   white-space: nowrap;
 }
 
+.editorSettingsStaticValue {
+  min-width: 0;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: var(--font-weight-medium, 500);
+  line-height: 1.2;
+}
+
 .editorSettingsInlineToggle {
   width: 100%;
   min-height: 38px;

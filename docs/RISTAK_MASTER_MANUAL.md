@@ -4379,8 +4379,12 @@ contacto y submission como `disqualified`, permite automatizaciones de descarte
 y bloquea el evento de conversion tanto en CAPI como en el Pixel del navegador.
 Usar solo `specific_page` o `url` navega, pero no descalifica; por eso el editor
 y las instrucciones para IA deben exigir `action="disqualify"` cuando el destino
-representa un no candidato. El selector Meta muestra explicitamente todos los
-envios (`SUBMITTED`) frente a solo calificados (`QUALIFIED`).
+representa un no candidato. Para HTML importado, el editor mantiene el selector
+`Evento al terminar`, incluida la opcion `Sin evento (solo PageView)`, pero
+reemplaza la eleccion `SUBMITTED`/`QUALIFIED` por el texto fijo
+`Enviar cuando · Formulario enviado`. La condicion real sigue siendo code-first:
+el HTML puede declarar `data-rstk-conversion-condition="qualified_only"` y Ristak
+omite Pixel/CAPI cuando el mismo formulario descalifica al contacto.
 
 Para HTML importado con elementos nativos de Ristak, el contrato es declarar una
 zona con `data-rstk-native-element="form|calendar|payment|video"` y
