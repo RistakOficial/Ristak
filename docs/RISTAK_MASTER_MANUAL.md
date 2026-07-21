@@ -1844,8 +1844,10 @@ desde `Configuración > Inteligencia Artificial`.
 El historial de `/chat` conserva una textura punteada ligera, con los puntos
 espaciados para que el fondo se sienta limpio y no compita con los mensajes.
 
-Los avisos flotantes de `/chat` desktop se anclan al lado izquierdo y deben
-ajustar textos largos sin aumentar el ancho del documento. El historial de la
+Los avisos flotantes de `/chat` desktop usan el mismo `NotificationContext` y el
+mismo `ToastContainer` global del resto del CRM, anclado al lado derecho. Chat no
+debe mover ese contenedor con atributos o estilos especiales por ruta. Los avisos
+ajustan textos largos sin aumentar el ancho del documento. El historial de la
 conversacion solo admite desplazamiento vertical: globos, errores, menus y
 contenido del mensaje nunca deben crear scroll horizontal. El detalle de error
 de cada mensaje se abre hacia el interior del hilo (a la izquierda para mensajes

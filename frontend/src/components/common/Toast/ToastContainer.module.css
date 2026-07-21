@@ -20,11 +20,6 @@
   bottom: 92px;
 }
 
-:global(body[data-desktop-chat-active='true']:not([data-phone-app='active'])) .container {
-  right: auto;
-  left: 24px;
-}
-
 :global(body[data-phone-app='active']) .container {
   top: max(10px, var(--phone-safe-area-top));
   right: max(10px, var(--phone-safe-area-right));
