@@ -22,6 +22,7 @@ import {
   Percent,
   Plus,
   ReceiptText,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -91,7 +92,11 @@ import {
   getGigstackUnitName,
   gigstackPaymentMethodOptions,
   gigstackProductKeyOptions,
-  gigstackUnitOptions
+  gigstackUnitOptions,
+  isValidGigstackProductKey,
+  isValidGigstackUnitKey,
+  normalizeGigstackProductKeyInput,
+  normalizeGigstackUnitKeyInput
 } from '@/utils/gigstackFiscalCatalog'
 import {
   BASE_VARIABLES,
@@ -195,6 +200,7 @@ const sectionItems: Array<{ id: PaymentsSectionId; label: string; icon: React.Re
 const sectionIds = sectionItems.map((item) => item.id)
 const gatewayIds: PaymentGatewayId[] = ['highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill']
 const GIGSTACK_API_URL = 'https://gigstack.pro/api-facturacion'
+const SAT_PRODUCT_CATALOG_URL = 'https://wwwmat.sat.gob.mx/consultas/53693/catalogo-de-productos-y-servicios'
 const stripeModeIds: StripeModeId[] = ['test', 'live']
 const emptyStripeModeCredentials: Record<StripeModeId, StripeModeCredentials> = {
   test: { publishableKey: '', secretKey: '', webhookSecret: '' },
@@ -801,6 +807,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [savingRebillMode, setSavingRebillMode] = useState<StripeModeId | null>(null)
   const [testingRebillMode, setTestingRebillMode] = useState<StripeModeId | null>(null)
   const [testingGigstackMode, setTestingGigstackMode] = useState<PaymentModeId | null>(null)
+  const [syncingGigstackFiscal, setSyncingGigstackFiscal] = useState(false)
   const [rebillConnectionFailed, setRebillConnectionFailed] = useState(false)
   const [disconnectingRebillMode, setDisconnectingRebillMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
@@ -1431,13 +1438,45 @@ export const PaymentsConfiguration: React.FC = () => {
     )
   }
 
+  const syncGigstackFiscalProfile = async (draftSettings = latestSettingsRef.current) => {
+    if (syncingGigstackFiscal) return
+    const mode: PaymentModeId = draftSettings.paymentMode === 'test' ? 'test' : 'live'
+    const token = mode === 'test'
+      ? draftSettings.taxes.gigstackTestApiToken
+      : draftSettings.taxes.gigstackLiveApiToken
+    const hasSavedToken = mode === 'test'
+      ? draftSettings.taxes.hasGigstackTestApiToken
+      : draftSettings.taxes.hasGigstackLiveApiToken
+    if (!token && !hasSavedToken) {
+      showToast('warning', `Falta la API key ${mode === 'test' ? 'Test' : 'Live'}`, 'Pega la llave del ambiente activo antes de conectar Gigstack.')
+      return
+    }
+
+    setSyncingGigstackFiscal(true)
+    setAutoSaveState('saving')
+    try {
+      const synced = await paymentSettingsService.syncGigstackFiscalProfile(draftSettings, mode, token || '')
+      const serialized = JSON.stringify(synced)
+      latestSettingsRef.current = synced
+      lastSavedSettingsRef.current = serialized
+      setSettings(synced)
+      setAutoSaveState('saved')
+      showToast('success', 'Datos fiscales actualizados', 'RFC, razón social, régimen, código postal e impuesto ya vienen del equipo de Gigstack.')
+    } catch (error: any) {
+      setAutoSaveState('error')
+      showToast('error', 'No se pudo activar Gigstack', error?.message || 'Revisa la configuración fiscal de tu equipo en Gigstack.')
+    } finally {
+      setSyncingGigstackFiscal(false)
+    }
+  }
+
   const setGigstackDefaultUnit = (unitKey: string) => {
     setSettings((current) => ({
       ...current,
       taxes: {
         ...current.taxes,
         gigstackDefaultUnitKey: unitKey,
-        gigstackDefaultUnitName: getGigstackUnitName(unitKey) || current.taxes.gigstackDefaultUnitName
+        gigstackDefaultUnitName: getGigstackUnitName(unitKey) || unitKey
       }
     }))
   }
@@ -1445,8 +1484,16 @@ export const PaymentsConfiguration: React.FC = () => {
   const loadPaymentSettings = async (signal?: AbortSignal) => {
     setLoadingSettings(true)
     try {
-      const nextSettings = await paymentSettingsService.getSettings(signal)
+      let nextSettings = await paymentSettingsService.getSettings(signal)
       if (signal?.aborted) return
+      if (nextSettings.taxes.gigstackEnabled && !nextSettings.taxes.gigstackSatConnected) {
+        const mode: PaymentModeId = nextSettings.paymentMode === 'test' ? 'test' : 'live'
+        try {
+          nextSettings = await paymentSettingsService.syncGigstackFiscalProfile(nextSettings, mode)
+        } catch (error: any) {
+          showToast('warning', 'Gigstack necesita revisión', error?.message || 'No se pudieron actualizar los datos fiscales desde Gigstack.')
+        }
+      }
       const serialized = JSON.stringify(nextSettings)
       loadedSettingsRef.current = true
       lastSavedSettingsRef.current = serialized
@@ -4792,12 +4839,8 @@ export const PaymentsConfiguration: React.FC = () => {
   )
 
   const renderTaxesSection = () => {
-    const previewBaseAmount = 2490
-    const previewTaxAmount = calculatePreviewTax(previewBaseAmount, taxes)
-    const previewTotalAmount = taxes.enabled && taxes.calculationMode === 'exclusive'
-      ? previewBaseAmount + previewTaxAmount
-      : previewBaseAmount
     const taxRateLabel = `${getTaxRateValue(taxes)}%`
+    const gigstackControlsFiscalData = taxes.gigstackEnabled
     const hasAnyGigstackToken = Boolean(taxes.hasGigstackTestApiToken || taxes.hasGigstackLiveApiToken)
     const hasBothGigstackTokens = Boolean(taxes.hasGigstackTestApiToken && taxes.hasGigstackLiveApiToken)
 
@@ -4807,17 +4850,38 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Impuestos</h2>
-              <p>Activa una regla fiscal global para que los formularios de cobro muestren impuestos solo cuando corresponda.</p>
+              <p>{gigstackControlsFiscalData
+                ? 'Gigstack es la fuente de los datos fiscales usados para los pagos y las facturas.'
+                : 'Configura una regla de impuestos interna para mostrarla en tus cobros aunque no uses facturación automática.'}</p>
             </div>
-            <Badge variant={taxes.enabled ? 'success' : 'neutral'}>
+            <Badge variant={gigstackControlsFiscalData ? 'info' : taxes.enabled ? 'success' : 'neutral'}>
               <Percent size={14} />
-              {taxes.enabled ? 'Activo' : 'Apagado'}
+              {gigstackControlsFiscalData ? 'Controlado por Gigstack' : taxes.enabled ? 'Manual activo' : 'Manual apagado'}
             </Badge>
           </div>
 
-          <div className={styles.switchStack}>
-            {renderSwitchRow('Cobrar impuestos', 'Cuando está apagado, registrar pagos y links no muestran opciones de impuestos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
-          </div>
+          {gigstackControlsFiscalData ? (
+            <div className={styles.fiscalSourceRow}>
+              <div>
+                <ShieldCheck size={17} />
+                <span>El RFC, la razón social, el régimen, el código postal y la tasa se importan del equipo fiscal de Gigstack.</span>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void syncGigstackFiscalProfile()}
+                disabled={syncingGigstackFiscal}
+              >
+                {syncingGigstackFiscal ? <Loader2 size={15} className={styles.spinIcon} /> : <RefreshCw size={15} />}
+                Actualizar desde Gigstack
+              </Button>
+            </div>
+          ) : (
+            <div className={styles.switchStack}>
+              {renderSwitchRow('Cobrar impuestos', 'Cuando está apagado, registrar pagos y links no muestran opciones de impuestos.', taxes.enabled, (next) => setTaxValue('enabled', next))}
+            </div>
+          )}
 
           <div className={styles.formGrid}>
             {renderField(
@@ -4827,17 +4891,23 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.taxName}
                 onChange={(event) => setTaxValue('taxName', event.target.value)}
                 placeholder="IVA"
+                disabled={gigstackControlsFiscalData}
               />
             )}
             {renderField(
-              'País de la tasa automática',
+              gigstackControlsFiscalData ? 'País fiscal' : 'País de la tasa automática',
               <CustomSelect
                 value={taxes.country || 'MX'}
                 onValueChange={(value) => setTaxValue('country', value)}
                 options={taxCountryOptions}
+                disabled={gigstackControlsFiscalData}
               />,
-              `Ristak usará ${taxRateLabel} según el país seleccionado.`
+              gigstackControlsFiscalData ? `Gigstack indicó una tasa de ${taxRateLabel}.` : `Ristak usará ${taxRateLabel} según el país seleccionado.`
             )}
+            {gigstackControlsFiscalData ? renderField(
+              'Tasa configurada en Gigstack',
+              <input type="text" value={taxRateLabel} disabled readOnly />
+            ) : null}
             {renderField(
               'Modo de cálculo',
               <CustomSelect
@@ -4847,6 +4917,7 @@ export const PaymentsConfiguration: React.FC = () => {
                   { value: 'exclusive', label: 'Se suma al total' },
                   { value: 'inclusive', label: 'Ya incluido en el precio' }
                 ]}
+                disabled={gigstackControlsFiscalData}
               />
             )}
             {renderField(
@@ -4856,6 +4927,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.fiscalId}
                 onChange={(event) => setTaxValue('fiscalId', event.target.value)}
                 placeholder="RFC o identificador fiscal"
+                disabled={gigstackControlsFiscalData}
               />
             )}
             {renderField(
@@ -4865,6 +4937,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.fiscalLegalName}
                 onChange={(event) => setTaxValue('fiscalLegalName', event.target.value)}
                 placeholder="Nombre o razón social"
+                disabled={gigstackControlsFiscalData}
               />
             )}
             {renderField(
@@ -4874,6 +4947,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.fiscalPostalCode}
                 onChange={(event) => setTaxValue('fiscalPostalCode', event.target.value)}
                 placeholder="Ej. 06600"
+                disabled={gigstackControlsFiscalData}
               />
             )}
             {renderField(
@@ -4883,6 +4957,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.fiscalRegime}
                 onChange={(event) => setTaxValue('fiscalRegime', event.target.value)}
                 placeholder="Ej. 612 - Personas físicas"
+                disabled={gigstackControlsFiscalData}
               />
             )}
           </div>
@@ -4904,13 +4979,14 @@ export const PaymentsConfiguration: React.FC = () => {
             'Enviar pagos confirmados a Gigstack',
             'Sólo se envían pagos nuevos que ya traen impuesto y un ambiente Test o Live explícito. No se facturan pagos anteriores.',
             taxes.gigstackEnabled,
-            (next) => setTaxValue('gigstackEnabled', next)
+            (next) => {
+              if (next) {
+                void syncGigstackFiscalProfile()
+              } else {
+                setTaxValue('gigstackEnabled', false)
+              }
+            }
           )}
-
-          <div className={styles.inlineWarning}>
-            <AlertTriangle size={17} />
-            <span>Protección SAT — un pago Test usa únicamente la API key Test. Un pago Live usa únicamente la API key Live. Si falta la llave correcta o el ambiente no viene claro, Ristak bloquea el envío.</span>
-          </div>
 
           <div className={styles.stripeModeGrid}>
             {stripeModeIds.map((mode) => {
@@ -5096,8 +5172,17 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.gigstackDefaultProductKey || defaultPaymentSettings.taxes.gigstackDefaultProductKey}
                 onValueChange={(value) => setTaxValue('gigstackDefaultProductKey', value)}
                 options={gigstackProductKeyOptions}
+                searchable
+                searchPlaceholder="Busca o escribe 8 dígitos"
+                allowCustomValue
+                normalizeCustomValue={normalizeGigstackProductKeyInput}
+                isCustomValueValid={isValidGigstackProductKey}
+                getCustomValueLabel={(value) => `Usar clave SAT ${value}`}
               />,
-              'Se usa en cobros directos o productos sin mapeo propio.'
+              <>
+                Los ejemplos son sólo atajos: puedes buscar o escribir cualquier clave válida de 8 dígitos para tu actividad.{' '}
+                <a href={SAT_PRODUCT_CATALOG_URL} target="_blank" rel="noreferrer">Consultar catálogo completo del SAT</a>
+              </>
             )}
             {renderField(
               'Unidad SAT por defecto',
@@ -5105,10 +5190,27 @@ export const PaymentsConfiguration: React.FC = () => {
                 value={taxes.gigstackDefaultUnitKey || defaultPaymentSettings.taxes.gigstackDefaultUnitKey}
                 onValueChange={setGigstackDefaultUnit}
                 options={gigstackUnitOptions}
-              />
+                searchable
+                searchPlaceholder="Busca o escribe la unidad"
+                allowCustomValue
+                normalizeCustomValue={normalizeGigstackUnitKeyInput}
+                isCustomValueValid={isValidGigstackUnitKey}
+                getCustomValueLabel={(value) => `Usar unidad SAT ${value}`}
+              />,
+              'Puedes elegir una unidad frecuente o escribir directamente la clave del catálogo.'
             )}
             {renderField(
-              'Forma de pago fallback',
+              'Nombre de la unidad',
+              <input
+                type="text"
+                value={taxes.gigstackDefaultUnitName || ''}
+                onChange={(event) => setTaxValue('gigstackDefaultUnitName', event.target.value)}
+                placeholder="Ej. Pieza, consulta, hora"
+              />,
+              'Así se mostrará la unidad en el concepto de la factura.'
+            )}
+            {renderField(
+              'Forma de pago si no se identifica',
               <CustomSelect
                 value={taxes.gigstackDefaultPaymentMethod || defaultPaymentSettings.taxes.gigstackDefaultPaymentMethod}
                 onValueChange={(value) => setTaxValue('gigstackDefaultPaymentMethod', value)}
@@ -5116,10 +5218,6 @@ export const PaymentsConfiguration: React.FC = () => {
               />,
               'Ristak sólo usa una forma específica cuando el proveedor confirma cuál fue. Si no, usa este valor para no adivinar datos fiscales.'
             )}
-          </div>
-          <div className={styles.inlineWarning}>
-            <AlertTriangle size={17} />
-            <span>La clave de producto, la unidad y la forma de pago deben corresponder a tu operación fiscal real. Ristak valida el formato y el ambiente, pero la clasificación correcta debes confirmarla con tu contador.</span>
           </div>
           <div className={styles.gigstackActions}>
             <Button
@@ -5140,20 +5238,6 @@ export const PaymentsConfiguration: React.FC = () => {
               <ExternalLink size={15} />
               Abrir Gigstack
             </Button>
-          </div>
-          <div className={styles.taxPreview}>
-            <div>
-              <span>Subtotal</span>
-              <strong>{formatCompactMoney(previewBaseAmount, accountCurrency)}</strong>
-            </div>
-            <div>
-              <span>{taxes.taxName || 'IVA'} · {taxRateLabel}</span>
-              <strong>{taxes.enabled ? formatCompactMoney(previewTaxAmount, accountCurrency) : 'Apagado'}</strong>
-            </div>
-            <div>
-              <span>Total mostrado</span>
-              <strong>{formatCompactMoney(previewTotalAmount, accountCurrency)}</strong>
-            </div>
           </div>
         </Card>
       </div>

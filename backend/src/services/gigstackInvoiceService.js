@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import JSZip from 'jszip'
 
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -10,6 +11,19 @@ import {
 
 const GIGSTACK_API_BASE_URL = (process.env.GIGSTACK_API_BASE_URL || 'https://api.gigstack.io/v2').replace(/\/+$/, '')
 const GIGSTACK_REQUEST_TIMEOUT_MS = 15_000
+const GIGSTACK_FILE_MAX_BYTES = 25 * 1024 * 1024
+const GIGSTACK_UNIT_NAMES = {
+  E48: 'Unidad de servicio',
+  H87: 'Pieza',
+  EA: 'Elemento',
+  ACT: 'Actividad',
+  MON: 'Mes',
+  ANN: 'Año',
+  HUR: 'Hora',
+  DAY: 'Día',
+  KGM: 'Kilogramo',
+  MTR: 'Metro'
+}
 const GIGSTACK_JOB_LEASE_MS = 2 * 60 * 1000
 const GIGSTACK_JOB_BATCH_SIZE = 10
 const GIGSTACK_MAX_ATTEMPTS = 12
@@ -96,7 +110,69 @@ function assertGigstackTokenMode(token, mode) {
   return metadata
 }
 
-function normalizeGigstackProductKey(value, fallback = '82101800') {
+function normalizeGigstackTaxRate(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0) return null
+  const percentage = parsed > 0 && parsed <= 1 ? parsed * 100 : parsed
+  return Math.round(percentage * 1_000_000) / 1_000_000
+}
+
+function normalizeGigstackTeamProfile(response, tokenMetadata) {
+  const team = response?.data && typeof response.data === 'object' ? response.data : response
+  const settings = team?.settings && typeof team.settings === 'object' ? team.settings : {}
+  const taxes = Array.isArray(settings.taxes) ? settings.taxes : []
+  const tax = taxes.find((item) => item && typeof item === 'object' && item.withholding !== true) || null
+  const rateValue = normalizeGigstackTaxRate(tax?.rate ?? tax?.percentage ?? tax?.value)
+  const satConnected = team?.sat?.completed === true
+
+  if (!satConnected) {
+    throw createGigstackError('El equipo de Gigstack todavía no tiene completa la conexión con el SAT.', {
+      status: 409,
+      code: 'gigstack_sat_not_connected'
+    })
+  }
+  if (!tax || rateValue === null) {
+    throw createGigstackError('Gigstack no tiene una tasa de impuesto válida configurada para este equipo.', {
+      status: 409,
+      code: 'gigstack_tax_not_configured'
+    })
+  }
+
+  const fiscalProfile = {
+    fiscalId: cleanString(team?.tax_id, 120),
+    fiscalLegalName: cleanString(team?.legal_name, 180),
+    fiscalPostalCode: cleanString(team?.address?.zip, 20),
+    fiscalRegime: cleanString(team?.tax_system, 120)
+  }
+  const missingFiscalFields = Object.entries(fiscalProfile)
+    .filter(([, value]) => !value)
+    .map(([field]) => field)
+  if (missingFiscalFields.length) {
+    throw createGigstackError('El perfil fiscal de Gigstack está incompleto. Revisa RFC, razón social, régimen y código postal antes de activarlo.', {
+      status: 409,
+      code: 'gigstack_fiscal_profile_incomplete'
+    })
+  }
+
+  const unitKey = normalizeGigstackUnitKey(settings.unit_key, '')
+
+  return {
+    teamId: cleanString(team?.id || tokenMetadata.teamId, 180),
+    satConnected,
+    ...fiscalProfile,
+    taxName: cleanString(tax?.type || tax?.name || 'IVA', 80) || 'IVA',
+    rateValue,
+    taxFactor: ['Tasa', 'Cuota', 'Exento'].includes(tax?.factor) ? tax.factor : 'Tasa',
+    calculationMode: tax?.inclusive === true ? 'inclusive' : 'exclusive',
+    country: 'MX',
+    defaultDescription: cleanString(settings.default_description, 500),
+    productKey: normalizeGigstackProductKey(settings.product_key, ''),
+    unitKey,
+    unitName: GIGSTACK_UNIT_NAMES[unitKey] || unitKey
+  }
+}
+
+function normalizeGigstackProductKey(value, fallback = '01010101') {
   const normalized = cleanString(value, 20).replace(/\D/g, '').slice(0, 8)
   return normalized.length === 8 ? normalized : fallback
 }
@@ -166,7 +242,7 @@ async function getProductFiscalConfig(item = {}) {
 
 function buildGigstackTaxLine(tax) {
   return {
-    factor: 'Tasa',
+    factor: ['Tasa', 'Cuota', 'Exento'].includes(tax.gigstackTaxFactor) ? tax.gigstackTaxFactor : 'Tasa',
     inclusive: tax.calculationMode === 'inclusive',
     rate: roundMoney(tax.rateValue / 100),
     type: cleanString(tax.taxName || tax.name || 'IVA', 20) || 'IVA',
@@ -242,6 +318,7 @@ function getPaymentTax(row, settings) {
       rateType: 'percentage',
       rateValue: roundMoney(storedTax.rateValue || storedTax.rate || settings.taxes.rateValue),
       rateSource: storedTax.rateSource || settings.taxes.rateSource,
+      gigstackTaxFactor: storedTax.gigstackTaxFactor || settings.taxes.gigstackTaxFactor,
       calculationMode: storedTax.calculationMode || settings.taxes.calculationMode,
       country: storedTax.country || settings.taxes.country,
       fiscalId: storedTax.fiscalId || settings.taxes.fiscalId,
@@ -339,6 +416,270 @@ async function gigstackRequest(path, { token, method = 'GET', body } = {}) {
     })
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+export async function getGigstackFiscalProfile({ mode, token } = {}) {
+  const normalizedMode = normalizeGigstackPaymentMode(mode)
+  if (!normalizedMode) {
+    throw createGigstackError('Elige si quieres sincronizar Gigstack Test o Live.', {
+      status: 400,
+      code: 'invalid_gigstack_mode'
+    })
+  }
+
+  let selectedToken = cleanString(token, 5000)
+  if (!selectedToken) {
+    const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+    selectedToken = getGigstackTokenForMode(settings.taxes, normalizedMode)
+  }
+  const tokenMetadata = assertGigstackTokenMode(selectedToken, normalizedMode)
+  if (!tokenMetadata.teamId) {
+    throw createGigstackError('La API key de Gigstack no identifica el equipo fiscal.', {
+      status: 400,
+      code: 'gigstack_missing_team'
+    })
+  }
+
+  const response = await gigstackRequest(`/teams/${encodeURIComponent(tokenMetadata.teamId)}`, {
+    token: selectedToken
+  })
+  return normalizeGigstackTeamProfile(response, tokenMetadata)
+}
+
+function findInvoiceFileReference(payload, format) {
+  if (!payload) return null
+  const root = payload?.data && typeof payload.data === 'object' ? payload.data : payload
+  const candidates = [
+    root?.[format],
+    root?.[`${format}_url`],
+    root?.[`${format}Url`],
+    root?.[`${format}_file`],
+    root?.[`${format}File`],
+    root?.files?.[format]
+  ]
+  const files = Array.isArray(root?.files) ? root.files : []
+  const listedFile = files.find((file) => {
+    const type = cleanString(file?.type || file?.format || file?.extension || file?.name, 120).toLowerCase()
+    return type === format || type.endsWith(`.${format}`) || type.includes(format)
+  })
+  if (listedFile) candidates.push(listedFile)
+  return candidates.find((candidate) => candidate !== undefined && candidate !== null && candidate !== '') || null
+}
+
+function decodeInlineInvoiceFile(reference, format) {
+  if (Buffer.isBuffer(reference)) return reference
+  if (reference && typeof reference === 'object') {
+    const nested = reference.url || reference.download_url || reference.downloadUrl ||
+      reference.file_url || reference.fileUrl || reference.href || reference.base64 ||
+      reference.content || reference.data
+    return decodeInlineInvoiceFile(nested, format)
+  }
+  const value = String(reference || '').trim()
+  if (!value || /^https?:\/\//i.test(value)) return null
+  if (value.startsWith('data:')) {
+    const separator = value.indexOf(',')
+    if (separator < 0) return null
+    const metadata = value.slice(0, separator)
+    const content = value.slice(separator + 1)
+    return Buffer.from(content, metadata.includes(';base64') ? 'base64' : 'utf8')
+  }
+  if (format === 'xml' && value.startsWith('<')) return Buffer.from(value, 'utf8')
+  if (format === 'pdf' && value.startsWith('%PDF')) return Buffer.from(value, 'binary')
+  if (/^[A-Za-z0-9+/=\s]+$/.test(value) && value.length >= 32) {
+    return Buffer.from(value.replace(/\s/g, ''), 'base64')
+  }
+  return null
+}
+
+function getInvoiceFileUrl(reference) {
+  if (typeof reference === 'string' && /^https?:\/\//i.test(reference.trim())) return reference.trim()
+  if (!reference || typeof reference !== 'object') return ''
+  return cleanString(
+    reference.url || reference.download_url || reference.downloadUrl ||
+      reference.file_url || reference.fileUrl || reference.href,
+    4000
+  )
+}
+
+function isAllowedGigstackFileHost(hostname) {
+  const host = cleanString(hostname, 255).toLowerCase()
+  return host === 'api.gigstack.io' || host.endsWith('.gigstack.io') || host.endsWith('.gigstack.pro') ||
+    host === 'storage.googleapis.com' || host.endsWith('.storage.googleapis.com') ||
+    host.endsWith('.googleapis.com') || host.endsWith('.googleusercontent.com')
+}
+
+async function fetchInvoiceFileUrl(rawUrl, token) {
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw createGigstackError('Gigstack devolvió una dirección inválida para la factura.', {
+      code: 'gigstack_invalid_file_url'
+    })
+  }
+  if (url.protocol !== 'https:' || !isAllowedGigstackFileHost(url.hostname)) {
+    throw createGigstackError('Gigstack devolvió una dirección de descarga no permitida.', {
+      code: 'gigstack_untrusted_file_url'
+    })
+  }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), GIGSTACK_REQUEST_TIMEOUT_MS)
+  timeout.unref?.()
+  try {
+    const response = await fetch(url, {
+      headers: url.hostname === 'api.gigstack.io' || url.hostname.endsWith('.gigstack.io')
+        ? { Authorization: `Bearer ${token}` }
+        : {},
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      throw createGigstackError(`No se pudo descargar el archivo fiscal (${response.status}).`, {
+        status: response.status,
+        code: `gigstack_file_http_${response.status}`,
+        retryable: response.status === 429 || response.status >= 500
+      })
+    }
+    const declaredSize = Number(response.headers.get('content-length') || 0)
+    if (declaredSize > GIGSTACK_FILE_MAX_BYTES) {
+      throw createGigstackError('El archivo fiscal excede el tamaño permitido.', {
+        status: 413,
+        code: 'gigstack_file_too_large'
+      })
+    }
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.length > GIGSTACK_FILE_MAX_BYTES) {
+      throw createGigstackError('El archivo fiscal excede el tamaño permitido.', {
+        status: 413,
+        code: 'gigstack_file_too_large'
+      })
+    }
+    return buffer
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw createGigstackError('La descarga fiscal tardó demasiado.', {
+        code: 'gigstack_file_timeout',
+        retryable: true
+      })
+    }
+    if (error?.code) throw error
+    throw createGigstackError('No se pudo descargar el archivo fiscal.', {
+      code: 'gigstack_file_download_error',
+      retryable: true
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function loadGigstackInvoiceFile(invoiceId, format, token) {
+  let response = await gigstackRequest(`/invoices/${encodeURIComponent(invoiceId)}/files`, { token })
+  let reference = findInvoiceFileReference(response, format)
+  if (!reference) {
+    response = await gigstackRequest(
+      `/invoices/${encodeURIComponent(invoiceId)}/files?file_type=${encodeURIComponent(format)}`,
+      { token }
+    )
+    reference = findInvoiceFileReference(response, format)
+  }
+  if (!reference) {
+    throw createGigstackError(`Gigstack no devolvió el archivo ${format.toUpperCase()} de esta factura.`, {
+      status: 404,
+      code: `gigstack_${format}_not_available`
+    })
+  }
+
+  const inline = decodeInlineInvoiceFile(reference, format)
+  const buffer = inline || await fetchInvoiceFileUrl(getInvoiceFileUrl(reference), token)
+  if (!buffer?.length || buffer.length > GIGSTACK_FILE_MAX_BYTES) {
+    throw createGigstackError(`El archivo ${format.toUpperCase()} de Gigstack no es válido.`, {
+      status: 422,
+      code: `gigstack_invalid_${format}`
+    })
+  }
+  return buffer
+}
+
+function safeInvoiceFileBase(value) {
+  const normalized = cleanString(value, 180).replace(/[^a-zA-Z0-9_-]/g, '-')
+  return normalized || 'factura'
+}
+
+export async function getGigstackInvoiceFileDownload(paymentId, format = 'zip') {
+  const normalizedFormat = cleanString(format, 12).toLowerCase()
+  if (!['zip', 'pdf', 'xml'].includes(normalizedFormat)) {
+    throw createGigstackError('El formato de factura debe ser ZIP, PDF o XML.', {
+      status: 400,
+      code: 'invalid_gigstack_file_format'
+    })
+  }
+  const row = await db.get('SELECT id, payment_mode, metadata_json FROM payments WHERE id = ?', [cleanString(paymentId, 160)])
+  if (!row) {
+    throw createGigstackError('No encontramos esta transacción.', { status: 404, code: 'payment_not_found' })
+  }
+  const mode = normalizeGigstackPaymentMode(row.payment_mode)
+  if (!mode) {
+    throw createGigstackError('La transacción no tiene un ambiente fiscal válido.', {
+      status: 409,
+      code: 'unknown_payment_mode'
+    })
+  }
+  const metadata = parseJson(row.metadata_json)
+  const fiscal = metadata.gigstack && typeof metadata.gigstack === 'object' ? metadata.gigstack : {}
+  const metadataMode = normalizeGigstackPaymentMode(fiscal.mode)
+  if (metadataMode && metadataMode !== mode) {
+    throw createGigstackError('La factura y la transacción pertenecen a ambientes distintos.', {
+      status: 409,
+      code: 'gigstack_invoice_mode_mismatch'
+    })
+  }
+  const storedInvoices = Array.isArray(fiscal.invoices) ? fiscal.invoices : []
+  const fallbackIds = Array.isArray(fiscal.invoiceIds) ? fiscal.invoiceIds : []
+  const invoices = (storedInvoices.length ? storedInvoices : fallbackIds.map((id) => ({ id })))
+    .map((invoice) => ({
+      id: cleanString(typeof invoice === 'object' ? invoice.id || invoice.uuid : invoice, 180),
+      uuid: cleanString(typeof invoice === 'object' ? invoice.uuid || invoice.id : invoice, 180)
+    }))
+    .filter((invoice) => invoice.id)
+  if (!invoices.length || !['stamped', 'valid'].includes(cleanString(fiscal.status, 80).toLowerCase())) {
+    throw createGigstackError('Esta transacción todavía no tiene una factura timbrada disponible.', {
+      status: 404,
+      code: 'gigstack_invoice_not_available'
+    })
+  }
+
+  const settings = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+  const token = getGigstackTokenForMode(settings.taxes, mode)
+  assertGigstackTokenMode(token, mode)
+  const first = invoices[0]
+  const fileBase = `factura-${safeInvoiceFileBase(first.uuid || first.id)}`
+
+  if (normalizedFormat === 'pdf' || normalizedFormat === 'xml') {
+    const buffer = await loadGigstackInvoiceFile(first.id, normalizedFormat, token)
+    return {
+      buffer,
+      contentType: normalizedFormat === 'pdf' ? 'application/pdf' : 'application/xml; charset=utf-8',
+      fileName: `${fileBase}.${normalizedFormat}`
+    }
+  }
+
+  const zip = new JSZip()
+  for (const [index, invoice] of invoices.entries()) {
+    const invoiceBase = invoices.length === 1
+      ? fileBase
+      : `factura-${safeInvoiceFileBase(invoice.uuid || invoice.id)}-${index + 1}`
+    const [pdf, xml] = await Promise.all([
+      loadGigstackInvoiceFile(invoice.id, 'pdf', token),
+      loadGigstackInvoiceFile(invoice.id, 'xml', token)
+    ])
+    zip.file(`${invoiceBase}.pdf`, pdf)
+    zip.file(`${invoiceBase}.xml`, xml)
+  }
+  return {
+    buffer: await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
+    contentType: 'application/zip',
+    fileName: `${fileBase}.zip`
   }
 }
 
@@ -511,7 +852,7 @@ export async function registerGigstackPaymentForTransaction(paymentId, { expecte
   }
 
   const tax = getPaymentTax(row, settings)
-  if (!tax?.enabled || tax.taxAmount <= 0) return { skipped: true, reason: 'missing_tax' }
+  if (!tax?.enabled) return { skipped: true, reason: 'missing_tax' }
   if (!/^[A-Z]{3}$/.test(cleanString(row.currency, 3).toUpperCase())) {
     throw createGigstackError('El pago no tiene una moneda ISO válida; no se enviará a Gigstack.', { code: 'missing_payment_currency' })
   }

@@ -71,7 +71,8 @@ export interface PaymentTaxSettings {
   taxName: string
   rateType: 'percentage' | 'fixed'
   rateValue: number
-  rateSource: 'automatic'
+  rateSource: 'automatic' | 'gigstack'
+  gigstackTaxFactor: 'Tasa' | 'Cuota' | 'Exento'
   calculationMode: 'exclusive' | 'inclusive'
   country: string
   fiscalId: string
@@ -80,6 +81,9 @@ export interface PaymentTaxSettings {
   fiscalRegime: string
   provider: 'gigstack'
   gigstackEnabled: boolean
+  gigstackFiscalSource: 'manual' | 'gigstack'
+  gigstackSatConnected: boolean
+  gigstackTeamId: string
   gigstackDefaultDescription: string
   gigstackDefaultProductKey: string
   gigstackDefaultUnitKey: string
@@ -201,8 +205,12 @@ export const defaultPaymentSettings: PaymentSettings = {
     fiscalRegime: '',
     provider: 'gigstack',
     gigstackEnabled: false,
-    gigstackDefaultDescription: 'Servicios de consultoría en mercadotecnia',
-    gigstackDefaultProductKey: '82101800',
+    gigstackFiscalSource: 'manual',
+    gigstackSatConnected: false,
+    gigstackTeamId: '',
+    gigstackTaxFactor: 'Tasa',
+    gigstackDefaultDescription: 'Producto o servicio cobrado',
+    gigstackDefaultProductKey: '01010101',
     gigstackDefaultUnitKey: 'E48',
     gigstackDefaultUnitName: 'Unidad de Servicio',
     gigstackDefaultPaymentMethod: '99',
@@ -271,6 +279,22 @@ export const paymentSettingsService = {
       body: JSON.stringify({ mode, token: token.trim() || undefined })
     })
     return parseApiResponse<GigstackConnectionTestResult>(response)
+  },
+
+  async syncGigstackFiscalProfile(
+    settings: PaymentSettings,
+    mode: 'test' | 'live',
+    token = ''
+  ): Promise<PaymentSettings> {
+    const response = await fetch(apiUrl('/api/settings/payments/gigstack/sync-fiscal-profile'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ settings, mode, token: token.trim() || undefined })
+    })
+    return parseApiResponse<PaymentSettings>(response)
   },
 
   async createReceiptPreviewSession(payload: PaymentSettings, currency = 'MXN'): Promise<PaymentReceiptPreviewSession> {

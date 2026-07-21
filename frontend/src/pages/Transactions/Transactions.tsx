@@ -33,7 +33,9 @@ import {
   X,
   Loader2,
   Copy,
-  ExternalLink
+  ExternalLink,
+  FileArchive,
+  FileText
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -792,6 +794,7 @@ export const Transactions: React.FC = () => {
   const [paymentPlanActionId, setPaymentPlanActionId] = useState<string | null>(null)
   const [bulkPaymentPlanAction, setBulkPaymentPlanAction] = useState<PaymentPlanBulkAction | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [downloadingFiscalInvoice, setDownloadingFiscalInvoice] = useState('')
   const [modal, setModal] = useState<ModalData>({ type: null, selectedContact: null })
   const [transferProofDecision, setTransferProofDecision] = useState<TransferProofDecision | null>(null)
   const [transferProofRejectionReason, setTransferProofRejectionReason] = useState('')
@@ -2503,6 +2506,23 @@ export const Transactions: React.FC = () => {
     }
   }
 
+  const handleDownloadFiscalInvoice = async (transaction: Transaction, format: 'zip' | 'pdf' | 'xml') => {
+    const downloadId = `${transaction.id}:${format}`
+    setDownloadingFiscalInvoice(downloadId)
+    try {
+      await transactionsService.downloadFiscalInvoice(transaction.id, format)
+      showToast(
+        'success',
+        'Factura descargada',
+        format === 'zip' ? 'El ZIP incluye los archivos PDF y XML disponibles.' : `El archivo ${format.toUpperCase()} quedó listo.`
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo descargar la factura', error?.message || 'Gigstack no devolvió los archivos fiscales.')
+    } finally {
+      setDownloadingFiscalInvoice('')
+    }
+  }
+
   const closeStripeCardSetupLinkModal = () => {
     setStripeCardSetupLinkModal({
       open: false,
@@ -2852,6 +2872,10 @@ export const Transactions: React.FC = () => {
           actions.push('view')
         }
 
+        if (item.fiscalInvoice?.available) {
+          actions.push('download-invoice-zip', 'download-invoice-pdf', 'download-invoice-xml')
+        }
+
         // Enviar - solo para draft y pending
         if (!isGatewayTransaction && item.invoiceId && ['draft', 'pending'].includes(item.status)) {
           actions.push('send')
@@ -2942,6 +2966,35 @@ export const Transactions: React.FC = () => {
                   <DropdownMenuItem onClick={() => handleViewReceipt(item)}>
                     <Eye size={16} />
                     <span style={{ marginLeft: '8px' }}>Ver recibo</span>
+                  </DropdownMenuItem>
+                )}
+
+
+                {actions.includes('download-invoice-zip') && (
+                  <DropdownMenuItem
+                    disabled={Boolean(downloadingFiscalInvoice)}
+                    onClick={() => handleDownloadFiscalInvoice(item, 'zip')}
+                  >
+                    <FileArchive size={16} />
+                    <span style={{ marginLeft: '8px' }}>Factura SAT · ZIP (PDF + XML)</span>
+                  </DropdownMenuItem>
+                )}
+                {actions.includes('download-invoice-pdf') && (
+                  <DropdownMenuItem
+                    disabled={Boolean(downloadingFiscalInvoice)}
+                    onClick={() => handleDownloadFiscalInvoice(item, 'pdf')}
+                  >
+                    <FileText size={16} />
+                    <span style={{ marginLeft: '8px' }}>Factura SAT · PDF</span>
+                  </DropdownMenuItem>
+                )}
+                {actions.includes('download-invoice-xml') && (
+                  <DropdownMenuItem
+                    disabled={Boolean(downloadingFiscalInvoice)}
+                    onClick={() => handleDownloadFiscalInvoice(item, 'xml')}
+                  >
+                    <FileText size={16} />
+                    <span style={{ marginLeft: '8px' }}>Factura SAT · XML</span>
                   </DropdownMenuItem>
                 )}
 

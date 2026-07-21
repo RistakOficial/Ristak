@@ -24,7 +24,10 @@ import { updateSingleContactStats } from '../utils/updateContactsStats.js'
 import { triggerMetaPaymentPurchaseEvent } from '../services/metaConversionEventsService.js'
 import { sendPaymentNotification } from '../services/pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from '../services/paymentAutomationsService.js'
-import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js'
+import {
+  getGigstackInvoiceFileDownload,
+  registerGigstackPaymentForTransactionInBackground
+} from '../services/gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js'
 import {
   getPaymentDeletionGuard,
@@ -498,6 +501,25 @@ const mapSafeTransferProof = (transaction = {}) => {
   }
 }
 
+const mapSafeFiscalInvoice = (transaction = {}) => {
+  const metadata = parseJson(transaction.metadata_json, {})
+  const gigstack = metadata.gigstack && typeof metadata.gigstack === 'object' ? metadata.gigstack : null
+  if (!gigstack) return null
+  const invoices = Array.isArray(gigstack.invoices) ? gigstack.invoices : []
+  const invoiceIds = Array.isArray(gigstack.invoiceIds) ? gigstack.invoiceIds : []
+  const status = cleanString(gigstack.status, 80).toLowerCase()
+  const firstInvoice = invoices[0] && typeof invoices[0] === 'object' ? invoices[0] : null
+  const invoiceCount = invoices.length || invoiceIds.length
+  return {
+    provider: 'gigstack',
+    status: status || 'pending',
+    available: ['stamped', 'valid'].includes(status) && invoiceCount > 0,
+    invoiceCount,
+    uuid: cleanString(firstInvoice?.uuid || firstInvoice?.id || invoiceIds[0], 180),
+    mode: gigstack.mode === 'test' ? 'test' : gigstack.mode === 'live' ? 'live' : null
+  }
+}
+
 const mapTransactionRow = (t, baseUrl = '') => ({
   id: t.id,
   date: t.date,
@@ -537,6 +559,7 @@ const mapTransactionRow = (t, baseUrl = '') => ({
   rebillCustomerId: t.rebill_customer_id,
   rebillCardId: t.rebill_card_id,
   paidAt: t.paid_at,
+  ...(mapSafeFiscalInvoice(t) ? { fiscalInvoice: mapSafeFiscalInvoice(t) } : {}),
   ...(mapSafeTransferProof(t) ? { transferProof: mapSafeTransferProof(t) } : {})
 })
 
@@ -1345,6 +1368,7 @@ export const getTransactionById = async (req, res) => {
       rebillCustomerId: transaction.rebill_customer_id,
       rebillCardId: transaction.rebill_card_id,
       paidAt: transaction.paid_at,
+      ...(mapSafeFiscalInvoice(transaction) ? { fiscalInvoice: mapSafeFiscalInvoice(transaction) } : {}),
       ...(mapSafeTransferProof(transaction) ? { transferProof: mapSafeTransferProof(transaction) } : {}),
       contactSource: transaction.contact_source,
       attributionAdName: transaction.attribution_ad_name,
@@ -1361,6 +1385,22 @@ export const getTransactionById = async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Error obteniendo transacción'
+    })
+  }
+}
+
+export const downloadTransactionFiscalInvoice = async (req, res) => {
+  try {
+    const result = await getGigstackInvoiceFileDownload(req.params.id, req.query.format || 'zip')
+    res.set('Cache-Control', 'private, no-store')
+    res.set('Content-Type', result.contentType)
+    res.attachment(result.fileName)
+    res.send(result.buffer)
+  } catch (error) {
+    logger.warn(`No se pudo descargar la factura fiscal de ${req.params.id}: ${error.message}`)
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.message || 'No se pudo descargar la factura fiscal'
     })
   }
 }

@@ -36,6 +36,14 @@ export interface Transaction {
   stripePaymentIntentId?: string
   paidAt?: string
   metadata?: Record<string, unknown>
+  fiscalInvoice?: {
+    provider: 'gigstack'
+    status: string
+    available: boolean
+    invoiceCount: number
+    uuid?: string
+    mode?: 'test' | 'live' | null
+  }
   transferProof?: {
     mediaUrl?: string | null
     receivedAt?: string | null
@@ -464,6 +472,36 @@ export const transactionsService = {
   async getPaymentLink(id: string): Promise<string> {
     const response = await apiClient.get<{ link: string }>(`/transactions/${id}/payment-link`)
     return response.link
+  },
+
+  async downloadFiscalInvoice(id: string, format: 'zip' | 'pdf' | 'xml' = 'zip'): Promise<void> {
+    const response = await fetch(apiUrl(`/api/transactions/${encodeURIComponent(id)}/fiscal-invoice?format=${format}`), {
+      headers: getAuthHeaders()
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(body?.error || 'No se pudo descargar la factura')
+    }
+    const blob = await response.blob()
+    const contentDisposition = response.headers.get('content-disposition') || ''
+    const encodedName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    const quotedName = contentDisposition.match(/filename="([^"]+)"/i)?.[1]
+    let fileName = quotedName || `factura.${format}`
+    if (encodedName) {
+      try {
+        fileName = decodeURIComponent(encodedName)
+      } catch {
+        fileName = `factura.${format}`
+      }
+    }
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   },
 
   getPaymentPlansPage(params: PaymentPlansPageParams = {}): Promise<PaymentPlansPageResult> {

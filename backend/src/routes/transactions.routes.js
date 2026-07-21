@@ -1,6 +1,7 @@
 import express from 'express'
 import {
   createTransaction,
+  downloadTransactionFiscalInvoice,
   getTransactions,
   getTransactionById,
   getTransactionStats,
@@ -52,6 +53,7 @@ router.put('/payment-plans/:scheduleId', requirePaymentPlansFeature, updatePayme
 router.post('/payment-plans/:scheduleId/action', requirePaymentPlansFeature, actionPaymentPlan)
 router.post('/payment-flows/installments', requirePaymentPlansFeature, createPaymentInstallmentFlow)
 
+router.get('/:id/fiscal-invoice', downloadTransactionFiscalInvoice)
 router.get('/:id', getTransactionById)
 router.put('/:id', updateTransaction)
 router.delete('/:id', deleteTransaction)

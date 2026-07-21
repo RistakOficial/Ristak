@@ -10,6 +10,7 @@ import { renderPaymentReceiptPreviewHtml } from '../services/paymentReceiptPrevi
 import { logger } from '../utils/logger.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import {
+  getGigstackFiscalProfile,
   requeueBlockedGigstackInvoiceJobs,
   testGigstackConnection
 } from '../services/gigstackInvoiceService.js'
@@ -128,6 +129,56 @@ export async function testGigstackConnectionView(req, res) {
   } catch (error) {
     logger.warn(`Validación de conexión Gigstack rechazada: ${error.message}`)
     sendPaymentSettingsError(res, error, 'No se pudo validar la conexión con Gigstack')
+  }
+}
+
+export async function syncGigstackFiscalProfileView(req, res) {
+  try {
+    const current = await getPaymentSettings({ includeSecrets: true, resolveBusinessProfile: false })
+    const draft = req.body?.settings && typeof req.body.settings === 'object'
+      ? req.body.settings
+      : current
+    const mode = req.body?.mode || draft.paymentMode || current.paymentMode
+    const draftTaxes = { ...current.taxes, ...(draft.taxes || {}) }
+    const token = req.body?.token || (mode === 'live'
+      ? draftTaxes.gigstackLiveApiToken
+      : draftTaxes.gigstackTestApiToken)
+    const profile = await getGigstackFiscalProfile({ mode, token })
+
+    const settings = await savePaymentSettings({
+      ...current,
+      ...draft,
+      taxes: {
+        ...draftTaxes,
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackFiscalSource: 'gigstack',
+        gigstackSatConnected: profile.satConnected,
+        gigstackTeamId: profile.teamId,
+        taxName: profile.taxName,
+        rateType: 'percentage',
+        rateValue: profile.rateValue,
+        rateSource: 'gigstack',
+        gigstackTaxFactor: profile.taxFactor,
+        calculationMode: profile.calculationMode,
+        country: profile.country,
+        fiscalId: profile.fiscalId,
+        fiscalLegalName: profile.fiscalLegalName,
+        fiscalPostalCode: profile.fiscalPostalCode,
+        fiscalRegime: profile.fiscalRegime,
+        ...(profile.defaultDescription ? { gigstackDefaultDescription: profile.defaultDescription } : {}),
+        ...(profile.productKey ? { gigstackDefaultProductKey: profile.productKey } : {}),
+        ...(profile.unitKey ? { gigstackDefaultUnitKey: profile.unitKey } : {}),
+        ...(profile.unitName ? { gigstackDefaultUnitName: profile.unitName } : {})
+      }
+    }, { allowGigstackFiscalOverride: true })
+
+    await requeueBlockedGigstackInvoiceJobs()
+    await syncRegisteredIntegrationCronsForProvider('gigstack', { reason: 'gigstack-fiscal-profile-synced' })
+    res.json({ success: true, data: settings })
+  } catch (error) {
+    logger.warn(`Sincronización fiscal de Gigstack rechazada: ${error.message}`)
+    sendPaymentSettingsError(res, error, 'No se pudo importar la configuración fiscal desde Gigstack')
   }
 }
 

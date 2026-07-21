@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import { afterEach, describe, it } from 'node:test'
+import JSZip from 'jszip'
 
 import { db, setAppConfig } from '../src/config/database.js'
 import {
+  getGigstackFiscalProfile,
+  getGigstackInvoiceFileDownload,
   processGigstackInvoiceJob,
   registerGigstackPaymentForTransaction,
   registerGigstackPaymentForTransactionInBackground,
@@ -29,6 +32,81 @@ afterEach(async () => {
 })
 
 describe('Gigstack payment registration', () => {
+  it('imports the fiscal profile and tax rate from the Gigstack team', async () => {
+    const testToken = fakeGigstackToken(false)
+    globalThis.fetch = async (url, options) => {
+      assert.match(String(url), /\/teams\/team_example$/)
+      assert.equal(options.headers.Authorization, `Bearer ${testToken}`)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            id: 'team_example',
+            legal_name: 'Clínica Ejemplo SA de CV',
+            tax_id: 'CEE010101AAA',
+            tax_system: '601',
+            address: { country: 'MEX', zip: '06600' },
+            sat: { completed: true },
+            settings: {
+              default_description: 'Consulta médica',
+              product_key: '85121600',
+              unit_key: 'E48',
+              taxes: [{ type: 'IVA', rate: 0.16, inclusive: true, withholding: false }]
+            }
+          }
+        })
+      }
+    }
+
+    const profile = await getGigstackFiscalProfile({ mode: 'test', token: testToken })
+    assert.deepEqual(profile, {
+      teamId: 'team_example',
+      satConnected: true,
+      fiscalId: 'CEE010101AAA',
+      fiscalLegalName: 'Clínica Ejemplo SA de CV',
+      fiscalPostalCode: '06600',
+      fiscalRegime: '601',
+      taxName: 'IVA',
+      rateValue: 16,
+      taxFactor: 'Tasa',
+      calculationMode: 'inclusive',
+      country: 'MX',
+      defaultDescription: 'Consulta médica',
+      productKey: '85121600',
+      unitKey: 'E48',
+      unitName: 'Unidad de servicio'
+    })
+  })
+
+  it('refuses to activate a Gigstack team with an incomplete fiscal profile', async () => {
+    const testToken = fakeGigstackToken(false)
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          id: 'team_example',
+          legal_name: 'Negocio incompleto',
+          tax_id: '',
+          tax_system: '601',
+          address: { country: 'MEX', zip: '06600' },
+          sat: { completed: true },
+          settings: {
+            product_key: '01010101',
+            unit_key: 'E48',
+            taxes: [{ type: 'IVA', rate: 0, factor: 'Exento', withholding: false }]
+          }
+        }
+      })
+    })
+
+    await assert.rejects(
+      () => getGigstackFiscalProfile({ mode: 'test', token: testToken }),
+      (error) => error.code === 'gigstack_fiscal_profile_incomplete' && error.status === 409
+    )
+  })
+
   it('tests a Test key with a read-only request and never registers a payment', async () => {
     const testToken = fakeGigstackToken(false)
     let capturedRequest = null
@@ -79,7 +157,7 @@ describe('Gigstack payment registration', () => {
         gigstackDefaultPaymentMethod: '99',
         gigstackAutomateInvoiceOnComplete: true
       }
-    })
+    }, { allowGigstackFiscalOverride: true })
 
     await db.run(
       `INSERT INTO contacts (id, email, full_name, phone, created_at, updated_at)
@@ -222,7 +300,7 @@ describe('Gigstack payment registration', () => {
         gigstackEnabled: true,
         gigstackTestApiToken: fakeGigstackToken(false)
       }
-    })
+    }, { allowGigstackFiscalOverride: true })
     await db.run(
       `INSERT INTO payments (
         id, amount, currency, status, payment_method, payment_mode, payment_provider,
@@ -285,7 +363,7 @@ describe('Gigstack payment registration', () => {
         gigstackTestApiToken: fakeGigstackToken(false),
         gigstackLiveApiToken: fakeGigstackToken(true)
       }
-    })
+    }, { allowGigstackFiscalOverride: true })
     await db.run(
       `INSERT INTO contacts (id, email, full_name, created_at, updated_at)
        VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -359,6 +437,90 @@ describe('Gigstack payment registration', () => {
       await db.run('DELETE FROM gigstack_invoice_jobs WHERE payment_id = ?', [paymentId])
       await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
       await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
+
+  it('downloads the stamped Test invoice as a ZIP with PDF and XML', async () => {
+    const suffix = Date.now().toString(36)
+    const paymentId = `payment_gigstack_files_${suffix}`
+    const testToken = fakeGigstackToken(false)
+    const apiAuthorizations = []
+    const storageAuthorizations = []
+
+    await initializeMasterKey()
+    await savePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackTestApiToken: testToken,
+        rateValue: 16,
+        gigstackSatConnected: true
+      }
+    }, { allowGigstackFiscalOverride: true })
+    await db.run(
+      `INSERT INTO payments (
+        id, amount, currency, status, payment_mode, payment_provider, metadata_json,
+        date, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        paymentId,
+        116,
+        'MXN',
+        'paid',
+        'test',
+        'stripe',
+        JSON.stringify({
+          gigstack: {
+            status: 'stamped',
+            mode: 'test',
+            invoices: [{ id: 'invoice_files_1', uuid: 'UUID-FILES-1', status: 'stamped' }]
+          }
+        })
+      ]
+    )
+
+    const pdf = Buffer.from('%PDF-1.4 test invoice')
+    const xml = Buffer.from('<?xml version="1.0"?><cfdi/>')
+    globalThis.fetch = async (url, options = {}) => {
+      const href = String(url)
+      if (href.startsWith('https://api.gigstack.io/')) {
+        apiAuthorizations.push(options.headers?.Authorization)
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              pdf_url: 'https://storage.googleapis.com/gigstack-test/invoice.pdf',
+              xml_url: 'https://storage.googleapis.com/gigstack-test/invoice.xml'
+            }
+          })
+        }
+      }
+      storageAuthorizations.push(options.headers?.Authorization)
+      const buffer = href.endsWith('.pdf') ? pdf : xml
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => String(buffer.length) },
+        arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+      }
+    }
+
+    try {
+      const download = await getGigstackInvoiceFileDownload(paymentId, 'zip')
+      assert.equal(download.contentType, 'application/zip')
+      assert.equal(download.fileName, 'factura-UUID-FILES-1.zip')
+      assert.deepEqual(apiAuthorizations, [`Bearer ${testToken}`, `Bearer ${testToken}`])
+      assert.deepEqual(storageAuthorizations, [undefined, undefined])
+      const archive = await JSZip.loadAsync(download.buffer)
+      assert.deepEqual(Object.keys(archive.files).sort(), [
+        'factura-UUID-FILES-1.pdf',
+        'factura-UUID-FILES-1.xml'
+      ])
+      assert.equal(await archive.file('factura-UUID-FILES-1.pdf').async('string'), pdf.toString())
+      assert.equal(await archive.file('factura-UUID-FILES-1.xml').async('string'), xml.toString())
+    } finally {
+      await db.run('DELETE FROM payments WHERE id = ?', [paymentId])
     }
   })
 })

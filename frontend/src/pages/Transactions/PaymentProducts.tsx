@@ -35,7 +35,11 @@ import { paymentSettingsService } from '@/services/paymentSettingsService'
 import {
   getGigstackUnitName,
   gigstackProductKeyOptions,
-  gigstackUnitOptions
+  gigstackUnitOptions,
+  isValidGigstackProductKey,
+  isValidGigstackUnitKey,
+  normalizeGigstackProductKeyInput,
+  normalizeGigstackUnitKeyInput
 } from '@/utils/gigstackFiscalCatalog'
 import { createRistakId } from '@/utils/idGenerator'
 import styles from './PaymentProducts.module.css'
@@ -827,7 +831,7 @@ export const PaymentProducts: React.FC = () => {
       productType: productForm.productType,
       gigstackProductKey: productForm.gigstackProductKey,
       gigstackUnitKey: productForm.gigstackUnitKey,
-      gigstackUnitName: getGigstackUnitName(productForm.gigstackUnitKey),
+      gigstackUnitName: getGigstackUnitName(productForm.gigstackUnitKey) || productForm.gigstackUnitKey,
       postWebhooks,
       prices: prices.map((price) => ({
         id: price.id || undefined,
@@ -1382,6 +1386,12 @@ export const PaymentProducts: React.FC = () => {
                           { value: '', label: 'Usar default de Gigstack' },
                           ...gigstackProductKeyOptions
                         ]}
+                        searchable
+                        searchPlaceholder="Busca o escribe 8 dígitos"
+                        allowCustomValue
+                        normalizeCustomValue={normalizeGigstackProductKeyInput}
+                        isCustomValueValid={isValidGigstackProductKey}
+                        getCustomValueLabel={(value) => `Usar clave SAT ${value}`}
                       />
                     </div>
                     <div className={styles.formGroup}>
@@ -1393,6 +1403,12 @@ export const PaymentProducts: React.FC = () => {
                           { value: '', label: 'Usar default de Gigstack' },
                           ...gigstackUnitOptions
                         ]}
+                        searchable
+                        searchPlaceholder="Busca o escribe la unidad"
+                        allowCustomValue
+                        normalizeCustomValue={normalizeGigstackUnitKeyInput}
+                        isCustomValueValid={isValidGigstackUnitKey}
+                        getCustomValueLabel={(value) => `Usar unidad SAT ${value}`}
                       />
                     </div>
                   </div>

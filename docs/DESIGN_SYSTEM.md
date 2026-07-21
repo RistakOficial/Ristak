@@ -163,6 +163,11 @@ opción coincidente, pasa `placeholderIcon` y un `placeholder` accesible. El
 trigger compacto nunca debe renderizar el texto del placeholder dentro de su
 ancho fijo ni dejar que se desborde sobre controles vecinos.
 
+Cuando el catálogo es demasiado grande o cambia fuera de Ristak, usa el modo
+buscable de `<CustomSelect>` con `allowCustomValue`, normalización y validación
+explícitas. Así el usuario conserva sugerencias frecuentes sin quedar encerrado
+en una lista parcial; no dupliques el patrón con un select y un input local.
+
 **Separador único de página.** El encabezado es el dueño de la línea que separa
 el título del contenido. La primera sección que aparece inmediatamente después
 no debe volver a pintar `border-top`; las secciones posteriores sí pueden usar

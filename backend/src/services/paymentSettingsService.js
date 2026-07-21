@@ -15,6 +15,24 @@ const PAYMENT_AUTOMATION_CONTENT_MODES = ['template', 'direct']
 const GIGSTACK_MODES = [PAYMENT_MODE_TEST, PAYMENT_MODE_LIVE]
 const GIGSTACK_AUTOMATION_TYPES = ['pue_invoice', 'none']
 const GIGSTACK_CLIENT_MATCH_MODES = ['email', 'client_id_or_email']
+const GIGSTACK_FISCAL_SOURCES = ['manual', 'gigstack']
+const GIGSTACK_PROTECTED_FISCAL_FIELDS = [
+  'enabled',
+  'taxName',
+  'rateType',
+  'rateValue',
+  'rateSource',
+  'gigstackTaxFactor',
+  'calculationMode',
+  'country',
+  'fiscalId',
+  'fiscalLegalName',
+  'fiscalPostalCode',
+  'fiscalRegime',
+  'gigstackFiscalSource',
+  'gigstackSatConnected',
+  'gigstackTeamId'
+]
 
 const DEFAULT_PAYMENT_AUTOMATION_MESSAGES = {
   reminder: 'Hola {{contact.first_name}}, tienes un pago pendiente de {{payment.amount}} por {{payment.product}}. Puedes completarlo aquí: {{payment.url}}',
@@ -99,8 +117,12 @@ const DEFAULT_PAYMENT_SETTINGS = {
     fiscalRegime: '',
     provider: 'gigstack',
     gigstackEnabled: false,
-    gigstackDefaultDescription: 'Servicios de consultoría en mercadotecnia',
-    gigstackDefaultProductKey: '82101800',
+    gigstackFiscalSource: 'manual',
+    gigstackSatConnected: false,
+    gigstackTeamId: '',
+    gigstackTaxFactor: 'Tasa',
+    gigstackDefaultDescription: 'Producto o servicio cobrado',
+    gigstackDefaultProductKey: '01010101',
     gigstackDefaultUnitKey: 'E48',
     gigstackDefaultUnitName: 'Unidad de Servicio',
     gigstackDefaultPaymentMethod: '99',
@@ -414,7 +436,14 @@ export function normalizePaymentSettings(input = {}, options = {}) {
   const taxes = input.taxes || {}
   const previousTaxes = options.previousTaxes || {}
   const country = cleanCountry(taxes.country || taxes.countryCode || taxes.businessCountry || previousTaxes.country)
-  const rateValue = resolveAutomaticTaxRate(country)
+  const gigstackEnabled = cleanBoolean(
+    taxes.gigstackEnabled ?? taxes.jigsawEnabled,
+    DEFAULT_PAYMENT_SETTINGS.taxes.gigstackEnabled
+  )
+  const automaticRateValue = resolveAutomaticTaxRate(country)
+  const rateValue = gigstackEnabled
+    ? cleanNumber(taxes.rateValue ?? previousTaxes.rateValue, automaticRateValue, { min: 0, max: 100, decimals: 6 })
+    : automaticRateValue
   const legacyGigstackToken = resolveLegacyGigstackTokenStorage(taxes, previousTaxes)
   const gigstackTokens = Object.fromEntries(GIGSTACK_MODES.map((mode) => [
     mode,
@@ -505,11 +534,12 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       failedPaymentDelayHours: cleanNumber(automations.failedPaymentDelayHours, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentDelayHours, { min: 1, max: 168 })
     },
     taxes: {
-      enabled: cleanBoolean(taxes.enabled, DEFAULT_PAYMENT_SETTINGS.taxes.enabled),
+      enabled: gigstackEnabled ? true : cleanBoolean(taxes.enabled, DEFAULT_PAYMENT_SETTINGS.taxes.enabled),
       taxName: cleanString(taxes.taxName, 80) || DEFAULT_PAYMENT_SETTINGS.taxes.taxName,
       rateType: 'percentage',
       rateValue,
-      rateSource: 'automatic',
+      rateSource: gigstackEnabled ? 'gigstack' : 'automatic',
+      gigstackTaxFactor: cleanEnum(taxes.gigstackTaxFactor, ['Tasa', 'Cuota', 'Exento'], 'Tasa'),
       calculationMode: cleanEnum(taxes.calculationMode, ['exclusive', 'inclusive'], DEFAULT_PAYMENT_SETTINGS.taxes.calculationMode),
       country,
       fiscalId: cleanString(taxes.fiscalId, 120),
@@ -517,7 +547,17 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       fiscalPostalCode: cleanString(taxes.fiscalPostalCode || taxes.postalCode, 20),
       fiscalRegime: cleanString(taxes.fiscalRegime || taxes.taxRegime, 120),
       provider: 'gigstack',
-      gigstackEnabled: cleanBoolean(taxes.gigstackEnabled ?? taxes.jigsawEnabled, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackEnabled),
+      gigstackEnabled,
+      gigstackFiscalSource: cleanEnum(
+        gigstackEnabled ? 'gigstack' : taxes.gigstackFiscalSource,
+        GIGSTACK_FISCAL_SOURCES,
+        gigstackEnabled ? 'gigstack' : DEFAULT_PAYMENT_SETTINGS.taxes.gigstackFiscalSource
+      ),
+      gigstackSatConnected: gigstackEnabled && cleanBoolean(
+        taxes.gigstackSatConnected,
+        DEFAULT_PAYMENT_SETTINGS.taxes.gigstackSatConnected
+      ),
+      gigstackTeamId: gigstackEnabled ? cleanString(taxes.gigstackTeamId, 180) : '',
       gigstackDefaultDescription: cleanString(taxes.gigstackDefaultDescription || taxes.defaultDescription, 500) || DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultDescription,
       gigstackDefaultProductKey: cleanGigstackProductKey(taxes.gigstackDefaultProductKey || taxes.productKey),
       gigstackDefaultUnitKey: cleanGigstackUnitKey(taxes.gigstackDefaultUnitKey || taxes.unitKey),
@@ -558,7 +598,7 @@ export function calculatePaymentTax(amount, rawTaxes = {}) {
   const baseAmount = roundMoney(amount)
   const rateValue = roundMoney(taxes.rateValue)
 
-  if (!taxes.enabled || baseAmount <= 0 || rateValue <= 0) return null
+  if (!taxes.enabled || baseAmount <= 0) return null
 
   const isPercentage = taxes.rateType === 'percentage'
   const inclusive = taxes.calculationMode === 'inclusive'
@@ -584,6 +624,7 @@ export function calculatePaymentTax(amount, rawTaxes = {}) {
     rateType: taxes.rateType,
     rateValue,
     rateSource: taxes.rateSource,
+    gigstackTaxFactor: taxes.gigstackTaxFactor,
     calculationMode: taxes.calculationMode,
     country: taxes.country,
     fiscalId: taxes.fiscalId,
@@ -664,18 +705,36 @@ export async function getPaymentSettings(options = {}) {
   return resolvePaymentSettingsBusinessProfile(normalized, await getAccountBusinessProfile())
 }
 
-export async function savePaymentSettings(input = {}) {
+export async function savePaymentSettings(input = {}, options = {}) {
   const current = await getPaymentSettings({
     includeSecrets: true,
     includePrivateStorage: true,
     resolveBusinessProfile: false
   })
+  const requestedTaxes = { ...current.taxes, ...(input.taxes || {}) }
+  const requestedGigstackEnabled = cleanBoolean(
+    requestedTaxes.gigstackEnabled,
+    current.taxes.gigstackEnabled
+  )
+
+  if (requestedGigstackEnabled && !current.taxes.gigstackEnabled && !options.allowGigstackFiscalOverride) {
+    const error = new Error('Primero conecta Gigstack para importar y validar la configuración fiscal del equipo.')
+    error.status = 409
+    throw error
+  }
+
+  if (requestedGigstackEnabled && current.taxes.gigstackEnabled && !options.allowGigstackFiscalOverride) {
+    for (const field of GIGSTACK_PROTECTED_FISCAL_FIELDS) {
+      requestedTaxes[field] = current.taxes[field]
+    }
+  }
+
   const next = normalizePaymentSettings({
     paymentMode: input.paymentMode ?? current.paymentMode,
     checkout: { ...current.checkout, ...(input.checkout || {}) },
     receipt: { ...current.receipt, ...(input.receipt || {}) },
     automations: { ...current.automations, ...(input.automations || {}) },
-    taxes: { ...current.taxes, ...(input.taxes || {}) }
+    taxes: requestedTaxes
   }, {
     previousTaxes: current.taxes,
     includePrivateStorage: true

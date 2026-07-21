@@ -52,6 +52,7 @@ import {
   getPaymentSettingsView,
   previewPaymentReceiptSessionView,
   savePaymentSettingsView,
+  syncGigstackFiscalProfileView,
   testGigstackConnectionView
 } from '../controllers/paymentSettingsController.js';
 
@@ -106,6 +107,7 @@ router.get('/notifications', requireAccountAccess, getNotificationsView);
 router.get('/payments', requirePaymentsAccess, getPaymentSettingsView);
 router.post('/payments', requirePaymentsAccess, savePaymentSettingsView);
 router.post('/payments/gigstack/test-connection', requirePaymentsAccess, testGigstackConnectionView);
+router.post('/payments/gigstack/sync-fiscal-profile', requirePaymentsAccess, syncGigstackFiscalProfileView);
 router.post('/payments/receipt-preview-session', requirePaymentsAccess, createPaymentReceiptPreviewSessionView);
 
 // WhatsApp message templates

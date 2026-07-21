@@ -3163,6 +3163,28 @@ dos API keys: Test y Live. Ambas se cifran dentro de
 `app_config.payments_settings.taxes`; no son variables de entorno y nunca se
 regresan completas al frontend después de guardarlas.
 
+Mientras Gigstack está apagado, Impuestos funciona como una regla manual e
+interna de Ristak. Al conectarlo, Ristak consulta `GET /v2/teams/:id` con la llave
+del ambiente activo e importa RFC, razón social, régimen, código postal, tasa,
+factor fiscal (`Tasa`, `Cuota` o `Exento`) y modo inclusivo/exclusivo. Esos
+campos quedan de sólo lectura y
+`gigstackFiscalSource=gigstack`; un guard del backend conserva la copia importada
+ante guardados ordinarios. **Actualizar desde Gigstack** repite la lectura. Al
+apagarlo se recupera la edición manual y la tasa vuelve a resolverse por país.
+No se permite activar por el endpoint de guardado genérico sin pasar antes por
+la sincronización fiscal, y el equipo remoto debe reportar SAT completo, perfil
+fiscal completo y un impuesto válido. Una operación exenta con tasa cero sigue
+siendo una configuración fiscal válida y no se descarta como «sin impuesto».
+
+Las claves SAT por defecto no forman un catálogo cerrado. El selector ofrece
+giros frecuentes, busca por texto o código y acepta cualquier clave de producto
+de ocho dígitos o clave de unidad alfanumérica que pase la validación de formato.
+El usuario puede editar también el nombre de la unidad. Los productos conservan
+su mapeo fiscal local y aplican la misma entrada abierta; HighLevel no lo
+sobrescribe al sincronizar su catálogo. Las opciones visibles son atajos, no una
+recomendación fiscal: la clave correcta sigue siendo responsabilidad del emisor
+y puede consultarse en el catálogo oficial del SAT.
+
 La separación de ambientes es estricta:
 
 - La fuente de verdad es `payments.payment_mode`, no el modo global que esté
@@ -3193,6 +3215,16 @@ localmente junto con ambiente, ID remoto e IDs de factura. Cuando se eligió
 `pue_invoice`, Ristak además consulta cada `GET /v2/invoices/income/:id` y sólo
 marca el resultado como `stamped` si Gigstack confirma `stamped`/`valid` en el
 mismo ambiente; registrar el pago remoto no se confunde con haber timbrado.
+
+La lista de transacciones expone únicamente un resumen seguro de
+`metadata_json.gigstack`. Cuando el estado es `stamped`/`valid` y hay un ID de
+factura, el menú de tres puntos ofrece ZIP, PDF y XML. La descarga autenticada
+sale por `GET /api/transactions/:id/fiscal-invoice?format=zip|pdf|xml`: el backend
+elige la llave según el `payment_mode` fijado en el pago, vuelve a validar el
+claim `livemode`, obtiene los archivos con
+`GET /v2/invoices/:invoiceId/files` y nunca entrega la API key ni una URL fiscal
+interna al navegador. El ZIP se arma en Ristak con PDF y XML; las URLs remotas se
+aceptan sólo por HTTPS y desde hosts autorizados de Gigstack o Google Storage.
 
 `gigstack_invoice_jobs` es el outbox durable de reintentos. La fila nace antes de
 la llamada externa, reclama un lease por pago y reintenta sólo red, timeout,

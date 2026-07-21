@@ -56,6 +56,10 @@ interface CustomSelectProps {
   searchable?: boolean
   searchPlaceholder?: string
   emptyMessage?: string
+  allowCustomValue?: boolean
+  normalizeCustomValue?: (value: string) => string
+  isCustomValueValid?: (value: string) => boolean
+  getCustomValueLabel?: (value: string) => string
   hasMore?: boolean
   loading?: boolean
   selectedContent?: React.ReactNode
@@ -144,6 +148,10 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   searchable = false,
   searchPlaceholder = 'Buscar…',
   emptyMessage = 'No hay resultados',
+  allowCustomValue = false,
+  normalizeCustomValue = (nextValue) => nextValue.trim(),
+  isCustomValueValid = (nextValue) => Boolean(nextValue),
+  getCustomValueLabel = (nextValue) => `Usar “${nextValue}”`,
   hasMore = false,
   loading = false,
   selectedContent,
@@ -200,11 +208,18 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     return filteredEntries
   }, [optionEntries, searchQuery, searchable])
   const filteredFlatOptions = useMemo(() => flattenOptions(filteredOptionEntries), [filteredOptionEntries])
+  const customValue = useMemo(() => normalizeCustomValue(searchQuery), [normalizeCustomValue, searchQuery])
+  const customOption = useMemo<Option | null>(() => {
+    if (!allowCustomValue || !customValue || !isCustomValueValid(customValue)) return null
+    if (flatOptions.some(option => option.value === customValue)) return null
+    return { value: customValue, label: getCustomValueLabel(customValue) }
+  }, [allowCustomValue, customValue, flatOptions, getCustomValueLabel, isCustomValueValid])
   const firstEnabledOption = flatOptions.find(option => !option.disabled)
   const isControlled = value !== undefined
   const [internalValue, setInternalValue] = useState(() => String(defaultValue ?? value ?? firstEnabledOption?.value ?? ''))
   const selectedValue = String(isControlled ? value : internalValue)
-  const selectedOption = flatOptions.find(opt => opt.value === selectedValue)
+  const selectedOption = flatOptions.find(opt => opt.value === selectedValue) ||
+    (allowCustomValue && selectedValue ? { value: selectedValue, label: selectedValue } : undefined)
 
   useEffect(() => {
     if (isControlled || internalValue || defaultValue !== undefined || !firstEnabledOption) return
@@ -332,7 +347,7 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
             onChange={(event) => updateSearchQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
-                const firstMatch = filteredFlatOptions.find(option => !option.disabled)
+                const firstMatch = customOption || filteredFlatOptions.find(option => !option.disabled)
                 if (firstMatch) {
                   event.preventDefault()
                   handleSelect(firstMatch)
@@ -389,7 +404,17 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
             </button>
           )
         })}
-        {filteredFlatOptions.length === 0 ? (
+        {customOption ? (
+          <button
+            type="button"
+            className={styles.option}
+            onClick={() => handleSelect(customOption)}
+            data-ristak-dropdown-item
+          >
+            <span>{customOption.label}</span>
+          </button>
+        ) : null}
+        {filteredFlatOptions.length === 0 && !customOption ? (
           <div className={styles.empty} role="status">{loading ? 'Cargando opciones…' : emptyMessage}</div>
         ) : null}
         {hasMore && onLoadMore ? (

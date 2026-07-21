@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { afterEach, describe, it } from 'node:test'
+
+import { setAppConfig } from '../src/config/database.js'
 
 import {
   calculatePaymentTax,
   decodeGigstackTokenMetadata,
   normalizePaymentSettings,
   normalizePaymentSettingsMode,
-  resolvePaymentSettingsBusinessProfile
+  resolvePaymentSettingsBusinessProfile,
+  savePaymentSettings
 } from '../src/services/paymentSettingsService.js'
+
+afterEach(async () => {
+  await setAppConfig('payments_settings', null)
+})
 
 function fakeGigstackToken(livemode) {
   const header = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'RS256' })).toString('base64url')
@@ -137,6 +144,7 @@ describe('payment settings tax calculation', () => {
         rateType: 'percentage',
         rateValue: 16,
         rateSource: 'automatic',
+        gigstackTaxFactor: 'Tasa',
         calculationMode: 'exclusive',
         country: 'MX',
         fiscalId: '',
@@ -165,6 +173,7 @@ describe('payment settings tax calculation', () => {
         rateType: 'percentage',
         rateValue: 16,
         rateSource: 'automatic',
+        gigstackTaxFactor: 'Tasa',
         calculationMode: 'inclusive',
         country: 'MX',
         fiscalId: '',
@@ -220,6 +229,43 @@ describe('payment settings tax calculation', () => {
     assert.equal(settings.taxes.gigstackAutomateInvoiceOnComplete, true)
     assert.equal(settings.taxes.gigstackAutomationType, 'pue_invoice')
     assert.equal(settings.taxes.gigstackClientMatchMode, 'email')
+  })
+
+  it('uses the Gigstack tax rate instead of the manual country rate while connected', () => {
+    const settings = normalizePaymentSettings({
+      taxes: {
+        enabled: false,
+        country: 'MX',
+        rateValue: 8,
+        gigstackEnabled: true,
+        gigstackFiscalSource: 'gigstack',
+        gigstackSatConnected: true,
+        fiscalId: 'AAA010101AAA'
+      }
+    })
+
+    assert.equal(settings.taxes.enabled, true)
+    assert.equal(settings.taxes.rateValue, 8)
+    assert.equal(settings.taxes.rateSource, 'gigstack')
+    assert.equal(settings.taxes.gigstackFiscalSource, 'gigstack')
+    assert.equal(settings.taxes.fiscalId, 'AAA010101AAA')
+  })
+
+  it('keeps an exempt Gigstack tax active instead of treating zero percent as missing', () => {
+    const tax = calculatePaymentTax(850, {
+      enabled: true,
+      gigstackEnabled: true,
+      gigstackTaxFactor: 'Exento',
+      rateValue: 0,
+      calculationMode: 'exclusive',
+      country: 'MX'
+    })
+
+    assert.equal(tax.enabled, true)
+    assert.equal(tax.rateValue, 0)
+    assert.equal(tax.taxAmount, 0)
+    assert.equal(tax.totalAmount, 850)
+    assert.equal(tax.gigstackTaxFactor, 'Exento')
   })
 
   it('recognizes the environment embedded in Gigstack JWT keys', () => {
@@ -322,5 +368,49 @@ describe('payment settings business profile defaults', () => {
     assert.equal(resolved.receipt.businessAddress, 'Dirección override')
     assert.equal(resolved.receipt.businessWebsite, 'https://override.test')
     assert.equal(resolved.receipt.terms, 'Términos override.')
+  })
+})
+
+describe('Gigstack fiscal ownership', () => {
+  it('requires the fiscal sync path before Gigstack can be activated', async () => {
+    await assert.rejects(
+      () => savePaymentSettings({ taxes: { gigstackEnabled: true } }),
+      (error) => error.status === 409 && /Primero conecta Gigstack/.test(error.message)
+    )
+  })
+
+  it('protects synced fiscal fields while keeping SAT product defaults editable', async () => {
+    await savePaymentSettings({
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackFiscalSource: 'gigstack',
+        gigstackSatConnected: true,
+        gigstackTeamId: 'team-protected',
+        taxName: 'IVA',
+        rateValue: 16,
+        rateSource: 'gigstack',
+        gigstackTaxFactor: 'Tasa',
+        calculationMode: 'inclusive',
+        country: 'MX',
+        fiscalId: 'AAA010101AAA',
+        fiscalLegalName: 'Fiscal correcto',
+        fiscalPostalCode: '06600',
+        fiscalRegime: '601'
+      }
+    }, { allowGigstackFiscalOverride: true })
+
+    const settings = await savePaymentSettings({
+      taxes: {
+        rateValue: 8,
+        fiscalId: 'CAMBIO-NO-AUTORIZADO',
+        gigstackDefaultProductKey: '85121600'
+      }
+    })
+
+    assert.equal(settings.taxes.rateValue, 16)
+    assert.equal(settings.taxes.fiscalId, 'AAA010101AAA')
+    assert.equal(settings.taxes.gigstackFiscalSource, 'gigstack')
+    assert.equal(settings.taxes.gigstackDefaultProductKey, '85121600')
   })
 })
