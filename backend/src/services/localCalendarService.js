@@ -1537,6 +1537,7 @@ function calendarRowToApi(row = {}) {
 
 function normalizeCalendarRecord(raw = {}, options = {}) {
   const calendar = raw.calendar && typeof raw.calendar === 'object' ? raw.calendar : raw
+  const hasExplicitSyncError = Object.prototype.hasOwnProperty.call(options, 'syncError')
   const source = normalizeCalendarSource(options.source || calendar.source || (calendar.id && !String(calendar.id).startsWith(LOCAL_CALENDAR_PREFIX) ? 'ghl' : 'ristak'))
   const ghlCalendarId = cleanString(options.ghlCalendarId || calendar.ghlCalendarId || calendar.ghl_calendar_id || (source === 'ghl' ? calendar.id : '')) || null
   const id = cleanString(options.id || calendar.localId || calendar.local_id || calendar.ristakCalendarId || calendar.id) ||
@@ -1606,7 +1607,9 @@ function normalizeCalendarRecord(raw = {}, options = {}) {
       : null,
     source,
     syncStatus: options.syncStatus || calendar.syncStatus || calendar.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
-    syncError: options.syncError || calendar.syncError || calendar.sync_error || null,
+    syncError: hasExplicitSyncError
+      ? options.syncError
+      : calendar.syncError || calendar.sync_error || null,
     rawJson: jsonOrNull(rawJson)
   }
 }
@@ -7795,6 +7798,7 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
         ghlCalendarId,
         locationId,
         syncStatus: 'synced',
+        syncError: null,
         acknowledgeLocalWrite: true,
         rawJson: remoteCalendar
       })
