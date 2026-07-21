@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  buildConversationalAgentRuntimeConfig,
   buildNewContactScopeCutoffAt,
   contactIsOutOfScopeForAgent,
   findConversationalAgentEntryConflicts
@@ -76,6 +77,17 @@ test('calcula el corte de contactos nuevos en el instante exacto indicado', () =
   })
 
   assert.equal(cutoff, '2026-07-07T02:00:00.500Z')
+})
+
+test('un agente nuevo nace limitado a contactos creados desde su alta', () => {
+  const before = Date.now()
+  const agent = buildConversationalAgentRuntimeConfig()
+  const after = Date.now()
+  const cutoffMs = Date.parse(agent.contactScopeCutoffAt)
+
+  assert.equal(agent.contactScope, 'new_only')
+  assert.equal(Number.isFinite(cutoffMs), true)
+  assert.equal(cutoffMs >= before && cutoffMs <= after, true)
 })
 
 test('new_only permite solo contactos creados desde el instante exacto del corte', () => {

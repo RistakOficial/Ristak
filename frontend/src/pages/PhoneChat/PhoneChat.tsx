@@ -134,6 +134,7 @@ import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
   DEFAULT_AGENT_GOAL_WORKFLOW,
   DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
+  DEFAULT_CONVERSATIONAL_CONTACT_SCOPE,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   buildConversationalLegacyEditableText,
   conversationalAgentService,
@@ -1098,7 +1099,7 @@ function buildPhoneAgentCreateDraft(defaultName: string): PhoneAgentCreateDraft 
     name: defaultName,
     strategyText: String(DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.strategyText || ''),
     personalityText: String(DEFAULT_CONVERSATIONAL_PROMPT_CONFIG.personalityText || ''),
-    contactScope: 'new_only'
+    contactScope: DEFAULT_CONVERSATIONAL_CONTACT_SCOPE
   }
 }
 

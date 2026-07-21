@@ -96,6 +96,7 @@ export function normalizeConversationalLanguageLevel(value, fallback = DEFAULT_L
 //   actual; útil para agentes de reactivación/recuperación).
 // El corte se sella al configurar el alcance y se re-sella al cambiar de alcance.
 const SCOPED_CONTACT_SCOPES = new Set(['new_only', 'existing_only'])
+const DEFAULT_CONTACT_SCOPE = 'new_only'
 
 export function normalizeContactScope(value) {
   const scope = String(value || '').trim().toLowerCase()
@@ -6498,7 +6499,10 @@ const DEFAULT_AGENT_BASE = {
   closingStrategyCustom: '',
   persuasionLevel: DEFAULT_PERSUASION_LEVEL,
   languageLevel: DEFAULT_LANGUAGE_LEVEL,
-  contactScope: 'all',
+  // Un agente nuevo nace protegiendo la base existente: sólo toma contactos
+  // creados desde el instante en que se guarda. Los agentes ya persistidos
+  // conservan su alcance actual mediante mapAgentRow/normalizeContactScope.
+  contactScope: DEFAULT_CONTACT_SCOPE,
   contactScopeCutoffAt: null,
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
   replyDelivery: DEFAULT_REPLY_DELIVERY_CONFIG,

@@ -174,6 +174,27 @@ async function seedContact(contactId, { createdAt = null } = {}) {
   `, [contactId, 'Contacto Test', 'Contacto', `+52${phoneSuffix}`, 'test', timestamp, timestamp])
 }
 
+test('crear un agente sin alcance explicito persiste el default de contactos nuevos', async () => {
+  let agentId = ''
+
+  try {
+    const before = Date.now()
+    const agent = await createConversationalAgent({
+      name: 'Agente default contactos nuevos',
+      enabled: false
+    })
+    const after = Date.now()
+    agentId = agent.id
+    const cutoffMs = Date.parse(agent.contactScopeCutoffAt)
+
+    assert.equal(agent.contactScope, 'new_only')
+    assert.equal(Number.isFinite(cutoffMs), true)
+    assert.equal(cutoffMs >= before && cutoffMs <= after, true)
+  } finally {
+    await cleanupAgent(agentId)
+  }
+})
+
 test('activar una conversación con agentId asigna ese agente al estado', async () => {
   const contactId = `conversation_agent_state_${randomUUID()}`
   const previousBusinessProfile = await getStoredBusinessProfileRow()
@@ -281,7 +302,8 @@ test('un agente nuevo catch-all no hereda omisiones legacy anteriores', async ()
       defaultCalendarId: 'cal_state_test',
       name: 'Agente nuevo todos los chats',
       enabled: true,
-      objective: 'citas'
+      objective: 'citas',
+      contactScope: 'all'
     })
     agentId = agent.id
 
@@ -378,7 +400,8 @@ test('una asignación legacy activa se revalida por reglas y guarda procedencia 
       defaultCalendarId: 'cal_state_test',
       name: 'Agente revalida asignación legacy',
       enabled: true,
-      objective: 'citas'
+      objective: 'citas',
+      contactScope: 'all'
     })
     agentId = agent.id
 
@@ -593,7 +616,8 @@ test('un estado pausado de otro agente no bloquea a un agente nuevo', async () =
       defaultCalendarId: 'cal_state_test',
       name: 'Agente nuevo independiente',
       enabled: true,
-      objective: 'citas'
+      objective: 'citas',
+      contactScope: 'all'
     })
     newAgentId = newAgent.id
 
@@ -923,7 +947,8 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
       defaultCalendarId: 'cal_state_test',
       name: 'Agente reapertura test',
       enabled: true,
-      objective: 'citas'
+      objective: 'citas',
+      contactScope: 'all'
     })
     agentId = agent.id
 

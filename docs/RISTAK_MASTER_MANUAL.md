@@ -5418,7 +5418,8 @@ Alcance de contactos ("¿A quien puede atender?"), tres opciones funcionales
 runner):
 
 - `new_only` ("A todos los nuevos contactos desde ahora"): solo contactos
-  CREADOS despues del corte.
+  CREADOS despues del corte. Es el alcance predeterminado al crear cualquier
+  agente nuevo, tanto desde escritorio como desde la experiencia movil o la API.
 - `all` ("A todos los nuevos mensajes desde ahora"): cualquier chat con inbound
   nuevo, sin importar cuando nacio el contacto (historico).
 - `existing_only` ("A todos los contactos existentes"): solo contactos que YA

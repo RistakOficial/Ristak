@@ -33,6 +33,7 @@ import {
   isConversationalAgentEntryConflictError,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
+  DEFAULT_CONVERSATIONAL_CONTACT_SCOPE,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   type AgentFilterOptions,
   type AgentFollowUpConfig,
@@ -4591,7 +4592,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     if (!canStartAgentCreation()) return
     void runCreateAgent({
       enabled: false,
-      contactScope: 'all',
+      contactScope: DEFAULT_CONVERSATIONAL_CONTACT_SCOPE,
       capabilitiesConfig: DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG
     })
   }
