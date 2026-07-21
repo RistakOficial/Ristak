@@ -91,6 +91,10 @@ test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('125_sites_content_assets.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('125a_sites_content_assets.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('125a_sites_content_assets.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('126_gigstack_invoice_jobs.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('126_gigstack_invoice_jobs.sqlite.sql', 'postgres'), false)
+  assert.equal(migrationRunsForDialect('126a_gigstack_invoice_jobs.postgres.sql', 'postgres'), true)
+  assert.equal(migrationRunsForDialect('126a_gigstack_invoice_jobs.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
 })
@@ -792,6 +796,71 @@ test('la migracion 125 repara instalaciones cuyo bootstrap ya se marco sin conte
         ) VALUES (?, ?, ?, ?)
       `, ['binding-two', 'site-preview', 'hero', 'media-two']),
       /UNIQUE constraint failed/
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migracion 126 agrega la cola fiscal Gigstack a instalaciones existentes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-gigstack-invoice-jobs-migration-'))
+  const database = openMemoryDatabase()
+  const migration = new URL(
+    '../migrations/versioned/126_gigstack_invoice_jobs.sqlite.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE app_config (
+        config_key TEXT PRIMARY KEY,
+        config_value TEXT
+      );
+      CREATE TABLE payments (
+        id TEXT PRIMARY KEY
+      );
+      INSERT INTO app_config (config_key, config_value)
+      VALUES ('core_schema_bootstrap_version', '2026-07-12-v1');
+      INSERT INTO payments (id) VALUES ('payment-preview');
+    `)
+    await copyFile(migration, join(directory, '126_gigstack_invoice_jobs.sqlite.sql'))
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    const table = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'gigstack_invoice_jobs'
+    `)
+    assert.deepEqual(table.map(row => row.name), ['gigstack_invoice_jobs'])
+
+    const indexes = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_gigstack_invoice_jobs_due'
+    `)
+    assert.deepEqual(indexes.map(row => row.name), ['idx_gigstack_invoice_jobs_due'])
+
+    await database.run(`
+      INSERT INTO gigstack_invoice_jobs (payment_id, payment_mode)
+      VALUES (?, ?)
+    `, ['payment-preview', 'test'])
+    await assert.rejects(
+      database.run(`
+        INSERT INTO gigstack_invoice_jobs (payment_id, payment_mode)
+        VALUES (?, ?)
+      `, ['missing-payment', 'live']),
+      /FOREIGN KEY constraint failed/
     )
 
     assert.deepEqual(
