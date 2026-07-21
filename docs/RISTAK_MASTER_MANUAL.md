@@ -4729,6 +4729,17 @@ payload ambiguo. El mapping canonico anterior queda dormido y vuelve a activarse
 automaticamente cuando el ID vuelve a ser unico; no se obliga al usuario a
 configurarlo otra vez.
 
+Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente interno
+tratan este contrato como una compuerta obligatoria de entrega, no como una
+recomendacion. Si el HTML contiene un formulario propio, la IA no debe entregarlo
+ni marcarlo listo hasta comprobar que cada `<form>` tenga `data-rstk-form-id` y
+cada `input`, `textarea` o `select` guardable tenga `data-rstk-field-id`. `name`,
+`id`, `data-rstk-field` y los hooks `data-rstk-calendar-*` ayudan a interpretar o
+ejecutar los campos, pero no reemplazan su identidad estable. Esta misma regla
+incluye el `<form data-rstk-calendar-book-form>` de un calendario custom: el
+formulario de reserva y sus campos de nombre, email y telefono tambien deben
+declarar sus IDs estables antes de que la IA entregue el codigo.
+
 En el sitio publicado, `data-rstk-field-id` es tambien la llave estable del
 payload capturado. Por eso dos campos distintos pueden conservar el mismo
 atributo `name` sin pisarse. En formularios con el contrato estable, el backend

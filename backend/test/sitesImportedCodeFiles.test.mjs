@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -530,8 +531,13 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /"deleted":true/)
   assert.match(instructions, /No escribas JavaScript para escuchar el video/)
   assert.match(instructions, /elemento <form> real/)
+  assert.match(instructions, /REQUISITO OBLIGATORIO DE ENTREGA/)
+  assert.match(instructions, /no termines ni respondas status="ready"/)
+  assert.match(instructions, /name, id, data-rstk-field y los atributos data-rstk-calendar-\* NO sustituyen/)
   assert.match(instructions, /data-rstk-form-id semantico, estable y unico en TODO el sitio/)
   assert.match(instructions, /data-rstk-field-id estable y unico dentro de su formulario/)
+  assert.match(instructions, /data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva"/)
+  assert.match(instructions, /data-rstk-calendar-name data-rstk-field-id="agenda-nombre"/)
   assert.match(instructions, /<fieldset><legend>Pregunta<\/legend>/)
   assert.match(instructions, /Cambiar copy, clases, estilos, orden o name\/id NO cambia data-rstk-form-id ni data-rstk-field-id/)
   assert.doesNotMatch(instructions, /data-rstk-editable="true"/)
@@ -545,6 +551,25 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.doesNotMatch(instructions, /Cliente ideal guardado/)
   assert.doesNotMatch(instructions, /Voz de marca del chatbot/)
   assert.doesNotMatch(instructions, /Contexto del negocio configurado en Ristak/)
+})
+
+test('external AI compatibility instructions reject forms without stable Ristak IDs', async () => {
+  const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
+  const guideMatch = source.match(/const IMPORTED_HTML_AI_GUIDE = `[\s\S]*?`\n\n/)
+  const builderMatch = source.match(/const buildExternalAICompatibilityText[\s\S]*?\nconst copyTextToClipboard/)
+
+  assert.ok(guideMatch, 'No se encontró la guía del editor HTML')
+  assert.ok(builderMatch, 'No se encontró el bloque copiable para IA externa')
+
+  const guide = guideMatch[0]
+  const builder = builderMatch[0]
+
+  assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
+  assert.match(guide, /Un HTML que omita cualquiera de esas claves está incompleto para Ristak/)
+  assert.match(guide, /data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva"/)
+  assert.match(builder, /No entregues el HTML si falta uno solo/)
+  assert.match(builder, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
+  assert.match(builder, /Si falta cualquiera de esas claves, la entrega está incompleta/)
 })
 
 test('AI HTML editor sends uploaded references as multimodal input parts', async () => {

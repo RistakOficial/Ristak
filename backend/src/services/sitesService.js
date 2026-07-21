@@ -7119,6 +7119,8 @@ Contrato de código cerrado y contenido:
 
 Convenciones de formularios para Ristak:
 - Estas convenciones aplican a formularios HTML propios; si usas data-rstk-native-element="form", no crees un <form> propio para esa zona.
+- REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no termines ni respondas status="ready" hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. Un HTML que omita cualquiera de esas claves esta incompleto para Ristak.
+- name, id, data-rstk-field y los atributos data-rstk-calendar-* NO sustituyen data-rstk-form-id ni data-rstk-field-id: ayudan a interpretar o ejecutar el campo, pero no conservan su asociacion cuando el codigo se reescribe.
 - Cada conjunto debe vivir en un elemento <form> real con data-rstk-form-id semantico, estable y unico en TODO el sitio, incluso entre paginas; agrega data-rstk-label para el nombre visible del grupo. Ejemplo: <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto" data-rstk-form="lead_capture" method="post">.
 - Cada campo logico debe tener data-rstk-field-id estable y unico dentro de su formulario, ademas de id, name, label visible y autocomplete cuando aplique. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas las opciones comparten data-rstk-field-id y name.
 - Cambiar copy, clases, estilos, orden o name/id NO cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociacion nueva; conservarlo recupera la anterior aunque el elemento haya desaparecido temporalmente.
@@ -7136,7 +7138,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Solo uses data-rstk-native-element para formularios, calendarios, pagos y videos. No lo inventes para otros widgets.
 - Formulario nativo Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacio; no metas <form>, campos ni botones de envio dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio boton y sus acciones "Al enviar"; si necesitas navegar despues del submit, configuralo en el editor.
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
-- Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots, form data-rstk-calendar-book-form, campos data-rstk-calendar-name/email/phone y mensaje data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
+- Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">. Ese formulario tambien cumple el contrato obligatorio: nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre", email usa data-rstk-calendar-email data-rstk-field-id="agenda-email" y telefono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". El mensaje usa data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
@@ -7213,7 +7215,7 @@ Modo edición:
 - Usa needs_more_info solo si literalmente no hay una acción que ejecutar o la peticion contradice el HTML actual de forma imposible.
 ` : `
 Modo creación:
-- Si el usuario pidio formulario, incluyelo completo y bien mapeado.
+- Si el usuario pidio formulario, incluyelo completo y bien mapeado. Antes de responder status="ready", audita que cada formulario HTML propio tenga data-rstk-form-id y todos sus campos guardables tengan data-rstk-field-id.
 - Si no especifica campos, usa los campos minimos razonables para el objetivo.
 - Para landings de captura, incluye nombre completo, teléfono o email y un campo de interés si aplica.
 `}
