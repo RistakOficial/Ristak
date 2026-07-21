@@ -3002,9 +3002,11 @@ Reglas base:
 - El espejo saliente de calendarios usa el contrato vigente `v3` de HighLevel.
   Antes de crear o actualizar el calendario remoto, `openHours` se canoniza al
   formato de días `0..6` y rangos completos; el domingo legacy `7` se convierte
-  en `0` y nunca se manda un horario local ambiguo al proveedor. Cuando el
-  reintento termina bien, también se limpia el error remoto anterior para que la
-  agenda no siga mostrando una falla que ya fue resuelta.
+  en `0` y nunca se manda un horario local ambiguo al proveedor. La creación
+  incluye la ubicación requerida, pero una actualización omite `locationId` y
+  cualquier identificador inmutable porque HighLevel v3 los rechaza en el PUT.
+  Cuando el reintento termina bien, también se limpia el error remoto anterior
+  para que la agenda no siga mostrando una falla que ya fue resuelta.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque

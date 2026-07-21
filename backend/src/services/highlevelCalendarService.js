@@ -872,8 +872,14 @@ export async function deleteEvent(eventId, accessToken) {
  */
 export async function updateCalendar(calendarId, updateData, accessToken) {
   try {
+    const safeUpdateData = { ...(updateData || {}) };
+    delete safeUpdateData.locationId;
+    delete safeUpdateData.id;
+    delete safeUpdateData.ghlCalendarId;
+    delete safeUpdateData.ghl_calendar_id;
+
     logger.info(`[HighLevel Calendar] Actualizando configuración de calendario: ${calendarId}`);
-    logger.info(`[HighLevel Calendar] Datos a actualizar: ${JSON.stringify(updateData, null, 2)}`);
+    logger.info(`[HighLevel Calendar] Datos a actualizar: ${JSON.stringify(safeUpdateData, null, 2)}`);
 
     const response = await fetchWithTimeout(
       `${GHL_API_BASE}/calendars/${calendarId}`,
@@ -885,7 +891,7 @@ export async function updateCalendar(calendarId, updateData, accessToken) {
           'Version': CALENDARS_API_VERSION,
           'Authorization': `Bearer ${accessToken}`
         },
-        body: JSON.stringify(updateData)
+        body: JSON.stringify(safeUpdateData)
       }
     );
 

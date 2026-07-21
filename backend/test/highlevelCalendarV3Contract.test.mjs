@@ -22,13 +22,28 @@ test('HighLevel calendar create and update use the current v3 contract', async (
 
   try {
     await createCalendar({ locationId: 'loc_test', name: 'Agenda' }, 'token_test')
-    await updateCalendar('cal_remote', { name: 'Agenda nueva' }, 'token_test')
+    await updateCalendar('cal_remote', {
+      id: 'cal_remote',
+      locationId: 'loc_test',
+      ghlCalendarId: 'cal_remote',
+      ghl_calendar_id: 'cal_remote',
+      name: 'Agenda nueva'
+    }, 'token_test')
   } finally {
     globalThis.fetch = originalFetch
   }
 
   assert.equal(requests.length, 2)
   assert.ok(requests.every(request => request.options.headers.Version === 'v3'))
+
+  const createBody = JSON.parse(requests[0].options.body)
+  const updateBody = JSON.parse(requests[1].options.body)
+  assert.equal(createBody.locationId, 'loc_test')
+  assert.equal(updateBody.locationId, undefined)
+  assert.equal(updateBody.id, undefined)
+  assert.equal(updateBody.ghlCalendarId, undefined)
+  assert.equal(updateBody.ghl_calendar_id, undefined)
+  assert.equal(updateBody.name, 'Agenda nueva')
 })
 
 test('calendar payload canonicalizes legacy Sunday before sending openHours', () => {
