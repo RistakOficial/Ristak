@@ -1848,7 +1848,7 @@ const normalizeSiteForEditor = (site: PublicSite): PublicSite => ({
 const isImportedHtmlSite = (site?: PublicSite | null) =>
   Boolean(site?.theme?.importedHtml || site?.theme?.template === 'imported_html')
 
-type ImportedNativeElementType = 'form' | 'calendar' | 'payment' | 'video'
+type ImportedNativeElementType = 'form' | 'calendar' | 'payment' | 'video' | 'social_profile'
 type ImportedNativeElementRenderMode = 'ristak' | 'custom'
 type ImportedContentAssetKind = 'image' | 'background' | 'audio' | 'video' | 'document' | 'other'
 type SitesMediaPickerKind = 'image' | 'video' | 'audio' | 'document' | 'other'
@@ -1883,6 +1883,7 @@ type ImportedNativeElementSlot = {
   declaredVideoActions?: VideoActionRule[]
   videoRulesAttributePresent?: boolean
   videoRulesError?: string
+  socialProfileHooksError?: string
 }
 type ImportedNativeElementSaveOptions = {
   notify?: boolean
@@ -1943,14 +1944,16 @@ const importedNativeElementBlockTypes: Record<ImportedNativeElementType, SiteBlo
   form: 'form_embed',
   calendar: 'calendar_embed',
   payment: 'payment',
-  video: 'video'
+  video: 'video',
+  social_profile: 'social_profile'
 }
 
 const importedNativeElementTypeLabels: Record<ImportedNativeElementType, string> = {
   form: 'Formulario',
   calendar: 'Calendario',
   payment: 'Pago',
-  video: 'Video'
+  video: 'Video',
+  social_profile: 'Perfil social'
 }
 
 const importedContentAssetKindLabels: Record<ImportedContentAssetKind, string> = {
@@ -2169,6 +2172,7 @@ const normalizeImportedNativeElementType = (value?: string | null): ImportedNati
   if (['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)) return 'calendar'
   if (['payment', 'payments', 'pago', 'pagos', 'checkout', 'cobro', 'cobros', 'purchase'].includes(token)) return 'payment'
   if (['video', 'videos', 'video-player', 'player', 'reproductor', 'media'].includes(token)) return 'video'
+  if (['social-profile', 'social-profiles', 'perfil-social', 'perfiles-sociales', 'red-social', 'social', 'profile'].includes(token)) return 'social_profile'
   return null
 }
 
@@ -2201,7 +2205,7 @@ const getImportedNativeElementTypeFromElement = (element: Element): ImportedNati
 )
 
 const getImportedNativeElementRenderMode = (element: Element, type: ImportedNativeElementType): ImportedNativeElementRenderMode => {
-  if (type !== 'calendar') return 'ristak'
+  if (type !== 'calendar' && type !== 'social_profile') return 'ristak'
   const token = normalizeImportedNativeToken(getImportedNativeElementAttr(element, [
     'data-rstk-native-render',
     'data-ristak-native-render',
@@ -2334,6 +2338,30 @@ const parseImportedNativeVideoRuleManifest = (
   }
 }
 
+const importedSocialProfileHookSelectors = {
+  avatar: '[data-rstk-social-avatar],[data-ristak-social-avatar],[data-ristack-social-avatar]',
+  name: '[data-rstk-social-name],[data-ristak-social-name],[data-ristack-social-name]',
+  followers: '[data-rstk-social-followers],[data-ristak-social-followers],[data-ristack-social-followers]',
+  verified: '[data-rstk-social-verified],[data-ristak-social-verified],[data-ristack-social-verified]'
+}
+
+const getImportedCustomSocialProfileHooksError = (
+  element: Element,
+  type: ImportedNativeElementType,
+  renderMode: ImportedNativeElementRenderMode
+) => {
+  if (type !== 'social_profile' || renderMode !== 'custom') return ''
+  const missing = Object.entries(importedSocialProfileHookSelectors)
+    .filter(([key, selector]) => {
+      const match = element.matches(selector) ? element : element.querySelector(selector)
+      return !match || (key === 'avatar' && match.tagName.toLowerCase() !== 'img')
+    })
+    .map(([key]) => key === 'avatar' ? 'foto' : key === 'name' ? 'nombre' : key === 'followers' ? 'seguidores' : 'verificado')
+  return missing.length
+    ? `El perfil social con diseño propio necesita hooks para ${missing.join(', ')}.`
+    : ''
+}
+
 const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[] => {
   if (!html || typeof DOMParser === 'undefined') return []
   try {
@@ -2346,6 +2374,8 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
         const id = getImportedNativeElementSlotId(element, type, index)
         const explicitSlotId = getImportedNativeElementExplicitSlotId(element)
         const videoRuleManifest = parseImportedNativeVideoRuleManifest(element, type, explicitSlotId)
+        const renderMode = getImportedNativeElementRenderMode(element, type)
+        const socialProfileHooksError = getImportedCustomSocialProfileHooksError(element, type, renderMode)
         const key = `${type}:${id}`
         if (seen.has(key)) return null
         seen.add(key)
@@ -2353,14 +2383,15 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
           key,
           id,
           type,
-          renderMode: getImportedNativeElementRenderMode(element, type),
+          renderMode,
           label: getImportedNativeElementLabel(element, type, id),
           tagName: element.tagName.toLowerCase(),
           ...(videoRuleManifest.present ? {
             videoRulesAttributePresent: true,
             declaredVideoActions: videoRuleManifest.rules,
             videoRulesError: videoRuleManifest.error
-          } : {})
+          } : {}),
+          ...(socialProfileHooksError ? { socialProfileHooksError } : {})
         }
       })
       .filter(Boolean) as ImportedNativeElementSlot[]
@@ -2503,15 +2534,17 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Cada campo lógico debe declarar data-rstk-field-id estable y único dentro de su formulario, además de name e id. Ejemplo: <input data-rstk-field-id="correo-contacto" id="correo" name="email" type="email">. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas sus opciones comparten data-rstk-field-id y name.
 - Cambiar copy, clases, estilos, orden o name/id no cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociación nueva; conservarlo recupera el mapeo anterior aunque el elemento haya desaparecido temporalmente.
 - Orden de páginas: si entregas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.
-- Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago o video real desde el editor.
-- Solo se aceptan estos elementos nativos: formularios, calendarios, pagos y videos. No uses data-rstk-native-element para otros widgets.
-- Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment y video): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.
+- Elementos conectados a Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video|social-profile" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago, video o perfil social real desde el editor.
+- Solo se aceptan estos elementos conectados: formularios, calendarios, pagos, videos y perfiles sociales. No uses data-rstk-native-element para otros widgets.
+- Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment, video y social-profile con render="ristak"): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.
 - Formularios nativos Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacío; no pongas <form>, campos ni botones de envío dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio botón y sus acciones "Al enviar"; si necesitas ir a otra página, configúralo en el editor.
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 - Para calendario HTML conectado a Ristak usa un contenedor data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom". Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton con data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">. Sus campos también cumplen el contrato obligatorio: por ejemplo, nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre", email usa data-rstk-calendar-email data-rstk-field-id="agenda-email" y teléfono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". El mensaje usa data-rstk-calendar-message. No escribas JavaScript: Ristak conecta disponibilidad y reserva de forma segura con la zona horaria del negocio.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
+- Para que la IA diseñe un perfil social conectado usa <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal">. Dentro son obligatorios <img data-rstk-social-avatar alt="">, un elemento data-rstk-social-name, otro data-rstk-social-followers y el badge completo con data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle. Cierra el section después del diseño.
+- Diseña libremente ese perfil alrededor de los hooks, pero no inventes foto, nombre, seguidores ni verificado y no llames Meta desde el navegador. Ristak inyecta los datos del perfil elegido y oculta el elemento completo data-rstk-social-verified cuando el usuario apaga esa opción.
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
 - Targets para acciones de video: marca cada botón, contenedor, imagen, sección o formulario con id y data-rstk-video-action-target estables. Ejemplo: <section id="oferta-final" data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">...</section>.
@@ -15802,6 +15835,8 @@ export const Sites: React.FC = () => {
                   customFields={customFields}
                   customFieldFolders={customFieldFolders}
                   metaPixelConnected={metaPixelConnected}
+                  connectedSocialProfiles={connectedSocialProfiles}
+                  loadingSocialProfiles={loadingSocialProfiles}
                   codeEditorOpen={true}
                   codeDrafts={importedCodeDrafts}
                   popupCodeActive={popupSurfaceSelected}
@@ -21179,6 +21214,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   customFields: CustomFieldDefinition[]
   customFieldFolders: CustomFieldFolder[]
   metaPixelConnected: boolean
+  connectedSocialProfiles: ConnectedSocialProfile[]
+  loadingSocialProfiles: boolean
   codeEditorOpen: boolean
   codeDrafts: Record<string, string>
   popupCodeActive: boolean
@@ -21215,6 +21252,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   customFields,
   customFieldFolders,
   metaPixelConnected,
+  connectedSocialProfiles,
+  loadingSocialProfiles,
   codeEditorOpen,
   codeDrafts,
   popupCodeActive,
@@ -21514,6 +21553,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     const duplicateFieldIds = new Set<string>()
     const duplicateNativeElementIds = new Set<string>()
     const invalidVideoRuleDeclarations = new Set<string>()
+    const invalidSocialProfileDeclarations = new Set<string>()
 
     effectiveImportedHtmlFiles.forEach(file => {
       if (!file.html || typeof DOMParser === 'undefined') return
@@ -21556,6 +21596,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         })
         detectImportedNativeElementSlots(file.html).forEach(slot => {
           if (slot.videoRulesError) invalidVideoRuleDeclarations.add(`${file.label} · ${slot.label}: ${slot.videoRulesError}`)
+          if (slot.socialProfileHooksError) invalidSocialProfileDeclarations.add(`${file.label} · ${slot.label}: ${slot.socialProfileHooksError}`)
         })
       } catch {
         // Diagnostics are best-effort; the backend still sanitizes and validates.
@@ -21566,7 +21607,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       duplicateFormIds: [...formCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id),
       duplicateFieldIds: [...duplicateFieldIds],
       duplicateNativeElementIds: [...duplicateNativeElementIds],
-      invalidVideoRuleDeclarations: [...invalidVideoRuleDeclarations]
+      invalidVideoRuleDeclarations: [...invalidVideoRuleDeclarations],
+      invalidSocialProfileDeclarations: [...invalidSocialProfileDeclarations]
     }
   }, [effectiveImportedHtmlFiles])
   const importedDuplicateFormIds = importedEditorIdentityDiagnostics.duplicateFormIds
@@ -21583,6 +21625,9 @@ const ImportedHtmlEditorPanel: React.FC<{
         : '',
       importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.length
         ? `Reglas de video inválidas: ${importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.slice(0, 2).join(', ')}.`
+        : '',
+      importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.length
+        ? `Perfiles sociales incompletos: ${importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.slice(0, 2).join(', ')}.`
         : ''
     ].filter(Boolean)
     return details.length
@@ -21849,8 +21894,11 @@ const ImportedHtmlEditorPanel: React.FC<{
         videoActions: slot.declaredVideoActions || []
       }
     }
+    if (slot.type === 'social_profile') {
+      return socialProfileAutoPresetForNewBlock(blockType, baseSettings, connectedSocialProfiles)
+    }
     return baseSettings
-  }, [accountCurrency, activeImportedPage?.id, activePageId, site])
+  }, [accountCurrency, activeImportedPage?.id, activePageId, connectedSocialProfiles, site])
 
   const getImportedNativeElementDraftSettings = useCallback((slot: ImportedNativeElementSlot) => {
     const currentSite = importedNativeElementSiteRef.current || site
@@ -21923,6 +21971,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
     if (slot.type === 'video' && !getSettingString(settings, 'mediaUrl')) {
       return 'Sube o pega la URL del video que va en esta zona.'
+    }
+    if (slot.type === 'social_profile' && slot.socialProfileHooksError) {
+      return slot.socialProfileHooksError
     }
     return ''
   }, [accountCurrency])
@@ -22120,7 +22171,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (
       importedEditorIdentityDiagnostics.duplicateFormIds.length ||
       importedEditorIdentityDiagnostics.duplicateFieldIds.length ||
-      importedEditorIdentityDiagnostics.duplicateNativeElementIds.length
+      importedEditorIdentityDiagnostics.duplicateNativeElementIds.length ||
+      importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.length ||
+      importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.length
     ) return false
 
     const requests = new Map<string, ImportedNativeElementSaveRequest>()
@@ -25323,6 +25376,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (type === 'form') return <FormInput size={13} />
       if (type === 'calendar') return <CalendarDays size={13} />
       if (type === 'payment') return <DollarSign size={13} />
+      if (type === 'social_profile') return <Globe2 size={13} />
       return <Video size={13} />
     }
 
@@ -25614,7 +25668,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             </div>
           </div>
           {!importedNativeElementSlots.length && (
-            <p className={styles.importedFormFieldsHint}>Esta página no declara formularios, calendarios, pagos o videos nativos.</p>
+            <p className={styles.importedFormFieldsHint}>Esta página no declara formularios, calendarios, pagos, videos o perfiles sociales conectados.</p>
           )}
           {importedNativeElementDuplicateIds.length > 0 && (
             <p className={styles.importedContentHubError}>
@@ -25624,14 +25678,15 @@ const ImportedHtmlEditorPanel: React.FC<{
           <div className={styles.importedContentAssetList}>
             {importedNativeElementSlots.map(slot => {
               const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
+              const slotError = slot.socialProfileHooksError || slot.videoRulesError
               return (
                 <div key={slot.key} className={styles.importedContentAssetRow}>
                   <span className={styles.importedContentAssetIcon}>{renderSlotIcon(slot.type)}</span>
                   <span className={styles.importedFormFieldRowMain}>
                     <strong>{slot.label}</strong>
-                    <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{slot.type === 'calendar' && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
+                    <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{['calendar', 'social_profile'].includes(slot.type) && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
                   </span>
-                  <Badge variant={block ? 'success' : 'neutral'}>{block ? 'Configurado' : 'Pendiente'}</Badge>
+                  <Badge variant={slotError ? 'warning' : block ? 'success' : 'neutral'}>{slotError ? 'Corrige el código' : block ? 'Configurado' : 'Pendiente'}</Badge>
                   <Button
                     ref={(node) => { importedNativeElementTriggerRefs.current[slot.key] = node }}
                     type="button"
@@ -25655,6 +25710,9 @@ const ImportedHtmlEditorPanel: React.FC<{
 
         {selectedSlot && draftBlock && (
           <div className={styles.importedNativeElementControls}>
+            {selectedSlot.socialProfileHooksError && (
+              <p className={styles.importedContentHubError}>{selectedSlot.socialProfileHooksError}</p>
+            )}
             {selectedSlot.type === 'form' && (
               <>
                 <FormEmbedToolbarControls
@@ -25837,6 +25895,25 @@ const ImportedHtmlEditorPanel: React.FC<{
                   }
                 ]}
               />
+            )}
+
+            {selectedSlot.type === 'social_profile' && (
+              <>
+                <SocialProfileSettings
+                  site={nativeElementSite}
+                  settings={draftSettings}
+                  connectedSocialProfiles={connectedSocialProfiles}
+                  loadingSocialProfiles={loadingSocialProfiles}
+                  onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                  onSave={autosaveSelectedNativeElement}
+                  showScale={selectedSlot.renderMode !== 'custom'}
+                />
+                {selectedSlot.renderMode === 'custom' && (
+                  <p className={styles.importedFormFieldsHint}>
+                    Claude, ChatGPT o Codex controlan el diseño. Ristak llena foto, nombre, seguidores, red y verificado con el perfil que elijas aquí.
+                  </p>
+                )}
+              </>
             )}
 
             <div className={styles.importedButtonActionFooter}>
@@ -28069,19 +28146,22 @@ type ExternalAIFormMode = 'native' | 'custom' | 'none'
 type ExternalAICalendarMode = 'native' | 'custom' | 'none'
 type ExternalAIVideoMode = 'native' | 'html' | 'none'
 type ExternalAIPaymentMode = 'native' | 'none'
+type ExternalAISocialProfileMode = 'native' | 'custom' | 'none'
 
 type ExternalAICompatibilityAnswers = {
   forms: ExternalAIFormMode
   calendar: ExternalAICalendarMode
   video: ExternalAIVideoMode
   payment: ExternalAIPaymentMode
+  socialProfile: ExternalAISocialProfileMode
 }
 
 const EXTERNAL_AI_COMPATIBILITY_DEFAULTS: ExternalAICompatibilityAnswers = {
   forms: 'none',
   calendar: 'none',
   video: 'none',
-  payment: 'none'
+  payment: 'none',
+  socialProfile: 'none'
 }
 
 const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswers) => {
@@ -28089,7 +28169,8 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     answers.forms === 'native' ||
     answers.calendar === 'native' ||
     answers.video === 'native' ||
-    answers.payment === 'native'
+    answers.payment === 'native' ||
+    answers.socialProfile === 'native'
   const usesCustomHtmlForms = answers.forms === 'custom' || answers.calendar === 'custom'
 
   const sections = [
@@ -28124,8 +28205,8 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       'Slots nativos de Ristak:',
       '- Los slots nativos que Ristak renderiza deben ser huecos limpios, vacíos y sin diseño propio.',
       '- No pongas texto placeholder tipo "aquí va el calendario", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima del slot.',
-      '- El HTML solo decide la ubicación del elemento; Ristak insertará el diseño completo del formulario, calendario, pago o video real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.',
-      '- Esta regla aplica a form, calendar nativo, payment y video. No aplica al calendario custom con data-rstk-native-render="custom", porque ese sí usa tu frontend propio conectado a Ristak.',
+      '- El HTML solo decide la ubicación del elemento; Ristak insertará el diseño completo del formulario, calendario, pago, video o perfil social nativo. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.',
+      '- Esta regla aplica a form, calendar nativo, payment, video y social-profile nativo. No aplica al calendario custom ni al perfil social custom con data-rstk-native-render="custom", porque esos sí usan tu frontend propio conectado a Ristak.',
       ''
     )
   }
@@ -28141,7 +28222,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
   } else if (answers.forms === 'custom') {
     sections.push(
       'Formularios:',
-      '- ChatGPT o Claude diseñarán el formulario con compatibilidad Ristak.',
+      '- ChatGPT, Claude o Codex diseñarán el formulario con compatibilidad Ristak.',
       '- REQUISITO OBLIGATORIO DE ENTREGA: usa <form data-rstk-form-id="lead-form" data-rstk-label="Formulario principal"> y agrega un data-rstk-field-id semántico y estable a CADA input, textarea o select guardable. No entregues el HTML si falta uno solo.',
       '- data-rstk-form-id debe ser único en todo el sitio. data-rstk-field-id debe ser único dentro de su formulario y conservarse aunque cambien el texto, el orden o el diseño.',
       '- name, id y data-rstk-field ayudan a interpretar el campo, pero NO sustituyen los IDs estables. Ejemplo: <input data-rstk-field-id="lead-email" id="email" name="email" data-rstk-field="email" type="email">.',
@@ -28206,7 +28287,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
   } else if (answers.video === 'html') {
     sections.push(
       'Video:',
-      '- ChatGPT o Claude diseñarán el video con compatibilidad Ristak.',
+      '- ChatGPT, Claude o Codex diseñarán el video con compatibilidad Ristak.',
       '- El video HTML queda bajo control total del código y no se edita desde Ristak. Para reproductor, acciones y formularios sobre video usa el video nativo.',
       ''
     )
@@ -28230,6 +28311,32 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Pago:',
       '- Esta página no usará pago. No agregues data-rstk-native-element="payment" ni eventos Purchase.',
+      ''
+    )
+  }
+
+  if (answers.socialProfile === 'native') {
+    sections.push(
+      'Perfil de red social:',
+      '- La página usará el perfil social completo de Ristak.',
+      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="ristak" data-rstk-label="Perfil principal"></div>.',
+      '- Ristak dibuja el bloque y permite elegir el perfil conectado, foto, nombre, seguidores y si se muestra verificado.',
+      ''
+    )
+  } else if (answers.socialProfile === 'custom') {
+    sections.push(
+      'Perfil de red social:',
+      '- ChatGPT, Claude o Codex diseñarán el perfil, pero los datos reales los llenará Ristak.',
+      '- Usa <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal"> y diseña libremente dentro.',
+      '- Son obligatorios <img data-rstk-social-avatar alt="">, un elemento data-rstk-social-name, otro data-rstk-social-followers y el badge completo con data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle.',
+      '- No inventes nombre, foto, seguidores ni verificado y no llames Meta desde JavaScript. Ristak inyecta esos datos desde el perfil elegido y oculta todo el elemento data-rstk-social-verified cuando el usuario apaga esa opción.',
+      '- Conserva el contenedor, su data-rstk-native-id y todos los hooks al rediseñar. El CSS y el layout sí son tuyos; los valores no.',
+      ''
+    )
+  } else {
+    sections.push(
+      'Perfil de red social:',
+      '- Esta página no usará perfil social conectado. No agregues data-rstk-native-element="social-profile" ni seguidores inventados.',
       ''
     )
   }
@@ -28312,7 +28419,7 @@ const ExternalAICompatibilityModal: React.FC<{
       isOpen={isOpen}
       onClose={onClose}
       title="Asistente de compatibilidad"
-      subtitle="Elige qué quieres que ChatGPT o Claude diseñen y qué elementos prefieres agregar desde Ristak."
+      subtitle="Elige qué quieres que ChatGPT, Claude o Codex diseñen y qué elementos prefieres agregar desde Ristak."
       size="lg"
       closeOnBackdropClick={!creating}
       closeOnEscape={!creating}
@@ -28322,7 +28429,7 @@ const ExternalAICompatibilityModal: React.FC<{
           <span>¿Tu página usará formularios?</span>
           <CustomSelect value={answers.forms} onChange={(event) => updateAnswer('forms', event.target.value as ExternalAIFormMode)}>
             <option value="native">Agregar los formularios completos de Ristak</option>
-            <option value="custom">Hacer que ChatGPT o Claude diseñen el formulario con compatibilidad Ristak</option>
+            <option value="custom">Hacer que ChatGPT, Claude o Codex diseñen el formulario con compatibilidad Ristak</option>
             <option value="none">Diseñar la página sin formularios</option>
           </CustomSelect>
         </label>
@@ -28331,7 +28438,7 @@ const ExternalAICompatibilityModal: React.FC<{
           <span>¿Tu página usará calendario?</span>
           <CustomSelect value={answers.calendar} onChange={(event) => updateAnswer('calendar', event.target.value as ExternalAICalendarMode)}>
             <option value="native">Agregar el calendario completo de Ristak</option>
-            <option value="custom">Hacer que ChatGPT o Claude diseñen el calendario con compatibilidad Ristak</option>
+            <option value="custom">Hacer que ChatGPT, Claude o Codex diseñen el calendario con compatibilidad Ristak</option>
             <option value="none">Diseñar la página sin calendario</option>
           </CustomSelect>
         </label>
@@ -28340,7 +28447,7 @@ const ExternalAICompatibilityModal: React.FC<{
           <span>¿Tu página usará video?</span>
           <CustomSelect value={answers.video} onChange={(event) => updateAnswer('video', event.target.value as ExternalAIVideoMode)}>
             <option value="native">Agregar el reproductor completo de Ristak</option>
-            <option value="html">Hacer que ChatGPT o Claude diseñen el video con compatibilidad Ristak</option>
+            <option value="html">Hacer que ChatGPT, Claude o Codex diseñen el video con compatibilidad Ristak</option>
             <option value="none">Diseñar la página sin video</option>
           </CustomSelect>
         </label>
@@ -28350,6 +28457,15 @@ const ExternalAICompatibilityModal: React.FC<{
           <CustomSelect value={answers.payment} onChange={(event) => updateAnswer('payment', event.target.value as ExternalAIPaymentMode)}>
             <option value="native">Agregar el sistema de pago completo de Ristak</option>
             <option value="none">Diseñar la página sin pagos</option>
+          </CustomSelect>
+        </label>
+
+        <label className={styles.importedActionField}>
+          <span>¿Tu página usará perfil de red social?</span>
+          <CustomSelect value={answers.socialProfile} onChange={(event) => updateAnswer('socialProfile', event.target.value as ExternalAISocialProfileMode)}>
+            <option value="custom">Hacer que ChatGPT, Claude o Codex diseñen el perfil con datos de Ristak</option>
+            <option value="native">Agregar el perfil completo de Ristak</option>
+            <option value="none">Diseñar la página sin perfil social conectado</option>
           </CustomSelect>
         </label>
 
@@ -28432,7 +28548,7 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
               </button>
               <button type="button" disabled={creating} onClick={() => setExternalAICompatibilityOpen(true)}>
                 <Sparkles size={22} />
-                <strong>Diseñar con ChatGPT o Claude</strong>
+                <strong>Diseñar con ChatGPT, Claude o Codex</strong>
                 <p>Responde unas preguntas y copia instrucciones listas para diseñar una página compatible con Ristak.</p>
                 <ChevronRight size={18} />
               </button>
@@ -42815,7 +42931,8 @@ const SocialProfileSettings: React.FC<{
   loadingSocialProfiles: boolean
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ site, settings, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave }) => {
+  showScale?: boolean
+}> = ({ site, settings, connectedSocialProfiles, loadingSocialProfiles, onPatchSettings, onSave, showScale = true }) => {
   const platform = normalizeSocialPlatform(settings.platform || platformChromeFor(resolveTemplateId(site)))
   const connectedProfilesForPlatform = sortConnectedSocialProfilesByPriority(connectedSocialProfiles.filter(profile => profile.platform === platform))
   const selectedConnectedProfileId = getSettingString(settings, 'socialSourceProfileId')
@@ -42930,11 +43047,13 @@ const SocialProfileSettings: React.FC<{
           <span>Mostrar verificado</span>
         </label>
       </div>
-      <SocialProfileScaleField
-        value={getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX)}
-        onChange={(value) => onPatchSettings({ socialProfileScale: value })}
-        onCommit={onSave}
-      />
+      {showScale && (
+        <SocialProfileScaleField
+          value={getSettingNumber(settings, 'socialProfileScale', DEFAULT_SOCIAL_PROFILE_SCALE, SOCIAL_PROFILE_SCALE_MIN, SOCIAL_PROFILE_SCALE_MAX)}
+          onChange={(value) => onPatchSettings({ socialProfileScale: value })}
+          onCommit={onSave}
+        />
+      )}
     </AccordionSection>
   )
 }

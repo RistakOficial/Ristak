@@ -102,6 +102,94 @@ test('imported HTML native payment slots render the real Ristak checkout runtime
   }
 })
 
+test('imported HTML custom social profile keeps the AI design and injects connected data', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <section class="ai-social-card" data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal">
+              <img class="ai-social-avatar" data-rstk-social-avatar src="https://fake.test/avatar.webp" alt="Perfil inventado">
+              <strong class="ai-social-name" data-rstk-social-name>Perfil inventado</strong>
+              <span class="ai-social-verified" data-rstk-social-verified>Verificado</span>
+              <span class="ai-social-platform" data-rstk-social-platform>Red inventada</span>
+              <span class="ai-social-followers"><b data-rstk-social-followers>999 mil</b> seguidores</span>
+              <small class="ai-social-subtitle" data-rstk-social-subtitle>Texto inventado</small>
+            </section>
+          </main>
+        </body>
+      </html>
+    `, `HTML custom social profile ${Date.now()}`)
+    siteId = site.id
+
+    const siteWithSocialProfile = await createBlock(site.id, {
+      blockType: 'social_profile',
+      label: 'Perfil principal',
+      content: 'Perfil de red social',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'perfil-principal',
+        importedHtmlNativeType: 'social_profile',
+        importedHtmlNativeRenderMode: 'custom',
+        platform: 'instagram',
+        brandName: 'Ristak Oficial',
+        brandSubtitle: 'Cuenta de Instagram conectada',
+        brandAvatar: 'https://example.test/ristak-avatar.webp',
+        followers: '24 mil',
+        brandVerified: false,
+        socialAutoSync: true,
+        socialSourceProfileId: 'instagram:ig_1'
+      }
+    })
+
+    let currentSite = await getSite(site.id, { includeBlocks: true })
+    let html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: false
+    })
+
+    assert.match(html, /class="ai-social-card rstk-imported-native-slot rstk-imported-native-social-profile rstk-imported-native-custom"/)
+    assert.match(html, /data-rstk-native-mounted="true"/)
+    assert.match(html, /data-rstk-native-type="social_profile"/)
+    assert.match(html, /data-rstk-native-slot-id="perfil-principal"/)
+    assert.match(html, /data-rstk-social-platform-value="instagram"/)
+    assert.match(html, /src="https:\/\/example\.test\/ristak-avatar\.webp"/)
+    assert.match(html, /alt="Ristak Oficial"/)
+    assert.match(html, /data-rstk-social-name>Ristak Oficial</)
+    assert.match(html, /data-rstk-social-platform>Instagram</)
+    assert.match(html, /data-rstk-social-followers>24 mil</)
+    assert.match(html, /data-rstk-social-subtitle>Cuenta de Instagram conectada</)
+    assert.match(html, /data-rstk-social-verified data-rstk-social-visible="false" hidden aria-hidden="true">Verificado</)
+    assert.doesNotMatch(html, /Perfil inventado|999 mil|Red inventada|Texto inventado|fake\.test/)
+    assert.doesNotMatch(html, /<section class="rstk-chrome rstk-social-profile rstk-social-profile-block/)
+
+    const socialBlock = siteWithSocialProfile.blocks.find(currentBlock => currentBlock.blockType === 'social_profile')
+    assert.ok(socialBlock)
+    await updateBlock(site.id, socialBlock.id, {
+      settings: {
+        ...socialBlock.settings,
+        brandVerified: true
+      }
+    })
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: false
+    })
+
+    assert.match(html, /data-rstk-social-verified data-rstk-social-visible="true">Verificado</)
+    assert.doesNotMatch(html, /data-rstk-social-visible="true"[^>]*hidden/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('imported HTML native payment slots render editor payment mock from preview draft blocks', async () => {
   let siteId = ''
 

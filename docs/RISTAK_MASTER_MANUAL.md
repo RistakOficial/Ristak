@@ -4180,7 +4180,12 @@ Ristak usa Meta en varias areas:
   refresh diario de Meta actualiza avatar, nombre y seguidores de bloques con
   `socialAutoSync=true`; si un bloque legacy no tiene `socialSourceProfileId`,
   puede adoptar el perfil configurado que coincida con su plataforma. Cuando el
-  bloque vive dentro de un formulario nativo o un formulario embebido en Sites,
+  bloque esta asociado a un slot `social-profile` de HTML importado, conserva la
+  misma fuente, el mismo refresh diario y la opcion manual `brandVerified`, pero
+  el renderer llena los hooks del HTML en vez de sustituir el diseño creado por
+  la IA. Nunca expone el token de Meta ni consulta la red social desde el
+  navegador publico. Cuando el bloque vive dentro de un formulario nativo o un
+  formulario embebido en Sites,
   se alinea con el mismo carril de ancho y justificacion que los campos, opciones,
   acciones y pagos del formulario.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
@@ -4474,7 +4479,7 @@ el HTML puede declarar `data-rstk-conversion-condition="qualified_only"` y Rista
 omite Pixel/CAPI cuando el mismo formulario descalifica al contacto.
 
 Para HTML importado con elementos nativos de Ristak, el contrato es declarar una
-zona con `data-rstk-native-element="form|calendar|payment|video"` y
+zona con `data-rstk-native-element="form|calendar|payment|video|social-profile"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
@@ -4496,8 +4501,8 @@ el editor. No mezcla silenciosamente codigo externo con los bloques del proyecto
 que estaba abierto.
 
 Las tres entradas del editor HTML —`Pegar código HTML`, `Subir HTML o ZIP` y
-`Diseñar con ChatGPT o Claude`— terminan en el mismo contrato visible de reglas
-HTML. Al entrar al editor, la guía abre por default y exige una versión móvil
+`Diseñar con ChatGPT, Claude o Codex`— terminan en el mismo contrato visible de
+reglas HTML. Al entrar al editor, la guía abre por default y exige una versión móvil
 real: `meta viewport`, layout fluido, un `@media (max-width: 640px)` con cambios
 concretos, controles táctiles de al menos 44 px, campos de al menos 16 px y cero
 scroll horizontal a 390 px. El mismo bloque se incluye en las instrucciones
@@ -4583,16 +4588,18 @@ audio, el editor la marca para reasociar y el renderer no inyecta el archivo
 incompatible anterior.
 
 Los slots nativos que Ristak renderiza (`form`, `calendar` con
-`data-rstk-native-render="ristak"`, `payment` y `video`) deben ser huecos
+`data-rstk-native-render="ristak"`, `payment`, `video` y `social-profile` con
+render nativo) deben ser huecos
 limpios: contenedores vacios, sin texto placeholder, mocks, tarjetas, bordes
 punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni
 wrappers decorativos dentro, detras o encima. El HTML externo solo decide la
-ubicacion del bloque; Ristak pinta el formulario, calendario, checkout o video
-completo con su propio diseno y configuracion. Si hace falta reservar espacio en
+ubicacion del bloque; Ristak pinta el formulario, calendario, checkout, video o
+perfil social completo con su propio diseno y configuracion. Si hace falta reservar espacio en
 el layout, debe hacerse con estructura neutra sin borde/fondo visible para que
-no quede UI falsa atras o encima del embed. La excepcion es `calendar` con
-`data-rstk-native-render="custom"`, porque ahi el frontend importado si es el
-calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
+no quede UI falsa atras o encima del embed. Las excepciones son `calendar` y
+`social-profile` con `data-rstk-native-render="custom"`, porque ahi el frontend
+importado si es el elemento visual y Ristak solo conecta los datos y operaciones
+reales.
 
 El slot nativo de `video` tampoco es dueño de su geometria. No debe declarar
 `width`/`max-width`, `height`/`min-height`/`max-height`, `aspect-ratio`, padding
@@ -4668,6 +4675,17 @@ y controles configurados en el editor.
   para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
   externos sin archivo Storage asociado; las acciones del reproductor nativo se
   conectan directamente al elemento de video.
+- `social-profile` con `data-rstk-native-render="ristak"`: renderiza el bloque
+  completo del editor normal. Con `data-rstk-native-render="custom"`, conserva
+  el markup, clases, layout y CSS creados por ChatGPT, Claude o Codex y sustituye
+  server-side solamente los hooks `data-rstk-social-avatar` (en un `<img>`),
+  `data-rstk-social-name`, `data-rstk-social-followers` y
+  `data-rstk-social-verified`; `data-rstk-social-platform` y
+  `data-rstk-social-subtitle` son opcionales. Foto, nombre, red, texto y
+  seguidores salen del perfil conectado elegido en el inspector. El hook
+  completo de verificado se oculta cuando `brandVerified=false`, sin cambiar el
+  CSS del autor. El sitio publico no llama Meta ni recibe credenciales; consume
+  el snapshot guardado que el job diario existente actualiza desde backend.
 
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o
@@ -4736,7 +4754,8 @@ En el editor HTML importado, el Panel de contenido ocupa el inspector derecho y
 administra en una sola vista todo lo que el codigo de la pagina activa ya
 contiene. El listado se calcula por pagina, no con totales de todo el sitio, y
 muestra por separado cada imagen, fondo, audio, descargable, formulario HTML,
-calendario, pago y video detectado. No existe un limite de un elemento por tipo:
+calendario, pago, video y perfil social detectado. No existe un limite de un
+elemento por tipo:
 dos formularios, varias imagenes, varios videos o varios descargables aparecen
 como filas independientes y se asocian desde ahi. Los campos se agrupan debajo
 del formulario HTML real al que pertenecen, de modo que dos formularios con un
@@ -4745,8 +4764,11 @@ popovers sobre textos, imagenes, botones, campos o secciones, ni controles para
 insertar elementos nuevos en el HTML.
 
 La vista general del panel resuelve las asociaciones simples directamente en
-cada fila. Los elementos con configuracion avanzada, como video, calendario o
-pago, muestran un engrane. Al abrirlo, el mismo inspector derecho cambia a la
+cada fila. Los elementos con configuracion avanzada, como video, calendario,
+pago o perfil social, muestran un engrane. En el perfil social el usuario elige
+la red y el perfil conectado, puede ajustar los valores visibles y decide si se
+muestra verificado; en modo custom no aparece el control de escala porque el
+tamaño pertenece al CSS importado. Al abrirlo, el mismo inspector derecho cambia a la
 configuracion de ese elemento; arriba aparece una flecha con `Volver`, que
 regresa al mapeo general de la pagina y conserva el elemento desde el que se
 entro. No se abre otra ventana ni se mezcla la configuracion avanzada con todas
@@ -4763,17 +4785,18 @@ mostrar los elementos nativos ya montados tal como se veran en vivo; las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
 de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por
 `data-rstk-native-id` + tipo + pagina, de modo que dos paginas importadas no
-compartan accidentalmente un formulario, calendario, pago, video o target con el
+compartan accidentalmente un formulario, calendario, pago, video, perfil social o target con el
 mismo identificador. IDs duplicados dentro de una misma pagina nunca montan dos
 veces el mismo bloque: el preview muestra un diagnostico y publicado omite el
 duplicado. Antes de persistir siquiera el HTML, Guardar, Publicar, Preview y las
 asociaciones directas ejecutan el mismo preflight sobre todos los borradores
 efectivos del sitio: detienen la operacion si existe un `data-rstk-form-id`
-repetido globalmente, un `data-rstk-field-id` repetido dentro de su formulario o
-un `data-rstk-native-id` repetido dentro de la pagina. Asi la UI no puede avisar
+repetido globalmente, un `data-rstk-field-id` repetido dentro de su formulario,
+un `data-rstk-native-id` repetido dentro de la pagina, reglas de video invalidas
+o un perfil social custom sin sus cuatro hooks obligatorios. Asi la UI no puede avisar
 del error despues de haber dejado codigo ambiguo en un sitio publicado. El
 inspector derecho guarda automaticamente cambios validos
-de video, calendario y pago con bajo ruido, y el boton de guardado manual sigue
+de video, calendario, pago y perfil social con bajo ruido, y el boton de guardado manual sigue
 mostrando validaciones cuando falta una configuracion obligatoria. Para pagos,
 ese preview usa un snapshot temporal de la
 configuracion del inspector derecho y dibuja una maqueta de checkout con pasarela,
@@ -4811,11 +4834,12 @@ por ejemplo `Landing-01.html`, `Form-02.html`, `Booked-03.html`. Ristak usa ese
 numero para ordenar paginas importadas o generadas; no debe depender del orden
 alfabetico del ZIP ni de nombres como `Pagina 1`.
 
-En el flujo de crear un sitio, la opcion `Diseñar con ChatGPT o Claude`
+En el flujo de crear un sitio, la opcion `Diseñar con ChatGPT, Claude o Codex`
 vive dentro del grupo de Editor HTML, despues de `Subir HTML o ZIP`. Esta opcion
 no llama a ninguna API de IA ni crea paginas por el usuario: solo abre un
-asistente de compatibilidad que pregunta si ChatGPT o Claude diseñaran los
-formularios, el calendario o el video con compatibilidad Ristak, si se insertaran
+asistente de compatibilidad que pregunta si ChatGPT, Claude o Codex diseñaran los
+formularios, el calendario, el video o el perfil social con compatibilidad
+Ristak, si se insertaran
 los elementos completos de Ristak o si la pagina no los incluira. Los dropdowns
 usan el `CustomSelect` global y el valor cerrado conserva la misma tipografia de
 las opciones abiertas. Al terminar muestra instrucciones listas para copiar y
@@ -4826,6 +4850,9 @@ por pagina. Si el usuario elige formulario HTML personalizado, ese bloque
 copiable incluye el contrato de calificacion por opcion, los tres destinos de
 descarte y `data-rstk-conversion-condition="qualified_only"`; tambien prohibe
 disparar Pixel/CAPI manualmente antes del veredicto de Ristak.
+Cuando elige perfil social custom, las instrucciones exigen los cuatro hooks
+obligatorios, prohiben seguidores o identidades inventadas y dejan claro que
+Ristak conserva el diseño pero inyecta los datos del perfil conectado.
 
 El mapeo de campos HTML vive exclusivamente en el Panel de contenido; se elimina
 el modal separado de revision o "Ruta de datos". Cada formulario personalizado

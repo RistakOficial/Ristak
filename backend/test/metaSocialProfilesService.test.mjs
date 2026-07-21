@@ -380,7 +380,12 @@ test('published social profile refresh adopts configured Meta profile when legac
         brandName: 'Formulario 01',
         brandSubtitle: 'Patrocinado',
         followers: '',
-        socialAutoSync: true
+        brandVerified: false,
+        socialAutoSync: true,
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'perfil-principal',
+        importedHtmlNativeType: 'social_profile',
+        importedHtmlNativeRenderMode: 'custom'
       })
     ])
 
@@ -397,6 +402,11 @@ test('published social profile refresh adopts configured Meta profile when legac
         assert.equal(settings.followers, '1,5 mil')
         assert.equal(settings.socialSourceProfileId, 'facebook:page_1')
         assert.equal(settings.socialSourceId, 'page_1')
+        assert.equal(settings.brandVerified, false)
+        assert.equal(settings.importedHtmlNativeElement, true)
+        assert.equal(settings.importedHtmlNativeSlotId, 'perfil-principal')
+        assert.equal(settings.importedHtmlNativeType, 'social_profile')
+        assert.equal(settings.importedHtmlNativeRenderMode, 'custom')
       })
     } finally {
       await cleanupSite(siteId)

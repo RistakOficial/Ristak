@@ -7107,6 +7107,8 @@ Contrato de código cerrado y contenido:
 - Nunca reemplaces una clave por una URL física. No esperes un catálogo previo: primero declara la zona en el HTML y Ristak permitirá asociar el archivo después.
 - Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
 - El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
+- Para un perfil social diseñado por ti pero alimentado por Ristak usa un contenedor con data-rstk-native-element="social-profile", data-rstk-native-id estable y data-rstk-native-render="custom". Dentro conserva estos hooks: data-rstk-social-avatar en un <img>, data-rstk-social-name, data-rstk-social-followers y data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle. Diseña libremente el markup y CSS alrededor de esos hooks; Ristak inyecta foto, nombre, red, texto y seguidores del perfil elegido, y oculta el elemento completo data-rstk-social-verified cuando el usuario apaga el verificado.
+- No inventes seguidores, foto, nombre ni estado verificado y no llames Meta desde el navegador. Ristak resuelve el perfil conectado del editor y actualiza los datos publicados desde backend.
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
@@ -7138,13 +7140,14 @@ Convenciones de formularios para Ristak:
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
 Conversiones Meta/CAPI para HTML importado:
-- Elementos nativos Ristak en HTML externo: reserva zonas con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id unico. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y el editor permite elegir el formulario, calendario, pago o video real.
-- Solo uses data-rstk-native-element para formularios, calendarios, pagos y videos. No lo inventes para otros widgets.
+- Elementos conectados a Ristak en HTML externo: reserva zonas con data-rstk-native-element="form|calendar|payment|video|social-profile" y data-rstk-native-id unico. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y el editor permite elegir el formulario, calendario, pago, video o perfil social real.
+- Solo uses data-rstk-native-element para formularios, calendarios, pagos, videos y perfiles sociales. No lo inventes para otros widgets.
 - Formulario nativo Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacio; no metas <form>, campos ni botones de envio dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio boton y sus acciones "Al enviar"; si necesitas navegar despues del submit, configuralo en el editor.
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
 - Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">. Ese formulario tambien cumple el contrato obligatorio: nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre", email usa data-rstk-calendar-email data-rstk-field-id="agenda-email" y telefono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". El mensaje usa data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
+- Perfil social con diseño propio: <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal"><img data-rstk-social-avatar alt=""><span data-rstk-social-name></span><span data-rstk-social-verified aria-label="Perfil verificado">✓</span><span data-rstk-social-followers></span></section>. Los hooks de avatar, nombre, seguidores y verificado son obligatorios; data-rstk-social-platform y data-rstk-social-subtitle son opcionales. Ristak conserva el diseño HTML, llena los datos del perfil conectado y el elemento data-rstk-social-verified completo se muestra u oculta según la opción del editor.
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
@@ -23710,7 +23713,7 @@ function getSocialPlatformIcon(platform) {
   return ''
 }
 
-function renderSocialProfileBlock(block, context = {}) {
+function resolveSocialProfileBlockData(block, context = {}) {
   const settings = block.settings || {}
   const siteTemplate = resolveTemplate(context.site)
   const fallbackPlatform = isSocialTemplate(siteTemplate.id) ? siteTemplate.id : 'facebook'
@@ -23735,6 +23738,12 @@ function renderSocialProfileBlock(block, context = {}) {
   const secondary = followers ? `${escapeHtml(followers)} seguidores` : escapeHtml(subtitle)
   const platformLabel = platform === 'facebook' ? 'Facebook' : platform === 'instagram' ? 'Instagram' : platform === 'threads' ? 'Threads' : 'TikTok'
 
+  return { platform, platformLabel, brand, secondary }
+}
+
+function renderSocialProfileBlock(block, context = {}) {
+  const { platform, platformLabel, brand, secondary } = resolveSocialProfileBlockData(block, context)
+
   return `
     <section class="rstk-chrome rstk-social-profile rstk-social-profile-block rstk-social-profile-${platform}" aria-label="Perfil de ${platformLabel}">
       <div class="rstk-social-image">
@@ -23742,7 +23751,7 @@ function renderSocialProfileBlock(block, context = {}) {
         <span class="rstk-social-platform rstk-social-platform-${platform}" aria-hidden="true">${getSocialPlatformIcon(platform)}</span>
       </div>
       <div class="rstk-social-details">
-        <div class="rstk-social-name">${escapeHtml(name)}${verified ? RSTK_ICONS.verified : ''}</div>
+        <div class="rstk-social-name">${escapeHtml(brand.name)}${brand.verified ? RSTK_ICONS.verified : ''}</div>
         <div class="rstk-social-followers">${secondary}</div>
       </div>
     </section>
@@ -25632,6 +25641,7 @@ function normalizeImportedNativeElementType(value = '') {
   if (['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)) return 'calendar'
   if (['payment', 'payments', 'pago', 'pagos', 'checkout', 'cobro', 'cobros', 'purchase'].includes(token)) return 'payment'
   if (['video', 'videos', 'video-player', 'player', 'reproductor', 'media'].includes(token)) return 'video'
+  if (['social-profile', 'social-profiles', 'perfil-social', 'perfiles-sociales', 'red-social', 'social', 'profile'].includes(token)) return 'social_profile'
   return ''
 }
 
@@ -25664,7 +25674,7 @@ function getImportedNativeElementSlot(attrs = {}, index = 0) {
     'data-ristack-label',
     'aria-label',
     'title'
-  ]) || `${type === 'form' ? 'Formulario' : type === 'calendar' ? 'Calendario' : type === 'video' ? 'Video' : 'Pago'} ${id}`
+  ]) || `${type === 'form' ? 'Formulario' : type === 'calendar' ? 'Calendario' : type === 'video' ? 'Video' : type === 'social_profile' ? 'Perfil social' : 'Pago'} ${id}`
   const rawRenderMode = normalizeImportedNativeElementToken(firstImportedNativeAttr(attrs, [
     'data-rstk-native-render',
     'data-ristak-native-render',
@@ -25680,7 +25690,7 @@ function getImportedNativeElementSlot(attrs = {}, index = 0) {
     id,
     type,
     label,
-    renderMode: type === 'calendar' && ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(rawRenderMode) ? 'custom' : 'ristak'
+    renderMode: ['calendar', 'social_profile'].includes(type) && ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(rawRenderMode) ? 'custom' : 'ristak'
   }
 }
 
@@ -26008,6 +26018,8 @@ function isImportedNativeElementBlock(block = {}, slot = {}) {
         ? 'payment'
         : slot.type === 'video'
           ? 'video'
+          : slot.type === 'social_profile'
+            ? 'social_profile'
           : ''
   return expectedBlockType &&
     block.blockType === expectedBlockType &&
@@ -26037,7 +26049,9 @@ function renderImportedNativeElementPlaceholder(slot = {}) {
       ? 'Selecciona un calendario de Ristak'
       : slot.type === 'video'
         ? 'Configura el video de Ristak'
-        : 'Configura el pago de Ristak'
+        : slot.type === 'social_profile'
+          ? 'Configura el perfil social de Ristak'
+          : 'Configura el pago de Ristak'
   return `<div class="rstk-imported-native-placeholder">${escapeHtml(label)}</div>`
 }
 
@@ -26260,6 +26274,105 @@ async function renderImportedNativeFormSlot(block = {}, context = {}) {
   return `<iframe class="rstk-imported-native-form-frame" title="${escapeHtml(block.label || 'Formulario')}" srcdoc="${escapeHtml(bridgedFormHtml)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
 }
 
+const IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS = {
+  avatar: ['data-rstk-social-avatar', 'data-ristak-social-avatar', 'data-ristack-social-avatar'],
+  name: ['data-rstk-social-name', 'data-ristak-social-name', 'data-ristack-social-name'],
+  followers: ['data-rstk-social-followers', 'data-ristak-social-followers', 'data-ristack-social-followers'],
+  verified: ['data-rstk-social-verified', 'data-ristak-social-verified', 'data-ristack-social-verified'],
+  platform: ['data-rstk-social-platform', 'data-ristak-social-platform', 'data-ristack-social-platform'],
+  subtitle: ['data-rstk-social-subtitle', 'data-ristak-social-subtitle', 'data-ristack-social-subtitle']
+}
+
+function importedSocialHookPattern(names = []) {
+  return names.map(escapeRegExp).join('|')
+}
+
+function replaceImportedSocialHookContent(html = '', names = [], value = '') {
+  const hookPattern = importedSocialHookPattern(names)
+  if (!hookPattern) return html
+  const pattern = new RegExp(`<([a-z][\\w:-]*)\\b([^>]*\\b(?:${hookPattern})\\b[^>]*)>([\\s\\S]*?)<\\/\\1\\s*>`, 'gi')
+  return String(html || '').replace(pattern, (_full, tagName, attrsText) => (
+    `<${tagName}${attrsText}>${escapeHtml(value)}</${tagName}>`
+  ))
+}
+
+function removeImportedHtmlAttribute(attrsText = '', attrName = '') {
+  return String(attrsText || '').replace(
+    new RegExp(`\\s+${escapeRegExp(attrName)}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+))?`, 'gi'),
+    ''
+  )
+}
+
+function setImportedHtmlAttribute(attrsText = '', attrName = '', value = '') {
+  const cleaned = removeImportedHtmlAttribute(attrsText, attrName)
+  return `${cleaned} ${attrName}="${escapeHtml(value)}"`
+}
+
+function rewriteImportedSocialHookOpenings(html = '', names = [], rewrite) {
+  const hookPattern = importedSocialHookPattern(names)
+  if (!hookPattern) return html
+  const pattern = new RegExp(`<([a-z][\\w:-]*)\\b([^>]*\\b(?:${hookPattern})\\b[^>]*?)(\\/?)>`, 'gi')
+  return String(html || '').replace(pattern, (full, tagName, attrsText, selfClose) => (
+    rewrite({ full, tagName: String(tagName || '').toLowerCase(), attrsText, selfClose })
+  ))
+}
+
+function renderImportedCustomSocialProfileSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, block = null, context = {}) {
+  if (!block) {
+    return context.preview
+      ? renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
+      : ''
+  }
+
+  const { platform, platformLabel, brand } = resolveSocialProfileBlockData(block, context)
+  let content = String(innerHtml || '')
+  content = replaceImportedSocialHookContent(content, IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS.name, brand.name)
+  content = replaceImportedSocialHookContent(content, IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS.followers, brand.followers)
+  content = replaceImportedSocialHookContent(content, IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS.platform, platformLabel)
+  content = replaceImportedSocialHookContent(content, IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS.subtitle, brand.subtitle)
+  content = rewriteImportedSocialHookOpenings(content, IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS.avatar, ({ full, tagName: hookTag, attrsText, selfClose }) => {
+    if (hookTag !== 'img') return full
+    let nextAttrs = removeImportedHtmlAttribute(attrsText, 'src')
+    nextAttrs = removeImportedHtmlAttribute(nextAttrs, 'alt')
+    nextAttrs = removeImportedHtmlAttribute(nextAttrs, 'hidden')
+    nextAttrs = removeImportedHtmlAttribute(nextAttrs, 'aria-hidden')
+    nextAttrs = setImportedHtmlAttribute(nextAttrs, 'alt', brand.name)
+    if (brand.avatarUrl) {
+      nextAttrs = setImportedHtmlAttribute(nextAttrs, 'src', brand.avatarUrl)
+    } else {
+      nextAttrs = `${nextAttrs} hidden aria-hidden="true"`
+    }
+    return `<${hookTag}${nextAttrs}${selfClose}>`
+  })
+  content = rewriteImportedSocialHookOpenings(content, IMPORTED_SOCIAL_PROFILE_HOOK_ATTRS.verified, ({ tagName: hookTag, attrsText, selfClose }) => {
+    let nextAttrs = removeImportedHtmlAttribute(attrsText, 'hidden')
+    nextAttrs = removeImportedHtmlAttribute(nextAttrs, 'aria-hidden')
+    nextAttrs = removeImportedHtmlAttribute(nextAttrs, 'data-rstk-social-visible')
+    nextAttrs = setImportedHtmlAttribute(nextAttrs, 'data-rstk-social-visible', brand.verified ? 'true' : 'false')
+    if (!brand.verified) nextAttrs = `${nextAttrs} hidden aria-hidden="true"`
+    return `<${hookTag}${nextAttrs}${selfClose}>`
+  })
+
+  const classes = [
+    attrs.class,
+    'rstk-imported-native-slot',
+    'rstk-imported-native-social-profile',
+    'rstk-imported-native-custom'
+  ].filter(Boolean).join(' ')
+  const dataAttrs = {
+    ...attrs,
+    class: classes,
+    'data-rstk-native-mounted': 'true',
+    'data-rstk-native-type': 'social_profile',
+    'data-rstk-native-slot-id': slot.id || '',
+    'data-rstk-native-block-id': block.id || '',
+    'data-rstk-social-platform-value': platform,
+    'aria-label': attrs['aria-label'] || `Perfil de ${platformLabel}`
+  }
+
+  return `<${tagName}${renderHtmlAttributes(dataAttrs)}>${content}</${tagName}>`
+}
+
 function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
   const settings = block.settings || {}
   const calendarSlug = cleanString(settings.calendarSlug || settings.calendar_slug || block.content)
@@ -26319,6 +26432,9 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   const block = findImportedNativeElementBlock(blocks, slot)
   if (slot.type === 'calendar' && slot.renderMode === 'custom') {
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
+  }
+  if (slot.type === 'social_profile' && slot.renderMode === 'custom') {
+    return renderImportedCustomSocialProfileSlot(tagName, attrs, innerHtml, slot, block, context)
   }
   // Slot sin bloque configurado (o binding no resuelto): el placeholder "Configura…" es
   // una ayuda de EDITOR, jamás para el visitante real. En publicado devolvemos el markup
@@ -26660,6 +26776,7 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:140px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-video .rstk-video{width:100%}
+.rstk-imported-native-social-profile [data-rstk-social-verified][hidden],.rstk-imported-native-social-profile [data-ristak-social-verified][hidden],.rstk-imported-native-social-profile [data-ristack-social-verified][hidden],.rstk-imported-native-social-profile [data-rstk-social-avatar][hidden],.rstk-imported-native-social-profile [data-ristak-social-avatar][hidden],.rstk-imported-native-social-profile [data-ristack-social-avatar][hidden]{display:none!important}
 .rstk-payment-block{position:relative;width:100%;text-align:var(--rstk-checkout-align,left);font-family:inherit;color:inherit}
 .rstk-checkout-card{width:100%;border:1px solid color-mix(in srgb, CanvasText 12%, transparent);border-radius:18px;background:color-mix(in srgb, Canvas 94%, CanvasText 6%);box-shadow:0 12px 30px color-mix(in srgb, CanvasText 10%, transparent);overflow:hidden}
 .rstk-checkout-inner{display:grid;gap:16px;padding:24px}
