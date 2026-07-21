@@ -149,6 +149,13 @@ Los detectores deben ser conservadores:
   usa un lock distribuido para no duplicar consultas durante deploys o con más
   de una instancia.
 
+Para sincronizaciones periódicas no financieras, el heartbeat debe renovar el
+lease mientras el job siga vivo y el TTL de recuperación por caída debe vencer
+antes del siguiente tick. No lo iguales exactamente al intervalo: una diferencia
+de milisegundos entre adquisición y próximo disparo puede saltarse un ciclo
+completo. Los crones financieros conservan la regla más estricta de la sección
+de cobros y nunca operan en `failOpen`.
+
 ## Tests Mínimos
 
 Cada integración nueva con cron debe cubrir:

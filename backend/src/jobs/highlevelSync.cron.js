@@ -9,10 +9,11 @@ import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDr
 import { withCronLock } from '../utils/cronLock.js'
 import { canRunBackgroundJob } from '../services/licenseService.js'
 
-// (GHL-005) TTLs de los locks distribuidos = el intervalo de cada cron, así un lock
-// que quede colgado por un crash se libera solo en el siguiente ciclo.
-const HIGHLEVEL_SYNC_LOCK_TTL_MS = 60 * 60 * 1000 // sync completa: cada hora
-const HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS = 10 * 60 * 1000 // conversaciones: cada 10 min
+// (GHL-005) El heartbeat renueva los leases mientras el trabajo sigue vivo. Si
+// el proceso cae, el lease debe vencer ANTES del siguiente tick; igualarlo al
+// intervalo deja una carrera de milisegundos que puede saltarse otro ciclo.
+export const HIGHLEVEL_SYNC_LOCK_TTL_MS = 55 * 60 * 1000 // sync completa: cada hora
+export const HIGHLEVEL_CONVERSATIONS_LOCK_TTL_MS = 9 * 60 * 1000 // conversaciones: cada 10 min
 
 // (GHL-010) Prueba ligera de que el token tenga acceso a un scope concreto.
 // NO rompe la conexión base: solo loguea claramente si el scope falta, para que

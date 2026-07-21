@@ -3012,6 +3012,10 @@ Reglas base:
   entrega `customFields` explícito por contacto; así Ristak conserva los campos
   personalizados sin disparar un GET individual por cada ficha durante una
   sincronización masiva.
+- Los leases distribuidos de la sincronización completa y de conversaciones se
+  renuevan mientras el proceso siga vivo, pero vencen antes del siguiente tick
+  si la instancia cae. Así un deploy o crash no deja dos corridas activas ni
+  provoca que una carrera de milisegundos salte otra hora completa.
 - Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
   eliminarse de Ristak como copia local junto con sus citas locales asociadas.
   Mientras HighLevel siga configurado, el borrado local queda bloqueado porque
