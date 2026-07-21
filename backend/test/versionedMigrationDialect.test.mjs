@@ -87,6 +87,10 @@ test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('111_tracking_visitor_projection_state.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('111a_tracking_visitor_projection_state.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('111a_tracking_visitor_projection_state.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('125_sites_content_assets.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('125_sites_content_assets.sqlite.sql', 'postgres'), false)
+  assert.equal(migrationRunsForDialect('125a_sites_content_assets.postgres.sql', 'postgres'), true)
+  assert.equal(migrationRunsForDialect('125a_sites_content_assets.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
 })
@@ -719,6 +723,81 @@ test('la migracion 093 de bibliotecas Sites tolera JSON corrupto y crea ambos í
       'idx_public_sites_form_library_folder_page',
       'idx_public_sites_landing_library_folder_page'
     ])
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migracion 125 repara instalaciones cuyo bootstrap ya se marco sin content assets', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-sites-content-assets-migration-'))
+  const database = openMemoryDatabase()
+  const migration = new URL(
+    '../migrations/versioned/125_sites_content_assets.sqlite.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE app_config (
+        config_key TEXT PRIMARY KEY,
+        config_value TEXT
+      );
+      CREATE TABLE public_sites (
+        id TEXT PRIMARY KEY
+      );
+      INSERT INTO app_config (config_key, config_value)
+      VALUES ('core_schema_bootstrap_version', '2026-07-12-v1');
+      INSERT INTO public_sites (id) VALUES ('site-preview');
+    `)
+    await copyFile(migration, join(directory, '125_sites_content_assets.sqlite.sql'))
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    const table = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'public_site_content_assets'
+    `)
+    assert.deepEqual(table.map(row => row.name), ['public_site_content_assets'])
+
+    const indexes = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'index'
+        AND name IN (
+          'idx_public_site_content_assets_site_key',
+          'idx_public_site_content_assets_media'
+        )
+      ORDER BY name
+    `)
+    assert.deepEqual(indexes.map(row => row.name), [
+      'idx_public_site_content_assets_media',
+      'idx_public_site_content_assets_site_key'
+    ])
+
+    await database.run(`
+      INSERT INTO public_site_content_assets (
+        id, site_id, asset_key, media_asset_id
+      ) VALUES (?, ?, ?, ?)
+    `, ['binding-one', 'site-preview', 'hero', 'media-one'])
+    await assert.rejects(
+      database.run(`
+        INSERT INTO public_site_content_assets (
+          id, site_id, asset_key, media_asset_id
+        ) VALUES (?, ?, ?, ?)
+      `, ['binding-two', 'site-preview', 'hero', 'media-two']),
+      /UNIQUE constraint failed/
+    )
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
   } finally {
     await database.close()
     await rm(directory, { recursive: true, force: true })

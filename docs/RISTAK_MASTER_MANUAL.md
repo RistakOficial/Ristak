@@ -4420,6 +4420,11 @@ Media que corresponde. Al asociarlo, `public_site_content_assets` guarda
 Reemplazar el archivo actualiza el binding sin tocar la clave ni regenerar el
 HTML. El renderer resuelve la clave server-side y la ruta publica estable es
 `/api/sites/public/content-assets/:siteId/:assetKey`.
+La tabla y sus indices tambien viven en la migracion versionada `125`, por lo que
+una instalacion existente los recibe aunque el replay del esquema base ya se
+haya marcado como completado. El preview HTML no depende de tener un dominio
+publico conectado; usa una sesion temporal autenticada y mantiene el tracking
+apagado.
 
 Si una zona multimedia, un campo o un slot nativo existe solo en el borrador
 activo, la accion de asociarlo guarda primero el codigo de forma silenciosa y
