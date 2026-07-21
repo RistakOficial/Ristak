@@ -73,6 +73,7 @@ router.post('/oauth/:integrationKind/status/refresh', refreshMetaOAuthStatus)
 router.post('/oauth/:integrationKind/connect-url', createMetaOAuthConnectUrl)
 router.post('/oauth/:integrationKind/complete', completeMetaOAuth)
 router.post('/oauth/:integrationKind/finalize', finalizeMetaOAuth)
+router.post('/oauth/:integrationKind/reconfigure', reconfigureMetaOAuth)
 router.post('/oauth/:integrationKind/disconnect', disconnectMetaOAuth)
 
 // Aliases legacy del OAuth combinado. No se usan para conexiones nuevas.

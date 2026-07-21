@@ -18,6 +18,8 @@ import {
   disconnectMetaOAuthIntegration,
   finalizeMetaOAuthIntegration,
   getMetaOAuthIntegrationStatus,
+  prepareMetaOAuthIntegrationReconfiguration,
+  refreshMetaOAuthIntegrationStatus,
   setMetaOAuthIntegrationCentralClientForTest,
   setMetaOAuthIntegrationRuntimeClientForTest
 } from '../src/services/metaOAuthIntegrationService.js'
@@ -37,6 +39,7 @@ const TABLES = [
   'meta_config',
   'meta_oauth_integrations',
   'meta_oauth_integration_sessions',
+  'meta_oauth_authorized_assets',
   'highlevel_config'
 ]
 const APP_CONFIG_KEYS = [
@@ -397,6 +400,19 @@ test('OAuth Social y Ads aÃ­slan scopes, activos, runtime, rollback y desconexiÃ
     assert.equal(resolveMetaCapiAccessToken(await getMetaConfig()), '', 'sin Dataset CAPI permanece apagado')
     assert.equal(await isMetaAdsConnected(), true)
 
+    const persistedAdsStatus = await getMetaOAuthIntegrationStatus('ads')
+    assert.equal(persistedAdsStatus.assetSnapshot?.sessionId, '')
+    assert.equal(persistedAdsStatus.assetSnapshot?.adAccounts[0]?.name, 'Ads')
+    assert.equal(persistedAdsStatus.selectedAssets?.adAccount?.name, 'Ads')
+    assert.equal(persistedAdsStatus.selectedAssets?.dataset, null)
+
+    const reconfigurationSession = await prepareMetaOAuthIntegrationReconfiguration('ads')
+    assert.ok(reconfigurationSession.sessionId)
+    assert.equal(reconfigurationSession.adAccounts[0]?.name, 'Ads')
+    assert.deepEqual(reconfigurationSession.adAccounts[0]?.pixels, [{ id: 'dataset-1', name: 'Dataset' }])
+    assert.equal(JSON.stringify(reconfigurationSession).includes('ads-token'), false)
+    await db.run('DELETE FROM meta_oauth_integration_sessions WHERE id = ?', [reconfigurationSession.sessionId])
+
     // WhatsApp conserva su frontera histÃ³rica: nunca debe exportar el BISU de
     // Ads como si fuera un System User Token de WhatsApp.
     await setAppConfig('license_key', 'installer-signature-secret')
@@ -547,6 +563,66 @@ test('OAuth Social y Ads aÃ­slan scopes, activos, runtime, rollback y desconexiÃ
     assert.equal(cronProviders.includes('meta-social'), true)
     assert.equal(cronProviders.includes('meta-ads'), true)
     assert.ok(removedSubscriptions.length >= 1)
+  })
+})
+
+test('status remoto recupera nombres para conexiones Ads anteriores y conserva dropdowns localmente', async () => {
+  await initializeMasterKey()
+  await withIsolatedSplitMeta(async () => {
+    await db.run(
+      `INSERT INTO meta_oauth_integrations (
+         id, integration_kind, status, connection_id, access_token, appsecret_proof,
+         app_id, user_id, user_name, business_id, ad_account_id, dataset_id,
+         granted_scopes_json, missing_scopes_json, granular_scopes_json,
+         validated, relay_status, connected_at
+       ) VALUES (?, 'ads', 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 1, 'inactive', CURRENT_TIMESTAMP)`,
+      [
+        'old-ads-row',
+        'old-ads-connection',
+        encrypt('old-ads-token'),
+        encrypt('old-ads-proof'),
+        'meta-app',
+        'ads-user',
+        'Adriana',
+        'business-1',
+        '123',
+        'dataset-1',
+        JSON.stringify(META_OAUTH_ADS_REQUIRED_SCOPES),
+        JSON.stringify([{ scope: 'ads_read', target_ids: ['123'] }])
+      ]
+    )
+    setMetaOAuthIntegrationCentralClientForTest({
+      getStatus: async () => ({
+        configured: true,
+        available: true,
+        review_pending: false,
+        required_scopes: META_OAUTH_ADS_REQUIRED_SCOPES,
+        connection: {
+          connected: true,
+          connection_id: 'old-ads-connection',
+          available: {
+            businesses: [{ id: 'business-1', name: 'Negocio Adriana' }],
+            ad_accounts: [{ id: '123', name: 'Cuenta Adriana', business_id: 'business-1' }],
+            pixels: [{ id: 'dataset-1', name: 'Pixel Adriana', ad_account_id: '123' }]
+          }
+        }
+      })
+    })
+
+    const refreshed = await refreshMetaOAuthIntegrationStatus('ads')
+    assert.equal(refreshed.assetSnapshot?.adAccounts[0]?.name, 'Cuenta Adriana')
+    assert.equal(refreshed.assetSnapshot?.adAccounts[0]?.pixels[0]?.name, 'Pixel Adriana')
+    assert.equal(refreshed.selectedAssets?.adAccount?.name, 'Cuenta Adriana')
+    assert.equal(refreshed.selectedAssets?.dataset?.name, 'Pixel Adriana')
+
+    const passive = await getMetaOAuthIntegrationStatus('ads')
+    assert.equal(passive.assetSnapshot?.adAccounts[0]?.name, 'Cuenta Adriana')
+    assert.equal(passive.assetSnapshot?.defaults.adAccountId, 'act_123')
+
+    const selectionSession = await prepareMetaOAuthIntegrationReconfiguration('ads')
+    assert.ok(selectionSession.sessionId)
+    assert.equal(selectionSession.defaults.pixelId, 'dataset-1')
+    assert.equal(JSON.stringify(selectionSession).includes('old-ads-token'), false)
   })
 })
 

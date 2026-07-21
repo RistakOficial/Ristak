@@ -1469,6 +1469,57 @@ async function loadAuthorizedAssets() {
   }
 }
 
+async function cacheCentralAuthorizedAssets(config = null, centralConnection = null) {
+  const connectionId = cleanString(centralConnection?.connection_id || centralConnection?.connectionId)
+  if (
+    !config ||
+    !isMetaOAuthConnectionMode(config.connection_mode) ||
+    Number(config.oauth_connected) !== 1 ||
+    !connectionId ||
+    connectionId !== cleanString(config.oauth_connection_id) ||
+    !centralConnection?.available
+  ) {
+    return null
+  }
+
+  const stored = await loadAuthorizedAssets()
+  const existing = cleanString(stored?.connectionId) === connectionId ? stored : null
+  const selectedPageId = cleanString(config.page_id)
+  const selectedPageSecrets = selectedPageId && cleanString(config.oauth_page_access_token)
+    ? {
+        [selectedPageId]: {
+          pageAccessToken: config.oauth_page_access_token,
+          pageAppSecretProof: config.oauth_page_appsecret_proof
+        }
+      }
+    : {}
+  const authorized = {
+    connectionId,
+    connectionMode: normalizeMetaConnectionMode(config.connection_mode),
+    source: cleanString(centralConnection?.source)
+      || existing?.source
+      || normalizeMetaConnectionMode(config.connection_mode),
+    debugTokenType: existing?.debugTokenType || '',
+    appId: cleanString(config.oauth_app_id || config.app_id) || existing?.appId || '',
+    configId: cleanString(config.oauth_config_id) || existing?.configId || '',
+    user: existing?.user || {
+      id: cleanString(config.oauth_user_id),
+      name: cleanString(config.oauth_user_name)
+    },
+    tokenExpiresAt: config.token_expires_at || existing?.tokenExpiresAt || null,
+    dataAccessExpiresAt: config.oauth_data_access_expires_at || existing?.dataAccessExpiresAt || null,
+    permissions: {
+      granted: parseJson(config.oauth_granted_scopes_json, []),
+      missing: parseJson(config.oauth_missing_scopes_json, []),
+      granular: parseJson(config.oauth_granular_scopes_json, [])
+    },
+    ...normalizeHintAssets(centralConnection.available),
+    pageSecrets: { ...(existing?.pageSecrets || {}), ...selectedPageSecrets }
+  }
+  await saveAuthorizedAssets(authorized)
+  return authorizedAssetsPayload(authorized)
+}
+
 function buildLocalAuthorizedAssetSnapshot(config = null, authorized = null) {
   if (!config || !authorized) return null
   if (!isMetaOAuthConnectionMode(config.connection_mode)) return null
@@ -1633,6 +1684,17 @@ export async function refreshMetaOAuthConnectionStatus() {
     getMetaOAuthConnectionStatus(),
     centralClient.getStatus()
   ])
+  const config = local.oauth.connected
+    ? await getMetaConfig({ migratePlaintext: false }).catch(() => null)
+    : null
+  const centralConnection = central?.connection || null
+  const authorized = await cacheCentralAuthorizedAssets(config, centralConnection).catch(error => {
+    logger.warn(`Meta OAuth legacy: no se pudo refrescar el inventario local: ${error.message}`)
+    return null
+  })
+  const refreshedSelection = authorized
+    ? summarizeSelectedMetaAssets(config, authorized)
+    : { selected: local.selected, selectedAssets: local.selectedAssets }
   return {
     ...local,
     configured: central?.configured === true,
@@ -1643,7 +1705,11 @@ export async function refreshMetaOAuthConnectionStatus() {
     appId: cleanString(central?.app_id || central?.appId) || local.appId,
     configId: cleanString(central?.config_id || central?.configId) || local.configId,
     requiredScopes: toStringArray(central?.required_scopes || central?.requiredScopes || local.requiredScopes),
-    centralConnection: central?.connection || null,
+    ...refreshedSelection,
+    assetSnapshot: authorized
+      ? buildLocalAuthorizedAssetSnapshot(config, authorized)
+      : local.assetSnapshot,
+    centralConnection,
     remoteChecked: true,
     remoteCheckedAt: new Date().toISOString(),
     error: null

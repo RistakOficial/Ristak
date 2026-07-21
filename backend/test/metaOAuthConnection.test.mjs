@@ -15,6 +15,7 @@ import {
   finalizeMetaOAuthConnection,
   getMetaOAuthConnectionStatus,
   prepareMetaOAuthReconfiguration,
+  refreshMetaOAuthConnectionStatus,
   setMetaOAuthCentralClientForTest,
   setMetaOAuthFetchForTest,
   setMetaOAuthMarkLocalRelayForTest,
@@ -619,6 +620,78 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
     assert.equal(safeMetaGraphTransportError(
       new Error('request to https://graph.facebook.com/me?access_token=secret&appsecret_proof=proof failed')
     ), 'No se pudo contactar Meta Graph.')
+  })
+})
+
+test('status remoto recupera nombres y dropdowns para conexiones OAuth unificadas anteriores', async () => {
+  await initializeMasterKey()
+  await withIsolatedMeta(async () => {
+    await saveMetaConfig('123', 'legacy-oauth-token', 'dataset-1', null, null, {
+      connectionMode: 'oauth_bisu',
+      oauthConnectionId: 'legacy-oauth-connection',
+      oauthUserId: 'legacy-user',
+      oauthUserName: 'Adriana',
+      oauthAppId: 'meta-app',
+      oauthBusinessId: 'business-1',
+      appSecretProof: 'legacy-oauth-proof',
+      grantedScopes: META_OAUTH_REQUIRED_SCOPES,
+      missingScopes: [],
+      granularScopes: [{ scope: 'ads_read', target_ids: ['123'] }],
+      validated: true,
+      timezoneData: { timezone_name: 'UTC', timezone_id: null, timezone_offset_hours_utc: 0 }
+    })
+    await db.run(
+      `INSERT INTO meta_oauth_authorized_assets (id, connection_id, payload_encrypted)
+       VALUES ('unified', ?, ?)`,
+      [
+        'different-connection',
+        encrypt(JSON.stringify({
+          connectionId: 'different-connection',
+          pageSecrets: { 'old-page': { pageAccessToken: 'old-page-token' } }
+        }))
+      ]
+    )
+    setMetaOAuthCentralClientForTest({
+      getStatus: async () => ({
+        configured: true,
+        available: true,
+        review_pending: false,
+        connection: {
+          connected: true,
+          connection_id: 'legacy-oauth-connection',
+          source: 'oauth_bisu',
+          available: {
+            businesses: [{ id: 'business-1', name: 'Negocio Adriana' }],
+            ad_accounts: [{ id: '123', name: 'Cuenta Adriana', business_id: 'business-1' }],
+            pixels: [{ id: 'dataset-1', name: 'Pixel Adriana', ad_account_id: '123' }]
+          }
+        }
+      })
+    })
+
+    const before = await getMetaOAuthConnectionStatus()
+    assert.equal(before.assetSnapshot, null)
+
+    const refreshed = await refreshMetaOAuthConnectionStatus()
+    assert.equal(refreshed.assetSnapshot?.adAccounts[0]?.name, 'Cuenta Adriana')
+    assert.equal(refreshed.assetSnapshot?.adAccounts[0]?.pixels[0]?.name, 'Pixel Adriana')
+    assert.equal(refreshed.selectedAssets?.adAccount?.name, 'Cuenta Adriana')
+    assert.equal(refreshed.selectedAssets?.dataset?.name, 'Pixel Adriana')
+    const refreshedVault = await db.get(
+      'SELECT connection_id, payload_encrypted FROM meta_oauth_authorized_assets WHERE id = ?',
+      ['unified']
+    )
+    assert.equal(refreshedVault.connection_id, 'legacy-oauth-connection')
+    assert.equal(decrypt(refreshedVault.payload_encrypted).includes('old-page-token'), false)
+
+    const passive = await getMetaOAuthConnectionStatus()
+    assert.equal(passive.assetSnapshot?.defaults.adAccountId, '123')
+    assert.equal(passive.assetSnapshot?.defaults.pixelId, 'dataset-1')
+
+    const selectionSession = await prepareMetaOAuthReconfiguration()
+    assert.ok(selectionSession.sessionId)
+    assert.equal(selectionSession.adAccounts[0]?.name, 'Cuenta Adriana')
+    assert.equal(JSON.stringify(selectionSession).includes('legacy-oauth-token'), false)
   })
 })
 

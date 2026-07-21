@@ -87,7 +87,9 @@ cifrados existentes.
 
 1. **Meta Ads**: cuenta publicitaria obligatoria y Dataset de conversiones opcional, con
    dropdowns buscables y un solo boton **Guardar** para esa seccion. No existe
-   wizard de System User ni ruta visible para pegar tokens.
+   wizard de System User ni ruta visible para pegar tokens. Después de guardar,
+   ambos dropdowns permanecen visibles con el nombre legible del activo y pueden
+   cambiarse sin desconectar Meta.
 2. **Redes sociales**: durante App Review muestra un estado pendiente sin
    controles operativos. Cuando `meta_oauth_review_mode=false`, habilita el OAuth
    Social, la selección de **Página** e Instagram y los controles de mensajes y
@@ -165,10 +167,12 @@ Las conexiones nuevas viven cifradas en:
   selección y estado independientes;
 - `meta_oauth_integration_sessions`: sesión temporal cifrada por tipo, con TTL y
   consumo único;
+- `meta_oauth_authorized_assets`: inventario cifrado ligado al `connection_id`.
+  Usa IDs separados `split:ads|split:social` para que los dropdowns conserven
+  nombres y opciones después de guardar; `unified` permanece para legacy;
 - `meta_config`: conexión manual o OAuth combinado legacy; permanece como
   compatibilidad y no se sobreescribe al iniciar una conexión separada;
-- `meta_oauth_pending_sessions` y `meta_oauth_authorized_assets`: sesiones y
-  allowlist del login combinado legacy;
+- `meta_oauth_pending_sessions`: sesiones del login combinado legacy;
 - `meta_oauth_connection_backups`: respaldo cifrado del System User Token
   manual sustituido por OAuth.
 
@@ -234,10 +238,19 @@ https://www.facebook.com/v25.0/dialog/oauth
    conexión anterior del mismo tipo sigue activa hasta completar el commit.
 7. Ads exige elegir una cuenta publicitaria y permite dejar Dataset vacío.
    Social exige una Page y permite Instagram vacío.
-8. Cambiar un dropdown sólo cambia el borrador local. **Guardar** llama a
-   `POST /api/meta/oauth/:integrationKind/finalize`; Ads inicia su sync y Social
-   registra su relay/backfill. Un fallo de un tipo no desactiva el otro.
-9. **Autorizar nuevos activos** repite únicamente el OAuth del tipo activo. Las
+8. Al finalizar, Ristak conserva localmente el inventario cifrado y el estado
+   devuelve `assetSnapshot` más `selectedAssets`; por eso el nombre y el dropdown
+   no desaparecen al guardar o recargar. Un `status/refresh` explícito recupera
+   ese inventario desde Installer para conexiones separadas creadas antes de
+   esta regla. Las conexiones unificadas anteriores hacen el mismo backfill una
+   sola vez cuando la pantalla detecta que todavía no existe el inventario
+   `unified`.
+9. Cambiar un dropdown sólo cambia el borrador local. Al pulsar **Guardar**, el
+   frontend obtiene una sesión corta con
+   `POST /api/meta/oauth/:integrationKind/reconfigure` y después llama a
+   `finalize`; Ads inicia su sync y Social registra su relay/backfill. Un fallo de
+   un tipo no desactiva el otro.
+10. **Autorizar nuevos activos** repite únicamente el OAuth del tipo activo. Las
    conexiones combinadas existentes conservan sus endpoints sin segmento para
    selección y reconexión legacy.
 
@@ -255,15 +268,15 @@ Reglas no negociables:
 - La Page debe pertenecer al mismo portafolio que la cuenta publicitaria cuando
   Meta entrega esa relacion.
 - Instagram debe estar enlazado a la Page elegida.
-- Si Meta devuelve tareas de Page, deben incluir `ANALYZE`, `MESSAGING` y
-  `MODERATE`.
+- Si Meta devuelve tareas de Page, deben incluir `MESSAGING` y `MODERATE`.
 - `granular_scopes.target_ids` debe incluir cada activo elegido; si Meta no
   devuelve `target_ids`, Ristak no inventa una allowlist vacia.
 - El Page Token y su proof deben corresponder a la Page seleccionada.
-- En conexiones separadas, `complete` crea la sesión cifrada del tipo y
-  **Guardar** ejecuta un solo
-  `POST /api/meta/oauth/:integrationKind/finalize`. En conexiones combinadas
-  legacy, los selectores pueden obtener una sesión con
+- En conexiones separadas, `complete` crea la sesión cifrada inicial. Después
+  de guardar, los selectores se reconstruyen desde el inventario local sin
+  exponer credenciales; si cambia la selección, **Guardar** obtiene una sesión
+  one-time con `POST /api/meta/oauth/:integrationKind/reconfigure` y ejecuta un
+  solo `finalize`. En conexiones combinadas legacy, los selectores pueden obtener una sesión con
   `POST /api/meta/oauth/reconfigure` y guardar con el endpoint sin segmento.
   Cambiar un dropdown nunca llama a la API.
 - Los activos creados después del consentimiento no se agregan solos: requieren
@@ -513,7 +526,11 @@ Installer, autenticado por licencia salvo callbacks publicos:
     mezclan con el login ni los controles sociales.
 14. **Autorizar nuevos activos** abre sólo el Config ID del tipo conectado;
     reconectar Ads no cambia Social y viceversa.
-15. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
+15. Después de guardar o recargar, Cuenta publicitaria y Dataset siguen siendo
+    dropdowns, muestran sus nombres y permiten cambiar entre activos ya
+    autorizados. Una conexión Ads separada o unificada anterior recupera ese
+    inventario durante el primer `status/refresh` sin desconectarse.
+16. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
     conserva el último snapshot si Graph falla y nunca presenta `0` cuando Meta
     no devolvió el conteo.
 

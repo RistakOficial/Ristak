@@ -274,6 +274,13 @@ export const metaOAuthService = {
     })
   }),
 
+  reconfigureIntegration: (integrationKind: MetaOAuthIntegrationKind) => (
+    requestMetaOAuth<MetaOAuthSession>(`/api/meta/oauth/${integrationKind}/reconfigure`, {
+      method: 'POST',
+      body: JSON.stringify({ integrationKind })
+    })
+  ),
+
   finalizeIntegration: (
     integrationKind: MetaOAuthIntegrationKind,
     selection: MetaOAuthFinalizeSelection

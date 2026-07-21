@@ -3922,11 +3922,13 @@ Ristak usa Meta en varias areas:
   se copian a una instalación.
 - Las conexiones separadas activas viven cifradas por `ads|social` en
   `meta_oauth_integrations`; sus sesiones one-time viven en
-  `meta_oauth_integration_sessions`. La conexión combinada anterior permanece en
-  `meta_config` como `legacy`, y sus sesiones/allowlist permanecen en
-  `meta_oauth_pending_sessions` y `meta_oauth_authorized_assets`.
+  `meta_oauth_integration_sessions`. Sus inventarios autorizados viven cifrados
+  en `meta_oauth_authorized_assets` bajo `split:ads|split:social`, ligados al
+  `connection_id`. La conexión combinada anterior permanece en `meta_config`
+  como `legacy`, con sesiones en `meta_oauth_pending_sessions` e inventario
+  `unified` en la misma tabla de activos.
 - Las rutas canónicas para cuentas nuevas son
-  `/api/meta/oauth/:integrationKind/{status,status/refresh,connect-url,complete,finalize,disconnect}`.
+  `/api/meta/oauth/:integrationKind/{status,status/refresh,connect-url,complete,reconfigure,finalize,disconnect}`.
   Los endpoints sin segmento siguen sólo para conexiones combinadas legacy. Las
   rutas manuales de guardado/revelado/importación responden
   `410 META_OAUTH_REQUIRED`.
@@ -3947,9 +3949,15 @@ Ristak usa Meta en varias areas:
 - Al volver, Ristak conserva activos anteriores sólo si pertenecen a la misma
   conexion OAuth y siguen autorizados. Una conexion nueva empieza sin Page, Ad
   Account, Dataset ni Instagram. Cambiar un dropdown sólo actualiza el borrador;
-  pulsar Guardar manda un único `finalize` para la seccion correspondiente.
+  pulsar Guardar abre una sesión one-time con `reconfigure` y manda un único
+  `finalize` para la seccion correspondiente. Después del commit, los dropdowns
+  permanecen visibles con nombres y opciones tomados del inventario cifrado; no
+  se degradan a texto genérico. `status/refresh` recupera ese inventario desde
+  Installer para conexiones separadas o unificadas creadas antes de esta
+  persistencia; la pantalla dispara ese backfill sólo cuando falta el inventario
+  local.
   Instagram exige una Page enlazada. Si Meta devuelve tareas de Page, Ristak
-  exige `ANALYZE`, `MESSAGING` y `MODERATE`.
+  exige `MESSAGING` y `MODERATE`.
 - El Dataset se descubre por `/act_<AD_ACCOUNT_ID>/adspixels` para pixels
   clásicos y por `/{BUSINESS_ID}/ads_dataset` para Datasets modernos. Los edges
   `owned_pixels|client_pixels` sólo producen candidatos: la relación de cuenta
@@ -3990,7 +3998,8 @@ Ristak usa Meta en varias areas:
   texto plano la usan sólo en memoria: el cifrado oportunista queda para la
   siguiente mutacion explicita, nunca para la navegación.
 - El inventario autorizado de OAuth se pinta directamente desde
-  `meta_oauth_authorized_assets`. El modo manual usa el snapshot durable
+  `meta_oauth_authorized_assets`: `unified` identifica el login combinado y
+  `split:ads|split:social` las conexiones separadas. El modo manual usa el snapshot durable
   `app_config.meta_asset_snapshot_v1`, ligado a un fingerprint SHA-256 de la
   conexion para que un cambio de token no pueda reutilizar activos ajenos. El
   snapshot guarda sólo metadata de cuentas, Datasets, Pages y perfiles; jamás

@@ -42,6 +42,7 @@ import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCr
 const SESSION_TTL_MS = 15 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 const REQUIRED_PAGE_TASKS = ['MESSAGING', 'MODERATE']
+const AUTHORIZED_ASSETS_ID_PREFIX = 'split:'
 
 const defaultCentralClient = {
   claimHandoff: claimCentralOAuthHandoff,
@@ -324,6 +325,246 @@ function selectedFromRow(row = null) {
   }
 }
 
+function authorizedAssetsId(integrationKind) {
+  return `${AUTHORIZED_ASSETS_ID_PREFIX}${normalizeMetaOAuthIntegrationKind(integrationKind)}`
+}
+
+function normalizeAuthorizedAssetInventory(source = {}, integrationKind = 'ads') {
+  const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
+  const businesses = (Array.isArray(source.businesses) ? source.businesses : [])
+    .map(item => ({
+      id: cleanString(item?.id),
+      name: cleanString(item?.name) || cleanString(item?.id)
+    }))
+    .filter(item => item.id)
+
+  const rawAdAccounts = Array.isArray(source.adAccounts)
+    ? source.adAccounts
+    : Array.isArray(source.ad_accounts) ? source.ad_accounts : []
+  const rawDatasets = [
+    ...(Array.isArray(source.datasets) ? source.datasets : []),
+    ...(Array.isArray(source.pixels) ? source.pixels : []),
+    ...rawAdAccounts.flatMap(account => Array.isArray(account?.pixels) ? account.pixels.map(pixel => ({
+      ...pixel,
+      adAccountId: pixel?.adAccountId || account?.id
+    })) : [])
+  ]
+  const datasetsById = new Map()
+  for (const item of rawDatasets) {
+    const id = cleanString(item?.id || item?.dataset_id)
+    if (!id) continue
+    const previous = datasetsById.get(id) || {}
+    const adAccountIds = [...new Set([
+      ...toStringArray(previous.adAccountIds),
+      ...toStringArray(item?.adAccountIds || item?.ad_account_ids),
+      cleanString(item?.adAccountId || item?.ad_account_id)
+    ].map(normalizeAdAccountId).filter(Boolean))]
+    const businessId = cleanString(item?.businessId || item?.business_id || previous.businessId)
+    datasetsById.set(id, {
+      ...previous,
+      id,
+      name: cleanString(item?.name) || cleanString(previous.name) || id,
+      ...(businessId ? { businessId } : {}),
+      ...(adAccountIds.length ? { adAccountIds } : {}),
+      ...(adAccountIds.length === 1 ? { adAccountId: adAccountIds[0] } : {})
+    })
+  }
+  const datasets = [...datasetsById.values()]
+  const adAccounts = rawAdAccounts.map(item => {
+    const id = normalizeAdAccountId(item?.id || item?.account_id)
+    const businessId = cleanString(item?.businessId || item?.business_id || item?.business?.id)
+    return {
+      id: id ? `act_${id}` : '',
+      name: cleanString(item?.name) || id,
+      businessId,
+      ...(cleanString(item?.currency) ? { currency: cleanString(item.currency) } : {}),
+      ...(cleanString(item?.timezoneName || item?.timezone_name)
+        ? { timezoneName: cleanString(item?.timezoneName || item?.timezone_name) }
+        : {}),
+      pixels: datasets.filter(dataset => (
+        toStringArray(dataset?.adAccountIds || dataset?.adAccountId)
+          .map(normalizeAdAccountId)
+          .includes(id)
+      )).map(dataset => ({
+        id: dataset.id,
+        name: dataset.name,
+        ...(dataset.businessId ? { businessId: dataset.businessId } : {})
+      }))
+    }
+  }).filter(item => item.id)
+
+  const globalInstagram = Array.isArray(source.instagramAccounts)
+    ? source.instagramAccounts
+    : Array.isArray(source.instagram_accounts) ? source.instagram_accounts : []
+  const rawPages = Array.isArray(source.pages) ? source.pages : []
+  const pages = rawPages.map(item => {
+    const id = cleanString(item?.id)
+    const embedded = Array.isArray(item?.instagramAccounts)
+      ? item.instagramAccounts
+      : [item?.instagram_business_account, item?.connected_instagram_account].filter(Boolean)
+    const instagramAccounts = [...embedded, ...globalInstagram.filter(account => (
+      cleanString(account?.pageId || account?.page_id) === id
+    ))].reduce((items, account) => {
+      const accountId = cleanString(account?.id)
+      if (!accountId || items.some(existing => existing.id === accountId)) return items
+      items.push({
+        id: accountId,
+        username: cleanString(account?.username),
+        name: cleanString(account?.name) || cleanString(account?.username) || accountId
+      })
+      return items
+    }, [])
+    return {
+      id,
+      name: cleanString(item?.name) || id,
+      businessId: cleanString(item?.businessId || item?.business_id),
+      category: cleanString(item?.category) || null,
+      tasksAvailable: item?.tasksAvailable === true || item?.tasks_available === true,
+      tasks: toStringArray(item?.tasks).map(task => task.toUpperCase()),
+      instagramAccounts
+    }
+  }).filter(item => item.id)
+
+  return {
+    businesses,
+    adAccounts: kind === 'ads' ? adAccounts : [],
+    datasets: kind === 'ads' ? datasets : [],
+    pages: kind === 'social' ? pages : []
+  }
+}
+
+function authorizedAssetsPayload(payload = {}, integrationKind = payload?.integrationKind) {
+  const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
+  const inventory = normalizeAuthorizedAssetInventory(payload, kind)
+  return {
+    integrationKind: kind,
+    connectionId: cleanString(payload?.connectionId || payload?.connection_id),
+    user: payload?.user || {},
+    permissions: payload?.permissions || { granted: [], missing: [], granular: [] },
+    ...inventory,
+    pageSecrets: payload?.pageSecrets && typeof payload.pageSecrets === 'object'
+      ? payload.pageSecrets
+      : {},
+    updatedAt: payload?.updatedAt || new Date().toISOString()
+  }
+}
+
+async function saveAuthorizedAssets(payload, integrationKind = payload?.integrationKind) {
+  const authorized = authorizedAssetsPayload(payload, integrationKind)
+  if (!authorized.connectionId) {
+    throw oauthError(
+      'Falta identificar el inventario autorizado de Meta.',
+      500,
+      'META_OAUTH_AUTHORIZED_ASSETS_CONNECTION_MISSING'
+    )
+  }
+  await db.run(
+    `INSERT INTO meta_oauth_authorized_assets (id, connection_id, payload_encrypted)
+     VALUES (?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       connection_id = excluded.connection_id,
+       payload_encrypted = excluded.payload_encrypted,
+       updated_at = CURRENT_TIMESTAMP`,
+    [authorizedAssetsId(authorized.integrationKind), authorized.connectionId, encrypt(JSON.stringify(authorized))]
+  )
+  return authorized
+}
+
+async function loadAuthorizedAssets(integrationKind, activeRow = null) {
+  const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
+  const row = await db.get(
+    'SELECT connection_id, payload_encrypted, updated_at FROM meta_oauth_authorized_assets WHERE id = ?',
+    [authorizedAssetsId(kind)]
+  ).catch(() => null)
+  if (!row?.payload_encrypted) return null
+  if (activeRow && cleanString(row.connection_id) !== cleanString(activeRow.connection_id)) return null
+  try {
+    return {
+      ...authorizedAssetsPayload(JSON.parse(decrypt(row.payload_encrypted)), kind),
+      connectionId: cleanString(row.connection_id),
+      updatedAt: row.updated_at || null
+    }
+  } catch (error) {
+    logger.error(`No se pudo abrir el inventario autorizado de Meta ${kind}: ${error.message}`)
+    return null
+  }
+}
+
+function buildAssetSnapshot(row = null, authorized = null) {
+  if (!row || !authorized) return null
+  if (cleanString(row.connection_id) !== cleanString(authorized.connectionId)) return null
+  const selected = selectedFromRow(row)
+  return {
+    sessionId: '',
+    expiresAt: '',
+    integrationKind: row.integration_kind,
+    connectionMode: 'oauth_bisu',
+    user: authorized.user || {
+      id: cleanString(row.user_id),
+      name: cleanString(row.user_name)
+    },
+    permissions: authorized.permissions || {
+      granted: parseJson(row.granted_scopes_json, []),
+      missing: parseJson(row.missing_scopes_json, []),
+      granular: parseJson(row.granular_scopes_json, [])
+    },
+    businesses: authorized.businesses || [],
+    adAccounts: authorized.adAccounts || [],
+    datasets: authorized.datasets || [],
+    pages: authorized.pages || [],
+    defaults: selected,
+    updatedAt: authorized.updatedAt || row.updated_at || null,
+    source: 'local_authorized_assets'
+  }
+}
+
+function summarizeSelectedAssets(row = null, authorized = null) {
+  const selected = selectedFromRow(row)
+  const adAccount = (authorized?.adAccounts || []).find(item => (
+    normalizeAdAccountId(item?.id) === normalizeAdAccountId(selected.adAccountId)
+  )) || null
+  const dataset = (adAccount?.pixels || []).find(item => cleanString(item?.id) === selected.pixelId) || null
+  const page = (authorized?.pages || []).find(item => cleanString(item?.id) === selected.pageId) || null
+  const instagram = (page?.instagramAccounts || []).find(item => (
+    cleanString(item?.id) === selected.instagramAccountId
+  )) || null
+  const asset = (id, name, extra = {}) => id ? {
+    id,
+    name: cleanString(name) || id,
+    ...extra
+  } : null
+  return {
+    adAccount: asset(selected.adAccountId, adAccount?.name),
+    dataset: asset(selected.pixelId, dataset?.name),
+    page: asset(selected.pageId, page?.name),
+    instagram: asset(
+      selected.instagramAccountId,
+      instagram?.username ? `@${instagram.username}` : instagram?.name,
+      instagram?.username ? { username: cleanString(instagram.username) } : {}
+    )
+  }
+}
+
+async function cacheCentralAuthorizedAssets(integrationKind, row, centralConnection = null) {
+  const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
+  const connectionId = cleanString(centralConnection?.connection_id || centralConnection?.connectionId)
+  const available = centralConnection?.available
+  if (!row || !available || connectionId !== cleanString(row.connection_id)) return null
+  const existing = await loadAuthorizedAssets(kind, row)
+  return saveAuthorizedAssets({
+    integrationKind: kind,
+    connectionId,
+    user: existing?.user || { id: cleanString(row.user_id), name: cleanString(row.user_name) },
+    permissions: {
+      granted: parseJson(row.granted_scopes_json, []),
+      missing: parseJson(row.missing_scopes_json, []),
+      granular: parseJson(row.granular_scopes_json, [])
+    },
+    ...normalizeAuthorizedAssetInventory(available, kind),
+    pageSecrets: existing?.pageSecrets || {}
+  }, kind)
+}
+
 function localOAuthState(row = null) {
   const connected = Boolean(row && row.status === 'active')
   return {
@@ -409,10 +650,12 @@ function sanitizeSession(payload, session) {
     sessionId: session.id,
     expiresAt: session.expiresAt,
     integrationKind: payload.integrationKind,
+    connectionMode: 'oauth_bisu',
     user: payload.user,
     permissions: payload.permissions,
     businesses: [],
     adAccounts: payload.integrationKind === 'ads' ? payload.adAccounts : [],
+    datasets: payload.integrationKind === 'ads' ? payload.datasets : [],
     pages: payload.integrationKind === 'social' ? payload.pages : [],
     defaults: {
       businessId: payload.defaults?.businessId || '',
@@ -758,6 +1001,7 @@ async function finalizeUnlocked({
     await persistSessionPayload(sessionId, payload, 'central_committed')
 
     await activateCandidate(payload, { relayRegistered: kind === 'social' })
+    await saveAuthorizedAssets(payload, kind)
     runtimeEffects = await runPostActivationRuntimeEffects({
       kind,
       payload,
@@ -846,6 +1090,7 @@ export async function getMetaOAuthIntegrationStatus(integrationKind) {
     getActiveMetaOAuthIntegration(kind, { migratePlaintext: false }),
     db.get('SELECT * FROM meta_config ORDER BY id LIMIT 1').catch(() => null)
   ])
+  const authorized = row ? await loadAuthorizedAssets(kind, row) : null
   const legacyMode = normalizeMetaConnectionMode(legacy?.connection_mode)
   const manualConfigured = Boolean(legacy?.access_token && legacyMode === 'manual_system_user')
   const legacyCombinedConnected = Boolean(
@@ -870,6 +1115,8 @@ export async function getMetaOAuthIntegrationStatus(integrationKind) {
     legacyCombinedConnected,
     oauth: localOAuthState(row),
     selected: selectedFromRow(row),
+    selectedAssets: summarizeSelectedAssets(row, authorized),
+    assetSnapshot: buildAssetSnapshot(row, authorized),
     capabilities: metaOAuthIntegrationCapabilities(row),
     centralConnection: null,
     remoteChecked: false,
@@ -883,6 +1130,17 @@ export async function refreshMetaOAuthIntegrationStatus(integrationKind) {
     getMetaOAuthIntegrationStatus(kind),
     centralClient.getStatus({ integrationKind: kind })
   ])
+  const row = local.oauth.connected
+    ? await getActiveMetaOAuthIntegration(kind, { migratePlaintext: false })
+    : null
+  const centralConnection = central?.connection || null
+  const authorized = await cacheCentralAuthorizedAssets(kind, row, centralConnection)
+    .catch(error => {
+      logger.warn(`Meta OAuth ${kind}: no se pudo refrescar el inventario local: ${error.message}`)
+      return null
+    })
+  const assetSnapshot = authorized ? buildAssetSnapshot(row, authorized) : local.assetSnapshot
+  const selectedAssets = authorized ? summarizeSelectedAssets(row, authorized) : local.selectedAssets
   return {
     ...local,
     configured: central?.configured === true,
@@ -894,11 +1152,73 @@ export async function refreshMetaOAuthIntegrationStatus(integrationKind) {
     requiredScopes: toStringArray(
       central?.required_scopes || central?.requiredScopes || local.requiredScopes
     ),
-    centralConnection: central?.connection || null,
+    selectedAssets,
+    assetSnapshot,
+    centralConnection,
     remoteChecked: true,
     remoteCheckedAt: new Date().toISOString(),
     error: null
   }
+}
+
+export async function prepareMetaOAuthIntegrationReconfiguration(integrationKind) {
+  const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
+  const row = await getActiveMetaOAuthIntegration(kind)
+  if (!row) {
+    throw oauthError(
+      'Primero conecta esta sección con Meta.',
+      409,
+      'META_OAUTH_RECONFIGURE_NOT_CONNECTED'
+    )
+  }
+
+  let authorized = await loadAuthorizedAssets(kind, row)
+  if (!authorized) {
+    const central = await centralClient.getStatus({ integrationKind: kind })
+    authorized = await cacheCentralAuthorizedAssets(kind, row, central?.connection || null)
+  }
+  if (!authorized) {
+    throw oauthError(
+      'No se encontró el inventario autorizado. Usa “Autorizar nuevos activos” una vez para recuperarlo.',
+      409,
+      'META_OAUTH_AUTHORIZED_ASSETS_UNAVAILABLE'
+    )
+  }
+
+  const selected = selectedFromRow(row)
+  const selectedPageSecrets = selected.pageId && row.page_access_token
+    ? {
+        [selected.pageId]: {
+          pageAccessToken: row.page_access_token,
+          pageAppSecretProof: row.page_appsecret_proof
+        }
+      }
+    : {}
+  const payload = {
+    integrationKind: kind,
+    accessToken: row.access_token,
+    appSecretProof: row.appsecret_proof,
+    pageSecrets: { ...selectedPageSecrets, ...(authorized.pageSecrets || {}) },
+    source: 'oauth_bisu',
+    connectionId: row.connection_id,
+    appId: row.app_id,
+    configId: row.config_id,
+    user: authorized.user || { id: cleanString(row.user_id), name: cleanString(row.user_name) },
+    tokenExpiresAt: row.token_expires_at || null,
+    dataAccessExpiresAt: row.data_access_expires_at || null,
+    permissions: authorized.permissions || {
+      granted: parseJson(row.granted_scopes_json, []),
+      missing: parseJson(row.missing_scopes_json, []),
+      granular: parseJson(row.granular_scopes_json, [])
+    },
+    businesses: authorized.businesses || [],
+    adAccounts: kind === 'ads' ? authorized.adAccounts || [] : [],
+    datasets: kind === 'ads' ? authorized.datasets || [] : [],
+    pages: kind === 'social' ? authorized.pages || [] : [],
+    defaults: selected
+  }
+  const session = await createPendingSession(kind, payload)
+  return sanitizeSession(payload, session)
 }
 
 export async function createMetaOAuthIntegrationUrl({ integrationKind, returnPath } = {}) {
@@ -1026,6 +1346,7 @@ async function disconnectUnlocked(integrationKind) {
   await db.transaction(async tx => {
     await tx.run('DELETE FROM meta_oauth_integrations WHERE integration_kind = ?', [kind])
     await tx.run('DELETE FROM meta_oauth_integration_sessions WHERE integration_kind = ?', [kind])
+    await tx.run('DELETE FROM meta_oauth_authorized_assets WHERE id = ?', [authorizedAssetsId(kind)])
   })
   const fallback = await (kind === 'ads' ? getMetaConfig() : getMetaSocialConfig()).catch(error => {
     runtimeWarnings.push(`fallback-config: ${error.message}`)
@@ -1087,6 +1408,7 @@ async function repairPromotedSession(row, payload) {
       : null
   )
   await activateCandidate(payload, { relayRegistered: kind === 'social' })
+  await saveAuthorizedAssets(payload, kind)
   const effects = await runPostActivationRuntimeEffects({
     kind,
     payload,

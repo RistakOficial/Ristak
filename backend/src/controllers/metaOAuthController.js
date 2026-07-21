@@ -15,6 +15,7 @@ import {
   disconnectMetaOAuthIntegration,
   finalizeMetaOAuthIntegration,
   getMetaOAuthIntegrationStatus,
+  prepareMetaOAuthIntegrationReconfiguration,
   refreshMetaOAuthIntegrationStatus
 } from '../services/metaOAuthIntegrationService.js'
 import { clearMetaAssetSnapshot } from '../services/metaAssetSnapshotService.js'
@@ -168,13 +169,10 @@ export async function finalizeMetaOAuth(req, res) {
 
 export async function reconfigureMetaOAuth(req, res) {
   try {
-    if (integrationKind(req)) {
-      const error = new Error('La selección interna sólo aplica al login unificado de Meta.')
-      error.statusCode = 400
-      error.code = 'META_OAUTH_RECONFIGURE_KIND_INVALID'
-      throw error
-    }
-    const data = await prepareMetaOAuthReconfiguration()
+    const kind = integrationKind(req)
+    const data = kind
+      ? await prepareMetaOAuthIntegrationReconfiguration(kind)
+      : await prepareMetaOAuthReconfiguration()
     res.json({ success: true, data })
   } catch (error) {
     logger.warn(`No se pudo preparar la selección interna de Meta: ${error.message}`)

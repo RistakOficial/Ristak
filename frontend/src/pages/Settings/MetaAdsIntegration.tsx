@@ -728,7 +728,18 @@ export const MetaAdsIntegration: React.FC = () => {
   const loadMetaOAuthStatus = async () => {
     const loadVersion = ++metaStatusLoadVersion.current
     try {
-      const status = await metaOAuthService.getStatus()
+      const localStatus = await metaOAuthService.getStatus()
+      let status = localStatus
+      // Conexiones unificadas anteriores no siempre alcanzaron a guardar su
+      // inventario local. El POST explícito lo recupera una sola vez desde
+      // Installer; después las cargas vuelven a ser completamente locales.
+      if (localStatus.oauth.connected && !localStatus.assetSnapshot) {
+        try {
+          status = await metaOAuthService.refreshStatus()
+        } catch {
+          status = localStatus
+        }
+      }
       if (loadVersion !== metaStatusLoadVersion.current) return null
       setMetaOAuthStatus(status)
       if (status.connectionMode) setMetaConnectionMode(status.connectionMode)
@@ -863,7 +874,17 @@ export const MetaAdsIntegration: React.FC = () => {
           throw new Error('Esta autorización pertenece a otra sección de Meta.')
         }
 
-        const result = await metaOAuthService.finalizeIntegration(metaOAuthSessionKind, nextSelection)
+        // El snapshot persistente sólo pinta los dropdowns. Al guardar abrimos
+        // una sesión corta y cifrada con los mismos activos ya autorizados.
+        const commitSession = session.sessionId
+          ? session
+          : await metaOAuthService.reconfigureIntegration(metaOAuthSessionKind)
+        const commitSelection = buildMetaOAuthSelection(
+          commitSession,
+          selectionFromMetaOAuthSession(commitSession),
+          sectionPatch
+        )
+        const result = await metaOAuthService.finalizeIntegration(metaOAuthSessionKind, commitSelection)
         const nextPageId = result.selected.pageId || ''
         const nextInstagramAccountId = result.selected.instagramAccountId || ''
         setCredentials(current => ({
@@ -903,7 +924,9 @@ export const MetaAdsIntegration: React.FC = () => {
         setMetaOAuthSessionKind(null)
         setMetaOAuthSelection({ sessionId: '' })
         setSavedMetaOAuthSelection({ sessionId: '' })
-        await Promise.all([loadCredentials(), loadSplitMetaOAuthStatuses()])
+        const [, statuses] = await Promise.all([loadCredentials(), loadSplitMetaOAuthStatuses()])
+        const persistedSnapshot = statuses?.[section]?.assetSnapshot
+        if (persistedSnapshot) applyMetaOAuthSession(persistedSnapshot, section)
         showToast(
           socialChannelsUpdated ? 'success' : 'warning',
           section === 'ads'
@@ -1145,6 +1168,21 @@ export const MetaAdsIntegration: React.FC = () => {
   useEffect(() => {
     void Promise.all([loadMetaOAuthStatus(), loadSplitMetaOAuthStatuses()])
   }, [])
+
+  useEffect(() => {
+    // Una sesión con ID viene de un callback OAuth todavía pendiente de
+    // guardar y siempre gana. Fuera de ese momento restauramos el inventario
+    // local para que las cajas sigan visibles después de recargar la pantalla.
+    if (metaOAuthSession?.sessionId) return
+    const kind: MetaOAuthIntegrationKind = activeMetaTab === 'social' ? 'social' : 'ads'
+    const snapshot = splitMetaOAuthStatuses[kind]?.assetSnapshot
+    if (snapshot) applyMetaOAuthSession(snapshot, kind)
+  }, [
+    activeMetaTab,
+    metaOAuthSession?.sessionId,
+    splitMetaOAuthStatuses.ads?.assetSnapshot,
+    splitMetaOAuthStatuses.social?.assetSnapshot
+  ])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -2446,7 +2484,8 @@ export const MetaAdsIntegration: React.FC = () => {
     const matchingAccount = adAccounts.find(acc =>
       acc.id.replace(/^act_/, '') === normalizedId
     )
-    const savedAsset = metaOAuthStatus?.selectedAssets?.adAccount
+    const savedAsset = splitMetaOAuthStatuses.ads?.selectedAssets?.adAccount
+      || metaOAuthStatus?.selectedAssets?.adAccount
     const candidateName = matchingAccount?.name || (savedAsset?.id.replace(/^act_/, '') === normalizedId ? savedAsset.name : '')
     return {
       id: normalizedId,
@@ -2457,7 +2496,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const getSelectedPixelAsset = () => {
     if (!connectedPixelId) return null
     const matchingPixel = pixels.find(p => p.id === connectedPixelId)
-    const savedAsset = metaOAuthStatus?.selectedAssets?.dataset
+    const savedAsset = splitMetaOAuthStatuses.ads?.selectedAssets?.dataset
+      || metaOAuthStatus?.selectedAssets?.dataset
     const candidateName = matchingPixel?.name || (savedAsset?.id === connectedPixelId ? savedAsset.name : '')
     return {
       id: connectedPixelId,
@@ -2469,7 +2509,8 @@ export const MetaAdsIntegration: React.FC = () => {
     if (!connectedPageId) return null
     const pageId = connectedPageId
     const matchingPage = pages.find(page => page.id === pageId)
-    const savedAsset = metaOAuthStatus?.selectedAssets?.page
+    const savedAsset = splitMetaOAuthStatuses.social?.selectedAssets?.page
+      || metaOAuthStatus?.selectedAssets?.page
     const candidateName = matchingPage?.name || (savedAsset?.id === pageId ? savedAsset.name : '')
     return {
       id: pageId,
@@ -2481,7 +2522,8 @@ export const MetaAdsIntegration: React.FC = () => {
     if (!connectedInstagramAccountId) return null
     const instagramAccountId = connectedInstagramAccountId
     const matchingAccount = instagramAccounts.find(account => account.sourceId === instagramAccountId)
-    const savedAsset = metaOAuthStatus?.selectedAssets?.instagram
+    const savedAsset = splitMetaOAuthStatuses.social?.selectedAssets?.instagram
+      || metaOAuthStatus?.selectedAssets?.instagram
     const name = matchingAccount
       ? (matchingAccount.username ? `@${matchingAccount.username}` : matchingAccount.name)
       : (savedAsset?.id === instagramAccountId ? savedAsset.name : '')
