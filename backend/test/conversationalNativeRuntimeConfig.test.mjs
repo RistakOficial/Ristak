@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 
 import { db } from '../src/config/database.js'
 import {
@@ -24,6 +25,11 @@ const {
   normalizeConversationalCapabilitiesConfig,
   normalizeConversationalPromptConfig
 } = nativeRuntimeConfig
+
+const DEFAULT_PERSONALITY_MARKDOWN = readFileSync(
+  new URL('../../shared/conversational/default-personality.md', import.meta.url),
+  'utf8'
+).replace(/\r\n?/g, '\n').trim()
 
 async function removeAgent(agentId) {
   if (!agentId) return
@@ -95,6 +101,13 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       pastClientsToHuman: false
     }
   ])
+})
+
+test('la personalidad default nace completa desde el Markdown compartido', () => {
+  assert.equal(DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS, DEFAULT_PERSONALITY_MARKDOWN)
+  assert.ok(DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS.length > 90_000)
+  assert.match(DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS, /^# PROMPT COMPLETO: AGENTE CONVERSACIONAL CON CRITERIO, CALIDEZ Y ESTRATEGIA/)
+  assert.match(DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS, /Y sobre todo: \*\*curiosidad genuina\.\*\*[\s\S]*todo lo demás se acomoda solo\.$/)
 })
 
 test('Datos requeridos conserva sólo condiciones estructuradas que el servidor puede comprobar', () => {
@@ -616,6 +629,7 @@ test('agente nuevo nace con plantilla materializada, capacidades nativas y sin s
     assert.equal(Object.hasOwn(agent, 'runtimeMode'), false)
     assert.equal(agent.promptConfig.editableText, DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS)
     assert.equal(agent.promptConfig.schemaVersion, 2)
+    assert.equal(agent.promptConfig.templateVersion, 'ristak-conversational-v3')
     assert.equal(agent.promptConfig.strategyText, DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS)
     assert.equal(agent.promptConfig.personalityText, DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS)
     assert.equal(getConversationalCapability(agent, 'schedule_appointment')?.calendarId, 'cal_native_default')

@@ -5376,6 +5376,17 @@ valor viejo de `runtime_mode` se normaliza a `tool_calling_v2` y nunca seleccion
 otra implementacion. Una fila sin `capabilities_config` queda sin capacidades;
 `success_action`, `goal_workflow_config` y otros campos anteriores no se
 convierten ni pueden habilitar tools por debajo.
+
+La personalidad inicial de cada agente nuevo usa como fuente unica
+`shared/conversational/default-personality.md` (plantilla
+`ristak-conversational-v3`). Backend y frontend cargan el mismo Markdown completo,
+por lo que escritorio y la vista celular no pueden divergir. El contenido se
+materializa dentro de `prompt_config` al crear el agente: cambiar el archivo en una
+version futura no reescribe la personalidad ya guardada de agentes existentes. La
+zona de Personalidad controla la forma de expresarse; cualquier regla operativa
+incluida ahi sigue subordinada a Estrategia y capacitacion y a las capacidades
+blindadas del runtime.
+
 Escritorio y celular crean el mismo borrador sin capacidades operativas
 preactivadas: el dueño debe elegir calendario, cobro, enlace o traspaso de forma
 explícita, en vez de recibir una tool distinta según la pantalla usada.
