@@ -223,6 +223,18 @@ export async function isRebillConnected() {
     Boolean(cleanString(raw.rebill_public_key) && cleanString(raw.rebill_secret_key_encrypted))
 }
 
+export async function isGigstackConnected() {
+  const settings = parseJson(await getAppConfig(PAYMENT_SETTINGS_CONFIG_KEY), {})
+  const taxes = settings?.taxes || {}
+  if (!enabledFlag(taxes.enabled, false) || !enabledFlag(taxes.gigstackEnabled, false)) return false
+
+  return Boolean(
+    cleanString(taxes.gigstackTestApiTokenEncrypted) ||
+    cleanString(taxes.gigstackLiveApiTokenEncrypted) ||
+    cleanString(taxes.gigstackApiTokenEncrypted)
+  )
+}
+
 export async function isWhatsAppQrConnected() {
   const row = await db.get(`
     SELECT s.id

@@ -9,6 +9,10 @@ import { getAccountBusinessProfile } from '../services/accountBusinessProfileSer
 import { renderPaymentReceiptPreviewHtml } from '../services/paymentReceiptPreviewService.js'
 import { logger } from '../utils/logger.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
+import {
+  requeueBlockedGigstackInvoiceJobs,
+  testGigstackConnection
+} from '../services/gigstackInvoiceService.js'
 
 const PAYMENT_RECEIPT_PREVIEW_TTL_MS = 60 * 60 * 1000
 const paymentReceiptPreviewSessions = new Map()
@@ -105,10 +109,25 @@ export async function savePaymentSettingsView(req, res) {
     await syncRegisteredIntegrationCronsForProvider('conekta', { reason: 'payment-mode-changed' })
     await syncRegisteredIntegrationCronsForProvider('mercadopago', { reason: 'payment-mode-changed' })
     await syncRegisteredIntegrationCronsForProvider('rebill', { reason: 'payment-mode-changed' })
+    await requeueBlockedGigstackInvoiceJobs()
+    await syncRegisteredIntegrationCronsForProvider('gigstack', { reason: 'gigstack-settings-changed' })
     res.json({ success: true, data: settings })
   } catch (error) {
     logger.error(`Error guardando configuración de pagos: ${error.message}`)
     sendPaymentSettingsError(res, error)
+  }
+}
+
+export async function testGigstackConnectionView(req, res) {
+  try {
+    const result = await testGigstackConnection({
+      mode: req.body?.mode,
+      token: req.body?.token
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.warn(`Validación de conexión Gigstack rechazada: ${error.message}`)
+    sendPaymentSettingsError(res, error, 'No se pudo validar la conexión con Gigstack')
   }
 }
 

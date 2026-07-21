@@ -51,7 +51,8 @@ import {
   createPaymentReceiptPreviewSessionView,
   getPaymentSettingsView,
   previewPaymentReceiptSessionView,
-  savePaymentSettingsView
+  savePaymentSettingsView,
+  testGigstackConnectionView
 } from '../controllers/paymentSettingsController.js';
 
 const router = express.Router();
@@ -104,6 +105,7 @@ router.get('/notifications', requireAccountAccess, getNotificationsView);
 // Payment settings
 router.get('/payments', requirePaymentsAccess, getPaymentSettingsView);
 router.post('/payments', requirePaymentsAccess, savePaymentSettingsView);
+router.post('/payments/gigstack/test-connection', requirePaymentsAccess, testGigstackConnectionView);
 router.post('/payments/receipt-preview-session', requirePaymentsAccess, createPaymentReceiptPreviewSessionView);
 
 // WhatsApp message templates

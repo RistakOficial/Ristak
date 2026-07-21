@@ -1,5 +1,5 @@
 export const gigstackProductKeyOptions = [
-  { value: '82101800', label: 'Servicios de mercadotecnia · 82101800' },
+  { value: '82101800', label: 'Servicios de agencia de publicidad · 82101800' },
   { value: '80101500', label: 'Consultoría de negocios · 80101500' },
   { value: '81112100', label: 'Servicios de internet · 81112100' },
   { value: '43232408', label: 'Software como servicio · 43232408' },

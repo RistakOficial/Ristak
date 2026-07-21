@@ -2,6 +2,7 @@ import {
   isConektaConnected,
   isEmailInboundConnected,
   isGoogleCalendarConnected,
+  isGigstackConnected,
   isHighLevelConnected,
   isMetaAdsConnected,
   isMercadoPagoConnected,
@@ -13,6 +14,7 @@ import {
   isWhatsAppApiHistoryBackfillPending,
   isWhatsAppQrConnected
 } from '../services/integrationConnectionStateService.js'
+import { startGigstackInvoiceJobsCron, stopGigstackInvoiceJobsCron } from './gigstackInvoiceJobs.cron.js'
 import { startConektaPaymentPlansCron, stopConektaPaymentPlansCron } from './conektaPaymentPlans.cron.js'
 import { startEmailInboundSyncCron, stopEmailInboundSyncCron } from './emailInboundSync.cron.js'
 import { startGoogleCalendarSyncCron, stopGoogleCalendarSyncCron } from './googleCalendarSync.cron.js'
@@ -134,6 +136,15 @@ export function registerIntegrationCrons() {
     isEnabled: isRebillConnected,
     start: startRebillPaymentPlansCron,
     stop: stopRebillPaymentPlansCron
+  })
+
+  registerIntegrationCron({
+    name: 'gigstack-invoice-jobs',
+    label: 'Gigstack facturación fiscal',
+    provider: 'gigstack',
+    isEnabled: isGigstackConnected,
+    start: startGigstackInvoiceJobsCron,
+    stop: stopGigstackInvoiceJobsCron
   })
 
   registerIntegrationCron({

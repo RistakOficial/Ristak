@@ -12,6 +12,9 @@ const PAYMENT_MODE_LIVE = 'live'
 const PAYMENT_MODES = [PAYMENT_MODE_TEST, PAYMENT_MODE_LIVE]
 const PAYMENT_AUTOMATION_CHANNELS = ['whatsapp', 'whatsapp_qr', 'email', 'both']
 const PAYMENT_AUTOMATION_CONTENT_MODES = ['template', 'direct']
+const GIGSTACK_MODES = [PAYMENT_MODE_TEST, PAYMENT_MODE_LIVE]
+const GIGSTACK_AUTOMATION_TYPES = ['pue_invoice', 'none']
+const GIGSTACK_CLIENT_MATCH_MODES = ['email', 'client_id_or_email']
 
 const DEFAULT_PAYMENT_AUTOMATION_MESSAGES = {
   reminder: 'Hola {{contact.first_name}}, tienes un pago pendiente de {{payment.amount}} por {{payment.product}}. Puedes completarlo aquí: {{payment.url}}',
@@ -96,13 +99,18 @@ const DEFAULT_PAYMENT_SETTINGS = {
     fiscalRegime: '',
     provider: 'gigstack',
     gigstackEnabled: false,
+    gigstackDefaultDescription: 'Servicios de consultoría en mercadotecnia',
     gigstackDefaultProductKey: '82101800',
     gigstackDefaultUnitKey: 'E48',
     gigstackDefaultUnitName: 'Unidad de Servicio',
     gigstackDefaultPaymentMethod: '99',
     gigstackAutomateInvoiceOnComplete: true,
+    gigstackAutomationType: 'pue_invoice',
+    gigstackClientMatchMode: 'email',
+    gigstackSendEmail: true,
     gigstackPortalUrl: '',
-    gigstackApiTokenEncrypted: ''
+    gigstackTestApiTokenEncrypted: '',
+    gigstackLiveApiTokenEncrypted: ''
   }
 }
 
@@ -207,17 +215,52 @@ function decryptSecret(value = '') {
   }
 }
 
-function resolveGigstackTokenStorage(taxes = {}, previousTaxes = {}) {
-  if (cleanBoolean(taxes.clearGigstackApiToken, false)) {
-    return { encrypted: '', plain: '' }
-  }
+export function decodeGigstackTokenMetadata(value = '') {
+  const token = cleanString(value, 5000)
+  const payloadSegment = token.split('.')[1]
+  if (!payloadSegment) return { valid: false, mode: null }
 
-  const submittedToken = cleanString(taxes.gigstackApiToken || taxes.gigstackToken, 3000)
-  if (submittedToken && !isMaskedSecret(submittedToken)) {
+  try {
+    const payload = JSON.parse(Buffer.from(payloadSegment, 'base64url').toString('utf8'))
+    if (typeof payload?.livemode !== 'boolean') return { valid: false, mode: null }
     return {
-      encrypted: encrypt(submittedToken),
-      plain: submittedToken
+      valid: true,
+      mode: payload.livemode ? PAYMENT_MODE_LIVE : PAYMENT_MODE_TEST,
+      livemode: payload.livemode,
+      keyId: cleanString(payload.key_id, 180),
+      teamId: cleanString(payload.team, 180)
     }
+  } catch {
+    return { valid: false, mode: null }
+  }
+}
+
+function gigstackModeTitle(mode) {
+  return mode === PAYMENT_MODE_LIVE ? 'Live' : 'Test'
+}
+
+function validateSubmittedGigstackToken(token, expectedMode) {
+  if (!token || isMaskedSecret(token)) return
+  const metadata = decodeGigstackTokenMetadata(token)
+  if (!metadata.valid) {
+    const error = new Error(`La API key ${gigstackModeTitle(expectedMode)} de Gigstack no tiene un formato válido.`)
+    error.status = 400
+    throw error
+  }
+  if (metadata.mode !== expectedMode) {
+    const error = new Error(`La API key pegada es ${gigstackModeTitle(metadata.mode)}, pero se intentó guardar en ${gigstackModeTitle(expectedMode)}.`)
+    error.status = 400
+    throw error
+  }
+}
+
+function resolveLegacyGigstackTokenStorage(taxes = {}, previousTaxes = {}) {
+  if (cleanBoolean(taxes.clearGigstackApiToken, false)) return { encrypted: '', plain: '', mode: null }
+
+  const submittedToken = cleanString(taxes.gigstackApiToken || taxes.gigstackToken, 5000)
+  if (submittedToken && !isMaskedSecret(submittedToken)) {
+    const metadata = decodeGigstackTokenMetadata(submittedToken)
+    return { encrypted: encrypt(submittedToken), plain: submittedToken, mode: metadata.mode }
   }
 
   const encrypted = cleanString(
@@ -225,8 +268,37 @@ function resolveGigstackTokenStorage(taxes = {}, previousTaxes = {}) {
       taxes.gigstackTokenEncrypted ||
       previousTaxes.gigstackApiTokenEncrypted ||
       previousTaxes.gigstackTokenEncrypted,
-    3000
+    5000
   )
+  const plain = decryptSecret(encrypted)
+  return { encrypted, plain, mode: decodeGigstackTokenMetadata(plain).mode }
+}
+
+function resolveGigstackTokenStorage(mode, taxes = {}, previousTaxes = {}, legacyToken = {}) {
+  const prefix = mode === PAYMENT_MODE_LIVE ? 'gigstackLive' : 'gigstackTest'
+  const clearKey = mode === PAYMENT_MODE_LIVE ? 'clearGigstackLiveApiToken' : 'clearGigstackTestApiToken'
+
+  if (cleanBoolean(taxes[clearKey], false) || cleanBoolean(taxes.clearGigstackApiToken, false)) {
+    return { encrypted: '', plain: '' }
+  }
+
+  const submittedToken = cleanString(taxes[`${prefix}ApiToken`], 5000)
+  if (submittedToken && !isMaskedSecret(submittedToken)) {
+    validateSubmittedGigstackToken(submittedToken, mode)
+    return {
+      encrypted: encrypt(submittedToken),
+      plain: submittedToken
+    }
+  }
+
+  const encrypted = cleanString(
+    taxes[`${prefix}ApiTokenEncrypted`] || previousTaxes[`${prefix}ApiTokenEncrypted`],
+    5000
+  )
+
+  if (!encrypted && legacyToken.mode === mode) {
+    return { encrypted: legacyToken.encrypted, plain: legacyToken.plain }
+  }
 
   return {
     encrypted,
@@ -343,8 +415,25 @@ export function normalizePaymentSettings(input = {}, options = {}) {
   const previousTaxes = options.previousTaxes || {}
   const country = cleanCountry(taxes.country || taxes.countryCode || taxes.businessCountry || previousTaxes.country)
   const rateValue = resolveAutomaticTaxRate(country)
-  const gigstackToken = resolveGigstackTokenStorage(taxes, previousTaxes)
-  const hasGigstackApiToken = Boolean(gigstackToken.plain || gigstackToken.encrypted)
+  const legacyGigstackToken = resolveLegacyGigstackTokenStorage(taxes, previousTaxes)
+  const gigstackTokens = Object.fromEntries(GIGSTACK_MODES.map((mode) => [
+    mode,
+    resolveGigstackTokenStorage(mode, taxes, previousTaxes, legacyGigstackToken)
+  ]))
+  const hasGigstackTestApiToken = Boolean(gigstackTokens.test.plain || gigstackTokens.test.encrypted)
+  const hasGigstackLiveApiToken = Boolean(gigstackTokens.live.plain || gigstackTokens.live.encrypted)
+  const gigstackAutomateInvoice = cleanBoolean(
+    taxes.gigstackAutomateInvoiceOnComplete,
+    DEFAULT_PAYMENT_SETTINGS.taxes.gigstackAutomateInvoiceOnComplete
+  )
+  const requestedGigstackAutomationType = cleanEnum(
+    taxes.gigstackAutomationType,
+    GIGSTACK_AUTOMATION_TYPES,
+    gigstackAutomateInvoice ? 'pue_invoice' : 'none'
+  )
+  const gigstackAutomationType = gigstackAutomateInvoice && requestedGigstackAutomationType === 'pue_invoice'
+    ? 'pue_invoice'
+    : 'none'
 
   const normalized = {
     paymentMode: normalizePaymentSettingsMode(input.paymentMode || input.mode, DEFAULT_PAYMENT_SETTINGS.paymentMode),
@@ -429,23 +518,36 @@ export function normalizePaymentSettings(input = {}, options = {}) {
       fiscalRegime: cleanString(taxes.fiscalRegime || taxes.taxRegime, 120),
       provider: 'gigstack',
       gigstackEnabled: cleanBoolean(taxes.gigstackEnabled ?? taxes.jigsawEnabled, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackEnabled),
+      gigstackDefaultDescription: cleanString(taxes.gigstackDefaultDescription || taxes.defaultDescription, 500) || DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultDescription,
       gigstackDefaultProductKey: cleanGigstackProductKey(taxes.gigstackDefaultProductKey || taxes.productKey),
       gigstackDefaultUnitKey: cleanGigstackUnitKey(taxes.gigstackDefaultUnitKey || taxes.unitKey),
       gigstackDefaultUnitName: cleanString(taxes.gigstackDefaultUnitName || taxes.unitName, 120) || DEFAULT_PAYMENT_SETTINGS.taxes.gigstackDefaultUnitName,
       gigstackDefaultPaymentMethod: cleanGigstackPaymentMethod(taxes.gigstackDefaultPaymentMethod || taxes.paymentMethod),
-      gigstackAutomateInvoiceOnComplete: cleanBoolean(taxes.gigstackAutomateInvoiceOnComplete, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackAutomateInvoiceOnComplete),
+      gigstackAutomateInvoiceOnComplete: gigstackAutomationType === 'pue_invoice',
+      gigstackAutomationType,
+      gigstackClientMatchMode: cleanEnum(
+        taxes.gigstackClientMatchMode,
+        GIGSTACK_CLIENT_MATCH_MODES,
+        DEFAULT_PAYMENT_SETTINGS.taxes.gigstackClientMatchMode
+      ),
+      gigstackSendEmail: cleanBoolean(taxes.gigstackSendEmail, DEFAULT_PAYMENT_SETTINGS.taxes.gigstackSendEmail),
       gigstackPortalUrl: cleanUrl(taxes.gigstackPortalUrl || taxes.customerPortalUrl || taxes.portalUrl),
-      gigstackApiTokenPreview: maskSecret(gigstackToken.plain),
-      hasGigstackApiToken
+      gigstackTestApiTokenPreview: maskSecret(gigstackTokens.test.plain),
+      hasGigstackTestApiToken,
+      gigstackLiveApiTokenPreview: maskSecret(gigstackTokens.live.plain),
+      hasGigstackLiveApiToken,
+      hasGigstackApiToken: hasGigstackTestApiToken || hasGigstackLiveApiToken
     }
   }
 
   if (options.includeSecrets) {
-    normalized.taxes.gigstackApiToken = gigstackToken.plain
+    normalized.taxes.gigstackTestApiToken = gigstackTokens.test.plain
+    normalized.taxes.gigstackLiveApiToken = gigstackTokens.live.plain
   }
 
   if (options.includePrivateStorage) {
-    normalized.taxes.gigstackApiTokenEncrypted = gigstackToken.encrypted
+    normalized.taxes.gigstackTestApiTokenEncrypted = gigstackTokens.test.encrypted
+    normalized.taxes.gigstackLiveApiTokenEncrypted = gigstackTokens.live.encrypted
   }
 
   return normalized
@@ -523,7 +625,17 @@ function settingsForStorage(settings = {}) {
       ...(settings.taxes || {}),
       gigstackApiToken: undefined,
       gigstackApiTokenPreview: undefined,
-      hasGigstackApiToken: undefined
+      gigstackApiTokenEncrypted: undefined,
+      gigstackTokenEncrypted: undefined,
+      hasGigstackApiToken: undefined,
+      gigstackTestApiToken: undefined,
+      gigstackTestApiTokenPreview: undefined,
+      hasGigstackTestApiToken: undefined,
+      clearGigstackTestApiToken: undefined,
+      gigstackLiveApiToken: undefined,
+      gigstackLiveApiTokenPreview: undefined,
+      hasGigstackLiveApiToken: undefined,
+      clearGigstackLiveApiToken: undefined
     }
   }
 }

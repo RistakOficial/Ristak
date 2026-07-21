@@ -3,10 +3,17 @@ import { describe, it } from 'node:test'
 
 import {
   calculatePaymentTax,
+  decodeGigstackTokenMetadata,
   normalizePaymentSettings,
   normalizePaymentSettingsMode,
   resolvePaymentSettingsBusinessProfile
 } from '../src/services/paymentSettingsService.js'
+
+function fakeGigstackToken(livemode) {
+  const header = Buffer.from(JSON.stringify({ typ: 'JWT', alg: 'RS256' })).toString('base64url')
+  const payload = Buffer.from(JSON.stringify({ livemode, key_id: livemode ? 'sk_live_example' : 'sk_test_example' })).toString('base64url')
+  return `${header}.${payload}.signature`
+}
 
 describe('payment settings automations', () => {
   it('normalizes the global payment gateway mode', () => {
@@ -196,6 +203,7 @@ describe('payment settings tax calculation', () => {
       taxes: {
         enabled: true,
         gigstackEnabled: true,
+        gigstackDefaultDescription: 'Servicios de consultoría en mercadotecnia',
         gigstackDefaultProductKey: '82101800',
         gigstackDefaultUnitKey: 'e48',
         gigstackDefaultUnitName: 'Unidad de Servicio',
@@ -205,28 +213,37 @@ describe('payment settings tax calculation', () => {
     })
 
     assert.equal(settings.taxes.gigstackDefaultProductKey, '82101800')
+    assert.equal(settings.taxes.gigstackDefaultDescription, 'Servicios de consultoría en mercadotecnia')
     assert.equal(settings.taxes.gigstackDefaultUnitKey, 'E48')
     assert.equal(settings.taxes.gigstackDefaultUnitName, 'Unidad de Servicio')
     assert.equal(settings.taxes.gigstackDefaultPaymentMethod, '04')
     assert.equal(settings.taxes.gigstackAutomateInvoiceOnComplete, true)
+    assert.equal(settings.taxes.gigstackAutomationType, 'pue_invoice')
+    assert.equal(settings.taxes.gigstackClientMatchMode, 'email')
   })
 
-  it('clears the saved Gigstack token when disconnecting', () => {
+  it('recognizes the environment embedded in Gigstack JWT keys', () => {
+    assert.equal(decodeGigstackTokenMetadata(fakeGigstackToken(false)).mode, 'test')
+    assert.equal(decodeGigstackTokenMetadata(fakeGigstackToken(true)).mode, 'live')
+    assert.equal(decodeGigstackTokenMetadata('not-a-jwt').valid, false)
+  })
+
+  it('clears only the selected Gigstack token', () => {
     const settings = normalizePaymentSettings({
       taxes: {
         enabled: true,
-        gigstackEnabled: false,
-        clearGigstackApiToken: true,
-        gigstackApiToken: 'new-token-that-should-be-ignored'
+        gigstackEnabled: true,
+        clearGigstackTestApiToken: true,
+        gigstackTestApiToken: fakeGigstackToken(false)
       }
     }, {
       previousTaxes: {
-        gigstackApiTokenEncrypted: 'encrypted-token'
+        gigstackTestApiTokenEncrypted: 'encrypted-test-token'
       }
     })
 
-    assert.equal(settings.taxes.hasGigstackApiToken, false)
-    assert.equal(settings.taxes.gigstackApiTokenPreview, '')
+    assert.equal(settings.taxes.hasGigstackTestApiToken, false)
+    assert.equal(settings.taxes.gigstackTestApiTokenPreview, '')
   })
 })
 

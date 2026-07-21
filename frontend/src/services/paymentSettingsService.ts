@@ -80,16 +80,25 @@ export interface PaymentTaxSettings {
   fiscalRegime: string
   provider: 'gigstack'
   gigstackEnabled: boolean
+  gigstackDefaultDescription: string
   gigstackDefaultProductKey: string
   gigstackDefaultUnitKey: string
   gigstackDefaultUnitName: string
   gigstackDefaultPaymentMethod: string
   gigstackAutomateInvoiceOnComplete: boolean
+  gigstackAutomationType: 'pue_invoice' | 'none'
+  gigstackClientMatchMode: 'email' | 'client_id_or_email'
+  gigstackSendEmail: boolean
   gigstackPortalUrl?: string
-  gigstackApiToken?: string
-  gigstackApiTokenPreview?: string
+  gigstackTestApiToken?: string
+  gigstackTestApiTokenPreview?: string
+  hasGigstackTestApiToken?: boolean
+  clearGigstackTestApiToken?: boolean
+  gigstackLiveApiToken?: string
+  gigstackLiveApiTokenPreview?: string
+  hasGigstackLiveApiToken?: boolean
+  clearGigstackLiveApiToken?: boolean
   hasGigstackApiToken?: boolean
-  clearGigstackApiToken?: boolean
 }
 
 export interface PaymentSettings {
@@ -105,6 +114,14 @@ export type PublicPaymentSettings = Pick<PaymentSettings, 'paymentMode' | 'check
 export interface PaymentReceiptPreviewSession {
   url: string
   expiresAt: string
+}
+
+export interface GigstackConnectionTestResult {
+  connected: boolean
+  mode: 'test' | 'live'
+  teamId: string
+  keyIdSuffix: string
+  checkedAt: string
 }
 
 export const defaultPaymentSettings: PaymentSettings = {
@@ -184,16 +201,25 @@ export const defaultPaymentSettings: PaymentSettings = {
     fiscalRegime: '',
     provider: 'gigstack',
     gigstackEnabled: false,
+    gigstackDefaultDescription: 'Servicios de consultoría en mercadotecnia',
     gigstackDefaultProductKey: '82101800',
     gigstackDefaultUnitKey: 'E48',
     gigstackDefaultUnitName: 'Unidad de Servicio',
     gigstackDefaultPaymentMethod: '99',
     gigstackAutomateInvoiceOnComplete: true,
+    gigstackAutomationType: 'pue_invoice',
+    gigstackClientMatchMode: 'email',
+    gigstackSendEmail: true,
     gigstackPortalUrl: '',
-    gigstackApiToken: '',
-    gigstackApiTokenPreview: '',
+    gigstackTestApiToken: '',
+    gigstackTestApiTokenPreview: '',
+    hasGigstackTestApiToken: false,
+    clearGigstackTestApiToken: false,
+    gigstackLiveApiToken: '',
+    gigstackLiveApiTokenPreview: '',
+    hasGigstackLiveApiToken: false,
+    clearGigstackLiveApiToken: false,
     hasGigstackApiToken: false,
-    clearGigstackApiToken: false
   }
 }
 
@@ -233,6 +259,18 @@ export const paymentSettingsService = {
       body: JSON.stringify(payload)
     })
     return parseApiResponse<PaymentSettings>(response)
+  },
+
+  async testGigstackConnection(mode: 'test' | 'live', token = ''): Promise<GigstackConnectionTestResult> {
+    const response = await fetch(apiUrl('/api/settings/payments/gigstack/test-connection'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders()
+      },
+      body: JSON.stringify({ mode, token: token.trim() || undefined })
+    })
+    return parseApiResponse<GigstackConnectionTestResult>(response)
   },
 
   async createReceiptPreviewSession(payload: PaymentSettings, currency = 'MXN'): Promise<PaymentReceiptPreviewSession> {

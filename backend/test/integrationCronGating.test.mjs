@@ -8,6 +8,7 @@ import {
   isEmailInboundConnected,
   isClipConnected,
   isGoogleCalendarConnected,
+  isGigstackConnected,
   isHighLevelConnected,
   isMercadoPagoConnected,
   isMetaConnected,
@@ -107,6 +108,7 @@ test('detectores de crons de integración solo se activan con conexión local v�
   await withIsolatedIntegrationConfig(async ({ phoneNumberId }) => {
     assert.equal(await isGoogleCalendarConnected(), false)
     assert.equal(await isHighLevelConnected(), false)
+    assert.equal(await isGigstackConnected(), false)
     assert.equal(await isMetaConnected(), false)
     assert.equal(await isStripeConnected(), false)
     assert.equal(await isConektaConnected(), false)
@@ -256,6 +258,25 @@ test('detectores de crons de integración solo se activan con conexión local v�
       live: {}
     })
     assert.equal(await isRebillConnected(), true)
+
+    await setAppConfig('payments_settings', {
+      paymentMode: 'live',
+      taxes: {
+        enabled: true,
+        gigstackEnabled: true,
+        gigstackTestApiTokenEncrypted: 'encrypted_gigstack_test_cron_gate'
+      }
+    })
+    assert.equal(await isGigstackConnected(), true)
+    await setAppConfig('payments_settings', {
+      paymentMode: 'live',
+      taxes: {
+        enabled: true,
+        gigstackEnabled: false,
+        gigstackTestApiTokenEncrypted: 'encrypted_gigstack_test_cron_gate'
+      }
+    })
+    assert.equal(await isGigstackConnected(), false)
     await setAppConfig('payments_settings', { paymentMode: 'live' })
     assert.equal(await isRebillConnected(), false)
     await setAppConfig('payments_settings', { paymentMode: 'test' })

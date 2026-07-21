@@ -120,6 +120,12 @@ Los detectores deben ser conservadores:
 - Si hay bandera explícita de desconexión, regresan `false`.
 - Si hay modos `test` / `live`, sólo regresa `true` cuando el modo activo tiene
   credenciales completas.
+- Excepción para un outbox histórico con ambiente fijado por fila: el detector
+  puede regresar `true` si existe al menos una credencial de ambiente, siempre
+  que el worker seleccione la credencial exclusivamente desde el modo persistido
+  en cada fila y bloquee cualquier modo desconocido. Gigstack usa esta variante
+  porque una cola puede contener pagos Test y Live aunque el selector global haya
+  cambiado después.
 - Si falla la lectura local, el runtime debe tratarlo como desconectado.
 - No hagas llamadas de red dentro del detector. El detector sólo decide si el
   cron debe existir, no si el proveedor está saludable.
@@ -151,6 +157,8 @@ Cada integración nueva con cron debe cubrir:
 - Conectada con credenciales completas: el detector regresa `true`.
 - Desconectada o con credenciales incompletas: el detector regresa `false`.
 - Si aplica modo `test` / `live`: el cron sólo se activa para el modo activo.
+- Si aplica la excepción de outbox por fila: prueba que cada ambiente usa sólo su
+  credencial y que nunca existe fallback Test/Live.
 - El runtime no duplica `start()` al sincronizar dos veces.
 - El runtime llama `stop()` al desconectar.
 

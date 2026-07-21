@@ -3155,6 +3155,52 @@ El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
 
+### Gigstack y facturación fiscal
+
+Gigstack no procesa el cobro. Ristak lo llama únicamente después de que el pago
+local quedó confirmado y con impuesto. Configuración > Pagos > Impuestos separa
+dos API keys: Test y Live. Ambas se cifran dentro de
+`app_config.payments_settings.taxes`; no son variables de entorno y nunca se
+regresan completas al frontend después de guardarlas.
+
+La separación de ambientes es estricta:
+
+- La fuente de verdad es `payments.payment_mode`, no el modo global que esté
+  seleccionado después.
+- `test`/`sandbox` usa sólo `gigstackTestApiTokenEncrypted`; `live`/`production`
+  usa sólo `gigstackLiveApiTokenEncrypted`.
+- Antes de guardar o usar una llave, Ristak revisa el claim `livemode` del JWT.
+  Una llave pegada en el ambiente incorrecto se rechaza.
+- Si el pago no trae un modo reconocido o falta su llave exacta, el envío fiscal
+  queda bloqueado. No existe fallback entre Test y Live.
+- Probar conexión hace una lectura autenticada de pagos (`GET /v2/payments`) y
+  no registra pagos ni crea CFDI.
+
+El registro usa `POST /v2/payments/register` con el contrato v2 vigente:
+`client`, `automation_type`, `currency`, `payment_form`, `items[].unit_price`,
+`metadata`, `idempotency_key` y `send_email`. El correo del contacto busca o
+crea al cliente; opcionalmente puede preferirse un `gigstackClientId` ya ligado
+al pago. Si faltan ambos, no se inventa un receptor. La moneda sale siempre del
+pago, que a su vez usa `account_currency`; la forma SAT sólo se detecta cuando el
+proveedor reporta un medio inequívoco (por ejemplo, crédito, débito o SPEI). Si
+el dato es ambiguo, se usa el fallback configurado —por defecto `99`— en vez de
+inferir una forma fiscal desde el nombre de la pasarela.
+
+`pue_invoice` crea la factura PUE automáticamente; `none` registra el pago sin
+timbrarlo. En ambos casos, cada pago conserva una llave idempotente estable
+`ristak-payment-<payment_id>`. La respuesta remota `succeeded` se guarda
+localmente junto con ambiente, ID remoto e IDs de factura. Cuando se eligió
+`pue_invoice`, Ristak además consulta cada `GET /v2/invoices/income/:id` y sólo
+marca el resultado como `stamped` si Gigstack confirma `stamped`/`valid` en el
+mismo ambiente; registrar el pago remoto no se confunde con haber timbrado.
+
+`gigstack_invoice_jobs` es el outbox durable de reintentos. La fila nace antes de
+la llamada externa, reclama un lease por pago y reintenta sólo red, timeout,
+`429` y `5xx` con backoff. Errores fiscales, credenciales incorrectas o datos de
+cliente faltantes quedan bloqueados para corregir configuración; nunca se
+reenvían a ciegas. Activar Gigstack no factura pagos históricos: sólo se encolan
+pagos nuevos cuando la integración ya estaba encendida.
+
 ### Webhooks Stripe por instalación
 
 Cada modalidad Stripe (`test` y `live`) conserva en

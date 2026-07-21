@@ -800,6 +800,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const [loadingRebillConfig, setLoadingRebillConfig] = useState(false)
   const [savingRebillMode, setSavingRebillMode] = useState<StripeModeId | null>(null)
   const [testingRebillMode, setTestingRebillMode] = useState<StripeModeId | null>(null)
+  const [testingGigstackMode, setTestingGigstackMode] = useState<PaymentModeId | null>(null)
   const [rebillConnectionFailed, setRebillConnectionFailed] = useState(false)
   const [disconnectingRebillMode, setDisconnectingRebillMode] = useState<StripeModeId | null>(null)
   const [mercadoPagoConfig, setMercadoPagoConfig] = useState<MercadoPagoPaymentConfig | null>(null)
@@ -1252,11 +1253,65 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
-  const handleGigstackTokenChange = (value: string) => {
+  const handleGigstackTokenChange = (mode: PaymentModeId, value: string) => {
+    if (mode === 'test') {
+      patchTaxValues({
+        gigstackTestApiToken: value,
+        clearGigstackTestApiToken: false
+      })
+      return
+    }
     patchTaxValues({
-      gigstackApiToken: value,
-      clearGigstackApiToken: false
+      gigstackLiveApiToken: value,
+      clearGigstackLiveApiToken: false
     })
+  }
+
+  const handleTestGigstackConnection = async (mode: PaymentModeId) => {
+    setTestingGigstackMode(mode)
+    try {
+      const token = mode === 'test' ? taxes.gigstackTestApiToken : taxes.gigstackLiveApiToken
+      const result = await paymentSettingsService.testGigstackConnection(mode, token || '')
+      showToast(
+        'success',
+        `${mode === 'test' ? 'Test' : 'Live'} conectado`,
+        `Gigstack reconoció la llave correcta${result.keyIdSuffix ? ` · termina en ${result.keyIdSuffix}` : ''}. No se generó ninguna factura.`
+      )
+    } catch (error: any) {
+      showToast('error', 'No se pudo validar Gigstack', error.message || 'Revisa que la API key corresponda al ambiente elegido.')
+    } finally {
+      setTestingGigstackMode(null)
+    }
+  }
+
+  const handleDisconnectGigstackMode = (mode: PaymentModeId) => {
+    const modeTitle = mode === 'test' ? 'Test' : 'Live'
+    showConfirm(
+      `Borrar API key ${modeTitle}`,
+      `Ristak dejará de enviar pagos ${modeTitle} a Gigstack. La otra API key seguirá guardada.`,
+      () => {
+        if (mode === 'test') {
+          patchTaxValues({
+            gigstackTestApiToken: '',
+            gigstackTestApiTokenPreview: '',
+            hasGigstackTestApiToken: false,
+            clearGigstackTestApiToken: true
+          })
+        } else {
+          patchTaxValues({
+            gigstackLiveApiToken: '',
+            gigstackLiveApiTokenPreview: '',
+            hasGigstackLiveApiToken: false,
+            clearGigstackLiveApiToken: true
+          })
+        }
+        showToast('success', `API key ${modeTitle} eliminada`, 'El cambio se guardará automáticamente.')
+      },
+      'Borrar API key',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
   }
 
   const copyTextToClipboard = async (text: string) => {
@@ -1353,16 +1408,21 @@ export const PaymentsConfiguration: React.FC = () => {
   const handleDisconnectGigstack = () => {
     showConfirm(
       'Desconectar Gigstack',
-      'Se apagará el timbrado automático y se borrará el token API guardado. Después podrás pegar una key nueva desde este mismo campo.',
+      'Se apagará el envío fiscal y se borrarán las API keys Test y Live. Los pagos ya registrados no se cancelan ni se borran.',
       () => {
         patchTaxValues({
           gigstackEnabled: false,
-          gigstackApiToken: '',
-          gigstackApiTokenPreview: '',
+          gigstackTestApiToken: '',
+          gigstackTestApiTokenPreview: '',
+          hasGigstackTestApiToken: false,
+          clearGigstackTestApiToken: true,
+          gigstackLiveApiToken: '',
+          gigstackLiveApiTokenPreview: '',
+          hasGigstackLiveApiToken: false,
+          clearGigstackLiveApiToken: true,
           hasGigstackApiToken: false,
-          clearGigstackApiToken: true
         })
-        showToast('success', 'Gigstack desconectado', 'La API key se borrará de Ristak al guardar automáticamente.')
+        showToast('success', 'Gigstack desconectado', 'Las dos API keys se borrarán de Ristak al guardar automáticamente.')
       },
       'Desconectar',
       'Cancelar',
@@ -4738,8 +4798,8 @@ export const PaymentsConfiguration: React.FC = () => {
       ? previewBaseAmount + previewTaxAmount
       : previewBaseAmount
     const taxRateLabel = `${getTaxRateValue(taxes)}%`
-    const gigstackTokenInputValue = taxes.gigstackApiToken || (taxes.hasGigstackApiToken ? taxes.gigstackApiTokenPreview || '••••' : '')
-    const showingSavedGigstackToken = Boolean(!taxes.gigstackApiToken && taxes.hasGigstackApiToken && gigstackTokenInputValue)
+    const hasAnyGigstackToken = Boolean(taxes.hasGigstackTestApiToken || taxes.hasGigstackLiveApiToken)
+    const hasBothGigstackTokens = Boolean(taxes.hasGigstackTestApiToken && taxes.hasGigstackLiveApiToken)
 
     return (
       <div className={styles.taxSettingsLayout}>
@@ -4834,28 +4894,101 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.gigstackHeader}>
             <div>
               <h3>Facturas del SAT en automático</h3>
-              <p>Gigstack es el servicio que timbra CFDI ante el SAT. Si lo conectas, Ristak manda los pagos con impuesto para que no estés facturando a mano.</p>
+              <p>Gigstack recibe el pago ya confirmado y, según lo que elijas, registra el cobro o crea una factura PUE. No procesa tarjetas ni mueve dinero.</p>
             </div>
-            <Badge variant={taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'success' : 'warning') : 'neutral'}>
-              {taxes.gigstackEnabled ? (taxes.hasGigstackApiToken ? 'Listo para facturar' : 'Falta conectar') : 'Opcional para facturar'}
+            <Badge variant={taxes.gigstackEnabled ? (hasBothGigstackTokens ? 'success' : 'warning') : 'neutral'}>
+              {taxes.gigstackEnabled ? (hasBothGigstackTokens ? 'Test y Live listos' : 'Falta una API key') : 'Envío fiscal apagado'}
             </Badge>
           </div>
-          {renderSwitchRow('Quiero facturar automático', 'Cuando entra un pago con impuestos, Ristak intenta mandarlo a Gigstack para generar la factura sin capturarla a mano.', taxes.gigstackEnabled, (next) => setTaxValue('gigstackEnabled', next))}
-          {renderField(
-            'Token para conectar Gigstack',
-            <input
-              type="password"
-              value={gigstackTokenInputValue}
-              onChange={(event) => handleGigstackTokenChange(event.target.value)}
-              onFocus={(event) => {
-                if (showingSavedGigstackToken) event.currentTarget.select()
-              }}
-              placeholder="Pega el token JWT"
-              autoComplete="off"
-            />,
-            taxes.hasGigstackApiToken ? 'Ya hay un token guardado. Selecciona el campo y pega uno nuevo si quieres cambiarlo.' : 'Lo sacas de Gigstack, en la sección de API, y lo pegas aquí para dejarlo conectado.'
+          {renderSwitchRow(
+            'Enviar pagos confirmados a Gigstack',
+            'Sólo se envían pagos nuevos que ya traen impuesto y un ambiente Test o Live explícito. No se facturan pagos anteriores.',
+            taxes.gigstackEnabled,
+            (next) => setTaxValue('gigstackEnabled', next)
           )}
-          {taxes.hasGigstackApiToken && (
+
+          <div className={styles.inlineWarning}>
+            <AlertTriangle size={17} />
+            <span>Protección SAT — un pago Test usa únicamente la API key Test. Un pago Live usa únicamente la API key Live. Si falta la llave correcta o el ambiente no viene claro, Ristak bloquea el envío.</span>
+          </div>
+
+          <div className={styles.stripeModeGrid}>
+            {stripeModeIds.map((mode) => {
+              const isTest = mode === 'test'
+              const saved = isTest ? taxes.hasGigstackTestApiToken : taxes.hasGigstackLiveApiToken
+              const token = isTest ? taxes.gigstackTestApiToken : taxes.gigstackLiveApiToken
+              const preview = isTest ? taxes.gigstackTestApiTokenPreview : taxes.gigstackLiveApiTokenPreview
+              const inputValue = token || (saved ? preview || '••••' : '')
+              const showingSavedToken = Boolean(!token && saved && inputValue)
+              const isTesting = testingGigstackMode === mode
+
+              return (
+                <div key={mode} className={styles.stripeModePanel}>
+                  <div className={styles.stripeModeHeader}>
+                    <div>
+                      <h3>{isTest ? 'API key Test' : 'API key Live'}</h3>
+                      <p>{isTest
+                        ? 'Pruebas fiscales de Gigstack. Nunca timbra una factura real ante el SAT.'
+                        : 'Pagos reales. Puede generar un CFDI real si eliges facturación automática.'}</p>
+                    </div>
+                    <Badge variant={saved ? 'success' : 'neutral'}>{saved ? 'Guardada' : 'Sin conectar'}</Badge>
+                  </div>
+
+                  {renderField(
+                    isTest ? 'Llave de prueba' : 'Llave de producción',
+                    <input
+                      type="password"
+                      value={inputValue}
+                      onChange={(event) => handleGigstackTokenChange(mode, event.target.value)}
+                      onFocus={(event) => {
+                        if (showingSavedToken) event.currentTarget.select()
+                      }}
+                      placeholder="Pega la API key JWT"
+                      autoComplete="new-password"
+                      spellCheck={false}
+                    />,
+                    saved ? 'Ya está cifrada en Ristak. Pega una nueva sólo si quieres reemplazarla.' : 'La encuentras en Gigstack → Configuración → API.'
+                  )}
+
+                  <div className={styles.stripeModeActions}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleTestGigstackConnection(mode)}
+                      disabled={Boolean(testingGigstackMode) || (!saved && !token)}
+                    >
+                      {isTesting ? (
+                        <>
+                          <Loader2 size={15} className={styles.spinIcon} />
+                          Validando...
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck size={15} />
+                          Probar conexión
+                        </>
+                      )}
+                    </Button>
+                    {saved && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDisconnectGigstackMode(mode)}
+                        disabled={Boolean(testingGigstackMode)}
+                      >
+                        <Unplug size={15} />
+                        Borrar llave
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {hasAnyGigstackToken && (
             <div className={styles.gigstackTokenActions}>
               <Button
                 type="button"
@@ -4864,10 +4997,63 @@ export const PaymentsConfiguration: React.FC = () => {
                 onClick={handleDisconnectGigstack}
               >
                 <Unplug size={15} />
-                Desconectar Gigstack
+                Desconectar todo Gigstack
               </Button>
             </div>
           )}
+
+          <div className={styles.gigstackDefaultsGrid}>
+            {renderField(
+              'Qué hacer al recibir el pago',
+              <CustomSelect
+                value={taxes.gigstackAutomationType || 'pue_invoice'}
+                onValueChange={(value) => {
+                  const automationType = value as PaymentTaxSettings['gigstackAutomationType']
+                  patchTaxValues({
+                    gigstackAutomationType: automationType,
+                    gigstackAutomateInvoiceOnComplete: automationType === 'pue_invoice'
+                  })
+                }}
+                options={[
+                  { value: 'pue_invoice', label: 'Crear factura PUE automáticamente' },
+                  { value: 'none', label: 'Sólo registrar el pago' }
+                ]}
+              />,
+              'PUE significa pago en una sola exhibición. “Sólo registrar” no timbra automáticamente.'
+            )}
+            {renderField(
+              'Cómo encontrar al cliente',
+              <CustomSelect
+                value={taxes.gigstackClientMatchMode || 'email'}
+                onValueChange={(value) => setTaxValue('gigstackClientMatchMode', value as PaymentTaxSettings['gigstackClientMatchMode'])}
+                options={[
+                  { value: 'email', label: 'Correo del contacto (recomendado)' },
+                  { value: 'client_id_or_email', label: 'ID de Gigstack y después correo' }
+                ]}
+              />,
+              'Con correo, Gigstack busca al cliente y lo crea si todavía no existe.'
+            )}
+            {renderField(
+              'Descripción por defecto',
+              <input
+                type="text"
+                value={taxes.gigstackDefaultDescription || ''}
+                onChange={(event) => setTaxValue('gigstackDefaultDescription', event.target.value)}
+                placeholder="Servicio cobrado"
+              />,
+              'Se usa cuando el pago o producto no trae una descripción propia.'
+            )}
+          </div>
+
+          <div className={styles.switchStack}>
+            {renderSwitchRow(
+              'Enviar factura por correo desde Gigstack',
+              `Usa el correo guardado en ${customerLowerLabel}. Si falta correo, Ristak bloquea el envío fiscal en vez de inventar datos.`,
+              taxes.gigstackSendEmail !== false,
+              (next) => setTaxValue('gigstackSendEmail', next)
+            )}
+          </div>
+
           <div className={styles.gigstackPortalSection}>
             <div className={styles.gigstackPortalHeader}>
               <div>
@@ -4928,8 +5114,12 @@ export const PaymentsConfiguration: React.FC = () => {
                 onValueChange={(value) => setTaxValue('gigstackDefaultPaymentMethod', value)}
                 options={gigstackPaymentMethodOptions}
               />,
-              'Ristak detecta tarjeta, transferencia o efectivo; esto cubre casos desconocidos.'
+              'Ristak sólo usa una forma específica cuando el proveedor confirma cuál fue. Si no, usa este valor para no adivinar datos fiscales.'
             )}
+          </div>
+          <div className={styles.inlineWarning}>
+            <AlertTriangle size={17} />
+            <span>La clave de producto, la unidad y la forma de pago deben corresponder a tu operación fiscal real. Ristak valida el formato y el ambiente, pero la clasificación correcta debes confirmarla con tu contador.</span>
           </div>
           <div className={styles.gigstackActions}>
             <Button

@@ -3834,6 +3834,29 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_automation_dispatches_payment ON payment_automation_dispatches(payment_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_automation_dispatches_status ON payment_automation_dispatches(status, updated_at)')
 
+    // Outbox fiscal durable. El ambiente se copia del pago y nunca se infiere
+    // desde la configuración global para impedir que una prueba llegue a Live.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS gigstack_invoice_jobs (
+        payment_id TEXT PRIMARY KEY,
+        payment_mode TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at_ms BIGINT NOT NULL DEFAULT 0,
+        claim_token TEXT,
+        lease_until_at_ms BIGINT,
+        last_error TEXT,
+        remote_payment_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_gigstack_invoice_jobs_due
+      ON gigstack_invoice_jobs(status, next_attempt_at_ms)
+    `)
+
     await db.run(`
       CREATE TABLE IF NOT EXISTS stripe_payment_methods (
         id TEXT PRIMARY KEY,
