@@ -4493,6 +4493,12 @@ completo modificado. El codigo de cada pagina se puede pegar y editar
 directamente; el preview no modifica copy, imagenes, botones, campos o secciones
 por si solo y solo permite seleccionar slots funcionales de Ristak.
 
+Al crear un sitio web, la pantalla inicial muestra solo tres caminos en una misma
+fila: `En blanco`, `Desde plantilla` y `Crear desde HTML`. La última opción
+concentra en un solo flujo `Abrir editor HTML`, `Subir HTML o ZIP`, creación con
+la IA de Ristak y el asistente de compatibilidad para ChatGPT, Claude o Codex;
+todas terminan en el mismo editor y contrato de reglas HTML.
+
 Con el editor ya abierto, la barra superior mantiene `Subir paginas` junto al
 selector de paginas. El control acepta HTML o ZIP y reutiliza el mismo flujo de
 importacion: guarda primero cualquier cambio pendiente del sitio abierto, crea
@@ -4500,14 +4506,16 @@ el nuevo proyecto importado con el mismo tipo de sitio y lo abre directamente en
 el editor. No mezcla silenciosamente codigo externo con los bloques del proyecto
 que estaba abierto.
 
-Las tres entradas del editor HTML —`Pegar código HTML`, `Subir HTML o ZIP` y
-`Diseñar con ChatGPT, Claude o Codex`— terminan en el mismo contrato visible de
-reglas HTML. Al entrar al editor, la guía abre por default y exige una versión móvil
+Dentro del editor HTML, la guía `Reglas HTML y versión móvil` inicia plegada y el
+usuario puede abrirla u ocultarla sin perder contenido. Exige una versión móvil
 real: `meta viewport`, layout fluido, un `@media (max-width: 640px)` con cambios
 concretos, controles táctiles de al menos 44 px, campos de al menos 16 px y cero
-scroll horizontal a 390 px. El mismo bloque se incluye en las instrucciones
-copiables para IA externa, en creación con IA y en cada edición del asistente de
-código; editar escritorio nunca autoriza borrar o romper las media queries.
+scroll horizontal a 390 px. El mismo bloque completo se incluye en las
+instrucciones copiables para IA externa, en creación con IA y en cada edición
+del asistente de código; editar escritorio nunca autoriza borrar o romper las
+media queries. El asistente de código también inicia oculto y se abre o cierra
+desde el botón con icono de chat en la cabecera del código; al abrirse conserva
+modelo, adjuntos, dictado y aplicación sobre el HTML activo.
 El botón de dispositivo no escala una captura de escritorio: en `Móvil`, tanto
 la vista normal del HTML como la vista partida código/preview montan el documento
 en un iframe con viewport real de hasta 390 px, de modo que sus media queries se
@@ -4834,12 +4842,12 @@ por ejemplo `Landing-01.html`, `Form-02.html`, `Booked-03.html`. Ristak usa ese
 numero para ordenar paginas importadas o generadas; no debe depender del orden
 alfabetico del ZIP ni de nombres como `Pagina 1`.
 
-En el flujo de crear un sitio, la opcion `Diseñar con ChatGPT, Claude o Codex`
-vive dentro del grupo de Editor HTML, despues de `Subir HTML o ZIP`. Esta opcion
-no llama a ninguna API de IA ni crea paginas por el usuario: solo abre un
-asistente de compatibilidad que pregunta si ChatGPT, Claude o Codex diseñaran los
-formularios, el calendario, el video o el perfil social con compatibilidad
-Ristak, si se insertaran
+En el flujo de crear un sitio, el asistente externo vive dentro de la única
+opción `Crear desde HTML`, bajo la acción `Preparar para ChatGPT, Claude o
+Codex`. Esta acción no llama a ninguna API de IA ni crea paginas por el usuario:
+solo abre un asistente de compatibilidad que pregunta si ChatGPT, Claude o Codex
+diseñaran los formularios, el calendario, el video o el perfil social con
+compatibilidad Ristak, si se insertaran
 los elementos completos de Ristak o si la pagina no los incluira. Los dropdowns
 usan el `CustomSelect` global y el valor cerrado conserva la misma tipografia de
 las opciones abiertas. Al terminar muestra instrucciones listas para copiar y

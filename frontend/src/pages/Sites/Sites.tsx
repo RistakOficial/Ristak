@@ -66,6 +66,7 @@ import {
   ListOrdered,
   Lock,
   Maximize2,
+  MessageCircle,
   Mic,
   Monitor,
   MoreVertical,
@@ -21321,6 +21322,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
   const [codeAssistantPrompt, setCodeAssistantPrompt] = useState('')
+  const [codeAssistantOpen, setCodeAssistantOpen] = useState(false)
+  const codeAssistantPanelId = useId()
   const [codeAssistantModel, setCodeAssistantModel] = useState(getDefaultSiteChatGPTModel(true))
   const [codeAssistantSaving, setCodeAssistantSaving] = useState(false)
   const [codeAssistantError, setCodeAssistantError] = useState('')
@@ -25978,6 +25981,19 @@ const ImportedHtmlEditorPanel: React.FC<{
               <strong className={activeCodeDirty ? styles.importedCodeDirtyStatus : styles.importedCodeSavedStatus}>
                 {activeCodeDirty ? 'Cambios sin guardar' : 'Guardado'}
               </strong>
+              <Button
+                type="button"
+                variant={codeAssistantOpen ? 'secondary' : 'ghost'}
+                size="sm"
+                iconOnly
+                onClick={() => setCodeAssistantOpen(current => !current)}
+                aria-controls={codeAssistantPanelId}
+                aria-expanded={codeAssistantOpen}
+                aria-label={codeAssistantOpen ? 'Ocultar asistente de código' : 'Abrir asistente de código'}
+                title={codeAssistantOpen ? 'Ocultar asistente de código' : 'Abrir asistente de código'}
+              >
+                {codeAssistantOpen ? <X size={15} /> : <MessageCircle size={15} />}
+              </Button>
               <div className={styles.importedCodeThemeToggle} aria-label="Tema del editor de código">
                 <button
                   type="button"
@@ -26000,8 +26016,8 @@ const ImportedHtmlEditorPanel: React.FC<{
               </div>
             </div>
           </div>
-          <details className={styles.importedCodeGuide} open>
-            <summary>
+          <details className={styles.importedCodeGuide}>
+            <summary title="Mostrar u ocultar las reglas completas para HTML y móvil">
               <Sparkles size={13} />
               Reglas HTML y versión móvil
             </summary>
@@ -26038,22 +26054,23 @@ const ImportedHtmlEditorPanel: React.FC<{
               <span>No hay HTML editable para esta página.</span>
             </div>
           )}
-          <div className={styles.importedCodeAssistantPanel}>
-            <div className={styles.importedCodeAssistantHeader}>
-              <div className={styles.importedCodeAssistantTitle}>
-                <Sparkles size={14} />
-                <div>
-                  <span>Asistente de código</span>
-                  <strong>Solo ve el HTML activo</strong>
+          {codeAssistantOpen && (
+            <div id={codeAssistantPanelId} className={styles.importedCodeAssistantPanel}>
+              <div className={styles.importedCodeAssistantHeader}>
+                <div className={styles.importedCodeAssistantTitle}>
+                  <Sparkles size={14} />
+                  <div>
+                    <span>Asistente de código</span>
+                    <strong>Solo ve el HTML activo</strong>
+                  </div>
                 </div>
+                {codeAssistantActivityLabel && (
+                  <div className={`${styles.importedCodeAssistantGlassStatus} ${codeAssistantSaving ? styles.importedCodeAssistantGlassStatusActive : ''}`} aria-live="polite">
+                    <span className={styles.importedCodeAssistantGlassDot} aria-hidden="true" />
+                    <strong>{codeAssistantActivityLabel}</strong>
+                  </div>
+                )}
               </div>
-              {codeAssistantActivityLabel && (
-                <div className={`${styles.importedCodeAssistantGlassStatus} ${codeAssistantSaving ? styles.importedCodeAssistantGlassStatusActive : ''}`} aria-live="polite">
-                  <span className={styles.importedCodeAssistantGlassDot} aria-hidden="true" />
-                  <strong>{codeAssistantActivityLabel}</strong>
-                </div>
-              )}
-            </div>
             {codeAssistantError && (
               <div className={styles.importedAIRegionError}>
                 <AlertTriangle size={14} />
@@ -26157,7 +26174,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                 {codeAssistantSaving ? <RefreshCw size={18} /> : <ArrowUp size={20} />}
               </button>
             </div>
-          </div>
+            </div>
+          )}
         </section>
 
         <div
@@ -28498,70 +28516,82 @@ const ExternalAICompatibilityModal: React.FC<{
   )
 }
 
+const HtmlCreationModal: React.FC<{
+  isOpen: boolean
+  creating: boolean
+  aiAgentAvailable: boolean
+  onClose: () => void
+  onCreateBlankHtml: () => void
+  onImportHtml: () => void
+  onCreateWithAI: () => void
+  onOpenExternalAI: () => void
+}> = ({
+  isOpen,
+  creating,
+  aiAgentAvailable,
+  onClose,
+  onCreateBlankHtml,
+  onImportHtml,
+  onCreateWithAI,
+  onOpenExternalAI
+}) => (
+  <Modal
+    isOpen={isOpen}
+    onClose={onClose}
+    title="Crear desde HTML"
+    subtitle="Todo termina en el mismo editor HTML, con las reglas completas y el asistente de código disponibles cuando los necesites."
+    size="md"
+    closeOnBackdropClick={!creating}
+    closeOnEscape={!creating}
+  >
+    <div className={styles.aiCreationFunnelPicker}>
+      <p className={styles.galleryHint}>
+        Empieza pegando código, sube un HTML/ZIP o deja que la IA lo construya. Después podrás editar y revisar todo desde una sola pantalla.
+      </p>
+      <Button type="button" fullWidth leftIcon={<Code2 size={16} />} onClick={onCreateBlankHtml} disabled={creating} loading={creating}>
+        Abrir editor HTML
+      </Button>
+      <Button type="button" fullWidth variant="secondary" leftIcon={<Upload size={16} />} onClick={onImportHtml} disabled={creating}>
+        Subir HTML o ZIP
+      </Button>
+      {aiAgentAvailable && (
+        <Button type="button" fullWidth variant="secondary" leftIcon={<Sparkles size={16} />} onClick={onCreateWithAI} disabled={creating}>
+          Diseñar con la IA de Ristak
+        </Button>
+      )}
+      <Button type="button" fullWidth variant="ghost" leftIcon={<Copy size={16} />} onClick={onOpenExternalAI} disabled={creating}>
+        Preparar para ChatGPT, Claude o Codex
+      </Button>
+    </div>
+  </Modal>
+)
+
 const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAgentAvailable, onCreate, onCreateWithAI, onCreateBlankHtml, onImportHtml, onAdvance }) => {
+  const [htmlCreationOpen, setHtmlCreationOpen] = useState(false)
   const [externalAICompatibilityOpen, setExternalAICompatibilityOpen] = useState(false)
 
   return (
     <section className={styles.createPanel}>
       {step === 'landing-start' && (
-        <div className={styles.createChoiceCategories}>
-          <section className={styles.createChoiceCategory}>
-            <div className={styles.createChoiceCategoryHeader}>
-              <span>Editor de bloques</span>
-              <strong>Crea el sitio visualmente</strong>
-              <p>Empieza desde cero o usa una plantilla para editar con secciones y bloques.</p>
-            </div>
-            <div className={styles.choiceGrid}>
-              <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
-                <FileText size={22} />
-                <strong>En blanco</strong>
-                <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
-                <ChevronRight size={18} />
-              </button>
-              <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
-                <LayoutTemplate size={22} />
-                <strong>Desde plantilla</strong>
-                <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
-                <ChevronRight size={18} />
-              </button>
-            </div>
-          </section>
-
-          <section className={styles.createChoiceCategory}>
-            <div className={styles.createChoiceCategoryHeader}>
-              <span>Páginas HTML</span>
-              <strong>Importa o genera el código completo</strong>
-              <p>Sube tu HTML/ZIP o deja que la IA prepare la página completa con contenido conectado.</p>
-            </div>
-            <div className={styles.choiceGrid}>
-              <button type="button" disabled={creating} onClick={() => onCreateBlankHtml('landing_page')}>
-                <Code2 size={22} />
-                <strong>Pegar código HTML</strong>
-                <p>Crea la página y pega el código completo; Ristak detecta campos y contenido al instante.</p>
-                <ChevronRight size={18} />
-              </button>
-              <button type="button" disabled={creating} onClick={() => onImportHtml('landing_page')}>
-                <Upload size={22} />
-                <strong>Subir HTML o ZIP</strong>
-                <p>Usa tu página actual o un sitio comprimido; Ristak detecta sus formularios.</p>
-                <ChevronRight size={18} />
-              </button>
-              <button type="button" disabled={creating} onClick={() => setExternalAICompatibilityOpen(true)}>
-                <Sparkles size={22} />
-                <strong>Diseñar con ChatGPT, Claude o Codex</strong>
-                <p>Responde unas preguntas y copia instrucciones listas para diseñar una página compatible con Ristak.</p>
-                <ChevronRight size={18} />
-              </button>
-              {aiAgentAvailable && (
-                <button type="button" disabled={creating} onClick={() => onCreateWithAI('landing')}>
-                  <Sparkles size={22} />
-                  <strong>Usando IA</strong>
-                  <p>Genera una página HTML completa; Ristak la importa y revisa sus formularios.</p>
-                  <ChevronRight size={18} />
-                </button>
-              )}
-            </div>
-          </section>
+        <div className={styles.choiceGrid}>
+          <button type="button" disabled={creating} onClick={() => onCreate('landing_page', 'blank', 'ristak')}>
+            <FileText size={22} />
+            <strong>En blanco</strong>
+            <p>Canvas limpio para agregar solo los bloques que necesitas.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => onAdvance('landing-template')}>
+            <LayoutTemplate size={22} />
+            <strong>Desde plantilla</strong>
+            <p>Elige embudos completos para web, ventas, lanzamientos o redes sociales.</p>
+            <ChevronRight size={18} />
+          </button>
+          <button type="button" disabled={creating} onClick={() => setHtmlCreationOpen(true)}>
+            <Code2 size={22} />
+            <strong>Crear desde HTML</strong>
+            <p>Pega código, sube un HTML/ZIP o diseña con IA desde un solo flujo.</p>
+            <ChevronRight size={18} />
+          </button>
         </div>
       )}
 
@@ -28676,6 +28706,31 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
           />
         </>
       )}
+
+      <HtmlCreationModal
+        isOpen={htmlCreationOpen}
+        creating={creating}
+        aiAgentAvailable={aiAgentAvailable}
+        onClose={() => {
+          if (!creating) setHtmlCreationOpen(false)
+        }}
+        onCreateBlankHtml={() => {
+          setHtmlCreationOpen(false)
+          onCreateBlankHtml('landing_page')
+        }}
+        onImportHtml={() => {
+          setHtmlCreationOpen(false)
+          onImportHtml('landing_page')
+        }}
+        onCreateWithAI={() => {
+          setHtmlCreationOpen(false)
+          onCreateWithAI('landing')
+        }}
+        onOpenExternalAI={() => {
+          setHtmlCreationOpen(false)
+          setExternalAICompatibilityOpen(true)
+        }}
+      />
 
       <ExternalAICompatibilityModal
         isOpen={externalAICompatibilityOpen}
