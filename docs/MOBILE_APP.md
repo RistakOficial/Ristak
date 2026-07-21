@@ -1482,9 +1482,11 @@ app nativa lee `account_currency` via `/api/config`, zona horaria via
 `startDate/endDate` y productos via `/api/products`; cualquier importe visible
 debe formatearse con la moneda del registro o de la cuenta, no con una moneda
 hardcodeada. La app lee `/api/license/status` e `/api/integrations/status` para
-definir capacidades: plan `basic` solo muestra pago unico offline, y cualquier
-plan sin Stripe, Conekta, Mercado Pago, CLIP o Rebill conectado tambien queda en
-modo pago unico offline. `Planes de pago` y `Suscripcion` solo aparecen cuando
+definir capacidades: los planes `basic` y `medium` solo muestran pago único
+offline aunque una licencia vieja marque pasarelas o links como activos. En
+Profesional, una cuenta sin Stripe,
+Conekta, Mercado Pago, CLIP o Rebill conectado también queda en modo pago único
+offline. `Planes de pago` y `Suscripcion` solo aparecen cuando
 la licencia permite `payment_plans`/`subscriptions` y existe al menos una
 pasarela conectada. Si Pagos se abre desde el boton de cobro del header de una
 conversacion y la cuenta esta en modo offline, salta directo al wizard de pago

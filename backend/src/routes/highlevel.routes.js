@@ -102,9 +102,9 @@ router.get('/invoices/schedules/:scheduleId', requireModuleAccess('payments'), r
 router.put('/invoices/schedules/:scheduleId', requireModuleAccess('payments'), requireFeature('payment_plans'), updateInvoiceSchedule)
 router.post('/invoices/schedules/:scheduleId/action', requireModuleAccess('payments'), requireFeature('payment_plans'), actionInvoiceSchedule)
 router.post('/payment-flows/installments', requireModuleAccess('payments'), requireFeature('payment_plans'), createInstallmentFlow)
-router.post('/invoices/:invoiceId/send', requireModuleAccess('payments'), sendInvoice)
+router.post('/invoices/:invoiceId/send', requireModuleAccess('payments'), requireFeature('payment_links'), sendInvoice)
 router.post('/invoices/:invoiceId/record-payment', requireModuleAccess('payments'), recordPayment)
 router.post('/invoices/:invoiceId/sync', requireModuleAccess('payments'), syncInvoice)
-router.post('/text2pay', requireModuleAccess('payments'), text2Pay)
+router.post('/text2pay', requireModuleAccess('payments'), requireFeature('payment_links'), text2Pay)
 
 export default router

@@ -39,6 +39,7 @@ import {
   createSubscription,
   listSubscriptions
 } from '../../services/subscriptionsService.js'
+import { hasFeature } from '../../services/licenseService.js'
 
 /**
  * Herramientas avanzadas de cobro para el agente. Detectan las pasarelas
@@ -59,6 +60,15 @@ const PAYMENT_GATEWAY_LABELS = {
   mercadopago: 'Mercado Pago',
   clip: 'CLIP',
   rebill: 'Rebill'
+}
+
+async function unavailablePaymentFeature(featureKey) {
+  if (await hasFeature(featureKey)) return null
+  return {
+    ok: false,
+    code: 'feature_not_available',
+    error: 'Los cobros por pasarela están disponibles en el plan Profesional.'
+  }
 }
 
 const GATEWAY_PARAM = z.enum(['auto', 'highlevel', 'stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
@@ -417,6 +427,8 @@ export const getPaymentGatewaysTool = tool({
   description: 'Detecta qué pasarelas de pago están conectadas en Ristak (Stripe, Conekta, Mercado Pago, CLIP, Rebill y GoHighLevel opcional) y qué puede hacer cada una: links, planes, suscripciones o cobros con tarjeta guardada. Úsala antes de crear cobros si el usuario no dijo pasarela.',
   parameters: z.object({}),
   execute: async () => {
+    const unavailable = await unavailablePaymentFeature('payment_gateways')
+    if (unavailable) return unavailable
     const snapshot = await getPaymentGatewaySnapshot()
     return {
       ok: true,
@@ -446,6 +458,8 @@ export const createPaymentLinkTool = tool({
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el cobro')
   }),
   execute: async ({ contactId, amount, currency, concept, dueDate, gateway, channel, confirm }) => {
+    const unavailable = await unavailablePaymentFeature('payment_links')
+    if (unavailable) return unavailable
     if (!confirm) {
       return { ok: false, error: 'Falta confirmación del usuario. Resume el cobro (contacto, monto, concepto, pasarela y canal si aplica) y pide aprobación antes de crear el link.' }
     }
@@ -595,6 +609,8 @@ export const createInstallmentPlanTool = tool({
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el plan')
   }),
   execute: async ({ contactId, totalAmount, currency, concept, firstPayment, remainingPayments, remainingAutomatic, remainingFrequency, paymentMethodId, gateway, channel, confirm }) => {
+    const unavailable = await unavailablePaymentFeature('payment_plans')
+    if (unavailable) return unavailable
     if (!confirm) {
       return { ok: false, error: 'Falta confirmación del usuario. Resume el plan (total, pasarela, primer pago, parcialidades con fechas y canal si aplica) y pide aprobación.' }
     }
@@ -655,6 +671,8 @@ export const listSavedPaymentMethodsTool = tool({
     gateway: GATEWAY_PARAM
   }),
   execute: async ({ contactId, gateway }) => {
+    const unavailable = await unavailablePaymentFeature('saved_payment_methods')
+    if (unavailable) return unavailable
     const selected = await selectPaymentGateway(gateway, 'savedCardCharges')
     if (!selected.ok) return selected
 
@@ -713,6 +731,8 @@ export const chargeSavedCardTool = tool({
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente el cargo')
   }),
   execute: async ({ contactId, paymentMethodId, amount, concept, dueDate, gateway, confirm }) => {
+    const unavailable = await unavailablePaymentFeature('saved_payment_methods')
+    if (unavailable) return unavailable
     if (!confirm) {
       return { ok: false, error: 'Falta confirmación del usuario. Resume contacto, monto, concepto y tarjeta antes de cobrar.' }
     }
@@ -770,6 +790,8 @@ export const listSubscriptionsTool = tool({
     limit: z.number().int().min(1).max(100).nullable().describe('Filas por página; default 20, máximo 100')
   }),
   execute: async ({ status, search, page, cursor, limit }) => {
+    const unavailable = await unavailablePaymentFeature('subscriptions')
+    if (unavailable) return unavailable
     try {
       const result = await listSubscriptions({
         status: status || 'all',
@@ -801,6 +823,8 @@ export const createSubscriptionTool = tool({
     confirm: z.boolean().describe('true solo si el usuario ya confirmó explícitamente la suscripción')
   }),
   execute: async ({ contactId, name, description, amount, intervalType, intervalCount, startDate, paymentMethodId, gateway, confirm }) => {
+    const unavailable = await unavailablePaymentFeature('subscriptions')
+    if (unavailable) return unavailable
     if (!confirm) {
       return { ok: false, error: 'Falta confirmación del usuario. Resume contacto, monto, frecuencia, fecha inicial y tarjeta/pasarela antes de crear la suscripción.' }
     }

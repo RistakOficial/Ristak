@@ -43,7 +43,7 @@ const MCP_TOOL_FEATURES = {
   ghl_list_calendars: ['integrations', 'appointments'],
   ghl_get_free_slots: ['integrations', 'appointments'],
   ghl_create_appointment: ['integrations', 'appointments'],
-  ghl_create_payment_link: ['integrations', 'payments'],
+  ghl_create_payment_link: ['integrations', 'payments', 'payment_links'],
   ghl_record_offline_payment: ['integrations', 'payments'],
   ghl_create_installment_plan: ['integrations', 'payments', 'payment_plans'],
   ghl_api_request: ['integrations'],

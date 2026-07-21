@@ -10,6 +10,7 @@ import {
   scrubTestPaymentRecordForCleanup
 } from './paymentRecordSafetyService.js'
 import { expireMercadoPagoTestPreference } from './mercadoPagoPaymentService.js'
+import { hasFeature } from './licenseService.js'
 
 const TEST_PAYMENT_TTL_MS = 5 * 60 * 1000
 const CREATION_LEASE_MS = 2 * 60 * 1000
@@ -325,6 +326,9 @@ export async function createConversationalAgentTestPaymentLink({
   baseUrl = '',
   now = Date.now()
 } = {}) {
+  if (!(await hasFeature('payment_links'))) {
+    throw serviceError('Los enlaces de pago están disponibles en el plan Profesional.', 403, 'feature_not_available')
+  }
   const cleanEffectId = assertIdentifier(effectId, 'El efecto de pago')
   const cleanTestRunId = assertIdentifier(testRunId, 'La sesión de prueba')
   const cleanAgentId = assertIdentifier(agentId, 'El agente')

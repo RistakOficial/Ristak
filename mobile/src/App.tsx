@@ -15097,6 +15097,10 @@ function normalizeMobileLicensePlan(plan: unknown) {
   return normalized === 'pro' ? 'professional' : normalized;
 }
 
+function hasProfessionalMobilePlan(plan: string) {
+  return ['professional', 'profesional', 'premium'].includes(plan);
+}
+
 function isLicenseFeatureEnabled(features: LicenseStatusResponse['features'] | undefined, featureKey: string) {
   const value = features?.[featureKey];
   if (value === false) return false;
@@ -15128,7 +15132,10 @@ function resolveMobilePaymentAccess(
   const plan = normalizeMobileLicensePlan(license?.plan);
   const connectedGateways = getConnectedPaymentGateways(integrations);
   const hasConnectedGateway = connectedGateways.length > 0;
-  const offlineOnly = plan === 'basic' || !hasConnectedGateway;
+  const canUsePaymentLinks = hasProfessionalMobilePlan(plan) &&
+    isLicenseFeatureEnabled(license?.features, 'payment_gateways') &&
+    isLicenseFeatureEnabled(license?.features, 'payment_links');
+  const offlineOnly = !canUsePaymentLinks || !hasConnectedGateway;
   // Match /movil's usePaymentGatewayCapabilities: plans need a plan-capable
   // gateway (stripe/conekta/rebill) and subscriptions a sub-capable one
   // (stripe/conekta/mercadopago/rebill), so a clip-only or mercadopago-only

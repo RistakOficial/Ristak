@@ -367,11 +367,46 @@ export function hasProfessionalPlan(plan?: string | null) {
     normalized.endsWith('_premium')
 }
 
-export function hasWebAnalyticsAccess(user: AccessControlledUser | null | undefined) {
+export function hasProfessionalFeatureAccess(
+  user: AccessControlledUser | null | undefined,
+  featureKeys: readonly string[]
+) {
   if (!user?.licenseEnforced) return true
   if (user.licenseFeaturesSourceValid === false) return false
 
-  return hasProfessionalPlan(user.licensePlan) && hasLicenseFeature(user, ['web_analytics'])
+  return hasProfessionalPlan(user.licensePlan) && hasLicenseFeature(user, featureKeys)
+}
+
+export function hasWebAnalyticsAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['web_analytics'])
+}
+
+export function hasPaymentGatewaysAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_gateways'])
+}
+
+export function hasPaymentLinksAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_links'])
+}
+
+export function hasPaymentPlansAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_plans'])
+}
+
+export function hasSavedPaymentMethodsAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['saved_payment_methods'])
+}
+
+export function hasSubscriptionsAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['subscriptions'])
+}
+
+export function hasPaymentCheckoutAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_checkout'])
+}
+
+export function hasPaymentAutomationsAccess(user: AccessControlledUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_automations'])
 }
 
 export function hasCalendarPaymentsAccess(user: AccessControlledUser | null | undefined) {

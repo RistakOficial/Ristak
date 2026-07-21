@@ -1399,6 +1399,9 @@ Las superficies incrustadas deben validar su propia subfeature: HighLevel usa
 usan `whatsapp_templates`; checkout, pasarelas y automatizaciones de pago usan
 `payment_checkout`, `payment_gateways` y `payment_automations`. No se permite
 abrir estas superficies solo porque su módulo padre esté disponible.
+Además, checkout, pasarelas, links, tarjetas guardadas, planes, suscripciones y
+webhooks de pago requieren plan Profesional aunque un flag viejo llegue activo.
+Básico y Medio siguen pudiendo registrar y comprobar pagos offline.
 
 Modulos de acceso principales:
 
@@ -3148,18 +3151,25 @@ Ristak soporta:
 - Automatizaciones al completarse pagos.
 
 En app movil nativa, la disponibilidad de flujos de pago depende de licencia e
-integraciones conectadas. Plan `basic` solo puede registrar pagos unicos offline
-como efectivo, transferencia, deposito u otro pago confirmado. Planes de pago y
-suscripciones no deben mostrarse en Basic. En planes `professional`/`pro`, si no
+integraciones conectadas. Los planes `basic` y `medium` solo pueden registrar
+pagos unicos offline como efectivo, transferencia, deposito u otro pago
+confirmado. Links, tarjetas guardadas, planes de pago y suscripciones no deben
+mostrarse en esos planes. En planes `professional`/`pro`, si no
 hay ninguna pasarela de pago conectada, la app movil tambien debe limitarse al
 pago unico offline; los flujos avanzados aparecen solo cuando la licencia permite
 `payment_plans`/`subscriptions` y existe al menos una pasarela conectada.
 
-En Configuración > Pagos, Basic no muestra página de cobro, pasarelas ni
-automatizaciones: requieren, respectivamente, `payment_checkout`,
+En Configuración > Pagos, Básico y Medio no muestran página de cobro, pasarelas
+ni automatizaciones: requieren, respectivamente, `payment_checkout`,
 `payment_gateways` y `payment_automations`. Los checkouts públicos de Sites y
 sus bloques de cobro validan `payment_checkout` en backend, incluso si una página
 existía antes de un downgrade.
+
+El modal de registrar pago y la capacidad `Cobrar` del chatbot ofrecen sólo
+registro manual/transferencia fuera de Profesional. Las rutas autenticadas, el
+asistente de app y MCP vuelven a validar `payment_links`; una licencia stale no
+puede crear ni enviar un enlace. Los links públicos creados antes del downgrade
+siguen disponibles para que el pagador no reciba una URL rota.
 
 La ruta de Configuracion > Pagos siempre carga primero su configuracion local.
 Variables Meta se piden solo al abrir `Meta`; estado y plantillas de WhatsApp,

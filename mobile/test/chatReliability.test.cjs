@@ -37,7 +37,7 @@ const {
   makeUnreconciledNativePendingMessagesRetryable,
   retainNativeLocalOutboxMessages,
 } = require('../src/conversationReliability.ts');
-const { PHONE_SECTION_MODULE, hasPhoneSectionAccess, hasWebAnalyticsAccess } = require('../src/access.ts');
+const { PHONE_SECTION_MODULE, hasPaymentGatewaysAccess, hasPaymentLinksAccess, hasPhoneSectionAccess, hasWebAnalyticsAccess } = require('../src/access.ts');
 const {
   createVerifiedUserCacheRecord,
   getCachedVerifiedUser,
@@ -148,6 +148,29 @@ test('Analiticas movil solo muestra metricas web en Profesional', () => {
   assert.equal(hasWebAnalyticsAccess(licensedUser('premium')), true);
   assert.equal(hasWebAnalyticsAccess(licensedUser('professional', false)), false);
   assert.equal(hasWebAnalyticsAccess({ licenseEnforced: false }), true);
+});
+
+test('Pagos movil reserva pasarelas y links para Profesional', () => {
+  const licensedUser = (licensePlan, enabled = true) => ({
+    role: 'admin',
+    licenseEnforced: true,
+    licensePlan,
+    licenseFeatures: { payment_gateways: enabled, payment_links: enabled },
+  });
+
+  for (const accessCheck of [hasPaymentGatewaysAccess, hasPaymentLinksAccess]) {
+    assert.equal(accessCheck(licensedUser('basic')), false);
+    assert.equal(accessCheck(licensedUser('medium')), false);
+    assert.equal(accessCheck(licensedUser('professional')), true);
+    assert.equal(accessCheck(licensedUser('premium')), true);
+    assert.equal(accessCheck(licensedUser('professional', false)), false);
+    assert.equal(accessCheck({ licenseEnforced: false }), true);
+  }
+
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  assert.match(appSource, /hasProfessionalMobilePlan\(plan\)/);
+  assert.match(appSource, /isLicenseFeatureEnabled\(license\?\.features, 'payment_links'\)/);
+  assert.match(appSource, /const offlineOnly = !canUsePaymentLinks \|\| !hasConnectedGateway/);
 });
 
 test('un usuario sin verificar nunca abre secciones por default', () => {

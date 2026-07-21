@@ -827,7 +827,9 @@ export const PhonePayments: React.FC = () => {
               </span>
               <span className={styles.choiceText}>
                 <strong>Registrar pago único</strong>
-                <small>Cobro único: envía una liga de pago o registra un pago manual.</small>
+                <small>{paymentCapabilities.canUsePaymentLinks
+                  ? 'Cobro único: envía una liga de pago o registra un pago manual.'
+                  : 'Registra efectivo, transferencia, depósito u otro pago ya confirmado.'}</small>
               </span>
               <ChevronRight size={20} className={styles.choiceChevron} aria-hidden="true" />
             </button>

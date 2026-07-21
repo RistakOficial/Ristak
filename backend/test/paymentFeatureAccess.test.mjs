@@ -52,3 +52,32 @@ test('premium payment APIs require payment plan and subscription features', asyn
   assert.match(conektaRoutes, /router\.post\('\/public\/payments\/:publicPaymentId\/subscription', requireSubscriptionsFeature, createPublicConektaSubscriptionView\)/)
   assert.match(mercadoPagoRoutes, /router\.post\('\/payment-plans', requireModuleAccess\('payments'\), requirePaymentPlansFeature, createMercadoPagoPaymentPlanView\)/)
 })
+
+test('gateway configuration and payment-link creation require Professional features', async () => {
+  for (const fileName of ['stripe.routes.js', 'conekta.routes.js', 'mercadopago.routes.js', 'clip.routes.js', 'rebill.routes.js']) {
+    const source = await readFile(join(backendRoot, 'src/routes', fileName), 'utf8')
+    assert.match(source, /const requirePaymentGatewaysFeature = requireFeature\('payment_gateways'\)/, `${fileName} does not protect gateway configuration`)
+    assert.match(source, /const requirePaymentLinksFeature = requireFeature\('payment_links'\)/, `${fileName} does not protect payment links`)
+    assert.match(source, /router\.post\('\/payment-links', requireModuleAccess\('payments'\), requirePaymentLinksFeature,/, `${fileName} payment-link route is not protected`)
+  }
+
+  const highLevelRoutes = await readFile(join(backendRoot, 'src/routes/highlevel.routes.js'), 'utf8')
+  const mcpRoutes = await readFile(join(backendRoot, 'src/routes/mcp.routes.js'), 'utf8')
+  assert.match(highLevelRoutes, /router\.post\('\/invoices\/:invoiceId\/send', requireModuleAccess\('payments'\), requireFeature\('payment_links'\), sendInvoice\)/)
+  assert.match(highLevelRoutes, /router\.post\('\/text2pay', requireModuleAccess\('payments'\), requireFeature\('payment_links'\), text2Pay\)/)
+  assert.match(mcpRoutes, /ghl_create_payment_link: \['integrations', 'payments', 'payment_links'\]/)
+})
+
+test('AI payment entry points fail closed when online-payment features are unavailable', async () => {
+  const appAssistantTools = await readFile(join(backendRoot, 'src/agents/tools/paymentFlowTools.js'), 'utf8')
+  const conversationalTools = await readFile(join(backendRoot, 'src/agents/conversational/tools.js'), 'utf8')
+  const aiAgentService = await readFile(join(backendRoot, 'src/services/aiAgentService.js'), 'utf8')
+  const testPaymentService = await readFile(join(backendRoot, 'src/services/conversationalAgentTestPaymentService.js'), 'utf8')
+
+  assert.match(appAssistantTools, /unavailablePaymentFeature\('payment_links'\)/)
+  assert.match(appAssistantTools, /unavailablePaymentFeature\('payment_gateways'\)/)
+  assert.match(appAssistantTools, /unavailablePaymentFeature\('saved_payment_methods'\)/)
+  assert.match(conversationalTools, /hasFeature\('payment_links'\)/)
+  assert.match(aiAgentService, /hasFeature\('payment_links'\)/)
+  assert.match(testPaymentService, /hasFeature\('payment_links'\)/)
+})

@@ -71,6 +71,24 @@ const PROFESSIONAL_PLAN_KEYS = new Set([
   'premium'
 ])
 
+// Todo cobro que depende de una pasarela es exclusivo de Profesional. La lista
+// vive aquí también (además del Installer) para que una licencia vieja, parcial
+// o con overrides heredados no reactive movimiento de dinero online.
+const PROFESSIONAL_ONLY_PAYMENT_FEATURE_KEYS = new Set([
+  'payment_checkout',
+  'payment_automations',
+  'payment_gateways',
+  'highlevel_payments',
+  'conekta',
+  'mercadopago',
+  'rebill',
+  'payment_links',
+  'saved_payment_methods',
+  'payment_plans',
+  'subscriptions',
+  'payment_webhooks'
+])
+
 // (LIC-003) Features de pago que el backend bloquea con requireFeature(...). Si el
 // portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
 // éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
@@ -80,7 +98,10 @@ const PREMIUM_GATED_FEATURES = [
   'email', 'integrations', 'team_access', 'mobile_app', 'developers',
   'meta_ads', 'google_calendar', 'automations', 'advanced_reports',
   'app_assistant_ai', 'conversational_ai', 'ai', 'ai_agent',
-  'premium_modules', 'payment_plans', 'subscriptions', 'web_analytics'
+  'premium_modules', 'payment_checkout', 'payment_automations',
+  'payment_gateways', 'highlevel_payments', 'conekta', 'mercadopago',
+  'rebill', 'payment_links', 'saved_payment_methods', 'payment_plans',
+  'subscriptions', 'payment_webhooks', 'web_analytics'
 ]
 
 function closedRemoteFeatures() {
@@ -224,11 +245,18 @@ function applyPlanFeatureConstraints(features = {}, plan = '') {
   // si un portal viejo o un override heredado todavía envía web_analytics=true.
   if (!hasProfessionalPlan(plan)) constrained.web_analytics = false
 
+  if (!hasProfessionalPlan(plan)) {
+    for (const featureKey of PROFESSIONAL_ONLY_PAYMENT_FEATURE_KEYS) {
+      constrained[featureKey] = false
+    }
+  }
+
   return constrained
 }
 
 function readPlanBoundFeatureValue(state = {}, featureKey = '') {
   if (featureKey === 'web_analytics' && !hasProfessionalPlan(state.plan)) return false
+  if (PROFESSIONAL_ONLY_PAYMENT_FEATURE_KEYS.has(featureKey) && !hasProfessionalPlan(state.plan)) return false
   return readFeatureValue(state.features, featureKey)
 }
 

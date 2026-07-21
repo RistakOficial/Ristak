@@ -1,5 +1,12 @@
 import { useMemo } from 'react'
 import type { IntegrationsStatus } from '@/services/integrationsService'
+import { useAuth } from '@/contexts/AuthContext'
+import {
+  hasPaymentGatewaysAccess,
+  hasPaymentLinksAccess,
+  hasPaymentPlansAccess,
+  hasSubscriptionsAccess
+} from '@/utils/accessControl'
 import { useIntegrationsStatus } from './useIntegrationsStatus'
 
 export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
@@ -13,6 +20,7 @@ interface PaymentGatewayCapabilities {
   clipConnected: boolean
   rebillConnected: boolean
   hasConnectedPaymentGateway: boolean
+  canUsePaymentLinks: boolean
   canUsePaymentPlans: boolean
   canUseSubscriptions: boolean
   planProviders: PaymentGatewayProvider[]
@@ -42,8 +50,13 @@ function getConnectionStateFromStatus(status: IntegrationsStatus | null, loading
 }
 
 export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
-  const { status, loading } = useIntegrationsStatus()
-  const connectionState = getConnectionStateFromStatus(status, loading)
+  const { user } = useAuth()
+  const canUsePaymentGateways = hasPaymentGatewaysAccess(user)
+  const canUsePaymentLinks = hasPaymentLinksAccess(user)
+  const canUsePaymentPlans = hasPaymentPlansAccess(user)
+  const canUseSubscriptions = hasSubscriptionsAccess(user)
+  const { status, loading } = useIntegrationsStatus({ enabled: canUsePaymentGateways })
+  const connectionState = getConnectionStateFromStatus(canUsePaymentGateways ? status : null, loading)
 
   return useMemo(() => {
     const {
@@ -76,10 +89,11 @@ export function usePaymentGatewayCapabilities(): PaymentGatewayCapabilities {
       clipConnected,
       rebillConnected,
       hasConnectedPaymentGateway: stripeConnected || conektaConnected || mercadoPagoConnected || clipConnected || rebillConnected,
-      canUsePaymentPlans: highLevelConnected || planProviders.length > 0,
-      canUseSubscriptions: subscriptionProviders.length > 0,
+      canUsePaymentLinks: canUsePaymentLinks && (highLevelConnected || stripeConnected || conektaConnected || mercadoPagoConnected || clipConnected || rebillConnected),
+      canUsePaymentPlans: canUsePaymentPlans && (highLevelConnected || planProviders.length > 0),
+      canUseSubscriptions: canUseSubscriptions && subscriptionProviders.length > 0,
       planProviders,
       subscriptionProviders
     }
-  }, [connectionState])
+  }, [canUsePaymentLinks, canUsePaymentPlans, canUseSubscriptions, connectionState])
 }

@@ -14,6 +14,7 @@
     "test:appointment-modal-contract": "node scripts/test-appointment-modal-contract.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
     "test:web-analytics-plan-access": "node --test scripts/test-web-analytics-plan-access.cjs",
+    "test:payment-links-plan-access": "node --test scripts/test-payment-links-plan-access.cjs",
     "test:highlevel-chat-send": "node scripts/test-highlevel-chat-send.mjs",
     "typecheck": "tsc --noEmit",
     "build": "vite build",

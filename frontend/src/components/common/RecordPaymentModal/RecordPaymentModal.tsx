@@ -32,6 +32,7 @@ import styles from './RecordPaymentModal.module.css'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useAccountCurrency } from '@/hooks'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -63,6 +64,12 @@ import {
   normalizeGigstackUnitKeyInput
 } from '@/utils/gigstackFiscalCatalog'
 import { PaymentLinkReadyPanel, type PaymentLinkReadyData } from '../PaymentLinkReadyPanel'
+import {
+  hasPaymentGatewaysAccess,
+  hasPaymentLinksAccess,
+  hasPaymentPlansAccess,
+  hasSavedPaymentMethodsAccess
+} from '@/utils/accessControl'
 
 const DEFAULT_INVOICE_TITLE = 'Pago'
 const CONTACT_SEARCH_DELAY_MS = 90
@@ -733,6 +740,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   layout = 'phone',
   manualPaymentIdempotencyScope = ''
 }) => {
+  const { user } = useAuth()
   const { timezone } = useTimezone()
   const { labels } = useLabels()
   const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
@@ -890,8 +898,12 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   )
 
-  const canUsePaymentPlans = highLevelConnected || stripeConnected || conektaConnected || rebillConnected
-  const canChoosePaymentMode = canUsePaymentPlans && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
+  const canUsePaymentGateways = hasPaymentGatewaysAccess(user)
+  const canUsePaymentLinks = hasPaymentLinksAccess(user)
+  const canUsePaymentPlans = hasPaymentPlansAccess(user)
+  const canUseSavedPaymentMethods = hasSavedPaymentMethodsAccess(user)
+  const hasPaymentPlanProviders = highLevelConnected || stripeConnected || conektaConnected || rebillConnected
+  const canChoosePaymentMode = canUsePaymentPlans && hasPaymentPlanProviders && (chargeType === 'direct' || Boolean(selectedProduct && selectedPrice))
   const activePaymentMode: PaymentMode = lockPaymentMode
     ? paymentMode
     : canChoosePaymentMode
@@ -1033,32 +1045,32 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     )
   }
 
-  const paymentLinkGatewayLabels = [
+  const paymentLinkGatewayLabels = canUsePaymentLinks ? [
     stripeConnected ? 'Stripe' : null,
     conektaConnected ? 'Conekta' : null,
     mercadoPagoConnected ? 'Mercado Pago' : null,
     clipConnected ? 'CLIP' : null,
     rebillConnected ? 'Rebill' : null,
     highLevelConnected ? 'HighLevel' : null
-  ].filter(Boolean) as string[]
+  ].filter(Boolean) as string[] : []
   const paymentLinkGatewayCount = paymentLinkGatewayLabels.length
   const hasPaymentLinkGateways = paymentLinkGatewayCount > 0
   const hasMultiplePaymentLinkGateways = paymentLinkGatewayCount > 1
-  const hasStripeSavedCards = stripeConnected && savedPaymentMethods.length > 0
-  const hasConektaSavedCards = conektaConnected && savedConektaPaymentSources.length > 0
-  const hasRebillSavedCards = rebillConnected && savedRebillPaymentSources.length > 0
+  const hasStripeSavedCards = canUseSavedPaymentMethods && stripeConnected && savedPaymentMethods.length > 0
+  const hasConektaSavedCards = canUseSavedPaymentMethods && conektaConnected && savedConektaPaymentSources.length > 0
+  const hasRebillSavedCards = canUseSavedPaymentMethods && rebillConnected && savedRebillPaymentSources.length > 0
   const savedCardGatewayLabels = [
     hasStripeSavedCards ? 'Stripe' : null,
     hasConektaSavedCards ? 'Conekta' : null,
     hasRebillSavedCards ? 'Rebill' : null
   ].filter(Boolean) as string[]
   const hasSavedCards = savedCardGatewayLabels.length > 0
-  const paymentPlanGatewayLabels = [
+  const paymentPlanGatewayLabels = canUsePaymentPlans ? [
     stripeConnected ? 'Stripe' : null,
     conektaConnected ? 'Conekta' : null,
     rebillConnected ? 'Rebill' : null,
     highLevelConnected ? 'HighLevel' : null
-  ].filter(Boolean) as string[]
+  ].filter(Boolean) as string[] : []
   const hasPaymentPlanGateways = paymentPlanGatewayLabels.length > 0
   const hasMultiplePaymentPlanGateways = paymentPlanGatewayLabels.length > 1
   const hasPaymentPlanSavedCards = hasStripeSavedCards || hasConektaSavedCards || hasRebillSavedCards
@@ -1505,6 +1517,16 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   }
 
   const loadIntegrationStatus = async () => {
+    if (!canUsePaymentGateways) {
+      setHighLevelConnected(false)
+      setStripeConnected(false)
+      setConektaConnected(false)
+      setMercadoPagoConnected(false)
+      setClipConnected(false)
+      setRebillConnected(false)
+      return
+    }
+
     try {
       const data = await getIntegrationsStatus()
       setHighLevelConnected(Boolean(data?.highlevel?.connected))
@@ -1706,7 +1728,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     loadConfig()
     loadPaymentTaxSettings()
     loadIntegrationStatus()
-  }, [isOpen, initialPaymentMode, initialContact?.id, initialContact?.email, initialContact?.phone, initialContact?.name, accountCurrency])
+  }, [isOpen, initialPaymentMode, initialContact?.id, initialContact?.email, initialContact?.phone, initialContact?.name, accountCurrency, canUsePaymentGateways])
 
   // Search contacts
   useEffect(() => {

@@ -60,6 +60,7 @@ import {
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 import { logger } from '../../utils/logger.js'
 import { getGHLClient } from '../../services/ghlClient.js'
+import { hasFeature } from '../../services/licenseService.js'
 import { getGhlContactIdForLocalContact } from '../../services/contactIdentityService.js'
 import {
   applyConversationalAgentPreventiveMeasure,
@@ -11388,6 +11389,14 @@ export function createConversationalTools(ctx) {
       agreedAmount: z.number().positive().nullable().describe('Monto acordado dentro del rango del anticipo; null cuando el precio es fijo')
     }),
     execute: async ({ quantity, agreedAmount }) => {
+      if (!(await hasFeature('payment_links'))) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          code: 'feature_not_available',
+          error: 'Los enlaces de pago están disponibles en el plan Profesional.'
+        }
+      }
       const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
       if (safetyFence) return safetyFence
       if (paymentCapability?.collectionMethod !== 'payment_link') {

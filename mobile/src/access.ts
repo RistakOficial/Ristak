@@ -71,11 +71,26 @@ export function hasProfessionalPlan(plan?: string | null) {
     normalized.endsWith('_premium');
 }
 
-export function hasWebAnalyticsAccess(user: RistakUser | null | undefined) {
+export function hasProfessionalFeatureAccess(
+  user: RistakUser | null | undefined,
+  featureKeys: readonly string[],
+) {
   if (!user?.licenseEnforced) return true;
   if (user.licenseFeaturesSourceValid === false) return false;
 
-  return hasProfessionalPlan(user.licensePlan) && hasLicenseFeature(user, ['web_analytics']);
+  return hasProfessionalPlan(user.licensePlan) && hasLicenseFeature(user, featureKeys);
+}
+
+export function hasWebAnalyticsAccess(user: RistakUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['web_analytics']);
+}
+
+export function hasPaymentGatewaysAccess(user: RistakUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_gateways']);
+}
+
+export function hasPaymentLinksAccess(user: RistakUser | null | undefined) {
+  return hasProfessionalFeatureAccess(user, ['payment_links']);
 }
 
 function hasLicenseFeatureAccess(user: RistakUser | null | undefined, moduleKey: NativeModuleKey) {

@@ -113,6 +113,15 @@ tráfico u otras métricas web, aunque un flag heredado llegue accidentalmente e
 `true`. El frontend aplica la misma regla para no pintar esos bloques y el
 backend la vuelve a validar antes de entregar datos.
 
+Todo cobro que dependa de una pasarela también es exclusivo de
+`professional`/`pro` (y `premium`): `payment_checkout`,
+`payment_automations`, `payment_gateways`, `highlevel_payments`, `conekta`,
+`mercadopago`, `rebill`, `payment_links`, `saved_payment_methods`,
+`payment_plans`, `subscriptions` y `payment_webhooks`. `basic` y `medium`
+conservan el módulo `payments` para registrar efectivo, transferencia, depósito,
+comprobantes, impuestos y seguimiento offline, pero esos flags online se fuerzan
+a `false` aunque una licencia o un override heredado los mande en `true`.
+
 Subfeatures que no deben heredarse del módulo general: `payment_checkout`,
 `payment_gateways`, `payment_automations`, `highlevel_integration`,
 `whatsapp_api`, `whatsapp_templates` y `trigger_links`.
@@ -178,6 +187,11 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
   `payment_checkout`, `payment_gateways` y `payment_automations`,
   respectivamente. El job de automatizaciones de pago valida
   `payment_automations`, no el módulo genérico `payments`.
+- Crear o enviar links exige `payment_links` en las rutas de Stripe, Conekta,
+  Mercado Pago, CLIP, Rebill y HighLevel. La misma compuerta aplica al agente
+  conversacional, asistente de app y MCP; ocultar el botón no sustituye el
+  bloqueo del servidor. Las URL públicas de links ya creados siguen resolviendo
+  para no dejar al cliente final con un cobro roto después de un downgrade.
 - Automatizaciones validan features al guardar, publicar, probar y ejecutar:
   nodos WhatsApp requieren `whatsapp`, Email requiere `email`, Meta/Messenger/
   Instagram requiere `campaigns`, formularios `forms`, pagos `payments`,

@@ -21,6 +21,8 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
+const requirePaymentGatewaysFeature = requireFeature('payment_gateways')
+const requirePaymentLinksFeature = requireFeature('payment_links')
 const requirePaymentPlansFeature = requireFeature('payment_plans')
 
 router.post('/webhook', mercadoPagoWebhookView)
@@ -31,15 +33,15 @@ router.post('/public/payments/:publicPaymentId/card', createPublicMercadoPagoCar
 
 router.use(requireAuth)
 
-router.get('/config', requireModuleAccess('settings_payments'), getMercadoPagoConfigView)
-router.delete('/config', requireModuleAccess('settings_payments'), deleteMercadoPagoConfigView)
-router.post('/config/test', requireModuleAccess('settings_payments'), testMercadoPagoConfigView)
-router.post('/config/subscription-test-credentials', requireModuleAccess('settings_payments'), saveMercadoPagoSubscriptionTestCredentialsView)
-router.delete('/config/subscription-test-credentials', requireModuleAccess('settings_payments'), deleteMercadoPagoSubscriptionTestCredentialsView)
-router.post('/connect/url', requireModuleAccess('settings_payments'), createMercadoPagoConnectUrlView)
-router.post('/connect/sync', requireModuleAccess('settings_payments'), syncMercadoPagoConnectView)
-router.post('/connect/mode', requireModuleAccess('settings_payments'), setMercadoPagoModeView)
-router.post('/payment-links', requireModuleAccess('payments'), createMercadoPagoPaymentLinkView)
+router.get('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, getMercadoPagoConfigView)
+router.delete('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, deleteMercadoPagoConfigView)
+router.post('/config/test', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, testMercadoPagoConfigView)
+router.post('/config/subscription-test-credentials', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, saveMercadoPagoSubscriptionTestCredentialsView)
+router.delete('/config/subscription-test-credentials', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, deleteMercadoPagoSubscriptionTestCredentialsView)
+router.post('/connect/url', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, createMercadoPagoConnectUrlView)
+router.post('/connect/sync', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, syncMercadoPagoConnectView)
+router.post('/connect/mode', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, setMercadoPagoModeView)
+router.post('/payment-links', requireModuleAccess('payments'), requirePaymentLinksFeature, createMercadoPagoPaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createMercadoPagoPaymentPlanView)
 
 export default router

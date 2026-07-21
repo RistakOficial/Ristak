@@ -27,6 +27,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig } from '@/hooks'
+import { hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
   conversationalAgentService,
   buildConversationalLegacyEditableText,
@@ -1106,6 +1107,7 @@ interface AgentCardProps {
   products: ProductItem[]
   productsLoading: boolean
   productsError?: string
+  canUsePaymentLinks: boolean
   filterOptions?: AgentFilterOptions
   onConnectProvider: (providerId: ConversationalAIProviderId) => void
   onBack: () => void
@@ -1157,10 +1159,28 @@ function buildNativeCapabilityFromAgent(
   agent: ConversationalAgentDef,
   id: ConversationalCapabilityId,
   calendars: Calendar[],
-  accountCurrency: string
+  accountCurrency: string,
+  canUsePaymentLinks: boolean
 ): ConversationalCapabilityItem {
   const existing = getNativeCapability(agent.capabilitiesConfig, id)
-  if (existing) return { ...existing, enabled: true } as ConversationalCapabilityItem
+  if (existing) {
+    if (id === 'collect_payment' && !canUsePaymentLinks) {
+      const payment = existing as Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>
+      return {
+        ...payment,
+        enabled: true,
+        collectionMethod: 'bank_transfer',
+        gateway: null,
+        installments: { enabled: false, maxInstallments: 0 },
+        receiptProof: { enabled: true, disposition: 'pending_review' },
+        deposit: {
+          ...payment.deposit,
+          methods: { paymentLink: false, bankTransfer: true }
+        }
+      }
+    }
+    return { ...existing, enabled: true } as ConversationalCapabilityItem
+  }
 
   if (id === 'schedule_appointment') {
     return {
@@ -1182,10 +1202,10 @@ function buildNativeCapabilityFromAgent(
       priceId: '',
       paymentMode: 'full_payment',
       chargeType: 'product',
-      collectionMethod: 'payment_link',
+      collectionMethod: canUsePaymentLinks ? 'payment_link' : 'bank_transfer',
       amount: null,
       currency: accountCurrency,
-      gateway: 'stripe',
+      gateway: canUsePaymentLinks ? 'stripe' : null,
       direct: {
         amount: null,
         currency: accountCurrency,
@@ -1195,12 +1215,14 @@ function buildNativeCapabilityFromAgent(
       installments: { enabled: false, maxInstallments: 0 },
       expirationMinutes: 60,
       afterPayment: 'continue',
-      receiptProof: { enabled: false, disposition: 'pending_review' },
+      receiptProof: { enabled: !canUsePaymentLinks, disposition: 'pending_review' },
       bankTransfer: { details: '' },
       deposit: {
         ...defaultNativeDeposit,
         currency: accountCurrency,
-        methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS }
+        methods: canUsePaymentLinks
+          ? { ...DEFAULT_AGENT_DEPOSIT_METHODS }
+          : { paymentLink: false, bankTransfer: true }
       },
       testMode: { enabled: false, cleanupAfterMinutes: 5, notify: true }
     }
@@ -1242,6 +1264,7 @@ interface NativeConversationBuilderProps {
   teamUsers: TeamUser[]
   teamUsersLoading: boolean
   accountCurrency: string
+  canUsePaymentLinks: boolean
   onChange: (patch: ConversationalAgentDefInput) => void
   onFlushSave: () => Promise<ConversationalAgentDef | null>
 }
@@ -1255,6 +1278,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   teamUsers,
   teamUsersLoading,
   accountCurrency,
+  canUsePaymentLinks,
   onChange,
   onFlushSave
 }) => {
@@ -1312,13 +1336,19 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
   const toggleCapability = (id: ConversationalCapabilityId, enabled: boolean) => {
     const current = getNativeCapability(capabilities, id)
     const next = enabled
-      ? buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency)
-      : ({ ...(current || buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency)), enabled: false } as ConversationalCapabilityItem)
+      ? buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency, canUsePaymentLinks)
+      : ({ ...(current || buildNativeCapabilityFromAgent(agent, id, calendars, accountCurrency, canUsePaymentLinks)), enabled: false } as ConversationalCapabilityItem)
     updateCapability(next, { pause: true })
   }
 
   const scheduleCapability = getNativeCapability(capabilities, 'schedule_appointment')
-  const paymentCapability = getNativeCapability(capabilities, 'collect_payment')
+  const storedPaymentCapability = getNativeCapability(capabilities, 'collect_payment')
+  const paymentCapability = storedPaymentCapability && !canUsePaymentLinks
+    ? {
+        ...buildNativeCapabilityFromAgent(agent, 'collect_payment', calendars, accountCurrency, false),
+        enabled: storedPaymentCapability.enabled
+      } as Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>
+    : storedPaymentCapability
   const linkCapability = getNativeCapability(capabilities, 'send_link')
   const handoffCapability = getNativeCapability(capabilities, 'handoff_human')
   const customCapability = getNativeCapability(capabilities, 'custom_goal')
@@ -1532,7 +1562,9 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
               flushPromptSave()
             }}
             title="Cómo va a cobrar la IA"
-            subtitle="Elige si la IA manda un link seguro o revisa la imagen de una transferencia. Nunca pide datos de tarjeta en el chat."
+            subtitle={canUsePaymentLinks
+              ? 'Elige si la IA manda un link seguro o revisa la imagen de una transferencia. Nunca pide datos de tarjeta en el chat.'
+              : 'Configura cómo revisará la imagen de una transferencia o depósito. La imagen no confirma que los fondos hayan llegado.'}
             size="lg"
           >
           <div className={styles.nativeCapabilitySettings}>
@@ -1559,7 +1591,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
             }}
             portal
           >
-            <option value="payment_link">Link de pago</option>
+            {canUsePaymentLinks && <option value="payment_link">Link de pago</option>}
             <option value="bank_transfer">Transferencia/Depósito</option>
           </CustomSelect>
           <p className={styles.helper}>{paymentCapability.collectionMethod === 'bank_transfer'
@@ -2433,7 +2465,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, productsError, filterOptions, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, productsError, canUsePaymentLinks, filterOptions, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
   const { showToast } = useNotification()
   const { labels } = useLabels()
   const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
@@ -2606,7 +2638,13 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const followUpError = getFollowUpError(followUp)
   const testVoicePanelActive = testVoiceRecording || testVoiceProcessing || Boolean(testVoiceDraft)
   const hasTestConversation = testPracticeExpired || testMessages.length > 0 || Boolean(testInput.trim()) || testAttachments.length > 0 || Boolean(testVoiceDraft) || testVoiceRecording
-  const testPaymentCapability = getNativeCapability(agent.capabilitiesConfig, 'collect_payment')
+  const storedTestPaymentCapability = getNativeCapability(agent.capabilitiesConfig, 'collect_payment')
+  const testPaymentCapability = storedTestPaymentCapability && !canUsePaymentLinks
+    ? {
+        ...buildNativeCapabilityFromAgent(agent, 'collect_payment', calendars, accountCurrency, false),
+        enabled: storedTestPaymentCapability.enabled
+      } as Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>
+    : storedTestPaymentCapability
   const testScheduleCapability = getNativeCapability(agent.capabilitiesConfig, 'schedule_appointment')
   const testAiScheduleCapabilityEnabled = Boolean(
     testScheduleCapability?.enabled && testScheduleCapability.bookingOwner !== 'human'
@@ -3517,6 +3555,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             teamUsers={teamUsers}
             teamUsersLoading={teamUsersLoading}
             accountCurrency={accountCurrency}
+            canUsePaymentLinks={canUsePaymentLinks}
             onChange={onChange}
             onFlushSave={onFlushSave}
           />
@@ -4810,6 +4849,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           products={products}
           productsLoading={productsLoading}
           productsError={productsError}
+          canUsePaymentLinks={hasPaymentLinksAccess(user)}
           filterOptions={filterOptions}
           onConnectProvider={openProviderModal}
           onBack={() => {

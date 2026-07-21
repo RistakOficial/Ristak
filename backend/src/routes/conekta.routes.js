@@ -18,6 +18,9 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
+const requirePaymentGatewaysFeature = requireFeature('payment_gateways')
+const requirePaymentLinksFeature = requireFeature('payment_links')
+const requireSavedPaymentMethodsFeature = requireFeature('saved_payment_methods')
 const requirePaymentPlansFeature = requireFeature('payment_plans')
 const requireSubscriptionsFeature = requireFeature('subscriptions')
 
@@ -29,13 +32,13 @@ router.post('/webhook', handleConektaWebhookView)
 
 router.use(requireAuth)
 
-router.get('/config', requireModuleAccess('settings_payments'), getConektaConfigView)
-router.post('/config', requireModuleAccess('settings_payments'), saveConektaConfigView)
-router.delete('/config', requireModuleAccess('settings_payments'), deleteConektaConfigView)
-router.post('/config/test', requireModuleAccess('settings_payments'), testConektaConfigView)
-router.post('/payment-links', requireModuleAccess('payments'), createConektaPaymentLinkView)
+router.get('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, getConektaConfigView)
+router.post('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, saveConektaConfigView)
+router.delete('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, deleteConektaConfigView)
+router.post('/config/test', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, testConektaConfigView)
+router.post('/payment-links', requireModuleAccess('payments'), requirePaymentLinksFeature, createConektaPaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createConektaPaymentPlanView)
-router.get('/contacts/:contactId/payment-sources', requireModuleAccess('payments'), getConektaSavedPaymentSourcesView)
-router.post('/saved-card-payments', requireModuleAccess('payments'), createConektaSavedCardPaymentView)
+router.get('/contacts/:contactId/payment-sources', requireModuleAccess('payments'), requireSavedPaymentMethodsFeature, getConektaSavedPaymentSourcesView)
+router.post('/saved-card-payments', requireModuleAccess('payments'), requireSavedPaymentMethodsFeature, createConektaSavedCardPaymentView)
 
 export default router

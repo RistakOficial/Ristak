@@ -594,6 +594,37 @@ test('analítica web exige plan Profesional aunque el flag llegue activo', async
   assert.equal(await licenseService.hasFeature('web_analytics', { state: state('professional', false) }), false)
 })
 
+test('todo cobro por pasarela exige plan Profesional aunque los flags lleguen activos', async () => {
+  const onlinePaymentFeatures = [
+    'payment_checkout',
+    'payment_automations',
+    'payment_gateways',
+    'highlevel_payments',
+    'conekta',
+    'mercadopago',
+    'rebill',
+    'payment_links',
+    'saved_payment_methods',
+    'payment_plans',
+    'subscriptions',
+    'payment_webhooks'
+  ]
+  const state = (plan, enabled = true) => ({
+    allowed: true,
+    enforced: true,
+    plan,
+    features: Object.fromEntries(onlinePaymentFeatures.map((featureKey) => [featureKey, enabled]))
+  })
+
+  for (const featureKey of onlinePaymentFeatures) {
+    assert.equal(await licenseService.hasFeature(featureKey, { state: state('basic') }), false, `${featureKey} leaked into basic`)
+    assert.equal(await licenseService.hasFeature(featureKey, { state: state('medium') }), false, `${featureKey} leaked into medium`)
+    assert.equal(await licenseService.hasFeature(featureKey, { state: state('professional') }), true, `${featureKey} missing from professional`)
+    assert.equal(await licenseService.hasFeature(featureKey, { state: state('premium') }), true, `${featureKey} missing from premium`)
+    assert.equal(await licenseService.hasFeature(featureKey, { state: state('professional', false) }), false, `${featureKey} ignored an explicit off flag`)
+  }
+})
+
 test('features premium omitidos por el portal central quedan apagados', async () => {
   serverMode = 'allow_without_whatsapp'
 

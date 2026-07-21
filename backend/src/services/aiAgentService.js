@@ -12,6 +12,7 @@ import { getGHLClient } from './ghlClient.js'
 import * as highLevelCalendarService from './highlevelCalendarService.js'
 import { listLocalProducts, syncProductsWithSavedConfig } from './localProductService.js'
 import { cancelScheduledInstallmentPayment, createInstallmentPaymentFlow, createOfflineContactPayment, createSinglePaymentLink, updateScheduledInstallmentPayment } from './paymentFlowService.js'
+import { hasFeature } from './licenseService.js'
 import { createStripePaymentLink, createStripePaymentPlan, getStripePaymentConfig } from './stripePaymentService.js'
 import { createMercadoPagoPaymentLink, getMercadoPagoPaymentConfig } from './mercadoPagoPaymentService.js'
 import { createConektaPaymentLink, createConektaPaymentPlan, getConektaPaymentConfig } from './conektaPaymentService.js'
@@ -10211,6 +10212,9 @@ function resolveRemainingPayments(args, totalAmount, firstPayment, timezone = DE
 }
 
 async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnection, context = {}) {
+  if (!(await hasFeature('payment_plans'))) {
+    return { ok: false, code: 'feature_not_available', error: 'Los planes de pago están disponibles en el plan Profesional.' }
+  }
   highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   const paymentTimezone = await resolveAgentAccountTimezone(highLevelConnection)
@@ -10902,6 +10906,9 @@ async function executeCreateInstallmentPaymentFlow(args = {}, highLevelConnectio
 }
 
 async function executeCreateSinglePaymentLink(args = {}, highLevelConnection, context = {}) {
+  if (!(await hasFeature('payment_links'))) {
+    return { ok: false, code: 'feature_not_available', error: 'Los enlaces de pago están disponibles en el plan Profesional.' }
+  }
   highLevelConnection = normalizePaymentAgentConnection(highLevelConnection)
 
   args = applyPaymentProductMemory(args, context.messages)

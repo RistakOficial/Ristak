@@ -104,7 +104,11 @@ import {
   type FlowVariable
 } from '@/pages/Automations/editor/variablesCatalog'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import {
+  hasPaymentAutomationsAccess as canAccessPaymentAutomations,
+  hasPaymentCheckoutAccess as canAccessPaymentCheckout,
+  hasPaymentGatewaysAccess as canAccessPaymentGateways
+} from '@/utils/accessControl'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'meta' | 'automations' | 'gateways' | 'taxes'
@@ -748,9 +752,9 @@ export const PaymentsConfiguration: React.FC = () => {
   const customerWithPlainArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer, 'none')
   const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
-  const hasPaymentCheckoutAccess = hasLicenseFeature(user, ['payment_checkout'])
-  const hasPaymentAutomationsAccess = hasLicenseFeature(user, ['payment_automations'])
-  const hasPaymentGatewaysAccess = hasLicenseFeature(user, ['payment_gateways'])
+  const hasPaymentCheckoutAccess = canAccessPaymentCheckout(user)
+  const hasPaymentAutomationsAccess = canAccessPaymentAutomations(user)
+  const hasPaymentGatewaysAccess = canAccessPaymentGateways(user)
   const [accountCurrency] = useAccountCurrency()
   const [accountBusinessProfileRaw] = useAppConfig<AccountBusinessProfile>(
     ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY,

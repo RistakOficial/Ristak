@@ -21,6 +21,9 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
+const requirePaymentGatewaysFeature = requireFeature('payment_gateways')
+const requirePaymentLinksFeature = requireFeature('payment_links')
+const requireSavedPaymentMethodsFeature = requireFeature('saved_payment_methods')
 const requirePaymentPlansFeature = requireFeature('payment_plans')
 const requireSubscriptionsFeature = requireFeature('subscriptions')
 
@@ -33,14 +36,14 @@ router.post('/public/payments/:publicPaymentId/subscription-checkout', requireSu
 
 router.use(requireAuth)
 
-router.get('/config', requireModuleAccess('settings_payments'), getStripeConfigView)
-router.post('/config', requireModuleAccess('settings_payments'), saveStripeConfigView)
-router.delete('/config', requireModuleAccess('settings_payments'), deleteStripeConfigView)
-router.post('/config/test', requireModuleAccess('settings_payments'), testStripeConfigView)
-router.post('/payment-links', requireModuleAccess('payments'), createStripePaymentLinkView)
+router.get('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, getStripeConfigView)
+router.post('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, saveStripeConfigView)
+router.delete('/config', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, deleteStripeConfigView)
+router.post('/config/test', requireModuleAccess('settings_payments'), requirePaymentGatewaysFeature, testStripeConfigView)
+router.post('/payment-links', requireModuleAccess('payments'), requirePaymentLinksFeature, createStripePaymentLinkView)
 router.post('/payment-plans', requireModuleAccess('payments'), requirePaymentPlansFeature, createStripePaymentPlanView)
-router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), getStripeSavedPaymentMethodsView)
-router.post('/contacts/:contactId/payment-methods/refresh', requireModuleAccess('payments'), refreshStripeSavedPaymentMethodsView)
-router.post('/saved-card-payments', requireModuleAccess('payments'), createStripeSavedCardPaymentView)
+router.get('/contacts/:contactId/payment-methods', requireModuleAccess('payments'), requireSavedPaymentMethodsFeature, getStripeSavedPaymentMethodsView)
+router.post('/contacts/:contactId/payment-methods/refresh', requireModuleAccess('payments'), requireSavedPaymentMethodsFeature, refreshStripeSavedPaymentMethodsView)
+router.post('/saved-card-payments', requireModuleAccess('payments'), requireSavedPaymentMethodsFeature, createStripeSavedCardPaymentView)
 
 export default router

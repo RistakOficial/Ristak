@@ -20769,10 +20769,10 @@ export const PhoneChat: React.FC = () => {
           priceId: '',
           paymentMode: 'full_payment',
           chargeType: 'product',
-          collectionMethod: 'payment_link',
+          collectionMethod: paymentCapabilities.canUsePaymentLinks ? 'payment_link' : 'bank_transfer',
           amount: null,
           currency: normalizedAccountCurrency,
-          gateway: 'stripe',
+          gateway: paymentCapabilities.canUsePaymentLinks ? 'stripe' : null,
           direct: {
             amount: null,
             currency: normalizedAccountCurrency,
@@ -20782,12 +20782,14 @@ export const PhoneChat: React.FC = () => {
           installments: { enabled: false, maxInstallments: 0 },
           expirationMinutes: 60,
           afterPayment: 'continue',
-          receiptProof: { enabled: false, disposition: 'pending_review' },
+          receiptProof: { enabled: !paymentCapabilities.canUsePaymentLinks, disposition: 'pending_review' },
           bankTransfer: { details: '' },
           deposit: {
             ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
             currency: normalizedAccountCurrency,
-            methods: { paymentLink: true, bankTransfer: false }
+            methods: paymentCapabilities.canUsePaymentLinks
+              ? { paymentLink: true, bankTransfer: false }
+              : { paymentLink: false, bankTransfer: true }
           },
           testMode: { ...DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG.testMode }
         }
@@ -20834,6 +20836,24 @@ export const PhoneChat: React.FC = () => {
       })
     }
 
+    const constrainNativePaymentCapability = (
+      payment: Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>
+    ): Extract<ConversationalCapabilityItem, { id: 'collect_payment' }> => (
+      paymentCapabilities.canUsePaymentLinks
+        ? payment
+        : {
+            ...payment,
+            collectionMethod: 'bank_transfer',
+            gateway: null,
+            installments: { enabled: false, maxInstallments: 0 },
+            receiptProof: { enabled: true, disposition: 'pending_review' },
+            deposit: {
+              ...payment.deposit,
+              methods: { paymentLink: false, bankTransfer: true }
+            }
+          }
+    )
+
     const updateNativeCapabilityDraft = (next: ConversationalCapabilityItem) => {
       if (!selectedAgentDef) return
       const exists = nativeCapabilities.items.some((item) => item.id === next.id)
@@ -20847,14 +20867,20 @@ export const PhoneChat: React.FC = () => {
 
     const toggleNativeCapability = (id: ConversationalCapabilityId, enabled: boolean) => {
       const current = nativeCapabilities.items.find((item) => item.id === id)
-      const next = current
+      const base = current
         ? ({ ...current, enabled } as ConversationalCapabilityItem)
         : ({ ...buildDefaultNativeCapability(id), enabled } as ConversationalCapabilityItem)
+      const next = id === 'collect_payment'
+        ? constrainNativePaymentCapability(base as Extract<ConversationalCapabilityItem, { id: 'collect_payment' }>)
+        : base
       saveNativeCapability(next)
     }
 
     const scheduleCapability = getSelectedNativeCapability('schedule_appointment')
-    const paymentCapability = getSelectedNativeCapability('collect_payment')
+    const storedPaymentCapability = getSelectedNativeCapability('collect_payment')
+    const paymentCapability = storedPaymentCapability
+      ? constrainNativePaymentCapability(storedPaymentCapability)
+      : null
     const linkCapability = getSelectedNativeCapability('send_link')
     const handoffCapability = getSelectedNativeCapability('handoff_human')
     const customCapability = getSelectedNativeCapability('custom_goal')
@@ -21274,7 +21300,7 @@ export const PhoneChat: React.FC = () => {
                   })
                 }}
                 options={[
-                  { value: 'payment_link', label: 'Link de pago' },
+                  ...(paymentCapabilities.canUsePaymentLinks ? [{ value: 'payment_link', label: 'Link de pago' }] : []),
                   { value: 'bank_transfer', label: 'Transferencia/Depósito' }
                 ]}
                 title="Método de cobro"
@@ -22912,7 +22938,9 @@ export const PhoneChat: React.FC = () => {
         </span>
         <span>
           <strong>Registrar pago único</strong>
-          <small>Cobro único: envía una liga de pago o registra un pago manual.</small>
+          <small>{paymentCapabilities.canUsePaymentLinks
+            ? 'Cobro único: envía una liga de pago o registra un pago manual.'
+            : 'Registra efectivo, transferencia, depósito u otro pago ya confirmado.'}</small>
         </span>
         <ChevronRight size={20} aria-hidden="true" />
       </button>
