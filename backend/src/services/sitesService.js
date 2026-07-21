@@ -64,7 +64,10 @@ import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
 import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
-import { buildImportedHtmlMobileRulesText } from '../../../shared/sites/importedHtmlContract.js'
+import {
+  buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlMobileRulesText
+} from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
 // Contrato de render compartido con el editor (fuente única de templates,
 // variables --rstk-*, stylesheet público y helpers de tema/color).
@@ -7144,7 +7147,7 @@ Conversiones Meta/CAPI para HTML importado:
 - Solo uses data-rstk-native-element para formularios, calendarios, pagos, videos y perfiles sociales. No lo inventes para otros widgets.
 - Formulario nativo Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacio; no metas <form>, campos ni botones de envio dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio boton y sus acciones "Al enviar"; si necesitas navegar despues del submit, configuralo en el editor.
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
-- Calendario con frontend propio: usa <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">. Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">. Ese formulario tambien cumple el contrato obligatorio: nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre", email usa data-rstk-calendar-email data-rstk-field-id="agenda-email" y telefono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". El mensaje usa data-rstk-calendar-message. No agregues JavaScript: Ristak conecta esos hooks al calendario configurado, usa la zona horaria del negocio y manda el slot confirmado como ISO UTC.
+${buildImportedHtmlCustomCalendarRulesText()}
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
 - Perfil social con diseño propio: <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal"><img data-rstk-social-avatar alt=""><span data-rstk-social-name></span><span data-rstk-social-verified aria-label="Perfil verificado">✓</span><span data-rstk-social-followers></span></section>. Los hooks de avatar, nombre, seguidores y verificado son obligatorios; data-rstk-social-platform y data-rstk-social-subtitle son opcionales. Ristak conserva el diseño HTML, llena los datos del perfil conectado y el elemento data-rstk-social-verified completo se muestra u oculta según la opción del editor.
@@ -26652,6 +26655,26 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
     const slotLabel = (slot) => typeof slot === 'string'
       ? slot
       : String(slot && (slot.label || slot.display || slot.localTime || slot.local_time || slotStartValue(slot)) || 'Horario');
+    const escapeHtml = (value) => String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const isSupportedTimezone = (value) => {
+      try {
+        if (!value) return false;
+        new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const resolveTimezone = (config) => {
+      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      if (isSupportedTimezone(config && config.timezone)) return config.timezone;
+      if (isSupportedTimezone(browserTimezone)) return browserTimezone;
+      return 'UTC';
+    };
     const slotDateInTimezone = (slot, timezone) => {
       const startValue = slotStartValue(slot);
       const instant = new Date(startValue);
@@ -26674,6 +26697,37 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         return '';
       }
     };
+    const formatSlotTime = (slot, timezone) => {
+      const startValue = slotStartValue(slot);
+      const instant = new Date(startValue);
+      if (!startValue || Number.isNaN(instant.getTime())) return slotLabel(slot);
+      try {
+        return new Intl.DateTimeFormat('es-MX', {
+          timeZone: timezone,
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        }).format(instant);
+      } catch {
+        return slotLabel(slot);
+      }
+    };
+    const flattenSlotsByDate = (slots, timezone) => {
+      const byDate = new Map();
+      const add = (slot) => {
+        const startValue = slotStartValue(slot);
+        const dateKey = slotDateInTimezone(slot, timezone);
+        if (!startValue || !dateKey) return;
+        if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+        byDate.get(dateKey).push(slot);
+      };
+      (Array.isArray(slots) ? slots : []).forEach(item => {
+        if (item && typeof item === 'object' && Array.isArray(item.slots)) item.slots.forEach(add);
+        else add(item);
+      });
+      byDate.forEach(items => items.sort((left, right) => slotStartValue(left).localeCompare(slotStartValue(right))));
+      return byDate;
+    };
     const slotsForSelectedDate = (slots, selectedDate, timezone) => {
       const list = Array.isArray(slots) ? slots : [];
       const hasDayGroups = list.some(day => day && typeof day === 'object' && Array.isArray(day.slots));
@@ -26682,19 +26736,46 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         .flatMap(day => Array.isArray(day && day.slots) ? day.slots : [])
         .filter(slot => slotDateInTimezone(slot, timezone) === selectedDate);
     };
-    const wireDeclarativeCalendar = (root) => {
-      if (!root || root.dataset.rstkCalendarWired === 'true') return;
-      const slotId = root.getAttribute('data-rstk-native-slot-id') || '';
-      const config = configs[slotId];
-      if (!config) return;
+    const bookingPayloadFromForm = (bookingForm, startTime, timezone) => ({
+      startTime,
+      timezone,
+      name: String(bookingForm.querySelector('[data-rstk-calendar-name]')?.value || ''),
+      email: String(bookingForm.querySelector('[data-rstk-calendar-email]')?.value || ''),
+      phone: String(bookingForm.querySelector('[data-rstk-calendar-phone]')?.value || ''),
+      notes: String(bookingForm.querySelector('[data-rstk-calendar-notes]')?.value || '')
+    });
+    const bindBookingForm = ({ bookingForm, getStartTime, getTimezone, onSuccess, setMessage, slotId }) => {
+      if (!bookingForm) return;
+      bookingForm.addEventListener('submit', async event => {
+        event.preventDefault();
+        const startTime = String(getStartTime() || '');
+        if (!startTime) { setMessage('Selecciona un horario.', 'error'); return; }
+        const submit = bookingForm.querySelector('[type="submit"]');
+        submit && (submit.disabled = true);
+        setMessage('Agendando...', 'loading');
+        try {
+          const response = await window.ristakCalendarBook(
+            slotId,
+            bookingPayloadFromForm(bookingForm, startTime, getTimezone())
+          );
+          onSuccess(response || {});
+        } catch (error) {
+          setMessage(error && error.message || 'No se pudo confirmar la cita.', 'error');
+        } finally {
+          submit && (submit.disabled = false);
+        }
+      });
+    };
+    const wireLegacyDeclarativeCalendar = (root, slotId, config) => {
       const dateInput = root.querySelector('[data-rstk-calendar-date]');
       const endDateInput = root.querySelector('[data-rstk-calendar-end-date]');
       const slotsField = root.querySelector('[data-rstk-calendar-time]');
       const loadButton = root.querySelector('[data-rstk-calendar-load-slots]');
       const bookingForm = root.querySelector('[data-rstk-calendar-book-form]');
       const message = root.querySelector('[data-rstk-calendar-message]');
-      if (!dateInput || !slotsField) return;
+      if (!dateInput || !slotsField) return false;
       root.dataset.rstkCalendarWired = 'true';
+      const timezone = resolveTimezone(config);
       const setMessage = (text, kind = '') => {
         if (!message) return;
         message.textContent = text || '';
@@ -26709,12 +26790,12 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
           const slots = await window.ristakCalendarGetSlots(slotId, {
             startDate,
             endDate: String(endDateInput && endDateInput.value || startDate),
-            timezone: config.timezone || ''
+            timezone
           });
-          const list = slotsForSelectedDate(slots, startDate, config.timezone || '')
+          const list = slotsForSelectedDate(slots, startDate, timezone)
             .filter(slot => slotStartValue(slot));
           slotsField.innerHTML = '<option value="">Selecciona un horario</option>' + list
-            .map(slot => '<option value="' + slotStartValue(slot).replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '">' + slotLabel(slot).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</option>')
+            .map(slot => '<option value="' + escapeHtml(slotStartValue(slot)) + '">' + escapeHtml(slotLabel(slot)) + '</option>')
             .join('');
           setMessage(list.length ? '' : 'No hay horarios disponibles para esa fecha.', list.length ? '' : 'empty');
         } catch (error) {
@@ -26725,28 +26806,226 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       };
       loadButton && loadButton.addEventListener('click', event => { event.preventDefault(); void loadSlots(); });
       dateInput.addEventListener('change', () => { void loadSlots(); });
-      bookingForm && bookingForm.addEventListener('submit', async event => {
-        event.preventDefault();
-        const startTime = String(slotsField.value || '');
-        if (!startTime) { setMessage('Selecciona un horario.', 'error'); return; }
-        const submit = bookingForm.querySelector('[type="submit"]');
-        submit && (submit.disabled = true);
-        setMessage('Agendando...', 'loading');
-        try {
-          await window.ristakCalendarBook(slotId, {
-            startTime,
-            timezone: config.timezone || '',
-            name: String(bookingForm.querySelector('[data-rstk-calendar-name]')?.value || ''),
-            email: String(bookingForm.querySelector('[data-rstk-calendar-email]')?.value || ''),
-            phone: String(bookingForm.querySelector('[data-rstk-calendar-phone]')?.value || '')
-          });
+      bindBookingForm({
+        bookingForm,
+        getStartTime: () => String(slotsField.value || ''),
+        getTimezone: () => timezone,
+        onSuccess: () => {
           setMessage('Cita confirmada.', 'success');
-        } catch (error) {
-          setMessage(error && error.message || 'No se pudo confirmar la cita.', 'error');
-        } finally {
-          submit && (submit.disabled = false);
-        }
+        },
+        setMessage,
+        slotId
       });
+      return true;
+    };
+    const wireCalendarGrid = (root, slotId, config) => {
+      const monthLabel = root.querySelector('[data-rstk-calendar-month-label]');
+      const previousMonth = root.querySelector('[data-rstk-calendar-prev-month]');
+      const nextMonth = root.querySelector('[data-rstk-calendar-next-month]');
+      const days = root.querySelector('[data-rstk-calendar-days]');
+      const slots = root.querySelector('[data-rstk-calendar-slots]');
+      if (!monthLabel || !previousMonth || !nextMonth || !days || !slots) return false;
+
+      const bookingForm = root.querySelector('[data-rstk-calendar-book-form]');
+      const message = root.querySelector('[data-rstk-calendar-message]');
+      const success = root.querySelector('[data-rstk-calendar-success]');
+      const selectedDateLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-selected-date]'));
+      const selectedTimeLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-selected-time]'));
+      const selectedDateTimeLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-selected-datetime]'));
+      const steps = Array.from(root.querySelectorAll('[data-rstk-calendar-step]'));
+      const timezoneControl = root.querySelector('[data-rstk-calendar-timezone]');
+      const timezoneLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-timezone-label]'));
+      let timezone = resolveTimezone(config);
+      if (timezoneControl && typeof timezoneControl.value === 'string' && isSupportedTimezone(timezoneControl.value)) {
+        timezone = timezoneControl.value;
+      }
+      let selectedDate = '';
+      let selectedSlot = '';
+      let slotsByDate = new Map();
+      const nowParts = (() => {
+        const key = slotDateInTimezone(new Date().toISOString(), timezone);
+        const parts = key.split('-').map(Number);
+        return { year: parts[0] || 1970, month: (parts[1] || 1) - 1, day: parts[2] || 1 };
+      })();
+      let visibleYear = nowParts.year;
+      let visibleMonth = nowParts.month;
+
+      const pad = value => String(value).padStart(2, '0');
+      const dateKey = (year, month, day) => year + '-' + pad(month + 1) + '-' + pad(day);
+      const daysInMonth = (year, month) => new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+      const firstWeekday = (year, month) => new Date(Date.UTC(year, month, 1)).getUTCDay();
+      const monthText = (year, month) => new Intl.DateTimeFormat('es-MX', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC'
+      }).format(new Date(Date.UTC(year, month, 1)));
+      const dateText = (key) => {
+        const parts = String(key || '').split('-').map(Number);
+        if (!parts[0] || !parts[1] || !parts[2]) return '';
+        return new Intl.DateTimeFormat('es-MX', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          timeZone: 'UTC'
+        }).format(new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12)));
+      };
+      const setText = (elements, value) => elements.forEach(element => { element.textContent = value || ''; });
+      const setMessage = (text, kind = '') => {
+        if (!message) return;
+        message.textContent = text || '';
+        message.setAttribute('data-status', kind);
+      };
+      const setStep = (step) => {
+        root.setAttribute('data-rstk-calendar-state', step);
+        steps.forEach(element => {
+          const isActive = element.getAttribute('data-rstk-calendar-step') === step;
+          element.hidden = !isActive;
+          element.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+        });
+      };
+      const renderTimezone = () => {
+        setText(timezoneLabels, timezone);
+        if (timezoneControl && typeof timezoneControl.value === 'string') {
+          if (!timezoneControl.options || !timezoneControl.options.length) {
+            timezoneControl.innerHTML = '<option value="' + escapeHtml(timezone) + '">' + escapeHtml(timezone) + '</option>';
+          }
+          timezoneControl.value = timezone;
+        }
+      };
+      const renderDays = () => {
+        monthLabel.textContent = monthText(visibleYear, visibleMonth);
+        const cellCount = Math.ceil((firstWeekday(visibleYear, visibleMonth) + daysInMonth(visibleYear, visibleMonth)) / 7) * 7;
+        const cells = [];
+        for (let index = 0; index < cellCount; index += 1) {
+          const day = index - firstWeekday(visibleYear, visibleMonth) + 1;
+          if (day < 1 || day > daysInMonth(visibleYear, visibleMonth)) {
+            cells.push('<span data-rstk-calendar-day data-state="outside" aria-hidden="true"></span>');
+            continue;
+          }
+          const key = dateKey(visibleYear, visibleMonth, day);
+          const available = (slotsByDate.get(key) || []).length > 0;
+          const isSelected = key === selectedDate;
+          cells.push(
+            '<button type="button" data-rstk-calendar-day data-date="' + key + '" data-state="' + (available ? 'available' : 'unavailable') + '" data-available="' + (available ? 'true' : 'false') + '" data-selected="' + (isSelected ? 'true' : 'false') + '" aria-label="' + escapeHtml(dateText(key)) + '" aria-selected="' + (isSelected ? 'true' : 'false') + '"' + (available ? '' : ' disabled aria-disabled="true"') + '><span data-rstk-calendar-day-number>' + day + '</span></button>'
+          );
+        }
+        days.innerHTML = cells.join('');
+        const currentMonthKey = nowParts.year * 12 + nowParts.month;
+        previousMonth.disabled = visibleYear * 12 + visibleMonth <= currentMonthKey;
+      };
+      const renderSlots = () => {
+        const list = slotsByDate.get(selectedDate) || [];
+        setText(selectedDateLabels, dateText(selectedDate));
+        if (!list.length) {
+          slots.innerHTML = '<p data-rstk-calendar-empty>No hay horarios disponibles para este día.</p>';
+          setMessage('No hay horarios disponibles para este día.', 'empty');
+          return;
+        }
+        slots.innerHTML = list.map(slot => {
+          const startTime = slotStartValue(slot);
+          const isSelected = startTime === selectedSlot;
+          return '<button type="button" data-rstk-calendar-slot data-start-time="' + escapeHtml(startTime) + '" data-state="available" data-selected="' + (isSelected ? 'true' : 'false') + '" aria-pressed="' + (isSelected ? 'true' : 'false') + '">' + escapeHtml(formatSlotTime(slot, timezone)) + '</button>';
+        }).join('');
+        setMessage('', '');
+      };
+      const loadMonth = async () => {
+        root.setAttribute('data-rstk-calendar-loading', 'true');
+        setMessage('Buscando disponibilidad...', 'loading');
+        renderDays();
+        try {
+          const startDate = dateKey(visibleYear, visibleMonth, 1);
+          const endDate = dateKey(visibleYear, visibleMonth, daysInMonth(visibleYear, visibleMonth));
+          const result = await window.ristakCalendarGetSlots(slotId, { startDate, endDate, timezone });
+          slotsByDate = flattenSlotsByDate(result, timezone);
+          selectedDate = '';
+          selectedSlot = '';
+          renderDays();
+          const hasAvailability = Array.from(slotsByDate.keys()).some(key => key.slice(0, 7) === startDate.slice(0, 7));
+          setMessage(hasAvailability ? '' : 'No hay fechas disponibles en este mes.', hasAvailability ? '' : 'empty');
+          setStep('date');
+        } catch (error) {
+          slotsByDate = new Map();
+          renderDays();
+          setMessage(error && error.message || 'No se pudo cargar la disponibilidad.', 'error');
+        } finally {
+          root.setAttribute('data-rstk-calendar-loading', 'false');
+        }
+      };
+
+      root.dataset.rstkCalendarWired = 'true';
+      renderTimezone();
+      setStep('date');
+      renderDays();
+      previousMonth.addEventListener('click', event => {
+        event.preventDefault();
+        if (previousMonth.disabled) return;
+        visibleMonth -= 1;
+        if (visibleMonth < 0) { visibleMonth = 11; visibleYear -= 1; }
+        void loadMonth();
+      });
+      nextMonth.addEventListener('click', event => {
+        event.preventDefault();
+        visibleMonth += 1;
+        if (visibleMonth > 11) { visibleMonth = 0; visibleYear += 1; }
+        void loadMonth();
+      });
+      days.addEventListener('click', event => {
+        const button = event.target && event.target.closest ? event.target.closest('[data-rstk-calendar-day][data-available="true"]') : null;
+        if (!button || button.disabled) return;
+        selectedDate = button.getAttribute('data-date') || '';
+        selectedSlot = '';
+        renderDays();
+        renderSlots();
+        setStep('time');
+      });
+      slots.addEventListener('click', event => {
+        const button = event.target && event.target.closest ? event.target.closest('[data-rstk-calendar-slot]') : null;
+        if (!button) return;
+        selectedSlot = button.getAttribute('data-start-time') || '';
+        renderSlots();
+        const selectedTime = formatSlotTime(selectedSlot, timezone);
+        setText(selectedTimeLabels, selectedTime);
+        setText(selectedDateTimeLabels, dateText(selectedDate) + ' · ' + selectedTime);
+        setStep('form');
+      });
+      root.querySelectorAll('[data-rstk-calendar-back-to-dates]').forEach(button => {
+        button.addEventListener('click', event => { event.preventDefault(); selectedSlot = ''; setStep('date'); });
+      });
+      root.querySelectorAll('[data-rstk-calendar-back-to-times]').forEach(button => {
+        button.addEventListener('click', event => { event.preventDefault(); setStep('time'); });
+      });
+      if (timezoneControl && typeof timezoneControl.value === 'string') {
+        timezoneControl.addEventListener('change', () => {
+          if (!isSupportedTimezone(timezoneControl.value) || timezoneControl.value === timezone) return;
+          timezone = timezoneControl.value;
+          renderTimezone();
+          void loadMonth();
+        });
+      }
+      bindBookingForm({
+        bookingForm,
+        getStartTime: () => selectedSlot,
+        getTimezone: () => timezone,
+        onSuccess: response => {
+          const successText = response && response.message ? response.message : 'Listo. Tu cita quedó confirmada.';
+          if (success) success.textContent = successText;
+          setMessage('', 'success');
+          setStep('success');
+        },
+        setMessage,
+        slotId
+      });
+      void loadMonth();
+      return true;
+    };
+    const wireDeclarativeCalendar = (root) => {
+      if (!root || root.dataset.rstkCalendarWired === 'true') return;
+      const slotId = root.getAttribute('data-rstk-native-slot-id') || '';
+      const config = configs[slotId];
+      if (!config) return;
+      if (wireCalendarGrid(root, slotId, config)) return;
+      wireLegacyDeclarativeCalendar(root, slotId, config);
     };
     const wireAll = () => document.querySelectorAll('.rstk-imported-native-custom[data-rstk-native-type="calendar"]').forEach(wireDeclarativeCalendar);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireAll, { once: true });

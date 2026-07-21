@@ -547,6 +547,14 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /data-rstk-field-id estable y unico dentro de su formulario/)
   assert.match(instructions, /data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva"/)
   assert.match(instructions, /data-rstk-calendar-name data-rstk-field-id="agenda-nombre"/)
+  assert.match(instructions, /experiencia completa tipo Calendly/)
+  assert.match(instructions, /data-rstk-calendar-step="date"/)
+  assert.match(instructions, /data-rstk-calendar-month-label/)
+  assert.match(instructions, /data-rstk-calendar-days/)
+  assert.match(instructions, /data-rstk-calendar-slots/)
+  assert.match(instructions, /data-rstk-calendar-step="success"/)
+  assert.match(instructions, /no hardcodees fechas ni decidas disponibilidad en HTML/)
+  assert.doesNotMatch(instructions, /Dentro agrega input date con data-rstk-calendar-date/)
   assert.match(instructions, /<fieldset><legend>Pregunta<\/legend>/)
   assert.match(instructions, /Cambiar copy, clases, estilos, orden o name\/id NO cambia data-rstk-form-id ni data-rstk-field-id/)
   assert.doesNotMatch(instructions, /data-rstk-editable="true"/)
@@ -569,6 +577,7 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
 })
 
 test('external AI compatibility instructions reject forms without stable Ristak IDs', async () => {
+  const { buildImportedHtmlCustomCalendarRulesText } = await import('../../shared/sites/importedHtmlContract.js')
   const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
   const guideMatch = source.match(/const IMPORTED_HTML_AI_GUIDE = `[\s\S]*?const IMPORTED_HTML_MOBILE_PREVIEW_STYLE/)
   const builderMatch = source.match(/const buildExternalAICompatibilityText[\s\S]*?\nconst copyTextToClipboard/)
@@ -578,10 +587,11 @@ test('external AI compatibility instructions reject forms without stable Ristak 
 
   const guide = guideMatch[0]
   const builder = builderMatch[0]
+  const calendarGuide = buildImportedHtmlCustomCalendarRulesText()
 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
   assert.match(guide, /Un HTML que omita cualquiera de esas claves está incompleto para Ristak/)
-  assert.match(guide, /data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva"/)
+  assert.match(guide, /buildImportedHtmlCustomCalendarRulesText/)
   assert.match(guide, /El slot nativo de video no controla la geometría/)
   assert.match(guide, /Ristak detecta la orientación real del archivo/)
   assert.match(guide, /ocupa todo el ancho disponible en móvil conservando 9:16/)
@@ -590,7 +600,8 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /data-rstk-social-avatar/)
   assert.match(guide, /data-rstk-social-verified/)
   assert.match(builder, /No entregues el HTML si falta uno solo/)
-  assert.match(builder, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
+  assert.match(calendarGuide, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
+  assert.match(builder, /buildImportedHtmlCustomCalendarRulesText\('Calendario:'\)/)
   assert.match(builder, /Si falta cualquiera de esas claves, la entrega está incompleta/)
   assert.match(builder, /No pongas width\/max-width, height\/min-height\/max-height, aspect-ratio/)
   assert.match(builder, /No dibujes franjas laterales ni un marco negro falso/)
@@ -600,6 +611,16 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(builder, /No inventes nombre, foto, seguidores ni verificado/)
   assert.match(source, /invalidSocialProfileDeclarations/)
   assert.match(source, /Perfiles sociales incompletos/)
+  assert.match(calendarGuide, /experiencia completa tipo Calendly/)
+  assert.match(calendarGuide, /data-rstk-calendar-prev-month/)
+  assert.match(calendarGuide, /data-rstk-calendar-month-label/)
+  assert.match(calendarGuide, /data-rstk-calendar-days/)
+  assert.match(calendarGuide, /data-state="available"/)
+  assert.match(calendarGuide, /data-rstk-calendar-slots/)
+  assert.match(calendarGuide, /data-rstk-calendar-selected-datetime/)
+  assert.match(calendarGuide, /data-rstk-calendar-success/)
+  assert.match(calendarGuide, /Ristak vuelve a validar el horario al reservar/)
+  assert.doesNotMatch(calendarGuide, /data-rstk-calendar-date/)
 })
 
 test('video design panel exposes responsive portrait sizing without storing the mode in a device override', async () => {
@@ -639,7 +660,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   const sharedPromptUses = source.match(/buildImportedHtmlMobileRulesText\(/g) || []
   assert.ok(sharedPromptUses.length >= 5, 'La guía móvil debe llegar a creación, edición y asistentes HTML')
   assert.match(source, /\.\.\.IMPORTED_HTML_MOBILE_RULES\.map/)
-  assert.match(source, /<details className=\{styles\.importedCodeGuide\} open>/)
+  assert.match(source, /<details className=\{styles\.importedCodeGuide\}>/)
+  assert.match(source, /title="Mostrar u ocultar las reglas completas para HTML y móvil"/)
   assert.match(source, /data-preview-device=\{device\}/)
 
   assert.match(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame[\s\S]*?width: min\(var\(--imported-html-mobile-preview-width, 390px\), 100%\)/)

@@ -4659,13 +4659,21 @@ neutro y el reproductor nativo resuelve su geometría.
   embebido normal y respeta disponibilidad, campos, pagos, reglas de completado
   y evento Meta "al agendar".
 - `calendar` con `data-rstk-native-render="custom"`: conserva el frontend del
-  HTML importado, pero expone `window.ristakCalendarGetSlots(slotId, params)` y
-  `window.ristakCalendarBook(slotId, payload)` para mapearlo a un calendario de
-  Ristak. `payload.startTime` debe ser ISO UTC y `payload.timezone` la zona
-  horaria usada para mostrar la cita; el backend calcula con la zona del negocio
-  y valida disponibilidad antes de crearla. Aunque `free-slots` agrupe resultados
-  por día, el bridge devuelve al calendario importado sólo la lista plana del día
-  solicitado; no inventa ni mezcla espacios de otras fechas.
+  HTML importado y usa un flujo declarativo tipo Calendly. El paso `date` incluye
+  navegación mensual, etiqueta del mes y `data-rstk-calendar-days`; Ristak llena
+  la cuadrícula con todos los días y estados `available`, `unavailable` y
+  `outside`. El paso `time` recibe botones reales en
+  `data-rstk-calendar-slots`; después siguen `form` y `success`. El HTML y el CSS
+  son dueños del diseño, pero no incluyen fetch, fechas, horarios ni JavaScript
+  de agenda. El runtime expone además
+  `window.ristakCalendarGetSlots(slotId, params)` y
+  `window.ristakCalendarBook(slotId, payload)` para compatibilidad y usos
+  avanzados. `payload.startTime` debe ser ISO UTC y `payload.timezone` la zona
+  usada para mostrar la cita; el backend calcula con la zona del negocio y
+  vuelve a validar disponibilidad al crearla. Los instantes recibidos para el
+  mes se agrupan en la zona mostrada sin confiar en el día agrupador del backend.
+  El contrato legacy de `input date` más `select` permanece montable para HTML
+  publicado anteriormente, pero ya no es la estructura indicada a las IA.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
 - `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,

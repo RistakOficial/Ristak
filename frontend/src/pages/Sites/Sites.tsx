@@ -261,6 +261,7 @@ import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.
 import {
   IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
   IMPORTED_HTML_MOBILE_RULES,
+  buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlMobileRulesText
 } from '../../../../shared/sites/importedHtmlContract.js'
 
@@ -2540,7 +2541,7 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment, video y social-profile con render="ristak"): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.
 - Formularios nativos Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacío; no pongas <form>, campos ni botones de envío dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio botón y sus acciones "Al enviar"; si necesitas ir a otra página, configúralo en el editor.
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
-- Para calendario HTML conectado a Ristak usa un contenedor data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom". Dentro agrega input date con data-rstk-calendar-date, select con data-rstk-calendar-time, boton con data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">. Sus campos también cumplen el contrato obligatorio: por ejemplo, nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre", email usa data-rstk-calendar-email data-rstk-field-id="agenda-email" y teléfono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". El mensaje usa data-rstk-calendar-message. No escribas JavaScript: Ristak conecta disponibilidad y reserva de forma segura con la zona horaria del negocio.
+${buildImportedHtmlCustomCalendarRulesText()}
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
@@ -28272,13 +28273,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     )
   } else if (answers.calendar === 'custom') {
     sections.push(
-      'Calendario:',
-      '- La página usará un calendario diseñado por la IA pero conectado a Ristak.',
-      '- Envuelve el calendario custom con: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>.',
-      '- Dentro usa input date con data-rstk-calendar-date, select con data-rstk-calendar-time, botón con data-rstk-calendar-load-slots y <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva" data-rstk-label="Reserva de cita">.',
-      '- REQUISITO OBLIGATORIO DE ENTREGA: ese formulario de reserva también necesita IDs estables. Nombre usa data-rstk-calendar-name data-rstk-field-id="agenda-nombre"; email usa data-rstk-calendar-email data-rstk-field-id="agenda-email"; teléfono usa data-rstk-calendar-phone data-rstk-field-id="agenda-telefono". Los atributos data-rstk-calendar-* NO sustituyen data-rstk-field-id.',
-      '- El estado usa data-rstk-calendar-message.',
-      '- No agregues JavaScript. Ristak conecta disponibilidad y reserva de forma segura; el slot confirmado se envía como ISO UTC y la zona horaria sale de la configuración del negocio.',
+      buildImportedHtmlCustomCalendarRulesText('Calendario:'),
       ''
     )
   } else {

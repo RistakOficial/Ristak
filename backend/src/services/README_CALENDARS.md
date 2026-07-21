@@ -136,6 +136,37 @@ numero nacional; no debe aparecer `+52`, `52`, `+1` ni otro prefijo dentro del
 campo de numero. No vuelvas a renderizar telefono como un `type="tel"` simple
 sin selector de pais.
 
+### Calendario HTML avanzado en Sites
+
+Un calendario importado con `data-rstk-native-element="calendar"` y
+`data-rstk-native-render="custom"` conserva el diseño del HTML, pero no calcula
+ni guarda disponibilidad por su cuenta. El contrato declarativo replica el flujo
+de la URL pública tipo Calendly:
+
+1. `data-rstk-calendar-step="date"` muestra navegación mensual y una cuadrícula
+   de siete columnas. Ristak llena `data-rstk-calendar-days` con todos los días y
+   marca cada celda como `available`, `unavailable` u `outside`; los días sin
+   cupo llegan deshabilitados.
+2. Al seleccionar un día, `data-rstk-calendar-step="time"` muestra sólo los
+   botones reales dentro de `data-rstk-calendar-slots`.
+3. Al seleccionar un horario, `data-rstk-calendar-step="form"` muestra el
+   resumen y el formulario `data-rstk-calendar-book-form`. Ese formulario y
+   todos sus campos guardables conservan `data-rstk-form-id` y
+   `data-rstk-field-id` estables.
+4. Después de reservar, `data-rstk-calendar-step="success"` muestra la
+   confirmación o Ristak ejecuta la acción posterior configurada.
+
+El runtime vive en `sitesService.js`. Consulta
+`GET /api/calendars/public/:slug/free-slots` por el mes visible, recibe instantes
+UTC, los agrupa en la zona mostrada al visitante y pinta los estados sin confiar
+en el `date` agrupador del backend. Al confirmar usa
+`POST /api/calendars/public/:slug/appointments`; el backend vuelve a comprobar
+horario semanal, ventana de reserva, buffers, bloqueos, cupo y concurrencia antes
+de crear la cita. El HTML sólo define markup y CSS: no incluye fetch, fechas,
+slots hardcodeados ni JavaScript propio. El contrato legacy de `input date` más
+`select` sigue funcionando para sitios ya publicados, pero las instrucciones de
+creación exigen la cuadrícula y el flujo avanzado.
+
 ## Disponibilidad Semanal
 
 `calendars.open_hours` es la fuente de verdad del horario semanal. La API lo
