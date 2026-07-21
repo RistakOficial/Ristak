@@ -3183,7 +3183,10 @@ El usuario puede editar también el nombre de la unidad. Los productos conservan
 su mapeo fiscal local y aplican la misma entrada abierta; HighLevel no lo
 sobrescribe al sincronizar su catálogo. Las opciones visibles son atajos, no una
 recomendación fiscal: la clave correcta sigue siendo responsabilidad del emisor
-y puede consultarse en el catálogo oficial del SAT.
+y puede consultarse en el catálogo oficial del SAT. Sincronizar el perfil fiscal
+de Gigstack tampoco sustituye la descripción, clave de producto, unidad ni forma
+de pago elegidas en Ristak: Gigstack manda sobre identidad y tasa fiscal; esos
+valores operativos siguen bajo control del negocio.
 
 La separación de ambientes es estricta:
 

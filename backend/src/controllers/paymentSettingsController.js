@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import {
   getPaymentSettings,
+  mergeGigstackFiscalProfileTaxes,
   normalizePaymentSettings,
   resolvePaymentSettingsBusinessProfile,
   savePaymentSettings
@@ -148,29 +149,7 @@ export async function syncGigstackFiscalProfileView(req, res) {
     const settings = await savePaymentSettings({
       ...current,
       ...draft,
-      taxes: {
-        ...draftTaxes,
-        enabled: true,
-        gigstackEnabled: true,
-        gigstackFiscalSource: 'gigstack',
-        gigstackSatConnected: profile.satConnected,
-        gigstackTeamId: profile.teamId,
-        taxName: profile.taxName,
-        rateType: 'percentage',
-        rateValue: profile.rateValue,
-        rateSource: 'gigstack',
-        gigstackTaxFactor: profile.taxFactor,
-        calculationMode: profile.calculationMode,
-        country: profile.country,
-        fiscalId: profile.fiscalId,
-        fiscalLegalName: profile.fiscalLegalName,
-        fiscalPostalCode: profile.fiscalPostalCode,
-        fiscalRegime: profile.fiscalRegime,
-        ...(profile.defaultDescription ? { gigstackDefaultDescription: profile.defaultDescription } : {}),
-        ...(profile.productKey ? { gigstackDefaultProductKey: profile.productKey } : {}),
-        ...(profile.unitKey ? { gigstackDefaultUnitKey: profile.unitKey } : {}),
-        ...(profile.unitName ? { gigstackDefaultUnitName: profile.unitName } : {})
-      }
+      taxes: mergeGigstackFiscalProfileTaxes(draftTaxes, profile)
     }, { allowGigstackFiscalOverride: true })
 
     await requeueBlockedGigstackInvoiceJobs()

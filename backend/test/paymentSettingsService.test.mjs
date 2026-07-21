@@ -6,6 +6,7 @@ import { setAppConfig } from '../src/config/database.js'
 import {
   calculatePaymentTax,
   decodeGigstackTokenMetadata,
+  mergeGigstackFiscalProfileTaxes,
   normalizePaymentSettings,
   normalizePaymentSettingsMode,
   resolvePaymentSettingsBusinessProfile,
@@ -372,6 +373,41 @@ describe('payment settings business profile defaults', () => {
 })
 
 describe('Gigstack fiscal ownership', () => {
+  it('syncs fiscal identity without replacing the merchant SAT product defaults', () => {
+    const taxes = mergeGigstackFiscalProfileTaxes({
+      gigstackDefaultDescription: 'Servicios de consultoría en mercadotecnia',
+      gigstackDefaultProductKey: '82101800',
+      gigstackDefaultUnitKey: 'E48',
+      gigstackDefaultUnitName: 'Unidad de Servicio',
+      gigstackDefaultPaymentMethod: '99'
+    }, {
+      satConnected: true,
+      teamId: 'team-provider',
+      taxName: 'IVA',
+      rateValue: 16,
+      taxFactor: 'Tasa',
+      calculationMode: 'inclusive',
+      country: 'MX',
+      fiscalId: 'AAA010101AAA',
+      fiscalLegalName: 'Razón social fiscal',
+      fiscalPostalCode: '06600',
+      fiscalRegime: '601',
+      defaultDescription: 'Default del proveedor',
+      productKey: '82101702',
+      unitKey: 'ACT',
+      unitName: 'Actividad'
+    })
+
+    assert.equal(taxes.gigstackDefaultDescription, 'Servicios de consultoría en mercadotecnia')
+    assert.equal(taxes.gigstackDefaultProductKey, '82101800')
+    assert.equal(taxes.gigstackDefaultUnitKey, 'E48')
+    assert.equal(taxes.gigstackDefaultUnitName, 'Unidad de Servicio')
+    assert.equal(taxes.gigstackDefaultPaymentMethod, '99')
+    assert.equal(taxes.fiscalId, 'AAA010101AAA')
+    assert.equal(taxes.rateValue, 16)
+    assert.equal(taxes.gigstackFiscalSource, 'gigstack')
+  })
+
   it('requires the fiscal sync path before Gigstack can be activated', async () => {
     await assert.rejects(
       () => savePaymentSettings({ taxes: { gigstackEnabled: true } }),

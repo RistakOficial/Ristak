@@ -170,6 +170,28 @@ export function normalizePaymentSettingsMode(value, fallback = DEFAULT_PAYMENT_S
   return PAYMENT_MODES.includes(normalized) ? normalized : fallback
 }
 
+export function mergeGigstackFiscalProfileTaxes(currentTaxes = {}, profile = {}) {
+  return {
+    ...currentTaxes,
+    enabled: true,
+    gigstackEnabled: true,
+    gigstackFiscalSource: 'gigstack',
+    gigstackSatConnected: profile.satConnected,
+    gigstackTeamId: profile.teamId,
+    taxName: profile.taxName,
+    rateType: 'percentage',
+    rateValue: profile.rateValue,
+    rateSource: 'gigstack',
+    gigstackTaxFactor: profile.taxFactor,
+    calculationMode: profile.calculationMode,
+    country: profile.country,
+    fiscalId: profile.fiscalId,
+    fiscalLegalName: profile.fiscalLegalName,
+    fiscalPostalCode: profile.fiscalPostalCode,
+    fiscalRegime: profile.fiscalRegime
+  }
+}
+
 function cleanNumber(value, fallback, { min = 0, max = 9999, decimals = 0 } = {}) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) return fallback
