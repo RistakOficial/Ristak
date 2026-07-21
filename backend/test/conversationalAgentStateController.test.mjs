@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 
 import { db } from '../src/config/database.js'
 import { updateState } from '../src/controllers/conversationalAgentController.js'
@@ -12,6 +13,7 @@ import {
   createConversationalAgent,
   failConversationInboundMessage,
   getConversationState,
+  getManualConversationAgentAssignment,
   listConversationStates,
   listConversationStatesForContact,
   listConversationalAgentEvents,
@@ -224,9 +226,110 @@ test('activar una conversación con agentId asigna ese agente al estado', async 
     assert.ok(res.body?.data?.activatedAt)
     assert.equal(res.body?.data?.activationSource, 'manual')
     assert.equal(res.body?.data?.activatedBy, 'user')
+
+    const manualAssignment = await getManualConversationAgentAssignment(contactId)
+    assert.equal(manualAssignment?.agentId, agentId)
+    assert.equal(manualAssignment?.status, 'active')
   } finally {
     await cleanup(contactId, agentId)
     await restoreBusinessProfileRow(previousBusinessProfile)
+  }
+})
+
+test('la asignación manual aplica en todos los canales y vence el alcance solo nuevos', async () => {
+  const contactId = `conversation_agent_manual_all_channels_${randomUUID()}`
+  const previousBusinessProfile = await getStoredBusinessProfileRow()
+  let agentId = ''
+
+  try {
+    await seedContact(contactId, { createdAt: '2025-01-01T00:00:00.000Z' })
+    await seedReadyBusinessProfile()
+    const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_manual_all_channels',
+      name: 'Agente manual multicanal',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'new_only'
+    })
+    agentId = agent.id
+
+    const automaticMatch = await matchAgentForMessage({
+      contactId,
+      messageText: 'Hola',
+      channel: 'messenger'
+    })
+    assert.equal(automaticMatch, null)
+
+    const res = createMockResponse()
+    await updateState({
+      params: { contactId },
+      body: { action: 'activate', agentId }
+    }, res)
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.body?.success, true)
+
+    for (const channel of ['messenger', 'instagram']) {
+      const ruleContext = await buildRuleContext({
+        contactId,
+        messageText: `Mensaje por ${channel}`,
+        channel
+      })
+      const resolved = await resolveInboundAgentForContact({
+        contactId,
+        channel,
+        ruleContext,
+        latestMessageId: `msg_${channel}_${randomUUID()}`
+      })
+
+      assert.equal(resolved.agentConfig?.id, agentId)
+      assert.equal(resolved.assigned, false)
+      assert.equal(resolved.state?.channel, channel)
+      assert.equal(resolved.state?.assignmentSource, 'manual')
+    }
+
+    const states = await listConversationStatesForContact(contactId)
+    const statesByChannel = new Map(states.map((state) => [state.channel, state]))
+    assert.equal(statesByChannel.get('whatsapp')?.assignmentSource, 'manual')
+    assert.equal(statesByChannel.get('messenger')?.assignmentSource, 'manual')
+    assert.equal(statesByChannel.get('instagram')?.assignmentSource, 'manual')
+    assert.equal(new Set(states.map((state) => state.id)).size, 3)
+  } finally {
+    await cleanup(contactId, agentId)
+    await restoreBusinessProfileRow(previousBusinessProfile)
+  }
+})
+
+test('la migración recupera asignaciones manuales anteriores como política multicanal', async () => {
+  const contactId = `conversation_agent_manual_backfill_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente manual para backfill',
+      enabled: false
+    })
+    agentId = agent.id
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'manual',
+      assignmentSource: 'manual',
+      updatedBy: 'user',
+      channel: 'whatsapp'
+    })
+    await db.run('DELETE FROM conversational_agent_manual_assignments WHERE contact_id = ?', [contactId])
+
+    const migrationSql = await readFile(
+      new URL('../migrations/versioned/124_conversational_manual_assignment_all_channels.sqlite.sql', import.meta.url),
+      'utf8'
+    )
+    await db.exec(migrationSql)
+
+    const manualAssignment = await getManualConversationAgentAssignment(contactId)
+    assert.equal(manualAssignment?.agentId, agentId)
+    assert.equal(manualAssignment?.status, 'active')
+    assert.equal(manualAssignment?.assignedBy, 'user')
+  } finally {
+    await cleanup(contactId, agentId)
   }
 })
 

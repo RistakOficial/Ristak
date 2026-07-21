@@ -20,6 +20,7 @@ import {
 import {
   getConversationalAgentConfig,
   getConversationState,
+  getManualConversationAgentAssignment,
   listConversationStatesForContact,
   buildConversationalAgentRuntimeConfig,
   recordConversationalAgentEvent,
@@ -4826,8 +4827,39 @@ function shouldReopenCompletedConversationState(state, latestMessageId) {
   return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
 }
 
+function manualAssignmentOverridesContactScope(state) {
+  return String(state?.assignmentSource || '').trim().toLowerCase() === 'manual'
+}
+
 export async function resolveInboundAgentForContact({ contactId, channel, ruleContext, latestMessageId = '' }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
+  const manualAssignment = await getManualConversationAgentAssignment(contactId)
+  if (manualAssignment?.agentId) {
+    const manualState = await getConversationState(contactId, {
+      agentId: manualAssignment.agentId,
+      channel: normalizedChannel
+    })
+
+    // Mientras el usuario lo tenga pausado, tomado o saltado, esa decision
+    // manual tambien bloquea que otro agente automatico se cuele por otro canal.
+    if (manualAssignment.status !== 'active') {
+      return { agentConfig: null, state: manualState, assigned: false }
+    }
+
+    const manualAgent = await getConversationalAgent(manualAssignment.agentId).catch(() => null)
+    if (!manualAgent?.enabled) {
+      return { agentConfig: null, state: manualState, assigned: false }
+    }
+
+    if (!manualState) {
+      await assignAgentToConversation(contactId, manualAgent.id, {
+        activationSource: 'manual',
+        assignmentSource: 'manual',
+        updatedBy: 'agent',
+        channel: normalizedChannel
+      })
+    }
+  }
   const states = await listConversationStatesForContact(contactId, { channel: normalizedChannel }).catch(() => [])
   const blockedAgentIds = new Set()
   const releasedAgentIds = new Set()
@@ -4863,7 +4895,7 @@ export async function resolveInboundAgentForContact({ contactId, channel, ruleCo
         })
         continue
       }
-      if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
+      if (!manualAssignmentOverridesContactScope(state) && contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
         releasedAgentIds.add(agentConfig.id)
         await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
         await recordConversationalAgentEvent({
@@ -4946,7 +4978,7 @@ export async function resolveInboundAgentForContact({ contactId, channel, ruleCo
 
     // Seguridad: si el agente pasó a "solo nuevos" y este contacto ya existía antes del
     // corte, suéltalo aunque tuviera asignación pegajosa (no lo dejes grandfathered).
-    if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
+    if (!manualAssignmentOverridesContactScope(state) && contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
       releasedAgentIds.add(agentConfig.id)
       await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
       await recordConversationalAgentEvent({
@@ -5153,7 +5185,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           })
           return
         }
-        if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
+        if (!manualAssignmentOverridesContactScope(agentState) && contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
           await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
           await recordConversationalAgentEvent({
             contactId,

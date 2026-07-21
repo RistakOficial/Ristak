@@ -6847,6 +6847,29 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_status ON conversational_agent_state(status, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_state_agent_status ON conversational_agent_state(agent_id, status, updated_at)')
 
+	    // La asignacion manual pertenece al contacto completo. Los estados de
+	    // ejecucion siguen separados por canal para no compartir claims, pausas o
+	    // cierres entre WhatsApp, Messenger, Instagram, SMS, webchat y correo.
+	    await db.run(`
+	      CREATE TABLE IF NOT EXISTS conversational_agent_manual_assignments (
+	        contact_id TEXT PRIMARY KEY,
+	        agent_id TEXT NOT NULL,
+	        status TEXT NOT NULL DEFAULT 'active',
+	        paused_until_at DATETIME,
+	        assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	        assigned_by TEXT,
+	        updated_by TEXT,
+	        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE,
+	        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE CASCADE
+	      )
+	    `)
+	    await db.run(`
+	      CREATE INDEX IF NOT EXISTS idx_conv_agent_manual_assignment_agent_status
+	      ON conversational_agent_manual_assignments(agent_id, status, updated_at)
+	    `)
+
     // Columnas agregadas al evolucionar el agente conversacional.
 	    for (const [columnName, columnType] of [
 	      ['id', 'TEXT'],

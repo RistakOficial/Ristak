@@ -8371,6 +8371,225 @@ export async function ensureConversationState(contactId, { agentId = null, chann
   return getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
 }
 
+function mapManualConversationAgentAssignment(row) {
+  if (!row) return null
+  return {
+    contactId: row.contact_id,
+    agentId: row.agent_id,
+    status: row.status || 'active',
+    pausedUntilAt: row.paused_until_at || null,
+    assignedAt: row.assigned_at || null,
+    assignedBy: row.assigned_by || null,
+    updatedBy: row.updated_by || null,
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+/**
+ * La asignacion manual es una politica del contacto completo. No sustituye los
+ * estados por canal: el runtime materializa uno independiente cuando ese canal
+ * recibe actividad para conservar claims, pausas y cierres aislados.
+ */
+export async function getManualConversationAgentAssignment(contactId) {
+  if (!contactId) return null
+  let row = await db.get(`
+    SELECT *
+    FROM conversational_agent_manual_assignments
+    WHERE contact_id = ?
+    LIMIT 1
+  `, [contactId])
+  if (!row) return null
+
+  if (isExpiredPausedStateRow(row)) {
+    const nowIso = new Date().toISOString()
+    await db.run(`
+      UPDATE conversational_agent_manual_assignments
+      SET status = 'active',
+          paused_until_at = NULL,
+          updated_by = 'system',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ?
+        AND status = 'paused'
+        AND paused_until_at IS NOT NULL
+        AND paused_until_at <= ?
+    `, [contactId, nowIso])
+    row = await db.get(`
+      SELECT *
+      FROM conversational_agent_manual_assignments
+      WHERE contact_id = ?
+      LIMIT 1
+    `, [contactId])
+  }
+
+  return mapManualConversationAgentAssignment(row)
+}
+
+async function upsertManualConversationAgentAssignment(contactId, agentId, {
+  status = 'active',
+  pausedUntilAt = null,
+  updatedBy = 'user'
+} = {}) {
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  if (!contactId || !cleanAgentId) return null
+  if (!VALID_STATUSES.has(status)) {
+    throw Object.assign(new Error(`Estado de asignacion manual invalido: ${status}`), { statusCode: 400 })
+  }
+
+  await db.run(`
+    INSERT INTO conversational_agent_manual_assignments (
+      contact_id, agent_id, status, paused_until_at,
+      assigned_at, assigned_by, updated_by, updated_at
+    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(contact_id) DO UPDATE SET
+      agent_id = excluded.agent_id,
+      status = excluded.status,
+      paused_until_at = excluded.paused_until_at,
+      assigned_at = CURRENT_TIMESTAMP,
+      assigned_by = excluded.assigned_by,
+      updated_by = excluded.updated_by,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    contactId,
+    cleanAgentId,
+    status,
+    pausedUntilAt,
+    String(updatedBy || 'user').trim() || 'user',
+    updatedBy
+  ])
+
+  return getManualConversationAgentAssignment(contactId)
+}
+
+export async function assignAgentToContactManually(contactId, agentId, {
+  channel = null,
+  updatedBy = 'user'
+} = {}) {
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  if (!contactId || !cleanAgentId) return null
+
+  await upsertManualConversationAgentAssignment(contactId, cleanAgentId, {
+    status: 'active',
+    pausedUntilAt: null,
+    updatedBy
+  })
+
+  // Una asignacion manual es autoritativa: evita que un agente automatico o
+  // una asignacion manual anterior siga compitiendo en alguno de los canales.
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET agent_id = NULL,
+        assignment_source = 'released',
+        assigned_by = ?,
+        updated_by = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ?
+      AND agent_id IS NOT NULL
+      AND agent_id <> ?
+  `, [String(updatedBy || 'user').trim() || 'user', updatedBy, contactId, cleanAgentId])
+
+  await assignAgentToConversation(contactId, cleanAgentId, {
+    activationSource: 'manual',
+    assignmentSource: 'manual',
+    updatedBy,
+    channel: cleanChannel
+  })
+
+  // Reactivar manualmente significa reactivar al agente para el contacto
+  // completo. Cada fila conserva su canal y por tanto su propio claim.
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET status = 'active',
+        signal = NULL,
+        signal_reason = NULL,
+        signal_summary = NULL,
+        signal_at = NULL,
+        paused_until_at = NULL,
+        assignment_source = 'manual',
+        assigned_at = CURRENT_TIMESTAMP,
+        assigned_by = ?,
+        updated_by = ?,
+        activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+        activation_source = 'manual',
+        activated_by = COALESCE(activated_by, ?),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE contact_id = ? AND agent_id = ?
+  `, [updatedBy, updatedBy, updatedBy, contactId, cleanAgentId])
+
+  const state = await getConversationState(contactId, {
+    agentId: cleanAgentId,
+    channel: cleanChannel
+  })
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'status_changed',
+    detail: {
+      status: 'active',
+      updatedBy,
+      clearSignal: true,
+      pausedUntilAt: null,
+      agentId: cleanAgentId,
+      channel: 'all'
+    }
+  })
+  return state
+}
+
+export async function setManualConversationAgentStatus(contactId, status, {
+  agentId = null,
+  pausedUntilAt = null,
+  clearSignal = false,
+  updatedBy = 'user',
+  channel = null
+} = {}) {
+  if (!VALID_STATUSES.has(status)) {
+    throw Object.assign(new Error(`Estado de asignacion manual invalido: ${status}`), { statusCode: 400 })
+  }
+  const current = await getManualConversationAgentAssignment(contactId)
+  const cleanAgentId = normalizeConversationStateAgentId(agentId || current?.agentId)
+  if (!current || !cleanAgentId || current.agentId !== cleanAgentId) return null
+  const nextPausedUntilAt = status === 'paused' ? normalizePauseUntilAt(pausedUntilAt) : null
+
+  await upsertManualConversationAgentAssignment(contactId, cleanAgentId, {
+    status,
+    pausedUntilAt: nextPausedUntilAt,
+    updatedBy
+  })
+
+  const signalAssignments = clearSignal
+    ? ', signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL'
+    : ''
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET status = ?,
+        paused_until_at = ?,
+        updated_by = ?,
+        assignment_source = 'manual',
+        updated_at = CURRENT_TIMESTAMP
+        ${signalAssignments}
+    WHERE contact_id = ? AND agent_id = ?
+  `, [status, nextPausedUntilAt, updatedBy, contactId, cleanAgentId])
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'status_changed',
+    detail: {
+      status,
+      updatedBy,
+      clearSignal,
+      pausedUntilAt: nextPausedUntilAt,
+      agentId: cleanAgentId,
+      channel: 'all'
+    }
+  })
+
+  return getConversationState(contactId, {
+    agentId: cleanAgentId,
+    channel: normalizeOptionalConversationStateChannel(channel)
+  })
+}
+
 function dbMutationCount(result) {
   return Math.max(0, Number(result?.changes ?? result?.rowCount) || 0)
 }

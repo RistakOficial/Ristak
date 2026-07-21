@@ -2,9 +2,11 @@ import { logger } from '../utils/logger.js'
 import {
   getConversationalAgentConfig,
   getConversationState,
+  getManualConversationAgentAssignment,
   listConversationStatesForContact,
   setConversationStatus,
-  assignAgentToConversation,
+  assignAgentToContactManually,
+  setManualConversationAgentStatus,
   clearConversationSignal,
   listConversationStates,
   listConversationalAgentEvents,
@@ -302,18 +304,34 @@ export async function updateState(req, res) {
       })
     }
 
-    let state = await setConversationStatus(contactId, mapped.status, {
-      updatedBy: 'user',
-      clearSignal: mapped.clearSignal,
-      pausedUntilAt: req.body?.pausedUntilAt || null,
-      activationSource: 'manual',
-      agentId: agentId || null
-    })
-
     if (action === 'activate' && agentId) {
-      state = await assignAgentToConversation(contactId, agentId, {
-        activationSource: 'manual',
+      const state = await assignAgentToContactManually(contactId, agentId, {
+        channel: req.body?.channel || null,
         updatedBy: 'user'
+      })
+      return res.json({ success: true, data: state })
+    }
+
+    const manualAssignment = await getManualConversationAgentAssignment(contactId)
+    const manualAgentId = String(manualAssignment?.agentId || '').trim()
+    let state = manualAgentId && (!agentId || manualAgentId === agentId)
+      ? await setManualConversationAgentStatus(contactId, mapped.status, {
+          agentId: manualAgentId,
+          pausedUntilAt: req.body?.pausedUntilAt || null,
+          clearSignal: mapped.clearSignal,
+          updatedBy: 'user',
+          channel: req.body?.channel || null
+        })
+      : null
+
+    if (!state) {
+      state = await setConversationStatus(contactId, mapped.status, {
+        updatedBy: 'user',
+        clearSignal: mapped.clearSignal,
+        pausedUntilAt: req.body?.pausedUntilAt || null,
+        activationSource: 'manual',
+        agentId: agentId || null,
+        channel: req.body?.channel || null
       })
     }
 

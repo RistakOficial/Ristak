@@ -5466,6 +5466,21 @@ el modelo principal. Una pausa, omision o asignacion manual real conserva su
 procedencia. Las superficies de control manejan agentes individuales, nunca un
 pseudoagente global "Todos".
 
+`contactScope` limita exclusivamente el matching automatico. Cuando un usuario
+asigna manualmente un agente a un contacto, esa decision pertenece al contacto
+completo y aplica por defecto a todos sus canales conversacionales soportados,
+presentes y futuros; por eso una asignacion manual explicita puede atender un
+contacto historico aunque el agente use `new_only`, o uno nuevo aunque use
+`existing_only`. El runtime materializa un estado independiente por
+contacto + agente + canal para que Messenger, Instagram, WhatsApp, SMS, webchat
+y correo no compartan claims ni mensajes procesados. Pausar, tomar, omitir o
+reanudar una asignacion manual actualiza la politica global y los estados ya
+materializados. El agente debe seguir publicado y las reglas de salida,
+seguridad preventiva y disponibilidad real del canal conservan autoridad. La
+migracion `124*_conversational_manual_assignment_all_channels` recupera como
+politica global la asignacion manual vigente mas reciente que ya existiera para
+cada contacto.
+
 ### Runtime conversacional unico
 
 Cada inbound, preview y seguimiento entra a un solo `Agent`/`Runner`. El modelo conversa y
