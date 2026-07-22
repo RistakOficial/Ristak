@@ -150,9 +150,11 @@ de la URL pública tipo Calendly:
 2. Al seleccionar un día, `data-rstk-calendar-step="time"` muestra sólo los
    botones reales dentro de `data-rstk-calendar-slots`.
 3. Al seleccionar un horario, `data-rstk-calendar-step="form"` muestra el
-   resumen y el formulario `data-rstk-calendar-book-form`. Ese formulario y
-   todos sus campos guardables conservan `data-rstk-form-id` y
-   `data-rstk-field-id` estables.
+   resumen y el formulario `data-rstk-calendar-book-form`. Ese formulario es
+   parte semántica del calendario: no lleva `data-rstk-form-id`,
+   `data-rstk-field-id` ni una conversión `Lead` propia, y el detector de
+   formularios importados lo excluye aunque un HTML antiguo todavía tenga esos
+   atributos.
 4. Después de reservar, `data-rstk-calendar-step="success"` muestra la
    confirmación o Ristak ejecuta la acción posterior configurada.
 
@@ -166,6 +168,13 @@ de crear la cita. El HTML sólo define markup y CSS: no incluye fetch, fechas,
 slots hardcodeados ni JavaScript propio. El contrato legacy de `input date` más
 `select` sigue funcionando para sitios ya publicados, pero las instrucciones de
 creación exigen la cuadrícula y el flujo avanzado.
+
+En preview, la consulta de disponibilidad sí usa los endpoints reales, incluso
+cuando el documento corre dentro de un `srcDoc` sin origen. Confirmar desde esa
+vista devuelve un mensaje de demostración: no hace el `POST`, no crea una cita,
+no redirige y no dispara Pixel/CAPI. En publicado, una reserva confirmada manda
+únicamente el evento de calendario configurado (normalmente `Schedule`) con el
+mismo `event_id` para Pixel y CAPI.
 
 ## Disponibilidad Semanal
 

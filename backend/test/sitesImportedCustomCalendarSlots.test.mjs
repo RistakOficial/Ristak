@@ -20,7 +20,7 @@ function runtimeScriptFromHtml(html) {
   return html.slice(scriptStart + '<script>'.length, scriptEnd)
 }
 
-function createRuntimeHarness(script, initialPayload, selectedDate = '2030-01-08') {
+function createRuntimeHarness(script, initialPayload, selectedDate = '2030-01-08', options = {}) {
   const dateInput = {
     value: selectedDate,
     addEventListener() {}
@@ -61,7 +61,8 @@ function createRuntimeHarness(script, initialPayload, selectedDate = '2030-01-08
   const requestedUrls = []
   const window = {
     location: {
-      origin: 'https://example.test',
+      origin: options.locationOrigin ?? 'https://example.test',
+      href: options.locationHref ?? 'https://example.test/agenda',
       assign() {}
     },
     dispatchEvent() {}
@@ -105,7 +106,7 @@ function createRuntimeHarness(script, initialPayload, selectedDate = '2030-01-08
   }
 }
 
-function createAdvancedRuntimeHarness(script, initialPayload) {
+function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {}) {
   const eventNode = (initial = {}) => {
     const handlers = new Map()
     const attributes = new Map()
@@ -123,6 +124,9 @@ function createAdvancedRuntimeHarness(script, initialPayload) {
       },
       setAttribute(name, value) {
         attributes.set(name, String(value))
+      },
+      removeAttribute(name) {
+        attributes.delete(name)
       },
       async trigger(name, event = { preventDefault() {} }) {
         const handler = handlers.get(name)
@@ -192,12 +196,20 @@ function createAdvancedRuntimeHarness(script, initialPayload) {
 
   const requestedUrls = []
   const appointmentBodies = []
+  const pixelEvents = []
   const window = {
     location: {
-      origin: 'https://example.test',
+      origin: harnessOptions.locationOrigin ?? 'https://example.test',
+      href: harnessOptions.locationHref ?? 'https://example.test/agenda',
       assign() {}
     },
-    dispatchEvent() {}
+    dispatchEvent() {},
+    ristakMetaBuildMetaPayload(meta = {}) {
+      return { visitorId: 'visitor-calendar-1', fbp: 'fbp-calendar-1', ...meta }
+    },
+    ristakMetaTrackSiteEvent(eventName, eventId, customData) {
+      pixelEvents.push({ eventName, eventId, customData })
+    }
   }
   const document = {
     readyState: 'complete',
@@ -212,13 +224,24 @@ function createAdvancedRuntimeHarness(script, initialPayload) {
     CustomEvent: class CustomEvent {},
     document,
     window,
-    fetch: async (url, options = {}) => {
+    fetch: async (url, fetchOptions = {}) => {
       requestedUrls.push(String(url))
       if (String(url).endsWith('/appointments')) {
-        appointmentBodies.push(JSON.parse(options.body || '{}'))
+        appointmentBodies.push(JSON.parse(fetchOptions.body || '{}'))
         return {
           ok: true,
-          json: async () => ({ success: true, data: { message: 'Confirmación avanzada' } })
+          json: async () => ({
+            success: true,
+            data: harnessOptions.appointmentData || {
+              message: 'Confirmación avanzada',
+              metaEvent: {
+                eventName: 'Schedule',
+                eventId: 'schedule-event-1',
+                appointmentId: 'appointment-1',
+                status: 'booked'
+              }
+            }
+          })
         }
       }
       return {
@@ -234,6 +257,7 @@ function createAdvancedRuntimeHarness(script, initialPayload) {
     days,
     message,
     monthLabel,
+    pixelEvents,
     requestedUrls,
     selectedDateLabel,
     selectedDateTimeLabel,
@@ -295,7 +319,7 @@ test('calendario HTML personalizado usa la fecha del visitante y conserva listas
     const harness = createRuntimeHarness(runtimeScriptFromHtml(html), [
       { date: '2030-01-07', slots: ['2030-01-07T03:00:00.000Z'] },
       { date: '2030-01-08', slots: ['2030-01-08T03:00:00.000Z', '2030-01-08T04:00:00.000Z'] }
-    ])
+    ], '2030-01-08', { locationOrigin: 'null', locationHref: 'about:srcdoc' })
 
     await harness.loadSlots()
 
@@ -380,8 +404,10 @@ test('calendario HTML avanzado pinta mes, horarios y formulario con disponibilid
       name: `HTML custom calendar grid ${Date.now()}`
     })
     siteId = created.site.id
+    assert.equal(created.import.detectedForms.length, 0, 'el formulario interno pertenece al calendario')
+    assert.equal(created.import.formMappings.length, 0, 'el calendario no crea un mapping Lead independiente')
 
-    await createBlock(siteId, {
+    const siteWithCalendar = await createBlock(siteId, {
       blockType: 'calendar_embed',
       label: 'Agenda avanzada',
       settings: {
@@ -396,6 +422,10 @@ test('calendario HTML avanzado pinta mes, horarios y formulario con disponibilid
         calendarTimezone: 'Asia/Tokyo'
       }
     })
+    const calendarBlock = siteWithCalendar.blocks.find(block => (
+      block.blockType === 'calendar_embed' && block.settings?.importedHtmlNativeSlotId === 'agenda-custom'
+    ))
+    assert.ok(calendarBlock)
 
     const nowParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Tokyo',
@@ -406,10 +436,18 @@ test('calendario HTML avanzado pinta mes, horarios y formulario con disponibilid
     const slotDate = `${nowParts.year}-${nowParts.month}-15`
 
     const site = await getSite(siteId, { includeBlocks: true })
-    const html = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: true })
-    const harness = createAdvancedRuntimeHarness(runtimeScriptFromHtml(html), [
+    site.metaCapiEnabled = true
+    site.theme.metaCalendarEvents = {
+      [calendarBlock.id]: {
+        enabled: true,
+        eventName: 'Schedule',
+        eventParameters: { status: 'qualified' }
+      }
+    }
+    const previewHtml = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: true })
+    const harness = createAdvancedRuntimeHarness(runtimeScriptFromHtml(previewHtml), [
       { date: 'dato-no-confiable', slots: [slot] }
-    ])
+    ], { locationOrigin: 'null', locationHref: 'about:srcdoc' })
     await harness.settle()
 
     assert.match(harness.requestedUrls[0], new RegExp(`startDate=${nowParts.year}-${nowParts.month}-01`))
@@ -448,17 +486,48 @@ test('calendario HTML avanzado pinta mes, horarios y formulario con disponibilid
 
     await harness.bookingForm.trigger('submit')
 
-    assert.deepEqual(harness.appointmentBodies[0], {
+    assert.equal(harness.appointmentBodies.length, 0)
+    assert.equal(harness.pixelEvents.length, 0)
+    assert.equal(harness.stepForm.hidden, true)
+    assert.equal(harness.stepSuccess.hidden, false)
+    assert.match(harness.success.textContent, /Vista previa: la disponibilidad es real/)
+
+    const liveHtml = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: false })
+    const liveHarness = createAdvancedRuntimeHarness(runtimeScriptFromHtml(liveHtml), [
+      { date: 'dato-no-confiable', slots: [slot] }
+    ], { locationHref: 'https://public.example/agenda?utm_source=meta' })
+    await liveHarness.settle()
+    await liveHarness.days.trigger('click', {
+      target: { closest: () => dayButton }
+    })
+    await liveHarness.slots.trigger('click', {
+      target: { closest: () => slotButton }
+    })
+    await liveHarness.bookingForm.trigger('submit')
+
+    assert.deepEqual(liveHarness.appointmentBodies[0], {
       startTime: slot,
       timezone: 'Asia/Tokyo',
       name: 'Ada Lovelace',
       email: 'ada@example.test',
       phone: '+525511223344',
-      notes: 'Primera consulta'
+      notes: 'Primera consulta',
+      sourceUrl: 'https://public.example/agenda?utm_source=meta',
+      bookingChannel: 'site',
+      meta: {
+        visitorId: 'visitor-calendar-1',
+        fbp: 'fbp-calendar-1',
+        conversionType: 'appointment_scheduled',
+        siteEventName: 'Schedule',
+        siteEventParameters: { status: 'qualified' }
+      }
     })
-    assert.equal(harness.stepForm.hidden, true)
-    assert.equal(harness.stepSuccess.hidden, false)
-    assert.equal(harness.success.textContent, 'Confirmación avanzada')
+    assert.equal(liveHarness.pixelEvents.length, 1)
+    assert.equal(liveHarness.pixelEvents[0].eventName, 'Schedule')
+    assert.equal(liveHarness.pixelEvents[0].eventId, 'schedule-event-1')
+    assert.equal(liveHarness.stepForm.hidden, true)
+    assert.equal(liveHarness.stepSuccess.hidden, false)
+    assert.equal(liveHarness.success.textContent, 'Confirmación avanzada')
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

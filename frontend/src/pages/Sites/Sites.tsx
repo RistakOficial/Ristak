@@ -2217,6 +2217,22 @@ const getImportedNativeElementTypeFromElement = (element: Element): ImportedNati
   ]))
 )
 
+const isImportedCalendarBookingFormElement = (form: HTMLFormElement) => {
+  if ([
+    'data-rstk-calendar-book-form',
+    'data-ristak-calendar-book-form',
+    'data-ristack-calendar-book-form'
+  ].some(name => form.hasAttribute(name))) return true
+
+  let element: Element | null = form.parentElement
+  while (element) {
+    if (getImportedNativeElementTypeFromElement(element) === 'calendar') return true
+    if (normalizeImportedNativeElementType(element.getAttribute('data-rstk-native-type')) === 'calendar') return true
+    element = element.parentElement
+  }
+  return false
+}
+
 const getImportedNativeElementRenderMode = (element: Element, type: ImportedNativeElementType): ImportedNativeElementRenderMode => {
   if (type !== 'calendar' && type !== 'social_profile') return 'ristak'
   const token = normalizeImportedNativeToken(getImportedNativeElementAttr(element, [
@@ -2580,7 +2596,7 @@ const textToFileDataUrl = (content: string, mimeType: string) => {
 const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - El HTML es una superficie cerrada: no agregues data-rstk-editable ni contratos de edición visual por texto, imagen, botón o campo.
 - Devuelve siempre el documento o los documentos HTML completos. Los cambios posteriores se hacen reemplazando el código completo, manualmente o con IA.
-- REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no lo entregues hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. Un HTML que omita cualquiera de esas claves está incompleto para Ristak.
+- REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no lo entregues hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. La única excepción es el <form data-rstk-calendar-book-form> dentro de un calendario custom: pertenece al calendario y no debe llevar IDs de formulario/campos ni conversión propia.
 - name, id, data-rstk-field y los atributos data-rstk-calendar-* NO sustituyen data-rstk-form-id ni data-rstk-field-id: ayudan a interpretar o ejecutar el campo, pero no conservan su asociación cuando otra IA reescribe el código.
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
@@ -2603,12 +2619,12 @@ ${buildImportedHtmlVideoActionTargetRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
 - Nunca agregues JavaScript para medir el video u ocultar/mostrar targets. Ristak ejecuta las reglas. Conserva data-rstk-video-rules al editar otra cosa; quitar el atributo o una regla de la lista no borra configuraciones. Para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.
-- Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
+- Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No lo hagas en data-rstk-calendar-book-form: el calendario conectado emite Schedule por sí mismo solo después de reservar.
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
-- Para cita agendada usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta.
+- Para una cita administrada fuera del calendario conectado usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta. En un calendario custom de Ristak no declares estos atributos.
 - Para pago confirmado usa data-rstk-conversion-event="Purchase", data-rstk-conversion-type="purchase", data-rstk-conversion-value, data-rstk-conversion-content-name y data-rstk-conversion-order-id o data-rstk-payment-id. No marques Purchase en un intento de pago: solo en confirmación real/página de gracias.
 - Si un dato de conversión sale de un campo, marca ese campo con data-rstk-conversion-param="value|contentName|orderId|appointment_start_time|appointment_end_time|calendarName|paymentId|status".
-- Ejemplo cita: <form data-rstk-form-id="agenda" data-rstk-conversion-event="Schedule" data-rstk-conversion-type="appointment_scheduled" data-rstk-calendar-name="Consulta inicial"> ... <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z"> ... </form>.
+- Ejemplo de cita externa autogestionada (no calendario custom Ristak): <form data-rstk-form-id="agenda-externa" data-rstk-conversion-event="Schedule" data-rstk-conversion-type="appointment_scheduled" data-rstk-calendar-name="Consulta inicial"> ... <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z"> ... </form>.
 - Ejemplo pago: <form data-rstk-form-id="checkout" data-rstk-conversion-event="Purchase" data-rstk-conversion-type="purchase" data-rstk-conversion-value="1499" data-rstk-conversion-content-name="Consulta premium" data-rstk-conversion-order-id="ORD-123"> ... </form>.
 - Calificación en radio/checkbox/select: agrupa radio/checkbox con el mismo name y coloca data-rstk-choice-actions en el input u option que tenga una regla. Para descartar usa action="disqualify"; no uses specific_page o url solos porque navegan pero no marcan al contacto como no calificado.
 - Resultado del descarte: usa disqualifyOutcome="message" + buttonMessage, disqualifyOutcome="specific_page" + buttonPageId, o disqualifyOutcome="url" + buttonUrl. Ejemplo: <input type="radio" name="candidato" value="no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","disqualifyOutcome":"specific_page","buttonPageId":"no-califica"}]'>.
@@ -7820,12 +7836,39 @@ const getMetaDetectedFormSurfaces = (
   if (formBlocks.length) return formBlocks
 
   if (!isImportedHtmlSite(site) || !hasImportedFormSubmitSurface(importData)) return []
-  const detectedForms = Array.isArray(importData?.detectedForms) && importData.detectedForms.length
-    ? importData.detectedForms
-    : [{ id: 'imported-form-1' }]
+  const activeImportedPath = String(activePage?.importedAssetPath || '').trim()
+  const allDetectedForms = Array.isArray(importData?.detectedForms) ? importData.detectedForms : []
+  const activeCodeFile = importData?.codeFiles?.find(file => (
+    file.language === 'html' && String(file.path || '').trim() === activeImportedPath
+  ))
+  let activeHtmlFormIds: Set<string> | null = null
+  if (activeCodeFile && typeof DOMParser !== 'undefined') {
+    try {
+      const doc = new DOMParser().parseFromString(activeCodeFile.content || '', 'text/html')
+      activeHtmlFormIds = new Set(collectImportedPanelFormGroups(doc).map(group => group.formId))
+    } catch {
+      activeHtmlFormIds = null
+    }
+  }
+  const detectedForms = allDetectedForms.filter(form => {
+    const pagePath = String(form?.pagePath || form?.page_path || '').trim()
+    if (pagePath && pagePath !== activeImportedPath) return false
+    if (activeHtmlFormIds && !activeHtmlFormIds.has(String(form?.id || form?.selector || ''))) return false
+    return true
+  })
+  const fallbackMappings = Array.isArray(importData?.formMappings)
+    ? importData.formMappings.filter(mapping => {
+      if (mapping.present === false) return false
+      const pagePath = String(mapping.pagePath || '').trim()
+      if (pagePath && pagePath !== activeImportedPath) return false
+      return !activeHtmlFormIds || activeHtmlFormIds.has(String(mapping.formId || ''))
+    })
+    : []
+  const activeForms = allDetectedForms.length ? detectedForms : fallbackMappings
+  if (!activeForms.length) return []
 
-  return detectedForms.map((form, index) => ({
-    id: `imported-form:${String(form?.id || form?.selector || index)}`,
+  return activeForms.map((form, index) => ({
+    id: `imported-form:${String('formId' in form ? form.formId : form?.id || form?.selector || index)}`,
     label: `Formulario ${index + 1}`,
     detail: 'Formulario detectado en el HTML importado'
   }))
@@ -20156,6 +20199,7 @@ const getImportedPanelStableFieldId = (element: Element) => String(
 
 const collectImportedPanelFormGroups = (doc: Document): ImportedPanelFormGroup[] => {
   const explicitForms = Array.from(doc.querySelectorAll<HTMLFormElement>('form'))
+    .filter(form => !isImportedCalendarBookingFormElement(form))
   const roots: Array<{ element: ParentNode; formElement: HTMLFormElement; index: number }> = explicitForms
     .map((element, index) => ({ element, formElement: element, index }))
 
@@ -28317,7 +28361,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     answers.video === 'native' ||
     answers.payment === 'native' ||
     answers.socialProfile === 'native'
-  const usesCustomHtmlForms = answers.forms === 'custom' || answers.calendar === 'custom'
+  const usesCustomHtmlForms = answers.forms === 'custom'
 
   const sections = [
     'Bloque de compatibilidad para crear HTML importable en Ristak',
@@ -28483,7 +28527,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
   if (usesCustomHtmlForms) {
     sections.push(
       'Comprobación obligatoria antes de entregar:',
-      '- Revisa todos los <form> propios del HTML, incluido el formulario de un calendario custom. Cada uno debe tener data-rstk-form-id y cada input, textarea o select guardable debe tener data-rstk-field-id.',
+      '- Revisa todos los formularios de captación propios del HTML. Cada uno debe tener data-rstk-form-id y cada input, textarea o select guardable debe tener data-rstk-field-id. El formulario interno de un calendario custom queda fuera de esta comprobación porque pertenece al calendario.',
       '- Si falta cualquiera de esas claves, la entrega está incompleta: corrige el código antes de responder.',
       ''
     )

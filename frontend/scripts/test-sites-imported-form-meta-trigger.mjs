@@ -42,4 +42,21 @@ assert.match(
   'los formularios que no son HTML importado deben conservar su configuración actual'
 )
 
+const detectedFormsStart = sitesSource.indexOf('const getMetaDetectedFormSurfaces =')
+const detectedFormsEnd = sitesSource.indexOf('const getMetaDetectedCalendarSurfaces =', detectedFormsStart)
+assert.ok(detectedFormsStart >= 0 && detectedFormsEnd > detectedFormsStart, 'No se encontró la detección Meta por página')
+const detectedFormsSource = sitesSource.slice(detectedFormsStart, detectedFormsEnd)
+assert.match(detectedFormsSource, /activePage\?\.importedAssetPath/)
+assert.match(detectedFormsSource, /activeHtmlFormIds/)
+assert.match(detectedFormsSource, /collectImportedPanelFormGroups/)
+
+const panelFormsStart = sitesSource.indexOf('const collectImportedPanelFormGroups =')
+const panelFormsEnd = sitesSource.indexOf('const collectImportedPanelFormFields =', panelFormsStart)
+assert.ok(panelFormsStart >= 0 && panelFormsEnd > panelFormsStart, 'No se encontró la detección de formularios del Panel de contenido')
+assert.match(
+  sitesSource.slice(panelFormsStart, panelFormsEnd),
+  /filter\(form => !isImportedCalendarBookingFormElement\(form\)\)/,
+  'el formulario interno del calendario no debe mostrarse ni configurarse como formulario independiente'
+)
+
 console.log('Sites imported HTML Meta form trigger contract OK')

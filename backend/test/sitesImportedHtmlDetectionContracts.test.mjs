@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
+import { db } from '../src/config/database.js'
 import {
   createImportedSiteFromHtml,
   deleteSite,
@@ -61,6 +62,85 @@ test('only fields inside real form elements are detected and grouped', async () 
       created.import.formMappings[0].fields.map(field => field.fieldId),
       ['email_contact']
     )
+  } finally {
+    await deleteSites([siteId, ...sourceFormIds])
+  }
+})
+
+test('calendar booking fields stay inside the calendar and are not detected as a lead form', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'calendar-and-lead.html',
+      name: `Calendar semantic form ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <section data-rstk-native-element="calendar" data-rstk-native-id="agenda" data-rstk-native-render="custom">
+          <form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva">
+            <input name="name" data-rstk-calendar-name data-rstk-field-id="agenda-name">
+            <input name="email" data-rstk-calendar-email data-rstk-field-id="agenda-email">
+            <button type="submit">Agendar</button>
+          </form>
+        </section>
+        <form data-rstk-form-id="lead-real" data-rstk-label="Lead real">
+          <input name="email" type="email" data-rstk-field-id="lead-email">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId))
+
+    assert.deepEqual(created.import.detectedForms.map(form => form.id), ['lead_real'])
+    assert.deepEqual(created.import.formMappings.map(mapping => mapping.formId), ['lead_real'])
+    assert.match(created.import.htmlSanitized, /<form data-rstk-calendar-book-form data-rstk-form-id="agenda-reserva">/)
+    assert.doesNotMatch(created.import.htmlSanitized, /<form data-rstk-calendar-book-form[^>]*data-rstk-import-form/)
+
+    const staleCalendarForm = {
+      id: 'agenda_reserva',
+      importedFormId: 'agenda-reserva',
+      hasStableFormId: true,
+      sourceFormIndex: 0,
+      sourceFormOffset: created.import.htmlSanitized.indexOf('<form data-rstk-calendar-book-form'),
+      title: 'Reserva de cita',
+      purpose: 'lead_capture',
+      submitText: 'Agendar',
+      pagePath: '',
+      fields: [{ id: 'agenda_email', sourceName: 'email', type: 'email' }]
+    }
+    const staleCalendarMapping = {
+      formId: 'agenda_reserva',
+      formTitle: 'Reserva de cita',
+      pagePath: '',
+      present: true,
+      fields: [{
+        fieldId: 'agenda_email',
+        sourceName: 'email',
+        label: 'Correo',
+        type: 'email',
+        destinationType: 'standard',
+        destinationKey: 'email',
+        present: true
+      }]
+    }
+    await db.run(`
+      UPDATE public_site_imports
+      SET detected_forms_json = ?, form_mappings_json = ?
+      WHERE site_id = ?
+    `, [
+      JSON.stringify([staleCalendarForm, ...created.import.detectedForms]),
+      JSON.stringify([staleCalendarMapping, ...created.import.formMappings]),
+      siteId
+    ])
+
+    const reloaded = await getImportedSiteBySiteId(siteId)
+    assert.deepEqual(reloaded.detectedForms.map(form => form.id), ['lead_real'])
+    assert.equal(activeForm(reloaded, 'agenda_reserva'), undefined)
+    assert.equal(reloaded.formMappings.find(mapping => mapping.formId === 'agenda_reserva')?.present, false)
+    assert.equal(activeForm(reloaded, 'lead_real')?.present, true)
   } finally {
     await deleteSites([siteId, ...sourceFormIds])
   }

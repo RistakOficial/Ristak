@@ -1576,6 +1576,71 @@ function normalizeImportedFieldKey(value, fallback = 'custom_field') {
     .replace(/^_+|_+$/g, '') || fallback
 }
 
+const IMPORTED_CALENDAR_BOOK_FORM_ATTR_PATTERN = /\bdata-(?:rstk|ristak|ristack)-calendar-book-form(?:\s|=|$)/i
+const IMPORTED_CALENDAR_NATIVE_ATTR_NAMES = [
+  'data-rstk-native-element',
+  'data-ristak-native-element',
+  'data-ristack-native-element',
+  'data-rstk-element',
+  'data-ristak-element',
+  'data-ristack-element',
+  'data-rstk-element-type',
+  'data-ristak-element-type',
+  'data-ristack-element-type',
+  'data-rstk-component',
+  'data-ristak-component',
+  'data-ristack-component',
+  'data-rstk-widget',
+  'data-ristak-widget',
+  'data-ristack-widget'
+]
+const IMPORTED_VOID_HTML_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+  'meta', 'param', 'source', 'track', 'wbr'
+])
+
+function isImportedCalendarNativeAttrs(attrs = {}) {
+  const value = IMPORTED_CALENDAR_NATIVE_ATTR_NAMES
+    .map(name => cleanString(attrs[name]))
+    .find(Boolean)
+  const token = cleanString(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\s]+/g, '-')
+  return ['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)
+}
+
+function isImportedFormInsideNativeCalendar(html = '', formOffset = -1) {
+  const source = String(html || '')
+  if (!source || formOffset < 0) return false
+
+  const tagPattern = /<(\/?)\s*([a-z][\w:-]*)\b([^>]*)>/gi
+  const stack = []
+  let match
+  while ((match = tagPattern.exec(source))) {
+    if (match.index >= formOffset) break
+    const closing = Boolean(match[1])
+    const tagName = cleanString(match[2]).toLowerCase()
+    if (closing) {
+      const openingIndex = stack.map(entry => entry.tagName).lastIndexOf(tagName)
+      if (openingIndex >= 0) stack.splice(openingIndex)
+      continue
+    }
+    if (/\/\s*>$/.test(match[0]) || IMPORTED_VOID_HTML_TAGS.has(tagName)) continue
+    stack.push({
+      tagName,
+      calendar: isImportedCalendarNativeAttrs(parseHtmlAttributes(match[3] || ''))
+    })
+  }
+  return stack.some(entry => entry.calendar)
+}
+
+function isImportedCalendarBookingForm(html = '', formOffset = -1, attrsText = '') {
+  return IMPORTED_CALENDAR_BOOK_FORM_ATTR_PATTERN.test(String(attrsText || '')) ||
+    isImportedFormInsideNativeCalendar(html, formOffset)
+}
+
 function escapeRegExp(value = '') {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -2113,7 +2178,11 @@ function sanitizeImportedHtml(html = '') {
     report.push(`Se bloqueo ${attr} con javascript`)
     return ` ${attr}="#"`;
   })
-  sanitized = sanitized.replace(/<form\b([^>]*)>/gi, '<form$1 data-rstk-import-form novalidate>')
+  sanitized = sanitized.replace(/<form\b([^>]*)>/gi, (match, attrsText = '', offset = -1) => (
+    isImportedCalendarBookingForm(sanitized, offset, attrsText)
+      ? match
+      : `<form${attrsText} data-rstk-import-form novalidate>`
+  ))
 
   if (!/<html[\s>]/i.test(sanitized)) {
     sanitized = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${sanitized}</body></html>`
@@ -2423,6 +2492,11 @@ function detectImportedForms(html = '') {
 
   while ((formMatch = formPattern.exec(html))) {
     const attrs = parseHtmlAttributes(formMatch[1] || '')
+    const calendarBookingForm = isImportedCalendarBookingForm(html, formMatch.index, formMatch[1] || '')
+    if (calendarBookingForm) {
+      sourceFormIndex += 1
+      continue
+    }
     const formHtml = formMatch[2] || ''
     const explicitForm = cleanString(attrs['data-rstk-form'] || attrs['data-ristack-form'] || attrs['data-ristak-form'])
     const importedFormId = cleanString(attrs['data-rstk-form-id'] || attrs['data-ristack-form-id'] || attrs['data-ristak-form-id'])
@@ -2506,6 +2580,11 @@ function assignImportedFormIds(html = '', forms = []) {
 
   return String(html || '').replace(/<form\b([^>]*)>/gi, (match, attrsText = '', offset = -1) => {
     const attrs = parseHtmlAttributes(attrsText)
+    const calendarBookingForm = isImportedCalendarBookingForm(html, offset, attrsText)
+    if (calendarBookingForm) {
+      sourceFormIndex += 1
+      return match
+    }
     const detectedForm = hasSourcePositions
       ? formsByOffset.get(offset) || formsBySourceIndex.get(sourceFormIndex) || null
       : detectedForms[legacyDetectedFormIndex] || null
@@ -7132,7 +7211,7 @@ ${buildImportedHtmlVideoActionTargetRulesText()}
 
 Convenciones de formularios para Ristak:
 - Estas convenciones aplican a formularios HTML propios; si usas data-rstk-native-element="form", no crees un <form> propio para esa zona.
-- REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no termines ni respondas status="ready" hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. Un HTML que omita cualquiera de esas claves esta incompleto para Ristak.
+- REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no termines ni respondas status="ready" hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. La única excepción es el <form data-rstk-calendar-book-form> dentro de un calendario custom: pertenece al calendario y no debe llevar IDs de formulario/campos ni conversión propia.
 - name, id, data-rstk-field y los atributos data-rstk-calendar-* NO sustituyen data-rstk-form-id ni data-rstk-field-id: ayudan a interpretar o ejecutar el campo, pero no conservan su asociacion cuando el codigo se reescribe.
 - Cada conjunto debe vivir en un elemento <form> real con data-rstk-form-id semantico, estable y unico en TODO el sitio, incluso entre paginas; agrega data-rstk-label para el nombre visible del grupo. Ejemplo: <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto" data-rstk-form="lead_capture" method="post">.
 - Cada campo logico debe tener data-rstk-field-id estable y unico dentro de su formulario, ademas de id, name, label visible y autocomplete cuando aplique. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas las opciones comparten data-rstk-field-id y name.
@@ -7158,14 +7237,14 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
-- Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
+- Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No hagas esto en data-rstk-calendar-book-form: el calendario conectado emite Schedule por sí mismo solo después de reservar.
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
-- Para citas agendadas usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada.
+- Para citas administradas fuera del calendario conectado usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada. En un calendario custom de Ristak no declares estos atributos.
 - Para pagos confirmados usa data-rstk-conversion-event="Purchase", data-rstk-conversion-type="purchase", data-rstk-conversion-value, data-rstk-conversion-content-name y data-rstk-conversion-order-id o data-rstk-payment-id. No marques Purchase en intento de pago, precio mostrado o click de checkout; solo en confirmacion real o pagina de gracias.
 - Si el dato depende de un campo, marca ese campo con data-rstk-conversion-param="value|contentName|orderId|appointment_start_time|appointment_end_time|calendarName|paymentId|status".
 - La moneda de Purchase la pone Ristak desde la cuenta; no dependas de MXN/USD en el HTML salvo que sea texto visible del negocio.
-- Ejemplo cita: <form data-rstk-form-id="agenda" data-rstk-conversion-event="Schedule" data-rstk-conversion-type="appointment_scheduled" data-rstk-calendar-name="Consulta inicial"> ... <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z"> ... </form>.
+- Ejemplo de cita externa autogestionada (no calendario custom Ristak): <form data-rstk-form-id="agenda-externa" data-rstk-conversion-event="Schedule" data-rstk-conversion-type="appointment_scheduled" data-rstk-calendar-name="Consulta inicial"> ... <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z"> ... </form>.
 - Ejemplo pago: <form data-rstk-form-id="checkout" data-rstk-conversion-event="Purchase" data-rstk-conversion-type="purchase" data-rstk-conversion-value="1499" data-rstk-conversion-content-name="Consulta premium" data-rstk-conversion-order-id="ORD-123"> ... </form>.
 
 JSON cuando falta información:
@@ -11607,6 +11686,25 @@ export async function getImportedSiteBySiteId(siteId) {
     updatedAt: row.updated_at
   }
   imported.codeFiles = await listImportedSiteCodeFiles(siteId, imported)
+  const htmlCodeFiles = imported.codeFiles.filter(file => (
+    file?.language === 'html' && file?.role !== 'popup'
+  ))
+  if (htmlCodeFiles.length) {
+    const usedFormIds = new Set()
+    const currentDetectedForms = htmlCodeFiles.flatMap(file => {
+      const pagePath = cleanString(file.path)
+      return namespaceImportedPageForms(detectImportedForms(file.content), pagePath, usedFormIds)
+        .map(form => ({
+          ...form,
+          title: pagePath ? `${form.title} - ${pagePath}` : form.title
+        }))
+    })
+    imported.detectedForms = currentDetectedForms
+    imported.formMappings = mergeImportedFormMappings(
+      imported.formMappings,
+      buildDefaultImportedFormMappings(currentDetectedForms)
+    )
+  }
   return imported
 }
 
@@ -24530,7 +24628,32 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         setMessage(form, text || 'Gracias. Por ahora no califica.', 'success');
       };
 
-      const importedForms = Array.from(document.querySelectorAll('form'));
+      const calendarBookingFormAttrs = [
+        'data-rstk-calendar-book-form',
+        'data-ristak-calendar-book-form',
+        'data-ristack-calendar-book-form'
+      ];
+      const nativeCalendarAttrs = [
+        'data-rstk-native-element', 'data-ristak-native-element', 'data-ristack-native-element',
+        'data-rstk-element', 'data-ristak-element', 'data-ristack-element',
+        'data-rstk-element-type', 'data-ristak-element-type', 'data-ristack-element-type',
+        'data-rstk-component', 'data-ristak-component', 'data-ristack-component',
+        'data-rstk-widget', 'data-ristak-widget', 'data-ristack-widget',
+        'data-rstk-native-type'
+      ];
+      const calendarTokens = new Set(['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments']);
+      const isCalendarBookingForm = (form) => {
+        if (calendarBookingFormAttrs.some(name => form.hasAttribute && form.hasAttribute(name))) return true;
+        let element = form.parentElement;
+        while (element) {
+          const value = nativeCalendarAttrs.map(name => element.getAttribute && element.getAttribute(name)).find(Boolean);
+          const token = String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[_\s]+/g, '-');
+          if (calendarTokens.has(token)) return true;
+          element = element.parentElement;
+        }
+        return false;
+      };
+      const importedForms = Array.from(document.querySelectorAll('form')).filter(form => !isCalendarBookingForm(form));
       const initImportedContactPrefill = () => {
         const apply = () => {
           if (!window.ristakNativeInitContactPrefill) return;
@@ -26476,6 +26599,7 @@ function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
     slotsUrl: `/api/calendars/public/${encodeURIComponent(calendarSlug)}/free-slots`,
     bookUrl: `/api/calendars/public/${encodeURIComponent(calendarSlug)}/appointments`,
     redirectUrl: calendarCompletionRedirect,
+    preview: Boolean(context.preview),
     metaEventName: cleanString(metaParams.metaCalEvent),
     metaEventParameters: metaParams.metaCalData ? parseJson(metaParams.metaCalData, {}) : {}
   }
@@ -26687,11 +26811,16 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       return config;
     };
     const withParams = (url, params = {}) => {
-      const target = new URL(url, window.location.origin);
+      const source = String(url || '');
+      const hashIndex = source.indexOf('#');
+      const hash = hashIndex >= 0 ? source.slice(hashIndex) : '';
+      const base = hashIndex >= 0 ? source.slice(0, hashIndex) : source;
+      const query = [];
       ['startDate', 'endDate', 'timezone'].forEach(key => {
-        if (params[key]) target.searchParams.set(key, params[key]);
+        if (params[key]) query.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
       });
-      return target.toString();
+      if (!query.length) return source;
+      return base + (base.includes('?') ? '&' : '?') + query.join('&') + hash;
     };
     const parseJson = async (response) => {
       const payload = await response.json().catch(() => ({}));
@@ -26707,7 +26836,21 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
     };
     window.ristakCalendarBook = async (slotId, payload = {}) => {
       const config = getConfig(slotId);
+      if (config.preview) {
+        return {
+          success: true,
+          preview: true,
+          message: 'Vista previa: la disponibilidad es real, pero no se creó ninguna cita.'
+        };
+      }
       const body = Object.assign({}, payload);
+      if (!body.sourceUrl) body.sourceUrl = window.location.href;
+      if (!body.bookingChannel) body.bookingChannel = 'site';
+      if (window.ristakMetaBuildMetaPayload) {
+        body.meta = window.ristakMetaBuildMetaPayload(Object.assign({}, body.meta || {}, {
+          conversionType: 'appointment_scheduled'
+        }));
+      }
       if (config.metaEventName) {
         body.meta = Object.assign({}, body.meta || {}, {
           siteEventName: config.metaEventName,
@@ -26834,6 +26977,8 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
     });
     const bindBookingForm = ({ bookingForm, getStartTime, getTimezone, onSuccess, setMessage, slotId }) => {
       if (!bookingForm) return;
+      ['data-rstk-import-form', 'data-ristak-import-form', 'data-ristack-import-form'].forEach(name => bookingForm.removeAttribute && bookingForm.removeAttribute(name));
+      bookingForm.removeAttribute && bookingForm.removeAttribute('novalidate');
       bookingForm.addEventListener('submit', async event => {
         event.preventDefault();
         const startTime = String(getStartTime() || '');

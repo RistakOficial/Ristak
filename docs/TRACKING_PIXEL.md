@@ -564,7 +564,9 @@ window.ristakTrack('form_submit', {
 
 Los sitios HTML importados por Sites no deben depender de heuristicas visuales
 para saber si un formulario representa lead, cita o pago. El contrato oficial es
-declarar la conversion en el `<form>` final o en el boton submit:
+declarar la conversion en el `<form>` final o en el boton submit. Este ejemplo
+es para una cita externa autogestionada, no para un calendario custom conectado
+a Ristak:
 
 ```html
 <form
@@ -676,6 +678,20 @@ await window.ristakCalendarBook('agenda-custom', {
 `startTime` debe ser el ISO UTC del slot confirmado y `timezone` la zona usada
 para mostrar/agendar la cita. El backend vuelve a validar disponibilidad antes
 de crear la cita y manda el evento Meta de calendario cuando corresponde.
+
+El `<form data-rstk-calendar-book-form>` de ese frontend es parte del calendario,
+no un formulario HTML independiente. El importador, el Panel de contenido, la
+pestaña Meta y el runtime de submits genéricos deben excluirlo, incluso si un
+sitio anterior conserva `data-rstk-form-id` o `data-rstk-field-id`. Por lo tanto,
+una reserva no genera además un `Lead`: únicamente genera el evento configurado
+para el calendario (por default `Schedule`) después de que el backend confirma
+la cita. Entrar a la página, escoger fecha u horario y abrir el paso de datos no
+son conversiones.
+
+El preview consulta disponibilidad real, pero es deliberadamente inerte para
+escrituras y tracking: confirmar ahí no crea la cita, no redirige y no manda
+Pixel/CAPI. La validación de `Schedule` debe hacerse en una URL pública publicada
+y completando una reserva real.
 
 ## Tabla `sessions`
 

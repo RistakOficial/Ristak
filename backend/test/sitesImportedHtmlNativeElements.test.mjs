@@ -657,6 +657,7 @@ test('imported HTML custom calendar slots keep custom markup and expose mapped R
     assert.match(html, /data-rstk-calendar-book-form/)
     assert.match(html, /window\.ristakCalendarGetSlots/)
     assert.match(html, /window\.ristakCalendarBook/)
+    assert.match(html, /filter\(form => !isCalendarBookingForm\(form\)\)/)
     assert.match(html, /rstkCalendarWired/)
     assert.match(html, /\/api\/calendars\/public\/agenda-custom-slug\/free-slots/)
     assert.match(html, /\/api\/calendars\/public\/agenda-custom-slug\/appointments/)

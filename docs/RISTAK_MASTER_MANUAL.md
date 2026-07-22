@@ -4530,6 +4530,10 @@ order id y payment id; la moneda enviada a Meta sigue saliendo de
 `account_currency`, no del HTML externo. Un HTML externo no debe marcar
 `Purchase` en clicks o intentos de pago: solo en confirmacion real/pagina de
 gracias.
+Esta ruta aplica a formularios HTML independientes. El
+`<form data-rstk-calendar-book-form>` que vive dentro de un calendario custom es
+parte del calendario y queda fuera del submit generico: no crea submission de
+formulario ni dispara un `Lead` adicional.
 
 Los formularios HTML propios distinguen `SUBMITTED` de `QUALIFIED`. Si una
 opcion radio, checkbox o select descarta candidatos, esa opcion lleva
@@ -4738,6 +4742,11 @@ nunca a dos videos distintos de la misma página.
   usada para mostrar la cita; el backend calcula con la zona del negocio y
   vuelve a validar disponibilidad al crearla. Los instantes recibidos para el
   mes se agrupan en la zona mostrada sin confiar en el día agrupador del backend.
+  El `<form data-rstk-calendar-book-form>` pertenece semánticamente a este bloque:
+  no requiere `data-rstk-form-id` ni `data-rstk-field-id`, no aparece como
+  formulario independiente en Contenido o Meta y no ejecuta el runtime genérico
+  de leads. Solo una reserva confirmada en backend dispara el evento del
+  calendario, normalmente `Schedule`.
   El contrato legacy de `input date` más `select` permanece montable para HTML
   publicado anteriormente, pero ya no es la estructura indicada a las IA.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
@@ -4951,6 +4960,11 @@ runtime seguro. El HTML generado por IA no escribe JavaScript: declara
 `data-rstk-calendar-load-slots`, `data-rstk-calendar-book-form` y los hooks de
 contacto/mensaje; Ristak los conecta a los endpoints publicos vivos de
 disponibilidad y agendado.
+En preview, `window.ristakCalendarGetSlots` consulta disponibilidad real aun
+dentro de un `srcDoc` cuyo origen es `null`; `window.ristakCalendarBook` responde
+con una confirmación de demostración y no hace POST, no crea citas, no redirige
+ni dispara Pixel/CAPI. El agendado y `Schedule` solo ocurren en la página
+publicada después de confirmar la cita real.
 
 Cuando el asistente de codigo prepara un HTML completo y todavia no se ha guardado,
 la vista de pagina debe mandar ese archivo como borrador al endpoint de preview
@@ -5032,14 +5046,14 @@ configurarlo otra vez.
 
 Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente interno
 tratan este contrato como una compuerta obligatoria de entrega, no como una
-recomendacion. Si el HTML contiene un formulario propio, la IA no debe entregarlo
-ni marcarlo listo hasta comprobar que cada `<form>` tenga `data-rstk-form-id` y
-cada `input`, `textarea` o `select` guardable tenga `data-rstk-field-id`. `name`,
-`id`, `data-rstk-field` y los hooks `data-rstk-calendar-*` ayudan a interpretar o
-ejecutar los campos, pero no reemplazan su identidad estable. Esta misma regla
-incluye el `<form data-rstk-calendar-book-form>` de un calendario custom: el
-formulario de reserva y sus campos de nombre, email y telefono tambien deben
-declarar sus IDs estables antes de que la IA entregue el codigo.
+recomendacion. Si el HTML contiene un formulario propio de captacion, la IA no
+debe entregarlo ni marcarlo listo hasta comprobar que cada `<form>` tenga
+`data-rstk-form-id` y cada `input`, `textarea` o `select` guardable tenga
+`data-rstk-field-id`. `name`, `id` y `data-rstk-field` ayudan a interpretar los
+campos, pero no reemplazan su identidad estable. La excepción explícita es
+`<form data-rstk-calendar-book-form>` dentro de un calendario custom: sus hooks
+`data-rstk-calendar-*` alimentan la reserva y no deben recibir IDs ni conversión
+de formulario independiente.
 
 En el sitio publicado, `data-rstk-field-id` es tambien la llave estable del
 payload capturado. Por eso dos campos distintos pueden conservar el mismo
