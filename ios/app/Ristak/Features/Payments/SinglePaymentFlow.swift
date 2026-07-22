@@ -117,10 +117,12 @@ final class SinglePaymentModel {
         }
     }
 
-    enum Method: Equatable {
+    enum Method: Equatable, Hashable {
         case link
         case savedCard
         case manual
+
+        static let displayOrder: [Self] = [.manual, .link, .savedCard]
     }
 
     /// Resultado de un cobro con tarjeta guardada.
@@ -1084,38 +1086,43 @@ struct SinglePaymentOptionsView: View {
     private var methodSection: some View {
         Section("¿Cómo quieres cobrar?") {
             VStack(spacing: RistakTheme.Spacing.xs) {
-                if !(home.capabilities?.offlineOnly ?? true) {
-                    PaymentOptionRow(
-                        title: "Enviar enlace de pago",
-                        subtitle: linkOptionSubtitle,
-                        isSelected: model.method == .link
-                    ) {
-                        model.method = .link
-                        if model.selectedGateway == nil {
-                            model.selectedGateway = home.capabilities?.connectedGateways.first
-                        }
-                    }
-
-                    if savedCardCapableConnected {
+                ForEach(SinglePaymentModel.Method.displayOrder, id: \.self) { method in
+                    switch method {
+                    case .manual:
                         PaymentOptionRow(
-                            title: "Cobrar tarjeta guardada",
-                            subtitle: savedCardOptionSubtitle,
-                            isSelected: model.method == .savedCard,
-                            isDisabled: !model.isLoadingSavedCards
-                                && model.savedCards.isEmpty
-                                && !model.savedCardsLoadFailed
+                            title: "Registrar pago manual",
+                            subtitle: "Registra el pago en Ristak (efectivo, transferencia, etc.)",
+                            isSelected: model.method == .manual
                         ) {
-                            model.method = .savedCard
+                            model.method = .manual
+                        }
+                    case .link:
+                        if !(home.capabilities?.offlineOnly ?? true) {
+                            PaymentOptionRow(
+                                title: "Enviar enlace de pago",
+                                subtitle: linkOptionSubtitle,
+                                isSelected: model.method == .link
+                            ) {
+                                model.method = .link
+                                if model.selectedGateway == nil {
+                                    model.selectedGateway = home.capabilities?.connectedGateways.first
+                                }
+                            }
+                        }
+                    case .savedCard:
+                        if !(home.capabilities?.offlineOnly ?? true), savedCardCapableConnected {
+                            PaymentOptionRow(
+                                title: "Cobrar tarjeta guardada",
+                                subtitle: savedCardOptionSubtitle,
+                                isSelected: model.method == .savedCard,
+                                isDisabled: !model.isLoadingSavedCards
+                                    && model.savedCards.isEmpty
+                                    && !model.savedCardsLoadFailed
+                            ) {
+                                model.method = .savedCard
+                            }
                         }
                     }
-                }
-
-                PaymentOptionRow(
-                    title: "Registrar pago manual",
-                    subtitle: "Registra el pago en Ristak (efectivo, transferencia, etc.)",
-                    isSelected: model.method == .manual
-                ) {
-                    model.method = .manual
                 }
             }
             .listRowSeparator(.hidden)

@@ -797,13 +797,14 @@ Encabezado: tarjeta resumen (Cliente, nombre, email; "Total a cobrar" + desglose
 "Este cobro no incluye impuestos"; "Concepto"). Etapas (`singlePaymentOptionsStage`):
 
 - **`method`** (elige acción):
-  1. `Cobrar tarjeta guardada` (solo si hay tarjetas Stripe/Conekta/Rebill del contacto) —
-     descripción "Elige la tarjeta guardada en <Stripe o Conekta o Rebill>." / "…de <único>." /
-     "Este cliente todavía no tiene tarjetas guardadas.".
+  1. `Registrar pago manual` — "Marca el invoice como pagado (efectivo, transferencia, etc.)"
+     (con HL) / "Registra el pago en Ristak (efectivo, transferencia, etc.)" (sin HL).
   2. `Enviar enlace de pago` (si hay pasarelas) — descripción "Después eliges pasarela: <lista>."
      o texto específico de la única pasarela (líneas 4714-4728).
-  3. `Registrar pago manual` — "Marca el invoice como pagado (efectivo, transferencia, etc.)"
-     (con HL) / "Registra el pago en Ristak (efectivo, transferencia, etc.)" (sin HL).
+  3. `Cobrar tarjeta guardada` (si hay una pasarela compatible; se deshabilita cuando el
+     contacto no tiene tarjetas Stripe/Conekta/Rebill) —
+     descripción "Elige la tarjeta guardada en <Stripe o Conekta o Rebill>." / "…de <único>." /
+     "Este cliente todavía no tiene tarjetas guardadas.".
 - **`gateway`** (si hay >1 pasarela): opciones con logo y copy:
   Stripe "Genera tu página pública con campo seguro de tarjeta y meses sin intereses si aplica.";
   Conekta "Genera tu página pública con tokenizador seguro y opción de meses sin intereses.";

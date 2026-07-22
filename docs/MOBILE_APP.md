@@ -1545,6 +1545,10 @@ confirmacion humana. El boton final del wizard debe nombrar la accion real:
 `Registrar pago` para pagos offline recibidos, `Enviar enlace de pago` para
 links o domiciliacion, y `Cobrar tarjeta` para cobros directos con tarjeta
 guardada.
+En el selector de cobro unico de Android y Apple, las acciones se muestran
+siempre en este orden: `Registrar pago manual`, `Enviar enlace de pago` y
+`Cobrar tarjeta guardada`. Si la tarjeta guardada aparece deshabilitada, queda
+al final sin cortar visualmente las dos acciones disponibles.
 Los planes de pago deben agrupar el primer pago en su propio bloque con monto,
 fecha y metodo; los pagos restantes solo capturan monto y fecha, porque la
 domiciliacion o tarjeta guardada define como se cobran los futuros cargos. La

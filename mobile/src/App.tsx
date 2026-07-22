@@ -7663,6 +7663,14 @@ function PaymentFormView({
               ) : (
               <>
                 <PaymentWizardChoice
+                  icon={Banknote}
+                  meta="Offline"
+                  selected={singleAction === 'manual'}
+                  subtitle="Registra efectivo, transferencia, cheque u otro pago ya confirmado."
+                  title="Registrar pago manual"
+                  onPress={() => setSingleAction('manual')}
+                />
+                <PaymentWizardChoice
                   icon={Link2}
                   meta="Link"
                   selected={singleAction === 'payment_link'}
@@ -7678,14 +7686,6 @@ function PaymentFormView({
                   subtitle={planSavedCards.length ? 'Cobra una tarjeta guardada del contacto en Stripe, Conekta o Rebill.' : 'Este contacto todavía no tiene tarjetas guardadas.'}
                   title="Cobrar tarjeta guardada"
                   onPress={() => setSingleAction('saved_card')}
-                />
-                <PaymentWizardChoice
-                  icon={Banknote}
-                  meta="Offline"
-                  selected={singleAction === 'manual'}
-                  subtitle="Registra efectivo, transferencia, cheque u otro pago ya confirmado."
-                  title="Registrar pago manual"
-                  onPress={() => setSingleAction('manual')}
                 />
               </>
               )
