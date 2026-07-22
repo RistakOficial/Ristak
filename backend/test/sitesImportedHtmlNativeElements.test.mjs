@@ -111,7 +111,7 @@ test('imported HTML custom social profile keeps the AI design and injects connec
       <html>
         <body>
           <main>
-            <section class="ai-social-card" data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal">
+            <section class="ai-social-card" style="color:inherit;height:100vh!important;min-height:960px!important;max-height:1200px!important;aspect-ratio:1/1!important;flex:1 1 auto!important;margin:0 0 80vh!important" data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal">
               <img class="ai-social-avatar" data-rstk-social-avatar src="https://fake.test/avatar.webp" alt="Perfil inventado">
               <strong class="ai-social-name" data-rstk-social-name>Perfil inventado</strong>
               <span class="ai-social-verified" data-rstk-social-verified>Verificado</span>
@@ -154,6 +154,9 @@ test('imported HTML custom social profile keeps the AI design and injects connec
     })
 
     assert.match(html, /class="ai-social-card rstk-imported-native-slot rstk-imported-native-social-profile rstk-imported-native-custom"/)
+    assert.match(html, /style="color:inherit"/)
+    assert.doesNotMatch(html, /style="[^"]*(?:height|min-height|max-height|aspect-ratio|flex|margin):/)
+    assert.match(html, /\.rstk-imported-native-social-profile\.rstk-imported-native-custom\[data-rstk-native-mounted="true"\]\{width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;aspect-ratio:auto!important;flex-grow:0!important;flex-shrink:0!important;margin-bottom:0!important\}/)
     assert.match(html, /data-rstk-native-mounted="true"/)
     assert.match(html, /data-rstk-native-type="social_profile"/)
     assert.match(html, /data-rstk-native-slot-id="perfil-principal"/)

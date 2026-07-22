@@ -526,7 +526,12 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /data-rstk-social-name/)
   assert.match(instructions, /data-rstk-social-followers/)
   assert.match(instructions, /data-rstk-social-verified/)
-  assert.match(instructions, /No inventes seguidores.*no llames Meta desde el navegador/i)
+  assert.match(instructions, /contenedor raíz del perfil debe medir únicamente lo que ocupa su contenido/)
+  assert.match(instructions, /No le pongas height, min-height, max-height, block-size/)
+  assert.match(instructions, /unidades de viewport como vh\/svh\/dvh/)
+  assert.match(instructions, /Cierra el contenedor raíz inmediatamente después del diseño visual del perfil/)
+  assert.match(instructions, /sin un bloque vacío ni una altura de pantalla completa/)
+  assert.match(instructions, /No inventes .*seguidores.*no llames Meta desde el navegador/i)
   assert.match(instructions, /Un video HTML propio queda opaco/)
   assert.match(instructions, /El slot nativo de video NO define la geometria del reproductor/)
   assert.match(instructions, /padding porcentual/)
@@ -577,7 +582,10 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
 })
 
 test('external AI compatibility instructions reject forms without stable Ristak IDs', async () => {
-  const { buildImportedHtmlCustomCalendarRulesText } = await import('../../shared/sites/importedHtmlContract.js')
+  const {
+    buildImportedHtmlCustomCalendarRulesText,
+    buildImportedHtmlCustomSocialProfileRulesText
+  } = await import('../../shared/sites/importedHtmlContract.js')
   const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
   const guideMatch = source.match(/const IMPORTED_HTML_AI_GUIDE = `[\s\S]*?const IMPORTED_HTML_MOBILE_PREVIEW_STYLE/)
   const builderMatch = source.match(/const buildExternalAICompatibilityText[\s\S]*?\nconst copyTextToClipboard/)
@@ -588,6 +596,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const guide = guideMatch[0]
   const builder = builderMatch[0]
   const calendarGuide = buildImportedHtmlCustomCalendarRulesText()
+  const socialProfileGuide = buildImportedHtmlCustomSocialProfileRulesText()
 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
   assert.match(guide, /Un HTML que omita cualquiera de esas claves está incompleto para Ristak/)
@@ -596,9 +605,11 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /Ristak detecta la orientación real del archivo/)
   assert.match(guide, /ocupa todo el ancho disponible en móvil conservando 9:16/)
   assert.match(guide, /No fabriques franjas laterales, marcos negros/)
-  assert.match(guide, /data-rstk-native-element="social-profile"/)
-  assert.match(guide, /data-rstk-social-avatar/)
-  assert.match(guide, /data-rstk-social-verified/)
+  assert.match(guide, /buildImportedHtmlCustomSocialProfileRulesText/)
+  assert.match(socialProfileGuide, /data-rstk-native-element="social-profile"/)
+  assert.match(socialProfileGuide, /data-rstk-social-avatar/)
+  assert.match(socialProfileGuide, /data-rstk-social-verified/)
+  assert.match(socialProfileGuide, /altura de pantalla completa/)
   assert.match(builder, /No entregues el HTML si falta uno solo/)
   assert.match(calendarGuide, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
   assert.match(builder, /buildImportedHtmlCustomCalendarRulesText\('Calendario:'\)/)
@@ -608,7 +619,8 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(builder, /ancho completo y ancho manual por vista se configuran en el panel/)
   assert.match(builder, /Perfil de red social:/)
   assert.match(builder, /ChatGPT, Claude o Codex diseñarán el perfil/)
-  assert.match(builder, /No inventes nombre, foto, seguidores ni verificado/)
+  assert.match(builder, /buildImportedHtmlCustomSocialProfileRulesText\('Reglas del perfil custom:'\)/)
+  assert.match(socialProfileGuide, /No inventes .*seguidores.*verificado/)
   assert.match(source, /invalidSocialProfileDeclarations/)
   assert.match(source, /Perfiles sociales incompletos/)
   assert.match(calendarGuide, /experiencia completa tipo Calendly/)

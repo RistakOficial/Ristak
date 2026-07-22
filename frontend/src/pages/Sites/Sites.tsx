@@ -263,6 +263,7 @@ import {
   IMPORTED_HTML_MOBILE_RULES,
   areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
   resolveVisibleImportedNativeElementSelection
 } from '../../../../shared/sites/importedHtmlContract.js'
@@ -2595,8 +2596,7 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una falsa relación de aspecto alrededor del slot. En modo automático, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en móvil conservando 9:16; el usuario también puede elegir ancho completo o manual por vista desde el panel.
-- Para que la IA diseñe un perfil social conectado usa <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal">. Dentro son obligatorios <img data-rstk-social-avatar alt="">, un elemento data-rstk-social-name, otro data-rstk-social-followers y el badge completo con data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle. Cierra el section después del diseño.
-- Diseña libremente ese perfil alrededor de los hooks, pero no inventes foto, nombre, seguidores ni verificado y no llames Meta desde el navegador. Ristak inyecta los datos del perfil elegido y oculta el elemento completo data-rstk-social-verified cuando el usuario apaga esa opción.
+${buildImportedHtmlCustomSocialProfileRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
 - Targets para acciones de video: marca cada botón, contenedor, imagen, sección o formulario con id y data-rstk-video-action-target estables. Ejemplo: <section id="oferta-final" data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">...</section>.
@@ -28457,9 +28457,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Perfil de red social:',
       '- ChatGPT, Claude o Codex diseñarán el perfil, pero los datos reales los llenará Ristak.',
-      '- Usa <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal"> y diseña libremente dentro.',
-      '- Son obligatorios <img data-rstk-social-avatar alt="">, un elemento data-rstk-social-name, otro data-rstk-social-followers y el badge completo con data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle.',
-      '- No inventes nombre, foto, seguidores ni verificado y no llames Meta desde JavaScript. Ristak inyecta esos datos desde el perfil elegido y oculta todo el elemento data-rstk-social-verified cuando el usuario apaga esa opción.',
+      buildImportedHtmlCustomSocialProfileRulesText('Reglas del perfil custom:'),
       '- Conserva el contenedor, su data-rstk-native-id y todos los hooks al rediseñar. El CSS y el layout sí son tuyos; los valores no.',
       ''
     )

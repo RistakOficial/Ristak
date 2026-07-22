@@ -4797,6 +4797,16 @@ nunca a dos videos distintos de la misma página.
   CSS del autor. El sitio publico no llama Meta ni recibe credenciales; consume
   el snapshot guardado que el job diario existente actualiza desde backend.
 
+  La raíz de un perfil social custom representa únicamente la ficha conectada y
+  siempre conserva altura intrínseca. No puede reservar una pantalla completa
+  con `height`, `min-height`, `max-height`, propiedades lógicas equivalentes,
+  `aspect-ratio`, unidades `vh`/`svh`/`dvh`, crecimiento flex o margen inferior
+  artificial. La portada, el fondo grande y el ritmo entre secciones pertenecen
+  a un padre o hermano; hero, video, formulario y contenido posterior quedan
+  fuera de la raíz del perfil. Además de exigirlo a la IA interna y en las reglas
+  copiables para ChatGPT, Claude o Codex, el renderer neutraliza geometría legacy
+  en esa raíz al montarla para que un HTML anterior no genere un vacío gigante.
+
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o
 contenedores con `id`, `data-rstk-form-id`, `data-rstk-section` o
@@ -4963,7 +4973,10 @@ descarte y `data-rstk-conversion-condition="qualified_only"`; tambien prohibe
 disparar Pixel/CAPI manualmente antes del veredicto de Ristak.
 Cuando elige perfil social custom, las instrucciones exigen los cuatro hooks
 obligatorios, prohiben seguidores o identidades inventadas y dejan claro que
-Ristak conserva el diseño pero inyecta los datos del perfil conectado.
+Ristak conserva el diseño pero inyecta los datos del perfil conectado. También
+exigen cerrar la raíz justo después de la ficha, mantener altura intrínseca y
+validar a 390 px que el siguiente contenido aparezca con espaciado normal, sin
+un bloque vacío ni una sección de alto completo.
 
 El mapeo de campos HTML vive exclusivamente en el Panel de contenido; se elimina
 el modal separado de revision o "Ruta de datos". Cada formulario personalizado

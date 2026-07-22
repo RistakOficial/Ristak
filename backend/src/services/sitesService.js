@@ -67,6 +67,7 @@ import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText
 } from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
@@ -7111,8 +7112,7 @@ Contrato de código cerrado y contenido:
 - Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
 - El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una relacion de aspecto falsa alrededor del slot. En modo automatico, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en movil conservando 9:16; el usuario tambien puede elegir ancho completo o manual por vista desde el panel.
-- Para un perfil social diseñado por ti pero alimentado por Ristak usa un contenedor con data-rstk-native-element="social-profile", data-rstk-native-id estable y data-rstk-native-render="custom". Dentro conserva estos hooks: data-rstk-social-avatar en un <img>, data-rstk-social-name, data-rstk-social-followers y data-rstk-social-verified. Puedes agregar data-rstk-social-platform y data-rstk-social-subtitle. Diseña libremente el markup y CSS alrededor de esos hooks; Ristak inyecta foto, nombre, red, texto y seguidores del perfil elegido, y oculta el elemento completo data-rstk-social-verified cuando el usuario apaga el verificado.
-- No inventes seguidores, foto, nombre ni estado verificado y no llames Meta desde el navegador. Ristak resuelve el perfil conectado del editor y actualiza los datos publicados desde backend.
+${buildImportedHtmlCustomSocialProfileRulesText()}
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
 - Mantén también data-rstk-button-action con la primera acción para compatibilidad. Si el botón abre enlace, agrega data-rstk-button-url. Si va a una página interna, agrega data-rstk-button-page-id cuando exista un id claro.
@@ -7151,7 +7151,7 @@ Conversiones Meta/CAPI para HTML importado:
 ${buildImportedHtmlCustomCalendarRulesText()}
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
-- Perfil social con diseño propio: <section data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="custom" data-rstk-label="Perfil principal"><img data-rstk-social-avatar alt=""><span data-rstk-social-name></span><span data-rstk-social-verified aria-label="Perfil verificado">✓</span><span data-rstk-social-followers></span></section>. Los hooks de avatar, nombre, seguidores y verificado son obligatorios; data-rstk-social-platform y data-rstk-social-subtitle son opcionales. Ristak conserva el diseño HTML, llena los datos del perfil conectado y el elemento data-rstk-social-verified completo se muestra u oculta según la opción del editor.
+${buildImportedHtmlCustomSocialProfileRulesText()}
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
@@ -26355,10 +26355,46 @@ function rewriteImportedSocialHookOpenings(html = '', names = [], rewrite) {
   ))
 }
 
+const IMPORTED_CUSTOM_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES = [
+  'height',
+  'min-height',
+  'max-height',
+  'block-size',
+  'min-block-size',
+  'max-block-size',
+  'aspect-ratio',
+  'flex',
+  'flex-grow',
+  'flex-shrink',
+  'flex-basis',
+  'align-self',
+  'place-self',
+  'margin',
+  'margin-bottom',
+  'margin-block',
+  'margin-block-end'
+]
+
+function stripImportedCustomSocialProfileRootGeometry(style = '') {
+  const propertyPattern = IMPORTED_CUSTOM_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES
+    .map(property => property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
+  return cleanString(style)
+    .replace(new RegExp(`(^|;)\\s*(?:${propertyPattern})\\s*:[^;]*`, 'gi'), '$1')
+    .replace(/;{2,}/g, ';')
+    .replace(/^\s*;|;\s*$/g, '')
+    .trim()
+}
+
 function renderImportedCustomSocialProfileSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, block = null, context = {}) {
+  const intrinsicRootAttrs = { ...attrs }
+  const intrinsicRootStyle = stripImportedCustomSocialProfileRootGeometry(intrinsicRootAttrs.style)
+  if (intrinsicRootStyle) intrinsicRootAttrs.style = intrinsicRootStyle
+  else delete intrinsicRootAttrs.style
+
   if (!block) {
     return context.preview
-      ? renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
+      ? renderImportedNativeElementWrapper(intrinsicRootAttrs, slot, renderImportedNativeElementPlaceholder(slot))
       : ''
   }
 
@@ -26392,20 +26428,20 @@ function renderImportedCustomSocialProfileSlot(tagName = 'div', attrs = {}, inne
   })
 
   const classes = [
-    attrs.class,
+    intrinsicRootAttrs.class,
     'rstk-imported-native-slot',
     'rstk-imported-native-social-profile',
     'rstk-imported-native-custom'
   ].filter(Boolean).join(' ')
   const dataAttrs = {
-    ...attrs,
+    ...intrinsicRootAttrs,
     class: classes,
     'data-rstk-native-mounted': 'true',
     'data-rstk-native-type': 'social_profile',
     'data-rstk-native-slot-id': slot.id || '',
     'data-rstk-native-block-id': block.id || '',
     'data-rstk-social-platform-value': platform,
-    'aria-label': attrs['aria-label'] || `Perfil de ${platformLabel}`
+    'aria-label': intrinsicRootAttrs['aria-label'] || `Perfil de ${platformLabel}`
   }
 
   return `<${tagName}${renderHtmlAttributes(dataAttrs)}>${content}</${tagName}>`
@@ -27087,6 +27123,7 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
 .rstk-imported-native-video[data-rstk-native-mounted="true"]{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var(--rstk-native-slot-padding,0)!important;background-color:var(--rstk-native-slot-background,transparent)!important;box-shadow:none!important}
+.rstk-imported-native-social-profile.rstk-imported-native-custom[data-rstk-native-mounted="true"]{width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;aspect-ratio:auto!important;flex-grow:0!important;flex-shrink:0!important;margin-bottom:0!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:140px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
