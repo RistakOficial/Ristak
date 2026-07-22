@@ -28505,13 +28505,15 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       'Perfil de red social:',
       '- La página usará el perfil social completo de Ristak.',
       '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="ristak" data-rstk-label="Perfil principal"></div>.',
-      '- Ristak dibuja el bloque y permite elegir el perfil conectado, foto, nombre, seguidores y si se muestra verificado.',
+      '- Este es el diseño predeterminado cuando la petición no describe otro perfil: Ristak dibuja exactamente el componente del editor normal, con avatar circular, insignia de la red superpuesta, nombre, roseta azul de verificado y seguidores en la misma posición.',
+      '- Ristak permite elegir el perfil conectado, foto, nombre, seguidores y si se muestra verificado.',
       ''
     )
   } else if (answers.socialProfile === 'custom') {
     sections.push(
       'Perfil de red social:',
-      '- ChatGPT, Claude o Codex diseñarán el perfil, pero los datos reales los llenará Ristak.',
+      '- ChatGPT, Claude o Codex solo deben diseñar un perfil diferente cuando la petición real lo pida de forma explícita; los datos reales siempre los llenará Ristak.',
+      '- Si la petición no describe otro diseño, usa el slot nativo data-rstk-native-render="ristak": es el default y conserva exactamente la estrella de verificado, la insignia de red, la jerarquía y el acomodo del editor normal.',
       buildImportedHtmlCustomSocialProfileRulesText('Reglas del perfil custom:'),
       '- Conserva el contenedor, su data-rstk-native-id y todos los hooks al rediseñar. El CSS y el layout sí son tuyos; los valores no.',
       ''

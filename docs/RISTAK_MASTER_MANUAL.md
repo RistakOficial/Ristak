@@ -4795,7 +4795,14 @@ nunca a dos videos distintos de la misma página.
   externos sin archivo Storage asociado; las acciones del reproductor nativo se
   conectan directamente al elemento de video.
 - `social-profile` con `data-rstk-native-render="ristak"`: renderiza el bloque
-  completo del editor normal. Con `data-rstk-native-render="custom"`, conserva
+  completo del editor normal. Ese modo nativo es el default cuando el usuario no
+  pide otra composición: conserva exactamente la fila compacta y transparente,
+  el avatar circular, la insignia de la red superpuesta abajo a la derecha, el
+  nombre con la roseta azul de verificado y los seguidores debajo. Las reglas
+  para IA no deben intentar copiar ese diseño con HTML propio; deben usar el slot
+  nativo vacío para garantizar la misma iconografía, proporción y posición.
+  `data-rstk-native-render="custom"` se usa únicamente cuando el usuario pide de
+  forma explícita otro diseño. En ese caso conserva
   el markup, clases, layout y CSS creados por ChatGPT, Claude o Codex y sustituye
   server-side solamente los hooks `data-rstk-social-avatar` (en un `<img>`),
   `data-rstk-social-name`, `data-rstk-social-followers` y
@@ -5002,7 +5009,10 @@ descarte y `data-rstk-conversion-condition="qualified_only"`; tambien prohibe
 disparar Pixel/CAPI manualmente antes del veredicto de Ristak.
 Cuando elige perfil social custom, las instrucciones exigen los cuatro hooks
 obligatorios, prohiben seguidores o identidades inventadas y dejan claro que
-Ristak conserva el diseño pero inyecta los datos del perfil conectado. También
+Ristak conserva el diseño pero inyecta los datos del perfil conectado. Si la
+petición no describe una composición diferente, las mismas instrucciones mandan
+volver al slot nativo para reproducir exactamente el perfil del editor; el modo
+custom sólo queda autorizado por una petición visual explícita. También
 exigen cerrar la raíz justo después de la ficha, mantener altura intrínseca y
 validar a 390 px que el siguiente contenido aparezca con espaciado normal, sin
 un bloque vacío ni una sección de alto completo.
