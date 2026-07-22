@@ -382,6 +382,11 @@ Título del documento web: `Analíticas móviles | Ristak`.
 
 ### 7.2 Grid de 8 KPIs (2 columnas)
 
+Todos los carruseles horizontales de filtros de la pantalla usan el mismo
+contrato: el primer chip arranca con el inset interior de la tarjeta (16 pt),
+pero el viewport conserva todo el ancho de la tarjeta para que, al desplazar,
+los chips desaparezcan por completo en su borde.
+
 Cada tarjeta: icono en cápsula con tono, título pequeño, valor en negrita, delta abajo.
 Config exacta (`PhoneAnalytics.tsx:484-493`, `App.tsx:10792-10801`):
 

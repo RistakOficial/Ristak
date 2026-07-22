@@ -179,9 +179,10 @@ solo en capa flotante; copy en español.
   (Todos/Al registro/Anuncios) y 5 series, embudo con labels custom,
   distribución de origen (4 dimensiones) y origen por número de WhatsApp,
   rangos 30d/60d/180d/año/personalizado en zona del negocio, estado
-  "sin acceso" para la trampa de módulo dashboard. Los filtros horizontales se
-  recortan al borde exacto de cada tarjeta; Swift Charts reserva 20 % de techo y
-  agrega rellenos degradados bajo las líneas. iPad en grid.
+  "sin acceso" para la trampa de módulo dashboard. Los filtros horizontales
+  arrancan alineados con el contenido de cada tarjeta y, al deslizar, se recortan
+  en su borde exacto; Swift Charts reserva 20 % de techo y agrega rellenos
+  degradados bajo las líneas. iPad en grid.
 - **Ajustes**: números de WhatsApp (principal, bandeja junta/separada),
   plantillas, Asistente AI (contexto de negocio + dictado por voz →
   transcripción), lista de chat, campos personalizados y etiquetas con alta y

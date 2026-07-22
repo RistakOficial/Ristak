@@ -763,11 +763,12 @@ financieros, embudo con scopes, origen por fuente y origen por numero de
 WhatsApp cuando existan varios numeros detectados.
 
 En `ios/app`, todos los carruseles horizontales de filtros de Analiticas llegan
-sin margen al borde interior de su tarjeta, pero su viewport se recorta en ese
-borde: ningun chip puede dibujarse sobre el fondo de la pantalla. La grafica de
-doble serie reserva un techo visual del 20 % sobre el valor maximo —el dato mas
-alto ocupa como maximo 80 % del plot— y cada linea lleva un relleno degradado
-sutil hacia la base sin modificar los valores ni los callouts.
+en reposo alineados con el contenido interior de su tarjeta. Al desplazarlos,
+los chips pueden desaparecer por completo en el borde real del viewport, que se
+recorta dentro de la tarjeta sin dibujar sobre el fondo de la pantalla. La
+grafica de doble serie reserva un techo visual del 20 % sobre el valor maximo
+—el dato mas alto ocupa como maximo 80 % del plot— y cada linea lleva un
+relleno degradado sutil hacia la base sin modificar los valores ni los callouts.
 
 En `ios/app`, una revalidacion solo se considera fresca cuando completaron
 metricas, grafica, embudo y origen. Si alguno falla, se conservan los snapshots

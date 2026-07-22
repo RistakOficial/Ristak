@@ -20,3 +20,20 @@ test('metricas, origen y telefonos fallan de forma independiente', () => {
   assert.doesNotMatch(loadOverviewSource, /setOriginData\(EMPTY_ORIGIN_DATA\)/);
   assert.doesNotMatch(loadOverviewSource, /setDetectedPhones\(\[\]\)/);
 });
+
+test('los carruseles de Analiticas conservan aire inicial y scroll hasta el borde', () => {
+  const optionScrollStyle = appSource.match(
+    /analyticsOptionScroll:\s*\{([\s\S]*?)\n\s*\},\s*analyticsOptionScroller:/,
+  )?.[1] || '';
+  const optionScrollerStyle = appSource.match(
+    /analyticsOptionScroller:\s*\{([\s\S]*?)\n\s*\},\s*analyticsChip:/,
+  )?.[1] || '';
+  const scrollerUsages = appSource.match(
+    /contentContainerStyle=\{styles\.analyticsOptionScroller\}/g,
+  ) || [];
+
+  assert.match(optionScrollStyle, /marginHorizontal:\s*-14/);
+  assert.match(optionScrollerStyle, /paddingHorizontal:\s*14/);
+  assert.match(optionScrollerStyle, /paddingRight:\s*18/);
+  assert.equal(scrollerUsages.length, 2);
+});
