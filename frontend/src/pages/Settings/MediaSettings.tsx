@@ -18,6 +18,7 @@ import {
   Flame,
   Folder,
   FolderInput,
+  FolderPlus,
   Grid3X3,
   Globe2,
   HardDrive,
@@ -483,6 +484,9 @@ export const MediaSettings: React.FC = () => {
   const [moveFolders, setMoveFolders] = useState<FolderSummary[]>([])
   const [moveFolderPageInfo, setMoveFolderPageInfo] = useState<MediaPageInfo>(EMPTY_FOLDER_PAGE_INFO)
   const [moveFoldersLoading, setMoveFoldersLoading] = useState(false)
+  const [createFolderOpen, setCreateFolderOpen] = useState(false)
+  const [folderName, setFolderName] = useState('')
+  const [creatingFolder, setCreatingFolder] = useState(false)
   const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null)
@@ -771,6 +775,40 @@ export const MediaSettings: React.FC = () => {
     setSelectedItemKeys(new Set())
   }
 
+  const openCreateFolderDialog = () => {
+    setFolderName('')
+    setCreateFolderOpen(true)
+  }
+
+  const closeCreateFolderDialog = () => {
+    if (creatingFolder) return
+    setCreateFolderOpen(false)
+    setFolderName('')
+  }
+
+  const handleCreateFolder = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const name = folderName.trim()
+    if (!name) {
+      showToast('warning', 'Falta el nombre', 'Escribe cómo se llamará la carpeta.')
+      return
+    }
+
+    setCreatingFolder(true)
+    try {
+      const folder = await mediaService.createFolder({ parentPath: currentPath, name })
+      setCreateFolderOpen(false)
+      setFolderName('')
+      await refreshLibrary()
+      updateExplorerUrl({ type: 'all', path: folder.path, asset: null })
+      showToast('success', 'Carpeta creada', `Ya estás dentro de ${folder.name}. Todo lo que subas aquí se guardará en esta carpeta.`)
+    } catch (folderError) {
+      showToast('error', 'No se pudo crear la carpeta', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
+    } finally {
+      setCreatingFolder(false)
+    }
+  }
+
   const handleMediaFilterChange = (value: string) => {
     const nextFilter = isMediaFilter(value) ? value : 'all'
     updateExplorerUrl({
@@ -875,7 +913,7 @@ export const MediaSettings: React.FC = () => {
   }
 
   const isMoveTargetDisabled = (dialog: MoveDialogState | null, targetPath: string) => {
-    if (!dialog || dialog.filesCount === 0) return true
+    if (!dialog) return true
     for (const sourceFolderPath of dialog.folderPaths) {
       const sourceParentPath = pathSegments(sourceFolderPath).slice(0, -1).join('/')
       if (targetPath === sourceParentPath) return true
@@ -956,7 +994,13 @@ export const MediaSettings: React.FC = () => {
         ? joinFolderPath(targetFolderPath, pathSegments(dialog.sourceFolderPath).slice(-1)[0] || '')
         : targetFolderPath
       updateExplorerUrl({ path: destinationPath, asset: null })
-      showToast('success', 'Archivos movidos', `${affected} archivo${affected === 1 ? '' : 's'} quedaron en la carpeta elegida.`)
+      showToast(
+        'success',
+        dialog.folderPaths.length ? 'Carpeta movida' : 'Archivos movidos',
+        dialog.folderPaths.length
+          ? 'La carpeta y su contenido quedaron en la ubicación elegida.'
+          : `${affected} archivo${affected === 1 ? '' : 's'} quedaron en la carpeta elegida.`
+      )
       moveFolderRequestVersionRef.current += 1
       setMoveDialog(null)
       setMoveTargetPath('')
@@ -976,7 +1020,7 @@ export const MediaSettings: React.FC = () => {
   const handleMoveSelected = () => {
     openMoveDialog({
       kind: 'selection',
-      title: `Mover ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'}`,
+      title: `Mover ${selectedElementCount} elemento${selectedElementCount === 1 ? '' : 's'}`,
       assetIds: selectedScope.assetIds || [],
       folderPaths: selectedScope.folderPaths || [],
       filesCount: selectedFileCount,
@@ -1151,6 +1195,7 @@ export const MediaSettings: React.FC = () => {
           const uploaded = await mediaService.uploadFile({
             file,
             module: 'media',
+            folderPath: currentPath,
             isPublic: true,
             signal,
             onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
@@ -1182,7 +1227,7 @@ export const MediaSettings: React.FC = () => {
         showToast(
           'success',
           successCount === 1 ? 'Archivo subido' : 'Archivos subidos',
-          successCount === 1 ? 'Ya aparece en Media.' : `${successCount} archivos ya aparecen en Media.`
+          `${successCount === 1 ? 'Ya quedó' : `${successCount} archivos quedaron`} en ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.`
         )
       }
 
@@ -1324,8 +1369,8 @@ export const MediaSettings: React.FC = () => {
     successTitle: string,
     successMessage: string
   ) => {
-    if (!filesToDelete) {
-      showToast('warning', 'No hay archivos', 'Selecciona al menos un archivo para eliminar.')
+    if (!filesToDelete && !selection.folderPaths?.length) {
+      showToast('warning', 'No hay elementos', 'Selecciona al menos un archivo o carpeta para eliminar.')
       return
     }
 
@@ -1347,7 +1392,9 @@ export const MediaSettings: React.FC = () => {
   const handleDeleteFolder = (folder: FolderSummary) => {
     showConfirm(
       'Eliminar carpeta',
-      `Se quitarán ${folder.filesCount} archivo${folder.filesCount === 1 ? '' : 's'} dentro de ${folder.name} de Media y del storage conectado. Esta acción no se puede deshacer.`,
+      folder.filesCount > 0
+        ? `Se quitarán ${folder.filesCount} archivo${folder.filesCount === 1 ? '' : 's'} dentro de ${folder.name} de Media y del storage conectado. Esta acción no se puede deshacer.`
+        : `Se eliminará la carpeta vacía ${folder.name}. Esta acción no se puede deshacer.`,
       () => {
         void deleteSelection(
           { folderPaths: [folder.path], mediaType: mediaTypeFilter },
@@ -1366,7 +1413,9 @@ export const MediaSettings: React.FC = () => {
   const handleDeleteSelected = () => {
     showConfirm(
       'Eliminar selección',
-      `Se quitarán ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'} de Media y del storage conectado. Esta acción no se puede deshacer.`,
+      selectedFileCount > 0
+        ? `Se quitarán ${selectedFileCount} archivo${selectedFileCount === 1 ? '' : 's'} de Media y del storage conectado. Esta acción no se puede deshacer.`
+        : `Se eliminarán ${selectedFolderPaths.length} carpeta${selectedFolderPaths.length === 1 ? '' : 's'} vacía${selectedFolderPaths.length === 1 ? '' : 's'}. Esta acción no se puede deshacer.`,
       () => {
         void deleteSelection(selectedScope, selectedFileCount, 'Selección eliminada', 'Los archivos seleccionados ya no aparecerán en Media.')
       },
@@ -1627,7 +1676,7 @@ export const MediaSettings: React.FC = () => {
       <PageHeader
         eyebrow="Configuración"
         title="Media"
-        subtitle="Explora los archivos multimedia guardados en el storage de esta cuenta."
+        subtitle={`Explora el storage privado de esta cuenta. Las nuevas subidas se guardan en ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.`}
         actions={(
           <>
             <Button
@@ -1640,13 +1689,24 @@ export const MediaSettings: React.FC = () => {
               Actualizar
             </Button>
             <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<FolderPlus size={16} />}
+              onClick={openCreateFolderDialog}
+              disabled={loading || refreshing || creatingFolder || Boolean(normalizedQuery) || browsingGlobalType}
+              title={normalizedQuery || browsingGlobalType ? 'Abre una carpeta desde Todo para crear otra dentro.' : 'Crear una carpeta en la ubicación actual'}
+            >
+              Nueva carpeta
+            </Button>
+            <Button
               variant="primary"
               size="sm"
               leftIcon={uploading ? <Loader2 size={16} className={styles.spin} /> : <Upload size={16} />}
               onClick={handleUploadClick}
               disabled={uploading || loading}
+              title={`Se guardará en ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}`}
             >
-              Subir archivo
+              Subir aquí
             </Button>
           </>
         )}
@@ -1862,7 +1922,7 @@ export const MediaSettings: React.FC = () => {
                       size="sm"
                       leftIcon={moving ? <Loader2 size={15} className={styles.spin} /> : <FolderInput size={15} />}
                       onClick={handleMoveSelected}
-                      disabled={actionBusy || selectedFileCount === 0}
+                      disabled={actionBusy || selectedElementCount === 0}
                     >
                       Mover
                     </Button>
@@ -1872,7 +1932,7 @@ export const MediaSettings: React.FC = () => {
                       className={styles.deleteButton}
                       leftIcon={bulkAction === 'delete' ? <Loader2 size={15} className={styles.spin} /> : <Trash2 size={15} />}
                       onClick={handleDeleteSelected}
-                      disabled={Boolean(bulkAction) || selectedFileCount === 0}
+                      disabled={Boolean(bulkAction) || selectedElementCount === 0}
                     >
                       Eliminar
                     </Button>
@@ -1893,7 +1953,7 @@ export const MediaSettings: React.FC = () => {
                 <div className={styles.emptyState}>
                   <Folder size={34} />
                   <strong>{normalizedQuery ? 'No hay resultados' : 'Esta carpeta está vacía'}</strong>
-                  <p>{normalizedQuery ? 'Prueba con otro nombre, tipo o módulo.' : 'Sube archivos o abre otra carpeta.'}</p>
+                  <p>{normalizedQuery ? 'Prueba con otro nombre, tipo o módulo.' : 'Crea una subcarpeta o usa “Subir aquí” para guardar archivos en esta ubicación.'}</p>
                 </div>
               ) : viewMode === 'grid' ? (
                 <div className={styles.gridView}>
@@ -2020,6 +2080,40 @@ export const MediaSettings: React.FC = () => {
       </Card>
 
       <Modal
+        isOpen={createFolderOpen}
+        onClose={closeCreateFolderDialog}
+        title="Nueva carpeta"
+        subtitle={`Dentro de ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}`}
+        size="sm"
+      >
+        <form className={styles.createFolderForm} onSubmit={handleCreateFolder}>
+          <label className={styles.createFolderField} htmlFor="media-folder-name">
+            <span>Nombre de la carpeta</span>
+            <input
+              id="media-folder-name"
+              type="text"
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+              placeholder="Ej. Lanzamiento de agosto"
+              maxLength={120}
+              autoFocus
+              autoComplete="off"
+              disabled={creatingFolder}
+            />
+          </label>
+          <p>Esta ruta siempre quedará dentro del espacio privado de este negocio.</p>
+          <div className={styles.createFolderActions}>
+            <Button variant="secondary" size="sm" type="button" onClick={closeCreateFolderDialog} disabled={creatingFolder}>
+              Cancelar
+            </Button>
+            <Button variant="primary" size="sm" type="submit" loading={creatingFolder} disabled={!folderName.trim()}>
+              Crear carpeta
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
         isOpen={Boolean(moveDialog)}
         onClose={closeMoveDialog}
         title={moveDialog?.title || 'Mover archivos'}
@@ -2029,7 +2123,9 @@ export const MediaSettings: React.FC = () => {
         {moveDialog ? (
           <div className={styles.moveModal}>
             <p className={styles.moveIntro}>
-              {moveDialog.filesCount} archivo{moveDialog.filesCount === 1 ? '' : 's'} se moverán a {moveTargetPath ? moveTargetPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.
+              {moveDialog.kind === 'folder'
+                ? `La carpeta completa se moverá a ${moveTargetPath ? moveTargetPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.`
+                : `${moveDialog.filesCount} archivo${moveDialog.filesCount === 1 ? '' : 's'} se moverán a ${moveTargetPath ? moveTargetPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.`}
             </p>
             <div className={styles.moveFolderList} aria-label="Carpeta destino">
               {moveTargetPath ? (

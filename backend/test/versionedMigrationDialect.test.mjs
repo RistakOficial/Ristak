@@ -95,6 +95,10 @@ test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('126_gigstack_invoice_jobs.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('126a_gigstack_invoice_jobs.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('126a_gigstack_invoice_jobs.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('128_media_folders.sqlite.sql', 'sqlite'), true)
+  assert.equal(migrationRunsForDialect('128_media_folders.sqlite.sql', 'postgres'), false)
+  assert.equal(migrationRunsForDialect('128a_media_folders.postgres.sql', 'postgres'), true)
+  assert.equal(migrationRunsForDialect('128a_media_folders.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
 })
@@ -863,6 +867,62 @@ test('la migracion 126 agrega la cola fiscal Gigstack a instalaciones existentes
       /FOREIGN KEY constraint failed/
     )
 
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migracion 128 agrega carpetas multimedia vacías a instalaciones existentes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-media-folders-migration-'))
+  const database = openMemoryDatabase()
+  const migration = new URL(
+    '../migrations/versioned/128_media_folders.sqlite.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      CREATE TABLE app_config (
+        config_key TEXT PRIMARY KEY,
+        config_value TEXT
+      );
+      INSERT INTO app_config (config_key, config_value)
+      VALUES ('core_schema_bootstrap_version', '2026-07-12-v1');
+    `)
+    await copyFile(migration, join(directory, '128_media_folders.sqlite.sql'))
+
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 1, skipped: 0 }
+    )
+
+    await database.run(`
+      INSERT INTO media_folders (business_id, path, parent_path, name)
+      VALUES (?, ?, ?, ?)
+    `, ['business-one', 'Clientes/ACME', 'Clientes', 'ACME'])
+    await database.run(`
+      INSERT INTO media_folders (business_id, path, parent_path, name)
+      VALUES (?, ?, ?, ?)
+    `, ['business-two', 'Clientes/ACME', 'Clientes', 'ACME'])
+    await assert.rejects(
+      database.run(`
+        INSERT INTO media_folders (business_id, path, parent_path, name)
+        VALUES (?, ?, ?, ?)
+      `, ['business-one', 'Clientes/ACME', 'Clientes', 'ACME']),
+      /UNIQUE constraint failed/
+    )
+
+    const index = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_media_folders_parent'
+    `)
+    assert.deepEqual(index.map(row => row.name), ['idx_media_folders_parent'])
     assert.deepEqual(
       await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
       { applied: 0, skipped: 0 }

@@ -143,6 +143,7 @@ export interface UploadMediaFileInput {
   file: File
   module?: string
   moduleEntityId?: string
+  folderPath?: string
   isPublic?: boolean
   deferStreamSync?: boolean
   clientUploadId?: string
@@ -181,6 +182,7 @@ export interface MediaSelectionOperationResult {
   attempted: number
   affected: number
   failed: number
+  foldersAffected?: number
 }
 
 export interface StreamChartPoint {
@@ -449,7 +451,8 @@ async function createResumableVideoUploadClientId(input: UploadMediaFileInput) {
     input.file.size,
     input.file.type,
     input.file.lastModified,
-    String(input.module || '').toLowerCase()
+    String(input.module || '').toLowerCase(),
+    String(input.folderPath ?? '')
   ].join('\0')
 
   if (typeof crypto !== 'undefined' && crypto.subtle && typeof TextEncoder !== 'undefined') {
@@ -642,6 +645,7 @@ async function prepareResumableVideoUpload(input: UploadMediaFileInput, clientUp
       lastModified: input.file.lastModified,
       module,
       moduleEntityId: input.moduleEntityId,
+      folderPath: input.folderPath,
       isPublic: input.isPublic ?? true,
       clientUploadId
     },
@@ -697,6 +701,7 @@ function buildUploadFormData(input: UploadMediaFileInput, clientUploadId: string
   formData.append('deferStreamSync', String(input.deferStreamSync ?? true))
   formData.append('clientUploadId', clientUploadId)
   if (input.moduleEntityId) formData.append('moduleEntityId', input.moduleEntityId)
+  if (input.folderPath !== undefined) formData.append('folderPath', input.folderPath)
   return formData
 }
 
@@ -828,6 +833,7 @@ export const mediaService = {
     filename: string
     module?: string
     moduleEntityId?: string
+    folderPath?: string
     isPublic?: boolean
   }): Promise<MediaAsset> {
     return apiClient.post<MediaAsset>(mediaUploadEndpoint('/media/upload', input.module), {
@@ -835,6 +841,7 @@ export const mediaService = {
       filename: input.filename,
       module: input.module || 'other',
       moduleEntityId: input.moduleEntityId,
+      folderPath: input.folderPath,
       isPublic: input.isPublic ?? true
     })
   },
@@ -866,6 +873,10 @@ export const mediaService = {
     if (input.limit) params.limit = String(input.limit)
     if (input.cursor) params.cursor = input.cursor
     return apiClient.get<MediaFolderPage>('/media/folders', { params })
+  },
+
+  createFolder(input: { parentPath?: string; name: string }) {
+    return apiClient.post<MediaFolderSummary>('/media/folders', input)
   },
 
   deleteAsset(assetId: string) {

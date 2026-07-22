@@ -798,6 +798,39 @@
   background: rgba(148, 163, 184, 0.1);
 }
 
+.createFolderForm {
+  display: grid;
+  gap: 16px;
+}
+
+.createFolderForm > p {
+  margin: 0;
+  color: var(--text-mute);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.createFolderField {
+  display: grid;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.createFolderField input {
+  width: 100%;
+  min-width: 0;
+}
+
+.createFolderActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
 .moveModalContent {
   padding: 18px 22px 20px;
 }

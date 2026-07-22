@@ -127,6 +127,88 @@ test('moveMediaAssets reubica archivos locales y conserva lectura por metadata',
   }
 })
 
+test('la subida administrativa respeta la carpeta elegida sin salir de la raíz de la cuenta', async () => {
+  const previousEnv = snapshotEnv()
+  const businessId = `media-folder-upload-${Date.now()}`
+  const assetIds = []
+  let db = null
+  let mediaStorageService = null
+
+  try {
+    delete process.env.DATABASE_URL
+    delete process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+    delete process.env.BUNNY_STORAGE_ZONE
+    delete process.env.BUNNY_STORAGE_REGION
+    delete process.env.BUNNY_STORAGE_ENDPOINT
+    delete process.env.BUNNY_STORAGE_API_KEY
+    delete process.env.BUNNY_CDN_BASE_URL
+    process.env.MEDIA_STORAGE_PROVIDER = 'local'
+
+    const [loadedMediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService = loadedMediaStorageService
+    db = database.db
+    mediaStorageService.resetCentralStorageConfigCache()
+
+    const selectedDestination = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('video administrativo de prueba'),
+      filename: 'presentacion.txt',
+      mimeType: 'text/plain',
+      module: 'media',
+      folderPath: 'Clientes/ACME',
+      businessId,
+      clientAccountId: 'cuenta_destino',
+      skipCompression: true
+    })
+    assetIds.push(selectedDestination.id)
+
+    assert.equal(selectedDestination.module, 'media')
+    assert.equal(selectedDestination.folderPath, 'Clientes/ACME')
+    assert.match(
+      selectedDestination.bunnyPath,
+      /^accounts\/cuenta_destino\/Clientes\/ACME\/rstk_media_[^/]+-presentacion\.txt$/
+    )
+
+    const traversalAttempt = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('contenido aislado'),
+      filename: 'aislado.txt',
+      mimeType: 'text/plain',
+      module: 'media',
+      folderPath: '../../accounts/cuenta_ajena/Videos',
+      businessId,
+      clientAccountId: 'cuenta_destino',
+      skipCompression: true
+    })
+    assetIds.push(traversalAttempt.id)
+
+    assert.equal(traversalAttempt.folderPath, 'accounts/cuenta_ajena/Videos')
+    assert.match(
+      traversalAttempt.bunnyPath,
+      /^accounts\/cuenta_destino\/accounts\/cuenta_ajena\/Videos\//
+    )
+    assert.doesNotMatch(traversalAttempt.bunnyPath, /^accounts\/cuenta_ajena\//)
+  } finally {
+    if (mediaStorageService) {
+      for (const assetId of assetIds) {
+        await mediaStorageService.softDeleteMediaAsset(assetId).catch(() => undefined)
+      }
+    }
+    if (db) {
+      if (assetIds.length) {
+        await db.run(
+          `DELETE FROM media_assets WHERE id IN (${assetIds.map(() => '?').join(', ')})`,
+          assetIds
+        ).catch(() => undefined)
+      }
+      await db.run('DELETE FROM media_folders WHERE business_id = ?', [businessId]).catch(() => undefined)
+      await db.run('DELETE FROM storage_quotas WHERE business_id = ?', [businessId]).catch(() => undefined)
+    }
+    restoreEnv(previousEnv)
+  }
+})
+
 test('uploadMediaAsset reutiliza el asset existente cuando se repite el clientUploadId', async () => {
   const previousEnv = snapshotEnv()
   let db = null

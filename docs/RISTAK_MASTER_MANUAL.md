@@ -5495,11 +5495,22 @@ Capacidades:
 
 - Upload desde archivo, buffer o data URL.
 - Libreria de media.
+- Explorador por cuenta con carpetas persistentes, incluidas carpetas vacías.
 - Soft delete, move, replace.
 - Cuotas.
 - Compresion.
 - Bunny Storage para archivos.
 - Bunny Stream para video.
+- En `Configuración > Media`, **Nueva carpeta** crea rutas relativas a la unidad
+  privada del negocio y **Subir aquí** guarda directamente en la carpeta abierta,
+  sin inventar niveles de tipo o fecha. El backend siempre antepone
+  `accounts/<slug>` y normaliza la ruta, así que el navegador nunca puede elegir
+  ni escapar hacia la raíz de otro cliente. La tabla `media_folders` conserva las
+  carpetas vacías; Bunny crea el árbol físico al recibir el primer archivo.
+- Mover o eliminar carpetas mantiene sincronizados los assets y la carpeta
+  persistente. Las taxonomías automáticas de Chat, Sites, formularios, avatares y
+  otros módulos internos no cambian: el control manual aplica sólo a la biblioteca
+  administrativa de Media.
 - Subida TUS directa y resumible para videos de Sites/Forms, en chunks, sin que
   el upload inicial atraviese el proceso Render ni exponga la API key.
 - Preparacion/finalizacion idempotente en `media_assets`: reserva cuota mientras

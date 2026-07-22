@@ -262,6 +262,51 @@ test('Media/Sites conserva el ruteo administrativo multi-cuenta existente', () =
   assert.equal(context.module, 'sites')
 })
 
+test('sólo Media acepta carpeta exacta y la huella idempotente incluye el destino', async () => {
+  const request = {
+    mediaUploadModule: 'media',
+    query: { module: 'media' },
+    body: {
+      module: 'media',
+      folderPath: 'Clientes/ACME',
+      clientUploadId: 'same-upload-different-folder'
+    },
+    user: { userId: 'usuario_media', role: 'admin' },
+    file: {
+      originalname: 'presentacion.pdf',
+      mimetype: 'application/pdf',
+      size: 12
+    },
+    get: () => null
+  }
+  const directChat = { enabled: false, kind: '' }
+  const firstContext = trustedUploadContextFromRequest(request)
+  const secondContext = trustedUploadContextFromRequest({
+    ...request,
+    body: { ...request.body, folderPath: 'Clientes/Otra' }
+  })
+  const sitesContext = trustedUploadContextFromRequest({
+    ...request,
+    mediaUploadModule: 'sites',
+    query: { module: 'sites' },
+    body: { ...request.body, module: 'sites' }
+  })
+  const bytes = Buffer.from('mismos bytes')
+
+  assert.equal(firstContext.folderPath, 'Clientes/ACME')
+  assert.equal(sitesContext.folderPath, null)
+  assert.notEqual(
+    await createMediaUploadRequestHash({
+      descriptor: mediaUploadRequestDescriptor(request, firstContext, directChat),
+      buffer: bytes
+    }),
+    await createMediaUploadRequestHash({
+      descriptor: mediaUploadRequestDescriptor(request, secondContext, directChat),
+      buffer: bytes
+    })
+  )
+})
+
 test('la huella idempotente distingue cuentas administrativas aunque compartan bytes y llave', async () => {
   const request = {
     query: {},

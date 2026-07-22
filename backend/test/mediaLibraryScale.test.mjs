@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 
 import { databaseDialect, db } from '../src/config/database.js'
 import {
+  createMediaFolder,
   deleteMediaSelection,
   findMediaAssetsByBunnyStreamVideoIds,
   getStorageUsage,
@@ -224,6 +225,69 @@ test('Media pagina por created_at + id, busca en servidor y resume carpetas sin 
   } finally {
     await db.run('DELETE FROM media_assets WHERE business_id = ?', [businessId]).catch(() => undefined)
     await db.run('DELETE FROM storage_quotas WHERE business_id = ?', [businessId]).catch(() => undefined)
+  }
+})
+
+test('Media conserva carpetas vacías por cuenta y permite moverlas o eliminarlas', async () => {
+  const marker = `media_user_folders_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const businessId = `${marker}_a`
+  const otherBusinessId = `${marker}_b`
+
+  try {
+    const rootFolder = await createMediaFolder({
+      businessId,
+      name: 'Campañas 2026',
+      userId: 'user_media_test'
+    })
+    const nestedFolder = await createMediaFolder({
+      businessId,
+      parentPath: rootFolder.path,
+      name: 'Noviembre',
+      userId: 'user_media_test'
+    })
+
+    assert.equal(rootFolder.path, 'Campañas 2026')
+    assert.equal(nestedFolder.path, 'Campañas 2026/Noviembre')
+    assert.deepEqual(
+      (await listMediaFolders({ businessId, parentPath: '' })).items.map((folder) => folder.path),
+      ['Campañas 2026']
+    )
+    assert.deepEqual(
+      (await listMediaFolders({ businessId, parentPath: rootFolder.path })).items.map((folder) => ({
+        path: folder.path,
+        filesCount: folder.filesCount
+      })),
+      [{ path: nestedFolder.path, filesCount: 0 }]
+    )
+    assert.equal((await listMediaFolders({ businessId: otherBusinessId, parentPath: '' })).items.length, 0)
+
+    await assert.rejects(
+      () => createMediaFolder({ businessId, name: 'campañas 2026' }),
+      (error) => error?.status === 409 && error?.code === 'media_folder_exists'
+    )
+
+    const moved = await moveMediaSelection({
+      businessId,
+      folderPaths: [nestedFolder.path],
+      targetFolderPath: 'Archivo'
+    })
+    assert.equal(moved.affected, 0)
+    assert.equal(moved.foldersAffected, 1)
+    assert.deepEqual(
+      (await listMediaFolders({ businessId, parentPath: 'Archivo' })).items.map((folder) => folder.path),
+      ['Archivo/Noviembre']
+    )
+
+    const deleted = await deleteMediaSelection({
+      businessId,
+      folderPaths: ['Archivo/Noviembre']
+    })
+    assert.equal(deleted.affected, 0)
+    assert.equal(deleted.foldersAffected, 1)
+    assert.equal((await listMediaFolders({ businessId, parentPath: 'Archivo' })).items.length, 0)
+  } finally {
+    await db.run('DELETE FROM media_folders WHERE business_id IN (?, ?)', [businessId, otherBusinessId]).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE business_id IN (?, ?)', [businessId, otherBusinessId]).catch(() => undefined)
   }
 })
 

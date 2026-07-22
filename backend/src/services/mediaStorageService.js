@@ -64,6 +64,8 @@ const MEDIA_LIBRARY_DEFAULT_LIMIT = 50
 const MEDIA_LIBRARY_MAX_LIMIT = 100
 const MEDIA_FOLDER_DEFAULT_LIMIT = 100
 const MEDIA_FOLDER_MAX_LIMIT = 100
+const MEDIA_FOLDER_MAX_DEPTH = 20
+const MEDIA_FOLDER_MAX_PATH_LENGTH = 800
 const MEDIA_SELECTION_MAX_EXPLICIT_IDS = 500
 const MEDIA_SELECTION_MAX_FOLDER_PATHS = 50
 const MEDIA_SELECTION_MAX_RESOLVED_ITEMS = 2_000
@@ -146,6 +148,7 @@ const MEDIA_MODULES = new Set([
   'courses',
   'appointments',
   'landing',
+  'media',
   'business_settings',
   'documents',
   'automations',
@@ -1907,11 +1910,20 @@ async function getMediaStorageDateKey() {
   return businessTodayDateOnly(timezone).replace(/-/g, '/')
 }
 
-function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '', dateKey = '', subFolder = '' }) {
+function buildObjectPath({ businessId, clientAccount, mediaType, module, id, filename, extension, variant = '', dateKey = '', subFolder = '', folderPath = null }) {
   const day = dateKey || businessTodayDateOnly(DEFAULT_TIMEZONE).replace(/-/g, '/')
   const folder = module && module !== 'other' ? module : `${mediaType}s`
   const suffix = variant ? `-${variant}` : ''
   const rootPath = clientAccount?.rootPath || buildClientAccountRootPath(businessId)
+  const storedFilename = `${id}-${filenameBase(filename)}${suffix}.${extension}`
+  if (folderPath !== null && folderPath !== undefined) {
+    const destination = normalizeMediaFolderPath(folderPath)
+    return [
+      rootPath,
+      ...(destination ? destination.split('/') : []),
+      storedFilename
+    ].join('/')
+  }
   // subFolder opcional (p.ej. el canal en avatars/whatsapp/) va entre la categoría
   // y el bucket de fecha: accounts/<slug>/<categoría>/<subFolder>/<fecha>/<archivo>.
   const sub = normalizeMediaFolderPath(subFolder)
@@ -1920,7 +1932,7 @@ function buildObjectPath({ businessId, clientAccount, mediaType, module, id, fil
     folder,
     ...(sub ? sub.split('/') : []),
     day,
-    `${id}-${filenameBase(filename)}${suffix}.${extension}`
+    storedFilename
   ].join('/')
 }
 
@@ -2817,6 +2829,135 @@ function normalizeMediaFolderPath(value = '') {
     .join('/')
 }
 
+function validateMediaFolderPath(value = '', { allowRoot = true } = {}) {
+  const path = normalizeMediaFolderPath(value)
+  const segments = path.split('/').filter(Boolean)
+  if (!allowRoot && !segments.length) {
+    throw errorWithStatus('Escribe un nombre para la carpeta.', 400, 'invalid_media_folder_name')
+  }
+  if (segments.length > MEDIA_FOLDER_MAX_DEPTH) {
+    throw errorWithStatus(
+      `Media admite máximo ${MEDIA_FOLDER_MAX_DEPTH} niveles de carpetas.`,
+      400,
+      'media_folder_depth_exceeded'
+    )
+  }
+  if (path.length > MEDIA_FOLDER_MAX_PATH_LENGTH) {
+    throw errorWithStatus(
+      'La ruta de la carpeta es demasiado larga.',
+      400,
+      'media_folder_path_too_long'
+    )
+  }
+  return path
+}
+
+function mediaFolderRecord(path = '') {
+  const normalizedPath = validateMediaFolderPath(path, { allowRoot: false })
+  const segments = normalizedPath.split('/')
+  return {
+    path: normalizedPath,
+    parentPath: segments.slice(0, -1).join('/'),
+    name: segments[segments.length - 1]
+  }
+}
+
+async function upsertMediaFolderHierarchy(database, {
+  businessId = 'default',
+  folderPath = '',
+  createdBy = null
+} = {}) {
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const normalizedPath = validateMediaFolderPath(folderPath)
+  const segments = normalizedPath.split('/').filter(Boolean)
+  for (let index = 0; index < segments.length; index += 1) {
+    const record = mediaFolderRecord(segments.slice(0, index + 1).join('/'))
+    await database.run(
+      `INSERT INTO media_folders (
+         business_id, path, parent_path, name, created_by, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT (business_id, path) DO UPDATE SET
+         parent_path = excluded.parent_path,
+         name = excluded.name,
+         created_by = COALESCE(media_folders.created_by, excluded.created_by),
+         updated_at = CURRENT_TIMESTAMP`,
+      [normalizedBusinessId, record.path, record.parentPath, record.name, createdBy ? String(createdBy) : null]
+    )
+  }
+  return normalizedPath
+}
+
+export async function createMediaFolder({
+  businessId = 'default',
+  parentPath = '',
+  name = '',
+  userId = null
+} = {}) {
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const normalizedParentPath = validateMediaFolderPath(parentPath)
+  const normalizedName = sanitizeFolderSegment(name)
+  if (!normalizedName) {
+    throw errorWithStatus('Escribe un nombre válido para la carpeta.', 400, 'invalid_media_folder_name')
+  }
+  const path = validateMediaFolderPath(
+    [normalizedParentPath, normalizedName].filter(Boolean).join('/'),
+    { allowRoot: false }
+  )
+  const [declaredDuplicate, assetDuplicate] = await Promise.all([
+    db.get(
+      `SELECT path
+       FROM media_folders
+       WHERE business_id = ? AND LOWER(path) = LOWER(?)
+       LIMIT 1`,
+      [normalizedBusinessId, path]
+    ),
+    db.get(
+      `SELECT folder_path
+       FROM media_folder_usage_counters
+       WHERE business_id = ?
+         AND (LOWER(folder_path) = LOWER(?) OR LOWER(folder_path) LIKE LOWER(?) ESCAPE '\\')
+       LIMIT 1`,
+      [normalizedBusinessId, path, `${escapeMediaLibraryLike(path)}/%`]
+    )
+  ])
+  if (declaredDuplicate || assetDuplicate) {
+    throw errorWithStatus('Ya existe una carpeta con ese nombre en esta ubicación.', 409, 'media_folder_exists')
+  }
+
+  await db.transaction(async (transaction) => {
+    await upsertMediaFolderHierarchy(transaction, {
+      businessId: normalizedBusinessId,
+      folderPath: path,
+      createdBy: userId
+    })
+  })
+
+  return {
+    path,
+    name: normalizedName,
+    filesCount: 0,
+    sizeBytes: 0
+  }
+}
+
+async function persistUploadedMediaFolder({ businessId, folderPath, userId = null } = {}) {
+  if (folderPath === null || folderPath === undefined || !normalizeMediaFolderPath(folderPath)) return
+  try {
+    await db.transaction(async (transaction) => {
+      await upsertMediaFolderHierarchy(transaction, {
+        businessId,
+        folderPath,
+        createdBy: userId
+      })
+    })
+  } catch (error) {
+    // El asset y su ruta física ya son suficientes para reconstruir la carpeta.
+    // No convertimos una subida exitosa en error por un fallo secundario de la
+    // carpeta persistente; el siguiente refresh seguirá mostrando el destino.
+    logger.warn(`[MediaStorage] No se pudo persistir la carpeta de la subida: ${error.message}`)
+  }
+}
+
 export function mediaFolderPathFromObjectPath(objectPath = '', fallbackFolder = '') {
   const segments = cleanString(objectPath)
     .split('/')
@@ -2921,6 +3062,9 @@ export async function uploadMediaAsset(input = {}) {
     const module = normalizeModule(input.module)
     const moduleEntityId = input.moduleEntityId ? String(input.moduleEntityId) : null
     const subFolder = normalizeMediaFolderPath(input.subFolder || input.subfolder || '')
+    const folderPath = input.folderPath !== null && input.folderPath !== undefined
+      ? validateMediaFolderPath(input.folderPath)
+      : null
     const isPublic = input.isPublic !== undefined ? boolValue(input.isPublic) : true
     const clientUploadId = normalizeClientUploadId(
       input.clientUploadId ||
@@ -3018,7 +3162,8 @@ export async function uploadMediaAsset(input = {}) {
       filename: originalFilename,
       extension,
       dateKey,
-      subFolder
+      subFolder,
+      folderPath
     })
     const thumbnailPath = thumbnail ? buildObjectPath({
       businessId,
@@ -3030,7 +3175,8 @@ export async function uploadMediaAsset(input = {}) {
       extension: thumbnail.extension,
       variant: 'thumb',
       dateKey,
-      subFolder
+      subFolder,
+      folderPath
     }) : ''
 
     pendingArtifactCleanup = {
@@ -3153,6 +3299,7 @@ export async function uploadMediaAsset(input = {}) {
       metadata
     })
     mediaAssetPersisted = true
+    await persistUploadedMediaFolder({ businessId, folderPath, userId })
 
     await refreshQuotaUsage(businessId)
     if (deferredStreamSync) {
@@ -3201,6 +3348,9 @@ async function finalizeStreamingMediaUpload({
   const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
   const dateKey = await getMediaStorageDateKey()
   const subFolder = normalizeMediaFolderPath(input.subFolder || input.subfolder || '')
+  const folderPath = input.folderPath !== null && input.folderPath !== undefined
+    ? validateMediaFolderPath(input.folderPath)
+    : null
   const objectPath = buildObjectPath({
     businessId,
     clientAccount,
@@ -3210,7 +3360,8 @@ async function finalizeStreamingMediaUpload({
     filename: originalFilename,
     extension,
     dateKey,
-    subFolder
+    subFolder,
+    folderPath
   })
 
   let storageProvider = 'local'
@@ -3319,6 +3470,7 @@ async function finalizeStreamingMediaUpload({
     metadata
   })
   mediaAssetPersisted = true
+  await persistUploadedMediaFolder({ businessId, folderPath, userId })
 
   await refreshQuotaUsage(businessId)
   // Leemos el asset ANTES de agendar la sync diferida: así, una vez que el temporal
@@ -3996,10 +4148,14 @@ export async function listMediaFolders({
   // Esta consulta navega un resumen exacto por carpeta; su costo depende del
   // numero de carpetas/dimensiones, no del numero de archivos del negocio.
   const filters = buildMediaFolderCounterFilters({ businessId, module, modules, mediaType, status })
+  const includeDeclaredFolders = !cleanString(module) &&
+    (!Array.isArray(modules) || modules.length === 0) &&
+    !cleanString(mediaType) &&
+    !cleanString(status)
   const slashPosition = databaseDialect === 'postgres'
     ? `POSITION('/' IN relative_path)`
     : `instr(relative_path, '/')`
-  const cursorClause = cursorName ? 'AND child_name > ?' : ''
+  const cursorClause = cursorName ? 'AND child_names.child_name > ?' : ''
   const prefix = normalizedParentPath
     ? `${escapeMediaLibraryLike(normalizedParentPath)}/%`
     : '%'
@@ -4007,9 +4163,15 @@ export async function listMediaFolders({
     normalizedParentPath,
     ...filters.params,
     prefix,
+    ...(includeDeclaredFolders ? [normalizeBusinessId(businessId), normalizedParentPath] : []),
     ...(cursorName ? [cursorName] : []),
     safeLimit + 1
   ]
+  const declaredFoldersQuery = includeDeclaredFolders
+    ? `SELECT name AS child_name
+       FROM media_folders
+       WHERE business_id = ? AND parent_path = ?`
+    : `SELECT NULL AS child_name WHERE 1 = 0`
 
   const rows = await db.all(
     `WITH options AS (
@@ -4037,16 +4199,30 @@ export async function listMediaFolders({
          files_count,
          used_bytes
        FROM scoped
+     ), counter_summary AS (
+       SELECT
+         child_name,
+         COALESCE(SUM(files_count), 0) AS files_count,
+         COALESCE(SUM(used_bytes), 0) AS size_bytes
+       FROM children
+       WHERE child_name <> ''
+       GROUP BY child_name
+     ), declared_children AS (
+       ${declaredFoldersQuery}
+     ), child_names AS (
+       SELECT child_name FROM counter_summary
+       UNION
+       SELECT child_name FROM declared_children
      )
      SELECT
-       child_name,
-       COALESCE(SUM(files_count), 0) AS files_count,
-       COALESCE(SUM(used_bytes), 0) AS size_bytes
-     FROM children
-     WHERE child_name <> ''
+       child_names.child_name,
+       COALESCE(counter_summary.files_count, 0) AS files_count,
+       COALESCE(counter_summary.size_bytes, 0) AS size_bytes
+     FROM child_names
+     LEFT JOIN counter_summary ON counter_summary.child_name = child_names.child_name
+     WHERE child_names.child_name <> ''
        ${cursorClause}
-     GROUP BY child_name
-     ORDER BY child_name ASC
+     ORDER BY child_names.child_name ASC
      LIMIT ?`,
     params
   )
@@ -4550,6 +4726,81 @@ function movedSelectionFolderPath(currentFolderPath, sourceFolderPath, targetFol
   return normalizeMediaFolderPath([targetFolderPath, sourceName, relativePath].filter(Boolean).join('/'))
 }
 
+function mediaFolderRecordSelection(folderPaths = []) {
+  const normalized = normalizeMediaSelection({ folderPaths }).folderPaths
+  const clauses = []
+  const params = []
+  for (const folderPath of normalized) {
+    clauses.push(`(path = ? OR path LIKE ? ESCAPE '\\')`)
+    params.push(folderPath, `${escapeMediaLibraryLike(folderPath)}/%`)
+  }
+  return { folderPaths: normalized, clauses, params }
+}
+
+async function listMediaFolderRecords({ businessId = 'default', folderPaths = [] } = {}) {
+  const selection = mediaFolderRecordSelection(folderPaths)
+  return await db.all(
+    `SELECT business_id, path, parent_path, name, created_by
+     FROM media_folders
+     WHERE business_id = ? AND (${selection.clauses.join(' OR ')})
+     ORDER BY LENGTH(path) ASC, path ASC`,
+    [normalizeBusinessId(businessId), ...selection.params]
+  )
+}
+
+async function moveMediaFolderRecords({
+  businessId = 'default',
+  folderPaths = [],
+  targetFolderPath = '',
+  existingRows = []
+} = {}) {
+  const selection = mediaFolderRecordSelection(folderPaths)
+  const normalizedTarget = validateMediaFolderPath(targetFolderPath)
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const movedFolders = new Map(selection.folderPaths.map((sourcePath) => [
+    movedSelectionFolderPath(sourcePath, sourcePath, normalizedTarget),
+    null
+  ]))
+
+  for (const row of existingRows) {
+    const sourceFolderPath = selectedSourceFolder(row.path, selection.folderPaths)
+    if (!sourceFolderPath) continue
+    movedFolders.set(
+      movedSelectionFolderPath(row.path, sourceFolderPath, normalizedTarget),
+      row.created_by || null
+    )
+  }
+
+  await db.transaction(async (transaction) => {
+    await transaction.run(
+      `DELETE FROM media_folders
+       WHERE business_id = ? AND (${selection.clauses.join(' OR ')})`,
+      [normalizedBusinessId, ...selection.params]
+    )
+    for (const [path, createdBy] of movedFolders) {
+      await upsertMediaFolderHierarchy(transaction, {
+        businessId: normalizedBusinessId,
+        folderPath: path,
+        createdBy
+      })
+    }
+  })
+
+  return selection.folderPaths.length
+}
+
+async function deleteMediaFolderRecords({ businessId = 'default', folderPaths = [] } = {}) {
+  const selection = mediaFolderRecordSelection(folderPaths)
+  const rows = await listMediaFolderRecords({ businessId, folderPaths: selection.folderPaths })
+  if (!rows.length) return 0
+  await db.run(
+    `DELETE FROM media_folders
+     WHERE business_id = ? AND (${selection.clauses.join(' OR ')})`,
+    [normalizeBusinessId(businessId), ...selection.params]
+  )
+  return rows.length
+}
+
 function assertSynchronousRemoteSelectionBudget(rows = []) {
   const remoteRows = rows.filter((row) => (
     ['bunny', 'bunny_stream'].includes(cleanString(row.storage_provider).toLowerCase()) ||
@@ -4713,7 +4964,7 @@ export async function moveMediaSelection({
   status = '',
   targetFolderPath = ''
 } = {}) {
-  const normalizedTarget = normalizeMediaFolderPath(targetFolderPath)
+  const normalizedTarget = validateMediaFolderPath(targetFolderPath)
   const selection = normalizeMediaSelection({ assetIds, folderPaths })
   const invalidSourcePath = selection.folderPaths.find((sourcePath) => {
     const sourceParentPath = sourcePath.split('/').slice(0, -1).join('/')
@@ -4728,25 +4979,48 @@ export async function moveMediaSelection({
       'invalid_media_move_target'
     )
   }
-  return runMediaSelectionOperation({
-    businessId,
-    assetIds: selection.assetIds,
-    folderPaths: selection.folderPaths,
-    mediaType,
-    status,
-    operation: 'La operación de mover',
-    action: async (row, selection, { remoteDeadlineAt }) => {
-      const currentFolderPath = normalizeMediaFolderPath(row.folder_path)
-      const sourceFolderPath = selectedSourceFolder(currentFolderPath, selection.folderPaths)
-      await moveSingleMediaAsset({
-        assetId: row.id,
-        targetFolderPath: movedSelectionFolderPath(currentFolderPath, sourceFolderPath, normalizedTarget),
+  const manageFolderRecords = selection.folderPaths.length > 0 &&
+    !cleanString(mediaType) && !cleanString(status)
+  const existingFolderRows = manageFolderRecords
+    ? await listMediaFolderRecords({ businessId, folderPaths: selection.folderPaths })
+    : []
+
+  let result
+  try {
+    result = await runMediaSelectionOperation({
+      businessId,
+      assetIds: selection.assetIds,
+      folderPaths: selection.folderPaths,
+      mediaType,
+      status,
+      operation: 'La operación de mover',
+      action: async (row, resolvedSelection, { remoteDeadlineAt }) => {
+        const currentFolderPath = normalizeMediaFolderPath(row.folder_path)
+        const sourceFolderPath = selectedSourceFolder(currentFolderPath, resolvedSelection.folderPaths)
+        await moveSingleMediaAsset({
+          assetId: row.id,
+          targetFolderPath: movedSelectionFolderPath(currentFolderPath, sourceFolderPath, normalizedTarget),
+          businessId,
+          skipQuotaRefresh: true,
+          operationDeadlineAt: remoteDeadlineAt
+        })
+      }
+    })
+  } catch (error) {
+    if (error?.code !== 'media_selection_empty' || !existingFolderRows.length) throw error
+    result = { operation: 'La operación de mover', attempted: 0, affected: 0, failed: 0 }
+  }
+
+  const foldersAffected = manageFolderRecords && (existingFolderRows.length || result.affected)
+    ? await moveMediaFolderRecords({
         businessId,
-        skipQuotaRefresh: true,
-        operationDeadlineAt: remoteDeadlineAt
+        folderPaths: selection.folderPaths,
+        targetFolderPath: normalizedTarget,
+        existingRows: existingFolderRows
       })
-    }
-  })
+    : 0
+
+  return { ...result, foldersAffected }
 }
 
 export async function deleteMediaSelection({
@@ -4756,20 +5030,38 @@ export async function deleteMediaSelection({
   mediaType = '',
   status = ''
 } = {}) {
-  return runMediaSelectionOperation({
-    businessId,
-    assetIds,
-    folderPaths,
-    mediaType,
-    status,
-    operation: 'La operación de eliminar',
-    action: async (row, _selection, { remoteDeadlineAt }) => {
-      await softDeleteMediaAsset(row.id, {
-        skipQuotaRefresh: true,
-        operationDeadlineAt: remoteDeadlineAt
-      })
-    }
-  })
+  const selection = normalizeMediaSelection({ assetIds, folderPaths })
+  const manageFolderRecords = selection.folderPaths.length > 0 &&
+    !cleanString(mediaType) && !cleanString(status)
+  const existingFolderRows = manageFolderRecords
+    ? await listMediaFolderRecords({ businessId, folderPaths: selection.folderPaths })
+    : []
+
+  let result
+  try {
+    result = await runMediaSelectionOperation({
+      businessId,
+      assetIds: selection.assetIds,
+      folderPaths: selection.folderPaths,
+      mediaType,
+      status,
+      operation: 'La operación de eliminar',
+      action: async (row, _selection, { remoteDeadlineAt }) => {
+        await softDeleteMediaAsset(row.id, {
+          skipQuotaRefresh: true,
+          operationDeadlineAt: remoteDeadlineAt
+        })
+      }
+    })
+  } catch (error) {
+    if (error?.code !== 'media_selection_empty' || !existingFolderRows.length) throw error
+    result = { operation: 'La operación de eliminar', attempted: 0, affected: 0, failed: 0 }
+  }
+
+  const foldersAffected = manageFolderRecords
+    ? await deleteMediaFolderRecords({ businessId, folderPaths: selection.folderPaths })
+    : 0
+  return { ...result, foldersAffected }
 }
 
 export async function resolveMediaAssetSelection({

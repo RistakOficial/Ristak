@@ -52,6 +52,8 @@ Authenticated app endpoints:
 - `POST /api/media/video-upload/:id/finalize?module=sites`
 - `DELETE /api/media/video-upload/:id?module=sites`
 - `GET /api/media/assets`
+- `POST /api/media/folders`
+- `GET /api/media/folders`
 - `GET /api/media/storage/usage`
 - `GET /api/media/assets/:id/url`
 - `DELETE /api/media/assets/:id`
@@ -242,6 +244,23 @@ another account.
 ## App media explorer
 
 - `Configuracion > Media` reconstructs folders from `media_assets.bunny_path`, but must hide technical storage roots such as `accounts/<slug>` and legacy `businesses/<id>`. Users should start at business categories like Media, Cuenta, Chats, Sitios or the first real folder, never at the bucket/account root.
+- La biblioteca también conserva en `media_folders` las carpetas creadas por el
+  usuario, incluso cuando todavía están vacías. El árbol físico de Bunny se crea
+  automáticamente cuando llega el primer archivo a esa ruta; Ristak no fabrica
+  archivos marcadores ni expone objetos técnicos al usuario.
+- Una subida iniciada desde `Configuracion > Media` manda `folderPath` de forma
+  explícita. Esa ruta es relativa a la unidad visible del negocio: el backend la
+  normaliza y siempre antepone la raíz inmutable `accounts/<slug>`. Por eso una
+  ruta con separadores, `..` o nombres parecidos a raíces técnicas nunca puede
+  escribir fuera de la cuenta autenticada.
+- Las subidas administrativas se guardan directamente en la carpeta abierta,
+  sin agregar automáticamente categoría/año/mes/día. Los uploads internos de
+  Chat, Sites, formularios, avatares, anuncios y demás módulos conservan su
+  taxonomía automática porque esa estructura pertenece al sistema, no al
+  explorador manual.
+- Crear, mover o eliminar una carpeta actualiza tanto sus assets como su registro
+  persistente. Borrar el último archivo no borra por accidente una carpeta creada
+  por el usuario; una carpeta vacía puede moverse o eliminarse expresamente.
 - Quick filters such as Fotos, Videos, Audio, Docs and Otros are global views from the root of Media. Selecting one resets the current folder and shows matching files directly, while normal folder browsing remains available when the user opens a folder.
 
 ## Quotas

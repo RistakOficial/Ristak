@@ -7,6 +7,7 @@ import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   cancelResumableVideoUploadHandler,
+  createMediaFolderHandler,
   deleteMediaAssetHandler,
   deleteMediaSelectionHandler,
   downloadMediaAssetHandler,
@@ -148,6 +149,7 @@ router.delete('/video-upload/:assetId', classifyMediaUpload, requireMediaUploadA
 router.post('/upload', classifyMediaUpload, requireMediaUploadAccess, uploadSingleFile, uploadMediaHandler)
 router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHandler)
 router.get('/folders', requireMediaLicense, requireMediaAccess, listMediaFoldersHandler)
+router.post('/folders', requireMediaLicense, requireMediaAccess, createMediaFolderHandler)
 router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)
 router.get('/diagnostics', requireMediaLicense, requireMediaAccess, storageDiagnosticsHandler)
 router.get('/assets/:assetId/url', requireMediaLicense, requireMediaAccess, getMediaAssetUrlHandler)

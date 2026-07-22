@@ -4,6 +4,7 @@ import { pipeline } from 'stream/promises'
 import JSZip from 'jszip'
 import {
   cancelBunnyStreamResumableUpload,
+  createMediaFolder,
   deleteMediaSelection,
   extractMediaAssetIdFromUrl,
   finalizeBunnyStreamResumableUpload,
@@ -220,6 +221,9 @@ export function trustedUploadContextFromRequest(req = {}) {
   if (!directChat.enabled) {
     const trustedModule = cleanString(req.mediaUploadModule || req.query?.module).toLowerCase()
     const bodyModule = cleanString(body.module).toLowerCase()
+    const hasFolderPath = Object.prototype.hasOwnProperty.call(body, 'folderPath') ||
+      Object.prototype.hasOwnProperty.call(body, 'folder_path') ||
+      Object.prototype.hasOwnProperty.call(body, 'path')
     if (trustedModule && trustedModule !== 'other' && bodyModule && bodyModule !== trustedModule) {
       throw mediaUploadRequestError('El módulo de la subida no coincide con la superficie autorizada.')
     }
@@ -244,6 +248,12 @@ export function trustedUploadContextFromRequest(req = {}) {
         : body.userId || body.user_id || req.user?.userId || req.user?.id || null,
       module: trustedModule && trustedModule !== 'other' ? trustedModule : body.module || 'other',
       moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
+      // Sólo la biblioteca administrativa puede elegir una ruta exacta. Los
+      // demás módulos conservan su taxonomía automática y nunca aceptan una
+      // carpeta enviada por el navegador.
+      folderPath: trustedModule === 'media' && hasFolderPath
+        ? body.folderPath ?? body.folder_path ?? body.path ?? ''
+        : null,
       isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
       deferStreamSync: parseBoolean(
         body.deferStreamSync ?? body.defer_stream_sync ??
@@ -264,6 +274,7 @@ export function trustedUploadContextFromRequest(req = {}) {
     userId: req.user?.userId || req.user?.id || null,
     module: 'chat',
     moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
+    folderPath: null,
     isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
     deferStreamSync: parseBoolean(
       body.deferStreamSync ?? body.defer_stream_sync ??
@@ -346,6 +357,9 @@ export function mediaUploadRequestDescriptor(
   // explícita sí la incorporan para impedir replays entre locations.
   if (includeClientAccount && cleanString(context.clientAccountId)) {
     descriptor.clientAccountId = cleanString(context.clientAccountId)
+  }
+  if (context.folderPath !== null && context.folderPath !== undefined) {
+    descriptor.folderPath = cleanString(context.folderPath)
   }
   return descriptor
 }
@@ -558,6 +572,21 @@ export async function listMediaFoldersHandler(req, res) {
     res.json({ success: true, data: page })
   } catch (error) {
     sendError(res, error, 'Error listando carpetas multimedia')
+  }
+}
+
+export async function createMediaFolderHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const folder = await createMediaFolder({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      parentPath: body.parentPath ?? body.parent_path ?? body.path ?? '',
+      name: body.name || body.folderName || body.folder_name || '',
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.status(201).json({ success: true, data: folder })
+  } catch (error) {
+    sendError(res, error, 'Error creando carpeta multimedia')
   }
 }
 
