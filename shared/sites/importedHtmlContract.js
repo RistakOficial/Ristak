@@ -8,6 +8,7 @@ export const IMPORTED_HTML_MOBILE_RULES = Object.freeze([
   'En móvil convierte grids y filas de varias columnas a una sola columna cuando sea necesario, conserva el orden lógico del contenido y usa padding lateral seguro.',
   'Usa anchos fluidos (width: 100% y max-width), min-width: 0 y box-sizing: border-box. Evita anchos fijos, min-width de escritorio y 100vw dentro de contenedores con padding.',
   'Imágenes, video, audio e iframes deben respetar max-width: 100%; las imágenes y videos conservan su proporción con height: auto o aspect-ratio.',
+  'Si necesitas archivos de video distintos para computadora y móvil, declara dos slots nativos con la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile. Muéstralos con la media query real; Ristak enlaza el panel con la variante visible y usa la configurada como respaldo mientras la otra siga pendiente.',
   'Controles táctiles deben medir al menos 44px de alto. En móvil, inputs, selects y textareas usan font-size de al menos 16px para evitar zoom automático del navegador.',
   'No simules móvil con zoom, transform: scale ni una captura encogida. El CSS responsive debe reaccionar al ancho real del viewport.',
   'Cuando edites una página existente, conserva sus media queries y vuelve a revisar escritorio y móvil. Un cambio de escritorio no puede romper la versión móvil ni viceversa.'
@@ -51,4 +52,82 @@ export function buildImportedHtmlCustomCalendarRulesText(heading = 'Calendario H
     '- Estructura mínima obligatoria (agrega clases y CSS propios sin quitar los hooks):',
     IMPORTED_HTML_CUSTOM_CALENDAR_SKELETON
   ].join('\n')
+}
+
+const IMPORTED_NATIVE_DESKTOP_VARIANT_TOKENS = new Set([
+  'computer',
+  'computadora',
+  'desktop',
+  'escritorio',
+  'laptop',
+  'pc'
+])
+
+const IMPORTED_NATIVE_MOBILE_VARIANT_TOKENS = new Set([
+  'cel',
+  'celular',
+  'mobile',
+  'movil',
+  'phone',
+  'smartphone'
+])
+
+function normalizeImportedNativeVariantToken(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+export function getImportedNativeResponsiveVariant(value = '') {
+  const tokens = normalizeImportedNativeVariantToken(value)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  let device = ''
+  const familyTokens = tokens.filter(token => {
+    if (IMPORTED_NATIVE_DESKTOP_VARIANT_TOKENS.has(token)) {
+      device = device && device !== 'desktop' ? 'mixed' : 'desktop'
+      return false
+    }
+    if (IMPORTED_NATIVE_MOBILE_VARIANT_TOKENS.has(token)) {
+      device = device && device !== 'mobile' ? 'mixed' : 'mobile'
+      return false
+    }
+    return true
+  })
+  return {
+    device: device === 'desktop' || device === 'mobile' ? device : '',
+    family: familyTokens.join('-')
+  }
+}
+
+export function areImportedNativeResponsiveVariants(first = '', second = '') {
+  const left = getImportedNativeResponsiveVariant(first)
+  const right = getImportedNativeResponsiveVariant(second)
+  return Boolean(
+    left.device &&
+    right.device &&
+    left.device !== right.device &&
+    left.family &&
+    left.family === right.family
+  )
+}
+
+export function resolveVisibleImportedNativeElementSelection({
+  slots = [],
+  currentKey = '',
+  visibleKeys = []
+} = {}) {
+  if (!currentKey) return ''
+  const visible = new Set(visibleKeys)
+  if (visible.has(currentKey)) return currentKey
+  const current = slots.find(slot => slot?.key === currentKey)
+  if (!current) return ''
+  const sameTypeVisible = slots.filter(slot => slot?.type === current.type && visible.has(slot.key))
+  const responsiveVisible = sameTypeVisible.filter(slot => (
+    areImportedNativeResponsiveVariants(current.id, slot?.id)
+  ))
+  if (responsiveVisible.length === 1) return responsiveVisible[0].key
+  return sameTypeVisible.length === 1 ? sameTypeVisible[0].key : ''
 }

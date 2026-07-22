@@ -757,6 +757,75 @@ test('imported HTML native video slots render the real Ristak player and video a
   }
 })
 
+test('responsive imported video slots use the configured sibling until mobile gets its own file', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <head>
+          <style>
+            .video-desktop { display: block; }
+            .video-mobile { display: none; }
+            @media (max-width: 640px) {
+              .video-desktop { display: none; }
+              .video-mobile { display: block; }
+            }
+          </style>
+        </head>
+        <body>
+          <section class="video-desktop" data-rstk-native-element="video" data-rstk-native-id="video-presentacion-escritorio"></section>
+          <section class="video-mobile" data-rstk-native-element="video" data-rstk-native-id="video-presentacion-movil"></section>
+        </body>
+      </html>
+    `, `HTML responsive native video ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video computadora',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-presentacion-escritorio',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-escritorio.mp4'
+      }
+    })
+
+    let currentSite = await getSite(site.id, { includeBlocks: true })
+    let html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: false })
+
+    assert.match(html, /data-rstk-native-slot-id="video-presentacion-escritorio"/)
+    assert.match(html, /data-rstk-native-slot-id="video-presentacion-movil"/)
+    assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 2)
+    assert.doesNotMatch(html, /Configura el video de Ristak/)
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video móvil',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-presentacion-movil',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-movil.mp4'
+      }
+    })
+
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: false })
+
+    assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 1)
+    assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-movil\.mp4"/g) || []).length, 1)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('imported HTML native video slots keep the customized Ristak player in the published site', async () => {
   let siteId = ''
   const assetId = `site_imported_stream_${Date.now()}`

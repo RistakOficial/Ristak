@@ -4700,6 +4700,18 @@ por separado en computadora, tablet y móvil. El HTML importado no debe fabricar
 franjas laterales, un marco negro ni otra relación de aspecto: el slot permanece
 neutro y el reproductor nativo resuelve su geometría.
 
+Cuando una página necesita un archivo de video distinto para computadora y
+móvil, declara dos slots con la misma base semántica y sufijos de vista, por
+ejemplo `video-presentacion-escritorio` y `video-presentacion-movil`, y deja que
+la media query del HTML muestre solo el correspondiente. Al cambiar la vista del
+editor, el inspector sigue automáticamente el slot visible para que una subida
+móvil no reemplace por accidente el bloque de computadora. Mientras una de las
+dos variantes todavía no tenga bloque propio, el renderer usa como respaldo el
+único video configurado de la variante hermana; al conectar un archivo en el
+slot pendiente se crea su bloque independiente y esa coincidencia exacta siempre
+tiene prioridad. El respaldo solo aplica a videos emparejados por base y vista,
+nunca a dos videos distintos de la misma página.
+
 - `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
   exclusivamente un formulario ya existente, reglas "Al enviar", estilo del
   bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;
@@ -4869,8 +4881,9 @@ muestra verificado; en modo custom no aparece el control de escala porque el
 tamaño pertenece al CSS importado. Al abrirlo, el mismo inspector derecho cambia a la
 configuracion de ese elemento; arriba aparece una flecha con `Volver`, que
 regresa al mapeo general de la pagina y conserva el elemento desde el que se
-entro. No se abre otra ventana ni se mezcla la configuracion avanzada con todas
-las filas del resumen. Para un video
+entro. El encabezado de detalle es el único separador antes del inspector; los
+controles no agregan una segunda línea contigua. No se abre otra ventana ni se
+mezcla la configuracion avanzada con todas las filas del resumen. Para un video
 premium y personalizable, el HTML debe reservar
 `<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-label="Video principal"></div>`;
 usar un `<video>` HTML propio lo deja bajo control del codigo y no sustituye el

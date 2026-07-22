@@ -209,6 +209,14 @@ another account.
   mobile while preserving 9:16; `fill` uses the full width on every viewport;
   and `framed` respects the media-width value saved for each desktop/tablet/mobile
   view. The slot must not fake side bands or a black aspect-ratio frame.
+  Pages that need separate desktop and mobile files declare two native slots with
+  one semantic family plus a device suffix, for example
+  `video-presentacion-escritorio` and `video-presentacion-movil`, and use their
+  real media query to expose the active slot. The editor inspector follows the
+  visible slot when the preview device changes. Until the pending variant gets
+  its own block, preview and published rendering use the single configured sibling
+  as a fallback; saving a file in the pending slot creates an independent exact
+  binding, which then overrides the fallback.
 - Editor, canvas, preview-session and published/live native video blocks use the
   Bunny Storage URL with the customizable Ristak player. Publishing never swaps
   a ready Storage-backed native video to the Bunny Stream iframe, so the saved

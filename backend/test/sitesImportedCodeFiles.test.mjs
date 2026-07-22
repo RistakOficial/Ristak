@@ -640,6 +640,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
     IMPORTED_HTML_MOBILE_BREAKPOINT_PX,
     IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
     IMPORTED_HTML_MOBILE_RULES,
+    areImportedNativeResponsiveVariants,
+    resolveVisibleImportedNativeElementSelection,
     buildImportedHtmlMobileRulesText
   } = await import('../../shared/sites/importedHtmlContract.js')
   const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
@@ -656,6 +658,18 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(mobileGuide, /al menos 44px/)
   assert.match(mobileGuide, /al menos 16px/)
   assert.match(mobileGuide, /No simules móvil con zoom, transform: scale/)
+  assert.match(mobileGuide, /video-presentacion-desktop/)
+  assert.equal(areImportedNativeResponsiveVariants('video-presentacion-escritorio', 'video-presentacion-movil'), true)
+  assert.equal(areImportedNativeResponsiveVariants('video-testimonio-escritorio', 'video-presentacion-movil'), false)
+  assert.equal(resolveVisibleImportedNativeElementSelection({
+    slots: [
+      { id: 'video-presentacion-escritorio', key: 'video:video-presentacion-escritorio', type: 'video' },
+      { id: 'video-presentacion-movil', key: 'video:video-presentacion-movil', type: 'video' },
+      { id: 'video-testimonio-movil', key: 'video:video-testimonio-movil', type: 'video' }
+    ],
+    currentKey: 'video:video-presentacion-escritorio',
+    visibleKeys: ['video:video-presentacion-movil', 'video:video-testimonio-movil']
+  }), 'video:video-presentacion-movil')
 
   const sharedPromptUses = source.match(/buildImportedHtmlMobileRulesText\(/g) || []
   assert.ok(sharedPromptUses.length >= 5, 'La guía móvil debe llegar a creación, edición y asistentes HTML')
@@ -663,9 +677,12 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(source, /<details className=\{styles\.importedCodeGuide\}>/)
   assert.match(source, /title="Mostrar u ocultar las reglas completas para HTML y móvil"/)
   assert.match(source, /data-preview-device=\{device\}/)
+  assert.match(source, /onLoad=\{\(event\) => syncImportedNativeElementSelectionForFrame\(event\.currentTarget\)\}/)
 
   assert.match(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame[\s\S]*?width: min\(var\(--imported-html-mobile-preview-width, 390px\), 100%\)/)
   assert.doesNotMatch(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame\s*\{\s*width:\s*100%/)
+  const nativeControlsStyles = styles.match(/\.importedNativeElementControls\s*\{([^}]*)\}/)?.[1] || ''
+  assert.doesNotMatch(nativeControlsStyles, /border-top|padding-top/)
 })
 
 test('AI HTML editor sends uploaded references as multimodal input parts', async () => {

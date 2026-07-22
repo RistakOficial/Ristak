@@ -261,8 +261,10 @@ import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.
 import {
   IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
   IMPORTED_HTML_MOBILE_RULES,
+  areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
-  buildImportedHtmlMobileRulesText
+  buildImportedHtmlMobileRulesText,
+  resolveVisibleImportedNativeElementSelection
 } from '../../../../shared/sites/importedHtmlContract.js'
 
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
@@ -2450,6 +2452,47 @@ const isImportedNativeElementBlock = (block: SiteBlock, slot: ImportedNativeElem
 
 const findImportedNativeElementBlock = (blocks: SiteBlock[] = [], slot: ImportedNativeElementSlot) =>
   blocks.find(block => isImportedNativeElementBlock(block, slot)) || null
+
+const findImportedNativeResponsiveFallbackBlock = (blocks: SiteBlock[] = [], slot: ImportedNativeElementSlot) => {
+  if (slot.type !== 'video') return null
+  const slotPageId = String(slot.pageId || '').trim()
+  const candidates = blocks.filter(block => {
+    const settings = block.settings || {}
+    const blockPageId = getSettingString(settings, 'pageId') || getSettingString(settings, 'page_id')
+    return block.blockType === 'video' &&
+      Boolean(settings.importedHtmlNativeElement) &&
+      getSettingString(settings, 'importedHtmlNativeType') === 'video' &&
+      areImportedNativeResponsiveVariants(slot.id, getSettingString(settings, 'importedHtmlNativeSlotId')) &&
+      (!slotPageId || !blockPageId || blockPageId === slotPageId)
+  })
+  return candidates.length === 1 ? candidates[0] : null
+}
+
+const getVisibleImportedNativeElementSlotKeys = (
+  frame: HTMLIFrameElement,
+  slots: ImportedNativeElementSlot[] = []
+) => {
+  const doc = frame.contentDocument
+  const view = doc?.defaultView
+  if (!doc || !view) return []
+  const mountedElements = Array.from(doc.querySelectorAll<HTMLElement>('[data-rstk-native-slot-id][data-rstk-native-type]'))
+  const isVisible = (element: HTMLElement) => {
+    let current: HTMLElement | null = element
+    while (current && current !== doc.documentElement) {
+      const style = view.getComputedStyle(current)
+      if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false
+      current = current.parentElement
+    }
+    return element.getClientRects().length > 0
+  }
+  return slots
+    .filter(slot => mountedElements.some(element => (
+      element.dataset.rstkNativeSlotId === slot.id &&
+      element.dataset.rstkNativeType === slot.type &&
+      isVisible(element)
+    )))
+    .map(slot => slot.key)
+}
 
 const IMPORTED_POPUP_PATTERN = /(<dialog\b|role=["']dialog["']|aria-modal=["']true["']|(?:id|class|data-[\w-]+)=["'][^"']*(?:popup|pop-up|modal|dialog|lightbox|overlay|exit-intent|newsletter)[^"']*["'])/i
 const importedHtmlHasPopup = (importData?: ImportedSiteImport | null) => {
@@ -21689,6 +21732,26 @@ const ImportedHtmlEditorPanel: React.FC<{
   )
   const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
 
+  const syncImportedNativeElementSelectionForFrame = useCallback((frame: HTMLIFrameElement) => {
+    if (!selectedImportedNativeElementKey) return
+    const visibleKeys = getVisibleImportedNativeElementSlotKeys(frame, importedNativeElementSlots)
+    const nextKey = resolveVisibleImportedNativeElementSelection({
+      slots: importedNativeElementSlots,
+      currentKey: selectedImportedNativeElementKey,
+      visibleKeys
+    })
+    if (!nextKey || nextKey === selectedImportedNativeElementKey) return
+    setSelectedImportedNativeElementKey(nextKey)
+  }, [importedNativeElementSlots, selectedImportedNativeElementKey])
+
+  useEffect(() => {
+    if (!selectedImportedNativeElementKey) return
+    const frame = codeEditorOpen ? codePreviewIframeRef.current : iframeRef.current
+    if (!frame) return
+    const request = window.requestAnimationFrame(() => syncImportedNativeElementSelectionForFrame(frame))
+    return () => window.cancelAnimationFrame(request)
+  }, [codeEditorOpen, device, selectedImportedNativeElementKey, syncImportedNativeElementSelectionForFrame])
+
   useEffect(() => {
     if (!selectedImportedNativeElementSlot) return
     const frame = window.requestAnimationFrame(() => importedNativeElementBackButtonRef.current?.focus())
@@ -21944,10 +22007,14 @@ const ImportedHtmlEditorPanel: React.FC<{
   const getImportedNativeElementDraftSettings = useCallback((slot: ImportedNativeElementSlot) => {
     const currentSite = importedNativeElementSiteRef.current || site
     const block = findImportedNativeElementBlock(currentSite.blocks || [], slot)
+    const responsiveFallback = block
+      ? null
+      : findImportedNativeResponsiveFallbackBlock(currentSite.blocks || [], slot)
     const defaults = getImportedNativeElementDefaultSettingsForSlot(slot)
     const pageId = slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
     return {
       ...defaults,
+      ...(responsiveFallback?.settings || {}),
       ...(block?.settings || {}),
       ...(importedNativeElementDraftsRef.current[slot.key] || importedNativeElementDrafts[slot.key] || {}),
       ...getImportedNativeElementBlockSettings(slot, pageId)
@@ -25402,6 +25469,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     const nativeElementSite = importedNativeElementSiteRef.current || site
     const nativeElementBlocks = nativeElementSite.blocks || []
     const selectedBlock = selectedSlot ? findImportedNativeElementBlock(nativeElementBlocks, selectedSlot) : null
+    const selectedResponsiveFallbackBlock = selectedSlot && !selectedBlock
+      ? findImportedNativeResponsiveFallbackBlock(nativeElementBlocks, selectedSlot)
+      : null
     const draftBlock = selectedSlot ? makeImportedNativeElementDraftBlock(selectedSlot) : null
     const draftSettings = draftBlock?.settings || {}
     const selectedSlotSaving = Boolean(selectedSlot && importedNativeElementSavingKey === selectedSlot.key)
@@ -25856,24 +25926,31 @@ const ImportedHtmlEditorPanel: React.FC<{
                     label: 'Editar',
                     icon: <Pencil size={14} />,
                     content: (
-                      <AccordionGroup>
-                        <AccordionSection id="imported-native-video-source" title="Video" defaultGroupOpen>
-                          <LandingBlockSettings
-                            site={nativeElementSite}
-                            block={draftBlock}
-                            blocks={nativeElementBlocks}
-                            forms={forms}
-                            calendars={calendars}
-                            pages={pages}
-                            activePageId={activeImportedPage?.id || activePageId}
-                            connectedSocialProfiles={[]}
-                            loadingSocialProfiles={false}
-                            onPatchBlock={patchSelectedVideoBlock}
-                            onPatchSettings={patchSelectedVideoSettings}
-                            onSave={autosaveSelectedNativeElement}
-                          />
-                        </AccordionSection>
-                      </AccordionGroup>
+                      <>
+                        {selectedResponsiveFallbackBlock && (
+                          <p className={styles.importedFormFieldsHint}>
+                            Esta vista usa temporalmente el video de la otra versión. Elige otro archivo aquí para guardar una versión independiente.
+                          </p>
+                        )}
+                        <AccordionGroup>
+                          <AccordionSection id="imported-native-video-source" title="Video" defaultGroupOpen>
+                            <LandingBlockSettings
+                              site={nativeElementSite}
+                              block={draftBlock}
+                              blocks={nativeElementBlocks}
+                              forms={forms}
+                              calendars={calendars}
+                              pages={pages}
+                              activePageId={activeImportedPage?.id || activePageId}
+                              connectedSocialProfiles={[]}
+                              loadingSocialProfiles={false}
+                              onPatchBlock={patchSelectedVideoBlock}
+                              onPatchSettings={patchSelectedVideoSettings}
+                              onSave={autosaveSelectedNativeElement}
+                            />
+                          </AccordionSection>
+                        </AccordionGroup>
+                      </>
                     )
                   },
                   {
@@ -26291,6 +26368,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 srcDoc={guardedCodePreviewHtml}
                 sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 referrerPolicy="no-referrer-when-downgrade"
+                onLoad={(event) => syncImportedNativeElementSelectionForFrame(event.currentTarget)}
               />
             ) : (
               <div className={styles.importedPreviewState}>
@@ -26348,6 +26426,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               srcDoc={guardedEditorPreviewHtml}
               sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
               referrerPolicy="no-referrer-when-downgrade"
+              onLoad={(event) => syncImportedNativeElementSelectionForFrame(event.currentTarget)}
             />
           )}
           {!previewError && !editorPreviewHtml && previewLoading && (
