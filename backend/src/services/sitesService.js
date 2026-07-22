@@ -68,6 +68,7 @@ import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
+  buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlMobileRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlVideoActionTargets
@@ -2186,6 +2187,9 @@ function sanitizeImportedHtml(html = '') {
 
   if (!/<html[\s>]/i.test(sanitized)) {
     sanitized = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${sanitized}</body></html>`
+  } else if (!/<meta\b[^>]*\bname\s*=\s*["']?viewport["']?[^>]*>/i.test(sanitized)) {
+    sanitized = injectHtmlBeforeHeadClose(sanitized, '<meta name="viewport" content="width=device-width, initial-scale=1">')
+    report.push('Se agrego meta viewport para respetar la version movil')
   }
 
   sanitized = injectImportedStaticFallback(sanitized, report)
@@ -27634,6 +27638,7 @@ async function renderImportedPublicSiteHtml(site, {
   const importedResponsiveStyle = importedResponsiveCss
     ? `<style data-rstk-responsive>${importedResponsiveCss}</style>`
     : ''
+  const importedDeviceVisibilityStyle = buildImportedHtmlDeviceVisibilityStyle()
   html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
   const importedNativeRender = await replaceImportedNativeElementSlots(
     html,
@@ -27659,7 +27664,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedResponsiveStyle}${injection.head}`
+    `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -27727,6 +27732,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     const importedResponsiveStyle = importedResponsiveCss
       ? `<style data-rstk-responsive>${importedResponsiveCss}</style>`
       : ''
+    const importedDeviceVisibilityStyle = buildImportedHtmlDeviceVisibilityStyle()
     html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
     const importedNativeRender = await replaceImportedNativeElementSlots(
       html,
@@ -27747,7 +27753,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
-      `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedResponsiveStyle}${injection.head}`
+      `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
     )
 
     return {

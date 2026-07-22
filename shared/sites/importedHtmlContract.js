@@ -1,14 +1,29 @@
 export const IMPORTED_HTML_MOBILE_BREAKPOINT_PX = 640
 export const IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX = 390
+export const IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE = 'data-rstk-device-only'
+
+export function buildImportedHtmlDeviceVisibilityStyle(previewDevice = '') {
+  const device = String(previewDevice || '').trim().toLowerCase()
+  const selector = `[${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}`
+  const css = device === 'desktop'
+    ? `${selector}="mobile"]{display:none!important}`
+    : device === 'mobile'
+      ? `${selector}="desktop"]{display:none!important}`
+      : `@media (min-width:${IMPORTED_HTML_MOBILE_BREAKPOINT_PX + 1}px){${selector}="mobile"]{display:none!important}}\n@media (max-width:${IMPORTED_HTML_MOBILE_BREAKPOINT_PX}px){${selector}="desktop"]{display:none!important}}`
+
+  return `<style data-rstk-device-visibility="${device || 'responsive'}">${css}</style>`
+}
 
 export const IMPORTED_HTML_MOBILE_RULES = Object.freeze([
   'Incluye <meta name="viewport" content="width=device-width, initial-scale=1"> en cada documento HTML.',
   `Diseña una versión móvil real y fluida. Incluye reglas @media (max-width: ${IMPORTED_HTML_MOBILE_BREAKPOINT_PX}px) con cambios concretos; no basta con reducir visualmente la versión de escritorio.`,
+  `Visibilidad por dispositivo: si un elemento debe existir solo en computadora, marca su contenedor completo con ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="desktop". Si debe existir solo en celular, usa ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="mobile". Un elemento compartido por ambas vistas no lleva ese atributo.`,
+  `Cuando computadora y celular necesiten composiciones distintas, crea dos contenedores hermanos —uno ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="desktop" y otro ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="mobile"—. No uses JavaScript, clases inventadas ni hidden para alternarlos y no repitas el atributo en cada hijo: Ristak oculta la variante contraria en el selector del editor y en el sitio publicado.`,
   `Valida el resultado en un viewport de ${IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX}px: no debe existir scroll horizontal, contenido cortado ni texto, botones, formularios, imágenes, videos o iframes fuera del ancho visible.`,
   'En móvil convierte grids y filas de varias columnas a una sola columna cuando sea necesario, conserva el orden lógico del contenido y usa padding lateral seguro.',
   'Usa anchos fluidos (width: 100% y max-width), min-width: 0 y box-sizing: border-box. Evita anchos fijos, min-width de escritorio y 100vw dentro de contenedores con padding.',
   'Imágenes, video, audio e iframes deben respetar max-width: 100%; las imágenes y videos conservan su proporción con height: auto o aspect-ratio.',
-  'Si necesitas archivos de video distintos para computadora y móvil, declara dos slots nativos con la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile. Muéstralos con la media query real; Ristak enlaza el panel con la variante visible y usa la configurada como respaldo mientras la otra siga pendiente.',
+  `Si necesitas archivos de video distintos para computadora y móvil, declara dos slots nativos con la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile. Envuelve cada slot en su contenedor ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE} correspondiente; Ristak enlaza el panel con la variante visible y usa la configurada como respaldo mientras la otra siga pendiente.`,
   'Controles táctiles deben medir al menos 44px de alto. En móvil, inputs, selects y textareas usan font-size de al menos 16px para evitar zoom automático del navegador.',
   'No simules móvil con zoom, transform: scale ni una captura encogida. El CSS responsive debe reaccionar al ancho real del viewport.',
   'Cuando edites una página existente, conserva sus media queries y vuelve a revisar escritorio y móvil. Un cambio de escritorio no puede romper la versión móvil ni viceversa.'

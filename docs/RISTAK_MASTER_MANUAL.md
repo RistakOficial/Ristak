@@ -4602,6 +4602,20 @@ la vista normal del HTML como la vista partida código/preview montan el documen
 en un iframe con viewport real de hasta 390 px, de modo que sus media queries se
 activen igual que en un celular.
 
+La visibilidad exclusiva declarada por el propio HTML usa un contrato estable,
+no nombres de clase que Ristak tenga que adivinar. El contenedor completo lleva
+`data-rstk-device-only="desktop"` cuando solo existe en computadora o
+`data-rstk-device-only="mobile"` cuando solo existe en celular; si aparece en
+ambas vistas, no lleva el atributo. Para dos composiciones diferentes se crean
+dos contenedores hermanos, uno por dispositivo. El HTML no agrega `hidden`,
+JavaScript ni otra regla de `display` para alternarlos: en el editor, el selector
+Computadora/Celular oculta de forma explícita la variante contraria; en publicado,
+Ristak inyecta la regla responsive de `640px` para que mande el ancho real. El
+sanitizador también agrega `meta viewport` cuando un documento HTML completo no
+lo incluyó, evitando que un celular evalúe las reglas con un viewport ficticio de
+escritorio. Esta misma instrucción se comparte con la IA de Ristak y con los
+textos copiables para ChatGPT, Claude y Codex.
+
 El Panel de contenido muestra lo que ya declaro el HTML; no existe una accion
 "Agregar al HTML" ni un flujo que obligue a subir multimedia antes de escribir
 el codigo. Un `data-rstk-asset-id` o `data-rstk-background-asset-id` con clave no
@@ -4710,7 +4724,8 @@ neutro y el reproductor nativo resuelve su geometría.
 Cuando una página necesita un archivo de video distinto para computadora y
 móvil, declara dos slots con la misma base semántica y sufijos de vista, por
 ejemplo `video-presentacion-escritorio` y `video-presentacion-movil`, y deja que
-la media query del HTML muestre solo el correspondiente. Al cambiar la vista del
+sus contenedores padres usen respectivamente
+`data-rstk-device-only="desktop"` y `data-rstk-device-only="mobile"`. Al cambiar la vista del
 editor, el inspector sigue automáticamente el slot visible para que una subida
 móvil no reemplace por accidente el bloque de computadora. Mientras una de las
 dos variantes todavía no tenga bloque propio, el renderer usa como respaldo el

@@ -262,6 +262,7 @@ import {
   IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
   IMPORTED_HTML_MOBILE_RULES,
   areImportedNativeResponsiveVariants,
+  buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
@@ -18201,16 +18202,21 @@ const buildImportedEditorFrameGuardScript = (mode: ImportedFrameElementDescripto
 </script>
 `
 
-const buildImportedEditorPreviewHtml = (html: string, mode: ImportedFrameElementDescriptor['mode']) => {
+const buildImportedEditorPreviewHtml = (
+  html: string,
+  mode: ImportedFrameElementDescriptor['mode'],
+  device: DeviceMode
+) => {
   if (!html) return ''
-  const guard = buildImportedEditorFrameGuardScript(mode)
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b[^>]*>/i, match => `${match}${guard}`)
+  const source = html.replace(/<style\b[^>]*\bdata-rstk-device-visibility\b[^>]*>[\s\S]*?<\/style>/gi, '')
+  const guard = `${buildImportedHtmlDeviceVisibilityStyle(device)}${buildImportedEditorFrameGuardScript(mode)}`
+  if (/<head\b[^>]*>/i.test(source)) {
+    return source.replace(/<head\b[^>]*>/i, match => `${match}${guard}`)
   }
-  if (/<html\b[^>]*>/i.test(html)) {
-    return html.replace(/<html\b[^>]*>/i, match => `${match}${guard}`)
+  if (/<html\b[^>]*>/i.test(source)) {
+    return source.replace(/<html\b[^>]*>/i, match => `${match}${guard}`)
   }
-  return `${guard}${html}`
+  return `${guard}${source}`
 }
 
 const getImportedHtmlStartTagAttribute = (startTag: string, attrName: string) => {
@@ -21971,8 +21977,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodeFile?.path, ensureDetectedHtmlSaved, onImportMappingUpdated, onNativeSaveQueue, showToast, site.id])
 
   const guardedEditorPreviewHtml = useMemo(
-    () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
-    [editorPreviewHtml]
+    () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual', device),
+    [device, editorPreviewHtml]
   )
   const activeCodeDiagnostics = useMemo(
     () => getImportedCodeDiagnostics(activeCodeValue, activeCodeFile?.language || 'html'),
@@ -25098,8 +25104,8 @@ const ImportedHtmlEditorPanel: React.FC<{
     [activeCodePreviewHtml]
   )
   const guardedCodePreviewHtml = useMemo(
-    () => buildImportedEditorPreviewHtml(codePreviewSourceHtml, 'code'),
-    [codePreviewSourceHtml]
+    () => buildImportedEditorPreviewHtml(codePreviewSourceHtml, 'code', device),
+    [codePreviewSourceHtml, device]
   )
   const codeElementFloatingPanel = (buttonEditorPanel || codeElementEditorPanel || contentError) ? (
     <div

@@ -16,7 +16,7 @@ test('imported HTML code files are listed and saved through the code editor endp
   let siteId = ''
 
   try {
-    const html = '<!doctype html><html><head><title>Code file test</title></head><body><main><h1>Original heading</h1><p>Original copy</p></main></body></html>'
+    const html = '<!doctype html><html><head><title>Code file test</title></head><body><main><h1>Original heading</h1><p>Original copy</p><section data-rstk-device-only="desktop">Computadora</section><section data-rstk-device-only="mobile">Celular</section></main></body></html>'
     const created = await createImportedSiteFromHtml({
       filename: 'code-file-test.html',
       fileBase64: Buffer.from(html, 'utf8').toString('base64'),
@@ -31,6 +31,8 @@ test('imported HTML code files are listed and saved through the code editor endp
     assert.match(created.import.codeFiles[0].content, /Original heading/)
     assert.match(created.import.codeFiles[0].content, /<h1[^>]*data-rstk-video-action-target="titulo"/)
     assert.match(created.import.codeFiles[0].content, /<p[^>]*data-rstk-video-action-target="texto"/)
+    assert.match(created.import.codeFiles[0].content, /<meta name="viewport" content="width=device-width, initial-scale=1">/)
+    assert.match(created.import.securityReport.join(' '), /meta viewport/)
 
     const updatedContent = created.import.codeFiles[0].content.replace('>Original heading<', '>Edited from code<')
     const updated = await updateImportedSiteCodeFiles(siteId, {
@@ -47,6 +49,9 @@ test('imported HTML code files are listed and saved through the code editor endp
     })
 
     assert.match(rendered, /Edited from code/)
+    assert.match(rendered, /data-rstk-device-visibility="responsive"/)
+    assert.match(rendered, /@media \(min-width:641px\)\{\[data-rstk-device-only="mobile"\]\{display:none!important\}\}/)
+    assert.match(rendered, /@media \(max-width:640px\)\{\[data-rstk-device-only="desktop"\]\{display:none!important\}\}/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
@@ -693,10 +698,12 @@ test('video design panel exposes responsive portrait sizing without storing the 
 
 test('HTML mobile rules are shared by every creation path and the code preview uses a real phone viewport', async () => {
   const {
+    IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE,
     IMPORTED_HTML_MOBILE_BREAKPOINT_PX,
     IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
     IMPORTED_HTML_MOBILE_RULES,
     areImportedNativeResponsiveVariants,
+    buildImportedHtmlDeviceVisibilityStyle,
     resolveVisibleImportedNativeElementSelection,
     buildImportedHtmlMobileRulesText
   } = await import('../../shared/sites/importedHtmlContract.js')
@@ -705,6 +712,7 @@ test('HTML mobile rules are shared by every creation path and the code preview u
 
   assert.equal(IMPORTED_HTML_MOBILE_BREAKPOINT_PX, 640)
   assert.equal(IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX, 390)
+  assert.equal(IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE, 'data-rstk-device-only')
   assert.ok(IMPORTED_HTML_MOBILE_RULES.length >= 8)
 
   const mobileGuide = buildImportedHtmlMobileRulesText()
@@ -715,6 +723,22 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(mobileGuide, /al menos 16px/)
   assert.match(mobileGuide, /No simules móvil con zoom, transform: scale/)
   assert.match(mobileGuide, /video-presentacion-desktop/)
+  assert.match(mobileGuide, /data-rstk-device-only="desktop"/)
+  assert.match(mobileGuide, /data-rstk-device-only="mobile"/)
+  assert.match(mobileGuide, /dos contenedores hermanos/)
+  assert.match(mobileGuide, /Un elemento compartido por ambas vistas no lleva ese atributo/)
+  assert.match(mobileGuide, /clases inventadas/)
+
+  const desktopPreviewVisibility = buildImportedHtmlDeviceVisibilityStyle('desktop')
+  const mobilePreviewVisibility = buildImportedHtmlDeviceVisibilityStyle('mobile')
+  const publicVisibility = buildImportedHtmlDeviceVisibilityStyle()
+  assert.match(desktopPreviewVisibility, /data-rstk-device-visibility="desktop"/)
+  assert.match(desktopPreviewVisibility, /\[data-rstk-device-only="mobile"\]\{display:none!important\}/)
+  assert.doesNotMatch(desktopPreviewVisibility, /@media/)
+  assert.match(mobilePreviewVisibility, /\[data-rstk-device-only="desktop"\]\{display:none!important\}/)
+  assert.doesNotMatch(mobilePreviewVisibility, /@media/)
+  assert.match(publicVisibility, /@media \(min-width:641px\)/)
+  assert.match(publicVisibility, /@media \(max-width:640px\)/)
   assert.equal(areImportedNativeResponsiveVariants('video-presentacion-escritorio', 'video-presentacion-movil'), true)
   assert.equal(areImportedNativeResponsiveVariants('video-testimonio-escritorio', 'video-presentacion-movil'), false)
   assert.equal(resolveVisibleImportedNativeElementSelection({
@@ -733,6 +757,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(source, /<details className=\{styles\.importedCodeGuide\}>/)
   assert.match(source, /title="Mostrar u ocultar las reglas completas para HTML y móvil"/)
   assert.match(source, /data-preview-device=\{device\}/)
+  assert.match(source, /buildImportedHtmlDeviceVisibilityStyle\(device\)/)
+  assert.match(source, /data-rstk-device-visibility/)
   assert.match(source, /onLoad=\{\(event\) => syncImportedNativeElementSelectionForFrame\(event\.currentTarget\)\}/)
 
   assert.match(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame[\s\S]*?width: min\(var\(--imported-html-mobile-preview-width, 390px\), 100%\)/)
