@@ -2204,6 +2204,10 @@
   border-top: 1px solid var(--border);
 }
 
+.importedFieldMappingStatus {
+  justify-self: end;
+}
+
 .importedFieldMappingSelect {
   grid-column: 1 / -1;
   min-width: 0;

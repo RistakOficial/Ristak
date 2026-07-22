@@ -25735,6 +25735,12 @@ const ImportedHtmlEditorPanel: React.FC<{
                               <strong>{field.label || field.sourceName || field.fieldId}</strong>
                               <small>{field.sourceName || field.fieldId} · {importedPanelFieldTypeLabels[field.type] || field.type || 'Campo'}</small>
                             </span>
+                            <Badge
+                              className={styles.importedFieldMappingStatus}
+                              variant={pending ? 'info' : duplicateFormId || duplicateFieldId || missingCustomField || missingStableFieldId ? 'warning' : storedField ? 'success' : 'neutral'}
+                            >
+                              {pending ? 'Guardando' : duplicateFormId || duplicateFieldId ? 'Corrige el ID' : missingCustomField ? 'Reasociar' : missingStableFieldId ? 'Sin ID estable' : storedField ? 'Asociado' : 'Pendiente'}
+                            </Badge>
                             <CustomSelect
                               value={currentValue}
                               className={styles.importedFieldMappingSelect}
@@ -25765,9 +25771,6 @@ const ImportedHtmlEditorPanel: React.FC<{
                               </optgroup>
                               <option value="ignored">No guardar</option>
                             </CustomSelect>
-                            <Badge variant={pending ? 'info' : duplicateFormId || duplicateFieldId || missingCustomField || missingStableFieldId ? 'warning' : storedField ? 'success' : 'neutral'}>
-                              {pending ? 'Guardando' : duplicateFormId || duplicateFieldId ? 'Corrige el ID' : missingCustomField ? 'Reasociar' : missingStableFieldId ? 'Sin ID estable' : storedField ? 'Asociado' : 'Pendiente'}
-                            </Badge>
                           </div>
                         )
                       })}

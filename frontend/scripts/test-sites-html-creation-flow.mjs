@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const sitesSourceUrl = new URL('../src/pages/Sites/Sites.tsx', import.meta.url)
+const sitesStylesUrl = new URL('../src/pages/Sites/Sites.module.css', import.meta.url)
 const sitesSource = await readFile(sitesSourceUrl, 'utf8')
+const sitesStyles = await readFile(sitesStylesUrl, 'utf8')
 
 const sourceBetween = (startMarker, endMarker) => {
   const start = sitesSource.indexOf(startMarker)
@@ -116,6 +118,27 @@ assert.match(
   openSiteSource,
   /editorOpenRequestRef\.current !== requestId\) return/,
   'una carga vieja del editor no debe reemplazar una seleccion mas reciente'
+)
+
+const importedFieldMappingRowSource = sourceBetween(
+  '<div key={`${field.fieldId}:${fieldIndex}`} className={styles.importedFieldMappingRow}>',
+  '</div>\n                        )'
+)
+const importedFieldMappingStatusIndex = importedFieldMappingRowSource.indexOf('<Badge')
+const importedFieldMappingSelectIndex = importedFieldMappingRowSource.indexOf('<CustomSelect')
+assert.ok(
+  importedFieldMappingStatusIndex >= 0 && importedFieldMappingStatusIndex < importedFieldMappingSelectIndex,
+  'el estado del campo debe permanecer junto al titulo, antes del selector que ocupa toda la fila'
+)
+assert.match(
+  importedFieldMappingRowSource,
+  /<Badge\s+className=\{styles\.importedFieldMappingStatus\}/,
+  'el estado del campo debe usar la alineacion compacta del panel'
+)
+assert.match(
+  sitesStyles,
+  /\.importedFieldMappingStatus\s*\{[\s\S]*?justify-self:\s*end;[\s\S]*?\}/,
+  'la etiqueta de estado no debe estirarse a todo el ancho de la cuadricula'
 )
 
 console.log('Sites HTML creation flow contract OK')

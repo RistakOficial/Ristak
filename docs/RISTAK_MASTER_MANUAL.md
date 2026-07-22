@@ -5017,7 +5017,10 @@ reutilizarla en el mismo formulario. Desde la fila de cada campo el usuario
 elige un dato estandar del contacto, un campo personalizado existente, crear un
 campo personalizado nuevo (`destinationType/saveMode = new_custom`) o no
 guardarlo. Por eso no hace falta crear previamente todo el catalogo ni salir del
-panel. Los titulos detectados deben ignorar snippets tecnicos de Ristak
+panel. En cada fila, el estado (`Asociado`, `Pendiente`, `Guardando` o una alerta)
+se muestra como una etiqueta compacta a la derecha del titulo; el selector de
+destino conserva una fila completa debajo y el estado nunca se presenta como
+una barra de ancho completo. Los titulos detectados deben ignorar snippets tecnicos de Ristak
 (`data-rstk-*`, acciones `open_popup/close_popup` y JSON de botones) y usar
 `data-rstk-label`, un titulo humano cercano o `Formulario N` como respaldo.
 Si una reescritura duplica temporalmente el ID estable de dos campos distintos,
