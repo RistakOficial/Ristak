@@ -1447,7 +1447,7 @@ final class ConversationViewModel {
     /// controla o acciona agentes lee de aquí; `agentStates` crudo es solo store
     /// (conserva las filas legado como historial sin mostrarlas como asignadas).
     var assignedAgentStates: [ConversationAgentState] {
-        agentStates.filter { $0.isAssignedExistingAgent }
+        ConversationAgentState.uniqueAssignedStates(from: agentStates)
     }
 
     var activeAgentStates: [ConversationAgentState] {
@@ -2854,8 +2854,16 @@ final class ConversationViewModel {
     /// refetch): más ágil y consistente con el header + el sheet.
     private func applyUpdatedAgentState(_ updated: ConversationAgentState, previous: ConversationAgentState) {
         let key = previous.agentId ?? updated.agentId
-        if let index = agentStates.firstIndex(where: { ($0.agentId ?? "") == (key ?? "") }) {
-            agentStates[index] = updated
+        let assignmentStatuses = Set(["active", "paused"])
+        let changesAssignment = assignmentStatuses.contains(previous.status.lowercased()) ||
+            assignmentStatuses.contains(updated.status.lowercased())
+        if changesAssignment,
+           let key,
+           !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            agentStates.removeAll {
+                ($0.agentId ?? "") == key && assignmentStatuses.contains($0.status.lowercased())
+            }
+            agentStates.append(updated)
         } else if let index = agentStates.firstIndex(where: { $0.id == previous.id }) {
             agentStates[index] = updated
         } else {

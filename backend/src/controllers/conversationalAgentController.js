@@ -238,12 +238,52 @@ export async function listStates(req, res) {
   }
 }
 
+/**
+ * El runtime conserva una fila por canal, pero el contrato de includeAll es una
+ * lista de agentes para controlar en la UI. Entrega como máximo una asignación
+ * viva por agentId y conserva aparte estados terminales/señales de auditoría.
+ */
+export function collapseAssignedAgentStatesForPresentation(states = []) {
+  const source = Array.isArray(states) ? states : []
+  const winnerByAgentId = new Map()
+
+  for (const state of source) {
+    const agentId = String(state?.agentId || '').trim()
+    const status = String(state?.status || '').trim().toLowerCase()
+    if (!agentId || !['active', 'paused'].includes(status)) continue
+
+    const current = winnerByAgentId.get(agentId)
+    if (!current) {
+      winnerByAgentId.set(agentId, state)
+      continue
+    }
+
+    const currentStatus = String(current.status || '').trim().toLowerCase()
+    const candidateWinsByStatus = currentStatus !== 'active' && status === 'active'
+    const candidateWinsByRecency = currentStatus === status &&
+      String(state.updatedAt || '') > String(current.updatedAt || '')
+    if (candidateWinsByStatus || candidateWinsByRecency) {
+      winnerByAgentId.set(agentId, state)
+    }
+  }
+
+  return source.filter((state) => {
+    const agentId = String(state?.agentId || '').trim()
+    const status = String(state?.status || '').trim().toLowerCase()
+    if (!agentId || !['active', 'paused'].includes(status)) return true
+    return winnerByAgentId.get(agentId) === state
+  })
+}
+
 export async function getState(req, res) {
   try {
     const includeAll = ['1', 'true', 'yes'].includes(String(req.query?.includeAll || '').trim().toLowerCase())
     if (includeAll) {
       const states = await listConversationStatesForContact(req.params?.contactId)
-      return res.json({ success: true, data: states })
+      return res.json({
+        success: true,
+        data: collapseAssignedAgentStatesForPresentation(states)
+      })
     }
     const state = await getConversationState(req.params?.contactId, { agentId: req.query?.agentId || null })
     res.json({ success: true, data: state })

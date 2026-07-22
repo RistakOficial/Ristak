@@ -4,7 +4,10 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import { db } from '../src/config/database.js'
-import { updateState } from '../src/controllers/conversationalAgentController.js'
+import {
+  getState,
+  updateState
+} from '../src/controllers/conversationalAgentController.js'
 import {
   assignAgentToConversation,
   buildRuleContext,
@@ -583,6 +586,47 @@ test('el estado del mismo contacto y agente queda aislado por canal', async () =
     const instagramRows = await listConversationStatesForContact(contactId, { channel: 'instagram' })
     assert.deepEqual(whatsappRows.map((state) => state.id), [whatsappState.id])
     assert.deepEqual(instagramRows.map((state) => state.id), [instagramState.id])
+  } finally {
+    await cleanup(contactId)
+  }
+})
+
+test('una acción humana sin canal actualiza al mismo agente en todos sus canales', async () => {
+  const contactId = `conversation_agent_all_channels_${randomUUID()}`
+  const agentId = `agent_all_channels_${randomUUID()}`
+
+  try {
+    await seedContact(contactId)
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'whatsapp'
+    })
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'sms'
+    })
+
+    const beforeResponse = createMockResponse()
+    await getState({
+      params: { contactId },
+      query: { includeAll: '1' }
+    }, beforeResponse)
+    assert.equal(beforeResponse.statusCode, 200)
+    assert.equal(beforeResponse.body?.data?.length, 1)
+    assert.equal(beforeResponse.body?.data?.[0]?.agentId, agentId)
+
+    await setConversationStatus(contactId, 'skipped', {
+      updatedBy: 'user',
+      agentId
+    })
+
+    const states = (await listConversationStatesForContact(contactId))
+      .filter(state => state.agentId === agentId)
+    assert.equal(states.length, 2)
+    assert.deepEqual(new Set(states.map(state => state.channel)), new Set(['whatsapp', 'sms']))
+    assert.equal(states.every(state => state.status === 'skipped'), true)
   } finally {
     await cleanup(contactId)
   }

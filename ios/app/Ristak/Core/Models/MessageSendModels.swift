@@ -1060,4 +1060,34 @@ struct ConversationAgentState: Decodable, Sendable, Identifiable {
     var isPausedAssignment: Bool {
         isAssignedExistingAgent && status.lowercased() == "paused"
     }
+
+    /// El backend conserva un estado por canal para claims y entregas, pero la
+    /// UI controla agentes, no filas. Un mismo agentId activo en WhatsApp y SMS
+    /// debe aparecer una sola vez; si difieren, el estado activo manda al pausado.
+    static func uniqueAssignedStates(from states: [ConversationAgentState]) -> [ConversationAgentState] {
+        var result: [ConversationAgentState] = []
+        var indexByAgentID: [String: Int] = [:]
+
+        for state in states where state.isAssignedExistingAgent {
+            let agentID = (state.agentId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !agentID.isEmpty else { continue }
+
+            if let index = indexByAgentID[agentID] {
+                let current = result[index]
+                let currentIsActive = current.status.lowercased() == "active"
+                let candidateIsActive = state.status.lowercased() == "active"
+                let candidateIsNewer = (state.updatedAt ?? "") > (current.updatedAt ?? "")
+                if (!currentIsActive && candidateIsActive) ||
+                    (currentIsActive == candidateIsActive && candidateIsNewer) {
+                    result[index] = state
+                }
+                continue
+            }
+
+            indexByAgentID[agentID] = result.count
+            result.append(state)
+        }
+
+        return result
+    }
 }

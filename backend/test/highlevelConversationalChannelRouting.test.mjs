@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
 import {
+  collapseHighLevelPhoneMirrorRowsForDisplay,
   getHighLevelConversationalChannelPreference,
   resolveHighLevelConversationalPhoneRoute,
-  setHighLevelConversationalChannelPreference
+  setHighLevelConversationalChannelPreference,
+  stripHighLevelPhoneMirrorAnnotation
 } from '../src/services/highLevelConversationalChannelRoutingService.js'
 
 async function createContact(marker) {
@@ -112,6 +114,130 @@ test('GHL elige WhatsApp y suprime el SMS duplicado cuando la ventana previa sig
   } finally {
     await cleanup(contactId)
   }
+})
+
+test('GHL reconoce el espejo CUSTOM_SMS aunque agregue Received on al cuerpo', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const { contactId, phone } = await createContact(marker)
+  const nowMs = Date.parse('2030-06-01T19:00:00.000Z')
+  const whatsappBusinessPhone = '+19155550999'
+
+  try {
+    await insertInbound({
+      id: `wa_annotated_${marker}`,
+      contactId,
+      phone,
+      transport: 'ghl_whatsapp',
+      text: 'Buenos días quiero reagendar la cita por favor',
+      timestamp: new Date(nowMs - 900).toISOString(),
+      businessPhone: whatsappBusinessPhone
+    })
+    await insertInbound({
+      id: `sms_annotated_${marker}`,
+      contactId,
+      phone,
+      transport: 'ghl_sms',
+      text: 'Buenos días quiero reagendar la cita por favor\n\n📱 [Received on Raúl Gómez (5218123802444)]',
+      timestamp: new Date(nowMs - 1_000).toISOString(),
+      businessPhone: '+19155550888'
+    })
+
+    const sms = await resolveHighLevelConversationalPhoneRoute({
+      contactId,
+      inboundMessageId: `sms_annotated_${marker}`,
+      inboundChannel: 'sms',
+      nowMs
+    })
+
+    assert.equal(sms.shouldHandle, false)
+    assert.equal(sms.replyChannel, 'whatsapp')
+    assert.equal(sms.reason, 'cross_channel_duplicate_suppressed')
+  } finally {
+    await cleanup(contactId)
+  }
+})
+
+test('el historial oculta solo las firmas espejo y conserva envíos reales repetidos', () => {
+  const phone = '+529614398181'
+  const rows = [
+    {
+      id: 'wa_real_1',
+      transport: 'ghl_whatsapp',
+      direction: 'outbound',
+      phone,
+      message_text: 'Listo, aquí tienes el enlace',
+      message_timestamp: '2030-06-01T20:00:00.000Z'
+    },
+    {
+      id: 'sms_mirror_1',
+      transport: 'ghl_sms',
+      direction: 'outbound',
+      phone,
+      message_text: 'Listo, aquí tienes el enlace\n\n🔁 Sent from another device (5218123802444 ) 🔁',
+      message_timestamp: '2030-06-01T20:00:02.000Z'
+    },
+    {
+      id: 'wa_real_2',
+      transport: 'ghl_whatsapp',
+      direction: 'outbound',
+      phone,
+      message_text: 'Listo, aquí tienes el enlace',
+      message_timestamp: '2030-06-01T20:00:04.000Z'
+    },
+    {
+      id: 'sms_mirror_2',
+      transport: 'ghl_sms',
+      direction: 'outbound',
+      phone,
+      message_text: 'Listo, aquí tienes el enlace\n\n🔁 Sent from another device (5218123802444 ) 🔁',
+      message_timestamp: '2030-06-01T20:00:06.000Z'
+    }
+  ]
+
+  const visible = collapseHighLevelPhoneMirrorRowsForDisplay(rows)
+
+  assert.deepEqual(visible.map(row => row.id), ['wa_real_1', 'wa_real_2'])
+  assert.deepEqual(visible.map(row => row.message_text), [
+    'Listo, aquí tienes el enlace',
+    'Listo, aquí tienes el enlace'
+  ])
+  assert.equal(stripHighLevelPhoneMirrorAnnotation(
+    'Confirmo\n\n📱 [Received on Raúl Gómez (5218123802444)]'
+  ), 'Confirmo')
+})
+
+test('el historial no mezcla direcciones ni limpia anotaciones fuera de HighLevel', () => {
+  const phone = '+529614398181'
+  const visible = collapseHighLevelPhoneMirrorRowsForDisplay([
+    {
+      id: 'wa_inbound',
+      transport: 'ghl_whatsapp',
+      direction: 'inbound',
+      phone,
+      message_text: 'Sí, confirmo',
+      message_timestamp: '2030-06-01T20:01:00.000Z'
+    },
+    {
+      id: 'sms_outbound',
+      transport: 'ghl_sms',
+      direction: 'outbound',
+      phone,
+      message_text: 'Sí, confirmo 📱 [Received on Raúl Gómez (5218123802444)]',
+      message_timestamp: '2030-06-01T20:01:01.000Z'
+    },
+    {
+      id: 'plain_api',
+      transport: 'api',
+      direction: 'inbound',
+      phone,
+      message_text: 'Texto legítimo 📱 [Received on demostración] ',
+      message_timestamp: '2030-06-01T20:02:00.000Z'
+    }
+  ])
+
+  assert.deepEqual(visible.map(row => row.id), ['wa_inbound', 'sms_outbound', 'plain_api'])
+  assert.equal(visible[1].message_text, 'Sí, confirmo')
+  assert.equal(visible[2].message_text, 'Texto legítimo 📱 [Received on demostración] ')
 })
 
 test('GHL elige SMS después de 24 horas y no deja que el espejo WhatsApp reabra la ventana', async () => {

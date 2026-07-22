@@ -9371,8 +9371,9 @@ export async function setConversationStatus(contactId, status, {
   if (!VALID_STATUSES.has(status)) {
     throw Object.assign(new Error(`Estado de conversación inválido: ${status}`), { statusCode: 400 })
   }
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
-  const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
+  const state = await ensureConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   if (!state?.id) return null
   const nextPausedUntilAt = status === 'paused' ? normalizePauseUntilAt(pausedUntilAt) : null
   const assignments = [
@@ -9385,6 +9386,11 @@ export async function setConversationStatus(contactId, status, {
     appendActivationAssignments(assignments, params, { activationSource, updatedBy })
   }
   const cleanUpdatedBy = String(updatedBy || '').trim().toLowerCase()
+  const updateAgentAcrossChannels = Boolean(
+    cleanAgentId &&
+    !cleanChannel &&
+    ['user', 'human', 'manual'].includes(cleanUpdatedBy)
+  )
   if (state.agentId && ['user', 'human', 'manual'].includes(cleanUpdatedBy)) {
     assignments.push(
       "assignment_source = 'manual'",
@@ -9397,22 +9403,30 @@ export async function setConversationStatus(contactId, status, {
     assignments.push('signal = NULL', 'signal_reason = NULL', 'signal_summary = NULL', 'signal_at = NULL')
   }
   assignments.push('updated_at = CURRENT_TIMESTAMP')
-  params.push(state.id)
+  if (updateAgentAcrossChannels) params.push(contactId, cleanAgentId)
+  else params.push(state.id)
 
   await db.run(`
     UPDATE conversational_agent_state
     SET ${assignments.join(', ')}
-    WHERE id = ?
+    WHERE ${updateAgentAcrossChannels ? 'contact_id = ? AND agent_id = ?' : 'id = ?'}
   `, params)
 
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'status_changed',
-    detail: { status, updatedBy, clearSignal, pausedUntilAt: nextPausedUntilAt, agentId: state.agentId || agentId || null }
+    detail: {
+      status,
+      updatedBy,
+      clearSignal,
+      pausedUntilAt: nextPausedUntilAt,
+      agentId: state.agentId || cleanAgentId || null,
+      channel: updateAgentAcrossChannels ? 'all' : cleanChannel || state.channel || null
+    }
   })
 
   return getConversationState(contactId, {
-    agentId: state.agentId || agentId || null,
+    agentId: state.agentId || cleanAgentId || null,
     channel: cleanChannel
   })
 }

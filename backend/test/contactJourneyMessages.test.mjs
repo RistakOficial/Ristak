@@ -305,6 +305,93 @@ test('contact conversation falls back to legacy phone matching while projection 
   }
 })
 
+test('contact conversation collapses HighLevel WhatsApp and SMS mirror rows', async () => {
+  const id = randomUUID().replace(/-/g, '')
+  const contactId = `conversation_ghl_mirror_${id}`
+  const phone = `+52814${Date.now().toString().slice(-7)}`
+  const whatsappInboundId = `ghl_wa_in_${id}`
+  const whatsappOutboundId = `ghl_wa_out_${id}`
+
+  await cleanup(contactId, phone)
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente espejo HighLevel',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2098-01-02T11:00:00.000Z',
+      updated_at: '2098-01-02T11:00:00.000Z'
+    })
+    for (const message of [
+      {
+        id: `ghl_sms_in_${id}`,
+        transport: 'ghl_sms',
+        direction: 'inbound',
+        text: 'Quiero reagendar\n\n📱 [Received on Raúl Gómez (5218123802444)]',
+        timestamp: '2098-01-02T11:01:00.000Z'
+      },
+      {
+        id: whatsappInboundId,
+        transport: 'ghl_whatsapp',
+        direction: 'inbound',
+        text: 'Quiero reagendar',
+        timestamp: '2098-01-02T11:01:01.000Z'
+      },
+      {
+        id: whatsappOutboundId,
+        transport: 'ghl_whatsapp',
+        direction: 'outbound',
+        text: 'Claro, te ayudo',
+        timestamp: '2098-01-02T11:02:00.000Z'
+      },
+      {
+        id: `ghl_sms_out_${id}`,
+        transport: 'ghl_sms',
+        direction: 'outbound',
+        text: 'Claro, te ayudo\n\n🔁 Sent from another device (5218123802444 ) 🔁',
+        timestamp: '2098-01-02T11:02:02.000Z'
+      }
+    ]) {
+      await insertRow('whatsapp_api_messages', {
+        id: message.id,
+        contact_id: contactId,
+        phone,
+        from_phone: message.direction === 'inbound' ? phone : '+526561000000',
+        to_phone: message.direction === 'inbound' ? '+526561000000' : phone,
+        business_phone: '+526561000000',
+        transport: message.transport,
+        direction: message.direction,
+        message_type: 'text',
+        message_text: message.text,
+        status: message.direction === 'inbound' ? 'received' : 'sent',
+        message_timestamp: message.timestamp,
+        created_at: message.timestamp
+      })
+    }
+    await runChatActivityProjectionBackfill()
+
+    const conversation = await readConversation(contactId)
+    const messages = conversation.filter(event => event.type === 'whatsapp_message')
+
+    assert.deepEqual(messages.map(event => event.data.whatsapp_api_message_id), [
+      whatsappInboundId,
+      whatsappOutboundId
+    ])
+    assert.deepEqual(messages.map(event => event.data.message_text), [
+      'Quiero reagendar',
+      'Claro, te ayudo'
+    ])
+    assert.deepEqual(messages.map(event => event.data.transport), [
+      'ghl_whatsapp',
+      'ghl_whatsapp'
+    ])
+  } finally {
+    await cleanup(contactId, phone)
+    await runChatActivityProjectionBackfill()
+  }
+})
+
 test('contact conversation preserves legacy WhatsApp attribution beside projected messages', async () => {
   const id = randomUUID()
   const contactId = `conversation_projection_aux_${id}`

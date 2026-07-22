@@ -114,6 +114,7 @@ import {
   listContactPaymentsPage
 } from '../services/contactDetailPaginationService.js'
 import {
+  collapseHighLevelPhoneMirrorRowsForDisplay,
   getHighLevelConversationalChannelPreference,
   setHighLevelConversationalChannelPreference
 } from '../services/highLevelConversationalChannelRoutingService.js'
@@ -6727,7 +6728,8 @@ export const getContactJourney = async (req, res) => {
       databaseOptions
     )
 
-    whatsappApiMessages.forEach(msg => {
+    const visibleWhatsAppApiMessages = collapseHighLevelPhoneMirrorRowsForDisplay(whatsappApiMessages)
+    visibleWhatsAppApiMessages.forEach(msg => {
       if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
 
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
@@ -6796,8 +6798,11 @@ export const getContactJourney = async (req, res) => {
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.message_timestamp || msg.created_at,
-        cursorDate: msg.journey_message_cursor_date,
-        cursorKey: buildJourneyMessageCursorKey('whatsapp_api', msg.whatsapp_api_message_id),
+        cursorDate: msg.journey_mirror_cursor_date || msg.journey_message_cursor_date,
+        cursorKey: buildJourneyMessageCursorKey(
+          'whatsapp_api',
+          msg.journey_mirror_cursor_message_id || msg.whatsapp_api_message_id
+        ),
         data: {
           ...data,
           is_ad_attributed: isAdAttributed,

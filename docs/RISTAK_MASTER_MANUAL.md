@@ -1813,6 +1813,21 @@ segundos, el agente procesa únicamente la fila del medio ganador. La copia
 WhatsApp de ese par no puede reabrir por sí sola una ventana vencida. El runner
 revalida esta decisión después de su debounce y otra vez justo antes de entregar,
 incluidos los seguimientos, para impedir una salida simultánea por ambos medios.
+Las firmas operativas que HighLevel agrega al espejo `TYPE_CUSTOM_SMS`, como
+`[Received on ...]` o `Sent from another device (...)`, se eliminan antes de
+comparar el contenido. La fila firmada no despierta otra ejecución del agente y
+se colapsa en la conversación visible, aunque permanece guardada como evidencia
+cruda del proveedor. Dos envíos reales idénticos conservan sus dos burbujas.
+
+Los estados del runtime siguen separados por canal para conservar claims y
+entregas aisladas, pero `GET
+/api/conversational-agent/states/:contactId?includeAll=1` entrega como máximo
+una asignación activa/pausada por `agent_id`. Los clientes móviles también
+agrupan por `agent_id` como defensa: una fila WhatsApp y otra SMS del mismo
+agente no significan dos agentes activos. Una acción humana sin canal explícito
+(`pause`, `take_over`, `skip`) se aplica a todas las filas de ese agente para el
+contacto; nunca debe requerir varios toques para apagar el mismo agente en
+WhatsApp y SMS.
 
 Un webhook sólo concilia estado y puede marcar la API como restringida para
 solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
