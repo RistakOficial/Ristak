@@ -862,8 +862,10 @@ export async function deleteAppointmentReminder(reminderId) {
 }
 
 /**
- * Crea el recordatorio por defecto (1 día antes de la cita) una sola vez.
- * Usa una bandera en app_config para no recrearlo si el usuario lo borra.
+ * Crea la confirmación de asistencia inicial (1 día antes de la cita) una sola vez.
+ * Nace pausada para que una cuenta nueva no envíe mensajes sin que el usuario
+ * revise primero canal, plantilla y acciones de confirmación. Usa una bandera en
+ * app_config para no recrearla si el usuario la borra.
  */
 export async function ensureDefaultAppointmentReminder() {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
@@ -876,8 +878,9 @@ export async function ensureDefaultAppointmentReminder() {
   const existing = await db.get('SELECT id FROM appointment_reminders LIMIT 1')
   if (!existing) {
     const { created } = await insertAppointmentReminder({
-      name: '1 día antes',
-      messageType: 'reminder',
+      name: 'Confirmación 1 día antes',
+      enabled: false,
+      messageType: 'confirmation',
       offsetValue: 1,
       offsetUnit: 'days',
       smartEnabled: true
@@ -885,7 +888,7 @@ export async function ensureDefaultAppointmentReminder() {
       systemKey: DEFAULT_REMINDER_SYSTEM_KEY,
       ignoreConflict: true
     })
-    if (created) logger.info('[Citas] Recordatorio por defecto creado (1 día antes)')
+    if (created) logger.info('[Citas] Confirmación por defecto creada y pausada (1 día antes)')
   }
 
   await backfillMissingReminderTemplates()
@@ -1690,6 +1693,24 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
         continue
       }
       alreadyHandled.add(`${reminder.id}|${appointment.id}`)
+
+      // Un recordatorio previo a la cita no puede convertirse en el mensaje de
+      // bienvenida de una reserva tardía. Si la persona agendó después del
+      // momento en que ese recordatorio debía salir, la ventana nunca existió
+      // para esta cita: se omite aunque todavía caiga dentro de la tolerancia de
+      // reintento. Los avisos reales al agendar usan el ancla after_booking y la
+      // plantilla cita_programada, que sí muestra la fecha y hora confirmadas.
+      const bookedAt = parseStoredUtcDateTime(appointment.date_added)
+      if (reminder.timingAnchor !== 'after_booking' && bookedAt && sendAt < bookedAt) {
+        await finalizeSend({
+          reminder,
+          appointment,
+          status: 'skipped',
+          errorMessage: 'La cita se agendó después del momento programado para este recordatorio.'
+        })
+        skipped += 1
+        continue
+      }
 
       if (now.toMillis() - sendAt.toMillis() > SEND_GRACE_MS) {
         await finalizeSend({ reminder, appointment, status: 'skipped', errorMessage: 'Fuera de la ventana de envío' })

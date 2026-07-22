@@ -9494,6 +9494,7 @@ export function createConversationalTools(ctx) {
       }
 
       const end = new Date(start.getTime() + durationMinutes * 60000)
+      const confirmedSlot = buildCanonicalAppointmentSlotOption(start.toISOString(), businessTimezone)
 
       // El controller debe recibir primero la llave durable: así un retry
       // idéntico reproduce la cita ya creada antes de volver a evaluar conflicto.
@@ -9501,6 +9502,8 @@ export function createConversationalTools(ctx) {
       const finalTitle = participant.title
       const action = pushAction(ctx, 'book_appointment', {
         calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle,
+        localLabel: confirmedSlot?.localLabel || '',
+        timezone: businessTimezone,
         participants: participants.all,
         confirmationEvidence,
         ...(clientRequestId ? { clientRequestId } : {}),
@@ -9511,7 +9514,8 @@ export function createConversationalTools(ctx) {
           actionCompleted: false,
           wouldMarkObjectiveCompleted: true,
           calendarId,
-          startTime: start.toISOString()
+          startTime: start.toISOString(),
+          localLabel: confirmedSlot?.localLabel || ''
         })
         return {
           ok: true,
@@ -9979,6 +9983,7 @@ export function createConversationalTools(ctx) {
         appointmentId: toolResult.data?.id || null,
         calendarId,
         startTime: start.toISOString(),
+        localLabel: confirmedSlot?.localLabel || '',
         appointmentCreated: true,
         objectiveCompleted: !completionSyncWarning,
         completionSyncWarning,
@@ -13329,6 +13334,10 @@ export function createConversationalTools(ctx) {
       }
       ctx.appointmentOfferDecision = null
       const humanBooking = expected.terminalToolName === 'request_human_booking'
+      const confirmedLocalLabel = cleanAppointmentText(
+        expected.localLabel || buildCanonicalAppointmentSlotOption(expected.startTime, expected.timezone)?.localLabel,
+        240
+      )
       return {
         ...bookingResult,
         terminal: true,
@@ -13340,7 +13349,11 @@ export function createConversationalTools(ctx) {
               : (ctx.dryRun ? 'listo, la prueba conservaría la misma cita con el horario nuevo' : 'listo, la cita quedó cambiada al horario nuevo'))
           : (humanBooking
               ? 'el horario seguía disponible y ya quedó preparada la entrega al equipo para que confirme la cita'
-              : (ctx.dryRun ? 'listo, la cita de prueba quedó confirmada' : 'listo, la cita quedó confirmada'))
+              : (confirmedLocalLabel
+                  ? (ctx.dryRun
+                      ? `listo, la cita de prueba quedó confirmada para ${confirmedLocalLabel}`
+                      : `listo, tu cita quedó confirmada para ${confirmedLocalLabel}`)
+                  : (ctx.dryRun ? 'listo, la cita de prueba quedó confirmada' : 'listo, tu cita quedó confirmada')))
       }
     }
   })

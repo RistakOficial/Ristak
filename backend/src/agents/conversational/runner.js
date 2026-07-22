@@ -2119,7 +2119,12 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
     else if (completedPreviewAppointment?.type === 'request_human_booking') visible = 'el horario de prueba seguía disponible y ya quedó preparada la entrega al equipo'
     else if (completedPreviewAppointment?.type === 'reschedule_appointment') visible = 'listo, la prueba conservaría la misma cita con el horario nuevo'
     else if (completedPreviewAppointment?.type === 'cancel_appointment') visible = 'listo, la prueba cancelaría esa cita sin borrar su historial'
-    else if (confirmed?.type === 'book_appointment') visible = 'listo, la cita quedó confirmada'
+    else if (confirmed?.type === 'book_appointment') {
+      const localLabel = String(confirmed?.outcome?.localLabel || confirmed?.localLabel || '').trim()
+      visible = localLabel
+        ? `listo, tu cita quedó confirmada para ${localLabel}`
+        : 'listo, tu cita quedó confirmada'
+    }
     else if (confirmed?.type === 'request_human_booking') visible = 'el horario seguía disponible y ya dejé la solicitud con el equipo para que te confirme la cita'
     else if (confirmed?.type === 'reschedule_appointment') visible = 'listo, la misma cita quedó cambiada al horario nuevo'
     else if (confirmed?.type === 'cancel_appointment') visible = 'listo, la cita quedó cancelada'

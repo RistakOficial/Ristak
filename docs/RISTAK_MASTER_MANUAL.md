@@ -3715,7 +3715,17 @@ marca como omitido en vez de mandar un WhatsApp tarde. El enfriamiento se compar
 en UTC con SQL nativo del motor activo; PostgreSQL no ejecuta funciones exclusivas
 de SQLite durante este reclamo.
 
-El recordatorio inicial de `1 día antes` lleva
+La tolerancia de reintento no convierte un recordatorio vencido en confirmacion
+de reserva. Si una cita se crea despues del instante calculado para un mensaje
+`before_appointment`, ese mensaje queda `skipped` aunque el desfase sea menor a
+tres horas. La confirmacion inmediata de una reserva, cuando el usuario la
+configura, debe usar `after_booking` y la plantilla `cita_programada`, que muestra
+la fecha y hora reales de la cita.
+
+Una cuenta nueva recibe una sola fila inicial: `Confirmación 1 día antes`, con
+`message_type='confirmation'`, ancla `before_appointment`, plantilla
+`confirmacion_cita_dia_anterior` y `enabled=0`. Nace pausada para que no se envie
+nada hasta que el usuario revise y active su configuracion. Esta fila lleva
 `system_key='default_one_day_before'` y un índice único parcial. Así dos
 instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Además,
 cada mensaje automático guarda una `schedule_key` única compuesta por el ancla
@@ -6455,6 +6465,10 @@ nunca un booleano escrito por el modelo.
   `safe_unrelated` pasa sin cambios; duda, timeout, tool ausente o cualquier otra
   clasificación usan una respuesta determinista que deja claro que la oferta sigue
   pendiente y que no se creó ni cambió una cita.
+  Cuando la creación sí termina, la respuesta positiva incluye el `localLabel`
+  canónico de la oferta —fecha y hora exactas en la zona del negocio— para que el
+  cliente no reciba una confirmación ambigua ni dependa de un recordatorio
+  posterior para saber qué horario quedó reservado.
   La adjudicación también se serializa dentro del turno antes del primer `await`:
   dos invocaciones paralelas nunca pueden alcanzar dos terminales ni intercambiar
   sus resultados. Si `accept` se detiene en un preflight recuperable por datos

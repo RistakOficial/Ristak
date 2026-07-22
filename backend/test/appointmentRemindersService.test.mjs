@@ -324,6 +324,10 @@ async function withReminderFixture({
 
   const template = await createReminderTemplate({ suffix, ycloudStatus })
   const startTime = DateTime.utc().plus({ hours: 1 }).toISO()
+  // El recordatorio vence una hora antes de ejecutar la prueba. La reserva debe
+  // ser anterior a ese instante para probar reintentos válidos, no una cita que
+  // acaba de agendarse cuando su recordatorio ya había vencido.
+  const bookedAt = DateTime.utc().minus({ hours: 2 }).toISO()
 
   try {
     await db.run(`
@@ -349,13 +353,15 @@ async function withReminderFixture({
 
     await db.run(`
       INSERT INTO appointments (
-        id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time
-      ) VALUES (?, 'calendar_test', ?, 'Consulta', 'pending', 'pending', ?, ?)
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, date_added
+      ) VALUES (?, 'calendar_test', ?, 'Consulta', 'pending', 'pending', ?, ?, ?)
     `, [
       appointmentId,
       contactId,
       startTime,
-      DateTime.fromISO(startTime).plus({ hours: 1 }).toISO()
+      DateTime.fromISO(startTime).plus({ hours: 1 }).toISO(),
+      bookedAt
     ])
 
     const reminder = await createAppointmentReminder({
@@ -406,6 +412,29 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
       assert.equal(captures[0].template.name, template.name)
       assert.equal(captures[0].template.components[0].type, 'body')
       assert.equal(captures[0].template.components[0].parameters[0].text, 'Ana')
+    })
+  })
+})
+
+test('una cita nueva no recibe como confirmación un recordatorio cuyo momento ya había pasado', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ appointmentId }) => {
+      await db.run(
+        'UPDATE appointments SET date_added = ? WHERE id = ?',
+        [DateTime.utc().toISO(), appointmentId]
+      )
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.deepEqual(result, { sent: 0, errors: 0, skipped: 1 })
+      assert.equal(captures.length, 0)
+
+      const send = await db.get(
+        'SELECT status, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      assert.equal(send?.status, 'skipped')
+      assert.match(send?.error_message || '', /se agendó después del momento programado/i)
     })
   })
 })

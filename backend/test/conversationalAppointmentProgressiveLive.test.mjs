@@ -826,6 +826,7 @@ test('live: fecha, hora, oferta y “sí” crean una sola cita real por el reso
     assert.ok(names.includes('resolve_active_appointment_offer'))
     assert.equal(names.includes('book_appointment'), false)
     const resolver = toolNamed(confirmation, 'resolve_active_appointment_offer')
+    const confirmedLocalLabel = confirmation.appointmentOfferDecision.localLabel
     const confirmed = await resolver.invoke(null, JSON.stringify(acceptOfferInput()))
     collectClientRequestIds(fixture, confirmation)
 
@@ -833,6 +834,7 @@ test('live: fecha, hora, oferta y “sí” crean una sola cita real por el reso
     assert.equal(confirmed.actionCompleted, true)
     assert.equal(confirmed.simulated, undefined)
     assert.match(confirmed.visibleReply, /cita quedó confirmada/i)
+    assert.match(confirmed.visibleReply, new RegExp(confirmedLocalLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     const rows = await db.all(
       `SELECT id, start_time, appointment_status, status
        FROM appointments WHERE calendar_id = ? AND contact_id = ?`,

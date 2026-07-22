@@ -2040,9 +2040,13 @@ test('seguimiento v2 usa la misma llamada principal y conserva el transcript sin
 })
 
 test('fallback visible v2 sólo afirma éxito cuando la acción quedó confirmada', () => {
+  const confirmedLocalLabel = 'jueves 13 de agosto de 2026 a las 4:00 p. m.'
   assert.match(
-    ensureToolCallingV2VisibleReply('', [{ type: 'book_appointment', outcome: { status: 'ok', ok: true } }]),
-    /cita quedó confirmada/i
+    ensureToolCallingV2VisibleReply('', [{
+      type: 'book_appointment',
+      outcome: { status: 'ok', ok: true, localLabel: confirmedLocalLabel }
+    }]),
+    new RegExp(`cita quedó confirmada para ${confirmedLocalLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i')
   )
   assert.doesNotMatch(
     ensureToolCallingV2VisibleReply('', [{ type: 'book_appointment', outcome: { status: 'error', ok: false } }]),

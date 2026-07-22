@@ -14,12 +14,19 @@ test('el arranque concurrente crea una sola vez el recordatorio predeterminado',
   await Promise.all(Array.from({ length: 8 }, () => ensureDefaultAppointmentReminder()))
 
   const seededRows = await db.all(`
-    SELECT id, name, system_key
+    SELECT id, name, system_key, enabled, message_type, timing_anchor,
+      offset_value, offset_unit, template_name
     FROM appointment_reminders
     WHERE system_key = 'default_one_day_before'
   `)
   assert.equal(seededRows.length, 1)
-  assert.equal(seededRows[0].name, '1 día antes')
+  assert.equal(seededRows[0].name, 'Confirmación 1 día antes')
+  assert.equal(seededRows[0].enabled, 0)
+  assert.equal(seededRows[0].message_type, 'confirmation')
+  assert.equal(seededRows[0].timing_anchor, 'before_appointment')
+  assert.equal(seededRows[0].offset_value, 1)
+  assert.equal(seededRows[0].offset_unit, 'days')
+  assert.equal(seededRows[0].template_name, 'confirmacion_cita_dia_anterior')
 })
 
 test('bloquea recordatorios manuales configurados para el mismo momento', async () => {

@@ -157,8 +157,15 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
-- El recordatorio inicial de un día antes lleva una `system_key` única para que
-  dos arranques simultáneos no lo dupliquen.
+- Una cuenta nueva recibe únicamente `Confirmación 1 día antes`, configurado
+  como tipo Confirmación y con el mensaje automático pausado. Lleva una `system_key`
+  única para que dos arranques simultáneos no lo dupliquen y nunca envía nada
+  hasta que el usuario lo active.
+- Si una cita se agenda después de la hora calculada para un recordatorio
+  `before_appointment`, ese recordatorio se omite: no se aprovecha la tolerancia
+  de reintento para mandarlo como si fuera la confirmación de la reserva. Un aviso
+  inmediato configurado por el usuario usa `after_booking` y `cita_programada`,
+  donde se muestran la fecha y hora reales de la cita.
 - Un mensaje nuevo vive sólo como borrador local hasta que el usuario pulsa
   **Guardar**; abrir y cancelar el modal no crea una fila provisional de un día.
 - Cada recordatorio o aviso guarda una `schedule_key` única construida con el
