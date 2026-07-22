@@ -683,10 +683,23 @@ El `<form data-rstk-calendar-book-form>` de ese frontend es parte del calendario
 no un formulario HTML independiente. El importador, el Panel de contenido, la
 pestaña Meta y el runtime de submits genéricos deben excluirlo, incluso si un
 sitio anterior conserva `data-rstk-form-id` o `data-rstk-field-id`. Por lo tanto,
-una reserva no genera además un `Lead`: únicamente genera el evento configurado
-para el calendario (por default `Schedule`) después de que el backend confirma
-la cita. Entrar a la página, escoger fecha u horario y abrir el paso de datos no
-son conversiones.
+una reserva no genera además el evento del formulario genérico: únicamente
+genera el evento configurado para el elemento calendario después de que el
+backend confirma la cita. Ese evento puede ser `Schedule`, `Lead`, otro permitido
+o ninguno; el tipo `calendar` determina cuándo se dispara y el selector de
+Ajustes determina qué nombre recibe. Entrar a la página, escoger fecha u horario
+y abrir el paso de datos no son conversiones.
+
+La clasificación tampoco depende del orden visual. Si preguntas, contacto,
+fecha y horario comparten un único submit que crea la cita, el recorrido completo
+es un solo elemento `calendar`, ya sea preguntas → fecha, fecha → preguntas o
+cualquier orden declarativo válido. Para ello el único
+`data-rstk-calendar-book-form` envuelve los pasos
+`data-rstk-calendar-flow-step`, tipados con
+`data-rstk-calendar-flow-kind="questions|date|time|confirm|success"`. Solo si
+existe otro submit que guarda el formulario como operación independiente se
+detectan dos elementos (`form` + `calendar`) y cada uno obtiene su propio
+disparador configurable.
 
 El preview consulta disponibilidad real, pero es deliberadamente inerte para
 escrituras y tracking: confirmar ahí no crea la cita, no redirige y no manda

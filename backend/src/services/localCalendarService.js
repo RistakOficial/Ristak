@@ -2504,10 +2504,30 @@ function renderCalendarBookingForm(bookingForm = {}) {
   `
 }
 
+const CALENDAR_HTML_RESPONSE_MAX_FIELDS = 40
+const CALENDAR_HTML_RESPONSE_KEY_MAX_LENGTH = 120
+const CALENDAR_HTML_RESPONSE_LABEL_MAX_LENGTH = 180
+const CALENDAR_HTML_RESPONSE_VALUE_MAX_LENGTH = 2000
+const CALENDAR_HTML_RESPONSE_ARRAY_MAX_ITEMS = 20
+const CALENDAR_HTML_RESPONSE_SUMMARY_MAX_LENGTH = 12000
+
+function normalizeCalendarHtmlResponseValue(value) {
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, CALENDAR_HTML_RESPONSE_ARRAY_MAX_ITEMS)
+      .map(item => cleanString(item).slice(0, CALENDAR_HTML_RESPONSE_VALUE_MAX_LENGTH))
+      .filter(Boolean)
+  }
+  return cleanString(value).slice(0, CALENDAR_HTML_RESPONSE_VALUE_MAX_LENGTH)
+}
+
 export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) {
   const fields = Array.isArray(bookingForm.fields) ? bookingForm.fields : []
   const responses = body.responses && typeof body.responses === 'object' && !Array.isArray(body.responses)
     ? body.responses
+    : {}
+  const responseLabels = body.responseLabels && typeof body.responseLabels === 'object' && !Array.isArray(body.responseLabels)
+    ? body.responseLabels
     : {}
   const normalizedResponses = {}
   const errors = []
@@ -2595,6 +2615,25 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     if (!notes && matchesField(field, [/notes?/, /nota/, /comentario/, /mensaje/])) notes = valueAsText(value)
   }
 
+  // Un calendario HTML compuesto puede incluir preguntas visuales propias que no
+  // existen en la definición nativa del calendario. Siguen perteneciendo a la
+  // misma reserva (no a un segundo formulario): aceptamos un conjunto acotado,
+  // lo guardamos en el resumen de la cita y nunca lo usamos para decidir Meta.
+  const configuredFieldIds = new Set(fields.map(field => cleanString(field.id)).filter(Boolean))
+  const supplementalResponseLabels = {}
+  let supplementalCount = 0
+  for (const [rawKey, rawValue] of Object.entries(responses)) {
+    if (supplementalCount >= CALENDAR_HTML_RESPONSE_MAX_FIELDS) break
+    const key = cleanString(rawKey).slice(0, CALENDAR_HTML_RESPONSE_KEY_MAX_LENGTH)
+    if (!key || configuredFieldIds.has(key) || Object.prototype.hasOwnProperty.call(normalizedResponses, key)) continue
+    const value = normalizeCalendarHtmlResponseValue(rawValue)
+    const empty = Array.isArray(value) ? value.length === 0 : !value
+    if (empty) continue
+    normalizedResponses[key] = value
+    supplementalResponseLabels[key] = cleanString(responseLabels[key] || key).slice(0, CALENDAR_HTML_RESPONSE_LABEL_MAX_LENGTH) || key
+    supplementalCount += 1
+  }
+
   if (!fullName) errors.push('El nombre es requerido')
   if (!phone && !email) errors.push('Se requiere telefono o correo')
 
@@ -2607,13 +2646,22 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     disqualifyHtml = cleanString(formDq.html)
   }
 
-  const responseLines = fields
+  const configuredResponseLines = fields
     .map(field => {
       const value = normalizedResponses[field.id]
       const text = valueAsText(value)
       return text ? `${field.label || field.id}: ${text}` : ''
     })
     .filter(Boolean)
+  const supplementalResponseLines = Object.entries(supplementalResponseLabels)
+    .map(([key, label]) => {
+      const text = valueAsText(normalizedResponses[key])
+      return text ? `${label}: ${text}` : ''
+    })
+    .filter(Boolean)
+  const responseSummary = [...configuredResponseLines, ...supplementalResponseLines]
+    .join('\n')
+    .slice(0, CALENDAR_HTML_RESPONSE_SUMMARY_MAX_LENGTH)
 
   return {
     contact: {
@@ -2624,7 +2672,7 @@ export function normalizeCalendarBookingSubmission(bookingForm = {}, body = {}) 
     },
     notes,
     responses: normalizedResponses,
-    responseSummary: responseLines.join('\n'),
+    responseSummary,
     formId: bookingForm.formId || '',
     formName: bookingForm.formName || '',
     errors,

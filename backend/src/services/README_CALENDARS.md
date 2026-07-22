@@ -158,6 +158,19 @@ de la URL pública tipo Calendly:
 4. Después de reservar, `data-rstk-calendar-step="success"` muestra la
    confirmación o Ristak ejecuta la acción posterior configurada.
 
+El orden visual anterior es el flujo simple, no la identidad del elemento. Si
+el único submit crea la cita, preguntas, contacto, fecha y horario forman un
+solo elemento `calendar` aunque el HTML muestre primero las preguntas, primero
+la agenda o las intercale. Para esas combinaciones, un único
+`data-rstk-calendar-book-form` envuelve secciones ordenadas
+`data-rstk-calendar-flow-step` cuyo `data-rstk-calendar-flow-kind` es
+`questions`, `date`, `time`, `confirm` o `success`. Los pasos de preguntas
+avanzan/regresan con `data-rstk-calendar-flow-next` y
+`data-rstk-calendar-flow-back`; no existe submit intermedio. Campos adicionales
+con `data-rstk-calendar-response` acompañan la reserva y se agregan a su resumen.
+Si un formulario sí se guarda mediante otro submit, entonces son dos elementos
+independientes (`form` + `calendar`).
+
 El runtime vive en `sitesService.js`. Consulta
 `GET /api/calendars/public/:slug/free-slots` por el mes visible, recibe instantes
 UTC, los agrupa en la zona mostrada al visitante y pinta los estados sin confiar
@@ -168,6 +181,12 @@ de crear la cita. El HTML sólo define markup y CSS: no incluye fetch, fechas,
 slots hardcodeados ni JavaScript propio. El contrato legacy de `input date` más
 `select` sigue funcionando para sitios ya publicados, pero las instrucciones de
 creación exigen la cuadrícula y el flujo avanzado.
+
+La detección del tipo de elemento y el evento Meta son contratos separados. El
+submit que crea la cita hace que el inspector muestre un calendario y determina
+que el disparo ocurra únicamente tras confirmar la reserva. En Ajustes, el
+usuario puede elegir `Schedule`, `Lead`, otro evento permitido o ninguno para
+ese calendario; `Schedule` es el default recomendado, no parte de la identidad.
 
 En preview, la consulta de disponibilidad sí usa los endpoints reales, incluso
 cuando el documento corre dentro de un `srcDoc` sin origen. Confirmar desde esa

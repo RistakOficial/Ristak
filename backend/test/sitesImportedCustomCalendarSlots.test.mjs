@@ -9,6 +9,7 @@ import {
   getSite,
   renderPublicSiteHtml
 } from '../src/services/sitesService.js'
+import { normalizeCalendarBookingSubmission } from '../src/services/localCalendarService.js'
 
 function runtimeScriptFromHtml(html) {
   const markerIndex = html.indexOf('window.ristakCalendarGetSlots')
@@ -160,6 +161,18 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
   const email = eventNode({ value: 'ada@example.test' })
   const phone = eventNode({ value: '+525511223344' })
   const notes = eventNode({ value: 'Primera consulta' })
+  name.tagName = 'INPUT'
+  email.tagName = 'INPUT'
+  phone.tagName = 'INPUT'
+  notes.tagName = 'TEXTAREA'
+  if (harnessOptions.includeResponses) {
+    name.setAttribute('data-rstk-calendar-response', 'nombre')
+    name.setAttribute('data-rstk-label', 'Nombre')
+    email.setAttribute('data-rstk-calendar-response', 'correo')
+    email.setAttribute('data-rstk-label', 'Correo')
+    notes.setAttribute('data-rstk-calendar-response', 'motivo')
+    notes.setAttribute('data-rstk-label', 'Motivo de la consulta')
+  }
   const bookingForm = eventNode()
   const formNodes = new Map([
     ['[type="submit"]', submit],
@@ -169,6 +182,30 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     ['[data-rstk-calendar-notes]', notes]
   ])
   bookingForm.querySelector = selector => formNodes.get(selector) || null
+  bookingForm.querySelectorAll = selector => selector === 'input, select, textarea'
+    ? [name, email, phone, notes]
+    : []
+
+  const flowKinds = Array.isArray(harnessOptions.flowKinds) ? harnessOptions.flowKinds : []
+  const flowSteps = flowKinds.map((kind, index) => {
+    const step = eventNode()
+    step.setAttribute('data-rstk-calendar-flow-step', `${kind}-${index + 1}`)
+    step.setAttribute('data-rstk-calendar-flow-kind', kind)
+    step.querySelectorAll = selector => (
+      selector === 'input, select, textarea' && kind === 'questions'
+        ? [name, email, notes]
+        : []
+    )
+    return step
+  })
+  const flowNextButtons = flowKinds
+    .map((kind, index) => ({ kind, index }))
+    .filter(item => item.kind === 'questions')
+    .map(() => eventNode())
+  const flowBackButtons = flowKinds
+    .map((kind, index) => ({ kind, index }))
+    .filter(item => item.index > 0 && item.kind !== 'success')
+    .map(() => eventNode())
 
   const nodes = new Map([
     ['[data-rstk-calendar-month-label]', monthLabel],
@@ -185,12 +222,15 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     ['[data-rstk-calendar-selected-time]', [selectedTimeLabel]],
     ['[data-rstk-calendar-selected-datetime]', [selectedDateTimeLabel]],
     ['[data-rstk-calendar-step]', [stepDate, stepTime, stepForm, stepSuccess]],
+    ['[data-rstk-calendar-flow-step]', flowSteps],
+    ['[data-rstk-calendar-flow-next]', flowNextButtons],
+    ['[data-rstk-calendar-flow-back]', flowBackButtons],
     ['[data-rstk-calendar-timezone-label]', []],
     ['[data-rstk-calendar-back-to-dates]', []],
     ['[data-rstk-calendar-back-to-times]', []]
   ])
   const root = eventNode({ dataset: {} })
-  root.getAttribute = name => name === 'data-rstk-native-slot-id' ? 'agenda-custom' : ''
+  root.getAttribute = name => name === 'data-rstk-native-slot-id' ? (harnessOptions.slotId || 'agenda-custom') : ''
   root.querySelector = selector => nodes.get(selector) || null
   root.querySelectorAll = selector => nodeLists.get(selector) || []
 
@@ -255,6 +295,9 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     appointmentBodies,
     bookingForm,
     days,
+    flowBackButtons,
+    flowNextButtons,
+    flowSteps,
     message,
     monthLabel,
     pixelEvents,
@@ -273,6 +316,38 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     }
   }
 }
+
+test('respuestas HTML propias acompañan la cita sin convertir el calendario en formulario', () => {
+  const normalized = normalizeCalendarBookingSubmission({
+    formId: 'calendar_default',
+    formName: 'Agenda',
+    fields: [
+      { id: 'calendar_name', label: 'Nombre', required: true, settings: { systemFieldKey: 'full_name' } },
+      { id: 'calendar_email', label: 'Correo', required: true, settings: { systemFieldKey: 'email', validation: 'email' } }
+    ]
+  }, {
+    name: 'Ada Lovelace',
+    email: 'ada@example.test',
+    responses: {
+      motivo: 'Quiero una estrategia comercial',
+      prioridad: ['Esta semana', 'Presupuesto aprobado']
+    },
+    responseLabels: {
+      motivo: 'Motivo de la consulta',
+      prioridad: 'Prioridad'
+    }
+  })
+
+  assert.deepEqual(normalized.errors, [])
+  assert.deepEqual(normalized.responses, {
+    calendar_name: 'Ada Lovelace',
+    calendar_email: 'ada@example.test',
+    motivo: 'Quiero una estrategia comercial',
+    prioridad: ['Esta semana', 'Presupuesto aprobado']
+  })
+  assert.match(normalized.responseSummary, /Motivo de la consulta: Quiero una estrategia comercial/)
+  assert.match(normalized.responseSummary, /Prioridad: Esta semana, Presupuesto aprobado/)
+})
 
 test('calendario HTML personalizado usa la fecha del visitante y conserva listas planas', async () => {
   let siteId = ''
@@ -528,6 +603,132 @@ test('calendario HTML avanzado pinta mes, horarios y formulario con disponibilid
     assert.equal(liveHarness.stepForm.hidden, true)
     assert.equal(liveHarness.stepSuccess.hidden, false)
     assert.equal(liveHarness.success.textContent, 'Confirmación avanzada')
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('flujo combinado se detecta como calendario aunque las preguntas aparezcan despues del horario', async () => {
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'calendar-flexible-flow.html',
+      fileBase64: Buffer.from(`
+        <!doctype html>
+        <html>
+          <body>
+            <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-flexible" data-rstk-native-render="custom">
+              <form data-rstk-calendar-book-form>
+                <section data-rstk-calendar-flow-step="fecha" data-rstk-calendar-flow-kind="date">
+                  <button type="button" data-rstk-calendar-prev-month>Anterior</button>
+                  <strong data-rstk-calendar-month-label></strong>
+                  <button type="button" data-rstk-calendar-next-month>Siguiente</button>
+                  <div data-rstk-calendar-days></div>
+                </section>
+                <section data-rstk-calendar-flow-step="horario" data-rstk-calendar-flow-kind="time" hidden>
+                  <h3 data-rstk-calendar-selected-date></h3>
+                  <div data-rstk-calendar-slots></div>
+                </section>
+                <section data-rstk-calendar-flow-step="preguntas" data-rstk-calendar-flow-kind="questions" hidden>
+                  <input name="name" data-rstk-calendar-name data-rstk-calendar-response="nombre" data-rstk-label="Nombre" required>
+                  <input name="email" type="email" data-rstk-calendar-email data-rstk-calendar-response="correo" data-rstk-label="Correo" required>
+                  <textarea name="motivo" data-rstk-calendar-response="motivo" data-rstk-label="Motivo de la consulta"></textarea>
+                  <button type="button" data-rstk-calendar-flow-next>Continuar</button>
+                </section>
+                <section data-rstk-calendar-flow-step="confirmar" data-rstk-calendar-flow-kind="confirm" hidden>
+                  <p data-rstk-calendar-selected-datetime></p>
+                  <button type="submit">Agendar</button>
+                </section>
+                <section data-rstk-calendar-flow-step="listo" data-rstk-calendar-flow-kind="success" hidden>
+                  <p data-rstk-calendar-success></p>
+                </section>
+              </form>
+              <p data-rstk-calendar-message></p>
+            </section>
+          </body>
+        </html>
+      `, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `HTML flexible calendar ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    assert.equal(created.import.detectedForms.length, 0, 'el unico submit crea la cita y no es un form independiente')
+    assert.equal(created.import.formMappings.length, 0)
+
+    const siteWithCalendar = await createBlock(siteId, {
+      blockType: 'calendar_embed',
+      label: 'Agenda flexible',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-flexible',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'custom',
+        calendarId: 'cal-flexible',
+        calendarSlug: 'agenda-flexible',
+        calendarName: 'Agenda flexible',
+        calendarTimezone: 'Asia/Tokyo'
+      }
+    })
+    const calendarBlock = siteWithCalendar.blocks.find(block => (
+      block.blockType === 'calendar_embed' && block.settings?.importedHtmlNativeSlotId === 'agenda-flexible'
+    ))
+    assert.ok(calendarBlock)
+
+    const nowParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit'
+    }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]))
+    const slot = new Date(Date.UTC(Number(nowParts.year), Number(nowParts.month) - 1, 15, 3, 0)).toISOString()
+    const slotDate = `${nowParts.year}-${nowParts.month}-15`
+    const site = await getSite(siteId, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: false })
+    const harness = createAdvancedRuntimeHarness(runtimeScriptFromHtml(html), [{ slots: [slot] }], {
+      locationHref: 'https://public.example/agenda-flexible',
+      slotId: 'agenda-flexible',
+      flowKinds: ['date', 'time', 'questions', 'confirm', 'success'],
+      includeResponses: true
+    })
+    await harness.settle()
+
+    assert.equal(harness.flowSteps[0].hidden, false)
+    assert.equal(harness.flowSteps[1].hidden, true)
+
+    const dayButton = {
+      disabled: false,
+      getAttribute(name) { return name === 'data-date' ? slotDate : '' }
+    }
+    await harness.days.trigger('click', { target: { closest: () => dayButton } })
+    assert.equal(harness.flowSteps[0].hidden, true)
+    assert.equal(harness.flowSteps[1].hidden, false)
+
+    const slotButton = {
+      getAttribute(name) { return name === 'data-start-time' ? slot : '' }
+    }
+    await harness.slots.trigger('click', { target: { closest: () => slotButton } })
+    assert.equal(harness.flowSteps[1].hidden, true)
+    assert.equal(harness.flowSteps[2].hidden, false)
+
+    await harness.flowNextButtons[0].trigger('click')
+    assert.equal(harness.flowSteps[2].hidden, true)
+    assert.equal(harness.flowSteps[3].hidden, false)
+
+    await harness.bookingForm.trigger('submit')
+    assert.deepEqual(harness.appointmentBodies[0].responses, {
+      nombre: 'Ada Lovelace',
+      correo: 'ada@example.test',
+      motivo: 'Primera consulta'
+    })
+    assert.deepEqual(harness.appointmentBodies[0].responseLabels, {
+      nombre: 'Nombre',
+      correo: 'Correo',
+      motivo: 'Motivo de la consulta'
+    })
+    assert.equal(harness.flowSteps[3].hidden, true)
+    assert.equal(harness.flowSteps[4].hidden, false)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

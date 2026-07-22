@@ -7237,7 +7237,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
-- Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No hagas esto en data-rstk-calendar-book-form: el calendario conectado emite Schedule por sí mismo solo después de reservar.
+- Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No hagas esto en data-rstk-calendar-book-form: ese submit pertenece al elemento calendar y, solo después de reservar, Ristak emite el evento que el usuario haya elegido para ese calendario en Ajustes (Schedule es únicamente el default recomendado).
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
 - Para citas administradas fuera del calendario conectado usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada. En un calendario custom de Ristak no declares estos atributos.
@@ -26967,18 +26967,82 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         .flatMap(day => Array.isArray(day && day.slots) ? day.slots : [])
         .filter(slot => slotDateInTimezone(slot, timezone) === selectedDate);
     };
-    const bookingPayloadFromForm = (bookingForm, startTime, timezone) => ({
-      startTime,
-      timezone,
-      name: String(bookingForm.querySelector('[data-rstk-calendar-name]')?.value || ''),
-      email: String(bookingForm.querySelector('[data-rstk-calendar-email]')?.value || ''),
-      phone: String(bookingForm.querySelector('[data-rstk-calendar-phone]')?.value || ''),
-      notes: String(bookingForm.querySelector('[data-rstk-calendar-notes]')?.value || '')
-    });
+    const getBookingForm = (root) => (
+      root && root.matches && root.matches('[data-rstk-calendar-book-form]')
+        ? root
+        : root && root.querySelector ? root.querySelector('[data-rstk-calendar-book-form]') : null
+    );
+    const readBookingFieldValue = (field) => {
+      if (!field) return '';
+      const type = String(field.type || '').toLowerCase();
+      if ((type === 'checkbox' || type === 'radio') && !field.checked) return '';
+      if (field.tagName === 'SELECT' && field.multiple) {
+        return Array.from(field.selectedOptions || []).map(option => String(option.value || option.textContent || '')).filter(Boolean);
+      }
+      return String(field.value || '');
+    };
+    const collectBookingResponses = (bookingForm) => {
+      const responses = {};
+      const responseLabels = {};
+      if (!bookingForm || !bookingForm.querySelectorAll) return { responses, responseLabels };
+      Array.from(bookingForm.querySelectorAll('input, select, textarea')).forEach((field, index) => {
+        const type = String(field.type || '').toLowerCase();
+        if (['submit', 'button', 'reset', 'image', 'file'].includes(type)) return;
+        const key = String(
+          field.getAttribute('data-rstk-calendar-response') ||
+          field.getAttribute('data-ristak-calendar-response') ||
+          field.getAttribute('data-ristack-calendar-response') ||
+          ''
+        ).trim();
+        if (!key) return;
+        const value = readBookingFieldValue(field);
+        const hasValue = Array.isArray(value) ? value.length > 0 : String(value || '').trim();
+        if (!hasValue) return;
+        if (type === 'checkbox') {
+          const current = Array.isArray(responses[key]) ? responses[key] : [];
+          responses[key] = current.concat(Array.isArray(value) ? value : [value]);
+        } else if (type === 'radio' && Object.prototype.hasOwnProperty.call(responses, key)) {
+          return;
+        } else {
+          responses[key] = value;
+        }
+        const explicitLabel = String(
+          field.getAttribute('data-rstk-label') ||
+          field.getAttribute('data-ristak-label') ||
+          field.getAttribute('data-ristack-label') ||
+          field.getAttribute('aria-label') ||
+          field.getAttribute('name') ||
+          'Pregunta ' + (index + 1)
+        ).trim();
+        if (explicitLabel) responseLabels[key] = explicitLabel;
+      });
+      return { responses, responseLabels };
+    };
+    const bookingPayloadFromForm = (bookingForm, startTime, timezone) => {
+      const collected = collectBookingResponses(bookingForm);
+      const payload = {
+        startTime,
+        timezone,
+        name: String(bookingForm.querySelector('[data-rstk-calendar-name]')?.value || ''),
+        email: String(bookingForm.querySelector('[data-rstk-calendar-email]')?.value || ''),
+        phone: String(bookingForm.querySelector('[data-rstk-calendar-phone]')?.value || ''),
+        notes: String(bookingForm.querySelector('[data-rstk-calendar-notes]')?.value || '')
+      };
+      if (Object.keys(collected.responses).length) payload.responses = collected.responses;
+      if (Object.keys(collected.responseLabels).length) payload.responseLabels = collected.responseLabels;
+      return payload;
+    };
     const bindBookingForm = ({ bookingForm, getStartTime, getTimezone, onSuccess, setMessage, slotId }) => {
       if (!bookingForm) return;
       ['data-rstk-import-form', 'data-ristak-import-form', 'data-ristack-import-form'].forEach(name => bookingForm.removeAttribute && bookingForm.removeAttribute(name));
       bookingForm.removeAttribute && bookingForm.removeAttribute('novalidate');
+      const initContactPrefill = () => {
+        if (!window.ristakNativeInitContactPrefill) return;
+        window.ristakNativeInitContactPrefill(bookingForm).catch(() => {});
+      };
+      initContactPrefill();
+      if (window.setTimeout) window.setTimeout(initContactPrefill, 0);
+      if (window.addEventListener) window.addEventListener('ristak:native-ready', initContactPrefill, { once: true });
       bookingForm.addEventListener('submit', async event => {
         event.preventDefault();
         const startTime = String(getStartTime() || '');
@@ -27004,7 +27068,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       const endDateInput = root.querySelector('[data-rstk-calendar-end-date]');
       const slotsField = root.querySelector('[data-rstk-calendar-time]');
       const loadButton = root.querySelector('[data-rstk-calendar-load-slots]');
-      const bookingForm = root.querySelector('[data-rstk-calendar-book-form]');
+      const bookingForm = getBookingForm(root);
       const message = root.querySelector('[data-rstk-calendar-message]');
       if (!dateInput || !slotsField) return false;
       root.dataset.rstkCalendarWired = 'true';
@@ -27059,13 +27123,15 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       const slots = root.querySelector('[data-rstk-calendar-slots]');
       if (!monthLabel || !previousMonth || !nextMonth || !days || !slots) return false;
 
-      const bookingForm = root.querySelector('[data-rstk-calendar-book-form]');
+      const bookingForm = getBookingForm(root);
       const message = root.querySelector('[data-rstk-calendar-message]');
       const success = root.querySelector('[data-rstk-calendar-success]');
       const selectedDateLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-selected-date]'));
       const selectedTimeLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-selected-time]'));
       const selectedDateTimeLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-selected-datetime]'));
       const steps = Array.from(root.querySelectorAll('[data-rstk-calendar-step]'));
+      const flowSteps = Array.from(root.querySelectorAll('[data-rstk-calendar-flow-step]'));
+      const flexibleFlow = flowSteps.length > 0;
       const timezoneControl = root.querySelector('[data-rstk-calendar-timezone]');
       const timezoneLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-timezone-label]'));
       let timezone = resolveTimezone(config);
@@ -27075,6 +27141,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       let selectedDate = '';
       let selectedSlot = '';
       let slotsByDate = new Map();
+      let activeFlowIndex = 0;
       const nowParts = (() => {
         const key = slotDateInTimezone(new Date().toISOString(), timezone);
         const parts = key.split('-').map(Number);
@@ -27109,13 +27176,69 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         message.textContent = text || '';
         message.setAttribute('data-status', kind);
       };
+      const flowKind = (element) => {
+        const value = String(element && element.getAttribute('data-rstk-calendar-flow-kind') || '').trim().toLowerCase();
+        if (value === 'form') return 'confirm';
+        return value;
+      };
       const setStep = (step) => {
         root.setAttribute('data-rstk-calendar-state', step);
+        flowSteps.forEach(element => {
+          element.hidden = true;
+          element.setAttribute('aria-hidden', 'true');
+        });
         steps.forEach(element => {
           const isActive = element.getAttribute('data-rstk-calendar-step') === step;
           element.hidden = !isActive;
           element.setAttribute('aria-hidden', isActive ? 'false' : 'true');
         });
+      };
+      const showFlowIndex = (index) => {
+        if (!flexibleFlow) return false;
+        const safeIndex = Math.max(0, Math.min(flowSteps.length - 1, Number(index) || 0));
+        activeFlowIndex = safeIndex;
+        steps.forEach(element => {
+          element.hidden = true;
+          element.setAttribute('aria-hidden', 'true');
+        });
+        flowSteps.forEach((element, elementIndex) => {
+          const isActive = elementIndex === safeIndex;
+          element.hidden = !isActive;
+          element.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+        });
+        const active = flowSteps[safeIndex];
+        const kind = flowKind(active) || 'questions';
+        root.setAttribute('data-rstk-calendar-state', kind);
+        root.setAttribute('data-rstk-calendar-active-flow-step', active.getAttribute('data-rstk-calendar-flow-step') || String(safeIndex + 1));
+        return true;
+      };
+      const showFlowKind = (kind) => {
+        if (!flexibleFlow) return false;
+        const index = flowSteps.findIndex(element => flowKind(element) === kind);
+        return index >= 0 ? showFlowIndex(index) : false;
+      };
+      const validateFlowStep = (element) => {
+        if (!element || !element.querySelectorAll) return true;
+        const fields = Array.from(element.querySelectorAll('input, select, textarea'));
+        for (const field of fields) {
+          if (field.disabled || String(field.type || '').toLowerCase() === 'hidden') continue;
+          if (typeof field.checkValidity === 'function' && !field.checkValidity()) {
+            if (typeof field.reportValidity === 'function') field.reportValidity();
+            setMessage('Completa los campos requeridos para continuar.', 'error');
+            return false;
+          }
+        }
+        setMessage('', '');
+        return true;
+      };
+      const advanceFlexibleFlow = (expectedKind = '') => {
+        if (!flexibleFlow) return false;
+        const active = flowSteps[activeFlowIndex];
+        if (expectedKind && flowKind(active) !== expectedKind) {
+          const matchingIndex = flowSteps.findIndex(element => flowKind(element) === expectedKind);
+          if (matchingIndex >= 0) activeFlowIndex = matchingIndex;
+        }
+        return showFlowIndex(Math.min(activeFlowIndex + 1, flowSteps.length - 1));
       };
       const renderTimezone = () => {
         setText(timezoneLabels, timezone);
@@ -27176,7 +27299,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
           renderDays();
           const hasAvailability = Array.from(slotsByDate.keys()).some(key => key.slice(0, 7) === startDate.slice(0, 7));
           setMessage(hasAvailability ? '' : 'No hay fechas disponibles en este mes.', hasAvailability ? '' : 'empty');
-          setStep('date');
+          if (!flexibleFlow) setStep('date');
         } catch (error) {
           slotsByDate = new Map();
           renderDays();
@@ -27188,8 +27311,25 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
 
       root.dataset.rstkCalendarWired = 'true';
       renderTimezone();
-      setStep('date');
+      if (flexibleFlow) showFlowIndex(0);
+      else setStep('date');
       renderDays();
+      if (flexibleFlow) {
+        root.querySelectorAll('[data-rstk-calendar-flow-next]').forEach(button => {
+          button.addEventListener('click', event => {
+            event.preventDefault();
+            const current = flowSteps[activeFlowIndex];
+            if (!validateFlowStep(current)) return;
+            advanceFlexibleFlow();
+          });
+        });
+        root.querySelectorAll('[data-rstk-calendar-flow-back]').forEach(button => {
+          button.addEventListener('click', event => {
+            event.preventDefault();
+            showFlowIndex(Math.max(0, activeFlowIndex - 1));
+          });
+        });
+      }
       previousMonth.addEventListener('click', event => {
         event.preventDefault();
         if (previousMonth.disabled) return;
@@ -27210,7 +27350,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         selectedSlot = '';
         renderDays();
         renderSlots();
-        setStep('time');
+        if (!advanceFlexibleFlow('date')) setStep('time');
       });
       slots.addEventListener('click', event => {
         const button = event.target && event.target.closest ? event.target.closest('[data-rstk-calendar-slot]') : null;
@@ -27220,19 +27360,27 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         const selectedTime = formatSlotTime(selectedSlot, timezone);
         setText(selectedTimeLabels, selectedTime);
         setText(selectedDateTimeLabels, dateText(selectedDate) + ' · ' + selectedTime);
-        setStep('form');
+        if (!advanceFlexibleFlow('time')) setStep('form');
       });
       root.querySelectorAll('[data-rstk-calendar-back-to-dates]').forEach(button => {
-        button.addEventListener('click', event => { event.preventDefault(); selectedSlot = ''; setStep('date'); });
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          selectedSlot = '';
+          if (!showFlowKind('date')) setStep('date');
+        });
       });
       root.querySelectorAll('[data-rstk-calendar-back-to-times]').forEach(button => {
-        button.addEventListener('click', event => { event.preventDefault(); setStep('time'); });
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          if (!showFlowKind('time')) setStep('time');
+        });
       });
       if (timezoneControl && typeof timezoneControl.value === 'string') {
         timezoneControl.addEventListener('change', () => {
           if (!isSupportedTimezone(timezoneControl.value) || timezoneControl.value === timezone) return;
           timezone = timezoneControl.value;
           renderTimezone();
+          if (flexibleFlow) showFlowKind('date');
           void loadMonth();
         });
       }
@@ -27244,7 +27392,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
           const successText = response && response.message ? response.message : 'Listo. Tu cita quedó confirmada.';
           if (success) success.textContent = successText;
           setMessage('', 'success');
-          setStep('success');
+          if (!showFlowKind('success')) setStep('success');
         },
         setMessage,
         slotId

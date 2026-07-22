@@ -17,18 +17,47 @@ export const IMPORTED_HTML_MOBILE_RULES = Object.freeze([
 export const IMPORTED_HTML_CUSTOM_CALENDAR_RULES = Object.freeze([
   'El calendario custom debe ser una experiencia completa tipo Calendly, no un input de fecha aislado ni un select permanente de horarios.',
   'Usa un único contenedor raíz con data-rstk-native-element="calendar", data-rstk-native-id estable y data-rstk-native-render="custom". El HTML y el CSS controlan por completo el diseño; Ristak controla el mes vigente, disponibilidad real, zona horaria, selección y reserva.',
+  'Clasifica el elemento por la operación real que confirma su único submit, nunca por el orden visual, la cantidad de preguntas ni el nombre del evento Meta. Si ese submit crea la cita, TODO el recorrido es un elemento calendar aunque muestre preguntas antes, después o entre fecha y horario. Ristak lo detecta solo como calendario; en Ajustes el usuario elige por separado qué evento Meta enviar al agendar.',
+  'Si un formulario se envía y guarda antes o después como una operación independiente de la reserva, entonces sí son dos elementos: form y calendar, cada uno con su propio disparador y evento configurable. Avanzar entre pantallas sin enviar no crea otro elemento ni dispara conversiones.',
+  'Nunca anides <form>. Para un flujo combinado cuyo submit crea la cita, el único <form data-rstk-calendar-book-form> envuelve todas las preguntas y pasos, sin data-rstk-form-id ni submit intermedio. Los botones para avanzar o regresar usan type="button"; solo el botón que finalmente confirma la cita usa type="submit".',
+  'Para ordenar libremente el recorrido usa secciones data-rstk-calendar-flow-step="id-estable" con data-rstk-calendar-flow-kind="questions|date|time|confirm|success". El orden del DOM manda: puedes construir preguntas → fecha → horario → confirmar, fecha → horario → preguntas → confirmar o intercalar preguntas. En questions usa data-rstk-calendar-flow-next y data-rstk-calendar-flow-back; Ristak valida los campos required sin enviar todavía nada.',
+  'Nombre, email y teléfono pueden aparecer en cualquier paso questions dentro del mismo data-rstk-calendar-book-form; conserva data-rstk-calendar-name, data-rstk-calendar-email y data-rstk-calendar-phone. No los repitas al final: Ristak conserva sus valores y los usa cuando el submit crea la cita.',
+  'Las demás respuestas que deban acompañar la cita usan data-rstk-calendar-response="id-estable" y data-rstk-label="Pregunta visible". Ristak las manda con la reserva y las agrega al resumen de la cita; no inventes un segundo submit para guardarlas.',
   'Construye cuatro pasos dentro del mismo componente: data-rstk-calendar-step="date", "time", "form" y "success". Deja time, form y success con hidden al cargar; Ristak cambia el paso y el atributo data-rstk-calendar-state del contenedor.',
   'En date incluye navegación mensual con data-rstk-calendar-prev-month, data-rstk-calendar-month-label y data-rstk-calendar-next-month; muestra encabezados visibles de domingo a sábado y deja un contenedor vacío data-rstk-calendar-days con layout CSS de 7 columnas.',
   'Ristak llena data-rstk-calendar-days con todos los días del mes. El CSS debe contemplar [data-rstk-calendar-day][data-state="available"], [data-state="unavailable"], [data-state="outside"] y [data-selected="true"]. Los días sin disponibilidad llegan deshabilitados; no hardcodees fechas ni decidas disponibilidad en HTML.',
   'En time incluye data-rstk-calendar-selected-date, data-rstk-calendar-back-to-dates y un contenedor vacío data-rstk-calendar-slots. Ristak genera un botón por horario real con data-rstk-calendar-slot y data-selected="true|false"; estiliza esos selectores para que los horarios se elijan como botones, no como un simple select.',
-  'En form incluye data-rstk-calendar-selected-datetime, data-rstk-calendar-back-to-times y un <form data-rstk-calendar-book-form>. Nombre, email y teléfono usan respectivamente data-rstk-calendar-name, data-rstk-calendar-email y data-rstk-calendar-phone; data-rstk-calendar-notes es opcional.',
-  'Ese <form> pertenece al calendario y NO es un formulario independiente de captación. No le agregues data-rstk-form-id, data-rstk-field-id, data-rstk-conversion-event ni data-rstk-conversion-type: Ristak toma esos datos para reservar y emite únicamente Schedule después de confirmar la cita real.',
+  'En el flujo normal, form incluye data-rstk-calendar-selected-datetime, data-rstk-calendar-back-to-times y un <form data-rstk-calendar-book-form>. Nombre, email y teléfono usan respectivamente data-rstk-calendar-name, data-rstk-calendar-email y data-rstk-calendar-phone; data-rstk-calendar-notes es opcional. En el flujo compuesto, ese único form ya envuelve todo y el paso form contiene únicamente el resumen y el botón submit final.',
+  'Ese <form> pertenece al calendario y NO es un formulario independiente de captación. No le agregues data-rstk-form-id, data-rstk-field-id, data-rstk-conversion-event ni data-rstk-conversion-type: Ristak toma esos datos para reservar y, después de confirmar la cita real, emite únicamente el evento que el usuario configuró para ese elemento calendar en Ajustes (Schedule es solo el default recomendado).',
   'En success incluye un elemento data-rstk-calendar-success. Fuera o dentro de los pasos agrega data-rstk-calendar-message con role="status" para carga, falta de cupo y errores.',
   'Puedes mostrar la zona activa con data-rstk-calendar-timezone-label. Si agregas un select data-rstk-calendar-timezone, sus opciones deben ser zonas IANA válidas; Ristak vuelve a agrupar los instantes al cambiarla.',
   'No agregues JavaScript de calendario, fetch, fechas, slots ni submit. Ristak consulta el calendario asociado, agrupa los instantes UTC para la zona mostrada, Ristak vuelve a validar el horario al reservar y ejecuta la acción posterior configurada.',
   'En vista previa Ristak muestra disponibilidad real, pero el envío es de demostración: no crea la cita, no redirige y no dispara Pixel/CAPI.',
   'El grid, los horarios y el formulario deben ser responsive: sin scroll horizontal a 390px, controles táctiles de al menos 44px y una jerarquía clara entre elegir fecha, elegir hora y completar datos.'
 ])
+
+export const IMPORTED_HTML_COMPOSITE_CALENDAR_SKELETON = `<section data-rstk-native-element="calendar" data-rstk-native-id="agenda-compuesta" data-rstk-native-render="custom" data-rstk-label="Solicitud y agenda">
+  <form data-rstk-calendar-book-form>
+    <section data-rstk-calendar-flow-step="fecha" data-rstk-calendar-flow-kind="date">
+      <header><button type="button" data-rstk-calendar-prev-month aria-label="Mes anterior">‹</button><strong data-rstk-calendar-month-label></strong><button type="button" data-rstk-calendar-next-month aria-label="Mes siguiente">›</button></header>
+      <div data-rstk-calendar-weekdays aria-hidden="true"><span>Dom</span><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span></div>
+      <div data-rstk-calendar-days></div>
+    </section>
+    <section data-rstk-calendar-flow-step="horario" data-rstk-calendar-flow-kind="time" hidden><button type="button" data-rstk-calendar-flow-back>Cambiar fecha</button><h3 data-rstk-calendar-selected-date></h3><div data-rstk-calendar-slots></div></section>
+    <section data-rstk-calendar-flow-step="contacto" data-rstk-calendar-flow-kind="questions" hidden>
+      <label>Nombre<input name="name" autocomplete="name" data-rstk-calendar-name data-rstk-calendar-response="nombre" data-rstk-label="Nombre" required></label>
+      <label>Correo<input type="email" name="email" autocomplete="email" data-rstk-calendar-email data-rstk-calendar-response="correo" data-rstk-label="Correo" required></label>
+      <button type="button" data-rstk-calendar-flow-back>Regresar</button><button type="button" data-rstk-calendar-flow-next>Siguiente</button>
+    </section>
+    <section data-rstk-calendar-flow-step="calificacion" data-rstk-calendar-flow-kind="questions" hidden>
+      <label>¿Qué necesitas?<textarea name="necesidad" data-rstk-calendar-response="necesidad" data-rstk-label="Qué necesita" required></textarea></label>
+      <button type="button" data-rstk-calendar-flow-back>Anterior</button><button type="button" data-rstk-calendar-flow-next>Revisar cita</button>
+    </section>
+    <section data-rstk-calendar-flow-step="confirmar" data-rstk-calendar-flow-kind="confirm" hidden><button type="button" data-rstk-calendar-flow-back>Cambiar datos</button><p data-rstk-calendar-selected-datetime></p><button type="submit">Confirmar cita</button></section>
+    <section data-rstk-calendar-flow-step="listo" data-rstk-calendar-flow-kind="success" hidden><p data-rstk-calendar-success></p></section>
+  </form>
+  <p data-rstk-calendar-message role="status" aria-live="polite"></p>
+</section>`
 
 export const IMPORTED_HTML_CUSTOM_CALENDAR_SKELETON = `<section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom" data-rstk-label="Agenda principal">
   <section data-rstk-calendar-step="date">
@@ -51,7 +80,9 @@ export function buildImportedHtmlCustomCalendarRulesText(heading = 'Calendario H
     heading,
     ...IMPORTED_HTML_CUSTOM_CALENDAR_RULES.map(rule => `- ${rule}`),
     '- Estructura mínima obligatoria (agrega clases y CSS propios sin quitar los hooks):',
-    IMPORTED_HTML_CUSTOM_CALENDAR_SKELETON
+    IMPORTED_HTML_CUSTOM_CALENDAR_SKELETON,
+    '- Si el usuario combina preguntas y agenda bajo un único submit que crea la cita, usa esta variante flexible y reordena sus flow-step según la experiencia pedida:',
+    IMPORTED_HTML_COMPOSITE_CALENDAR_SKELETON
   ].join('\n')
 }
 

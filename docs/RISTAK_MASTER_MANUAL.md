@@ -4533,7 +4533,10 @@ gracias.
 Esta ruta aplica a formularios HTML independientes. El
 `<form data-rstk-calendar-book-form>` que vive dentro de un calendario custom es
 parte del calendario y queda fuera del submit generico: no crea submission de
-formulario ni dispara un `Lead` adicional.
+formulario ni dispara un evento adicional de formulario. El tipo detectado y el
+evento Meta son independientes: `calendar` fija que el disparo ocurre después de
+confirmar la cita, mientras Ajustes permite elegir `Schedule`, `Lead`, otro
+evento permitido o ninguno para ese calendario.
 
 Los formularios HTML propios distinguen `SUBMITTED` de `QUALIFIED`. Si una
 opcion radio, checkbox o select descarta candidatos, esa opcion lleva
@@ -4745,8 +4748,17 @@ nunca a dos videos distintos de la misma página.
   El `<form data-rstk-calendar-book-form>` pertenece semánticamente a este bloque:
   no requiere `data-rstk-form-id` ni `data-rstk-field-id`, no aparece como
   formulario independiente en Contenido o Meta y no ejecuta el runtime genérico
-  de leads. Solo una reserva confirmada en backend dispara el evento del
-  calendario, normalmente `Schedule`.
+  de leads. Solo una reserva confirmada en backend dispara el evento configurado
+  del calendario, cuyo default recomendado es `Schedule` pero puede cambiarse en
+  Ajustes sin cambiar el tipo de elemento.
+  La clasificación tampoco depende del orden visual. Cuando un único submit
+  crea la cita, preguntas, contacto, fecha y horario siguen siendo un solo
+  `calendar` aunque aparezcan antes, después o intercalados. El flujo flexible
+  usa un solo `data-rstk-calendar-book-form` y secciones ordenadas
+  `data-rstk-calendar-flow-step` tipadas como `questions`, `date`, `time`,
+  `confirm` y `success`; `data-rstk-calendar-response` conserva preguntas
+  adicionales en el resumen de la cita. Un submit independiente sí produce un
+  segundo elemento `form`.
   El contrato legacy de `input date` más `select` permanece montable para HTML
   publicado anteriormente, pero ya no es la estructura indicada a las IA.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
@@ -4970,8 +4982,8 @@ disponibilidad y agendado.
 En preview, `window.ristakCalendarGetSlots` consulta disponibilidad real aun
 dentro de un `srcDoc` cuyo origen es `null`; `window.ristakCalendarBook` responde
 con una confirmación de demostración y no hace POST, no crea citas, no redirige
-ni dispara Pixel/CAPI. El agendado y `Schedule` solo ocurren en la página
-publicada después de confirmar la cita real.
+ni dispara Pixel/CAPI. El agendado y el evento elegido para ese calendario solo
+ocurren en la página publicada después de confirmar la cita real.
 
 Cuando el asistente de codigo prepara un HTML completo y todavia no se ha guardado,
 la vista de pagina debe mandar ese archivo como borrador al endpoint de preview
