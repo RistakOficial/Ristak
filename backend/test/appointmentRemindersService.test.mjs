@@ -416,6 +416,64 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
   })
 })
 
+test('el envío corrige una plantilla default cruzada y usa cita_programada al agendar', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
+      const templates = await db.all(`
+        SELECT id, name
+        FROM whatsapp_message_templates
+        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+      `)
+      const byName = new Map(templates.map((template) => [template.name, template]))
+      const noticeTemplate = byName.get('cita_programada')
+      const wrongTemplate = byName.get('confirmacion_cita_dia_anterior')
+      assert.ok(noticeTemplate?.id)
+      assert.ok(wrongTemplate?.id)
+
+      await db.run(`
+        UPDATE whatsapp_message_templates
+        SET template_provider = 'ycloud',
+            provider_status = 'APPROVED',
+            provider_template_id = 'official_' || name,
+            provider_template_name = name,
+            ycloud_status = 'APPROVED',
+            ycloud_template_id = 'official_' || name,
+            ycloud_template_name = name
+        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+      `)
+      await db.run(`
+        UPDATE whatsapp_api_templates
+        SET status = 'APPROVED'
+        WHERE name IN ('cita_programada', 'confirmacion_cita_dia_anterior')
+      `)
+      await db.run(
+        "UPDATE appointments SET date_added = ?, source = 'public_calendar' WHERE id = ?",
+        [DateTime.utc().minus({ minutes: 1 }).toISO(), appointmentId]
+      )
+      // Corrupción histórica: el aviso inmediato apunta a la confirmación del
+      // día anterior. El último guard del envío debe ignorar ese cruce.
+      await db.run(`
+        UPDATE appointment_reminders
+        SET message_type = 'confirmation',
+            timing_anchor = 'after_booking',
+            offset_value = 0,
+            offset_unit = 'minutes',
+            smart_enabled = 0,
+            template_id = ?,
+            template_name = ?
+        WHERE id = ?
+      `, [wrongTemplate.id, wrongTemplate.name, reminder.id])
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.deepEqual(result, { sent: 1, errors: 0, skipped: 0 })
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'template')
+      assert.equal(captures[0].template.name, 'cita_programada')
+    })
+  })
+})
+
 test('una cita nueva no recibe como confirmación un recordatorio cuyo momento ya había pasado', async () => {
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ appointmentId }) => {

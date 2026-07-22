@@ -150,9 +150,15 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   confirmación y ventanas de seguimiento.
 - Si el switch está apagado, el mensaje se guarda como `messageType: 'reminder'`
   aunque sea un aviso posterior al agendado.
-- Las plantillas default son `recordatorio_cita_un_dia_antes` para recordatorios,
-  `cita_programada` para avisos y `confirmacion_cita_dia_anterior` cuando el
-  switch de confirmación está activo.
+- El momento manda sobre el modo de confirmación al elegir plantilla: todo aviso
+  `after_booking` usa `cita_programada`; antes de la cita se usa
+  `recordatorio_cita_un_dia_antes` o `confirmacion_cita_dia_anterior` según el
+  switch. Backend vuelve a calcular esta selección y repara filas históricas que
+  apunten a otra plantilla predeterminada, por lo que una confirmación inmediata
+  nunca puede mandar el texto del día anterior.
+- Los tres textos predeterminados incluyen la fecha y hora canónicas de la cita.
+  No dependen de frases relativas como "mañana" o "dentro de 1 día", que pueden
+  dejar de ser ciertas si cambia el horario inteligente o el momento configurado.
 - WhatsApp usa el canal conectado sin un switch manual de respaldo: QR-only sale
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin

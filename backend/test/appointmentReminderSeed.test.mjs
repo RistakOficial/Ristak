@@ -29,6 +29,59 @@ test('el arranque concurrente crea una sola vez el recordatorio predeterminado',
   assert.equal(seededRows[0].template_name, 'confirmacion_cita_dia_anterior')
 })
 
+test('un aviso al agendar nunca conserva la plantilla predeterminada del día anterior', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+  const confirmationTemplate = await db.get(`
+    SELECT id, name
+    FROM whatsapp_message_templates
+    WHERE name = 'confirmacion_cita_dia_anterior' AND language = 'es_MX'
+  `)
+  const noticeTemplate = await db.get(`
+    SELECT id, name
+    FROM whatsapp_message_templates
+    WHERE name = 'cita_programada' AND language = 'es_MX'
+  `)
+  assert.ok(confirmationTemplate?.id)
+  assert.ok(noticeTemplate?.id)
+
+  const reminder = await createAppointmentReminder({
+    name: 'Confirmación inmediata',
+    enabled: false,
+    messageType: 'confirmation',
+    timingAnchor: 'after_booking',
+    offsetValue: 0,
+    offsetUnit: 'minutes',
+    templateId: confirmationTemplate.id,
+    templateName: confirmationTemplate.name
+  })
+
+  assert.equal(reminder.templateId, noticeTemplate.id)
+  assert.equal(reminder.templateName, 'cita_programada')
+
+  // Simula la fila incongruente que existía antes de este arreglo. El ensure de
+  // arranque debe repararla aunque la cuenta ya haya terminado su seed inicial.
+  await db.run(`
+    UPDATE appointment_reminders
+    SET template_id = ?, template_name = ?
+    WHERE id = ?
+  `, [confirmationTemplate.id, confirmationTemplate.name, reminder.id])
+  await db.run(`
+    INSERT INTO app_config (config_key, config_value, updated_at)
+    VALUES ('appointment_reminders_seeded', '1', CURRENT_TIMESTAMP)
+    ON CONFLICT(config_key) DO UPDATE SET config_value = '1', updated_at = CURRENT_TIMESTAMP
+  `)
+
+  await ensureDefaultAppointmentReminder()
+
+  const repaired = await db.get(
+    'SELECT template_id, template_name, message_text FROM appointment_reminders WHERE id = ?',
+    [reminder.id]
+  )
+  assert.equal(repaired.template_id, noticeTemplate.id)
+  assert.equal(repaired.template_name, 'cita_programada')
+  assert.doesNotMatch(repaired.message_text || '', /mañana|dentro de 1 día/i)
+})
+
 test('bloquea recordatorios manuales configurados para el mismo momento', async () => {
   await db.run('DELETE FROM appointment_reminders')
 

@@ -73,9 +73,9 @@ const getDefaultTemplateName = (
   messageType: AppointmentReminderInput['messageType'],
   timingAnchor: ReminderTimingAnchor
 ) => {
-  if (messageType === 'confirmation') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
-  return timingAnchor === 'after_booking'
-    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
+  if (timingAnchor === 'after_booking') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
+  return messageType === 'confirmation'
+    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
     : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
 }
 

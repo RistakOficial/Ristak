@@ -24,6 +24,7 @@ import {
   recordSimulatedAppointmentTestAction
 } from './conversationalAppointmentTestAutomationAuditService.js'
 import {
+  DEFAULT_APPOINTMENT_NOTICE_TEXT,
   DEFAULT_REMINDER_TEXT,
   DEFAULT_CONFIRMATION_TEXT,
   OFFSET_UNIT_MS,
@@ -35,7 +36,13 @@ import {
   parseStoredUtcDateTime
 } from './appointmentReminderLogic.js'
 
-export { DEFAULT_REMINDER_TEXT, DEFAULT_CONFIRMATION_TEXT, formatOffsetLabel, computeReminderSendAt }
+export {
+  DEFAULT_APPOINTMENT_NOTICE_TEXT,
+  DEFAULT_REMINDER_TEXT,
+  DEFAULT_CONFIRMATION_TEXT,
+  formatOffsetLabel,
+  computeReminderSendAt
+}
 
 export function appointmentReminderRetryCutoffExpression(dialect = databaseDialect) {
   return dialect === 'postgres'
@@ -76,6 +83,7 @@ const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   notice: 'cita_programada',
   confirmation: 'confirmacion_cita_dia_anterior'
 }
+const DEFAULT_APPOINTMENT_TEMPLATE_NAMES = new Set(Object.values(DEFAULT_TEMPLATE_NAME_BY_PURPOSE))
 const APPROVED_TEMPLATE_STATUSES = new Set(['APPROVED'])
 const CHANNEL_LABELS = {
   booking_channel: 'Por el canal que agendó',
@@ -332,20 +340,41 @@ async function getReminderTemplateByName(name, language = 'es_MX') {
 }
 
 function getDefaultTemplateNameForReminder(data = {}) {
-  const messageType = MESSAGE_TYPES.has(cleanString(data.messageType)) ? cleanString(data.messageType) : 'reminder'
-  if (messageType === 'confirmation') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
-
   const timingAnchor = TIMING_ANCHORS.has(cleanString(data.timingAnchor))
     ? cleanString(data.timingAnchor)
     : 'before_appointment'
-  return timingAnchor === 'after_booking'
-    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
+  if (timingAnchor === 'after_booking') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
+
+  const messageType = MESSAGE_TYPES.has(cleanString(data.messageType)) ? cleanString(data.messageType) : 'reminder'
+  return messageType === 'confirmation'
+    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
     : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
 }
 
 async function getDefaultReminderTemplate(data = {}) {
   const name = getDefaultTemplateNameForReminder(data)
   return getReminderTemplateByName(name, 'es_MX')
+}
+
+async function makeDefaultAppointmentTemplatePurposeCompatible(template, data = {}) {
+  const selectedName = cleanString(template?.name || data.templateName)
+  const expectedName = getDefaultTemplateNameForReminder(data)
+  if (!DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(selectedName) || selectedName === expectedName) {
+    return template
+  }
+  const expectedTemplate = await getDefaultReminderTemplate(data)
+  if (!expectedTemplate) {
+    throw createServiceError(`No se encontró la plantilla predeterminada ${expectedName} para este mensaje de cita.`, 500)
+  }
+  return expectedTemplate
+}
+
+async function getPurposeCompatibleReminderTemplate(reminder = {}) {
+  let template = await getReminderTemplateById(reminder.templateId)
+  if (!template && reminder.templateName) {
+    template = await getReminderTemplateByName(reminder.templateName, reminder.templateLanguage)
+  }
+  return makeDefaultAppointmentTemplatePurposeCompatible(template, reminder)
 }
 
 async function resolveReminderTemplateSelection(data = {}) {
@@ -362,6 +391,7 @@ async function resolveReminderTemplateSelection(data = {}) {
   if (!template && data.templateName) {
     template = await getReminderTemplateByName(data.templateName, data.templateLanguage)
   }
+  template = await makeDefaultAppointmentTemplatePurposeCompatible(template, data)
   if (!template && !data.templateId) {
     template = await getDefaultReminderTemplate(data)
   }
@@ -377,16 +407,29 @@ async function resolveReminderTemplateSelection(data = {}) {
 async function backfillMissingReminderTemplates() {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
   const rows = await db.all(`
-    SELECT id, message_type, timing_anchor
+    SELECT id, message_type, timing_anchor, template_id, template_name, template_language
     FROM appointment_reminders
     WHERE COALESCE(channel, 'whatsapp') IN ('whatsapp', 'whatsapp_qr')
       AND COALESCE(content_mode, 'template') = 'template'
-      AND COALESCE(template_id, '') = ''
   `)
 
   for (const row of rows) {
     const messageType = MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder'
     const timingAnchor = TIMING_ANCHORS.has(cleanString(row.timing_anchor)) ? cleanString(row.timing_anchor) : 'before_appointment'
+    const expectedName = getDefaultTemplateNameForReminder({ messageType, timingAnchor })
+    const storedTemplateId = cleanString(row.template_id)
+    const storedTemplateName = cleanString(row.template_name)
+    let selectedTemplate = storedTemplateId ? await getReminderTemplateById(storedTemplateId) : null
+    if (!selectedTemplate && storedTemplateName) {
+      selectedTemplate = await getReminderTemplateByName(storedTemplateName, row.template_language)
+    }
+
+    const selectedName = cleanString(selectedTemplate?.name || storedTemplateName)
+    const hasNoSelection = !storedTemplateId && !storedTemplateName
+    const hasMismatchedDefault = DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(selectedName) && selectedName !== expectedName
+    const hasDanglingDefault = !selectedTemplate && DEFAULT_APPOINTMENT_TEMPLATE_NAMES.has(storedTemplateName)
+    if (!hasNoSelection && !hasMismatchedDefault && !hasDanglingDefault) continue
+
     const template = await getDefaultReminderTemplate({ messageType, timingAnchor })
     if (!template) continue
     await db.run(`
@@ -731,7 +774,11 @@ function sanitizeReminderInput(input = {}, base = {}) {
       ? 'template'
       : 'direct'
   const messageText = cleanString(merged.messageText) ||
-    (messageType === 'confirmation' ? DEFAULT_CONFIRMATION_TEXT : DEFAULT_REMINDER_TEXT)
+    (timingAnchor === 'after_booking'
+      ? DEFAULT_APPOINTMENT_NOTICE_TEXT
+      : messageType === 'confirmation'
+        ? DEFAULT_CONFIRMATION_TEXT
+        : DEFAULT_REMINDER_TEXT)
 
   return {
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
@@ -1059,7 +1106,7 @@ function getReminderChannelLabel(reminder = {}) {
 
 async function getReminderPlainText(reminder, appointment, timezone) {
   if (reminder.contentMode === 'template') {
-    const template = await getReminderTemplateById(reminder.templateId)
+    const template = await getPurposeCompatibleReminderTemplate(reminder)
     if (!template) throw new Error('Selecciona un mensaje para renderizar el texto de este recordatorio.')
     return renderReminderTemplateText(template, { appointment, timezone })
   }
@@ -1240,7 +1287,7 @@ async function sendReminderViaMetaSocial({ reminder, appointment, timezone }) {
 
 async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone }) {
   const sender = await resolveSenderPhone(reminder, appointment)
-  const template = await getReminderTemplateById(reminder.templateId)
+  const template = await getPurposeCompatibleReminderTemplate(reminder)
   if (!template) {
     throw new Error('Selecciona una plantilla de WhatsApp para este recordatorio.')
   }

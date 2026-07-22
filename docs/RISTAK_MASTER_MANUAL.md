@@ -3692,6 +3692,15 @@ abran una ventana en `appointment_confirmation_windows`. Si el switch esta
 apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
 `after_booking`.
 
+La plantilla se decide primero por el momento del mensaje y despues por el modo:
+`after_booking` siempre usa `cita_programada`; para `before_appointment`, una
+confirmacion usa `confirmacion_cita_dia_anterior` y un recordatorio usa
+`recordatorio_cita_un_dia_antes`. Esta regla se aplica tanto en frontend como en
+backend. El arranque repara filas historicas que apunten a otra plantilla default
+y el envio vuelve a validar el contrato para fallar cerrado ante una corrupcion
+posterior. Las plantillas default muestran la fecha y hora canonicas y no dependen
+de texto relativo como "mañana" o "dentro de 1 dia".
+
 Si solo hay WhatsApp QR conectado, recordatorios y avisos de cita envian el
 texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API este
 pendiente o no exista remotamente. Si hay API y QR conectados para el mismo

@@ -120,7 +120,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: true,
     headerType: 'text',
     headerText: 'Cita programada para {{1}}',
-    bodyText: 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!',
+    bodyText: 'Hola {{1}}.\n\nTu cita quedó agendada correctamente para la fecha y hora indicadas. Te esperamos. Si necesitas hacer algún cambio, avísanos con anticipación.\n\n¡Gracias!',
     footerText: '',
     buttons: [],
     variableExamples: {
@@ -155,7 +155,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: '*Recordatorio* ⏰\nHola {{1}}, tienes una cita programada para dentro de 1 día, el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄',
+    bodyText: '*Recordatorio de cita* ⏰\nHola {{1}}, te recordamos que tienes una cita el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄',
     footerText: 'Esto es un mensaje automático',
     buttons: [],
     variableExamples: {
@@ -196,11 +196,12 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
     headerEnabled: false,
     headerType: 'none',
     headerText: '',
-    bodyText: 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?',
+    bodyText: 'Hola {{1}}, queremos confirmar tu asistencia a la cita del {{2}} a las {{3}}. ¿Nos confirmas, por favor?',
     footerText: '',
     buttons: [],
     variableExamples: {
       '{{contact.first_name}}': 'María',
+      '{{cita.fecha}}': 'viernes 19 de junio',
       '{{cita.hora}}': '12:00'
     },
     variableBindings: {
@@ -213,6 +214,12 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
           example: 'María'
         },
         2: {
+          variableKey: 'cita.fecha',
+          mergeField: '{{cita.fecha}}',
+          label: 'Fecha de cita',
+          example: 'viernes 19 de junio'
+        },
+        3: {
           variableKey: 'cita.hora',
           mergeField: '{{cita.hora}}',
           label: 'Hora de cita',

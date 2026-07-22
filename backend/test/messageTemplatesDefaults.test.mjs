@@ -22,6 +22,9 @@ const DEFAULT_TEMPLATE_NAMES = [
   'confirmacion_cita_dia_anterior'
 ]
 const DEFAULT_FOLDER_ID = 'Reminders'
+const SCHEDULED_APPOINTMENT_BODY = 'Hola {{1}}.\n\nTu cita quedó agendada correctamente para la fecha y hora indicadas. Te esperamos. Si necesitas hacer algún cambio, avísanos con anticipación.\n\n¡Gracias!'
+const ONE_DAY_REMINDER_BODY = '*Recordatorio de cita* ⏰\nHola {{1}}, te recordamos que tienes una cita el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄'
+const APPOINTMENT_CONFIRMATION_BODY = 'Hola {{1}}, queremos confirmar tu asistencia a la cita del {{2}} a las {{3}}. ¿Nos confirmas, por favor?'
 const DEFAULT_PAYMENT_TEMPLATE_NAMES = [
   'recordatorio_pago_pendiente',
   'comprobante_pago_recibido',
@@ -162,8 +165,13 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.equal(scheduledTemplate.components[0].type, 'HEADER')
       assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
       assert.equal(scheduledTemplate.components[0].example.header_text[0], 'viernes, 19 de junio de 2026 9:00')
-      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!')
+      assert.equal(scheduledTemplate.components[1].text, SCHEDULED_APPOINTMENT_BODY)
       assert.deepEqual(scheduledTemplate.components.map((component) => component.type), ['HEADER', 'BODY'])
+
+      const reminderTemplate = captures.find((capture) => capture.name === 'recordatorio_cita_un_dia_antes')
+      assert.equal(reminderTemplate.components[0].text, ONE_DAY_REMINDER_BODY)
+      const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
+      assert.equal(confirmationTemplate.components[0].text, APPOINTMENT_CONFIRMATION_BODY)
 
       const bundle = await getMessageTemplateBundle()
       const folder = bundle.folders.find((item) => item.id === DEFAULT_FOLDER_ID)
@@ -178,6 +186,9 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
+      const localConfirmation = bundle.templates.find((template) => template.name === 'confirmacion_cita_dia_anterior')
+      assert.equal(localConfirmation.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
+      assert.equal(localConfirmation.variableBindings.bodyText['3'].variableKey, 'cita.hora')
       assert.ok(bundle.templates
         .filter((template) => DEFAULT_TEMPLATE_NAMES.includes(template.name))
         .every((template) => template.folderId === DEFAULT_FOLDER_ID))
@@ -623,9 +634,9 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
 
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
       assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
-      assert.equal(scheduledTemplate.components[1].text, 'Hola {{1}}.\n\n*🔔 Importante:* Te llegarán *varios* recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!')
+      assert.equal(scheduledTemplate.components[1].text, SCHEDULED_APPOINTMENT_BODY)
       const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
-      assert.equal(confirmationTemplate.components[0].text, 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?')
+      assert.equal(confirmationTemplate.components[0].text, APPOINTMENT_CONFIRMATION_BODY)
 
       const bundle = await getMessageTemplateBundle()
       const byName = new Map(bundle.templates.map((template) => [template.name, template]))
@@ -718,7 +729,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
         ]
       )
       assert.equal(requests[1].body.name, retryName)
-      assert.equal(requests[1].body.components[0].text, '*Recordatorio* ⏰\nHola {{1}}, tienes una cita programada para dentro de 1 día, el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄')
+      assert.equal(requests[1].body.components[0].text, ONE_DAY_REMINDER_BODY)
 
       const row = await db.get(
         'SELECT name, ycloud_template_name, ycloud_status, ycloud_template_id, ycloud_review_retry_count, ycloud_review_retry_last_at FROM whatsapp_message_templates WHERE name = ?',
@@ -817,7 +828,7 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
         ]
       )
       assert.equal(requests[1].body.name, retryName)
-      assert.equal(requests[1].body.components[0].text, 'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?')
+      assert.equal(requests[1].body.components[0].text, APPOINTMENT_CONFIRMATION_BODY)
       assert.equal(requests[1].body.components.length, 1)
 
       const localRows = await db.all(

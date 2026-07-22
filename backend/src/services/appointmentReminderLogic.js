@@ -4,11 +4,14 @@ import { DateTime } from 'luxon'
 // poder probarla de forma aislada: cálculo de horario inteligente, render de
 // variables y detección de respuestas afirmativas.
 
+export const DEFAULT_APPOINTMENT_NOTICE_TEXT =
+  'Hola {{contact.first_name}}, tu cita quedó agendada para el {{cita.fecha}} a las {{cita.hora}}. Te esperamos.\n\nEsto es un mensaje automático'
+
 export const DEFAULT_REMINDER_TEXT =
-  'Hola {{contact.first_name}}, tienes una cita programada para dentro de 1 día, el {{cita.fecha}} a las {{cita.hora}}. Recuerda estar al pendiente. 😄\n\nEsto es un mensaje automático'
+  'Hola {{contact.first_name}}, te recordamos que tienes una cita el {{cita.fecha}} a las {{cita.hora}}. Recuerda estar al pendiente. 😄\n\nEsto es un mensaje automático'
 
 export const DEFAULT_CONFIRMATION_TEXT =
-  '{{contact.first_name}}, solo para confirmar tu cita mañana a las {{cita.hora}}. ¿Confirmamos?\n\nEs necesario RESPONDER para evitar errores en la agenda'
+  'Hola {{contact.first_name}}, queremos confirmar tu asistencia a la cita del {{cita.fecha}} a las {{cita.hora}}. ¿Nos confirmas, por favor?\n\nEs necesario RESPONDER para evitar errores en la agenda'
 
 export const OFFSET_UNIT_MS = {
   seconds: 1000,
