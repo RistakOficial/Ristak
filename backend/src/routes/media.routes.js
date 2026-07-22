@@ -5,7 +5,10 @@ import { join } from 'path'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { hasUserAccess } from '../utils/userAccess.js'
 import {
+  MEDIA_MAX_UPLOAD_BYTES,
+  authorizeMcpMediaUploadTicket,
   cancelResumableVideoUploadHandler,
   createMediaFolderHandler,
   deleteMediaAssetHandler,
@@ -26,6 +29,7 @@ import {
   serveMediaAssetFileHandler,
   syncMediaAssetStreamHandler,
   storageDiagnosticsHandler,
+  uploadMcpBunnyMediaHandler,
   uploadMediaHandler,
   directChatCompatibilityFromRequest
 } from '../controllers/mediaController.js'
@@ -36,13 +40,23 @@ const requireMediaLicense = requireFeature('settings_media')
 const requireChatAccess = requireModuleAccess('chat')
 const requireSitesAccess = requireModuleAccess('sites')
 const requireSitesLicense = requireFeature('sites')
+const requireDevelopersLicense = requireFeature('developers')
 const SITES_MEDIA_UPLOAD_MODULES = new Set(['sites', 'forms', 'landing'])
-const maxUploadBytes = Number(process.env.MEDIA_MAX_UPLOAD_BYTES || 600 * 1024 * 1024)
 const maxChatUploadBytes = 25 * 1024 * 1024
 const upload = multer({
   dest: join(tmpdir(), 'ristak-media-uploads'),
   limits: {
-    fileSize: maxUploadBytes
+    fileSize: MEDIA_MAX_UPLOAD_BYTES
+  }
+})
+const mcpUpload = multer({
+  dest: join(tmpdir(), 'ristak-media-uploads'),
+  limits: {
+    fileSize: MEDIA_MAX_UPLOAD_BYTES,
+    files: 1,
+    fields: 0,
+    parts: 2,
+    headerPairs: 64
   }
 })
 const chatUpload = multer({
@@ -76,7 +90,7 @@ function uploadSingleFile(req, res, next) {
     if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
       res.status(413).json({
         success: false,
-        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(isDirectChatUpload ? maxChatUploadBytes : maxUploadBytes)}.`,
+        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(isDirectChatUpload ? maxChatUploadBytes : MEDIA_MAX_UPLOAD_BYTES)}.`,
         code: 'media_upload_too_large'
       })
       return
@@ -87,6 +101,33 @@ function uploadSingleFile(req, res, next) {
       error: error.message || 'No se pudo recibir el archivo multimedia.',
       code: error.code || 'media_upload_failed'
     })
+  })
+}
+
+function uploadMcpSingleFile(req, res, next) {
+  mcpUpload.single('file')(req, res, (error) => {
+    if (!error) return next()
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        success: false,
+        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(MEDIA_MAX_UPLOAD_BYTES)}.`,
+        code: 'media_upload_too_large'
+      })
+    }
+    return res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo recibir el archivo multimedia.',
+      code: error.code || 'media_upload_failed'
+    })
+  })
+}
+
+function requireMcpUploadDevelopersAccess(req, res, next) {
+  if (hasUserAccess(req.user, 'settings_api_access', 'read')) return next()
+  return res.status(403).json({
+    success: false,
+    code: 'access_denied',
+    error: 'El usuario ya no tiene acceso a Developers.'
   })
 }
 
@@ -140,6 +181,19 @@ router.get('/assets/:assetId/thumbnail', (req, res, next) => {
   req.params.variant = 'thumbnail'
   return serveMediaAssetFileHandler(req, res, next)
 })
+
+// Capacidad temporal emitida por el MCP. La firma, usuario, licencia y permisos
+// se validan ANTES de que Multer escriba un solo byte al disco.
+router.post(
+  '/mcp-upload',
+  authorizeMcpMediaUploadTicket,
+  requireDevelopersLicense,
+  requireMcpUploadDevelopersAccess,
+  requireMediaLicense,
+  requireMediaAccess,
+  uploadMcpSingleFile,
+  uploadMcpBunnyMediaHandler
+)
 
 router.use(requireAuth)
 

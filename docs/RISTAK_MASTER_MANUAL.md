@@ -1085,6 +1085,18 @@ El timestamp privado del cursor conserva microsegundos PostgreSQL y su scope
 incluye negocio, modulos, tipo, estado, busqueda y carpeta/recursion; cambiar el
 filtro exige empezar una pagina nueva y no puede contaminar el recorrido actual.
 
+El MCP puede preparar la subida de un archivo nuevo de la computadora con
+`media_prepare_bunny_upload`. La tool exige `ristak.execute`, confirmacion,
+idempotencyKey, nombre, MIME, bytes y SHA-256; no recibe Base64 ni entrega llaves
+de Bunny. Devuelve una URL multipart y un pase firmado de diez minutos que no se
+guarda en el replay del MCP. `/api/media/mcp-upload` valida usuario y grant OAuth
+vigentes, Developers, permiso de escritura de Media y plan antes de Multer;
+despues comprueba tamaño, MIME y SHA-256 exactos y delega al mismo servicio de
+cuota, carpetas, idempotencia y Bunny Storage de la biblioteca. Revocar o cambiar
+la conexión MCP invalida el pase pendiente. Los archivos quedan como assets
+normales de `module=media`; este flujo no importa ZIPs como Sites ni reemplaza la
+subida TUS del editor de video de Sites.
+
 Mover, borrar o descargar conserva `businessId`, `mediaType` y `status` del
 filtro visible; los IDs explicitos se revalidan contra ese alcance. Mover usa el
 endpoint por lote, transmite archivos remotos sin crear un buffer completo y no
@@ -7103,11 +7115,12 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 234 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 235 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
 precios, suscripciones, dashboard, reportes, analytics/tracking, campañas,
-activos multimedia, costos, plantillas de WhatsApp, preferencias moviles,
+activos multimedia —incluida la subida firmada de archivos locales a Bunny—,
+costos, plantillas de WhatsApp, preferencias moviles,
 estado seguro de integraciones y Sites con sus archivos HTML. El status de
 Developers y `tools/list` cuentan/muestran solo las tools visibles para el
 usuario, plan, modulos y scopes actuales. No es SQL libre, no es un proxy

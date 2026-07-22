@@ -1169,6 +1169,35 @@ const mediaTools = [
     query: cleanControls,
     mapResponse: stripSensitiveResponse
   }),
+  writeTool({
+    name: 'media_prepare_bunny_upload',
+    description: 'Prepara una subida multipart temporal y firmada para transmitir un archivo local a Bunny.net sin meter sus bytes en el JSON MCP. Después envía el archivo al uploadUrl usando el header y el campo devueltos.',
+    module: 'settings_media',
+    featureKeys: ['settings_media'],
+    scope: 'ristak.execute',
+    risk: 'high',
+    openWorld: true,
+    idempotencyResultMode: 'ephemeral',
+    handler: mediaController.prepareMcpBunnyUploadHandler,
+    inputSchema: schema({
+      filename: { type: 'string', minLength: 1, maxLength: 500 },
+      mimeType: { type: 'string', minLength: 3, maxLength: 200 },
+      sizeBytes: { type: 'integer', minimum: 1, maximum: mediaController.MEDIA_MAX_UPLOAD_BYTES },
+      sha256: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' },
+      folderPath: { type: 'string', maxLength: 1000 },
+      isPublic: { type: 'boolean' }
+    }, ['filename', 'mimeType', 'sizeBytes', 'sha256']),
+    query: () => ({ module: 'media' }),
+    body: (args) => compactDefined({
+      module: 'media',
+      filename: args.filename,
+      mimeType: args.mimeType,
+      sizeBytes: args.sizeBytes,
+      sha256: args.sha256,
+      folderPath: args.folderPath,
+      isPublic: args.isPublic
+    })
+  }),
   readTool({
     name: 'media_storage_usage',
     description: 'Obtiene cuota, consumo y desglose de la biblioteca sin revelar llaves ni rutas de infraestructura.',

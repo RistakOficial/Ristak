@@ -13,6 +13,10 @@ const MAX_AUDIT_STRING_LENGTH = 2000
 const MAX_AUDIT_JSON_LENGTH = 24000
 const MAX_IDEMPOTENCY_RESULT_LENGTH = 2 * 1024 * 1024
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
+const EPHEMERAL_IDEMPOTENCY_RESULT = Object.freeze({
+  __ristakMcpReplayUnavailable: true,
+  reason: 'ephemeral'
+})
 
 function makeError(message, code, status = 400, details = null) {
   const error = new Error(message)
@@ -318,7 +322,11 @@ async function beginIdempotentCall(context, spec, args) {
        WHERE user_id = ? AND client_id = ? AND tool_name = ? AND key_hash = ?`,
       [userId, clientId, spec.name, keyHash]
     )
-    return { mode: 'execute', id: row?.id || null }
+    return {
+      mode: 'execute',
+      id: row?.id || null,
+      resultMode: spec.idempotencyResultMode || 'replayable'
+    }
   }
 
   const existing = await db.get(
@@ -340,7 +348,9 @@ async function beginIdempotentCall(context, spec, args) {
     }
     if (result?.__ristakMcpReplayUnavailable === true) {
       throw makeError(
-        'La operación anterior sí terminó, pero su respuesta era demasiado grande para repetirla. Consulta el recurso actualizado.',
+        result.reason === 'ephemeral'
+          ? 'La operación anterior sí terminó, pero su respuesta temporal no se guarda. Usa una idempotencyKey nueva para solicitar otro pase.'
+          : 'La operación anterior sí terminó, pero su respuesta era demasiado grande para repetirla. Consulta el recurso actualizado.',
         'idempotency_replay_unavailable',
         409
       )
@@ -369,13 +379,17 @@ async function completeIdempotentCall(reservation, status, result = null) {
   if (!reservation?.id) return
   let serialized = null
   if (result !== null) {
-    try {
-      const candidate = JSON.stringify(result)
-      serialized = candidate.length <= MAX_IDEMPOTENCY_RESULT_LENGTH
-        ? candidate
-        : JSON.stringify({ __ristakMcpReplayUnavailable: true })
-    } catch {
-      serialized = JSON.stringify({ __ristakMcpReplayUnavailable: true })
+    if (reservation.resultMode === 'ephemeral') {
+      serialized = JSON.stringify(EPHEMERAL_IDEMPOTENCY_RESULT)
+    } else {
+      try {
+        const candidate = JSON.stringify(result)
+        serialized = candidate.length <= MAX_IDEMPOTENCY_RESULT_LENGTH
+          ? candidate
+          : JSON.stringify({ __ristakMcpReplayUnavailable: true, reason: 'too_large' })
+      } catch {
+        serialized = JSON.stringify({ __ristakMcpReplayUnavailable: true, reason: 'unserializable' })
+      }
     }
   }
   await db.run(

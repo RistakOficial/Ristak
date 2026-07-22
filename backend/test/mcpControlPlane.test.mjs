@@ -8,6 +8,7 @@ import express from 'express'
 import { databaseReady, db } from '../src/config/database.js'
 import { domainToolSpecs } from '../src/mcp/domainTools.js'
 import mcpRoutes from '../src/routes/mcp.routes.js'
+import { resetCentralStorageConfigCache } from '../src/services/mediaStorageService.js'
 import {
   MCP_SCOPES,
   MCP_SCOPE_VALUES,
@@ -269,10 +270,72 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
     'appointments_create',
     'payments_record',
     'automations_publish',
+    'media_prepare_bunny_upload',
     'sites_update_code',
     'sites_publish'
   ]) {
     assert.equal(names.has(required), true, `falta ${required}`)
+  }
+})
+
+test('el pase temporal de Bunny se entrega una vez pero nunca queda guardado en el replay MCP', async () => {
+  const envKeys = [
+    'MEDIA_STORAGE_PROVIDER',
+    'BUNNY_STORAGE_ZONE',
+    'BUNNY_STORAGE_API_KEY',
+    'BUNNY_CDN_BASE_URL',
+    'BUNNY_STREAM_ENABLED'
+  ]
+  const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]))
+  Object.assign(process.env, {
+    MEDIA_STORAGE_PROVIDER: 'bunny',
+    BUNNY_STORAGE_ZONE: 'unit-test-zone',
+    BUNNY_STORAGE_API_KEY: 'unit-test-key-not-used-for-network',
+    BUNNY_CDN_BASE_URL: 'https://cdn.example.test',
+    BUNNY_STREAM_ENABLED: 'false'
+  })
+  resetCentralStorageConfigCache()
+  const idempotencyKey = `bunny-ticket-${crypto.randomUUID()}`
+  const request = () => requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 41, method: 'tools/call',
+    params: {
+      name: 'media_prepare_bunny_upload',
+      arguments: {
+        filename: 'archivo.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 12,
+        sha256: 'a'.repeat(64),
+        folderPath: 'Pruebas',
+        confirm: true,
+        idempotencyKey
+      }
+    }
+  })
+
+  try {
+    const first = await request()
+    assert.equal(first.payload.result.isError, undefined)
+    const ticket = first.payload.result.structuredContent.data.headers['X-Ristak-Media-Upload-Ticket']
+    assert.ok(ticket)
+
+    const row = await db.get(
+      `SELECT result_json FROM mcp_idempotency_keys
+       WHERE user_id = ? AND tool_name = 'media_prepare_bunny_upload'
+       ORDER BY id DESC LIMIT 1`,
+      [fixture.userId]
+    )
+    assert.equal(JSON.parse(row.result_json).reason, 'ephemeral')
+    assert.equal(row.result_json.includes(ticket), false)
+
+    const replay = await request()
+    assert.equal(replay.payload.result.isError, true)
+    assert.equal(replay.payload.result.structuredContent.code, 'idempotency_replay_unavailable')
+  } finally {
+    for (const key of envKeys) {
+      if (previous[key] === undefined) delete process.env[key]
+      else process.env[key] = previous[key]
+    }
+    resetCentralStorageConfigCache()
   }
 })
 

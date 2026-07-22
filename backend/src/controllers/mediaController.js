@@ -1,4 +1,6 @@
-import { promises as fs } from 'fs'
+import { createHash, timingSafeEqual } from 'crypto'
+import { createReadStream, promises as fs } from 'fs'
+import { basename } from 'path'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import JSZip from 'jszip'
@@ -13,6 +15,7 @@ import {
   getMediaAssetBuffer,
   getMediaAssetFile,
   getMediaAssetReadStream,
+  getStorageRuntimeConfig,
   getStorageUsage,
   listMediaAssets,
   listMediaFolders,
@@ -39,9 +42,22 @@ import {
   runIdempotentMediaUpload
 } from '../services/mediaUploadSafetyService.js'
 import { attachmentDisposition, safeHeaderFilename } from '../utils/contentDisposition.js'
+import { signScopedToken, verifyScopedToken } from '../utils/auth.js'
+import { getRequestBaseUrl } from '../utils/publicUrl.js'
 
 const MAX_ARCHIVE_DOWNLOAD_ITEMS = Number(process.env.MEDIA_MAX_ARCHIVE_DOWNLOAD_ITEMS || 500)
 const MAX_ARCHIVE_DOWNLOAD_BYTES = 512 * 1024 * 1024
+const DEFAULT_MEDIA_MAX_UPLOAD_BYTES = 600 * 1024 * 1024
+const configuredMediaMaxUploadBytes = Number(
+  process.env.MEDIA_MAX_UPLOAD_BYTES || DEFAULT_MEDIA_MAX_UPLOAD_BYTES
+)
+export const MEDIA_MAX_UPLOAD_BYTES = Number.isFinite(configuredMediaMaxUploadBytes) && configuredMediaMaxUploadBytes > 0
+  ? Math.floor(configuredMediaMaxUploadBytes)
+  : DEFAULT_MEDIA_MAX_UPLOAD_BYTES
+export const MCP_MEDIA_UPLOAD_TICKET_HEADER = 'x-ristak-media-upload-ticket'
+export const MCP_MEDIA_UPLOAD_TTL_SECONDS = 10 * 60
+const MCP_MEDIA_UPLOAD_SCOPE = 'mcp_media_bunny_upload'
+const MCP_MEDIA_UPLOAD_TICKET_VERSION = 1
 
 function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback
@@ -193,6 +209,354 @@ function mediaUploadRequestError(message, code = 'media_upload_module_mismatch')
   error.status = 400
   error.code = code
   return error
+}
+
+function mcpMediaUploadError(message, status = 400, code = 'invalid_mcp_media_upload') {
+  const error = new Error(message)
+  error.status = status
+  error.code = code
+  return error
+}
+
+function normalizeMcpUploadFilename(value = '') {
+  const normalized = cleanString(value).replaceAll('\\', '/').replaceAll('\u0000', '').normalize('NFC')
+  const filename = basename(normalized).trim()
+  if (!filename || filename === '.' || filename === '..' || filename.length > 500) {
+    throw mcpMediaUploadError('filename debe ser un nombre de archivo válido de hasta 500 caracteres.')
+  }
+  return filename
+}
+
+function normalizeMcpUploadMimeType(value = '') {
+  const mimeType = cleanString(value).split(';')[0].trim().toLowerCase()
+  if (!mimeType || mimeType.length > 200 || !/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i.test(mimeType)) {
+    throw mcpMediaUploadError('mimeType no tiene un formato válido.')
+  }
+  return mimeType
+}
+
+function normalizeMcpUploadSize(value) {
+  const sizeBytes = Number(value)
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
+    throw mcpMediaUploadError('sizeBytes debe ser un entero positivo.')
+  }
+  if (sizeBytes > MEDIA_MAX_UPLOAD_BYTES) {
+    throw mcpMediaUploadError(
+      `El archivo supera el límite de ${MEDIA_MAX_UPLOAD_BYTES} bytes.`,
+      413,
+      'media_upload_too_large'
+    )
+  }
+  return sizeBytes
+}
+
+function normalizeMcpUploadSha256(value = '') {
+  const sha256 = cleanString(value).toLowerCase()
+  if (!/^[a-f0-9]{64}$/.test(sha256)) {
+    throw mcpMediaUploadError('sha256 debe contener los 64 caracteres hexadecimales del archivo.')
+  }
+  return sha256
+}
+
+function normalizeMcpUploadFolderPath(value = '') {
+  const folderPath = cleanString(value).normalize('NFC')
+  if (folderPath.length > 1000) {
+    throw mcpMediaUploadError('folderPath supera el tamaño permitido.')
+  }
+  return folderPath
+}
+
+function normalizeMcpUploadOrigin(value = '') {
+  try {
+    const parsed = new URL(cleanString(value))
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol')
+    return parsed.origin
+  } catch {
+    throw mcpMediaUploadError('No se pudo resolver la URL pública de subida.', 500, 'mcp_upload_origin_unavailable')
+  }
+}
+
+function stableMcpMediaClientUploadId({ businessId, userId, clientId, idempotencyKey, sha256 }) {
+  const digest = createHash('sha256')
+    .update(JSON.stringify({
+      businessId: cleanString(businessId) || 'default',
+      userId: cleanString(userId),
+      clientId: cleanString(clientId),
+      idempotencyKey: cleanString(idempotencyKey),
+      sha256
+    }))
+    .digest('hex')
+  return `mcp_${digest.slice(0, 64)}`
+}
+
+function assertBunnyUploadAvailable(config = {}) {
+  if (config.storageEnabled === false) {
+    throw mcpMediaUploadError('El almacenamiento multimedia está desactivado.', 503, 'media_storage_disabled')
+  }
+  if (config.provider !== 'bunny' || !config.bunnyConfigured) {
+    throw mcpMediaUploadError(
+      'Bunny.net no está disponible en esta instalación. Revisa la configuración central de Media.',
+      503,
+      'bunny_not_configured'
+    )
+  }
+}
+
+function validatedMcpUploadTicketPayload(payload = {}) {
+  if (Number(payload.version) !== MCP_MEDIA_UPLOAD_TICKET_VERSION) {
+    throw mcpMediaUploadError('El pase de subida no tiene una versión válida.', 401, 'invalid_mcp_upload_ticket')
+  }
+  const userId = cleanString(payload.userId)
+  const businessId = cleanString(payload.businessId) || 'default'
+  const clientUploadId = cleanString(payload.clientUploadId)
+  const oauthGrantId = cleanString(payload.oauthGrantId) || null
+  const oauthGrantVersion = oauthGrantId ? Number(payload.oauthGrantVersion) : null
+  if (!userId || !/^mcp_[a-f0-9]{64}$/.test(clientUploadId)) {
+    throw mcpMediaUploadError('El pase de subida está incompleto.', 401, 'invalid_mcp_upload_ticket')
+  }
+  if (oauthGrantId && (!Number.isSafeInteger(oauthGrantVersion) || oauthGrantVersion < 1)) {
+    throw mcpMediaUploadError('El pase de subida no conserva una autorización OAuth válida.', 401, 'invalid_mcp_upload_ticket')
+  }
+  return {
+    ...payload,
+    userId,
+    oauthGrantId,
+    oauthGrantVersion,
+    businessId,
+    clientAccountId: cleanString(payload.clientAccountId) || null,
+    clientUploadId,
+    filename: normalizeMcpUploadFilename(payload.filename),
+    mimeType: normalizeMcpUploadMimeType(payload.mimeType),
+    sizeBytes: normalizeMcpUploadSize(payload.sizeBytes),
+    sha256: normalizeMcpUploadSha256(payload.sha256),
+    folderPath: normalizeMcpUploadFolderPath(payload.folderPath),
+    isPublic: payload.isPublic !== false
+  }
+}
+
+export function createMcpBunnyUploadPreparation({
+  origin,
+  businessId = 'default',
+  clientAccountId = null,
+  userId,
+  clientId = '',
+  oauthGrantId = null,
+  oauthGrantVersion = null,
+  idempotencyKey,
+  filename,
+  mimeType,
+  sizeBytes,
+  sha256,
+  folderPath = '',
+  isPublic = true
+} = {}) {
+  const cleanUserId = cleanString(userId)
+  const cleanIdempotencyKey = cleanString(idempotencyKey)
+  if (!cleanUserId) throw mcpMediaUploadError('No se pudo identificar al usuario MCP.', 401, 'mcp_user_required')
+  if (cleanIdempotencyKey.length < 8 || cleanIdempotencyKey.length > 180) {
+    throw mcpMediaUploadError('La preparación requiere una idempotencyKey válida.')
+  }
+
+  const expected = {
+    filename: normalizeMcpUploadFilename(filename),
+    mimeType: normalizeMcpUploadMimeType(mimeType),
+    sizeBytes: normalizeMcpUploadSize(sizeBytes),
+    sha256: normalizeMcpUploadSha256(sha256)
+  }
+  const cleanBusinessId = cleanString(businessId) || 'default'
+  const cleanClientAccountId = cleanString(clientAccountId) || null
+  const cleanOauthGrantId = cleanString(oauthGrantId) || null
+  if (cleanOauthGrantId && (!Number.isSafeInteger(Number(oauthGrantVersion)) || Number(oauthGrantVersion) < 1)) {
+    throw mcpMediaUploadError('La autorización OAuth de la subida no es válida.', 401, 'mcp_upload_grant_invalid')
+  }
+  const clientUploadId = stableMcpMediaClientUploadId({
+    businessId: cleanBusinessId,
+    userId: cleanUserId,
+    clientId,
+    idempotencyKey: cleanIdempotencyKey,
+    sha256: expected.sha256
+  })
+  const payload = {
+    version: MCP_MEDIA_UPLOAD_TICKET_VERSION,
+    businessId: cleanBusinessId,
+    clientAccountId: cleanClientAccountId,
+    userId: cleanUserId,
+    oauthGrantId: cleanOauthGrantId,
+    oauthGrantVersion: cleanOauthGrantId ? Number(oauthGrantVersion) : null,
+    clientUploadId,
+    ...expected,
+    folderPath: normalizeMcpUploadFolderPath(folderPath),
+    isPublic: isPublic !== false
+  }
+  const ticket = signScopedToken(MCP_MEDIA_UPLOAD_SCOPE, payload, MCP_MEDIA_UPLOAD_TTL_SECONDS)
+  const signedPayload = verifyScopedToken(MCP_MEDIA_UPLOAD_SCOPE, ticket)
+  if (!signedPayload?.exp) {
+    throw mcpMediaUploadError('No se pudo firmar el pase de subida.', 500, 'mcp_upload_ticket_unavailable')
+  }
+  const uploadId = clientUploadId
+  return {
+    uploadId,
+    uploadUrl: `${normalizeMcpUploadOrigin(origin)}/api/media/mcp-upload`,
+    method: 'POST',
+    fileField: 'file',
+    headers: {
+      'X-Ristak-Media-Upload-Ticket': ticket
+    },
+    expiresAt: new Date(Number(signedPayload.exp) * 1000).toISOString(),
+    maxBytes: MEDIA_MAX_UPLOAD_BYTES,
+    expected
+  }
+}
+
+export async function prepareMcpBunnyUploadHandler(req, res) {
+  try {
+    assertBunnyUploadAvailable(await getStorageRuntimeConfig())
+    const context = trustedUploadContextFromRequest(req)
+    const oauthGrantId = cleanString(req.mcpUser?.grantId)
+    const oauthGrant = oauthGrantId
+      ? await db.get(
+          `SELECT grants.version
+           FROM oauth_grants grants
+           JOIN oauth_clients clients ON clients.client_id = grants.client_id
+           WHERE grants.grant_id = ? AND CAST(grants.user_id AS TEXT) = ?
+             AND grants.revoked_at IS NULL AND clients.revoked_at IS NULL`,
+          [oauthGrantId, String(req.user?.userId || req.user?.id || '')]
+        )
+      : null
+    if (!oauthGrant) {
+      throw mcpMediaUploadError('La conexión MCP ya no está autorizada.', 401, 'mcp_upload_grant_inactive')
+    }
+    // En producción manda la URL configurada por la instalación. No debemos
+    // devolver un Host controlado por el cliente junto con una capacidad
+    // temporal, porque eso podría filtrar el pase a otro origen.
+    const uploadOrigin = cleanString(
+      process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.APP_URL
+    ) || getRequestBaseUrl(req)
+    const data = createMcpBunnyUploadPreparation({
+      origin: uploadOrigin,
+      businessId: context.businessId,
+      clientAccountId: context.clientAccountId,
+      userId: req.user?.userId || req.user?.id,
+      clientId: req.mcpUser?.clientId,
+      oauthGrantId,
+      oauthGrantVersion: Number(oauthGrant.version),
+      idempotencyKey: req.get?.('idempotency-key'),
+      filename: req.body?.filename,
+      mimeType: req.body?.mimeType,
+      sizeBytes: req.body?.sizeBytes,
+      sha256: req.body?.sha256,
+      folderPath: req.body?.folderPath,
+      isPublic: req.body?.isPublic
+    })
+    res.status(201).json({ success: true, data })
+  } catch (error) {
+    logger.error(`[MediaStorage] Error preparando subida MCP a Bunny: ${error.message}`)
+    sendError(res, error, 'No se pudo preparar la subida a Bunny.net')
+  }
+}
+
+export async function authorizeMcpMediaUploadTicket(req, res, next) {
+  try {
+    const ticket = cleanString(req.get?.(MCP_MEDIA_UPLOAD_TICKET_HEADER))
+    if (ticket.split('.').length !== 2) {
+      throw mcpMediaUploadError('Pase de subida requerido.', 401, 'invalid_mcp_upload_ticket')
+    }
+    const payload = verifyScopedToken(MCP_MEDIA_UPLOAD_SCOPE, ticket)
+    if (!payload) {
+      throw mcpMediaUploadError('El pase de subida es inválido o ya expiró.', 401, 'invalid_mcp_upload_ticket')
+    }
+    const expected = validatedMcpUploadTicketPayload(payload)
+    const user = await db.get(
+      'SELECT id, username, email, role, access_config FROM users WHERE CAST(id AS TEXT) = ? AND is_active = 1',
+      [expected.userId]
+    )
+    if (!user) {
+      throw mcpMediaUploadError('El usuario que preparó la subida ya no está activo.', 401, 'mcp_upload_user_inactive')
+    }
+    if (expected.oauthGrantId) {
+      const activeGrant = await db.get(
+        `SELECT grants.grant_id
+         FROM oauth_grants grants
+         JOIN oauth_clients clients ON clients.client_id = grants.client_id
+         WHERE grants.grant_id = ? AND CAST(grants.user_id AS TEXT) = ?
+           AND grants.version = ? AND grants.revoked_at IS NULL AND clients.revoked_at IS NULL`,
+        [expected.oauthGrantId, expected.userId, expected.oauthGrantVersion]
+      )
+      if (!activeGrant) {
+        throw mcpMediaUploadError('La conexión MCP fue revocada o cambió de permisos.', 401, 'mcp_upload_grant_inactive')
+      }
+    }
+
+    req.user = {
+      userId: user.id,
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      access_config: user.access_config
+    }
+    req.mcpMediaUpload = expected
+    req.mediaUploadModule = 'media'
+    req.query = { ...(req.query || {}), module: 'media' }
+    next()
+  } catch (error) {
+    sendError(res, error, 'No se pudo autorizar la subida MCP')
+  }
+}
+
+async function sha256File(filePath) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+export async function validateMcpMediaUploadFile(expected = {}, file = null) {
+  const ticket = validatedMcpUploadTicketPayload(expected)
+  if (!file?.path) {
+    throw mcpMediaUploadError('Debes enviar un archivo multipart en el campo file.', 400, 'media_file_required')
+  }
+  if (Number(file.size) !== ticket.sizeBytes) {
+    throw mcpMediaUploadError('El tamaño recibido no coincide con el archivo autorizado.', 409, 'mcp_upload_size_mismatch')
+  }
+  const receivedMimeType = cleanString(file.mimetype).split(';')[0].toLowerCase()
+  if (receivedMimeType && receivedMimeType !== 'application/octet-stream' && receivedMimeType !== ticket.mimeType) {
+    throw mcpMediaUploadError('El MIME recibido no coincide con el archivo autorizado.', 409, 'mcp_upload_mime_mismatch')
+  }
+  const actualSha256 = await sha256File(file.path)
+  const actualHash = Buffer.from(actualSha256, 'hex')
+  const expectedHash = Buffer.from(ticket.sha256, 'hex')
+  if (actualHash.length !== expectedHash.length || !timingSafeEqual(actualHash, expectedHash)) {
+    throw mcpMediaUploadError('El contenido recibido no coincide con el SHA-256 autorizado.', 409, 'mcp_upload_checksum_mismatch')
+  }
+  return {
+    ...file,
+    originalname: ticket.filename,
+    mimetype: ticket.mimeType
+  }
+}
+
+export async function uploadMcpBunnyMediaHandler(req, res) {
+  try {
+    assertBunnyUploadAvailable(await getStorageRuntimeConfig())
+    const expected = validatedMcpUploadTicketPayload(req.mcpMediaUpload)
+    req.file = await validateMcpMediaUploadFile(expected, req.file)
+    req.mediaUploadModule = 'media'
+    req.query = { module: 'media' }
+    req.body = {
+      module: 'media',
+      businessId: expected.businessId,
+      ...(expected.clientAccountId ? { clientAccountId: expected.clientAccountId } : {}),
+      folderPath: expected.folderPath,
+      isPublic: expected.isPublic,
+      deferStreamSync: true,
+      clientUploadId: expected.clientUploadId
+    }
+    return uploadMediaHandler(req, res)
+  } catch (error) {
+    if (req.file?.path) await fs.rm(req.file.path, { force: true }).catch(() => undefined)
+    logger.error(`[MediaStorage] Error recibiendo subida MCP a Bunny: ${error.message}`)
+    sendError(res, error, 'No se pudo subir el archivo a Bunny.net')
+  }
 }
 
 const TENANT_SCOPED_MEDIA_MODULES = new Set(['sites', 'forms', 'landing'])

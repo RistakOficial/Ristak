@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 234 typed
+route proxy and not unrestricted SQL. The current registry contains 235 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. The registry covers these operational domains:
@@ -94,7 +94,8 @@ and granted scopes. The registry covers these operational domains:
 - dashboard summaries, reports, analytics, attribution and web tracking;
 - campaigns, Meta assets and campaign-builder operations already supported by
   the account;
-- media library assets, folders, storage usage and permitted lifecycle actions;
+- media library assets, folders, storage usage, signed local-file uploads to
+  Bunny.net and permitted lifecycle actions;
 - business costs, WhatsApp templates, mobile preferences and safe integration
   status;
 - Sites lifecycle, imported HTML files, preview and controlled publication.
@@ -139,6 +140,38 @@ the channels connected in Ristak. MCP does not initiate an unsolicited request
 into a closed Codex/ChatGPT/Claude session. A client that needs continuous
 reception must poll/read the inbox from its own runtime or use Ristak
 automations/webhooks for an event-driven flow.
+
+### Uploading a local file to Bunny.net
+
+`media_prepare_bunny_upload` uses `ristak.execute` and an explicit confirmation.
+The MCP request carries only the file name, MIME, exact byte count, SHA-256,
+optional Media folder and visibility; it never carries Base64 or the Bunny API
+key. This avoids the MCP JSON limit and lets Codex, ChatGPT, Claude or another
+local client stream large files from the computer.
+
+The returned contract contains `uploadUrl`, `method=POST`, `fileField=file` and
+the temporary `X-Ristak-Media-Upload-Ticket` header. The client sends one
+multipart file with those values. For example, after the MCP client has placed
+the returned values in local shell variables:
+
+```bash
+curl --fail-with-body --request POST "$UPLOAD_URL" \
+  --header "X-Ristak-Media-Upload-Ticket: $UPLOAD_TICKET" \
+  --form "file=@$FILE_PATH;type=$FILE_MIME"
+```
+
+The ticket expires after 10 minutes, is single-purpose and is not placed in the
+URL. Before multipart parsing, Ristak re-checks the active user, OAuth grant,
+Developers access, Media write access and the current plan. After receiving the
+temporary file it verifies exact size, declared MIME and SHA-256, then uses the
+same quota, MIME detection, folder isolation, idempotency and Bunny Storage
+pipeline as the Media library. Replaying the same authorized bytes is safe;
+changing bytes or destination under the same upload identity is a conflict.
+
+The MCP idempotency ledger stores only an `ephemeral` marker for this tool, not
+the temporary header. If a client loses the response or lets it expire, it must
+request a new pass with a new `idempotencyKey`. Revoking or changing the OAuth
+connection invalidates a still-pending pass.
 
 ### Connections and audit
 

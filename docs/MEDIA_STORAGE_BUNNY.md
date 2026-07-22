@@ -62,6 +62,11 @@ Authenticated app endpoints:
 - `POST /api/media/assets/:id/stream/sync`
 - `GET /api/media/diagnostics`
 
+MCP capability endpoint (temporary signed upload ticket, not a session or Bunny
+credential):
+
+- `POST /api/media/mcp-upload`
+
 Public file fallback:
 
 - `GET /media/assets/:id/file`
@@ -73,6 +78,44 @@ Installer/admin panel endpoints (sólo instalaciones gestionadas con token inter
 - `GET /internal/storage/diagnostics`
 
 The installer must send `Authorization: Bearer <INTERNAL_INSTALLER_TOKEN>` or `x-internal-installer-token`.
+
+## MCP local-file uploads
+
+The `media_prepare_bunny_upload` tool prepares a short-lived capability for a
+specific local file. Its arguments are `filename`, `mimeType`, `sizeBytes`,
+`sha256`, optional `folderPath`, optional `isPublic`, `confirm=true` and an
+`idempotencyKey`. The tool refuses preparation unless Bunny Storage is active
+and fully configured; it never returns storage, account or Stream keys.
+
+The MCP JSON contains metadata only. The client streams the local file as
+multipart to the returned `/api/media/mcp-upload` URL with the returned
+`X-Ristak-Media-Upload-Ticket` header and `file` field. The ticket is valid for
+10 minutes and is authorized before Multer writes anything to disk. Ristak loads
+the current active user, checks that the issuing OAuth grant/client is still
+active and unchanged, and re-applies Developers, `settings_media` and license
+gates. Revoking the MCP connection therefore invalidates a pending ticket.
+
+After parsing, backend ignores the multipart filename and destination, restores
+those values from the signed ticket and requires exact byte count, compatible
+MIME and SHA-256. The canonical `uploadMediaHandler` then applies quota, actual
+MIME detection, account-root/folder normalization, compression policy,
+`media_upload_requests` idempotency and Bunny upload. The normal configured
+limit applies (600 MB by default); large files and every video are streamed from
+temporary disk to Bunny instead of being materialized as Base64 or one giant
+memory buffer.
+
+The tool result is intentionally non-replayable: the MCP idempotency table keeps
+only an ephemeral marker and never persists the temporary ticket. The upload
+itself remains replay-safe through its stable `clientUploadId`; retrying the same
+ticket and bytes returns the existing asset, while different bytes or metadata
+conflict. Temporary files are removed on validation, provider or database
+failure and after successful handoff.
+
+Assets enter the normal Media library under `module=media`, so Sites, Forms,
+automations and other product surfaces can select them through their existing
+Media bindings. This flow is for uploading a new computer file, not for importing
+ZIP files as Sites and not for bypassing the dedicated resumable Sites video
+editor flow.
 
 ## Resumable Sites video uploads
 

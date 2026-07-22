@@ -96,6 +96,7 @@ test('el catálogo cubre dominios faltantes sin SQL, proxies ni administración 
     'analytics_attribution_fallback_execute',
     'campaigns_overview',
     'media_list_assets',
+    'media_prepare_bunny_upload',
     'settings_tags_catalog',
     'settings_custom_fields_list',
     'settings_trigger_links_list',
@@ -128,6 +129,52 @@ test('el catálogo cubre dominios faltantes sin SQL, proxies ni administración 
   assert.doesNotMatch(source, /from ['"]\.\.\/config\/database\.js['"]/)
   assert.doesNotMatch(source, /\bSELECT\s+.+\s+FROM\b/i)
   assert.doesNotMatch(source, /ghl_api_request|query_data_table|revealToken/)
+})
+
+test('Media prepara una subida local a Bunny sin meter bytes ni guardar el pase como replay', async () => {
+  const uploadTool = tool('media_prepare_bunny_upload')
+  assert.equal(uploadTool.scope, 'ristak.execute')
+  assert.equal(uploadTool.risk, 'high')
+  assert.equal(uploadTool.openWorld, true)
+  assert.equal(uploadTool.idempotencyResultMode, 'ephemeral')
+  assert.equal(uploadTool.inputSchema.properties.fileBase64, undefined)
+  assert.equal(uploadTool.inputSchema.properties.content, undefined)
+
+  const response = {
+    success: true,
+    data: {
+      uploadUrl: 'https://app.example.test/api/media/mcp-upload',
+      method: 'POST',
+      fileField: 'file',
+      headers: { 'X-Ristak-Media-Upload-Ticket': 'temporary-ticket' }
+    }
+  }
+  const uploadRecorder = recorder(response)
+  const args = {
+    filename: 'presentacion.pdf',
+    mimeType: 'application/pdf',
+    sizeBytes: 12345,
+    sha256: 'a'.repeat(64),
+    folderPath: 'Documentos/Propuestas',
+    isPublic: false,
+    confirm: true,
+    idempotencyKey: 'bunny-upload-001'
+  }
+  const result = await uploadTool.execute(uploadRecorder.context, args)
+
+  assert.equal(uploadRecorder.calls[0].handler, 'prepareMcpBunnyUploadHandler')
+  assert.equal(uploadRecorder.calls[0].request.headers['idempotency-key'], args.idempotencyKey)
+  assert.deepEqual(uploadRecorder.calls[0].request.query, { module: 'media' })
+  assert.deepEqual(uploadRecorder.calls[0].request.body, {
+    module: 'media',
+    filename: args.filename,
+    mimeType: args.mimeType,
+    sizeBytes: args.sizeBytes,
+    sha256: args.sha256,
+    folderPath: args.folderPath,
+    isPublic: false
+  })
+  assert.equal(result.data.headers['X-Ristak-Media-Upload-Ticket'], 'temporary-ticket')
 })
 
 test('productos usa el catálogo local, no sincroniza al leer y compacta datos del proveedor', async () => {
