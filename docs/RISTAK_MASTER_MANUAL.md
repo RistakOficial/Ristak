@@ -4807,13 +4807,28 @@ nunca a dos videos distintos de la misma página.
   copiables para ChatGPT, Claude o Codex, el renderer neutraliza geometría legacy
   en esa raíz al montarla para que un HTML anterior no genere un vacío gigante.
 
-Las acciones de video en HTML importado solo deben apuntar a elementos
-identificables y publicables: botones, links, formularios, secciones, imagenes o
-contenedores con `id`, `data-rstk-form-id`, `data-rstk-section` o
-`data-rstk-native-id`. Cuando una accion
-arranca con estado "Mantener oculto", el render importado marca el target con
-`data-rstk-video-action-hidden="true"` desde el HTML inicial para evitar
-parpadeos entre preview y sitio publicado.
+Las acciones de video en HTML importado solo apuntan a elementos identificables
+y publicables. Cada CTA, boton, link, formulario, seccion, bloque de texto,
+titulo, imagen, figura o slot nativo controlable debe declarar desde la creacion
+de la pagina un `data-rstk-video-action-target` semantico, estable y unico, junto
+con un `data-rstk-label` legible para el panel. Esta identidad se conserva aunque
+cambien copy, clases, estilos, posicion o diseño responsive. Se marca el elemento
+completo que debe reaccionar, no sus spans, iconos o wrappers internos; los
+controles interiores de un slot nativo pertenecen a Ristak y no se exponen como
+targets independientes.
+
+El contrato se exige tanto a la IA interna como a las instrucciones copiables
+para ChatGPT, Claude o Codex. Como defensa para HTML legacy o incompleto, Ristak
+normaliza cada pagina al cargarla, guardarla y renderizarla: reutiliza primero
+`id`, `data-rstk-section`, `data-rstk-form-id`, `data-rstk-native-id`, claves de
+contenido o el ID declarativo de la accion del boton; si ninguno existe, genera
+una identidad determinista para el elemento semantico. Esos hooks llegan también
+al catálogo de "Elementos a controlar" del inspector, por lo que una página
+anterior no depende de volver a escribir manualmente todos sus botones. Cuando
+una accion arranca con estado "Mantener oculto", el render importado marca el
+target con `data-rstk-video-action-hidden="true"` desde el HTML inicial para
+evitar parpadeos entre preview y sitio publicado. Al mostrar un target también
+retira un atributo `hidden` legacy si el autor lo había dejado en el elemento.
 
 El panel de acciones ofrece las mismas tres condiciones para un video nativo del
 editor visual y para un slot `data-rstk-native-element="video"` de HTML
@@ -4832,8 +4847,8 @@ importado:
 El contrato declarativo para pedir estas acciones desde código es
 `data-rstk-video-rules` sobre el slot de video nativo. Cada regla necesita un
 `id` estable, `triggerType`, `triggerValue`, la `action` y sus
-`targetBlockIds` cuando la acción opera sobre elementos. El target recomendado declara también una identidad estable
-con `data-rstk-video-action-target`; por ejemplo:
+`targetBlockIds` cuando la acción opera sobre elementos. Cada valor debe coincidir
+con la identidad estable de `data-rstk-video-action-target`; por ejemplo:
 
 `triggerValue` se expresa en segundos para `timeline_reached` y
 `playback_seconds` (`3 minutos = 180`), y como porcentaje de `1` a `100` para

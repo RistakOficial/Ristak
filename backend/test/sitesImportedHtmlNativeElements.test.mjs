@@ -690,7 +690,7 @@ test('imported HTML native video slots render the real Ristak player and video a
         <body>
           <main>
             <section class="ai-video-slot" style="height:640px;aspect-ratio:9/16" data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
-            <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>
+            <a class="button" data-rstk-button-action="next_page" data-rstk-button-actions='[{"id":"cta-final","action":"next_page"}]' href="?page=page-2">Continuar</a>
           </main>
         </body>
       </html>
@@ -735,6 +735,7 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(html, /data-rstk-video-actions=/)
     assert.match(html, /https:\/\/example\.test\/gracias/)
     assert.match(html, /window\.ristakVideoActionsRuntimeLoaded/)
+    assert.match(html, /target\.removeAttribute\('hidden'\)/)
     assert.match(html, /const previewEnabled = video\.getAttribute\('data-rstk-video-preview'\) === 'true'/)
     assert.match(html, /const startPreviewLoop = \(\) =>/)
     assert.match(html, /const syncVideoOrientation = \(host, video\) =>/)
@@ -746,15 +747,14 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(html, /style data-rstk-imported-native-theme/)
     assert.match(html, /<style data-rstk-responsive>@media \(max-width:640px\)\{\[data-rstk-block-id="[^"]+"\]\{--rstk-media-width:78%!important\}\}<\/style>/)
     assert.match(html, /\.rstk-imported-native-slot \.rstk-video-form-gate/)
-    assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-target="cta-final"/)
-    assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+    assert.match(html, /<a[^>]*data-rstk-video-action-target="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
     assert.doesNotMatch(html, /Configura el video de Ristak/)
 
     const previewHtml = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: true })
     assert.match(previewHtml, /const PREVIEW_SAFE = true;/)
     assert.match(previewHtml, /data-rstk-video-preview="true"/)
     assert.match(previewHtml, /startPreviewLoop\(\)/)
-    assert.match(previewHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+    assert.match(previewHtml, /<a[^>]*data-rstk-video-action-target="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

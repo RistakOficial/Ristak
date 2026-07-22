@@ -67,6 +67,357 @@ export function buildImportedHtmlCustomSocialProfileRulesText(heading = 'Perfil 
   return [heading, ...IMPORTED_HTML_CUSTOM_SOCIAL_PROFILE_RULES.map(rule => `- ${rule}`)].join('\n')
 }
 
+export const IMPORTED_HTML_VIDEO_ACTION_TARGET_RULES = Object.freeze([
+  'Prepara desde el inicio todos los elementos visibles que una acción de video podría controlar, aunque todavía no exista ninguna regla ni se haya elegido mostrar u ocultar algo en el editor.',
+  'Cada CTA, botón, enlace, formulario, sección, bloque de texto, título, imagen, figura y slot nativo controlable debe tener un data-rstk-video-action-target semántico, estable y único en su página, además de data-rstk-label con un nombre humano reconocible en el panel.',
+  'Conserva exactamente esos identificadores al cambiar copy, clases, estilos, posición o diseño responsive. No recicles un identificador para otro elemento y no uses índices visuales frágiles como boton-1 cuando exista un nombre de negocio como aplicar-ahora.',
+  'Marca el elemento completo que debe aparecer, ocultarse, desplazarse o cambiar; no marques spans, iconos o wrappers internos si la acción debe controlar el botón, tarjeta o sección completa.',
+  'Los interiores de form, calendar, payment, video o social-profile nativos pertenecen a Ristak: marca el slot raíz si debe ser controlable, pero no agregues targets a sus controles internos.',
+  'data-rstk-video-rules referencia exclusivamente esos valores mediante targetBlockIds. No escribas JavaScript para ocultar, mostrar, medir progreso ni reaccionar al reproductor; Ristak aplica el estado inicial y ejecuta la acción en preview y publicado.'
+])
+
+export function buildImportedHtmlVideoActionTargetRulesText(heading = 'Elementos controlables por acciones de video:') {
+  return [heading, ...IMPORTED_HTML_VIDEO_ACTION_TARGET_RULES.map(rule => `- ${rule}`)].join('\n')
+}
+
+const IMPORTED_VIDEO_ACTION_TARGET_ATTRS = [
+  'data-rstk-video-action-target',
+  'data-ristak-video-action-target',
+  'data-ristack-video-action-target'
+]
+
+const IMPORTED_VIDEO_ACTION_IDENTITY_ATTRS = [
+  'id',
+  'data-rstk-section',
+  'data-ristak-section',
+  'data-ristack-section',
+  'data-rstk-form-id',
+  'data-ristak-form-id',
+  'data-ristack-form-id',
+  'data-rstk-native-id',
+  'data-ristak-native-id',
+  'data-ristack-native-id',
+  'data-rstk-element-id',
+  'data-ristak-element-id',
+  'data-ristack-element-id',
+  'data-rstk-edit-id',
+  'data-ristak-edit-id',
+  'data-ristack-edit-id',
+  'data-rstk-asset-id',
+  'data-ristak-asset-id',
+  'data-ristack-asset-id',
+  'data-rstk-background-asset-id',
+  'data-ristak-background-asset-id',
+  'data-ristack-background-asset-id'
+]
+
+const IMPORTED_VIDEO_ACTION_NATIVE_ROOT_ATTRS = [
+  'data-rstk-native-element',
+  'data-ristak-native-element',
+  'data-ristack-native-element',
+  'data-rstk-element-type',
+  'data-ristak-element-type',
+  'data-ristack-element-type'
+]
+
+const IMPORTED_VIDEO_ACTION_SEMANTIC_TAGS = new Set([
+  'article',
+  'aside',
+  'blockquote',
+  'button',
+  'details',
+  'fieldset',
+  'figure',
+  'footer',
+  'form',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'header',
+  'img',
+  'main',
+  'p',
+  'picture',
+  'section',
+  'summary'
+])
+
+const IMPORTED_VIDEO_ACTION_VOID_TAGS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'
+])
+
+const IMPORTED_VIDEO_ACTION_RAW_TEXT_TAGS = new Set([
+  'script', 'style', 'template', 'textarea', 'title'
+])
+
+const IMPORTED_VIDEO_ACTION_FALLBACK_NAMES = {
+  a: 'enlace',
+  article: 'contenido',
+  aside: 'contenido-lateral',
+  blockquote: 'cita',
+  button: 'boton',
+  details: 'detalle',
+  fieldset: 'grupo-campos',
+  figure: 'figura',
+  footer: 'pie',
+  form: 'formulario',
+  h1: 'titulo',
+  h2: 'titulo',
+  h3: 'titulo',
+  h4: 'titulo',
+  h5: 'titulo',
+  h6: 'titulo',
+  header: 'encabezado',
+  img: 'imagen',
+  input: 'boton',
+  main: 'contenido-principal',
+  p: 'texto',
+  picture: 'imagen',
+  section: 'seccion',
+  summary: 'resumen'
+}
+
+function decodeImportedVideoActionAttribute(value = '') {
+  return String(value || '')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .trim()
+}
+
+function readImportedVideoActionAttribute(tag = '', name = '') {
+  const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = String(tag || '').match(new RegExp(`\\s${escaped}(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\x60]+)))?`, 'i'))
+  return match ? decodeImportedVideoActionAttribute(match[1] ?? match[2] ?? match[3] ?? '') : ''
+}
+
+function hasImportedVideoActionAttribute(tag = '', name = '') {
+  const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`\\s${escaped}(?:\\s*=|\\s|/?>)`, 'i').test(String(tag || ''))
+}
+
+function firstImportedVideoActionAttribute(tag = '', names = []) {
+  for (const name of names) {
+    if (!hasImportedVideoActionAttribute(tag, name)) continue
+    const value = readImportedVideoActionAttribute(tag, name)
+    if (value) return value
+  }
+  return ''
+}
+
+function normalizeImportedVideoActionTargetId(value = '', fallback = 'elemento') {
+  const normalized = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96)
+  return normalized || fallback
+}
+
+function getImportedVideoActionDeclaredId(tag = '') {
+  const explicitTarget = firstImportedVideoActionAttribute(tag, IMPORTED_VIDEO_ACTION_TARGET_ATTRS)
+  if (explicitTarget) return explicitTarget
+  const identity = firstImportedVideoActionAttribute(tag, IMPORTED_VIDEO_ACTION_IDENTITY_ATTRS)
+  if (identity) return identity
+  const actions = firstImportedVideoActionAttribute(tag, [
+    'data-rstk-button-actions',
+    'data-ristak-button-actions',
+    'data-ristack-button-actions'
+  ])
+  const actionId = actions.match(/["']id["']\s*:\s*["']([^"']+)["']/i)?.[1]
+  return actionId ? normalizeImportedVideoActionTargetId(actionId) : ''
+}
+
+function isImportedVideoActionNativeRoot(tag = '') {
+  return IMPORTED_VIDEO_ACTION_NATIVE_ROOT_ATTRS.some(name => hasImportedVideoActionAttribute(tag, name))
+}
+
+function isImportedVideoActionTargetable(tagName = '', tag = '', insideNativeRoot = false) {
+  if (insideNativeRoot) return false
+  if (firstImportedVideoActionAttribute(tag, IMPORTED_VIDEO_ACTION_TARGET_ATTRS)) return true
+  if (isImportedVideoActionNativeRoot(tag)) return true
+  if (IMPORTED_VIDEO_ACTION_SEMANTIC_TAGS.has(tagName)) return true
+  if (tagName === 'a') {
+    return hasImportedVideoActionAttribute(tag, 'href') || /data-(?:rstk|ristak|ristack)-button-action/i.test(tag)
+  }
+  if (tagName === 'input') {
+    return ['button', 'submit', 'image'].includes(readImportedVideoActionAttribute(tag, 'type').toLowerCase())
+  }
+  if (['div', 'li'].includes(tagName)) {
+    return Boolean(
+      firstImportedVideoActionAttribute(tag, IMPORTED_VIDEO_ACTION_IDENTITY_ATTRS) ||
+      firstImportedVideoActionAttribute(tag, ['data-rstk-label', 'data-ristak-label', 'data-ristack-label', 'aria-label', 'title']) ||
+      ['button', 'link'].includes(readImportedVideoActionAttribute(tag, 'role').toLowerCase())
+    )
+  }
+  return false
+}
+
+function getImportedVideoActionGeneratedBase(tagName = '', tag = '') {
+  const label = firstImportedVideoActionAttribute(tag, [
+    'data-rstk-label',
+    'data-ristak-label',
+    'data-ristack-label',
+    'aria-label',
+    'title',
+    'name'
+  ])
+  if (label) return normalizeImportedVideoActionTargetId(label)
+  const className = readImportedVideoActionAttribute(tag, 'class').split(/\s+/).filter(Boolean)[0] || ''
+  if (className) return normalizeImportedVideoActionTargetId(`${IMPORTED_VIDEO_ACTION_FALLBACK_NAMES[tagName] || tagName}-${className}`)
+  return IMPORTED_VIDEO_ACTION_FALLBACK_NAMES[tagName] || normalizeImportedVideoActionTargetId(tagName)
+}
+
+function addImportedVideoActionTargetAttribute(tag = '', targetId = '') {
+  if (!tag || !targetId || hasImportedVideoActionAttribute(tag, 'data-rstk-video-action-target')) return tag
+  const insertAt = tag.endsWith('/>') ? tag.length - 2 : tag.length - 1
+  const spacer = tag[insertAt - 1] === ' ' ? '' : ' '
+  const safeId = String(targetId).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `${tag.slice(0, insertAt)}${spacer}data-rstk-video-action-target="${safeId}"${tag.slice(insertAt)}`
+}
+
+function scanImportedHtmlTagTokens(html = '') {
+  const source = String(html || '')
+  const lowerSource = source.toLowerCase()
+  const tokens = []
+  let cursor = 0
+  let rawTextTag = ''
+
+  while (cursor < source.length) {
+    if (rawTextTag) {
+      const closeIndex = lowerSource.indexOf(`</${rawTextTag}`, cursor)
+      if (closeIndex < 0) break
+      cursor = closeIndex
+      rawTextTag = ''
+    }
+
+    const start = source.indexOf('<', cursor)
+    if (start < 0) break
+
+    if (source.startsWith('<!--', start)) {
+      const commentEnd = source.indexOf('-->', start + 4)
+      const end = commentEnd < 0 ? source.length : commentEnd + 3
+      tokens.push({ start, end, token: source.slice(start, end) })
+      cursor = end
+      continue
+    }
+
+    const lead = source[start + 1] || ''
+    if (!/[A-Za-z!/?]/.test(lead)) {
+      cursor = start + 1
+      continue
+    }
+
+    let end = start + 1
+    let quote = ''
+    while (end < source.length) {
+      const character = source[end]
+      if (quote) {
+        if (character === quote) quote = ''
+      } else if (character === '"' || character === "'") {
+        quote = character
+      } else if (character === '>') {
+        end += 1
+        break
+      }
+      end += 1
+    }
+    if (end > source.length || source[end - 1] !== '>') break
+
+    const token = source.slice(start, end)
+    tokens.push({ start, end, token })
+    cursor = end
+
+    const opening = token.match(/^<\s*([A-Za-z][\w:-]*)/)
+    if (!opening || /^<\s*\//.test(token) || /\/\s*>$/.test(token)) continue
+    const tagName = opening[1].toLowerCase()
+    if (IMPORTED_VIDEO_ACTION_RAW_TEXT_TAGS.has(tagName)) rawTextTag = tagName
+  }
+
+  return tokens
+}
+
+/**
+ * Completa HTML legacy con identidades deterministas para el panel/runtime de
+ * acciones de video. Los hooks declarados por el autor siempre ganan; Ristak
+ * solo genera un fallback para elementos semánticos que llegaron sin contrato.
+ */
+export function ensureImportedHtmlVideoActionTargets(html = '') {
+  const source = String(html || '')
+  if (!source.trim()) return source
+
+  const reservedIds = new Set()
+  const tokens = scanImportedHtmlTagTokens(source)
+  for (const { token } of tokens) {
+    if (!/^<\s*[A-Za-z]/.test(token) || /^<\s*\//.test(token)) continue
+    const declaredId = getImportedVideoActionDeclaredId(token)
+    if (declaredId) reservedIds.add(declaredId)
+  }
+
+  const usedIds = new Set()
+  const fallbackCounts = new Map()
+  const stack = []
+  let output = ''
+  let cursor = 0
+
+  for (const tagToken of tokens) {
+    const token = tagToken.token
+    output += source.slice(cursor, tagToken.start)
+    cursor = tagToken.end
+
+    const closingMatch = token.match(/^<\/\s*([A-Za-z][\w:-]*)/)
+    if (closingMatch) {
+      const closingName = closingMatch[1].toLowerCase()
+      const stackIndex = stack.map(item => item.tagName).lastIndexOf(closingName)
+      if (stackIndex >= 0) stack.splice(stackIndex)
+      output += token
+      continue
+    }
+
+    const opening = token.match(/^<\s*([A-Za-z][\w:-]*)/)
+    if (!opening || token.startsWith('<!')) {
+      output += token
+      continue
+    }
+
+    const tagName = opening[1].toLowerCase()
+    const insideNativeRoot = stack.some(item => item.nativeRoot)
+    const nativeRoot = isImportedVideoActionNativeRoot(token)
+    let nextToken = token
+
+    if (isImportedVideoActionTargetable(tagName, token, insideNativeRoot)) {
+      let targetId = getImportedVideoActionDeclaredId(token)
+      if (!targetId) {
+        const base = getImportedVideoActionGeneratedBase(tagName, token)
+        let suffix = (fallbackCounts.get(base) || 0) + 1
+        fallbackCounts.set(base, suffix)
+        targetId = suffix === 1 ? base : `${base}-${suffix}`
+        while (reservedIds.has(targetId) || usedIds.has(targetId)) {
+          suffix += 1
+          fallbackCounts.set(base, suffix)
+          targetId = `${base}-${suffix}`
+        }
+      }
+      usedIds.add(targetId)
+      nextToken = addImportedVideoActionTargetAttribute(token, targetId)
+    }
+
+    output += nextToken
+    const selfClosing = /\/\s*>$/.test(token) || IMPORTED_VIDEO_ACTION_VOID_TAGS.has(tagName)
+    if (!selfClosing) stack.push({ tagName, nativeRoot: insideNativeRoot || nativeRoot })
+  }
+
+  output += source.slice(cursor)
+  return output
+}
+
 const IMPORTED_NATIVE_DESKTOP_VARIANT_TOKENS = new Set([
   'computer',
   'computadora',

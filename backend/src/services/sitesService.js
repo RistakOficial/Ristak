@@ -68,7 +68,9 @@ import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
-  buildImportedHtmlMobileRulesText
+  buildImportedHtmlMobileRulesText,
+  buildImportedHtmlVideoActionTargetRulesText,
+  ensureImportedHtmlVideoActionTargets
 } from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
 // Contrato de render compartido con el editor (fuente única de templates,
@@ -2118,6 +2120,7 @@ function sanitizeImportedHtml(html = '') {
   }
 
   sanitized = injectImportedStaticFallback(sanitized, report)
+  sanitized = ensureImportedHtmlVideoActionTargets(sanitized)
 
   return {
     html: sanitized,
@@ -7123,7 +7126,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 - Nunca llames fbq, gtag, dataLayer ni eventos de conversión manuales desde el HTML por click o submit. Ristak emite la conversión después del veredicto del backend.
 - Acciones declarativas de video: escribe data-rstk-video-rules como una lista JSON en el MISMO slot nativo de video. Cada regla necesita id estable, triggerType, triggerValue, action y targetBlockIds cuando la acción usa elementos de la página. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones válidas: timeline_reached significa "llegó al minuto X" y adelantar la barra sí cuenta; playback_seconds significa "reprodujo X segundos/minutos" y solo suma reproducción activa, no seek ni buffering; unique_watched_percent significa "vio X% real del contenido" y suma la unión de fragmentos reproducidos, sin inflar por adelantar o repetir. triggerValue siempre va en segundos para timeline_reached/playback_seconds (3 minutos = 180) y de 1 a 100 para unique_watched_percent.
-- Marca cada target con data-rstk-video-action-target e id semántico estable. Ejemplo: <section id="oferta-final" data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">...</section>.
+${buildImportedHtmlVideoActionTargetRulesText()}
 - No escribas JavaScript para escuchar el video, ocultar, mostrar o medir progreso. Ristak interpreta las reglas y permite afinarlas en el panel.
 - Conserva data-rstk-video-rules y los ids de sus reglas cuando edites otra cosa. Quitar el atributo o una regla de la lista NO borra configuraciones; para borrar una regla declarada usa explícitamente {"id":"mostrar-oferta","deleted":true}.
 
@@ -7152,6 +7155,7 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
 ${buildImportedHtmlCustomSocialProfileRulesText()}
+${buildImportedHtmlVideoActionTargetRulesText()}
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
@@ -11432,15 +11436,20 @@ async function listImportedSiteCodeFiles(siteId, imported = {}) {
       const contentType = row.content_type || getImportedAssetContentType(assetPath)
       if (!assetPath || row.media_asset_id || row.public_url || !isImportedCodeContentType(contentType, assetPath)) return null
       const page = pageByAssetPath.get(assetPath)
+      const language = getImportedCodeLanguage(assetPath, contentType)
+      const storedContent = Buffer.from(row.content_base64 || '', 'base64').toString('utf8')
+      const content = language === 'html'
+        ? ensureImportedHtmlVideoActionTargets(storedContent)
+        : storedContent
       return {
         path: assetPath,
         label: page?.title || assetPath.split('/').pop() || assetPath,
         pageId: page?.id || '',
         pageTitle: page?.title || '',
         contentType,
-        language: getImportedCodeLanguage(assetPath, contentType),
-        content: Buffer.from(row.content_base64 || '', 'base64').toString('utf8'),
-        sizeBytes: Number(row.size_bytes || 0),
+        language,
+        content,
+        sizeBytes: Buffer.byteLength(content, 'utf8'),
         updatedAt: row.updated_at || imported.updatedAt || '',
         role: page ? 'page_asset' : 'asset'
       }
@@ -11458,7 +11467,7 @@ async function listImportedSiteCodeFiles(siteId, imported = {}) {
     return file && file.language === 'html'
   })
 
-  const mainHtml = imported.htmlSanitized || imported.htmlOriginal || ''
+  const mainHtml = ensureImportedHtmlVideoActionTargets(imported.htmlSanitized || imported.htmlOriginal || '')
   const files = []
   if (mainHtml && !hasPageHtmlAssets) {
     files.push({
@@ -12050,7 +12059,9 @@ async function getImportedSitePagesForAIContext(site, importedSite, options = {}
       id: page.id,
       title: page.title || page.id,
       filename: importedAssetPath || importedSite?.originalFilename || '',
-      html: htmlLimit > 0 ? limitString(html, htmlLimit) : String(html || '')
+      html: htmlLimit > 0
+        ? limitString(ensureImportedHtmlVideoActionTargets(html), htmlLimit)
+        : ensureImportedHtmlVideoActionTargets(html)
     })
   }
 
@@ -16081,6 +16092,8 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           target.setAttribute('data-rstk-video-action-hidden', 'true');
           target.setAttribute('aria-hidden', 'true');
         } else {
+          target.hidden = false;
+          target.removeAttribute('hidden');
           target.removeAttribute('data-rstk-video-action-hidden');
           target.removeAttribute('aria-hidden');
         }
@@ -27288,6 +27301,7 @@ async function renderImportedPublicSiteHtml(site, {
       }
     }
   }
+  html = ensureImportedHtmlVideoActionTargets(html)
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
   html = await resolveImportedContentAssets(html, site.id)
   const importedSourceBlocks = Array.isArray(site.blocks) ? site.blocks : await listSiteBlocks(site.id)

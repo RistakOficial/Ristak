@@ -265,6 +265,8 @@ import {
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
+  buildImportedHtmlVideoActionTargetRulesText,
+  ensureImportedHtmlVideoActionTargets,
   resolveVisibleImportedNativeElementSelection
 } from '../../../../shared/sites/importedHtmlContract.js'
 
@@ -2597,9 +2599,9 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una falsa relación de aspecto alrededor del slot. En modo automático, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en móvil conservando 9:16; el usuario también puede elegir ancho completo o manual por vista desde el panel.
 ${buildImportedHtmlCustomSocialProfileRulesText()}
+${buildImportedHtmlVideoActionTargetRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
-- Targets para acciones de video: marca cada botón, contenedor, imagen, sección o formulario con id y data-rstk-video-action-target estables. Ejemplo: <section id="oferta-final" data-rstk-video-action-target="oferta-final" data-rstk-label="Oferta final">...</section>.
 - Nunca agregues JavaScript para medir el video u ocultar/mostrar targets. Ristak ejecuta las reglas. Conserva data-rstk-video-rules al editar otra cosa; quitar el atributo o una regla de la lista no borra configuraciones. Para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
@@ -19118,8 +19120,8 @@ const getImportedVideoActionTargetBlockType = (
   if (nativeType) return importedNativeElementBlockTypes[nativeType]
   if (tagName === 'form' || element.hasAttribute('data-rstk-form-id') || element.hasAttribute('data-ristak-form-id')) return 'form_embed'
   if (editType === 'form_field' || tagName === 'input' || tagName === 'textarea' || tagName === 'select') return 'form_embed'
-  if (getImportedEditableAttribute(element, 'section')) return SECTION_BLOCK_TYPE
-  if (editType === 'image' || editType === 'background_image' || tagName === 'img') return 'image'
+  if (getImportedEditableAttribute(element, 'section') || ['section', 'article', 'main', 'header', 'footer', 'aside'].includes(tagName)) return SECTION_BLOCK_TYPE
+  if (editType === 'image' || editType === 'background_image' || ['img', 'picture', 'figure'].includes(tagName)) return 'image'
   if (editType === 'video') return 'video'
   if (editType === 'button' || tagName === 'a' || tagName === 'button') return 'button'
   if (editType === 'heading' || /^h[1-6]$/.test(tagName)) return 'title'
@@ -20695,6 +20697,8 @@ Reglas para esta edición:
 - Si la solicitud pide un video configurable, agrega un slot nativo de video. Un video HTML propio queda bajo control exclusivo del código.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
 
+${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
+
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
   `.trim()
 }
@@ -20725,6 +20729,8 @@ Reglas para esta edición:
 - Conserva formularios, campos, rutas de datos, tracking y acciones de botones salvo que el usuario pida cambiarlos.
 - Si el usuario pide cambiar copy, layout, video, contraste, imágenes o botones, aplica el cambio directamente con el HTML actual.
 - Usa needs_more_info solo si no hay una acción concreta que ejecutar.
+
+${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
 
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
 `.trim()
@@ -21538,9 +21544,11 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [])
   const activePageDraftPreviewHtml = !popupCodeActive && activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
   const editorPreviewHtml = activePageDraftPreviewHtml ? codeRuntimePreviewHtml || activePageDraftPreviewHtml : previewHtml
-  const importedNativeElementDetectionHtml = activeCodeFile?.language === 'html'
-    ? activeCodeValue
-    : editorPreviewHtml
+  const importedNativeElementDetectionHtml = ensureImportedHtmlVideoActionTargets(
+    activeCodeFile?.language === 'html'
+      ? activeCodeValue
+      : editorPreviewHtml
+  )
   const importedNativeElementSlots = useMemo(() => {
     const pageId = activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
     return detectImportedNativeElementSlots(importedNativeElementDetectionHtml)
@@ -28410,7 +28418,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',
       '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (seek y buffering no cuentan) y unique_watched_percent para "vio X% real" (solo fragmentos distintos; repetir no infla). triggerValue usa segundos en las dos primeras (3 minutos = 180) y de 1 a 100 en porcentaje.',
       '- Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules=\'[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]\'></div>.',
-      '- Marca cada target con id y data-rstk-video-action-target iguales, por ejemplo <section id="oferta-final" data-rstk-video-action-target="oferta-final">...</section>.',
+      buildImportedHtmlVideoActionTargetRulesText(),
       '- No escribas JavaScript para medir o reaccionar al video. Conserva data-rstk-video-rules al editar; para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.',
       ''
     )

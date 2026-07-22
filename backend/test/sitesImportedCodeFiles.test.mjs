@@ -29,6 +29,8 @@ test('imported HTML code files are listed and saved through the code editor endp
     assert.equal(created.import.codeFiles[0].path, '')
     assert.equal(created.import.codeFiles[0].language, 'html')
     assert.match(created.import.codeFiles[0].content, /Original heading/)
+    assert.match(created.import.codeFiles[0].content, /<h1[^>]*data-rstk-video-action-target="titulo"/)
+    assert.match(created.import.codeFiles[0].content, /<p[^>]*data-rstk-video-action-target="texto"/)
 
     const updatedContent = created.import.codeFiles[0].content.replace('>Original heading<', '>Edited from code<')
     const updated = await updateImportedSiteCodeFiles(siteId, {
@@ -584,7 +586,9 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
 test('external AI compatibility instructions reject forms without stable Ristak IDs', async () => {
   const {
     buildImportedHtmlCustomCalendarRulesText,
-    buildImportedHtmlCustomSocialProfileRulesText
+    buildImportedHtmlCustomSocialProfileRulesText,
+    buildImportedHtmlVideoActionTargetRulesText,
+    ensureImportedHtmlVideoActionTargets
   } = await import('../../shared/sites/importedHtmlContract.js')
   const source = await readFile(new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url), 'utf8')
   const guideMatch = source.match(/const IMPORTED_HTML_AI_GUIDE = `[\s\S]*?const IMPORTED_HTML_MOBILE_PREVIEW_STYLE/)
@@ -597,6 +601,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const builder = builderMatch[0]
   const calendarGuide = buildImportedHtmlCustomCalendarRulesText()
   const socialProfileGuide = buildImportedHtmlCustomSocialProfileRulesText()
+  const videoTargetGuide = buildImportedHtmlVideoActionTargetRulesText()
 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
   assert.match(guide, /Un HTML que omita cualquiera de esas claves está incompleto para Ristak/)
@@ -606,10 +611,15 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /ocupa todo el ancho disponible en móvil conservando 9:16/)
   assert.match(guide, /No fabriques franjas laterales, marcos negros/)
   assert.match(guide, /buildImportedHtmlCustomSocialProfileRulesText/)
+  assert.match(guide, /buildImportedHtmlVideoActionTargetRulesText/)
   assert.match(socialProfileGuide, /data-rstk-native-element="social-profile"/)
   assert.match(socialProfileGuide, /data-rstk-social-avatar/)
   assert.match(socialProfileGuide, /data-rstk-social-verified/)
   assert.match(socialProfileGuide, /altura de pantalla completa/)
+  assert.match(videoTargetGuide, /aunque todavía no exista ninguna regla/)
+  assert.match(videoTargetGuide, /Cada CTA, botón, enlace, formulario, sección, bloque de texto, título, imagen, figura y slot nativo/)
+  assert.match(videoTargetGuide, /data-rstk-video-action-target semántico, estable y único/)
+  assert.match(videoTargetGuide, /no agregues targets a sus controles internos/)
   assert.match(builder, /No entregues el HTML si falta uno solo/)
   assert.match(calendarGuide, /Los atributos data-rstk-calendar-\* NO sustituyen data-rstk-field-id/)
   assert.match(builder, /buildImportedHtmlCustomCalendarRulesText\('Calendario:'\)/)
@@ -633,6 +643,15 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(calendarGuide, /data-rstk-calendar-success/)
   assert.match(calendarGuide, /Ristak vuelve a validar el horario al reservar/)
   assert.doesNotMatch(calendarGuide, /data-rstk-calendar-date/)
+
+  const legacyHtml = '<!doctype html><html><body><main><h1>Oferta</h1><section data-rstk-native-element="calendar" data-rstk-native-id="agenda"><button type="button">Mes siguiente</button><p>Texto interno</p></section><a class="button" data-rstk-button-actions=\'[{"id":"aplicar-ahora","action":"next_page"}]\' href="?page=2">Aplicar</a></main></body></html>'
+  const normalizedLegacyHtml = ensureImportedHtmlVideoActionTargets(legacyHtml)
+  assert.match(normalizedLegacyHtml, /<h1[^>]*data-rstk-video-action-target="titulo"/)
+  assert.match(normalizedLegacyHtml, /data-rstk-native-id="agenda"[^>]*data-rstk-video-action-target="agenda"/)
+  assert.match(normalizedLegacyHtml, /<a[^>]*data-rstk-video-action-target="aplicar-ahora"/)
+  assert.doesNotMatch(normalizedLegacyHtml, /<button[^>]*data-rstk-video-action-target/)
+  assert.doesNotMatch(normalizedLegacyHtml, /<p[^>]*data-rstk-video-action-target[^>]*>Texto interno/)
+  assert.equal(ensureImportedHtmlVideoActionTargets(normalizedLegacyHtml), normalizedLegacyHtml)
 })
 
 test('video design panel exposes responsive portrait sizing without storing the mode in a device override', async () => {
