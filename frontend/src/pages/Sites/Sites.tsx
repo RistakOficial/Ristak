@@ -3897,19 +3897,6 @@ const getEmptyEditorMessage = (section: SitesSection) => {
   return 'Crea un sitio web o formulario para entrar al editor visual.'
 }
 
-const getLibraryPreviewBlocks = (site: PublicSite) => {
-  const blocks = [...(site.blocks || [])].sort((a, b) => a.sortOrder - b.sortOrder)
-  if (!hasEditablePages(site)) return blocks.filter(block => !isPopupBlock(block)).slice(0, 4)
-
-  const pages = normalizeFunnelPages(site)
-  const firstPageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-  const pageBlocks = blocks.filter(block => (
-    !isPopupBlock(block) &&
-    (isGlobalHeaderBlock(block) || getBlockPageId(block, pages) === firstPageId)
-  ))
-  return isLanding(site) ? pageBlocks : pageBlocks.slice(0, 4)
-}
-
 const getSettingString = (settings: Record<string, unknown>, key: string) => {
   const value = settings?.[key]
   return typeof value === 'string' ? value : ''
@@ -27185,165 +27172,126 @@ const BulkSelectCheckbox: React.FC<BulkSelectCheckboxProps> = ({ indeterminate =
   return <input ref={inputRef} type="checkbox" {...props} />
 }
 
+const LIBRARY_PREVIEW_DESKTOP_WIDTH = 1440
+const LIBRARY_PREVIEW_DEFAULT_HEIGHT = 720
+
 const LibrarySitePreview: React.FC<{
   site: PublicSite
-  forms: PublicSite[]
-  calendars: CalendarType[]
-}> = ({ site, forms, calendars }) => {
-  if (site.summary) {
-    return (
-      <div className={`${styles.libraryPreviewViewport} ${styles.librarySummaryPreview}`} aria-hidden="true">
-        {isLanding(site) ? <LayoutTemplate size={30} /> : <FormInput size={30} />}
-        <span>{site.name}</span>
-      </div>
-    )
-  }
+}> = ({ site }) => {
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const [frameGeometry, setFrameGeometry] = useState({
+    width: LIBRARY_PREVIEW_DESKTOP_WIDTH,
+    height: LIBRARY_PREVIEW_DEFAULT_HEIGHT,
+    scale: 1
+  })
+  const firstPageId = hasEditablePages(site)
+    ? normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+    : undefined
+  const previewRevision = `${site.id}:${site.updatedAt || ''}:${firstPageId || ''}`
 
-  const pages = hasEditablePages(site) ? normalizeFunnelPages(site) : []
-  const activePageId = pages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
-  const blocks = getLibraryPreviewBlocks(site)
-  const canvasTheme = buildCanvasTheme(site, 'desktop')
-  const hasFields = isFormSite(site) && blocks.some(block => fieldBlockTypes.has(block.blockType))
-  const isLandingPreview = isLanding(site)
-  const previewDesignWidth = canvasTheme.designWidth
-  const previewHeight = isLandingPreview ? 680 : 540
-  const previewScale = Math.min(
-    isLandingPreview ? 0.205 : 0.52,
-    (isLandingPreview ? 304 : 286) / previewDesignWidth
-  )
-  const previewFrameStyle = {
-    minHeight: previewHeight,
-    ...(isLandingPreview ? {} : { padding: '20px 16px 42px' })
-  } as React.CSSProperties
-  const previewScalerStyle = {
-    width: Math.round(previewDesignWidth * previewScale),
-    height: Math.round(previewHeight * previewScale)
-  } as React.CSSProperties
-  const previewCanvasStyle = {
-    ...canvasTheme.vars,
-    width: previewDesignWidth,
-    minHeight: previewHeight,
-    transform: `scale(${previewScale})`,
-    ['--rstk-scale' as string]: previewScale
-  } as React.CSSProperties
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
 
-  const renderBlockPreview = (block: SiteBlock) => (
-    <div key={block.id} className={getBlockStyleClassName(block, 'rstkStaticSel')} style={getBlockCanvasStyle(block, { site, parentBlock: getParentSectionBlock(block, blocks) })}>
-      <BlockBackgroundVideo block={block} />
-      <CanvasPreviewBlock
-        block={block}
-        site={site}
-        blocks={blocks}
-        forms={forms}
-        calendars={calendars}
-        pages={pages}
-        activePageId={activePageId}
-      />
-    </div>
-  )
-
-  const renderLandingLane = (lane: LandingSectionLane) => {
-    const section = lane.section
-
-    if (!section) {
-      return (
-        <section key={lane.id} className="rstk-section-lane rstk-section-lane-legacy">
-          <div className="rstk-section-inner">
-            <div className="rstk-section-columns">
-              {lane.columnBlocks.map((columnBlocks, columnIndex) => (
-                <div key={`${lane.id}-${columnIndex}`} className="rstk-section-column">
-                  {columnBlocks.map(renderBlockPreview)}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+    const measure = () => {
+      const rect = viewport.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      const scale = rect.width / LIBRARY_PREVIEW_DESKTOP_WIDTH
+      const height = Math.max(
+        LIBRARY_PREVIEW_DEFAULT_HEIGHT,
+        Math.ceil(rect.height / Math.max(scale, 0.01))
       )
+      setFrameGeometry(current => (
+        Math.abs(current.scale - scale) < 0.0001 && current.height === height
+          ? current
+          : { width: LIBRARY_PREVIEW_DESKTOP_WIDTH, height, scale }
+      ))
     }
 
-    const settings = section.settings || {}
-    const subtitle = getSettingString(settings, 'subtitle')
-    const hasHeading = Boolean(section.content || subtitle)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [])
 
-    return (
-      <section
-        key={section.id}
-        className={getBlockStyleClassName(section, 'rstk-section-lane', 'always')}
-        style={getBlockCanvasStyle(section, { site })}
-      >
-        <BlockBackgroundVideo block={section} />
-        <div className="rstk-section-inner">
-          {hasHeading && (
-            <div className="rstk-section-heading">
-              {section.content && <h2>{section.content}</h2>}
-              {subtitle && <p>{subtitle}</p>}
-            </div>
-          )}
-          <div className="rstk-section-columns">
-            {lane.columnBlocks.map((columnBlocks, columnIndex) => (
-              <div key={`${lane.id}-${columnIndex}`} className="rstk-section-column">
-                {columnBlocks.map(renderBlockPreview)}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-    )
-  }
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    let cancelled = false
+    let requested = false
+    const controller = new AbortController()
 
-  const renderLandingPreviewBlocks = () => {
-    const lanes = buildLandingSectionLanes(blocks)
-    const laneBySectionId = new Map(lanes.filter(lane => lane.section).map(lane => [lane.section!.id, lane]))
-    const legacyLane = lanes.find(lane => !lane.section)
-    let legacyRendered = false
+    setPreviewHtml('')
+    setPreviewFailed(false)
 
-    const renderedBlocks = blocks.map(block => {
-      if (isPanelBlock(block)) return renderBlockPreview(block)
-
-      if (!isSectionBlock(block)) {
-        if (!legacyLane || legacyRendered || getBlockSectionId(block)) return null
-        legacyRendered = true
-        return renderLandingLane(legacyLane)
+    const loadPreview = async () => {
+      if (requested) return
+      requested = true
+      try {
+        const html = await sitesService.getPreviewHtml(site.id, firstPageId, {
+          test: true,
+          signal: controller.signal
+        })
+        if (!cancelled) setPreviewHtml(html)
+      } catch {
+        if (!cancelled && !controller.signal.aborted) setPreviewFailed(true)
       }
+    }
 
-      const lane = laneBySectionId.get(block.id)
-      return lane ? renderLandingLane(lane) : null
-    })
+    if (!('IntersectionObserver' in window)) {
+      void loadPreview()
+      return () => {
+        cancelled = true
+        controller.abort()
+      }
+    }
 
-    if (legacyLane && !legacyRendered) renderedBlocks.push(renderLandingLane(legacyLane))
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      observer.disconnect()
+      void loadPreview()
+    }, { rootMargin: '240px 0px' })
+    observer.observe(viewport)
 
-    return renderedBlocks
-  }
+    return () => {
+      cancelled = true
+      controller.abort()
+      observer.disconnect()
+    }
+  }, [firstPageId, previewRevision, site.id])
 
   return (
-    <div className={styles.libraryPreviewViewport} aria-hidden="true" inert>
-      <div className={styles.libraryPreviewScaler} style={previewScalerStyle}>
-        <div
-          className={`rstkCanvas ${canvasTheme.bodyClass} ${styles.libraryPreviewCanvas}`}
-          style={previewCanvasStyle}
-        >
-          <div className="rstk-frame" style={previewFrameStyle}>
-            <CanvasBackgroundVideo theme={site.theme} />
-            <main className="rstk-page">
-              <div className="rstk-shell">
-                {blocks.length ? (
-                  isLandingPreview ? renderLandingPreviewBlocks() : blocks.map(renderBlockPreview)
-                ) : (
-                  <div className="rstkDropEmpty">
-                    {isLandingPreview ? <LayoutTemplate size={22} /> : <FormInput size={22} />}
-                    <p>Sin bloques todavía</p>
-                  </div>
-                )}
-                {hasFields && (
-                  <div className="rstk-actions">
-                    <button type="button" data-submit><SubmitButtonContent theme={site.theme} /></button>
-                  </div>
-                )}
-              </div>
-            </main>
-          </div>
-        </div>
-      </div>
+    <div
+      ref={viewportRef}
+      className={`${styles.libraryPreviewViewport} ${previewHtml ? '' : styles.librarySummaryPreview}`}
+      data-library-site-preview={site.id}
+      data-library-preview-status={previewHtml ? 'ready' : previewFailed ? 'error' : 'loading'}
+      aria-hidden="true"
+      inert
+    >
+      {previewHtml ? (
+        <iframe
+          className={styles.libraryPreviewDocument}
+          title={`Vista previa de ${site.name}`}
+          srcDoc={previewHtml}
+          loading="lazy"
+          sandbox=""
+          referrerPolicy="no-referrer"
+          tabIndex={-1}
+          style={{
+            width: frameGeometry.width,
+            height: frameGeometry.height,
+            transform: `scale(${frameGeometry.scale})`
+          }}
+        />
+      ) : (
+        <>
+          {isLanding(site) ? <LayoutTemplate size={30} /> : <FormInput size={30} />}
+          <span>{previewFailed ? 'Vista previa no disponible' : site.name}</span>
+        </>
+      )}
     </div>
   )
 }
@@ -27690,7 +27638,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           {renderSiteSelectionControl(site, 'card')}
           <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
           <span className={styles.libraryCardStatus}>{renderSiteStatus(site)}</span>
-          <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
+          <LibrarySitePreview site={site} />
           <div className={styles.libraryCardHoverActions} data-library-card-action="true">
             <button type="button" onClick={() => onEdit(site.id)}>
               <Pencil size={16} />

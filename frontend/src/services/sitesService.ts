@@ -1407,6 +1407,7 @@ export const sitesService = {
     test?: boolean
     draftSite?: PublicSite
     draftImportedCodeFiles?: Array<{ path: string; content: string }>
+    signal?: AbortSignal
   } = {}) {
     const searchParams = new URLSearchParams()
     if (pageId) searchParams.set('page', pageId)
@@ -1425,7 +1426,8 @@ export const sitesService = {
         draftImportedCodeFiles,
         importedNativePreviewMock: true
       }) : undefined,
-      cache: 'no-store'
+      cache: 'no-store',
+      signal: options.signal
     })
 
     if (!response.ok) {

@@ -5649,34 +5649,14 @@
   white-space: nowrap;
 }
 
-.libraryPreviewScaler {
-  position: relative;
-  flex: 0 0 auto;
-  overflow: hidden;
-}
-
-.libraryPreviewCanvas {
-  width: 560px;
-  min-height: 520px;
-  transform: scale(0.45);
+.libraryPreviewDocument {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  border: 0;
+  background: var(--color-background-primary);
   transform-origin: top left;
-}
-
-.libraryPreviewCanvas :global(.rstk-frame) {
-  min-height: 520px;
-  padding: 22px 24px 48px;
-}
-
-.libraryPreviewCanvas :global(.rstk-shell) {
-  gap: 18px;
-}
-
-.libraryPreviewCanvas :global(.rstk-block-style) {
-  box-shadow: none;
-}
-
-.libraryPreviewCanvas :global(.rstk-embed iframe),
-.libraryPreviewCanvas :global(iframe) {
   pointer-events: none;
 }
 
@@ -11935,7 +11915,7 @@
   padding: 0;
 }
 
-.libraryPreviewCanvas {
+.libraryPreviewDocument {
   transform-origin: top left;
 }
 

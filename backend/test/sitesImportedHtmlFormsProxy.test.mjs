@@ -45,6 +45,10 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
   }
   let siteId = ''
   let sourceFormId = ''
+  const automationIds = [
+    `automation_html_source_${suffix}`,
+    `automation_html_imported_${suffix}`
+  ]
 
   try {
     await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
@@ -122,6 +126,35 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
       theme: created.site.theme
     })
 
+    const importedTriggerFormId = `${siteId}:imported:${updated.import.formMappings[0].formId}`
+    const automationFlow = (formId) => ({
+      nodes: [{
+        id: 'start',
+        type: 'start',
+        category: 'trigger',
+        label: 'Cuando...',
+        position: { x: 120, y: 220 },
+        config: {
+          triggers: [{
+            id: 'trigger-form-submitted',
+            type: 'trigger-form-submitted',
+            config: { form: formId }
+          }]
+        }
+      }],
+      edges: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+    })
+    for (const [index, formId] of [sourceFormId, importedTriggerFormId].entries()) {
+      const flow = automationFlow(formId)
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationIds[index], `Formulario HTML ${index + 1}`, JSON.stringify(flow), JSON.stringify(flow)]
+      )
+    }
+
     const result = await createSubmissionFromRequest(
       {
         headers: { host: 'example.test', 'user-agent': 'node-test' },
@@ -156,7 +189,20 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
 
     const summary = await getSitesTrackingSummary({ siteIds: [sourceFormId] })
     assert.equal(summary.bySiteId[sourceFormId].conversions, 1)
+
+    const enrollments = await db.all(
+      `SELECT automation_id FROM automation_enrollments
+       WHERE contact_id = ? AND automation_id IN (?, ?)`,
+      [result.contactId, ...automationIds]
+    )
+    assert.deepEqual(
+      new Set(enrollments.map(enrollment => enrollment.automation_id)),
+      new Set(automationIds),
+      'el envío HTML debe disparar tanto el formulario visible en Formularios como su identidad importada estable'
+    )
   } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id IN (?, ?)', automationIds).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id IN (?, ?)', automationIds).catch(() => undefined)
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)

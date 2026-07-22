@@ -916,10 +916,13 @@ Cada pagina obtiene metricas de formularios/tracking en un solo lote y carga el
 documento completo solo al abrir, editar o ejecutar una accion. El endpoint
 legacy queda capado, los detalles limitan submissions y los indices de las
 bibliotecas viven en `055*` y `091*`. La carga incremental conserva el contenido
-ya visible, no mezcla tipos y no vuelve a hidratar cada tarjeta con requests
-independientes. Cambiar tipo, carpeta, busqueda o abandonar la ruta aborta la
-promesa anterior; una promesa de otra llave nunca se reutiliza para la consulta
-nueva ni queda consumiendo backend fuera de pantalla.
+ya visible y no mezcla tipos. Las tarjetas de galeria no hidratan bloques ni
+reconstruyen el sitio: cuando entran al viewport solicitan de forma diferida el
+HTML del preview sin tracking y muestran su primer pliegue a escala de escritorio.
+Las tarjetas fuera de pantalla conservan el placeholder ligero. Cambiar tipo,
+carpeta, busqueda o abandonar la ruta aborta la promesa anterior; una promesa de
+otra llave nunca se reutiliza para la consulta nueva ni queda consumiendo backend
+fuera de pantalla.
 
 La ruta de Sites tiene una compuerta propia y liviana. Mientras descarga una sola
 vez el chunk del workspace muestra únicamente el cargador global de Ristak; no
@@ -4510,6 +4513,12 @@ solo despues de marcar al menos un elemento; en vista tabla viven dentro de la
 toolbar de seleccion comun de las tablas. Esta seleccion multiple no aparece
 dentro del selector de paginas del editor de sitios; ahi las paginas se eliminan
 una por una desde su menu.
+En vista galeria, la miniatura usa el mismo renderer de preview que el editor y el
+publicado, en un iframe inerte y sin tracking. Por eso una landing HTML enseña el
+layout completo del primer pliegue —copy, columnas, fondos y slots nativos— en vez
+de intentar reconstruirse a partir de sus bloques conectados. El ancho fuente es
+un viewport de escritorio completo y se escala al ancho real de la tarjeta; el
+recorte vertical siempre comienza en la parte superior de la primera pagina.
 
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
@@ -4597,6 +4606,16 @@ reemplaza la eleccion `SUBMITTED`/`QUALIFIED` por el texto fijo
 `Enviar cuando · Formulario enviado`. La condicion real sigue siendo code-first:
 el HTML puede declarar `data-rstk-conversion-condition="qualified_only"` y Ristak
 omite Pixel/CAPI cuando el mismo formulario descalifica al contacto.
+
+Cada submit HTML independiente persistido dispara `form-submitted` despues de
+guardar contacto, respuestas y submission. Automatizaciones puede seleccionar
+tanto el formulario fuente que aparece en la biblioteca de Formularios como la
+identidad estable del formulario dentro del HTML
+`<siteId>:imported:<data-rstk-form-id>`; el mismo evento incluye ambas identidades
+y las respuestas por ID, llave y etiqueta. El formulario de calendario custom
+sigue siendo la excepcion deliberada: al terminar con una reserva confirmada
+dispara `Cita agendada`, no un segundo `Formulario enviado`, para que una sola
+accion del visitante no inscriba dos veces al contacto.
 
 Para HTML importado con elementos nativos de Ristak, el contrato es declarar una
 zona con `data-rstk-native-element="form|calendar|payment|video|social-profile"` y
