@@ -67,10 +67,13 @@ import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlMobileRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
+  ensureImportedHtmlFavicon,
+  importedHtmlHasFavicon,
   ensureImportedHtmlVideoActionTargets
 } from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
@@ -2190,6 +2193,11 @@ function sanitizeImportedHtml(html = '') {
   } else if (!/<meta\b[^>]*\bname\s*=\s*["']?viewport["']?[^>]*>/i.test(sanitized)) {
     sanitized = injectHtmlBeforeHeadClose(sanitized, '<meta name="viewport" content="width=device-width, initial-scale=1">')
     report.push('Se agrego meta viewport para respetar la version movil')
+  }
+
+  if (!importedHtmlHasFavicon(sanitized)) {
+    sanitized = ensureImportedHtmlFavicon(sanitized)
+    report.push('Se agrego favicon de respaldo para la pestana del sitio')
   }
 
   sanitized = injectImportedStaticFallback(sanitized, report)
@@ -7166,6 +7174,7 @@ Reglas duras:
 - Responde SOLO JSON válido, sin markdown.
 - No uses React, JSX, Tailwind, dependencias externas ni JavaScript obligatorio. El importador de Ristak puede quitar scripts por seguridad.
 - Entrega un documento HTML completo con <!doctype html>, <html lang="es">, <head>, <meta charset>, <meta viewport>, <title>, meta description y CSS dentro de <style>.
+- El favicon no es opcional. Inclúyelo y compruébalo antes de entregar cada documento.
 - Si el embudo necesita varias páginas, devuelve cada página por separado en page.pages. No juntes todo en una sola página cuando el flujo naturalmente tiene pasos separados.
 - Cada página de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Página 1" si puedes nombrarla mejor.
 - Ordena páginas multipágina con sufijo numérico de dos dígitos en title y filename según el flujo real: Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar y no debe depender del orden alfabético.
@@ -7181,6 +7190,8 @@ Reglas duras:
 - No escondas campos importantes ni uses inputs sin name.
 - No metas tarjetas dentro de tarjetas sin necesidad; usa secciones limpias, buena jerarquía y aire visual.
 - Tipo solicitado: ${targetSiteType}.
+
+${buildImportedHtmlFaviconRulesText()}
 
 ${buildImportedHtmlMobileRulesText()}
 

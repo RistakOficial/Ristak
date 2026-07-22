@@ -259,11 +259,13 @@ import type { SiteLike, SiteBlockLike } from '../../../../shared/sites/renderCon
 import { MSI_INSTALLMENT_CHOICES, msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.js'
 import {
+  DEFAULT_IMPORTED_HTML_FAVICON_TAG,
   IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
   IMPORTED_HTML_MOBILE_RULES,
   areImportedNativeResponsiveVariants,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
@@ -2597,6 +2599,7 @@ const textToFileDataUrl = (content: string, mimeType: string) => {
 const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - El HTML es una superficie cerrada: no agregues data-rstk-editable ni contratos de edición visual por texto, imagen, botón o campo.
 - Devuelve siempre el documento o los documentos HTML completos. Los cambios posteriores se hacen reemplazando el código completo, manualmente o con IA.
+${buildImportedHtmlFaviconRulesText()}
 - REQUISITO OBLIGATORIO DE ENTREGA: si el HTML contiene cualquier <form> propio, no lo entregues hasta comprobar que cada <form> tenga data-rstk-form-id y que cada input, textarea o select guardable tenga data-rstk-field-id. La única excepción es el <form data-rstk-calendar-book-form> dentro de un calendario custom: pertenece al calendario y no debe llevar IDs de formulario/campos ni conversión propia.
 - name, id, data-rstk-field y los atributos data-rstk-calendar-* NO sustituyen data-rstk-form-id ni data-rstk-field-id: ayudan a interpretar o ejecutar el campo, pero no conservan su asociación cuando otra IA reescribe el código.
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
@@ -2650,6 +2653,7 @@ const BLANK_IMPORTED_HTML = `<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sitio HTML en blanco</title>
+  ${DEFAULT_IMPORTED_HTML_FAVICON_TAG}
   <style>
     :root {
       color: #111827;
@@ -20736,6 +20740,8 @@ Reglas para esta edición:
 
 ${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
 
+${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes conservar:')}
+
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
   `.trim()
 }
@@ -20768,6 +20774,8 @@ Reglas para esta edición:
 - Usa needs_more_info solo si no hay una acción concreta que ejecutar.
 
 ${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
+
+${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes conservar:')}
 
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
 `.trim()
@@ -28326,6 +28334,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     '- Entrega HTML, CSS y JavaScript estático. Si hay varios archivos, organízalos para que se puedan comprimir en un ZIP e importar en Ristak.',
     '- No dependas de un build step, servidor propio, framework que requiera compilación ni rutas privadas.',
     '- Trata el HTML como código final y cerrado. No uses data-rstk-editable ni dependas de un editor visual por elemento.',
+    buildImportedHtmlFaviconRulesText(),
     '- Para multimedia declara claves semánticas aunque todavía no exista el archivo. Ristak detectará cada zona y después permitirá asociarla desde Media.',
     '- Imagen: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="...">.',
     '- Fondo: <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal">...</section>.',

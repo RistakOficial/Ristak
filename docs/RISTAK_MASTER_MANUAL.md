@@ -4696,6 +4696,15 @@ del asistente de código; editar escritorio nunca autoriza borrar o romper las
 media queries. El asistente de código también inicia oculto y se abre o cierra
 desde el botón con icono de chat en la cabecera del código; al abrirse conserva
 modelo, adjuntos, dictado y aplicación sobre el HTML activo.
+
+El favicon es obligatorio en todo sitio HTML: cada documento debe incluir dentro
+de `<head>` un `<link rel="icon" href="...">` válido y todas las páginas del
+mismo sitio deben compartirlo. La IA debe crear uno acorde con la marca o el
+concepto del sitio, conservarlo al editar y comprobar que no apunte a una ruta
+inexistente. Un HTML autocontenido puede usar un SVG en `data:image/svg+xml`; un
+ZIP puede incluir SVG, PNG o ICO. Si se pega, genera o importa HTML sin favicon,
+Ristak inyecta uno de respaldo para que la pestaña nunca quede sin icono.
+
 El botón de dispositivo no escala una captura de escritorio: en `Móvil`, tanto
 la vista normal del HTML como la vista partida código/preview montan el documento
 en un iframe con viewport real de hasta 390 px, de modo que sus media queries se

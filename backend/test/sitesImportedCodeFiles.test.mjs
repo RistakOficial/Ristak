@@ -4,6 +4,28 @@ import { readFile } from 'node:fs/promises'
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+test('imported HTML favicon contract adds one usable fallback without replacing a custom icon', async () => {
+  const {
+    DEFAULT_IMPORTED_HTML_FAVICON_TAG,
+    ensureImportedHtmlFavicon,
+    importedHtmlHasFavicon
+  } = await import('../../shared/sites/importedHtmlContract.js')
+
+  const withoutFavicon = '<!doctype html><html><head><title>Sin icono</title></head><body></body></html>'
+  const withFallback = ensureImportedHtmlFavicon(withoutFavicon)
+  assert.equal(importedHtmlHasFavicon(withoutFavicon), false)
+  assert.equal(importedHtmlHasFavicon(withFallback), true)
+  assert.match(withFallback, /data-rstk-default-favicon="true"/)
+  assert.equal(ensureImportedHtmlFavicon(withFallback), withFallback)
+  assert.match(DEFAULT_IMPORTED_HTML_FAVICON_TAG, /^<link rel="icon"/)
+
+  const customFavicon = '<!doctype html><html><head><link rel="shortcut icon" href="favicon.svg"><title>Con icono</title></head><body></body></html>'
+  assert.equal(importedHtmlHasFavicon(customFavicon), true)
+  assert.equal(ensureImportedHtmlFavicon(customFavicon), customFavicon)
+  assert.equal(importedHtmlHasFavicon('<link rel="apple-touch-icon" href="touch.png">'), false)
+  assert.equal(importedHtmlHasFavicon('<link rel="icon" href="#">'), false)
+})
+
 test('imported HTML code files are listed and saved through the code editor endpoint', async () => {
   const {
     createImportedSiteFromHtml,
@@ -32,7 +54,9 @@ test('imported HTML code files are listed and saved through the code editor endp
     assert.match(created.import.codeFiles[0].content, /<h1[^>]*data-rstk-video-action-target="titulo"/)
     assert.match(created.import.codeFiles[0].content, /<p[^>]*data-rstk-video-action-target="texto"/)
     assert.match(created.import.codeFiles[0].content, /<meta name="viewport" content="width=device-width, initial-scale=1">/)
+    assert.match(created.import.codeFiles[0].content, /<link rel="icon"[^>]+data-rstk-default-favicon="true"/)
     assert.match(created.import.securityReport.join(' '), /meta viewport/)
+    assert.match(created.import.securityReport.join(' '), /favicon de respaldo/)
 
     const updatedContent = created.import.codeFiles[0].content.replace('>Original heading<', '>Edited from code<')
     const updated = await updateImportedSiteCodeFiles(siteId, {
@@ -520,6 +544,10 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /Esta prohibido responderle al usuario dentro del HTML/)
   assert.match(instructions, /Aplica cambios en silencio/)
   assert.match(instructions, /El HTML es el resultado final/)
+  assert.match(instructions, /Favicon obligatorio:/)
+  assert.match(instructions, /cada documento HTML debe incluir dentro de <head> un <link rel="icon"/)
+  assert.match(instructions, /No termines ni respondas status="ready" hasta comprobarlo/)
+  assert.match(instructions, /En sitios multipágina usa el mismo favicon en todas las páginas/)
   assert.match(instructions, /data-rstk-asset-id="inicio-imagen-01"/)
   assert.match(instructions, /data-rstk-background-asset-id="inicio-fondo-01"/)
   assert.match(instructions, /data-rstk-asset-id="inicio-audio-01"/)
@@ -616,6 +644,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const videoTargetGuide = buildImportedHtmlVideoActionTargetRulesText()
 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
+  assert.match(guide, /buildImportedHtmlFaviconRulesText/)
   assert.match(guide, /La única excepción es el <form data-rstk-calendar-book-form>/)
   assert.match(guide, /buildImportedHtmlCustomCalendarRulesText/)
   assert.match(guide, /El slot nativo de video no controla la geometría/)
@@ -637,6 +666,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoTargetGuide, /data-rstk-video-action-target semántico, estable y único/)
   assert.match(videoTargetGuide, /no agregues targets a sus controles internos/)
   assert.match(builder, /No entregues el HTML si falta uno solo/)
+  assert.match(builder, /buildImportedHtmlFaviconRulesText/)
   assert.match(calendarGuide, /No le agregues data-rstk-form-id, data-rstk-field-id, data-rstk-conversion-event ni data-rstk-conversion-type/)
   assert.match(builder, /buildImportedHtmlCustomCalendarRulesText\('Calendario:'\)/)
   assert.match(builder, /El formulario interno de un calendario custom queda fuera de esta comprobación/)

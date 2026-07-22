@@ -59,6 +59,40 @@ assert.match(
   'la guía visible debe seguir incluyendo el contrato móvil compartido completo'
 )
 assert.match(
+  importedHtmlGuideSource,
+  /\$\{buildImportedHtmlFaviconRulesText\(\)\}/,
+  'la guía visible debe exigir favicon en todos los documentos HTML'
+)
+assert.match(
+  sitesSource,
+  /<title>Sitio HTML en blanco<\/title>\s+\$\{DEFAULT_IMPORTED_HTML_FAVICON_TAG\}/,
+  'un sitio HTML en blanco debe iniciar con favicon de respaldo'
+)
+
+const importedAIRegionPromptSource = sourceBetween(
+  'const buildImportedAIRegionPrompt =',
+  'const buildImportedAIPagePrompt ='
+)
+const importedAIPagePromptSource = sourceBetween(
+  'const buildImportedAIPagePrompt =',
+  'const normalizeImportedAIRegionPreviewHtml ='
+)
+const externalCompatibilitySource = sourceBetween(
+  'const buildExternalAICompatibilityText =',
+  'const copyTextToClipboard ='
+)
+for (const [label, source] of [
+  ['edición de zona', importedAIRegionPromptSource],
+  ['edición de página', importedAIPagePromptSource],
+  ['instrucciones para IA externa', externalCompatibilitySource]
+]) {
+  assert.match(
+    source,
+    /buildImportedHtmlFaviconRulesText/,
+    `${label} debe conservar el contrato obligatorio de favicon`
+  )
+}
+assert.match(
   sitesSource,
   /<details className=\{styles\.importedCodeGuide\}>/,
   'las reglas HTML deben iniciar plegadas y poder abrirse con el control nativo'

@@ -1,6 +1,46 @@
 export const IMPORTED_HTML_MOBILE_BREAKPOINT_PX = 640
 export const IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX = 390
 export const IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE = 'data-rstk-device-only'
+export const DEFAULT_IMPORTED_HTML_FAVICON_TAG = '<link rel="icon" type="image/svg+xml" data-rstk-default-favicon="true" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23111827%22%2F%3E%3Cpath%20d%3D%22M32%209l6.2%2016.8L55%2032l-16.8%206.2L32%2055l-6.2-16.8L9%2032l16.8-6.2L32%209z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">'
+
+export const IMPORTED_HTML_FAVICON_RULES = Object.freeze([
+  'REQUISITO OBLIGATORIO DE ENTREGA: cada documento HTML debe incluir dentro de <head> un <link rel="icon" href="..."> válido. No termines ni respondas status="ready" hasta comprobarlo.',
+  'El favicon debe representar la marca o el concepto del sitio y cargar de verdad en la pestaña. Para un HTML único usa un data:image/svg+xml autocontenido; para un ZIP puedes incluir favicon.svg, favicon.png o favicon.ico y referenciar ese archivo. También puedes usar una URL HTTPS si el usuario la proporcionó expresamente.',
+  'No uses href vacío, #, javascript:, una ruta a un archivo inexistente ni el favicon de la aplicación Ristak como sustituto de la identidad del sitio.',
+  'En sitios multipágina usa el mismo favicon en todas las páginas. Al editar conserva el favicon existente salvo que el usuario pida reemplazarlo; si falta, agrégalo antes de entregar.'
+])
+
+export function buildImportedHtmlFaviconRulesText(heading = 'Favicon obligatorio:') {
+  return [heading, ...IMPORTED_HTML_FAVICON_RULES.map(rule => `- ${rule}`)].join('\n')
+}
+
+export function importedHtmlHasFavicon(html = '') {
+  const linkPattern = /<link\b([^>]*)>/gi
+  let match
+  while ((match = linkPattern.exec(String(html || '')))) {
+    const attrs = match[1] || ''
+    const relMatch = attrs.match(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
+    const rel = String(relMatch?.[1] ?? relMatch?.[2] ?? relMatch?.[3] ?? '').trim().toLowerCase()
+    if (!rel.split(/\s+/).includes('icon')) continue
+
+    const hrefMatch = attrs.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
+    const href = String(hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? '').trim()
+    if (href && href !== '#' && !/^javascript:/i.test(href)) return true
+  }
+  return false
+}
+
+export function ensureImportedHtmlFavicon(html = '') {
+  const source = String(html || '')
+  if (importedHtmlHasFavicon(source)) return source
+  if (/<\/head>/i.test(source)) {
+    return source.replace(/<\/head>/i, `${DEFAULT_IMPORTED_HTML_FAVICON_TAG}\n</head>`)
+  }
+  if (/<body\b/i.test(source)) {
+    return source.replace(/<body\b/i, `<head>\n${DEFAULT_IMPORTED_HTML_FAVICON_TAG}\n</head>\n$&`)
+  }
+  return `${DEFAULT_IMPORTED_HTML_FAVICON_TAG}\n${source}`
+}
 
 export function buildImportedHtmlDeviceVisibilityStyle(previewDevice = '') {
   const device = String(previewDevice || '').trim().toLowerCase()
