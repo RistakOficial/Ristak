@@ -239,6 +239,16 @@ test('scope de lectura lista sólo lecturas y no expone SQL ni proxies arbitrari
   assert.equal(names.has('chat_get_conversation'), true)
 })
 
+test('el servidor monta MCP antes del router catch-all de costos', async () => {
+  const serverSource = await readFile(new URL('../src/server.js', import.meta.url), 'utf8')
+  const mcpMount = serverSource.indexOf("app.use('/api/mcp', mcpRoutes)")
+  const costsMount = serverSource.indexOf("app.use('/api', costsRoutes)")
+
+  assert.notEqual(mcpMount, -1)
+  assert.notEqual(costsMount, -1)
+  assert.ok(mcpMount < costsMount, 'costsRoutes interceptaría OAuth/MCP antes de su router propio')
+})
+
 test('grant ampliado invalida el token viejo y publica el catálogo de control', async () => {
   fixture.fullToken = await issueToken(MCP_SCOPE_VALUES)
 
