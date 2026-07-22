@@ -50,6 +50,7 @@ import {
 } from '@/services/whatsappApiService'
 import { subscribeToChatLiveEvents } from '@/services/chatLiveEventsService'
 import { getContactDetailLabel, getContactDisplayName } from '@/utils/contactAvatar'
+import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { CONTACT_STAGE_BADGE_VARIANTS, getContactStageBadge } from '@/utils/contactStageBadge'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
@@ -198,7 +199,6 @@ type ContactChatTimelineItem =
   | { type: 'message'; id: string; date: string; message: ContactChatMessage }
   | { type: 'agentCompletion'; id: string; date: string; completion: ConversationalAgentCompletionEvent }
 
-const CONTACT_PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
 const CONTACT_FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
 const CONTACT_OPTIMISTIC_MESSAGE_ID_PREFIXES = ['contact-modal-chat-']
 const CONTACT_OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
@@ -2115,9 +2115,8 @@ export function ContactDetailsModal({
                   const message = item.message
                   const status = String(message.status || '').trim().toLowerCase()
                   const failed = CONTACT_FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
-                  const pending = CONTACT_PENDING_MESSAGE_STATUSES.has(status)
                   const scheduled = isScheduledContactChatMessage(message)
-                  const sending = message.direction === 'outbound' && pending && !scheduled && !failed
+                  const sending = message.direction === 'outbound' && isChatMessageSendInFlight(status) && !scheduled && !failed
 
                   return (
                     <article
@@ -2148,7 +2147,7 @@ export function ContactDetailsModal({
                         {failed ? <CircleAlert size={12} aria-hidden="true" /> : null}
                         <span>{getChatTimeLabel(message.date, timezone)}</span>
                         {message.transport ? <em>{message.transport}</em> : null}
-                        {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} aria-hidden="true" /> : null}
+                        {message.direction === 'outbound' && !failed && !scheduled && !sending ? <CheckCheck size={13} aria-hidden="true" /> : null}
                         {scheduled ? <Clock size={12} aria-hidden="true" /> : null}
                         {sending ? <Loader2 size={12} className={styles.spinIcon} aria-label="Enviando" /> : null}
                       </small>

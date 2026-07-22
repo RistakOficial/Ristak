@@ -101,6 +101,7 @@ import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
+import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -1227,7 +1228,6 @@ interface PhonePullReleasePayload {
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CANCELED_APPOINTMENT_STATUSES = new Set(['cancelled', 'canceled', 'no_show', 'noshow', 'deleted', 'failed', 'invalid'])
 const FAILED_MESSAGE_STATUSES = new Set(['error', 'failed', 'undelivered', 'rejected'])
-const PENDING_MESSAGE_STATUSES = new Set(['pending', 'scheduled', 'queued'])
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
 const EMPTY_TEMPLATE_LOCATION = {
   latitude: '',
@@ -2795,8 +2795,7 @@ function isMessageFailed(message: ChatMessage) {
 }
 
 function isMessagePending(message: ChatMessage) {
-  const status = String(message.status || '').trim().toLowerCase()
-  return PENDING_MESSAGE_STATUSES.has(status) || status.startsWith('enviando')
+  return isChatMessageSendInFlight(message.status)
 }
 
 function isMessageScheduled(message: ChatMessage) {

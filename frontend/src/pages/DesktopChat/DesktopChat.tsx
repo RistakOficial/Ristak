@@ -93,6 +93,7 @@ import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
+import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
 import {
   getHighLevelChatSendOutcome,
@@ -618,7 +619,6 @@ const VOICE_WAVE_PATTERN = [8, 18, 30, 42, 24, 13, 36, 48, 31, 16, 10, 22, 40, 5
 const MESSAGE_AUDIO_WAVE_PATTERN = [13, 24, 36, 19, 30, 46, 22, 15, 40, 52, 34, 20, 28, 44, 18, 26, 38, 23]
 const MESSAGE_AUDIO_WAVE_BAR_COUNT = 30
 const FAILED_MESSAGE_STATUSES = new Set(['failed', 'error', 'undelivered', 'rejected', 'cancelled'])
-const PENDING_MESSAGE_STATUSES = new Set(['pending', 'queued', 'sending', 'enviando', 'enviando por qr', 'scheduled'])
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['desktop-chat-', 'desktop-email-', 'desktop-template-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
 const TEMPLATE_DISABLED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED', 'ARCHIVED', 'DELETED', 'PENDING', 'IN_APPEAL'])
@@ -8798,14 +8798,13 @@ export const DesktopChat: React.FC = () => {
   const renderMessageMeta = (message: DesktopChatMessage, transportLabel = '') => {
     const status = String(message.status || '').trim().toLowerCase()
     const failed = FAILED_MESSAGE_STATUSES.has(status) || Boolean(message.errorReason)
-    const pending = PENDING_MESSAGE_STATUSES.has(status)
     const scheduled = isMessageScheduled(message)
-    const sending = message.direction === 'outbound' && pending && !scheduled && !failed
+    const sending = message.direction === 'outbound' && isChatMessageSendInFlight(status) && !scheduled && !failed
     return (
       <span className={styles.messageMeta}>
         {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
         {formatMessageTime(message.date)}
-        {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
+        {message.direction === 'outbound' && !failed && !scheduled && !sending ? <CheckCheck size={13} /> : null}
         {scheduled ? <Clock size={13} /> : null}
         {sending ? <Loader2 size={13} className={styles.spin} aria-label="Enviando" /> : null}
       </span>

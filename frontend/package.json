@@ -7,6 +7,7 @@
     "design:audit": "node scripts/audit-design-system.mjs",
     "test:chat-notification-placement": "node scripts/test-chat-notification-placement.mjs",
     "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
+    "test:chat-delivery-state": "node scripts/test-chat-message-delivery-state.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
     "test:sites-html-creation-flow": "node scripts/test-sites-html-creation-flow.mjs",

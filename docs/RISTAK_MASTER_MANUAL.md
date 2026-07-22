@@ -1776,14 +1776,20 @@ guardado ya no existe, Ristak busca o recrea el contacto por teléfono/correo,
 persiste el vínculo reparado y reintenta el envío una sola vez únicamente ante
 `CONVERSATIONS_CONTACT_NOT_FOUND`.
 
-Un HTTP 2xx de HighLevel sin recibo durable, incluso `sent`, `pending` o `queued`, solo significa
-aceptacion, no entrega. El espejo local conserva `pending` hasta que webhook o
-sync publique el estado durable `sent/delivered/read/failed`; el mismo evento
-SSE reconcilia el globo optimista. En fallo se guarda tambien el motivo limpio
-de `message.error`, y nunca se pinta una palomita de exito antes del acuse real.
-Los inbounds sincronizados guardan `from_phone`, `to_phone` y `business_phone`
-desde el payload HighLevel para que selector, ventana y ultimo remitente
-compartan la misma identidad.
+Un HTTP 2xx de HighLevel sin recibo durable, incluso `sent`, `pending` o `queued`,
+significa aceptacion del proveedor, no entrega al destinatario. El espejo local
+conserva `pending` hasta que webhook o sync publique el estado durable
+`sent/delivered/read/failed`; el mismo evento SSE reconcilia el globo optimista.
+El loader de `/chat`, `/movil` y el chat del modal de contacto representa sólo la
+peticion local que todavía no termina (`sending`/`enviando`). En cuanto el
+proveedor acepta la solicitud, los estados `pending`, `queued` o `processing`
+deben mostrarse como enviados y dejar de girar, aunque la base conserve el
+estado pendiente para esperar el recibo final. Un `delivered/read` posterior
+actualiza el acuse y un `failed` posterior reemplaza esa confirmacion visual con
+el error real y su motivo limpio de `message.error`; la UI nunca debe esconder
+ese rechazo. Los inbounds sincronizados guardan `from_phone`, `to_phone` y
+`business_phone` desde el payload HighLevel para que selector, ventana y ultimo
+remitente compartan la misma identidad.
 
 Para un mismo contacto, WhatsApp y SMS de HighLevel forman una sola decisión de
 salida del agente conversacional. La última selección manual de **WhatsApp ·
