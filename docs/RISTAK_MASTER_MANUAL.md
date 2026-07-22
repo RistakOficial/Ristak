@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-15.
+Ultima consolidacion: 2026-07-21.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -1289,7 +1289,15 @@ Configuracion se organiza en:
   Artificial.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
-- Avanzado: Developers.
+- Avanzado: Developers. La entrada principal es **Conectar con MCP**: muestra
+  salud/capacidades del servidor remoto, instrucciones para Codex, ChatGPT,
+  Claude y clientes compatibles, conexiones OAuth revocables y acceso a la
+  auditoria autenticada en `GET /api/api-access/mcp/audit`. Credenciales API,
+  webhooks, documentacion y logs permanecen como subsecciones separadas. Codex
+  registra el servidor con `codex mcp add` y abre OAuth con
+  `codex mcp login ristak`; ese flujo usa la sesion web normal de Ristak y pide
+  consentimiento para los scopes. No genera, copia ni usa el API token de
+  REST/OpenAPI.
 
 Las tablas de Configuracion que permiten seleccion multiple usan el patron
 compartido de `Table` con acciones integradas en una sola barra dentro del
@@ -1360,8 +1368,9 @@ No basta con esconder botones en frontend. Cualquier endpoint que escriba o lea
 datos sensibles debe tener validacion de backend.
 
 Las superficies que no pasan por navegacion normal tambien deben validar plan:
-API tokens legacy y nuevos requieren `developers`; `/api/external` y `/api/mcp`
-requieren `developers` y feature del recurso; la busqueda global filtra
+los API tokens REST legacy y nuevos requieren `developers`; `/api/external` y
+`/api/mcp` requieren `developers` y feature del recurso, aunque MCP se autoriza
+con la sesion web y OAuth en lugar del API token; la busqueda global filtra
 categorias por permiso y plan; `/movil` filtra secciones/cargas y cache por
 feature; automatizaciones validan nodos premium al guardar, publicar, probar y
 ejecutar.
@@ -7025,6 +7034,45 @@ Incluye:
   autenticadas; una URL sin integracion permanece pendiente.
 - MCP para clientes compatibles.
 
+El MCP externo es un plano de control tipado sobre los servicios de negocio de
+Ristak. El registro actual contiene 234 tools antes del filtrado de autorizacion
+y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
+de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
+precios, suscripciones, dashboard, reportes, analytics/tracking, campañas,
+activos multimedia, costos, plantillas de WhatsApp, preferencias moviles,
+estado seguro de integraciones y Sites con sus archivos HTML. El status de
+Developers y `tools/list` cuentan/muestran solo las tools visibles para el
+usuario, plan, modulos y scopes actuales. No es SQL libre, no es un proxy
+generico de rutas y no autoriza secretos, infraestructura, administracion de
+usuarios ni escritura directa en tablas/ledgers protegidos. Cada accion nueva
+de producto que se publique por MCP debe registrarse con schema, contrato de
+salida, feature/modulo, permiso de usuario, scope OAuth, anotaciones de riesgo y
+ejecutor auditable.
+
+El servidor remoto usa Streamable HTTP y OAuth 2.1 con PKCE. Los scopes separan
+`ristak.read`, `ristak.write`, `ristak.execute` y `ristak.destructive` para que
+leer, modificar estado, provocar efectos externos y destruir datos no sean el
+mismo permiso. `tools/list` solo descubre acciones compatibles con licencia,
+acceso de usuario y scopes; `tools/call` vuelve a comprobarlos. Mensajes,
+publicaciones, pagos y borrados requieren las confirmaciones/metadatos de riesgo
+correspondientes y dejan auditoria con secretos redactados.
+La edición genérica de pagos no acepta `status`: registrar un pago requiere
+`ristak.execute`; anular, reembolsar o cancelar/eliminar un plan exige
+`ristak.destructive`.
+
+El usuario administra estas conexiones en
+`Configuracion > Developers > Conectar con MCP`. El frontend consulta
+`GET /api/api-access/mcp/status` y
+`GET /api/api-access/mcp/connections`; revoca una autorizacion con
+`DELETE /api/api-access/mcp/connections/:id`. Las fechas de negocio que entren
+por tools se resuelven con la zona de la cuenta y la moneda default sale de
+`account_currency`, nunca de la computadora del cliente MCP.
+
+"Recibir mensajes" en una herramienta MCP significa listar inbox/conversacion o
+mantener polling desde el runtime del cliente. Ristak no puede iniciar una
+llamada espontanea dentro de una sesion cerrada de Codex, ChatGPT o Claude; para
+flujos event-driven se usan automatizaciones o webhooks.
+
 Los tokens se tratan como secretos. La documentacion solo debe indicar nombres,
 ubicacion y uso, nunca valores.
 
@@ -7033,12 +7081,14 @@ agentes deben entrar por el MCP/CLI de soporte de Ristak Installer, documentado
 en `docs/support-mcp-operations.md`, para resolver la instalacion, leer logs,
 inspeccionar schema y consultar filas read-only de la DB del cliente.
 
-La API externa y MCP no son bypass de plan. Para generar/rotar/revocar tokens y
-usar `/api/external` o `/api/mcp` se requiere `developers`; cada endpoint/tool
-vuelve a revisar la feature del recurso (`payments`, `payment_plans`,
+La API externa y MCP no son bypass de plan. Generar, rotar y revocar tokens de
+REST/OpenAPI requiere `developers`; conectar MCP usa la sesion web normal y
+consentimiento OAuth, sin ese token. Usar `/api/external` o `/api/mcp` requiere
+`developers`; cada endpoint/tool vuelve a revisar la feature del recurso (`payments`, `payment_plans`,
 `subscriptions`, `reports`, `campaigns`, `appointments`, `sites`, `contacts`,
-`integrations`, etc.). Un token generado antes de un downgrade no conserva
-acceso a modulos que el plan actual ya no incluye.
+`integrations`, etc.), el acceso vigente del usuario y, para MCP, el scope OAuth.
+Una credencial emitida antes de un downgrade o un cambio de permisos no conserva
+acceso a modulos que la cuenta o ese usuario ya no pueden usar.
 
 Las tablas `meta_oauth_integrations` y `meta_oauth_integration_sessions` estan
 bloqueadas completamente en el CRUD generico de `/api/external` y en las

@@ -374,6 +374,16 @@ app.post(
   handleMetaInstallerRelayWebhook
 )
 
+// MCP sólo acepta JSON-RPC acotado. Se parsea antes del límite global usado por
+// uploads/base64 para que un cliente externo no pueda hacer que el proceso
+// materialice 35 MB por request antes de que corran OAuth y el rate limit.
+app.use('/api/mcp', express.json({
+  limit: '3mb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+}))
+
 app.use(express.json({
   limit: '35mb',
   verify: (req, _res, buf) => {

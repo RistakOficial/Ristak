@@ -1,11 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { BookOpen, CheckCircle, Copy, ExternalLink, FileText, KeyRound, RefreshCw, ServerCog, Trash2, Webhook, XCircle } from 'lucide-react'
-import { Button, Card } from '@/components/common'
+import {
+  BookOpen,
+  CheckCircle,
+  Copy,
+  ExternalLink,
+  FileText,
+  KeyRound,
+  Network,
+  RefreshCw,
+  ServerCog,
+  Trash2,
+  Webhook
+} from 'lucide-react'
+import { Button, Card, SegmentTabs } from '@/components/common'
+import type { SegmentTab } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useTimezone } from '@/contexts/TimezoneContext'
 import { apiUrl, getApiBaseUrl } from '@/services/apiBaseUrl'
 import { formatDateTime } from '@/utils/format'
+import { McpAccessPanel } from './McpAccessPanel'
+import type { McpHeaderStatus } from './McpAccessPanel'
 import styles from './Settings.module.css'
 
 interface ApiTokenMetadata {
@@ -22,18 +38,26 @@ interface WebhookEndpoint {
   path: string
 }
 
-type DeveloperSection = 'credentials' | 'webhooks' | 'docs' | 'logs'
+type DeveloperSection = 'mcp' | 'credentials' | 'webhooks' | 'docs' | 'logs'
+
+const INITIAL_MCP_STATUS: McpHeaderStatus = {
+  label: 'Revisando',
+  variant: 'neutral',
+  ready: false
+}
 
 export const APIAccessSettings: React.FC = () => {
   const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
+  const { timezone } = useTimezone()
   const [appId, setAppId] = useState('')
   const [apiTokenMetadata, setApiTokenMetadata] = useState<ApiTokenMetadata | null>(null)
   const [newApiToken, setNewApiToken] = useState(() => sessionStorage.getItem('ristak_latest_api_token') || '')
   const [isLoadingApiToken, setIsLoadingApiToken] = useState(false)
   const [isRotatingApiToken, setIsRotatingApiToken] = useState(false)
   const [isRevokingApiToken, setIsRevokingApiToken] = useState(false)
-  const [activeSection, setActiveSection] = useState<DeveloperSection>('credentials')
+  const [activeSection, setActiveSection] = useState<DeveloperSection>('mcp')
+  const [mcpHeaderStatus, setMcpHeaderStatus] = useState<McpHeaderStatus>(INITIAL_MCP_STATUS)
 
   const origin = (getApiBaseUrl() || window.location.origin).replace(/\/+$/, '')
   const externalApiBaseUrl = `${origin}/api/external`
@@ -71,36 +95,13 @@ export const APIAccessSettings: React.FC = () => {
     }
   ]
 
-  const developerSections = useMemo(() => [
-    {
-      key: 'credentials' as const,
-      icon: <KeyRound size={18} />,
-      title: 'Credenciales API',
-      description: 'Llaves para conectar sistemas externos.',
-      meta: apiTokenMetadata?.hasToken ? 'Token activo' : 'Sin token'
-    },
-    {
-      key: 'webhooks' as const,
-      icon: <Webhook size={18} />,
-      title: 'Webhooks',
-      description: 'URLs POST para recibir eventos.',
-      meta: `${webhookEndpoints.length} URLs`
-    },
-    {
-      key: 'docs' as const,
-      icon: <BookOpen size={18} />,
-      title: 'Documentación',
-      description: 'Guías, endpoints y conexión MCP.',
-      meta: 'Abrir guía'
-    },
-    {
-      key: 'logs' as const,
-      icon: <ServerCog size={18} />,
-      title: 'Logs de la app',
-      description: 'Registros para revisar fallas con soporte.',
-      meta: 'Soporte'
-    }
-  ], [apiTokenMetadata?.hasToken, webhookEndpoints.length])
+  const developerSectionTabs = useMemo<SegmentTab[]>(() => [
+    { id: 'mcp', label: 'Conectar con MCP', icon: <Network size={18} /> },
+    { id: 'credentials', label: 'Credenciales API', icon: <KeyRound size={18} /> },
+    { id: 'webhooks', label: 'Webhooks', icon: <Webhook size={18} /> },
+    { id: 'docs', label: 'Documentación', icon: <BookOpen size={18} /> },
+    { id: 'logs', label: 'Logs de la app', icon: <ServerCog size={18} /> }
+  ], [])
 
   const authHeaders = () => {
     const token = localStorage.getItem('auth_token')
@@ -110,15 +111,14 @@ export const APIAccessSettings: React.FC = () => {
     }
   }
 
-  const formatDate = (value: string | null) => {
-    return formatDateTime(value, {
-      fallback: 'Nunca',
-      intlOptions: {
-        dateStyle: 'medium',
-        timeStyle: 'short'
-      }
-    })
-  }
+  const formatDate = (value: string | null) => formatDateTime(value, {
+    fallback: 'Nunca',
+    timezone,
+    intlOptions: {
+      dateStyle: 'medium',
+      timeStyle: 'short'
+    }
+  })
 
   const copyText = async (value: string, label: string) => {
     if (!value) return
@@ -134,9 +134,7 @@ export const APIAccessSettings: React.FC = () => {
   const loadApiToken = async () => {
     setIsLoadingApiToken(true)
     try {
-      const response = await fetch(apiUrl('/api/api-access'), {
-        headers: authHeaders()
-      })
+      const response = await fetch(apiUrl('/api/api-access'), { headers: authHeaders() })
       const data = await response.json()
       if (!response.ok || !data.success) {
         throw new Error(data.message || 'No se pudo cargar el acceso API')
@@ -152,20 +150,17 @@ export const APIAccessSettings: React.FC = () => {
 
   useEffect(() => {
     if (!user) return
-    loadApiToken()
+    void loadApiToken()
   }, [user])
 
   const rotateApiToken = async () => {
     setIsRotatingApiToken(true)
-
     try {
       const response = await fetch(apiUrl('/api/api-access/token/rotate'), {
         method: 'POST',
         headers: authHeaders()
       })
-
       const data = await response.json()
-
       if (!response.ok || !data.success) {
         throw new Error(data.message || 'No se pudo generar el API token')
       }
@@ -214,15 +209,12 @@ export const APIAccessSettings: React.FC = () => {
 
   const revokeApiToken = async () => {
     setIsRevokingApiToken(true)
-
     try {
       const response = await fetch(apiUrl('/api/api-access/token'), {
         method: 'DELETE',
         headers: authHeaders()
       })
-
       const data = await response.json()
-
       if (!response.ok || !data.success) {
         throw new Error(data.message || 'No se pudo revocar el API token')
       }
@@ -238,7 +230,7 @@ export const APIAccessSettings: React.FC = () => {
     }
   }
 
-  const handleRevokeApiToken = async () => {
+  const handleRevokeApiToken = () => {
     if (!apiTokenMetadata?.hasToken) return
 
     showConfirm(
@@ -265,44 +257,44 @@ export const APIAccessSettings: React.FC = () => {
             <div>
               <h2 className={styles.panelTitle}>Developers</h2>
               <p className={styles.panelDescription}>
-                Webhooks, documentación, logs y credenciales para conectar Ristak con otros sistemas.
+                Conecta agentes de IA y sistemas externos sin brincar permisos, licencias ni auditoría.
               </p>
             </div>
           </div>
           <div className={styles.panelHeaderActions}>
-            <Badge variant={apiTokenMetadata?.hasToken ? 'success' : 'error'}>
-              {apiTokenMetadata?.hasToken ? <CheckCircle size={15} /> : <XCircle size={15} />}
-              {apiTokenMetadata?.hasToken ? 'Token activo' : 'Sin token'}
+            <Badge variant={mcpHeaderStatus.variant}>
+              {mcpHeaderStatus.ready ? <CheckCircle size={15} /> : <Network size={15} />}
+              {mcpHeaderStatus.label}
             </Badge>
           </div>
         </div>
 
         <div className={styles.panelSection}>
-          <div className={styles.developerMenuGrid}>
-            {developerSections.map((section) => (
-              <button
-                key={section.key}
-                type="button"
-                className={`${styles.developerMenuButton} ${activeSection === section.key ? styles.developerMenuButtonActive : ''}`}
-                onClick={() => setActiveSection(section.key)}
-              >
-                <span className={styles.developerMenuTop}>
-                  <span className={styles.developerMenuIcon}>{section.icon}</span>
-                  <span className={styles.developerMenuMeta}>{section.meta}</span>
-                </span>
-                <span className={styles.developerMenuTitle}>{section.title}</span>
-                <span className={styles.developerMenuDescription}>{section.description}</span>
-              </button>
-            ))}
-          </div>
+          <SegmentTabs
+            tabs={developerSectionTabs}
+            value={activeSection}
+            onChange={(value) => setActiveSection(value as DeveloperSection)}
+            aria-label="Secciones de Developers"
+          />
 
           <div className={styles.developerPanel}>
+            {activeSection === 'mcp' && (
+              <McpAccessPanel
+                enabled={Boolean(user)}
+                origin={origin}
+                serverUrl={mcpServerUrl}
+                onCopy={copyText}
+                onOpenDocumentation={() => setActiveSection('docs')}
+                onStatusChange={setMcpHeaderStatus}
+              />
+            )}
+
             {activeSection === 'credentials' && (
               <>
                 <SectionHeading
                   icon={<KeyRound size={16} />}
-                  title="Credenciales externas"
-                  description="ID público de la app y token secreto revocable."
+                  title="Credenciales REST/OpenAPI"
+                  description="ID público de la app y token secreto revocable para integraciones REST. MCP usa la sesión normal de Ristak."
                 />
 
                 <div className={styles.developerInfoGrid}>
@@ -314,7 +306,6 @@ export const APIAccessSettings: React.FC = () => {
 
                 <div className={styles.developerFieldStack}>
                   <ReadonlyField label="Endpoint base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'endpoint base')} />
-                  <ReadonlyField label="MCP server" value={mcpServerUrl} onCopy={() => copyText(mcpServerUrl, 'MCP server')} />
                 </div>
 
                 {newApiToken && (
@@ -357,14 +348,12 @@ export const APIAccessSettings: React.FC = () => {
                 <div className={styles.webhookEndpointList}>
                   {webhookEndpoints.map((endpoint) => {
                     const url = `${origin}${endpoint.path}`
-
                     return (
                       <div key={endpoint.path} className={styles.webhookEndpointRow}>
                         <div>
                           <p className={styles.webhookEndpointTitle}>{endpoint.label}</p>
                           <p className={styles.webhookEndpointDescription}>{endpoint.description}</p>
                         </div>
-
                         <ReadonlyField
                           label={`URL POST para ${endpoint.label}`}
                           value={url}
@@ -456,11 +445,7 @@ const InfoField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
     <div>
       <strong>{value}</strong>
       {onCopy && value && (
-        <button
-          type="button"
-          onClick={onCopy}
-          aria-label={`Copiar ${label}`}
-        >
+        <button type="button" onClick={onCopy} aria-label={`Copiar ${label}`}>
           <Copy size={16} />
         </button>
       )}
@@ -472,11 +457,7 @@ const ReadonlyField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
   <div className={styles.developerReadonlyField}>
     <label>{label}</label>
     <div>
-      <input
-        type="text"
-        value={value}
-        readOnly
-      />
+      <input type="text" value={value} readOnly />
       {onCopy && (
         <Button variant="secondary" onClick={onCopy} className={styles.developerCopyButton}>
           <Copy size={18} />

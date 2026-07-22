@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Copy, Database, ExternalLink, KeyRound, Network, RefreshCw, Server } from 'lucide-react'
+import { ArrowLeft, Copy, Database, ExternalLink, KeyRound, Network, RefreshCw, Server, ShieldCheck } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
 import { PageHeader } from '@/components/common'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
@@ -99,15 +99,15 @@ export const APIDocumentation: React.FC = () => {
   return (
     <main className={styles.page}>
       <header className={styles.header}>
-        <a href="/settings/api-access" className={styles.backLink}>
+        <a href="/settings/developers" className={styles.backLink}>
           <ArrowLeft size={16} />
-          Acceso API
+          Developers
         </a>
 
         <PageHeader
           eyebrow="Ristak API Docs"
           title="Documentación API"
-          subtitle="Conecta sistemas externos para leer, crear, actualizar y borrar datos de Ristak. Las integraciones externas se usan sólo cuando están conectadas."
+          subtitle="Conecta sistemas externos o agentes de IA para operar Ristak con herramientas tipadas. Cada acción respeta el plan, los permisos del usuario, los alcances OAuth y la auditoría."
           actions={
             <div className={styles.quickLinks}>
               <DocLink label="REST base" value={externalApiBaseUrl} onCopy={() => copyText(externalApiBaseUrl, 'REST base')} />
@@ -127,6 +127,8 @@ export const APIDocumentation: React.FC = () => {
           <a href="#data">Base de datos</a>
           <a href="#sync">Integraciones externas</a>
           <a href="#mcp">MCP</a>
+          <a href="#mcp-clients">Conectar clientes</a>
+          <a href="#mcp-security">Permisos y auditoría</a>
           <a href="#endpoints">Endpoints</a>
         </aside>
 
@@ -192,7 +194,7 @@ export const APIDocumentation: React.FC = () => {
 
           <Section id="mcp" icon={<Network size={18} />} title="MCP">
             <p>
-              El servidor MCP expone herramientas para explorar datos de Ristak y, si aplica, proxificar integraciones conectadas. La lista exacta se descubre con `tools/list`.
+              El catálogo actual registra 234 herramientas tipadas de negocio. `tools/list` y el estado de Developers muestran únicamente las visibles para el usuario, plan, módulos y alcances que autorizaron la conexión. No entrega acceso SQL libre, secretos, infraestructura ni administración de usuarios, y nunca brinca la lógica del producto.
             </p>
             <CodeBlock
               value={`POST ${mcpServerUrl}
@@ -207,11 +209,43 @@ Content-Type: application/json
 {"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`, 'ejemplo MCP')}
             />
             <div className={styles.toolGrid}>
-              <Tool name="list_data_tables" text="Lista tablas y columnas disponibles." />
-              <Tool name="query_data_table" text="Consulta filas con filtros y paginación." />
-              <Tool name="ghl_mcp__*" text="Tools opcionales de GoHighLevel cuando esa integración está conectada." />
-              <Tool name="ghl_mcp_call_tool" text="Fallback opcional para ejecutar tools de GoHighLevel por nombre." />
+              <Tool name="CRM, inbox y chatbot" text="Buscar, crear y actualizar contactos; operar tags y conversaciones; responder por canales conectados y configurar agentes conversacionales." />
+              <Tool name="Citas y automatizaciones" text="Consultar calendarios y disponibilidad, crear o cambiar citas y administrar el ciclo de vida de automatizaciones." />
+              <Tool name="Pagos y catálogo" text="Operar pagos, links, planes, productos, precios y suscripciones con confirmaciones y moneda de la cuenta." />
+              <Tool name="Dashboard, reportes y analítica" text="Consultar resúmenes, métricas, atribución, tracking y resultados operativos o financieros." />
+              <Tool name="Campañas y multimedia" text="Consultar y operar campañas permitidas, activos de Meta y la biblioteca multimedia sin exponer credenciales de proveedores." />
+              <Tool name="Configuración operativa" text="Administrar tags, campos personalizados, trigger links, costos, plantillas de WhatsApp, preferencias móviles y consultar el estado seguro de integraciones." />
+              <Tool name="Sites y HTML" text="Crear, leer y editar Sites, incluyendo archivos HTML importados, vista previa y publicación controlada." />
+              <Tool name="Catálogo controlado" text="Cada herramienta usa el servicio de negocio correspondiente; no hay SQL libre, proxies genéricos, acceso a credenciales o ledgers internos, gestión de infraestructura ni administración de usuarios." />
             </div>
+          </Section>
+
+          <Section id="mcp-clients" icon={<Network size={18} />} title="Conectar Codex, ChatGPT, Claude u otro cliente">
+            <p>
+              Usa el mismo endpoint remoto con cualquier cliente compatible con MCP Streamable HTTP. La conexión abre OAuth en Ristak: inicia sesión con tu usuario normal, revisa los alcances y autoriza. MCP no usa el API token de REST/OpenAPI.
+            </p>
+            <CodeBlock
+              label="Codex"
+              value={`codex mcp add ristak --url "${mcpServerUrl}"\ncodex mcp login ristak`}
+              onCopy={() => copyText(`codex mcp add ristak --url "${mcpServerUrl}"\ncodex mcp login ristak`, 'comandos de Codex')}
+            />
+            <EndpointExample method="POST" path={mcpServerUrl} description="En un espacio o Work mode de ChatGPT compatible con conectores MCP, agrega el conector remoto y completa OAuth en Ristak. En Claude usa Settings > Connectors > Add custom connector; Claude Code también puede registrar el servidor HTTP desde su configuración o CLI." />
+            <p>
+              Después de autorizar con tu sesión normal de Ristak, ejecuta `tools/list` para verificar qué herramientas quedaron disponibles. Para leer mensajes entrantes, el cliente consulta el inbox o la conversación; MCP no manda mensajes espontáneos a una sesión cerrada.
+            </p>
+          </Section>
+
+          <Section id="mcp-security" icon={<ShieldCheck size={18} />} title="Permisos, confirmaciones y auditoría">
+            <p>
+              Los alcances separan lectura (`ristak.read`), escritura (`ristak.write`), acciones con efecto externo (`ristak.execute`) y operaciones destructivas (`ristak.destructive`). Tener un alcance no basta: el backend también valida la licencia actual y el permiso de módulo del usuario en cada llamada.
+            </p>
+            <p>
+              En Configuración &gt; Developers puedes ver las conexiones OAuth, su último uso y revocar cualquiera. Las escrituras, mensajes, publicaciones, movimientos de dinero y borrados llevan metadatos de riesgo y confirmación; las ejecuciones quedan registradas en la auditoría MCP indicada por el servidor.
+            </p>
+            <EndpointExample method="GET" path="/api/api-access/mcp/status" description="Estado, transporte, versión, herramientas, dominios, alcances y enlace de auditoría." />
+            <EndpointExample method="GET" path="/api/api-access/mcp/connections" description="Lista las conexiones OAuth autorizadas por el usuario actual." />
+            <EndpointExample method="GET" path="/api/api-access/mcp/audit" description="Consulta ejecuciones MCP auditadas, con cliente, herramienta, riesgo, resultado y tiempos; los datos sensibles se redactan." />
+            <EndpointExample method="DELETE" path="/api/api-access/mcp/connections/{id}" description="Revoca una conexión y corta su acceso inmediatamente." />
           </Section>
 
           <Section id="endpoints" icon={<Server size={18} />} title="Referencia de endpoints">

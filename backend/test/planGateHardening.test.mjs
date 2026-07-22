@@ -29,6 +29,7 @@ test('module access checks the commercial plan before exposing a module', async 
 
 test('developer surfaces are gated by Developers and by resource features', async () => {
   const authRoutes = await backendFile('src/routes/auth.routes.js')
+  const apiAccessRoutes = await backendFile('src/routes/apiAccess.routes.js')
   const externalRoutes = await backendFile('src/routes/external.routes.js')
   const mcpRoutes = await backendFile('src/routes/mcp.routes.js')
   const goalLedgerMigration = await repoFile('backend/migrations/versioned/019_conversational_goal_effects_ledger.sql')
@@ -36,6 +37,7 @@ test('developer surfaces are gated by Developers and by resource features', asyn
   assert.match(authRoutes, /router\.get\('\/api-token', requireAuth, requireModuleAccess\('settings_api_access'\), getApiToken\)/)
   assert.match(authRoutes, /router\.post\('\/api-token\/rotate', requireAuth, requireModuleAccess\('settings_api_access'\), rotateApiToken\)/)
   assert.match(authRoutes, /router\.delete\('\/api-token', requireAuth, requireModuleAccess\('settings_api_access'\), revokeApiToken\)/)
+  assert.match(apiAccessRoutes, /router\.use\(requireFeature\('developers'\)\)/)
 
   assert.match(externalRoutes, /router\.use\(requireFeature\('developers'\)\)/)
   assert.match(externalRoutes, /function getExternalTableFeatureKeys\(table\)/)
@@ -48,7 +50,7 @@ test('developer surfaces are gated by Developers and by resource features', asyn
   assert.match(externalRoutes, /WRITE_BLOCKED_TABLE_PATTERN[^\n]*conversational_agents[^\n]*conversational_agent_\.\*/)
   assert.match(externalRoutes, /name === 'conversational_agents' \|\| \/\^conversational_agent_\/\.test\(name\)/)
 
-  assert.match(mcpRoutes, /hasFeature\('developers'\)/)
+  assert.match(mcpRoutes, /hasFeature\('developers'(?:,|\))/)
   assert.match(mcpRoutes, /ghl_create_payment_link: \['integrations', 'payments', 'payment_links'\]/)
   assert.match(mcpRoutes, /ghl_create_installment_plan: \['integrations', 'payments', 'payment_plans'\]/)
   assert.match(mcpRoutes, /await assertMcpFeatures\(getMcpToolFeatureKeys\(name, args\)\)/)

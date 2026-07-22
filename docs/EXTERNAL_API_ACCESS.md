@@ -23,10 +23,17 @@ de la interfaz de Ristak y no autentican clientes MCP ni integraciones de tercer
 - The database stores only the SHA-256 hash, prefix, last four characters, creation time, last-used time, and revocation time.
 - Rotation immediately invalidates the previous token.
 - Revocation clears the stored hash and disables external access for that user.
+- MCP does not use the REST/OpenAPI token. Clients connect through OAuth 2.1,
+  authorize with the user's normal authenticated Ristak session, receive scoped
+  access/refresh credentials and appear as a revocable connection under
+  `Configuración > Developers`.
+- An OAuth connection inherits the current user identity. It never becomes a
+  system administrator and never preserves access after the user, permission or
+  license loses that capability.
 
-## Setup
+## REST/OpenAPI setup
 
-1. Go to `Configuración > Acceso API`.
+1. Go to `Configuración > Developers`.
 2. Copy the `App ID`.
 3. Generate or rotate the API token and copy it immediately.
 4. Send requests with:
@@ -41,13 +48,109 @@ de la interfaz de Ristak y no autentican clientes MCP ni integraciones de tercer
    https://YOUR_RENDER_DOMAIN/api/external/openapi.json
    ```
 
-6. Use this MCP server URL if the external client expects MCP instead of OpenAPI:
+## MCP setup
+
+1. While logged into Ristak, open `Configuración > Developers > Conectar con MCP`.
+2. Use this remote server URL:
 
    ```text
    https://YOUR_RENDER_DOMAIN/api/mcp
    ```
 
-   MCP clients that require OAuth should use the built-in OAuth discovery endpoints. The authorization screen asks for a Ristak API token and exchanges it for OAuth access credentials.
+   MCP clients use the built-in OAuth discovery endpoints. Ristak's authorization
+   screen uses the normal web session and asks the user to consent to the
+   requested scopes. No REST/OpenAPI token is generated, copied or stored.
+
+   Codex registers the remote server and starts OAuth with:
+
+   ```sh
+   codex mcp add ristak --url "https://YOUR_RENDER_DOMAIN/api/mcp"
+   codex mcp login ristak
+   ```
+
+   For ChatGPT, use a space or Work mode that supports MCP plugins/connectors.
+   For Claude, use `Settings > Connectors > Add custom connector`; Claude Code
+   can register the same Streamable HTTP endpoint through its configuration or
+   CLI. In every case, log into Ristak when OAuth opens, review the scopes and
+   approve or deny the connection.
+
+## MCP control plane
+
+`/api/mcp` is the customer-facing remote MCP server. It uses Streamable HTTP and
+OAuth 2.1 with PKCE. Codex, ChatGPT, Claude and any compatible remote client use
+the same server URL; `tools/list` returns the exact tools available to the user
+who authorized that connection.
+
+The MCP is a typed control plane over Ristak's business services, not a generic
+route proxy and not unrestricted SQL. The current registry contains 234 typed
+tools before authorization filtering. `GET /api/api-access/mcp/status` and
+`tools/list` report only the subset visible to the current user, plan, modules
+and granted scopes. The registry covers these operational domains:
+
+- contacts, CRM search, tags, custom fields and trigger links;
+- inbox, conversations, outbound messages and conversational chatbot operation;
+- calendars, availability, appointments and automations;
+- payments, payment links/plans, products, prices and subscriptions;
+- dashboard summaries, reports, analytics, attribution and web tracking;
+- campaigns, Meta assets and campaign-builder operations already supported by
+  the account;
+- media library assets, folders, storage usage and permitted lifecycle actions;
+- business costs, WhatsApp templates, mobile preferences and safe integration
+  status;
+- Sites lifecycle, imported HTML files, preview and controlled publication.
+
+Payment metadata edits cannot change payment status. Recording a payment uses
+`ristak.execute`; refunds, voids and payment-plan cancellation/deletion use
+`ristak.destructive` so a write-only client cannot cross those boundaries.
+
+New product actions must enter the MCP through the same registry with an input
+schema, output contract, module/feature gate, OAuth scope, risk annotation and
+auditable executor. "Exponer todo" never means bypassing controllers, writing
+directly into protected ledgers, leaking secrets, managing infrastructure or
+administering users.
+
+### Scopes and execution rules
+
+- `ristak.read`: reads and searches.
+- `ristak.write`: creates or updates Ristak-owned data.
+- `ristak.execute`: causes an external or irreversible side effect such as
+  sending a message, publishing a Site or registering a payment action.
+- `ristak.destructive`: deletes, revokes, refunds, cancels or performs another
+  destructive operation.
+
+The granted scope is necessary but not sufficient. On every `tools/list` and
+`tools/call`, backend re-checks all of these:
+
+1. active OAuth token and current active user;
+2. `developers` plus the commercial feature for the resource;
+3. the user's module access (`read`, `write` or `admin` as required);
+4. the OAuth scope declared by the tool;
+5. explicit confirmation for high-impact writes, external effects and
+   destructive actions.
+
+Business dates are interpreted with the account timezone and new monetary
+records use `account_currency` when the caller does not provide a valid explicit
+currency. An MCP client must not infer either value from its own computer.
+
+### Receiving messages
+
+An agent can list the inbox, inspect a contact conversation and answer through
+the channels connected in Ristak. MCP does not initiate an unsolicited request
+into a closed Codex/ChatGPT/Claude session. A client that needs continuous
+reception must poll/read the inbox from its own runtime or use Ristak
+automations/webhooks for an event-driven flow.
+
+### Connections and audit
+
+`Configuración > Developers > Conectar con MCP` shows server health, effective
+domains/tool count, setup instructions, OAuth connections and last use. Revoking
+a connection invalidates its refresh/access path immediately without affecting
+the user's separate REST/OpenAPI token.
+
+The status response publishes the account's audit URL. MCP calls record the
+authenticated user, client, tool, risk level, result and timing; payloads are
+redacted so credentials, authorization headers, passwords, tokens and protected
+secrets do not enter the audit trail.
 
 ## License gates
 
@@ -62,8 +165,9 @@ security boundary.
   calendars and appointments, `sites` for Sites/tracking/form tables,
   `contacts` for CRM contact data and `integrations` for HighLevel proxy calls.
 - `/api/mcp` requires OAuth access plus `developers`. The tools list is filtered
-  by plan, and tool execution re-checks the same feature gates. Generic table
-  tools apply the same table-to-feature mapping as `/api/external/data/:table`.
+  by plan, current user permissions and granted scopes; execution re-checks the
+  same gates. MCP does not expose generic table writes; `/api/external/data`
+  remains a separate REST surface with its own allowlists and feature checks.
 - A token minted before a downgrade does not bypass the current plan; feature
   checks run on every request.
 
@@ -74,6 +178,10 @@ security boundary.
 - `GET /api/api-access`
 - `POST /api/api-access/token/rotate`
 - `DELETE /api/api-access/token`
+- `GET /api/api-access/mcp/status`
+- `GET /api/api-access/mcp/connections`
+- `GET /api/api-access/mcp/audit`
+- `DELETE /api/api-access/mcp/connections/{id}`
 
 ### MCP and OAuth
 

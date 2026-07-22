@@ -846,81 +846,10 @@ body.dark .select:focus {
   color: var(--color-text-tertiary);
 }
 
-.developerMenuGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 12px;
-}
-
-.developerMenuButton {
-  display: flex;
-  min-height: 142px;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.045);
-  color: var(--color-text-primary);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease;
-}
-
-.developerMenuButton:hover,
-.developerMenuButtonActive {
-  border-color: rgba(var(--color-primary-rgb), 0.34);
-  background: rgba(var(--color-primary-rgb), 0.08);
-}
-
-.developerMenuTop {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.developerMenuIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.1);
-  color: var(--color-text-primary);
-}
-
-.developerMenuMeta {
-  overflow: hidden;
-  max-width: 112px;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.developerMenuTitle {
-  display: block;
-  color: var(--color-text-primary);
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.developerMenuDescription {
-  display: block;
-  color: var(--color-text-tertiary);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 .developerPanel {
   margin-top: 18px;
   padding-top: 18px;
-  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  border-top: 1px solid var(--border);
 }
 
 .developerSectionHeading {
@@ -951,16 +880,184 @@ body.dark .select:focus {
   margin-top: 16px;
 }
 
+.mcpStatusBar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 18px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.mcpStatusItem {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 13px 16px;
+  border-left: 1px solid var(--border);
+}
+
+.mcpStatusItem:first-child {
+  border-left: 0;
+}
+
+.mcpStatusItem > span:first-child {
+  color: var(--text-mute);
+  font: var(--label-font);
+  font-size: 11px;
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-spacing);
+}
+
+.mcpStatusItem strong {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpStatusMessage {
+  margin: 0 0 14px;
+  color: var(--warn);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mcpAccessNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--info);
+}
+
+.mcpAccessNote svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.mcpAccessNote h4,
+.mcpSubsectionHeader h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mcpAccessNote p,
+.mcpSubsectionHeader p,
+.mcpStepList p,
+.mcpMutedText {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.mcpSubsection {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.mcpSubsectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.mcpCapabilityList,
+.mcpScopeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.mcpClientSetup {
+  display: grid;
+  gap: 18px;
+  padding-top: 16px;
+}
+
+.mcpStepList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcpStepList li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.mcpStepList li > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--num-font);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcpStepList p {
+  margin-top: 4px;
+}
+
+.mcpConnectionClient {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.mcpConnectionClient span {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpConnectionClient small {
+  overflow: hidden;
+  color: var(--text-mute);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpMutedText {
+  display: block;
+  margin-top: 10px;
+}
+
 .developerInfoField {
   padding: 12px 14px;
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
 }
 
 .developerInfoField p {
   margin: 0 0 5px;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   font-size: 12px;
 }
 
@@ -973,7 +1070,7 @@ body.dark .select:focus {
 .developerInfoField strong {
   min-width: 0;
   flex: 1;
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 14px;
   font-weight: 500;
   overflow-wrap: anywhere;
@@ -986,15 +1083,15 @@ body.dark .select:focus {
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-ctl);
   background: transparent;
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   cursor: pointer;
 }
 
 .developerInfoField button:hover {
-  background: rgba(148, 163, 184, 0.12);
-  color: var(--color-text-primary);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .developerReadonlyField {
@@ -1004,7 +1101,7 @@ body.dark .select:focus {
 .developerReadonlyField label {
   display: block;
   margin-bottom: 8px;
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   font-size: 13px;
   font-weight: 500;
 }
@@ -1021,10 +1118,10 @@ body.dark .select:focus {
   min-width: 0;
   height: 42px;
   padding: 0 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
   font-size: 13px;
 }
 
@@ -1043,7 +1140,7 @@ body.dark .select:focus {
   gap: 16px;
   align-items: center;
   padding: 14px 0;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--border);
 }
 
 .webhookEndpointRow:last-child {
@@ -1052,14 +1149,14 @@ body.dark .select:focus {
 
 .webhookEndpointTitle {
   margin: 0 0 5px;
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 14px;
   font-weight: 700;
 }
 
 .webhookEndpointDescription {
   margin: 0;
-  color: var(--color-text-tertiary);
+  color: var(--text-mute);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -1071,10 +1168,10 @@ body.dark .select:focus {
   gap: 12px;
   margin-top: 14px;
   padding: 12px 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
   font-size: 14px;
   font-weight: 500;
   text-decoration: none;
@@ -1087,8 +1184,8 @@ body.dark .select:focus {
 }
 
 .developerDocLink:hover {
-  border-color: rgba(var(--color-primary-rgb), 0.28);
-  background: rgba(var(--color-primary-rgb), 0.08);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .developerLogsBox {
@@ -1096,9 +1193,9 @@ body.dark .select:focus {
   align-items: flex-start;
   gap: 14px;
   padding: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.055);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
 }
 
 .developerLogsIcon {
@@ -1108,15 +1205,15 @@ body.dark .select:focus {
   width: 42px;
   height: 42px;
   flex: 0 0 42px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 8px;
-  background: rgba(148, 163, 184, 0.12);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .developerLogsBox h3 {
   margin: 0;
-  color: var(--color-text-primary);
+  color: var(--text);
   font-size: 15px;
   font-weight: 600;
 }
@@ -1124,7 +1221,7 @@ body.dark .select:focus {
 .developerLogsBox p {
   max-width: 620px;
   margin: 6px 0 0;
-  color: var(--color-text-secondary);
+  color: var(--text-dim);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -2322,6 +2419,23 @@ body.dark .select:focus {
     grid-template-columns: 1fr;
   }
 
+  .mcpStatusBar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mcpStatusItem:nth-child(3) {
+    border-left: 0;
+  }
+
+  .mcpStatusItem:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+
+  .mcpSubsectionHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .mobileRoutePanel {
     padding-top: 18px;
     padding-left: 0;
@@ -2336,6 +2450,22 @@ body.dark .select:focus {
 
   .accountSectionWide {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .mcpStatusBar {
+    grid-template-columns: 1fr;
+  }
+
+  .mcpStatusItem,
+  .mcpStatusItem:nth-child(3) {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .mcpStatusItem:first-child {
+    border-top: 0;
   }
 }
 

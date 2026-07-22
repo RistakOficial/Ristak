@@ -16,6 +16,8 @@
     "test:web-analytics-plan-access": "node --test scripts/test-web-analytics-plan-access.cjs",
     "test:payment-links-plan-access": "node --test scripts/test-payment-links-plan-access.cjs",
     "test:highlevel-chat-send": "node scripts/test-highlevel-chat-send.mjs",
+    "test:mcp-developers-ui": "node scripts/test-mcp-developers-ui.mjs",
+    "test:oauth-consent": "node scripts/test-oauth-consent-flow.mjs",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",

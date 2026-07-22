@@ -5,30 +5,48 @@ import {
   buildContactStats,
   buildTransactionSummary
 } from '../services/analyticsService.js'
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 import * as calendarService from '../services/highlevelCalendarService.js'
 import {
   createInstallmentPaymentFlow,
   createOfflineContactPayment,
   createSinglePaymentLink
 } from '../services/paymentFlowService.js'
-import { hasFeature, isLicenseEnforced } from '../services/licenseService.js'
+import { getLicenseState, hasFeature, isLicenseEnforced } from '../services/licenseService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
-import { verifyOAuthAccessToken } from '../utils/oauthTokens.js'
+import { validateOAuthAccessContext } from '../utils/oauthTokens.js'
+import { resolveMcpResource, resolveOAuthOrigin } from '../utils/oauthOrigin.js'
+import { hasUserAccess } from '../utils/userAccess.js'
 import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 import { serializePaymentRowAmount } from '../utils/paymentAmountSerialization.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { logger } from '../utils/logger.js'
+import { invokeController } from '../mcp/controllerInvoker.js'
+import {
+  callRegisteredMcpTool,
+  listMcpToolDefinitions,
+  sanitizeMcpResult
+} from '../mcp/toolRegistry.js'
 
 const router = express.Router()
 const HIGHLEVEL_MCP_SERVER_URL = process.env.GHL_MCP_SERVER_URL || 'https://services.leadconnectorhq.com/mcp/'
 const GHL_MCP_TOOL_PREFIX = 'ghl_mcp__'
 const MCP_PROTOCOL_VERSION = '2025-06-18'
 const HIGHLEVEL_MCP_TIMEOUT_MS = 15000
+const MCP_MAX_BATCH_SIZE = 20
+const MCP_MAX_BODY_BYTES = 3 * 1024 * 1024
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
-const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_oauth_integrations|meta_oauth_integration_sessions|meta_oauth_pending_sessions|meta_oauth_connection_backups|meta_oauth_authorized_assets|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
+const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|meta_oauth_integrations|meta_oauth_integration_sessions|meta_oauth_pending_sessions|meta_oauth_connection_backups|meta_oauth_authorized_assets|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|oauth_grants|mcp_idempotency_keys|mcp_audit_log|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+router.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store')
+  res.set('MCP-Protocol-Version', MCP_PROTOCOL_VERSION)
+  next()
+})
 
 const MCP_TOOL_FEATURES = {
   get_summary: ['dashboard'],
@@ -84,14 +102,26 @@ async function assertMcpFeatures(featureKeys = []) {
   throw error
 }
 
+const mcpRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.RATE_LIMIT_DISABLED === '1',
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${req.mcpContext?.clientId || 'anonymous'}`,
+  handler: (_req, res) => res.status(429).json({
+    jsonrpc: '2.0',
+    id: null,
+    error: { code: -32029, message: 'Demasiadas llamadas MCP. Intenta de nuevo en un minuto.' }
+  })
+})
+
 function originFor(req) {
-  const proto = req.get('x-forwarded-proto') || req.protocol || 'https'
-  const host = req.get('x-forwarded-host') || req.get('host')
-  return host ? `${proto}://${host}` : ''
+  return resolveOAuthOrigin(req)
 }
 
 function resourceFor(req) {
-  return `${originFor(req)}/api/mcp`
+  return resolveMcpResource(req)
 }
 
 function metadataUrlFor(req) {
@@ -102,17 +132,30 @@ async function requireMcpAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization || ''
     const token = authHeader.replace(/^Bearer\s+/i, '').trim()
-    const payload = verifyOAuthAccessToken(token, resourceFor(req))
+    const access = await validateOAuthAccessContext(token, {
+      audience: resourceFor(req),
+      issuer: originFor(req)
+    })
 
-    if (!payload) {
-      res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrlFor(req)}"`)
+    if (!access) {
+      res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrlFor(req)}", error="invalid_token"`)
       return res.status(401).json({
         error: 'unauthorized',
         error_description: 'OAuth access token requerido'
       })
     }
 
-    if (isLicenseEnforced() && !(await hasFeature('developers'))) {
+    if (!hasUserAccess(access.user, 'settings_api_access', 'read')) {
+      return res.status(403).json({
+        error: 'access_denied',
+        error_description: 'El usuario conectado no tiene acceso a Developers.'
+      })
+    }
+
+    const license = isLicenseEnforced()
+      ? await getLicenseState({ email: access.user.email || access.user.username })
+      : null
+    if (license && (!license.allowed || !(await hasFeature('developers', { state: license })))) {
       return res.status(403).json({
         error: 'feature_not_available',
         error_description: 'MCP y Developers no están incluidos en tu plan actual.'
@@ -120,9 +163,33 @@ async function requireMcpAuth(req, res, next) {
     }
 
     req.mcpUser = {
-      id: payload.userId,
-      clientId: payload.clientId,
-      scope: payload.scope
+      id: access.userId,
+      clientId: access.clientId,
+      grantId: access.grant?.id || access.grantId,
+      scope: access.scopes
+    }
+    req.mcpContext = {
+      user: access.user,
+      license,
+      grant: access.grant,
+      scopes: access.scopes,
+      clientId: access.clientId,
+      mcpUser: req.mcpUser,
+      baseUrl: originFor(req),
+      ip: req.ip,
+      userAgent: req.get('user-agent') || '',
+      app: req.app,
+      invoke: (handler, request) => invokeController(handler, {
+        user: access.user,
+        license,
+        grant: access.grant,
+        scopes: access.scopes,
+        mcpUser: req.mcpUser,
+        baseUrl: originFor(req),
+        ip: req.ip,
+        userAgent: req.get('user-agent') || '',
+        app: req.app
+      }, request)
     }
     next()
   } catch (error) {
@@ -132,6 +199,23 @@ async function requireMcpAuth(req, res, next) {
       error_description: 'No se pudo validar tu plan para MCP.'
     })
   }
+}
+
+function requireMcpPayloadBounds(req, res, next) {
+  const contentLength = Number(req.get('content-length') || 0)
+  let actualBytes = 0
+  try {
+    actualBytes = Buffer.byteLength(JSON.stringify(req.body ?? null), 'utf8')
+  } catch {
+    return res.status(400).json(jsonRpcError(null, -32700, 'JSON inválido'))
+  }
+  if (contentLength > MCP_MAX_BODY_BYTES || actualBytes > MCP_MAX_BODY_BYTES) {
+    return res.status(413).json(jsonRpcError(null, -32013, 'El payload MCP supera 3 MB'))
+  }
+  if (Array.isArray(req.body) && req.body.length > MCP_MAX_BATCH_SIZE) {
+    return res.status(400).json(jsonRpcError(null, -32600, `El batch MCP admite máximo ${MCP_MAX_BATCH_SIZE} mensajes`))
+  }
+  next()
 }
 
 function jsonRpcResult(id, result) {
@@ -162,7 +246,10 @@ function sanitizeForExternal(value, key = '') {
 }
 
 function textResult(payload) {
-  const sanitizedPayload = sanitizeForExternal(payload)
+  const sanitized = sanitizeForExternal(payload)
+  const sanitizedPayload = sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
+    ? sanitized
+    : { data: sanitized }
 
   return {
     structuredContent: sanitizedPayload,
@@ -358,7 +445,7 @@ const toolDefinitions = [
       properties: {
         contactId: { type: 'string' },
         amount: { type: 'number' },
-        currency: { type: 'string', default: 'MXN' },
+        currency: { type: 'string', description: 'Opcional; usa la moneda de la cuenta cuando se omite.' },
         concept: { type: 'string' },
         dueDate: { type: 'string' },
         channels: { type: 'object' },
@@ -377,7 +464,7 @@ const toolDefinitions = [
       properties: {
         contactId: { type: 'string' },
         amount: { type: 'number' },
-        currency: { type: 'string', default: 'MXN' },
+        currency: { type: 'string', description: 'Opcional; usa la moneda de la cuenta cuando se omite.' },
         concept: { type: 'string' },
         paymentMethod: { type: 'string', enum: ['cash', 'bank_transfer', 'transfer', 'deposit', 'check', 'manual', 'other'] },
         paymentDate: { type: 'string' },
@@ -398,7 +485,7 @@ const toolDefinitions = [
       properties: {
         contactId: { type: 'string' },
         totalAmount: { type: 'number' },
-        currency: { type: 'string', default: 'MXN' },
+        currency: { type: 'string', description: 'Opcional; usa la moneda de la cuenta cuando se omite.' },
         concept: { type: 'string' },
         remainingPayments: { type: 'array', items: { type: 'object' } },
         firstPayment: { type: 'object' },
@@ -753,7 +840,7 @@ async function listDataTables() {
       queryableColumns: table.queryableColumns,
       redactedColumns: table.redactedColumns
     })),
-    blockedTables: ['highlevel_config', 'meta_config', 'meta_oauth_integrations', 'meta_oauth_integration_sessions', 'meta_oauth_pending_sessions', 'meta_oauth_connection_backups', 'meta_oauth_authorized_assets', 'meta_campaign_templates', 'meta_campaign_drafts', 'meta_campaign_execution_logs', 'ai_agent_config', 'agent_runs', 'agent_steps', 'agent_pending_actions', 'agent_tool_idempotency', 'app_config', 'oauth_clients', 'oauth_authorization_codes', 'oauth_refresh_tokens', 'conversational_agent_goal_links', 'conversational_agent_goal_evidence_claims'],
+    blockedTables: ['users', 'payment_methods', 'highlevel_config', 'meta_config', 'meta_oauth_integrations', 'meta_oauth_integration_sessions', 'meta_oauth_pending_sessions', 'meta_oauth_connection_backups', 'meta_oauth_authorized_assets', 'meta_campaign_templates', 'meta_campaign_drafts', 'meta_campaign_execution_logs', 'ai_agent_config', 'agent_runs', 'agent_steps', 'agent_pending_actions', 'agent_tool_idempotency', 'app_config', 'oauth_clients', 'oauth_authorization_codes', 'oauth_refresh_tokens', 'oauth_grants', 'mcp_idempotency_keys', 'mcp_audit_log', 'conversational_agent_goal_links', 'conversational_agent_goal_evidence_claims'],
     note: 'Se exponen todas las tablas de datos detectadas; las tablas de configuración sensible se bloquean y las columnas tipo token/password/secret/hash se redactan.'
   }
 }
@@ -1057,11 +1144,12 @@ async function ghlCreateAppointment(args = {}) {
 async function ghlCreatePaymentLink(args = {}) {
   assertConfirmed(args, 'Crear link de pago en GoHighLevel')
   const contact = await resolveContact(args.contactId)
+  const accountCurrency = await getAccountCurrency()
 
   return createSinglePaymentLink({
     contact,
     amount: args.amount,
-    currency: args.currency || 'MXN',
+    currency: args.currency || accountCurrency,
     concept: args.concept,
     description: args.concept,
     dueDate: args.dueDate,
@@ -1073,11 +1161,12 @@ async function ghlCreatePaymentLink(args = {}) {
 async function ghlRecordOfflinePayment(args = {}) {
   assertConfirmed(args, 'Registrar pago offline en GoHighLevel')
   const contact = await resolveContact(args.contactId)
+  const accountCurrency = await getAccountCurrency()
 
   return createOfflineContactPayment({
     contact,
     amount: args.amount,
-    currency: args.currency || 'MXN',
+    currency: args.currency || accountCurrency,
     concept: args.concept,
     description: args.concept,
     paymentMethod: args.paymentMethod || 'cash',
@@ -1091,10 +1180,12 @@ async function ghlRecordOfflinePayment(args = {}) {
 async function ghlCreateInstallmentPlan(args = {}) {
   assertConfirmed(args, 'Crear plan de parcialidades en GoHighLevel')
   const contact = await resolveContact(args.contactId)
+  const accountCurrency = await getAccountCurrency()
 
   return createInstallmentPaymentFlow({
     ...args,
     contact,
+    currency: args.currency || accountCurrency,
     source: 'mcp'
   })
 }
@@ -1346,49 +1437,37 @@ function getMcpToolFeatureKeys(name, args = {}) {
     .filter((featureKey, index, all) => all.indexOf(featureKey) === index)
 }
 
-async function getCombinedToolDefinitions() {
-  const baseTools = []
-  for (const tool of toolDefinitions) {
-    if (await hasEveryMcpFeature(getMcpToolFeatureKeys(tool.name))) {
-      baseTools.push(tool)
-    }
-  }
-
-  const highLevelTools = await hasEveryMcpFeature(['integrations'])
-    ? await listHighLevelMcpTools()
-    : []
-
-  return [...baseTools, ...highLevelTools]
-}
-
-async function callTool(name, args) {
+// Contrato legacy conservado sólo para que los gates históricos sigan teniendo
+// una referencia verificable. Ninguna de estas rutas genéricas/proxy forma
+// parte del catálogo nuevo ni se puede invocar desde handleMessage.
+async function assertRetiredLegacyToolPolicy(name, args) {
   await assertMcpFeatures(getMcpToolFeatureKeys(name, args))
+  return getMcpTableFeatureKeys(args?.table)
+}
+void assertRetiredLegacyToolPolicy
 
-  if (String(name || '').startsWith(GHL_MCP_TOOL_PREFIX)) {
-    return callHighLevelMcpTool(name, args)
-  }
-
-  if (name === 'get_summary') return textResult(await getSummary(args))
-  if (name === 'search_contacts') return textResult(await searchContacts(args))
-  if (name === 'get_contact') return textResult(await getContact(args))
-  if (name === 'list_transactions') return textResult(await listTransactions(args))
-  if (name === 'list_data_tables') return textResult(await listDataTables())
-  if (name === 'query_data_table') return textResult(await queryDataTable(args))
-  if (name === 'get_meta_ads_summary') return textResult(await getMetaAdsSummary(args))
-  if (name === 'ghl_search_contacts') return textResult(await ghlSearchContacts(args))
-  if (name === 'ghl_create_contact') return textResult(await ghlCreateContact(args))
-  if (name === 'ghl_list_calendars') return textResult(await ghlListCalendars(args))
-  if (name === 'ghl_get_free_slots') return textResult(await ghlGetFreeSlots(args))
-  if (name === 'ghl_create_appointment') return textResult(await ghlCreateAppointment(args))
-  if (name === 'ghl_create_payment_link') return textResult(await ghlCreatePaymentLink(args))
-  if (name === 'ghl_record_offline_payment') return textResult(await ghlRecordOfflinePayment(args))
-  if (name === 'ghl_create_installment_plan') return textResult(await ghlCreateInstallmentPlan(args))
-  if (name === 'ghl_api_request') return textResult(await ghlApiRequest(args))
-  if (name === 'ghl_mcp_call_tool') return callHighLevelMcpTool(args?.toolName, args?.arguments || {})
-  throw new Error(`Tool no soportada: ${name}`)
+async function getCombinedToolDefinitions(context) {
+  return listMcpToolDefinitions(context)
 }
 
-async function handleMessage(message) {
+async function callTool(context, name, args) {
+  return textResult(await callRegisteredMcpTool(context, name, args))
+}
+
+function toolErrorResult(error) {
+  const payload = sanitizeMcpResult({
+    error: error?.message || 'No se pudo ejecutar la herramienta',
+    code: error?.code || 'mcp_tool_failed',
+    ...(error?.details ? { details: error.details } : {})
+  })
+  return {
+    isError: true,
+    structuredContent: payload,
+    content: [{ type: 'text', text: JSON.stringify(payload) }]
+  }
+}
+
+async function handleMessage(context, message) {
   const { id, method, params = {} } = message || {}
 
   if (!method) {
@@ -1399,63 +1478,60 @@ async function handleMessage(message) {
     return null
   }
 
+  if (method === 'notifications/cancelled') return null
+  if (method === 'ping') return jsonRpcResult(id, {})
+
   if (method === 'initialize') {
     return jsonRpcResult(id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {
-        tools: {}
+        tools: { listChanged: false }
       },
       serverInfo: {
         name: 'ristak',
         title: 'Ristak',
-        version: '1.0.0'
-      }
+        version: '2.0.0'
+      },
+      instructions: 'Ristak MCP opera el CRM por acciones de negocio autorizadas. Lee con ristak.read; modifica borradores con ristak.write; enviar mensajes, registrar pagos, ejecutar automatizaciones o publicar requiere ristak.execute; borrados, cancelaciones y reembolsos requieren ristak.destructive. Respeta confirm=true e idempotencyKey cuando la herramienta los solicite. Nunca pidas ni reveles tokens o secretos.'
     })
   }
 
   if (method === 'tools/list') {
     return jsonRpcResult(id, {
-      tools: await getCombinedToolDefinitions()
+      tools: await getCombinedToolDefinitions(context)
     })
   }
 
   if (method === 'tools/call') {
     try {
-      return jsonRpcResult(id, await callTool(params.name, params.arguments || {}))
+      return jsonRpcResult(id, await callTool(context, params.name, params.arguments || {}))
     } catch (error) {
-      return jsonRpcError(id, -32000, error.message)
+      return jsonRpcResult(id, toolErrorResult(error))
     }
   }
 
   return jsonRpcError(id, -32601, `Método no soportado: ${method}`)
 }
 
-router.get('/', requireMcpAuth, async (req, res) => {
-  try {
-    const tools = await getCombinedToolDefinitions()
-
-    res.json({
-      name: 'ristak',
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      tools: tools.map(tool => tool.name)
-    })
-  } catch (error) {
-    logger.error(`[MCP] Error listando herramientas: ${error.message}`)
-    res.status(500).json({ error: 'No se pudieron listar las herramientas MCP' })
-  }
+router.get('/', requireMcpAuth, (_req, res) => {
+  res.set('Allow', 'POST')
+  res.status(405).json({
+    error: 'method_not_allowed',
+    error_description: 'Este servidor MCP usa Streamable HTTP stateless por POST.'
+  })
 })
 
-router.post('/', requireMcpAuth, async (req, res) => {
+router.post('/', requireMcpAuth, mcpRateLimiter, requireMcpPayloadBounds, async (req, res) => {
   try {
     const payload = req.body
 
     if (Array.isArray(payload)) {
-      const responses = (await Promise.all(payload.map(handleMessage))).filter(Boolean)
+      const responses = (await Promise.all(payload.map(message => handleMessage(req.mcpContext, message)))).filter(Boolean)
       if (!responses.length) return res.status(202).end()
       return res.json(responses)
     }
 
-    const response = await handleMessage(payload)
+    const response = await handleMessage(req.mcpContext, payload)
     if (!response) return res.status(202).end()
     res.json(response)
   } catch (error) {

@@ -80,6 +80,8 @@ import {
 import { installKeyboardFocusScroll } from '@/utils/keyboardFocusScroll'
 import { isNativeAppRuntime } from '@/services/apiBaseUrl'
 
+const LazyOAuthAuthorize = React.lazy(() => import('@/pages/OAuth/OAuthAuthorize'))
+
 type RouteLocationState = {
   from?: RedirectLocation
 } | null
@@ -815,6 +817,7 @@ const AppWithNotifications: React.FC = () => {
           <Route path="/sso" element={<LazySso />} />
           <Route path="/login" element={<LazyLogin />} />
           <Route path="/reset-password" element={<LazyResetPassword />} />
+          <Route path="/oauth/authorize" element={<ProtectedRoute><LazyOAuthAuthorize /></ProtectedRoute>} />
           <Route path="/pay/success" element={<LazyPublicPaymentGatewayReturn />} />
           <Route path="/pay/:publicPaymentId" element={<LazyPublicPayment />} />
           <Route path={PHONE_APP_TENANT_PATH} element={<LazyMobileTenantSetup />} />
