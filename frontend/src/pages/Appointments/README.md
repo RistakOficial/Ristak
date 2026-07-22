@@ -153,6 +153,13 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - Las plantillas default son `recordatorio_cita_un_dia_antes` para recordatorios,
   `cita_programada` para avisos y `confirmacion_cita_dia_anterior` cuando el
   switch de confirmación está activo.
+- WhatsApp usa el canal conectado sin un switch manual de respaldo: QR-only sale
+  por QR, API-only sale por API y API+QR del mismo número intenta API primero y
+  usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
+  aprobar o una ventana cerrada no cambian a QR.
+- El recordatorio inicial de un día antes lleva una `system_key` única para que
+  dos arranques simultáneos no lo dupliquen. Los recordatorios manuales mantienen
+  `system_key=NULL` y pueden repetirse si el usuario lo configuró así.
 
 ## Servicio API Frontend
 

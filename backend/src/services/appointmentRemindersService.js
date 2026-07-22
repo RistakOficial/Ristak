@@ -3,6 +3,7 @@ import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/datab
 import { getAccountTimezone } from '../utils/dateUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import {
+  resolveWhatsAppOutboundRoute,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage
 } from './whatsappApiService.js'
@@ -43,6 +44,7 @@ export function appointmentReminderRetryCutoffExpression(dialect = databaseDiale
 }
 
 const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
+const DEFAULT_REMINDER_SYSTEM_KEY = 'default_one_day_before'
 
 // Si un envío quedó pendiente demasiado tiempo (p.ej. cita creada después de
 // que ya pasó la hora del recordatorio), se marca como omitido en vez de
@@ -208,7 +210,9 @@ function normalizeReminderRow(row = {}) {
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
     confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(row.confirmation_success_action)) ? cleanString(row.confirmation_success_action) : 'chat_card',
     bypassAutomations: Number(row.bypass_automations || 0) === 1,
-    qrFallbackEnabled: channel === 'whatsapp' && Number(row.qr_fallback_enabled || 0) === 1,
+    // Compatibilidad de API: el respaldo ya no es una preferencia manual. La
+    // capa central lo habilita sólo para un QR conectado al mismo número.
+    qrFallbackEnabled: channel === 'whatsapp',
     position: Number(row.position || 0),
     createdAt: cleanString(row.created_at),
     updatedAt: cleanString(row.updated_at)
@@ -543,10 +547,6 @@ function buildReminderDeliveryHealth(reminder, template, senders = [], channelSt
     errors.push('Conecta un número de WhatsApp API o QR para enviar este recordatorio.')
   }
 
-  if (reminder.qrFallbackEnabled && apiSenders.length && !qrSenders.length) {
-    errors.push('El respaldo QR está activado, pero no hay un número QR conectado.')
-  }
-
   const details = errors.length ? errors : warnings
   return {
     status: errors.length ? 'error' : warnings.length ? 'warning' : 'ready',
@@ -685,26 +685,29 @@ function sanitizeReminderInput(input = {}, base = {}) {
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
     confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(merged.confirmationSuccessAction)) ? cleanString(merged.confirmationSuccessAction) : 'chat_card',
     bypassAutomations: merged.bypassAutomations === true ? 1 : 0,
-    qrFallbackEnabled: channel === 'whatsapp' && merged.qrFallbackEnabled === true ? 1 : 0
+    // Se conserva la columna para clientes anteriores, pero el ruteo real es
+    // automático y siempre queda autorizado para WhatsApp API. La capa central
+    // sólo usa un QR del mismo número y por indisponibilidad real de la API.
+    qrFallbackEnabled: channel === 'whatsapp' ? 1 : 0
   }
 }
 
-export async function createAppointmentReminder(input = {}) {
-  await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreConflict = false } = {}) {
   const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input))
   const id = createReminderId()
   const positionRow = await db.get('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM appointment_reminders')
 
-  await db.run(`
+  const result = await db.run(`
     INSERT INTO appointment_reminders (
-      id, name, enabled, message_type, ai_enabled, channel, sender_mode,
+      id, system_key, name, enabled, message_type, ai_enabled, channel, sender_mode,
       sender_phone_number_id, template_id, template_name, template_language,
       content_mode, qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ${ignoreConflict ? 'ON CONFLICT DO NOTHING' : ''}
   `, [
-    id, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
+    id, cleanString(systemKey) || null, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
     data.templateLanguage, data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
@@ -712,7 +715,22 @@ export async function createAppointmentReminder(input = {}) {
     Number(positionRow?.next || 0)
   ])
 
-  return normalizeReminderRow(await db.get('SELECT * FROM appointment_reminders WHERE id = ?', [id]))
+  if (!Number(result?.changes || 0) && systemKey) {
+    return {
+      reminder: normalizeReminderRow(await db.get('SELECT * FROM appointment_reminders WHERE system_key = ?', [systemKey])),
+      created: false
+    }
+  }
+  return {
+    reminder: normalizeReminderRow(await db.get('SELECT * FROM appointment_reminders WHERE id = ?', [id])),
+    created: true
+  }
+}
+
+export async function createAppointmentReminder(input = {}) {
+  await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+  const { reminder } = await insertAppointmentReminder(input)
+  return reminder
 }
 
 export async function updateAppointmentReminder(reminderId, input = {}) {
@@ -774,14 +792,17 @@ export async function ensureDefaultAppointmentReminder() {
 
   const existing = await db.get('SELECT id FROM appointment_reminders LIMIT 1')
   if (!existing) {
-    await createAppointmentReminder({
+    const { created } = await insertAppointmentReminder({
       name: '1 día antes',
       messageType: 'reminder',
       offsetValue: 1,
       offsetUnit: 'days',
       smartEnabled: true
+    }, {
+      systemKey: DEFAULT_REMINDER_SYSTEM_KEY,
+      ignoreConflict: true
     })
-    logger.info('[Citas] Recordatorio por defecto creado (1 día antes)')
+    if (created) logger.info('[Citas] Recordatorio por defecto creado (1 día antes)')
   }
 
   await backfillMissingReminderTemplates()
@@ -819,38 +840,21 @@ async function resolveSenderPhone(reminder, contact) {
     phoneNumberId: null,
     transport: 'api',
     apiEnabled: false,
-    qrReady: false
+    qrReady: false,
+    qrFallbackAvailable: false
   }
 
-  const apiEnabled = Number(row.api_send_enabled || 0) === 1
-  const qrReady = Number(row.qr_send_enabled || 0) === 1 && cleanString(row.qr_status).toLowerCase() === 'connected'
+  const route = await resolveWhatsAppOutboundRoute({
+    phoneNumberId: cleanString(row.id),
+    fromPhone: cleanString(row.phone_number)
+  })
   return {
-    fromPhone: cleanString(row.phone_number) || null,
-    phoneNumberId: cleanString(row.id) || null,
-    transport: apiEnabled ? 'api' : 'qr',
-    apiEnabled,
-    qrReady
-  }
-}
-
-async function resolveQrFallbackSender(preferredSender = {}) {
-  if (preferredSender.qrReady) return preferredSender
-
-  const row = await db.get(`
-    SELECT id, phone_number, api_send_enabled, qr_send_enabled, qr_status
-    FROM whatsapp_api_phone_numbers
-    WHERE qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected'
-    ORDER BY is_default_sender DESC, updated_at DESC
-    LIMIT 1
-  `)
-
-  if (!row) return null
-  return {
-    fromPhone: cleanString(row.phone_number) || null,
-    phoneNumberId: cleanString(row.id) || null,
-    transport: 'qr',
-    apiEnabled: Number(row.api_send_enabled || 0) === 1,
-    qrReady: true
+    fromPhone: route.fromPhone,
+    phoneNumberId: route.phoneNumberId,
+    transport: route.transport,
+    apiEnabled: route.available && route.transport === 'api',
+    qrReady: route.available && route.transport === 'qr',
+    qrFallbackAvailable: route.qrFallbackAvailable
   }
 }
 
@@ -919,18 +923,10 @@ function renderReminderTemplateText(template, context) {
   return parts.join('\n\n')
 }
 
-async function sendReminderViaQr({ reminder, appointment, sender, template, timezone, reason, primary = false }) {
-  if (!primary && !reminder.qrFallbackEnabled) {
-    throw new Error(reason || 'El respaldo por QR no está activado para este recordatorio.')
+async function sendReminderViaQr({ reminder, appointment, sender, template, timezone }) {
+  if (!sender?.qrReady) {
+    throw new Error('Conecta un número de WhatsApp QR para enviar este recordatorio.')
   }
-
-  const qrSender = await resolveQrFallbackSender(sender)
-  if (!qrSender?.qrReady) {
-    throw new Error(primary
-      ? 'Conecta un número de WhatsApp QR para enviar este recordatorio.'
-      : 'El respaldo por QR está activado, pero no hay un número conectado por QR.')
-  }
-
   const text = template
     ? renderReminderTemplateText(template, { appointment, timezone })
     : renderMessageText(reminder.messageText, { contact: appointment, appointment, timezone })
@@ -938,17 +934,13 @@ async function sendReminderViaQr({ reminder, appointment, sender, template, time
   const response = await sendWhatsAppApiTextMessage({
     to: appointment.phone,
     text,
-    from: qrSender.fromPhone || undefined,
+    from: sender.fromPhone || undefined,
     contactId: appointment.contact_id,
-    phoneNumberId: qrSender.phoneNumberId || undefined,
-    transport: 'qr'
+    phoneNumberId: sender.phoneNumberId || undefined,
+    transport: 'qr',
+    allowQrFallback: false
   })
-  return {
-    ...response,
-    // Si la fila también tiene API activa, la capa central sustituye la
-    // petición QR por API. Reflejamos el transporte real también en logs.
-    transport: response?.transport || (sender.apiEnabled ? 'api' : 'qr')
-  }
+  return response
 }
 
 function reminderUsesWhatsAppTemplate(reminder = {}) {
@@ -1063,7 +1055,7 @@ async function sendReminderByResolvedChannel({ reminder, appointment, timezone, 
     // El ruteo automático no implementa su propio salto API -> QR. Conserva
     // la preferencia sólo en el intento API y deja que la capa central valide
     // si la indisponibilidad realmente autoriza el respaldo del mismo número.
-    qrFallbackEnabled: resolvedChannel === 'whatsapp' && reminder.qrFallbackEnabled === true,
+    qrFallbackEnabled: resolvedChannel === 'whatsapp',
     senderMode: isWhatsAppReminderChannel(resolvedChannel) ? reminder.senderMode : 'contact'
   }
   const missingTarget = getMissingReminderTarget(resolvedReminder, appointment)
@@ -1119,17 +1111,6 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
     })
   }
 
-  if (!sender.apiEnabled && reminder.qrFallbackEnabled) {
-    return sendReminderViaQr({
-      reminder,
-      appointment,
-      sender,
-      template: null,
-      timezone,
-      reason: 'WhatsApp API no está disponible para este remitente.'
-    })
-  }
-
   if (!sender.apiEnabled) {
     throw new Error('Conecta un número de WhatsApp API o QR para enviar este recordatorio.')
   }
@@ -1140,7 +1121,7 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
     from: sender.fromPhone || undefined,
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
-    allowQrFallback: reminder.qrFallbackEnabled === true
+    allowQrFallback: true
   })
 }
 
@@ -1180,16 +1161,13 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
 
   const providerState = getMessageTemplateProviderState(template)
   const templateStatus = providerState.status
-  const useQrPrimary = !sender.apiEnabled && sender.qrReady
-  if (useQrPrimary) {
+  if (!sender.apiEnabled && sender.qrReady) {
     return sendReminderViaQr({
       reminder,
       appointment,
       sender,
       template,
-      timezone,
-      primary: true,
-      reason: 'WhatsApp API no está disponible; se enviará por QR.'
+      timezone
     })
   }
 
@@ -1198,16 +1176,7 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     throw new Error(`La plantilla ${template.name} está ${statusLabel}; solo se pueden enviar plantillas APPROVED por WhatsApp API.`)
   }
 
-  if (!sender.apiEnabled && reminder.qrFallbackEnabled) {
-    return sendReminderViaQr({
-      reminder,
-      appointment,
-      sender,
-      template,
-      timezone,
-      reason: 'WhatsApp API no está disponible para este remitente.'
-    })
-  }
+  if (!sender.apiEnabled) throw new Error('Conecta un número de WhatsApp API o QR para enviar este recordatorio.')
 
   const components = buildReminderTemplateComponents(template, { appointment, timezone })
   return sendWhatsAppApiTemplateMessage({
@@ -1218,35 +1187,7 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     ...(components.length ? { components } : {}),
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
-    allowQrFallback: reminder.qrFallbackEnabled === true
-  })
-}
-
-async function sendReminderViaWhatsAppQrOnly({ reminder, appointment, timezone }) {
-  const sender = await resolveSenderPhone(reminder, appointment)
-  const selectedSenderId = cleanString(reminder.senderPhoneNumberId)
-  if (
-    reminder.senderMode === 'specific' &&
-    (!sender.phoneNumberId || sender.phoneNumberId !== selectedSenderId || !sender.qrReady)
-  ) {
-    throw new Error('El remitente elegido no está conectado por WhatsApp QR.')
-  }
-
-  const template = reminder.contentMode === 'direct'
-    ? null
-    : await getReminderTemplateById(reminder.templateId)
-  if (reminder.contentMode !== 'direct' && !template) {
-    throw new Error('Selecciona un mensaje de WhatsApp para renderizarlo por QR.')
-  }
-
-  return sendReminderViaQr({
-    reminder,
-    appointment,
-    sender,
-    template,
-    timezone,
-    primary: true,
-    reason: 'WhatsApp QR elegido como canal.'
+    allowQrFallback: true
   })
 }
 
@@ -1260,9 +1201,6 @@ async function sendAppointmentReminderByChannel({ reminder, appointment, timezon
   }
   if (channel === 'messenger' || channel === 'instagram') {
     return sendReminderViaMetaSocial({ reminder, appointment, timezone })
-  }
-  if (channel === 'whatsapp_qr') {
-    return sendReminderViaWhatsAppQrOnly({ reminder, appointment, timezone })
   }
   if (reminderUsesWhatsAppTemplate(reminder)) {
     return sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone })

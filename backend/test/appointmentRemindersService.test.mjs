@@ -578,7 +578,7 @@ test('recordatorios con canal QR no brincan una API activa del mismo número', a
   })
 })
 
-test('recordatorios por canal disponible no brincan a QR si el respaldo no está autorizado', async () => {
+test('recordatorios por canal disponible usan automáticamente el QR del mismo número si cae la API', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const sentMessages = []
     await withReminderFixture({
@@ -615,18 +615,19 @@ test('recordatorios por canal disponible no brincan a QR si el respaldo no está
 
       const result = await processDueAppointmentReminders({ batchSize: 1 })
 
-      assert.equal(result.sent, 0)
-      assert.equal(result.errors, 1)
+      assert.equal(result.sent, 1)
+      assert.equal(result.errors, 0)
       assert.equal(captures.length, 0)
-      assert.equal(sentMessages.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.match(sentMessages[0].payload.text, /Canal disponible para Ana/)
 
       const send = await db.get(
         'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
         [appointmentId]
       )
-      assert.equal(send.status, 'error')
-      assert.match(send.error_message, /WhatsApp Business no está conectado/)
-      assert.equal(send.sent_message_id, null)
+      assert.equal(send.status, 'sent')
+      assert.equal(send.error_message, null)
+      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
     })
   }, {
     onMessage: async () => ycloudJsonResponse(

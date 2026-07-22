@@ -6,6 +6,7 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   getWhatsAppApiStatus,
   getWhatsAppApiConfigKeys,
+  resolveWhatsAppOutboundRoute,
   sendWhatsAppApiInteractiveMessage,
   sendWhatsAppApiTextMessage,
   sendWhatsAppApiTemplateMessage,
@@ -636,6 +637,39 @@ test('mensaje manual pedido por QR usa API oficial si la ventana de 24h sigue ab
   })
 })
 
+test('el ruteo activo promueve API y conserva el QR hermano como respaldo automático', async () => {
+  await withYCloudMessageCapture(async () => {
+    const suffix = randomUUID()
+    const apiId = `phone_api_route_${suffix}`
+    const qrId = `phone_qr_route_${suffix}`
+    const businessPhone = '+526561234567'
+    try {
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'ycloud', 'waba_ycloud_buttons_test', ?, ?, 'API Route Test',
+          1, 1, 0, 'disconnected', 'CONNECTED')
+      `, [apiId, businessPhone, businessPhone])
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'qr', ?, ?, 'QR Route Test', 0, 0, 1, 'connected', 'CONNECTED')
+      `, [qrId, businessPhone, businessPhone])
+
+      const route = await resolveWhatsAppOutboundRoute({ phoneNumberId: qrId })
+
+      assert.equal(route.available, true)
+      assert.equal(route.transport, 'api')
+      assert.equal(route.phoneNumberId, apiId)
+      assert.equal(route.qrFallbackAvailable, true)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [apiId, qrId])
+    }
+  })
+})
+
 test('envía botones interactivos de respuesta por YCloud', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const to = '+5215511112222'
@@ -1146,7 +1180,9 @@ test('automatización con respaldo QR usa WhatsApp API primero cuando está disp
           config: {
             sender: 'default',
             messageType: 'text',
-            sendViaQr: true,
+            // El flag legacy ya no gobierna el ruteo. Aunque esté apagado y el
+            // transporte guardado diga QR, la API oficial sigue siendo primaria.
+            sendViaQr: false,
             transport: 'qr',
             messageBlocks: [
               {

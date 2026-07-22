@@ -5,7 +5,6 @@ import {
   CatalogSelect,
   ConfigSection,
   Field,
-  Toggle,
   useCatalogOptions
 } from './configPrimitives'
 import { MessageBlocksEditor } from './MessageBlocksEditor'
@@ -58,8 +57,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
-  const qrOnlyConnected = whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected
-  const allowQrFallback = !qrOnlyConnected && config.sendViaQr === true
 
   useEffect(() => {
     let mounted = true
@@ -75,28 +72,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
       mounted = false
     }
   }, [])
-
-  useEffect(() => {
-    const currentTransport = str(config.transport)
-    if (qrOnlyConnected) {
-      if (currentTransport === 'qr') return
-      onChange({
-        ...config,
-        sendViaQr: false,
-        transport: 'qr'
-      })
-      return
-    }
-
-    if (currentTransport === 'qr' && config.sendViaQr !== true) {
-      onChange({
-        ...config,
-        sendViaQr: false,
-        transport: 'api'
-      })
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qrOnlyConnected, config.transport, config.sendViaQr])
 
   // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
@@ -165,9 +140,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         messageType: 'template',
         messageBlocks: nextBlocks,
         templateId: str(firstTemplate?.templateId),
-        templateName: str(firstTemplate?.templateName),
-        sendViaQr: false,
-        transport: qrOnlyConnected ? 'qr' : 'api'
+        templateName: str(firstTemplate?.templateName)
       })
       return
     }
@@ -175,46 +148,17 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
       messageType: next,
       messageBlocks: normalBlocks,
       templateId: '',
-      templateName: '',
-      sendViaQr: false,
-      transport: qrOnlyConnected ? 'qr' : 'api'
+      templateName: ''
     })
   }
 
-  const applyQrFallback = (checked: boolean) => {
-    set({
-      sendViaQr: checked,
-      transport: 'api'
-    })
-  }
-
-  const setAllowQrFallback = (checked: boolean) => {
-    applyQrFallback(checked)
-  }
-
-  const qrFallbackNotice = (
-    <>
-      {whatsappAvailability.canShowQrFallbackSwitch && (
-        <div>
-          <Toggle
-            checked={allowQrFallback}
-            onChange={setAllowQrFallback}
-            label="Permitir QR"
-          />
-          <span className={styles.configHelp}>
-            Si WhatsApp API no está disponible, Ristak intentará enviar el mensaje por QR.
-          </span>
-        </div>
-      )}
-
-      {allowQrFallback && !whatsappAvailability.hasQrConnected && (
-        <div className={styles.configWarning}>
-          <AlertTriangle size={12} />
-          Esta automatización permite respaldo por QR, pero ahora no hay ningún número conectado por QR.
-        </div>
-      )}
-    </>
-  )
+  const activeChannelNotice = whatsappAvailability.hasApiConnected && whatsappAvailability.hasQrConnected
+    ? 'Canal automático: WhatsApp API sale primero. Si ese mismo número pierde la API, Ristak usa su conexión QR como respaldo.'
+    : whatsappAvailability.hasQrConnected
+      ? 'Canal automático: este mensaje se enviará por la conexión QR activa.'
+      : whatsappAvailability.hasApiConnected
+        ? 'Canal automático: este mensaje se enviará por WhatsApp API y usará plantilla oficial cuando corresponda.'
+        : ''
 
   return (
     <div className={styles.whatsappConfig}>
@@ -275,7 +219,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
               onChange={setNormalBlocks}
               supportsQuickReplies={false}
               buttonLabelMaxLength={20}
-              afterBlocks={qrFallbackNotice}
+              afterBlocks={activeChannelNotice ? <span className={styles.configHelp}>{activeChannelNotice}</span> : undefined}
             />
           </>
         )}
@@ -290,6 +234,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
             <p className={styles.configHelp}>
               Cada plantilla ya incluye su idioma y sus variables: encadena varias con retrasos entre ellas si lo necesitas.
             </p>
+            {activeChannelNotice && <p className={styles.configHelp}>{activeChannelNotice}</p>}
           </>
         )}
       </ConfigSection>

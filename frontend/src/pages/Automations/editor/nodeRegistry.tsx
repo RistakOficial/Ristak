@@ -1546,16 +1546,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
       const firstTemplate = messageBlocks.find((block) => block.type === 'template')
       const templateLabel = str(config.templateName) || str(firstTemplate?.templateName) || str(firstTemplate?.templateId)
       const countLabel = !isTemplate && blocks > 1 ? ` · ${blocks} mensajes` : ''
-      let methodLabel = ' · API'
-      if (isTemplate) {
-        methodLabel = str(config.transport) === 'qr' && config.sendViaQr !== true
-          ? ' · Plantilla como texto · QR'
-          : ' · Plantilla · API'
-      } else if (str(config.transport) === 'qr' && config.sendViaQr !== true) {
-        methodLabel = ' · QR'
-      } else if (config.sendViaQr === true) {
-        methodLabel = ' · API + QR respaldo'
-      }
+      const methodLabel = isTemplate ? ' · Plantilla · canal activo' : ' · Canal activo'
       return {
         text: `${senderLabels[str(config.sender)] || 'Número principal'}${countLabel}${methodLabel}`,
         box: isTemplate ? templateLabel || undefined : firstTextBlock(config) || undefined,

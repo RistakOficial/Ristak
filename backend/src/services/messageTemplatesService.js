@@ -1639,6 +1639,7 @@ async function ensureTemplateFolder(folderDefinition, sortOrder = -100) {
   await db.run(`
     INSERT INTO whatsapp_template_folders (id, name, parent_id, sort_order, created_at, updated_at)
     VALUES (?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT DO NOTHING
   `, [folderDefinition.id, folderDefinition.name, sortOrder])
 
   return mapFolder(await db.get(
@@ -1688,16 +1689,30 @@ async function ensureDefaultMessageTemplate(definition, folderId, { provider } =
     return { template, refreshed, refreshSkippedLocked, created: false }
   }
 
-  return {
-    template: await createMessageTemplate({
-      ...definition,
-      folderId,
-      name,
-      language
-    }),
-    refreshed: true,
-    refreshSkippedLocked: false,
-    created: true
+  try {
+    return {
+      template: await createMessageTemplate({
+        ...definition,
+        folderId,
+        name,
+        language
+      }),
+      refreshed: true,
+      refreshSkippedLocked: false,
+      created: true
+    }
+  } catch (error) {
+    // Dos instancias pueden arrancar al mismo tiempo. Si la otra ganó la
+    // inserción, la plantilla ya existe y este arranque debe continuar como un
+    // ensure idempotente, no tumbar el servicio por una carrera inocente.
+    const concurrent = await findMessageTemplateByNameLanguage(name, language)
+    if (!concurrent) throw error
+    return {
+      template: concurrent,
+      refreshed: false,
+      refreshSkippedLocked: false,
+      created: false
+    }
   }
 }
 

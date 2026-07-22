@@ -129,6 +129,16 @@ aplica a ventana cerrada, plantilla no aprobada, destinatario, contenido,
 `131047`, `131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts siempre usan
 `allowQrFallback=false`.
 
+Los nodos de WhatsApp en Automatizaciones y los recordatorios/avisos de Citas
+autorizan este ruteo estricto automáticamente. En esas superficies,
+`sendViaQr` y `qr_fallback_enabled` son campos legacy de compatibilidad y no
+deciden el transporte: QR-only envía por QR; API-only envía por API; y el mismo
+número con API+QR intenta API una sola vez y sólo usa su QR ante una
+indisponibilidad inequívoca. Las plantillas continúan saliendo como plantillas
+oficiales cuando existe API; estar pendientes/rechazadas o tener la ventana de
+24 horas cerrada nunca habilita QR. Campañas/broadcasts conservan su prohibición
+explícita de fallback.
+
 El webhook es un observador: persiste estados y puede marcar la API restringida
 para solicitudes futuras, pero jamás origina un envío QR. Si una solicitud fue
 aceptada y después llega `failed`, se conserva como fallo API. Esta frontera

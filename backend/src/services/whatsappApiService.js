@@ -3724,6 +3724,77 @@ async function findQrFallbackPhoneRowForSender({ phoneNumberId, fromPhone, phone
   ) || null
 }
 
+/**
+ * Resuelve el canal activo de un número sin enviar todavía el mensaje.
+ *
+ * La fila oficial es siempre la primaria cuando representa el mismo número que
+ * una conexión QR. QR sólo queda como transporte primario si no hay API oficial
+ * disponible, y como respaldo únicamente cuando pertenece al mismo teléfono.
+ */
+export async function resolveWhatsAppOutboundRoute({ phoneNumberId, fromPhone } = {}) {
+  let config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone })
+
+  // Algunas automatizaciones antiguas no guardaron un remitente explícito. En
+  // ese caso usamos la fila activa predeterminada y volvemos a resolver para que
+  // también pueda promover una fila QR a su API oficial gemela.
+  if (!cleanString(phoneNumberId) && !cleanString(fromPhone)) {
+    const defaultRow = await db.get(`
+      SELECT ${BUSINESS_PHONE_ROW_SELECT}
+      FROM whatsapp_api_phone_numbers
+      WHERE api_send_enabled = 1
+         OR (qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected')
+      ORDER BY is_default_sender DESC, updated_at DESC
+      LIMIT 1
+    `).catch(() => null)
+    if (defaultRow?.id) {
+      config = await loadWhatsAppOutboundConfig({ phoneNumberId: defaultRow.id })
+    }
+  }
+
+  const phoneRow = config.selectedPhoneRow
+  const provider = cleanString(config.provider).toLowerCase()
+  const officialAvailable = Boolean(
+    config.officialApiAvailable &&
+    (provider === PROVIDER_NAME || provider === META_DIRECT_PROVIDER_NAME)
+  )
+  const qrRow = await findQrFallbackPhoneRowForSender({
+    phoneNumberId: config.phoneNumberId || phoneNumberId,
+    fromPhone: config.senderPhone || fromPhone,
+    phoneRow
+  })
+
+  if (officialAvailable) {
+    return {
+      available: true,
+      transport: 'api',
+      provider,
+      phoneNumberId: cleanString(config.phoneNumberId) || null,
+      fromPhone: cleanString(config.senderPhone) || null,
+      qrFallbackAvailable: Boolean(qrRow?.id)
+    }
+  }
+
+  if (qrRow?.id) {
+    return {
+      available: true,
+      transport: 'qr',
+      provider: 'qr',
+      phoneNumberId: cleanString(qrRow.id) || null,
+      fromPhone: cleanString(qrRow.phone_number || qrRow.display_phone_number || qrRow.qr_connected_phone) || null,
+      qrFallbackAvailable: false
+    }
+  }
+
+  return {
+    available: false,
+    transport: 'api',
+    provider,
+    phoneNumberId: cleanString(config.phoneNumberId || phoneNumberId) || null,
+    fromPhone: cleanString(config.senderPhone || fromPhone) || null,
+    qrFallbackAvailable: false
+  }
+}
+
 function buildSqlInClause(values = []) {
   const uniqueValues = [...new Set(values.map(cleanString).filter(Boolean))]
   if (!uniqueValues.length) return { clause: '', params: [] }

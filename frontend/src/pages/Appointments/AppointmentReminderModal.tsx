@@ -209,10 +209,6 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     setDraft(prev => ({ ...prev, [key]: value }))
   }
 
-  const setQrFallbackEnabled = (checked: boolean) => {
-    set('qrFallbackEnabled', checked)
-  }
-
   const selectedChannelId = String(draft.channel || reminder?.channel || 'whatsapp')
   const channel = channels.find(item => item.id === selectedChannelId) || channels[0]
   const isWhatsAppApiChannel = selectedChannelId === 'whatsapp'
@@ -364,7 +360,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       ...prev,
       channel: nextChannel,
       contentMode: prev.contentMode === 'direct' ? 'direct' : nextContentMode,
-      qrFallbackEnabled: nextChannel === 'whatsapp' ? prev.qrFallbackEnabled : false,
+      qrFallbackEnabled: nextChannel === 'whatsapp',
       senderMode: nextUsesWhatsApp && !nextAutomatic ? prev.senderMode : 'contact',
       senderPhoneNumberId: nextUsesWhatsApp && !nextAutomatic ? prev.senderPhoneNumberId : null
     }))
@@ -379,7 +375,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         ? {
             templateId: null,
             templateName: '',
-            qrFallbackEnabled: isWhatsAppApiChannel ? prev.qrFallbackEnabled : false
+            qrFallbackEnabled: isWhatsAppApiChannel
           }
         : {})
     }))
@@ -419,7 +415,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         ...draft,
         channel: selectedChannelId,
         contentMode,
-        qrFallbackEnabled: isWhatsAppApiChannel ? draft.qrFallbackEnabled : false
+        qrFallbackEnabled: isWhatsAppApiChannel
       })
       onClose()
     } finally {
@@ -871,15 +867,15 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </div>
             )}
 
-            {contentMode === 'template' && selectedTemplate && !selectedTemplateApproved && !draft.qrFallbackEnabled && !qrOnlyConnected && !isWhatsAppQrOnly && (
+            {contentMode === 'template' && selectedTemplate && !selectedTemplateApproved && !qrOnlyConnected && !isWhatsAppQrOnly && (
               <div className={styles.templateNotice}>
                 Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe y WhatsApp API esté disponible.
               </div>
             )}
 
-            {isWhatsAppApiChannel && !hasApiConnected && !hasQrConnected && (contentMode === 'direct' || selectedTemplateApproved) && !draft.qrFallbackEnabled && (
+            {isWhatsAppApiChannel && !hasApiConnected && !hasQrConnected && (
               <div className={styles.templateNotice}>
-                WhatsApp no está disponible ahora. Con QR apagado, este recordatorio esperará a que la API vuelva.
+                WhatsApp no está disponible ahora. Conecta WhatsApp API o un número por QR para enviar este recordatorio.
               </div>
             )}
 
@@ -889,20 +885,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </div>
             )}
 
-            {isWhatsAppApiChannel && whatsappAvailability.canShowQrFallbackSwitch && (
-              <div className={styles.confirmationToggleBox}>
-                <div className={styles.confirmationToggleCopy}>
-                  <span className={styles.confirmationToggleTitle}>Usar QR como respaldo</span>
-                  <span className={styles.helpText}>
-                    Si WhatsApp API no está disponible{contentMode === 'template' ? ' o la plantilla sigue en revisión, rechazada o pausada' : ''},
-                    Ristak intentará mandar el texto por QR.
-                  </span>
-                </div>
-                <Switch
-                  checked={draft.qrFallbackEnabled === true}
-                  onChange={setQrFallbackEnabled}
-                  aria-label="Usar QR como respaldo"
-                />
+            {isWhatsAppApiChannel && hasApiConnected && hasQrConnected && (
+              <div className={styles.templateNotice}>
+                Ristak enviará primero por WhatsApp API. Si ese mismo número pierde la API, usará su QR automáticamente; una plantilla sin aprobar o una ventana cerrada no provocan ese cambio.
               </div>
             )}
           </section>

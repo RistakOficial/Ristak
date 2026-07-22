@@ -7938,6 +7938,7 @@ async function initTablesUnlocked() {
     await db.run(`
       CREATE TABLE IF NOT EXISTS appointment_reminders (
         id TEXT PRIMARY KEY,
+        system_key TEXT,
         name TEXT,
         enabled INTEGER DEFAULT 1,
         message_type TEXT DEFAULT 'reminder',
@@ -8021,6 +8022,16 @@ async function initTablesUnlocked() {
     try {
       await db.run('ALTER TABLE appointment_reminders ADD COLUMN qr_fallback_enabled INTEGER DEFAULT 0')
     } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN system_key TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_reminders_system_key
+      ON appointment_reminders(system_key)
+      WHERE system_key IS NOT NULL
+    `)
 
     try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN timing_anchor TEXT DEFAULT 'before_appointment'")

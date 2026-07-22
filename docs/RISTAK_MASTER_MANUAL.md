@@ -2830,8 +2830,13 @@ la configuracion usa una plantilla, Ristak debe renderizar la plantilla local o
 predeterminada como texto limpio, incluyendo URLs de botones, y enviarla por QR
 sin exigir aprobacion de Meta/YCloud. El riesgo de usar QR se comunica al conectar
 la sesion; las superficies posteriores de citas, pagos y Automatizaciones no
-repiten esa advertencia. Cuando tambien hay WhatsApp API conectado, el usuario
-puede activar QR como respaldo directamente desde la configuracion correspondiente.
+repiten esa advertencia. En nodos de WhatsApp y mensajes automáticos de Citas el
+canal ya no depende de un switch manual: si el mismo número tiene API y QR,
+Ristak usa API primero y habilita su QR como respaldo estricto de forma
+automática. `sendViaQr` y `qr_fallback_enabled` sólo sobreviven para leer flujos
+viejos; no pueden forzar QR, apagar el respaldo seguro ni seleccionar un QR de
+otro teléfono. Plantilla no aprobada, ventana cerrada y contenido inválido siguen
+siendo errores de API y no provocan fallback.
 
 En automatizaciones de pago, si la plantilla configurada esta pendiente,
 rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero
@@ -3630,8 +3635,9 @@ Las citas antiguas o formularios que no informan canal usan directamente la
 prioridad configurada. "Por canal disponible" hace un solo intento de WhatsApp:
 API si está disponible o QR si es standalone; después prueba Instagram,
 Messenger y correo electrónico.
-`channel='whatsapp'` usa WhatsApp API como ruta principal y QR solo como
-respaldo opcional. `channel='whatsapp_qr'` usa QR como ruta principal sólo si la
+`channel='whatsapp'` usa el canal conectado automáticamente: WhatsApp API como
+ruta principal y el QR del mismo teléfono como respaldo estricto, sin switch
+manual. `channel='whatsapp_qr'` queda por compatibilidad y usa QR como ruta principal sólo si la
 API del mismo teléfono no está disponible. En los dos canales de WhatsApp, el contenido
 puede ser `content_mode='template'` para seleccionar un mensaje guardado o
 `content_mode='direct'` para texto editable; en QR el mensaje guardado se renderiza
@@ -3654,8 +3660,9 @@ Si solo hay WhatsApp QR conectado, recordatorios y avisos de cita envian el
 texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API este
 pendiente o no exista remotamente. Si hay API y QR conectados para el mismo
 teléfono, API sigue como ruta principal incluso si una configuración histórica
-guardó `whatsapp_qr`; QR entra sólo ante indisponibilidad real y cuando el switch
-de respaldo autorizó esa solicitud.
+guardó `whatsapp_qr`; QR entra sólo ante indisponibilidad real. La autorización
+la agrega automáticamente el servicio de Citas y la capa central verifica que
+el QR pertenezca al mismo número.
 
 Los mensajes directos por WhatsApp API en citas tambien dependen de ventana de
 conversacion abierta de 24 horas. Si no existe una respuesta reciente del
@@ -3671,6 +3678,14 @@ envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
 marca como omitido en vez de mandar un WhatsApp tarde. El enfriamiento se compara
 en UTC con SQL nativo del motor activo; PostgreSQL no ejecuta funciones exclusivas
 de SQLite durante este reclamo.
+
+El recordatorio inicial de `1 día antes` lleva
+`system_key='default_one_day_before'` y un índice único parcial. Así dos
+instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Los
+recordatorios creados manualmente guardan `system_key=NULL`, por lo que el
+usuario sí puede configurar dos recordatorios iguales de manera intencional.
+La creación concurrente de la carpeta y plantillas base también usa operaciones
+idempotentes para que esa carrera no tumbe el arranque antes de llegar al índice.
 
 En PostgreSQL, las columnas de citas y envios siguen siendo
 `timestamp without time zone` con el valor normalizado a UTC. Al leerlas, el
