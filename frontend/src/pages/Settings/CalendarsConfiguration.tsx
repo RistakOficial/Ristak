@@ -88,6 +88,7 @@ import {
 import {
   appointmentRemindersService,
   formatReminderOffsetLabel,
+  isAppointmentReminderScheduleConflict,
   type AppointmentReminder,
   type AppointmentReminderInput,
   type ReminderChannelOption,
@@ -946,7 +947,6 @@ export const CalendarsConfiguration: React.FC = () => {
   const [selectedAppointmentReminder, setSelectedAppointmentReminder] = useState<AppointmentReminder | null>(null)
   const [isAppointmentReminderModalOpen, setIsAppointmentReminderModalOpen] = useState(false)
   const [loadingAppointmentReminders, setLoadingAppointmentReminders] = useState(false)
-  const [creatingAppointmentReminder, setCreatingAppointmentReminder] = useState(false)
   const appointmentReminderSettingsLoadedRef = useRef(false)
   const metaVariablesLoadedRef = useRef(false)
 
@@ -1313,30 +1313,24 @@ export const CalendarsConfiguration: React.FC = () => {
     }
   }
 
-  const handleAddAppointmentReminder = async () => {
-    if (creatingAppointmentReminder) return
-    setCreatingAppointmentReminder(true)
-    try {
-      const created = await appointmentRemindersService.createReminder({})
-      setAppointmentReminders(current => [...current, created])
-      setSelectedAppointmentReminder(created)
-      setIsAppointmentReminderModalOpen(true)
-    } catch {
-      showToast('error', 'Recordatorios automáticos', 'No se pudo crear el mensaje automático.')
-    } finally {
-      setCreatingAppointmentReminder(false)
-    }
+  const handleAddAppointmentReminder = () => {
+    setSelectedAppointmentReminder(null)
+    setIsAppointmentReminderModalOpen(true)
   }
 
-  const handleSaveAppointmentReminder = async (reminderId: string, input: AppointmentReminderInput) => {
+  const handleSaveAppointmentReminder = async (reminderId: string | null, input: AppointmentReminderInput) => {
     try {
-      const updated = await appointmentRemindersService.updateReminder(reminderId, input)
-      setAppointmentReminders(current => current.map(item => (
-        item.id === updated.id ? updated : item
-      )))
-      showToast('success', 'Recordatorios automáticos', 'Cambios guardados.')
+      const saved = reminderId
+        ? await appointmentRemindersService.updateReminder(reminderId, input)
+        : await appointmentRemindersService.createReminder(input)
+      setAppointmentReminders(current => reminderId
+        ? current.map(item => item.id === saved.id ? saved : item)
+        : [...current, saved])
+      showToast('success', 'Recordatorios automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.')
     } catch (error) {
-      showToast('error', 'Recordatorios automáticos', 'No se pudieron guardar los cambios.')
+      if (!isAppointmentReminderScheduleConflict(error)) {
+        showToast('error', 'Recordatorios automáticos', 'No se pudieron guardar los cambios.')
+      }
       throw error
     }
   }
@@ -3655,13 +3649,8 @@ export const CalendarsConfiguration: React.FC = () => {
                           variant="secondary"
                           size="small"
                           onClick={handleAddAppointmentReminder}
-                          disabled={creatingAppointmentReminder}
                         >
-                          {creatingAppointmentReminder ? (
-                            <Loader2 size={14} className={styles.spinIcon} />
-                          ) : (
-                            <Plus size={14} />
-                          )}
+                          <Plus size={14} />
                           Agregar
                         </Button>
                       </div>

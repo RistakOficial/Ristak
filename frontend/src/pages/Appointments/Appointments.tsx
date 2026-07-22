@@ -19,6 +19,7 @@ import { parseSortableDateValue } from '@/utils/dateSort'
 import {
   appointmentRemindersService,
   formatReminderOffsetLabel,
+  isAppointmentReminderScheduleConflict,
   type AppointmentReminder,
   type AppointmentReminderInput,
   type ReminderChannelOption,
@@ -362,7 +363,6 @@ export const Appointments: React.FC = () => {
   const [reminderTemplates, setReminderTemplates] = useState<MessageTemplate[]>([]);
   const [selectedReminder, setSelectedReminder] = useState<AppointmentReminder | null>(null);
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
-  const [creatingReminder, setCreatingReminder] = useState(false);
 
   // Modal de cita
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -442,28 +442,24 @@ export const Appointments: React.FC = () => {
     }
   }, [showToast]);
 
-  const handleAddReminder = useCallback(async () => {
-    if (creatingReminder) return;
-    setCreatingReminder(true);
-    try {
-      const created = await appointmentRemindersService.createReminder({});
-      setReminders(prev => [...prev, created]);
-      setSelectedReminder(created);
-      setIsReminderModalOpen(true);
-    } catch {
-      showToast('error', 'Mensajes automáticos', 'No se pudo crear el mensaje automático.');
-    } finally {
-      setCreatingReminder(false);
-    }
-  }, [creatingReminder, showToast]);
+  const handleAddReminder = useCallback(() => {
+    setSelectedReminder(null);
+    setIsReminderModalOpen(true);
+  }, []);
 
-  const handleSaveReminder = useCallback(async (reminderId: string, input: AppointmentReminderInput) => {
+  const handleSaveReminder = useCallback(async (reminderId: string | null, input: AppointmentReminderInput) => {
     try {
-      const updated = await appointmentRemindersService.updateReminder(reminderId, input);
-      setReminders(prev => prev.map(item => item.id === updated.id ? updated : item));
-      showToast('success', 'Mensajes automáticos', 'Cambios guardados.');
+      const saved = reminderId
+        ? await appointmentRemindersService.updateReminder(reminderId, input)
+        : await appointmentRemindersService.createReminder(input);
+      setReminders(prev => reminderId
+        ? prev.map(item => item.id === saved.id ? saved : item)
+        : [...prev, saved]);
+      showToast('success', 'Mensajes automáticos', reminderId ? 'Cambios guardados.' : 'Mensaje automático creado.');
     } catch (error) {
-      showToast('error', 'Mensajes automáticos', 'No se pudieron guardar los cambios.');
+      if (!isAppointmentReminderScheduleConflict(error)) {
+        showToast('error', 'Mensajes automáticos', 'No se pudieron guardar los cambios.');
+      }
       throw error;
     }
   }, [showToast]);
@@ -2650,7 +2646,6 @@ export const Appointments: React.FC = () => {
               type="button"
               className={styles.automationAddButton}
               onClick={handleAddReminder}
-              disabled={creatingReminder}
               aria-label="Agregar mensaje automático"
               title="Agregar mensaje automático"
             >

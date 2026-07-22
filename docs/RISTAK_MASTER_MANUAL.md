@@ -3687,11 +3687,24 @@ de SQLite durante este reclamo.
 
 El recordatorio inicial de `1 día antes` lleva
 `system_key='default_one_day_before'` y un índice único parcial. Así dos
-instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Los
-recordatorios creados manualmente guardan `system_key=NULL`, por lo que el
-usuario sí puede configurar dos recordatorios iguales de manera intencional.
-La creación concurrente de la carpeta y plantillas base también usa operaciones
-idempotentes para que esa carrera no tumbe el arranque antes de llegar al índice.
+instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Además,
+cada mensaje automático guarda una `schedule_key` única compuesta por el ancla
+(`before_appointment` o `after_booking`) y la duración normalizada en
+milisegundos. Dos configuraciones que caerían en el mismo momento —por ejemplo,
+`60 minutos antes` y `1 hora antes`— se consideran el mismo horario sin importar
+canal, plantilla, texto o modo de confirmación. Crear o actualizar un segundo
+mensaje devuelve HTTP `409` con
+`code='appointment_reminder_schedule_conflict'`; el editor permanece abierto y
+muestra el modal canónico para elegir otro momento. La llave única también
+cierra carreras entre pestañas o procesos. Los duplicados históricos no se
+borran durante la migración: sólo la fila canónica recibe la llave y las demás
+deben corregirse al editarse. La creación concurrente de la carpeta y plantillas
+base también usa operaciones idempotentes para que esa carrera no tumbe el
+arranque antes de llegar a los índices.
+
+Al pulsar **Agregar**, el frontend abre un borrador local y no persiste nada
+hasta **Guardar**. Esto evita crear provisionalmente otro recordatorio de un día
+antes y garantiza que cerrar el modal no deje filas huérfanas activas.
 
 En PostgreSQL, las columnas de citas y envios siguen siendo
 `timestamp without time zone` con el valor normalizado a UTC. Al leerlas, el

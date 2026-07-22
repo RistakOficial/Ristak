@@ -45,6 +45,7 @@ export function appointmentReminderRetryCutoffExpression(dialect = databaseDiale
 
 const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
 const DEFAULT_REMINDER_SYSTEM_KEY = 'default_one_day_before'
+const REMINDER_SCHEDULE_CONFLICT_CODE = 'appointment_reminder_schedule_conflict'
 
 // Si un envío quedó pendiente demasiado tiempo (p.ej. cita creada después de
 // que ya pasó la hora del recordatorio), se marca como omitido en vez de
@@ -168,6 +169,76 @@ function normalizeOffsetForAnchor(timingAnchor, rawUnit, rawValue, { clampMax = 
     ? Math.max(1, Math.min(60, Math.round(Number(rawValue) || 1)))
     : Math.max(1, Math.round(Number(rawValue) || 1))
   return { timingAnchor: 'before_appointment', offsetUnit, offsetValue }
+}
+
+export function buildAppointmentReminderScheduleKey(reminder = {}) {
+  const { timingAnchor, offsetUnit, offsetValue } = normalizeOffsetForAnchor(
+    TIMING_ANCHORS.has(cleanString(reminder.timingAnchor))
+      ? cleanString(reminder.timingAnchor)
+      : 'before_appointment',
+    reminder.offsetUnit,
+    reminder.offsetValue,
+    { clampMax: true }
+  )
+  const offsetMs = offsetValue * (OFFSET_UNIT_MS[offsetUnit] || OFFSET_UNIT_MS.days)
+  return `${timingAnchor}:${offsetMs}`
+}
+
+function createReminderScheduleConflictError(existingReminder) {
+  const label = formatOffsetLabel(
+    existingReminder.offsetValue,
+    existingReminder.offsetUnit,
+    existingReminder.timingAnchor
+  )
+  const error = createServiceError(
+    `Ya existe "${existingReminder.name}" configurado para ${label}. Elige otro momento para evitar mensajes repetidos.`,
+    409
+  )
+  error.code = REMINDER_SCHEDULE_CONFLICT_CODE
+  error.conflict = {
+    id: existingReminder.id,
+    name: existingReminder.name,
+    timingAnchor: existingReminder.timingAnchor,
+    offsetValue: existingReminder.offsetValue,
+    offsetUnit: existingReminder.offsetUnit,
+    label
+  }
+  return error
+}
+
+async function findReminderScheduleConflict(scheduleKey, excludeReminderId = '') {
+  const rows = await db.all(`
+    SELECT *
+    FROM appointment_reminders
+    WHERE id != ?
+    ORDER BY position ASC, created_at ASC
+  `, [cleanString(excludeReminderId)])
+
+  return rows
+    .map(normalizeReminderRow)
+    .find(reminder => buildAppointmentReminderScheduleKey(reminder) === scheduleKey) || null
+}
+
+async function assertReminderScheduleAvailable(data, excludeReminderId = '') {
+  const scheduleKey = buildAppointmentReminderScheduleKey(data)
+  const conflict = await findReminderScheduleConflict(scheduleKey, excludeReminderId)
+  if (conflict) throw createReminderScheduleConflictError(conflict)
+  return scheduleKey
+}
+
+function isReminderScheduleUniqueConstraintError(error) {
+  const message = cleanString(error?.message).toLowerCase()
+  return error?.code === '23505' ||
+    error?.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    message.includes('idx_appointment_reminders_schedule_key') ||
+    message.includes('appointment_reminders.schedule_key')
+}
+
+async function rethrowReminderScheduleConflict(error, scheduleKey, excludeReminderId = '') {
+  if (!isReminderScheduleUniqueConstraintError(error)) throw error
+  const conflict = await findReminderScheduleConflict(scheduleKey, excludeReminderId)
+  if (conflict) throw createReminderScheduleConflictError(conflict)
+  throw error
 }
 
 function normalizeReminderRow(row = {}) {
@@ -694,20 +765,21 @@ function sanitizeReminderInput(input = {}, base = {}) {
 
 async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreConflict = false } = {}) {
   const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input))
+  const scheduleKey = buildAppointmentReminderScheduleKey(data)
   const id = createReminderId()
   const positionRow = await db.get('SELECT COALESCE(MAX(position), -1) + 1 AS next FROM appointment_reminders')
 
   const result = await db.run(`
     INSERT INTO appointment_reminders (
-      id, system_key, name, enabled, message_type, ai_enabled, channel, sender_mode,
+      id, system_key, schedule_key, name, enabled, message_type, ai_enabled, channel, sender_mode,
       sender_phone_number_id, template_id, template_name, template_language,
       content_mode, qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ${ignoreConflict ? 'ON CONFLICT DO NOTHING' : ''}
   `, [
-    id, cleanString(systemKey) || null, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
+    id, cleanString(systemKey) || null, scheduleKey, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
     data.templateLanguage, data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
@@ -729,8 +801,14 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
 
 export async function createAppointmentReminder(input = {}) {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
-  const { reminder } = await insertAppointmentReminder(input)
-  return reminder
+  const sanitized = sanitizeReminderInput(input)
+  const scheduleKey = await assertReminderScheduleAvailable(sanitized)
+  try {
+    const { reminder } = await insertAppointmentReminder(input)
+    return reminder
+  } catch (error) {
+    await rethrowReminderScheduleConflict(error, scheduleKey)
+  }
 }
 
 export async function updateAppointmentReminder(reminderId, input = {}) {
@@ -740,6 +818,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
 
   const base = normalizeReminderRow(existing)
   const data = await resolveReminderTemplateSelection(sanitizeReminderInput(input, base))
+  const scheduleKey = await assertReminderScheduleAvailable(data, id)
 
   // Si cambia el tiempo/ancla y el nombre era el autogenerado, regenerarlo.
   const autoName = formatOffsetLabel(base.offsetValue, base.offsetUnit, base.timingAnchor)
@@ -747,21 +826,25 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
     ? formatOffsetLabel(data.offsetValue, data.offsetUnit, data.timingAnchor)
     : data.name))
 
-  await db.run(`
-    UPDATE appointment_reminders
-    SET name = ?, enabled = ?, message_type = ?, ai_enabled = ?, channel = ?, sender_mode = ?,
-      sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
-      content_mode = ?, qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
-      smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
-      no_confirm_action = ?, confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
-    data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
-    data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
-    data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
-    data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations, id
-  ])
+  try {
+    await db.run(`
+      UPDATE appointment_reminders
+      SET schedule_key = ?, name = ?, enabled = ?, message_type = ?, ai_enabled = ?, channel = ?, sender_mode = ?,
+        sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
+        content_mode = ?, qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
+        smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
+        no_confirm_action = ?, confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      scheduleKey, name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
+      data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
+      data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
+      data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
+      data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations, id
+    ])
+  } catch (error) {
+    await rethrowReminderScheduleConflict(error, scheduleKey, id)
+  }
 
   // Si cambió la configuración de tiempo, los envíos pendientes se recalculan
   // solos porque el cron computa la hora de envío al vuelo.

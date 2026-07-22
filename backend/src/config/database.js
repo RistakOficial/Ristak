@@ -7939,6 +7939,7 @@ async function initTablesUnlocked() {
       CREATE TABLE IF NOT EXISTS appointment_reminders (
         id TEXT PRIMARY KEY,
         system_key TEXT,
+        schedule_key TEXT,
         name TEXT,
         enabled INTEGER DEFAULT 1,
         message_type TEXT DEFAULT 'reminder',
@@ -8036,6 +8037,74 @@ async function initTablesUnlocked() {
     try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN timing_anchor TEXT DEFAULT 'before_appointment'")
     } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN schedule_key TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    // Conserva configuraciones históricas sin borrar nada: cuando ya había
+    // duplicados, sólo la primera fila ocupa el horario canónico. Las demás
+    // quedan visibles y deberán corregirse antes de poder volver a guardarse.
+    await db.run(`
+      WITH reminder_schedule_candidates AS (
+        SELECT
+          id,
+          COALESCE(timing_anchor, 'before_appointment') || ':' || CAST(
+            CASE
+              WHEN COALESCE(timing_anchor, 'before_appointment') = 'after_booking' THEN
+                CASE COALESCE(offset_unit, 'minutes')
+                  WHEN 'seconds' THEN COALESCE(offset_value, 0) * 1000
+                  WHEN 'hours' THEN COALESCE(offset_value, 0) * 3600000
+                  ELSE COALESCE(offset_value, 0) * 60000
+                END
+              ELSE
+                CASE COALESCE(offset_unit, 'days')
+                  WHEN 'minutes' THEN COALESCE(offset_value, 1) * 60000
+                  WHEN 'hours' THEN COALESCE(offset_value, 1) * 3600000
+                  ELSE COALESCE(offset_value, 1) * 86400000
+                END
+            END AS TEXT
+          ) AS candidate_key,
+          created_at
+        FROM appointment_reminders
+      ), ranked_reminder_schedules AS (
+        SELECT
+          id,
+          candidate_key,
+          ROW_NUMBER() OVER (
+            PARTITION BY candidate_key
+            ORDER BY created_at ASC, id ASC
+          ) AS schedule_rank
+        FROM reminder_schedule_candidates
+      )
+      UPDATE appointment_reminders
+      SET schedule_key = (
+        SELECT candidate_key
+        FROM ranked_reminder_schedules
+        WHERE ranked_reminder_schedules.id = appointment_reminders.id
+      )
+      WHERE schedule_key IS NULL
+        AND id IN (
+          SELECT id
+          FROM ranked_reminder_schedules
+          WHERE schedule_rank = 1
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM appointment_reminders occupied_schedule
+          WHERE occupied_schedule.schedule_key = (
+            SELECT candidate_key
+            FROM ranked_reminder_schedules
+            WHERE ranked_reminder_schedules.id = appointment_reminders.id
+          )
+        )
+    `)
+
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_appointment_reminders_schedule_key
+      ON appointment_reminders(schedule_key)
+      WHERE schedule_key IS NOT NULL
+    `)
 
     try {
       await db.run('ALTER TABLE appointments ADD COLUMN confirmation_badge_until DATETIME')

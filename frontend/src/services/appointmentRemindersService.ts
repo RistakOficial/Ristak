@@ -1,4 +1,4 @@
-import apiClient from './apiClient'
+import apiClient, { type ApiRequestError } from './apiClient'
 
 // ---------------------------------------------------------------------------
 // Mensajes automáticos de citas (recordatorios, avisos y modo confirmación)
@@ -80,6 +80,43 @@ export interface AppointmentRemindersOverview {
   senders: ReminderSenderOption[]
   channels: ReminderChannelOption[]
 }
+
+export interface AppointmentReminderScheduleConflict {
+  id: string
+  name: string
+  timingAnchor: ReminderTimingAnchor
+  offsetValue: number
+  offsetUnit: ReminderOffsetUnit
+  label: string
+}
+
+const REMINDER_SCHEDULE_CONFLICT_CODE = 'appointment_reminder_schedule_conflict'
+
+export function getAppointmentReminderScheduleConflict(error: unknown): {
+  message: string
+  conflict: AppointmentReminderScheduleConflict | null
+} | null {
+  const apiError = error as ApiRequestError | null
+  if (apiError?.status !== 409 || !apiError.body || typeof apiError.body !== 'object') return null
+
+  const body = apiError.body as {
+    code?: unknown
+    error?: unknown
+    conflict?: AppointmentReminderScheduleConflict
+  }
+  if (body.code !== REMINDER_SCHEDULE_CONFLICT_CODE) return null
+
+  return {
+    message: typeof body.error === 'string'
+      ? body.error
+      : 'Ya existe un mensaje automático configurado para ese momento. Elige otro horario.',
+    conflict: body.conflict || null
+  }
+}
+
+export const isAppointmentReminderScheduleConflict = (error: unknown): boolean => (
+  getAppointmentReminderScheduleConflict(error) !== null
+)
 
 export type AppointmentReminderInput = Partial<Omit<AppointmentReminder, 'id' | 'position' | 'createdAt' | 'updatedAt'>>
 

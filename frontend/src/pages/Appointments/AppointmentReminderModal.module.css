@@ -379,6 +379,7 @@
 .footerActions {
   display: flex;
   gap: 0.5rem;
+  margin-left: auto;
 }
 
 @media (max-width: 640px) {

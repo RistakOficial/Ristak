@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import {
   createAppointmentReminder,
-  ensureDefaultAppointmentReminder
+  ensureDefaultAppointmentReminder,
+  updateAppointmentReminder
 } from '../src/services/appointmentRemindersService.js'
 
 test('el arranque concurrente crea una sola vez el recordatorio predeterminado', async () => {
@@ -21,25 +22,83 @@ test('el arranque concurrente crea una sola vez el recordatorio predeterminado',
   assert.equal(seededRows[0].name, '1 día antes')
 })
 
-test('los recordatorios manuales idénticos siguen permitidos', async () => {
+test('bloquea recordatorios manuales configurados para el mismo momento', async () => {
   await db.run('DELETE FROM appointment_reminders')
 
   const input = {
-    name: 'Recordatorio manual repetido',
+    name: 'Recordatorio manual',
     messageType: 'reminder',
     offsetValue: 1,
     offsetUnit: 'days',
     smartEnabled: true
   }
   const first = await createAppointmentReminder(input)
-  const second = await createAppointmentReminder(input)
 
-  assert.notEqual(first.id, second.id)
-  const rows = await db.all(`
-    SELECT id, system_key
-    FROM appointment_reminders
-    WHERE name = 'Recordatorio manual repetido'
-  `)
-  assert.equal(rows.length, 2)
-  assert.equal(rows.every(row => row.system_key === null), true)
+  await assert.rejects(
+    () => createAppointmentReminder({ ...input, name: 'Otro texto, mismo momento' }),
+    error => {
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'appointment_reminder_schedule_conflict')
+      assert.equal(error.conflict.id, first.id)
+      assert.equal(error.conflict.label, '1 día antes')
+      return true
+    }
+  )
+
+  const rows = await db.all('SELECT id, system_key, schedule_key FROM appointment_reminders')
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].system_key, null)
+  assert.equal(rows[0].schedule_key, 'before_appointment:86400000')
+})
+
+test('normaliza unidades equivalentes y protege también las actualizaciones', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+
+  const oneHour = await createAppointmentReminder({
+    name: 'Una hora antes',
+    timingAnchor: 'before_appointment',
+    offsetValue: 1,
+    offsetUnit: 'hours'
+  })
+  const threeHours = await createAppointmentReminder({
+    name: 'Tres horas antes',
+    timingAnchor: 'before_appointment',
+    offsetValue: 3,
+    offsetUnit: 'hours'
+  })
+
+  await assert.rejects(
+    () => updateAppointmentReminder(threeHours.id, { offsetValue: 60, offsetUnit: 'minutes' }),
+    error => {
+      assert.equal(error.status, 409)
+      assert.equal(error.conflict.id, oneHour.id)
+      return true
+    }
+  )
+
+  const unchanged = await db.get('SELECT offset_value, offset_unit FROM appointment_reminders WHERE id = ?', [threeHours.id])
+  assert.equal(unchanged.offset_value, 3)
+  assert.equal(unchanged.offset_unit, 'hours')
+})
+
+test('la restricción atómica deja una sola alta cuando varias pestañas guardan a la vez', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+
+  const results = await Promise.allSettled(Array.from({ length: 8 }, (_, index) => (
+    createAppointmentReminder({
+      name: `Concurrente ${index}`,
+      timingAnchor: 'after_booking',
+      offsetValue: 15,
+      offsetUnit: 'minutes'
+    })
+  )))
+
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal(results.filter(result => (
+    result.status === 'rejected' &&
+    result.reason?.code === 'appointment_reminder_schedule_conflict'
+  )).length, 7)
+
+  const rows = await db.all("SELECT id FROM appointment_reminders WHERE schedule_key = 'after_booking:900000'")
+  assert.equal(rows.length, 1)
 })

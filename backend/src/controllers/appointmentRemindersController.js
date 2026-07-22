@@ -8,7 +8,10 @@ import {
 
 function sendError(res, error, fallback = 'Error procesando la solicitud') {
   const status = error.status || 500
-  res.status(status).json({ success: false, error: error.message || fallback })
+  const payload = { success: false, error: error.message || fallback }
+  if (error.code) payload.code = error.code
+  if (error.conflict) payload.conflict = error.conflict
+  res.status(status).json(payload)
 }
 
 export async function getAppointmentRemindersHandler(req, res) {

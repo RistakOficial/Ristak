@@ -11,7 +11,8 @@ import {
   type ReminderOffsetUnit,
   type ReminderSenderOption,
   type ReminderTimingAnchor,
-  formatReminderOffsetLabel
+  formatReminderOffsetLabel,
+  getAppointmentReminderScheduleConflict
 } from '@/services/appointmentRemindersService'
 import {
   getMessageTemplateProviderStatus,
@@ -29,7 +30,7 @@ interface AppointmentReminderModalProps {
   channels: ReminderChannelOption[]
   templates: MessageTemplate[]
   onClose: () => void
-  onSave: (reminderId: string, input: AppointmentReminderInput) => Promise<void>
+  onSave: (reminderId: string | null, input: AppointmentReminderInput) => Promise<void>
   onDelete: (reminderId: string) => Promise<void>
 }
 
@@ -160,6 +161,30 @@ const buildTemplatePreview = (template?: MessageTemplate | null) => {
 const isWhatsAppChannelId = (channelId: string) => channelId === 'whatsapp' || channelId === 'whatsapp_qr'
 const isAutomaticChannelId = (channelId: string) => channelId === 'booking_channel' || channelId === 'available_channel'
 
+const createNewReminderDraft = (): AppointmentReminderInput => ({
+  messageType: 'reminder',
+  aiEnabled: true,
+  bypassAutomations: false,
+  senderMode: 'contact',
+  senderPhoneNumberId: null,
+  templateId: null,
+  templateName: '',
+  templateLanguage: 'es_MX',
+  contentMode: 'template',
+  channel: 'whatsapp',
+  qrFallbackEnabled: true,
+  timingAnchor: 'before_appointment',
+  offsetValue: 1,
+  offsetUnit: 'days',
+  messageText: '',
+  smartEnabled: true,
+  smartStart: '09:00',
+  smartEnd: '21:00',
+  smartOverflow: 'before',
+  noConfirmAction: 'no_action',
+  confirmationSuccessAction: 'chat_card'
+})
+
 export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> = ({
   isOpen,
   reminder,
@@ -174,35 +199,39 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
+  const [scheduleConflictMessage, setScheduleConflictMessage] = useState('')
 
   useEffect(() => {
-    if (!isOpen || !reminder) return
-    setDraft({
-      messageType: reminder.messageType,
-      aiEnabled: reminder.aiEnabled,
-      bypassAutomations: reminder.bypassAutomations,
-      senderMode: reminder.senderMode,
-      senderPhoneNumberId: reminder.senderPhoneNumberId,
-      templateId: reminder.templateId,
-      templateName: reminder.templateName || '',
-      templateLanguage: reminder.templateLanguage || 'es_MX',
-      contentMode: reminder.contentMode || 'template',
-      channel: reminder.channel || 'whatsapp',
-      qrFallbackEnabled: reminder.qrFallbackEnabled,
-      timingAnchor: reminder.timingAnchor || 'before_appointment',
-      offsetValue: reminder.offsetValue,
-      offsetUnit: reminder.offsetUnit,
-      messageText: reminder.messageText,
-      smartEnabled: reminder.smartEnabled,
-      smartStart: reminder.smartStart,
-      smartEnd: reminder.smartEnd,
-      smartOverflow: reminder.smartOverflow,
-      noConfirmAction: reminder.noConfirmAction,
-      confirmationSuccessAction: reminder.confirmationSuccessAction
-    })
+    if (!isOpen) return
+    setDraft(reminder
+      ? {
+          messageType: reminder.messageType,
+          aiEnabled: reminder.aiEnabled,
+          bypassAutomations: reminder.bypassAutomations,
+          senderMode: reminder.senderMode,
+          senderPhoneNumberId: reminder.senderPhoneNumberId,
+          templateId: reminder.templateId,
+          templateName: reminder.templateName || '',
+          templateLanguage: reminder.templateLanguage || 'es_MX',
+          contentMode: reminder.contentMode || 'template',
+          channel: reminder.channel || 'whatsapp',
+          qrFallbackEnabled: reminder.qrFallbackEnabled,
+          timingAnchor: reminder.timingAnchor || 'before_appointment',
+          offsetValue: reminder.offsetValue,
+          offsetUnit: reminder.offsetUnit,
+          messageText: reminder.messageText,
+          smartEnabled: reminder.smartEnabled,
+          smartStart: reminder.smartStart,
+          smartEnd: reminder.smartEnd,
+          smartOverflow: reminder.smartOverflow,
+          noConfirmAction: reminder.noConfirmAction,
+          confirmationSuccessAction: reminder.confirmationSuccessAction
+        }
+      : createNewReminderDraft())
     setSaving(false)
     setDeleting(false)
     setConfirmDeleteOpen(false)
+    setScheduleConflictMessage('')
   }, [isOpen, reminder])
 
   const set = <K extends keyof AppointmentReminderInput>(key: K, value: AppointmentReminderInput[K]) => {
@@ -251,14 +280,14 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   }, [draft.messageType, timingAnchor, visibleTemplates])
 
   useEffect(() => {
-    if (!isOpen || !reminder || isDirectMessage || draft.templateId || !defaultTemplateForType) return
+    if (!isOpen || isDirectMessage || draft.templateId || !defaultTemplateForType) return
     setDraft(prev => ({
       ...prev,
       templateId: defaultTemplateForType.id,
       templateName: defaultTemplateForType.name,
       templateLanguage: defaultTemplateForType.language
     }))
-  }, [defaultTemplateForType, draft.templateId, isDirectMessage, isOpen, reminder])
+  }, [defaultTemplateForType, draft.templateId, isDirectMessage, isOpen])
 
   const templateOptions = useMemo(() => visibleTemplates.map(template => ({
     value: template.id,
@@ -287,8 +316,6 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     (draft.offsetUnit as ReminderOffsetUnit) || (isAfterBooking ? 'minutes' : 'days'),
     timingAnchor
   )
-
-  if (!reminder) return null
 
   // El tipo visible (Recordatorio/Aviso) define el ancla de envío. La confirmación
   // es una capacidad aparte y no debe cambiarse automáticamente al mover el ancla.
@@ -411,19 +438,25 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     if (contentMode === 'direct' && !String(draft.messageText || '').trim()) return
     setSaving(true)
     try {
-      await onSave(reminder.id, {
+      await onSave(reminder?.id || null, {
         ...draft,
         channel: selectedChannelId,
         contentMode,
         qrFallbackEnabled: isWhatsAppApiChannel
       })
       onClose()
+    } catch (error) {
+      const conflict = getAppointmentReminderScheduleConflict(error)
+      if (conflict) {
+        setScheduleConflictMessage(conflict.message)
+      }
     } finally {
       setSaving(false)
     }
   }
 
   const handleDelete = async () => {
+    if (!reminder) return
     setDeleting(true)
     try {
       await onDelete(reminder.id)
@@ -441,7 +474,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title="Detalles del mensaje automático"
+        title={reminder ? 'Detalles del mensaje automático' : 'Nuevo mensaje automático'}
         size="lg"
         type="custom"
       >
@@ -893,14 +926,16 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
           </section>
 
           <div className={styles.footer}>
-            <Button
-              variant="ghost"
-              onClick={() => setConfirmDeleteOpen(true)}
-              disabled={saving || deleting}
-            >
-              <Trash2 size={16} aria-hidden="true" />
-              Eliminar
-            </Button>
+            {reminder && (
+              <Button
+                variant="ghost"
+                onClick={() => setConfirmDeleteOpen(true)}
+                disabled={saving || deleting}
+              >
+                <Trash2 size={16} aria-hidden="true" />
+                Eliminar
+              </Button>
+            )}
             <div className={styles.footerActions}>
               <Button variant="secondary" onClick={onClose} disabled={saving || deleting}>
                 Cancelar
@@ -917,11 +952,20 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         isOpen={confirmDeleteOpen}
         onClose={() => setConfirmDeleteOpen(false)}
         title="Eliminar mensaje automático"
-        message={`Se dejará de enviar "${reminder.name}" a tus contactos. Esta acción no se puede deshacer.`}
+        message={`Se dejará de enviar "${reminder?.name || 'este mensaje automático'}" a tus contactos. Esta acción no se puede deshacer.`}
         type="confirm"
         confirmText="Eliminar"
         cancelText="Cancelar"
         onConfirm={handleDelete}
+      />
+
+      <Modal
+        isOpen={Boolean(scheduleConflictMessage)}
+        onClose={() => setScheduleConflictMessage('')}
+        title="Ya existe un recordatorio en ese momento"
+        message={scheduleConflictMessage}
+        type="alert"
+        confirmText="Entendido"
       />
     </>
   )

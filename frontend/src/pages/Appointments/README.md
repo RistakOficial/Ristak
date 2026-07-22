@@ -158,8 +158,18 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
 - El recordatorio inicial de un día antes lleva una `system_key` única para que
-  dos arranques simultáneos no lo dupliquen. Los recordatorios manuales mantienen
-  `system_key=NULL` y pueden repetirse si el usuario lo configuró así.
+  dos arranques simultáneos no lo dupliquen.
+- Un mensaje nuevo vive sólo como borrador local hasta que el usuario pulsa
+  **Guardar**; abrir y cancelar el modal no crea una fila provisional de un día.
+- Cada recordatorio o aviso guarda una `schedule_key` única construida con el
+  ancla y la duración normalizada. Por eso `60 minutos antes` y `1 hora antes`
+  ocupan el mismo momento aunque cambien canal, plantilla, texto o modo de
+  confirmación. Crear o mover otro mensaje a ese momento devuelve
+  `409 appointment_reminder_schedule_conflict`; la UI mantiene abierto el editor
+  y muestra un `<Modal type="alert">` para que el usuario elija otro horario.
+- El índice único cierra carreras entre pestañas o instancias. Si una instalación
+  ya tenía duplicados históricos, no se borran silenciosamente: la fila canónica
+  ocupa la llave y las demás deben corregirse antes de volver a guardarse.
 
 ## Servicio API Frontend
 
