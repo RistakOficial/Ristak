@@ -5507,6 +5507,11 @@ Capacidades:
   `accounts/<slug>` y normaliza la ruta, así que el navegador nunca puede elegir
   ni escapar hacia la raíz de otro cliente. La tabla `media_folders` conserva las
   carpetas vacías; Bunny crea el árbol físico al recibir el primer archivo.
+- El usuario también puede arrastrar archivos o carpetas desde Finder, Escritorio,
+  Descargas o un volumen externo. Soltar sobre una carpeta sube ahí; soltar en el
+  resto del explorador sube a la ubicación abierta. Una carpeta arrastrada
+  conserva su jerarquía interna y la operación siempre copia: no altera el
+  archivo original de la computadora.
 - Mover o eliminar carpetas mantiene sincronizados los assets y la carpeta
   persistente. Las taxonomías automáticas de Chat, Sites, formularios, avatares y
   otros módulos internos no cambian: el control manual aplica sólo a la biblioteca

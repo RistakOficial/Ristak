@@ -29,6 +29,7 @@ import {
   RefreshCw,
   Trash2,
   Upload,
+  UploadCloud,
   X
 } from 'lucide-react'
 import {
@@ -112,6 +113,24 @@ interface MarqueeSelectionState {
   startY: number
   currentX: number
   currentY: number
+}
+
+interface PendingLocalUpload {
+  file: File
+  relativeFolderPath: string
+}
+
+interface DragFileSystemEntry {
+  isFile: boolean
+  isDirectory: boolean
+  name: string
+  file?: (success: (file: File) => void, error?: (reason: DOMException) => void) => void
+  createReader?: () => {
+    readEntries: (
+      success: (entries: DragFileSystemEntry[]) => void,
+      error?: (reason: DOMException) => void
+    ) => void
+  }
 }
 
 const STORAGE_GB = 1024 * 1024 * 1024
@@ -422,6 +441,87 @@ function dataTransferHasMediaPayload(dataTransfer: DataTransfer) {
   return Array.from(dataTransfer.types || []).includes(MEDIA_DRAG_MIME)
 }
 
+function dataTransferHasExternalFiles(dataTransfer: DataTransfer) {
+  if (dataTransferHasMediaPayload(dataTransfer)) return false
+  return Array.from(dataTransfer.types || []).includes('Files') ||
+    Array.from(dataTransfer.items || []).some((item) => item.kind === 'file')
+}
+
+function directoryPathFromRelativeFilePath(relativePath = '') {
+  const segments = pathSegments(relativePath)
+  return segments.slice(0, -1).join('/')
+}
+
+function readDragFileEntry(entry: DragFileSystemEntry) {
+  return new Promise<File>((resolve, reject) => {
+    if (!entry.file) {
+      reject(new Error(`No se pudo leer ${entry.name}.`))
+      return
+    }
+    entry.file(resolve, reject)
+  })
+}
+
+async function readAllDragDirectoryEntries(entry: DragFileSystemEntry) {
+  const reader = entry.createReader?.()
+  if (!reader) return []
+  const entries: DragFileSystemEntry[] = []
+  while (true) {
+    const batch = await new Promise<DragFileSystemEntry[]>((resolve, reject) => {
+      reader.readEntries(resolve, reject)
+    })
+    if (!batch.length) return entries
+    entries.push(...batch)
+  }
+}
+
+async function collectDragEntryFiles(
+  entry: DragFileSystemEntry,
+  parentPath = ''
+): Promise<PendingLocalUpload[]> {
+  const relativePath = joinFolderPath(parentPath, entry.name)
+  if (entry.isFile) {
+    return [{ file: await readDragFileEntry(entry), relativeFolderPath: parentPath }]
+  }
+  if (!entry.isDirectory) return []
+
+  const children = await readAllDragDirectoryEntries(entry)
+  const nested = await Promise.all(children.map((child) => collectDragEntryFiles(child, relativePath)))
+  return nested.flat()
+}
+
+async function readExternalDroppedFiles(dataTransfer: DataTransfer): Promise<PendingLocalUpload[]> {
+  // El navegador protege DataTransfer al terminar el evento. Capturamos aquí,
+  // de forma síncrona, los handles y Files antes de empezar cualquier await.
+  const captured = Array.from(dataTransfer.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => {
+      const itemWithEntry = item as DataTransferItem & {
+        webkitGetAsEntry?: () => DragFileSystemEntry | null
+      }
+      return {
+        entry: itemWithEntry.webkitGetAsEntry?.() || null,
+        file: item.getAsFile()
+      }
+    })
+  const fallbackFiles = Array.from(dataTransfer.files || [])
+
+  const fromItems = (await Promise.all(captured.map(async ({ entry, file }) => {
+    if (entry) return collectDragEntryFiles(entry)
+    if (!file) return []
+    return [{
+      file,
+      relativeFolderPath: directoryPathFromRelativeFilePath(file.webkitRelativePath)
+    }]
+  }))).flat()
+
+  if (fromItems.length) return fromItems
+  return fallbackFiles.map((file) => ({
+    file,
+    relativeFolderPath: directoryPathFromRelativeFilePath(file.webkitRelativePath)
+  }))
+}
+
 function readDraggedMediaIds(dataTransfer: DataTransfer) {
   try {
     const parsed = JSON.parse(dataTransfer.getData(MEDIA_DRAG_MIME) || '[]')
@@ -442,6 +542,7 @@ export const MediaSettings: React.FC = () => {
   const folderRequestVersionRef = useRef(0)
   const rootFolderRequestVersionRef = useRef(0)
   const moveFolderRequestVersionRef = useRef(0)
+  const externalDragDepthRef = useRef(0)
   const [assets, setAssets] = useState<MediaAsset[]>([])
   const [folderSummaries, setFolderSummaries] = useState<FolderSummary[]>([])
   const [rootFolders, setRootFolders] = useState<FolderSummary[]>([])
@@ -489,6 +590,8 @@ export const MediaSettings: React.FC = () => {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
+  const [externalDragActive, setExternalDragActive] = useState(false)
+  const [externalDropTargetPath, setExternalDropTargetPath] = useState('')
   const [marqueeSelection, setMarqueeSelection] = useState<MarqueeSelectionState | null>(null)
   const [videoAnalytics, setVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [videoAnalyticsLoading, setVideoAnalyticsLoading] = useState(false)
@@ -1175,27 +1278,72 @@ export const MediaSettings: React.FC = () => {
     setMarqueeSelection(null)
   }
 
+  const resetExternalDragState = () => {
+    externalDragDepthRef.current = 0
+    setExternalDragActive(false)
+    setExternalDropTargetPath('')
+  }
+
+  const externalDropPathFromTarget = (target: EventTarget | null) => {
+    const element = target instanceof Element ? target : null
+    const folderTarget = element?.closest<HTMLElement>('[data-media-folder-path]')
+    return folderTarget
+      ? folderTarget.dataset.mediaFolderPath || ''
+      : currentPath
+  }
+
+  const handleExternalDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!dataTransferHasExternalFiles(event.dataTransfer)) return
+    event.preventDefault()
+    externalDragDepthRef.current += 1
+    if (loading || uploading || actionBusy) {
+      event.dataTransfer.dropEffect = 'none'
+      return
+    }
+    event.dataTransfer.dropEffect = 'copy'
+    setExternalDropTargetPath(externalDropPathFromTarget(event.target))
+    setExternalDragActive(true)
+  }
+
+  const handleExternalDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!dataTransferHasExternalFiles(event.dataTransfer)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = loading || uploading || actionBusy ? 'none' : 'copy'
+    if (loading || uploading || actionBusy) return
+    setExternalDropTargetPath(externalDropPathFromTarget(event.target))
+    setExternalDragActive(true)
+  }
+
+  const handleExternalDragLeave = (_event: React.DragEvent<HTMLDivElement>) => {
+    if (externalDragDepthRef.current === 0) return
+    externalDragDepthRef.current = Math.max(0, externalDragDepthRef.current - 1)
+    if (externalDragDepthRef.current === 0) resetExternalDragState()
+  }
+
   const handleUploadClick = () => {
     uploadInputRef.current?.click()
   }
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
-    event.target.value = ''
-    if (!files.length) return
-
+  const uploadLocalFiles = async (
+    uploads: PendingLocalUpload[],
+    destinationPath: string,
+    { revealLastUpload = false, preserveFolderMessage = false } = {}
+  ) => {
+    if (!uploads.length) return
     setUploading(true)
     let lastUploaded: MediaAsset | null = null
     let successCount = 0
     let failedCount = 0
     try {
-      for (const file of files) {
+      for (const upload of uploads) {
+        const file = upload.file
+        const uploadFolderPath = joinFolderPath(destinationPath, upload.relativeFolderPath)
         const { id: taskId, signal } = uploadQueue.addTask(file)
         try {
           const uploaded = await mediaService.uploadFile({
             file,
             module: 'media',
-            folderPath: currentPath,
+            folderPath: uploadFolderPath,
             isPublic: true,
             signal,
             onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
@@ -1220,14 +1368,17 @@ export const MediaSettings: React.FC = () => {
 
       if (successCount > 0) {
         await refreshLibrary()
-        if (lastUploaded) {
+        if (lastUploaded && revealLastUpload) {
           const uploadedFile = toExplorerFile(lastUploaded)
           updateExplorerUrl({ path: uploadedFile.folderPath, asset: lastUploaded.id })
         }
+        const destinationLabel = destinationPath
+          ? destinationPath.split('/').map(formatFolderSegment).join(' / ')
+          : 'Mi unidad'
         showToast(
           'success',
           successCount === 1 ? 'Archivo subido' : 'Archivos subidos',
-          `${successCount === 1 ? 'Ya quedó' : `${successCount} archivos quedaron`} en ${currentPath ? currentPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}.`
+          `${successCount === 1 ? 'Ya quedó' : `${successCount} archivos quedaron`} en ${destinationLabel}.${preserveFolderMessage ? ' Se conservó la estructura de las carpetas arrastradas.' : ''}`
         )
       }
 
@@ -1236,6 +1387,45 @@ export const MediaSettings: React.FC = () => {
       }
     } finally {
       setUploading(false)
+    }
+  }
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const uploads = Array.from(event.target.files || []).map((file) => ({
+      file,
+      relativeFolderPath: ''
+    }))
+    event.target.value = ''
+    await uploadLocalFiles(uploads, currentPath, { revealLastUpload: true })
+  }
+
+  const handleExternalDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+    if (!dataTransferHasExternalFiles(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    const destinationPath = externalDropPathFromTarget(event.target)
+    resetExternalDragState()
+
+    if (loading || uploading || actionBusy) {
+      showToast('warning', 'Media está ocupada', 'Espera a que termine la operación actual y vuelve a soltar tus archivos.')
+      return
+    }
+
+    try {
+      const uploads = await readExternalDroppedFiles(event.dataTransfer)
+      if (!uploads.length) {
+        showToast('warning', 'No encontramos archivos', 'Suelta archivos o una carpeta que contenga archivos.')
+        return
+      }
+      await uploadLocalFiles(uploads, destinationPath, {
+        preserveFolderMessage: uploads.some((upload) => Boolean(upload.relativeFolderPath))
+      })
+    } catch (dropError) {
+      showToast(
+        'error',
+        'No pudimos leer lo que soltaste',
+        dropError instanceof Error ? dropError.message : 'Intenta arrastrarlo nuevamente desde Finder.'
+      )
     }
   }
 
@@ -1554,9 +1744,11 @@ export const MediaSettings: React.FC = () => {
         className={cx(
           variant === 'tile' ? styles.folderTile : styles.listRow,
           isChecked && styles.itemChecked,
-          dragOverFolderPath === folder.path && styles.folderDropActive
+          (dragOverFolderPath === folder.path ||
+            (externalDragActive && externalDropTargetPath === folder.path)) && styles.folderDropActive
         )}
         data-media-item="true"
+        data-media-folder-path={folder.path}
         data-media-selection-key={selectionKey}
         onClick={() => handleFolderOpen(folder.path)}
         onKeyDown={(event) => handleItemKeyDown(event, () => handleFolderOpen(folder.path))}
@@ -1759,7 +1951,26 @@ export const MediaSettings: React.FC = () => {
         />
       ) : null}
 
-      <Card padding="none" className={styles.explorerCard}>
+      <Card
+        padding="none"
+        className={styles.explorerCard}
+        onDragEnter={handleExternalDragEnter}
+        onDragOver={handleExternalDragOver}
+        onDragLeave={handleExternalDragLeave}
+        onDrop={handleExternalDrop}
+      >
+        {externalDragActive ? (
+          <div className={styles.externalDropOverlay} role="status" aria-live="polite">
+            <UploadCloud size={38} aria-hidden="true" />
+            <strong>Suelta para subir</strong>
+            <p>
+              Se guardará en {externalDropTargetPath
+                ? externalDropTargetPath.split('/').map(formatFolderSegment).join(' / ')
+                : 'Mi unidad'}.
+            </p>
+            <small>Puedes soltar varios archivos o una carpeta completa.</small>
+          </div>
+        ) : null}
         <div className={styles.toolbar}>
           <SearchField
             className={styles.toolbarSearch}
@@ -1841,8 +2052,10 @@ export const MediaSettings: React.FC = () => {
                 className={cx(
                   styles.folderNavItem,
                   !currentPath && styles.folderNavItemActive,
-                  dragOverFolderPath === '' && styles.folderNavItemDropActive
+                  (dragOverFolderPath === '' ||
+                    (externalDragActive && externalDropTargetPath === '')) && styles.folderNavItemDropActive
                 )}
+                data-media-folder-path=""
                 onClick={() => handleFolderOpen('')}
                 onDragOver={(event) => handleFolderDragOver(event, '')}
                 onDragLeave={(event) => handleFolderDragLeave(event, '')}
@@ -1859,8 +2072,10 @@ export const MediaSettings: React.FC = () => {
                   className={cx(
                     styles.folderNavItem,
                     currentPath === folder.path && styles.folderNavItemActive,
-                    dragOverFolderPath === folder.path && styles.folderNavItemDropActive
+                    (dragOverFolderPath === folder.path ||
+                      (externalDragActive && externalDropTargetPath === folder.path)) && styles.folderNavItemDropActive
                   )}
+                  data-media-folder-path={folder.path}
                   onClick={() => handleFolderOpen(folder.path)}
                   onDragOver={(event) => handleFolderDragOver(event, folder.path)}
                   onDragLeave={(event) => handleFolderDragLeave(event, folder.path)}

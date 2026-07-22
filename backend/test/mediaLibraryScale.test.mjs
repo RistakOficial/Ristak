@@ -666,6 +666,30 @@ test('Media consulta varios módulos con un cursor y el ZIP exige un presupuesto
   }
 })
 
+test('Media separa el drop externo de mover assets y conserva carpetas del Finder', async () => {
+  const mediaSettings = await readFile(mediaSettingsSourceUrl, 'utf8')
+  const externalDetection = mediaSettings.slice(
+    mediaSettings.indexOf('function dataTransferHasExternalFiles'),
+    mediaSettings.indexOf('function directoryPathFromRelativeFilePath')
+  )
+  const externalDrop = mediaSettings.slice(
+    mediaSettings.indexOf('const handleExternalDrop ='),
+    mediaSettings.indexOf('const handleCopyLink =')
+  )
+
+  assert.match(externalDetection, /dataTransferHasMediaPayload\(dataTransfer\)/)
+  assert.match(externalDetection, /includes\('Files'\)/)
+  assert.match(mediaSettings, /webkitGetAsEntry/)
+  assert.match(mediaSettings, /while \(true\)/)
+  assert.match(mediaSettings, /collectDragEntryFiles\(child, relativePath\)/)
+  assert.match(mediaSettings, /joinFolderPath\(destinationPath, upload\.relativeFolderPath\)/)
+  assert.match(mediaSettings, /event\.dataTransfer\.dropEffect = 'copy'/)
+  assert.match(externalDrop, /readExternalDroppedFiles\(event\.dataTransfer\)/)
+  assert.match(externalDrop, /uploadLocalFiles\(uploads, destinationPath/)
+  assert.match(mediaSettings, /data-media-folder-path=/)
+  assert.match(mediaSettings, /Suelta para subir/)
+})
+
 test('el backfill SQLite conserva la ruta visible y el contrato frontend no descarga la biblioteca completa', async () => {
   assert.equal(
     mediaFolderPathFromObjectPath('accounts/cliente/sites/2026/07/14/video.mp4'),

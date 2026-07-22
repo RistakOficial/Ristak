@@ -258,6 +258,17 @@ another account.
   Chat, Sites, formularios, avatares, anuncios y demás módulos conservan su
   taxonomía automática porque esa estructura pertenece al sistema, no al
   explorador manual.
+- El explorador acepta archivos externos arrastrados desde Finder, Escritorio,
+  Descargas, volúmenes externos u otra ubicación expuesta por el sistema. Soltar
+  sobre una carpeta la usa como destino; soltar en el resto del explorador usa la
+  carpeta abierta. El `dropEffect` externo es copia y nunca mueve ni elimina el
+  archivo original de la computadora.
+- Al arrastrar una carpeta completa, el frontend recorre sus entradas y conserva
+  la estructura relativa debajo del destino elegido. Este flujo reutiliza la
+  misma cola, progreso, cancelación, `folderPath` y aislamiento
+  `accounts/<slug>` que el selector **Subir aquí**. El MIME interno de Media sigue
+  reservado para mover assets ya existentes y no se confunde con archivos del
+  sistema operativo.
 - Crear, mover o eliminar una carpeta actualiza tanto sus assets como su registro
   persistente. Borrar el último archivo no borra por accidente una carpeta creada
   por el usuario; una carpeta vacía puede moverse o eliminarse expresamente.
