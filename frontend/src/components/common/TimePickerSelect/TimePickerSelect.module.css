@@ -79,7 +79,7 @@
 
 .column {
   min-width: 0;
-  max-height: 230px;
+  max-height: 190px;
   overflow-y: auto;
   padding: 0 4px;
   scrollbar-width: thin;
@@ -94,6 +94,26 @@
   min-height: 34px;
   padding: 6px 4px;
   font-size: 13px;
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-mute);
+  font-size: 12px;
+}
+
+.preview strong {
+  color: var(--text);
+  font-family: var(--num-font);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .actions {

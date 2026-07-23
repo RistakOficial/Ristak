@@ -71,6 +71,7 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<TimeParts>(() => parseTimeParts(value))
   const contentRef = useRef<HTMLDivElement>(null)
+  const draftValue = timePartsToValue(draft)
   const minuteOptions = useMemo(() => {
     const options = new Set(FIVE_MINUTE_OPTIONS)
     options.add(draft.minute)
@@ -112,7 +113,7 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
           aria-label={ariaLabel}
           data-ristak-dropdown-trigger
         >
-          <span>{formatTimeValue(value)}</span>
+          <span>{formatTimeValue(open ? draftValue : value)}</span>
           <Clock3 size={15} aria-hidden="true" />
         </button>
       </DropdownMenuTrigger>
@@ -183,6 +184,11 @@ export const TimePickerSelect: React.FC<TimePickerSelectProps> = ({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+        </div>
+
+        <div className={styles.preview} aria-live="polite" aria-atomic="true">
+          <span>Horario seleccionado</span>
+          <strong>{formatTimeValue(draftValue)}</strong>
         </div>
 
         <div className={styles.actions}>
