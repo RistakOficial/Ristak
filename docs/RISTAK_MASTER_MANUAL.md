@@ -4969,7 +4969,9 @@ de decenas de spans o reglas por segundo.
   `preload="none"`, no inicia el loop automático y no conecta HLS hasta una
   reproducción real. Así puede mostrar a la vez variantes desktop/mobile sin
   descargar ni decodificar videos ocultos; preview-session y publicado conservan
-  la reproducción configurada.
+  la reproducción configurada. El runtime del candado actualiza el tiempo restante
+  sólo cuando el texto realmente cambia y su observador ignora mutaciones de texto;
+  esto evita ciclos de render infinitos entre el contador y `MutationObserver`.
   Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
   previa del video`; abrir el editor o crear una preview-session autenticada
   dispara automáticamente la creación de su espejo de Storage. El proceso está

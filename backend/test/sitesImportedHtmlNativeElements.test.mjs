@@ -948,6 +948,8 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.match(html, /position:absolute!important;\s*inset:0!important;\s*z-index:2!important/)
     assert.match(html, /element\.setAttribute\('inert', ''\)/)
     assert.match(html, /element\.removeAttribute\('inert'\)/)
+    assert.match(html, /if \(element\.textContent !== nextValue\) element\.textContent = nextValue/)
+    assert.match(html, /const hasNewGateSource = Array\.from\(mutations \|\| \[\]\)\.some/)
     assert.doesNotMatch(html, /ocultar-contador-30/)
 
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1])
@@ -960,9 +962,19 @@ test('native video gate keeps the real calendar inert, shows live remaining play
       constructor(attrs = {}) {
         this.attrs = new Map(Object.entries(attrs))
         this.hidden = this.attrs.has('hidden')
-        this.textContent = ''
+        this._textContent = ''
+        this.textContentWriteCount = 0
         this.styleValues = new Map()
         this.style = { setProperty: (name, value) => this.styleValues.set(name, String(value)) }
+      }
+
+      get textContent() {
+        return this._textContent
+      }
+
+      set textContent(value) {
+        this._textContent = String(value)
+        this.textContentWriteCount += 1
       }
 
       getAttribute(name) {
@@ -1070,7 +1082,12 @@ test('native video gate keeps the real calendar inert, shows live remaining play
       removeEventListener: () => {},
       dispatchEvent: () => {}
     }
+    const mutationObservers = []
     class MutationObserver {
+      constructor(callback) {
+        mutationObservers.push(callback)
+      }
+
       observe() {}
     }
 
@@ -1085,6 +1102,10 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.equal(legacyContent.attrs.has('inert'), true)
     assert.equal(locked.hidden, false)
     assert.equal(remaining.textContent, '30')
+    assert.equal(remaining.textContentWriteCount, 1)
+
+    mutationObservers[0]([{ addedNodes: [{ nodeType: 3 }] }])
+    assert.equal(remaining.textContentWriteCount, 1)
 
     video.dispatch('play')
     nowMs = 10_000

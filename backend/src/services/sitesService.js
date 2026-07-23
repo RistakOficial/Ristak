@@ -25980,6 +25980,11 @@ function buildImportedVideoGateRuntimeScript(html = '') {
         const minutes = Math.floor(safe / 60);
         return String(minutes).padStart(2, '0') + ':' + String(safe % 60).padStart(2, '0');
       };
+      const setTextContent = (element, value) => {
+        if (!element) return;
+        const nextValue = String(value);
+        if (element.textContent !== nextValue) element.textContent = nextValue;
+      };
       const setGateStateAttribute = (element, state) => {
         if (!element) return;
         element.setAttribute('data-rstk-video-gate-state', state);
@@ -26041,11 +26046,11 @@ function buildImportedVideoGateRuntimeScript(html = '') {
           setGateStateAttribute(element, state);
         });
         selectGateNodes(REMAINING_ATTRS, gate.id).forEach(element => {
-          element.textContent = String(displayRemaining);
+          setTextContent(element, displayRemaining);
           setGateStateAttribute(element, state);
         });
         selectGateNodes(REMAINING_TIME_ATTRS, gate.id).forEach(element => {
-          element.textContent = formatRemainingTime(remaining);
+          setTextContent(element, formatRemainingTime(remaining));
           setGateStateAttribute(element, state);
         });
         document.querySelectorAll(SOURCE_SELECTOR).forEach(source => {
@@ -26101,7 +26106,17 @@ function buildImportedVideoGateRuntimeScript(html = '') {
         }
       };
       registerSources();
-      const observer = new MutationObserver(registerSources);
+      const containsGateSource = node => {
+        if (!node || node.nodeType !== 1) return false;
+        if (typeof node.matches === 'function' && node.matches(SOURCE_SELECTOR)) return true;
+        return typeof node.querySelector === 'function' && Boolean(node.querySelector(SOURCE_SELECTOR));
+      };
+      const observer = new MutationObserver(mutations => {
+        const hasNewGateSource = Array.from(mutations || []).some(mutation => (
+          Array.from(mutation.addedNodes || []).some(containsGateSource)
+        ));
+        if (hasNewGateSource) registerSources();
+      });
       observer.observe(document.documentElement, { childList: true, subtree: true });
     })();
   </script>`
