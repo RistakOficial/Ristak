@@ -9771,7 +9771,10 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
           buttonTitle: result.buttonTitle,
           buttonReplyType: result.buttonReplyType,
           channel: 'whatsapp',
-          businessPhoneNumberId: result.businessPhoneNumberId || null
+          businessPhoneNumberId: result.businessPhoneNumberId || null,
+          attribution: result.attribution || null,
+          adId: result.attribution?.sourceId || null,
+          adReferral: result.attribution?.hasAttribution === true
         }))
         .catch(error => {
           logger.warn(`[Automatizaciones] No se pudo procesar el mensaje entrante: ${error.message}`)
@@ -10707,7 +10710,10 @@ async function processMetaDirectInboundSideEffects(inboundResults = []) {
           buttonTitle: result.buttonTitle,
           buttonReplyType: result.buttonReplyType,
           channel: 'whatsapp',
-          businessPhoneNumberId: result.businessPhoneNumberId || null
+          businessPhoneNumberId: result.businessPhoneNumberId || null,
+          attribution: result.attribution || null,
+          adId: result.attribution?.sourceId || null,
+          adReferral: result.attribution?.hasAttribution === true
         }))
         .catch(error => logger.warn(`[Automatizaciones] Meta directo no pudo procesar mensaje: ${error.message}`))),
     ...inboundResults

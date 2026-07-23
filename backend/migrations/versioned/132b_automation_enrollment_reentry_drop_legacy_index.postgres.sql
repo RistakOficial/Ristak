@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS uq_automation_enrollments_auto_contact;

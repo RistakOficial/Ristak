@@ -1047,6 +1047,49 @@ completo. Abrir, buscar y `Cargar mas` son las unicas acciones que piden paginas
 plantillas de WhatsApp son snapshots locales: una lectura vacia no dispara
 `refresh` al proveedor; sincronizar sigue siendo una accion explicita.
 
+### Ejecuciones, reingreso y eventos dentro de Automatizaciones
+
+Cada entrada de un contacto a una automatizacion es una ejecucion independiente
+en `automation_enrollments`. Si el flujo permite reingreso, terminar o sacar al
+contacto libera la proteccion de ejecucion activa y la siguiente entrada crea
+otra fila con otro `enrollmentId`; nunca reutiliza el resultado, los objetivos
+cumplidos ni las esperas de una vuelta anterior. La opcion
+`preventDuplicateActiveEnrollment` solo evita dos vueltas simultaneas mientras
+la fila esta `active`, `waiting` o `paused`. Las migraciones `132*` retiran la
+unicidad historica por contacto y la sustituyen por
+`uq_automation_enrollments_active_contact`, un indice parcial sobre
+`dedupe_contact_id`.
+
+Un evento del CRM se entrega primero a las ejecuciones que ya estaban activas y
+despues se evalua como posible disparador de entrada. Si el evento completa una
+espera u objetivo de una automatizacion, ese mismo hecho no puede cerrar una
+vuelta y abrir otra vuelta de esa automatizacion ya autocumplida. Un clic, cita,
+pago, formulario o respuesta que ocurrio antes del `entered_at` de la ejecucion
+actual no cuenta para los modos `during-automation` o `window`. Solo la opcion
+explicita `immediate` puede consultar el estado acumulado actual del contacto.
+
+El contrato por ejecucion aplica a:
+
+- `Esperar` una respuesta o una accion: clic de disparo, formulario, pago,
+  reserva de cita, respuesta de mensaje o webhook/evento personalizado.
+- `Esperar` condiciones: se revisa al entrar y con cada evento nuevo del
+  contacto; si ya era verdadera al entrar, continua de inmediato porque es
+  estado actual, no un hecho historico consumible.
+- `Evento objetivo`: etiqueta recibida o retirada, pago exitoso/fallido o
+  reembolso, cita agendada o cambio de estado, formulario, clic de disparo,
+  respuesta/palabra clave, cambios de contacto, mensaje atribuido a Ads,
+  evento personalizado y condicion avanzada.
+- `No ha respondido`: no es un evento entrante sino una ausencia. Exige una
+  ventana de tiempo; al vencer sin respuesta cumple el objetivo de esa
+  ejecucion. Si responde antes, toma la salida de no cumplido/continuacion y una
+  entrada futura empieza con un temporizador limpio.
+
+Los eventos recibidos mientras una ejecucion esta pausada se guardan como
+cumplimiento pendiente de esa misma vuelta y se aplican al reanudar. Los
+timeouts conservan sus salidas `timeout`/`notmet`, y las fechas limite se
+interpretan en la zona horaria del flujo o, si no esta configurada, en la zona
+horaria efectiva de la cuenta.
+
 Las alertas de referencias rotas del Header también son un read-model local.
 `listAutomationReviewProblems` ejecuta un único `SELECT ... LIMIT` sobre el
 snapshot publicado: no consulta el estado, no agenda trabajo y jamás carga o

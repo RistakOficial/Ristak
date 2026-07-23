@@ -4714,7 +4714,10 @@ export async function processMetaSocialWebhook({
                 contactId: result.contactId,
                 contactName: result.contactName,
                 text: result.messageText,
-                channel: channelForAutomation
+                channel: channelForAutomation,
+                referral: socialMessage.referral || null,
+                adId: socialMessage.referral?.ad_id || null,
+                adReferral: Boolean(socialMessage.referral?.ad_id)
               }))
               .catch(error => {
                 logger.warn(`[Automatizaciones] DM Meta no procesado: ${error.message}`)

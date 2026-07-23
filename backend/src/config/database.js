@@ -7784,7 +7784,8 @@ async function initTablesUnlocked() {
       'wait_kind TEXT',
       "context TEXT DEFAULT '{}'",
       "execution_outcome TEXT DEFAULT 'pending'",
-      'last_error TEXT'
+      'last_error TEXT',
+      'dedupe_contact_id TEXT'
     ]) {
       await db.run(`ALTER TABLE automation_enrollments ADD COLUMN ${column}`).catch(() => {})
     }

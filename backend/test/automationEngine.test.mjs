@@ -15,6 +15,7 @@ import {
   processScheduledTriggers,
   processScheduledContactEnrollments,
   enrollContactManually,
+  controlAutomationEnrollment,
   testWebhookAction,
   resolveAutomationMediaAssetId,
   resolveAutomationMediaSource,
@@ -3319,6 +3320,845 @@ test('inscripción manual programada se ejecuta cuando llega su fecha', async ()
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automation_contact_enrollment_jobs WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('cada reingreso crea una ejecución nueva y exige un clic posterior', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_reentry_click_${suffix}`
+  const contactId = `contact_reentry_click_${suffix}`
+  const triggerLinkId = `trigger_link_reentry_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: { triggers: [] }
+      },
+      {
+        id: 'wait-click',
+        type: 'logic-wait',
+        label: 'Esperar clic',
+        config: {
+          mode: 'action',
+          expectedAction: 'click_link',
+          actionResource: triggerLinkId,
+          actionResourceName: 'Confirmación'
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-click' },
+      { id: 'edge-wait-done', sourceNodeId: 'wait-click', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+521${Date.now().toString().slice(-10)}`,
+        `reentry-click-${suffix}@test.com`,
+        'Contacto Reingreso',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test reingreso clic', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await enrollContactManually({ automationId, contactId })
+    let rows = await db.all(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
+      [automationId, contactId]
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].status, 'waiting')
+    const firstEnrollmentId = rows[0].id
+
+    await handleAutomationEvent('trigger-link-clicked', {
+      contactId,
+      triggerLinkId,
+      triggerLinkName: 'Confirmación',
+      eventId: `click_first_${suffix}`
+    })
+    rows = await db.all(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
+      [automationId, contactId]
+    )
+    assert.equal(rows.find((row) => row.id === firstEnrollmentId)?.status, 'completed')
+
+    await enrollContactManually({ automationId, contactId })
+    rows = await db.all(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
+      [automationId, contactId]
+    )
+    assert.equal(rows.length, 2)
+    const secondEnrollment = rows.find((row) => row.id !== firstEnrollmentId)
+    assert.ok(secondEnrollment)
+    assert.equal(secondEnrollment.status, 'waiting')
+    assert.equal(secondEnrollment.current_node_id, 'wait-click')
+
+    await handleAutomationEvent('trigger-link-clicked', {
+      contactId,
+      triggerLinkId,
+      triggerLinkName: 'Confirmación',
+      eventId: `click_second_${suffix}`
+    })
+    rows = await db.all(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
+      [automationId, contactId]
+    )
+    assert.equal(rows.every((row) => row.status === 'completed'), true)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('objetivo de cita usa el evento de cada ejecución y no el historial del contacto', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_reentry_goal_${suffix}`
+  const contactId = `contact_reentry_goal_${suffix}`
+  const calendarId = `calendar_reentry_goal_${suffix}`
+  const appointmentId = `appointment_reentry_goal_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: { triggers: [] }
+      },
+      {
+        id: 'long-wait',
+        type: 'logic-wait',
+        label: 'Secuencia activa',
+        config: { mode: 'duration', amount: 30, unit: 'days' }
+      },
+      {
+        id: 'appointment-goal',
+        type: 'logic-goal',
+        label: 'Evento objetivo',
+        config: {
+          name: 'Agendó consulta',
+          goalType: 'appointment',
+          appointmentStatus: 'booked',
+          calendar: calendarId,
+          evaluate: 'during-automation',
+          onMet: 'end-automation',
+          onNotMet: 'continue',
+          windowMode: 'none'
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'long-wait' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+522${Date.now().toString().slice(-10)}`,
+        `reentry-goal-${suffix}@test.com`,
+        'Contacto Meta',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test objetivo por ejecución', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await enrollContactManually({ automationId, contactId })
+    const firstEnrollment = await db.get(
+      'SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments
+         (id, calendar_id, contact_id, title, status, appointment_status, start_time, end_time)
+       VALUES (?, ?, ?, ?, 'confirmed', 'confirmed', ?, ?)`,
+      [
+        appointmentId,
+        calendarId,
+        contactId,
+        'Consulta previa',
+        new Date(Date.now() + 86_400_000).toISOString(),
+        new Date(Date.now() + 90_000_000).toISOString()
+      ]
+    )
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId,
+      calendarId,
+      status: 'confirmed'
+    })
+
+    await enrollContactManually({ automationId, contactId })
+    let rows = await db.all(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
+      [automationId, contactId]
+    )
+    assert.equal(rows.length, 2)
+    const firstRow = rows.find((row) => row.id === firstEnrollment.id)
+    const secondRow = rows.find((row) => row.id !== firstEnrollment.id)
+    assert.equal(firstRow?.status, 'exited')
+    assert.equal(secondRow?.status, 'waiting')
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId: `${appointmentId}_second`,
+      calendarId,
+      status: 'confirmed'
+    })
+    rows = await db.all(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? ORDER BY entered_at, id',
+      [automationId, contactId]
+    )
+    assert.equal(rows.every((row) => row.status === 'exited'), true)
+    const completedSecondRow = rows.find((row) => row.id === secondRow.id)
+    const secondLog = JSON.parse(completedSecondRow?.log || '[]')
+    assert.equal(
+      secondLog.some((entry) => /Objetivo cumplido en esta ejecución/.test(entry.detail || '')),
+      true
+    )
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('todos los eventos objetivo candidatos se cumplen sólo en la ejecución activa', async () => {
+  const suffix = randomUUID()
+  const created = []
+  const cases = [
+    {
+      key: 'tag-received',
+      goal: { goalType: 'tag', tagOperator: 'received', tag: `tag_${suffix}` },
+      eventType: 'tag-changed',
+      eventData: { tagId: `tag_${suffix}`, tagAction: 'added' }
+    },
+    {
+      key: 'tag-lost',
+      goal: { goalType: 'tag', tagOperator: 'lost', tag: `tag_${suffix}` },
+      eventType: 'tag-changed',
+      eventData: { tagId: `tag_${suffix}`, tagAction: 'removed' }
+    },
+    {
+      key: 'payment-success',
+      goal: {
+        goalType: 'payment',
+        paymentEvent: 'received',
+        amountOperator: 'gte',
+        amount: 500,
+        product: `product_${suffix}`
+      },
+      eventType: 'payment-received',
+      eventData: {
+        paymentStatus: 'paid',
+        amount: 750,
+        product: `product_${suffix}`
+      }
+    },
+    {
+      key: 'payment-failed',
+      goal: { goalType: 'payment', paymentEvent: 'failed', amountOperator: 'any' },
+      eventType: 'payment-received',
+      eventData: { paymentStatus: 'failed', amount: 750 }
+    },
+    {
+      key: 'refund',
+      goal: { goalType: 'payment', paymentEvent: 'refund', amountOperator: 'any' },
+      eventType: 'refund',
+      eventData: { paymentStatus: 'refunded', amount: 750 }
+    },
+    {
+      key: 'appointment-status',
+      goal: {
+        goalType: 'appointment',
+        appointmentStatus: 'confirmed',
+        calendar: `calendar_${suffix}`
+      },
+      eventType: 'appointment-status',
+      eventData: {
+        status: 'confirmed',
+        calendarId: `calendar_${suffix}`
+      }
+    },
+    {
+      key: 'form',
+      goal: { goalType: 'form', form: `form_${suffix}` },
+      eventType: 'form-submitted',
+      eventData: { formId: `form_${suffix}`, formName: 'Registro' }
+    },
+    {
+      key: 'trigger-link',
+      goal: { goalType: 'link', link: `link_${suffix}` },
+      eventType: 'trigger-link-clicked',
+      eventData: { triggerLinkId: `link_${suffix}` }
+    },
+    {
+      key: 'conversation-keyword',
+      goal: {
+        goalType: 'conversation',
+        conversationEvent: 'keyword',
+        conversationChannel: 'whatsapp',
+        keyword: 'confirmo'
+      },
+      incoming: {
+        text: 'Sí, confirmo la cita',
+        channel: 'whatsapp'
+      }
+    },
+    {
+      key: 'contact-field',
+      goal: {
+        goalType: 'contact',
+        contactEvent: 'field_contains',
+        contactField: 'stage',
+        contactFieldValue: 'cliente'
+      },
+      prepare: async (contactId) => {
+        await db.run(
+          'UPDATE contacts SET custom_fields = ? WHERE id = ?',
+          [JSON.stringify({ stage: 'cliente' }), contactId]
+        )
+      },
+      eventType: 'contact-updated',
+      eventData: { changedFields: ['stage'] }
+    },
+    {
+      key: 'contact-assigned',
+      goal: { goalType: 'contact', contactEvent: 'assigned' },
+      eventType: 'contact-updated',
+      eventData: { changedFields: ['assignedUser'] }
+    },
+    {
+      key: 'ctwa',
+      goal: { goalType: 'ads', adsEvent: 'ctwa' },
+      incoming: {
+        text: 'Vengo del anuncio',
+        channel: 'whatsapp',
+        adId: `ad_${suffix}`,
+        adReferral: true
+      }
+    },
+    {
+      key: 'facebook-ad',
+      goal: { goalType: 'ads', adsEvent: 'fb_click' },
+      incoming: {
+        text: 'Quiero información',
+        channel: 'messenger',
+        adId: `ad_${suffix}`,
+        adReferral: true
+      }
+    },
+    {
+      key: 'custom',
+      goal: { goalType: 'custom', customEventName: `event_${suffix}` },
+      eventType: 'webhook-received',
+      eventData: {
+        endpointId: `event_${suffix}`,
+        payload: { status: 'ok' }
+      }
+    },
+    {
+      key: 'advanced',
+      goal: {
+        goalType: 'advanced',
+        advancedCondition: {
+          branches: [
+            {
+              name: 'Cliente',
+              groupsOperator: 'AND',
+              groups: [
+                {
+                  operator: 'AND',
+                  negate: false,
+                  rules: [
+                    { field: 'contact-stage', operator: 'is', value: 'cliente' }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      prepare: async (contactId) => {
+        await db.run(
+          'UPDATE contacts SET custom_fields = ? WHERE id = ?',
+          [JSON.stringify({ stage: 'cliente' }), contactId]
+        )
+      },
+      eventType: 'contact-updated',
+      eventData: { changedFields: ['stage'] }
+    }
+  ]
+
+  try {
+    for (const item of cases) {
+      const contactId = `contact_goal_${item.key}_${suffix}`
+      const automationId = `automation_goal_${item.key}_${suffix}`
+      created.push({ contactId, automationId })
+      const flow = {
+        nodes: [
+          { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+          {
+            id: 'active-sequence',
+            type: 'logic-wait',
+            label: 'Secuencia activa',
+            config: { mode: 'duration', amount: 30, unit: 'days' }
+          },
+          {
+            id: 'goal',
+            type: 'logic-goal',
+            label: 'Evento objetivo',
+            config: {
+              name: `Objetivo ${item.key}`,
+              evaluate: 'during-automation',
+              onMet: 'end-automation',
+              onNotMet: 'continue',
+              windowMode: 'none',
+              ...item.goal
+            }
+          }
+        ],
+        edges: [
+          { id: 'edge-start-active', sourceNodeId: 'start', targetNodeId: 'active-sequence' }
+        ],
+        settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+      }
+
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `+526${Date.now().toString().slice(-9)}`,
+          `goal-${item.key}-${suffix}@test.com`,
+          `Contacto ${item.key}`,
+          'Contacto',
+          JSON.stringify({ stage: 'prospecto' })
+        ]
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, `Test objetivo ${item.key}`, JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      const enrollment = await enrollContactManually({ automationId, contactId })
+      assert.equal(enrollment.status, 'waiting', item.key)
+      await item.prepare?.(contactId)
+
+      if (item.incoming) {
+        await handleIncomingMessage({ contactId, ...item.incoming })
+      } else {
+        await handleAutomationEvent(item.eventType, {
+          contactId,
+          ...item.eventData
+        })
+      }
+
+      const row = await db.get(
+        'SELECT * FROM automation_enrollments WHERE id = ?',
+        [enrollment.id]
+      )
+      assert.equal(row.status, 'exited', item.key)
+      const log = JSON.parse(row.log || '[]')
+      assert.equal(
+        log.some((entry) => /Objetivo cumplido en esta ejecución/.test(entry.detail || '')),
+        true,
+        item.key
+      )
+    }
+  } finally {
+    for (const item of created) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [item.automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [item.automationId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [item.contactId])
+    }
+  }
+})
+
+test('objetivo sin respuesta vence por ejecución y una respuesta nueva lo descarta', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_no_reply_goal_${suffix}`
+  const contactId = `contact_no_reply_goal_${suffix}`
+  const flow = {
+    nodes: [
+      { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+      {
+        id: 'goal-no-reply',
+        type: 'logic-goal',
+        label: 'Sin respuesta',
+        config: {
+          name: 'No respondió',
+          goalType: 'conversation',
+          conversationEvent: 'no_reply',
+          conversationChannel: 'any',
+          evaluate: 'immediate',
+          onMet: 'end-automation',
+          onNotMet: 'continue',
+          windowMode: 'duration',
+          windowAmount: 1,
+          windowUnit: 'days'
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-goal', sourceNodeId: 'start', targetNodeId: 'goal-no-reply' },
+      { id: 'edge-goal-done', sourceNodeId: 'goal-no-reply', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+527${Date.now().toString().slice(-9)}`,
+        `no-reply-goal-${suffix}@test.com`,
+        'Contacto Sin Respuesta',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test objetivo sin respuesta', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const first = await enrollContactManually({ automationId, contactId })
+    assert.equal(first.status, 'waiting')
+    assert.equal(first.waitKind, 'goal')
+    await db.run(
+      'UPDATE automation_enrollments SET resume_at = ? WHERE id = ?',
+      [new Date(Date.now() - 1000).toISOString(), first.id]
+    )
+    await processDueResumes()
+
+    let row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [first.id])
+    assert.equal(row.status, 'exited')
+    assert.equal(
+      JSON.parse(row.log || '[]').some((entry) => /no respondió dentro del tiempo/.test(entry.detail || '')),
+      true
+    )
+
+    const second = await enrollContactManually({ automationId, contactId })
+    assert.equal(second.status, 'waiting')
+    await handleIncomingMessage({
+      contactId,
+      text: 'Aquí estoy de nuevo',
+      channel: 'whatsapp'
+    })
+
+    row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [second.id])
+    assert.equal(row.status, 'completed')
+    assert.equal(row.current_node_id, 'done')
+    assert.equal(
+      JSON.parse(row.log || '[]').some((entry) => /objetivo de no respuesta no se cumplió/.test(entry.detail || '')),
+      true
+    )
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('Esperar reanuda formularios, pagos, citas y eventos personalizados de la ejecución activa', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_event_waits_${suffix}`
+  const formId = `form_event_waits_${suffix}`
+  const calendarId = `calendar_event_waits_${suffix}`
+  const customEventName = `custom_event_waits_${suffix}`
+  const cases = [
+    {
+      key: 'form',
+      expectedAction: 'submit_form',
+      actionResource: formId,
+      eventType: 'form-submitted',
+      eventData: { formId, formName: 'Registro' }
+    },
+    {
+      key: 'payment',
+      expectedAction: 'purchase',
+      actionResource: '',
+      eventType: 'payment-received',
+      eventData: { paymentStatus: 'paid', amount: 500, currency: 'USD' }
+    },
+    {
+      key: 'appointment',
+      expectedAction: 'book_appointment',
+      actionResource: calendarId,
+      eventType: 'appointment-booked',
+      eventData: { calendarId, status: 'confirmed' }
+    },
+    {
+      key: 'custom',
+      expectedAction: 'custom_event',
+      actionResource: customEventName,
+      eventType: 'custom-event',
+      eventData: { customEventName, payload: { status: 'ok' } }
+    }
+  ]
+  const automationIds = cases.map((entry) => `automation_wait_${entry.key}_${suffix}`)
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+523${Date.now().toString().slice(-10)}`,
+        `event-waits-${suffix}@test.com`,
+        'Contacto Esperas',
+        'Contacto',
+        '{}'
+      ]
+    )
+
+    for (let index = 0; index < cases.length; index += 1) {
+      const entry = cases[index]
+      const automationId = automationIds[index]
+      const flow = {
+        nodes: [
+          { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+          {
+            id: 'wait-action',
+            type: 'logic-wait',
+            label: `Esperar ${entry.key}`,
+            config: {
+              mode: 'action',
+              expectedAction: entry.expectedAction,
+              actionResource: entry.actionResource
+            }
+          },
+          { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+        ],
+        edges: [
+          { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-action' },
+          { id: 'edge-wait-done', sourceNodeId: 'wait-action', sourceHandle: 'out', targetNodeId: 'done' }
+        ],
+        settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+      }
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, `Test espera ${entry.key}`, JSON.stringify(flow), JSON.stringify(flow)]
+      )
+      const enrollment = await enrollContactManually({ automationId, contactId })
+      assert.equal(enrollment.status, 'waiting')
+
+      await handleAutomationEvent(entry.eventType, {
+        contactId,
+        ...entry.eventData
+      })
+      const row = await db.get(
+        'SELECT * FROM automation_enrollments WHERE id = ?',
+        [enrollment.id]
+      )
+      assert.equal(row.status, 'completed', entry.key)
+      assert.equal(row.current_node_id, 'done', entry.key)
+    }
+  } finally {
+    for (const automationId of automationIds) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('Esperar condiciones sólo se cumple con un cambio nuevo dentro de la ejecución', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_condition_wait_${suffix}`
+  const contactId = `contact_condition_wait_${suffix}`
+  const flow = {
+    nodes: [
+      { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+      {
+        id: 'wait-condition',
+        type: 'logic-wait',
+        label: 'Esperar condición',
+        config: {
+          mode: 'conditions',
+          evaluation: 'continuous',
+          conditions: {
+            branches: [
+              {
+                name: 'Ya es cliente',
+                groupsOperator: 'AND',
+                groups: [
+                  {
+                    operator: 'AND',
+                    negate: false,
+                    rules: [
+                      { field: 'contact-stage', operator: 'is', value: 'cliente' }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-condition' },
+      { id: 'edge-wait-done', sourceNodeId: 'wait-condition', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts
+         (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+524${Date.now().toString().slice(-10)}`,
+        `condition-wait-${suffix}@test.com`,
+        'Contacto Condición',
+        'Contacto',
+        JSON.stringify({ stage: 'prospecto' })
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test espera condición', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const enrollment = await enrollContactManually({ automationId, contactId })
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.waitKind, 'condition')
+
+    await handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: ['email']
+    })
+    let row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'waiting')
+
+    await db.run(
+      'UPDATE contacts SET custom_fields = ? WHERE id = ?',
+      [JSON.stringify({ stage: 'cliente' }), contactId]
+    )
+    await handleAutomationEvent('contact-updated', {
+      contactId,
+      changedFields: ['stage']
+    })
+    row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'completed')
+    assert.equal(row.current_node_id, 'done')
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('un evento cumplido mientras la ejecución está pausada se aplica al reanudar', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_paused_event_${suffix}`
+  const contactId = `contact_paused_event_${suffix}`
+  const formId = `form_paused_event_${suffix}`
+  const flow = {
+    nodes: [
+      { id: 'start', type: 'start', label: 'Cuando...', config: { triggers: [] } },
+      {
+        id: 'wait-form',
+        type: 'logic-wait',
+        label: 'Esperar formulario',
+        config: {
+          mode: 'action',
+          expectedAction: 'submit_form',
+          actionResource: formId
+        }
+      },
+      { id: 'done', type: 'extra-comment', label: 'Listo', config: {} }
+    ],
+    edges: [
+      { id: 'edge-start-wait', sourceNodeId: 'start', targetNodeId: 'wait-form' },
+      { id: 'edge-wait-done', sourceNodeId: 'wait-form', sourceHandle: 'out', targetNodeId: 'done' }
+    ],
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+525${Date.now().toString().slice(-10)}`,
+        `paused-event-${suffix}@test.com`,
+        'Contacto Pausado',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test evento pausado', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    const enrollment = await enrollContactManually({ automationId, contactId })
+    await controlAutomationEnrollment({
+      automationId,
+      enrollmentId: enrollment.id,
+      action: 'pause'
+    })
+    await handleAutomationEvent('form-submitted', {
+      contactId,
+      formId,
+      formName: 'Registro pausado'
+    })
+
+    let row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'paused')
+    assert.ok(JSON.parse(row.context || '{}').__pendingWaitCompletion)
+
+    await controlAutomationEnrollment({
+      automationId,
+      enrollmentId: enrollment.id,
+      action: 'resume'
+    })
+    row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(row.status, 'completed')
+    assert.equal(row.current_node_id, 'done')
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
   }

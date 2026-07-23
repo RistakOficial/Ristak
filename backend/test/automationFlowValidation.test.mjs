@@ -422,6 +422,32 @@ test('publicar exige mensaje enviado anterior en esperas por respuesta a mensaje
   assert.ok(errors.some((message) => message.includes('ya no está antes')))
 })
 
+test('publicar exige ventana de tiempo para el objetivo sin respuesta', () => {
+  const goalNode = {
+    id: 'goal-no-reply',
+    type: 'logic-goal',
+    position: { x: 100, y: 0 },
+    config: {
+      goalType: 'conversation',
+      conversationEvent: 'no_reply',
+      windowMode: 'none'
+    }
+  }
+  const flow = {
+    nodes: [startNode(), goalNode],
+    edges: [edge('e1', 'start', 'goal-no-reply')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('necesita una ventana de tiempo')))
+
+  goalNode.config.windowMode = 'duration'
+  goalNode.config.windowAmount = 1
+  goalNode.config.windowUnit = 'days'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
+})
+
 test('Instagram bloquea documentos salientes antes de publicar el flujo', () => {
   const instagramNode = {
     id: 'ig1',

@@ -530,6 +530,19 @@ export function validateFlowForPublish(flow) {
     })
 
   nodes
+    .filter((node) => node.type === 'logic-goal')
+    .forEach((node) => {
+      const config = isPlainObject(node.config) ? node.config : {}
+      if (
+        config.goalType === 'conversation' &&
+        config.conversationEvent === 'no_reply' &&
+        !['duration', 'until'].includes(String(config.windowMode || 'none'))
+      ) {
+        errors.push('El objetivo "No ha respondido" necesita una ventana de tiempo')
+      }
+    })
+
+  nodes
     .filter((node) => node.type === 'channel-comment-public-reply' || node.type === 'channel-comment-dm-reply')
     .forEach((node) => validateCommentReplyNode({ node, triggers, errors }))
 

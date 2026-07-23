@@ -2790,6 +2790,12 @@ const OTHER_ACTIONS: NodeDefinition[] = [
         if (!['any', ...ALLOWED_CHANNELS].includes(channel)) {
           errors.push('Canal inválido: usa WhatsApp, Messenger o Instagram Direct')
         }
+        if (
+          str(config.conversationEvent) === 'no_reply' &&
+          !['duration', 'until'].includes(str(config.windowMode) || 'none')
+        ) {
+          errors.push('El objetivo "No ha respondido" necesita una ventana de tiempo')
+        }
       }
       if (goalType === 'custom' && !str(config.customEventName).trim()) {
         errors.push('Indica el nombre del evento personalizado')

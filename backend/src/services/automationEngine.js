@@ -3,7 +3,12 @@ import fetch from 'node-fetch'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
-import { DEFAULT_TIMEZONE, getAccountTimezone, isValidTimezone } from '../utils/dateUtils.js'
+import {
+  DEFAULT_TIMEZONE,
+  getAccountTimezone,
+  isValidTimezone,
+  normalizeToUtcIso
+} from '../utils/dateUtils.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { createInternalNotification } from './notificationsService.js'
 import {
@@ -51,6 +56,10 @@ const SCHEDULE_TRIGGER_CATCHUP_MINUTES = 24 * 60
 const WAIT_KIND_REPLY = 'reply'
 const WAIT_KIND_BUTTON_REPLY = 'button_reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
+const WAIT_KIND_EVENT_ACTION = 'event-action'
+const WAIT_KIND_CONDITION = 'condition'
+const WAIT_KIND_APPOINTMENT = 'appointment'
+const WAIT_KIND_GOAL = 'goal'
 const WAIT_KIND_DRIP = 'drip'
 // (AUTO-005) Espera especial para reintentar el MISMO nodo que falló de forma
 // transitoria, en vez de expulsar la inscripción ('exited') al primer error.
@@ -535,10 +544,6 @@ function triggerLinkMatchesValue(configured, ctx = {}) {
   const wanted = normalizeText(configured)
   if (!wanted) return true
   return triggerLinkCandidateValues(ctx).map(normalizeText).includes(wanted)
-}
-
-function hasTriggerLinkEventContext(ctx = {}) {
-  return triggerLinkCandidateValues(ctx).some((value) => Boolean(normalizeText(value)))
 }
 
 function triggerLinkDisplayName(ctx = {}) {
@@ -2020,6 +2025,315 @@ function triggerMatches(trigger, eventType, ctx) {
   }
 }
 
+function normalizedAppointmentStatus(value) {
+  const normalized = normalizeText(value)
+  return APPOINTMENT_STATUS_ALIASES[normalized] || normalized
+}
+
+function selectedResourceMatches(candidates = [], configuredValue = '') {
+  const wanted = normalizeText(configuredValue)
+  if (!wanted) return true
+  return candidates
+    .map((candidate) => normalizeText(candidate))
+    .filter(Boolean)
+    .some((candidate) => candidate === wanted)
+}
+
+function appointmentEventMatches(config = {}, eventType, ctx = {}) {
+  if (eventType !== 'appointment-booked' && eventType !== 'appointment-status') return false
+
+  const configuredCalendar = str(config.calendar || config.actionResource)
+  if (
+    configuredCalendar &&
+    !selectedResourceMatches(
+      [ctx.calendarId, ctx.calendar_id, ctx.calendarName, ctx.calendar_name],
+      configuredCalendar
+    )
+  ) {
+    return false
+  }
+
+  const configuredType = str(config.appointmentType)
+  if (
+    configuredType &&
+    !selectedResourceMatches(
+      [ctx.appointmentType, ctx.appointment_type, ctx.service, ctx.title],
+      configuredType
+    )
+  ) {
+    return false
+  }
+
+  const wantedStatus = normalizedAppointmentStatus(config.appointmentStatus)
+  if (!wantedStatus) return true
+  if (wantedStatus === 'booked') return eventType === 'appointment-booked'
+  const actualStatus = normalizedAppointmentStatus(
+    ctx.appointmentStatus || ctx.appointment_status || ctx.status
+  )
+  return eventType === 'appointment-status' && actualStatus === wantedStatus
+}
+
+function paymentEventMatches(config = {}, eventType, ctx = {}) {
+  if (eventType !== 'payment-received' && eventType !== 'refund') return false
+
+  const wantedEvent = normalizeText(config.paymentEvent || config.paymentAction || 'received')
+  const actualAction = paymentActionFromContext(ctx, eventType) || (
+    eventType === 'refund' ? 'refunded' : 'successful'
+  )
+  if (wantedEvent === 'refund' && actualAction !== 'refunded') return false
+  if (wantedEvent === 'failed' && actualAction !== 'failed') return false
+  if (!['refund', 'failed'].includes(wantedEvent) && actualAction !== 'successful') return false
+
+  const amountOperator = str(config.amountOperator) || 'any'
+  if (amountOperator !== 'any') {
+    const actual = Number(firstPaymentContextValue(ctx, 'amount'))
+    const expected = Number(config.amount)
+    if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false
+    if (amountOperator === 'gt' && !(actual > expected)) return false
+    if (amountOperator === 'gte' && !(actual >= expected)) return false
+    if (amountOperator === 'lt' && !(actual < expected)) return false
+    if (amountOperator === 'lte' && !(actual <= expected)) return false
+    if (amountOperator === 'eq' && actual !== expected) return false
+  }
+
+  const configuredProduct = str(config.product || config.actionResource)
+  if (
+    configuredProduct &&
+    !paymentProductCandidatesFromContext(ctx)
+      .some((candidate) => normalizeText(candidate) === normalizeText(configuredProduct))
+  ) {
+    return false
+  }
+
+  const configuredProvider = str(config.provider)
+  if (
+    configuredProvider &&
+    normalizeText(firstPaymentContextValue(ctx, 'provider')) !== normalizeText(configuredProvider)
+  ) {
+    return false
+  }
+
+  const configuredCurrency = str(config.currency)
+  if (
+    configuredCurrency &&
+    normalizeText(firstPaymentContextValue(ctx, 'currency')) !== normalizeText(configuredCurrency)
+  ) {
+    return false
+  }
+
+  return true
+}
+
+function replyEventMatches(config = {}, eventType, ctx = {}, {
+  channelKey = 'replyChannel',
+  keywordKey = 'keywords',
+  singleKeywordKey = ''
+} = {}) {
+  if (eventType !== 'message-received') return false
+  const configuredChannel = normalizeConversationChannel(config[channelKey]) || 'any'
+  const eventChannel = normalizeConversationChannel(ctx.channel)
+  if (configuredChannel !== 'any' && configuredChannel !== eventChannel) return false
+
+  const keywordConfig = {
+    keywords: Array.isArray(config[keywordKey]) ? config[keywordKey] : [],
+    match: config.match
+  }
+  if (singleKeywordKey && str(config[singleKeywordKey])) {
+    keywordConfig.keywords = [str(config[singleKeywordKey])]
+  }
+  return keywordsMatch(keywordConfig, ctx.messageText)
+}
+
+function formEventMatches(config = {}, eventType, ctx = {}) {
+  if (eventType !== 'form-submitted') return false
+  const configuredForm = str(config.form || config.actionResource)
+  if (
+    configuredForm &&
+    !formSubmittedMatches(configuredForm, ctx) &&
+    !selectedResourceMatches(
+      [primaryFormNameFromContext(ctx), ctx.formName, ctx.form_name, ctx.siteName, ctx.site_name],
+      configuredForm
+    )
+  ) {
+    return false
+  }
+  if (str(config.formFieldKey)) {
+    const actual = normalizeText(formResponseValue(ctx, config.formFieldKey))
+    if (!actual.includes(normalizeText(config.formFieldValue))) return false
+  }
+  return true
+}
+
+function triggerLinkEventMatches(config = {}, eventType, ctx = {}) {
+  if (eventType !== 'trigger-link-clicked') return false
+  const configured = str(
+    config.link ||
+    config.triggerLinkId ||
+    config.publicId ||
+    config.actionResource
+  )
+  return !configured || triggerLinkMatchesValue(configured, ctx)
+}
+
+function customEventMatches(config = {}, eventType, ctx = {}) {
+  const configuredName = str(config.customEventName || config.actionResource)
+  const eventNames = [
+    ctx.customEventName,
+    ctx.custom_event_name,
+    ctx.eventName,
+    ctx.event_name,
+    ctx.endpointId,
+    ctx.endpoint_id,
+    eventType === 'webhook-received' ? 'webhook-received' : '',
+    eventType
+  ]
+  if (configuredName && !selectedResourceMatches(eventNames, configuredName)) return false
+
+  const payloadContains = str(config.payloadContains)
+  if (payloadContains) {
+    let serialized = ''
+    try {
+      serialized = typeof ctx.payload === 'string' ? ctx.payload : JSON.stringify(ctx.payload || {})
+    } catch {
+      serialized = ''
+    }
+    if (!normalizeText(serialized).includes(normalizeText(payloadContains))) return false
+  }
+  return Boolean(configuredName) || eventType === 'webhook-received' || eventType === 'custom-event'
+}
+
+function expectedActionMatches(config = {}, eventType, ctx = {}) {
+  if (!filtersMatch(config.filters, ctx)) return false
+  const expectedAction = str(config.expectedAction) || 'click_link'
+  switch (expectedAction) {
+    case 'click_link':
+    case 'trigger_link_click':
+    case 'trigger-link-click':
+      return triggerLinkEventMatches(config, eventType, ctx)
+    case 'reply_message':
+    case 'reply-message':
+      return replyEventMatches(config, eventType, ctx, { channelKey: 'actionChannel' })
+    case 'submit_form':
+      return formEventMatches(config, eventType, ctx)
+    case 'purchase':
+      return paymentEventMatches({ ...config, paymentEvent: 'received' }, eventType, ctx)
+    case 'book_appointment':
+      return appointmentEventMatches(
+        {
+          ...config,
+          calendar: config.calendar || config.actionResource,
+          appointmentStatus: config.appointmentStatus || 'booked'
+        },
+        eventType,
+        ctx
+      )
+    case 'custom_event':
+      return customEventMatches(config, eventType, ctx)
+    default:
+      return false
+  }
+}
+
+function goalMatchesEvent(config = {}, eventType, ctx = {}) {
+  if (!filtersMatch(config.filters, ctx)) return false
+  const goalType = str(config.goalType)
+  switch (goalType) {
+    case 'tag': {
+      if (eventType !== 'tag-changed') return false
+      const configuredTag = str(config.tag)
+      if (
+        configuredTag &&
+        !selectedResourceMatches([ctx.tag, ctx.tagId, ctx.tag_id], configuredTag)
+      ) {
+        return false
+      }
+      const operator = str(config.tagOperator) || 'has'
+      const removed = normalizeText(ctx.tagAction) === 'removed'
+      if (operator === 'lost' || operator === 'not_has' || operator === 'not-has') return removed
+      return !removed
+    }
+    case 'payment':
+      return paymentEventMatches(config, eventType, ctx)
+    case 'appointment':
+      return appointmentEventMatches(config, eventType, ctx)
+    case 'form':
+      return formEventMatches(config, eventType, ctx)
+    case 'link':
+      return triggerLinkEventMatches(config, eventType, ctx)
+    case 'conversation': {
+      const conversationEvent = str(config.conversationEvent) || 'replied'
+      if (conversationEvent === 'no_reply') return false
+      return replyEventMatches(config, eventType, ctx, {
+        channelKey: 'conversationChannel',
+        singleKeywordKey: conversationEvent === 'keyword' ? 'keyword' : ''
+      })
+    }
+    case 'contact': {
+      const contactEvent = str(config.contactEvent) || 'created'
+      if (contactEvent === 'created') return eventType === 'contact-created'
+      if (eventType !== 'contact-updated') return false
+      if (contactEvent === 'assigned') {
+        return changedFieldMatches(ctx.changedFields, 'assignedUser') ||
+          changedFieldMatches(ctx.changedFields, 'assigned_user')
+      }
+      if (str(config.contactField) && !changedFieldMatches(ctx.changedFields, config.contactField)) {
+        return false
+      }
+      if (contactEvent === 'field_contains') {
+        const actual = filterFieldValue({ field: config.contactField }, ctx)
+        return normalizeText(actual).includes(normalizeText(config.contactFieldValue))
+      }
+      return true
+    }
+    case 'ads': {
+      const adsEvent = str(config.adsEvent) || 'fb_click'
+      const eventAdId = str(
+        ctx.adId ||
+        ctx.ad_id ||
+        ctx.attribution?.sourceId ||
+        ctx.referral?.ad_id
+      )
+      const hasAdReferral =
+        ctx.adReferral === true ||
+        ctx.attribution?.hasAttribution === true ||
+        Boolean(eventAdId)
+      const configuredCampaign = str(config.campaign)
+      if (
+        configuredCampaign &&
+        !selectedResourceMatches(
+          [
+            ctx.campaignId,
+            ctx.campaign_id,
+            ctx.campaignName,
+            ctx.campaign_name,
+            ctx.attribution?.campaignId,
+            ctx.attribution?.campaignName
+          ],
+          configuredCampaign
+        )
+      ) {
+        return false
+      }
+      if (adsEvent === 'ctwa') {
+        return eventType === 'message-received' &&
+          normalizeConversationChannel(ctx.channel) === 'whatsapp' &&
+          hasAdReferral
+      }
+      return ['ad-clicked', 'facebook-ad-clicked'].includes(eventType) || (
+        eventType === 'message-received' &&
+        ['messenger', 'instagram'].includes(normalizeConversationChannel(ctx.channel)) &&
+        hasAdReferral
+      )
+    }
+    case 'custom':
+      return customEventMatches(config, eventType, ctx)
+    case 'advanced':
+      return evaluateConditionNode(config.advancedCondition, ctx).handle === 'yes'
+    default:
+      return false
+  }
+}
+
 function normalizeCommentEventPlatform(platform) {
   return str(platform) === 'instagram' ? 'instagram' : 'facebook'
 }
@@ -2474,6 +2788,19 @@ function getPersistentRuntimeContext(ctx = {}, current = {}) {
 
 async function createEnrollment(automation, contact, ctx) {
   const id = makeId('enr')
+  const requestedTimezone = str(
+    ctx.scheduleTimezone ||
+    ctx.timezone ||
+    automation?.flow?.settings?.timezone
+  )
+  const scheduleTimezone = isValidTimezone(requestedTimezone)
+    ? requestedTimezone
+    : await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  ctx.scheduleTimezone = scheduleTimezone
+  const preventDuplicateActiveEnrollment =
+    automation?.flow?.settings?.preventDuplicateActiveEnrollment !== false
+  const dedupeContactId =
+    preventDuplicateActiveEnrollment && contact.id ? contact.id : null
   const enrollment = {
     id,
     automationId: automation.id,
@@ -2518,34 +2845,43 @@ async function createEnrollment(automation, contact, ctx) {
       scheduledFor: ctx.scheduledFor || null,
       scheduleRunKey: ctx.scheduleRunKey || null,
       scheduleRecurrence: ctx.scheduleRecurrence || null,
-      scheduleTimezone: ctx.scheduleTimezone || null,
+      scheduleTimezone,
       manualEnrollment: Boolean(ctx.manualEnrollment),
       manualEnrollmentSource: ctx.manualEnrollmentSource || null,
       manualScheduledFor: ctx.manualScheduledFor || null
     }
   }
-  // (AUTO-004) ON CONFLICT DO NOTHING contra el índice único parcial
-  // uq_automation_enrollments_auto_contact (automation_id, contact_id WHERE contact_id IS NOT NULL).
-  // Si dos triggers corren la misma inscripción en paralelo, solo una gana la carrera.
+  // La deduplicación pertenece a la ejecución ACTIVA, no al historial completo
+  // del contacto. dedupe_contact_id sólo se llena cuando el flujo bloquea
+  // inscripciones activas simultáneas; al terminar esa fila, el índice parcial
+  // libera el par y un reingreso crea un enrollment nuevo.
   const result = await db.run(
     `INSERT INTO automation_enrollments
-       (id, automation_id, contact_id, contact_name, status, current_node_id, log, context)
-     VALUES (?, ?, ?, ?, 'active', 'start', '[]', ?)
+       (id, automation_id, contact_id, dedupe_contact_id, contact_name, status, current_node_id, log, context)
+     VALUES (?, ?, ?, ?, ?, 'active', 'start', '[]', ?)
      ON CONFLICT DO NOTHING`,
-    [id, automation.id, enrollment.contactId, enrollment.contactName, JSON.stringify(enrollment.context)]
+    [
+      id,
+      automation.id,
+      enrollment.contactId,
+      dedupeContactId,
+      enrollment.contactName,
+      JSON.stringify(enrollment.context)
+    ]
   )
-  // (AUTO-004) Si no se insertó (changes === 0) ya existía una inscripción para este
-  // contacto+automatización: recuperamos la real y la devolvemos en vez del objeto recién
-  // construido, para no procesar una inscripción fantasma con id que no está en la tabla.
-  if (result && result.changes === 0 && enrollment.contactId) {
+  // Si dos eventos intentaron abrir la misma ejecución activa con la protección
+  // encendida, sólo uno gana. El perdedor recupera la fila activa, pero queda
+  // marcado para que el caller no vuelva a recorrerla ni duplique acciones.
+  if (result && result.changes === 0 && dedupeContactId) {
     const existing = await db.get(
       `SELECT id, automation_id, contact_id, contact_name, status, current_node_id, log,
               execution_outcome, last_error, resume_at, wait_kind, context
          FROM automation_enrollments
-        WHERE automation_id = ? AND contact_id = ?
-        ORDER BY entered_at ASC, id ASC
+        WHERE automation_id = ? AND dedupe_contact_id = ?
+          AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})
+        ORDER BY entered_at DESC, id DESC
         LIMIT 1`,
-      [automation.id, enrollment.contactId]
+      [automation.id, dedupeContactId]
     )
     if (existing) {
       return {
@@ -2560,7 +2896,8 @@ async function createEnrollment(automation, contact, ctx) {
         lastError: existing.last_error || null,
         resumeAt: existing.resume_at || null,
         waitKind: existing.wait_kind || null,
-        context: parseJson(existing.context, {})
+        context: parseJson(existing.context, {}),
+        reusedActiveEnrollment: true
       }
     }
   }
@@ -4384,7 +4721,9 @@ function evaluateGoalMet(config, ctx) {
       if (!tag) return null
       const has = (contact.tagKeys || contact.tags || []).map(normalizeText).includes(tag)
       const operator = str(config.tagOperator) || 'has'
-      return operator === 'not-has' || operator === 'nothas' ? !has : has
+      return operator === 'not-has' || operator === 'not_has' || operator === 'nothas'
+        ? !has
+        : has
     }
     case 'payment': {
       const purchases = Number(contact.purchasesCount || contact.purchases_count || 0) || 0
@@ -4409,6 +4748,85 @@ function evaluateGoalMet(config, ctx) {
     default:
       return null
   }
+}
+
+function waitTimeoutAt(config = {}) {
+  if (!config.timeoutEnabled) return null
+  const timeoutMs =
+    (Number(config.timeoutAmount) || 0) *
+    (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
+  return timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null
+}
+
+function goalWindowDeadline(config = {}, ctx = {}) {
+  const mode = str(config.windowMode) || 'none'
+  if (mode === 'duration') {
+    const durationMs =
+      (Number(config.windowAmount) || 0) *
+      (DURATION_MS[str(config.windowUnit) || 'days'] || DURATION_MS.days)
+    return durationMs > 0 ? new Date(Date.now() + durationMs).toISOString() : null
+  }
+  if (mode === 'until' && str(config.windowUntil)) {
+    const timezone = str(ctx.scheduleTimezone || ctx.timezone) || DEFAULT_TIMEZONE
+    return normalizeToUtcIso(config.windowUntil, timezone)
+  }
+  return null
+}
+
+function isNoReplyGoal(config = {}) {
+  return str(config.goalType) === 'conversation' &&
+    str(config.conversationEvent) === 'no_reply'
+}
+
+function appointmentWaitTarget(config = {}, ctx = {}) {
+  const contact = ctx.contact || {}
+  const calendar = str(config.calendar)
+  const eventCalendar = str(ctx.calendarId || ctx.calendar_id)
+  const activeCalendar = str(contact.activeAppointmentCalendarId)
+  if (calendar && calendar !== eventCalendar && calendar !== activeCalendar) return null
+
+  const appointmentType = str(config.appointmentType)
+  const currentType = str(
+    ctx.appointmentType ||
+    ctx.appointment_type ||
+    ctx.service ||
+    ctx.title ||
+    contact.activeAppointmentTitle
+  )
+  if (appointmentType && normalizeText(appointmentType) !== normalizeText(currentType)) return null
+
+  const wantedStatus = normalizedAppointmentStatus(config.appointmentStatus)
+  const currentStatus = normalizedAppointmentStatus(
+    ctx.appointmentStatus ||
+    ctx.appointment_status ||
+    ctx.status ||
+    contact.activeAppointmentStatus
+  )
+  if (wantedStatus && wantedStatus !== 'booked' && wantedStatus !== currentStatus) return null
+
+  const rawStart = str(
+    ctx.appointmentDate ||
+    ctx.startTime ||
+    ctx.start_time ||
+    ctx.startAt ||
+    ctx.start_at ||
+    ctx.date ||
+    contact.activeAppointmentDate
+  )
+  if (!rawStart) return null
+  const startMs = new Date(rawStart).getTime()
+  if (!Number.isFinite(startMs)) return null
+
+  const offset = str(config.appointmentOffset) || 'before'
+  const amount = offset === 'at' ? 0 : Math.max(0, Number(config.offsetAmount) || 0)
+  const unitMs = DURATION_MS[str(config.offsetUnit) || 'hours'] || DURATION_MS.hours
+  const delta = amount * unitMs
+  const targetMs = offset === 'before'
+    ? startMs - delta
+    : offset === 'after'
+      ? startMs + delta
+      : startMs
+  return new Date(targetMs).toISOString()
 }
 
 // Nodo de acción: responder un comentario a mitad de un flujo. Usa el
@@ -4679,21 +5097,51 @@ async function executeNode(node, ctx, enrollment) {
       }
       if ((mode === 'datetime' || mode === 'until-datetime') && (str(config.untilDate) || str(config.untilDatetime))) {
         const until = str(config.untilDate) || str(config.untilDatetime)
+        const timezone = str(ctx.scheduleTimezone || ctx.timezone) || DEFAULT_TIMEZONE
         return {
-          wait: { kind: 'duration', resumeAt: new Date(until).toISOString() },
+          wait: { kind: 'duration', resumeAt: normalizeToUtcIso(until, timezone) },
           detail: `Esperando hasta ${until}`
         }
       }
+      if (mode === 'appointment') {
+        const resumeAt = appointmentWaitTarget(config, ctx)
+        if (!resumeAt) {
+          return {
+            wait: {
+              kind: WAIT_KIND_APPOINTMENT,
+              resumeAt: null,
+              context: {
+                waitExpectedAction: 'appointment_available',
+                waitActionResource: str(config.calendar),
+                waitActionResourceName: str(config.calendarName)
+              }
+            },
+            detail: 'Esperando una cita que coincida con la configuración'
+          }
+        }
+        if (new Date(resumeAt).getTime() <= Date.now()) {
+          return { handle: 'out', detail: 'La cita ya llegó al momento configurado' }
+        }
+        return {
+          wait: {
+            kind: WAIT_KIND_APPOINTMENT,
+            resumeAt,
+            context: {
+              waitExpectedAction: 'appointment_time',
+              waitActionResource: str(config.calendar),
+              waitActionResourceName: str(config.calendarName)
+            }
+          },
+          detail: `Esperando hasta ${resumeAt} según la cita`
+        }
+      }
       if (mode === 'reply') {
-        const timeoutMs = config.timeoutEnabled
-          ? (Number(config.timeoutAmount) || 0) * (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
-          : 0
         const sourceId = str(config.replySourceNodeId || config.actionResource)
         const sourceName = str(config.replySourceName || config.actionResourceName)
         return {
           wait: {
             kind: WAIT_KIND_REPLY,
-            resumeAt: timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null,
+            resumeAt: waitTimeoutAt(config),
             context: sourceId || sourceName
               ? {
                   waitExpectedAction: 'reply_message',
@@ -4708,49 +5156,58 @@ async function executeNode(node, ctx, enrollment) {
       }
       if (mode === 'action') {
         const expectedAction = str(config.expectedAction) || 'click_link'
-        if (expectedAction === 'reply_message' || expectedAction === 'reply-message') {
-          const timeoutMs = config.timeoutEnabled
-            ? (Number(config.timeoutAmount) || 0) * (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
-            : 0
-          const actionResource = str(config.actionResource || config.messageSourceNodeId || config.replySourceNodeId)
-          const actionResourceName = str(config.actionResourceName || config.messageSourceName || config.replySourceName)
-          return {
-            wait: {
-              kind: WAIT_KIND_REPLY,
-              resumeAt: timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null,
-              context: {
-                waitExpectedAction: 'reply_message',
-                waitActionResource: actionResource,
-                waitActionResourceName: actionResourceName,
-                waitActionChannel: str(config.actionChannel)
-              }
-            },
-            detail: actionResourceName
-              ? `Esperando respuesta al mensaje "${actionResourceName}"`
-              : 'Esperando respuesta al mensaje enviado'
-          }
+        const actionResource = str(
+          config.actionResource ||
+          config.messageSourceNodeId ||
+          config.replySourceNodeId ||
+          config.link ||
+          config.triggerLinkId
+        )
+        const actionResourceName = str(
+          config.actionResourceName ||
+          config.messageSourceName ||
+          config.replySourceName ||
+          config.linkName
+        )
+        const waitKind =
+          expectedAction === 'reply_message' || expectedAction === 'reply-message'
+            ? WAIT_KIND_REPLY
+            : expectedAction === 'click_link' ||
+                expectedAction === 'trigger_link_click' ||
+                expectedAction === 'trigger-link-click'
+              ? WAIT_KIND_TRIGGER_LINK_CLICK
+              : WAIT_KIND_EVENT_ACTION
+        return {
+          wait: {
+            kind: waitKind,
+            resumeAt: waitTimeoutAt(config),
+            context: {
+              waitExpectedAction: expectedAction,
+              waitActionResource: actionResource,
+              waitActionResourceName: actionResourceName,
+              waitActionChannel: str(config.actionChannel)
+            }
+          },
+          detail: actionResourceName
+            ? `Esperando ${expectedAction} en "${actionResourceName}"`
+            : `Esperando que el contacto complete ${expectedAction}`
         }
-        if (expectedAction === 'click_link' || expectedAction === 'trigger_link_click' || expectedAction === 'trigger-link-click') {
-          const timeoutMs = config.timeoutEnabled
-            ? (Number(config.timeoutAmount) || 0) * (DURATION_MS[str(config.timeoutUnit) || 'hours'] || DURATION_MS.hours)
-            : 0
-          const actionResource = str(config.actionResource || config.link || config.triggerLinkId)
-          const actionResourceName = str(config.actionResourceName || config.linkName)
-          const displayName = actionResourceName || actionResource
-          return {
-            wait: {
-              kind: WAIT_KIND_TRIGGER_LINK_CLICK,
-              resumeAt: timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : null,
-              context: {
-                waitExpectedAction: 'trigger_link_click',
-                waitActionResource: actionResource,
-                waitActionResourceName: actionResourceName
-              }
-            },
-            detail: displayName ? `Esperando clic de disparo en "${displayName}"` : 'Esperando un clic de disparo'
-          }
+      }
+      if (mode === 'conditions') {
+        const result = evaluateConditionNode(config.conditions, ctx)
+        if (result.handle === 'yes') {
+          return { handle: 'out', detail: 'La condición de espera ya está cumplida' }
         }
-        return { skipped: true, handle: 'out', detail: `Espera por acción "${expectedAction}" aún no soportada: continúa` }
+        return {
+          wait: {
+            kind: WAIT_KIND_CONDITION,
+            resumeAt: waitTimeoutAt(config),
+            context: {
+              waitExpectedAction: 'condition_met'
+            }
+          },
+          detail: 'Esperando hasta que se cumplan las condiciones'
+        }
       }
       return { skipped: true, handle: 'out', detail: `Espera "${mode}" aún no soportada: continúa` }
     }
@@ -4767,30 +5224,73 @@ async function executeNode(node, ctx, enrollment) {
       return executeRandomizerNode(node)
 
     case 'logic-goal': {
-      // (AUTO-006) Antes este nodo SIEMPRE tomaba la salida "cumplido" sin evaluar
-      // nada, así que un contacto que ya cumplió la meta (p. ej. ya pagó) seguía
-      // recibiendo la secuencia. Ahora evaluamos el estado actual del contacto:
-      //  - Si el objetivo YA está cumplido y onMet es "end-automation" (el default del
-      //    editor), sacamos al contacto del flujo (stop).
-      //  - Si está cumplido y onMet es "continue", seguimos por la salida "out".
-      //  - Si NO está cumplido y onNotMet es "timeout-branch", tomamos la rama "notmet".
-      //  - En cualquier otro caso (no cumplido + continuar, o tipo no evaluable inline
-      //    como formulario/link/conversación/personalizado), conservamos el
-      //    comportamiento anterior: seguir por "out" sin cortar el flujo.
       const config = node.config || {}
-      const met = evaluateGoalMet(config, ctx)
+      const completedGoalNodeIds = new Set(
+        Array.isArray(enrollment?.context?.__completedGoalNodeIds)
+          ? enrollment.context.__completedGoalNodeIds
+          : []
+      )
+      const evaluation = str(config.evaluate) || 'during-automation'
+      // Los objetivos persistentes se cumplen por eventos de ESTA inscripción.
+      // Sólo "immediate" puede consultar el snapshot acumulado del contacto.
+      const met = evaluation === 'immediate'
+        ? evaluateGoalMet(config, ctx)
+        : completedGoalNodeIds.has(node.id)
       const onMet = str(config.onMet) || 'end-automation'
       const onNotMet = str(config.onNotMet) || 'continue'
+      if (isNoReplyGoal(config)) {
+        const resumeAt = goalWindowDeadline(config, ctx)
+        if (!resumeAt) {
+          return {
+            handle: 'out',
+            detail: 'Objetivo sin respuesta omitido: necesita una ventana de tiempo'
+          }
+        }
+        return {
+          wait: {
+            kind: WAIT_KIND_GOAL,
+            resumeAt,
+            context: {
+              waitExpectedAction: 'no_reply',
+              waitActionResource: node.id,
+              waitActionResourceName: str(config.name) || nodeLabel(node)
+            }
+          },
+          detail: `Esperando falta de respuesta hasta ${resumeAt}`
+        }
+      }
       if (met === true) {
         if (onMet === 'continue') {
           return { handle: 'out', detail: 'Objetivo cumplido: continúa por la salida "cumplido"' }
         }
         return { stop: true, detail: 'Objetivo cumplido: el contacto sale de la automatización' }
       }
-      if (met === false && onNotMet === 'timeout-branch') {
-        return { handle: 'notmet', detail: 'Objetivo no cumplido: rama "no cumplido"' }
+      if (onNotMet === 'wait' || onNotMet === 'timeout-branch') {
+        const resumeAt = goalWindowDeadline(config, ctx)
+        if (onNotMet === 'timeout-branch' && !resumeAt) {
+          return { handle: 'notmet', detail: 'Objetivo no cumplido: rama "no cumplido"' }
+        }
+        return {
+          wait: {
+            kind: WAIT_KIND_GOAL,
+            resumeAt,
+            context: {
+              waitExpectedAction: 'goal_met',
+              waitActionResource: node.id,
+              waitActionResourceName: str(config.name) || nodeLabel(node)
+            }
+          },
+          detail: resumeAt
+            ? `Esperando el objetivo hasta ${resumeAt}`
+            : 'Esperando hasta que se cumpla el objetivo'
+        }
       }
-      return { handle: 'out', detail: 'Objetivo registrado' }
+      return {
+        handle: 'out',
+        detail: evaluation === 'immediate'
+          ? 'Objetivo evaluado'
+          : 'Objetivo registrado para esta ejecución'
+      }
     }
 
     case 'action-create-contact':
@@ -5268,6 +5768,7 @@ function clearManualControlContext(context = {}) {
     __pausedStatus,
     __pausedResumeAt,
     __pausedWaitKind,
+    __pendingWaitCompletion,
     waitExpectedAction,
     waitActionResource,
     waitActionResourceName,
@@ -5360,6 +5861,9 @@ export async function enrollContactManually({
     scheduledFor: scheduledFor || null
   }
   const enrollment = await createEnrollment(automation, contact, ctx)
+  if (enrollment.reusedActiveEnrollment) {
+    return reloadEnrollmentResult(enrollment.id)
+  }
   addLog(enrollment, {
     nodeId: 'start',
     label: 'Cuando...',
@@ -5440,8 +5944,13 @@ export async function controlAutomationEnrollment({
     }
     const pausedStatus = cleanString(enrollment.context?.__pausedStatus)
     const nextStatus = pausedStatus === 'waiting' || enrollment.resumeAt || enrollment.waitKind ? 'waiting' : 'active'
+    const pendingWaitCompletion = enrollment.context?.__pendingWaitCompletion
+    const {
+      __pendingWaitCompletion,
+      ...contextWithoutPendingCompletion
+    } = clearPauseContext(enrollment.context)
     enrollment.status = nextStatus
-    enrollment.context = clearPauseContext(enrollment.context)
+    enrollment.context = contextWithoutPendingCompletion
     addLog(enrollment, {
       nodeId: enrollment.currentNodeId || 'flow',
       label: 'Flujo',
@@ -5450,6 +5959,49 @@ export async function controlAutomationEnrollment({
         ? 'Reanudado manualmente; conserva su espera pendiente'
         : 'Reanudado manualmente desde Automatizaciones'
     })
+
+    if (pendingWaitCompletion && enrollment.currentNodeId) {
+      const automation = await getAutomationForEnrollmentControl(automationId, { requirePublished: true })
+      const contact = await loadContact(enrollment.contactId)
+      const ctx = {
+        ...(enrollment.context || {}),
+        ...(pendingWaitCompletion.eventContext || {}),
+        contact,
+        automationName: automation.name,
+        lastAutomationEventType: pendingWaitCompletion.eventType || ''
+      }
+      const currentNode = getNode(automation.flow, enrollment.currentNodeId)
+      if (pendingWaitCompletion.appointmentRecheck && currentNode) {
+        const result = await executeNode(currentNode, ctx, enrollment)
+        if (result.wait) {
+          enrollment.status = 'waiting'
+          enrollment.waitKind = result.wait.kind
+          enrollment.resumeAt = result.wait.resumeAt
+          enrollment.context = {
+            ...enrollment.context,
+            ...(pendingWaitCompletion.eventContext || {}),
+            ...(result.wait.context || {})
+          }
+          addLog(enrollment, {
+            nodeId: currentNode.id,
+            label: nodeLabel(currentNode),
+            status: 'waiting',
+            detail: result.detail
+          })
+          await saveEnrollment(enrollment)
+          return reloadEnrollmentResult(enrollment.id)
+        }
+      }
+      await continueEnrollmentAfterEvent({
+        automation,
+        enrollment,
+        ctx,
+        handle: pendingWaitCompletion.handle || 'out',
+        label: nodeLabel(currentNode) || 'Esperar',
+        detail: pendingWaitCompletion.detail || 'La espera se cumplió mientras estaba pausada'
+      })
+      return reloadEnrollmentResult(enrollment.id)
+    }
 
     if (nextStatus === 'active' && enrollment.currentNodeId) {
       const automation = await getAutomationForEnrollmentControl(automationId, { requirePublished: true })
@@ -5515,74 +6067,395 @@ export async function controlAutomationEnrollment({
   throw engineError(400, 'Acción de inscripción no soportada')
 }
 
-async function resumeWaitingTriggerLinkClicks(baseCtx) {
-  const contact = baseCtx.contact || {}
-  if (!contact.id || !hasTriggerLinkEventContext(baseCtx)) return
+function eventContextForEnrollment(eventType, ctx = {}) {
+  const {
+    contact,
+    automationName,
+    manualControl,
+    ...eventContext
+  } = ctx
+  return {
+    ...eventContext,
+    lastAutomationEventType: eventType,
+    lastAutomationEventAt: nowIso()
+  }
+}
 
-  const waiting = await db.all(
-    `SELECT * FROM automation_enrollments
-     WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
-    [contact.id, WAIT_KIND_TRIGGER_LINK_CLICK]
-  )
-  const automations = await listPublishedAutomations({
-    automationIds: waiting.map((row) => row.automation_id)
+function persistentGoalNodes(flow = {}) {
+  return (Array.isArray(flow.nodes) ? flow.nodes : []).filter((node) => {
+    if (node?.type !== 'logic-goal') return false
+    const evaluation = str(node.config?.evaluate) || 'during-automation'
+    return evaluation === 'during-automation' || evaluation === 'window'
   })
-  const automationsById = new Map(automations.map((automation) => [automation.id, automation]))
+}
 
-  for (const row of waiting) {
+function goalListenerDeadline(node, enrollment, flow = {}) {
+  const config = node?.config || {}
+  const mode = str(config.windowMode) || 'none'
+  if (mode === 'duration') {
+    const enteredMs = new Date(enrollment.enteredAt || enrollment.updatedAt || 0).getTime()
+    const durationMs =
+      (Number(config.windowAmount) || 0) *
+      (DURATION_MS[str(config.windowUnit) || 'days'] || DURATION_MS.days)
+    if (!Number.isFinite(enteredMs) || durationMs <= 0) return null
+    return new Date(enteredMs + durationMs).toISOString()
+  }
+  if (mode === 'until' && str(config.windowUntil)) {
+    try {
+      return normalizeToUtcIso(
+        config.windowUntil,
+        str(
+          enrollment.context?.scheduleTimezone ||
+          flow?.settings?.timezone
+        ) || DEFAULT_TIMEZONE
+      )
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function goalListenerIsOpen(node, enrollment, flow = {}, ctx = {}) {
+  const deadline = goalListenerDeadline(node, enrollment, flow)
+  if (!deadline) return true
+  const eventAt = str(
+    ctx.eventAt ||
+    ctx.occurredAt ||
+    ctx.timestamp ||
+    ctx.clickedAt ||
+    ctx.submittedAt ||
+    ctx.paymentDate ||
+    ctx.createdAt
+  )
+  const eventMs = eventAt ? new Date(eventAt).getTime() : Date.now()
+  return Number.isFinite(eventMs) && eventMs <= new Date(deadline).getTime()
+}
+
+function completedGoalNodeIds(context = {}) {
+  return new Set(
+    Array.isArray(context.__completedGoalNodeIds)
+      ? context.__completedGoalNodeIds.map(str).filter(Boolean)
+      : []
+  )
+}
+
+function eventCompletionDetail(eventType, ctx = {}) {
+  switch (eventType) {
+    case 'message-received':
+      return `Respuesta recibida por ${ctx.channel || 'el canal configurado'}`
+    case 'trigger-link-clicked':
+      return triggerLinkDisplayName(ctx)
+        ? `Clic de disparo recibido en "${triggerLinkDisplayName(ctx)}"`
+        : 'Clic de disparo recibido'
+    case 'form-submitted':
+      return `Formulario enviado${primaryFormNameFromContext(ctx) ? `: ${primaryFormNameFromContext(ctx)}` : ''}`
+    case 'payment-received':
+      return 'Evento de pago recibido'
+    case 'refund':
+      return 'Evento de reembolso recibido'
+    case 'appointment-booked':
+      return 'Cita agendada durante esta ejecución'
+    case 'appointment-status':
+      return `La cita cambió a ${ctx.status || ctx.appointmentStatus || 'otro estado'}`
+    case 'tag-changed':
+      return `La etiqueta fue ${normalizeText(ctx.tagAction) === 'removed' ? 'retirada' : 'asignada'} durante esta ejecución`
+    case 'contact-updated':
+      return 'El contacto cumplió el cambio esperado'
+    case 'contact-created':
+      return 'El contacto fue creado durante esta ejecución'
+    case 'webhook-received':
+    case 'custom-event':
+      return 'Evento personalizado recibido'
+    default:
+      return `Evento ${eventType} recibido`
+  }
+}
+
+async function continueEnrollmentAfterEvent({
+  automation,
+  enrollment,
+  ctx,
+  handle = 'out',
+  label = 'Esperar',
+  detail
+}) {
+  enrollment.status = 'active'
+  enrollment.resumeAt = null
+  enrollment.waitKind = null
+  enrollment.context = {
+    ...(enrollment.context || {}),
+    ...eventContextForEnrollment(ctx.lastAutomationEventType || '', ctx)
+  }
+  addLog(enrollment, {
+    nodeId: enrollment.currentNodeId,
+    label,
+    status: 'ok',
+    detail
+  })
+  const edge = edgesFrom(automation.flow, enrollment.currentNodeId, handle)[0]
+  if (edge) {
+    await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
+  } else {
+    enrollment.status = 'completed'
+    addLog(enrollment, {
+      nodeId: enrollment.currentNodeId,
+      label,
+      status: 'ok',
+      detail: 'Fin del flujo'
+    })
+    await saveEnrollment(enrollment)
+  }
+}
+
+function waitingNodeEventMatch(node, enrollment, eventType, ctx = {}) {
+  const config = node?.config || {}
+  if (enrollment.waitKind === WAIT_KIND_BUTTON_REPLY) {
+    if (eventType !== 'message-received') return null
+    const matchedButton = findMatchingWaitButton(enrollment.context?.waitButtons, {
+      buttonId: ctx.buttonId,
+      buttonPayload: ctx.buttonPayload,
+      buttonTitle: ctx.buttonTitle,
+      text: ctx.messageText
+    })
+    return matchedButton
+      ? {
+          handle: `btn_${matchedButton.id}`,
+          detail: `Botón "${matchedButton.label}" recibido`
+        }
+      : null
+  }
+
+  if (node?.type === 'logic-goal' && enrollment.waitKind === WAIT_KIND_GOAL) {
+    if (isNoReplyGoal(config)) {
+      if (eventType !== 'message-received') return null
+      return {
+        handle: str(config.onNotMet) === 'timeout-branch' ? 'notmet' : 'out',
+        detail: 'El contacto respondió durante esta ejecución; el objetivo de no respuesta no se cumplió'
+      }
+    }
+    return goalMatchesEvent(config, eventType, ctx)
+      ? { handle: 'out', detail: eventCompletionDetail(eventType, ctx) }
+      : null
+  }
+  if (node?.type !== 'logic-wait') return null
+
+  const mode = str(config.mode)
+  if (mode === 'reply') {
+    const sourceName = str(enrollment.context?.waitActionResourceName)
+    return replyEventMatches(config, eventType, ctx)
+      ? {
+          handle: 'out',
+          detail: sourceName
+            ? `El contacto respondió a "${sourceName}"`
+            : 'El contacto respondió'
+        }
+      : null
+  }
+  if (mode === 'action') {
+    const expectedAction = str(config.expectedAction) || 'click_link'
+    const sourceName = str(enrollment.context?.waitActionResourceName)
+    return expectedActionMatches(config, eventType, ctx)
+      ? {
+          handle: 'out',
+          detail:
+            (expectedAction === 'reply_message' || expectedAction === 'reply-message') && sourceName
+              ? `El contacto respondió a "${sourceName}"`
+              : eventCompletionDetail(eventType, ctx)
+        }
+      : null
+  }
+  if (mode === 'conditions') {
+    return evaluateConditionNode(config.conditions, ctx).handle === 'yes'
+      ? { handle: 'out', detail: 'Las condiciones se cumplieron durante esta ejecución' }
+      : null
+  }
+  if (mode === 'appointment') {
+    return appointmentEventMatches(config, eventType, ctx)
+      ? { appointmentRecheck: true }
+      : null
+  }
+  return null
+}
+
+/**
+ * Entrega un evento únicamente a las inscripciones que ya existían cuando
+ * ocurrió. Devuelve las automatizaciones que consumieron el evento para impedir
+ * que ese mismo hecho cierre una vuelta y abra otra inmediatamente.
+ */
+async function processActiveEnrollmentEvent(eventType, baseCtx = {}) {
+  const contact = baseCtx.contact || {}
+  const consumedAutomationIds = new Set()
+  if (!contact.id) return consumedAutomationIds
+
+  const rows = await db.all(
+    `SELECT *
+     FROM automation_enrollments
+     WHERE contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})
+     ORDER BY entered_at ASC, id ASC`,
+    [contact.id]
+  )
+  if (!rows.length) return consumedAutomationIds
+
+  const automations = await listPublishedAutomations({
+    automationIds: [...new Set(rows.map((row) => row.automation_id))]
+  })
+  const automationsById = new Map(
+    automations.map((automation) => [automation.id, automation])
+  )
+
+  for (const row of rows) {
     const automation = automationsById.get(row.automation_id)
     if (!automation) continue
-
-    const storedContext = parseJson(row.context, {})
-    if (!triggerLinkMatchesValue(storedContext.waitActionResource, baseCtx)) continue
-
-    const clickedContext = {
-      triggerLinkId: baseCtx.triggerLinkId || null,
-      triggerLinkPublicId: baseCtx.triggerLinkPublicId || null,
-      triggerLinkName: baseCtx.triggerLinkName || null,
-      triggerLinkUrl: baseCtx.triggerLinkUrl || null,
-      destinationUrl: baseCtx.destinationUrl || null,
-      visitorId: baseCtx.visitorId || null,
-      referrer: baseCtx.referrer || null,
-      eventId: baseCtx.eventId || null,
-      clickedAt: baseCtx.clickedAt || nowIso(),
-      query: baseCtx.query || null
-    }
-    const enrollment = {
-      id: row.id,
-      automationId: row.automation_id,
-      status: 'active',
-      currentNodeId: row.current_node_id,
-      log: parseJson(row.log, []),
-      resumeAt: null,
-      waitKind: null,
-      context: { ...storedContext, ...clickedContext }
-    }
+    const enrollment = mapEnrollmentRow(row)
+    const storedContext = enrollment.context || {}
     const ctx = {
       ...storedContext,
       ...baseCtx,
-      ...clickedContext,
       contact,
-      messageText: baseCtx.messageText || storedContext.messageText || '',
-      channel: baseCtx.channel || storedContext.channel || '',
-      businessPhoneNumberId: baseCtx.businessPhoneNumberId || storedContext.businessPhoneNumberId || null,
-      automationName: automation.name
+      automationName: automation.name,
+      lastAutomationEventType: eventType
     }
-    const displayName = triggerLinkDisplayName(baseCtx) || storedContext.waitActionResourceName || storedContext.waitActionResource
-    addLog(enrollment, {
-      nodeId: row.current_node_id,
-      label: 'Esperar',
-      status: 'ok',
-      detail: displayName ? `Clic de disparo recibido en "${displayName}"` : 'Clic de disparo recibido'
+    const completedGoals = completedGoalNodeIds(storedContext)
+    let goalMatched = false
+    let enrollmentAdvanced = false
+
+    for (const goalNode of persistentGoalNodes(automation.flow)) {
+      if (completedGoals.has(goalNode.id)) continue
+      if (!goalListenerIsOpen(goalNode, enrollment, automation.flow, ctx)) continue
+      if (!goalMatchesEvent(goalNode.config || {}, eventType, ctx)) continue
+
+      goalMatched = true
+      completedGoals.add(goalNode.id)
+      enrollment.context = {
+        ...storedContext,
+        ...eventContextForEnrollment(eventType, ctx),
+        __completedGoalNodeIds: [...completedGoals]
+      }
+      addLog(enrollment, {
+        nodeId: goalNode.id,
+        label: str(goalNode.config?.name) || nodeLabel(goalNode),
+        status: 'ok',
+        detail: `Objetivo cumplido en esta ejecución: ${eventCompletionDetail(eventType, ctx)}`
+      })
+      consumedAutomationIds.add(automation.id)
+
+      const onMet = str(goalNode.config?.onMet) || 'end-automation'
+      if (onMet === 'end-automation' || onMet === 'remove' || onMet === 'end-branch') {
+        enrollment.status = onMet === 'end-branch' ? 'completed' : 'exited'
+        enrollment.resumeAt = null
+        enrollment.waitKind = null
+        await saveEnrollment(enrollment)
+        break
+      }
+
+      if (
+        onMet === 'continue' &&
+        enrollment.status === 'waiting' &&
+        enrollment.currentNodeId === goalNode.id
+      ) {
+        await continueEnrollmentAfterEvent({
+          automation,
+          enrollment,
+          ctx,
+          handle: 'out',
+          label: nodeLabel(goalNode),
+          detail: eventCompletionDetail(eventType, ctx)
+        })
+        enrollmentAdvanced = true
+        break
+      }
+    }
+
+    if (enrollmentAdvanced) continue
+    if (['completed', 'exited'].includes(enrollment.status)) continue
+    if (enrollment.status === 'paused') {
+      const currentNode = getNode(automation.flow, enrollment.currentNodeId)
+      const pausedWaitKind = str(storedContext.__pausedWaitKind)
+      const pausedEnrollment = {
+        ...enrollment,
+        waitKind: pausedWaitKind || enrollment.waitKind
+      }
+      const pendingMatch = waitingNodeEventMatch(
+        currentNode,
+        pausedEnrollment,
+        eventType,
+        ctx
+      )
+      if (pendingMatch) {
+        consumedAutomationIds.add(automation.id)
+        enrollment.context = {
+          ...(enrollment.context || {}),
+          __pendingWaitCompletion: {
+            handle: pendingMatch.handle || 'out',
+            detail: pendingMatch.detail || eventCompletionDetail(eventType, ctx),
+            appointmentRecheck: Boolean(pendingMatch.appointmentRecheck),
+            eventType,
+            eventContext: eventContextForEnrollment(eventType, ctx)
+          }
+        }
+        addLog(enrollment, {
+          nodeId: enrollment.currentNodeId,
+          label: nodeLabel(currentNode) || 'Esperar',
+          status: 'info',
+          detail: 'La espera se cumplió mientras estaba pausada; continuará al reanudar'
+        })
+      }
+      if (goalMatched || pendingMatch) await saveEnrollment(enrollment)
+      continue
+    }
+    if (enrollment.status !== 'waiting') {
+      if (goalMatched) await saveEnrollment(enrollment)
+      continue
+    }
+
+    const currentNode = getNode(automation.flow, enrollment.currentNodeId)
+    const match = waitingNodeEventMatch(currentNode, enrollment, eventType, ctx)
+    if (!match) {
+      if (goalMatched) await saveEnrollment(enrollment)
+      continue
+    }
+
+    consumedAutomationIds.add(automation.id)
+    enrollment.context = {
+      ...(enrollment.context || {}),
+      ...eventContextForEnrollment(eventType, ctx)
+    }
+
+    if (match.appointmentRecheck) {
+      const result = await executeNode(currentNode, ctx, enrollment)
+      if (result.wait) {
+        enrollment.status = 'waiting'
+        enrollment.waitKind = result.wait.kind
+        enrollment.resumeAt = result.wait.resumeAt
+        enrollment.context = {
+          ...enrollment.context,
+          ...(result.wait.context || {})
+        }
+        addLog(enrollment, {
+          nodeId: currentNode.id,
+          label: nodeLabel(currentNode),
+          status: 'waiting',
+          detail: result.detail
+        })
+        await saveEnrollment(enrollment)
+        continue
+      }
+      match.handle = result.handle || 'out'
+      match.detail = result.detail || eventCompletionDetail(eventType, ctx)
+    }
+
+    await continueEnrollmentAfterEvent({
+      automation,
+      enrollment,
+      ctx,
+      handle: match.handle || 'out',
+      label: nodeLabel(currentNode) || 'Esperar',
+      detail: match.detail || eventCompletionDetail(eventType, ctx)
     })
-    const edge = edgesFrom(automation.flow, row.current_node_id, 'out')[0]
-    if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
-    else {
-      enrollment.status = 'completed'
-      addLog(enrollment, { nodeId: row.current_node_id, label: 'Esperar', status: 'ok', detail: 'Fin del flujo' })
-      await saveEnrollment(enrollment)
-    }
   }
+
+  return consumedAutomationIds
 }
 
 /** Evento principal: llega un mensaje entrante (WhatsApp por ahora) */
@@ -5597,12 +6470,14 @@ export async function handleIncomingMessage({
   buttonTitle = '',
   buttonReplyType = '',
   channel = 'whatsapp',
-  businessPhoneNumberId = null
+  businessPhoneNumberId = null,
+  ...eventContext
 }) {
   try {
     if (!(await canRunBackgroundJob('automations'))) return
     const contact = await loadContact(contactId, { phone, name: contactName })
     const baseCtx = {
+      ...eventContext,
       contact,
       messageText: text || '',
       channel: normalizeConversationChannel(channel) || 'whatsapp',
@@ -5613,101 +6488,19 @@ export async function handleIncomingMessage({
       buttonTitle,
       buttonReplyType
     }
-    const [waitingButtons, waiting] = await Promise.all([
-      db.all(
-        `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
-        [contact.id, WAIT_KIND_BUTTON_REPLY]
-      ),
-      db.all(
-        `SELECT * FROM automation_enrollments WHERE contact_id = ? AND status = 'waiting' AND wait_kind = ?`,
-        [contact.id, WAIT_KIND_REPLY]
-      )
-    ])
-    const waitingAutomationIds = [...waitingButtons, ...waiting].map((row) => row.automation_id)
-    const [messageAutomations, stopOnResponseAutomations, waitingAutomations] = await Promise.all([
-      listPublishedAutomations({ eventType: 'message-received' }),
-      listPublishedAutomations({ eventType: AUTOMATION_STOP_ON_RESPONSE_EVENT_TYPE }),
-      listPublishedAutomations({ automationIds: waitingAutomationIds })
-    ])
-    const waitingAutomationsById = new Map(
-      waitingAutomations.map((automation) => [automation.id, automation])
+    // Primero se entrega el evento a las ejecuciones que YA estaban dentro.
+    // Sólo después se evalúan disparadores de entrada; así el mismo mensaje no
+    // puede cerrar una vuelta y abrir otra que nazca autocumplida.
+    const consumedAutomationIds = await processActiveEnrollmentEvent(
+      'message-received',
+      baseCtx
     )
+    const [messageAutomations, stopOnResponseAutomations] = await Promise.all([
+      listPublishedAutomations({ eventType: 'message-received' }),
+      listPublishedAutomations({ eventType: AUTOMATION_STOP_ON_RESPONSE_EVENT_TYPE })
+    ])
 
-    // 1) Reanudar inscripciones que esperaban un botón de este contacto
-    for (const row of waitingButtons) {
-      const automation = waitingAutomationsById.get(row.automation_id)
-      if (!automation) continue
-      const storedContext = parseJson(row.context, {})
-      const matchedButton = findMatchingWaitButton(storedContext.waitButtons, {
-        buttonId,
-        buttonPayload,
-        buttonTitle,
-        text
-      })
-      if (!matchedButton) continue
-
-      const enrollment = {
-        id: row.id,
-        automationId: row.automation_id,
-        status: 'active',
-        currentNodeId: row.current_node_id,
-        log: parseJson(row.log, []),
-        resumeAt: null,
-        waitKind: null,
-        context: storedContext
-      }
-      const ctx = {
-        ...baseCtx,
-        buttonId: matchedButton.id,
-        buttonTitle: buttonTitle || matchedButton.label,
-        buttonPayload: buttonPayload || matchedButton.id,
-        businessPhoneNumberId: businessPhoneNumberId || enrollment.context.businessPhoneNumberId
-      }
-      addLog(enrollment, {
-        nodeId: row.current_node_id,
-        label: nodeLabel(getNode(automation.flow, row.current_node_id)) || 'WhatsApp',
-        status: 'ok',
-        detail: `Botón "${matchedButton.label}" recibido`
-      })
-      const edge = edgesFrom(automation.flow, row.current_node_id, `btn_${matchedButton.id}`)[0]
-      if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
-      else {
-        enrollment.status = 'completed'
-        await saveEnrollment(enrollment)
-      }
-    }
-
-    // 2) Reanudar inscripciones que esperaban respuesta de este contacto
-    for (const row of waiting) {
-      const automation = waitingAutomationsById.get(row.automation_id)
-      if (!automation) continue
-      const enrollment = {
-        id: row.id,
-        automationId: row.automation_id,
-        status: 'active',
-        currentNodeId: row.current_node_id,
-        log: parseJson(row.log, []),
-        resumeAt: null,
-        waitKind: null,
-        context: parseJson(row.context, {})
-      }
-      const ctx = { ...baseCtx, businessPhoneNumberId: businessPhoneNumberId || enrollment.context.businessPhoneNumberId }
-      const sourceName = str(enrollment.context.waitActionResourceName)
-      addLog(enrollment, {
-        nodeId: row.current_node_id,
-        label: 'Esperar',
-        status: 'ok',
-        detail: sourceName ? `El contacto respondió a "${sourceName}"` : 'El contacto respondió'
-      })
-      const edge = edgesFrom(automation.flow, row.current_node_id, 'out')[0]
-      if (edge) await runFrom(automation.flow, enrollment, edge.targetNodeId, ctx)
-      else {
-        enrollment.status = 'completed'
-        await saveEnrollment(enrollment)
-      }
-    }
-
-    // 3) Detener flujos configurados con "salir al responder"
+    // Detener flujos configurados con "salir al responder".
     for (const automation of stopOnResponseAutomations) {
       if (automation.flow?.settings?.stopOnContactResponse) {
         await db.run(
@@ -5719,8 +6512,9 @@ export async function handleIncomingMessage({
       }
     }
 
-    // 4) Inscribir en automatizaciones cuyo disparador coincide
-    await enrollMatching(messageAutomations, 'message-received', baseCtx)
+    await enrollMatching(messageAutomations, 'message-received', baseCtx, {
+      skipAutomationIds: consumedAutomationIds
+    })
   } catch (error) {
     logger.error(`[Automatizaciones] Error procesando mensaje entrante: ${error.message}`)
   }
@@ -5755,9 +6549,15 @@ async function commentTriggerShouldSkip(trigger, ctx) {
   return false
 }
 
-async function enrollMatching(automations, eventType, baseCtx) {
+async function enrollMatching(
+  automations,
+  eventType,
+  baseCtx,
+  { skipAutomationIds = new Set() } = {}
+) {
   const contact = baseCtx.contact || {}
   for (const automation of automations) {
+    if (skipAutomationIds.has(automation.id)) continue
     const flow = automation.flow
     const startNode = getStartNode(flow)
     if (!startNode) continue
@@ -5790,6 +6590,7 @@ async function enrollMatching(automations, eventType, baseCtx) {
 
     const ctx = { ...baseCtx, automationName: automation.name }
     const enrollment = await createEnrollment(automation, contact, ctx)
+    if (enrollment.reusedActiveEnrollment) continue
     const describe = EVENT_DESCRIPTIONS[eventType]
     addLog(enrollment, {
       nodeId: 'start',
@@ -6344,10 +7145,10 @@ export async function handleAutomationEvent(eventType, data = {}) {
       channel: normalizeConversationChannel(eventData.channel || '')
     })
     const automations = await listPublishedAutomations({ eventType, endpointId: eventData.endpointId })
-    if (eventType === 'trigger-link-clicked') {
-      await resumeWaitingTriggerLinkClicks(ctx)
-    }
-    await enrollMatching(automations, eventType, ctx)
+    const consumedAutomationIds = await processActiveEnrollmentEvent(eventType, ctx)
+    await enrollMatching(automations, eventType, ctx, {
+      skipAutomationIds: consumedAutomationIds
+    })
   } catch (error) {
     logger.error(`[Automatizaciones] Error en evento ${eventType}: ${error.message}`)
   }
@@ -6701,8 +7502,40 @@ export async function processDueResumes() {
       }
       const wasReplyTimeout = row.wait_kind === WAIT_KIND_REPLY
       const wasTriggerLinkTimeout = row.wait_kind === WAIT_KIND_TRIGGER_LINK_CLICK
+      const wasEventTimeout =
+        row.wait_kind === WAIT_KIND_EVENT_ACTION ||
+        row.wait_kind === WAIT_KIND_CONDITION
+      const wasGoalTimeout = row.wait_kind === WAIT_KIND_GOAL
       const wasDripResume = row.wait_kind === WAIT_KIND_DRIP
-      const handle = wasReplyTimeout || wasTriggerLinkTimeout ? 'timeout' : 'out'
+      const currentNode = getNode(automation.flow, row.current_node_id)
+      const noReplyGoalTimedOut = wasGoalTimeout && isNoReplyGoal(currentNode?.config)
+      if (noReplyGoalTimedOut) {
+        const completedGoals = completedGoalNodeIds(enrollment.context)
+        completedGoals.add(currentNode.id)
+        enrollment.context = {
+          ...enrollment.context,
+          __completedGoalNodeIds: [...completedGoals]
+        }
+        addLog(enrollment, {
+          nodeId: currentNode.id,
+          label: str(currentNode.config?.name) || nodeLabel(currentNode),
+          status: 'ok',
+          detail: 'Objetivo cumplido en esta ejecución: el contacto no respondió dentro del tiempo configurado'
+        })
+        const onMet = str(currentNode.config?.onMet) || 'end-automation'
+        if (onMet === 'end-automation' || onMet === 'remove' || onMet === 'end-branch') {
+          enrollment.status = onMet === 'end-branch' ? 'completed' : 'exited'
+          await saveEnrollment(enrollment)
+          continue
+        }
+      }
+      const handle = wasGoalTimeout
+        ? noReplyGoalTimedOut
+          ? 'out'
+          : (str(currentNode?.config?.onNotMet) === 'timeout-branch' ? 'notmet' : 'out')
+        : wasReplyTimeout || wasTriggerLinkTimeout || wasEventTimeout
+          ? 'timeout'
+          : 'out'
       const sourceName = str(enrollment.context.waitActionResourceName)
       const dripBatch = Number(enrollment.context.dripBatch) || 0
       addLog(enrollment, {
@@ -6715,6 +7548,12 @@ export async function processDueResumes() {
             ? sourceName ? `No respondió a "${sourceName}" a tiempo` : 'No respondió a tiempo'
             : wasTriggerLinkTimeout
               ? 'No hubo clic de disparo a tiempo'
+              : wasEventTimeout
+                ? 'La acción o condición no se cumplió a tiempo'
+                : noReplyGoalTimedOut
+                  ? 'El contacto no respondió dentro del tiempo configurado'
+                  : wasGoalTimeout
+                  ? 'El objetivo no se cumplió dentro de su ventana'
               : 'Espera terminada'
       })
       const edge = edgesFrom(automation.flow, row.current_node_id, handle)[0]
