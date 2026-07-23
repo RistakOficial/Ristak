@@ -77,7 +77,7 @@ export const IMPORTED_HTML_CUSTOM_CALENDAR_RULES = Object.freeze([
   'Nunca anides <form>. Para un flujo combinado cuyo submit crea la cita, el único <form data-rstk-calendar-book-form> envuelve todas las preguntas y pasos, sin data-rstk-form-id ni submit intermedio. Los botones para avanzar o regresar usan type="button"; solo el botón que finalmente confirma la cita usa type="submit".',
   'Para ordenar libremente el recorrido usa secciones data-rstk-calendar-flow-step="id-estable" con data-rstk-calendar-flow-kind="questions|date|time|confirm|success". El orden del DOM manda: puedes construir preguntas → fecha → horario → confirmar, fecha → horario → preguntas → confirmar o intercalar preguntas. En questions usa data-rstk-calendar-flow-next y data-rstk-calendar-flow-back; Ristak valida los campos required sin enviar todavía nada.',
   'Si la solicitud dice que el formulario pertenece al calendario, que debe aparecer después de agendar o que primero se eligen fecha y hora, el orden obligatorio es date → time → questions → confirm → success. No muestres situación, inversión, contacto ni ningún otro campo antes de seleccionar un horario; los datos de contacto van en el último paso questions, justo antes de confirm.',
-  'Si el calendario se desbloquea al avanzar un video, usa el contrato nativo data-rstk-video-gate-* descrito más abajo. El estado inicial debe mostrar un calendario completo pero deshabilitado bajo una capa o franja de bloqueo con el progreso restante. El calendario real completo va dentro de data-rstk-video-gate-content y Ristak lo mantiene oculto e inerte hasta cumplir la condición; no lo dibujes además por fuera ni uses reglas individuales para simular cada segundo. Al desbloquear, empieza en date: las preguntas siguen ocultas hasta que el visitante seleccione time.',
+  'Si el calendario se desbloquea al avanzar un video, usa el contrato nativo data-rstk-video-gate-* descrito más abajo. El estado inicial recomendado usa un solo calendario real, visible con blur pero inert e imposible de tocar, y una capa encima con el progreso restante; declara data-rstk-video-gate-shell y data-rstk-video-gate-locked-mode="blur". No dibujes otro calendario bloqueado ni uses reglas individuales para simular cada segundo. Al desbloquear, empieza en date: las preguntas siguen ocultas hasta que el visitante seleccione time.',
   'Nombre, email y teléfono pueden aparecer en cualquier paso questions dentro del mismo data-rstk-calendar-book-form; conserva data-rstk-calendar-name, data-rstk-calendar-email y data-rstk-calendar-phone. No los repitas al final: Ristak conserva sus valores y los usa cuando el submit crea la cita.',
   'Las demás respuestas que deban acompañar la cita usan data-rstk-calendar-response="id-estable" y data-rstk-label="Pregunta visible". Ristak las manda con la reserva y las agrega al resumen de la cita; no inventes un segundo submit para guardarlas.',
   'Construye cuatro pasos dentro del mismo componente: data-rstk-calendar-step="date", "time", "form" y "success". Deja time, form y success con hidden al cargar; Ristak cambia el paso y el atributo data-rstk-calendar-state del contenedor.',
@@ -403,7 +403,9 @@ export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor de 
 export const IMPORTED_HTML_VIDEO_GATE_RULES = Object.freeze([
   'Para bloquear de verdad un calendario, formulario, checkout o sección hasta que se vea un video, declara data-rstk-video-gate-id="id-estable" en el slot nativo de video y data-rstk-video-gate-value con el umbral. Ristak mide el reproductor real; no escribas JavaScript ni una regla por cada segundo.',
   'data-rstk-video-gate-trigger acepta playback_seconds, unique_watched_percent o timeline_reached. Usa playback_seconds cuando adelantar o mover la barra NO debe contar: seek, buffering y el preview automático no cuentan. Usa unique_watched_percent cuando el umbral sea un porcentaje de fragmentos realmente vistos; timeline_reached sí acepta que el visitante adelante.',
-  'Marca el diseño que debe verse mientras está bloqueado con data-rstk-video-gate-locked="id-estable", el número vivo con data-rstk-video-gate-remaining="id-estable" y envuelve TODO el contenido real con data-rstk-video-gate-content="id-estable". Ristak oculta e inutiliza ese contenido desde el primer render y lo muestra únicamente al llegar al umbral.',
+  'Marca el diseño que debe verse mientras está bloqueado con data-rstk-video-gate-locked="id-estable", el número vivo con data-rstk-video-gate-remaining="id-estable" y envuelve TODO el contenido real con data-rstk-video-gate-content="id-estable". Por default Ristak oculta e inutiliza ese contenido desde el primer render y lo muestra únicamente al llegar al umbral.',
+  'Para que el calendario real permanezca visible pero desenfocado, usa un único contenedor data-rstk-video-gate-shell="id-estable". Dentro coloca como hijos directos el calendario real con data-rstk-video-gate-content y data-rstk-video-gate-locked-mode="blur", y la capa de texto con data-rstk-video-gate-locked. Ristak pone la capa encima del mismo calendario, conserva el contenido visible con blur, lo vuelve inert e imposible de tocar y quita blur y capa al desbloquear.',
+  'En modo blur NO dibujes un calendario bloqueado falso y otro calendario real debajo. Existe un solo calendario real detrás de la capa; el HTML/CSS puede ajustar la intensidad con --rstk-video-gate-blur y la opacidad con --rstk-video-gate-locked-opacity.',
   'El contenido real incluye el slot nativo completo. Si es un calendario compuesto, data-rstk-video-gate-content envuelve fecha, horario, preguntas, contacto, confirmación y éxito; nunca dejes el formulario o el calendario real como hermano visible fuera de esa zona.',
   'Para computadora y móvil con videos distintos, ambos slots usan el mismo data-rstk-video-gate-id, trigger y value. Ristak toma el mayor progreso real de las variantes y nunca suma dos reproducciones simultáneas.',
   'El elemento data-rstk-video-gate-remaining debe traer como texto inicial el umbral completo para que la página sea legible aun antes de iniciar el runtime. Ristak lo reemplaza por el restante real y lo deja en 0 al desbloquear.',
@@ -419,17 +421,19 @@ export const IMPORTED_HTML_VIDEO_GATE_EXAMPLE = `<div
   data-rstk-video-gate-value="30"
 ></div>
 
-<section data-rstk-video-gate-locked="agenda-admision">
-  <p>Tu agenda se desbloquea al ver la clase.</p>
-  <p>Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos de reproducción.</p>
-</section>
-
-<section data-rstk-video-gate-content="agenda-admision">
-  <div
+<section data-rstk-video-gate-shell="agenda-admision">
+  <section
     data-rstk-native-element="calendar"
     data-rstk-native-id="agenda-real"
     data-rstk-native-render="custom"
-  ></div>
+    data-rstk-video-gate-content="agenda-admision"
+    data-rstk-video-gate-locked-mode="blur"
+  ></section>
+
+  <section data-rstk-video-gate-locked="agenda-admision" role="status" aria-live="polite">
+    <p>Tu agenda se desbloquea al ver la clase.</p>
+    <p>Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos de reproducción.</p>
+  </section>
 </section>`
 
 export function buildImportedHtmlVideoGateRulesText(heading = 'Bloqueo nativo de contenido por video:') {

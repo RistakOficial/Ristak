@@ -176,8 +176,15 @@ simular el contador con reglas `show`/`hide`. Los slots de video declaran el mis
 `data-rstk-video-gate-id`, trigger y value; el diseño bloqueado usa
 `data-rstk-video-gate-locked`, el número vivo
 `data-rstk-video-gate-remaining` y el calendario compuesto completo usa
-`data-rstk-video-gate-content`. El renderer oculta ese contenido con `hidden`,
-`inert` y `aria-hidden` desde la primera respuesta. Con
+`data-rstk-video-gate-content`. Sin modo explícito, el renderer oculta ese
+contenido con `hidden`, `inert` y `aria-hidden` desde la primera respuesta. Para
+mostrar el único calendario real desenfocado, un
+`data-rstk-video-gate-shell` debe contener como hijos directos el calendario con
+`data-rstk-video-gate-locked-mode="blur"` y la capa
+`data-rstk-video-gate-locked`. El calendario permanece visible pero `inert`,
+con el overlay encima; al desbloquear se retiran blur y bloqueo. No se crea una
+agenda falsa separada. El HTML puede ajustar `--rstk-video-gate-blur` y
+`--rstk-video-gate-locked-opacity`. Con
 `playback_seconds`, seek, buffering y preview automático no cuentan. Dos
 variantes responsive comparten el mayor progreso individual y nunca se suman.
 Al desbloquear, el flujo comienza en `date`; `time` y todas las preguntas siguen

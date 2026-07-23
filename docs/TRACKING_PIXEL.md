@@ -667,26 +667,35 @@ Para bloquear contenido por reproducción sin escribir JavaScript, el slot
   data-rstk-video-gate-value="30">
 </div>
 
-<section data-rstk-video-gate-locked="agenda-admision">
-  Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong>
-  segundos.
-</section>
-
-<section data-rstk-video-gate-content="agenda-admision">
-  <div
+<section data-rstk-video-gate-shell="agenda-admision">
+  <section
     data-rstk-native-element="calendar"
     data-rstk-native-id="agenda-real"
-    data-rstk-native-render="custom">
-  </div>
+    data-rstk-native-render="custom"
+    data-rstk-video-gate-content="agenda-admision"
+    data-rstk-video-gate-locked-mode="blur">
+  </section>
+
+  <section data-rstk-video-gate-locked="agenda-admision">
+    Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong>
+    segundos.
+  </section>
 </section>
 ```
 
-Ristak oculta e inutiliza `data-rstk-video-gate-content` desde el primer render,
-actualiza el restante desde el progreso real del reproductor y habilita el
-contenido al cumplir el umbral. `playback_seconds` no acredita adelantos ni
-buffering; `unique_watched_percent` mide fragmentos distintos vistos y
+Con `data-rstk-video-gate-locked-mode="blur"`, Ristak mantiene visible el
+calendario real pero lo vuelve `inert`, le aplica blur y posiciona la capa
+`data-rstk-video-gate-locked` encima del mismo
+`data-rstk-video-gate-shell`. No existe un calendario falso seguido de otro
+calendario real. El modo sin `locked-mode` conserva el comportamiento compatible
+que oculta el contenido. En ambos casos el restante sale del progreso real del
+reproductor y el contenido se habilita al cumplir el umbral.
+`playback_seconds` no acredita adelantos ni buffering;
+`unique_watched_percent` mide fragmentos distintos vistos y
 `timeline_reached` sí permite seek. Dos videos responsive pueden compartir el
-mismo gate; se usa su mayor progreso individual, no la suma.
+mismo gate; se usa su mayor progreso individual, no la suma. El HTML puede
+ajustar el efecto con `--rstk-video-gate-blur` y
+`--rstk-video-gate-locked-opacity`.
 
 Si el calendario usa frontend propio, el HTML debe marcar
 `data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo

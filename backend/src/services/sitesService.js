@@ -25804,6 +25804,18 @@ const IMPORTED_VIDEO_GATE_CONTENT_ATTR_NAMES = [
   'data-ristack-video-gate-content'
 ]
 
+const IMPORTED_VIDEO_GATE_SHELL_ATTR_NAMES = [
+  'data-rstk-video-gate-shell',
+  'data-ristak-video-gate-shell',
+  'data-ristack-video-gate-shell'
+]
+
+const IMPORTED_VIDEO_GATE_LOCKED_MODE_ATTR_NAMES = [
+  'data-rstk-video-gate-locked-mode',
+  'data-ristak-video-gate-locked-mode',
+  'data-ristack-video-gate-locked-mode'
+]
+
 function importedVideoGateAttributeValue(attrs = {}, names = []) {
   for (const name of names) {
     const value = cleanString(attrs[name])
@@ -25812,8 +25824,23 @@ function importedVideoGateAttributeValue(attrs = {}, names = []) {
   return ''
 }
 
+function importedVideoGateLockedMode(attrs = {}) {
+  return importedVideoGateAttributeValue(attrs, IMPORTED_VIDEO_GATE_LOCKED_MODE_ATTR_NAMES).toLowerCase() === 'blur'
+    ? 'blur'
+    : 'hidden'
+}
+
+function removeImportedVideoGateOpeningAttribute(openingTag = '', attrName = '') {
+  if (!attrName) return openingTag
+  const pattern = new RegExp(
+    `\\s+${escapeRegExp(attrName)}(?:\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+))?`,
+    'gi'
+  )
+  return String(openingTag || '').replace(pattern, '')
+}
+
 function annotateImportedVideoGateState(html = '') {
-  if (!/\bdata-(?:rstk|ristak|ristack)-video-gate-(?:locked|content)\b/i.test(String(html || ''))) return html
+  if (!/\bdata-(?:rstk|ristak|ristack)-video-gate-(?:locked|content|shell)\b/i.test(String(html || ''))) return html
 
   return String(html || '').replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (full, tagName, attrsText = '') => {
     const tag = cleanString(tagName).toLowerCase()
@@ -25821,19 +25848,29 @@ function annotateImportedVideoGateState(html = '') {
     const attrs = parseHtmlAttributes(attrsText)
     const lockedId = importedVideoGateAttributeValue(attrs, IMPORTED_VIDEO_GATE_LOCKED_ATTR_NAMES)
     const contentId = importedVideoGateAttributeValue(attrs, IMPORTED_VIDEO_GATE_CONTENT_ATTR_NAMES)
-    if (!lockedId && !contentId) return full
+    const shellId = importedVideoGateAttributeValue(attrs, IMPORTED_VIDEO_GATE_SHELL_ATTR_NAMES)
+    if (!lockedId && !contentId && !shellId) return full
+
+    const lockedMode = contentId ? importedVideoGateLockedMode(attrs) : 'hidden'
+    let openingTag = full
+    if (contentId && lockedMode === 'blur') {
+      openingTag = removeImportedVideoGateOpeningAttribute(openingTag, 'hidden')
+      openingTag = removeImportedVideoGateOpeningAttribute(openingTag, 'data-rstk-video-action-hidden')
+      openingTag = removeImportedVideoGateOpeningAttribute(openingTag, 'aria-hidden')
+    }
+    const nextAttrsText = openingTag.match(/^<[a-z][\w:-]*\b([^>]*)>/i)?.[1] || attrsText
 
     const extras = []
-    if (!openingTagHasAttribute(attrsText, 'data-rstk-video-gate-state')) {
+    if (!openingTagHasAttribute(nextAttrsText, 'data-rstk-video-gate-state')) {
       extras.push(' data-rstk-video-gate-state="locked"')
     }
     if (contentId) {
-      if (!openingTagHasAttribute(attrsText, 'hidden')) extras.push(' hidden')
-      if (!openingTagHasAttribute(attrsText, 'inert')) extras.push(' inert')
-      if (!openingTagHasAttribute(attrsText, 'aria-hidden')) extras.push(' aria-hidden="true"')
+      if (lockedMode !== 'blur' && !openingTagHasAttribute(nextAttrsText, 'hidden')) extras.push(' hidden')
+      if (!openingTagHasAttribute(nextAttrsText, 'inert')) extras.push(' inert')
+      if (!openingTagHasAttribute(nextAttrsText, 'aria-hidden')) extras.push(' aria-hidden="true"')
     }
-    if (!extras.length) return full
-    return full.replace(/(\s*\/?>)$/i, `${extras.join('')}$1`)
+    if (!extras.length) return openingTag
+    return openingTag.replace(/(\s*\/?>)$/i, `${extras.join('')}$1`)
   })
 }
 
@@ -25841,9 +25878,25 @@ function buildImportedVideoGateRuntimeScript(html = '') {
   if (!/\bdata-(?:rstk|ristak|ristack)-video-gate-id\s*=/i.test(String(html || ''))) return ''
 
   return `<style data-rstk-video-gate-runtime>
-  [data-rstk-video-gate-content]:not([data-rstk-video-gate-state="unlocked"]),
-  [data-ristak-video-gate-content]:not([data-rstk-video-gate-state="unlocked"]),
-  [data-ristack-video-gate-content]:not([data-rstk-video-gate-state="unlocked"]){display:none!important}
+  :where([data-rstk-video-gate-content],[data-ristak-video-gate-content],[data-ristack-video-gate-content]):not([data-rstk-video-gate-state="unlocked"]):not(:where([data-rstk-video-gate-locked-mode="blur"],[data-ristak-video-gate-locked-mode="blur"],[data-ristack-video-gate-locked-mode="blur"])){display:none!important}
+  :where([data-rstk-video-gate-content],[data-ristak-video-gate-content],[data-ristack-video-gate-content]):where([data-rstk-video-gate-locked-mode="blur"],[data-ristak-video-gate-locked-mode="blur"],[data-ristack-video-gate-locked-mode="blur"]){
+      transition:filter .24s ease,opacity .24s ease
+    }
+  :where([data-rstk-video-gate-content],[data-ristak-video-gate-content],[data-ristack-video-gate-content]):where([data-rstk-video-gate-locked-mode="blur"],[data-ristak-video-gate-locked-mode="blur"],[data-ristack-video-gate-locked-mode="blur"]):not([data-rstk-video-gate-state="unlocked"]){
+      filter:blur(var(--rstk-video-gate-blur,3px))!important;
+      opacity:var(--rstk-video-gate-locked-opacity,.72);
+      pointer-events:none!important;
+      user-select:none!important
+    }
+  :where([data-rstk-video-gate-shell],[data-ristak-video-gate-shell],[data-ristack-video-gate-shell]){
+    position:relative!important;
+    isolation:isolate
+  }
+  :where([data-rstk-video-gate-shell],[data-ristak-video-gate-shell],[data-ristack-video-gate-shell]):not([data-rstk-video-gate-state="unlocked"]) > :where([data-rstk-video-gate-locked],[data-ristak-video-gate-locked],[data-ristack-video-gate-locked]){
+      position:absolute!important;
+      inset:0!important;
+      z-index:2!important
+    }
   [data-rstk-video-gate-locked][data-rstk-video-gate-state="unlocked"],
   [data-ristak-video-gate-locked][data-rstk-video-gate-state="unlocked"],
   [data-ristack-video-gate-locked][data-rstk-video-gate-state="unlocked"]{display:none!important}
@@ -25859,6 +25912,8 @@ function buildImportedVideoGateRuntimeScript(html = '') {
       const SECONDS_ATTRS = ['data-rstk-video-gate-seconds','data-ristak-video-gate-seconds','data-ristack-video-gate-seconds'];
       const LOCKED_ATTRS = ['data-rstk-video-gate-locked','data-ristak-video-gate-locked','data-ristack-video-gate-locked'];
       const CONTENT_ATTRS = ['data-rstk-video-gate-content','data-ristak-video-gate-content','data-ristack-video-gate-content'];
+      const SHELL_ATTRS = ['data-rstk-video-gate-shell','data-ristak-video-gate-shell','data-ristack-video-gate-shell'];
+      const LOCKED_MODE_ATTRS = ['data-rstk-video-gate-locked-mode','data-ristak-video-gate-locked-mode','data-ristack-video-gate-locked-mode'];
       const REMAINING_ATTRS = ['data-rstk-video-gate-remaining','data-ristak-video-gate-remaining','data-ristack-video-gate-remaining'];
       const REMAINING_TIME_ATTRS = ['data-rstk-video-gate-remaining-time','data-ristak-video-gate-remaining-time','data-ristack-video-gate-remaining-time'];
       const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent']);
@@ -25932,8 +25987,14 @@ function buildImportedVideoGateRuntimeScript(html = '') {
           element.removeAttribute('data-rstk-video-action-hidden');
           return;
         }
-        element.hidden = true;
-        element.setAttribute('hidden', '');
+        const lockedMode = readAttr(element, LOCKED_MODE_ATTRS).toLowerCase() === 'blur' ? 'blur' : 'hidden';
+        element.hidden = lockedMode !== 'blur';
+        if (lockedMode === 'blur') {
+          element.removeAttribute('hidden');
+          element.removeAttribute('data-rstk-video-action-hidden');
+        } else {
+          element.setAttribute('hidden', '');
+        }
         element.setAttribute('inert', '');
         element.setAttribute('aria-hidden', 'true');
       };
@@ -25967,6 +26028,9 @@ function buildImportedVideoGateRuntimeScript(html = '') {
         selectGateNodes(LOCKED_ATTRS, gate.id).forEach(element => {
           setLockedState(element, gate.unlocked && !gate.invalid);
           if (gate.invalid) setGateStateAttribute(element, state);
+        });
+        selectGateNodes(SHELL_ATTRS, gate.id).forEach(element => {
+          setGateStateAttribute(element, state);
         });
         selectGateNodes(REMAINING_ATTRS, gate.id).forEach(element => {
           element.textContent = String(displayRemaining);

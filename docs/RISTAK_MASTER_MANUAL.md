@@ -4864,9 +4864,17 @@ renderer, no una composición de acciones `show`/`hide`. Cada slot fuente declar
 `data-rstk-video-gate-value`. El diseño bloqueado usa
 `data-rstk-video-gate-locked`, el contador vivo
 `data-rstk-video-gate-remaining` y el contenido real completo
-`data-rstk-video-gate-content`, todos con el mismo ID. Desde el primer render,
-Ristak marca el contenido real como `hidden`, `inert` y `aria-hidden`; sólo lo
-habilita al cumplir el umbral y entonces oculta el diseño bloqueado. En
+`data-rstk-video-gate-content`, todos con el mismo ID. El comportamiento legacy
+oculta el contenido real con `hidden`, `inert` y `aria-hidden` desde el primer
+render. Para una experiencia integrada, `data-rstk-video-gate-shell` envuelve
+como hijos directos el contenido y la capa, mientras el contenido declara
+`data-rstk-video-gate-locked-mode="blur"`: el calendario real permanece visible
+con blur, pero `inert`, sin eventos de puntero y fuera del árbol accesible; la
+capa se posiciona encima del mismo contenedor. Al cumplir el umbral se eliminan
+blur y bloqueo y se oculta la capa. No se deben renderizar un calendario falso
+bloqueado y otro real debajo. El HTML puede ajustar la intensidad con
+`--rstk-video-gate-blur` y la opacidad con
+`--rstk-video-gate-locked-opacity`. En
 `playback_seconds` suma únicamente reproducción activa: seek, buffering y el
 preview automático no cuentan. `unique_watched_percent` usa fragmentos vistos
 sin inflar el avance por repetir, y `timeline_reached` sí permite adelantar.
@@ -4919,11 +4927,14 @@ de decenas de spans o reglas por segundo.
   el orden `date -> time -> questions -> confirm -> success`: ningún campo de
   situación, inversión o contacto aparece antes del horario, y los datos de
   contacto quedan en el último paso `questions`. Si un video controla el acceso,
-  el estado inicial conserva a la vista un calendario completo deshabilitado con
-  su capa y progreso de bloqueo mediante el contrato
-  `data-rstk-video-gate-*`; el calendario compuesto completo vive dentro de
-  `data-rstk-video-gate-content`. Al desbloquearse aparece el calendario real en
-  `date`, mientras las preguntas permanecen ocultas hasta seleccionar `time`.
+  el estado inicial recomendado conserva a la vista el único calendario real
+  bajo un blur y una capa superpuesta con el progreso, mediante
+  `data-rstk-video-gate-shell`, `data-rstk-video-gate-content`,
+  `data-rstk-video-gate-locked-mode="blur"` y
+  `data-rstk-video-gate-locked`. El calendario permanece visible pero
+  inaccesible hasta el desbloqueo; no existe una segunda agenda debajo. Al
+  desbloquearse queda activo en `date`, mientras las preguntas permanecen
+  ocultas hasta seleccionar `time`.
   El contrato legacy de `input date` más `select` permanece montable para HTML
   publicado anteriormente, pero ya no es la estructura indicada a las IA.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion

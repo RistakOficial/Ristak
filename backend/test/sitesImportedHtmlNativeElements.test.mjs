@@ -849,25 +849,32 @@ test('native video gate keeps the real calendar inert, shows live remaining play
               data-rstk-video-gate-value="30"
             ></div>
           </section>
-          <section data-rstk-video-gate-locked="agenda-admision">
-            Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos.
+          <section data-rstk-video-gate-shell="agenda-admision">
+            <section
+              data-rstk-native-element="calendar"
+              data-rstk-native-id="agenda-real"
+              data-rstk-native-render="custom"
+              data-rstk-video-gate-content="agenda-admision"
+              data-rstk-video-gate-locked-mode="blur"
+              data-rstk-video-action-hidden="true"
+              aria-hidden="true"
+              hidden
+            >
+              <form data-rstk-calendar-book-form>
+                <section data-rstk-calendar-flow-step="fecha" data-rstk-calendar-flow-kind="date">
+                  <div data-rstk-calendar-days></div>
+                </section>
+                <section data-rstk-calendar-flow-step="horario" data-rstk-calendar-flow-kind="time" hidden>
+                  <div data-rstk-calendar-slots></div>
+                </section>
+                <button type="submit">Agendar</button>
+              </form>
+            </section>
+            <section data-rstk-video-gate-locked="agenda-admision">
+              Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos.
+            </section>
           </section>
-          <section
-            data-rstk-native-element="calendar"
-            data-rstk-native-id="agenda-real"
-            data-rstk-native-render="custom"
-            data-rstk-video-gate-content="agenda-admision"
-          >
-            <form data-rstk-calendar-book-form>
-              <section data-rstk-calendar-flow-step="fecha" data-rstk-calendar-flow-kind="date">
-                <div data-rstk-calendar-days></div>
-              </section>
-              <section data-rstk-calendar-flow-step="horario" data-rstk-calendar-flow-kind="time" hidden>
-                <div data-rstk-calendar-slots></div>
-              </section>
-              <button type="submit">Agendar</button>
-            </form>
-          </section>
+          <aside data-rstk-video-gate-content="agenda-admision">Contenido legacy oculto</aside>
         </body>
       </html>
     `, `HTML native video gate ${Date.now()}`)
@@ -908,11 +915,23 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     })
 
     assert.equal((html.match(/data-rstk-video-gate-id="agenda-admision"/g) || []).length, 2)
-    assert.match(html, /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-state="locked"[^>]* hidden[^>]* inert[^>]*aria-hidden="true"/)
+    assert.match(html, /data-rstk-video-gate-shell="agenda-admision"[^>]*data-rstk-video-gate-state="locked"/)
+    assert.match(html, /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-locked-mode="blur"[^>]*data-rstk-video-gate-state="locked"[^>]* inert[^>]*aria-hidden="true"/)
+    assert.doesNotMatch(
+      html,
+      /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-locked-mode="blur"[^>]*\shidden(?:\s|=|>)/
+    )
+    assert.doesNotMatch(
+      html,
+      /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-action-hidden/
+    )
+    assert.match(html, /<aside[^>]*data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-state="locked"[^>]* hidden[^>]* inert[^>]*aria-hidden="true"/)
     assert.match(html, /data-rstk-video-gate-runtime/)
     assert.match(html, /window\.ristakSyncVideoGates/)
     assert.match(html, /const GATE_SOURCE_SELECTOR =/)
     assert.match(html, /gate\.progress = Math\.max\(0, \.\.\.Array\.from\(gate\.progressByVideo\.values\(\)\)\)/)
+    assert.match(html, /filter:blur\(var\(--rstk-video-gate-blur,3px\)\)!important/)
+    assert.match(html, /position:absolute!important;\s*inset:0!important;\s*z-index:2!important/)
     assert.match(html, /element\.setAttribute\('inert', ''\)/)
     assert.match(html, /element\.removeAttribute\('inert'\)/)
     assert.doesNotMatch(html, /ocultar-contador-30/)
@@ -958,7 +977,14 @@ test('native video gate keeps the real calendar inert, shows live remaining play
       'data-rstk-video-gate-value': '30'
     })
     const locked = new FakeElement({ 'data-rstk-video-gate-locked': 'agenda-admision' })
+    const shell = new FakeElement({ 'data-rstk-video-gate-shell': 'agenda-admision' })
     const content = new FakeElement({
+      'data-rstk-video-gate-content': 'agenda-admision',
+      'data-rstk-video-gate-locked-mode': 'blur',
+      inert: '',
+      'aria-hidden': 'true'
+    })
+    const legacyContent = new FakeElement({
       'data-rstk-video-gate-content': 'agenda-admision',
       hidden: '',
       inert: '',
@@ -1006,8 +1032,9 @@ test('native video gate keeps the real calendar inert, shows live remaining play
         if (selector === sourceSelector) return [source, mobileSource]
         if (selector === gateVideoSelector) return [video, mobileVideo]
         if (selector === 'video[data-rstk-video-actions]') return []
+        if (selector.includes('video-gate-shell')) return [shell]
         if (selector.includes('video-gate-locked')) return [locked]
-        if (selector.includes('video-gate-content')) return [content]
+        if (selector.includes('video-gate-content')) return [content, legacyContent]
         if (selector.includes('video-gate-remaining-time')) return []
         if (selector.includes('video-gate-remaining')) return [remaining]
         return []
@@ -1037,8 +1064,11 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     vm.runInNewContext(gateRuntime, context)
     vm.runInNewContext(actionRuntime, context)
 
-    assert.equal(content.hidden, true)
+    assert.equal(content.hidden, false)
     assert.equal(content.attrs.has('inert'), true)
+    assert.equal(content.attrs.has('aria-hidden'), true)
+    assert.equal(legacyContent.hidden, true)
+    assert.equal(legacyContent.attrs.has('inert'), true)
     assert.equal(locked.hidden, false)
     assert.equal(remaining.textContent, '30')
 
@@ -1061,7 +1091,9 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     video.currentTime = 29
     video.dispatch('seeked')
     assert.equal(remaining.textContent, '20')
-    assert.equal(content.hidden, true)
+    assert.equal(content.hidden, false)
+    assert.equal(content.attrs.has('inert'), true)
+    assert.equal(legacyContent.hidden, true)
 
     for (let step = 1; step <= 4; step += 1) {
       nowMs += 5_000
@@ -1073,7 +1105,10 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.equal(content.hidden, false)
     assert.equal(content.attrs.has('inert'), false)
     assert.equal(content.attrs.has('aria-hidden'), false)
+    assert.equal(legacyContent.hidden, false)
+    assert.equal(legacyContent.attrs.has('inert'), false)
     assert.equal(content.getAttribute('data-rstk-video-gate-state'), 'unlocked')
+    assert.equal(shell.getAttribute('data-rstk-video-gate-state'), 'unlocked')
     assert.equal(locked.hidden, true)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
