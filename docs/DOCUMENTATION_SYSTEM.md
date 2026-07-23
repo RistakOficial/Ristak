@@ -1,6 +1,6 @@
 # Sistema de documentacion
 
-Ultima consolidacion: 2026-07-11.
+Ultima consolidacion: 2026-07-22.
 
 Este documento define como se mantiene la documentacion de Ristak. El objetivo no
 es tener menos archivos a lo bruto; el objetivo es que cada archivo tenga dueño,
@@ -52,7 +52,7 @@ decirlo explicitamente.
 | Licencia central e Installer | `docs/LICENSING.md` |
 | API externa, OAuth, MCP | `docs/EXTERNAL_API_ACCESS.md` |
 | Meta OAuth, BISU, permisos, handoff y broker multi-tenant de webhooks | `docs/META_OAUTH.md` |
-| Soporte interno MCP para investigar clientes instalados via Installer | `docs/support-mcp-operations.md` |
+| Enrutamiento entre MCP funcional y soporte interno; investigacion de clientes instalados via Installer | `docs/support-mcp-operations.md` |
 | WhatsApp YCloud, Meta directo, Coexistence, webhooks, IDs y Baileys | `docs/integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md` y seccion Chat del manual maestro |
 | Pixel/tracking/conversiones, CORS público, Cloudflare/CDN y tracking nativo de Sites | `docs/TRACKING_PIXEL.md`, `docs/PIXEL_SETUP.md` y seccion Meta/pagos del manual |
 | Media/Bunny | `docs/MEDIA_STORAGE_BUNNY.md` |

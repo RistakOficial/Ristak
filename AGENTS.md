@@ -123,15 +123,36 @@
   aislamiento de rutas privadas y evaluar abuso/rate limiting o un diseño
   firmado de servidor; un secret fijo dentro de JavaScript público no es secret.
 
-## Soporte MCP / Installer — OBLIGATORIO
+## Enrutamiento MCP: operar Ristak vs dar soporte — OBLIGATORIO
 
-- Si Raul pide revisar un cliente, error, chat, IA, logs o datos de una cuenta
-  instalada, lee **`docs/support-mcp-operations.md`** antes de diagnosticar solo
-  desde codigo local.
-- El MCP externo `/api/mcp` de esta app es para integraciones del cliente. El
-  soporte interno vive en **Ristak Installer** (`ristak-render-support` /
-  `npm run render:support`) y es la ruta para resolver cliente, Render, logs y DB
-  con llaves cifradas del Installer.
+- No trates todos los pedidos sobre Ristak como si fueran lo mismo. Primero
+  clasifica la intencion y usa un solo carril como punto de entrada:
+
+  | Intencion de Raul | Punto de entrada |
+  | --- | --- |
+  | Operar una funcion de Ristak como usuario: crear/buscar contactos, leer o mandar mensajes, agendar citas, ejecutar automatizaciones, gestionar pagos, crear/publicar Sites y acciones equivalentes | MCP funcional de Ristak: servidor `ristak`, `/api/mcp`, herramientas `mcp__ristak__*` |
+  | Investigar un cliente instalado, una falla real, backend en produccion, chats/IA que no funcionaron, logs, deploy, health, esquema o datos del cliente | MCP de soporte del Installer: servidor `ristak-render-support`, herramientas `mcp__ristak_render_support__*` o `npm run render:support` |
+  | Implementar una funcion, refactor o cambio de codigo sin incidente en una instalacion real | Repo local en rama/worktree limpio; no invoques soporte por reflejo |
+
+- Si Raul dice "MSP", entiende que quiso decir **MCP** y decide cual de los dos
+  por la intencion. No supongas que "MSP" siempre significa soporte.
+- El MCP funcional es la primera opcion para ejecutar acciones de negocio. Respeta
+  las herramientas realmente disponibles, la cuenta autenticada, scopes,
+  permisos, licencia y confirmaciones; no prometas una capacidad que no aparezca
+  en el MCP actual.
+- El MCP de soporte es para evidencia operativa y diagnostico, no para operar el
+  CRM ni como atajo para escribir directamente en la DB de un cliente. Sus
+  consultas son read-only.
+- Si el problema es de backend/codigo **y ocurre en un cliente o produccion**, lee
+  **`docs/support-mcp-operations.md`**, usa soporte primero para probar el fallo y
+  despues inspecciona o cambia el repo que corresponda. El MCP de soporte no
+  sustituye la revision del codigo: identifica la instalacion, logs y datos reales.
+- Si una operacion normal hecha con el MCP funcional falla de forma inesperada,
+  conserva la evidencia de esa llamada y cambia al MCP de soporte para investigar;
+  no sigas repitiendo escrituras a ciegas.
+- En una solicitud mixta, separa las fases y dilo explicitamente: operacion con
+  `ristak`; diagnostico con `ristak-render-support`; correccion en el repo
+  correspondiente. Nunca uses ambos para ejecutar la misma escritura.
 - No metas secrets de soporte en este repo. Si falta el entorno local del
   Installer, pide acceso; no inventes valores.
 

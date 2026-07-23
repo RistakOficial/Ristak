@@ -1,6 +1,6 @@
 # Documentacion de Ristak
 
-Ultima consolidacion: 2026-07-11.
+Ultima consolidacion: 2026-07-22.
 
 Este folder es la entrada canonica de documentacion. La regla es simple:
 antes de crear otro README perdido, revisa este indice y actualiza el documento
@@ -18,7 +18,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Reglas obligatorias para crons/jobs de integraciones externas | [INTEGRATION_CRON_RULES.md](./INTEGRATION_CRON_RULES.md) |
 | Reglas obligatorias de atribucion de conversiones y eventos Meta CAPI | [CONVERSION_ATTRIBUTION.md](./CONVERSION_ATTRIBUTION.md) |
 | OAuth de Meta, BISU, permisos, handoff y broker multi-tenant de webhooks | [META_OAUTH.md](./META_OAUTH.md) |
-| Como revisar clientes, logs, chats, DB e IA instalada desde cualquier repo | [support-mcp-operations.md](./support-mcp-operations.md) |
+| Como elegir entre el MCP funcional de Ristak y el MCP de soporte; revisar clientes, logs, chats, DB e IA instalada | [support-mcp-operations.md](./support-mcp-operations.md) |
 | Diferencias y contrato entre WhatsApp YCloud, Meta directo, Coexistence y Baileys | [integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md) |
 
 ## Rutas por tipo de cambio
@@ -35,7 +35,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Licenciamiento, distribucion managed Docker, restricciones por plan | [LICENSING.md](./LICENSING.md) |
 | API externa, OAuth, MCP y tokens de integracion | [EXTERNAL_API_ACCESS.md](./EXTERNAL_API_ACCESS.md) |
 | Conexion de Meta OAuth, convivencia manual y relay central de Messenger/Instagram/comentarios | [META_OAUTH.md](./META_OAUTH.md) |
-| Soporte interno MCP via Ristak Installer para clientes instalados | [support-mcp-operations.md](./support-mcp-operations.md) |
+| Enrutamiento entre MCP funcional y soporte interno via Ristak Installer | [support-mcp-operations.md](./support-mcp-operations.md) |
 | WhatsApp YCloud, Meta directo, Coexistence, webhooks, IDs y Baileys | [integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md](./integrations/WHATSAPP_PROVIDER_ARCHITECTURE.md) y la seccion Chat del manual |
 | Pixel, tracking, sesiones, conversiones, CORS público, Cloudflare/CDN, Sites públicos y rastreo web | [TRACKING_PIXEL.md](./TRACKING_PIXEL.md) y [PIXEL_SETUP.md](./PIXEL_SETUP.md) |
 | Atribucion de compras/citas, ultimo paid touch, superficie y payload Meta CAPI | [CONVERSION_ATTRIBUTION.md](./CONVERSION_ATTRIBUTION.md) |

@@ -1,22 +1,51 @@
-# Operacion de soporte MCP entre Ristak e Installer
+# Enrutamiento y operacion MCP entre Ristak e Installer
 
-Este documento es el contrato operativo para agentes cuando Raul pide revisar un
-cliente, un error, una conversacion, logs o una falla de IA. Aplica aunque el
-agente este parado en este repo (`Ristak`) o en `Ristak - Installer`.
+Este documento es el contrato operativo para que los agentes distingan entre
+operar Ristak y dar soporte interno. Aplica aunque el agente este parado en este
+repo (`Ristak`) o en `Ristak - Installer`.
 
-El usuario puede decir "MSP"; en este proyecto se refiere al MCP de soporte del
-Installer.
+El usuario puede decir "MSP" cuando se refiere a "MCP". Ese error de nombre no
+elige el servidor: la intencion de la solicitud decide si corresponde el MCP
+funcional de Ristak o el MCP de soporte del Installer.
 
 Si la solicitud es **subir la app a App Store o Play Store**, no uses este flujo
 de soporte. Lee [`MOBILE_STORE_RELEASES.md`](./MOBILE_STORE_RELEASES.md) y usa el
 MCP `ristak-mobile-stores` del Installer.
+
+## Regla de decision
+
+| Si Raul pide... | Usa primero... | Para que |
+| --- | --- | --- |
+| "Crea un contacto", "manda este mensaje", "agenda una cita", "crea/publica una pagina" o cualquier accion normal de producto | MCP funcional `ristak` (`/api/mcp`, herramientas `mcp__ristak__*`) | Ejecutar la funcion con la cuenta, permisos, licencia, scopes y confirmaciones del usuario autenticado |
+| "Investiga este cliente", "por que fallo el backend", "revisa el chat o la IA", "mira logs/health/deploy/DB" sobre una instalacion real | MCP de soporte `ristak-render-support` (`mcp__ristak_render_support__*`) | Encontrar la instalacion correcta y reunir evidencia real, read-only, antes de diagnosticar |
+| "Implementa/cambia/refactoriza esta funcion" sin reportar un incidente real | Repo correspondiente en rama o worktree limpio | Cambiar y validar codigo; soporte no es un navegador de codigo |
+
+No intercambies los carriles:
+
+- El MCP funcional **opera el producto**. No sirve para leer Render, logs internos,
+  secretos, infraestructura o la base del cliente como soporte.
+- El MCP de soporte **investiga instalaciones**. No debe crear contactos, mandar
+  mensajes, agendar citas, publicar Sites ni mutar datos de negocio.
+- El repo **contiene la implementacion**. Cuando soporte confirma un bug de
+  producto, el arreglo se hace aqui; cuando confirma un problema de provisioning,
+  licencias, Render o soporte, el arreglo se hace en `Ristak - Installer`.
+
+Si una solicitud mezcla operacion y diagnostico, separa y anuncia las fases. Por
+ejemplo: intenta la accion con `ristak`; si falla inesperadamente, conserva el
+error y usa `ristak-render-support` para investigar sin repetir escrituras. Si
+despues hace falta corregir codigo, cambia el repo correcto en un espacio limpio.
+
+Si el MCP esperado no esta conectado, autorizado o no expone la herramienta
+necesaria, dilo claramente. No sustituyas en silencio el MCP funcional por SQL de
+soporte ni el soporte por una suposicion basada solo en el checkout local.
 
 ## Fuente de verdad
 
 - El control plane es `Ristak - Installer`.
 - Este repo contiene el producto instalado en cada cuenta.
 - El MCP externo de una app instalada vive en `/api/mcp` y es para integraciones
-  del cliente. No es la herramienta de soporte interno.
+  y operaciones funcionales autorizadas del cliente. No es la herramienta de
+  soporte interno.
 - El MCP de soporte interno vive en Installer y usa:
   - la base central del Installer para encontrar instalaciones;
   - `installations.render_api_key_enc` para descifrar en memoria la Render API
