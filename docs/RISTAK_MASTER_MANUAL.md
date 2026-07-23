@@ -4898,6 +4898,14 @@ nunca a dos videos distintos de la misma página.
   `confirm` y `success`; `data-rstk-calendar-response` conserva preguntas
   adicionales en el resumen de la cita. Un submit independiente sí produce un
   segundo elemento `form`.
+  Cuando la petición especifica que el formulario pertenece al calendario y
+  debe aparecer después de elegir fecha y hora, las instrucciones para IA fijan
+  el orden `date -> time -> questions -> confirm -> success`: ningún campo de
+  situación, inversión o contacto aparece antes del horario, y los datos de
+  contacto quedan en el último paso `questions`. Si un video controla el acceso,
+  el estado inicial conserva a la vista un calendario completo deshabilitado con
+  su capa y progreso de bloqueo; al desbloquearse aparece el calendario real en
+  `date`, mientras las preguntas permanecen ocultas hasta seleccionar `time`.
   El contrato legacy de `input date` más `select` permanece montable para HTML
   publicado anteriormente, pero ya no es la estructura indicada a las IA.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
