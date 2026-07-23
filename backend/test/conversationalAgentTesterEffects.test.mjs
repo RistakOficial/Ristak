@@ -25,6 +25,10 @@ import {
   setConversationalAgentTestPaymentDependenciesForTests
 } from '../src/services/conversationalAgentTestPaymentService.js'
 import {
+  CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL,
+  resolveConversationalAgentTestContact
+} from '../src/services/conversationalAgentTestContactService.js'
+import {
   lockConversationalTesterConfigOverride,
   testAgent as testAgentController
 } from '../src/controllers/conversationalAgentController.js'
@@ -1591,6 +1595,70 @@ test('normaliza efectos sólo cuando hay una acción explícita y no activa noti
     assignUser: false,
     notifyOwner: true
   })
+})
+
+test('Modo test resuelve, reutiliza y reactiva test@aiagent.com sin selección del frontend', async () => {
+  const suffix = randomUUID()
+  const agentId = `agent_default_test_contact_${suffix}`
+  const runId = `session_default_test_contact_${suffix}`
+  const requestedByUserId = `user_default_test_contact_${suffix}`
+
+  try {
+    const concurrentContacts = await Promise.all(
+      Array.from({ length: 4 }, () => resolveConversationalAgentTestContact())
+    )
+    const contactIds = new Set(concurrentContacts.map((contact) => contact?.id))
+    assert.equal(contactIds.size, 1)
+    assert.equal(concurrentContacts[0]?.email, CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL)
+
+    const defaultContactId = concurrentContacts[0].id
+    await db.run(
+      'UPDATE contacts SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [defaultContactId]
+    )
+    const restoredContact = await resolveConversationalAgentTestContact()
+    assert.equal(restoredContact.id, defaultContactId)
+    assert.equal(restoredContact.deleted_at, null)
+
+    await db.run(
+      `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
+       VALUES (?, 'Agente con contacto técnico automático', 1, 'tool_calling_v2', ?)`,
+      [agentId, JSON.stringify({
+        schemaVersion: 3,
+        items: [{
+          id: 'schedule_appointment',
+          enabled: true,
+          calendarId: `calendar_default_test_contact_${suffix}`,
+          bookingOwner: 'human',
+          testMode: { enabled: true, cleanupAfterMinutes: 5, notify: false }
+        }]
+      })]
+    )
+
+    const run = await prepareConversationalAgentTestRun({
+      testRunId: runId,
+      testMessageId: `message_default_test_contact_${suffix}`,
+      agentId,
+      requestedByUserId,
+      effects: {
+        enabled: true,
+        scheduleAppointment: true,
+        notifyOwner: false
+      }
+    })
+
+    assert.equal(run.contact.id, defaultContactId)
+    assert.equal(run.contact.email, CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL)
+    assert.equal(
+      (await db.get('SELECT contact_id FROM conversational_agent_test_runs WHERE id = ?', [runId])).contact_id,
+      defaultContactId
+    )
+  } finally {
+    await db.run('DELETE FROM conversational_agent_test_effects WHERE run_id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_turns WHERE run_id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agent_test_runs WHERE id = ?', [runId]).catch(() => undefined)
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+  }
 })
 
 test('agenda humana sin persona asignada abre una corrida durable de cita y notificación sin exigir assignUser', async () => {

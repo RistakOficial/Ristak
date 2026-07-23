@@ -24,6 +24,7 @@ import {
   cleanupConversationalAgentTestAssignment
 } from './conversationalAgentTestAssignmentService.js'
 import { withConversationalAgentTestMutationLock } from './conversationalAgentTestMutationLockService.js'
+import { resolveConversationalAgentTestContact } from './conversationalAgentTestContactService.js'
 import { getAccountTimezone, normalizeDateOnlyInTimezone } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { logger } from '../utils/logger.js'
@@ -622,17 +623,25 @@ export async function prepareConversationalAgentTestRun({
   const messageId = normalizeIdentifier(testMessageId, TEST_MESSAGE_ID_PATTERN, 'El mensaje de prueba')
   const cleanAgentId = cleanString(agentId)
   const cleanUserId = cleanString(requestedByUserId)
-  const cleanContactId = cleanString(contactId)
-  if (!cleanAgentId || !cleanUserId || !cleanContactId) {
-    throw testError('Selecciona un contacto de prueba antes de registrar citas o cobros.', 400, 'test_contact_required')
+  let cleanContactId = cleanString(contactId)
+  if (!cleanAgentId || !cleanUserId) {
+    throw testError('No se pudo identificar al agente o al usuario de esta prueba.', 400, 'test_run_identity_required')
   }
 
-  const [agent, contact] = await Promise.all([
-    db.get('SELECT id, name, capabilities_config FROM conversational_agents WHERE id = ?', [cleanAgentId]),
-    db.get('SELECT id, full_name, first_name, last_name, phone, email FROM contacts WHERE id = ? AND deleted_at IS NULL', [cleanContactId])
-  ])
+  const agent = await db.get(
+    'SELECT id, name, capabilities_config FROM conversational_agents WHERE id = ?',
+    [cleanAgentId]
+  )
   if (!agent) throw testError('El agente de esta prueba ya no existe.', 404, 'test_agent_not_found')
+
+  const contact = cleanContactId
+    ? await db.get(
+        'SELECT id, full_name, first_name, last_name, phone, email FROM contacts WHERE id = ? AND deleted_at IS NULL',
+        [cleanContactId]
+      )
+    : await resolveConversationalAgentTestContact()
   if (!contact) throw testError('El contacto de prueba ya no existe.', 404, 'test_contact_not_found')
+  cleanContactId = cleanString(contact.id)
 
   const persistedCapabilitiesConfig = parseJson(agent.capabilities_config, {})
   const persistedConfig = { capabilitiesConfig: persistedCapabilitiesConfig }

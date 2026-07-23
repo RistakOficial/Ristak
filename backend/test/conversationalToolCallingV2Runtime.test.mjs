@@ -10,6 +10,7 @@ import {
   loadConversationalAppointmentOfferDecisionContext
 } from '../src/agents/conversational/tools.js'
 import {
+  CONVERSATIONAL_PREVIEW_CONTACT_EMAIL,
   CONVERSATIONAL_PREVIEW_CONTACT_ID,
   CONVERSATIONAL_PREVIEW_CONTACT_NAME,
   TOOL_CALLING_V2_HISTORY_BYTE_BUDGET,
@@ -2155,6 +2156,7 @@ test('preview v2 comparte el sobre por bytes, conserva 60 mensajes cortos y nunc
       assert.equal(contactName, CONVERSATIONAL_PREVIEW_CONTACT_NAME)
       assert.equal(virtualContact.id, CONVERSATIONAL_PREVIEW_CONTACT_ID)
       assert.equal(virtualContact.fullName, CONVERSATIONAL_PREVIEW_CONTACT_NAME)
+      assert.equal(virtualContact.email, CONVERSATIONAL_PREVIEW_CONTACT_EMAIL)
       assert.equal(dryRun, true)
       assert.equal(input.length, 60)
       assert.equal(historyEnvelope.telemetry.source, 'preview')

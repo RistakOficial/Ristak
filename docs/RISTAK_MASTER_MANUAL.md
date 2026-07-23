@@ -6320,11 +6320,16 @@ entran mensajes durante esa espera, mientras se calculan los cortes o entre
 globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
 el turno mas reciente antes de enviar contenido viejo.
 
-El tester usa por defecto un contacto virtual estable. `get_contact_profile` lo
-reconoce como la identidad del hilo, sin inventar que falta una ficha, pedir otro
-telefono ni marcarlo como cliente anterior. Con los switches de prueba apagados, todas las
-tools conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero
-no crea citas, pagos, asignaciones ni notificaciones.
+El tester usa por defecto la identidad estable `test@aiagent.com`.
+`get_contact_profile` la reconoce como la identidad del hilo, sin inventar que
+falta una ficha, pedir otro telefono ni marcarla como cliente anterior. Con los
+switches de prueba apagados vive como contacto virtual y todas las tools
+conservan `dryRun=true`: el telefono muestra decisiones y respuestas, pero no
+crea citas, pagos, asignaciones ni notificaciones. Cuando una capacidad autoriza
+un efecto real aislado, el backend resuelve o crea esa misma ficha tecnica,
+reactiva la fila si fue enviada a la papelera y devuelve su ID al tester para
+continuaciones por webhook. El usuario no selecciona contacto ni el frontend
+envia una identidad elegida desde el modal.
 
 Cada burbuja de usuario o asistente del tester conserva un ID de transcript
 estable tanto en el editor como en el wizard. El backend lo valida y lo aisla
@@ -6340,13 +6345,12 @@ Cada capacidad guarda su propio **Modo test**. Citas sólo autoriza cita o entre
 humana; Pagos autoriza exclusivamente el mecanismo configurado: link sandbox si
 es `payment_link`, o lectura real del adjunto sin crear dinero si es
 `bank_transfer`. Activar una no amplia la otra ni hace que una cita exija
-credenciales sandbox de pagos. Al
-activarlo, el usuario
-elige un contacto existente y el servidor vuelve a cargar la configuracion
-persistida; nunca confia en calendario, usuario, producto, precio, pasarela,
-monto o moneda enviados como override por el navegador. La decision del modelo
-sigue ocurriendo primero en `dryRun`; sólo la accion estructurada exacta que tuvo
-exito se convierte despues en un efecto real, aislado y marcado como prueba.
+credenciales sandbox de pagos. Al activarlo, el servidor usa la ficha tecnica
+estable y vuelve a cargar la configuracion persistida; nunca confia en
+calendario, usuario, producto, precio, pasarela, monto o moneda enviados como
+override por el navegador. La decision del modelo sigue ocurriendo primero en
+`dryRun`; sólo la accion estructurada exacta que tuvo exito se convierte despues
+en un efecto real, aislado y marcado como prueba.
 
 Los efectos se guardan en `conversational_agent_test_runs` y
 `conversational_agent_test_effects`, con ledgers especializados para links

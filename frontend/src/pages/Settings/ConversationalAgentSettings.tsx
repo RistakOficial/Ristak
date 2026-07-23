@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, CheckboxMultiSelect, ContactSearchInput, CustomSelect, ExpandableTextareaField, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { Badge, Button, Card, CheckboxMultiSelect, CustomSelect, ExpandableTextareaField, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
-import type { ContactSearchInputContact } from '@/components/common/ContactSearchInput/ContactSearchInput'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -2478,7 +2477,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testEmojiPickerOpen, setTestEmojiPickerOpen] = useState(false)
   const [testPracticeExpired, setTestPracticeExpired] = useState(false)
   const [testOptionsOpen, setTestOptionsOpen] = useState(false)
-  const [testContact, setTestContact] = useState<ContactSearchInputContact | null>(null)
   const [testing, setTesting] = useState(false)
   const [testVoiceRecording, setTestVoiceRecording] = useState(false)
   const [testVoiceProcessing, setTestVoiceProcessing] = useState(false)
@@ -2514,6 +2512,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const testMessagesRef = useRef<TestMessage[]>([])
   const testSessionIdRef = useRef(createTestTrackingId('session'))
   const activeTestRunIdRef = useRef<string | null>(null)
+  const activeTestContactIdRef = useRef('')
   const handledTestPaymentEventsRef = useRef<Set<string>>(new Set())
   const announcedTestPaymentEventsRef = useRef<Set<string>>(new Set())
   const testPaymentResumeMessageIdsRef = useRef<Map<string, string>>(new Map())
@@ -2542,6 +2541,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const rotateTestSessionIdentity = useCallback(() => {
     const nextSessionId = createTestTrackingId('session')
     activeTestRunIdRef.current = null
+    activeTestContactIdRef.current = ''
     testSessionIdRef.current = nextSessionId
     handledTestPaymentEventsRef.current.clear()
     announcedTestPaymentEventsRef.current.clear()
@@ -2554,6 +2554,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const cleanupActiveTestRun = useCallback(() => {
     const testRunId = activeTestRunIdRef.current
     activeTestRunIdRef.current = null
+    activeTestContactIdRef.current = ''
     handledTestPaymentEventsRef.current.clear()
     announcedTestPaymentEventsRef.current.clear()
     testPaymentResumeMessageIdsRef.current.clear()
@@ -2983,11 +2984,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     const content = String(input.content ?? '').trim()
     const attachments = input.attachments || []
     if (testPracticeExpired || testing || testingRef.current || (!content && attachments.length === 0)) return
-    if (expectsTestRun && !testContact?.id) {
-      setTestOptionsOpen(true)
-      showToast('warning', 'Elige un contacto de prueba', 'Lo necesitamos para ligar las validaciones al hilo correcto sin adivinar identidades.')
-      return
-    }
 
     const now = Date.now()
     if (attachments.some((attachment) => testAttachmentExpired(attachment, now)) || testMessages.some((message) => testMessageHasExpiredAttachment(message, now))) {
@@ -3029,7 +3025,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           agentId: effectiveAgent.id,
           testSessionId,
           testMessageId,
-          ...(expectsTestRun && testContact?.id ? { contactId: testContact.id } : {}),
           effects: effectiveTestEffects
         }
       )
@@ -3058,6 +3053,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       }
       if (result.testRunId) activeTestRunIdRef.current = result.testRunId
       else if (expectsTestRun) activeTestRunIdRef.current = null
+      if (result.testContactId) activeTestContactIdRef.current = result.testContactId
 
       await renderTestAgentResult(result, {
         shouldContinue: () => (
@@ -3093,8 +3089,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
     const pollVerifiedPayment = async () => {
       const testRunId = activeTestRunIdRef.current
-      if (!testRunId || testingRef.current || testPaymentResumeInFlightRef.current || !testContact?.id) return
-      const paymentContactId = testContact.id
+      const paymentContactId = activeTestContactIdRef.current
+      if (!testRunId || testingRef.current || testPaymentResumeInFlightRef.current || !paymentContactId) return
       let claimedPaymentEffectId = ''
       let requestOwnerToken = ''
       let ownsPaymentResume = false
@@ -3143,19 +3139,19 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             agentId: effectiveAgent.id,
             testSessionId: testRunId,
             testMessageId: resumeMessageId,
-            contactId: paymentContactId,
             effects: effectiveTestEffects
           }
         )
         if (cancelled) return
         if (result.testRunId) activeTestRunIdRef.current = result.testRunId
+        if (result.testContactId) activeTestContactIdRef.current = result.testContactId
         const rendered = await renderTestAgentResult(result, {
           includeResponseDelay: false,
           shouldContinue: () => (
             !cancelled &&
             testRequestOwnerRef.current === requestOwnerToken &&
             activeTestRunIdRef.current === testRunId &&
-            testContact?.id === paymentContactId
+            activeTestContactIdRef.current === paymentContactId
           ),
           messageKeyPrefix: `payment-resume-${claimedPaymentEffectId}`
         })
@@ -3198,7 +3194,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     testPaymentWebhookEnabled,
     showToast,
     refreshTestRunHistory,
-    testContact?.id,
     testEffectsEnabled,
     testPracticeExpired
   ])
@@ -4022,62 +4017,45 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </div>
 
               {expectsTestRun && (
-                <>
-                  <ContactSearchInput
-                    value={testContact}
-                    onChange={(contact) => {
-                      if (contact?.id !== testContact?.id && !handleResetTestChat()) return
-                      setTestContact(contact)
-                    }}
-                    label="Contacto de prueba"
-                    placeholder="Buscar contacto existente"
-                    required
-                    allowCreate={false}
-                    error={!testContact ? 'Elige el contacto que recibirá las acciones de esta prueba.' : undefined}
-                    disabled={testing || Boolean(testRequestOwnerRef.current)}
-                    portal
-                  />
+                <div className={styles.agentTestEffectList}>
+                  {scheduleTestModeEnabled && testAiScheduleCapabilityEnabled && (
+                    <div className={styles.agentTestOptionSwitch}>
+                      <span>
+                        <strong>Cita real de prueba</strong>
+                        <small>La IA agenda en el calendario elegido, dispara notificaciones y la cita se elimina después de 5 minutos.</small>
+                      </span>
+                      <Badge variant="info">Activa</Badge>
+                    </div>
+                  )}
 
-                  <div className={styles.agentTestEffectList}>
-                    {scheduleTestModeEnabled && testAiScheduleCapabilityEnabled && (
-                      <div className={styles.agentTestOptionSwitch}>
-                        <span>
-                          <strong>Cita real de prueba</strong>
-                          <small>La IA agenda en el calendario elegido, dispara notificaciones y la cita se elimina después de 5 minutos.</small>
-                        </span>
-                        <Badge variant="info">Activa</Badge>
-                      </div>
-                    )}
+                  {scheduleTestModeEnabled && testHumanScheduleCapabilityEnabled && (
+                    <div className={styles.agentTestOptionSwitch}>
+                      <span>
+                        <strong>Agenda confirmada por humano</strong>
+                        <small>{testScheduleCapability?.handoffUserId
+                          ? 'La IA valida el horario, asigna temporalmente la solicitud a la persona configurada y después restaura al responsable anterior.'
+                          : 'La IA valida el horario y avisa al equipo sin asignar a una persona; no crea ni modifica la cita.'}</small>
+                      </span>
+                      <Badge variant={testScheduleCapability?.handoffUserId ? 'info' : 'neutral'}>
+                        {testScheduleCapability?.handoffUserId ? 'Asignación activa' : 'Sin asignar'}
+                      </Badge>
+                    </div>
+                  )}
 
-                    {scheduleTestModeEnabled && testHumanScheduleCapabilityEnabled && (
-                      <div className={styles.agentTestOptionSwitch}>
-                        <span>
-                          <strong>Agenda confirmada por humano</strong>
-                          <small>{testScheduleCapability?.handoffUserId
-                            ? 'La IA valida el horario, asigna temporalmente la solicitud a la persona configurada y después restaura al responsable anterior.'
-                            : 'La IA valida el horario y avisa al equipo sin asignar a una persona; no crea ni modifica la cita.'}</small>
-                        </span>
-                        <Badge variant={testScheduleCapability?.handoffUserId ? 'info' : 'neutral'}>
-                          {testScheduleCapability?.handoffUserId ? 'Asignación activa' : 'Sin asignar'}
-                        </Badge>
-                      </div>
-                    )}
-
-                    {paymentTestModeEnabled && (
-                      <div className={styles.agentTestOptionSwitch}>
-                        <span>
-                          <strong>{testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Comprobante de transferencia' : 'Pago sandbox'}</strong>
-                          <small>{testPaymentCapability?.collectionMethod === 'bank_transfer'
-                            ? 'Lee y comprueba de verdad la imagen; queda pendiente de revisión y nunca confirma dinero.'
-                            : 'Genera un link de prueba, escucha el webhook y nunca usa credenciales en vivo como respaldo.'}</small>
-                        </span>
-                        <Badge variant="info">
-                          {testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Lectura real' : 'Activo'}
-                        </Badge>
-                      </div>
-                    )}
-                  </div>
-                </>
+                  {paymentTestModeEnabled && (
+                    <div className={styles.agentTestOptionSwitch}>
+                      <span>
+                        <strong>{testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Comprobante de transferencia' : 'Pago sandbox'}</strong>
+                        <small>{testPaymentCapability?.collectionMethod === 'bank_transfer'
+                          ? 'Lee y comprueba de verdad la imagen; queda pendiente de revisión y nunca confirma dinero.'
+                          : 'Genera un link de prueba, escucha el webhook y nunca usa credenciales en vivo como respaldo.'}</small>
+                      </span>
+                      <Badge variant="info">
+                        {testPaymentCapability?.collectionMethod === 'bank_transfer' ? 'Lectura real' : 'Activo'}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
               )}
 
               <div className={styles.agentTestEffectList} aria-label="Historial reciente de pruebas">
@@ -4118,7 +4096,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               )}
 
               <div className={styles.agentTestOptionsActions}>
-                <Button variant="primary" onClick={() => setTestOptionsOpen(false)} disabled={expectsTestRun && !testContact}>
+                <Button variant="primary" onClick={() => setTestOptionsOpen(false)}>
                   Listo
                 </Button>
               </div>

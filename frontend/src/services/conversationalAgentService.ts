@@ -494,6 +494,8 @@ export interface ConversationalAgentTestResult {
   aiProvider: ConversationalAIProviderId
   model: string
   testRunId?: string
+  testContactId?: string
+  testContactEmail?: string | null
   testEffects?: ConversationalAgentTestEffectResult[]
 }
 

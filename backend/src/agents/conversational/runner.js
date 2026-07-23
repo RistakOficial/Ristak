@@ -93,6 +93,10 @@ import {
   getActiveConversationalAgentPreventiveMeasure,
   withConversationalAgentSafetyLock
 } from '../../services/conversationalAgentSafetyService.js'
+import {
+  CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL,
+  CONVERSATIONAL_AGENT_TEST_CONTACT_NAME
+} from '../../services/conversationalAgentTestContactService.js'
 import { resolveHighLevelConversationalPhoneRoute } from '../../services/highLevelConversationalChannelRoutingService.js'
 
 const HISTORY_LIMIT = 20
@@ -116,7 +120,8 @@ const FOLLOW_UP_WINDOW_MS = MAX_FOLLOW_UP_DELAY_MINUTES * 60 * 1000
 const MAX_TIMER_MS = 2_147_483_647
 export const TOOL_CALLING_V2_RUNTIME_MODE = 'tool_calling_v2'
 export const CONVERSATIONAL_PREVIEW_CONTACT_ID = 'ristak-preview-contact'
-export const CONVERSATIONAL_PREVIEW_CONTACT_NAME = 'Contacto de prueba'
+export const CONVERSATIONAL_PREVIEW_CONTACT_NAME = CONVERSATIONAL_AGENT_TEST_CONTACT_NAME
+export const CONVERSATIONAL_PREVIEW_CONTACT_EMAIL = CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL
 export const TOOL_CALLING_V2_MODEL_SETTINGS = Object.freeze({
   parallelToolCalls: false
 })
@@ -5839,7 +5844,8 @@ export async function runConversationalAgentPreview({
       ? null
       : {
           id: CONVERSATIONAL_PREVIEW_CONTACT_ID,
-          fullName: CONVERSATIONAL_PREVIEW_CONTACT_NAME
+          fullName: CONVERSATIONAL_PREVIEW_CONTACT_NAME,
+          email: CONVERSATIONAL_PREVIEW_CONTACT_EMAIL
         },
     dryRun: true,
     channel: previewChannel,

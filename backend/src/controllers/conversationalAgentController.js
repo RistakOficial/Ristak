@@ -51,7 +51,7 @@ import {
 function assertConversationalTesterAccess(user, effects) {
   if (!effects?.enabled) return
   if (!hasUserAccess(user, 'contacts', 'read')) {
-    const error = new Error('Necesitas acceso a Contactos para usar un contacto real en esta prueba.')
+    const error = new Error('Necesitas acceso a Contactos para registrar acciones aisladas de esta prueba.')
     error.statusCode = 403
     error.code = 'test_contacts_access_required'
     throw error
@@ -491,7 +491,12 @@ export async function testAgent(req, res) {
         terminal: isConversationalAgentTestMaterializationTerminal(testEffects),
         response: {
           ...visibleResult,
-          ...(runContext ? { testRunId: runContext.id, testEffects } : {})
+          ...(runContext ? {
+            testRunId: runContext.id,
+            testContactId: runContext.contact.id,
+            testContactEmail: runContext.contact.email,
+            testEffects
+          } : {})
         }
       }
     }
