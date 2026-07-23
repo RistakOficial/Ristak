@@ -171,6 +171,18 @@ con `data-rstk-calendar-response` acompañan la reserva y se agregan a su resume
 Si un formulario sí se guarda mediante otro submit, entonces son dos elementos
 independientes (`form` + `calendar`).
 
+Cuando el calendario se desbloquea mediante un video nativo, el HTML no debe
+simular el contador con reglas `show`/`hide`. Los slots de video declaran el mismo
+`data-rstk-video-gate-id`, trigger y value; el diseño bloqueado usa
+`data-rstk-video-gate-locked`, el número vivo
+`data-rstk-video-gate-remaining` y el calendario compuesto completo usa
+`data-rstk-video-gate-content`. El renderer oculta ese contenido con `hidden`,
+`inert` y `aria-hidden` desde la primera respuesta. Con
+`playback_seconds`, seek, buffering y preview automático no cuentan. Dos
+variantes responsive comparten el mayor progreso individual y nunca se suman.
+Al desbloquear, el flujo comienza en `date`; `time` y todas las preguntas siguen
+ocultos hasta que el visitante seleccione los pasos previos.
+
 El runtime vive en `sitesService.js`. Consulta
 `GET /api/calendars/public/:slug/free-slots` por el mes visible, recibe instantes
 UTC, los agrupa en la zona mostrada al visitante y pinta los estados sin confiar

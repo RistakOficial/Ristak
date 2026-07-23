@@ -691,6 +691,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const {
     buildImportedHtmlCustomCalendarRulesText,
     buildImportedHtmlCustomSocialProfileRulesText,
+    buildImportedHtmlVideoGateRulesText,
     buildImportedHtmlVideoPlayerRulesText,
     buildImportedHtmlVideoActionTargetRulesText,
     ensureImportedHtmlVideoActionTargets
@@ -707,6 +708,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const calendarGuide = buildImportedHtmlCustomCalendarRulesText()
   const socialProfileGuide = buildImportedHtmlCustomSocialProfileRulesText()
   const videoPlayerGuide = buildImportedHtmlVideoPlayerRulesText()
+  const videoGateGuide = buildImportedHtmlVideoGateRulesText()
   const videoTargetGuide = buildImportedHtmlVideoActionTargetRulesText()
 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
@@ -720,7 +722,9 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /buildImportedHtmlCustomSocialProfileRulesText/)
   assert.match(guide, /buildImportedHtmlVideoPlayerRulesText/)
   assert.match(guide, /buildImportedHtmlVideoActionTargetRulesText/)
+  assert.match(guide, /buildImportedHtmlVideoGateRulesText/)
   assert.match(builder, /buildImportedHtmlVideoPlayerRulesText/)
+  assert.match(builder, /buildImportedHtmlVideoGateRulesText/)
   assert.match(videoPlayerGuide, /data-rstk-video-settings/)
   assert.match(videoPlayerGuide, /videoOverlayPlay/)
   assert.match(videoPlayerGuide, /videoControlProgress/)
@@ -728,6 +732,11 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoPlayerGuide, /"videoControlVolume":null/)
   assert.match(videoTargetGuide, /open_video_form/)
   assert.match(videoTargetGuide, /activate_checkout/)
+  assert.match(videoGateGuide, /data-rstk-video-gate-id/)
+  assert.match(videoGateGuide, /data-rstk-video-gate-remaining/)
+  assert.match(videoGateGuide, /data-rstk-video-gate-content/)
+  assert.match(videoGateGuide, /seek, buffering y el preview automático no cuentan/)
+  assert.match(videoGateGuide, /nunca suma dos reproducciones simultáneas/)
   assert.match(socialProfileGuide, /data-rstk-native-element="social-profile"/)
   assert.match(socialProfileGuide, /data-rstk-native-render="ristak"/)
   assert.match(socialProfileGuide, /también debe conservar altura intrínseca/)

@@ -655,6 +655,39 @@ Ristak guarda cada zona como bloque real del sitio importado:
   manda los eventos first-party a `/video-event`; una copia lista en Bunny
   Storage no se reemplaza por el iframe visual de Bunny Stream.
 
+Para bloquear contenido por reproducción sin escribir JavaScript, el slot
+`video` puede declarar:
+
+```html
+<div
+  data-rstk-native-element="video"
+  data-rstk-native-id="video-principal"
+  data-rstk-video-gate-id="agenda-admision"
+  data-rstk-video-gate-trigger="playback_seconds"
+  data-rstk-video-gate-value="30">
+</div>
+
+<section data-rstk-video-gate-locked="agenda-admision">
+  Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong>
+  segundos.
+</section>
+
+<section data-rstk-video-gate-content="agenda-admision">
+  <div
+    data-rstk-native-element="calendar"
+    data-rstk-native-id="agenda-real"
+    data-rstk-native-render="custom">
+  </div>
+</section>
+```
+
+Ristak oculta e inutiliza `data-rstk-video-gate-content` desde el primer render,
+actualiza el restante desde el progreso real del reproductor y habilita el
+contenido al cumplir el umbral. `playback_seconds` no acredita adelantos ni
+buffering; `unique_watched_percent` mide fragmentos distintos vistos y
+`timeline_reached` sí permite seek. Dos videos responsive pueden compartir el
+mismo gate; se usa su mayor progreso individual, no la suma.
+
 Si el calendario usa frontend propio, el HTML debe marcar
 `data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo
 e inyecta helpers publicos:

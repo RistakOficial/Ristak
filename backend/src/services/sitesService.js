@@ -71,6 +71,7 @@ import {
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlMobileRulesText,
+  buildImportedHtmlVideoGateRulesText,
   buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlFavicon,
@@ -7212,6 +7213,7 @@ Contrato de código cerrado y contenido:
 - El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una relacion de aspecto falsa alrededor del slot. En modo automatico, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en movil conservando 9:16; el usuario tambien puede elegir ancho completo o manual por vista desde el panel.
 ${buildImportedHtmlVideoPlayerRulesText()}
+${buildImportedHtmlVideoGateRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
@@ -7224,6 +7226,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 - Acciones declarativas de video: escribe data-rstk-video-rules como una lista JSON en el MISMO slot nativo de video. Cada regla necesita id estable, triggerType, triggerValue, action y targetBlockIds cuando la acción usa elementos de la página. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones válidas: timeline_reached significa "llegó al minuto X" y adelantar la barra sí cuenta; playback_seconds significa "reprodujo X segundos/minutos" y solo suma reproducción activa, no seek ni buffering; unique_watched_percent significa "vio X% real del contenido" y suma la unión de fragmentos reproducidos, sin inflar por adelantar o repetir. triggerValue siempre va en segundos para timeline_reached/playback_seconds (3 minutos = 180) y de 1 a 100 para unique_watched_percent.
 ${buildImportedHtmlVideoActionTargetRulesText()}
+${buildImportedHtmlVideoGateRulesText()}
 - No escribas JavaScript para escuchar el video, ocultar, mostrar o medir progreso. Ristak interpreta las reglas y permite afinarlas en el panel.
 - Conserva data-rstk-video-rules y los ids de sus reglas cuando edites otra cosa. Quitar el atributo o una regla de la lista NO borra configuraciones; para borrar una regla declarada usa explícitamente {"id":"mostrar-oferta","deleted":true}.
 
@@ -7253,6 +7256,7 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 - Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
+${buildImportedHtmlVideoGateRulesText()}
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
 ${buildImportedHtmlVideoPlayerRulesText()}
@@ -7322,7 +7326,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-video-rules, data-rstk-video-action-target, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-section, data-rstk-asset-id, data-rstk-background-asset-id, data-rstk-native-*, data-rstk-element-*, data-rstk-video-rules, data-rstk-video-action-target, data-rstk-video-gate-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -16140,6 +16144,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       if (window.ristakVideoActionsRuntimeLoaded) return;
       window.ristakVideoActionsRuntimeLoaded = true;
       const SOURCE_SELECTOR = 'video[data-rstk-video-actions]';
+      const GATE_SOURCE_SELECTOR = '[data-rstk-video-gate-id] video,[data-ristak-video-gate-id] video,[data-ristack-video-gate-id] video';
       const POPUP_ID = ${JSON.stringify(POPUP_SURFACE_ID)};
       const PREVIEW_SAFE = ${options.previewSafe ? 'true' : 'false'};
       const PREVIEW_SAFE_ACTIONS = new Set(['show', 'hide', 'scroll_to']);
@@ -16167,6 +16172,10 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         } catch (_) {
           return [];
         }
+      };
+      const hasVideoGateSource = video => {
+        if (!video || typeof video.closest !== 'function') return false;
+        return Boolean(video.closest('[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]'));
       };
       const escapeSelectorValue = value => {
         const text = String(value || '');
@@ -16489,6 +16498,15 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           state.playbackActive = true;
         }
         samplePlaybackProgress(state, realPlaybackStarted);
+        if (typeof window.ristakSyncVideoGates === 'function') {
+          const duration = finiteMediaDuration(state.video);
+          window.ristakSyncVideoGates(state.video, {
+            realPlaybackStarted,
+            timelineReached: finiteMediaTime(state.video),
+            playbackSeconds: state.playbackSeconds,
+            uniqueWatchedPercent: duration > 0 ? Math.min(100, (watchedSeconds(state) / duration) * 100) : 0
+          });
+        }
         state.actions.forEach(action => {
           const reached = actionReached(state, action, realPlaybackStarted);
           if (action.action === 'show_popup') {
@@ -16561,7 +16579,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const attach = video => {
         if (!video || attached.has(video)) return;
         const actions = parseActions(video);
-        if (!actions.length) return;
+        if (!actions.length && !hasVideoGateSource(video)) return;
         const state = {
           video,
           actions,
@@ -16645,7 +16663,10 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         sync();
         attached.add(video);
       };
-      const attachAll = () => document.querySelectorAll(SOURCE_SELECTOR).forEach(attach);
+      const attachAll = () => {
+        document.querySelectorAll(SOURCE_SELECTOR).forEach(attach);
+        document.querySelectorAll(GATE_SOURCE_SELECTOR).forEach(attach);
+      };
       attachAll();
       const observer = new MutationObserver(attachAll);
       observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -25771,15 +25792,260 @@ function buildVideoPlayerRuntimeScript() {
 	    })();
 	  </script>`
 }
+const IMPORTED_VIDEO_GATE_LOCKED_ATTR_NAMES = [
+  'data-rstk-video-gate-locked',
+  'data-ristak-video-gate-locked',
+  'data-ristack-video-gate-locked'
+]
+
+const IMPORTED_VIDEO_GATE_CONTENT_ATTR_NAMES = [
+  'data-rstk-video-gate-content',
+  'data-ristak-video-gate-content',
+  'data-ristack-video-gate-content'
+]
+
+function importedVideoGateAttributeValue(attrs = {}, names = []) {
+  for (const name of names) {
+    const value = cleanString(attrs[name])
+    if (value) return value
+  }
+  return ''
+}
+
+function annotateImportedVideoGateState(html = '') {
+  if (!/\bdata-(?:rstk|ristak|ristack)-video-gate-(?:locked|content)\b/i.test(String(html || ''))) return html
+
+  return String(html || '').replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (full, tagName, attrsText = '') => {
+    const tag = cleanString(tagName).toLowerCase()
+    if (!tag || tag === 'script' || tag === 'style') return full
+    const attrs = parseHtmlAttributes(attrsText)
+    const lockedId = importedVideoGateAttributeValue(attrs, IMPORTED_VIDEO_GATE_LOCKED_ATTR_NAMES)
+    const contentId = importedVideoGateAttributeValue(attrs, IMPORTED_VIDEO_GATE_CONTENT_ATTR_NAMES)
+    if (!lockedId && !contentId) return full
+
+    const extras = []
+    if (!openingTagHasAttribute(attrsText, 'data-rstk-video-gate-state')) {
+      extras.push(' data-rstk-video-gate-state="locked"')
+    }
+    if (contentId) {
+      if (!openingTagHasAttribute(attrsText, 'hidden')) extras.push(' hidden')
+      if (!openingTagHasAttribute(attrsText, 'inert')) extras.push(' inert')
+      if (!openingTagHasAttribute(attrsText, 'aria-hidden')) extras.push(' aria-hidden="true"')
+    }
+    if (!extras.length) return full
+    return full.replace(/(\s*\/?>)$/i, `${extras.join('')}$1`)
+  })
+}
+
+function buildImportedVideoGateRuntimeScript(html = '') {
+  if (!/\bdata-(?:rstk|ristak|ristack)-video-gate-id\s*=/i.test(String(html || ''))) return ''
+
+  return `<style data-rstk-video-gate-runtime>
+  [data-rstk-video-gate-content]:not([data-rstk-video-gate-state="unlocked"]),
+  [data-ristak-video-gate-content]:not([data-rstk-video-gate-state="unlocked"]),
+  [data-ristack-video-gate-content]:not([data-rstk-video-gate-state="unlocked"]){display:none!important}
+  [data-rstk-video-gate-locked][data-rstk-video-gate-state="unlocked"],
+  [data-ristak-video-gate-locked][data-rstk-video-gate-state="unlocked"],
+  [data-ristack-video-gate-locked][data-rstk-video-gate-state="unlocked"]{display:none!important}
+  </style>
+  <script>
+    (() => {
+      if (window.ristakImportedVideoGateRuntimeLoaded) return;
+      window.ristakImportedVideoGateRuntimeLoaded = true;
+      const SOURCE_SELECTOR = '[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]';
+      const SOURCE_ID_ATTRS = ['data-rstk-video-gate-id','data-ristak-video-gate-id','data-ristack-video-gate-id'];
+      const TRIGGER_ATTRS = ['data-rstk-video-gate-trigger','data-ristak-video-gate-trigger','data-ristack-video-gate-trigger'];
+      const VALUE_ATTRS = ['data-rstk-video-gate-value','data-ristak-video-gate-value','data-ristack-video-gate-value'];
+      const SECONDS_ATTRS = ['data-rstk-video-gate-seconds','data-ristak-video-gate-seconds','data-ristack-video-gate-seconds'];
+      const LOCKED_ATTRS = ['data-rstk-video-gate-locked','data-ristak-video-gate-locked','data-ristack-video-gate-locked'];
+      const CONTENT_ATTRS = ['data-rstk-video-gate-content','data-ristak-video-gate-content','data-ristack-video-gate-content'];
+      const REMAINING_ATTRS = ['data-rstk-video-gate-remaining','data-ristak-video-gate-remaining','data-ristack-video-gate-remaining'];
+      const REMAINING_TIME_ATTRS = ['data-rstk-video-gate-remaining-time','data-ristak-video-gate-remaining-time','data-ristack-video-gate-remaining-time'];
+      const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent']);
+      const gates = new Map();
+      const readAttr = (element, names) => {
+        for (const name of names) {
+          const value = String(element && element.getAttribute && element.getAttribute(name) || '').trim();
+          if (value) return value;
+        }
+        return '';
+      };
+      const escapeSelectorValue = value => {
+        const text = String(value || '');
+        if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(text);
+        return text.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"');
+      };
+      const selectGateNodes = (names, id) => {
+        const escaped = escapeSelectorValue(id);
+        const selector = names.map(name => '[' + name + '="' + escaped + '"]').join(',');
+        return selector ? Array.from(document.querySelectorAll(selector)) : [];
+      };
+      const gateDefinition = source => {
+        const id = readAttr(source, SOURCE_ID_ATTRS);
+        if (!id) return null;
+        const requestedType = readAttr(source, TRIGGER_ATTRS);
+        const triggerType = TRIGGER_TYPES.has(requestedType) ? requestedType : 'playback_seconds';
+        const rawValue = readAttr(source, VALUE_ATTRS) || readAttr(source, SECONDS_ATTRS);
+        const parsedValue = Number(rawValue);
+        const fallback = triggerType === 'unique_watched_percent' ? 100 : 30;
+        const triggerValue = triggerType === 'unique_watched_percent'
+          ? Math.max(1, Math.min(100, Number.isFinite(parsedValue) ? parsedValue : fallback))
+          : Math.max(1, Math.min(86399, Number.isFinite(parsedValue) ? parsedValue : fallback));
+        return { id, triggerType, triggerValue };
+      };
+      const getOrCreateGate = definition => {
+        if (!definition) return null;
+        let gate = gates.get(definition.id);
+        if (!gate) {
+          gate = {
+            ...definition,
+            progressByVideo: new Map(),
+            progress: 0,
+            unlocked: false,
+            invalid: false
+          };
+          gates.set(definition.id, gate);
+          return gate;
+        }
+        if (gate.triggerType !== definition.triggerType || Math.abs(gate.triggerValue - definition.triggerValue) > 0.0001) {
+          gate.invalid = true;
+        }
+        return gate;
+      };
+      const formatRemainingTime = seconds => {
+        const safe = Math.max(0, Math.ceil(Number(seconds) || 0));
+        const minutes = Math.floor(safe / 60);
+        return String(minutes).padStart(2, '0') + ':' + String(safe % 60).padStart(2, '0');
+      };
+      const setGateStateAttribute = (element, state) => {
+        if (!element) return;
+        element.setAttribute('data-rstk-video-gate-state', state);
+      };
+      const setContentState = (element, unlocked) => {
+        if (!element) return;
+        setGateStateAttribute(element, unlocked ? 'unlocked' : 'locked');
+        if (unlocked) {
+          element.hidden = false;
+          element.removeAttribute('hidden');
+          element.removeAttribute('inert');
+          element.removeAttribute('aria-hidden');
+          element.removeAttribute('data-rstk-video-action-hidden');
+          return;
+        }
+        element.hidden = true;
+        element.setAttribute('hidden', '');
+        element.setAttribute('inert', '');
+        element.setAttribute('aria-hidden', 'true');
+      };
+      const setLockedState = (element, unlocked) => {
+        if (!element) return;
+        setGateStateAttribute(element, unlocked ? 'unlocked' : 'locked');
+        if (unlocked) {
+          element.hidden = true;
+          element.setAttribute('hidden', '');
+          element.setAttribute('aria-hidden', 'true');
+          return;
+        }
+        element.hidden = false;
+        element.removeAttribute('hidden');
+        element.removeAttribute('inert');
+        element.removeAttribute('aria-hidden');
+        element.removeAttribute('data-rstk-video-action-hidden');
+      };
+      const renderGate = gate => {
+        if (!gate) return;
+        const state = gate.invalid ? 'error' : gate.unlocked ? 'unlocked' : 'locked';
+        const remaining = Math.max(0, gate.triggerValue - gate.progress);
+        const displayRemaining = Math.max(0, Math.ceil(remaining - 0.0001));
+        selectGateNodes(CONTENT_ATTRS, gate.id).forEach(element => {
+          setContentState(element, gate.unlocked && !gate.invalid);
+          if (element.style && typeof element.style.setProperty === 'function') {
+            element.style.setProperty('--rstk-video-gate-progress', String(Math.min(1, gate.progress / gate.triggerValue)));
+          }
+          if (gate.invalid) setGateStateAttribute(element, state);
+        });
+        selectGateNodes(LOCKED_ATTRS, gate.id).forEach(element => {
+          setLockedState(element, gate.unlocked && !gate.invalid);
+          if (gate.invalid) setGateStateAttribute(element, state);
+        });
+        selectGateNodes(REMAINING_ATTRS, gate.id).forEach(element => {
+          element.textContent = String(displayRemaining);
+          setGateStateAttribute(element, state);
+        });
+        selectGateNodes(REMAINING_TIME_ATTRS, gate.id).forEach(element => {
+          element.textContent = formatRemainingTime(remaining);
+          setGateStateAttribute(element, state);
+        });
+        document.querySelectorAll(SOURCE_SELECTOR).forEach(source => {
+          if (readAttr(source, SOURCE_ID_ATTRS) === gate.id) setGateStateAttribute(source, state);
+        });
+      };
+      const registerSources = () => {
+        document.querySelectorAll(SOURCE_SELECTOR).forEach(source => {
+          const gate = getOrCreateGate(gateDefinition(source));
+          if (gate) renderGate(gate);
+        });
+      };
+      const sourceForVideo = video => {
+        if (!video || typeof video.closest !== 'function') return null;
+        return video.closest(SOURCE_SELECTOR);
+      };
+      const progressForMetrics = (gate, metrics) => {
+        if (gate.triggerType === 'unique_watched_percent') return Number(metrics.uniqueWatchedPercent || 0);
+        if (gate.triggerType === 'timeline_reached') return Number(metrics.timelineReached || 0);
+        return Number(metrics.playbackSeconds || 0);
+      };
+      const sourceIsVisible = source => {
+        if (!source || source.hidden || source.getAttribute('aria-hidden') === 'true') return false;
+        if (typeof source.getClientRects === 'function' && source.getClientRects().length === 0) return false;
+        try {
+          const style = window.getComputedStyle ? window.getComputedStyle(source) : null;
+          if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+        } catch (_) {}
+        return true;
+      };
+      window.ristakSyncVideoGates = (video, metrics = {}) => {
+        const source = sourceForVideo(video);
+        const gate = getOrCreateGate(gateDefinition(source));
+        if (!gate || gate.invalid) {
+          if (gate) renderGate(gate);
+          return;
+        }
+        if (metrics.realPlaybackStarted === true && sourceIsVisible(source)) {
+          const progress = Math.max(0, progressForMetrics(gate, metrics));
+          const previousProgress = Number(gate.progressByVideo.get(video) || 0);
+          gate.progressByVideo.set(video, Math.max(previousProgress, progress));
+        }
+        gate.progress = Math.max(0, ...Array.from(gate.progressByVideo.values()));
+        const wasUnlocked = gate.unlocked;
+        if (gate.progress + 0.0001 >= gate.triggerValue) gate.unlocked = true;
+        renderGate(gate);
+        if (!wasUnlocked && gate.unlocked) {
+          try {
+            window.dispatchEvent(new CustomEvent('ristak:video-gate-unlocked', {
+              detail: { id: gate.id, triggerType: gate.triggerType, triggerValue: gate.triggerValue }
+            }));
+          } catch (_) {}
+        }
+      };
+      registerSources();
+      const observer = new MutationObserver(registerSources);
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>`
+}
+
 function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, actionsPreviewSafe = false } = {}) {
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
   const hasPlayer = /\brstk-video-player\b/.test(source)
-  const hasActions = actionsEnabled && /data-rstk-video-actions=/.test(source)
+  const hasVideoGate = /\bdata-(?:rstk|ristak|ristack)-video-gate-id\s*=/.test(source)
+  const hasActions = actionsEnabled && (/data-rstk-video-actions=/.test(source) || hasVideoGate)
   return [
     IMPORTED_VIDEO_PLAYER_CSS,
     hasPlayer ? buildVideoPlayerRuntimeScript() : '',
+    hasVideoGate ? buildImportedVideoGateRuntimeScript(source) : '',
     hasActions ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
   ].filter(Boolean).join('')
 }
@@ -27817,6 +28083,7 @@ async function renderImportedPublicSiteHtml(site, {
     : ''
   const importedDeviceVisibilityStyle = buildImportedHtmlDeviceVisibilityStyle()
   html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
+  html = annotateImportedVideoGateState(html)
   const importedNativeRender = await replaceImportedNativeElementSlots(
     html,
     site.blocks || [],
@@ -27911,6 +28178,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       : ''
     const importedDeviceVisibilityStyle = buildImportedHtmlDeviceVisibilityStyle()
     html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
+    html = annotateImportedVideoGateState(html)
     const importedNativeRender = await replaceImportedNativeElementSlots(
       html,
       site.blocks || [],

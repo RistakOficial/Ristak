@@ -4858,6 +4858,22 @@ slot pendiente se crea su bloque independiente y esa coincidencia exacta siempre
 tiene prioridad. El respaldo solo aplica a videos emparejados por base y vista,
 nunca a dos videos distintos de la misma página.
 
+El bloqueo de contenido por video en HTML importado es una capacidad nativa del
+renderer, no una composición de acciones `show`/`hide`. Cada slot fuente declara
+`data-rstk-video-gate-id`, `data-rstk-video-gate-trigger` y
+`data-rstk-video-gate-value`. El diseño bloqueado usa
+`data-rstk-video-gate-locked`, el contador vivo
+`data-rstk-video-gate-remaining` y el contenido real completo
+`data-rstk-video-gate-content`, todos con el mismo ID. Desde el primer render,
+Ristak marca el contenido real como `hidden`, `inert` y `aria-hidden`; sólo lo
+habilita al cumplir el umbral y entonces oculta el diseño bloqueado. En
+`playback_seconds` suma únicamente reproducción activa: seek, buffering y el
+preview automático no cuentan. `unique_watched_percent` usa fragmentos vistos
+sin inflar el avance por repetir, y `timeline_reached` sí permite adelantar.
+Variantes móvil/escritorio con el mismo gate comparten el mayor progreso
+individual; nunca se suman entre sí. El contador sale del mismo estado real y no
+de decenas de spans o reglas por segundo.
+
 - `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
   exclusivamente un formulario ya existente, reglas "Al enviar", estilo del
   bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;
@@ -4904,7 +4920,9 @@ nunca a dos videos distintos de la misma página.
   situación, inversión o contacto aparece antes del horario, y los datos de
   contacto quedan en el último paso `questions`. Si un video controla el acceso,
   el estado inicial conserva a la vista un calendario completo deshabilitado con
-  su capa y progreso de bloqueo; al desbloquearse aparece el calendario real en
+  su capa y progreso de bloqueo mediante el contrato
+  `data-rstk-video-gate-*`; el calendario compuesto completo vive dentro de
+  `data-rstk-video-gate-content`. Al desbloquearse aparece el calendario real en
   `date`, mientras las preguntas permanecen ocultas hasta seleccionar `time`.
   El contrato legacy de `input date` más `select` permanece montable para HTML
   publicado anteriormente, pero ya no es la estructura indicada a las IA.

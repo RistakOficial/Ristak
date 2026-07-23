@@ -268,6 +268,7 @@ import {
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
+  buildImportedHtmlVideoGateRulesText,
   buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlVideoActionTargets,
@@ -2663,6 +2664,7 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 ${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
+${buildImportedHtmlVideoGateRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
 - Nunca agregues JavaScript para medir el video u ocultar/mostrar targets. Ristak ejecuta las reglas. Conserva data-rstk-video-rules al editar otra cosa; quitar el atributo o una regla de la lista no borra configuraciones. Para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.
@@ -20783,6 +20785,8 @@ Reglas para esta edición:
 
 ${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
 
+${buildImportedHtmlVideoGateRulesText('Contrato de bloqueo nativo por video que debes conservar:')}
+
 ${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes conservar:')}
 
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
@@ -20817,6 +20821,8 @@ Reglas para esta edición:
 - Usa needs_more_info solo si no hay una acción concreta que ejecutar.
 
 ${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
+
+${buildImportedHtmlVideoGateRulesText('Contrato de bloqueo nativo por video que debes conservar:')}
 
 ${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes conservar:')}
 
@@ -28499,6 +28505,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- No pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que fuercen orientación en el slot. Para ubicarlo usa un contenedor padre; Ristak detecta la orientación real del archivo y controla su proporción y ancho responsive.',
       '- No dibujes franjas laterales ni un marco negro falso. En automático, el video vertical queda contenido en computadora y usa todo el ancho disponible en móvil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.',
       buildImportedHtmlVideoPlayerRulesText(),
+      buildImportedHtmlVideoGateRulesText(),
       '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',
       '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (seek y buffering no cuentan) y unique_watched_percent para "vio X% real" (solo fragmentos distintos; repetir no infla). triggerValue usa segundos en las dos primeras (3 minutos = 180) y de 1 a 100 en porcentaje.',
       '- Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules=\'[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]\'></div>.',

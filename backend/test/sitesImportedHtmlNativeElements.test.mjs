@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import vm from 'node:vm'
 
 import { db } from '../src/config/database.js'
 import {
@@ -817,6 +818,263 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(previewHtml, /data-rstk-video-preview="true"/)
     assert.match(previewHtml, /startPreviewLoop\(\)/)
     assert.match(previewHtml, /<a[^>]*data-rstk-video-action-target="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('native video gate keeps the real calendar inert, shows live remaining playback, and ignores seeks', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <section data-rstk-device-only="desktop">
+            <div
+              data-rstk-native-element="video"
+              data-rstk-native-id="video-gate-desktop"
+              data-rstk-video-gate-id="agenda-admision"
+              data-rstk-video-gate-trigger="playback_seconds"
+              data-rstk-video-gate-value="30"
+            ></div>
+          </section>
+          <section data-rstk-device-only="mobile">
+            <div
+              data-rstk-native-element="video"
+              data-rstk-native-id="video-gate-mobile"
+              data-rstk-video-gate-id="agenda-admision"
+              data-rstk-video-gate-trigger="playback_seconds"
+              data-rstk-video-gate-value="30"
+            ></div>
+          </section>
+          <section data-rstk-video-gate-locked="agenda-admision">
+            Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos.
+          </section>
+          <section
+            data-rstk-native-element="calendar"
+            data-rstk-native-id="agenda-real"
+            data-rstk-native-render="custom"
+            data-rstk-video-gate-content="agenda-admision"
+          >
+            <form data-rstk-calendar-book-form>
+              <section data-rstk-calendar-flow-step="fecha" data-rstk-calendar-flow-kind="date">
+                <div data-rstk-calendar-days></div>
+              </section>
+              <section data-rstk-calendar-flow-step="horario" data-rstk-calendar-flow-kind="time" hidden>
+                <div data-rstk-calendar-slots></div>
+              </section>
+              <button type="submit">Agendar</button>
+            </form>
+          </section>
+        </body>
+      </html>
+    `, `HTML native video gate ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video gate desktop',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-gate-desktop',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-gate.mp4'
+      }
+    })
+    await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Agenda gate',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-real',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'custom',
+        calendarId: 'cal_gate',
+        calendarSlug: 'agenda-gate',
+        calendarName: 'Agenda gate'
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.equal((html.match(/data-rstk-video-gate-id="agenda-admision"/g) || []).length, 2)
+    assert.match(html, /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-state="locked"[^>]* hidden[^>]* inert[^>]*aria-hidden="true"/)
+    assert.match(html, /data-rstk-video-gate-runtime/)
+    assert.match(html, /window\.ristakSyncVideoGates/)
+    assert.match(html, /const GATE_SOURCE_SELECTOR =/)
+    assert.match(html, /gate\.progress = Math\.max\(0, \.\.\.Array\.from\(gate\.progressByVideo\.values\(\)\)\)/)
+    assert.match(html, /element\.setAttribute\('inert', ''\)/)
+    assert.match(html, /element\.removeAttribute\('inert'\)/)
+    assert.doesNotMatch(html, /ocultar-contador-30/)
+
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1])
+    const gateRuntime = scripts.find(script => script.includes('ristakImportedVideoGateRuntimeLoaded'))
+    const actionRuntime = scripts.find(script => script.includes('ristakVideoActionsRuntimeLoaded'))
+    assert.ok(gateRuntime)
+    assert.ok(actionRuntime)
+
+    class FakeElement {
+      constructor(attrs = {}) {
+        this.attrs = new Map(Object.entries(attrs))
+        this.hidden = this.attrs.has('hidden')
+        this.textContent = ''
+        this.styleValues = new Map()
+        this.style = { setProperty: (name, value) => this.styleValues.set(name, String(value)) }
+      }
+
+      getAttribute(name) {
+        return this.attrs.get(name) || ''
+      }
+
+      setAttribute(name, value) {
+        this.attrs.set(name, String(value))
+        if (name === 'hidden') this.hidden = true
+      }
+
+      removeAttribute(name) {
+        this.attrs.delete(name)
+        if (name === 'hidden') this.hidden = false
+      }
+    }
+
+    const source = new FakeElement({
+      'data-rstk-video-gate-id': 'agenda-admision',
+      'data-rstk-video-gate-trigger': 'playback_seconds',
+      'data-rstk-video-gate-value': '30'
+    })
+    const mobileSource = new FakeElement({
+      'data-rstk-video-gate-id': 'agenda-admision',
+      'data-rstk-video-gate-trigger': 'playback_seconds',
+      'data-rstk-video-gate-value': '30'
+    })
+    const locked = new FakeElement({ 'data-rstk-video-gate-locked': 'agenda-admision' })
+    const content = new FakeElement({
+      'data-rstk-video-gate-content': 'agenda-admision',
+      hidden: '',
+      inert: '',
+      'aria-hidden': 'true'
+    })
+    const remaining = new FakeElement({ 'data-rstk-video-gate-remaining': 'agenda-admision' })
+
+    class FakeVideo extends FakeElement {
+      constructor(gateSource) {
+        super()
+        this.gateSource = gateSource
+        this.dataset = {}
+        this.autoplay = false
+        this.paused = false
+        this.ended = false
+        this.currentTime = 0
+        this.duration = 120
+        this.playbackRate = 1
+        this.listeners = new Map()
+      }
+
+      closest(selector) {
+        return selector.includes('video-gate-id') ? this.gateSource : null
+      }
+
+      addEventListener(name, listener) {
+        const listeners = this.listeners.get(name) || []
+        listeners.push(listener)
+        this.listeners.set(name, listeners)
+      }
+
+      dispatch(name) {
+        for (const listener of this.listeners.get(name) || []) listener({ type: name })
+      }
+    }
+
+    const video = new FakeVideo(source)
+    const mobileVideo = new FakeVideo(mobileSource)
+    const sourceSelector = '[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]'
+    const gateVideoSelector = '[data-rstk-video-gate-id] video,[data-ristak-video-gate-id] video,[data-ristack-video-gate-id] video'
+    const document = {
+      documentElement: {},
+      cookie: '',
+      querySelectorAll: selector => {
+        if (selector === sourceSelector) return [source, mobileSource]
+        if (selector === gateVideoSelector) return [video, mobileVideo]
+        if (selector === 'video[data-rstk-video-actions]') return []
+        if (selector.includes('video-gate-locked')) return [locked]
+        if (selector.includes('video-gate-content')) return [content]
+        if (selector.includes('video-gate-remaining-time')) return []
+        if (selector.includes('video-gate-remaining')) return [remaining]
+        return []
+      },
+      querySelector: () => null,
+      getElementById: () => null
+    }
+    let nowMs = 0
+    let nextFrameId = 0
+    const window = {
+      CSS: { escape: value => String(value) },
+      performance: { now: () => nowMs },
+      requestAnimationFrame: () => {
+        nextFrameId += 1
+        return nextFrameId
+      },
+      cancelAnimationFrame: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => {}
+    }
+    class MutationObserver {
+      observe() {}
+    }
+
+    const context = { window, document, MutationObserver }
+    vm.runInNewContext(gateRuntime, context)
+    vm.runInNewContext(actionRuntime, context)
+
+    assert.equal(content.hidden, true)
+    assert.equal(content.attrs.has('inert'), true)
+    assert.equal(locked.hidden, false)
+    assert.equal(remaining.textContent, '30')
+
+    video.dispatch('play')
+    nowMs = 10_000
+    video.currentTime = 10
+    video.dispatch('timeupdate')
+    assert.equal(remaining.textContent, '20')
+    video.dispatch('pause')
+    assert.equal(remaining.textContent, '20')
+    video.dispatch('play')
+
+    mobileVideo.dispatch('play')
+    nowMs += 10_000
+    mobileVideo.currentTime = 10
+    mobileVideo.dispatch('timeupdate')
+    assert.equal(remaining.textContent, '20')
+
+    video.dispatch('seeking')
+    video.currentTime = 29
+    video.dispatch('seeked')
+    assert.equal(remaining.textContent, '20')
+    assert.equal(content.hidden, true)
+
+    for (let step = 1; step <= 4; step += 1) {
+      nowMs += 5_000
+      video.currentTime += 5
+      video.dispatch('timeupdate')
+    }
+
+    assert.equal(remaining.textContent, '0')
+    assert.equal(content.hidden, false)
+    assert.equal(content.attrs.has('inert'), false)
+    assert.equal(content.attrs.has('aria-hidden'), false)
+    assert.equal(content.getAttribute('data-rstk-video-gate-state'), 'unlocked')
+    assert.equal(locked.hidden, true)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

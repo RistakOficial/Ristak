@@ -11,6 +11,8 @@ export const IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE: string
 export const IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS: readonly string[]
 export const IMPORTED_HTML_VIDEO_PLAYER_RULES: readonly string[]
 export const IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE: string
+export const IMPORTED_HTML_VIDEO_GATE_RULES: readonly string[]
+export const IMPORTED_HTML_VIDEO_GATE_EXAMPLE: string
 export const IMPORTED_HTML_VIDEO_ACTION_TARGET_RULES: readonly string[]
 export function buildImportedHtmlFaviconRulesText(heading?: string): string
 export function importedHtmlHasFavicon(html?: string): boolean
@@ -20,6 +22,7 @@ export function buildImportedHtmlDeviceVisibilityStyle(previewDevice?: 'desktop'
 export function buildImportedHtmlCustomCalendarRulesText(heading?: string): string
 export function buildImportedHtmlCustomSocialProfileRulesText(heading?: string): string
 export function buildImportedHtmlVideoPlayerRulesText(heading?: string): string
+export function buildImportedHtmlVideoGateRulesText(heading?: string): string
 export function normalizeImportedHtmlVideoPlayerManifest(value?: string | Record<string, unknown>): {
   valid: boolean
   settings: Record<string, unknown>
