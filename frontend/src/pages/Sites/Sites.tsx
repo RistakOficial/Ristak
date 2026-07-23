@@ -7382,7 +7382,7 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
   const calendarLineDefault = siteIsDark ? 'rgba(255, 255, 255, 0.22)' : '#e5e7eb'
   const shouldDefaultToForwardPage = shouldDefaultFunnelBlockToNextPage(site, resolvedSiteType, activePageId)
   const formCompletionDefaults = shouldDefaultToForwardPage
-    ? { completionAction: 'next_page' }
+    ? { completionAction: 'next_page', completionActionOrigin: 'auto_funnel' }
     : {}
   const calendarCompletionDefaults = shouldDefaultToForwardPage
     ? { calendarCompletionAction: 'next_page' }
@@ -38343,6 +38343,8 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                     embeddedSiteId: undefined,
                     embeddedBlocks: undefined,
                     embeddedPages: undefined,
+                    completionAction: 'form_default',
+                    completionActionOrigin: 'form_source',
                     // Importado: sin override de theme, para que llegue idéntico al fuente.
                     embeddedTheme: undefined
                   })
@@ -39421,7 +39423,10 @@ const FormCompletionSettingsControls: React.FC<{
 
   useEffect(() => {
     if (hasForwardPage || !isFormNextPageCompletionAction(storedCompletionAction)) return
-    onPatchSettings({ completionAction: 'form_default' })
+    onPatchSettings({
+      completionAction: 'form_default',
+      completionActionOrigin: 'form_source'
+    })
     window.setTimeout(onSave, 0)
   }, [hasForwardPage, onPatchSettings, onSave, storedCompletionAction])
 
@@ -39434,7 +39439,10 @@ const FormCompletionSettingsControls: React.FC<{
           dropdownMinWidth={420}
           onChange={(event) => {
             const action = event.target.value as FormCompletionAction
-            const patch: Record<string, unknown> = { completionAction: action }
+            const patch: Record<string, unknown> = {
+              completionAction: action,
+              completionActionOrigin: 'user'
+            }
             if ((action === 'specific_page' || action === 'specific_page_if_qualified') && !getSettingString(settings, 'completionPageId')) {
               patch.completionPageId = completionTargetPageId
             }
@@ -39532,6 +39540,8 @@ const FormEmbedToolbarControls: React.FC<{
               embeddedSiteName: undefined,
               embeddedBlocks: undefined,
               embeddedPages: undefined,
+              completionAction: 'form_default',
+              completionActionOrigin: 'form_source',
               // Importado: sin override de theme, para que llegue idéntico al fuente.
               embeddedTheme: undefined,
               embeddedSiteType: undefined

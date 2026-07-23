@@ -1292,6 +1292,19 @@ function hasFormEmbedCompletionAction(settings = {}) {
   return Boolean(cleanString(settings.completionAction || settings.completion_action))
 }
 
+function getFormEmbedSourceSiteId(settings = {}) {
+  return cleanString(
+    settings.formSiteId ||
+    settings.form_site_id ||
+    settings.embeddedSiteId ||
+    settings.embedded_site_id
+  )
+}
+
+function getFormEmbedCompletionActionOrigin(settings = {}) {
+  return cleanString(settings.completionActionOrigin || settings.completion_action_origin)
+}
+
 function hasForwardPageForBlockSettings(site, settings = {}) {
   const pages = normalizeSitePages(site)
   const pageId = getBlockPageId({ settings }, pages)
@@ -1307,9 +1320,44 @@ function shouldDefaultLandingBlockToNextPage(site, settings = {}) {
 
 function applyFormEmbedCreateDefaults(site, settings = {}) {
   const next = isPlainObject(settings) ? { ...settings } : {}
-  if (shouldDefaultLandingBlockToNextPage(site, next) && !hasFormEmbedCompletionAction(next)) {
+  const sourceFormId = getFormEmbedSourceSiteId(next)
+  if (
+    shouldDefaultLandingBlockToNextPage(site, next) &&
+    !sourceFormId &&
+    !hasFormEmbedCompletionAction(next)
+  ) {
     next.completionAction = 'next_page'
+    next.completionActionOrigin = 'auto_funnel'
+  } else if (
+    sourceFormId &&
+    hasFormEmbedCompletionAction(next) &&
+    !getFormEmbedCompletionActionOrigin(next)
+  ) {
+    // API/MCP: si el consumidor manda una acción junto con el formulario fuente,
+    // se considera deliberada. El editor marca sus defaults automáticos aparte.
+    next.completionActionOrigin = 'user'
   }
+  return next
+}
+
+function applyLinkedFormSelectionDefaults(existingSettings = {}, nextSettings = {}) {
+  const next = isPlainObject(nextSettings) ? { ...nextSettings } : {}
+  const previousSourceFormId = getFormEmbedSourceSiteId(existingSettings)
+  const nextSourceFormId = getFormEmbedSourceSiteId(next)
+  const actionOrigin = getFormEmbedCompletionActionOrigin(next)
+
+  if (
+    nextSourceFormId &&
+    nextSourceFormId !== previousSourceFormId &&
+    actionOrigin !== 'user'
+  ) {
+    // Elegir/cambiar el formulario fuente debe empezar respetando SUS reglas.
+    // El bloque vacío de un funnel puede traer next_page como conveniencia, pero
+    // ese default no puede convertir una respuesta descalificada en "siguiente".
+    next.completionAction = 'form_default'
+    next.completionActionOrigin = 'form_source'
+  }
+
   return next
 }
 
@@ -13933,7 +13981,9 @@ export async function updateBlock(siteId, blockId, input = {}) {
     : isPlainObject(input.settings)
       ? input.settings
       : {}
-  if (blockType === 'payment') {
+  if (blockType === 'form_embed') {
+    nextSettings = applyLinkedFormSelectionDefaults(parseJson(existing.settings_json, {}), nextSettings)
+  } else if (blockType === 'payment') {
     nextSettings = applyPaymentBlockCreateDefaults(site, nextSettings)
   }
   if (blockType === 'video' && normalizeBoolean(nextSettings.importedHtmlNativeElement || nextSettings.imported_html_native_element)) {
@@ -15387,6 +15437,40 @@ export async function resolveConnectedAppDomainForHost(hostValue, { forceRefresh
   return { ok: true, domain: config.domain, domainConfig: config, host }
 }
 
+function hasEmbeddedFormDisqualificationRules(blocks = []) {
+  return collectFieldBlocks(blocks).some(field => (
+    ['dropdown', 'radio', 'checkboxes'].includes(field.blockType) &&
+    getBlockOptions(field).some(option => (
+      option.action === 'disqualify' || option.action === 'disqualify_after_submit'
+    ))
+  ))
+}
+
+function repairLegacyLinkedFormCompletionSettings(settings = {}, embeddedBlocks = []) {
+  const completionAction = normalizeFormCompletionAction(
+    settings.completionAction || settings.completion_action,
+    'form_default'
+  )
+  const actionOrigin = getFormEmbedCompletionActionOrigin(settings)
+  const inheritedAutoNextPage = completionAction === 'next_page' && (
+    !actionOrigin || actionOrigin === 'auto_funnel'
+  )
+
+  if (!inheritedAutoNextPage || !hasEmbeddedFormDisqualificationRules(embeddedBlocks)) {
+    return settings
+  }
+
+  // Compatibilidad para embeds creados antes de registrar el origen del default:
+  // si el "siguiente paso" fue automático y el fuente sí tiene reglas de
+  // descalificación, manda el formulario. Una acción re-elegida por el usuario se
+  // guarda con origin=user y conserva el override intencional.
+  return {
+    ...settings,
+    completionAction: 'form_default',
+    completionActionOrigin: 'form_source'
+  }
+}
+
 async function hydrateEmbeddedForms(blocks = []) {
   const hydrated = []
 
@@ -15435,7 +15519,8 @@ async function hydrateEmbeddedForms(blocks = []) {
       continue
     }
 
-    const localEmbeddedTheme = isPlainObject(settings.embeddedTheme) ? { ...settings.embeddedTheme } : {}
+    const hydratedSettings = repairLegacyLinkedFormCompletionSettings(settings, embeddedBlocks)
+    const localEmbeddedTheme = isPlainObject(hydratedSettings.embeddedTheme) ? { ...hydratedSettings.embeddedTheme } : {}
     // Importado: descarta el borde transparente auto-inyectado para no pisar el marco del fuente.
     if (embeddedSite && localEmbeddedTheme.pageBorderColor === 'transparent') {
       delete localEmbeddedTheme.pageBorderWidth
@@ -15456,7 +15541,7 @@ async function hydrateEmbeddedForms(blocks = []) {
     hydrated.push({
       ...block,
       settings: {
-        ...settings,
+        ...hydratedSettings,
         embeddedSiteId: embeddedSite?.id || formSiteId,
         embeddedSiteName: embeddedSite?.name || '',
         embeddedSiteType: embeddedSite?.siteType || embeddedSite?.site_type || 'standard_form',

@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-21.
+Ultima consolidacion: 2026-07-23.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -5373,6 +5373,21 @@ mensaje de exito para no dejar al comprador en una redireccion rota. Ese default
 solo se aplica al crear o guardar el bloque; si el usuario cambia la accion a
 reglas propias, pagina especifica o redireccion, se respeta su configuracion
 guardada mientras sea valida.
+
+El default de `Ir a la siguiente pagina` de un bloque de formulario vacio no se
+hereda al vincular un formulario ya guardado. Elegir o cambiar el formulario
+fuente deja `Al enviar` en `Usar reglas del formulario`: se conservan sus reglas
+por opcion, estado `disqualified`, mensaje o pantalla de no calificado y
+redirecciones configuradas. `settings.completionActionOrigin` distingue el
+default automatico del embudo (`auto_funnel`), la herencia del formulario
+(`form_source`) y una accion elegida de forma deliberada en el sitio (`user`).
+Para embeds legacy que guardaron `next_page` sin origen, si el formulario fuente
+contiene una regla `disqualify` o `disqualify_after_submit`, la hidratacion lo
+trata como el antiguo default automatico y restaura las reglas del formulario.
+Si el usuario vuelve a elegir explicitamente una accion del sitio, esa accion sí
+manda. La regresion completa esta cubierta por
+`backend/test/sitesEmbeddedStepform.test.mjs`: formulario fuente, seleccion en
+landing, render publico y submission descalificada.
 
 El editor tambien debe ocultar cualquier opcion literal de `Ir a la siguiente
 pagina` cuando la pagina activa ya es la ultima del orden del sitio. Esta regla

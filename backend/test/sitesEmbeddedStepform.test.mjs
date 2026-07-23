@@ -1,11 +1,202 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 
-import { createBlock, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
+import { getAppConfig, setAppConfig } from '../src/config/database.js'
+import {
+  createBlock,
+  createSite,
+  createSubmissionFromRequest,
+  deleteSite,
+  getSitePreview,
+  renderPublicSiteHtml,
+  updateBlock
+} from '../src/services/sitesService.js'
 
 function findFormEmbedBlock(site) {
   return site.blocks.find(block => block.blockType === 'form_embed')
 }
+
+const DOMAIN_KEYS = {
+  domain: 'sites_public_domain',
+  verified: 'sites_public_domain_verified',
+  checkedAt: 'sites_public_domain_checked_at',
+  error: 'sites_public_domain_error'
+}
+
+test('linked forms keep their disqualification rules when submitted from a landing', async () => {
+  const suffix = crypto.randomUUID()
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  let sourceForm
+  let landing
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    sourceForm = await createSite({
+      name: 'Formulario fuente con descalificacion',
+      slug: `source-form-disqualify-${suffix}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+    let sourceWithBlocks = await createBlock(sourceForm.id, {
+      blockType: 'email',
+      label: 'Correo',
+      required: true,
+      settings: { systemFieldKey: 'email', internalName: 'email' }
+    })
+    sourceWithBlocks = await createBlock(sourceForm.id, {
+      blockType: 'radio',
+      label: '¿Calificas?',
+      required: true,
+      options: [
+        { id: 'yes', label: 'Sí', value: 'Sí', action: 'continue' },
+        {
+          id: 'no',
+          label: 'No',
+          value: 'No',
+          action: 'disqualify_after_submit',
+          message: 'No calificas para continuar.'
+        }
+      ]
+    })
+
+    const emailBlock = sourceWithBlocks.blocks.find(block => block.blockType === 'email')
+    const qualificationBlock = sourceWithBlocks.blocks.find(block => block.blockType === 'radio')
+    assert.ok(emailBlock)
+    assert.ok(qualificationBlock)
+
+    landing = await createSite({
+      name: 'Landing con formulario fuente',
+      slug: `landing-form-disqualify-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pageMode: 'funnel',
+        pages: [
+          { id: 'page-1', title: 'Formulario', sortOrder: 0 },
+          { id: 'page-2', title: 'Siguiente paso', sortOrder: 1 }
+        ]
+      }
+    })
+    landing = await createBlock(landing.id, {
+      blockType: 'form_embed',
+      label: 'Formulario embebido',
+      settings: {
+        pageId: 'page-1'
+      }
+    })
+    const formEmbed = findFormEmbedBlock(landing)
+    assert.ok(formEmbed)
+    assert.equal(formEmbed.settings.completionAction, 'next_page')
+    assert.equal(formEmbed.settings.completionActionOrigin, 'auto_funnel')
+
+    landing = await updateBlock(landing.id, formEmbed.id, {
+      settings: {
+        ...formEmbed.settings,
+        formSiteId: sourceForm.id,
+        embeddedTheme: undefined
+      }
+    })
+
+    const linkedEmbed = findFormEmbedBlock(landing)
+    assert.equal(linkedEmbed.settings.completionAction, 'form_default')
+    assert.equal(linkedEmbed.settings.completionActionOrigin, 'form_source')
+
+    const rendered = await renderPublicSiteHtml(landing, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.match(rendered, /const completionAction = "next_page_if_qualified";/)
+    assert.match(rendered, /const completionUsesFormRules = true;/)
+
+    // Compatibilidad: los embeds viejos no registraban si next_page era el
+    // default automático. Si el fuente sí descalifica, se reparan al hidratar.
+    landing = await updateBlock(landing.id, linkedEmbed.id, {
+      settings: {
+        ...linkedEmbed.settings,
+        completionAction: 'next_page',
+        completionActionOrigin: undefined
+      }
+    })
+    assert.equal(findFormEmbedBlock(landing).settings.completionAction, 'next_page')
+    const repairedLegacyEmbed = findFormEmbedBlock(await getSitePreview(landing.id))
+    assert.equal(
+      repairedLegacyEmbed.settings.completionAction,
+      'form_default',
+      JSON.stringify({
+        origin: repairedLegacyEmbed.settings.completionActionOrigin,
+        optionActions: repairedLegacyEmbed.settings.embeddedBlocks
+          ?.flatMap(block => block.options || [])
+          .map(option => option.action)
+      })
+    )
+    const repairedLegacyRender = await renderPublicSiteHtml(await getSitePreview(landing.id), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.match(repairedLegacyRender, /const completionAction = "next_page_if_qualified";/)
+    assert.match(repairedLegacyRender, /const completionUsesFormRules = true;/)
+
+    // Una acción re-elegida explícitamente por el usuario sí conserva el
+    // override del sitio, incluso si el formulario fuente tiene reglas.
+    landing = await updateBlock(landing.id, linkedEmbed.id, {
+      settings: {
+        ...findFormEmbedBlock(landing).settings,
+        completionAction: 'next_page',
+        completionActionOrigin: 'user'
+      }
+    })
+    assert.equal(findFormEmbedBlock(landing).settings.completionAction, 'next_page')
+
+    landing = await updateBlock(landing.id, linkedEmbed.id, {
+      settings: {
+        ...findFormEmbedBlock(landing).settings,
+        completionAction: 'form_default',
+        completionActionOrigin: 'form_source'
+      }
+    })
+
+    const result = await createSubmissionFromRequest({
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      hostname: 'example.test',
+      path: `/${landing.slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }, {
+      siteId: landing.id,
+      pageId: 'page-1',
+      finalSubmit: true,
+      responses: {
+        [emailBlock.id]: `embedded-disqualified-${suffix}@example.test`,
+        [qualificationBlock.id]: 'No'
+      }
+    })
+
+    assert.equal(result.status, 'disqualified')
+    assert.equal(result.message, 'No calificas para continuar.')
+    assert.equal(result.rules.actions[0]?.action, 'disqualify_after_submit')
+  } finally {
+    if (landing?.id) await deleteSite(landing.id).catch(() => undefined)
+    if (sourceForm?.id) await deleteSite(sourceForm.id).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
 
 test('landing form embeds render multiple form pages as an inline stepform', async () => {
   const site = {
