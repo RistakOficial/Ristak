@@ -4874,7 +4874,11 @@ capa se posiciona encima del mismo contenedor. Al cumplir el umbral se eliminan
 blur y bloqueo y se oculta la capa. No se deben renderizar un calendario falso
 bloqueado y otro real debajo. El HTML puede ajustar la intensidad con
 `--rstk-video-gate-blur` y la opacidad con
-`--rstk-video-gate-locked-opacity`. En
+`--rstk-video-gate-locked-opacity`. Si el contenido es un calendario compuesto,
+el estado bloqueado deja visibles `date` y `time`, elige temporalmente el primer
+día con disponibilidad del mes y pinta sus horarios reales; las preguntas,
+contacto y confirmación permanecen ocultos. Al desbloquear se borra esa
+preselección y el flujo regresa a `date`. En
 `playback_seconds` suma únicamente reproducción activa: seek, buffering y el
 preview automático no cuentan. `unique_watched_percent` usa fragmentos vistos
 sin inflar el avance por repetir, y `timeline_reached` sí permite adelantar.

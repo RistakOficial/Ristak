@@ -690,6 +690,11 @@ calendario real pero lo vuelve `inert`, le aplica blur y posiciona la capa
 calendario real. El modo sin `locked-mode` conserva el comportamiento compatible
 que oculta el contenido. En ambos casos el restante sale del progreso real del
 reproductor y el contenido se habilita al cumplir el umbral.
+En calendarios compuestos, el estado bloqueado muestra simultáneamente los pasos
+`date` y `time`: Ristak toma el primer día disponible del mes y pinta sus horarios
+reales detrás del blur. Las preguntas y datos de contacto siguen ocultos. Al
+desbloquear, esa preselección se limpia y el flujo vuelve a `date` para que el
+visitante elija su propia fecha.
 `playback_seconds` no acredita adelantos ni buffering;
 `unique_watched_percent` mide fragmentos distintos vistos y
 `timeline_reached` sí permite seek. Dos videos responsive pueden compartir el

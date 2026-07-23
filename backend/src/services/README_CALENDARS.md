@@ -184,7 +184,10 @@ mostrar el único calendario real desenfocado, un
 `data-rstk-video-gate-locked`. El calendario permanece visible pero `inert`,
 con el overlay encima; al desbloquear se retiran blur y bloqueo. No se crea una
 agenda falsa separada. El HTML puede ajustar `--rstk-video-gate-blur` y
-`--rstk-video-gate-locked-opacity`. Con
+`--rstk-video-gate-locked-opacity`. Mientras el calendario compuesto está
+bloqueado, el runtime muestra `date` y `time` juntos con el primer día disponible
+del mes y sus horarios reales; mantiene ocultos los pasos de preguntas, contacto,
+confirmación y éxito. Al desbloquear limpia la preselección y vuelve a `date`. Con
 `playback_seconds`, seek, buffering y preview automático no cuentan. Dos
 variantes responsive comparten el mayor progreso individual y nunca se suman.
 Al desbloquear, el flujo comienza en `date`; `time` y todas las preguntas siguen

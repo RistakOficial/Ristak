@@ -27643,6 +27643,23 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       const steps = Array.from(root.querySelectorAll('[data-rstk-calendar-step]'));
       const flowSteps = Array.from(root.querySelectorAll('[data-rstk-calendar-flow-step]'));
       const flexibleFlow = flowSteps.length > 0;
+      const videoGateId = String(
+        root.getAttribute('data-rstk-video-gate-content') ||
+        root.getAttribute('data-ristak-video-gate-content') ||
+        root.getAttribute('data-ristack-video-gate-content') ||
+        ''
+      ).trim();
+      const videoGateLockedMode = String(
+        root.getAttribute('data-rstk-video-gate-locked-mode') ||
+        root.getAttribute('data-ristak-video-gate-locked-mode') ||
+        root.getAttribute('data-ristack-video-gate-locked-mode') ||
+        ''
+      ).trim().toLowerCase();
+      const lockedCalendarPreviewEnabled = Boolean(
+        flexibleFlow &&
+        videoGateId &&
+        videoGateLockedMode === 'blur'
+      );
       const timezoneControl = root.querySelector('[data-rstk-calendar-timezone]');
       const timezoneLabels = Array.from(root.querySelectorAll('[data-rstk-calendar-timezone-label]'));
       let timezone = resolveTimezone(config);
@@ -27693,6 +27710,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         return value;
       };
       const setStep = (step) => {
+        root.removeAttribute('data-rstk-calendar-lock-preview');
         root.setAttribute('data-rstk-calendar-state', step);
         flowSteps.forEach(element => {
           element.hidden = true;
@@ -27706,6 +27724,7 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
       };
       const showFlowIndex = (index) => {
         if (!flexibleFlow) return false;
+        root.removeAttribute('data-rstk-calendar-lock-preview');
         const safeIndex = Math.max(0, Math.min(flowSteps.length - 1, Number(index) || 0));
         activeFlowIndex = safeIndex;
         steps.forEach(element => {
@@ -27727,6 +27746,29 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
         if (!flexibleFlow) return false;
         const index = flowSteps.findIndex(element => flowKind(element) === kind);
         return index >= 0 ? showFlowIndex(index) : false;
+      };
+      const videoGateIsLocked = () => (
+        lockedCalendarPreviewEnabled &&
+        root.getAttribute('data-rstk-video-gate-state') !== 'unlocked'
+      );
+      const showLockedCalendarPreview = () => {
+        if (!videoGateIsLocked()) return false;
+        const dateStep = flowSteps.find(element => flowKind(element) === 'date');
+        const timeStep = flowSteps.find(element => flowKind(element) === 'time');
+        if (!dateStep || !timeStep) return false;
+        steps.forEach(element => {
+          element.hidden = true;
+          element.setAttribute('aria-hidden', 'true');
+        });
+        flowSteps.forEach(element => {
+          const isPreviewVisible = element === dateStep || element === timeStep;
+          element.hidden = !isPreviewVisible;
+          element.setAttribute('aria-hidden', isPreviewVisible ? 'false' : 'true');
+        });
+        root.setAttribute('data-rstk-calendar-lock-preview', 'true');
+        root.setAttribute('data-rstk-calendar-state', 'locked-preview');
+        root.setAttribute('data-rstk-calendar-active-flow-step', 'locked-preview');
+        return true;
       };
       const validateFlowStep = (element) => {
         if (!element || !element.querySelectorAll) return true;
@@ -27807,10 +27849,20 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
           slotsByDate = flattenSlotsByDate(result, timezone);
           selectedDate = '';
           selectedSlot = '';
+          const firstAvailableDate = Array.from(slotsByDate.keys())
+            .filter(key => key.slice(0, 7) === startDate.slice(0, 7))
+            .sort()[0] || '';
+          if (videoGateIsLocked()) selectedDate = firstAvailableDate;
           renderDays();
           const hasAvailability = Array.from(slotsByDate.keys()).some(key => key.slice(0, 7) === startDate.slice(0, 7));
-          setMessage(hasAvailability ? '' : 'No hay fechas disponibles en este mes.', hasAvailability ? '' : 'empty');
-          if (!flexibleFlow) setStep('date');
+          if (videoGateIsLocked()) {
+            renderSlots();
+            showLockedCalendarPreview();
+            if (!hasAvailability) setMessage('No hay fechas disponibles en este mes.', 'empty');
+          } else {
+            setMessage(hasAvailability ? '' : 'No hay fechas disponibles en este mes.', hasAvailability ? '' : 'empty');
+            if (!flexibleFlow) setStep('date');
+          }
         } catch (error) {
           slotsByDate = new Map();
           renderDays();
@@ -27893,6 +27945,20 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
           renderTimezone();
           if (flexibleFlow) showFlowKind('date');
           void loadMonth();
+        });
+      }
+      if (lockedCalendarPreviewEnabled && window.addEventListener) {
+        window.addEventListener('ristak:video-gate-unlocked', event => {
+          if (String(event && event.detail && event.detail.id || '') !== videoGateId) return;
+          selectedDate = '';
+          selectedSlot = '';
+          slots.innerHTML = '';
+          setText(selectedDateLabels, '');
+          setText(selectedTimeLabels, '');
+          setText(selectedDateTimeLabels, '');
+          renderDays();
+          setMessage('', '');
+          if (!showFlowKind('date')) setStep('date');
         });
       }
       bindBookingForm({

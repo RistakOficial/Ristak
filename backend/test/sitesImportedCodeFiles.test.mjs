@@ -738,6 +738,8 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoGateGuide, /data-rstk-video-gate-shell/)
   assert.match(videoGateGuide, /data-rstk-video-gate-locked-mode="blur"/)
   assert.match(videoGateGuide, /NO dibujes un calendario bloqueado falso y otro calendario real debajo/)
+  assert.match(videoGateGuide, /primer día con disponibilidad real del mes/)
+  assert.match(videoGateGuide, /Al desbloquear se limpia esa preselección/)
   assert.match(videoGateGuide, /seek, buffering y el preview automático no cuentan/)
   assert.match(videoGateGuide, /nunca suma dos reproducciones simultáneas/)
   assert.match(socialProfileGuide, /data-rstk-native-element="social-profile"/)

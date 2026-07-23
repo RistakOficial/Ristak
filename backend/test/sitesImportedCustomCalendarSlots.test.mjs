@@ -230,13 +230,22 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     ['[data-rstk-calendar-back-to-times]', []]
   ])
   const root = eventNode({ dataset: {} })
-  root.getAttribute = name => name === 'data-rstk-native-slot-id' ? (harnessOptions.slotId || 'agenda-custom') : ''
+  const rootGetAttribute = root.getAttribute.bind(root)
+  root.getAttribute = name => name === 'data-rstk-native-slot-id'
+    ? (harnessOptions.slotId || 'agenda-custom')
+    : rootGetAttribute(name)
+  if (harnessOptions.videoGateId) {
+    root.setAttribute('data-rstk-video-gate-content', harnessOptions.videoGateId)
+    root.setAttribute('data-rstk-video-gate-state', harnessOptions.videoGateState || 'locked')
+    root.setAttribute('data-rstk-video-gate-locked-mode', harnessOptions.videoGateLockedMode || 'blur')
+  }
   root.querySelector = selector => nodes.get(selector) || null
   root.querySelectorAll = selector => nodeLists.get(selector) || []
 
   const requestedUrls = []
   const appointmentBodies = []
   const pixelEvents = []
+  const windowHandlers = new Map()
   const window = {
     location: {
       origin: harnessOptions.locationOrigin ?? 'https://example.test',
@@ -244,6 +253,11 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
       assign() {}
     },
     dispatchEvent() {},
+    addEventListener(name, handler) {
+      const handlers = windowHandlers.get(name) || []
+      handlers.push(handler)
+      windowHandlers.set(name, handlers)
+    },
     ristakMetaBuildMetaPayload(meta = {}) {
       return { visitorId: 'visitor-calendar-1', fbp: 'fbp-calendar-1', ...meta }
     },
@@ -302,6 +316,7 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     monthLabel,
     pixelEvents,
     requestedUrls,
+    root,
     selectedDateLabel,
     selectedDateTimeLabel,
     selectedTimeLabel,
@@ -313,6 +328,12 @@ function createAdvancedRuntimeHarness(script, initialPayload, harnessOptions = {
     success,
     async settle() {
       await new Promise(resolve => setImmediate(resolve))
+    },
+    unlockGate(id = harnessOptions.videoGateId) {
+      root.setAttribute('data-rstk-video-gate-state', 'unlocked')
+      for (const handler of windowHandlers.get('ristak:video-gate-unlocked') || []) {
+        handler({ detail: { id } })
+      }
     }
   }
 }
@@ -729,6 +750,120 @@ test('flujo combinado se detecta como calendario aunque las preguntas aparezcan 
     })
     assert.equal(harness.flowSteps[3].hidden, true)
     assert.equal(harness.flowSteps[4].hidden, false)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('calendario compuesto bloqueado muestra fechas y horarios reales, pero reinicia en fecha al desbloquear', async () => {
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'calendar-video-gate-preview.html',
+      fileBase64: Buffer.from(`
+        <!doctype html>
+        <html>
+          <body>
+            <div
+              data-rstk-native-element="video"
+              data-rstk-native-id="video-principal"
+              data-rstk-video-gate-id="agenda-admision"
+              data-rstk-video-gate-trigger="playback_seconds"
+              data-rstk-video-gate-value="30"
+            ></div>
+            <section data-rstk-video-gate-shell="agenda-admision">
+              <section
+                data-rstk-native-element="calendar"
+                data-rstk-native-id="agenda-gate-preview"
+                data-rstk-native-render="custom"
+                data-rstk-video-gate-content="agenda-admision"
+                data-rstk-video-gate-locked-mode="blur"
+              >
+                <form data-rstk-calendar-book-form>
+                  <section data-rstk-calendar-flow-step="fecha" data-rstk-calendar-flow-kind="date">
+                    <button type="button" data-rstk-calendar-prev-month>Anterior</button>
+                    <strong data-rstk-calendar-month-label></strong>
+                    <button type="button" data-rstk-calendar-next-month>Siguiente</button>
+                    <div data-rstk-calendar-days></div>
+                  </section>
+                  <section data-rstk-calendar-flow-step="horario" data-rstk-calendar-flow-kind="time" hidden>
+                    <h3 data-rstk-calendar-selected-date></h3>
+                    <div data-rstk-calendar-slots></div>
+                  </section>
+                  <section data-rstk-calendar-flow-step="preguntas" data-rstk-calendar-flow-kind="questions" hidden>
+                    <textarea data-rstk-calendar-response="situacion"></textarea>
+                  </section>
+                  <section data-rstk-calendar-flow-step="confirmar" data-rstk-calendar-flow-kind="confirm" hidden>
+                    <button type="submit">Agendar</button>
+                  </section>
+                  <section data-rstk-calendar-flow-step="listo" data-rstk-calendar-flow-kind="success" hidden>
+                    <p data-rstk-calendar-success></p>
+                  </section>
+                </form>
+                <p data-rstk-calendar-message></p>
+              </section>
+              <section data-rstk-video-gate-locked="agenda-admision">
+                Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos
+              </section>
+            </section>
+          </body>
+        </html>
+      `, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `HTML calendar gate preview ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    await createBlock(siteId, {
+      blockType: 'calendar_embed',
+      label: 'Agenda con preview bloqueado',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-gate-preview',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'custom',
+        calendarId: 'cal-gate-preview',
+        calendarSlug: 'agenda-gate-preview',
+        calendarName: 'Agenda gate preview',
+        calendarTimezone: 'Asia/Tokyo'
+      }
+    })
+
+    const nowParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit'
+    }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]))
+    const slot = new Date(Date.UTC(Number(nowParts.year), Number(nowParts.month) - 1, 15, 3, 0)).toISOString()
+
+    const site = await getSite(siteId, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(site, { pageId: 'page-1', trackingEnabled: false, preview: false })
+    const harness = createAdvancedRuntimeHarness(runtimeScriptFromHtml(html), [{ slots: [slot] }], {
+      flowKinds: ['date', 'time', 'questions', 'confirm', 'success'],
+      slotId: 'agenda-gate-preview',
+      videoGateId: 'agenda-admision',
+      videoGateState: 'locked',
+      videoGateLockedMode: 'blur'
+    })
+    await harness.settle()
+
+    assert.equal(harness.root.getAttribute('data-rstk-calendar-lock-preview'), 'true')
+    assert.equal(harness.flowSteps[0].hidden, false)
+    assert.equal(harness.flowSteps[1].hidden, false)
+    assert.equal(harness.flowSteps[2].hidden, true)
+    assert.match(harness.selectedDateLabel.textContent, /15/)
+    assert.match(harness.slots.innerHTML, new RegExp(`data-start-time="${slot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+
+    harness.unlockGate('agenda-admision')
+
+    assert.equal(harness.root.getAttribute('data-rstk-calendar-lock-preview'), '')
+    assert.equal(harness.flowSteps[0].hidden, false)
+    assert.equal(harness.flowSteps[1].hidden, true)
+    assert.equal(harness.flowSteps[2].hidden, true)
+    assert.equal(harness.selectedDateLabel.textContent, '')
+    assert.equal(harness.slots.innerHTML, '')
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
