@@ -165,6 +165,26 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /18cqw/)
 })
 
+test('video player keeps legacy overlay mode playable when videoControls was false', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'overlay',
+    videoControls: false,
+    videoControlBar: true,
+    videoControlPlay: true
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.classes, /\brstk-video-custom-controls\b/)
+  assert.equal(signature.hasOverlay, true)
+  assert.equal(signature.hasControlBar, true)
+  assert.equal(signature.hasPlayControl, true)
+  assert.doesNotMatch(signature.classes, /\brstk-video-no-controls\b/)
+})
+
 test('video player default preset uses large rectangular solid play button', async () => {
   const html = await renderPublicSiteHtml(baseSite({}), {
     pageId: 'page-1',
@@ -1237,6 +1257,9 @@ test('video player none mode removes overlay and audio prompt', async () => {
   assert.match(html, /rstk-video-no-controls/)
   assert.doesNotMatch(html, /<button type="button" class="rstk-video-overlay" data-rstk-video-overlay/)
   assert.doesNotMatch(html, /<span class="rstk-video-sound">/)
+  assert.match(html, /if \(!overlay && !host\.classList\.contains\('rstk-video-native-controls'\)\)/)
+  assert.match(html, /video\.addEventListener\('click', event =>/)
+  assert.match(html, /togglePlayback\(!hasUserPlayed\)/)
 })
 
 test('preview render suppresses custom tracking code without changing live tracking', async () => {

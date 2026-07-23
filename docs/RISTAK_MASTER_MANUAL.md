@@ -5082,6 +5082,12 @@ controles falsos. Sus grupos de control son:
   `videoControlBarInitiallyVisible`, `videoControlPlay`,
   `videoControlProgress`, `videoControlTime`, `videoControlVolume`,
   `videoControlSpeed` y `videoControlSettings`.
+  El valor histórico `overlay` se interpreta como `clean`, incluso si el mismo
+  bloque conserva `videoControls=false`; así un Site anterior no pierde de
+  golpe su botón ni su barra. `none` oculta toda la interfaz visible, pero no
+  vuelve inerte el video: tocar su superficie reproduce o pausa. La misma
+  interacción de superficie mantiene reproducible cualquier combinación
+  personalizada que oculte el botón central y los botones de la barra.
 - Diseño: fondo, borde y radio del frame; color y radio del panel; color, forma,
   radio, tamaño, estilo e icono del play; y color del aviso de sonido mediante
   `videoPlayerBackground`, `videoPlayerRadius`, `videoPlayerBorderColor`,

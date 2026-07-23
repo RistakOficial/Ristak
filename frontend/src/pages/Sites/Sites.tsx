@@ -4038,6 +4038,7 @@ const isVideoControlsMode = (value: string): value is VideoControlsMode =>
 
 const getVideoControlsMode = (settings: Record<string, unknown>): VideoControlsMode => {
   const rawMode = getSettingString(settings, 'videoControlsMode')
+  if (rawMode === 'overlay') return 'clean'
   if (isVideoControlsMode(rawMode)) return rawMode
   if (settings.videoControls === false) return 'none'
   return DEFAULT_VIDEO_CONTROLS_MODE
@@ -37251,7 +37252,7 @@ const VideoPlayerPreview: React.FC<{
   }
 
   const handleVideoClick = (event: React.MouseEvent<HTMLVideoElement>) => {
-    if (!showOverlay || showNativeControls || shouldLetEditorSelect) return
+    if (showNativeControls || shouldLetEditorSelect) return
     event.preventDefault()
     event.stopPropagation()
     if (showCustomControlBar && isPlaying && !controlsVisible) {
@@ -37259,7 +37260,7 @@ const VideoPlayerPreview: React.FC<{
       return
     }
     showControlsTemporarily()
-    togglePlayback(false)
+    togglePlayback(!hasStartedPlaybackRef.current)
   }
 
   const handleControlPlayClick = (event: React.MouseEvent<HTMLButtonElement>) => {

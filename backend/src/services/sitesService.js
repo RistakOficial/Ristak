@@ -18391,7 +18391,7 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     if (settings.videoAutoplay) params.set('autoplay', 'true')
     if (settings.videoMuted !== false) params.set('muted', 'true')
     if (settings.videoLoop) params.set('loop', 'true')
-    if (settings.videoControlsMode === 'none' || settings.videoControls === false) params.set('controls', 'false')
+    if (normalizeVideoControlsMode(settings) === 'none') params.set('controls', 'false')
     const embedUrl = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(resolvedStream.libraryId)}/${encodeURIComponent(resolvedStream.videoId)}${params.toString() ? `?${params.toString()}` : ''}`
     return renderBunnyStreamIframe(embedUrl, block, {
       enabled: !context.noTrack,
@@ -22088,6 +22088,7 @@ const VIDEO_PLAY_ICON_STYLES = new Set(['solid', 'outline', 'soft', 'spark'])
 const DEFAULT_VIDEO_PLAY_ICON_STYLE = 'solid'
 const VIDEO_PLAY_SHAPES = new Set(['round', 'rectangle'])
 const DEFAULT_VIDEO_PLAY_SHAPE = 'rectangle'
+const VIDEO_CONTROLS_MODES = new Set(['native', 'clean', 'none'])
 const LEGACY_VIDEO_PLAY_SIZE = 82
 const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
 const LEGACY_VIDEO_PLAY_RADIUS = 999
@@ -22193,6 +22194,15 @@ const LEGACY_VIDEO_PLAY_COLOR = '#ffffff'
 const VIDEO_PLAYER_COLOR_DEFAULTS_VERSION = 2
 const VIDEO_CONTROLS_IDLE_MS = 2600
 const VIDEO_CONTROLS_LEAVE_IDLE_MS = 650
+
+function normalizeVideoControlsMode(settings = {}) {
+  const requestedMode = cleanString(settings.videoControlsMode)
+  // Los videos importados anteriores al contrato declarativo guardaban
+  // `overlay`; hoy ese mismo reproductor personalizado se llama `clean`.
+  if (requestedMode === 'overlay') return 'clean'
+  if (VIDEO_CONTROLS_MODES.has(requestedMode)) return requestedMode
+  return settings.videoControls === false ? 'none' : 'clean'
+}
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
@@ -22661,12 +22671,7 @@ function renderSubmitButtonContent(label, subtitle = '', settings = {}, { labelA
 }
 
 function renderVideoPlayer(src, block, settings = {}, options = {}) {
-  const requestedControlsMode = cleanString(settings.videoControlsMode)
-  const controlsMode = ['native', 'clean', 'none'].includes(requestedControlsMode)
-    ? requestedControlsMode
-    : settings.videoControls === false
-      ? 'none'
-      : 'clean'
+  const controlsMode = normalizeVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
   const showCentralPlay = settings.videoOverlayPlay !== false
@@ -25791,6 +25796,15 @@ function buildVideoPlayerRuntimeScript() {
 	            }
 	            showControlsTemporarily();
 	            togglePlayback(true);
+	          });
+	        }
+	        if (!overlay && !host.classList.contains('rstk-video-native-controls')) {
+	          video.addEventListener('click', event => {
+	            if (editorPreview) return;
+	            event.preventDefault();
+	            event.stopPropagation();
+	            showControlsTemporarily();
+	            togglePlayback(!hasUserPlayed);
 	          });
 	        }
 	        toggleButtons.forEach(button => {
