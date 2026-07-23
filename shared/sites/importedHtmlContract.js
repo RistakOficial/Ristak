@@ -160,13 +160,254 @@ export function buildImportedHtmlCustomSocialProfileRulesText(heading = 'Perfil 
   return [heading, ...IMPORTED_HTML_CUSTOM_SOCIAL_PROFILE_RULES.map(rule => `- ${rule}`)].join('\n')
 }
 
+export const IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE = 'data-rstk-video-settings'
+
+const IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS = new Set([
+  'videoOverlayPlay',
+  'videoControlBar',
+  'videoControlBarInitiallyVisible',
+  'videoControlPlay',
+  'videoControlProgress',
+  'videoControlVolume',
+  'videoControlSpeed',
+  'videoControlSettings',
+  'videoControlTime',
+  'videoTrickProgressEnabled',
+  'videoPreviewEnabled',
+  'videoDisableEditorPlayback',
+  'videoSoundHint',
+  'videoMuted',
+  'videoAutoplay',
+  'videoLoop'
+])
+
+const IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS = Object.freeze({
+  videoControlsMode: new Set(['clean', 'native', 'none']),
+  videoOrientation: new Set(['auto', 'landscape', 'portrait']),
+  videoPortraitWidthMode: new Set(['auto', 'fill', 'framed']),
+  videoFit: new Set(['cover', 'contain', 'fill']),
+  videoPlayShape: new Set(['round', 'rectangle']),
+  videoPlayIconStyle: new Set(['solid', 'outline', 'soft', 'spark']),
+  mediaAlign: new Set(['left', 'center', 'right'])
+})
+
+const IMPORTED_HTML_VIDEO_PLAYER_NUMBER_RANGES = Object.freeze({
+  videoControlPanelRadius: [0, 48],
+  videoTrickProgressRampPercent: [5, 85],
+  videoTrickProgressPeakPercent: [55, 96],
+  videoPreviewStart: [0, 86400],
+  videoPreviewEnd: [0, 86400],
+  videoSoundNoticeHideAfter: [0, 12],
+  videoDefaultSpeed: [0.25, 4],
+  videoPlayerRadius: [0, 80],
+  videoPlayerBorderWidth: [0, 12],
+  videoPlaySize: [56, 160],
+  videoPlayRadius: [0, 999],
+  videoPlayIconSize: [18, 95],
+  mediaWidth: [30, 100]
+})
+
+const IMPORTED_HTML_VIDEO_PLAYER_PAINT_KEYS = new Set([
+  'videoPlayerBackground',
+  'videoPlayerBorderColor',
+  'videoPlayerColor',
+  'videoPlayColor',
+  'videoSoundColor'
+])
+
+const IMPORTED_HTML_VIDEO_PLAYER_STRING_KEYS = Object.freeze({
+  mediaUrl: 4000,
+  videoSoundNoticeText: 180
+})
+
+export const IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS = Object.freeze([
+  ...IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS,
+  ...Object.keys(IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS),
+  ...Object.keys(IMPORTED_HTML_VIDEO_PLAYER_NUMBER_RANGES),
+  ...IMPORTED_HTML_VIDEO_PLAYER_PAINT_KEYS,
+  ...Object.keys(IMPORTED_HTML_VIDEO_PLAYER_STRING_KEYS),
+  'responsive'
+])
+
+const IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEY_SET = new Set(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS)
+
+function importedHtmlVideoPlayerError(message = '') {
+  return { valid: false, settings: {}, tombstones: [], error: message }
+}
+
+function normalizeImportedHtmlVideoPlayerNumber(value, min, max) {
+  const number = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(number)) return null
+  return Math.min(max, Math.max(min, number))
+}
+
+function normalizeImportedHtmlVideoPlayerResponsive(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, value: null, error: 'responsive debe ser un objeto con tablet y/o mobile.' }
+  }
+  const devices = Object.keys(value)
+  if (devices.some(device => !['tablet', 'mobile'].includes(device))) {
+    return { valid: false, value: null, error: 'responsive solo admite tablet y mobile.' }
+  }
+  const normalized = {}
+  for (const device of devices) {
+    const source = value[device]
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return { valid: false, value: null, error: `responsive.${device} debe ser un objeto.` }
+    }
+    const keys = Object.keys(source)
+    if (keys.some(key => !['mediaWidth', 'mediaAlign'].includes(key))) {
+      return { valid: false, value: null, error: `responsive.${device} solo admite mediaWidth y mediaAlign.` }
+    }
+    const entry = {}
+    if (Object.prototype.hasOwnProperty.call(source, 'mediaWidth')) {
+      const mediaWidth = normalizeImportedHtmlVideoPlayerNumber(source.mediaWidth, 30, 100)
+      if (mediaWidth === null) {
+        return { valid: false, value: null, error: `responsive.${device}.mediaWidth debe ser un número entre 30 y 100.` }
+      }
+      entry.mediaWidth = mediaWidth
+    }
+    if (Object.prototype.hasOwnProperty.call(source, 'mediaAlign')) {
+      const mediaAlign = String(source.mediaAlign || '').trim()
+      if (!IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS.mediaAlign.has(mediaAlign)) {
+        return { valid: false, value: null, error: `responsive.${device}.mediaAlign debe ser left, center o right.` }
+      }
+      entry.mediaAlign = mediaAlign
+    }
+    normalized[device] = entry
+  }
+  return { valid: true, value: normalized, error: '' }
+}
+
+/**
+ * Valida y normaliza la configuración declarativa del reproductor nativo de
+ * video dentro de HTML importado. Un `null` explícito es un tombstone: quita
+ * esa propiedad declarativa sin adueñarse del resto de los ajustes del bloque.
+ */
+export function normalizeImportedHtmlVideoPlayerManifest(value = '') {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value)
+  if (String(raw || '').length > 24576) {
+    return importedHtmlVideoPlayerError(`${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} supera el máximo de 24 KB.`)
+  }
+
+  let parsed
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value) : value
+  } catch {
+    return importedHtmlVideoPlayerError(`${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} no contiene JSON válido.`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return importedHtmlVideoPlayerError(`${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} debe contener un objeto JSON.`)
+  }
+
+  const keys = Object.keys(parsed)
+  if (keys.length > IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.length) {
+    return importedHtmlVideoPlayerError(`${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} contiene demasiadas propiedades.`)
+  }
+  const unknownKey = keys.find(key => !IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEY_SET.has(key))
+  if (unknownKey) {
+    return importedHtmlVideoPlayerError(`La propiedad ${unknownKey} no existe en el reproductor de Ristak.`)
+  }
+
+  const settings = {}
+  const tombstones = []
+  for (const key of keys) {
+    const source = parsed[key]
+    if (source === null) {
+      tombstones.push(key)
+      continue
+    }
+    if (IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS.has(key)) {
+      if (typeof source !== 'boolean') {
+        return importedHtmlVideoPlayerError(`${key} debe ser true o false.`)
+      }
+      settings[key] = source
+      continue
+    }
+    if (Object.prototype.hasOwnProperty.call(IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS, key)) {
+      const normalized = String(source || '').trim()
+      if (!IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS[key].has(normalized)) {
+        return importedHtmlVideoPlayerError(`${key} contiene un valor no permitido.`)
+      }
+      settings[key] = normalized
+      continue
+    }
+    if (Object.prototype.hasOwnProperty.call(IMPORTED_HTML_VIDEO_PLAYER_NUMBER_RANGES, key)) {
+      const [min, max] = IMPORTED_HTML_VIDEO_PLAYER_NUMBER_RANGES[key]
+      const normalized = normalizeImportedHtmlVideoPlayerNumber(source, min, max)
+      if (normalized === null) {
+        return importedHtmlVideoPlayerError(`${key} debe ser un número entre ${min} y ${max}.`)
+      }
+      settings[key] = normalized
+      continue
+    }
+    if (IMPORTED_HTML_VIDEO_PLAYER_PAINT_KEYS.has(key)) {
+      const normalized = typeof source === 'string' ? source.trim() : ''
+      if (!normalized || normalized.length > 256) {
+        return importedHtmlVideoPlayerError(`${key} debe ser un color o degradado CSS válido de máximo 256 caracteres.`)
+      }
+      settings[key] = normalized
+      continue
+    }
+    if (Object.prototype.hasOwnProperty.call(IMPORTED_HTML_VIDEO_PLAYER_STRING_KEYS, key)) {
+      const normalized = typeof source === 'string' ? source.trim() : ''
+      const maxLength = IMPORTED_HTML_VIDEO_PLAYER_STRING_KEYS[key]
+      if (normalized.length > maxLength) {
+        return importedHtmlVideoPlayerError(`${key} supera el máximo de ${maxLength} caracteres.`)
+      }
+      settings[key] = normalized
+      continue
+    }
+    if (key === 'responsive') {
+      const normalized = normalizeImportedHtmlVideoPlayerResponsive(source)
+      if (!normalized.valid) return importedHtmlVideoPlayerError(normalized.error)
+      settings.responsive = normalized.value
+    }
+  }
+
+  // Los navegadores bloquean autoplay con audio. Igual que el panel normal,
+  // el contrato declara la combinación funcional en vez de guardar un estado
+  // que luego parece roto en publicado.
+  if (settings.videoAutoplay === true) settings.videoMuted = true
+
+  return { valid: true, settings, tombstones, error: '' }
+}
+
+export const IMPORTED_HTML_VIDEO_PLAYER_RULES = Object.freeze([
+  `En el mismo slot nativo de video puedes declarar ${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} como un objeto JSON. Ristak aplica exactamente el mismo reproductor y las mismas opciones del editor normal; no dibujes controles HTML ni escribas JavaScript propio.`,
+  'Visibilidad total: videoControlsMode acepta clean, native o none. En clean controla por separado videoOverlayPlay, videoControlBar, videoControlBarInitiallyVisible, videoControlPlay, videoControlProgress, videoControlTime, videoControlVolume, videoControlSpeed y videoControlSettings.',
+  'Diseño total: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize, videoSoundColor y videoControlPanelRadius.',
+  'Reproducción total: configura videoMuted, videoAutoplay, videoLoop, videoDefaultSpeed, videoPreviewEnabled, videoPreviewStart, videoPreviewEnd, videoDisableEditorPlayback, videoSoundHint, videoSoundNoticeText, videoSoundNoticeHideAfter, videoTrickProgressEnabled, videoTrickProgressRampPercent y videoTrickProgressPeakPercent. Autoplay siempre se normaliza a silenciado porque así lo exigen los navegadores.',
+  'Formato y tamaño: configura videoOrientation (auto|landscape|portrait), videoPortraitWidthMode (auto|fill|framed), videoFit (cover|contain|fill), mediaWidth, mediaAlign y responsive con overrides tablet/mobile de mediaWidth y mediaAlign. El slot sigue sin llevar geometría CSS propia.',
+  'Conserva el atributo y sus claves al editar otras partes del HTML. La primera declaración completa ajustes faltantes; después Ristak solo aplica las propiedades cuyo valor declarativo cambió, de modo que no pisa personalizaciones manuales del panel.',
+  'Quitar el atributo o quitar una clave del JSON no borra nada. Para dejar de declarar y restablecer una propiedad concreta, envíala una vez con null; por ejemplo {"videoControlVolume":null}. Las claves desconocidas o valores inválidos bloquean Guardar/Publicar para evitar un reproductor a medias.',
+  'data-rstk-video-settings controla el reproductor; data-rstk-video-rules controla las acciones. Ambos viven en el mismo slot, usan el mismo data-rstk-native-id estable y pueden combinarse.'
+])
+
+export const IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE = `<div
+  data-rstk-native-element="video"
+  data-rstk-native-id="video-principal"
+  data-rstk-label="Video principal"
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+></div>`
+
+export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor de video HTML con control total:') {
+  return [
+    heading,
+    ...IMPORTED_HTML_VIDEO_PLAYER_RULES.map(rule => `- ${rule}`),
+    '- Ejemplo completo:',
+    IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE
+  ].join('\n')
+}
+
 export const IMPORTED_HTML_VIDEO_ACTION_TARGET_RULES = Object.freeze([
   'Prepara desde el inicio todos los elementos visibles que una acción de video podría controlar, aunque todavía no exista ninguna regla ni se haya elegido mostrar u ocultar algo en el editor.',
   'Cada CTA, botón, enlace, formulario, sección, bloque de texto, título, imagen, figura y slot nativo controlable debe tener un data-rstk-video-action-target semántico, estable y único en su página, además de data-rstk-label con un nombre humano reconocible en el panel.',
   'Conserva exactamente esos identificadores al cambiar copy, clases, estilos, posición o diseño responsive. No recicles un identificador para otro elemento y no uses índices visuales frágiles como boton-1 cuando exista un nombre de negocio como aplicar-ahora.',
   'Marca el elemento completo que debe aparecer, ocultarse, desplazarse o cambiar; no marques spans, iconos o wrappers internos si la acción debe controlar el botón, tarjeta o sección completa.',
   'Los interiores de form, calendar, payment, video o social-profile nativos pertenecen a Ristak: marca el slot raíz si debe ser controlable, pero no agregues targets a sus controles internos.',
-  'data-rstk-video-rules referencia exclusivamente esos valores mediante targetBlockIds. No escribas JavaScript para ocultar, mostrar, medir progreso ni reaccionar al reproductor; Ristak aplica el estado inicial y ejecuta la acción en preview y publicado.'
+  'data-rstk-video-rules referencia exclusivamente esos valores mediante targetBlockIds. No escribas JavaScript para ocultar, mostrar, medir progreso ni reaccionar al reproductor; Ristak aplica el estado inicial y ejecuta la acción en preview y publicado.',
+  'Acciones disponibles: show, hide, open_form, open_video_form, show_popup, site_page, redirect, change_text, change_link, scroll_to, activate_checkout, meta_event y reveal_form_action. Usa las propiedades que correspondan: targetBlockIds, targetPageId, redirectUrl, value, before, pauseUntilComplete, metaCapiEnabled, metaEventName, metaEventParameters y repeatMode.'
 ])
 
 export function buildImportedHtmlVideoActionTargetRulesText(heading = 'Elementos controlables por acciones de video:') {

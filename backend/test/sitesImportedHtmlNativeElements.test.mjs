@@ -975,6 +975,143 @@ test('imported HTML native video slots keep the customized Ristak player in the 
   }
 })
 
+test('declarative HTML video player settings reconcile without overwriting manual customization', async () => {
+  let siteId = ''
+  const settingsAttribute = settings => `data-rstk-video-settings='${JSON.stringify(settings)}'`
+  const renderPage = (attribute = '') => `
+    <!doctype html>
+    <html>
+      <body>
+        <main>
+          <div
+            data-rstk-native-element="video"
+            data-rstk-native-id="video-principal"
+            data-rstk-label="Video principal"
+            ${attribute}
+          ></div>
+        </main>
+      </body>
+    </html>
+  `
+
+  const initialDeclaration = {
+    videoControlsMode: 'clean',
+    videoOverlayPlay: true,
+    videoControlBar: true,
+    videoControlProgress: false,
+    videoControlVolume: false,
+    videoPlayerRadius: 18,
+    videoPlayShape: 'round',
+    videoPlaySize: 96,
+    videoPlayColor: '#f8fafc',
+    responsive: {
+      tablet: { mediaWidth: 72, mediaAlign: 'center' },
+      mobile: { mediaWidth: 100, mediaAlign: 'center' }
+    }
+  }
+
+  try {
+    const site = await createImportedNativeSite(
+      renderPage(settingsAttribute(initialDeclaration)),
+      `HTML declarative video player ${Date.now()}`
+    )
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/declarative-player.mp4'
+      }
+    })
+
+    let currentSite = await getSite(site.id, { includeBlocks: true })
+    let videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.ok(videoBlock)
+    assert.equal(videoBlock.settings.videoControlProgress, false)
+    assert.equal(videoBlock.settings.videoControlVolume, false)
+    assert.equal(videoBlock.settings.videoPlayShape, 'round')
+    assert.equal(videoBlock.settings.responsive.tablet.mediaWidth, 72)
+    assert.deepEqual(
+      videoBlock.settings.importedHtmlVideoPlayerKeys,
+      Object.keys(initialDeclaration).sort((left, right) => left.localeCompare(right))
+    )
+    assert.equal(typeof videoBlock.settings.importedHtmlVideoPlayerSignature, 'string')
+
+    await updateBlock(site.id, videoBlock.id, {
+      settings: {
+        ...videoBlock.settings,
+        videoControlVolume: true,
+        videoPlaySize: 110,
+        responsive: {
+          ...videoBlock.settings.responsive,
+          mobile: { mediaWidth: 86, mediaAlign: 'right' }
+        }
+      }
+    })
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage(settingsAttribute(initialDeclaration)) }]
+    })
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoControlVolume, true)
+    assert.equal(videoBlock.settings.videoPlaySize, 110)
+    assert.equal(videoBlock.settings.responsive.mobile.mediaWidth, 86)
+    assert.equal(videoBlock.settings.responsive.mobile.mediaAlign, 'right')
+
+    const updatedDeclaration = {
+      ...initialDeclaration,
+      videoOverlayPlay: false,
+      videoControlProgress: null,
+      videoPlayerRadius: 30,
+      responsive: {
+        tablet: { mediaWidth: 68, mediaAlign: 'left' }
+      }
+    }
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage(settingsAttribute(updatedDeclaration)) }]
+    })
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoOverlayPlay, false)
+    assert.equal(videoBlock.settings.videoPlayerRadius, 30)
+    assert.equal(Object.prototype.hasOwnProperty.call(videoBlock.settings, 'videoControlProgress'), false)
+    assert.equal(videoBlock.settings.videoControlVolume, true)
+    assert.equal(videoBlock.settings.videoPlaySize, 110)
+    assert.equal(videoBlock.settings.responsive.tablet.mediaWidth, 68)
+    assert.equal(videoBlock.settings.responsive.tablet.mediaAlign, 'left')
+    assert.equal(videoBlock.settings.responsive.mobile.mediaWidth, 86)
+    assert.equal(videoBlock.settings.responsive.mobile.mediaAlign, 'right')
+    assert.equal(videoBlock.settings.importedHtmlVideoPlayerKeys.includes('videoControlProgress'), false)
+
+    await updateImportedSiteCodeFiles(site.id, {
+      files: [{ path: '', content: renderPage() }]
+    })
+    currentSite = await getSite(site.id, { includeBlocks: true })
+    videoBlock = currentSite.blocks.find(block => block.blockType === 'video')
+    assert.equal(videoBlock.settings.videoOverlayPlay, false)
+    assert.equal(videoBlock.settings.videoPlayerRadius, 30)
+    assert.equal(videoBlock.settings.videoControlVolume, true)
+
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: false
+    })
+    assert.doesNotMatch(html, /<button[^>]+data-rstk-video-overlay/)
+    assert.match(html, /<div class="rstk-video-progress" data-rstk-video-progress-track/)
+    assert.match(html, /--rstk-video-radius:30px/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('declarative HTML video rules reconcile by stable id without deleting manual actions', async () => {
   let siteId = ''
 

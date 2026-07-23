@@ -71,9 +71,11 @@ import {
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlMobileRulesText,
+  buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlFavicon,
   importedHtmlHasFavicon,
+  normalizeImportedHtmlVideoPlayerManifest,
   ensureImportedHtmlVideoActionTargets
 } from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
@@ -7209,6 +7211,7 @@ Contrato de código cerrado y contenido:
 - Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
 - El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una relacion de aspecto falsa alrededor del slot. En modo automatico, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en movil conservando 9:16; el usuario tambien puede elegir ancho completo o manual por vista desde el panel.
+${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
 - Acciones permitidas: submit, next_page, specific_page, url, automation, none. La acción automation puede quedar como demo.
@@ -7252,6 +7255,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 - El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
+${buildImportedHtmlVideoPlayerRulesText()}
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No hagas esto en data-rstk-calendar-book-form: ese submit pertenece al elemento calendar y, solo después de reservar, Ristak emite el evento que el usuario haya elegido para ese calendario en Ajustes (Schedule es únicamente el default recomendado).
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
@@ -12557,7 +12561,7 @@ async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
     ])
 
     await syncAndPersistImportedFormSourceSites(siteId)
-    await reconcileImportedHtmlVideoRulesForSite(siteId)
+    await reconcileImportedHtmlVideoDeclarationsForSite(siteId)
 
     return {
       site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -12620,7 +12624,7 @@ async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
   ])
 
   await syncAndPersistImportedFormSourceSites(siteId)
-  await reconcileImportedHtmlVideoRulesForSite(siteId)
+  await reconcileImportedHtmlVideoDeclarationsForSite(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -12753,7 +12757,7 @@ async function updateImportedSiteEditableContentUnlocked(siteId, input = {}) {
   ])
 
   await syncAndPersistImportedFormSourceSites(siteId)
-  await reconcileImportedHtmlVideoRulesForSite(siteId)
+  await reconcileImportedHtmlVideoDeclarationsForSite(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -12990,7 +12994,7 @@ async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
   ])
 
   await syncAndPersistImportedFormSourceSites(siteId)
-  await reconcileImportedHtmlVideoRulesForSite(siteId)
+  await reconcileImportedHtmlVideoDeclarationsForSite(siteId)
 
   return {
     site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
@@ -13880,7 +13884,7 @@ export async function createBlock(siteId, input = {}) {
   } else if (blockType === 'payment') {
     settings = applyPaymentBlockCreateDefaults(site, settings)
   } else if (blockType === 'video' && normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element)) {
-    settings = await applyImportedHtmlVideoRulesToSettings(site, settings)
+    settings = await applyImportedHtmlVideoDeclarationsToSettings(site, settings)
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings }, blockType)
 
@@ -13929,7 +13933,7 @@ export async function updateBlock(siteId, blockId, input = {}) {
     nextSettings = applyPaymentBlockCreateDefaults(site, nextSettings)
   }
   if (blockType === 'video' && normalizeBoolean(nextSettings.importedHtmlNativeElement || nextSettings.imported_html_native_element)) {
-    nextSettings = await applyImportedHtmlVideoRulesToSettings(site, nextSettings)
+    nextSettings = await applyImportedHtmlVideoDeclarationsToSettings(site, nextSettings)
   }
   await assertUniqueSystemFieldForInput(siteId, site, { settings: nextSettings }, blockType, blockId)
 
@@ -22559,9 +22563,11 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       : 'clean'
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
+  const showCentralPlay = settings.videoOverlayPlay !== false
   const showCustomControlBar = showOverlay && settings.videoControlBar !== false
   const showControlBarInitially = settings.videoControlBarInitiallyVisible !== false
   const showCustomPlayControl = settings.videoControlPlay !== false
+  const showCustomProgress = settings.videoControlProgress !== false
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
   const showCustomSettings = settings.videoControlSettings !== false
@@ -22660,7 +22666,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   return `
     <div class="${classes}" style="${styleVars}">
       <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
-      ${showOverlay ? `
+      ${showOverlay && showCentralPlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
         </button>
@@ -22669,7 +22675,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
       ${showCustomControlBar ? `
         <div class="rstk-video-control-bar" data-rstk-video-control-bar data-rstk-video-control-bar-start-visible="${showControlBarInitially ? 'true' : 'false'}"${controlBarLockedAtStart ? ' aria-hidden="true"' : ''}>
           ${showCustomPlayControl ? `<button type="button" class="rstk-video-control-button" data-rstk-video-toggle${controlBarTabIndex} aria-label="Reproducir video"><span class="rstk-video-control-play">${RSTK_ICONS.play}</span><span class="rstk-video-control-pause">${RSTK_ICONS.pause}</span></button>` : ''}
-          <div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="${progressTabIndex}" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>
+          ${showCustomProgress ? `<div class="rstk-video-progress" data-rstk-video-progress-track role="slider" tabindex="${progressTabIndex}" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span data-rstk-video-progress></span></div>` : ''}
           ${showCustomTime ? `<span class="rstk-video-timecode" data-rstk-video-timecode aria-label="Tiempo del video 0:00, queda 0:00"><span data-rstk-video-time-elapsed>0:00</span><span data-rstk-video-time-remaining>-0:00</span></span>` : ''}
           ${showCustomVolume ? `<button type="button" class="rstk-video-control-button" data-rstk-video-mute${controlBarTabIndex} aria-label="Silenciar video"><span class="rstk-video-control-volume">${RSTK_ICONS.volume}</span><span class="rstk-video-control-muted">${RSTK_ICONS.volumeMuted}</span></button>` : ''}
           ${showCustomSpeed ? `<label class="rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}" aria-label="Velocidad de reproducción">${showCustomSettings ? `<span class="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">${RSTK_ICONS.settings}</span>` : ''}<select data-rstk-video-speed-select${controlBarTabIndex}>${renderVideoSpeedOptions(String(speed))}</select></label>` : ''}
@@ -25871,6 +25877,12 @@ const IMPORTED_HTML_VIDEO_RULE_ATTR_NAMES = [
   'data-ristack-video-rules'
 ]
 
+const IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTR_NAMES = [
+  'data-rstk-video-settings',
+  'data-ristak-video-settings',
+  'data-ristack-video-settings'
+]
+
 const IMPORTED_HTML_NATIVE_ID_ATTR_NAMES = [
   'data-rstk-native-id',
   'data-ristak-native-id',
@@ -25906,6 +25918,15 @@ const IMPORTED_HTML_VIDEO_RULE_PATCH_KEYS = [
 
 function getImportedHtmlVideoRuleAttribute(attrs = {}) {
   for (const name of IMPORTED_HTML_VIDEO_RULE_ATTR_NAMES) {
+    if (Object.prototype.hasOwnProperty.call(attrs, name)) {
+      return { present: true, name, value: String(attrs[name] ?? '') }
+    }
+  }
+  return { present: false, name: '', value: '' }
+}
+
+function getImportedHtmlVideoPlayerSettingsAttribute(attrs = {}) {
+  for (const name of IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTR_NAMES) {
     if (Object.prototype.hasOwnProperty.call(attrs, name)) {
       return { present: true, name, value: String(attrs[name] ?? '') }
     }
@@ -26044,6 +26065,41 @@ function collectImportedHtmlVideoRuleDeclarations(html = '', pageId = '') {
   return declarations
 }
 
+function collectImportedHtmlVideoPlayerDeclarations(html = '', pageId = '') {
+  const declarations = new Map()
+  const ambiguousKeys = new Set()
+  let nativeIndex = 0
+  for (const { attrsText } of scanImportedHtmlOpeningTags(html)) {
+    if (!IMPORTED_NATIVE_ELEMENT_ATTR_PATTERN.test(attrsText)) continue
+    const attrs = parseHtmlAttributes(attrsText)
+    const slot = getImportedNativeElementSlot(attrs, nativeIndex)
+    nativeIndex += 1
+    if (!slot || slot.type !== 'video') continue
+
+    const settingsAttribute = getImportedHtmlVideoPlayerSettingsAttribute(attrs)
+    if (!settingsAttribute.present) continue
+    const explicitSlotId = firstImportedNativeAttr(attrs, IMPORTED_HTML_NATIVE_ID_ATTR_NAMES)
+    if (!explicitSlotId) continue
+    const manifest = normalizeImportedHtmlVideoPlayerManifest(settingsAttribute.value)
+    if (!manifest.valid) continue
+
+    const key = importedHtmlVideoRuleSlotKey(pageId, explicitSlotId)
+    if (declarations.has(key)) {
+      declarations.delete(key)
+      ambiguousKeys.add(key)
+      continue
+    }
+    if (ambiguousKeys.has(key)) continue
+    declarations.set(key, {
+      pageId: cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID,
+      slotId: explicitSlotId,
+      declarations: manifest.settings,
+      tombstones: manifest.tombstones
+    })
+  }
+  return declarations
+}
+
 async function collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite = null) {
   if (!site?.id) return new Map()
   const currentImport = importedSite || await getImportedSiteBySiteId(site.id)
@@ -26052,6 +26108,25 @@ async function collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSit
   const declarations = new Map()
   for (const page of pages) {
     const pageDeclarations = collectImportedHtmlVideoRuleDeclarations(page.html, page.id)
+    for (const [key, payload] of pageDeclarations) {
+      if (declarations.has(key)) {
+        declarations.delete(key)
+        continue
+      }
+      declarations.set(key, payload)
+    }
+  }
+  return declarations
+}
+
+async function collectImportedHtmlVideoPlayerDeclarationsForSite(site, importedSite = null) {
+  if (!site?.id) return new Map()
+  const currentImport = importedSite || await getImportedSiteBySiteId(site.id)
+  if (!currentImport) return new Map()
+  const pages = await getImportedSitePagesForAIContext(site, currentImport, { htmlLimit: 0 })
+  const declarations = new Map()
+  for (const page of pages) {
+    const pageDeclarations = collectImportedHtmlVideoPlayerDeclarations(page.html, page.id)
     for (const [key, payload] of pageDeclarations) {
       if (declarations.has(key)) {
         declarations.delete(key)
@@ -26134,7 +26209,81 @@ function reconcileImportedHtmlVideoRuleSettings(settings = {}, manifest = null) 
   }
 }
 
-function findImportedHtmlVideoRuleManifestForSettings(declarations = new Map(), settings = {}) {
+function mergeImportedHtmlVideoResponsiveDeclaration(previous = {}, next = {}) {
+  const merged = { ...(isPlainObject(previous) ? previous : {}) }
+  for (const device of ['tablet', 'mobile']) {
+    if (!isPlainObject(next?.[device])) continue
+    merged[device] = {
+      ...(isPlainObject(merged[device]) ? merged[device] : {}),
+      ...next[device]
+    }
+  }
+  return merged
+}
+
+function patchImportedHtmlVideoResponsiveValue(current = {}, previous = {}, next = {}) {
+  const patched = { ...(isPlainObject(current) ? current : {}) }
+  for (const device of ['tablet', 'mobile']) {
+    if (!isPlainObject(next?.[device])) continue
+    const currentDevice = isPlainObject(patched[device]) ? patched[device] : {}
+    const previousDevice = isPlainObject(previous?.[device]) ? previous[device] : {}
+    const patchedDevice = { ...currentDevice }
+    for (const [key, value] of Object.entries(next[device])) {
+      if (importedHtmlVideoRuleValuesEqual(previousDevice[key], value)) continue
+      patchedDevice[key] = value
+    }
+    patched[device] = patchedDevice
+  }
+  return patched
+}
+
+function reconcileImportedHtmlVideoPlayerSettings(settings = {}, manifest = null) {
+  if (!manifest) return settings
+  const nextSettings = { ...settings }
+  const previousDeclarations = isPlainObject(settings.importedHtmlVideoPlayerDeclarations)
+    ? settings.importedHtmlVideoPlayerDeclarations
+    : {}
+  const nextDeclarations = { ...previousDeclarations }
+
+  for (const key of manifest.tombstones || []) {
+    delete nextSettings[key]
+    delete nextDeclarations[key]
+  }
+
+  for (const [key, rawNextDeclaration] of Object.entries(manifest.declarations || {})) {
+    const hasPreviousDeclaration = Object.prototype.hasOwnProperty.call(previousDeclarations, key)
+    const previousDeclaration = previousDeclarations[key]
+    const nextDeclaration = key === 'responsive'
+      ? mergeImportedHtmlVideoResponsiveDeclaration(previousDeclaration, rawNextDeclaration)
+      : rawNextDeclaration
+
+    if (!hasPreviousDeclaration) {
+      // El panel puede haber personalizado el draft antes del primer guardado.
+      // La declaración completa únicamente propiedades todavía ausentes.
+      if (!Object.prototype.hasOwnProperty.call(nextSettings, key)) nextSettings[key] = nextDeclaration
+      nextDeclarations[key] = nextDeclaration
+      continue
+    }
+
+    if (!importedHtmlVideoRuleValuesEqual(previousDeclaration, nextDeclaration)) {
+      nextSettings[key] = key === 'responsive'
+        ? patchImportedHtmlVideoResponsiveValue(nextSettings[key], previousDeclaration, nextDeclaration)
+        : nextDeclaration
+    }
+    nextDeclarations[key] = nextDeclaration
+  }
+
+  const declarationKeys = Object.keys(nextDeclarations).sort((left, right) => left.localeCompare(right))
+  const orderedDeclarations = Object.fromEntries(declarationKeys.map(key => [key, nextDeclarations[key]]))
+  return {
+    ...nextSettings,
+    importedHtmlVideoPlayerDeclarations: orderedDeclarations,
+    importedHtmlVideoPlayerKeys: declarationKeys,
+    importedHtmlVideoPlayerSignature: jsonString(declarationKeys.map(key => orderedDeclarations[key]))
+  }
+}
+
+function findImportedHtmlVideoManifestForSettings(declarations = new Map(), settings = {}) {
   if (!normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element)) return null
   if (cleanString(settings.importedHtmlNativeType || settings.imported_html_native_type) !== 'video') return null
   const slotId = cleanString(settings.importedHtmlNativeSlotId || settings.imported_html_native_slot_id)
@@ -26146,28 +26295,38 @@ function findImportedHtmlVideoRuleManifestForSettings(declarations = new Map(), 
   return candidates.length === 1 ? candidates[0] : null
 }
 
-async function applyImportedHtmlVideoRulesToSettings(site, settings = {}) {
+async function applyImportedHtmlVideoDeclarationsToSettings(site, settings = {}) {
   const importedSite = await getImportedSiteBySiteId(site?.id)
   if (!importedSite) return settings
-  const declarations = await collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite)
-  const manifest = findImportedHtmlVideoRuleManifestForSettings(declarations, settings)
-  return manifest ? reconcileImportedHtmlVideoRuleSettings(settings, manifest) : settings
+  const [playerDeclarations, ruleDeclarations] = await Promise.all([
+    collectImportedHtmlVideoPlayerDeclarationsForSite(site, importedSite),
+    collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite)
+  ])
+  const playerManifest = findImportedHtmlVideoManifestForSettings(playerDeclarations, settings)
+  const ruleManifest = findImportedHtmlVideoManifestForSettings(ruleDeclarations, settings)
+  const nextSettings = playerManifest ? reconcileImportedHtmlVideoPlayerSettings(settings, playerManifest) : settings
+  return ruleManifest ? reconcileImportedHtmlVideoRuleSettings(nextSettings, ruleManifest) : nextSettings
 }
 
-async function reconcileImportedHtmlVideoRulesForSite(siteId) {
+async function reconcileImportedHtmlVideoDeclarationsForSite(siteId) {
   const site = await getSite(siteId, { includeBlocks: true, includeSubmissions: false })
   if (!site) return
   const importedSite = await getImportedSiteBySiteId(siteId)
   if (!importedSite) return
-  const declarations = await collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite)
-  if (!declarations.size) return
+  const [playerDeclarations, ruleDeclarations] = await Promise.all([
+    collectImportedHtmlVideoPlayerDeclarationsForSite(site, importedSite),
+    collectImportedHtmlVideoRuleDeclarationsForSite(site, importedSite)
+  ])
+  if (!playerDeclarations.size && !ruleDeclarations.size) return
 
   for (const block of site.blocks || []) {
     if (block.blockType !== 'video') continue
     const settings = isPlainObject(block.settings) ? block.settings : {}
-    const manifest = findImportedHtmlVideoRuleManifestForSettings(declarations, settings)
-    if (!manifest) continue
-    const nextSettings = reconcileImportedHtmlVideoRuleSettings(settings, manifest)
+    const playerManifest = findImportedHtmlVideoManifestForSettings(playerDeclarations, settings)
+    const ruleManifest = findImportedHtmlVideoManifestForSettings(ruleDeclarations, settings)
+    if (!playerManifest && !ruleManifest) continue
+    const playerSettings = playerManifest ? reconcileImportedHtmlVideoPlayerSettings(settings, playerManifest) : settings
+    const nextSettings = ruleManifest ? reconcileImportedHtmlVideoRuleSettings(playerSettings, ruleManifest) : playerSettings
     if (jsonString(nextSettings) === jsonString(settings)) continue
     await db.run(`
       UPDATE public_site_blocks

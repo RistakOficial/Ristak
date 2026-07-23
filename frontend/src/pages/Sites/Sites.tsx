@@ -268,8 +268,10 @@ import {
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
+  buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlVideoActionTargets,
+  normalizeImportedHtmlVideoPlayerManifest,
   resolveVisibleImportedNativeElementSelection
 } from '../../../../shared/sites/importedHtmlContract.js'
 
@@ -1187,9 +1189,11 @@ const VIDEO_FORM_GATE_FIT_WIDE_MIN_WIDTH = 420
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
   videoControls: false,
+  videoOverlayPlay: true,
   videoControlBar: true,
   videoControlBarInitiallyVisible: true,
   videoControlPlay: true,
+  videoControlProgress: true,
   videoControlVolume: true,
   videoControlSpeed: true,
   videoControlSettings: true,
@@ -1896,6 +1900,9 @@ type ImportedNativeElementSlot = {
   renderMode: ImportedNativeElementRenderMode
   label: string
   tagName: string
+  declaredVideoPlayerSettings?: Record<string, unknown>
+  videoPlayerSettingsAttributePresent?: boolean
+  videoPlayerSettingsError?: string
   declaredVideoActions?: VideoActionRule[]
   videoRulesAttributePresent?: boolean
   videoRulesError?: string
@@ -2323,6 +2330,35 @@ const importedHtmlVideoRuleAttributeNames = [
   'data-ristack-video-rules'
 ]
 
+const importedHtmlVideoPlayerSettingsAttributeNames = [
+  'data-rstk-video-settings',
+  'data-ristak-video-settings',
+  'data-ristack-video-settings'
+]
+
+const parseImportedNativeVideoPlayerManifest = (
+  element: Element,
+  type: ImportedNativeElementType,
+  explicitSlotId: string
+) => {
+  if (type !== 'video') return { present: false, settings: {} as Record<string, unknown>, error: '' }
+  const attributeName = importedHtmlVideoPlayerSettingsAttributeNames.find(name => element.hasAttribute(name))
+  if (!attributeName) return { present: false, settings: {} as Record<string, unknown>, error: '' }
+  if (!explicitSlotId) {
+    return {
+      present: true,
+      settings: {} as Record<string, unknown>,
+      error: 'El video con data-rstk-video-settings necesita un data-rstk-native-id estable.'
+    }
+  }
+  const manifest = normalizeImportedHtmlVideoPlayerManifest(element.getAttribute(attributeName) || '')
+  return {
+    present: true,
+    settings: manifest.valid ? manifest.settings : {},
+    error: manifest.error
+  }
+}
+
 const parseImportedNativeVideoRuleManifest = (
   element: Element,
   type: ImportedNativeElementType,
@@ -2405,6 +2441,7 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
         if (!type) return null
         const id = getImportedNativeElementSlotId(element, type, index)
         const explicitSlotId = getImportedNativeElementExplicitSlotId(element)
+        const videoPlayerManifest = parseImportedNativeVideoPlayerManifest(element, type, explicitSlotId)
         const videoRuleManifest = parseImportedNativeVideoRuleManifest(element, type, explicitSlotId)
         const renderMode = getImportedNativeElementRenderMode(element, type)
         const socialProfileHooksError = getImportedCustomSocialProfileHooksError(element, type, renderMode)
@@ -2418,6 +2455,11 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
           renderMode,
           label: getImportedNativeElementLabel(element, type, id),
           tagName: element.tagName.toLowerCase(),
+          ...(videoPlayerManifest.present ? {
+            videoPlayerSettingsAttributePresent: true,
+            declaredVideoPlayerSettings: videoPlayerManifest.settings,
+            videoPlayerSettingsError: videoPlayerManifest.error
+          } : {}),
           ...(videoRuleManifest.present ? {
             videoRulesAttributePresent: true,
             declaredVideoActions: videoRuleManifest.rules,
@@ -2618,6 +2660,7 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una falsa relación de aspecto alrededor del slot. En modo automático, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en móvil conservando 9:16; el usuario también puede elegir ancho completo o manual por vista desde el panel.
+${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
@@ -21690,6 +21733,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     const duplicateFieldIds = new Set<string>()
     const duplicateNativeElementIds = new Set<string>()
     const invalidVideoRuleDeclarations = new Set<string>()
+    const invalidVideoPlayerDeclarations = new Set<string>()
     const invalidSocialProfileDeclarations = new Set<string>()
 
     effectiveImportedHtmlFiles.forEach(file => {
@@ -21732,6 +21776,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           duplicateNativeElementIds.add(`${file.label} · ${id}`)
         })
         detectImportedNativeElementSlots(file.html).forEach(slot => {
+          if (slot.videoPlayerSettingsError) invalidVideoPlayerDeclarations.add(`${file.label} · ${slot.label}: ${slot.videoPlayerSettingsError}`)
           if (slot.videoRulesError) invalidVideoRuleDeclarations.add(`${file.label} · ${slot.label}: ${slot.videoRulesError}`)
           if (slot.socialProfileHooksError) invalidSocialProfileDeclarations.add(`${file.label} · ${slot.label}: ${slot.socialProfileHooksError}`)
         })
@@ -21744,6 +21789,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       duplicateFormIds: [...formCounts.entries()].filter(([, count]) => count > 1).map(([id]) => id),
       duplicateFieldIds: [...duplicateFieldIds],
       duplicateNativeElementIds: [...duplicateNativeElementIds],
+      invalidVideoPlayerDeclarations: [...invalidVideoPlayerDeclarations],
       invalidVideoRuleDeclarations: [...invalidVideoRuleDeclarations],
       invalidSocialProfileDeclarations: [...invalidSocialProfileDeclarations]
     }
@@ -21762,6 +21808,9 @@ const ImportedHtmlEditorPanel: React.FC<{
         : '',
       importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.length
         ? `Reglas de video inválidas: ${importedEditorIdentityDiagnostics.invalidVideoRuleDeclarations.slice(0, 2).join(', ')}.`
+        : '',
+      importedEditorIdentityDiagnostics.invalidVideoPlayerDeclarations.length
+        ? `Ajustes del reproductor inválidos: ${importedEditorIdentityDiagnostics.invalidVideoPlayerDeclarations.slice(0, 2).join(', ')}.`
         : '',
       importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.length
         ? `Perfiles sociales incompletos: ${importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.slice(0, 2).join(', ')}.`
@@ -22045,10 +22094,22 @@ const ImportedHtmlEditorPanel: React.FC<{
         calendarDesignMode: slot.renderMode === 'custom' ? 'original' : getSettingString(baseSettings, 'calendarDesignMode') || 'original'
       }
     }
-    if (slot.type === 'video' && slot.videoRulesAttributePresent && !slot.videoRulesError) {
+    if (slot.type === 'video') {
+      const declaredPlayerSettings = slot.videoPlayerSettingsAttributePresent && !slot.videoPlayerSettingsError
+        ? slot.declaredVideoPlayerSettings || {}
+        : {}
+      const declaredPlayerKeys = Object.keys(declaredPlayerSettings).sort((left, right) => left.localeCompare(right))
       return {
         ...baseSettings,
-        videoActions: slot.declaredVideoActions || []
+        ...declaredPlayerSettings,
+        ...(slot.videoPlayerSettingsAttributePresent && !slot.videoPlayerSettingsError ? {
+          importedHtmlVideoPlayerDeclarations: declaredPlayerSettings,
+          importedHtmlVideoPlayerKeys: declaredPlayerKeys,
+          importedHtmlVideoPlayerSignature: JSON.stringify(declaredPlayerKeys.map(key => declaredPlayerSettings[key]))
+        } : {}),
+        ...(slot.videoRulesAttributePresent && !slot.videoRulesError ? {
+          videoActions: slot.declaredVideoActions || []
+        } : {})
       }
     }
     if (slot.type === 'social_profile') {
@@ -22132,6 +22193,12 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
     if (slot.type === 'video' && !getSettingString(settings, 'mediaUrl')) {
       return 'Sube o pega la URL del video que va en esta zona.'
+    }
+    if (slot.type === 'video' && slot.videoPlayerSettingsError) {
+      return slot.videoPlayerSettingsError
+    }
+    if (slot.type === 'video' && slot.videoRulesError) {
+      return slot.videoRulesError
     }
     if (slot.type === 'social_profile' && slot.socialProfileHooksError) {
       return slot.socialProfileHooksError
@@ -25845,7 +25912,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           <div className={styles.importedContentAssetList}>
             {importedNativeElementSlots.map(slot => {
               const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
-              const slotError = slot.socialProfileHooksError || slot.videoRulesError
+              const slotError = slot.socialProfileHooksError || slot.videoPlayerSettingsError || slot.videoRulesError
               return (
                 <div key={slot.key} className={styles.importedContentAssetRow}>
                   <span className={styles.importedContentAssetIcon}>{renderSlotIcon(slot.type)}</span>
@@ -25879,6 +25946,12 @@ const ImportedHtmlEditorPanel: React.FC<{
           <div className={styles.importedNativeElementControls}>
             {selectedSlot.socialProfileHooksError && (
               <p className={styles.importedContentHubError}>{selectedSlot.socialProfileHooksError}</p>
+            )}
+            {selectedSlot.videoPlayerSettingsError && (
+              <p className={styles.importedContentHubError}>{selectedSlot.videoPlayerSettingsError}</p>
+            )}
+            {selectedSlot.videoRulesError && (
+              <p className={styles.importedContentHubError}>{selectedSlot.videoRulesError}</p>
             )}
             {selectedSlot.type === 'form' && (
               <>
@@ -28425,6 +28498,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- Ristak configurará el video real, controles, diseño, acciones y eventos desde el editor.',
       '- No pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que fuercen orientación en el slot. Para ubicarlo usa un contenedor padre; Ristak detecta la orientación real del archivo y controla su proporción y ancho responsive.',
       '- No dibujes franjas laterales ni un marco negro falso. En automático, el video vertical queda contenido en computadora y usa todo el ancho disponible en móvil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.',
+      buildImportedHtmlVideoPlayerRulesText(),
       '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',
       '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (seek y buffering no cuentan) y unique_watched_percent para "vio X% real" (solo fragmentos distintos; repetir no infla). triggerValue usa segundos en las dos primeras (3 minutos = 180) y de 1 a 100 en porcentaje.',
       '- Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules=\'[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]\'></div>.',
@@ -30461,7 +30535,7 @@ const VideoSettingsElementPreview: React.FC<{
       {type === 'bar' && (
         <span className={styles.videoElementBarSample}>
           {showControlPlay && <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>}
-          <i />
+          {settings.videoControlProgress !== false && <i />}
           {showControlTime && <em>0:12 / -2:18</em>}
           {showControlVolume && <span className={styles.videoElementBarVolume}><Volume2 size={12} /></span>}
           {showControlSpeed && (
@@ -30757,6 +30831,31 @@ const VideoPlayerSettingsControls: React.FC<{
               <label className={styles.checkboxLabel}>
                 <input
                   type="checkbox"
+                  checked={settings.videoOverlayPlay !== false}
+                  onChange={(event) => {
+                    onPatchSettings({ videoOverlayPlay: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Play central</span>
+              </label>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={settings.videoControlProgress !== false}
+                  disabled={!showCustomControlBar}
+                  onChange={(event) => {
+                    onPatchSettings({ videoControlProgress: event.target.checked })
+                    window.setTimeout(onSave, 0)
+                  }}
+                />
+                <span>Barra de progreso</span>
+              </label>
+            </div>
+            <div className={styles.twoColumn}>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
                   checked={shouldShowVideoControlPlay(settings)}
                   disabled={!showCustomControlBar}
                   onChange={(event) => {
@@ -30764,7 +30863,7 @@ const VideoPlayerSettingsControls: React.FC<{
                     window.setTimeout(onSave, 0)
                   }}
                 />
-                <span>Botón play</span>
+                <span>Play en barra</span>
               </label>
               <label className={styles.checkboxLabel}>
                 <input
@@ -30822,7 +30921,7 @@ const VideoPlayerSettingsControls: React.FC<{
                 <input
                   type="checkbox"
                   checked={trickProgressEnabled}
-                  disabled={!showCustomControlBar}
+                  disabled={!showCustomControlBar || settings.videoControlProgress === false}
                   onChange={(event) => {
                     onPatchSettings({ videoTrickProgressEnabled: event.target.checked })
                     window.setTimeout(onSave, 0)
@@ -30831,7 +30930,7 @@ const VideoPlayerSettingsControls: React.FC<{
                 <span>Reproductor truqueado</span>
               </label>
             </div>
-            {trickProgressEnabled && (
+            {trickProgressEnabled && settings.videoControlProgress !== false && (
               <div className={styles.videoTrickProgressBox}>
                 <div className={styles.videoTrickProgressHeader}>
                   <span>Avance visual</span>
@@ -36567,8 +36666,10 @@ const VideoPlayerPreview: React.FC<{
   const controlsMode = getVideoControlsMode(settings)
   const showNativeControls = controlsMode === 'native' && !editorPlaybackDisabled
   const showOverlay = controlsMode === 'clean'
+  const showCentralPlay = settings.videoOverlayPlay !== false
   const showCustomControlBar = showOverlay && shouldShowVideoControlBar(settings)
   const showCustomPlayControl = shouldShowVideoControlPlay(settings)
+  const showCustomProgress = settings.videoControlProgress !== false
   const showCustomVolume = settings.videoControlVolume !== false
   const showCustomSpeed = settings.videoControlSpeed !== false
   const showCustomSettings = shouldShowVideoControlSettings(settings)
@@ -36605,7 +36706,7 @@ const VideoPlayerPreview: React.FC<{
   const soundNoticeCycle = `${Math.max(1, soundNoticeHideAfter + 1.6)}s`
   const shouldLetEditorSelect = editable && !selected
   const controlsHideTimerRef = useRef<number | null>(null)
-  const showOverlayLayer = showOverlay && (!isPlaying || isPreviewLooping)
+  const showOverlayLayer = showOverlay && showCentralPlay && (!isPlaying || isPreviewLooping)
   const showSoundNotice = showOverlay && soundHint && !hasStartedPlayback
   const shouldHideControlBarAtStart = showCustomControlBar && !hasStartedPlayback
   const shouldDismissControlsOnOutsidePointer = showCustomControlBar && controlsVisible && !shouldHideControlBarAtStart
@@ -37356,22 +37457,24 @@ const VideoPlayerPreview: React.FC<{
               {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play className="rstk-video-control-play-icon" size={15} fill="currentColor" />}
             </button>
           )}
-          <div
-            className="rstk-video-progress"
-            role="slider"
-            tabIndex={shouldHideControlBarAtStart ? -1 : 0}
-            aria-label="Progreso del video"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(progress * 100)}
-            onPointerDown={handleProgressPointerDown}
-            onPointerMove={handleProgressPointerMove}
-            onPointerUp={handleProgressPointerEnd}
-            onPointerCancel={handleProgressPointerEnd}
-            onKeyDown={handleProgressKeyDown}
-          >
-            <span style={{ width: formatVideoProgressPercent(progress) }} />
-          </div>
+          {showCustomProgress && (
+            <div
+              className="rstk-video-progress"
+              role="slider"
+              tabIndex={shouldHideControlBarAtStart ? -1 : 0}
+              aria-label="Progreso del video"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(progress * 100)}
+              onPointerDown={handleProgressPointerDown}
+              onPointerMove={handleProgressPointerMove}
+              onPointerUp={handleProgressPointerEnd}
+              onPointerCancel={handleProgressPointerEnd}
+              onKeyDown={handleProgressKeyDown}
+            >
+              <span style={{ width: formatVideoProgressPercent(progress) }} />
+            </div>
+          )}
           {showCustomTime && (
             <span className="rstk-video-timecode" aria-label={`Tiempo del video ${elapsedTimeLabel}, queda ${formatSitesTimecode(remainingTimeSeconds)}`}>
               <span>{elapsedTimeLabel}</span>

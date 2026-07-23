@@ -74,6 +74,7 @@ const getVideoPlayerVisualSignature = (html) => {
     hasSoundNotice: /class="rstk-video-sound\b/.test(source),
     soundText: source.match(/<span class="rstk-video-sound-text">([^<]*)<\/span>/)?.[1] || '',
     hasControlBar: /class="rstk-video-control-bar"/.test(source),
+    hasProgressControl: /<div class="rstk-video-progress" data-rstk-video-progress-track/.test(source),
     hasPlayControl: /class="rstk-video-control-button" data-rstk-video-toggle/.test(source),
     hasVolumeControl: /class="rstk-video-control-button" data-rstk-video-mute/.test(source),
     hasSpeedControl: /<select data-rstk-video-speed-select/.test(source),
@@ -188,6 +189,31 @@ test('video player default preset uses large rectangular solid play button', asy
   assert.match(html, /<\/button>\s*<span class="rstk-video-sound\b/)
   assert.match(signature.classes, /\brstk-video-landscape\b/)
   assert.match(signature.style, /--rstk-video-aspect-ratio:16 \/ 9/)
+})
+
+test('video player independently hides the central play and progress controls', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoOverlayPlay: false,
+    videoControlBar: true,
+    videoControlPlay: true,
+    videoControlProgress: false,
+    videoControlTime: true,
+    videoControlVolume: true
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.equal(signature.hasOverlay, false)
+  assert.equal(signature.hasControlBar, true)
+  assert.equal(signature.hasPlayControl, true)
+  assert.equal(signature.hasProgressControl, false)
+  assert.equal(signature.hasTimecodeControl, true)
+  assert.equal(signature.hasVolumeControl, true)
+  assert.doesNotMatch(html, /aria-label="Progreso del video"/)
 })
 
 test('video player legacy saved colors resolve to modern translucent defaults', async () => {

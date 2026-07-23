@@ -4988,6 +4988,59 @@ nunca a dos videos distintos de la misma página.
   copiables para ChatGPT, Claude o Codex, el renderer neutraliza geometría legacy
   en esa raíz al montarla para que un HTML anterior no genere un vacío gigante.
 
+El reproductor nativo de video de un HTML importado acepta el contrato
+declarativo `data-rstk-video-settings` en el mismo slot que se conecta a Ristak.
+Ese objeto JSON usa las mismas propiedades y el mismo renderer del bloque de
+video normal; no crea un segundo reproductor ni permite que el HTML dibuje
+controles falsos. Sus grupos de control son:
+
+- Visibilidad: `videoControlsMode` (`clean`, `native` o `none`),
+  `videoOverlayPlay`, `videoControlBar`,
+  `videoControlBarInitiallyVisible`, `videoControlPlay`,
+  `videoControlProgress`, `videoControlTime`, `videoControlVolume`,
+  `videoControlSpeed` y `videoControlSettings`.
+- Diseño: fondo, borde y radio del frame; color y radio del panel; color, forma,
+  radio, tamaño, estilo e icono del play; y color del aviso de sonido mediante
+  `videoPlayerBackground`, `videoPlayerRadius`, `videoPlayerBorderColor`,
+  `videoPlayerBorderWidth`, `videoPlayerColor`, `videoControlPanelRadius`,
+  `videoPlayColor`, `videoPlayShape`, `videoPlayRadius`, `videoPlaySize`,
+  `videoPlayIconStyle`, `videoPlayIconSize` y `videoSoundColor`.
+- Reproducción: autoplay silenciado, loop, velocidad inicial, preview, aviso de
+  sonido y progreso visual mediante `videoMuted`, `videoAutoplay`, `videoLoop`,
+  `videoDefaultSpeed`, `videoPreviewEnabled`, `videoPreviewStart`,
+  `videoPreviewEnd`, `videoDisableEditorPlayback`, `videoSoundHint`,
+  `videoSoundNoticeText`, `videoSoundNoticeHideAfter`,
+  `videoTrickProgressEnabled`, `videoTrickProgressRampPercent` y
+  `videoTrickProgressPeakPercent`. Autoplay fuerza `videoMuted=true` porque los
+  navegadores bloquean la reproducción automática con audio.
+- Formato responsive: `videoOrientation`, `videoPortraitWidthMode`, `videoFit`,
+  `mediaWidth`, `mediaAlign` y overrides `responsive.tablet/mobile` de ancho y
+  alineación. La geometría del slot HTML sigue perteneciendo al reproductor y
+  nunca se fija con CSS en el propio slot.
+
+Ejemplo:
+
+```html
+<div
+  data-rstk-native-element="video"
+  data-rstk-native-id="video-principal"
+  data-rstk-label="Video principal"
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayShape":"round","videoPlaySize":96,"videoPlayColor":"#fff","videoMuted":true,"videoAutoplay":false,"videoOrientation":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+></div>
+```
+
+La declaración se reconcilia por `data-rstk-native-id`, tipo y página. Al crear
+el bloque completa propiedades faltantes. En ediciones posteriores compara la
+declaración anterior, el HTML nuevo y el ajuste actual del panel: solo una clave
+que cambió expresamente en el HTML vuelve a aplicarse; una personalización manual
+del panel se conserva cuando la declaración no cambió. Quitar el atributo u
+omitir una clave es no destructivo. Para retirar una propiedad declarada se usa
+un tombstone `null`, por ejemplo `{"videoControlVolume":null}`. Propiedades
+desconocidas, enums fuera de contrato, rangos inválidos o JSON roto detienen el
+preflight de Guardar, Preview y Publicar. Los aliases `data-ristak-video-settings`
+y `data-ristack-video-settings` se leen por compatibilidad, pero toda instrucción
+nueva emite `data-rstk-video-settings`.
+
 Las acciones de video en HTML importado solo apuntan a elementos identificables
 y publicables. Cada CTA, boton, link, formulario, seccion, bloque de texto,
 titulo, imagen, figura o slot nativo controlable debe declarar desde la creacion
@@ -5030,6 +5083,13 @@ El contrato declarativo para pedir estas acciones desde código es
 `id` estable, `triggerType`, `triggerValue`, la `action` y sus
 `targetBlockIds` cuando la acción opera sobre elementos. Cada valor debe coincidir
 con la identidad estable de `data-rstk-video-action-target`; por ejemplo:
+
+Las acciones disponibles son `show`, `hide`, `open_form`, `open_video_form`,
+`show_popup`, `site_page`, `redirect`, `change_text`, `change_link`,
+`scroll_to`, `activate_checkout`, `meta_event` y `reveal_form_action`. Según la
+acción se declaran `targetBlockIds`, `targetPageId`, `redirectUrl`, `value`,
+`before`, `pauseUntilComplete`, `metaCapiEnabled`, `metaEventName`,
+`metaEventParameters` y `repeatMode`.
 
 `triggerValue` se expresa en segundos para `timeline_reached` y
 `playback_seconds` (`3 minutos = 180`), y como porcentaje de `1` a `100` para
@@ -5109,7 +5169,8 @@ duplicado. Antes de persistir siquiera el HTML, Guardar, Publicar, Preview y las
 asociaciones directas ejecutan el mismo preflight sobre todos los borradores
 efectivos del sitio: detienen la operacion si existe un `data-rstk-form-id`
 repetido globalmente, un `data-rstk-field-id` repetido dentro de su formulario,
-un `data-rstk-native-id` repetido dentro de la pagina, reglas de video invalidas
+  un `data-rstk-native-id` repetido dentro de la pagina, ajustes declarativos del
+  reproductor invalidos, reglas de video invalidas
 o un perfil social custom sin sus cuatro hooks obligatorios. Asi la UI no puede avisar
 del error despues de haber dejado codigo ambiguo en un sitio publicado. El
 inspector derecho guarda automaticamente cambios validos

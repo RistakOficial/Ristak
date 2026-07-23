@@ -26,6 +26,59 @@ test('imported HTML favicon contract adds one usable fallback without replacing 
   assert.equal(importedHtmlHasFavicon('<link rel="icon" href="#">'), false)
 })
 
+test('imported HTML video player manifest validates every supported control and tombstone', async () => {
+  const {
+    IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS,
+    normalizeImportedHtmlVideoPlayerManifest
+  } = await import('../../shared/sites/importedHtmlContract.js')
+
+  const valid = normalizeImportedHtmlVideoPlayerManifest(JSON.stringify({
+    videoControlsMode: 'clean',
+    videoOverlayPlay: false,
+    videoControlBar: true,
+    videoControlPlay: false,
+    videoControlProgress: false,
+    videoControlVolume: false,
+    videoControlSpeed: true,
+    videoControlSettings: false,
+    videoControlTime: false,
+    videoPlayerColor: 'rgba(0, 0, 0, .6)',
+    videoPlayShape: 'rectangle',
+    videoPlaySize: 999,
+    videoPlayIconStyle: 'spark',
+    videoAutoplay: true,
+    videoMuted: false,
+    videoSoundNoticeText: 'Toca para escuchar',
+    mediaWidth: 20,
+    responsive: {
+      tablet: { mediaWidth: 65, mediaAlign: 'left' },
+      mobile: { mediaWidth: 100, mediaAlign: 'center' }
+    }
+  }))
+
+  assert.equal(valid.valid, true)
+  assert.equal(valid.settings.videoOverlayPlay, false)
+  assert.equal(valid.settings.videoControlProgress, false)
+  assert.equal(valid.settings.videoPlaySize, 160)
+  assert.equal(valid.settings.mediaWidth, 30)
+  assert.equal(valid.settings.videoMuted, true)
+  assert.equal(valid.settings.responsive.tablet.mediaAlign, 'left')
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlProgress'))
+
+  const tombstone = normalizeImportedHtmlVideoPlayerManifest('{"videoControlVolume":null}')
+  assert.equal(tombstone.valid, true)
+  assert.deepEqual(tombstone.settings, {})
+  assert.deepEqual(tombstone.tombstones, ['videoControlVolume'])
+
+  const unknown = normalizeImportedHtmlVideoPlayerManifest('{"videoControlFullscreen":true}')
+  assert.equal(unknown.valid, false)
+  assert.match(unknown.error, /videoControlFullscreen no existe/)
+
+  const invalidResponsive = normalizeImportedHtmlVideoPlayerManifest('{"responsive":{"desktop":{"mediaWidth":80}}}')
+  assert.equal(invalidResponsive.valid, false)
+  assert.match(invalidResponsive.error, /solo admite tablet y mobile/)
+})
+
 test('imported HTML code files are listed and saved through the code editor endpoint', async () => {
   const {
     createImportedSiteFromHtml,
@@ -578,6 +631,15 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /El slot nativo de video NO define la geometria del reproductor/)
   assert.match(instructions, /padding porcentual/)
   assert.match(instructions, /data-rstk-video-rules/)
+  assert.match(instructions, /data-rstk-video-settings/)
+  assert.match(instructions, /videoOverlayPlay/)
+  assert.match(instructions, /videoControlProgress/)
+  assert.match(instructions, /videoControlVolume/)
+  assert.match(instructions, /videoPlayShape/)
+  assert.match(instructions, /videoPlayIconStyle/)
+  assert.match(instructions, /responsive con overrides tablet\/mobile/)
+  assert.match(instructions, /show, hide, open_form, open_video_form, show_popup/)
+  assert.match(instructions, /activate_checkout, meta_event y reveal_form_action/)
   assert.match(instructions, /timeline_reached/)
   assert.match(instructions, /playback_seconds/)
   assert.match(instructions, /unique_watched_percent/)
@@ -629,6 +691,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const {
     buildImportedHtmlCustomCalendarRulesText,
     buildImportedHtmlCustomSocialProfileRulesText,
+    buildImportedHtmlVideoPlayerRulesText,
     buildImportedHtmlVideoActionTargetRulesText,
     ensureImportedHtmlVideoActionTargets
   } = await import('../../shared/sites/importedHtmlContract.js')
@@ -643,6 +706,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const builder = builderMatch[0]
   const calendarGuide = buildImportedHtmlCustomCalendarRulesText()
   const socialProfileGuide = buildImportedHtmlCustomSocialProfileRulesText()
+  const videoPlayerGuide = buildImportedHtmlVideoPlayerRulesText()
   const videoTargetGuide = buildImportedHtmlVideoActionTargetRulesText()
 
   assert.match(guide, /REQUISITO OBLIGATORIO DE ENTREGA/)
@@ -654,7 +718,16 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /ocupa todo el ancho disponible en móvil conservando 9:16/)
   assert.match(guide, /No fabriques franjas laterales, marcos negros/)
   assert.match(guide, /buildImportedHtmlCustomSocialProfileRulesText/)
+  assert.match(guide, /buildImportedHtmlVideoPlayerRulesText/)
   assert.match(guide, /buildImportedHtmlVideoActionTargetRulesText/)
+  assert.match(builder, /buildImportedHtmlVideoPlayerRulesText/)
+  assert.match(videoPlayerGuide, /data-rstk-video-settings/)
+  assert.match(videoPlayerGuide, /videoOverlayPlay/)
+  assert.match(videoPlayerGuide, /videoControlProgress/)
+  assert.match(videoPlayerGuide, /videoControlPanelRadius/)
+  assert.match(videoPlayerGuide, /"videoControlVolume":null/)
+  assert.match(videoTargetGuide, /open_video_form/)
+  assert.match(videoTargetGuide, /activate_checkout/)
   assert.match(socialProfileGuide, /data-rstk-native-element="social-profile"/)
   assert.match(socialProfileGuide, /data-rstk-native-render="ristak"/)
   assert.match(socialProfileGuide, /también debe conservar altura intrínseca/)
