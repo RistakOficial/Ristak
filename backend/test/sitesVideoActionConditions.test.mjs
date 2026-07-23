@@ -449,5 +449,6 @@ test('Bunny bridge closes the final watched range before ended actions run', asy
   nowMs = 100_000
   player.emit('ended', { duration: 100 })
   assert.equal(proxy.currentTime, 100)
+  assert.equal(proxy.ended, true)
   assert.equal(targetAttrs.has('data-rstk-video-action-hidden'), false)
 })

@@ -16309,9 +16309,12 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           target.removeAttribute('aria-hidden');
         }
       };
+      // data-rstk-video-render-preview sólo describe que el documento salió de
+      // la ruta Previsualizar. Ahí la reproducción iniciada por la persona debe
+      // contar exactamente igual que en publicado. La única reproducción que no
+      // acredita avance es el loop decorativo previo al primer play.
       const isPreviewPlayback = video => (
-        video?.dataset?.rstkVideoPreviewing === 'true' ||
-        video?.dataset?.rstkVideoRenderPreview === 'true'
+        video?.dataset?.rstkVideoPreviewing === 'true'
       );
       const hasRealPlaybackStarted = video => (
         video && (video.autoplay || video.dataset.rstkVideoRealPlayed === 'true')
@@ -16383,6 +16386,95 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const watchedSeconds = state => state.watchedRanges.reduce((total, range) => (
         total + Math.max(0, Number(range[1] || 0) - Number(range[0] || 0))
       ), 0);
+      const progressSnapshotsById = new Map();
+      const progressSnapshotsByVideo = new WeakMap();
+      const getProgressSourceId = video => {
+        if (!video || typeof video.getAttribute !== 'function') return '';
+        const directId = video.getAttribute('data-rstk-video-action-source') || '';
+        if (directId) return directId;
+        if (typeof video.closest !== 'function') return '';
+        const source = video.closest(
+          '[data-rstk-native-id],[data-ristak-native-id],[data-ristack-native-id],' +
+          '[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]'
+        );
+        if (!source || typeof source.getAttribute !== 'function') return '';
+        return source.getAttribute('data-rstk-native-id') ||
+          source.getAttribute('data-ristak-native-id') ||
+          source.getAttribute('data-ristack-native-id') ||
+          source.getAttribute('data-rstk-video-gate-id') ||
+          source.getAttribute('data-ristak-video-gate-id') ||
+          source.getAttribute('data-ristack-video-gate-id') ||
+          '';
+      };
+      const buildProgressSnapshot = (state, realPlaybackStarted) => {
+        const currentTimeSeconds = finiteMediaTime(state.video);
+        const durationSeconds = finiteMediaDuration(state.video);
+        const uniqueWatchedSeconds = watchedSeconds(state);
+        const uniqueWatchedPercent = durationSeconds > 0
+          ? Math.min(100, (uniqueWatchedSeconds / durationSeconds) * 100)
+          : 0;
+        return {
+          sourceId: getProgressSourceId(state.video),
+          currentTimeSeconds,
+          durationSeconds,
+          timelinePercent: durationSeconds > 0 ? Math.min(100, (currentTimeSeconds / durationSeconds) * 100) : 0,
+          playbackSeconds: state.playbackSeconds,
+          uniqueWatchedSeconds,
+          uniqueWatchedPercent,
+          realPlaybackStarted: Boolean(realPlaybackStarted),
+          playing: Boolean(
+            realPlaybackStarted &&
+            !state.video.paused &&
+            !state.video.ended &&
+            !state.seeking &&
+            !state.buffering &&
+            !isPreviewPlayback(state.video)
+          ),
+          seeking: Boolean(state.seeking),
+          buffering: Boolean(state.buffering),
+          previewing: isPreviewPlayback(state.video),
+          ended: Boolean(state.video.ended)
+        };
+      };
+      const publishProgressSnapshot = (state, snapshot) => {
+        const now = monotonicNowSeconds();
+        const statusKey = [
+          snapshot.realPlaybackStarted,
+          snapshot.playing,
+          snapshot.seeking,
+          snapshot.buffering,
+          snapshot.previewing,
+          snapshot.ended
+        ].join(':');
+        if (
+          Number.isFinite(state.lastProgressPublishWallTime) &&
+          now - state.lastProgressPublishWallTime < 0.1 &&
+          state.lastProgressStatusKey === statusKey
+        ) return;
+        state.lastProgressPublishWallTime = now;
+        state.lastProgressStatusKey = statusKey;
+        const publicSnapshot = typeof Object.freeze === 'function' ? Object.freeze({ ...snapshot }) : { ...snapshot };
+        progressSnapshotsByVideo.set(state.video, publicSnapshot);
+        if (snapshot.sourceId) progressSnapshotsById.set(snapshot.sourceId, publicSnapshot);
+        if (typeof state.video.setAttribute === 'function') {
+          state.video.setAttribute('data-rstk-video-current-time', String(Number(snapshot.currentTimeSeconds.toFixed(3))));
+          state.video.setAttribute('data-rstk-video-duration', String(Number(snapshot.durationSeconds.toFixed(3))));
+          state.video.setAttribute('data-rstk-video-timeline-percent', String(Number(snapshot.timelinePercent.toFixed(3))));
+          state.video.setAttribute('data-rstk-video-playback-seconds', String(Number(snapshot.playbackSeconds.toFixed(3))));
+          state.video.setAttribute('data-rstk-video-unique-watched-percent', String(Number(snapshot.uniqueWatchedPercent.toFixed(3))));
+          state.video.setAttribute('data-rstk-video-playing', snapshot.playing ? 'true' : 'false');
+        }
+        try {
+          if (typeof window.CustomEvent === 'function' && typeof window.dispatchEvent === 'function') {
+            window.dispatchEvent(new window.CustomEvent('ristak:video-progress', { detail: publicSnapshot }));
+          }
+        } catch (_) {}
+      };
+      window.ristakGetVideoProgress = reference => {
+        if (reference && typeof reference === 'object') return progressSnapshotsByVideo.get(reference) || null;
+        const sourceId = String(reference || '');
+        return sourceId ? progressSnapshotsById.get(sourceId) || null : null;
+      };
       const samplePlaybackProgress = (state, realPlaybackStarted) => {
         const mediaTime = finiteMediaTime(state.video);
         const wallTime = monotonicNowSeconds();
@@ -16583,13 +16675,14 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           state.playbackActive = true;
         }
         samplePlaybackProgress(state, realPlaybackStarted);
+        const progressSnapshot = buildProgressSnapshot(state, realPlaybackStarted);
+        publishProgressSnapshot(state, progressSnapshot);
         if (typeof window.ristakSyncVideoGates === 'function') {
-          const duration = finiteMediaDuration(state.video);
           window.ristakSyncVideoGates(state.video, {
-            realPlaybackStarted,
-            timelineReached: finiteMediaTime(state.video),
-            playbackSeconds: state.playbackSeconds,
-            uniqueWatchedPercent: duration > 0 ? Math.min(100, (watchedSeconds(state) / duration) * 100) : 0
+            realPlaybackStarted: progressSnapshot.realPlaybackStarted,
+            timelineReached: progressSnapshot.currentTimeSeconds,
+            playbackSeconds: progressSnapshot.playbackSeconds,
+            uniqueWatchedPercent: progressSnapshot.uniqueWatchedPercent
           });
         }
         state.actions.forEach(action => {
@@ -16678,7 +16771,9 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           playbackSeconds: 0,
           watchedRanges: [],
           lastMeasurementMediaTime: null,
-          lastMeasurementWallTime: null
+          lastMeasurementWallTime: null,
+          lastProgressPublishWallTime: null,
+          lastProgressStatusKey: ''
         };
         let frameId = 0;
         const stopFrameSync = () => {
@@ -18047,9 +18142,10 @@ function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
           if (!target.matches('input[type="radio"], input[type="checkbox"], select')) return;
           if (field) updateGateDisqualifyNotice(field);
         });
+        // Previsualizar es una sesión interactiva real. Sólo el loop decorativo
+        // anterior al primer play se excluye de los disparadores del formulario.
         const isPreviewVideoPlayback = () => (
-          video?.dataset?.rstkVideoPreviewing === 'true' ||
-          video?.dataset?.rstkVideoRenderPreview === 'true'
+          video?.dataset?.rstkVideoPreviewing === 'true'
         );
         const hasRealVideoPlaybackStarted = () => (
           video && (video.autoplay || video.dataset.rstkVideoRealPlayed === 'true')
@@ -18135,10 +18231,14 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
     playbackId
   })
   const videoActionAttrs = renderVideoActionAttributes(block, settings, context)
-  const actionProxy = videoActionAttrs
-    ? `<video data-rstk-stream-action-proxy muted playsinline hidden ${videoActionAttrs}></video>`
+  // Un gate declarativo del HTML también necesita la señal Player.js aunque el
+  // bloque no tenga acciones configuradas en el panel. El proxy convierte Bunny
+  // iframe y video nativo al mismo contrato de progreso.
+  const progressBridgeRequired = Boolean(videoActionAttrs || cleanString(context.importedVideoGateId))
+  const actionProxy = progressBridgeRequired
+    ? `<video data-rstk-stream-action-proxy muted playsinline hidden${videoActionAttrs ? ` ${videoActionAttrs}` : ''}></video>`
     : ''
-  const actionBridge = videoActionAttrs
+  const actionBridge = progressBridgeRequired
     ? `<script>
       (() => {
         const script = document.currentScript;
@@ -18149,10 +18249,12 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
         let currentTime = 0;
         let duration = 0;
         let paused = true;
+        let ended = false;
         try {
           Object.defineProperty(proxy, 'currentTime', { configurable: true, get: () => currentTime, set: value => { currentTime = Number(value || 0) || 0; } });
           Object.defineProperty(proxy, 'duration', { configurable: true, get: () => duration });
           Object.defineProperty(proxy, 'paused', { configurable: true, get: () => paused });
+          Object.defineProperty(proxy, 'ended', { configurable: true, get: () => ended });
         } catch (_) {}
         const connect = () => {
           if (!window.playerjs || !window.playerjs.Player) return;
@@ -18168,7 +18270,7 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
               proxy.dispatchEvent(new Event('durationchange'));
             });
           });
-          player.on('play', () => { paused = false; proxy.dataset.rstkVideoRealPlayed = 'true'; proxy.dispatchEvent(new Event('play')); });
+          player.on('play', () => { paused = false; ended = false; proxy.dataset.rstkVideoRealPlayed = 'true'; proxy.dispatchEvent(new Event('play')); });
           player.on('pause', () => { paused = true; proxy.dispatchEvent(new Event('pause')); });
           player.on('ended', timing => {
             const nextDuration = Number(timing && (timing.duration || timing.total || timing.totalSeconds) || duration);
@@ -18180,6 +18282,7 @@ function renderBunnyStreamIframe(embedUrl, block, tracking = {}, settings = {}, 
                 ? duration
                 : currentTime;
             paused = true;
+            ended = true;
             // Cierra el último tramo antes de detener la medición. Sin este
             // evento, un 100% o el tiempo total exacto podía quedarse en 99.x.
             proxy.dispatchEvent(new Event('timeupdate'));
@@ -27294,9 +27397,19 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   if (slot.type === 'calendar') runtimeState.hasCalendar = true
   if (slot.type === 'video') runtimeState.hasVideo = true
 
+  const nativeContentContext = slot.type === 'video'
+    ? {
+        ...context,
+        importedVideoGateId: importedVideoGateAttributeValue(attrs, [
+          'data-rstk-video-gate-id',
+          'data-ristak-video-gate-id',
+          'data-ristack-video-gate-id'
+        ])
+      }
+    : context
   const rendered = slot.type === 'form'
-    ? await renderImportedNativeFormSlot(block, context)
-    : renderContentBlock(block, context)
+    ? await renderImportedNativeFormSlot(block, nativeContentContext)
+    : renderContentBlock(block, nativeContentContext)
   // Contenido vacío (p. ej. cobro deshabilitado devuelve '') = mismo trato que
   // wrapRenderedBlock en el editor normal: en publicado no dejamos una caja vacía con
   // padding; en preview mostramos placeholder para que el editor pueda detectar/seleccionar.

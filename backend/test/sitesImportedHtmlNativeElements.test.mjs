@@ -1022,7 +1022,9 @@ test('native video gate keeps the real calendar inert, shows live remaining play
       constructor(gateSource) {
         super()
         this.gateSource = gateSource
-        this.dataset = {}
+        // La sesión Previsualizar sí es interactiva. Este marcador describe la
+        // ruta de render y jamás debe confundirse con el loop decorativo.
+        this.dataset = { rstkVideoRenderPreview: 'true' }
         this.autoplay = false
         this.paused = false
         this.ended = false
@@ -1070,8 +1072,16 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     }
     let nowMs = 0
     let nextFrameId = 0
+    const progressEvents = []
+    class FakeCustomEvent {
+      constructor(type, options = {}) {
+        this.type = type
+        this.detail = options.detail
+      }
+    }
     const window = {
       CSS: { escape: value => String(value) },
+      CustomEvent: FakeCustomEvent,
       performance: { now: () => nowMs },
       requestAnimationFrame: () => {
         nextFrameId += 1
@@ -1080,7 +1090,9 @@ test('native video gate keeps the real calendar inert, shows live remaining play
       cancelAnimationFrame: () => {},
       addEventListener: () => {},
       removeEventListener: () => {},
-      dispatchEvent: () => {}
+      dispatchEvent: event => {
+        if (event?.type === 'ristak:video-progress') progressEvents.push(event)
+      }
     }
     const mutationObservers = []
     class MutationObserver {
@@ -1103,6 +1115,7 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.equal(locked.hidden, false)
     assert.equal(remaining.textContent, '30')
     assert.equal(remaining.textContentWriteCount, 1)
+    assert.equal(window.ristakGetVideoProgress('agenda-admision')?.playbackSeconds, 0)
 
     mutationObservers[0]([{ addedNodes: [{ nodeType: 3 }] }])
     assert.equal(remaining.textContentWriteCount, 1)
@@ -1112,6 +1125,12 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     video.currentTime = 10
     video.dispatch('timeupdate')
     assert.equal(remaining.textContent, '20')
+    assert.equal(window.ristakGetVideoProgress('agenda-admision')?.currentTimeSeconds, 10)
+    assert.equal(window.ristakGetVideoProgress('agenda-admision')?.playbackSeconds, 10)
+    assert.equal(video.getAttribute('data-rstk-video-playback-seconds'), '10')
+    assert.equal(video.getAttribute('data-rstk-video-unique-watched-percent'), '8.333')
+    assert.equal(progressEvents.at(-1)?.detail?.sourceId, 'agenda-admision')
+    assert.equal(progressEvents.at(-1)?.detail?.playbackSeconds, 10)
     video.dispatch('pause')
     assert.equal(remaining.textContent, '20')
     video.dispatch('play')
@@ -1145,6 +1164,61 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.equal(content.getAttribute('data-rstk-video-gate-state'), 'unlocked')
     assert.equal(shell.getAttribute('data-rstk-video-gate-state'), 'unlocked')
     assert.equal(locked.hidden, true)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('native HTML gate receives the Bunny Player.js bridge even without panel actions', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <div
+            data-rstk-native-element="video"
+            data-rstk-native-id="bunny-gate"
+            data-rstk-video-gate-id="agenda-bunny"
+            data-rstk-video-gate-trigger="unique_watched_percent"
+            data-rstk-video-gate-value="50"
+          ></div>
+          <section data-rstk-video-gate-content="agenda-bunny">Agenda</section>
+          <p data-rstk-video-gate-locked="agenda-bunny">
+            Falta <strong data-rstk-video-gate-remaining="agenda-bunny">50</strong>%
+          </p>
+        </body>
+      </html>
+    `, `HTML Bunny gate bridge ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Bunny gate',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'bunny-gate',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://iframe.mediadelivery.net/embed/123456/bunny-gate-video'
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(html, /iframe data-rstk-stream-action-frame/)
+    assert.match(html, /video data-rstk-stream-action-proxy muted playsinline hidden/)
+    assert.doesNotMatch(html, /video data-rstk-stream-action-proxy[^>]*data-rstk-video-actions/)
+    assert.match(html, /player\.on\('timeupdate'/)
+    assert.match(html, /ristakVideoActionsRuntimeLoaded/)
+    assert.match(html, /ristakImportedVideoGateRuntimeLoaded/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

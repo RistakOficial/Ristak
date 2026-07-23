@@ -4929,6 +4929,23 @@ Variantes móvil/escritorio con el mismo gate comparten el mayor progreso
 individual; nunca se suman entre sí. El contador sale del mismo estado real y no
 de decenas de spans o reglas por segundo.
 
+La ruta **Previsualizar** conserva esta lógica completa. El atributo informativo
+`data-rstk-video-render-preview="true"` identifica el documento de preview, pero
+no invalida una reproducción iniciada por el visitante; únicamente
+`data-rstk-video-previewing="true"` marca el loop decorativo que no debe contar.
+Así, el contador, el desbloqueo y las acciones por tiempo o porcentaje se pueden
+validar antes de publicar.
+
+El runtime mantiene una sola lectura canónica del reproductor Ristak/Bunny y la
+expone, en modo lectura, con `window.ristakGetVideoProgress(idDelVideo)` y el
+evento `ristak:video-progress`. El detalle incluye `currentTimeSeconds`,
+`durationSeconds`, `timelinePercent`, `playbackSeconds`,
+`uniqueWatchedSeconds`, `uniqueWatchedPercent`, `playing`, `seeking`,
+`buffering`, `previewing` y `ended`. El `<video>` refleja además los valores
+principales en atributos `data-rstk-video-*`. Los gates y
+`data-rstk-video-rules` usan exactamente esa misma medición; el HTML importado no
+debe crear temporizadores propios ni consultar Bunny directamente.
+
 - `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
   exclusivamente un formulario ya existente, reglas "Al enviar", estilo del
   bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;
@@ -5166,6 +5183,12 @@ importado:
   fragmentos que realmente se reprodujeron contra la duración total. Saltar a
   otra posición no rellena el tramo omitido y repetir una zona ya vista no infla
   el porcentaje.
+
+La medición se conserva en Previsualizar después del play explícito y en el sitio
+publicado. El loop automático de los primeros segundos sigue siendo sólo una
+muestra visual y no acredita avance. El mismo snapshot canónico alimenta las
+acciones, los gates, el contador restante y el evento de lectura
+`ristak:video-progress`, evitando que cada función calcule un tiempo distinto.
 
 El contrato declarativo para pedir estas acciones desde código es
 `data-rstk-video-rules` sobre el slot de video nativo. Cada regla necesita un
