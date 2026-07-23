@@ -22603,11 +22603,17 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   // Marcador informativo para el atributo data-rstk-video-render-preview (nadie lo
   // consume en runtime); ya NO altera el comportamiento del render.
   const renderPreviewMode = Boolean(options.context?.preview)
+  // El preview embebido del editor puede montar varias versiones responsivas del
+  // mismo video dentro de srcDoc. No debe descargar ni decodificar assets grandes
+  // al abrir la pantalla: el editor intercepta la interacción para seleccionar el
+  // slot, mientras preview-session y publicado conservan la reproducción real.
+  const editorPreviewMode = Boolean(options.context?.importedNativePreviewMock)
   // Paridad preview/publicado (pipeline #8): el candado inicial de la barra ya no
   // se fuerza en preview; depende solo del autoplay, igual que en el sitio publicado.
   const controlBarLockedAtStart = showCustomControlBar && !autoplay
   const initialControlsVisible = showCustomControlBar && !controlBarLockedAtStart && showControlBarInitially
-  const previewLoopEnabled = previewEnabled && !autoplay
+  const previewLoopEnabled = previewEnabled && !autoplay && !editorPreviewMode
+  const preloadMode = editorPreviewMode ? 'none' : previewEnabled ? 'auto' : 'metadata'
   const previewRange = normalizeVideoPreviewRange(settings)
   const showSoundNotice = showOverlay && soundHint && !autoplay
   const loop = Boolean(settings.videoLoop) || autoplay
@@ -22676,6 +22682,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-render-preview="${renderPreviewMode ? 'true' : 'false'}"`,
+    `data-rstk-video-editor-preview="${editorPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-orientation-mode="${escapeHtml(orientationMode)}"`,
     `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
     `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
@@ -22686,7 +22693,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
 
   return `
     <div class="${classes}" style="${styleVars}">
-      <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${previewEnabled ? 'auto' : 'metadata'}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
+      <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${preloadMode}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay && showCentralPlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
@@ -25424,7 +25431,8 @@ function buildVideoPlayerRuntimeScript() {
 	        const video = host.querySelector('video');
 	        if (!video) return;
 	        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
-	        if (source && isHlsSource(source)) {
+	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
+	        if (source && isHlsSource(source) && !editorPreview) {
 	          if (canPlayNativeHls(video)) {
 	            video.src = source;
 	            video.load();

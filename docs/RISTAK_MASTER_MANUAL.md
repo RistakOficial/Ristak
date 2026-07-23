@@ -4964,7 +4964,12 @@ de decenas de spans o reglas por segundo.
   que el sitio construido en el editor: preview silencioso en loop, detección de
   orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
   aviso de sonido y formulario sobre video. El runtime de acciones por tiempo es
-  adicional y no sustituye al runtime del reproductor.
+  adicional y no sustituye al runtime del reproductor. La vista `srcDoc` embebida
+  dentro del editor es deliberadamente conservadora: monta el player con
+  `preload="none"`, no inicia el loop automático y no conecta HLS hasta una
+  reproducción real. Así puede mostrar a la vez variantes desktop/mobile sin
+  descargar ni decodificar videos ocultos; preview-session y publicado conservan
+  la reproducción configurada.
   Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
   previa del video`; abrir el editor o crear una preview-session autenticada
   dispara automáticamente la creación de su espejo de Storage. El proceso está

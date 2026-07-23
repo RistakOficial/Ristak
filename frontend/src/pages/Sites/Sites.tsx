@@ -22669,7 +22669,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     stopCodeAssistantProgress()
   }, [stopCodeAssistantProgress])
 
-  const loadInlinePreview = useCallback(async () => {
+  const loadInlinePreview = useCallback(async (signal?: AbortSignal) => {
     const requestId = previewRequestIdRef.current + 1
     previewRequestIdRef.current = requestId
     // Sin site.updatedAt en la clave: antes CADA autosave cambiaba updatedAt, el contexto
@@ -22686,23 +22686,27 @@ const ImportedHtmlEditorPanel: React.FC<{
     try {
       const html = await sitesService.getPreviewHtml(site.id, activeImportedPage?.id, {
         test: true,
-        draftSite: getImportedNativeElementPreviewSite()
+        draftSite: getImportedNativeElementPreviewSite(),
+        signal
       })
       if (previewRequestIdRef.current !== requestId) return
       previewHtmlContextKeyRef.current = requestContextKey
       setPreviewHtml(html)
       setPreviewVersion(current => current + 1)
     } catch (error) {
+      if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) return
       if (previewRequestIdRef.current !== requestId) return
       setPreviewHtml('')
       setPreviewError(error instanceof Error ? error.message : 'No se pudo cargar la vista previa')
     } finally {
       if (previewRequestIdRef.current === requestId) setPreviewLoading(false)
     }
-  }, [activeImportedPage?.id, getImportedNativeElementPreviewSite, site.id, site.updatedAt])
+  }, [activeImportedPage?.id, getImportedNativeElementPreviewSite, site.id])
 
   useEffect(() => {
-    void loadInlinePreview()
+    const controller = new AbortController()
+    void loadInlinePreview(controller.signal)
+    return () => controller.abort()
   }, [contentAssetsRevision, loadInlinePreview])
 
   useEffect(() => {

@@ -816,8 +816,22 @@ test('imported HTML native video slots render the real Ristak player and video a
     const previewHtml = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: true })
     assert.match(previewHtml, /const PREVIEW_SAFE = true;/)
     assert.match(previewHtml, /data-rstk-video-preview="true"/)
+    assert.match(previewHtml, /data-rstk-video-editor-preview="false"/)
+    assert.match(previewHtml, /preload="auto"/)
     assert.match(previewHtml, /startPreviewLoop\(\)/)
     assert.match(previewHtml, /<a[^>]*data-rstk-video-action-target="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+
+    const editorHtml = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+    assert.match(editorHtml, /data-rstk-video-preview="false"/)
+    assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
+    assert.match(editorHtml, /preload="none"/)
+    assert.match(editorHtml, /const editorPreview = video\.getAttribute\('data-rstk-video-editor-preview'\) === 'true'/)
+    assert.match(editorHtml, /source && isHlsSource\(source\) && !editorPreview/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
