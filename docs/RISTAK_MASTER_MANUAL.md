@@ -6320,7 +6320,7 @@ entran mensajes durante esa espera, mientras se calculan los cortes o entre
 globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
 el turno mas reciente antes de enviar contenido viejo.
 
-El tester usa por defecto la identidad estable `test@aiagent.com`.
+El tester usa por defecto la identidad estable `test@ristaktests.com`.
 `get_contact_profile` la reconoce como la identidad del hilo, sin inventar que
 falta una ficha, pedir otro telefono ni marcarla como cliente anterior. Con los
 switches de prueba apagados vive como contacto virtual y todas las tools

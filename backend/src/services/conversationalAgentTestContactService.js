@@ -1,7 +1,7 @@
 import { db } from '../config/database.js'
 import { generateContactId } from './contactIdentityService.js'
 
-export const CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL = 'test@aiagent.com'
+export const CONVERSATIONAL_AGENT_TEST_CONTACT_EMAIL = 'test@ristaktests.com'
 export const CONVERSATIONAL_AGENT_TEST_CONTACT_NAME = 'Contacto de prueba'
 export const CONVERSATIONAL_AGENT_TEST_CONTACT_SOURCE = 'conversational_agent_test'
 

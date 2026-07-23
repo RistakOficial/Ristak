@@ -1597,7 +1597,7 @@ test('normaliza efectos sólo cuando hay una acción explícita y no activa noti
   })
 })
 
-test('Modo test resuelve, reutiliza y reactiva test@aiagent.com sin selección del frontend', async () => {
+test('Modo test resuelve, reutiliza y reactiva test@ristaktests.com sin selección del frontend', async () => {
   const suffix = randomUUID()
   const agentId = `agent_default_test_contact_${suffix}`
   const runId = `session_default_test_contact_${suffix}`
