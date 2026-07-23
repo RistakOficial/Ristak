@@ -4817,9 +4817,13 @@ limpios: contenedores vacios, sin texto placeholder, mocks, tarjetas, bordes
 punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni
 wrappers decorativos dentro, detras o encima. El HTML externo solo decide la
 ubicacion del bloque; Ristak pinta el formulario, calendario, checkout, video o
-perfil social completo con su propio diseno y configuracion. Si hace falta reservar espacio en
-el layout, debe hacerse con estructura neutra sin borde/fondo visible para que
-no quede UI falsa atras o encima del embed. Las excepciones son `calendar` y
+perfil social completo con su propio diseno y configuracion. El slot no debe
+reservar altura: si la composición necesita controlar ubicación o ancho, lo hace
+un padre neutro sin borde/fondo visible. Al montarlo, el renderer neutraliza en
+el wrapper `height`, `min-height`, `max-height`, tamaños lógicos, `aspect-ratio`
+y crecimiento flex heredados del CSS de página completa; así una regla original
+para `body` no convierte cada elemento nativo en una pantalla vacía. Las
+excepciones son `calendar` y
 `social-profile` con `data-rstk-native-render="custom"`, porque ahi el frontend
 importado si es el elemento visual y Ristak solo conecta los datos y operaciones
 reales.
@@ -4948,6 +4952,12 @@ nunca a dos videos distintos de la misma página.
   nombre con la roseta azul de verificado y los seguidores debajo. Las reglas
   para IA no deben intentar copiar ese diseño con HTML propio; deben usar el slot
   nativo vacío para garantizar la misma iconografía, proporción y posición.
+  Su wrapper conserva altura intrínseca y usa la clase canónica
+  `rstk-imported-native-social-profile`; el renderer elimina geometría inline
+  heredada del código importado y aplica el reset de slots montados antes de
+  comenzar el título, video, formulario o sección siguiente. Esto evita que un
+  `body { min-height: 100vh }`, un `height: 100vh`, `flex: 1` o una reserva de
+  viewport empujen el resto del embudo debajo de un bloque vacío.
   `data-rstk-native-render="custom"` se usa únicamente cuando el usuario pide de
   forma explícita otro diseño. En ese caso conserva
   el markup, clases, layout y CSS creados por ChatGPT, Claude o Codex y sustituye
@@ -5160,7 +5170,8 @@ Ristak conserva el diseño pero inyecta los datos del perfil conectado. Si la
 petición no describe una composición diferente, las mismas instrucciones mandan
 volver al slot nativo para reproducir exactamente el perfil del editor; el modo
 custom sólo queda autorizado por una petición visual explícita. También
-exigen cerrar la raíz justo después de la ficha, mantener altura intrínseca y
+exigen tanto al slot nativo como a la raíz custom cerrar justo después de la
+ficha, mantener altura intrínseca y no reservar viewport, y
 validar a 390 px que el siguiente contenido aparezca con espaciado normal, sin
 un bloque vacío ni una sección de alto completo.
 

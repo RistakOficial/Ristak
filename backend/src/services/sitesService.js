@@ -26288,14 +26288,21 @@ function buildImportedNativeSlotStyle(block, slotType = '') {
 }
 
 function renderImportedNativeElementWrapper(attrs = {}, slot = {}, content = '', extraAttrs = {}, block = null) {
+  const intrinsicRootAttrs = { ...attrs }
+  if (slot.type === 'social_profile') {
+    const intrinsicRootStyle = stripImportedSocialProfileRootGeometry(intrinsicRootAttrs.style)
+    if (intrinsicRootStyle) intrinsicRootAttrs.style = intrinsicRootStyle
+    else delete intrinsicRootAttrs.style
+  }
+  const nativeTypeClass = cleanString(slot.type).replace(/_/g, '-')
   const classes = [
-    attrs.class,
+    intrinsicRootAttrs.class,
     'rstk-imported-native-slot',
-    slot.type ? `rstk-imported-native-${slot.type}` : '',
+    nativeTypeClass ? `rstk-imported-native-${nativeTypeClass}` : '',
     slot.renderMode === 'custom' ? 'rstk-imported-native-custom' : ''
   ].filter(Boolean).join(' ')
   const dataAttrs = {
-    ...attrs,
+    ...intrinsicRootAttrs,
     ...extraAttrs,
     class: classes,
     'data-rstk-native-mounted': 'true',
@@ -26506,7 +26513,7 @@ function rewriteImportedSocialHookOpenings(html = '', names = [], rewrite) {
   ))
 }
 
-const IMPORTED_CUSTOM_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES = [
+const IMPORTED_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES = [
   'height',
   'min-height',
   'max-height',
@@ -26526,8 +26533,8 @@ const IMPORTED_CUSTOM_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES = [
   'margin-block-end'
 ]
 
-function stripImportedCustomSocialProfileRootGeometry(style = '') {
-  const propertyPattern = IMPORTED_CUSTOM_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES
+function stripImportedSocialProfileRootGeometry(style = '') {
+  const propertyPattern = IMPORTED_SOCIAL_PROFILE_ROOT_GEOMETRY_PROPERTIES
     .map(property => property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|')
   return cleanString(style)
@@ -26539,7 +26546,7 @@ function stripImportedCustomSocialProfileRootGeometry(style = '') {
 
 function renderImportedCustomSocialProfileSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, block = null, context = {}) {
   const intrinsicRootAttrs = { ...attrs }
-  const intrinsicRootStyle = stripImportedCustomSocialProfileRootGeometry(intrinsicRootAttrs.style)
+  const intrinsicRootStyle = stripImportedSocialProfileRootGeometry(intrinsicRootAttrs.style)
   if (intrinsicRootStyle) intrinsicRootAttrs.style = intrinsicRootStyle
   else delete intrinsicRootAttrs.style
 
@@ -27436,13 +27443,13 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 /* Cuando Ristak MONTA el elemento nativo real (data-rstk-native-mounted="true"), neutraliza
    el "chrome de placeholder" que el autor del HTML suele poner en la zona reservada: la
    etiqueta ::before/::after ("Video nativo Ristak"…), el borde punteado de drop-zone, la
-   caja de aspecto fijo y el centrado tipo placeholder. Sin esto se veía la CAJA DOBLE
-   (placeholder del autor + elemento real apilados). El elemento nativo aporta su propio
-   marco, así que aquí solo quitamos lo decorativo del placeholder; el fondo NO se toca para
-   no pisar el diseño de bloque. */
+   caja de aspecto fijo y el centrado tipo placeholder. El CSS original de página completa
+   también se reescopa a este host: por eso un body{min-height:100vh} terminaría aplicado a
+   CADA slot. El reset de geometría mantiene el wrapper intrínseco y deja que el elemento
+   hijo aporte su altura real. El fondo NO se toca para no pisar el diseño de bloque. */
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::before,
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
-.rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;flex:0 1 auto!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
 .rstk-imported-native-video[data-rstk-native-mounted="true"]{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var(--rstk-native-slot-padding,0)!important;background-color:var(--rstk-native-slot-background,transparent)!important;box-shadow:none!important}
 .rstk-imported-native-social-profile.rstk-imported-native-custom[data-rstk-native-mounted="true"]{width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;aspect-ratio:auto!important;flex-grow:0!important;flex-shrink:0!important;margin-bottom:0!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}

@@ -2610,7 +2610,7 @@ ${buildImportedHtmlFaviconRulesText()}
 - Orden de páginas: si entregas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.
 - Elementos conectados a Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video|social-profile" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago, video o perfil social real desde el editor.
 - Solo se aceptan estos elementos conectados: formularios, calendarios, pagos, videos y perfiles sociales. No uses data-rstk-native-element para otros widgets.
-- Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment, video y social-profile con render="ristak"): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.
+- Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment, video y social-profile con render="ristak"): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. No reserves altura en el slot: colócalo dentro de un padre neutro si necesitas controlar su ubicación.
 - Formularios nativos Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacío; no pongas <form>, campos ni botones de envío dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio botón y sus acciones "Al enviar"; si necesitas ir a otra página, configúralo en el editor.
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 ${buildImportedHtmlCustomCalendarRulesText()}
@@ -28358,7 +28358,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       'Slots nativos de Ristak:',
       '- Los slots nativos que Ristak renderiza deben ser huecos limpios, vacíos y sin diseño propio.',
       '- No pongas texto placeholder tipo "aquí va el calendario", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima del slot.',
-      '- El HTML solo decide la ubicación del elemento; Ristak insertará el diseño completo del formulario, calendario, pago, video o perfil social nativo. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.',
+      '- El HTML solo decide la ubicación del elemento; Ristak insertará el diseño completo del formulario, calendario, pago, video o perfil social nativo. No reserves altura en el slot: usa un padre neutro para controlar su ubicación.',
       '- Esta regla aplica a form, calendar nativo, payment, video y social-profile nativo. No aplica al calendario custom ni al perfil social custom con data-rstk-native-render="custom", porque esos sí usan tu frontend propio conectado a Ristak.',
       ''
     )
@@ -28469,6 +28469,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- La página usará el perfil social completo de Ristak.',
       '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="ristak" data-rstk-label="Perfil principal"></div>.',
       '- Este es el diseño predeterminado cuando la petición no describe otro perfil: Ristak dibuja exactamente el componente del editor normal, con avatar circular, insignia de la red superpuesta, nombre, roseta azul de verificado y seguidores en la misma posición.',
+      '- El slot debe medir solo lo que ocupa el perfil. No uses height/min-height/max-height, block-size, vh/svh/dvh, aspect-ratio, flex: 1, flex-grow ni estiramiento de grid; el siguiente título, video o formulario debe empezar inmediatamente después con el espaciado normal.',
       '- Ristak permite elegir el perfil conectado, foto, nombre, seguidores y si se muestra verificado.',
       ''
     )

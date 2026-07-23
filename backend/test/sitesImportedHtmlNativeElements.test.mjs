@@ -193,6 +193,67 @@ test('imported HTML custom social profile keeps the AI design and injects connec
   }
 })
 
+test('imported HTML native social profile keeps intrinsic height and does not push following content below the viewport', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <head>
+          <style>
+            body { min-height: 100vh; margin: 0; }
+            [data-rstk-native-id="perfil-principal"] { min-height: 52px; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <div class="social-slot" style="color:inherit;height:100vh!important;min-height:960px!important;max-height:1200px!important;aspect-ratio:1/1!important;flex:1 1 auto!important;margin:0 0 80vh!important" data-rstk-native-element="social-profile" data-rstk-native-id="perfil-principal" data-rstk-native-render="ristak" data-rstk-label="Perfil principal"></div>
+            <h1 data-after-social-profile>Contenido siguiente visible</h1>
+          </main>
+        </body>
+      </html>
+    `, `HTML native social profile intrinsic height ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'social_profile',
+      label: 'Perfil principal',
+      content: 'Perfil de red social',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'perfil-principal',
+        importedHtmlNativeType: 'social_profile',
+        importedHtmlNativeRenderMode: 'ristak',
+        platform: 'facebook',
+        brandName: 'Ristak Oficial',
+        brandAvatar: 'https://example.test/ristak-avatar.webp',
+        followers: '40.3 mil',
+        brandVerified: true
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(html, /class="social-slot rstk-imported-native-slot rstk-imported-native-social-profile"/)
+    assert.doesNotMatch(html, /rstk-imported-native-social_profile/)
+    assert.match(html, /style="color:inherit"/)
+    assert.doesNotMatch(html, /style="[^"]*(?:height|min-height|max-height|aspect-ratio|flex|margin):/)
+    assert.match(html, /\.rstk-imported-native-slot\[data-rstk-native-mounted="true"\]\{display:block!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;flex:0 1 auto!important;/)
+    assert.match(html, /\.rstk-imported-native-slot\{[^}]*min-height:var\(--rstk-vh100,100vh\)[^}]*\}/)
+    assert.match(html, /data-after-social-profile[^>]*>Contenido siguiente visible<\/h1>/)
+    assert.match(html, /Ristak Oficial/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('imported HTML native payment slots render editor payment mock from preview draft blocks', async () => {
   let siteId = ''
 
