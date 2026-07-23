@@ -194,7 +194,7 @@ export const APIDocumentation: React.FC = () => {
 
           <Section id="mcp" icon={<Network size={18} />} title="MCP">
             <p>
-              El catálogo actual registra 234 herramientas tipadas de negocio. `tools/list` y el estado de Developers muestran únicamente las visibles para el usuario, plan, módulos y alcances que autorizaron la conexión. No entrega acceso SQL libre, secretos, infraestructura ni administración de usuarios, y nunca brinca la lógica del producto.
+              El catálogo actual registra 235 herramientas tipadas de negocio. `tools/list` y el estado de Developers muestran únicamente las visibles para el usuario, plan, módulos y alcances que autorizaron la conexión. No entrega acceso SQL libre, secretos, infraestructura ni administración de usuarios, y nunca brinca la lógica del producto.
             </p>
             <CodeBlock
               value={`POST ${mcpServerUrl}

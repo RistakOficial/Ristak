@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, BookOpen, Network, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
+import { Activity, BookOpen, CheckCircle2, Copy, Network, RefreshCw, ShieldCheck, Unplug } from 'lucide-react'
 import { Button, SegmentTabs, Table } from '@/components/common'
 import type { Column, SegmentTab } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
@@ -284,6 +284,11 @@ const authHeaders = () => {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   }
+}
+
+const formatTransportLabel = (value: string | undefined): string => {
+  const normalized = asString(value).toLowerCase().replace(/_/g, '-')
+  return normalized === 'streamable-http' ? 'Streamable HTTP' : asString(value) || 'Streamable HTTP'
 }
 
 export const McpAccessPanel: React.FC<McpAccessPanelProps> = ({
@@ -655,7 +660,7 @@ export const McpAccessPanel: React.FC<McpAccessPanelProps> = ({
         </div>
         <div className={styles.mcpStatusItem}>
           <span>Transporte</span>
-          <strong>{status?.transport || 'Streamable HTTP'}</strong>
+          <strong>{formatTransportLabel(status?.transport)}</strong>
         </div>
       </div>
 
@@ -690,7 +695,7 @@ export const McpAccessPanel: React.FC<McpAccessPanelProps> = ({
       <div className={styles.mcpAccessNote}>
         <ShieldCheck size={20} />
         <div>
-          <h4>El MCP no recibe poderes mágicos</h4>
+          <h4>Tus permisos siguen mandando</h4>
           <p>
             Cada herramienta vuelve a revisar el plan, los permisos del usuario y el alcance OAuth. Leer, escribir, ejecutar acciones externas o borrar son permisos distintos.
           </p>
@@ -705,13 +710,17 @@ export const McpAccessPanel: React.FC<McpAccessPanelProps> = ({
           </div>
           {status?.protocolVersion && <Badge variant="neutral">MCP {status.protocolVersion}</Badge>}
         </div>
-        <div className={styles.mcpCapabilityList}>
+        <ul className={styles.mcpCapabilityList} aria-label="Áreas disponibles mediante MCP">
           {domains.map(domain => (
-            <Badge key={domain.key} variant="neutral">
-              {domain.label}{domain.toolCount !== null ? ` · ${domain.toolCount}` : ''}
-            </Badge>
+            <li key={domain.key} className={styles.mcpCapabilityItem}>
+              <CheckCircle2 size={16} aria-hidden="true" />
+              <span>{domain.label}</span>
+              <strong className={styles.mcpCapabilityCount}>
+                {domain.toolCount ?? '—'}
+              </strong>
+            </li>
           ))}
-        </div>
+        </ul>
         {status?.scopes.length ? (
           <p className={styles.mcpMutedText}>Alcances soportados: {status.scopes.join(' · ')}</p>
         ) : null}
@@ -834,6 +843,7 @@ const ReadonlyMcpField: React.FC<ReadonlyMcpFieldProps> = ({ label, value, onCop
     <div>
       <input type="text" value={value} readOnly />
       <Button variant="secondary" onClick={onCopy} className={styles.developerCopyButton}>
+        <Copy size={16} />
         Copiar
       </Button>
     </div>

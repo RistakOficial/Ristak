@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen,
   CheckCircle,
+  Code2,
   Copy,
   ExternalLink,
-  FileText,
   KeyRound,
   Network,
   RefreshCw,
@@ -252,7 +252,7 @@ export const APIAccessSettings: React.FC = () => {
         <div className={styles.panelHeader}>
           <div className={styles.panelHeaderLeft}>
             <div className={styles.iconBox}>
-              <FileText size={22} />
+              <Code2 size={22} />
             </div>
             <div>
               <h2 className={styles.panelTitle}>Developers</h2>
@@ -274,6 +274,7 @@ export const APIAccessSettings: React.FC = () => {
             tabs={developerSectionTabs}
             value={activeSection}
             onChange={(value) => setActiveSection(value as DeveloperSection)}
+            className={styles.developerTabs}
             aria-label="Secciones de Developers"
           />
 
@@ -445,9 +446,17 @@ const InfoField: React.FC<FieldProps> = ({ label, value, onCopy }) => (
     <div>
       <strong>{value}</strong>
       {onCopy && value && (
-        <button type="button" onClick={onCopy} aria-label={`Copiar ${label}`}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          iconOnly
+          onClick={onCopy}
+          aria-label={`Copiar ${label}`}
+          title={`Copiar ${label}`}
+        >
           <Copy size={16} />
-        </button>
+        </Button>
       )}
     </div>
   </div>

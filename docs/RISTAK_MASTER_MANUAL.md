@@ -1312,7 +1312,10 @@ Configuracion se organiza en:
   registra el servidor con `codex mcp add` y abre OAuth con
   `codex mcp login ristak`; ese flujo usa la sesion web normal de Ristak y pide
   consentimiento para los scopes. No genera, copia ni usa el API token de
-  REST/OpenAPI.
+  REST/OpenAPI. La pantalla mantiene una jerarquia plana y responsive: el estado
+  del servidor aparece como un resumen unico, las areas disponibles se leen como
+  una lista compacta en vez de una nube de etiquetas y los campos con acciones
+  se apilan sin desbordarse en ventanas chicas.
 
 Las tablas de Configuracion que permiten seleccion multiple usan el patron
 compartido de `Table` con acciones integradas en una sola barra dentro del
