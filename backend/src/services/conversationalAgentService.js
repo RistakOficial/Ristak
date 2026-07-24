@@ -7857,11 +7857,11 @@ async function notifyConversationalCompletion({
       return { sent: 0, skipped: true, inProgress: true, reason: criticalClaim.reason }
     }
   }
-  // [Fase 1 — nunca fantasma] Idempotencia: como ahora una conversación cumplida se reabre
-  // para seguir contestando (ver shouldReopenCompletedConversationState), el modelo podría
-  // volver a marcar el objetivo en un follow-up. No re-avisamos a un humano si ya le avisamos
-  // de este contacto hace poco. Cutoff en JS + comparación de string para que sirva igual en
-  // SQLite (dev) y Postgres (clientes).
+  // [Fase 1 — nunca fantasma] Idempotencia: un retry, una reconciliación tardía o
+  // evidencia terminal duplicada podría volver a marcar el mismo objetivo. No
+  // re-avisamos a un humano si ya le avisamos de este contacto hace poco. Cutoff
+  // en JS + comparación de string para que sirva igual en SQLite (dev) y
+  // Postgres (clientes).
   const since = new Date(Date.now() - COMPLETION_NOTIFICATION_DEDUP_MS).toISOString().slice(0, 19).replace('T', ' ')
   let recentNotification = null
   try {

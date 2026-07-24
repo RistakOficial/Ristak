@@ -1082,8 +1082,8 @@ test('reiniciar omisiones opera por agente aunque el contacto tenga otro agente 
   }
 })
 
-test('un mensaje nuevo reabre una conversación completada con acción concreta no-handoff', async () => {
-  const contactId = `conversation_agent_reopen_completed_${randomUUID()}`
+test('un mensaje nuevo no reactiva al agente después de cumplir el objetivo', async () => {
+  const contactId = `conversation_agent_terminal_completed_${randomUUID()}`
   const answeredMessageId = `waapi_msg_answered_${randomUUID()}`
   const newMessageId = `waapi_msg_new_${randomUUID()}`
   let agentId = ''
@@ -1092,7 +1092,7 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
     await seedContact(contactId)
     const agent = await createConversationalAgent({
       defaultCalendarId: 'cal_state_test',
-      name: 'Agente reapertura test',
+      name: 'Agente objetivo terminal test',
       enabled: true,
       objective: 'citas',
       contactScope: 'all'
@@ -1127,7 +1127,7 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
     assert.equal(alreadyAnswered.agentConfig, null)
 
     const newRuleContext = await buildRuleContext({ contactId, messageText: 'Costos otra vez', channel: 'whatsapp' })
-    const reopened = await resolveInboundAgentForContact({
+    const terminalResult = await resolveInboundAgentForContact({
       contactId,
       messageText: 'Costos otra vez',
       channel: 'whatsapp',
@@ -1135,29 +1135,142 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
       latestMessageId: newMessageId
     })
 
-    assert.equal(reopened.agentConfig?.id, agentId)
-    assert.equal(reopened.assigned, false)
-    assert.equal(reopened.state?.status, 'active')
-    assert.equal(reopened.state?.signal, null)
+    assert.equal(terminalResult.agentConfig, null)
+    assert.equal(terminalResult.assigned, false)
+    assert.equal(terminalResult.state?.status, 'completed')
+    assert.equal(terminalResult.state?.signal, 'appointment_booked')
 
-    const activeState = await getConversationState(contactId, { agentId })
-    assert.equal(activeState?.status, 'active')
-    assert.equal(activeState?.signal, null)
+    const terminalState = await getConversationState(contactId, { agentId })
+    assert.equal(terminalState?.status, 'completed')
+    assert.equal(terminalState?.signal, 'appointment_booked')
 
     const events = await listConversationalAgentEvents({ contactId })
-    assert.ok(events.some((event) => (
-      event.eventType === 'agent_reopened' &&
-      event.detail?.reason === 'new_inbound_after_completion' &&
-      event.detail?.messageId === newMessageId &&
-      event.detail?.agentId === agentId
-    )))
+    assert.equal(events.some((event) => event.eventType === 'agent_reopened'), false)
+    assert.equal(events.some((event) => (
+      event.eventType === 'status_changed' &&
+      event.detail?.status === 'active' &&
+      event.detail?.clearSignal === true
+    )), false)
   } finally {
     await cleanup(contactId, agentId)
   }
 })
 
-test('una conversación completada no reabre si el agente está apagado o ya no cumple entrada', async () => {
-  const contactId = `conversation_agent_reopen_rules_${randomUUID()}`
+test('la migración restaura cierres que el runtime antiguo reabrió, pero respeta una reactivación manual', async () => {
+  const repairedContactId = `conversation_agent_terminal_repair_${randomUUID()}`
+  const manualContactId = `conversation_agent_terminal_manual_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(repairedContactId)
+    await seedContact(manualContactId)
+    const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
+      name: 'Agente reparación terminal test',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'all'
+    })
+    agentId = agent.id
+
+    for (const contactId of [repairedContactId, manualContactId]) {
+      await assignAgentToConversation(contactId, agentId, {
+        activationSource: 'automatic',
+        updatedBy: 'agent'
+      })
+      await db.run(`
+        UPDATE conversational_agent_state
+        SET status = 'paused',
+            signal = NULL,
+            signal_reason = NULL,
+            signal_summary = NULL,
+            signal_at = NULL,
+            paused_until_at = '2026-08-01T00:00:00.000Z',
+            updated_by = 'user'
+        WHERE contact_id = ? AND agent_id = ?
+      `, [contactId, agentId])
+      await db.run(`
+        INSERT INTO conversational_agent_events (
+          id, contact_id, agent_id, event_type, detail_json, created_at
+        ) VALUES (?, ?, ?, 'signal_set', ?, '2026-07-24 10:27:24')
+      `, [
+        `cae_completion_${randomUUID()}`,
+        contactId,
+        agentId,
+        JSON.stringify({
+          signal: 'appointment_booked',
+          reason: 'Cita agendada por el agente',
+          summary: '',
+          actionSummary: 'Agendó una cita',
+          status: 'completed',
+          objectiveCompleted: true
+        })
+      ])
+      await db.run(`
+        INSERT INTO conversational_agent_events (
+          id, contact_id, agent_id, event_type, detail_json, created_at
+        ) VALUES (?, ?, ?, 'agent_reopened', ?, '2026-07-24 10:27:42')
+      `, [
+        `cae_reopen_${randomUUID()}`,
+        contactId,
+        agentId,
+        JSON.stringify({ reason: 'new_inbound_after_completion' })
+      ])
+    }
+
+    await db.run(`
+      INSERT INTO conversational_agent_events (
+        id, contact_id, agent_id, event_type, detail_json, created_at
+      ) VALUES (?, ?, ?, 'status_changed', ?, '2026-07-24 10:28:00')
+    `, [
+      `cae_manual_activation_${randomUUID()}`,
+      manualContactId,
+      agentId,
+      JSON.stringify({ status: 'active', updatedBy: 'user', clearSignal: true })
+    ])
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET status = 'active', paused_until_at = NULL, updated_by = 'user'
+      WHERE contact_id = ? AND agent_id = ?
+    `, [manualContactId, agentId])
+
+    const migrationSql = await readFile(
+      new URL('../migrations/versioned/133_conversational_terminal_objective_repair.sqlite.sql', import.meta.url),
+      'utf8'
+    )
+    await db.exec(migrationSql)
+    await db.exec(migrationSql)
+
+    const repairedState = await getConversationState(repairedContactId, { agentId })
+    assert.equal(repairedState?.status, 'completed')
+    assert.equal(repairedState?.signal, 'appointment_booked')
+    assert.equal(repairedState?.signalReason, 'Cita agendada por el agente')
+    assert.equal(repairedState?.signalSummary, 'Agendó una cita')
+    assert.equal(repairedState?.pausedUntilAt, null)
+
+    const manualState = await getConversationState(manualContactId, { agentId })
+    assert.equal(manualState?.status, 'active')
+    assert.equal(manualState?.signal, null)
+
+    const repairedEvents = await listConversationalAgentEvents({ contactId: repairedContactId })
+    assert.equal(
+      repairedEvents.filter((event) => event.eventType === 'terminal_state_restored').length,
+      1
+    )
+    const manualEvents = await listConversationalAgentEvents({ contactId: manualContactId })
+    assert.equal(
+      manualEvents.some((event) => event.eventType === 'terminal_state_restored'),
+      false
+    )
+  } finally {
+    await cleanup(repairedContactId)
+    await cleanup(manualContactId)
+    await cleanupAgent(agentId)
+  }
+})
+
+test('un objetivo completado conserva su cierre aunque cambien publicación o reglas del agente', async () => {
+  const contactId = `conversation_agent_terminal_rules_${randomUUID()}`
   const answeredMessageId = `waapi_msg_rules_answered_${randomUUID()}`
   let agentId = ''
 
@@ -1165,7 +1278,7 @@ test('una conversación completada no reabre si el agente está apagado o ya no 
     await seedContact(contactId)
     const agent = await createConversationalAgent({
       defaultCalendarId: 'cal_state_test',
-      name: 'Agente reapertura con reglas',
+      name: 'Agente terminal con reglas',
       enabled: true,
       objective: 'citas',
       filters: {
@@ -1233,7 +1346,7 @@ test('una conversación completada no reabre si el agente está apagado o ya no 
       ORDER BY updated_at DESC
       LIMIT 1
     `, [contactId])
-    assert.equal(stored?.agent_id, null)
+    assert.equal(stored?.agent_id, agentId)
     assert.equal(stored?.status, 'completed')
     assert.equal(stored?.signal, 'appointment_booked')
   } finally {

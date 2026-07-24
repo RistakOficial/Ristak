@@ -195,7 +195,7 @@ test('la telemetría de lectura conserva hechos de agenda sin copiar títulos ni
   assert.equal(Object.hasOwn(actions[0].appointmentFacts[0], 'title'), false)
 })
 
-test('una cita canónica bloquea la contradicción observada después de que el chat se reabre', () => {
+test('una cita canónica bloquea contradicciones durante una reactivación manual', () => {
   const ctx = {
     actions: [],
     appointmentReadActions: [],

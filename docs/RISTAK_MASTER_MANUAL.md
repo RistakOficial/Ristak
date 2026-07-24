@@ -6315,18 +6315,28 @@ que sigue ligada al agente aunque no este respondiendo. Si un estado terminal
 conserva una senal pendiente para el humano, la interfaz puede mostrar la alerta
 y permitir descartarla, pero esa alerta no cuenta como asignacion ni usa robot.
 
-Una conversacion `completed` solo se reabre con un inbound nuevo cuando el mismo
-agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
-pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
-Si el cierre anterior fue una cita agendada, reabrir el chat no usa la señal
-terminal ni una frase del historial como prueba vigente. Antes de razonar cada
-turno vivo con capacidad de agenda, Ristak relee las citas futuras activas del
-contacto dentro del calendario blindado y entrega ese snapshot estructurado al
-agente. Un agradecimiento, una duda lateral o cualquier inbound posterior no
-borra ni contradice la cita. Sólo una cancelación o reagenda realmente confirmada
-puede sustituir ese snapshot durante la vuelta. Si la consulta canónica falla,
-el runtime no convierte el error en “no hay cita”, y `get_contact_appointments`
-devuelve un fallo verificable en lugar de una lista vacía fabricada.
+Una conversacion `completed` es terminal: significa que el agente cumplio su
+objetivo y salio del chat. Un inbound posterior no limpia la señal, no cambia el
+estado a `active` y no autoriza otra respuesta automatica. El equipo conserva la
+notificacion y el contexto del resultado para continuar como humano. Si se desea
+que ese mismo agente vuelva a atender al contacto, una persona debe reactivarlo
+de forma explicita; no existe reapertura automatica por el simple hecho de
+recibir otro mensaje. Los handoffs, pausas, omisiones y asignaciones manuales
+tampoco se borran con heuristicas de edad.
+
+El despliegue repara una sola vez los estados `active` o `paused` que una version
+anterior marco con `agent_reopened` después de un `signal_set` terminal. Restaura
+la señal y el estado `completed`, pero respeta una reactivacion manual posterior
+hecha por una persona.
+
+En cualquier turno vivo con capacidad de agenda —por ejemplo, después de una
+reactivacion manual o con otro agente elegible— Ristak relee las citas futuras
+activas del contacto dentro del calendario blindado y entrega ese snapshot
+estructurado al agente. Una duda lateral no borra ni contradice la cita. Sólo una
+cancelación o reagenda realmente confirmada puede sustituir ese snapshot durante
+la vuelta. Si la consulta canónica falla, el runtime no convierte el error en
+“no hay cita”, y `get_contact_appointments` devuelve un fallo verificable en
+lugar de una lista vacía fabricada.
 
 Los seguimientos usan el mismo agente principal y el mismo transcript; no
 inventan un mensaje nuevo del contacto ni llaman un analizador aparte. El modo
