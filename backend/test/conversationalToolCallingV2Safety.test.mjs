@@ -9,6 +9,7 @@ import {
   buildNativeFreeSlotDays,
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext,
+  loadConversationalVerifiedAppointmentContext,
   setNativeAppointmentAfterPreCommitAuthorityHookForTest,
   setNativeHandoffAfterAssignmentHookForTest,
   setNativeHumanBookingAfterCommitHookForTest,
@@ -7921,6 +7922,19 @@ test('get_contact_appointments limita la agenda al dueño o solicitante del hilo
       new Set([ownedId, requesterId])
     )
     assert.ok(listed.appointments.every((appointment) => appointment.localLabel && appointment.startTime.endsWith('Z')))
+    const verifiedContext = await loadConversationalVerifiedAppointmentContext({ ctx, config: ctx.config })
+    assert.equal(verifiedContext.verified, true)
+    assert.equal(verifiedContext.active, true)
+    assert.equal(verifiedContext.total, 2)
+    assert.deepEqual(
+      new Set(verifiedContext.appointments.map((appointment) => appointment.appointmentId)),
+      new Set([ownedId, requesterId])
+    )
+    assert.ok(verifiedContext.appointments.every((appointment) => (
+      appointment.localLabel &&
+      appointment.status === 'confirmed' &&
+      !Object.hasOwn(appointment, 'title')
+    )))
 
     const forbiddenCancellation = await tools.find((item) => item.name === 'cancel_appointment').invoke(null, JSON.stringify({
       appointmentId: guestId,

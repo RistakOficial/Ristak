@@ -20,6 +20,7 @@ import {
   enforceToolCallingV2AppointmentOfferPostcondition,
   estimateToolCallingV2HistoryMessageBytes,
   ensureToolCallingV2VisibleReply,
+  extractAppointmentReadToolTelemetryActions,
   guardConversationalAppointmentReplyAgainstState,
   loadToolCallingV2ConversationEnvelope,
   resolveConversationalFollowUpAIProvider,
@@ -163,6 +164,212 @@ test('Agent v2 desactiva tool calls paralelas para serializar mutaciones', () =>
   assert.equal(TOOL_CALLING_V2_MODEL_SETTINGS.parallelToolCalls, false)
   assert.equal(agent.modelSettings.parallelToolCalls, false)
   assert.equal(typeof agent.toolUseBehavior, 'function')
+})
+
+test('la telemetría de lectura conserva hechos de agenda sin copiar títulos ni datos personales', () => {
+  const actions = extractAppointmentReadToolTelemetryActions([{
+    type: 'tool_call_output_item',
+    toolName: 'get_contact_appointments',
+    output: JSON.stringify({
+      ok: true,
+      found: true,
+      total: 1,
+      returned: 1,
+      appointments: [{
+        appointmentId: 'appointment_verified_runtime',
+        title: 'Cita para una persona que no debe entrar a telemetría',
+        startTime: '2030-08-04T18:00:00.000Z',
+        endTime: '2030-08-04T19:00:00.000Z',
+        localLabel: 'domingo 4 de agosto a las 12:00 p. m.',
+        status: 'confirmed'
+      }]
+    })
+  }])
+
+  assert.equal(actions.length, 1)
+  assert.equal(actions[0].found, true)
+  assert.equal(actions[0].total, 1)
+  assert.equal(actions[0].appointmentFacts.length, 1)
+  assert.equal(actions[0].appointmentFacts[0].appointmentId, 'appointment_verified_runtime')
+  assert.equal(actions[0].appointmentFacts[0].status, 'confirmed')
+  assert.equal(Object.hasOwn(actions[0].appointmentFacts[0], 'title'), false)
+})
+
+test('una cita canónica bloquea la contradicción observada después de que el chat se reabre', () => {
+  const ctx = {
+    actions: [],
+    appointmentReadActions: [],
+    verifiedAppointmentContext: {
+      verified: true,
+      active: true,
+      total: 1,
+      appointments: [{
+        appointmentId: 'appointment_marcomaxilofacial',
+        startTime: '2030-08-04T18:00:00.000Z',
+        localLabel: 'domingo 4 de agosto a las 12:00 p. m.',
+        status: 'confirmed'
+      }]
+    }
+  }
+  const contradiction = guardConversationalAppointmentReplyAgainstState({
+    reply: 'Gracias por avisarme. Revisé y la cita todavía no aparece confirmada en el calendario.',
+    ctx
+  })
+  assert.equal(contradiction.prevented, true)
+  assert.equal(contradiction.reason, 'verified_appointment_contradiction_replaced')
+  assert.equal(
+    contradiction.reply,
+    'Tu cita sigue confirmada para domingo 4 de agosto a las 12:00 p. m.'
+  )
+
+  const lateralReply = guardConversationalAppointmentReplyAgainstState({
+    reply: 'Con gusto. Si te surge otra duda, aquí estoy.',
+    ctx
+  })
+  assert.equal(lateralReply.prevented, false)
+  assert.equal(lateralReply.reply, 'Con gusto. Si te surge otra duda, aquí estoy.')
+})
+
+test('una lectura positiva de get_contact_appointments también impide negar la cita', () => {
+  const appointmentReadActions = extractAppointmentReadToolTelemetryActions([{
+    type: 'tool_call_output_item',
+    toolName: 'get_contact_appointments',
+    output: JSON.stringify({
+      ok: true,
+      found: true,
+      total: 1,
+      returned: 1,
+      appointments: [{
+        appointmentId: 'appointment_readback',
+        startTime: '2030-08-04T18:00:00.000Z',
+        localLabel: 'domingo 4 de agosto a las 12:00 p. m.',
+        status: 'confirmed'
+      }]
+    })
+  }])
+  const guarded = guardConversationalAppointmentReplyAgainstState({
+    reply: 'No encuentro ninguna cita activa en tu agenda.',
+    ctx: {
+      actions: [],
+      appointmentReadActions,
+      verifiedAppointmentContext: null
+    }
+  })
+
+  assert.equal(guarded.prevented, true)
+  assert.equal(guarded.reason, 'verified_appointment_contradiction_replaced')
+  assert.match(guarded.reply, /sigue confirmada/i)
+})
+
+test('un fallo al consultar agenda nunca se convierte en una negativa inventada', () => {
+  const guarded = guardConversationalAppointmentReplyAgainstState({
+    reply: 'No encontré ninguna cita registrada en el calendario.',
+    ctx: {
+      actions: [],
+      appointmentReadActions: [{
+        type: 'get_contact_appointments',
+        found: false,
+        outcome: {
+          status: 'error',
+          code: 'appointment_lookup_failed'
+        }
+      }],
+      verifiedAppointmentContext: {
+        verified: false,
+        active: false,
+        unavailable: true,
+        appointments: []
+      }
+    }
+  })
+
+  assert.equal(guarded.prevented, true)
+  assert.equal(guarded.reason, 'unverified_appointment_denial_replaced')
+  assert.match(guarded.reply, /no pude verificar/i)
+  assert.doesNotMatch(guarded.reply, /no encontré ninguna cita/i)
+})
+
+test('el runtime vivo carga la cita canónica antes de razonar el mensaje posterior', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_verified_runtime_${suffix}`
+  const agentId = `agent_verified_runtime_${suffix}`
+  const calendarId = `calendar_verified_runtime_${suffix}`
+  const appointmentId = `appointment_verified_runtime_${suffix}`
+  const start = new Date(Date.now() + 35 * 24 * 60 * 60 * 1000)
+  start.setUTCHours(18, 0, 0, 0)
+  const end = new Date(start.getTime() + 60 * 60 * 1000)
+  let builtAgent = null
+  const config = {
+    id: agentId,
+    runtimeMode: 'tool_calling_v2',
+    aiProvider: 'openai',
+    model: 'gpt-4.1-mini',
+    capabilitiesConfig: {
+      items: [{
+        id: 'schedule_appointment',
+        enabled: true,
+        calendarId,
+        bookingOwner: 'ai'
+      }]
+    }
+  }
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con contexto canónico',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: []
+    }, { source: 'ristak', syncStatus: 'synced' })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Paciente con cita confirmada', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, calendar_id, contact_id, title, status, appointment_status,
+        start_time, end_time, source, sync_status, date_added, date_updated
+      ) VALUES (?, ?, ?, 'Valoración', 'confirmed', 'confirmed', ?, ?,
+        'conversational_agent_v2', 'synced', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [appointmentId, calendarId, contactId, start.toISOString(), end.toISOString()]
+    )
+
+    const turn = await runToolCallingV2Turn({
+      config,
+      runtime: { modelProvider: {} },
+      messages: [{ id: `message_${suffix}`, role: 'user', content: 'Gracias' }],
+      contactId,
+      dryRun: false,
+      channel: 'whatsapp',
+      executionId: `message_${suffix}`,
+      conversationModel: 'gpt-4.1-mini'
+    }, {
+      executeAgent: async ({ agent }) => {
+        builtAgent = agent
+        return 'La cita todavía no aparece confirmada en el calendario.'
+      }
+    })
+
+    assert.equal(turn.ctx.verifiedAppointmentContext?.verified, true)
+    assert.equal(turn.ctx.verifiedAppointmentContext?.active, true)
+    assert.equal(turn.ctx.verifiedAppointmentContext?.appointments[0]?.appointmentId, appointmentId)
+    assert.match(String(builtAgent?.instructions || ''), /Citas activas verificadas por Ristak/)
+    assert.match(String(builtAgent?.instructions || ''), /Un mensaje nuevo, un agradecimiento o una duda lateral no cancela/)
+    const guarded = guardConversationalAppointmentReplyAgainstState({
+      reply: turn.reply,
+      ctx: turn.ctx
+    })
+    assert.equal(guarded.prevented, true)
+    assert.equal(guarded.reason, 'verified_appointment_contradiction_replaced')
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
 })
 
 test('Agent v2 puede exigir una herramienta terminal exacta sin aceptar nombres que no estén habilitados', () => {

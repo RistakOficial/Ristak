@@ -6180,16 +6180,21 @@ que corresponden exactamente a las capacidades activadas. No ejecuta
 `complianceGuard`, reglas regex que decidan intención, bloqueen acciones o
 supriman respuestas completas,
 `stay_silent`, `discard_conversation` ni `update_closing_context`. Después de la
-respuesta principal sólo existen dos compuertas de entrega que no vuelven a
-consultar al modelo principal: el recorte determinista de oraciones repetidas y
-la separación opcional en globos. El recorte compara exclusivamente el copy
-propuesto contra los últimos mensajes visibles del asistente, elimina oraciones
-ya dichas y conserva intacto cualquier contenido nuevo. No interpreta la
-intención para ejecutar acciones, no inventa reemplazos, nunca cambia números y
-permite la repetición cuando la persona pide otra vez una dirección, precio u
-horario. Si retirar lo repetido dejaría la respuesta vacía, conserva el original
-para no dejar mudo al agente. Esta compuerta es código local y no consume una
-segunda llamada ni tokens de IA.
+respuesta principal sólo existen compuertas locales que no vuelven a consultar
+al modelo principal: la postcondición factual de agenda, el recorte determinista
+de oraciones repetidas y la separación opcional en globos. La postcondición de
+agenda compara únicamente la respuesta propuesta contra citas futuras que el
+servidor ya verificó para ese contacto y calendario; si el modelo niega una cita
+canónica vigente, reemplaza esa contradicción por el hecho real. No interpreta
+el mensaje del cliente, no decide si quiere reagendar o cancelar y no bloquea una
+mutación real confirmada. El recorte compara exclusivamente el copy propuesto
+contra los últimos mensajes visibles del asistente, elimina oraciones ya dichas
+y conserva intacto cualquier contenido nuevo. No interpreta la intención para
+ejecutar acciones, no inventa reemplazos, nunca cambia números y permite la
+repetición cuando la persona pide otra vez una dirección, precio u horario. Si
+retirar lo repetido dejaría la respuesta vacía, conserva el original para no
+dejar mudo al agente. Estas compuertas son código local y no consumen una segunda
+llamada ni tokens de IA.
 
 Para separar en globos, si el dueño la activa, una
 mini-IA aislada con `gpt-5-nano` recibe solamente la respuesta final visible y
@@ -6310,6 +6315,15 @@ y permitir descartarla, pero esa alerta no cuenta como asignacion ni usa robot.
 Una conversacion `completed` solo se reabre con un inbound nuevo cuando el mismo
 agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
 pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
+Si el cierre anterior fue una cita agendada, reabrir el chat no usa la señal
+terminal ni una frase del historial como prueba vigente. Antes de razonar cada
+turno vivo con capacidad de agenda, Ristak relee las citas futuras activas del
+contacto dentro del calendario blindado y entrega ese snapshot estructurado al
+agente. Un agradecimiento, una duda lateral o cualquier inbound posterior no
+borra ni contradice la cita. Sólo una cancelación o reagenda realmente confirmada
+puede sustituir ese snapshot durante la vuelta. Si la consulta canónica falla,
+el runtime no convierte el error en “no hay cita”, y `get_contact_appointments`
+devuelve un fallo verificable en lugar de una lista vacía fabricada.
 
 Los seguimientos usan el mismo agente principal y el mismo transcript; no
 inventan un mensaje nuevo del contacto ni llaman un analizador aparte. El modo

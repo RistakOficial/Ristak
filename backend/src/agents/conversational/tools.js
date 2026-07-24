@@ -1801,7 +1801,14 @@ async function loadOwnedConversationalAppointment({
   return throwOnError ? lookup : lookup.catch(() => null)
 }
 
-async function listOwnedConversationalAppointments({ ctx, calendarId, timezone, limit = 10, offset = 0 } = {}) {
+async function listOwnedConversationalAppointments({
+  ctx,
+  calendarId,
+  timezone,
+  limit = 10,
+  offset = 0,
+  throwOnError = false
+} = {}) {
   const contactId = String(ctx?.contactId || '').trim()
   const cleanCalendarId = String(calendarId || '').trim()
   if (!contactId || !cleanCalendarId) return { appointments: [], total: 0, limit: 10, offset: 0 }
@@ -1817,14 +1824,14 @@ async function listOwnedConversationalAppointments({ ctx, calendarId, timezone, 
       'cancelled', 'canceled', 'no_show', 'no-show', 'noshow', 'invalid', 'deleted',
       'showed', 'show', 'attended', 'completed', 'complete'
     )`
-  const totalRow = await db.get(
+  const totalQuery = db.get(
     `SELECT COUNT(DISTINCT a.id) AS total
      FROM appointments a
      LEFT JOIN appointment_participants ap ON ap.appointment_id = a.id
      WHERE ${ownershipWhere}`,
     ownershipParams
-  ).catch(() => ({ total: 0 }))
-  const rows = await db.all(
+  )
+  const rowsQuery = db.all(
     `SELECT owned.*
      FROM (
        SELECT DISTINCT a.id, a.calendar_id, a.contact_id, a.title,
@@ -1836,7 +1843,13 @@ async function listOwnedConversationalAppointments({ ctx, calendarId, timezone, 
      ORDER BY owned.start_time ASC, owned.id ASC
      LIMIT ? OFFSET ?`,
     [...ownershipParams, pageSize, pageOffset]
-  ).catch(() => [])
+  )
+  const [totalRow, rows] = throwOnError
+    ? await Promise.all([totalQuery, rowsQuery])
+    : await Promise.all([
+        totalQuery.catch(() => ({ total: 0 })),
+        rowsQuery.catch(() => [])
+      ])
   const appointments = (rows || []).flatMap((row) => {
     const canonical = buildCanonicalAppointmentSlotOption(row.start_time, timezone)
     if (!canonical) return []
@@ -1854,6 +1867,48 @@ async function listOwnedConversationalAppointments({ ctx, calendarId, timezone, 
     total: Number(totalRow?.total || 0),
     limit: pageSize,
     offset: pageOffset
+  }
+}
+
+/**
+ * Snapshot factual de citas futuras del contacto para el runtime vivo.
+ *
+ * No usa el estado terminal de la conversación como fuente de verdad porque una
+ * cita pudo cambiar fuera del chat. Relee la agenda local canónica y falla sin
+ * fabricar un "no hay citas" cuando la base no pudo verificarse.
+ */
+export async function loadConversationalVerifiedAppointmentContext({
+  ctx = {},
+  config = ctx?.config || {}
+} = {}) {
+  if (ctx?.dryRun === true) return null
+  const scheduleCapability = getNativeCapability(ctx, config, 'schedule_appointment')
+  if (!scheduleCapability) return null
+  const nativeCalendar = await resolveNativeScheduleCalendar(scheduleCapability)
+  if (!nativeCalendar?.id) return null
+  const timezone = await getAccountTimezone({ throwOnError: true })
+  const pagination = await listOwnedConversationalAppointments({
+    ctx,
+    calendarId: nativeCalendar.id,
+    timezone,
+    limit: 5,
+    offset: 0,
+    throwOnError: true
+  })
+  const appointments = pagination.appointments.map((appointment) => ({
+    appointmentId: String(appointment.appointmentId || '').trim(),
+    startTime: appointment.startTime,
+    endTime: appointment.endTime,
+    localLabel: String(appointment.localLabel || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+    status: nativeAppointmentStatus(appointment) || 'confirmed'
+  }))
+  return {
+    verified: true,
+    active: appointments.length > 0,
+    calendarId: String(nativeCalendar.id),
+    timezone,
+    total: pagination.total,
+    appointments
   }
 }
 
@@ -8137,13 +8192,26 @@ export function createConversationalTools(ctx) {
         return { ok: false, found: false, appointments: [], error: 'El calendario blindado ya no existe o no está activo.' }
       }
       const timezone = await getAccountTimezone()
-      const pagination = await listOwnedConversationalAppointments({
-        ctx,
-        calendarId,
-        timezone,
-        limit: pageSize,
-        offset: (page - 1) * pageSize
-      })
+      let pagination
+      try {
+        pagination = await listOwnedConversationalAppointments({
+          ctx,
+          calendarId,
+          timezone,
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+          throwOnError: true
+        })
+      } catch (error) {
+        logger.warn(`[Agente conversacional] No se pudo verificar la agenda del contacto: ${error.message}`)
+        return {
+          ok: false,
+          found: null,
+          appointments: [],
+          code: 'appointment_lookup_failed',
+          error: 'No pude verificar las citas del contacto en este momento. No afirmes que no tiene cita.'
+        }
+      }
       const appointments = pagination.appointments
       const hasMore = pagination.offset + appointments.length < pagination.total
       return {

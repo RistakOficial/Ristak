@@ -69,6 +69,7 @@ import {
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext,
   loadConversationalAppointmentSelectionProgressContext,
+  loadConversationalVerifiedAppointmentContext,
   supersedeUndeliveredConversationalAppointmentOffer
 } from './tools.js'
 import { buildInputItems } from '../runner.js'
@@ -1616,6 +1617,23 @@ export function extractAppointmentReadToolTelemetryActions(items = []) {
     const code = output.availabilityCheckFailed === true
       ? 'availability_check_failed'
       : safeTelemetryMachineToken(output.code)
+    const appointmentFacts = (Array.isArray(output.appointments) ? output.appointments : [])
+      .slice(0, 20)
+      .flatMap((appointment) => {
+        const appointmentId = safeTelemetryIdentifier(appointment?.appointmentId || appointment?.appointment_id)
+        const startTime = safeAppointmentUtcInstant(appointment?.startTime || appointment?.start_time, DEFAULT_TIMEZONE)
+        if (!appointmentId || !startTime) return []
+        return [{
+          appointmentId,
+          startTime,
+          endTime: safeAppointmentUtcInstant(appointment?.endTime || appointment?.end_time, DEFAULT_TIMEZONE),
+          localLabel: String(appointment?.localLabel || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 240),
+          status: safeTelemetryMachineToken(appointment?.status)
+        }]
+      })
     return [{
       type,
       calendarId: output.calendarId || output.calendar_id || null,
@@ -1623,6 +1641,10 @@ export function extractAppointmentReadToolTelemetryActions(items = []) {
       clientRequestId: output.clientRequestId || output.client_request_id || null,
       startTime: output.startTime || output.start_time || null,
       endTime: output.endTime || output.end_time || null,
+      found: output.found === true || appointmentFacts.length > 0,
+      total: safeTelemetryCount(output.total),
+      returned: safeTelemetryCount(output.returned),
+      appointmentFacts,
       availabilityVerificationRequired: output.availabilityVerificationRequired === true,
       outcome: {
         status: failed ? 'error' : (simulated ? 'simulated' : (output.ok === true ? 'ok' : 'unknown')),
@@ -1791,6 +1813,77 @@ function currentTurnOwnsAppointmentReply(actions = []) {
   })
 }
 
+function normalizeAppointmentFactText(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function replyContradictsVerifiedAppointment(value = '') {
+  const text = normalizeAppointmentFactText(value)
+  if (!text || !/\b(?:cita|citas|turno|turnos|reserva|reservas|calendario|agenda)\b/.test(text)) return false
+  return [
+    /\b(?:no|aun no|todavia no)\s+(?:me\s+)?(?:aparece|figura|esta|quedo|se encuentra|veo|encuentro|tengo)\b.{0,90}\b(?:confirmad|agendad|registrad|reservad|programad)\w*\b/,
+    /\b(?:cita|citas|turno|turnos|reserva|reservas)\b.{0,100}\b(?:no|aun no|todavia no)\b.{0,70}\b(?:confirmad|agendad|registrad|reservad|programad|aparece|figura)\w*\b/,
+    /\bno\s+(?:encontre|encuentro|veo|hay|existe|aparece|figura)\b.{0,70}\b(?:cita|citas|turno|turnos|reserva|reservas)\b/
+  ].some((pattern) => pattern.test(text))
+}
+
+function appointmentMutationSupersedesVerifiedSnapshot(actions = []) {
+  return (Array.isArray(actions) ? actions : []).some((action) => (
+    ['cancel_appointment', 'reschedule_appointment'].includes(String(action?.type || '')) &&
+    nativeActionSucceeded(action)
+  ))
+}
+
+function verifiedAppointmentFactsFromContext(ctx = {}) {
+  const snapshotFacts = ctx.verifiedAppointmentContext?.verified === true &&
+    ctx.verifiedAppointmentContext?.active === true
+    ? ctx.verifiedAppointmentContext.appointments
+    : []
+  const readFacts = (Array.isArray(ctx.appointmentReadActions) ? ctx.appointmentReadActions : [])
+    .filter((action) => (
+      action?.type === 'get_contact_appointments' &&
+      action?.found === true &&
+      action?.outcome?.status === 'ok'
+    ))
+    .flatMap((action) => action.appointmentFacts || [])
+  const unique = new Map()
+  for (const fact of [...snapshotFacts, ...readFacts]) {
+    const appointmentId = safeTelemetryIdentifier(fact?.appointmentId)
+    const startTime = safeAppointmentUtcInstant(fact?.startTime, DEFAULT_TIMEZONE)
+    if (!appointmentId || !startTime) continue
+    if (!unique.has(appointmentId)) {
+      unique.set(appointmentId, {
+        appointmentId,
+        startTime,
+        localLabel: String(fact?.localLabel || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+        status: safeTelemetryMachineToken(fact?.status)
+      })
+    }
+  }
+  return [...unique.values()].sort((left, right) => left.startTime.localeCompare(right.startTime))
+}
+
+function buildVerifiedAppointmentCorrection(facts = []) {
+  const next = facts[0] || {}
+  const localLabel = String(next.localLabel || '').trim().replace(/[.!?]+$/u, '')
+  const isConfirmed = ['confirmed', 'booked', 'scheduled'].includes(String(next.status || '').toLowerCase())
+  const count = facts.length
+  if (count > 1) {
+    return localLabel
+      ? `Sí tienes citas activas. La próxima sigue ${isConfirmed ? 'confirmada' : 'registrada'} para ${localLabel}.`
+      : 'Sí tienes citas activas registradas.'
+  }
+  if (localLabel) {
+    return `Tu cita sigue ${isConfirmed ? 'confirmada' : 'registrada'} para ${localLabel}.`
+  }
+  return `Tu cita sigue ${isConfirmed ? 'confirmada' : 'registrada'} en el calendario.`
+}
+
 /**
  * Compuerta pre-entrega: sólo contrasta la pregunta producida por el modelo con
  * hechos estructurados que ya cargó el servidor. No interpreta el mensaje del
@@ -1805,6 +1898,39 @@ export function guardConversationalAppointmentReplyAgainstState({ reply = '', ct
     reason: null,
     questionCategories,
     previousState: currentAppointmentTelemetryState(ctx)
+  }
+  const verifiedAppointmentFacts = verifiedAppointmentFactsFromContext(ctx)
+  const appointmentVerificationUnavailable = ctx.verifiedAppointmentContext?.unavailable === true ||
+    (Array.isArray(ctx.appointmentReadActions) && ctx.appointmentReadActions.some((action) => (
+      action?.type === 'get_contact_appointments' &&
+      action?.outcome?.status === 'error'
+    )))
+  if (
+    verifiedAppointmentFacts.length &&
+    !appointmentMutationSupersedesVerifiedSnapshot(ctx.actions) &&
+    replyContradictsVerifiedAppointment(originalReply)
+  ) {
+    return {
+      ...base,
+      reply: buildVerifiedAppointmentCorrection(verifiedAppointmentFacts),
+      prevented: true,
+      reason: 'verified_appointment_contradiction_replaced',
+      replacementKind: 'canonical_appointment_fact',
+      verifiedAppointmentCount: verifiedAppointmentFacts.length
+    }
+  }
+  if (
+    !verifiedAppointmentFacts.length &&
+    appointmentVerificationUnavailable &&
+    replyContradictsVerifiedAppointment(originalReply)
+  ) {
+    return {
+      ...base,
+      reply: 'Ahorita no pude verificar tus citas en el calendario. No quiero darte información incorrecta.',
+      prevented: true,
+      reason: 'unverified_appointment_denial_replaced',
+      replacementKind: 'appointment_verification_unavailable'
+    }
   }
   if (!questionCategories.length || currentTurnOwnsAppointmentReply(ctx.actions)) return base
 
@@ -2907,6 +3033,17 @@ async function buildToolCallingV2AgentForRun({
   ctx.appointmentSelectionProgress = previewAppointmentPaymentResume
     ? null
     : await loadConversationalAppointmentSelectionProgressContext({ ctx, config })
+  ctx.verifiedAppointmentContext = dryRun
+    ? null
+    : await loadConversationalVerifiedAppointmentContext({ ctx, config }).catch((error) => {
+        logger.warn(`[Agente conversacional] No se pudo cargar el contexto canónico de citas: ${error.message}`)
+        return {
+          verified: false,
+          active: false,
+          unavailable: true,
+          appointments: []
+        }
+      })
   const tools = createConversationalTools(ctx)
   const paymentResumeToolChoice = resolvePaymentResumeToolChoice({
     config,
@@ -3020,11 +3157,30 @@ ${progressivePurposeInstruction}
   const runtimeFactInstruction = cleanRuntimeEventContext
     ? `## Estado factual verificado por Ristak\n${cleanRuntimeEventContext}\n- Este bloque es contexto interno del sistema, no un mensaje del cliente. No lo cites, no muestres IDs ni expliques la maquinaria interna.`
     : ''
+  const verifiedAppointments = ctx.verifiedAppointmentContext?.verified === true &&
+    ctx.verifiedAppointmentContext?.active === true
+    ? ctx.verifiedAppointmentContext.appointments
+    : []
+  const verifiedAppointmentInstruction = verifiedAppointments.length
+    ? `## Citas activas verificadas por Ristak
+${verifiedAppointments.map((appointment, index) => (
+  `- Cita ${index + 1}: ${String(appointment.localLabel || appointment.startTime || '').slice(0, 240)}; estado ${String(appointment.status || 'activo').slice(0, 40)}.`
+)).join('\n')}
+- Estos hechos vienen de la agenda local canónica, no de una interpretación del chat. No afirmes que falta confirmación, que no hay cita ni que debe volver a agendarse mientras sigan vigentes.
+- Un mensaje nuevo, un agradecimiento o una duda lateral no cancela estas citas ni abre otra búsqueda. Si la persona pide explícitamente cancelar, mover o crear una cita adicional, usa las herramientas correspondientes y conserva la cita actual hasta que una mutación real confirme el cambio.
+- No muestres IDs ni expliques este bloque interno.`
+    : ctx.verifiedAppointmentContext?.unavailable === true
+      ? `## Verificación de citas no disponible
+- Ristak no pudo consultar la agenda canónica en esta vuelta. Esto no demuestra que falte una cita.
+- No afirmes que la persona no tiene cita, que no está confirmada ni que debe volver a agendar. Si el tema requiere esa verificación, explica brevemente que no pudiste comprobarlo y evita inventar disponibilidad.
+- No expliques este bloque interno.`
+      : ''
   const instructions = [
     baseInstructions,
     pendingOfferInstruction,
     progressiveSelectionInstruction,
-    runtimeFactInstruction
+    runtimeFactInstruction,
+    verifiedAppointmentInstruction
   ].filter(Boolean).join('\n\n')
 
   const agent = createToolCallingV2Agent({
@@ -3142,6 +3298,9 @@ export async function runToolCallingV2Turn({
     runTelemetry
   }))
   const initialOfferDecision = built.appointmentOfferDecision
+  ctx.appointmentReadActions = Array.isArray(runTelemetry.appointmentReadActions)
+    ? runTelemetry.appointmentReadActions
+    : []
   const offerAdjudication = ctx.appointmentOfferAdjudication
   const preserveNeedsSemanticValidation = initialOfferDecision?.active === true &&
     offerAdjudication?.completed === true &&
@@ -4470,6 +4629,25 @@ async function handleToolCallingV2InboundTurn({
   if (replyGuardResult.prevented) {
     reply = replyGuardResult.reply
     turn.reply = reply
+    if ([
+      'verified_appointment_contradiction_replaced',
+      'unverified_appointment_denial_replaced'
+    ].includes(replyGuardResult.reason)) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'appointment_reply_fact_corrected',
+        detail: {
+          messageId: latest.id,
+          agentId: agentConfig.id || null,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: replyGuardResult.reason,
+          verifiedAppointmentCount: safeTelemetryCount(replyGuardResult.verifiedAppointmentCount) ?? 0,
+          originalReplyHash: createHash('sha256').update(generatedReply).digest('hex'),
+          deliveredReplyHash: createHash('sha256').update(reply).digest('hex')
+        }
+      }).catch(() => {})
+    }
     preventedQuestionEvent = buildRepeatedConversationalAppointmentQuestionEvent({
       ctx,
       reply: generatedReply,
