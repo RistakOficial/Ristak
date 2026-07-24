@@ -5868,9 +5868,12 @@ Capacidades:
   premium, Player v2, x264 + AV1, rendiciones 240p–2160p, bitrates oficiales de
   alta calidad, originales conservados y HLS pre-encodeado. Subida y reproducción
   quedan provider-direct; Ristak administra metadata, no relaya el binario. No
-  agrega secrets ni variables manuales: usa la credencial central de cuenta
-  Bunny. Si la biblioteca no puede validarse, Ristak bloquea esa subida premium
-  en lugar de degradarla a la biblioteca compartida.
+  agrega secrets ni variables manuales al tenant: Installer conserva cifrada la
+  API global de Bunny, prepara la biblioteca y entrega por
+  `/api/license/storage-config` únicamente su ID y API key limitada. La
+  configuración estándar de Render se conserva para operar videos históricos.
+  Si la biblioteca premium no puede validarse, Ristak bloquea esa subida en
+  lugar de degradarla a la biblioteca compartida.
 - La sincronización de Stream también repara assets TUS antiguos que quedaron
   sin Storage, sin crear otro video ni cargar el archivo completo en memoria.
 - Candado distribuido por negocio para que dos preparaciones simultáneas no

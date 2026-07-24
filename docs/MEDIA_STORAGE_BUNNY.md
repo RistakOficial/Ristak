@@ -349,16 +349,19 @@ per-video size ceiling because bytes travel browser-to-Bunny through TUS. The
 600 MB multipart/Render safety limit remains in place for traditional endpoints;
 “unlimited” must never route a giant video through Render memory or disk.
 
-The same policy creates or reuses an isolated library named
-`Ristak Sites Premium Adaptive` through the existing central Bunny account
-credential. Ristak enforces premium encoding, Player v2, x264 plus AV1, 240p
-through 2160p renditions, official high-quality bitrate defaults, original-file
-retention, no early direct-original playback and pre-encoded adaptive HLS. The
-TUS upload and all playback bytes stay provider-direct; Ristak stores metadata
-and never downloads the premium master merely to upload a duplicate copy. No
-new Render variable or tenant-managed secret is introduced. Existing videos
-retain their original library identity for analytics, repair and deletion; only
-new premium uploads use the dedicated library.
+The same policy consumes an isolated library named
+`Ristak Sites Premium Adaptive`. Installer keeps the global Bunny account key
+ciphered in its own database, creates or updates that library, and gives the
+installed app only the scoped library ID/API key through `/api/license/storage-config`.
+Ristak never receives the global account key. The profile enforces premium
+encoding, Player v2, x264 plus AV1, 240p through 2160p renditions, official
+high-quality bitrate defaults, original-file retention, no early direct-original
+playback and pre-encoded adaptive HLS. The TUS upload and all playback bytes stay
+provider-direct; Ristak stores metadata and never downloads the premium master
+merely to upload a duplicate copy. No new Render variable or tenant-managed
+secret is introduced. The standard Stream credentials already present in Render
+remain available only as the legacy configuration for old videos; new premium
+uploads use the dedicated library delivered by Installer.
 
 A prepared TUS video reserves its original size immediately, including while it
 is `uploading`, so later attempts see the reservation. Finalization is

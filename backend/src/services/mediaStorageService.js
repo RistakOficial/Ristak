@@ -1103,12 +1103,71 @@ function premiumStreamUnavailableConfig(config, policy, error = null) {
   }
 }
 
+function hasScopedPremiumStreamConfig(config, policy) {
+  return Boolean(
+    config.bunnyStreamConfigured &&
+    cleanString(config.bunnyStreamLibraryId) &&
+    cleanString(config.bunnyStreamApiKey) &&
+    cleanString(config.bunnyStreamLibraryName).toLowerCase() ===
+      cleanString(policy.streamLibraryName).toLowerCase()
+  )
+}
+
+function applyInstallerPremiumStreamConfig(config, policy, centralEnv = null) {
+  const premiumLibraryName = cleanString(centralEnv?.BUNNY_STREAM_LIBRARY_NAME)
+  const premiumLibraryId = cleanString(centralEnv?.BUNNY_STREAM_LIBRARY_ID)
+  const premiumApiKey = cleanString(centralEnv?.BUNNY_STREAM_API_KEY)
+  if (
+    !policy.premiumStream ||
+    !premiumLibraryId ||
+    !premiumApiKey ||
+    premiumLibraryName.toLowerCase() !== cleanString(policy.streamLibraryName).toLowerCase()
+  ) {
+    return config
+  }
+
+  const legacyStreamConfig = (
+    config.bunnyStreamConfigured &&
+    cleanString(config.bunnyStreamLibraryId) !== premiumLibraryId
+  )
+    ? {
+        ...config,
+        mediaAccountPolicy: policy,
+        bunnyStreamLegacyConfig: null
+      }
+    : config.bunnyStreamLegacyConfig || null
+
+  return {
+    ...config,
+    mediaAccountPolicy: policy,
+    premiumStreamProvisionedByInstaller: true,
+    bunnyStreamEnabled: true,
+    bunnyStreamLibraryId: premiumLibraryId,
+    bunnyStreamLibraryName: premiumLibraryName,
+    bunnyStreamApiKey: premiumApiKey,
+    bunnyStreamCollectionId: '',
+    bunnyStreamCollectionName: policy.streamCollectionName,
+    bunnyStreamConfigured: true,
+    streamMissingEnvironment: [],
+    streamStatus: 'configured',
+    bunnyStreamLegacyConfig: legacyStreamConfig
+  }
+}
+
 async function applyPremiumMediaStreamConfig(config, policy) {
   if (!policy.premiumStream || config.provider !== 'bunny') {
     return {
       ...config,
       mediaAccountPolicy: policy,
       premiumStreamReady: !policy.premiumStream
+    }
+  }
+  if (hasScopedPremiumStreamConfig(config, policy)) {
+    return {
+      ...config,
+      mediaAccountPolicy: policy,
+      premiumStreamReady: true,
+      premiumStreamError: ''
     }
   }
   if (!config.bunnyAccountApiKey || !config.bunnyConfigured) {
@@ -1249,6 +1308,7 @@ export async function getStorageRuntimeConfig() {
   const row = await getStorageSettingsRow()
   const mediaAccountPolicy = await resolveMediaAccountPolicy()
   let config = buildStorageRuntimeConfig(row)
+  let centralEnv = null
 
   const needsPremiumAccountKey = mediaAccountPolicy.premiumStream && !config.bunnyAccountApiKey
   if (
@@ -1259,13 +1319,14 @@ export async function getStorageRuntimeConfig() {
       needsPremiumAccountKey
     )
   ) {
-    const centralEnv = await fetchCentralStorageConfig()
+    centralEnv = await fetchCentralStorageConfig()
     if (applyCentralStorageEnv(centralEnv)) {
       config = buildStorageRuntimeConfig(row)
       config.centralConfigLoaded = config.bunnyConfigured
     }
   }
 
+  config = applyInstallerPremiumStreamConfig(config, mediaAccountPolicy, centralEnv)
   if (!mediaAccountPolicy.premiumStream) {
     config = await autoProvisionBunnyStreamConfig(config)
   }
@@ -1276,6 +1337,8 @@ export async function ensureBunnyStreamRuntimeConfigured() {
   const config = await getStorageRuntimeConfig()
   if (config.mediaAccountPolicy?.premiumStream && !config.premiumStreamReady) {
     logger.warn(`[MediaStorage] Bunny Stream premium no está listo: ${config.premiumStreamError || 'falta acceso de cuenta Bunny'}.`)
+  } else if (config.mediaAccountPolicy?.premiumStream) {
+    logger.info(`[MediaStorage] Perfil premium Bunny Stream listo: ${config.bunnyStreamLibraryName || config.bunnyStreamLibraryId}.`)
   } else if (!config.bunnyStreamEnabled) {
     logger.info('[MediaStorage] Bunny Stream está deshabilitado.')
   } else if (config.bunnyStreamConfigured) {

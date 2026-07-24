@@ -34,7 +34,16 @@ const ENV_KEYS = [
   'HIGHLEVEL_LOCATION_ID',
   'RENDER_EXTERNAL_URL',
   'PUBLIC_URL',
-  'OWNER_EMAIL'
+  'OWNER_EMAIL',
+  'APP_URL',
+  'LICENSE_SERVER_URL',
+  'RISTAK_LICENSE_SERVER_URL',
+  'CLIENT_ID',
+  'RISTAK_CLIENT_ID',
+  'LICENSE_KEY',
+  'RISTAK_LICENSE_KEY',
+  'INSTALLATION_ID',
+  'RISTAK_INSTALLATION_ID'
 ]
 
 function snapshotEnv() {
@@ -81,6 +90,7 @@ async function createBunnyMockServer() {
   let streamVideoTitle = 'Hero video (sites) site_1'
   let streamVideoCollectionId = ''
   let streamVideoStatus = 4
+  let centralStorageConfig = null
   const streamOriginalBuffer = Buffer.from('fake original video bytes from Bunny Stream')
   let tusUploadLength = streamOriginalBuffer.length
   let tusUploadOffset = tusUploadLength
@@ -104,6 +114,16 @@ async function createBunnyMockServer() {
         res.setHeader('Upload-Length', String(tusUploadLength))
         res.setHeader('Upload-Offset', String(tusUploadOffset))
         res.end()
+        return
+      }
+
+      if (path === '/api/license/storage-config' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
+        requests.push({ kind: 'central-storage-config', body })
+        sendJson(res, 200, {
+          success: true,
+          config: centralStorageConfig || {}
+        })
         return
       }
 
@@ -398,6 +418,9 @@ async function createBunnyMockServer() {
     setStreamVideoStatus: (status) => {
       streamVideoStatus = status
     },
+    setCentralStorageConfig: (config) => {
+      centralStorageConfig = config
+    },
     streamOriginalBuffer,
     close: () => {
       server.closeAllConnections?.()
@@ -665,6 +688,51 @@ test('la cuenta premium del dueño usa cuota ilimitada y una biblioteca Stream a
       await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
     }
     await db?.run('DELETE FROM storage_quotas WHERE business_id = ?', ['default']).catch(() => undefined)
+    bunny.close()
+    restoreEnv(previousEnv)
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+  }
+})
+
+test('la cuenta premium consume la biblioteca limitada del Installer sin recibir la API global', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+    process.env.OWNER_EMAIL = 'milemedia.mkt@gmail.com'
+    process.env.LICENSE_SERVER_URL = bunny.baseUrl
+    process.env.CLIENT_ID = 'client-premium'
+    process.env.LICENSE_KEY = 'license-premium'
+    process.env.INSTALLATION_ID = 'installation-premium'
+    process.env.RENDER_EXTERNAL_URL = 'https://milemedia.example'
+    bunny.setCentralStorageConfig({
+      media_storage_provider: 'bunny',
+      bunny_storage_zone: 'central-zone',
+      bunny_storage_endpoint: `${bunny.baseUrl}/storage`,
+      bunny_storage_api_key: 'storage-secret',
+      bunny_cdn_base_url: `${bunny.baseUrl}/cdn`,
+      bunny_stream_library_name: 'Ristak Sites Premium Adaptive',
+      bunny_stream_library_id: '456',
+      bunny_stream_api_key: 'premium-stream-secret'
+    })
+
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+
+    const config = await mediaStorageService.ensureBunnyStreamRuntimeConfigured()
+    assert.equal(config.premiumStreamReady, true)
+    assert.equal(config.premiumStreamProvisionedByInstaller, true)
+    assert.equal(config.bunnyStreamLibraryName, 'Ristak Sites Premium Adaptive')
+    assert.equal(config.bunnyStreamLibraryId, '456')
+    assert.equal(config.bunnyStreamApiKey, 'premium-stream-secret')
+    assert.equal(config.bunnyAccountApiKey, '')
+    assert.equal(config.bunnyStreamLegacyConfig.bunnyStreamLibraryId, '123')
+    assert.equal(config.bunnyStreamLegacyConfig.bunnyStreamApiKey, 'stream-secret')
+    assert.ok(bunny.requests.some(request => request.kind === 'central-storage-config'))
+    assert.equal(bunny.requests.some(request => request.kind.startsWith('core-')), false)
+  } finally {
     bunny.close()
     restoreEnv(previousEnv)
     const mediaStorageService = await import('../src/services/mediaStorageService.js')
