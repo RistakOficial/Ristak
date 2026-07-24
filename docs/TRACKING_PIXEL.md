@@ -652,8 +652,11 @@ Ristak guarda cada zona como bloque real del sitio importado:
 - `video`: usa el mismo bloque de video del editor: subida/URL, controles,
   diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI
   configurados. En publicado conserva el reproductor personalizable de Ristak y
-  manda los eventos first-party a `/video-event`; una copia lista en Bunny
-  Storage no se reemplaza por el iframe visual de Bunny Stream.
+  manda los eventos first-party a `/video-event`; cuando existe una playlist HLS
+  validada usa esa entrega adaptativa dentro del player de Ristak. Bunny Storage
+  queda para editor/fallback cuando existe; el perfil premium también usa HLS en
+  preview con tracking apagado y no crea una copia binaria a través de Render.
+  Ningún modo sustituye el player nativo por el iframe visual de Bunny Stream.
 
 Para bloquear contenido por reproducción sin escribir JavaScript, el slot
 `video` puede declarar:

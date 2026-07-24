@@ -5011,17 +5011,17 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   campos, reglas de completado, diseno y submit publico del bloque nativo; el
   HTML externo solo reserva la zona donde se monta el reproductor.
   Un video nuevo se prepara en backend y se sube directo a Bunny Stream con TUS
-  resumible y firma temporal; la API key nunca llega al navegador. Al finalizar,
-  backend descarga el original autenticado desde Stream y lo transmite a Bunny
-  Storage sin cargarlo completo en memoria. El asset queda listo solamente
-  cuando existen Storage para reproducción nativa y la identidad/metadata de
-  Stream para procesamiento y analítica.
-  Editor, canvas, preview-session y publicado/en vivo usan la URL de Storage con
-  el reproductor personalizable de Ristak. Publicar nunca sustituye un video
-  nativo listo por el iframe visual de Stream: conserva exactamente el botón,
-  colores, barra, controles, acciones y formulario configurados. Editor y
-  preview mantienen tracking apagado; publicado envía los eventos first-party
-  de video y conserva los ids del asset y de Stream.
+  resumible y firma temporal; la API key nunca llega al navegador. En cuentas
+  estándar, backend crea además el espejo Storage sin cargar el archivo completo
+  en memoria. El perfil premium conserva el máster en Stream y no lo descarga ni
+  lo vuelve a subir a través de Render: preview y publicado consumen HLS directo.
+  Editor y canvas usan Storage cuando existe o HLS validado para el perfil
+  premium. Publicado/en vivo siempre prefiere la playlist adaptativa de Stream
+  dentro del mismo reproductor; un asset estándar sin HLS usa Storage. Publicar nunca
+  sustituye un video nativo listo por el iframe visual de Stream: conserva
+  exactamente el botón, colores, barra, controles, acciones y formulario
+  configurados. Editor y preview mantienen tracking apagado; publicado envía los
+  eventos first-party de video y conserva los ids del asset y de Stream.
   El HTML importado inyecta el mismo stylesheet y el mismo runtime de reproductor
   que el sitio construido en el editor: preview silencioso en loop, detección de
   orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
@@ -5034,19 +5034,21 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   la reproducción configurada. El runtime del candado actualiza el tiempo restante
   sólo cuando el texto realmente cambia y su observador ignora mutaciones de texto;
   esto evita ciclos de render infinitos entre el contador y `MutationObserver`.
-  Un asset legacy que solo vive en Stream muestra brevemente `Preparando vista
-  previa del video`; abrir el editor o crear una preview-session autenticada
-  dispara automáticamente la creación de su espejo de Storage. El proceso está
-  deduplicado por asset, conserva el mismo video de Stream y jamás usa la página
-  iframe como `<video src>` ni carga Stream como fallback no-track.
+  Un asset legacy que solo vive en Stream y no tiene HLS muestra brevemente
+  `Preparando vista previa del video`; abrir el editor o crear una
+  preview-session autenticada dispara la reparación correspondiente. Un asset
+  premium con HLS se reproduce directo sin crear espejo. El proceso estándar
+  está deduplicado por asset, conserva el mismo video de Stream y jamás usa la
+  página iframe como `<video src>`.
   El mismo contrato aplica al HTML importado. En el canvas, el primer click
   selecciona el bloque y, una vez seleccionado, el reproductor recibe interacción
   para reproducir, pausar y operar sus controles sin volver interactivos los
   demás embeds del editor.
-  Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado, el total
-  recibido por Bunny y que el original copiado a Storage tenga exactamente el
-  mismo tamaño antes de marcar el asset listo; estados de error de Stream nunca
-  se convierten en éxito y liberan inmediatamente asset/video/cuota.
+  Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado y el total
+  recibido por Bunny. En estándar también exige que el espejo Storage tenga el
+  mismo tamaño; en premium exige la identidad Stream y persiste su HLS sin
+  retransmitir el máster. Estados de error nunca se convierten en éxito y liberan
+  inmediatamente asset/video/cuota.
   Cancelar elimina la reserva y el video
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
@@ -5849,11 +5851,26 @@ Capacidades:
   el upload inicial atraviese el proceso Render ni exponga la API key.
 - Preparacion/finalizacion idempotente en `media_assets`: reserva cuota mientras
   sube y queda `ready` solo después de verificar por TUS el tamaño y avance que
-  Bunny recibió, confirmar el original en Stream y transmitir ese original a
-  Bunny Storage con el mismo número de bytes.
-- Mientras sube, un TUS directo vive temporalmente como `bunny_stream`; al
-  finalizar queda como `bunny`, con `bunny_path` y `public_url` de Storage. La
-  identidad Stream permanece en metadata para el render publicado y analíticas.
+  Bunny recibió y confirmar el original en Stream. Las cuentas estándar
+  transmiten además ese original a Bunny Storage con el mismo número de bytes;
+  el perfil premium no retransmite ni duplica el archivo.
+- Mientras sube, un TUS directo vive como `bunny_stream`. En estándar, al
+  finalizar queda como `bunny`, con `bunny_path` y `public_url` de Storage. En
+  premium permanece `bunny_stream` y preview/publicado reproducen el HLS
+  adaptativo validado sin que el máster atraviese Render. La identidad Stream y
+  `stream.delivery.playlistUrl` permanecen en metadata para render y analíticas.
+- La política interna de media premium se resuelve por el correo normalizado del
+  dueño configurado por Installer, nunca por el empleado conectado. Ese perfil
+  declara cuota Ristak ilimitada, conserva el máster de video y permite videos
+  TUS sin el techo interno de 512 MB; el multipart tradicional conserva su límite
+  de seguridad de 600 MB.
+- El perfil premium crea o reutiliza una biblioteca Stream aislada con encoding
+  premium, Player v2, x264 + AV1, rendiciones 240p–2160p, bitrates oficiales de
+  alta calidad, originales conservados y HLS pre-encodeado. Subida y reproducción
+  quedan provider-direct; Ristak administra metadata, no relaya el binario. No
+  agrega secrets ni variables manuales: usa la credencial central de cuenta
+  Bunny. Si la biblioteca no puede validarse, Ristak bloquea esa subida premium
+  en lugar de degradarla a la biblioteca compartida.
 - La sincronización de Stream también repara assets TUS antiguos que quedaron
   sin Storage, sin crear otro video ni cargar el archivo completo en memoria.
 - Candado distribuido por negocio para que dos preparaciones simultáneas no

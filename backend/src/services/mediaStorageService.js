@@ -17,6 +17,7 @@ import {
   createSafeOutboundMediaHttpsAgent
 } from './outboundMediaReferenceService.js'
 import { resolveCentralBrokerConfig } from './centralBrokerService.js'
+import { resolveMediaAccountPolicy } from './mediaAccountPolicyService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -31,6 +32,31 @@ const BUNNY_STREAM_TUS_STALE_UPLOAD_MS = 7 * 24 * 60 * 60 * 1000
 const BUNNY_STREAM_FAILED_STATUSES = new Set([5, 6])
 const DEFAULT_BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
 const DEFAULT_BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
+const PREMIUM_BUNNY_STREAM_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS = Object.freeze({
+  PlayerVersion: 2,
+  EncodingTier: 1,
+  JitEncodingEnabled: false,
+  OutputCodecs: 'x264,av1',
+  EnabledResolutions: '240p,360p,480p,720p,1080p,1440p,2160p',
+  AllowEarlyPlay: false,
+  EnableMP4Fallback: false,
+  KeepOriginalFiles: true,
+  AllowDirectPlay: true,
+  EnableMultiAudioTrackSupport: true,
+  UseSeparateAudioStream: true,
+  ScaleVideoUsingBothDimensions: true,
+  ExposeOriginals: false,
+  ExposeVideoMetadata: false,
+  RemoveMetadataFromFallbackVideos: true,
+  Bitrate240p: 600,
+  Bitrate360p: 800,
+  Bitrate480p: 1400,
+  Bitrate720p: 2800,
+  Bitrate1080p: 5000,
+  Bitrate1440p: 8000,
+  Bitrate2160p: 25000
+})
 const DEFAULT_CLIENT_ACCOUNT_ID = 'default'
 const CLIENT_ACCOUNT_ROOT_FOLDER = 'accounts'
 const CENTRAL_STORAGE_CONFIG_TTL_MS = Math.max(
@@ -116,6 +142,13 @@ let centralStorageConfigCache = {
 let bunnyStreamLibraryProvisionCache = {
   key: '',
   expiresAt: 0,
+  promise: null
+}
+let premiumBunnyStreamLibraryCache = {
+  key: '',
+  expiresAt: 0,
+  library: null,
+  error: null,
   promise: null
 }
 const bunnyStreamCollectionCache = new Map()
@@ -936,16 +969,182 @@ async function getBunnyVideoLibrary(config, libraryId) {
   return normalizeBunnyVideoLibrary(payload)
 }
 
-async function createBunnyVideoLibrary(config) {
+async function createBunnyVideoLibrary(config, {
+  name = config.bunnyStreamLibraryName || DEFAULT_BUNNY_STREAM_LIBRARY_NAME,
+  premium = false
+} = {}) {
   const payload = await bunnyCoreRequest(config, '/videolibrary', {
     method: 'POST',
     body: {
-      Name: config.bunnyStreamLibraryName || DEFAULT_BUNNY_STREAM_LIBRARY_NAME
+      Name: name,
+      ...(premium ? {
+        PlayerVersion: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.PlayerVersion,
+        EncodingTier: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EncodingTier,
+        JitEncodingEnabled: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.JitEncodingEnabled,
+        OutputCodecs: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.OutputCodecs,
+        EnabledResolutions: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EnabledResolutions,
+        AllowEarlyPlay: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.AllowEarlyPlay,
+        EnableMP4Fallback: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EnableMP4Fallback,
+        KeepOriginalFiles: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.KeepOriginalFiles,
+        AllowDirectPlay: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.AllowDirectPlay,
+        EnableMultiAudioTrackSupport: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EnableMultiAudioTrackSupport
+      } : {})
     },
     okStatuses: [200, 201]
   })
   const library = normalizeBunnyVideoLibrary(payload)
   return library ? { ...library, created: true } : null
+}
+
+async function applyPremiumBunnyVideoLibrarySettings(config, library) {
+  const payload = await bunnyCoreRequest(
+    config,
+    `/videolibrary/${encodeURIComponent(library.id)}`,
+    {
+      method: 'POST',
+      body: {
+        Name: library.name || config.mediaAccountPolicy?.streamLibraryName,
+        ...PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS
+      },
+      okStatuses: [200]
+    }
+  )
+  const updated = normalizeBunnyVideoLibrary(payload)
+  return {
+    ...library,
+    ...(updated || {}),
+    apiKey: updated?.apiKey || library.apiKey,
+    readOnlyApiKey: updated?.readOnlyApiKey || library.readOnlyApiKey,
+    created: library.created
+  }
+}
+
+async function provisionPremiumBunnyStreamLibrary(config, policy) {
+  const libraryName = policy.streamLibraryName
+  const cacheKey = [
+    config.bunnyCoreEndpoint || BUNNY_CORE_API_BASE_URL,
+    libraryName.toLowerCase()
+  ].join('|')
+  if (
+    premiumBunnyStreamLibraryCache.key === cacheKey &&
+    premiumBunnyStreamLibraryCache.library &&
+    premiumBunnyStreamLibraryCache.expiresAt > Date.now()
+  ) {
+    return premiumBunnyStreamLibraryCache.library
+  }
+  if (
+    premiumBunnyStreamLibraryCache.key === cacheKey &&
+    premiumBunnyStreamLibraryCache.error &&
+    premiumBunnyStreamLibraryCache.expiresAt > Date.now()
+  ) {
+    throw premiumBunnyStreamLibraryCache.error
+  }
+  if (premiumBunnyStreamLibraryCache.promise) return premiumBunnyStreamLibraryCache.promise
+
+  premiumBunnyStreamLibraryCache.key = cacheKey
+  premiumBunnyStreamLibraryCache.promise = (async () => {
+    const libraries = await listBunnyVideoLibraries(config)
+    let library = libraries.find(item => item.name.toLowerCase() === libraryName.toLowerCase()) || null
+    if (library) {
+      library = await getBunnyVideoLibrary(config, library.id) || library
+    } else {
+      library = await createBunnyVideoLibrary(config, { name: libraryName, premium: true })
+    }
+    if (!library?.id) {
+      throw errorWithStatus(
+        'Bunny no regresó una biblioteca premium usable.',
+        502,
+        'bunny_stream_premium_library_missing'
+      )
+    }
+
+    library = await applyPremiumBunnyVideoLibrarySettings(config, library)
+    if (!library.apiKey) {
+      const refreshed = await getBunnyVideoLibrary(config, library.id)
+      library = {
+        ...library,
+        ...(refreshed || {}),
+        apiKey: refreshed?.apiKey || library.apiKey
+      }
+    }
+    if (!library.apiKey) {
+      throw errorWithStatus(
+        'Bunny preparó la biblioteca premium, pero no regresó su API key.',
+        502,
+        'bunny_stream_library_api_key_missing'
+      )
+    }
+
+    premiumBunnyStreamLibraryCache.library = library
+    premiumBunnyStreamLibraryCache.error = null
+    premiumBunnyStreamLibraryCache.expiresAt = Date.now() + PREMIUM_BUNNY_STREAM_PROFILE_CACHE_TTL_MS
+    logger.info(`[MediaStorage] Perfil premium Bunny Stream listo: ${library.name || library.id}`)
+    return library
+  })()
+
+  try {
+    return await premiumBunnyStreamLibraryCache.promise
+  } catch (error) {
+    premiumBunnyStreamLibraryCache.error = error
+    premiumBunnyStreamLibraryCache.expiresAt = Date.now() + 60_000
+    throw error
+  } finally {
+    premiumBunnyStreamLibraryCache.promise = null
+  }
+}
+
+function premiumStreamUnavailableConfig(config, policy, error = null) {
+  return {
+    ...config,
+    mediaAccountPolicy: policy,
+    premiumStreamReady: false,
+    premiumStreamError: cleanString(error?.message),
+    streamStatus: 'premium_not_configured'
+  }
+}
+
+async function applyPremiumMediaStreamConfig(config, policy) {
+  if (!policy.premiumStream || config.provider !== 'bunny') {
+    return {
+      ...config,
+      mediaAccountPolicy: policy,
+      premiumStreamReady: !policy.premiumStream
+    }
+  }
+  if (!config.bunnyAccountApiKey || !config.bunnyConfigured) {
+    return premiumStreamUnavailableConfig(config, policy)
+  }
+
+  const legacyStreamConfig = config.bunnyStreamConfigured
+    ? {
+        ...config,
+        mediaAccountPolicy: policy,
+        bunnyStreamLegacyConfig: null
+      }
+    : null
+
+  try {
+    const library = await provisionPremiumBunnyStreamLibrary(config, policy)
+    return {
+      ...config,
+      mediaAccountPolicy: policy,
+      premiumStreamReady: true,
+      premiumStreamError: '',
+      bunnyStreamEnabled: true,
+      bunnyStreamLibraryId: library.id,
+      bunnyStreamLibraryName: library.name || policy.streamLibraryName,
+      bunnyStreamApiKey: library.apiKey,
+      bunnyStreamCollectionId: '',
+      bunnyStreamCollectionName: policy.streamCollectionName,
+      bunnyStreamConfigured: true,
+      streamMissingEnvironment: [],
+      streamStatus: 'configured',
+      bunnyStreamLegacyConfig: legacyStreamConfig
+    }
+  } catch (error) {
+    logger.warn(`[MediaStorage] No se pudo preparar el perfil premium de Bunny Stream: ${error.message}`)
+    return premiumStreamUnavailableConfig(config, policy, error)
+  }
 }
 
 async function updateStorageSettingsBunnyStreamLibrary(library, config) {
@@ -1036,14 +1235,30 @@ export function resetCentralStorageConfigCache() {
     expiresAt: 0,
     promise: null
   }
+  premiumBunnyStreamLibraryCache = {
+    key: '',
+    expiresAt: 0,
+    library: null,
+    error: null,
+    promise: null
+  }
   bunnyStreamCollectionCache.clear()
 }
 
 export async function getStorageRuntimeConfig() {
   const row = await getStorageSettingsRow()
+  const mediaAccountPolicy = await resolveMediaAccountPolicy()
   let config = buildStorageRuntimeConfig(row)
 
-  if (config.provider === 'bunny' && (!config.bunnyConfigured || (config.bunnyStreamEnabled && !config.bunnyStreamConfigured && !config.bunnyAccountApiKey))) {
+  const needsPremiumAccountKey = mediaAccountPolicy.premiumStream && !config.bunnyAccountApiKey
+  if (
+    config.provider === 'bunny' &&
+    (
+      !config.bunnyConfigured ||
+      (config.bunnyStreamEnabled && !config.bunnyStreamConfigured && !config.bunnyAccountApiKey) ||
+      needsPremiumAccountKey
+    )
+  ) {
     const centralEnv = await fetchCentralStorageConfig()
     if (applyCentralStorageEnv(centralEnv)) {
       config = buildStorageRuntimeConfig(row)
@@ -1051,13 +1266,17 @@ export async function getStorageRuntimeConfig() {
     }
   }
 
-  config = await autoProvisionBunnyStreamConfig(config)
-  return config
+  if (!mediaAccountPolicy.premiumStream) {
+    config = await autoProvisionBunnyStreamConfig(config)
+  }
+  return applyPremiumMediaStreamConfig(config, mediaAccountPolicy)
 }
 
 export async function ensureBunnyStreamRuntimeConfigured() {
   const config = await getStorageRuntimeConfig()
-  if (!config.bunnyStreamEnabled) {
+  if (config.mediaAccountPolicy?.premiumStream && !config.premiumStreamReady) {
+    logger.warn(`[MediaStorage] Bunny Stream premium no está listo: ${config.premiumStreamError || 'falta acceso de cuenta Bunny'}.`)
+  } else if (!config.bunnyStreamEnabled) {
     logger.info('[MediaStorage] Bunny Stream está deshabilitado.')
   } else if (config.bunnyStreamConfigured) {
     logger.info(`[MediaStorage] Bunny Stream listo: librería ${config.bunnyStreamLibraryId}.`)
@@ -1309,6 +1528,34 @@ function isBunnyStreamEligibleVideo({ mediaType = '', module = '' } = {}) {
   return cleanString(mediaType).toLowerCase() === 'video' && BUNNY_STREAM_MEDIA_MODULES.has(normalizeModule(module))
 }
 
+function assertPremiumStreamReady(config, { mediaType = 'video', module = 'sites' } = {}) {
+  if (
+    config.mediaAccountPolicy?.premiumStream &&
+    isBunnyStreamEligibleVideo({ mediaType, module }) &&
+    !config.premiumStreamReady
+  ) {
+    throw errorWithStatus(
+      'La biblioteca premium de Bunny Stream todavía no está lista. Ristak no degradará este video a una subida de menor calidad.',
+      503,
+      'bunny_stream_premium_profile_unavailable'
+    )
+  }
+}
+
+function bunnyStreamConfigForAsset(config, asset) {
+  const assetLibraryId = cleanString(asset?.metadata?.stream?.libraryId)
+  if (!assetLibraryId || assetLibraryId === cleanString(config.bunnyStreamLibraryId)) return config
+
+  const legacyConfig = config.bunnyStreamLegacyConfig
+  if (
+    legacyConfig?.bunnyStreamConfigured &&
+    assetLibraryId === cleanString(legacyConfig.bunnyStreamLibraryId)
+  ) {
+    return legacyConfig
+  }
+  return config
+}
+
 function bunnyStreamUsageContext(asset, context = {}) {
   const module = normalizeModule(context.module || asset.module)
   const moduleEntityId = context.moduleEntityId === undefined || context.moduleEntityId === null
@@ -1557,6 +1804,12 @@ async function syncVideoToBunnyStream({
       return created
     })
     const normalizedVideo = normalizeBunnyStreamVideo(video) || normalizeBunnyStreamVideo(created)
+    const delivery = await getBunnyStreamVideoPlayData(config, videoId)
+      .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config))
+      .catch((error) => {
+        logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${videoId}: ${error.message}`)
+        return null
+      })
 
     logger.info(`[MediaStorage] Bunny Stream sync completada: ${id} -> ${videoId}`)
     return {
@@ -1577,6 +1830,7 @@ async function syncVideoToBunnyStream({
         statusCode: uploadResult?.statusCode ?? null,
         message: uploadResult?.message ?? null
       },
+      ...(delivery ? { delivery } : {}),
       video: normalizedVideo
     }
   } catch (error) {
@@ -1828,10 +2082,12 @@ async function detectMimeType(buffer, declaredMimeType = '', filename = '') {
   }
 }
 
-function validateMediaType({ mimeType, mediaType, sizeBytes, settings }) {
+function validateMediaType({ mimeType, mediaType, sizeBytes, settings, accountPolicy = settings?.mediaAccountPolicy }) {
   if (!ALLOWED_MIME_TYPES.has(mimeBase(mimeType))) {
     throw errorWithStatus('Tipo de archivo no permitido para almacenamiento multimedia.', 415, 'unsupported_media_type')
   }
+
+  if (mediaType === 'video' && accountPolicy?.unlimitedDirectVideoUpload) return
 
   const maxBytes = maxBytesForMediaType(settings, mediaType)
   if (sizeBytes > maxBytes) {
@@ -2015,6 +2271,7 @@ async function assertQuotaAvailable({ businessId, quotaSize, config }) {
   if (!boolValue(quota.storage_enabled, true)) {
     throw errorWithStatus('El almacenamiento está deshabilitado para este negocio.', 403, 'storage_disabled')
   }
+  if (config?.mediaAccountPolicy?.unlimitedQuota) return
 
   const usedBytes = await readActiveUsageBytes(businessId)
   const quotaBytes = numberValue(quota.quota_bytes, Math.round(numberValue(quota.quota_gb, 5) * GB))
@@ -2223,6 +2480,37 @@ function bunnyStreamOriginalDeliveryUrl(playData = {}, videoId = '', config = {}
   return sourceUrl.toString()
 }
 
+function bunnyStreamPlaylistDeliveryUrl(playData = {}, videoId = '', config = {}) {
+  const playlistUrl = cleanString(playData.videoPlaylistUrl)
+  if (!playlistUrl) return ''
+
+  try {
+    const parsed = new URL(playlistUrl)
+    const streamApiUrl = new URL(bunnyStreamBaseUrl(config))
+    if (parsed.protocol !== 'https:' && parsed.origin !== streamApiUrl.origin) return ''
+    const pathSegments = parsed.pathname.split('/').filter(Boolean).map(segment => {
+      try { return decodeURIComponent(segment) } catch { return segment }
+    })
+    if (!pathSegments.includes(cleanString(videoId)) || !/\.m3u8$/i.test(parsed.pathname)) return ''
+    parsed.hash = ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
+}
+
+function bunnyStreamDeliveryMetadata(playData = {}, videoId = '', config = {}) {
+  const playlistUrl = bunnyStreamPlaylistDeliveryUrl(playData, videoId, config)
+  if (!playlistUrl) return null
+  return {
+    protocol: 'hls',
+    playlistUrl,
+    adaptive: true,
+    profile: config.mediaAccountPolicy?.streamProfile || 'standard',
+    resolvedAt: nowIso()
+  }
+}
+
 async function fetchBunnyStreamOriginalForStorage(config, asset, videoId) {
   const playData = await getBunnyStreamVideoPlayData(config, videoId)
   const sourceUrl = bunnyStreamOriginalDeliveryUrl(playData, videoId, config)
@@ -2268,7 +2556,8 @@ async function fetchBunnyStreamOriginalForStorage(config, asset, videoId) {
       return {
         stream: response.body,
         size: contentLength,
-        mimeType: storageMimeType(response.headers.get('content-type') || asset.mimeType) || asset.mimeType
+        mimeType: storageMimeType(response.headers.get('content-type') || asset.mimeType) || asset.mimeType,
+        delivery: bunnyStreamDeliveryMetadata(playData, videoId, config)
       }
     }
 
@@ -2298,7 +2587,8 @@ async function ensureBunnyStreamStorageMirrorUnlocked(assetId, context = {}) {
     throw errorWithStatus('Este video no requiere una copia de Stream a Storage.', 409, 'bunny_stream_storage_mirror_not_applicable')
   }
 
-  const config = context.config || await getStorageRuntimeConfig()
+  const runtimeConfig = context.config || await getStorageRuntimeConfig()
+  const config = bunnyStreamConfigForAsset(runtimeConfig, asset)
   if (config.provider !== 'bunny' || !config.bunnyConfigured) {
     throw errorWithStatus(
       'Bunny Storage no está listo para crear la vista previa separada del video.',
@@ -2358,6 +2648,7 @@ async function ensureBunnyStreamStorageMirrorUnlocked(assetId, context = {}) {
     }
     const nextStream = {
       ...streamMetadata,
+      ...(original.delivery ? { delivery: original.delivery } : {}),
       source: {
         ...(streamMetadata.source || {}),
         ...bunnyStreamSourceForAsset(mirroredAsset, { module, moduleEntityId }, clientAccount)
@@ -2434,8 +2725,8 @@ async function ensureBunnyStreamStorageMirror(assetId, context = {}) {
 
 // Punto de entrada interno para superficies autenticadas de Sites. Mantiene la
 // reparación de assets Stream-only separada de la sincronización completa de
-// metadata: abrir un editor o generar un preview sólo debe crear el espejo que
-// alimenta al reproductor Ristak, nunca crear otro video de Stream.
+// metadata. El perfil premium reproduce HLS directo también en preview y evita
+// bajar/subir archivos pesados a través del backend.
 export async function ensureMediaAssetStoragePreview(assetId, context = {}) {
   const asset = await getMediaAsset(assetId)
   const module = normalizeModule(context.module || asset.module)
@@ -2444,6 +2735,12 @@ export async function ensureMediaAssetStoragePreview(assetId, context = {}) {
   }
 
   if (asset.storageProvider !== 'bunny_stream') return asset
+  const config = await getStorageRuntimeConfig()
+  if (config.mediaAccountPolicy?.preserveVideoSource) {
+    return asset.metadata?.stream?.delivery?.playlistUrl
+      ? asset
+      : syncMediaAssetBunnyStream(asset.id, { ...context, module })
+  }
   return ensureBunnyStreamStorageMirror(asset.id, { ...context, module })
 }
 
@@ -2520,6 +2817,7 @@ async function prepareBunnyStreamResumableUploadUnlocked(input = {}) {
   }
 
   const config = await getStorageRuntimeConfig()
+  assertPremiumStreamReady(config, { mediaType: 'video', module })
   if (!config.storageEnabled) {
     throw errorWithStatus('El almacenamiento multimedia está deshabilitado.', 503, 'storage_disabled')
   }
@@ -2746,19 +3044,28 @@ export async function finalizeBunnyStreamResumableUpload(assetId, context = {}) 
     throw errorWithStatus('Bunny todavía no confirma que recibió el video completo.', 409, 'bunny_stream_upload_not_complete')
   }
 
-  asset = await ensureBunnyStreamStorageMirror(asset.id, {
-    ...context,
-    config,
-    module,
-    clientAccount: stream.clientAccount
-  })
   const normalizedVideo = normalizeBunnyStreamVideo(video)
-  const mirroredStream = asset.metadata?.stream || stream
+  if (!config.mediaAccountPolicy?.preserveVideoSource) {
+    asset = await ensureBunnyStreamStorageMirror(asset.id, {
+      ...context,
+      config,
+      module,
+      clientAccount: stream.clientAccount
+    })
+  }
+  const currentStream = asset.metadata?.stream || stream
+  const delivery = currentStream.delivery || await getBunnyStreamVideoPlayData(config, videoId)
+    .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config))
+    .catch((error) => {
+      logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${videoId}: ${error.message}`)
+      return null
+    })
   const nextStream = {
-    ...mirroredStream,
+    ...currentStream,
     syncStatus: 'uploaded',
     syncedAt: nowIso(),
-    video: normalizedVideo || mirroredStream.video || null
+    ...(delivery ? { delivery } : {}),
+    video: normalizedVideo || currentStream.video || null
   }
   const nextMetadata = {
     ...(asset.metadata || {}),
@@ -3094,6 +3401,7 @@ export async function uploadMediaAsset(input = {}) {
         : detectedMedia.mimeType
     }
     const mediaType = mediaTypeFromMime(detected.mimeType)
+    assertPremiumStreamReady(config, { mediaType, module })
     validateMediaType({ mimeType: detected.mimeType, mediaType, sizeBytes, settings: config })
 
     await assertQuotaAvailable({ businessId, quotaSize: sizeBytes, config })
@@ -3135,7 +3443,8 @@ export async function uploadMediaAsset(input = {}) {
       mimeType: detected.mimeType,
       mediaType,
       config,
-      skipCompression: boolValue(input.skipCompression)
+      skipCompression: boolValue(input.skipCompression) ||
+        (mediaType === 'video' && config.mediaAccountPolicy?.preserveVideoSource)
     })
     const processedDetected = await detectMimeType(processed.buffer, processed.mimeType, originalFilename)
     const processedStorageMimeType = storageMimeType(processed.mimeType)
@@ -3875,7 +4184,8 @@ export async function getMediaAssetBunnyStreamAnalytics(assetId, options = {}) {
     throw errorWithStatus('Las analíticas de Stream solo aplican para videos.', 400, 'bunny_stream_not_video')
   }
 
-  const config = await getStorageRuntimeConfig()
+  const runtimeConfig = await getStorageRuntimeConfig()
+  const config = bunnyStreamConfigForAsset(runtimeConfig, asset)
   const dateFrom = cleanString(options.dateFrom || options.date_from)
   const dateTo = cleanString(options.dateTo || options.date_to)
   const hourly = boolValue(options.hourly)
@@ -4376,6 +4686,7 @@ export async function listMediaAssets({
 
 export async function getStorageUsage({ businessId = 'default' } = {}) {
   const config = await getStorageRuntimeConfig()
+  const unlimitedQuota = Boolean(config.mediaAccountPolicy?.unlimitedQuota)
   const normalizedBusinessId = normalizeBusinessId(businessId)
   // Esta ruta es de lectura. No crea cuotas, no recalcula toda media_assets y
   // no escribe updated_at cada vez que alguien abre Configuración > Media.
@@ -4422,13 +4733,21 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
     business_name: userRow?.business_name || userRow?.full_name || userRow?.email || '',
     storage_provider: config.provider,
     storage_status: config.storageStatus,
-    quota_gb: numberValue(quota.quota_gb, 5),
-    quota_bytes: totalQuotaBytes,
-    included_quota_bytes: quotaBytes,
+    quota_mode: unlimitedQuota ? 'unlimited' : 'metered',
+    quota_unlimited: unlimitedQuota,
+    media_profile: config.mediaAccountPolicy?.id || 'standard',
+    stream_profile: config.mediaAccountPolicy?.streamProfile || 'standard',
+    quota_gb: unlimitedQuota ? null : numberValue(quota.quota_gb, 5),
+    quota_bytes: unlimitedQuota ? null : totalQuotaBytes,
+    included_quota_bytes: unlimitedQuota ? null : quotaBytes,
     extra_quota_gb: extraQuotaGb,
     used_bytes: usedBytes,
-    available_bytes: availableBytes,
-    usage_percent: totalQuotaBytes > 0 ? Math.round((usedBytes / totalQuotaBytes) * 10000) / 100 : 0,
+    available_bytes: unlimitedQuota ? null : availableBytes,
+    usage_percent: unlimitedQuota
+      ? null
+      : totalQuotaBytes > 0
+        ? Math.round((usedBytes / totalQuotaBytes) * 10000) / 100
+        : 0,
     files_count: filesCount,
     by_media_type: byMediaType,
     by_module: byModule,
@@ -5142,7 +5461,8 @@ export async function softDeleteMediaAsset(assetId, {
   operationDeadlineAt = 0
 } = {}) {
   const asset = await getMediaAsset(assetId)
-  const config = await getStorageRuntimeConfig()
+  const runtimeConfig = await getStorageRuntimeConfig()
+  const config = bunnyStreamConfigForAsset(runtimeConfig, asset)
   const metadata = asset.metadata || {}
 
   await db.run(
@@ -5591,8 +5911,9 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
     throw errorWithStatus('Este archivo no es un video de sitios o formularios.', 400, 'bunny_stream_not_applicable')
   }
 
-  const config = await getStorageRuntimeConfig()
-  if (asset.storageProvider === 'bunny_stream') {
+  const runtimeConfig = await getStorageRuntimeConfig()
+  const config = bunnyStreamConfigForAsset(runtimeConfig, asset)
+  if (asset.storageProvider === 'bunny_stream' && !config.mediaAccountPolicy?.preserveVideoSource) {
     asset = await ensureBunnyStreamStorageMirror(asset.id, {
       ...context,
       config,
@@ -5629,6 +5950,12 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
         return { ...video, collectionId: collection.id, title: nextTitle }
       })
     }
+    const delivery = await getBunnyStreamVideoPlayData(config, currentVideoId)
+      .then(playData => bunnyStreamDeliveryMetadata(playData, currentVideoId, config))
+      .catch((error) => {
+        logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${currentVideoId}: ${error.message}`)
+        return currentStream.delivery || null
+      })
     stream = {
       ...currentStream,
       provider: 'bunny_stream',
@@ -5646,6 +5973,7 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
         ...bunnyStreamSourceForAsset(asset, usageContext, clientAccount)
       },
       clientAccount,
+      ...(delivery ? { delivery } : {}),
       video: normalizeBunnyStreamVideo(video) || currentStream.video || null
     }
   } else {

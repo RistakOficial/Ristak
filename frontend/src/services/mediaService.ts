@@ -39,13 +39,17 @@ export interface StorageUsage {
   business_name?: string
   storage_provider?: string
   storage_status?: string
-  quota_gb?: number
-  quota_bytes?: number
-  included_quota_bytes?: number
+  quota_mode?: 'metered' | 'unlimited' | string
+  quota_unlimited?: boolean
+  media_profile?: string
+  stream_profile?: string
+  quota_gb?: number | null
+  quota_bytes?: number | null
+  included_quota_bytes?: number | null
   extra_quota_gb?: number
   used_bytes?: number
-  available_bytes?: number
-  usage_percent?: number
+  available_bytes?: number | null
+  usage_percent?: number | null
   files_count?: number
   by_media_type?: Record<string, number>
   by_module?: Record<string, number>

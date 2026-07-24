@@ -15791,7 +15791,30 @@ function getMediaAssetStreamMetadata(asset) {
   const videoId = cleanString(stream.videoId)
   const libraryId = cleanString(stream.libraryId || stream.video?.libraryId)
   if (!videoId || !libraryId) return null
-  return { videoId, libraryId }
+  const rawPlaylistUrl = safePublicMediaUrl(
+    stream.delivery?.playlistUrl || stream.videoPlaylistUrl,
+    'video'
+  )
+  let playlistUrl = ''
+  if (rawPlaylistUrl) {
+    try {
+      const parsed = new URL(rawPlaylistUrl)
+      const pathSegments = parsed.pathname.split('/').filter(Boolean).map(segment => {
+        try { return decodeURIComponent(segment) } catch { return segment }
+      })
+      if (
+        parsed.protocol === 'https:' &&
+        pathSegments.includes(videoId) &&
+        /\.m3u8$/i.test(parsed.pathname)
+      ) {
+        parsed.hash = ''
+        playlistUrl = parsed.toString()
+      }
+    } catch {
+      playlistUrl = ''
+    }
+  }
+  return { videoId, libraryId, playlistUrl }
 }
 
 function getBunnyStreamVideoIdFromUrl(value = '') {
@@ -18465,14 +18488,15 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  // El asset sincronizado ya tiene una copia directa en Storage. Esa copia debe
-  // alimentar SIEMPRE al reproductor nativo de Ristak, también en publicado.
-  // Antes el live render reemplazaba todo el player configurado por el iframe de
-  // Bunny Stream, así que colores, botón, barra y controles sólo existían en
-  // preview/no-track. Conservamos la identidad Stream para analítica y relación
-  // con Media, pero no cedemos la interfaz visible al proveedor.
-  if (directVideoUrl) {
-    return renderVideoPlayer(directVideoUrl, block, settings, {
+  // El editor conserva la copia MP4 de Storage cuando existe. El perfil premium,
+  // que evita duplicar archivos pesados a través del backend, usa HLS también en
+  // preview sin activar tracking de Ristak. Publicado siempre prefiere HLS:
+  // mantiene reproductor/acciones y Bunny adapta la resolución a la conexión.
+  const playerVideoUrl = !context.noTrack && resolvedStream?.playlistUrl
+    ? resolvedStream.playlistUrl
+    : directVideoUrl || resolvedStream?.playlistUrl
+  if (playerVideoUrl) {
+    return renderVideoPlayer(playerVideoUrl, block, settings, {
       noTrack: false,
       tracking: {
         enabled: !context.noTrack,
@@ -18495,7 +18519,7 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     if (settings.videoMuted !== false) params.set('muted', 'true')
     if (settings.videoLoop) params.set('loop', 'true')
     if (normalizeVideoControlsMode(settings) === 'none') params.set('controls', 'false')
-    const embedUrl = `https://iframe.mediadelivery.net/embed/${encodeURIComponent(resolvedStream.libraryId)}/${encodeURIComponent(resolvedStream.videoId)}${params.toString() ? `?${params.toString()}` : ''}`
+    const embedUrl = `https://player.mediadelivery.net/embed/${encodeURIComponent(resolvedStream.libraryId)}/${encodeURIComponent(resolvedStream.videoId)}${params.toString() ? `?${params.toString()}` : ''}`
     return renderBunnyStreamIframe(embedUrl, block, {
       enabled: !context.noTrack,
       asset,

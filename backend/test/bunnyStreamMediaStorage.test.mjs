@@ -33,7 +33,8 @@ const ENV_KEYS = [
   'GHL_LOCATION_ID',
   'HIGHLEVEL_LOCATION_ID',
   'RENDER_EXTERNAL_URL',
-  'PUBLIC_URL'
+  'PUBLIC_URL',
+  'OWNER_EMAIL'
 ]
 
 function snapshotEnv() {
@@ -164,6 +165,19 @@ async function createBunnyMockServer() {
           Name: 'Ristak Sites & Forms',
           ApiKey: 'stream-secret',
           ReadOnlyApiKey: 'stream-readonly-secret'
+        })
+        return
+      }
+
+      if (path === '/core/videolibrary/123' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
+        requests.push({ kind: 'core-update-video-library', body, accessKey: req.headers.accesskey })
+        sendJson(res, 200, {
+          Id: 123,
+          Name: body.Name,
+          ApiKey: 'stream-secret',
+          ReadOnlyApiKey: 'stream-readonly-secret',
+          ...body
         })
         return
       }
@@ -453,6 +467,7 @@ function configureBunnyAccountOnlyEnv(baseUrl) {
   process.env.BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
   process.env.BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
   process.env.BUNNY_STREAM_ENDPOINT = `${baseUrl}/stream`
+  process.env.BUNNY_STREAM_TUS_ENDPOINT = `${baseUrl}/tusupload`
   process.env.BUNNY_STREAM_TIMEOUT_MS = '5000'
 }
 
@@ -533,6 +548,160 @@ test('Bunny Stream se prepara automaticamente al arrancar con API key de cuenta'
     if (db && mediaAssetId) {
       await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
     }
+    bunny.close()
+    restoreEnv(previousEnv)
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+  }
+})
+
+test('la cuenta premium del dueño usa cuota ilimitada y una biblioteca Stream adaptativa aislada', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let assetId = ''
+
+  try {
+    configureBunnyAccountOnlyEnv(bunny.baseUrl)
+    process.env.OWNER_EMAIL = 'MileMedia.MKT@gmail.com'
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    await db.run(`
+      UPDATE storage_settings
+      SET bunny_stream_enabled = 1,
+          bunny_stream_library_id = NULL,
+          bunny_stream_library_name = NULL,
+          bunny_stream_collection_id = NULL,
+          bunny_stream_collection_name = NULL
+      WHERE id = 1
+    `)
+    await db.run(`
+      INSERT INTO storage_quotas (
+        business_id, quota_gb, quota_bytes, used_bytes, extra_quota_gb, storage_enabled
+      ) VALUES ('default', 0.000001, 1, 0, 0, 1)
+      ON CONFLICT (business_id) DO UPDATE SET
+        quota_gb = 0.000001,
+        quota_bytes = 1,
+        extra_quota_gb = 0,
+        storage_enabled = 1
+    `)
+
+    const config = await mediaStorageService.ensureBunnyStreamRuntimeConfigured()
+    assert.equal(config.mediaAccountPolicy.id, 'owner_premium_media')
+    assert.equal(config.premiumStreamReady, true)
+    assert.equal(config.bunnyStreamLibraryName, 'Ristak Sites Premium Adaptive')
+    assert.equal(config.bunnyStreamLibraryId, '123')
+
+    const createdLibrary = bunny.requests.find(request => request.kind === 'core-create-video-library')
+    assert.equal(createdLibrary?.body.Name, 'Ristak Sites Premium Adaptive')
+    assert.equal(createdLibrary?.body.EncodingTier, 1)
+    assert.equal(createdLibrary?.body.PlayerVersion, 2)
+    assert.equal(createdLibrary?.body.KeepOriginalFiles, true)
+
+    const updatedLibrary = bunny.requests.find(request => request.kind === 'core-update-video-library')
+    assert.equal(updatedLibrary?.body.EncodingTier, 1)
+    assert.equal(updatedLibrary?.body.OutputCodecs, 'x264,av1')
+    assert.equal(updatedLibrary?.body.EnabledResolutions, '240p,360p,480p,720p,1080p,1440p,2160p')
+    assert.equal(updatedLibrary?.body.AllowEarlyPlay, false)
+    assert.equal(updatedLibrary?.body.JitEncodingEnabled, false)
+    assert.equal(updatedLibrary?.body.Bitrate2160p, 25000)
+
+    const prepared = await mediaStorageService.prepareBunnyStreamResumableUpload({
+      filename: 'master-4k.mov',
+      mimeType: 'video/quicktime',
+      size: 700 * 1024 * 1024,
+      lastModified: 1_784_000_000_000,
+      module: 'sites',
+      moduleEntityId: 'site_premium',
+      businessId: 'default',
+      clientAccountId: 'premium_owner',
+      clientUploadId: `premium_tus_${Date.now()}`,
+      isPublic: true
+    })
+    assetId = prepared.asset.id
+    assert.equal(prepared.completed, false)
+    assert.equal(prepared.upload.libraryId, '123')
+    assert.equal(prepared.asset.sizeOriginal, 700 * 1024 * 1024)
+
+    bunny.setTusUploadStatus({
+      length: prepared.asset.sizeOriginal,
+      offset: prepared.asset.sizeOriginal
+    })
+    const finalized = await mediaStorageService.finalizeBunnyStreamResumableUpload(assetId, {
+      businessId: 'default',
+      module: 'sites',
+      uploadUrl: `${bunny.baseUrl}/tusupload/session-1`
+    })
+    assert.equal(finalized.status, 'ready')
+    assert.equal(finalized.storageProvider, 'bunny_stream')
+    assert.equal(finalized.bunnyPath, '')
+    assert.equal(finalized.metadata.stream.delivery.protocol, 'hls')
+    assert.equal(
+      finalized.metadata.stream.delivery.playlistUrl,
+      `${bunny.baseUrl}/stream-delivery/stream-video-1/playlist.m3u8`
+    )
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-original-download'), false)
+    assert.equal(
+      bunny.requests.some(request => request.kind === 'storage-upload' && request.path.includes(assetId)),
+      false
+    )
+
+    const usage = await mediaStorageService.getStorageUsage({ businessId: 'default' })
+    assert.equal(usage.quota_mode, 'unlimited')
+    assert.equal(usage.quota_unlimited, true)
+    assert.equal(usage.quota_bytes, null)
+    assert.equal(usage.available_bytes, null)
+    assert.equal(usage.usage_percent, null)
+  } finally {
+    if (assetId && db) {
+      const mediaStorageService = await import('../src/services/mediaStorageService.js')
+      await mediaStorageService.softDeleteMediaAsset(assetId).catch(() => undefined)
+      await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    }
+    await db?.run('DELETE FROM storage_quotas WHERE business_id = ?', ['default']).catch(() => undefined)
+    bunny.close()
+    restoreEnv(previousEnv)
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+  }
+})
+
+test('la cuenta premium no degrada videos de Sites a la biblioteca compartida si falta acceso Core', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+    process.env.OWNER_EMAIL = 'milemedia.mkt@gmail.com'
+
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+
+    await assert.rejects(
+      mediaStorageService.prepareBunnyStreamResumableUpload({
+        filename: 'master-sin-degradar.mov',
+        mimeType: 'video/quicktime',
+        size: 700 * 1024 * 1024,
+        module: 'sites',
+        moduleEntityId: 'site_premium_blocked',
+        businessId: 'default',
+        clientAccountId: 'premium_owner',
+        clientUploadId: `premium_blocked_${Date.now()}`,
+        isPublic: true
+      }),
+      error => error?.status === 503 && error?.code === 'bunny_stream_premium_profile_unavailable'
+    )
+    assert.equal(
+      bunny.requests.some(request => request.kind === 'stream-create-video'),
+      false
+    )
+  } finally {
     bunny.close()
     restoreEnv(previousEnv)
     const mediaStorageService = await import('../src/services/mediaStorageService.js')
@@ -624,6 +793,11 @@ test('videos de Sites usan TUS para Stream y crean su espejo original en Storage
     assert.equal(finalized.metadata.directUpload.storageMirror.provider, 'bunny')
     assert.equal(finalized.metadata.directUpload.storageMirror.source, 'bunny_stream_original')
     assert.equal(finalized.metadata.stream.syncStatus, 'uploaded')
+    assert.equal(finalized.metadata.stream.delivery.protocol, 'hls')
+    assert.equal(
+      finalized.metadata.stream.delivery.playlistUrl,
+      `${bunny.baseUrl}/stream-delivery/stream-video-1/playlist.m3u8`
+    )
     assert.equal(finalized.metadata.stream.source.storagePath, finalized.bunnyPath)
     assert.equal(finalized.metadata.stream.source.storagePublicUrl, finalized.publicUrl)
     assert.equal(bunny.requests.filter(request => request.kind === 'tus-head').length, 2)

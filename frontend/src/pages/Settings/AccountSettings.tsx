@@ -58,6 +58,7 @@ interface StorageStatus {
   percentUsed: number
   warningThreshold: number
   needsAttention: boolean
+  unlimited: boolean
 }
 
 const ALL_TIMEZONES: string[] =
@@ -369,10 +370,12 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
       try {
         const usage = await mediaService.getStorageUsage() as {
           used_bytes?: number
-          quota_bytes?: number
-          available_bytes?: number
-          usage_percent?: number
+          quota_bytes?: number | null
+          available_bytes?: number | null
+          usage_percent?: number | null
+          quota_unlimited?: boolean
         }
+        const unlimited = usage.quota_unlimited === true
         const usedBytes = Number(usage.used_bytes || 0)
         const quotaBytes = Number(usage.quota_bytes || 0)
         const percentUsed = Math.max(0, Math.min(100, Number(usage.usage_percent || 0)))
@@ -383,7 +386,8 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
           availablePretty: formatStorageBytes(Number(usage.available_bytes || 0)),
           percentUsed,
           warningThreshold: 80,
-          needsAttention: percentUsed >= 80
+          needsAttention: !unlimited && percentUsed >= 80,
+          unlimited
         }
         if (!cancelled) {
           setStorageStatus(data)
@@ -1600,7 +1604,7 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
                 </div>
                 <strong className={styles.storageUsageValue}>
                   {storageStatus
-                    ? `${storageStatus.percentUsed}%`
+                    ? storageStatus.unlimited ? 'Sin límite' : `${storageStatus.percentUsed}%`
                     : storageStatusError
                       ? 'No disponible'
                       : ''}
@@ -1609,11 +1613,13 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
 
               <div
                 className={styles.storageUsageTrack}
-                role="meter"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(storagePercent)}
-                aria-label="Uso de almacenamiento multimedia"
+                role={storageStatus?.unlimited ? 'status' : 'meter'}
+                aria-valuemin={storageStatus?.unlimited ? undefined : 0}
+                aria-valuemax={storageStatus?.unlimited ? undefined : 100}
+                aria-valuenow={storageStatus?.unlimited ? undefined : Math.round(storagePercent)}
+                aria-label={storageStatus?.unlimited
+                  ? 'Almacenamiento multimedia sin límite'
+                  : 'Uso de almacenamiento multimedia'}
               >
                 <span
                   className={`${styles.storageUsageBar} ${storageStatus?.needsAttention ? styles.storageUsageBarWarning : ''}`}
@@ -1623,7 +1629,13 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
 
               <div className={styles.storageUsageMeta}>
                 <span>{storageStatus?.sizePretty || `${storageStatus?.sizeGB ?? 0} GB`} usados</span>
-                <span>{storageStatus ? `${storageStatus.availablePretty || '0 MB'} libres de ${storageStatus.limitGB.toFixed(storageStatus.limitGB >= 10 ? 0 : 1)} GB` : 'Esperando lectura'}</span>
+                <span>
+                  {storageStatus
+                    ? storageStatus.unlimited
+                      ? 'Sin límite de almacenamiento en Ristak'
+                      : `${storageStatus.availablePretty || '0 MB'} libres de ${storageStatus.limitGB.toFixed(storageStatus.limitGB >= 10 ? 0 : 1)} GB`
+                    : 'Esperando lectura'}
+                </span>
               </div>
             </section>
 

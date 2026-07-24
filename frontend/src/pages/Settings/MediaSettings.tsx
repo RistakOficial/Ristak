@@ -821,7 +821,10 @@ export const MediaSettings: React.FC = () => {
     setDateRange,
     enabled: showVideoAnalytics
   })
-  const usagePercent = Math.max(0, Math.min(100, Number(usage?.usage_percent || 0)))
+  const unlimitedStorage = usage?.quota_unlimited === true
+  const usagePercent = unlimitedStorage
+    ? 0
+    : Math.max(0, Math.min(100, Number(usage?.usage_percent || 0)))
   const filesCount = usage?.files_count ?? assets.length
   const libraryItemsCountLabel = `${libraryItemsCount}${libraryItemsCountIsLowerBound ? '+' : ''}`
   const visibleItemsCount = folderSummaries.length + libraryItemsCount
@@ -1924,13 +1927,17 @@ export const MediaSettings: React.FC = () => {
         <div className={styles.usageSummary}>
           <span>{formatStorageStatus(usage)}</span>
           <strong>{formatBytes(usage?.used_bytes)} usados</strong>
-          <small>{formatBytes(usage?.available_bytes)} libres de {formatBytes(usage?.quota_bytes)}</small>
+          <small>
+            {unlimitedStorage
+              ? 'Sin límite de almacenamiento en Ristak'
+              : `${formatBytes(usage?.available_bytes)} libres de ${formatBytes(usage?.quota_bytes)}`}
+          </small>
         </div>
         <div className={styles.usageMeter}>
           <span style={{ width: `${usagePercent}%` }} data-warning={usagePercent >= 80 ? 'true' : undefined} />
         </div>
         <div className={styles.usageNumbers}>
-          <strong>{usagePercent}%</strong>
+          <strong>{unlimitedStorage ? 'Sin límite' : `${usagePercent}%`}</strong>
           <span>{filesCount} archivo{filesCount === 1 ? '' : 's'}</span>
         </div>
       </section>

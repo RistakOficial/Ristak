@@ -123,7 +123,8 @@ Sites, Forms and landing-page videos use a direct Bunny Stream TUS flow instead
 of sending the full file through the Render web process:
 
 1. The authenticated frontend calls `video-upload/prepare`. The backend checks
-   the Sites plan/access, MIME, configured video limit and available quota,
+   the Sites plan/access, MIME, applicable account policy, configured video
+   limit and available quota,
    creates the Bunny Stream video in the account collection and reserves a
    `media_assets` row with `status='uploading'`.
 2. The backend returns a short-lived SHA-256 authorization for that video. It
@@ -145,7 +146,9 @@ longer interrupts the file transfer because Render is not carrying the video
 body. Explicit cancellation deletes the pending Stream video and releases its
 quota; abandoned sessions are cleaned on a later prepare after seven days. The
 legacy multipart route remains as a compatibility fallback when Stream is not
-configured.
+configured for a standard account. A premium media policy never degrades a Sites
+video to multipart or to the shared Stream library: prepare fails with
+`bunny_stream_premium_profile_unavailable` until its dedicated library is ready.
 
 Authorization is decided before multipart parsing. `module=sites`, `forms` or
 `landing` maps to the `sites` write permission; other administrative uploads
@@ -202,19 +205,27 @@ another account.
 - Images are compressed through the shared media compression service and get a WebP thumbnail when possible.
 - Buffer-based video compatibility paths may transcode through FFmpeg. Legacy
   multipart videos stream the original file from disk without FFmpeg, and Sites/
-  Forms TUS videos go directly to Bunny Stream for transcoding.
+  Forms TUS videos go directly to Bunny Stream for transcoding. Premium media
+  accounts always preserve the submitted video source in Ristak.
 - Audio is compressed through FFmpeg to a web/WhatsApp-friendly format when possible.
 - Failed compression keeps the original so uploads do not die only because FFmpeg is missing.
 - New videos selected from Sites, imported site assets and Forms
   (`module=sites`, `module=forms`, `module=landing`) are uploaded directly and
-  resumably to Bunny Stream. Before the asset becomes `ready`, backend streams
-  Bunny Stream's authenticated original into Bunny Storage without buffering
-  the full file in RAM. This creates the separate editor/preview source while
-  preserving the resumable browser-to-Stream upload. Legacy assets can still be
-  copied from Bunny Storage to Stream through the compatibility/sync path.
-  Other modules do not sync to Stream automatically.
+  resumably to Bunny Stream. Standard accounts then stream Bunny Stream's
+  authenticated original into Bunny Storage without buffering the full file in
+  RAM, which creates their separate editor/preview source. Premium media accounts
+  do not relay that large original through Render or duplicate it in Storage:
+  the Stream master is retained by Bunny and its adaptive HLS feeds preview and
+  published playback directly. Legacy assets can still be copied from Bunny
+  Storage to Stream through the compatibility/sync path. Other modules do not
+  sync to Stream automatically.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
+- When Bunny exposes playback data, Ristak stores the validated adaptive HLS URL
+  under `metadata_json.stream.delivery.playlistUrl`. The public Sites renderer
+  uses that HLS source inside the native Ristak player. A Storage MP4 remains the
+  editor/no-track source and binary fallback when it exists; a premium Stream-only
+  asset uses the same HLS in preview with Ristak tracking disabled.
 - Imported HTML Sites are code-first: pasting complete HTML or uploading an
   HTML/ZIP creates the site/pages and detects media slots before any Media asset
   is selected. `data-rstk-asset-id` and `data-rstk-background-asset-id` declare
@@ -241,8 +252,8 @@ another account.
   downloadable anchor.
 - Premium imported-HTML video uses a native slot such as
   `<div data-rstk-native-element="video" data-rstk-native-id="video-01"></div>`.
-  This preserves the complete Sites player configuration and the Storage preview
-  and published-player contract. A code-owned `<video>` is kept only as
+  This preserves the complete Sites player configuration and the adaptive
+  preview/published-player contract. A code-owned `<video>` is kept only as
   HTML/legacy media and does not gain the native player's customization contract.
   The native slot itself must not own player geometry (`width`, fixed heights,
   `aspect-ratio`, percentage padding, clipped overflow, or forced orientation);
@@ -262,18 +273,22 @@ another account.
   its own block, preview and published rendering use the single configured sibling
   as a fallback; saving a file in the pending slot creates an independent exact
   binding, which then overrides the fallback.
-- Editor, canvas, preview-session and published/live native video blocks use the
-  Bunny Storage URL with the customizable Ristak player. Publishing never swaps
-  a ready Storage-backed native video to the Bunny Stream iframe, so the saved
-  button, colors, controls, preview behavior, video actions and form gate remain
-  identical. Preview playback keeps tracking disabled; published playback emits
-  Ristak first-party video events while preserving the Media asset and Stream ids.
+- Editor and canvas use the Bunny Storage URL when that mirror exists; premium
+  Stream-only video uses its validated HLS playlist directly. Published/live
+  native video blocks prefer that HLS inside the same customizable Ristak player,
+  so visitors get adaptive bitrate without surrendering the saved button, colors,
+  controls, video actions or form gate to a provider iframe. Preview playback
+  keeps Ristak tracking disabled; published playback emits first-party video
+  events while preserving the Media asset and Stream ids. Standard assets
+  without a validated HLS URL keep the Storage MP4 fallback.
 - During a direct TUS upload the temporary asset has
-  `storage_provider='bunny_stream'` and an iframe `public_url`. Finalization must
-  validate the TUS byte count, confirm the original in Stream, copy that original
-  to Storage, and only then change the row to `storage_provider='bunny'`, a real
-  `bunny_path` and a direct Storage `public_url`. The Stream identity remains in
-  `metadata_json.stream` for live rendering and analytics.
+  `storage_provider='bunny_stream'` and an iframe `public_url`. Finalization
+  validates the TUS byte count and confirms the original in Stream. Standard
+  accounts then copy the original to Storage and change the row to
+  `storage_provider='bunny'`; the premium profile deliberately remains
+  `bunny_stream`, stores validated HLS delivery metadata and never proxies the
+  original through Render. The Stream identity remains in
+  `metadata_json.stream` for rendering and analytics.
 - A legacy Stream-only row must never be used as `<video src>` and must not fall
   back to its Stream iframe in editor/no-track mode. It shows a preparation state
   while the authenticated editor or preview-session creates the missing Storage
@@ -320,6 +335,30 @@ another account.
 ## Quotas
 
 Every business starts with 5 GB. Usage is recalculated from active `media_assets` rows and cached in `storage_quotas.used_bytes`.
+
+An installation whose normalized owner email matches the internal premium media
+policy in `backend/src/services/mediaAccountPolicyService.js` has unlimited
+Ristak media quota. This policy belongs to the installation owner, not to the
+employee making the request. The usage response declares
+`quota_mode='unlimited'` and `quota_unlimited=true`; `quota_bytes`,
+`available_bytes` and `usage_percent` are `null` instead of inventing a numeric
+ceiling. Physical Bunny account/provider limits still apply.
+
+For that policy, Sites/Forms/landing video also bypasses Ristak's configured
+per-video size ceiling because bytes travel browser-to-Bunny through TUS. The
+600 MB multipart/Render safety limit remains in place for traditional endpoints;
+“unlimited” must never route a giant video through Render memory or disk.
+
+The same policy creates or reuses an isolated library named
+`Ristak Sites Premium Adaptive` through the existing central Bunny account
+credential. Ristak enforces premium encoding, Player v2, x264 plus AV1, 240p
+through 2160p renditions, official high-quality bitrate defaults, original-file
+retention, no early direct-original playback and pre-encoded adaptive HLS. The
+TUS upload and all playback bytes stay provider-direct; Ristak stores metadata
+and never downloads the premium master merely to upload a duplicate copy. No
+new Render variable or tenant-managed secret is introduced. Existing videos
+retain their original library identity for analytics, repair and deletion; only
+new premium uploads use the dedicated library.
 
 A prepared TUS video reserves its original size immediately, including while it
 is `uploading`, so later attempts see the reservation. Finalization is
@@ -382,8 +421,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Complete the returned TUS session with a TUS client and then call
 `POST /api/media/video-upload/:id/finalize?module=sites`. A valid result is a
-`media_assets` row with `status=ready`, `storage_provider=bunny_stream` and
-`metadata_json.stream.syncStatus=uploaded`.
+`media_assets` row with `status=ready`, `storage_provider=bunny`,
+`metadata_json.stream.syncStatus=uploaded` and, once Bunny publishes playback
+data, `metadata_json.stream.delivery.playlistUrl`.
 
 Check usage:
 

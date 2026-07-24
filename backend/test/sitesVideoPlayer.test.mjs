@@ -1359,6 +1359,7 @@ test('live render keeps a synced Storage video inside the customized Ristak play
   const assetId = `site_stream_asset_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
   const streamVideoId = `stream-${assetId}`
+  const playlistUrl = `https://vz-premium.b-cdn.net/${streamVideoId}/playlist.m3u8`
 
   try {
     await db.run(
@@ -1378,7 +1379,13 @@ test('live render keeps a synced Storage video inside the customized Ristak play
             provider: 'bunny_stream',
             syncStatus: 'uploaded',
             libraryId: '123456',
-            videoId: streamVideoId
+            videoId: streamVideoId,
+            delivery: {
+              protocol: 'hls',
+              playlistUrl,
+              adaptive: true,
+              profile: 'premium_adaptive_v1'
+            }
           }
         })
       ]
@@ -1411,8 +1418,9 @@ test('live render keeps a synced Storage video inside the customized Ristak play
     })
 
     assert.match(liveHtml, /rstk-video-player/)
-    assert.match(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
-    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.match(liveHtml, /hls\.js@1\/dist\/hls\.min\.js/)
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))
@@ -1425,10 +1433,79 @@ test('live render keeps a synced Storage video inside the customized Ristak play
   }
 })
 
+test('premium Stream-only video uses adaptive HLS in preview and live without relaying an MP4', async () => {
+  const assetId = `site_premium_stream_${Date.now()}`
+  const streamVideoId = `stream-${assetId}`
+  const embedUrl = `https://player.mediadelivery.net/embed/123456/${streamVideoId}`
+  const playlistUrl = `https://vz-premium.b-cdn.net/${streamVideoId}/playlist.m3u8`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json,
+        stream_video_id
+      ) VALUES (?, 'default', 'master-4k.mov', 'master-4k.mov', NULL, ?, 'video/quicktime', 'video', 'mov', 128, 128, 128, 'ready', 'bunny_stream', 'sites', ?, 1, ?, ?)`,
+      [
+        assetId,
+        embedUrl,
+        'site_video_player',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId,
+            delivery: {
+              protocol: 'hls',
+              playlistUrl,
+              adaptive: true,
+              profile: 'premium_adaptive_v1'
+            }
+          }
+        }),
+        streamVideoId
+      ]
+    )
+
+    const site = baseSite({
+      mediaUrl: embedUrl,
+      videoControlsMode: 'clean',
+      videoAutoplay: false
+    })
+    const previewHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.match(previewHtml, /rstk-video-player/)
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.match(previewHtml, /hls\.js@1\/dist\/hls\.min\.js/)
+    assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
+    assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
+
+    const liveHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    assert.match(liveHtml, /rstk-video-player/)
+    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.match(liveHtml, /data-rstk-video-track="true"/)
+    assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
+    assert.doesNotMatch(liveHtml, /player\.mediadelivery\.net\/embed/)
+  } finally {
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
 test('editor-style preview does not load manually pasted Bunny Stream embeds', async () => {
   const assetId = `site_manual_stream_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
   const streamVideoId = `stream-${assetId}`
+  const playlistUrl = `https://vz-premium.b-cdn.net/${streamVideoId}/playlist.m3u8`
 
   try {
     await db.run(
@@ -1449,7 +1526,13 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
             provider: 'bunny_stream',
             syncStatus: 'uploaded',
             libraryId: '123456',
-            videoId: streamVideoId
+            videoId: streamVideoId,
+            delivery: {
+              protocol: 'hls',
+              playlistUrl,
+              adaptive: true,
+              profile: 'premium_adaptive_v1'
+            }
           }
         }),
         streamVideoId
@@ -1480,8 +1563,9 @@ test('editor-style preview does not load manually pasted Bunny Stream embeds', a
     })
 
     assert.match(liveHtml, /rstk-video-player/)
-    assert.match(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
-    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
+    assert.doesNotMatch(liveHtml, new RegExp(`src="${escapedStorageUrl}"`))
+    assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.match(liveHtml, /hls\.js@1\/dist\/hls\.min\.js/)
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))
@@ -1512,6 +1596,7 @@ test('legacy Stream-only assets stay disabled in preview and remain playable in 
   const assetId = `site_direct_stream_${Date.now()}`
   const streamVideoId = `stream-${assetId}`
   const embedUrl = `https://iframe.mediadelivery.net/embed/123456/${streamVideoId}`
+  const playerEmbedUrl = `https://player.mediadelivery.net/embed/123456/${streamVideoId}`
 
   try {
     await db.run(
@@ -1557,7 +1642,7 @@ test('legacy Stream-only assets stay disabled in preview and remain playable in 
     assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
 
     assert.match(liveHtml, /class="[^"]*\brstk-video-stream-frame\b[^"]*"/)
-    assert.match(liveHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(embedUrl)}`))
+    assert.match(liveHtml, new RegExp(`<iframe[^>]+src="${escapeRegExp(playerEmbedUrl)}`))
     assert.doesNotMatch(liveHtml, new RegExp(`<video[^>]+src="${escapeRegExp(embedUrl)}`))
     assert.doesNotMatch(liveHtml, /class="[^"]*\brstk-video-player\b/)
     assert.match(liveHtml, /data-rstk-video-track="true"/)
