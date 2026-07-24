@@ -154,6 +154,11 @@ const DEFAULT_REPLY_DELIVERY_CONFIG = {
   minDelaySeconds: 2,
   maxDelaySeconds: 7
 }
+const DEFAULT_NEW_AGENT_REPLY_DELIVERY_CONFIG = {
+  ...DEFAULT_REPLY_DELIVERY_CONFIG,
+  mode: 'single',
+  splitMessagesEnabled: false
+}
 const FOLLOW_UP_UNITS = new Set(['minutes', 'hours'])
 export const MAX_FOLLOW_UP_DELAY_MINUTES = 23 * 60
 export const DEFAULT_FOLLOW_UP_STRATEGY = [
@@ -6505,7 +6510,10 @@ const DEFAULT_AGENT_BASE = {
   contactScope: DEFAULT_CONTACT_SCOPE,
   contactScopeCutoffAt: null,
   responseDelay: DEFAULT_RESPONSE_DELAY_CONFIG,
-  replyDelivery: DEFAULT_REPLY_DELIVERY_CONFIG,
+  // Los agentes nuevos empiezan sin la mini-IA que separa globos. El dueño
+  // puede activarla conscientemente desde el editor; los agentes existentes
+  // conservan su configuración persistida y el fallback legacy de arriba.
+  replyDelivery: DEFAULT_NEW_AGENT_REPLY_DELIVERY_CONFIG,
   followUp: DEFAULT_FOLLOW_UP_CONFIG,
   goalWorkflow: DEFAULT_GOAL_WORKFLOW_CONFIG,
   filters: { entry: [], exit: [] }

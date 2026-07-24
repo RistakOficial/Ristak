@@ -90,6 +90,13 @@ test('un agente nuevo nace limitado a contactos creados desde su alta', () => {
   assert.equal(cutoffMs >= before && cutoffMs <= after, true)
 })
 
+test('un agente nuevo nace sin separación de globos', () => {
+  const agent = buildConversationalAgentRuntimeConfig()
+
+  assert.equal(agent.replyDelivery.mode, 'single')
+  assert.equal(agent.replyDelivery.splitMessagesEnabled, false)
+})
+
 test('new_only permite solo contactos creados desde el instante exacto del corte', () => {
   const scopedAgent = {
     contactScope: 'new_only',

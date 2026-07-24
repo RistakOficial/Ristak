@@ -1001,9 +1001,9 @@ function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
 
 function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
   if (delivery.splitMessagesEnabled || delivery.mode === 'split') {
-    return `Parte textos largos en globitos. Ejemplo: manda una idea, espera ${delivery.minDelaySeconds} a ${delivery.maxDelaySeconds} segundos y manda otra.`
+    return `Parte respuestas largas en varios globos. Cada texto que se intente dividir puede hacer una llamada adicional a la IA y consumir créditos extra.`
   }
-  return 'Manda todo junto en un solo globo. Ejemplo: una respuesta completa en un mensaje.'
+  return 'Manda cada respuesta completa en un solo globo. Si activas la separación, puede hacerse una llamada adicional a la IA y consumirse créditos extra.'
 }
 
 function getFollowUpSummary(followUp: AgentFollowUpConfig) {
@@ -3670,12 +3670,12 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               </QuestionSelectRow>
 
               <QuestionSelectRow
-                question="¿Quieres que mande mensajes como persona?"
+                question="¿Quieres separar respuestas largas en varios globos?"
                 helper={getReplyDeliveryHelp(replyDelivery)}
                 error={replyDeliveryError}
                 value={humanMessagesEnabled ? 'yes' : 'no'}
                 options={binaryChoiceOptions}
-                selectLabel="Modo mensajes humanos"
+                selectLabel="Separación de globos"
                 onChange={(value) => {
                   const enabled = value === 'yes'
                   updateReplyDelivery({

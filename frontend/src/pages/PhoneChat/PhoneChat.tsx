@@ -817,8 +817,8 @@ function getConditionRuleScalarValue(value: PhoneChatCustomFilterRule['value']) 
 }
 
 const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
-  mode: 'split',
-  splitMessagesEnabled: true,
+  mode: 'single',
+  splitMessagesEnabled: false,
   minMessageLengthToSplit: 120,
   maxBubbles: 6,
   minBubbleLength: 20,
@@ -22587,7 +22587,7 @@ export const PhoneChat: React.FC = () => {
                 />
                 <span>
                   <strong>Partir respuestas largas</strong>
-                  <small>Divide textos largos en varios globos de chat.</small>
+                  <small>Usa una llamada adicional a la IA y consume créditos extra cuando intenta dividir el texto.</small>
                 </span>
               </label>
 

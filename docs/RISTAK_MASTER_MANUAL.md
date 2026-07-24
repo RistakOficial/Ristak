@@ -6203,6 +6203,9 @@ tamano minimo y maximo, variacion de los cortes y pausas se toman exactamente de
 la configuracion guardada por el dueño; el backend no los reemplaza en silencio
 por los valores de fabrica. Una respuesta menor al umbral elegido sale en un solo
 globo sin otra llamada.
+Los agentes nuevos nacen con esta separación apagada. El editor avisa junto al
+control que activarla puede hacer una llamada adicional a la IA y consumir
+créditos extra; los agentes existentes conservan el valor que ya tenían guardado.
 No recibe historial, contexto del negocio ni tools; no interpreta la intencion
 del cliente, no decide acciones y no puede agendar, cobrar, transferir ni
 suprimir la respuesta. Esta excepcion usa OpenAI aunque el proveedor principal
