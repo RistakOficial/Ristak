@@ -41,6 +41,7 @@ import {
 import {
   buildReplyPartDelaySchedule,
   canDeclareConversationalReplyUndeliveredBeforeSend,
+  guardConversationalReplyAgainstRecentRepetition,
   normalizeConversationalChannel,
   RECOVERABLE_CONVERSATIONAL_CHANNELS,
   getConversationalFollowUpTiming,
@@ -51,6 +52,7 @@ import {
   shouldRecoverPendingInbound,
   splitReplyIntoParts
 } from '../src/agents/conversational/runner.js'
+import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import { buildNativeFreeSlotDays, createConversationalTools } from '../src/agents/conversational/tools.js'
 import {
   buildConversationalMediaSummary,
@@ -1220,6 +1222,107 @@ test('ventana de respuesta espera antes de OpenAI y absorbe mensajes nuevos', as
   assert.equal(events[0].detail.phase, 'before_agent_run')
   assert.equal(events[1].detail.originalMessageId, 'msg_costos')
   assert.equal(events[1].detail.messageId, 'msg_ubicacion')
+})
+
+test('la guardia de copy elimina una dirección repetida y conserva el avance', () => {
+  const result = guardConversationalReplyAgainstRecentRepetition({
+    messages: [
+      {
+        id: 'assistant_direccion_original',
+        role: 'assistant',
+        content: 'Buenos días, en Toluca estamos en:\n\nDirección: Ignacio López Rayón 1312, Zona Universidad, Toluca, en el Sanatorio Venecia'
+      },
+      { id: 'user_interrogacion', role: 'user', content: '?' }
+    ],
+    reply: 'Sí, la consulta en Toluca es en:\n\nDirección: Ignacio López Rayón 1312, Zona Universidad, Toluca, Estado de México. Lugar: Sanatorio Venecia. ¿Qué situación te gustaría revisar con la Dra.?'
+  })
+
+  assert.equal(result.prevented, true)
+  assert.equal(result.reply, '¿Qué situación te gustaría revisar con la Dra.?')
+  assert.equal(result.removedUnitCount, 3)
+  assert.deepEqual(result.priorMessageIds, ['assistant_direccion_original'])
+})
+
+test('la guardia de copy no vuelve a preguntar por estudios que el cliente ya contestó', () => {
+  const result = guardConversationalReplyAgainstRecentRepetition({
+    messages: [
+      {
+        id: 'assistant_pregunta_estudios',
+        role: 'assistant',
+        content: 'Ya te las detectaron con un ultrasonido o apenas sospechas que las tienes?'
+      },
+      { id: 'user_confirma_estudios', role: 'user', content: 'Ya me detectaron ya tengo estudios' }
+    ],
+    reply: 'En Toluca, la valoración tiene un valor de $1,000. Se solicita un anticipo de $200 para confirmar la cita. Ya cuentas con ultrasonido o apenas sospechas que son piedras?'
+  })
+
+  assert.equal(result.prevented, true)
+  assert.equal(
+    result.reply,
+    'En Toluca, la valoración tiene un valor de $1,000. Se solicita un anticipo de $200 para confirmar la cita.'
+  )
+  assert.equal(result.removedUnitCount, 1)
+})
+
+test('la guardia de copy elimina precio repetido después de que el cliente avanzó', () => {
+  const result = guardConversationalReplyAgainstRecentRepetition({
+    messages: [
+      {
+        id: 'assistant_precio_original',
+        role: 'assistant',
+        content: 'En Toluca, la valoración tiene un valor de $1,000. Se solicita un anticipo de $200 para confirmar la cita y la valoración se bonifica a favor de una cirugía si llegara a requerirse.'
+      },
+      { id: 'user_estudios', role: 'user', content: 'Ya me detectaron ya tengo estudios' }
+    ],
+    reply: 'Perfecto, lleva tus estudios para que la Dra. los revise y valore si requieres algún procedimiento. La consulta en Toluca tiene un valor de $1,000 y se solicita un anticipo de $200, que se bonifica si se requiere cirugía. ¿Te indicaron cirugía o solo valoración?'
+  })
+
+  assert.equal(result.prevented, true)
+  assert.equal(
+    result.reply,
+    'Perfecto, lleva tus estudios para que la Dra. los revise y valore si requieres algún procedimiento. ¿Te indicaron cirugía o solo valoración?'
+  )
+})
+
+test('la guardia permite repetir información cuando la persona sí la solicita', () => {
+  const repeatedAddress = 'Dirección: Ignacio López Rayón 1312, Zona Universidad, Toluca.'
+  const result = guardConversationalReplyAgainstRecentRepetition({
+    messages: [
+      { id: 'assistant_direccion', role: 'assistant', content: repeatedAddress },
+      { id: 'user_pide_repetir', role: 'user', content: '¿Me repites la dirección?' }
+    ],
+    reply: repeatedAddress
+  })
+
+  assert.equal(result.prevented, false)
+  assert.equal(result.reply, repeatedAddress)
+})
+
+test('la guardia nunca elimina un importe distinto aunque el copy se parezca', () => {
+  const result = guardConversationalReplyAgainstRecentRepetition({
+    messages: [
+      { id: 'assistant_precio_anterior', role: 'assistant', content: 'La consulta cuesta $1,000.' },
+      { id: 'user_otro_servicio', role: 'user', content: '¿Y el procedimiento?' }
+    ],
+    reply: 'El procedimiento cuesta $18,000.'
+  })
+
+  assert.equal(result.prevented, false)
+  assert.equal(result.reply, 'El procedimiento cuesta $18,000.')
+})
+
+test('el prompt blindado obliga a avanzar sin repetir hechos ni preguntas', () => {
+  const prompt = buildNativeConversationalInstructions({
+    promptConfig: {
+      strategyText: 'Responde dudas y avanza con naturalidad.',
+      personalityText: 'Habla de forma amable.'
+    },
+    businessName: 'Clínica de prueba',
+    channel: 'whatsapp'
+  })
+
+  assert.match(prompt, /No vuelvas a explicar un hecho ni a formular una pregunta que ya enviaste/)
+  assert.match(prompt, /reconoce su respuesta y avanza desde ahí/)
 })
 
 test('envio real espera antes de cada globo posterior', async () => {

@@ -43,6 +43,7 @@ async function runVerifiedAppointmentPaymentResumeFixture({
   terminalToolName,
   actions,
   assertReconciliationClaim = async () => ({ valid: true }),
+  newerInboundAfterRun = null,
   onDelivery = null
 }) {
   const suffix = randomUUID()
@@ -51,6 +52,8 @@ async function runVerifiedAppointmentPaymentResumeFixture({
   const agentId = `agent_${suffix}`
   const events = []
   const deliveries = []
+  const reruns = []
+  let latestInboundLoads = 0
   const latest = {
     id: `inbound_${suffix}`,
     phone: '+526560000000',
@@ -88,7 +91,12 @@ async function runVerifiedAppointmentPaymentResumeFixture({
       }
     }),
     getState: async () => ({ status: 'active', signal: null }),
-    getLatestInbound: async () => latest,
+    getLatestInbound: async () => {
+      latestInboundLoads += 1
+      return latestInboundLoads > 1 && newerInboundAfterRun
+        ? newerInboundAfterRun
+        : latest
+    },
     getHistoryEnvelope: async () => ({
       messages: [{ role: 'user', content: 'ok' }],
       telemetry: { totalMessages: 1, includedMessages: 1, omittedMessages: 0 }
@@ -119,9 +127,10 @@ async function runVerifiedAppointmentPaymentResumeFixture({
     recordEvent: async (event) => {
       events.push(event)
       return event
-    }
+    },
+    scheduleRerun: (input) => reruns.push(input)
   })
-  return { result, reconciliationId, events, deliveries }
+  return { result, reconciliationId, events, deliveries, reruns }
 }
 
 test('si el claim se pierde después de la terminal, el Runner no entrega ni sella respuesta', async () => {
@@ -1146,6 +1155,39 @@ for (const variant of [
     )
   })
 }
+
+test('una respuesta ya generada se entrega antes de encolar el inbound siguiente', async () => {
+  const newerInbound = {
+    id: 'inbound_durante_generacion',
+    phone: '+526560000000',
+    message_text: 'y también quiero cambiar la hora'
+  }
+  const execution = await runVerifiedAppointmentPaymentResumeFixture({
+    bookingOwner: 'ai',
+    terminalToolName: 'book_appointment',
+    newerInboundAfterRun: newerInbound,
+    actions: [{
+      type: 'book_appointment',
+      outcome: {
+        status: 'ok',
+        ok: true,
+        simulated: false,
+        actionCompleted: true
+      }
+    }]
+  })
+
+  assert.equal(execution.result.resumed, true)
+  assert.equal(execution.result.sent, true)
+  assert.equal(execution.deliveries.length, 1)
+  assert.equal(execution.reruns.length, 1)
+  assert.equal(execution.reruns[0].latestMessage, newerInbound)
+  const queuedEvent = execution.events.find(
+    (event) => event.eventType === 'newer_inbound_queued_after_committed_reply'
+  )
+  assert.ok(queuedEvent)
+  assert.equal(queuedEvent.detail.modelCallCount, 1)
+})
 
 test('una mutación confirmada y una oferta estructurada de preview cierran la vuelta', async () => {
   const liveAgent = createToolCallingV2Agent({

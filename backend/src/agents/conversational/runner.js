@@ -1863,6 +1863,226 @@ export function guardConversationalAppointmentReplyAgainstState({ reply = '', ct
   }
 }
 
+const CONVERSATIONAL_REPETITION_STOP_WORDS = new Set([
+  'a', 'al', 'algo', 'aqui', 'cada', 'como', 'con', 'cual', 'cuando',
+  'de', 'del', 'donde', 'e', 'el', 'ella', 'en', 'es', 'esa', 'ese', 'esta',
+  'este', 'esto', 'hay', 'la', 'las', 'le', 'les', 'lo', 'los', 'me', 'mi',
+  'o', 'para', 'pero', 'por', 'que', 'se', 'si', 'sin', 'su', 'sus', 'te',
+  'tu', 'tus', 'un', 'una', 'y', 'ya'
+])
+
+const CONVERSATIONAL_REPEAT_REQUEST_PATTERNS = Object.freeze({
+  location: /\b(?:donde|direccion|domicilio|ubicacion|ubicados?|lugar|como\s+llego)\b/,
+  price: /\b(?:cuanto|costo|precio|valor|importe|anticipo|cotizacion|cotizar|pago)\b/,
+  schedule: /\b(?:horario|hora|abren|cierran|atienden|disponibilidad)\b/
+})
+
+function splitConversationalReplyUnits(value = '') {
+  const units = []
+  for (const line of String(value || '').split(/\n+/)) {
+    const cleanLine = line.trim()
+    if (!cleanLine) continue
+    const matches = cleanLine.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)
+    for (const match of matches || [cleanLine]) {
+      const clean = String(match || '').trim()
+      if (clean) units.push(clean)
+    }
+  }
+  return units
+}
+
+function normalizeConversationalRepetitionTokens(value = '') {
+  const normalized = stripQuestionAccents(value)
+    .replace(/(\d)[,.\s](?=\d{3}\b)/g, '$1')
+    .replace(/[^a-z0-9]+/g, ' ')
+  return [...new Set(normalized
+    .split(/\s+/)
+    .filter((token) => token && !CONVERSATIONAL_REPETITION_STOP_WORDS.has(token)))]
+}
+
+function conversationalRepeatRequestCategories(value = '') {
+  const text = stripQuestionAccents(value)
+  const categories = []
+  for (const [category, pattern] of Object.entries(CONVERSATIONAL_REPEAT_REQUEST_PATTERNS)) {
+    if (pattern.test(text)) categories.push(category)
+  }
+  return categories
+}
+
+function conversationalUnitCategories(value = '') {
+  const text = stripQuestionAccents(value)
+  const categories = []
+  if (CONVERSATIONAL_REPEAT_REQUEST_PATTERNS.location.test(text) ||
+      /\b(?:calle|avenida|colonia|sanatorio|hospital|consultorio)\b/.test(text)) {
+    categories.push('location')
+  }
+  if (CONVERSATIONAL_REPEAT_REQUEST_PATTERNS.price.test(text) ||
+      /(?:[$€£]\s*\d|\b\d+\s*(?:mxn|usd|eur)\b)/.test(text)) {
+    categories.push('price')
+  }
+  if (CONVERSATIONAL_REPEAT_REQUEST_PATTERNS.schedule.test(text)) categories.push('schedule')
+  return categories
+}
+
+function latestConversationalUserText(messages = []) {
+  return [...(Array.isArray(messages) ? messages : [])]
+    .reverse()
+    .find((message) => message?.role === 'user' && String(message?.content || '').trim())
+    ?.content || ''
+}
+
+function explicitlyRequestsGeneralRepeat(value = '') {
+  const text = stripQuestionAccents(value)
+  return /\b(?:repite|repiteme|repetir|otra\s+vez|de\s+nuevo|cual\s+era|cuales\s+eran|no\s+(?:lo\s+)?(?:vi|entendi|escuche))\b/.test(text)
+}
+
+function conversationalCharacterTrigramSimilarity(first = '', second = '') {
+  const buildTrigrams = (value) => {
+    const normalized = stripQuestionAccents(value).replace(/[^a-z0-9]+/g, ' ').trim()
+    const trigrams = new Set()
+    for (let index = 0; index <= normalized.length - 3; index += 1) {
+      trigrams.add(normalized.slice(index, index + 3))
+    }
+    return trigrams
+  }
+  const firstTrigrams = buildTrigrams(first)
+  const secondTrigrams = buildTrigrams(second)
+  if (!firstTrigrams.size || !secondTrigrams.size) return 0
+  let intersection = 0
+  for (const trigram of firstTrigrams) {
+    if (secondTrigrams.has(trigram)) intersection += 1
+  }
+  return (2 * intersection) / (firstTrigrams.size + secondTrigrams.size)
+}
+
+function isConversationalUnitRepeated(candidate = '', prior = '') {
+  const candidateTokens = normalizeConversationalRepetitionTokens(candidate)
+  const priorTokens = normalizeConversationalRepetitionTokens(prior)
+  if (candidateTokens.length < 2 || priorTokens.length < 2) return false
+
+  const priorSet = new Set(priorTokens)
+  const intersection = candidateTokens.filter((token) => priorSet.has(token)).length
+
+  const candidateNumbers = candidateTokens.filter((token) => /^\d+$/.test(token))
+  if (candidateNumbers.some((number) => !priorSet.has(number))) return false
+
+  const candidateCategories = conversationalUnitCategories(candidate)
+  const priorCategories = new Set(conversationalUnitCategories(prior))
+  const sharedCategories = candidateCategories.filter((category) => priorCategories.has(category))
+  if (sharedCategories.includes('location')) {
+    const genericLocationTokens = new Set(['consulta', 'direccion', 'domicilio', 'ubicacion', 'ubicados', 'lugar'])
+    const distinctiveTokens = candidateTokens.filter((token) => !genericLocationTokens.has(token))
+    if (distinctiveTokens.length && distinctiveTokens.every((token) => priorSet.has(token))) return true
+  }
+
+  if (intersection < 2) return false
+  const containment = intersection / Math.min(candidateTokens.length, priorTokens.length)
+  const candidateCoverage = intersection / candidateTokens.length
+  const question = /[?]\s*$/.test(candidate)
+  return candidateCoverage >= 0.78 ||
+    (containment >= 0.82 && intersection >= 4) ||
+    (question && (
+      containment >= 0.72 ||
+      conversationalCharacterTrigramSimilarity(candidate, prior) >= 0.62
+    ))
+}
+
+function currentTurnOwnsOperationalVisibleReply(actions = []) {
+  return (Array.isArray(actions) ? actions : []).some((action) => {
+    const outcome = action?.outcome || {}
+    return currentTurnOwnsAppointmentReply([action]) ||
+      outcome.actionCompleted === true ||
+      String(outcome.visibleReply || action?.visibleReply || '').trim() ||
+      String(outcome.sentUrl || outcome.paymentLink || action?.sentUrl || action?.paymentLink || '').trim()
+  })
+}
+
+/**
+ * Última compuerta de copy libre. Sólo elimina oraciones que repiten contenido
+ * visible reciente; nunca inventa hechos, cambia importes ni decide acciones.
+ * Si no queda nada útil, conserva el original para no dejar mudo al agente.
+ */
+export function guardConversationalReplyAgainstRecentRepetition({
+  reply = '',
+  messages = [],
+  actions = []
+} = {}) {
+  const originalReply = String(reply || '').trim()
+  const base = {
+    reply: originalReply,
+    prevented: false,
+    reason: null,
+    originalUnitCount: 0,
+    removedUnitCount: 0,
+    retainedUnitCount: 0,
+    priorMessageIds: []
+  }
+  if (!originalReply || currentTurnOwnsOperationalVisibleReply(actions)) return base
+
+  const candidateUnits = splitConversationalReplyUnits(originalReply)
+  base.originalUnitCount = candidateUnits.length
+  base.retainedUnitCount = candidateUnits.length
+  if (!candidateUnits.length) return base
+
+  const latestUserText = latestConversationalUserText(messages)
+  if (explicitlyRequestsGeneralRepeat(latestUserText)) return base
+  const requestedCategories = new Set(conversationalRepeatRequestCategories(latestUserText))
+  const priorAssistantMessages = (Array.isArray(messages) ? messages : [])
+    .filter((message) => message?.role === 'assistant' && String(message?.content || '').trim())
+    .slice(-8)
+    .map((message) => ({
+      id: safeTelemetryIdentifier(message?.id),
+      text: String(message.content).trim(),
+      units: splitConversationalReplyUnits(message.content)
+    }))
+  if (!priorAssistantMessages.length) return base
+
+  const removedIndexes = new Set()
+  const matchedMessageIds = new Set()
+  candidateUnits.forEach((unit, index) => {
+    const unitCategories = conversationalUnitCategories(unit)
+    if (unitCategories.some((category) => requestedCategories.has(category))) return
+
+    for (const priorMessage of priorAssistantMessages) {
+      const comparisons = [priorMessage.text, ...priorMessage.units]
+      if (!comparisons.some((prior) => isConversationalUnitRepeated(unit, prior))) continue
+      removedIndexes.add(index)
+      if (priorMessage.id) matchedMessageIds.add(priorMessage.id)
+      break
+    }
+  })
+
+  // Un encabezado terminado en ":" no debe quedar colgando si todo lo que
+  // introducía fue retirado por repetido.
+  candidateUnits.forEach((unit, index) => {
+    if (!/:$/.test(unit) || removedIndexes.has(index)) return
+    const nextRetainedIndex = candidateUnits
+      .findIndex((_, candidateIndex) => candidateIndex > index && !removedIndexes.has(candidateIndex))
+    const nextRetainedUnit = nextRetainedIndex >= 0 ? candidateUnits[nextRetainedIndex] : ''
+    if (!nextRetainedUnit || /^[¿¡]/.test(nextRetainedUnit)) removedIndexes.add(index)
+  })
+
+  if (!removedIndexes.size) return base
+  const retainedUnits = candidateUnits.filter((_, index) => !removedIndexes.has(index))
+  if (!retainedUnits.length) {
+    return {
+      ...base,
+      reason: 'repetition_would_empty_reply',
+      removedUnitCount: removedIndexes.size
+    }
+  }
+
+  return {
+    ...base,
+    reply: retainedUnits.join(' ').trim(),
+    prevented: true,
+    reason: 'recent_visible_repetition_pruned',
+    removedUnitCount: removedIndexes.size,
+    retainedUnitCount: retainedUnits.length,
+    priorMessageIds: [...matchedMessageIds].slice(-3)
+  }
+}
+
 export function detectRepeatedConversationalAppointmentQuestion({ reply = '', messages = [], ctx = {} } = {}) {
   const categories = classifyConversationalAppointmentQuestion(reply)
   if (!categories.length) return null
@@ -3083,6 +3303,20 @@ async function schedulePendingContactRerun(contactId, phone, reason, channel = '
   scheduleConversationalAgentRerun({ contactId, phone, latestMessage: latest, reason, channel: normalizedChannel })
 }
 
+async function queuePendingConversationalAgentRerun({
+  contactId,
+  phone,
+  messageId,
+  channel = 'whatsapp'
+}) {
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const runKey = getRunKey(contactId, normalizedChannel)
+  const pendingEntry = { contactId, phone, messageId, channel: normalizedChannel }
+  pendingContactReruns.set(runKey, pendingEntry)
+  await persistPendingRerun(runKey, pendingEntry)
+  return pendingEntry
+}
+
 // [Fase 0] Tipos de entrante que NO deben abortar ni reiniciar una respuesta en curso:
 // una reacción o un sticker son ruido (un 🙏🏽 o una carita no cambian el hilo) y hoy
 // disparaban reply_suppressed dejando al paciente sin respuesta (casos viWyCup1 / j3GRLcmg).
@@ -4127,6 +4361,7 @@ async function handleToolCallingV2InboundTurn({
   const { ctx, model } = turn
   let reply = turn.reply
   let replyGuardResult = null
+  let repetitionGuardResult = null
   let preventedQuestionEvent = null
   const closeUndeliveredAppointmentOffer = async (reason, { beforeDelivery = false } = {}) => {
     try {
@@ -4230,32 +4465,6 @@ async function handleToolCallingV2InboundTurn({
     return { sent: false, reason: 'external_conversation_state', turn }
   }
 
-  const latestBeforeSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
-  if (latestBeforeSend) {
-    await closeUndeliveredAppointmentOffer('offer_reply_preempted_before_send', { beforeDelivery: true })
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'reply_suppressed',
-      detail: {
-        messageId: latest.id,
-        agentId: agentConfig.id || null,
-        channel: normalizedChannel,
-        runtimeMode: turn.runtimeMode,
-        reason: 'newer_inbound_before_reply',
-        newerMessageId: latestBeforeSend.id
-      }
-    })
-    scheduleConversationalAgentRerun({
-      contactId,
-      phone,
-      latestMessage: latestBeforeSend,
-      channel: normalizedChannel,
-      reason: 'mensaje nuevo antes de enviar'
-    })
-    await settleActiveClaim({ status: 'completed', answered: false })
-    return { sent: false, reason: 'newer_inbound_before_reply', turn }
-  }
-
   const generatedReply = reply
   replyGuardResult = guardConversationalAppointmentReplyAgainstState({ reply: generatedReply, ctx })
   if (replyGuardResult.prevented) {
@@ -4273,6 +4482,34 @@ async function handleToolCallingV2InboundTurn({
       deliveryOutcome: 'prevented'
     })
     await recordConversationalObservabilityEvents(preventedQuestionEvent ? [preventedQuestionEvent] : [])
+  }
+  if (!replyGuardResult.prevented) {
+    repetitionGuardResult = guardConversationalReplyAgainstRecentRepetition({
+      reply,
+      messages: ctx.conversationMessages,
+      actions: ctx.actions
+    })
+    if (repetitionGuardResult.prevented) {
+      reply = repetitionGuardResult.reply
+      turn.reply = reply
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'reply_repetition_pruned',
+        detail: {
+          messageId: latest.id,
+          agentId: agentConfig.id || null,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: repetitionGuardResult.reason,
+          originalUnitCount: repetitionGuardResult.originalUnitCount,
+          removedUnitCount: repetitionGuardResult.removedUnitCount,
+          retainedUnitCount: repetitionGuardResult.retainedUnitCount,
+          priorMessageIds: repetitionGuardResult.priorMessageIds,
+          originalReplyHash: createHash('sha256').update(generatedReply).digest('hex'),
+          deliveredReplyHash: createHash('sha256').update(reply).digest('hex')
+        }
+      }).catch(() => {})
+    }
   }
 
   let deliveryRoute = highLevelPhoneRoute
@@ -4320,7 +4557,13 @@ async function handleToolCallingV2InboundTurn({
     forceHighLevel: deliveryRoute?.applies === true,
     dependencies: {
       splitter: splitMessageIntoBubbles,
-      forceSingleMessage: replyGuardResult?.prevented === true || hasServerVisibleAppointmentAvailability(ctx.actions),
+      // Desde que terminó la llamada principal, esta respuesta ya consumió
+      // tokens y queda comprometida. Los inbounds posteriores se encolan para
+      // otra vuelta; jamás desechan el texto pagado ni cortan sus globos.
+      loadNewerInbound: async () => null,
+      forceSingleMessage: replyGuardResult?.prevented === true ||
+        repetitionGuardResult?.prevented === true ||
+        hasServerVisibleAppointmentAvailability(ctx.actions),
       markReplyComplete: async () => {
         await settleActiveClaim({ status: 'completed', answered: true })
       }
@@ -4405,6 +4648,31 @@ async function handleToolCallingV2InboundTurn({
       repeatedQuestion: repeatedQuestionEvent
     })
   })
+  const newerInboundAfterCommittedReply = await loadNewerInboundMessage(
+    contactId,
+    latest.id,
+    normalizedChannel
+  ).catch(() => null)
+  if (newerInboundAfterCommittedReply) {
+    await queuePendingConversationalAgentRerun({
+      contactId,
+      phone: newerInboundAfterCommittedReply.phone || phone,
+      messageId: newerInboundAfterCommittedReply.id,
+      channel: normalizedChannel
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'newer_inbound_queued_after_committed_reply',
+      detail: {
+        messageId: latest.id,
+        newerMessageId: newerInboundAfterCommittedReply.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        modelCallCount: turn.modelCallCount
+      }
+    }).catch(() => {})
+  }
   if (!preventedQuestionEvent) {
     await recordConversationalObservabilityEvents(repeatedQuestionEvent ? [repeatedQuestionEvent] : [])
   }
@@ -4624,6 +4892,7 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
   const runNativeTurn = dependencies.runNativeTurn || runToolCallingV2Turn
   const deliverReply = dependencies.deliverReply || sendReplyParts
   const recordEvent = dependencies.recordEvent || recordConversationalAgentEvent
+  const scheduleRerun = dependencies.scheduleRerun || scheduleConversationalAgentRerun
 
   try {
     const runtimeDefaults = await getRuntimeConfig()
@@ -4757,18 +5026,6 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       throwOnError: true
     })
 
-    const latestAfterRun = await getLatestInbound(cleanContactId, normalizedChannel)
-    if (latestAfterRun?.id && latestAfterRun.id !== latest.id) {
-      scheduleConversationalAgentRerun({
-        contactId: cleanContactId,
-        phone: latestAfterRun.phone || contact?.phone,
-        latestMessage: latestAfterRun,
-        channel: normalizedChannel,
-        reason: 'mensaje nuevo durante reanudación de pago'
-      })
-      return { resumed: false, queued: true, reason: 'newer_inbound_queued', turn }
-    }
-
     const postState = await getState(cleanContactId, { agentId: cleanAgentId, channel: normalizedChannel })
     const ownsTerminalState = toolCallingV2OwnsTerminalState(ctx.actions)
     if (!postState || ((postState.status !== 'active' || Boolean(postState.signal)) && !ownsTerminalState)) {
@@ -4835,7 +5092,7 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       return { resumed: true, sent: false, suppressed: true, delivery, turn }
     }
     if (delivery.interruptedBy) {
-      scheduleConversationalAgentRerun({
+      scheduleRerun({
         contactId: cleanContactId,
         phone: delivery.interruptedBy.phone || contact?.phone,
         latestMessage: delivery.interruptedBy,
@@ -4874,6 +5131,29 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       },
       throwOnError: true
     })
+    const latestAfterCommittedReply = await getLatestInbound(cleanContactId, normalizedChannel)
+    if (latestAfterCommittedReply?.id && latestAfterCommittedReply.id !== latest.id) {
+      scheduleRerun({
+        contactId: cleanContactId,
+        phone: latestAfterCommittedReply.phone || contact?.phone,
+        latestMessage: latestAfterCommittedReply,
+        channel: normalizedChannel,
+        reason: 'mensaje nuevo después de respuesta de pago comprometida'
+      })
+      await recordEvent({
+        eventId: `${cleanReconciliationId}_newer_inbound_queued`,
+        contactId: cleanContactId,
+        eventType: 'newer_inbound_queued_after_committed_reply',
+        detail: {
+          agentId: cleanAgentId,
+          channel: normalizedChannel,
+          reconciliationId: cleanReconciliationId,
+          newerMessageId: latestAfterCommittedReply.id,
+          runtimeMode: turn.runtimeMode,
+          modelCallCount: turn.modelCallCount
+        }
+      }).catch(() => {})
+    }
     return { resumed: true, sent: true, delivery, turn }
   } catch (error) {
     await recordEvent({
@@ -5179,11 +5459,14 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 
     clearFollowUpTimer(runKey)
 
-	    if (runningContacts.has(runKey)) {
-	      const pendingEntry = { contactId, phone, messageId, channel: normalizedChannel }
-	      pendingContactReruns.set(runKey, pendingEntry)
-	      // (AI-009) Espeja el rerun encolado en DB para sobrevivir reinicios.
-	      await persistPendingRerun(runKey, pendingEntry)
+    if (runningContacts.has(runKey)) {
+      // (AI-009) Espeja el rerun encolado en DB para sobrevivir reinicios.
+      await queuePendingConversationalAgentRerun({
+        contactId,
+        phone,
+        messageId,
+        channel: normalizedChannel
+      })
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'run_rerun_queued',
@@ -5870,6 +6153,7 @@ export async function runConversationalAgentPreview({
     reply: generatedReply,
     ctx: turn.ctx
   })
+  let repetitionGuardResult = null
   let preventedQuestionEvent = null
   if (replyGuardResult.prevented) {
     turn.reply = replyGuardResult.reply
@@ -5887,6 +6171,33 @@ export async function runConversationalAgentPreview({
     // Debe existir antes de construir los globos que verá el tester.
     await recordConversationalObservabilityEvents(preventedQuestionEvent ? [preventedQuestionEvent] : [], recordPreviewEvent)
   }
+  if (!replyGuardResult.prevented) {
+    repetitionGuardResult = guardConversationalReplyAgainstRecentRepetition({
+      reply: turn.reply,
+      messages: previewConversationMessages,
+      actions: turn.ctx.actions
+    })
+    if (repetitionGuardResult.prevented) {
+      turn.reply = repetitionGuardResult.reply
+      await recordPreviewEvent({
+        contactId: previewContactId,
+        eventType: 'reply_repetition_pruned',
+        detail: {
+          messageId: previewMessageId,
+          agentId: previewAgentId,
+          channel: previewChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: repetitionGuardResult.reason,
+          originalUnitCount: repetitionGuardResult.originalUnitCount,
+          removedUnitCount: repetitionGuardResult.removedUnitCount,
+          retainedUnitCount: repetitionGuardResult.retainedUnitCount,
+          priorMessageIds: repetitionGuardResult.priorMessageIds,
+          originalReplyHash: createHash('sha256').update(generatedReply).digest('hex'),
+          deliveredReplyHash: createHash('sha256').update(turn.reply).digest('hex')
+        }
+      }).catch(() => {})
+    }
+  }
   await recordConversationalObservabilityEvents(buildConversationalAppointmentTransitionEvents({
     ctx: turn.ctx,
     appointmentReadActions: turn.appointmentReadActions,
@@ -5896,8 +6207,12 @@ export async function runConversationalAgentPreview({
     channel: previewChannel
   }), recordPreviewEvent)
 
-  const splitResult = replyGuardResult.prevented
-    ? { messages: [turn.reply].filter(Boolean), source: 'appointment_state_guard', reason: replyGuardResult.reason }
+  const splitResult = replyGuardResult.prevented || repetitionGuardResult?.prevented
+    ? {
+        messages: [turn.reply].filter(Boolean),
+        source: replyGuardResult.prevented ? 'appointment_state_guard' : 'repetition_guard',
+        reason: replyGuardResult.prevented ? replyGuardResult.reason : repetitionGuardResult.reason
+      }
     : hasServerVisibleAppointmentAvailability(turn.ctx.actions)
     ? { messages: [turn.reply].filter(Boolean), source: 'structured_offer', reason: 'server_single_message' }
     : isEmailConversationalChannel(previewChannel)

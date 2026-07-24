@@ -6178,9 +6178,20 @@ decide llamadas estructuradas a las tools
 que corresponden exactamente a las capacidades activadas. No ejecuta
 `assessment`, `strategyPlanner`, `turnPolicy`, `closingPhaseGate`,
 `complianceGuard`, reglas regex que decidan intención, bloqueen acciones o
-supriman respuestas,
-`stay_silent`, `discard_conversation` ni `update_closing_context`. La separacion
-en globos es la unica excepcion de posprocesamiento: si el dueño la activa, una
+supriman respuestas completas,
+`stay_silent`, `discard_conversation` ni `update_closing_context`. Después de la
+respuesta principal sólo existen dos compuertas de entrega que no vuelven a
+consultar al modelo principal: el recorte determinista de oraciones repetidas y
+la separación opcional en globos. El recorte compara exclusivamente el copy
+propuesto contra los últimos mensajes visibles del asistente, elimina oraciones
+ya dichas y conserva intacto cualquier contenido nuevo. No interpreta la
+intención para ejecutar acciones, no inventa reemplazos, nunca cambia números y
+permite la repetición cuando la persona pide otra vez una dirección, precio u
+horario. Si retirar lo repetido dejaría la respuesta vacía, conserva el original
+para no dejar mudo al agente. Esta compuerta es código local y no consume una
+segunda llamada ni tokens de IA.
+
+Para separar en globos, si el dueño la activa, una
 mini-IA aislada con `gpt-5-nano` recibe solamente la respuesta final visible y
 devuelve cortes estructurados. El umbral para dividir, numero maximo de globos,
 tamano minimo y maximo, variacion de los cortes y pausas se toman exactamente de
@@ -6206,8 +6217,15 @@ pendientes, sin volver a pedir cortes ni duplicar lo ya confirmado. Cada parte
 pasa por `sending` y `sent` con compare-and-swap y lease. Si el proceso muere
 despues de iniciar un envio pero antes de confirmar su resultado, el plan queda
 `ambiguous` y no se reenvia a ciegas porque Meta no ofrece idempotencia real en
-ese punto. Si entra un mensaje nuevo, el plan viejo queda `interrupted` y sus
-partes pendientes no reviven. `parallelToolCalls=false` impide
+ese punto. Una respuesta principal que ya terminó de generarse queda
+**comprometida**: se entrega completa con su mismo plan aunque entre otro mensaje
+mientras se divide o durante las pausas entre globos. Ese inbound nuevo se
+encola de forma durable y comienza otra vuelta después de la entrega, por lo que
+Ristak no tira una generación ya cobrada para pedirle otra al modelo. Una
+cuarentena preventiva, toma humana o canal inválido todavía puede bloquear la
+salida por seguridad; no dispara por sí misma otra generación. Entregas
+automáticas que todavía no responden a un inbound, como un seguimiento ya
+obsoleto, sí pueden interrumpirse. `parallelToolCalls=false` impide
 mutaciones paralelas en una misma vuelta del modelo y las acciones conservan
 idempotencia en servidor. Ademas, una medida preventiva toma prioridad antes de
 cualquier tool mutable y cada mutacion vuelve a consultar la cuarentena justo
@@ -6316,9 +6334,11 @@ manifiesto de capacidades y las acciones simuladas; no produce assessment,
 estrategia ni una decision de silencio. `responseDelayMs` es cero
 en preview; la previsualizacion y el chat publicado comparten la misma mini-IA
 de globos cuando el switch esta activo. El chat publicado conserva su espera. Si
-entran mensajes durante esa espera, mientras se calculan los cortes o entre
-globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
-el turno mas reciente antes de enviar contenido viejo.
+entran mensajes durante esa espera previa, el runtime recarga contexto y agrupa
+el último inbound **antes** de llamar al modelo principal. Una vez generada la
+respuesta, no se descarta ni se vuelve a generar: se entrega completa, y
+cualquier inbound que llegue mientras se calculan los cortes o entre globos
+queda en cola para el siguiente turno con el historial ya actualizado.
 
 El tester usa por defecto la identidad estable `test@ristaktests.com`.
 `get_contact_profile` la reconoce como la identidad del hilo, sin inventar que
