@@ -17,6 +17,7 @@ import {
   TOOL_CALLING_V2_MODEL_SETTINGS,
   buildToolCallingV2HistoryEnvelope,
   createToolCallingV2Agent,
+  didConversationalPreviewEndConversation,
   enforceToolCallingV2AppointmentOfferPostcondition,
   estimateToolCallingV2HistoryMessageBytes,
   ensureToolCallingV2VisibleReply,
@@ -27,7 +28,8 @@ import {
   resumeToolCallingV2AfterVerifiedPayment,
   runConversationalAgentPreview,
   runToolCallingV2Turn,
-  sanitizeToolCallingV2Reply
+  sanitizeToolCallingV2Reply,
+  terminalHandoffOwnsSilence
 } from '../src/agents/conversational/runner.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
@@ -1396,7 +1398,7 @@ test('una respuesta ya generada se entrega antes de encolar el inbound siguiente
   assert.equal(queuedEvent.detail.modelCallCount, 1)
 })
 
-test('una mutación confirmada y una oferta estructurada de preview cierran la vuelta', async () => {
+test('una mutación confirmada y toda salida terminal de preview cierran la vuelta', async () => {
   const liveAgent = createToolCallingV2Agent({
     model: 'gpt-4.1-mini',
     instructions: 'Prueba',
@@ -1451,6 +1453,30 @@ test('una mutación confirmada y una oferta estructurada de preview cierran la v
   }])
   assert.equal(previewBooking.isFinalOutput, true)
   assert.equal(previewBooking.finalOutput, '')
+
+  const previewHandoff = await previewAgent.toolUseBehavior(null, [{
+    tool: { name: 'send_to_human' },
+    output: {
+      ok: true,
+      simulated: true,
+      actionCompleted: false,
+      wouldNotifyHuman: true
+    }
+  }])
+  assert.equal(previewHandoff.isFinalOutput, true)
+  assert.equal(previewHandoff.finalOutput, '')
+
+  const previewCustomGoal = await previewAgent.toolUseBehavior(null, [{
+    tool: { name: 'mark_ready_to_advance' },
+    output: {
+      ok: true,
+      simulated: true,
+      actionCompleted: false,
+      wouldMarkObjectiveCompleted: true
+    }
+  }])
+  assert.equal(previewCustomGoal.isFinalOutput, true)
+  assert.equal(previewCustomGoal.finalOutput, '')
 })
 
 test('v2 sólo expone mutaciones de capacidades activadas y nunca tools de silencio o descarte', () => {
@@ -2168,7 +2194,7 @@ test('prompt asigna herramientas distintas al enlace general y al enlace de Obje
   assert.doesNotMatch(triggerGoalLink, /esta meta, usa exclusivamente send_goal_url/i)
 })
 
-test('runtime v2 ejecuta sólo el agente principal con el transcript real y nunca devuelve silencio', async () => {
+test('runtime v2 ejecuta sólo el agente principal y conserva respuesta en turnos no terminales', async () => {
   const messages = conversationMessages(200)
   let mainRuns = 0
   let receivedMessages = null
@@ -2434,6 +2460,138 @@ test('preview v2 comparte el sobre por bytes, conserva 60 mensajes cortos y nunc
   assert.equal(result.historyTelemetry.includedMessages, 60)
   assert.equal(result.historyTelemetry.omittedMessages, 0)
   assert.deepEqual(result.validationErrors, [])
+})
+
+test('preview v2 silencia y termina el chat cuando pasa a humano', async () => {
+  const messages = [{ role: 'user', content: 'sí, ese horario me funciona' }]
+  const config = {
+    runtimeMode: 'tool_calling_v2',
+    aiProvider: 'openai',
+    model: 'fake-model',
+    replyDelivery: { splitMessagesEnabled: false }
+  }
+
+  const result = await runConversationalAgentPreview({ messages }, {
+    resolvePreviewRuntimeConfig: async () => ({
+      config,
+      runtimeDefaults: { aiProvider: 'openai', model: 'fake-model' }
+    }),
+    resolveAIRuntime: async () => ({
+      apiKey: 'stored-test-key-not-real',
+      modelProvider: { kind: 'fake' },
+      supportsMultimodalInputs: true
+    }),
+    hydratePreviewMessages: async (input) => input,
+    runNativeTurn: async () => ({
+      reply: 'En breve te enviaré el enlace de pago.',
+      ctx: {
+        actions: [{
+          type: 'send_to_human',
+          outcome: {
+            status: 'simulated',
+            ok: true,
+            simulated: true,
+            actionCompleted: false,
+            signal: 'ready_for_human',
+            wouldNotifyHuman: true
+          }
+        }]
+      },
+      model: 'fake-model',
+      runtimeMode: 'tool_calling_v2',
+      modelCallCount: 1,
+      historyTelemetry: {},
+      capabilityManifest: [],
+      validationErrors: []
+    })
+  })
+
+  assert.equal(result.reply, '')
+  assert.deepEqual(result.replyParts, [])
+  assert.equal(result.suppressed, true)
+  assert.equal(result.conversationEnded, true)
+})
+
+test('handoff exitoso no entrega texto libre ni cierre automático', () => {
+  const liveAction = [{
+    type: 'send_to_human',
+    outcome: {
+      status: 'ok',
+      ok: true,
+      actionCompleted: true,
+      transferredToHuman: true
+    }
+  }]
+  const previewAction = [{
+    type: 'mark_ready_to_advance',
+    outcome: {
+      status: 'simulated',
+      ok: true,
+      simulated: true,
+      actionCompleted: false,
+      wouldMarkObjectiveCompleted: true
+    }
+  }]
+
+  assert.equal(ensureToolCallingV2VisibleReply('¿Prefieres pagar con tarjeta?', liveAction), '')
+  assert.equal(ensureToolCallingV2VisibleReply('Cualquier otro texto', previewAction), '')
+  assert.equal(terminalHandoffOwnsSilence(liveAction), true)
+  assert.equal(terminalHandoffOwnsSilence(previewAction), true)
+  assert.equal(terminalHandoffOwnsSilence([{
+    type: 'send_to_human',
+    outcome: { status: 'error', ok: false, actionCompleted: false }
+  }]), false)
+})
+
+test('preview distingue una conversación cumplida de una operación intermedia', () => {
+  assert.equal(didConversationalPreviewEndConversation([{
+    type: 'book_appointment',
+    outcome: {
+      status: 'simulated',
+      ok: true,
+      simulated: true,
+      wouldMarkObjectiveCompleted: true
+    }
+  }]), true)
+  assert.equal(didConversationalPreviewEndConversation([{
+    type: 'request_human_booking',
+    outcome: {
+      status: 'simulated',
+      ok: true,
+      simulated: true,
+      wouldTransferToHuman: true
+    }
+  }]), true)
+  assert.equal(didConversationalPreviewEndConversation([{
+    type: 'send_trigger_link',
+    outcome: {
+      status: 'simulated',
+      ok: true,
+      simulated: true,
+      sentUrl: 'https://example.com/continuar',
+      objectiveCompleted: false
+    }
+  }]), false)
+  assert.equal(didConversationalPreviewEndConversation([{
+    type: 'create_payment_link',
+    outcome: {
+      status: 'simulated',
+      ok: true,
+      simulated: true,
+      wouldCreateAndSendLink: true,
+      paymentConfirmed: false
+    }
+  }]), false)
+  assert.equal(didConversationalPreviewEndConversation([{
+    type: 'book_appointment',
+    outcome: {
+      status: 'error',
+      ok: false,
+      simulated: false,
+      actionCompleted: false,
+      wouldMarkObjectiveCompleted: true
+    }
+  }]), false)
 })
 
 test('preview con efectos usa el contacto real elegido y conserva dryRun para todas las tools', async () => {

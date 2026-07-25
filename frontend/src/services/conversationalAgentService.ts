@@ -490,6 +490,8 @@ export interface ConversationalAgentTestResult {
   replyParts?: string[]
   replyPartDelaysMs?: number[]
   responseDelayMs?: number
+  suppressed?: boolean
+  conversationEnded?: boolean
   actions: Array<{ type: string; effect?: { liveEffect?: string; marksObjectiveCompleted?: boolean }; [key: string]: unknown }>
   aiProvider: ConversationalAIProviderId
   model: string

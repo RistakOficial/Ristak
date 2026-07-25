@@ -2476,6 +2476,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [testAttachmentMenuOpen, setTestAttachmentMenuOpen] = useState(false)
   const [testEmojiPickerOpen, setTestEmojiPickerOpen] = useState(false)
   const [testPracticeExpired, setTestPracticeExpired] = useState(false)
+  const [testConversationEnded, setTestConversationEnded] = useState(false)
   const [testOptionsOpen, setTestOptionsOpen] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testVoiceRecording, setTestVoiceRecording] = useState(false)
@@ -2880,6 +2881,20 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestVoiceBars(createTestVoiceBars())
   }
 
+  function endTestConversation() {
+    cleanupTestVoiceRecorder()
+    setTestConversationEnded(true)
+    setTestInput('')
+    setTestAttachments([])
+    setTestAttachmentMenuOpen(false)
+    setTestEmojiPickerOpen(false)
+    setTestVoiceDraft(null)
+    setTestVoiceRecording(false)
+    setTestVoiceProcessing(false)
+    setTestVoiceElapsedMs(0)
+    setTestVoicePlaying(false)
+  }
+
   const expireTestPracticeMedia = useCallback(() => {
     testPracticeExpiredRef.current = true
     const requestStillInFlight = Boolean(testRequestOwnerRef.current || testingRef.current)
@@ -2888,6 +2903,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestMessages([])
     setTestInput('')
     setTestAttachments([])
+    setTestConversationEnded(false)
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen(false)
     // Expirar los adjuntos invalida el render, pero no cancela mágicamente el
@@ -2972,6 +2988,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       }
       return true
     }
+    if (result.suppressed || result.conversationEnded) return canContinue()
     if (!canContinue()) return false
     appendMessage(
       { role: 'assistant', content: '⚠︎ La prueba no devolvió una respuesta válida. Vuelve a intentarlo.', internal: true },
@@ -2983,7 +3000,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   async function submitTestMessage(input: { content?: string; attachments?: TestAttachment[]; clearComposer?: boolean }) {
     const content = String(input.content ?? '').trim()
     const attachments = input.attachments || []
-    if (testPracticeExpired || testing || testingRef.current || (!content && attachments.length === 0)) return
+    if (testPracticeExpired || testConversationEnded || testing || testingRef.current || (!content && attachments.length === 0)) return
 
     const now = Date.now()
     if (attachments.some((attachment) => testAttachmentExpired(attachment, now)) || testMessages.some((message) => testMessageHasExpiredAttachment(message, now))) {
@@ -3055,13 +3072,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
       else if (expectsTestRun) activeTestRunIdRef.current = null
       if (result.testContactId) activeTestContactIdRef.current = result.testContactId
 
-      await renderTestAgentResult(result, {
+      const rendered = await renderTestAgentResult(result, {
         shouldContinue: () => (
           testRequestOwnerRef.current === requestOwnerToken &&
           testSessionIdRef.current === requestSessionId
         ),
         messageKeyPrefix: `submit-${requestMessageId}`
       })
+      if (rendered && result.conversationEnded) {
+        endTestConversation()
+      }
       if (result.testRunId || result.testEffects?.length) void refreshTestRunHistory()
     } catch (error: any) {
       if (
@@ -3156,6 +3176,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           messageKeyPrefix: `payment-resume-${claimedPaymentEffectId}`
         })
         if (!rendered || cancelled || testPracticeExpiredRef.current) return
+        if (result.conversationEnded) {
+          endTestConversation()
+        }
         handledTestPaymentEventsRef.current.add(claimedPaymentEffectId)
         testPaymentResumeErrorsRef.current.delete(claimedPaymentEffectId)
         void refreshTestRunHistory()
@@ -3469,6 +3492,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTestMessages([])
     setTestInput('')
     setTestAttachments([])
+    setTestConversationEnded(false)
     setTestAttachmentMenuOpen(false)
     setTestEmojiPickerOpen(false)
     setTestVoiceDraft(null)
@@ -3883,7 +3907,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             avatarLabel="Mi negocio"
             messages={testPreviewMessages}
             emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : `Escribe como ${leadLowerLabel} y revisa si contesta como debe.`}
-            typing={!testPracticeExpired && testing}
+            typing={!testPracticeExpired && !testConversationEnded && testing}
             headerActions={[
               {
                 id: 'reset',
@@ -3959,10 +3983,14 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 <PhoneChatPreviewComposer
                   inputRef={testComposerInputRef}
                   value={testInput}
-                  placeholder={testPracticeExpired ? 'Prueba expirada. Reinicia el chat.' : 'Ejemplo: Hola, quiero agendar'}
-                  disabled={testPracticeExpired}
-                  controlsDisabled={testing}
-                  sendDisabled={testPracticeExpired || testing || (!testInput.trim() && testAttachments.length === 0)}
+                  placeholder={testPracticeExpired
+                    ? 'Prueba expirada. Reinicia el chat.'
+                    : testConversationEnded
+                      ? 'Conversación terminada. Reinicia el chat.'
+                      : 'Ejemplo: Hola, quiero agendar'}
+                  disabled={testPracticeExpired || testConversationEnded}
+                  controlsDisabled={testing || testConversationEnded}
+                  sendDisabled={testPracticeExpired || testConversationEnded || testing || (!testInput.trim() && testAttachments.length === 0)}
                   hasDraftContent={testAttachments.length > 0}
                   onChange={setTestInput}
                   onSend={handleSendTestMessage}

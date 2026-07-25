@@ -11334,7 +11334,7 @@ export function createConversationalTools(ctx) {
         signal,
         ...(assignment.assigned ? { assignedUserName: assignment.userName } : {}),
         ...(postCommitWarnings.length ? { postCommitWarning: true } : {}),
-        note: 'Objetivo registrado y entregado al equipo. Responde siempre con un cierre breve, visible y natural.'
+        note: 'Objetivo registrado y entregado al equipo. Esta acción es terminal: no generes ningún mensaje adicional.'
       }
     }
   })
@@ -12286,7 +12286,7 @@ export function createConversationalTools(ctx) {
         actionCompleted: true,
         signal: 'ready_for_human',
         ...(assignment.assigned ? { assignedUserName: assignment.userName } : {}),
-        note: 'Un humano seguirá la conversación. Si hace falta, cierra con una frase breve y natural (ej. que en un momento le confirmas).'
+        note: 'Un humano seguirá la conversación. Esta acción es terminal: no generes ningún mensaje adicional.'
       }
     }
   })

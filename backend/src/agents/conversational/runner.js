@@ -142,6 +142,36 @@ const LIVE_MUTATION_TERMINAL_TOOLS = new Set([
   'register_deposit_payment_proof'
 ])
 
+const PREVIEW_CONVERSATION_END_FLAG_BY_TOOL = Object.freeze({
+  book_appointment: 'wouldMarkObjectiveCompleted',
+  request_human_booking: 'wouldTransferToHuman',
+  mark_ready_to_advance: 'wouldMarkObjectiveCompleted',
+  send_to_human: 'wouldNotifyHuman'
+})
+
+const PREVIEW_TURN_END_FLAG_BY_TOOL = Object.freeze({
+  ...PREVIEW_CONVERSATION_END_FLAG_BY_TOOL,
+  reschedule_appointment: 'wouldRescheduleAppointment',
+  cancel_appointment: 'wouldCancelAppointment'
+})
+
+const SILENT_CONVERSATION_TERMINAL_TOOLS = new Set([
+  'mark_ready_to_advance',
+  'send_to_human'
+])
+
+function previewToolResultEndsTurn(result = {}) {
+  const toolName = String(result?.tool?.name || '').trim()
+  const completionFlag = PREVIEW_TURN_END_FLAG_BY_TOOL[toolName]
+  const output = result?.output || {}
+  return Boolean(
+    completionFlag &&
+    output.ok === true &&
+    output.simulated === true &&
+    output[completionFlag] === true
+  )
+}
+
 function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
   const serverVisibleTerminal = (Array.isArray(toolResults) ? toolResults : []).find((result) => (
     ['offer_appointment_options', 'offer_appointment_slot', 'resolve_active_appointment_selection', 'resolve_active_appointment_offer'].includes(String(result?.tool?.name || '').trim()) &&
@@ -156,19 +186,9 @@ function stopAfterCommittedLiveMutation(_runContext, toolResults = []) {
       finalOutput: String(serverVisibleTerminal.output.visibleReply).trim()
     }
   }
-  const completedPreviewAppointment = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
-    const toolName = String(result?.tool?.name || '').trim()
-    if (!['book_appointment', 'request_human_booking', 'reschedule_appointment', 'cancel_appointment'].includes(toolName)) return false
-    return result?.output?.ok === true &&
-      result?.output?.simulated === true &&
-      (
-        result?.output?.wouldMarkObjectiveCompleted === true ||
-        result?.output?.wouldTransferToHuman === true ||
-        result?.output?.wouldRescheduleAppointment === true ||
-        result?.output?.wouldCancelAppointment === true
-      )
-  })
-  if (completedPreviewAppointment) {
+  const completedPreviewTurn = (Array.isArray(toolResults) ? toolResults : [])
+    .some(previewToolResultEndsTurn)
+  if (completedPreviewTurn) {
     return { isFinalOutput: true, isInterrupted: undefined, finalOutput: '' }
   }
   const mustStop = (Array.isArray(toolResults) ? toolResults : []).some((result) => {
@@ -1490,6 +1510,28 @@ function nativeActionFailed(action = {}) {
   return outcome.status === 'error' || outcome.ok === false || action?.ok === false || Boolean(action?.error || outcome?.error)
 }
 
+export function didConversationalActionEndConversation(action = {}) {
+  const toolName = String(action?.type || '').trim()
+  const completionFlag = PREVIEW_CONVERSATION_END_FLAG_BY_TOOL[toolName]
+  if (!completionFlag || nativeActionFailed(action)) return false
+  const outcome = action?.outcome || {}
+  if (outcome.simulated === true || outcome.status === 'simulated') {
+    return outcome[completionFlag] === true
+  }
+  return nativeActionSucceeded(action)
+}
+
+export function didConversationalPreviewEndConversation(actions = []) {
+  return (Array.isArray(actions) ? actions : []).some(didConversationalActionEndConversation)
+}
+
+export function terminalHandoffOwnsSilence(actions = []) {
+  return (Array.isArray(actions) ? actions : []).some((action) => (
+    SILENT_CONVERSATION_TERMINAL_TOOLS.has(String(action?.type || '').trim()) &&
+    didConversationalActionEndConversation(action)
+  ))
+}
+
 const APPOINTMENT_OBSERVABILITY_TOOLS = new Set([
   'get_contact_appointments',
   'get_free_slots',
@@ -2443,6 +2485,7 @@ export function ensureToolCallingV2VisibleReply(reply = '', actions = []) {
     action?.outcome?.terminal === true
   ))
   if (preventiveSuppression) return ''
+  if (terminalHandoffOwnsSilence(actions)) return ''
   const serverVisibleAvailability = (Array.isArray(actions) ? actions : []).find((action) => (
     ['offer_appointment_options', 'offer_appointment_slot'].includes(String(action?.type || '').trim()) &&
     !nativeActionFailed(action) &&
@@ -4601,6 +4644,25 @@ async function handleToolCallingV2InboundTurn({
     channel: normalizedChannel
   })
   const ownTerminalState = toolCallingV2OwnsTerminalState(ctx.actions)
+  const intentionalTerminalSilence = ownTerminalState && terminalHandoffOwnsSilence(ctx.actions)
+  if (intentionalTerminalSilence) {
+    await closeUndeliveredAppointmentOffer('offer_reply_suppressed_by_terminal_handoff', { beforeDelivery: true })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'reply_suppressed',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        runtimeMode: turn.runtimeMode,
+        reason: 'terminal_handoff',
+        status: postState?.status || null,
+        signal: postState?.signal || null
+      }
+    })
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'terminal_handoff', turn }
+  }
   const externallyBlocked = !postState || (
     (postState.status !== 'active' || Boolean(postState.signal)) && !ownTerminalState
   )
@@ -6262,8 +6324,11 @@ export async function runConversationalAgentPreview({
     ? turn.ctx.conversationMessages
     : hydratedMessages
   const generatedReply = turn.reply
+  const conversationEnded = didConversationalPreviewEndConversation(turn.ctx.actions)
+  const replySuppressedByTerminal = conversationEnded && terminalHandoffOwnsSilence(turn.ctx.actions)
+  if (replySuppressedByTerminal) turn.reply = ''
   const replyGuardResult = guardConversationalAppointmentReplyAgainstState({
-    reply: generatedReply,
+    reply: turn.reply,
     ctx: turn.ctx
   })
   let repetitionGuardResult = null
@@ -6320,7 +6385,13 @@ export async function runConversationalAgentPreview({
     channel: previewChannel
   }), recordPreviewEvent)
 
-  const splitResult = replyGuardResult.prevented || repetitionGuardResult?.prevented
+  const splitResult = replySuppressedByTerminal
+    ? {
+        messages: [],
+        source: 'conversation_terminal',
+        reason: 'terminal_handoff_suppressed'
+      }
+    : replyGuardResult.prevented || repetitionGuardResult?.prevented
     ? {
         messages: [turn.reply].filter(Boolean),
         source: replyGuardResult.prevented ? 'appointment_state_guard' : 'repetition_guard',
@@ -6355,7 +6426,8 @@ export async function runConversationalAgentPreview({
     replyParts,
     replyPartDelaysMs: buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery }),
     responseDelayMs: getConversationalAgentPreviewResponseDelayMs(),
-    suppressed: false,
+    suppressed: replySuppressedByTerminal,
+    conversationEnded,
     actions: turn.ctx.actions,
     validationErrors: turn.validationErrors,
     modelCallCount: turn.modelCallCount,

@@ -93,7 +93,7 @@ const CAPABILITY_INSTRUCTIONS = {
     config.pastClientsToHuman
       ? 'Antes de continuar con un contacto, consulta get_contact_profile. Si pastClientEvidence.isPastClient es true por pagos exitosos reales o citas anteriores no canceladas, pásalo al equipo; una frase del contacto por sí sola no sustituye esa evidencia.'
       : '',
-    'Usa send_to_human y después responde con una frase visible, breve y natural; no dejes a la persona hablando sola.'
+    'Usa send_to_human como salida terminal. Cuando la herramienta confirme el traspaso, no escribas ninguna frase adicional: Ristak detiene la IA y el equipo continúa el chat.'
   ].filter(Boolean).join(' '),
   custom_goal: ({ summary = '', missingConfiguration = [], config = {} } = {}) => [
     CAPABILITY_AVAILABILITY_RULE,
@@ -103,7 +103,7 @@ const CAPABILITY_INSTRUCTIONS = {
       ? `Configuración incompleta: ${missingConfiguration.join(', ')}. Pide apoyo humano en vez de improvisar.`
       : (config.completion === 'send_link'
           ? 'Cuando la estrategia indique que corresponde avanzar específicamente con esta meta, usa exclusivamente send_goal_url. Esa herramienta prepara el enlace rastreable y deja el objetivo pendiente. Nunca uses send_trigger_link para cumplir este Objetivo propio y no declares la meta cumplida al enviarlo: espera su confirmación autenticada.'
-          : 'Sólo cuando la estrategia y los hechos de la conversación demuestren que la meta ya se cumplió, usa la herramienta de objetivo propio; esa acción registra el resultado y lo entrega al equipo.'),
+          : 'Sólo cuando la estrategia y los hechos de la conversación demuestren que la meta ya se cumplió, usa la herramienta de objetivo propio; esa acción registra el resultado, lo entrega al equipo y termina la intervención de la IA sin una frase adicional.'),
   ].filter(Boolean).join(' ')
 }
 

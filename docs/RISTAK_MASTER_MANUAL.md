@@ -7326,7 +7326,15 @@ nunca un booleano escrito por el modelo.
 - Entrega visible: si una tool de pago o enlace tuvo exito y el texto generado
   omitio su URL, el servidor la agrega completa y una sola vez despues de
   sanitizar el mensaje. Los nombres de tools, IDs, payloads y codigos internos no
-  se entregan al contacto; v2 tampoco dispone de una tool capaz de quedarse mudo.
+  se entregan al contacto. `send_to_human` y el cierre directo de un Objetivo
+  propio son salidas terminales silenciosas: al confirmar el traspaso, el servidor
+  descarta cualquier texto libre adicional y la IA no envía un cierre automático.
+  En el tester, un handoff silencioso muestra únicamente las acciones/efectos
+  internos. Cualquier cierre real de conversación —también una cita completada—
+  bloquea el composer hasta reiniciar la prueba. Las operaciones que sí deben
+  entregar un resultado al contacto (confirmación de cita, enlace o cobro)
+  conservan su salida canónica antes de detener el turno. Preparar un link de
+  pago, mandar un enlace general o dejar una meta pendiente no cuenta como cierre.
   Para listas y ofertas de horario, el tester tampoco agrega el globo generico
   "Prueba interna": simula el efecto por estado y deja visible solamente el
   horario que recibiria el contacto. Esas listas y ofertas estructuradas siempre

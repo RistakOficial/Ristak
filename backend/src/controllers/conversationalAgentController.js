@@ -25,7 +25,10 @@ import {
   deleteConversationalAIProvider,
   listConversationalAIProviders
 } from '../services/conversationalAIProviderService.js'
-import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
+import {
+  didConversationalPreviewEndConversation,
+  runConversationalAgentPreview
+} from '../agents/conversational/runner.js'
 import {
   buildConversationalAgentTestRuntimeEventContext,
   buildConversationalAgentTestTurnRequestHash,
@@ -470,6 +473,12 @@ export async function testAgent(req, res) {
       const reconciledResult = runContext
         ? reconcileConversationalAgentPreviewResult({ result, testEffects })
         : result
+      const reconciledConversationEnded = didConversationalPreviewEndConversation(reconciledResult.actions)
+      const terminalResult = {
+        ...reconciledResult,
+        conversationEnded: reconciledConversationEnded,
+        suppressed: reconciledConversationEnded && reconciledResult.suppressed === true
+      }
       const paymentLinks = testEffects
         .filter((effect) => effect?.type === 'payment' && /^https?:\/\//i.test(effect?.payload?.paymentUrl || ''))
         .map((effect) => effect.payload.paymentUrl)
@@ -477,15 +486,15 @@ export async function testAgent(req, res) {
       const testPaymentMessages = uniquePaymentLinks.map((url) => `Aquí está el enlace sandbox de esta prueba: ${url}`)
       const visibleResult = testPaymentMessages.length
         ? {
-            ...reconciledResult,
-            reply: [reconciledResult.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
-            replyParts: [...(Array.isArray(reconciledResult.replyParts) ? reconciledResult.replyParts : [reconciledResult.reply].filter(Boolean)), ...testPaymentMessages],
+            ...terminalResult,
+            reply: [terminalResult.reply, ...testPaymentMessages].filter(Boolean).join('\n\n'),
+            replyParts: [...(Array.isArray(terminalResult.replyParts) ? terminalResult.replyParts : [terminalResult.reply].filter(Boolean)), ...testPaymentMessages],
             replyPartDelaysMs: [
-              ...(Array.isArray(reconciledResult.replyPartDelaysMs) ? reconciledResult.replyPartDelaysMs : []),
+              ...(Array.isArray(terminalResult.replyPartDelaysMs) ? terminalResult.replyPartDelaysMs : []),
               ...testPaymentMessages.map(() => 0)
             ]
           }
-        : reconciledResult
+        : terminalResult
       return {
         kind: 'conversational_agent_test_turn_materialization',
         terminal: isConversationalAgentTestMaterializationTerminal(testEffects),
