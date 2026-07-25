@@ -22587,7 +22587,7 @@ export const PhoneChat: React.FC = () => {
                 />
                 <span>
                   <strong>Partir respuestas largas</strong>
-                  <small>Usa una llamada adicional a la IA y consume créditos extra cuando intenta dividir el texto.</small>
+                  <small>Se cobrarán créditos extra cada vez que una respuesta se divida en varios globos.</small>
                 </span>
               </label>
 

@@ -1001,9 +1001,9 @@ function getResponseDelayHelp(delay: AgentResponseDelayConfig) {
 
 function getReplyDeliveryHelp(delivery: AgentReplyDeliveryConfig) {
   if (delivery.splitMessagesEnabled || delivery.mode === 'split') {
-    return `Parte respuestas largas en varios globos. Cada texto que se intente dividir puede hacer una llamada adicional a la IA y consumir créditos extra.`
+    return 'Separa respuestas largas en varios globos. Cada vez que una respuesta se divida así, se cobrarán créditos extra.'
   }
-  return 'Manda cada respuesta completa en un solo globo. Si activas la separación, puede hacerse una llamada adicional a la IA y consumirse créditos extra.'
+  return 'Manda cada respuesta completa en un solo globo. Si activas esta opción, se cobrarán créditos extra cada vez que una respuesta se divida.'
 }
 
 function getFollowUpSummary(followUp: AgentFollowUpConfig) {
