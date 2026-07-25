@@ -5,11 +5,13 @@ import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, businessTodayDateOnly, getAccountTimezone } from '../utils/dateUtils.js'
 import { getMetaSocialConfig } from './metaAdsService.js'
+import { getActiveMetaOAuthIntegration } from './metaOAuthIntegrationConfigService.js'
 import { getMetaOAuthAuthorizedAssetsSnapshot } from './metaOAuthService.js'
 import { getMetaAssetSnapshot, saveMetaAssetSnapshot } from './metaAssetSnapshotService.js'
 
 const THREADS_GRAPH_URL = 'https://graph.threads.net/v1.0'
 const META_PROFILE_PLATFORMS = new Set(['facebook', 'instagram'])
+const META_PROFILE_DISCOVERY_SCOPES = Object.freeze(['pages_show_list', 'pages_read_engagement'])
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -61,6 +63,48 @@ function normalizePlatform(value) {
 
 function isMetaProfilePlatform(value) {
   return META_PROFILE_PLATFORMS.has(normalizePlatform(value))
+}
+
+function hasMetaProfileDiscoveryScopes(config = null) {
+  const parsedScopes = parseJson(config?.granted_scopes_json, [])
+  const grantedScopes = new Set(
+    Array.isArray(parsedScopes) ? parsedScopes.map(cleanString).filter(Boolean) : []
+  )
+  return META_PROFILE_DISCOVERY_SCOPES.every(scope => grantedScopes.has(scope))
+}
+
+async function getStoredMetaProfileConfig({ allowAdsUserProfileDiscovery = false } = {}) {
+  const socialConfig = await getMetaSocialConfig().catch(error => {
+    logger.warn(`No se pudo leer configuración Meta Social para perfiles: ${error.message}`)
+    return null
+  })
+  if (cleanString(socialConfig?.access_token)) return socialConfig
+  if (!allowAdsUserProfileDiscovery) return socialConfig
+
+  const adsOAuth = await getActiveMetaOAuthIntegration('ads').catch(error => {
+    logger.warn(`No se pudo leer OAuth Ads para perfiles sociales: ${error.message}`)
+    return null
+  })
+  if (
+    !cleanString(adsOAuth?.access_token) ||
+    Number(adsOAuth?.validated) !== 1 ||
+    !hasMetaProfileDiscoveryScopes(adsOAuth)
+  ) {
+    return socialConfig
+  }
+
+  // Esta compatibilidad es exclusivamente de lectura para el catálogo de Sites.
+  // No convierte el token Ads en credencial de mensajería, comentarios o webhooks.
+  return {
+    connection_mode: 'oauth_user',
+    oauth_profile_discovery: true,
+    oauth_integration_kind: 'ads',
+    oauth_connection_id: cleanString(adsOAuth.connection_id),
+    access_token: cleanString(adsOAuth.access_token),
+    oauth_appsecret_proof: cleanString(adsOAuth.appsecret_proof),
+    page_id: '',
+    instagram_account_id: ''
+  }
 }
 
 async function fetchMetaConnection(initialUrl) {
@@ -451,6 +495,38 @@ async function fetchOAuthPages({
   })
 }
 
+async function fetchOAuthUserPages({
+  accessToken,
+  appSecretProof,
+  fields
+}) {
+  const params = new URLSearchParams({
+    fields,
+    limit: '100',
+    access_token: accessToken
+  })
+  if (appSecretProof) params.set('appsecret_proof', appSecretProof)
+
+  const discoveredPages = await fetchMetaPages(accessToken, params, appSecretProof)
+
+  return mapWithConcurrency(discoveredPages, 4, async page => {
+    const pageId = cleanString(page?.id)
+    if (!pageId) return page
+    try {
+      const [details] = await fetchOAuthConfiguredPage(
+        pageId,
+        accessToken,
+        appSecretProof,
+        fields
+      )
+      return mergeUsefulFields(page, details || {})
+    } catch (error) {
+      logger.warn(`No se pudo enriquecer la Page OAuth ${pageId} para Sites: ${safeMetaGraphTransportError(error)}`)
+      return page
+    }
+  })
+}
+
 export async function getConnectedMetaSocialProfiles(options = {}) {
   const hasExplicitAccessToken = Boolean(cleanString(options.accessToken))
   const config = options.accessToken
@@ -459,14 +535,14 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
         page_id: cleanString(options.pageId),
         instagram_account_id: cleanString(options.instagramAccountId)
       }
-    : await getMetaSocialConfig().catch(error => {
-      logger.warn(`No se pudo leer configuración Meta para perfiles sociales: ${error.message}`)
-      return null
-    })
+    : await getStoredMetaProfileConfig({
+        allowAdsUserProfileDiscovery: options.allowAdsUserProfileDiscovery === true
+      })
 
   const accessToken = cleanString(config?.access_token)
   const appSecretProof = cleanString(config?.oauth_appsecret_proof)
   const isOAuth = ['oauth_bisu', 'oauth_user'].includes(cleanString(config?.connection_mode))
+  const isOAuthProfileDiscovery = config?.oauth_profile_discovery === true
   const pageAccessToken = isOAuth
     ? cleanString(config?.oauth_page_access_token)
     : accessToken
@@ -476,7 +552,11 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
   const configuredPageId = cleanString(config?.page_id)
   const configuredInstagramAccountId = cleanString(config?.instagram_account_id)
   const updatedAt = new Date().toISOString()
-  const restrictToConfiguredProfiles = options.restrictToConfiguredProfiles !== false && !hasExplicitAccessToken
+  const restrictToConfiguredProfiles = (
+    options.restrictToConfiguredProfiles !== false &&
+    !hasExplicitAccessToken &&
+    !isOAuthProfileDiscovery
+  )
 
   if (!accessToken) {
     return { connected: false, updatedAt, profiles: [], message: 'Meta no tiene token guardado' }
@@ -528,7 +608,13 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
 
   let pages = []
   try {
-    pages = isOAuth
+    pages = isOAuthProfileDiscovery
+      ? await fetchOAuthUserPages({
+          accessToken,
+          appSecretProof,
+          fields: richFields
+        })
+      : isOAuth
       ? await fetchOAuthPages({
           config,
           configuredPageId,
@@ -542,7 +628,13 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
     logger.warn(`Meta no devolvio todos los campos de perfil social: ${safeMetaGraphTransportError(error)}`)
     params.set('fields', fallbackFields)
     try {
-      pages = isOAuth
+      pages = isOAuthProfileDiscovery
+        ? await fetchOAuthUserPages({
+            accessToken,
+            appSecretProof,
+            fields: fallbackFields
+          })
+        : isOAuth
         ? await fetchOAuthPages({
             config,
             configuredPageId,
@@ -583,7 +675,10 @@ export async function getConnectedMetaSocialProfiles(options = {}) {
 }
 
 export async function refreshMetaSocialProfileSnapshot() {
-  const result = await getConnectedMetaSocialProfiles({ restrictToConfiguredProfiles: false })
+  const result = await getConnectedMetaSocialProfiles({
+    restrictToConfiguredProfiles: false,
+    allowAdsUserProfileDiscovery: true
+  })
   if (!result.connected || result.profiles.length === 0) return result
   const current = await getMetaAssetSnapshot().catch(() => ({ profiles: [] }))
   const incomingById = new Map(result.profiles.map(profile => [profile.id, profile]))
@@ -719,7 +814,9 @@ export async function refreshConnectedSocialProfileBlocks({ force = false } = {}
     }
   }
 
-  const { connected, profiles, message } = await getConnectedMetaSocialProfiles()
+  const { connected, profiles, message } = await getConnectedMetaSocialProfiles({
+    allowAdsUserProfileDiscovery: true
+  })
   if (!connected || profiles.length === 0) {
     return { success: false, updated: 0, message: message || 'No hay perfiles Meta conectados' }
   }

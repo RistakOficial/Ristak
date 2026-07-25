@@ -4379,6 +4379,12 @@ Ristak usa Meta en varias areas:
 - El bloque **Perfil de red social** del editor de Sites lee primero el OAuth
   unificado activo de `meta_config`, despues la conexion Social separada y al
   final los campos manuales `page_id`, `instagram_account_id` y `access_token`.
+  Si ninguna de esas fuentes existe, durante la espera de App Review el catálogo
+  puede usar el User Token de la conexión OAuth Ads separada, siempre que esté
+  activa, validada y conserve `pages_show_list` y `pages_read_engagement`. Ese
+  fallback sólo descubre y refresca identidad, avatar y seguidores para Sites:
+  no autoriza Messenger, comentarios, publicaciones ni webhooks y nunca desplaza
+  un System User heredado ya configurado.
   El endpoint no debe interpretar el JWT de sesion de Ristak
   como token de Meta; solo usa `X-Meta-Access-Token` durante el wizard manual
   cuando se esta probando un token explicito. Al cargar el catálogo del editor,

@@ -370,7 +370,12 @@ relistar el portafolio. El contrato es:
   lectura de confirmación; después el polling no toca esos endpoints.
 - El catálogo **Perfil de red social** de Sites usa
   `POST /api/meta/social-profiles/refresh` al solicitar datos actuales. Recorre
-  la allowlist local y consulta cada Page con su Page Token/proof; el `GET`
+  la allowlist local y consulta cada Page con su Page Token/proof. Mientras la
+  conexión Social separada siga detrás de App Review, si no existe otra
+  credencial Social/legacy puede descubrir las Pages con el User Token OAuth Ads
+  activo y validado, pero sólo cuando conserva `pages_show_list` y
+  `pages_read_engagement`; este fallback es exclusivo de lectura para Sites y no
+  habilita mensajes, comentarios, publicaciones ni webhooks. El `GET`
   `/api/meta/social-profiles` permanece pasivo. Foto, identidad y seguidores se
   recuperan por grupos tolerantes a fallos para que un field rechazado no borre
   los demás. Un conteo ausente es desconocido (`null`), no cero.
@@ -539,7 +544,10 @@ Installer, autenticado por licencia salvo callbacks publicos:
     inventario durante el primer `status/refresh` sin desconectarse.
 16. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
     conserva el último snapshot si Graph falla y nunca presenta `0` cuando Meta
-    no devolvió el conteo.
+    no devolvió el conteo. También funciona durante App Review con una conexión
+    Ads USER validada que sí tenga permisos de lectura de Pages, sin convertir
+    esa credencial en token operativo de Social. El System User heredado conserva
+    prioridad cuando ya está configurado.
 
 ## Fuentes oficiales
 

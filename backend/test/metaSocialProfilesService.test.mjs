@@ -6,7 +6,10 @@ import { db, getAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { getSocialProfiles, refreshSocialProfiles } from '../src/controllers/metaController.js'
 import { saveMetaAssetSnapshot, clearMetaAssetSnapshot } from '../src/services/metaAssetSnapshotService.js'
-import { refreshConnectedSocialProfileBlocks } from '../src/services/metaSocialProfilesService.js'
+import {
+  getConnectedMetaSocialProfiles,
+  refreshConnectedSocialProfileBlocks
+} from '../src/services/metaSocialProfilesService.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 
 async function snapshotMetaConfig(callback) {
@@ -56,6 +59,62 @@ async function snapshotOAuthAssetState(callback) {
       )
     }
   }
+}
+
+async function snapshotMetaOAuthIntegrations(callback) {
+  const previousRows = await db.all('SELECT * FROM meta_oauth_integrations')
+  try {
+    await db.run('DELETE FROM meta_oauth_integrations')
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM meta_oauth_integrations')
+    for (const row of previousRows) {
+      const columns = Object.keys(row)
+      await db.run(
+        `INSERT INTO meta_oauth_integrations (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        columns.map(column => row[column])
+      )
+    }
+  }
+}
+
+async function insertAdsOAuthUser({
+  token = 'split-ads-user-token',
+  proof = 'split-ads-user-proof',
+  scopes = ['ads_read', 'pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+  validated = 1
+} = {}) {
+  await db.run(`
+    INSERT INTO meta_oauth_integrations (
+      id,
+      integration_kind,
+      status,
+      connection_id,
+      access_token,
+      appsecret_proof,
+      app_id,
+      config_id,
+      user_id,
+      user_name,
+      granted_scopes_json,
+      missing_scopes_json,
+      validated,
+      connected_at,
+      created_at,
+      updated_at
+    ) VALUES (?, 'ads', 'active', ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    'split-ads-profile-test',
+    'split-ads-profile-connection',
+    encrypt(token),
+    encrypt(proof),
+    'split-ads-app',
+    'split-ads-config',
+    'split-ads-user',
+    'OAuth User',
+    JSON.stringify(scopes),
+    validated
+  ])
 }
 
 async function insertMetaConfig({
@@ -136,7 +195,13 @@ async function seedMetaAssetSnapshot() {
   })
 }
 
-async function withFakeMetaGraph(callback, { rejectCombinedProfileFields = false } = {}) {
+async function withFakeMetaGraph(callback, {
+  rejectCombinedProfileFields = false,
+  meAccountsToken = 'meta-token-db',
+  meAccountsProof = '',
+  pageToken = 'oauth-page-token',
+  pageProof = 'oauth-page-proof'
+} = {}) {
   const calls = []
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   let server
@@ -152,11 +217,11 @@ async function withFakeMetaGraph(callback, { rejectCombinedProfileFields = false
 
       if (url.pathname === '/me/accounts' || url.pathname === '/page_1' || url.pathname === '/ig_1') {
         const oauthPageRequest = url.pathname === '/page_1' || url.pathname === '/ig_1'
-        const expectedToken = oauthPageRequest ? 'oauth-page-token' : 'meta-token-db'
-        const expectedProof = oauthPageRequest ? 'oauth-page-proof' : null
+        const expectedToken = oauthPageRequest ? pageToken : meAccountsToken
+        const expectedProof = oauthPageRequest ? pageProof : meAccountsProof
         if (
           url.searchParams.get('access_token') !== expectedToken ||
-          (oauthPageRequest && url.searchParams.get('appsecret_proof') !== expectedProof)
+          (url.searchParams.get('appsecret_proof') || '') !== expectedProof
         ) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: { message: 'invalid meta token' } }))
@@ -537,6 +602,97 @@ test('OAuth social profile refresh isolates fields when Meta rejects the combine
         assert.equal(instagram.avatarUrl, 'https://example.test/instagram.webp')
         assert.equal(instagram.followers, 24000)
       }, { rejectCombinedProfileFields: true })
+    })
+  })
+})
+
+test('Sites refresh discovers Page and Instagram profiles from a validated split Ads User Token', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotMetaOAuthIntegrations(async () => {
+      await snapshotOAuthAssetState(async () => {
+        await insertAdsOAuthUser()
+
+        await withFakeMetaGraph(async calls => {
+          const res = createJsonResponse()
+          await refreshSocialProfiles({ headers: {}, query: {} }, res)
+
+          assert.equal(res.statusCode, 200)
+          assert.equal(res.body.success, true)
+          assert.deepEqual(calls.map(call => call.pathname), ['/me/accounts', '/page_1'])
+          assert.equal(calls.every(call => call.accessToken === 'split-ads-user-token'), true)
+          assert.equal(calls.every(call => call.appSecretProof === 'split-ads-user-proof'), true)
+
+          const facebook = res.body.data.profiles.find(profile => profile.id === 'facebook:page_1')
+          const instagram = res.body.data.profiles.find(profile => profile.id === 'instagram:ig_1')
+          assert.equal(facebook.avatarUrl, 'https://example.test/page.webp')
+          assert.equal(facebook.followers, 1532)
+          assert.equal(facebook.followersLabel, '1,5 mil')
+          assert.equal(instagram.avatarUrl, 'https://example.test/instagram.webp')
+          assert.equal(instagram.followers, 24000)
+          assert.equal(instagram.followersLabel, '24 mil')
+        }, {
+          meAccountsToken: 'split-ads-user-token',
+          meAccountsProof: 'split-ads-user-proof',
+          pageToken: 'split-ads-user-token',
+          pageProof: 'split-ads-user-proof'
+        })
+      })
+    })
+  })
+})
+
+test('Sites keeps the legacy System User profile source ahead of the split Ads User Token', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotMetaOAuthIntegrations(async () => {
+      await insertMetaConfig({ connectionMode: 'manual_system_user' })
+      await insertAdsOAuthUser()
+
+      await withFakeMetaGraph(async calls => {
+        const result = await getConnectedMetaSocialProfiles({ restrictToConfiguredProfiles: false })
+
+        assert.equal(result.connected, true)
+        assert.deepEqual(calls.map(call => call.pathname), ['/me/accounts'])
+        assert.equal(calls[0].accessToken, 'meta-token-db')
+        assert.equal(result.profiles.some(profile => profile.id === 'facebook:page_1'), true)
+        assert.equal(result.profiles.some(profile => profile.id === 'instagram:ig_1'), true)
+      })
+    })
+  })
+})
+
+test('profile reads outside Sites do not borrow the split Ads User Token', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotMetaOAuthIntegrations(async () => {
+      await insertAdsOAuthUser()
+      const result = await getConnectedMetaSocialProfiles({ restrictToConfiguredProfiles: false })
+
+      assert.equal(result.connected, false)
+      assert.deepEqual(result.profiles, [])
+      assert.equal(result.message, 'Meta no tiene token guardado')
+    })
+  })
+})
+
+test('Sites does not borrow an Ads token without the Page read scopes', async () => {
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotMetaOAuthIntegrations(async () => {
+      await insertAdsOAuthUser({ scopes: ['ads_read'] })
+      const result = await getConnectedMetaSocialProfiles({
+        restrictToConfiguredProfiles: false,
+        allowAdsUserProfileDiscovery: true
+      })
+
+      assert.equal(result.connected, false)
+      assert.deepEqual(result.profiles, [])
+      assert.equal(result.message, 'Meta no tiene token guardado')
     })
   })
 })
