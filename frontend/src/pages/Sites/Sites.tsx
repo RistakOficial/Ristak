@@ -8542,7 +8542,7 @@ function FormEmbedEditorPanel({
   const shouldOpenActiveFieldContentByDefault = shouldOpenTextContentInEdit(activeField)
   const shouldOpenActiveFieldRulesByDefault = Boolean(activeField && isChoiceBlock(activeField.blockType))
   const activeFieldContentSectionTitle = shouldOpenActiveFieldContentByDefault ? 'Texto' : 'Contenido'
-  const selectedFieldAccordionKey = `${activeElement}:${activeField?.id || 'none'}:${activeField?.blockType || 'none'}`
+  const embeddedInspectorSelectionKey = `${block.id}:${activeElement}:${activeField?.id || 'none'}:${activeField?.blockType || 'none'}`
   const activeFieldPageId = activeField ? getBlockPageId(activeField, pages) : activePage?.id || DEFAULT_FUNNEL_PAGE_ID
   const ruleFieldBlocks = fields.filter(field => fieldBlockTypes.has(field.blockType))
   const patchActiveField = (patch: Partial<SiteBlock>) => {
@@ -8698,7 +8698,7 @@ function FormEmbedEditorPanel({
 
   const selectedFieldContent = (
     <div className={styles.settingsGroup}>
-      <AccordionGroup key={selectedFieldAccordionKey}>
+      <AccordionGroup key={embeddedInspectorSelectionKey}>
         {isFormSurfaceSelected ? (
           <AccordionSection id="embedded-form-selected" title="Formulario">
             <InspectorEmptyState>Usa la pestaña Formulario para ajustar fondo, separación, borde y ancho.</InspectorEmptyState>
@@ -9086,6 +9086,7 @@ function FormEmbedEditorPanel({
 
   return (
     <InspectorTabbedPanel
+      key={`embedded-form-inspector:${embeddedInspectorSelectionKey}`}
       title="Componente de formulario"
       subtitle="Se guarda con el sitio web"
       className={styles.formModePanel}

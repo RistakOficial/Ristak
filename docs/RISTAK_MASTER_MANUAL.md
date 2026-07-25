@@ -4600,6 +4600,14 @@ franja, queda centrado, usa espacio compacto, ancho angosto, esquinas cuadradas
 y borde fino. Estos valores solo son el punto de partida; el usuario puede
 ajustarlos desde Diseño del formulario. Los formularios guardados que se
 embeben conservan su diseño propio.
+Al seleccionar un elemento dentro de un formulario embebido —texto, perfil de
+red social, pregunta, contenido multimedia o botón de envío— el inspector
+derecho cambia de inmediato a `Editar` y muestra la configuración específica de
+ese elemento. Al seleccionar el fondo o marco del formulario, el inspector
+vuelve a `Diseño` para editar la configuración general. Esta selección interna
+debe conservar el mismo comportamiento que el editor de formularios standalone;
+el estado de una pestaña anterior nunca puede dejar visible la configuración del
+formulario cuando ya está seleccionado uno de sus elementos.
 La biblioteca de sitios y formularios permite seleccionar varios elementos con
 checkboxes en vista galeria, lista o tabla y eliminarlos juntos con confirmacion
 destructiva. Los controles masivos de `Todos los visibles` y `Eliminar` aparecen
