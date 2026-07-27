@@ -1,4 +1,4 @@
-import { db } from '../config/database.js'
+import { db, databaseDialect } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isAffirmativeReply } from './appointmentReminderLogic.js'
 import { classifyConfirmationResponse } from '../agents/appointmentConfirmationAgent.js'
@@ -45,15 +45,127 @@ async function resyncAppointmentToGoogle(appointmentId) {
 function parseMessages(raw) {
   try {
     const parsed = JSON.parse(raw || '[]')
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+
+    return parsed
+      .map((entry, index) => {
+        if (typeof entry === 'string') {
+          return { text: entry.trim(), receivedAtMs: null, index }
+        }
+
+        const text = String(entry?.text || '').trim()
+        const receivedAtMs = new Date(entry?.receivedAt || '').getTime()
+        return {
+          text,
+          receivedAtMs: Number.isNaN(receivedAtMs) ? null : receivedAtMs,
+          index
+        }
+      })
+      .filter(entry => entry.text)
+      .sort((left, right) => {
+        // Ventanas creadas antes de este cambio guardaban strings. Si aparece
+        // una mezcla, se conserva el orden ya persistido. Cuando ambos mensajes
+        // traen instante del proveedor, sí se reconstruye el orden real.
+        if (
+          left.receivedAtMs !== null &&
+          right.receivedAtMs !== null &&
+          left.receivedAtMs !== right.receivedAtMs
+        ) {
+          return left.receivedAtMs - right.receivedAtMs
+        }
+        return left.index - right.index
+      })
+      .map(entry => entry.text)
   } catch {
     return []
   }
 }
 
+function buildStoredMessage({ text, receivedAt, messageId, fallbackReceivedAt }) {
+  const messageText = String(text || '').trim()
+  if (!messageText) return null
+
+  const receivedAtDate = new Date(receivedAt || '')
+  const receivedAtIso = Number.isNaN(receivedAtDate.getTime())
+    ? fallbackReceivedAt
+    : receivedAtDate.toISOString()
+  const stored = {
+    text: messageText,
+    receivedAt: receivedAtIso
+  }
+  const cleanMessageId = String(messageId || '').trim()
+  if (cleanMessageId) stored.messageId = cleanMessageId
+  return stored
+}
+
 function normalizeConfirmationSuccessAction(value) {
   const clean = String(value || '').trim()
   return CONFIRMATION_SUCCESS_ACTIONS.has(clean) ? clean : 'chat_card'
+}
+
+function confirmationMessagesAppendExpression() {
+  if (databaseDialect === 'postgres') {
+    return `(
+      COALESCE(NULLIF(appointment_confirmation_windows.accumulated_messages, ''), '[]')::jsonb
+      || excluded.accumulated_messages::jsonb
+    )::text`
+  }
+
+  return `
+    CASE
+      WHEN excluded.accumulated_messages = '[]' THEN
+        COALESCE(NULLIF(appointment_confirmation_windows.accumulated_messages, ''), '[]')
+      ELSE json_insert(
+        CASE
+          WHEN json_valid(appointment_confirmation_windows.accumulated_messages)
+            THEN appointment_confirmation_windows.accumulated_messages
+          ELSE '[]'
+        END,
+        '$[#]',
+        json_extract(excluded.accumulated_messages, '$[0]')
+      )
+    END`
+}
+
+function resultForTerminalAppointment(status) {
+  const normalized = String(status || '').trim().toLowerCase()
+  if (normalized === 'confirmed') return 'confirmed'
+  if (['cancelled', 'canceled'].includes(normalized)) return 'cancel'
+  return 'already_resolved'
+}
+
+function isTerminalAppointmentStatus(status) {
+  return ['confirmed', 'cancelled', 'canceled', 'showed', 'noshow', 'invalid']
+    .includes(String(status || '').trim().toLowerCase())
+}
+
+async function finishClaimedWindow({
+  windowId,
+  revision,
+  result,
+  resultDetail = '',
+  expectedStatus = 'processing'
+}) {
+  const timestamp = nowIso()
+  return db.run(`
+    UPDATE appointment_confirmation_windows
+    SET status = 'done',
+        result = ?,
+        result_detail = ?,
+        processed_at = ?,
+        updated_at = ?
+    WHERE id = ?
+      AND status = ?
+      AND message_revision = ?
+  `, [
+    result,
+    String(resultDetail || '').slice(0, 500),
+    timestamp,
+    timestamp,
+    windowId,
+    expectedStatus,
+    revision
+  ])
 }
 
 /**
@@ -79,7 +191,12 @@ export async function getActiveConfirmationWindow(contactId) {
  *   dentro de una secuencia de confirmación con IA.
  *   { windowActive: false } si no aplica.
  */
-export async function handleInboundForConfirmation({ contactId, text } = {}) {
+export async function handleInboundForConfirmation({
+  contactId,
+  text,
+  receivedAt,
+  messageId
+} = {}) {
   const id = String(contactId || '').trim()
   if (!id) return { windowActive: false }
 
@@ -111,47 +228,39 @@ export async function handleInboundForConfirmation({ contactId, text } = {}) {
 
   const bypassAutomations = Number(pending.bypass_automations || 0) === 1
   const now = nowIso()
-  const messageText = String(text || '').trim()
+  const storedMessage = buildStoredMessage({
+    text,
+    receivedAt,
+    messageId,
+    fallbackReceivedAt: now
+  })
 
-  // ¿Ya existe una ventana activa para este par (contacto, cita)?
-  const existing = await db.get(`
-    SELECT id, accumulated_messages FROM appointment_confirmation_windows
-    WHERE contact_id = ? AND appointment_id = ? AND status = 'waiting'
-  `, [id, pending.appointment_id])
-
-  if (existing) {
-    // Reiniciar el temporizador y agregar el mensaje.
-    const messages = parseMessages(existing.accumulated_messages)
-    if (messageText) messages.push(messageText)
-    await db.run(`
-      UPDATE appointment_confirmation_windows
-      SET accumulated_messages = ?, last_message_at = ?, updated_at = ?
-      WHERE id = ?
-    `, [JSON.stringify(messages), now, now, existing.id])
-    logger.info(`[Confirmación IA] Ventana reiniciada para contacto ${id} (${messages.length} msgs acumulados)`)
-  } else {
-    // Crear nueva ventana.
-    const messages = messageText ? [messageText] : []
-    await db.run(`
-      INSERT INTO appointment_confirmation_windows
-        (id, contact_id, appointment_id, reminder_send_id, status,
-         accumulated_messages, bypass_automations, confirmation_success_action, last_message_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(contact_id, appointment_id) DO UPDATE SET
-        status = 'waiting',
-        accumulated_messages = excluded.accumulated_messages,
-        bypass_automations = excluded.bypass_automations,
-        confirmation_success_action = excluded.confirmation_success_action,
-        last_message_at = excluded.last_message_at,
-        updated_at = excluded.updated_at
-    `, [
-      makeWindowId(), id, pending.appointment_id, pending.send_id,
-      JSON.stringify(messages), bypassAutomations ? 1 : 0,
-      normalizeConfirmationSuccessAction(pending.confirmation_success_action),
-      now, now, now
-    ])
-    logger.info(`[Confirmación IA] Ventana abierta para contacto ${id}, cita ${pending.appointment_id}`)
-  }
+  // Una sola escritura atómica crea o agrega el mensaje. Antes se hacía
+  // SELECT + UPDATE/UPSERT y dos mensajes entregados en el mismo lote podían
+  // leer el mismo arreglo y sobrescribirse entre sí.
+  await db.run(`
+    INSERT INTO appointment_confirmation_windows
+      (id, contact_id, appointment_id, reminder_send_id, status,
+       accumulated_messages, message_revision, bypass_automations,
+       confirmation_success_action, last_message_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'waiting', ?, 1, ?, ?, ?, ?, ?)
+    ON CONFLICT(contact_id, appointment_id) DO UPDATE SET
+      reminder_send_id = excluded.reminder_send_id,
+      status = 'waiting',
+      accumulated_messages = ${confirmationMessagesAppendExpression()},
+      message_revision = COALESCE(appointment_confirmation_windows.message_revision, 0) + 1,
+      bypass_automations = excluded.bypass_automations,
+      confirmation_success_action = excluded.confirmation_success_action,
+      last_message_at = excluded.last_message_at,
+      updated_at = excluded.updated_at
+  `, [
+    makeWindowId(), id, pending.appointment_id, pending.send_id,
+    JSON.stringify(storedMessage ? [storedMessage] : []),
+    bypassAutomations ? 1 : 0,
+    normalizeConfirmationSuccessAction(pending.confirmation_success_action),
+    now, now, now
+  ])
+  logger.info(`[Confirmación IA] Respuesta acumulada para contacto ${id}, cita ${pending.appointment_id}`)
 
   return { windowActive: true, bypassAutomations }
 }
@@ -173,14 +282,14 @@ export async function processExpiredConfirmationWindows() {
   let processed = 0
   for (const win of windows) {
     try {
-      await processConfirmationWindow(win)
-      processed += 1
+      const outcome = await processConfirmationWindow(win, cutoff)
+      if (outcome?.processed) processed += 1
     } catch (error) {
       logger.error(`[Confirmación IA] Error procesando ventana ${win.id}: ${error.message}`)
       await db.run(`
         UPDATE appointment_confirmation_windows
         SET status = 'error', result_detail = ?, updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND status IN ('processing', 'deciding')
       `, [error.message.slice(0, 500), nowIso(), win.id])
     }
   }
@@ -188,16 +297,31 @@ export async function processExpiredConfirmationWindows() {
   return { processed }
 }
 
-async function processConfirmationWindow(win) {
-  // Bloquear la ventana para evitar procesarla dos veces.
+async function processConfirmationWindow(candidate, cutoff) {
+  const candidateRevision = Number(candidate.message_revision || 0)
+
+  // Reclamar exactamente la revisión que venció. Si entró otro mensaje desde
+  // que el cron hizo el SELECT, cambió la revisión y se vuelve a esperar.
   const updated = await db.run(`
     UPDATE appointment_confirmation_windows
     SET status = 'processing', updated_at = ?
-    WHERE id = ? AND status = 'waiting'
-  `, [nowIso(), win.id])
+    WHERE id = ?
+      AND status = 'waiting'
+      AND message_revision = ?
+      AND last_message_at <= ?
+  `, [nowIso(), candidate.id, candidateRevision, cutoff])
 
-  if (!updated || updated.changes === 0) return // Ya tomada por otra ejecución concurrente.
+  if (!updated || updated.changes === 0) return { processed: false, deferred: true }
 
+  // Leer después del claim evita clasificar el snapshot viejo del SELECT inicial.
+  const win = await db.get(`
+    SELECT *
+    FROM appointment_confirmation_windows
+    WHERE id = ? AND status = 'processing' AND message_revision = ?
+  `, [candidate.id, candidateRevision])
+  if (!win) return { processed: false, deferred: true }
+
+  const revision = Number(win.message_revision || 0)
   const messages = parseMessages(win.accumulated_messages)
   const contactId = String(win.contact_id || '')
   const appointmentId = String(win.appointment_id || '')
@@ -211,15 +335,47 @@ async function processConfirmationWindow(win) {
     WHERE s.id = ?
   `, [win.reminder_send_id])
 
+  const appointmentState = await db.get(`
+    SELECT appointment_status, status, start_time
+    FROM appointments
+    WHERE id = ? AND deleted_at IS NULL
+  `, [appointmentId])
+  const currentAppointmentStatus = appointmentState?.appointment_status || appointmentState?.status
+  const appointmentStart = appointmentState?.start_time ? new Date(appointmentState.start_time) : null
+  const appointmentExpired = appointmentStart && !Number.isNaN(appointmentStart.getTime()) && appointmentStart <= new Date()
+
+  if (!appointmentState || isTerminalAppointmentStatus(currentAppointmentStatus) || appointmentExpired) {
+    const priorResult = String(win.result || '').trim()
+    const terminalResult = priorResult || (
+      appointmentExpired
+        ? 'appointment_started'
+        : resultForTerminalAppointment(currentAppointmentStatus)
+    )
+    const terminalDetail = String(win.result_detail || '').trim() || (
+      appointmentExpired
+        ? 'La cita ya comenzó; la respuesta no produjo acciones automáticas.'
+        : 'La cita ya tenía un estado final; no se repitieron acciones automáticas.'
+    )
+    const finished = await finishClaimedWindow({
+      windowId: win.id,
+      revision,
+      result: terminalResult,
+      resultDetail: terminalDetail
+    })
+    return { processed: Number(finished?.changes || 0) > 0 }
+  }
+
   // Si no hay mensajes acumulados, cerrar la ventana sin acción.
   if (!messages.length) {
-    await db.run(`
-      UPDATE appointment_confirmation_windows
-      SET status = 'done', result = 'no_response', processed_at = ?, updated_at = ?
-      WHERE id = ?
-    `, [nowIso(), nowIso(), win.id])
-    logger.info(`[Confirmación IA] Ventana ${win.id} cerrada sin mensajes (sin respuesta)`)
-    return
+    const finished = await finishClaimedWindow({
+      windowId: win.id,
+      revision,
+      result: 'no_response'
+    })
+    if (Number(finished?.changes || 0) > 0) {
+      logger.info(`[Confirmación IA] Ventana ${win.id} cerrada sin texto clasificable`)
+    }
+    return { processed: Number(finished?.changes || 0) > 0 }
   }
 
   // Clasificar la respuesta con el agente IA.
@@ -237,6 +393,23 @@ async function processConfirmationWindow(win) {
     : (classification.reason || '')
 
   logger.info(`[Confirmación IA] Contacto ${contactId}, cita ${appointmentId}: ${result} (${resultDetail})`)
+
+  // Reservar la decisión sólo si ningún mensaje llegó mientras el modelo
+  // clasificaba. El inbound concurrente cambia status a waiting y revision +1.
+  const decisionClaim = await db.run(`
+    UPDATE appointment_confirmation_windows
+    SET status = 'deciding',
+        result = ?,
+        result_detail = ?,
+        updated_at = ?
+    WHERE id = ?
+      AND status = 'processing'
+      AND message_revision = ?
+  `, [result, resultDetail.slice(0, 500), nowIso(), win.id, revision])
+  if (!decisionClaim || decisionClaim.changes === 0) {
+    logger.info(`[Confirmación IA] Ventana ${win.id} recibió otro mensaje durante la clasificación; se difiere la acción`)
+    return { processed: false, deferred: true }
+  }
 
   // Ejecutar la acción según la clasificación.
   if (result === 'confirmed') {
@@ -284,11 +457,17 @@ async function processConfirmationWindow(win) {
     })
   }
 
-  await db.run(`
-    UPDATE appointment_confirmation_windows
-    SET status = 'done', result = ?, result_detail = ?, processed_at = ?, updated_at = ?
-    WHERE id = ?
-  `, [result, resultDetail.slice(0, 500), nowIso(), nowIso(), win.id])
+  const finished = await finishClaimedWindow({
+    windowId: win.id,
+    revision,
+    result,
+    resultDetail,
+    expectedStatus: 'deciding'
+  })
+  return {
+    processed: Number(finished?.changes || 0) > 0,
+    deferred: Number(finished?.changes || 0) === 0
+  }
 }
 
 async function executeConfirmationSuccessAction({ contactId, appointmentId, action, resultDetail, reminderData }) {
@@ -303,18 +482,6 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
   const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
   const appointmentTitle = String(appointment?.title || 'cita').trim()
 
-  await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
-    appointmentId,
-    contactId,
-    contactName,
-    appointmentTitle,
-    calendarId: appointment?.calendar_id,
-    startTime: appointment?.start_time,
-    resultDetail
-  }).catch(error => {
-    logger.warn(`[Confirmación IA] No se pudo enviar push de cita confirmada: ${error.message}`)
-  })
-
   if (normalizedAction === 'chat_badge') {
     await db.run(`
       UPDATE appointments
@@ -327,6 +494,17 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
   }
 
   if (normalizedAction === 'notify_push') {
+    await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
+      appointmentId,
+      contactId,
+      contactName,
+      appointmentTitle,
+      calendarId: appointment?.calendar_id,
+      startTime: appointment?.start_time,
+      resultDetail
+    }).catch(error => {
+      logger.warn(`[Confirmación IA] No se pudo enviar push de cita confirmada: ${error.message}`)
+    })
     logger.info(`[Confirmación IA] Notificación de confirmación enviada para cita ${appointmentId}`)
     return
   }
@@ -400,7 +578,7 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
     WHERE s.contact_id = ?
       AND s.status = 'sent'
       AND s.message_type = 'confirmation'
-      AND s.ai_enabled = 1
+      AND s.ai_enabled = 0
       AND a.deleted_at IS NULL
       AND a.start_time > ?
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('confirmed', 'cancelled', 'canceled')

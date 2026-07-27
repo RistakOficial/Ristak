@@ -1,0 +1,2 @@
+-- initTables agrega message_revision antes de ejecutar migraciones versionadas.
+-- La columna permite comparar y reclamar de forma atómica cada lote de respuestas.

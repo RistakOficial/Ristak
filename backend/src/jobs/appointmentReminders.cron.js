@@ -10,7 +10,7 @@ import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const APPOINTMENT_REMINDERS_INTERVAL_MS = 60 * 1000
 // Las ventanas se verifican más frecuentemente para no agregar latencia innecesaria
-// después del debounce de 3 min. Cada 30 s es suficiente.
+// después del debounce de 2 min. Cada 30 s es suficiente.
 const CONFIRMATION_WINDOWS_INTERVAL_MS = 30 * 1000
 
 let started = false

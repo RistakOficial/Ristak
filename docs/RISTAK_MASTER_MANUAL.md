@@ -3740,6 +3740,48 @@ abran una ventana en `appointment_confirmation_windows`. Si el switch esta
 apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
 `after_booking`.
 
+Con IA activa, la primera respuesta abre la ventana y cada mensaje posterior
+reinicia una espera de dos minutos desde el ultimo inbound. El cron revisa esas
+ventanas cada 30 segundos, por lo que la clasificacion comienza normalmente
+entre 2:00 y 2:30 minutos despues del ultimo mensaje. Todos los textos se mandan
+al clasificador como una sola respuesta y, ante intenciones contradictorias, la
+intencion explicita mas reciente manda.
+
+La acumulacion es atomica en SQLite y PostgreSQL. Cada inbound incrementa
+`appointment_confirmation_windows.message_revision`; un lote concurrente no
+puede sobrescribir mensajes previos. Cada entrada conserva el instante y el ID
+del mensaje del proveedor; el instante reconstruye el orden cronologico antes de
+clasificar y los mensajes de un mismo lote se registran secuencialmente para
+resolver empates. El procesador reclama una revision especifica y vuelve a
+comprobarla despues de clasificar. Si llego otro mensaje mientras el modelo
+pensaba, no ejecuta ninguna accion con el contexto viejo: devuelve la ventana a
+espera y clasifica nuevamente el conjunto completo cuando vuelvan a transcurrir
+dos minutos.
+
+El clasificador distingue `confirmed`, `reschedule`, `cancel`, `ambiguous` y
+`human_needed`. `confirmed` siempre cambia la cita local a `confirmed` y luego
+ejecuta solamente la accion visual elegida: tarjeta en el chat, etiqueta hasta
+la cita, push o ningun aviso extra. El push de confirmacion no se manda por
+reflejo cuando se eligio tarjeta, etiqueta o "solo marcar". Una respuesta de
+reagendamiento no busca ni reserva por si sola otro horario; usa la accion de
+"respondio pero no confirmo" configurada para conservar, avisar o cancelar la
+cita actual.
+
+La accion de no confirmacion aplica solo cuando existe una respuesta recibida.
+Si el contacto guarda silencio, Ristak conserva la cita; no hay un plazo
+implicito que la cancele. Respuestas ambiguas, preguntas logisticas, necesidad
+humana o una falla tecnica del clasificador nunca ejecutan una cancelacion
+destructiva: si estaba configurada, se degrada a notificacion para revision. Si
+la IA esta apagada, se conserva el modo compatible: una respuesta afirmativa
+simple marca la cita confirmada sin abrir ventana ni intentar interpretar
+negativas.
+
+La opcion `bypass_automations` se presenta como "Reservar estas respuestas para
+la confirmacion". Mientras la ventana esta activa, esos mensajes no se entregan
+al agente conversacional ni a automatizaciones y tampoco se reproducen despues.
+Es aislamiento intencional, no una cola pausada. Si el negocio necesita que el
+agente responda preguntas logisticas, debe dejar esa opcion apagada.
+
 La plantilla se decide primero por el momento del mensaje y despues por el modo:
 `after_booking` siempre usa `cita_programada`; para `before_appointment`, una
 confirmacion usa `confirmacion_cita_dia_anterior` y un recordatorio usa

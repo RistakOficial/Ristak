@@ -4693,7 +4693,12 @@ export async function processMetaSocialWebhook({
           const channelForAutomation = socialMessage.platform === 'instagram' ? 'instagram' : 'messenger'
           ;(async () => {
             let confirmWindow = { windowActive: false, bypassAutomations: false }
-            await handleInboundForConfirmation({ contactId: result.contactId, text: result.messageText })
+            await handleInboundForConfirmation({
+              contactId: result.contactId,
+              text: result.messageText,
+              receivedAt: result.timestamp,
+              messageId: result.messageId
+            })
               .then(w => { confirmWindow = w })
               .catch(error => {
                 logger.warn(`[Citas] Error en ventana de confirmación (DM Meta): ${error.message}`)

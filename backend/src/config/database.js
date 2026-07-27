@@ -8120,6 +8120,7 @@ async function initTablesUnlocked() {
         reminder_send_id TEXT NOT NULL,
         status TEXT DEFAULT 'waiting',
         accumulated_messages TEXT DEFAULT '[]',
+        message_revision INTEGER NOT NULL DEFAULT 0,
         bypass_automations INTEGER DEFAULT 0,
         confirmation_success_action TEXT DEFAULT 'chat_card',
         last_message_at DATETIME NOT NULL,
@@ -8133,6 +8134,9 @@ async function initTablesUnlocked() {
     `)
     try {
       await db.run("ALTER TABLE appointment_confirmation_windows ADD COLUMN confirmation_success_action TEXT DEFAULT 'chat_card'")
+    } catch (_) { /* columna ya existe */ }
+    try {
+      await db.run('ALTER TABLE appointment_confirmation_windows ADD COLUMN message_revision INTEGER NOT NULL DEFAULT 0')
     } catch (_) { /* columna ya existe */ }
     await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_contact ON appointment_confirmation_windows(contact_id, status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conf_windows_last_msg ON appointment_confirmation_windows(last_message_at, status)')

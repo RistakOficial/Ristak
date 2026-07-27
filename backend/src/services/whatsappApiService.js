@@ -8724,11 +8724,13 @@ export async function captureQrChatMessage({
     })
 
     // Ventana de confirmación con IA: registrar mensaje y determinar si se deben
-    // pausar otros agentes/automatizaciones durante la espera de 3 minutos.
+    // reservar otros agentes/automatizaciones durante la espera de 2 minutos.
     let confirmWindow = { windowActive: false, bypassAutomations: false }
     await handleInboundForConfirmation({
       contactId: result.contactId,
-      text: result.messageText
+      text: result.messageText,
+      receivedAt: result.messageTimestamp,
+      messageId: result.messageId
     }).then(w => { confirmWindow = w }).catch(error => {
       logger.warn(`[Citas] Error en ventana de confirmación (QR): ${error.message}`)
     })
@@ -9731,14 +9733,19 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
 
     // Ventanas de confirmación con IA: registrar mensajes y obtener estado de bypass.
     const confirmWindows = new Map()
-    await Promise.all(inboundResults
-      .map(result => handleInboundForConfirmation({
-        contactId: result.contactId,
-        text: result.messageText
-      }).then(w => { confirmWindows.set(result.contactId, w) })
-        .catch(error => {
-          logger.warn(`[Citas] Error en ventana de confirmación: ${error.message}`)
-        })))
+    for (const result of inboundResults) {
+      try {
+        const window = await handleInboundForConfirmation({
+          contactId: result.contactId,
+          text: result.messageText,
+          receivedAt: result.messageTimestamp,
+          messageId: result.messageId
+        })
+        confirmWindows.set(result.contactId, window)
+      } catch (error) {
+        logger.warn(`[Citas] Error en ventana de confirmación: ${error.message}`)
+      }
+    }
 
     await Promise.all(inboundResults
       .map(result => {
@@ -10672,14 +10679,19 @@ export async function processMetaDirectWebhookPayload({
 async function processMetaDirectInboundSideEffects(inboundResults = []) {
   const confirmWindows = new Map()
 
-  await Promise.all(inboundResults.map(result => handleInboundForConfirmation({
-    contactId: result.contactId,
-    text: result.messageText
-  }).then(window => {
-    confirmWindows.set(result.contactId, window)
-  }).catch(error => {
-    logger.warn(`[Citas] Error en ventana Meta directo: ${error.message}`)
-  })))
+  for (const result of inboundResults) {
+    try {
+      const window = await handleInboundForConfirmation({
+        contactId: result.contactId,
+        text: result.messageText,
+        receivedAt: result.messageTimestamp,
+        messageId: result.messageId
+      })
+      confirmWindows.set(result.contactId, window)
+    } catch (error) {
+      logger.warn(`[Citas] Error en ventana Meta directo: ${error.message}`)
+    }
+  }
 
   await Promise.all(inboundResults.map(result => {
     const window = confirmWindows.get(result.contactId)

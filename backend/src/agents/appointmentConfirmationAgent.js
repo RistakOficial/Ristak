@@ -28,6 +28,7 @@ Analiza los mensajes del contacto que se proporcionan y determina si la persona:
 REGLAS IMPORTANTES:
 - Considera TODOS los mensajes acumulados como una sola respuesta completa.
 - La persona puede haber enviado varios mensajes separados que juntos forman un pensamiento.
+- Si hay mensajes contradictorios, la intención explícita más reciente tiene prioridad.
 - Presta atención tanto a señales explícitas como implícitas.
 
 Señales que indican CONFIRMACIÓN (result: "confirmed"):

@@ -111,7 +111,7 @@ const NO_CONFIRM_ACTION_OPTIONS: { value: ReminderNoConfirmAction; label: string
   {
     value: 'cancel_appointment',
     label: 'Cancelar la cita',
-    description: 'La cita se marca como cancelada si la respuesta no confirma asistencia.'
+    description: 'Sólo cancela ante una cancelación o reagendamiento explícitos; una respuesta ambigua se manda a revisión.'
   },
   {
     value: 'notify_push',
@@ -558,11 +558,10 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                         <span className={styles.switchTrack} />
                       </span>
                       <span>
-                        <span className={styles.switchLabel}>Pausar agentes y automatizaciones durante la confirmación</span>
+                        <span className={styles.switchLabel}>Reservar estas respuestas para la confirmación</span>
                         <span className={styles.helpText}>
-                          Mientras el contacto esté respondiendo al mensaje de confirmación, otros agentes
-                          de IA y automatizaciones activas quedarán en pausa para evitar respuestas cruzadas.
-                          Se reanudan automáticamente cuando la IA termina de clasificar la respuesta.
+                          Mientras la IA reúne y clasifica la respuesta, esos mensajes no se entregan a otros
+                          agentes ni a automatizaciones. No se reproducen después; así evitas respuestas cruzadas.
                         </span>
                       </span>
                     </label>
@@ -588,10 +587,10 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </div>
             )}
 
-            {isConfirmation && (
+            {isConfirmation && draft.aiEnabled !== false && (
               <div className={styles.noConfirmBox}>
                 <div className={styles.field}>
-                  <label className={styles.fieldLabel}>Si el contacto no confirma</label>
+                  <label className={styles.fieldLabel}>Si responde pero no confirma</label>
                   <CustomSelect
                     value={draft.noConfirmAction || 'no_action'}
                     options={NO_CONFIRM_ACTION_OPTIONS.map(option => ({
@@ -603,6 +602,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     portal
                   />
                   <span className={styles.helpText}>{selectedNoConfirmAction.description}</span>
+                  <span className={styles.helpText}>
+                    Si no responde, Ristak conserva la cita. Esta acción sólo aplica a respuestas recibidas.
+                  </span>
                 </div>
               </div>
             )}

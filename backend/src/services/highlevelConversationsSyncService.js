@@ -574,7 +574,16 @@ async function ensureLocalContact({ contactId, apiToken, locationId, contactCach
   return { contact, created: Boolean(ensured.created) }
 }
 
-async function triggerAutomationsForInboundMessage({ contact, channel, text, messageType, isNew, notifyNewInbound }) {
+async function triggerAutomationsForInboundMessage({
+  contact,
+  channel,
+  text,
+  messageType,
+  messageTimestamp,
+  messageId,
+  isNew,
+  notifyNewInbound
+}) {
   if (!contact?.id || !isNew || !notifyNewInbound) return
   if (!['whatsapp', 'messenger', 'instagram', 'sms', 'webchat', 'email'].includes(channel)) return
 
@@ -582,7 +591,12 @@ async function triggerAutomationsForInboundMessage({ contact, channel, text, mes
   // inbound que llegan vía HighLevel. Si hay una ventana activa con bypass, no
   // disparamos automatizaciones (mismo criterio que el inbound de WhatsApp API/QR).
   let confirmWindow = { windowActive: false, bypassAutomations: false }
-  await handleInboundForConfirmation({ contactId: contact.id, text })
+  await handleInboundForConfirmation({
+    contactId: contact.id,
+    text,
+    receivedAt: messageTimestamp,
+    messageId
+  })
     .then(w => { confirmWindow = w })
     .catch(error => {
       logger.warn(`[Citas] Error en ventana de confirmación (GHL ${channel}): ${error.message}`)
@@ -1158,6 +1172,8 @@ export async function upsertHighLevelConversationMessage({
       channel: getAutomationChannel(channel),
       text: getMessageBody(message),
       messageType: getMessageAttachments(message).length ? 'media' : 'text',
+      messageTimestamp: getMessageTimestamp(message),
+      messageId: getRemoteMessageId(message),
       isNew: result.isNew,
       notifyNewInbound
     })

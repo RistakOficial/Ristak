@@ -148,6 +148,23 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - El switch **Usar como confirmación de cita** no cambia el ancla del envío.
   Sólo cambia `messageType` a `confirmation` para activar IA, acciones de
   confirmación y ventanas de seguimiento.
+- Con IA activa, cada respuesta reinicia una espera de dos minutos. Los mensajes
+  se acumulan de forma atómica, se ordenan por el instante del proveedor y se
+  clasifican juntos; si entra otro mientras el modelo está clasificando, la
+  acción se difiere y se vuelve a evaluar el lote completo después de otros dos
+  minutos de silencio.
+- **Si responde pero no confirma** sólo aplica a respuestas recibidas. Si la
+  persona no responde, la cita se conserva. Una respuesta ambigua o una falla
+  del clasificador nunca cancela la cita; se degrada a revisión humana.
+- **Reservar estas respuestas para la confirmación** impide que esos mensajes
+  lleguen al agente conversacional o a automatizaciones. No se reproducen al
+  terminar; si el negocio necesita contestar preguntas logísticas debe dejarlo
+  apagado.
+- Cuando la IA confirma, siempre cambia el estado real de la cita y ejecuta
+  únicamente el aviso seleccionado: tarjeta, push, etiqueta o sólo marcar.
+  Elegir tarjeta/etiqueta/solo marcar no manda también un push oculto.
+- Con IA apagada, una respuesta afirmativa simple sigue confirmando la cita sin
+  abrir una ventana; las acciones para interpretar negativas quedan ocultas.
 - Si el switch está apagado, el mensaje se guarda como `messageType: 'reminder'`
   aunque sea un aviso posterior al agendado.
 - El momento manda sobre el modo de confirmación al elegir plantilla: todo aviso
