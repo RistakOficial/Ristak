@@ -27,6 +27,7 @@ import {
   replaceMediaAssetHandler,
   retryMediaAssetHandler,
   serveMediaAssetFileHandler,
+  syncBunnyStorageFolderHandler,
   syncMediaAssetStreamHandler,
   storageDiagnosticsHandler,
   uploadMcpBunnyMediaHandler,
@@ -203,6 +204,7 @@ router.delete('/video-upload/:assetId', classifyMediaUpload, requireMediaUploadA
 router.post('/upload', classifyMediaUpload, requireMediaUploadAccess, uploadSingleFile, uploadMediaHandler)
 router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHandler)
 router.get('/folders', requireMediaLicense, requireMediaAccess, listMediaFoldersHandler)
+router.post('/folders/sync', requireMediaLicense, requireMediaAccess, syncBunnyStorageFolderHandler)
 router.post('/folders', requireMediaLicense, requireMediaAccess, createMediaFolderHandler)
 router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)
 router.get('/diagnostics', requireMediaLicense, requireMediaAccess, storageDiagnosticsHandler)

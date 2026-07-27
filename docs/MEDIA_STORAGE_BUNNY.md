@@ -54,6 +54,7 @@ Authenticated app endpoints:
 - `GET /api/media/assets`
 - `POST /api/media/folders`
 - `GET /api/media/folders`
+- `POST /api/media/folders/sync`
 - `GET /api/media/storage/usage`
 - `GET /api/media/assets/:id/url`
 - `DELETE /api/media/assets/:id`
@@ -306,6 +307,23 @@ another account.
   usuario, incluso cuando todavía están vacías. El árbol físico de Bunny se crea
   automáticamente cuando llega el primer archivo a esa ruta; Ristak no fabrica
   archivos marcadores ni expone objetos técnicos al usuario.
+- Al abrir o refrescar una carpeta, el frontend solicita explícitamente
+  `POST /api/media/folders/sync`. El backend lista únicamente ese nivel de Bunny
+  Storage bajo la raíz autorizada `accounts/<slug>`, registra las subcarpetas
+  encontradas e importa o actualiza los archivos directos en `media_assets`. La
+  sincronización es idempotente por ruta física, deduplica refreshes simultáneos,
+  clasifica imagen, video, audio y documento por extensión y nunca recorre la
+  raíz de otra cuenta.
+- La lectura del proveedor es progresiva, no un escaneo recursivo: abrir `Mi
+  unidad` descubre su primer nivel y entrar en una carpeta sincroniza su contenido
+  directo. Se omiten `_LEEME.txt`, nombres inválidos y derivados técnicos ya
+  asociados a un asset, como thumbnails. Una falla temporal de Bunny no bloquea
+  la biblioteca que Ristak ya tenía indexada; el siguiente refresh reintenta.
+  La sincronización tampoco borra automáticamente registros si un objeto
+  desaparece del proveedor, para evitar pérdidas por una lectura parcial.
+- Esta importación corresponde al explorador de **Bunny Storage**. Las
+  colecciones de Bunny Stream son otra jerarquía del proveedor y no se presentan
+  como carpetas de archivos de Storage.
 - Una subida iniciada desde `Configuracion > Media` manda `folderPath` de forma
   explícita. Esa ruta es relativa a la unidad visible del negocio: el backend la
   normaliza y siempre antepone la raíz inmutable `accounts/<slug>`. Por eso una
@@ -320,10 +338,12 @@ another account.
   completa del negocio desde `Mi unidad`, con breadcrumbs, carpeta anterior y
   paginación independiente de archivos y carpetas. El tipo del campo filtra sólo
   los archivos visibles —video, imagen, audio o documento—, no las carpetas:
-  todas siguen disponibles para navegar. La búsqueda recorre toda la unidad y
-  una subida manual desde el selector se guarda explícitamente en la carpeta
-  abierta; los uploads internos que no pasan por ese explorador conservan su
-  taxonomía automática.
+  todas siguen disponibles para navegar. Cada carpeta se sincroniza con Bunny
+  Storage antes de leer su primera página, por lo que una carpeta o archivo
+  creado manualmente en la cuenta aparece al abrirla o refrescarla. La búsqueda
+  recorre el inventario ya indexado de toda la unidad y una subida manual desde
+  el selector se guarda explícitamente en la carpeta abierta; los uploads internos
+  que no pasan por ese explorador conservan su taxonomía automática.
 - El explorador acepta archivos externos arrastrados desde Finder, Escritorio,
   Descargas, volúmenes externos u otra ubicación expuesta por el sistema. Soltar
   sobre una carpeta la usa como destino; soltar en el resto del explorador usa la

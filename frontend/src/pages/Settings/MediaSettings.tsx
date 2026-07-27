@@ -665,7 +665,8 @@ export const MediaSettings: React.FC = () => {
       const page = await mediaService.listFolders({
         parentPath: '',
         mediaType: mediaTypeFilter,
-        limit: 100
+        limit: 100,
+        syncProvider: true
       })
       if (requestVersion !== rootFolderRequestVersionRef.current) return
       setRootFolders(page.items.map(presentFolderSummary))
@@ -688,7 +689,8 @@ export const MediaSettings: React.FC = () => {
       const page = await mediaService.listFolders({
         parentPath: requestedFolderPath,
         mediaType: mediaTypeFilter,
-        limit: 100
+        limit: 100,
+        syncProvider: true
       })
       if (requestVersion !== folderRequestVersionRef.current) return
       const nextFolders = page.items.map(presentFolderSummary)
@@ -724,7 +726,8 @@ export const MediaSettings: React.FC = () => {
         limit: MEDIA_LIBRARY_PAGE_SIZE,
         cursor: requestedCursor || null,
         includeMeta,
-        includeFolders: false
+        includeFolders: false,
+        syncProvider: requestedFolderPath !== null
       })
       if (requestVersion !== mediaRequestVersionRef.current) return
 
@@ -987,7 +990,8 @@ export const MediaSettings: React.FC = () => {
         parentPath: requestedFolderPath,
         mediaType: mediaTypeFilter,
         cursor: folderPageInfo.nextCursor,
-        limit: 100
+        limit: 100,
+        syncProvider: true
       })
       if (requestVersion !== folderRequestVersionRef.current) return
       setFolderSummaries((current) => appendFolderPage(current, page))
@@ -1007,7 +1011,8 @@ export const MediaSettings: React.FC = () => {
         parentPath: '',
         mediaType: mediaTypeFilter,
         cursor: rootFolderPageInfo.nextCursor,
-        limit: 100
+        limit: 100,
+        syncProvider: true
       })
       if (requestVersion !== rootFolderRequestVersionRef.current) return
       setRootFolders((current) => appendFolderPage(current, page))
@@ -1036,7 +1041,12 @@ export const MediaSettings: React.FC = () => {
     moveFolderRequestVersionRef.current = requestVersion
     setMoveFoldersLoading(true)
     try {
-      const page = await mediaService.listFolders({ parentPath, cursor: cursor || null, limit: 100 })
+      const page = await mediaService.listFolders({
+        parentPath,
+        cursor: cursor || null,
+        limit: 100,
+        syncProvider: true
+      })
       if (requestVersion !== moveFolderRequestVersionRef.current) return
       setMoveFolders((current) => append ? appendFolderPage(current, page) : page.items.map(presentFolderSummary))
       setMoveFolderPageInfo(page.pageInfo)

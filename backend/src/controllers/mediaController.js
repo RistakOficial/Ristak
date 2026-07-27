@@ -27,6 +27,7 @@ import {
   resolveMediaAssetSelection,
   runStorageDiagnostics,
   softDeleteMediaAsset,
+  syncBunnyStorageFolder,
   syncMediaAssetBunnyStream,
   uploadMediaAsset,
   uploadMediaAssetFromDataUrl
@@ -951,6 +952,20 @@ export async function createMediaFolderHandler(req, res) {
     res.status(201).json({ success: true, data: folder })
   } catch (error) {
     sendError(res, error, 'Error creando carpeta multimedia')
+  }
+}
+
+export async function syncBunnyStorageFolderHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const result = await syncBunnyStorageFolder({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      folderPath: body.folderPath ?? body.folder_path ?? body.path ?? '',
+      userId: req.user?.userId || req.user?.id || null
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    sendError(res, error, 'Error sincronizando la carpeta de Bunny')
   }
 }
 

@@ -29895,7 +29895,8 @@ const SitesMediaPickerModal: React.FC<{
         limit: mediaPickerPageSize,
         cursor: cursor || null,
         includeMeta: false,
-        includeFolders: false
+        includeFolders: false,
+        syncProvider: !debouncedQuery
       })
       if (requestVersion !== requestVersionRef.current) return
       setAssets(page.items)
@@ -29926,7 +29927,8 @@ const SitesMediaPickerModal: React.FC<{
       const page = await mediaService.listFolders({
         parentPath: currentFolderPath,
         limit: mediaPickerFolderPageSize,
-        cursor: cursor || null
+        cursor: cursor || null,
+        syncProvider: true
       })
       if (requestVersion !== folderRequestVersionRef.current) return
       setFolders(current => {

@@ -69,6 +69,7 @@ export interface ListMediaAssetsInput {
   cursor?: string | null
   includeMeta?: boolean
   includeFolders?: boolean
+  syncProvider?: boolean
 }
 
 export interface MediaPageInfo {
@@ -112,11 +113,23 @@ export interface ListMediaFoldersInput {
   status?: string
   limit?: number
   cursor?: string | null
+  syncProvider?: boolean
 }
 
 export interface MediaFolderPage {
   items: MediaFolderSummary[]
   pageInfo: MediaPageInfo
+}
+
+export interface MediaProviderFolderSync {
+  status: 'ready' | 'skipped' | string
+  provider: string
+  folderPath: string
+  accountRoot?: string
+  foldersDiscovered: number
+  assetsImported: number
+  assetsUpdated: number
+  itemsSkipped: number
 }
 
 export interface MediaDownloadEntry {
@@ -133,6 +146,36 @@ export interface MediaUploadProgress {
 export const MEDIA_UPLOAD_CANCELLED_MESSAGE = 'La subida se canceló.'
 const MEDIA_UPLOAD_RETRY_DELAYS_MS = [1500, 4500]
 const MEDIA_UPLOAD_RETRY_STATUS_CODES = new Set([502, 503, 504])
+const mediaProviderFolderSyncInflight = new Map<string, Promise<MediaProviderFolderSync>>()
+
+function syncMediaProviderFolder(input: { businessId?: string; folderPath?: string }) {
+  const businessId = input.businessId || ''
+  const folderPath = input.folderPath || ''
+  const key = `${businessId}\n${folderPath}`
+  const existing = mediaProviderFolderSyncInflight.get(key)
+  if (existing) return existing
+
+  const promise = apiClient.post<MediaProviderFolderSync>('/media/folders/sync', {
+    ...(businessId ? { businessId } : {}),
+    folderPath
+  }).finally(() => {
+    if (mediaProviderFolderSyncInflight.get(key) === promise) {
+      mediaProviderFolderSyncInflight.delete(key)
+    }
+  })
+  mediaProviderFolderSyncInflight.set(key, promise)
+  return promise
+}
+
+async function syncMediaProviderFolderBestEffort(input: { businessId?: string; folderPath?: string }) {
+  try {
+    return await syncMediaProviderFolder(input)
+  } catch {
+    // Bunny es la fuente remota, pero una falla temporal no debe ocultar la
+    // biblioteca que Ristak ya tiene indexada. El próximo refresh reintenta.
+    return null
+  }
+}
 
 export function isMediaUploadCancelledError(error: unknown) {
   if (!error || typeof error !== 'object') return false
@@ -850,7 +893,19 @@ export const mediaService = {
     })
   },
 
-  listAssets(input: ListMediaAssetsInput = {}) {
+  async listAssets(input: ListMediaAssetsInput = {}) {
+    if (
+      input.syncProvider &&
+      input.folderPath !== null &&
+      input.folderPath !== undefined &&
+      !input.cursor
+    ) {
+      await syncMediaProviderFolderBestEffort({
+        businessId: input.businessId,
+        folderPath: input.folderPath
+      })
+    }
+
     const params: Record<string, string> = {}
     if (input.businessId) params.businessId = input.businessId
     if (input.module) params.module = input.module
@@ -867,7 +922,14 @@ export const mediaService = {
     return apiClient.get<MediaAssetPage>('/media/assets', { params })
   },
 
-  listFolders(input: ListMediaFoldersInput = {}) {
+  async listFolders(input: ListMediaFoldersInput = {}) {
+    if (input.syncProvider && !input.cursor) {
+      await syncMediaProviderFolderBestEffort({
+        businessId: input.businessId,
+        folderPath: input.parentPath || ''
+      })
+    }
+
     const params: Record<string, string> = {}
     if (input.businessId) params.businessId = input.businessId
     if (input.parentPath !== undefined) params.parentPath = input.parentPath
@@ -877,6 +939,10 @@ export const mediaService = {
     if (input.limit) params.limit = String(input.limit)
     if (input.cursor) params.cursor = input.cursor
     return apiClient.get<MediaFolderPage>('/media/folders', { params })
+  },
+
+  syncFolder(input: { businessId?: string; folderPath?: string }) {
+    return syncMediaProviderFolder(input)
   },
 
   createFolder(input: { parentPath?: string; name: string }) {

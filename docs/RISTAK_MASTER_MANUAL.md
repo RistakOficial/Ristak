@@ -4838,8 +4838,12 @@ oculta carpetas vacías ni carpetas que todavía no contengan ese tipo. La búsq
 se ejecuta en servidor sobre toda la unidad y al limpiarla vuelve a la carpeta
 abierta. Cada página usa cursor de 50 assets y las carpetas tienen paginación
 independiente; una subida nueva se guarda en la carpeta que el usuario tiene
-abierta. El backend deriva el negocio de la sesión y nunca expone carpetas de
-otra cuenta.
+abierta. Antes de cargar la primera página de una carpeta, el selector sincroniza
+ese nivel con Bunny Storage: así descubre carpetas y archivos creados manualmente
+fuera de Ristak, los indexa de forma idempotente y les aplica el mismo filtro por
+tipo. La lectura siempre queda encerrada bajo `accounts/<slug>`; no es recursiva,
+no expone carpetas de otra cuenta y una falla temporal de Bunny conserva visible
+el inventario que Ristak ya tenía.
 
 El contrato canonico para contenido asociable es:
 
@@ -5859,6 +5863,19 @@ Capacidades:
   `accounts/<slug>` y normaliza la ruta, así que el navegador nunca puede elegir
   ni escapar hacia la raíz de otro cliente. La tabla `media_folders` conserva las
   carpetas vacías; Bunny crea el árbol físico al recibir el primer archivo.
+- Abrir o refrescar una carpeta ejecuta
+  `POST /api/media/folders/sync`. Ristak lista sólo ese nivel de Bunny Storage
+  dentro de `accounts/<slug>`, descubre las subcarpetas e importa o actualiza los
+  archivos creados manualmente. La ruta física hace la operación idempotente, los
+  refreshes simultáneos se deduplican y cada archivo queda clasificado por
+  extensión como imagen, video, audio, documento u otro. Los marcadores técnicos,
+  nombres inválidos y thumbnails ya asociados no aparecen como archivos del
+  usuario.
+- La sincronización es progresiva: `Mi unidad` descubre su primer nivel y entrar
+  a una carpeta sincroniza sus elementos directos. Si Bunny falla, Media conserva
+  el índice local y reintenta en el siguiente refresh; no borra registros
+  automáticamente ante una lectura parcial. Este contrato cubre Bunny Storage,
+  no las colecciones separadas de Bunny Stream.
 - El usuario también puede arrastrar archivos o carpetas desde Finder, Escritorio,
   Descargas o un volumen externo. Soltar sobre una carpeta sube ahí; soltar en el
   resto del explorador sube a la ubicación abierta. Una carpeta arrastrada

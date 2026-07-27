@@ -84,6 +84,8 @@ const BUNNY_FILE_UPLOAD_BASE_TIMEOUT_MS = Math.max(
 )
 const BUNNY_FILE_UPLOAD_MAX_TIMEOUT_MS = 30 * 60_000
 const BUNNY_FILE_DELETE_TIMEOUT_MS = 30_000
+const BUNNY_FOLDER_LIST_TIMEOUT_MS = 30_000
+const BUNNY_FOLDER_SYNC_MAX_ITEMS = 20_000
 // Solo necesitamos los primeros bytes para detectar el tipo real del archivo.
 const MEDIA_HEADER_SAMPLE_BYTES = 64 * 1024
 const MEDIA_LIBRARY_DEFAULT_LIMIT = 50
@@ -225,6 +227,18 @@ const MIME_EXTENSION = {
 }
 
 const ALLOWED_MIME_TYPES = new Set(Object.keys(MIME_EXTENSION))
+const BUNNY_IMPORT_MIME_BY_EXTENSION = new Map()
+for (const [mimeType, extension] of Object.entries(MIME_EXTENSION)) {
+  if (!BUNNY_IMPORT_MIME_BY_EXTENSION.has(extension)) {
+    BUNNY_IMPORT_MIME_BY_EXTENSION.set(extension, mimeType)
+  }
+}
+BUNNY_IMPORT_MIME_BY_EXTENSION.set('jpeg', 'image/jpeg')
+BUNNY_IMPORT_MIME_BY_EXTENSION.set('oga', 'audio/ogg')
+BUNNY_IMPORT_MIME_BY_EXTENSION.set('wav', 'audio/wav')
+
+const BUNNY_FOLDER_SYNC_TECHNICAL_FILES = new Set(['_LEEME.txt'])
+const bunnyFolderSyncInflight = new Map()
 
 // `file-type` reconoce el brand `M4A ` que escribe AVAudioRecorder como
 // `audio/x-m4a`. El cliente iOS declara correctamente `audio/mp4`, pero la
@@ -1362,6 +1376,12 @@ function bunnyObjectUrl(config, objectPath) {
   return `${bunnyStorageBaseUrl(config).replace(/\/+$/, '')}/${encodeURIComponent(config.bunnyStorageZone)}/${encodedPath}`
 }
 
+function bunnyDirectoryUrl(config, directoryPath = '') {
+  const normalizedPath = cleanString(directoryPath).replace(/^\/+|\/+$/g, '')
+  const baseUrl = bunnyObjectUrl(config, normalizedPath)
+  return `${baseUrl.replace(/\/+$/, '')}/`
+}
+
 function bunnyPublicUrl(config, objectPath) {
   return `${config.bunnyCdnBaseUrl.replace(/\/+$/, '')}/${objectPath.split('/').map(segment => encodeURIComponent(segment)).join('/')}`
 }
@@ -1388,6 +1408,40 @@ async function parseBunnyResponse(response) {
   } catch {
     return { message: text }
   }
+}
+
+async function listBunnyStorageDirectory(config, directoryPath = '') {
+  const response = await fetch(bunnyDirectoryUrl(config, directoryPath), {
+    method: 'GET',
+    headers: { AccessKey: config.bunnyStorageApiKey },
+    signal: AbortSignal.timeout(BUNNY_FOLDER_LIST_TIMEOUT_MS)
+  })
+
+  if (response.status === 404) return []
+  const payload = await parseBunnyResponse(response)
+  if (!response.ok) {
+    const detail = cleanString(payload?.message || payload?.error || payload?.Message || response.statusText)
+    throw errorWithStatus(
+      `Bunny rechazó la lectura de la carpeta (${response.status}): ${detail.slice(0, 180) || response.statusText}`,
+      502,
+      'bunny_folder_list_failed'
+    )
+  }
+  if (!Array.isArray(payload)) {
+    throw errorWithStatus(
+      'Bunny devolvió una respuesta inválida al listar la carpeta.',
+      502,
+      'bunny_folder_list_invalid'
+    )
+  }
+  if (payload.length > BUNNY_FOLDER_SYNC_MAX_ITEMS) {
+    throw errorWithStatus(
+      `La carpeta contiene más de ${BUNNY_FOLDER_SYNC_MAX_ITEMS.toLocaleString('en-US')} elementos directos. Divídela en subcarpetas para sincronizarla de forma segura.`,
+      409,
+      'bunny_folder_sync_too_large'
+    )
+  }
+  return payload
 }
 
 function isReadableStream(value) {
@@ -3340,6 +3394,392 @@ export function mediaFolderPathFromObjectPath(objectPath = '', fallbackFolder = 
     : segments
   const folderSegments = relativeSegments.slice(0, -1)
   return normalizeMediaFolderPath(folderSegments.join('/') || fallbackFolder)
+}
+
+function bunnyInventoryObjectName(entry = {}) {
+  const value = cleanString(
+    entry.ObjectName ??
+    entry.objectName ??
+    entry.object_name ??
+    entry.Name ??
+    entry.name
+  ).replace(/\/+$/, '')
+  if (!value || value === '.' || value === '..' || /[/\\\u0000]/.test(value)) return ''
+  return value
+}
+
+function bunnyInventoryIsDirectory(entry = {}) {
+  return boolValue(entry.IsDirectory ?? entry.isDirectory ?? entry.is_directory)
+}
+
+function bunnyInventoryFileLength(entry = {}) {
+  const value = Math.floor(numberValue(entry.Length ?? entry.length ?? entry.Size ?? entry.size))
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
+}
+
+function bunnyInventoryImportDescriptor(filename = '') {
+  const extension = extname(filename).replace(/^\./, '').toLowerCase()
+  const mimeType = BUNNY_IMPORT_MIME_BY_EXTENSION.get(extension) || 'application/octet-stream'
+  return {
+    extension: extension || 'bin',
+    mimeType,
+    mediaType: mediaTypeFromMime(mimeType)
+  }
+}
+
+function bunnyInventoryModule(folderPath = '') {
+  const firstSegment = normalizeMediaFolderPath(folderPath).split('/').filter(Boolean)[0] || ''
+  const normalizedModule = firstSegment.toLowerCase().replace(/[^a-z0-9_]+/g, '_')
+  return MEDIA_MODULES.has(normalizedModule) ? normalizedModule : 'media'
+}
+
+function bunnyInventoryAssetId(businessId, objectPath) {
+  const digest = crypto
+    .createHash('sha256')
+    .update(`${normalizeBusinessId(businessId)}\n${cleanString(objectPath)}`)
+    .digest('hex')
+    .slice(0, 32)
+  return `rstk_media_bunny_${digest}`
+}
+
+function collectBunnyMetadataPaths(value, paths, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 6) return
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (
+      typeof nestedValue === 'string' &&
+      /path$/i.test(key) &&
+      /^(?:accounts|businesses)\//.test(cleanString(nestedValue))
+    ) {
+      paths.add(cleanString(nestedValue))
+      continue
+    }
+    if (nestedValue && typeof nestedValue === 'object') {
+      collectBunnyMetadataPaths(nestedValue, paths, depth + 1)
+    }
+  }
+}
+
+function bunnyInventoryMetadata(entry, clientAccount, existingMetadata = null) {
+  const existing = existingMetadata && typeof existingMetadata === 'object'
+    ? existingMetadata
+    : {}
+  const existingProviderInventory = existing.providerInventory && typeof existing.providerInventory === 'object'
+    ? existing.providerInventory
+    : {}
+  const imported = existingProviderInventory.imported === true
+
+  if (Object.keys(existing).length && !imported) return existing
+
+  return {
+    ...existing,
+    clientAccount: existing.clientAccount || clientAccount,
+    providerInventory: {
+      ...existingProviderInventory,
+      source: 'bunny_storage',
+      imported: true,
+      objectGuid: cleanString(entry.Guid ?? entry.guid) || null,
+      dateCreated: cleanString(entry.DateCreated ?? entry.dateCreated ?? entry.date_created) || null,
+      lastChanged: cleanString(entry.LastChanged ?? entry.lastChanged ?? entry.last_changed) || null,
+      syncedAt: nowIso()
+    }
+  }
+}
+
+async function upsertBunnyInventoryAsset(database, {
+  businessId,
+  userId,
+  folderPath,
+  objectPath,
+  filename,
+  fileLength,
+  entry,
+  config,
+  clientAccount,
+  existingRow = null
+}) {
+  const descriptor = bunnyInventoryImportDescriptor(filename)
+  const publicUrl = bunnyPublicUrl(config, objectPath)
+  const existingMetadata = parseJson(existingRow?.metadata_json, {})
+  const metadata = bunnyInventoryMetadata(entry, clientAccount, existingMetadata)
+  const module = cleanString(existingRow?.module) || bunnyInventoryModule(folderPath)
+  const mimeType = cleanString(existingRow?.mime_type) || descriptor.mimeType
+  const mediaType = cleanString(existingRow?.media_type) || mediaTypeFromMime(mimeType)
+  const extension = cleanString(existingRow?.extension) || descriptor.extension
+
+  if (existingRow) {
+    await database.run(
+      `UPDATE media_assets
+       SET user_id = COALESCE(user_id, ?),
+           original_filename = COALESCE(NULLIF(original_filename, ''), ?),
+           stored_filename = COALESCE(NULLIF(stored_filename, ''), ?),
+           bunny_path = ?,
+           folder_path = ?,
+           public_url = ?,
+           mime_type = ?,
+           media_type = ?,
+           extension = ?,
+           size_original = ?,
+           size_processed = ?,
+           quota_size = ?,
+           status = 'ready',
+           storage_provider = 'bunny',
+           storage_zone = ?,
+           cdn_base_url = ?,
+           module = ?,
+           is_public = 1,
+           metadata_json = ?,
+           deleted_at = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        userId || null,
+        sanitizeFilename(filename),
+        sanitizeFilename(filename),
+        objectPath,
+        folderPath,
+        publicUrl,
+        mimeType,
+        mediaType,
+        extension,
+        fileLength,
+        fileLength,
+        fileLength,
+        config.bunnyStorageZone || null,
+        config.bunnyCdnBaseUrl || null,
+        module,
+        JSON.stringify(metadata),
+        existingRow.id
+      ]
+    )
+    return { imported: false, updated: true, id: existingRow.id }
+  }
+
+  const id = bunnyInventoryAssetId(businessId, objectPath)
+  await database.run(
+    `INSERT INTO media_assets (
+       id, business_id, user_id, original_filename, stored_filename,
+       bunny_path, folder_path, public_url, private_url,
+       mime_type, media_type, extension,
+       size_original, size_processed, quota_size,
+       width, height, duration, status, storage_provider,
+       storage_zone, cdn_base_url, module, module_entity_id,
+       is_public, metadata_json, stream_video_id,
+       created_at, updated_at, deleted_at
+     ) VALUES (
+       ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?,
+       NULL, NULL, NULL, 'ready', 'bunny', ?, ?, ?, NULL,
+       1, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL
+     )
+     ON CONFLICT (id) DO UPDATE SET
+       user_id = COALESCE(media_assets.user_id, excluded.user_id),
+       original_filename = excluded.original_filename,
+       stored_filename = excluded.stored_filename,
+       bunny_path = excluded.bunny_path,
+       folder_path = excluded.folder_path,
+       public_url = excluded.public_url,
+       mime_type = excluded.mime_type,
+       media_type = excluded.media_type,
+       extension = excluded.extension,
+       size_original = excluded.size_original,
+       size_processed = excluded.size_processed,
+       quota_size = excluded.quota_size,
+       status = 'ready',
+       storage_provider = 'bunny',
+       storage_zone = excluded.storage_zone,
+       cdn_base_url = excluded.cdn_base_url,
+       module = excluded.module,
+       is_public = 1,
+       metadata_json = excluded.metadata_json,
+       deleted_at = NULL,
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      id,
+      normalizeBusinessId(businessId),
+      userId || null,
+      sanitizeFilename(filename),
+      sanitizeFilename(filename),
+      objectPath,
+      folderPath,
+      publicUrl,
+      descriptor.mimeType,
+      descriptor.mediaType,
+      descriptor.extension,
+      fileLength,
+      fileLength,
+      fileLength,
+      config.bunnyStorageZone || null,
+      config.bunnyCdnBaseUrl || null,
+      bunnyInventoryModule(folderPath),
+      JSON.stringify(metadata)
+    ]
+  )
+  return { imported: true, updated: false, id }
+}
+
+async function syncBunnyStorageFolderUnlocked({
+  businessId = 'default',
+  folderPath = '',
+  userId = null,
+  clientAccountId = ''
+} = {}) {
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const normalizedFolderPath = validateMediaFolderPath(folderPath)
+  const config = await getStorageRuntimeConfig()
+  if (config.provider !== 'bunny' || !config.bunnyConfigured) {
+    return {
+      status: 'skipped',
+      provider: config.provider || 'unknown',
+      folderPath: normalizedFolderPath,
+      foldersDiscovered: 0,
+      assetsImported: 0,
+      assetsUpdated: 0,
+      itemsSkipped: 0
+    }
+  }
+
+  const clientAccount = await resolveClientAccountContext({
+    businessId: normalizedBusinessId,
+    clientAccountId: clientAccountId || undefined
+  })
+  const accountRoot = cleanString(clientAccount.rootPath)
+  if (!accountRoot || !accountRoot.startsWith(`${CLIENT_ACCOUNT_ROOT_FOLDER}/`)) {
+    throw errorWithStatus(
+      'La cuenta de Media no tiene una raíz Bunny válida.',
+      409,
+      'bunny_account_root_invalid'
+    )
+  }
+  const directoryObjectPath = [
+    accountRoot,
+    ...normalizedFolderPath.split('/').filter(Boolean)
+  ].join('/')
+  const entries = await listBunnyStorageDirectory(config, directoryObjectPath)
+  const existingRows = await db.all(
+    `SELECT *
+     FROM media_assets
+     WHERE business_id = ?
+       AND COALESCE(folder_path, '') = ?`,
+    [normalizedBusinessId, normalizedFolderPath]
+  )
+  const existingByPath = new Map()
+  const technicalPaths = new Set()
+  for (const row of existingRows) {
+    const path = cleanString(row.bunny_path)
+    if (path) {
+      const current = existingByPath.get(path)
+      const rowActive = !row.deleted_at && row.status !== 'deleted'
+      const currentActive = current && !current.deleted_at && current.status !== 'deleted'
+      if (!current || (rowActive && !currentActive)) existingByPath.set(path, row)
+    }
+    collectBunnyMetadataPaths(parseJson(row.metadata_json, {}), technicalPaths)
+  }
+
+  let foldersDiscovered = 0
+  let assetsImported = 0
+  let assetsUpdated = 0
+  let itemsSkipped = 0
+
+  await ensureStorageQuota(normalizedBusinessId, config)
+  await db.transaction(async (transaction) => {
+    if (normalizedFolderPath) {
+      await upsertMediaFolderHierarchy(transaction, {
+        businessId: normalizedBusinessId,
+        folderPath: normalizedFolderPath,
+        createdBy: userId
+      })
+    }
+
+    for (const entry of entries) {
+      const objectName = bunnyInventoryObjectName(entry)
+      if (!objectName) {
+        itemsSkipped += 1
+        continue
+      }
+
+      if (bunnyInventoryIsDirectory(entry)) {
+        const normalizedName = sanitizeFolderSegment(objectName)
+        if (!normalizedName || normalizedName !== objectName) {
+          itemsSkipped += 1
+          continue
+        }
+        const childPath = validateMediaFolderPath(
+          [normalizedFolderPath, normalizedName].filter(Boolean).join('/'),
+          { allowRoot: false }
+        )
+        await upsertMediaFolderHierarchy(transaction, {
+          businessId: normalizedBusinessId,
+          folderPath: childPath,
+          createdBy: userId
+        })
+        foldersDiscovered += 1
+        continue
+      }
+
+      if (BUNNY_FOLDER_SYNC_TECHNICAL_FILES.has(objectName)) {
+        itemsSkipped += 1
+        continue
+      }
+
+      const objectPath = `${directoryObjectPath}/${objectName}`
+      const existingRow = existingByPath.get(objectPath) || null
+      if (!existingRow && technicalPaths.has(objectPath)) {
+        itemsSkipped += 1
+        continue
+      }
+
+      const result = await upsertBunnyInventoryAsset(transaction, {
+        businessId: normalizedBusinessId,
+        userId,
+        folderPath: normalizedFolderPath,
+        objectPath,
+        filename: objectName,
+        fileLength: bunnyInventoryFileLength(entry),
+        entry,
+        config,
+        clientAccount,
+        existingRow
+      })
+      if (result.imported) assetsImported += 1
+      if (result.updated) assetsUpdated += 1
+    }
+  })
+
+  await refreshQuotaUsage(normalizedBusinessId)
+  logger.info(
+    `[MediaStorage] Bunny → Ristak sincronizado: ${directoryObjectPath} ` +
+    `(${foldersDiscovered} carpeta(s), ${assetsImported} nuevo(s), ${assetsUpdated} actualizado(s))`
+  )
+  return {
+    status: 'ready',
+    provider: 'bunny',
+    folderPath: normalizedFolderPath,
+    accountRoot,
+    foldersDiscovered,
+    assetsImported,
+    assetsUpdated,
+    itemsSkipped
+  }
+}
+
+export async function syncBunnyStorageFolder(input = {}) {
+  const normalizedBusinessId = normalizeBusinessId(input.businessId)
+  const normalizedFolderPath = validateMediaFolderPath(input.folderPath)
+  const accountKey = normalizeClientAccountId(input.clientAccountId || normalizedBusinessId)
+  const key = [normalizedBusinessId, accountKey, normalizedFolderPath].join('\n')
+  const existing = bunnyFolderSyncInflight.get(key)
+  if (existing) return existing
+
+  const promise = syncBunnyStorageFolderUnlocked({
+    ...input,
+    businessId: normalizedBusinessId,
+    folderPath: normalizedFolderPath
+  }).finally(() => {
+    if (bunnyFolderSyncInflight.get(key) === promise) {
+      bunnyFolderSyncInflight.delete(key)
+    }
+  })
+  bunnyFolderSyncInflight.set(key, promise)
+  return promise
 }
 
 function getStoredObjectFilename(asset) {
