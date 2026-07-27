@@ -138,27 +138,6 @@
   width: 100%;
   min-width: 220px;
   max-width: 520px;
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface);
-  color: var(--text-dim);
-}
-
-.mediaPickerSearch input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  font-size: 0.86rem;
-  font-weight: 520;
 }
 
 .mediaPickerActions {
@@ -216,12 +195,169 @@
   opacity: 0.58;
 }
 
+.mediaPickerPathBar {
+  min-width: 0;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.mediaPickerBreadcrumbs,
+.mediaPickerSearchScope {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.mediaPickerBreadcrumbs > svg {
+  flex: 0 0 auto;
+  color: var(--text-mute);
+}
+
+.mediaPickerBreadcrumbs [data-btn][aria-current="page"] {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.mediaPickerSearchScope {
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.mediaPickerSearchScope > svg,
+.mediaPickerSearchScope > span {
+  flex: 0 0 auto;
+}
+
+.mediaPickerSearchScope [data-btn] {
+  flex: 0 0 auto;
+}
+
+.mediaPickerTypeScope {
+  flex: 0 0 auto;
+}
+
 .mediaPickerBody {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding: 20px 22px 22px;
   scrollbar-gutter: stable;
+}
+
+.mediaPickerContents,
+.mediaPickerFolderSection,
+.mediaPickerAssetSection {
+  min-width: 0;
+  display: grid;
+}
+
+.mediaPickerContents {
+  gap: 22px;
+}
+
+.mediaPickerFolderSection,
+.mediaPickerAssetSection {
+  gap: 10px;
+}
+
+.mediaPickerSectionHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-mute);
+  font-size: 0.76rem;
+}
+
+.mediaPickerSectionHeader strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 680;
+}
+
+.mediaPickerFolderGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(250px, 100%), 1fr));
+  gap: 10px;
+}
+
+.mediaPickerFolder {
+  min-width: 0;
+  min-height: 66px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.mediaPickerFolder:hover:not(:disabled),
+.mediaPickerFolder:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  box-shadow: var(--ristak-focus-ring);
+  outline: 0;
+}
+
+.mediaPickerFolder:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.mediaPickerFolderIcon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: calc(var(--radius-ctl) - 2px);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mediaPickerFolderInfo {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.mediaPickerFolderInfo strong,
+.mediaPickerFolderInfo small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mediaPickerFolderInfo strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 680;
+}
+
+.mediaPickerFolderInfo small {
+  color: var(--text-mute);
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
 .mediaPickerGrid {
@@ -438,6 +574,10 @@
     padding: 12px 16px;
   }
 
+  .mediaPickerPathBar {
+    padding-inline: 16px;
+  }
+
   .mediaPickerSearch {
     min-width: 0;
     max-width: none;
@@ -459,10 +599,20 @@
 }
 
 @media (max-width: 520px) {
+  .mediaPickerPathBar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mediaPickerTypeScope {
+    align-self: flex-start;
+  }
+
   .mediaPickerActions {
     grid-template-columns: 1fr;
   }
 
+  .mediaPickerFolderGrid,
   .mediaPickerGrid {
     grid-template-columns: 1fr;
   }

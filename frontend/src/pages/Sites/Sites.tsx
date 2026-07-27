@@ -193,6 +193,7 @@ import mediaService, {
   type FirstPartyVideoRetentionSegment,
   type FirstPartyVideoViewer,
   type MediaAsset,
+  type MediaFolderSummary,
   type MediaPageInfo,
   type MediaStreamAnalytics,
   type StreamChartPoint
@@ -29741,7 +29742,39 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
 }
 
 const mediaPickerPageSize = 50
+const mediaPickerFolderPageSize = 100
 const emptyMediaPickerPageInfo: MediaPageInfo = { limit: mediaPickerPageSize, hasMore: false, nextCursor: null }
+const emptyMediaPickerFolderPageInfo: MediaPageInfo = { limit: mediaPickerFolderPageSize, hasMore: false, nextCursor: null }
+
+function getMediaPickerFolderParts(path = '') {
+  return path.split('/').map(part => part.trim()).filter(Boolean)
+}
+
+function getMediaPickerFolderParent(path = '') {
+  return getMediaPickerFolderParts(path).slice(0, -1).join('/')
+}
+
+function formatMediaPickerFolderName(value = '') {
+  const normalized = value.trim()
+  if (!normalized) return 'Mi unidad'
+  if (/^\d{2,4}$/.test(normalized)) return normalized
+  const knownFolders: Record<string, string> = {
+    audio: 'Audio',
+    business_settings: 'Cuenta',
+    chat: 'Chats',
+    documents: 'Documentos',
+    images: 'Imágenes',
+    media: 'Media',
+    other: 'Otros',
+    sites: 'Sitios',
+    videos: 'Videos',
+    whatsapp: 'WhatsApp'
+  }
+  const key = normalized.toLowerCase()
+  return knownFolders[key] || key
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase())
+}
 
 function formatMediaPickerAssetSize(asset: MediaAsset) {
   const bytes = Number(asset.quotaSize || asset.sizeProcessed || asset.sizeOriginal || 0)
@@ -29798,14 +29831,19 @@ const SitesMediaPickerModal: React.FC<{
   const inputRef = useRef<HTMLInputElement>(null)
   const blockedCloseToastAtRef = useRef(0)
   const requestVersionRef = useRef(0)
+  const folderRequestVersionRef = useRef(0)
   const uploadQueue = useMediaUploadQueue()
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  const [folders, setFolders] = useState<MediaFolderSummary[]>([])
+  const [currentFolderPath, setCurrentFolderPath] = useState('')
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [pageInfo, setPageInfo] = useState<MediaPageInfo>(emptyMediaPickerPageInfo)
+  const [folderPageInfo, setFolderPageInfo] = useState<MediaPageInfo>(emptyMediaPickerFolderPageInfo)
   const [pageCursor, setPageCursor] = useState('')
   const [cursorHistory, setCursorHistory] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingFolders, setLoadingFolders] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [syncingAssetId, setSyncingAssetId] = useState('')
   const [selectingAssetId, setSelectingAssetId] = useState('')
@@ -29818,8 +29856,11 @@ const SitesMediaPickerModal: React.FC<{
   const feminineKind = kind === 'image'
   const kindArticle = feminineKind ? 'la' : 'el'
   const kindSelectionTitle = `${kindLabels.singular.charAt(0).toUpperCase()}${kindLabels.singular.slice(1)} ${feminineKind ? 'seleccionada' : 'seleccionado'}`
-  const uploadText = uploading ? 'Subiendo...' : `Subir ${kindLabels.singular} ${feminineKind ? 'nueva' : 'nuevo'}`
   const mediaPickerBusy = uploading || Boolean(syncingAssetId) || Boolean(selectingAssetId)
+  const folderParts = getMediaPickerFolderParts(currentFolderPath)
+  const currentFolderName = formatMediaPickerFolderName(folderParts[folderParts.length - 1])
+  const uploadText = uploading ? 'Subiendo...' : `Subir ${kindLabels.singular} a ${currentFolderName}`
+  const searchingEntireLibrary = Boolean(debouncedQuery)
 
   const requestClose = useCallback(() => {
     if (!mediaPickerBusy) {
@@ -29850,6 +29891,7 @@ const SitesMediaPickerModal: React.FC<{
         ...(kind === 'other' ? {} : { mediaType: kind }),
         status: 'ready',
         search: debouncedQuery || undefined,
+        folderPath: debouncedQuery ? null : currentFolderPath,
         limit: mediaPickerPageSize,
         cursor: cursor || null,
         includeMeta: false,
@@ -29866,7 +29908,41 @@ const SitesMediaPickerModal: React.FC<{
     } finally {
       if (requestVersion === requestVersionRef.current) setLoading(false)
     }
-  }, [debouncedQuery, kind, showToast])
+  }, [currentFolderPath, debouncedQuery, kind, showToast])
+
+  const loadFolders = useCallback(async (cursor = '', append = false) => {
+    const requestVersion = folderRequestVersionRef.current + 1
+    folderRequestVersionRef.current = requestVersion
+
+    if (debouncedQuery) {
+      setFolders([])
+      setFolderPageInfo(emptyMediaPickerFolderPageInfo)
+      setLoadingFolders(false)
+      return
+    }
+
+    setLoadingFolders(true)
+    try {
+      const page = await mediaService.listFolders({
+        parentPath: currentFolderPath,
+        limit: mediaPickerFolderPageSize,
+        cursor: cursor || null
+      })
+      if (requestVersion !== folderRequestVersionRef.current) return
+      setFolders(current => {
+        if (!append) return page.items
+        const byPath = new Map(current.map(folder => [folder.path, folder]))
+        page.items.forEach(folder => byPath.set(folder.path, folder))
+        return Array.from(byPath.values())
+      })
+      setFolderPageInfo(page.pageInfo)
+    } catch (error) {
+      if (requestVersion !== folderRequestVersionRef.current) return
+      showToast('error', 'No se pudieron cargar las carpetas', error instanceof Error ? error.message : 'Inténtalo otra vez.')
+    } finally {
+      if (requestVersion === folderRequestVersionRef.current) setLoadingFolders(false)
+    }
+  }, [currentFolderPath, debouncedQuery, showToast])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 300)
@@ -29876,6 +29952,10 @@ const SitesMediaPickerModal: React.FC<{
   useEffect(() => {
     void loadAssets()
   }, [loadAssets])
+
+  useEffect(() => {
+    void loadFolders()
+  }, [loadFolders])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -29961,6 +30041,7 @@ const SitesMediaPickerModal: React.FC<{
         file,
         module: 'sites',
         moduleEntityId,
+        folderPath: currentFolderPath,
         isPublic: true,
         signal,
         onProgress: ({ percent }) => uploadQueue.setTaskProgress(taskId, percent)
@@ -29987,7 +30068,10 @@ const SitesMediaPickerModal: React.FC<{
     setDeletingAssetId(asset.id)
     try {
       await mediaService.deleteAsset(asset.id)
-      await loadAssets(pageCursor, cursorHistory)
+      await Promise.all([
+        loadAssets(pageCursor, cursorHistory),
+        loadFolders()
+      ])
       showToast('success', 'Archivo eliminado', 'Se quitó de la biblioteca de Media.')
     } catch (error) {
       showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
@@ -30022,6 +30106,48 @@ const SitesMediaPickerModal: React.FC<{
     )
   }
 
+  const openFolder = (folderPath: string) => {
+    if (mediaPickerBusy) return
+    setQuery('')
+    setDebouncedQuery('')
+    setCurrentFolderPath(folderPath)
+    setAssets([])
+    setFolders([])
+    setLoading(true)
+    setLoadingFolders(true)
+    setPageInfo(emptyMediaPickerPageInfo)
+    setFolderPageInfo(emptyMediaPickerFolderPageInfo)
+    setPageCursor('')
+    setCursorHistory([])
+  }
+
+  const clearSearch = () => {
+    const hadDebouncedSearch = Boolean(debouncedQuery)
+    setQuery('')
+    setDebouncedQuery('')
+    if (!hadDebouncedSearch) return
+    setAssets([])
+    setFolders([])
+    setLoading(true)
+    setLoadingFolders(true)
+    setPageInfo(emptyMediaPickerPageInfo)
+    setFolderPageInfo(emptyMediaPickerFolderPageInfo)
+    setPageCursor('')
+    setCursorHistory([])
+  }
+
+  const refreshBrowser = () => {
+    void Promise.all([
+      loadAssets(pageCursor, cursorHistory),
+      loadFolders()
+    ])
+  }
+
+  const loadMoreFolders = () => {
+    if (!folderPageInfo.nextCursor || loadingFolders) return
+    void loadFolders(folderPageInfo.nextCursor, true)
+  }
+
   return (
     <div
       className={styles.mediaPickerOverlay}
@@ -30040,18 +30166,19 @@ const SitesMediaPickerModal: React.FC<{
           </button>
         </header>
         <div className={styles.mediaPickerToolbar}>
-          <label className={styles.mediaPickerSearch}>
-            <Search size={15} />
-            <input
-              data-ristak-unstyled
-              value={query}
-              placeholder={`Buscar ${kindLabels.singular}...`}
-              onChange={(event) => setQuery(event.target.value)}
-              autoFocus
-            />
-          </label>
+          <SearchField
+            className={styles.mediaPickerSearch}
+            size="sm"
+            value={query}
+            placeholder={`Buscar ${kindLabels.singular} en toda la unidad...`}
+            aria-label={`Buscar ${kindLabels.plural} en toda la unidad`}
+            onChange={setQuery}
+            onClear={clearSearch}
+            loading={loading && Boolean(query.trim())}
+            autoFocus
+          />
           <div className={styles.mediaPickerActions}>
-            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={() => void loadAssets(pageCursor, cursorHistory)} disabled={loading || mediaPickerBusy}>
+            <button type="button" className={styles.mediaPickerSecondaryButton} onClick={refreshBrowser} disabled={loading || loadingFolders || mediaPickerBusy}>
               <RefreshCw size={14} />
               <span>Actualizar</span>
             </button>
@@ -30062,86 +30189,190 @@ const SitesMediaPickerModal: React.FC<{
             </button>
           </div>
         </div>
-        <div className={styles.mediaPickerBody} aria-busy={loading || mediaPickerBusy}>
-          {loading ? (
+        <div className={styles.mediaPickerPathBar}>
+          {query.trim() ? (
+            <div className={styles.mediaPickerSearchScope}>
+              <Search size={14} aria-hidden="true" />
+              <span>Resultados en toda la unidad</span>
+              <Button variant="ghost" size="sm" onClick={clearSearch}>
+                Volver a {currentFolderName}
+              </Button>
+            </div>
+          ) : (
+            <nav className={styles.mediaPickerBreadcrumbs} aria-label="Ruta de carpetas de Media">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                onClick={() => openFolder(getMediaPickerFolderParent(currentFolderPath))}
+                disabled={!currentFolderPath || mediaPickerBusy}
+                aria-label="Subir a la carpeta anterior"
+                title="Subir a la carpeta anterior"
+              >
+                <ArrowLeft size={15} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openFolder('')}
+                disabled={!currentFolderPath || mediaPickerBusy}
+                aria-current={!currentFolderPath ? 'page' : undefined}
+              >
+                <FolderOpen size={15} />
+                Mi unidad
+              </Button>
+              {folderParts.map((part, index) => {
+                const path = folderParts.slice(0, index + 1).join('/')
+                const isCurrent = path === currentFolderPath
+                return (
+                  <React.Fragment key={path}>
+                    <ChevronRight size={14} aria-hidden="true" />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openFolder(path)}
+                      disabled={isCurrent || mediaPickerBusy}
+                      aria-current={isCurrent ? 'page' : undefined}
+                    >
+                      {formatMediaPickerFolderName(part)}
+                    </Button>
+                  </React.Fragment>
+                )
+              })}
+            </nav>
+          )}
+          <Badge variant="neutral" className={styles.mediaPickerTypeScope}>Solo {kindLabels.plural}</Badge>
+        </div>
+        <div className={styles.mediaPickerBody} aria-busy={loading || loadingFolders || mediaPickerBusy}>
+          {loading && (searchingEntireLibrary || loadingFolders) ? (
             <div className={styles.mediaPickerEmpty} role="status" aria-live="polite" aria-label="Cargando biblioteca">
               <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
             </div>
-          ) : assets.length ? (
-            <div className={styles.mediaPickerGrid}>
-              {assets.map(asset => {
-                const assetUrl = getMediaPickerAssetUrl(asset)
-                const previewUrl = getMediaPickerAssetUrl(asset, 'thumbnail')
-                const directVideoUrl = getDirectMediaAssetVideoUrl(asset)
-                const videoThumbnailUrl = previewUrl && previewUrl !== assetUrl ? previewUrl : ''
-                const name = getMediaPickerAssetName(asset)
-                const deleting = deletingAssetId === asset.id
-                const syncing = syncingAssetId === asset.id
-                const selecting = selectingAssetId === asset.id
-                const disabled = mediaPickerBusy || deleting
-
-                  return (
-                    <div
-                      key={asset.id}
-                      className={styles.mediaPickerAsset}
-                      aria-disabled={disabled}
-                      aria-busy={syncing || selecting || deleting}
-                    >
+          ) : folders.length || assets.length ? (
+            <div className={styles.mediaPickerContents}>
+              {!query.trim() && folders.length ? (
+                <section className={styles.mediaPickerFolderSection} aria-labelledby="sites-media-picker-folders">
+                  <div className={styles.mediaPickerSectionHeader}>
+                    <strong id="sites-media-picker-folders">Carpetas</strong>
+                    <span>{folders.length}{folderPageInfo.hasMore ? '+' : ''}</span>
+                  </div>
+                  <div className={styles.mediaPickerFolderGrid}>
+                    {folders.map(folder => (
                       <button
                         type="button"
-                        className={styles.mediaPickerAssetMain}
-                        onClick={() => { void selectAsset(asset) }}
-                        disabled={disabled}
-                        aria-label={`Elegir ${name}`}
+                        key={folder.path}
+                        className={styles.mediaPickerFolder}
+                        onClick={() => openFolder(folder.path)}
+                        disabled={mediaPickerBusy}
+                        aria-label={`Abrir carpeta ${formatMediaPickerFolderName(folder.name)}`}
                       >
-                        <span className={styles.mediaPickerAssetPreview}>
-                          {kind === 'image' ? (
-                            <img src={previewUrl} alt="" loading="lazy" />
-                          ) : kind === 'video' ? (
-                            videoThumbnailUrl
-                              ? <img src={videoThumbnailUrl} alt="" loading="lazy" />
-                              : directVideoUrl
-                                ? <video src={directVideoUrl} muted playsInline preload="metadata" />
-                                : <Video size={24} />
-                          ) : (
-                            renderSitesMediaPickerKindIcon(kind, 24)
-                          )}
+                        <span className={styles.mediaPickerFolderIcon}>
+                          <Folder size={21} aria-hidden="true" />
                         </span>
-                        <span className={styles.mediaPickerAssetInfo}>
-                          <strong title={name}>{name}</strong>
-                          <small>{formatMediaPickerAssetSize(asset)}</small>
+                        <span className={styles.mediaPickerFolderInfo}>
+                          <strong>{formatMediaPickerFolderName(folder.name)}</strong>
+                          <small>{folder.filesCount} archivo{folder.filesCount === 1 ? '' : 's'}</small>
                         </span>
+                        <ChevronRight size={16} aria-hidden="true" />
                       </button>
-                      <span className={styles.mediaPickerAssetFooter}>
-                        <button
-                          type="button"
-                          className={styles.mediaPickerChooseButton}
-                          onClick={() => { void selectAsset(asset) }}
-                          disabled={disabled}
-                          aria-label={`Elegir ${name}`}
+                    ))}
+                  </div>
+                  {folderPageInfo.hasMore ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={loadMoreFolders}
+                      disabled={loadingFolders || mediaPickerBusy}
+                      loading={loadingFolders}
+                    >
+                      Cargar más carpetas
+                    </Button>
+                  ) : null}
+                </section>
+              ) : null}
+              {assets.length ? (
+                <section className={styles.mediaPickerAssetSection} aria-labelledby="sites-media-picker-files">
+                  <div className={styles.mediaPickerSectionHeader}>
+                    <strong id="sites-media-picker-files">{query.trim() ? 'Resultados' : kindLabels.plural.charAt(0).toUpperCase() + kindLabels.plural.slice(1)}</strong>
+                    <span>{assets.length}{pageInfo.hasMore ? '+' : ''}</span>
+                  </div>
+                  <div className={styles.mediaPickerGrid}>
+                    {assets.map(asset => {
+                      const assetUrl = getMediaPickerAssetUrl(asset)
+                      const previewUrl = getMediaPickerAssetUrl(asset, 'thumbnail')
+                      const directVideoUrl = getDirectMediaAssetVideoUrl(asset)
+                      const videoThumbnailUrl = previewUrl && previewUrl !== assetUrl ? previewUrl : ''
+                      const name = getMediaPickerAssetName(asset)
+                      const deleting = deletingAssetId === asset.id
+                      const syncing = syncingAssetId === asset.id
+                      const selecting = selectingAssetId === asset.id
+                      const disabled = mediaPickerBusy || deleting
+
+                      return (
+                        <div
+                          key={asset.id}
+                          className={styles.mediaPickerAsset}
+                          aria-disabled={disabled}
+                          aria-busy={syncing || selecting || deleting}
                         >
-                          {(syncing || selecting) && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
-                          <span>{syncing ? 'Sincronizando' : selecting ? 'Asociando' : 'Elegir'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.mediaPickerDeleteButton}
-                          onClick={(event) => requestDeleteAsset(asset, event)}
-                          disabled={deleting || mediaPickerBusy}
-                          aria-label={`Eliminar ${name}`}
-                        >
-                          {deleting ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
-                        </button>
-                      </span>
-                    </div>
-                  )
-                })}
+                          <button
+                            type="button"
+                            className={styles.mediaPickerAssetMain}
+                            onClick={() => { void selectAsset(asset) }}
+                            disabled={disabled}
+                            aria-label={`Elegir ${name}`}
+                          >
+                            <span className={styles.mediaPickerAssetPreview}>
+                              {kind === 'image' ? (
+                                <img src={previewUrl} alt="" loading="lazy" />
+                              ) : kind === 'video' ? (
+                                videoThumbnailUrl
+                                  ? <img src={videoThumbnailUrl} alt="" loading="lazy" />
+                                  : directVideoUrl
+                                    ? <video src={directVideoUrl} muted playsInline preload="metadata" />
+                                    : <Video size={24} />
+                              ) : (
+                                renderSitesMediaPickerKindIcon(kind, 24)
+                              )}
+                            </span>
+                            <span className={styles.mediaPickerAssetInfo}>
+                              <strong title={name}>{name}</strong>
+                              <small>{formatMediaPickerAssetSize(asset)}</small>
+                            </span>
+                          </button>
+                          <span className={styles.mediaPickerAssetFooter}>
+                            <button
+                              type="button"
+                              className={styles.mediaPickerChooseButton}
+                              onClick={() => { void selectAsset(asset) }}
+                              disabled={disabled}
+                              aria-label={`Elegir ${name}`}
+                            >
+                              {(syncing || selecting) && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
+                              <span>{syncing ? 'Sincronizando' : selecting ? 'Asociando' : 'Elegir'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.mediaPickerDeleteButton}
+                              onClick={(event) => requestDeleteAsset(asset, event)}
+                              disabled={deleting || mediaPickerBusy}
+                              aria-label={`Eliminar ${name}`}
+                            >
+                              {deleting ? <RefreshCw size={13} className={styles.previewSpin} /> : <Trash2 size={13} />}
+                            </button>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+              ) : null}
             </div>
           ) : (
             <div className={styles.mediaPickerEmpty}>
-              {renderSitesMediaPickerKindIcon(kind, 20)}
-              <strong>{query.trim() ? 'Sin coincidencias' : `No hay ${kindLabels.plural} ${feminineKind ? 'listas' : 'listos'}`}</strong>
-              <span>Sube un archivo nuevo desde aquí o cambia la búsqueda.</span>
+              {query.trim() ? <Search size={20} /> : renderSitesMediaPickerKindIcon(kind, 20)}
+              <strong>{query.trim() ? 'Sin coincidencias en la unidad' : `No hay ${kindLabels.plural} en ${currentFolderName}`}</strong>
+              <span>{query.trim() ? 'Cambia la búsqueda o vuelve a navegar por carpetas.' : `Abre otra carpeta o sube ${kindArticle} ${kindLabels.singular} aquí.`}</span>
             </div>
           )}
         </div>

@@ -316,6 +316,14 @@ another account.
   Chat, Sites, formularios, avatares, anuncios y demás módulos conservan su
   taxonomía automática porque esa estructura pertenece al sistema, no al
   explorador manual.
+- El selector de Media dentro del editor de Sites también navega la unidad
+  completa del negocio desde `Mi unidad`, con breadcrumbs, carpeta anterior y
+  paginación independiente de archivos y carpetas. El tipo del campo filtra sólo
+  los archivos visibles —video, imagen, audio o documento—, no las carpetas:
+  todas siguen disponibles para navegar. La búsqueda recorre toda la unidad y
+  una subida manual desde el selector se guarda explícitamente en la carpeta
+  abierta; los uploads internos que no pasan por ese explorador conservan su
+  taxonomía automática.
 - El explorador acepta archivos externos arrastrados desde Finder, Escritorio,
   Descargas, volúmenes externos u otra ubicación expuesta por el sistema. Soltar
   sobre una carpeta la usa como destino; soltar en el resto del explorador usa la

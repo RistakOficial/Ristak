@@ -759,6 +759,14 @@ test('el backfill SQLite conserva la ruta visible y el contrato frontend no desc
     mediaSettings.indexOf('const closeMoveDialog'),
     mediaSettings.indexOf('const openMoveFolderPath')
   )
+  const sitesMediaPicker = sites.slice(
+    sites.indexOf('const SitesMediaPickerModal'),
+    sites.indexOf('const MediaUploadControl')
+  )
+  const sitesMediaPickerFolderLoader = sitesMediaPicker.slice(
+    sitesMediaPicker.indexOf('const loadFolders'),
+    sitesMediaPicker.indexOf('useEffect(() =>')
+  )
   assert.match(listFunction, /safeLimit \+ 1/)
   assert.match(listFunction, /cursor_created_at/)
   assert.match(listFunction, /ORDER BY \$\{sortTimestamp\} DESC, id DESC/)
@@ -801,4 +809,11 @@ test('el backfill SQLite conserva la ruta visible y el contrato frontend no desc
   assert.match(sites, /mediaPickerPageSize = 50/)
   assert.match(sites, /includeMeta: false/)
   assert.doesNotMatch(sites, /listAllAssets/)
+  assert.match(sitesMediaPicker, /folderPath: debouncedQuery \? null : currentFolderPath/)
+  assert.match(sitesMediaPicker, /mediaService\.listFolders\(\{\s*parentPath: currentFolderPath/)
+  assert.doesNotMatch(sitesMediaPickerFolderLoader, /mediaType:|status:/)
+  assert.match(sitesMediaPicker, /folderPath: currentFolderPath,\s*isPublic: true/)
+  assert.match(sitesMediaPicker, /setCurrentFolderPath\(folderPath\)/)
+  assert.match(sitesMediaPicker, /Ruta de carpetas de Media/)
+  assert.match(sitesMediaPicker, /Solo \{kindLabels\.plural\}/)
 })

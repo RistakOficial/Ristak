@@ -4829,10 +4829,17 @@ se descarta porque haya empezado antes un guardado silencioso. Las respuestas de
 preview se validan contra sitio, pagina y request vigente para no pintar una
 pagina anterior despues de cambiar de paso.
 
-El selector de Media carga hasta 250 archivos por pagina y ofrece `Cargar mas`
-sin bloquear la primera vista. Si la busqueda local aun no encuentra una
-coincidencia, conserva la opcion `Buscar en mas archivos`; eliminar un archivo
-recarga la primera pagina para no saltarse elementos por el cambio de offsets.
+El selector de Media de Sites es un explorador de la unidad autorizada del
+negocio: abre en `Mi unidad`, muestra todas las carpetas navegables, permite subir
+al nivel anterior y conserva breadcrumbs para volver a cualquier ancestro. Los
+archivos sí se filtran por el tipo solicitado por el campo (`image`, `video`,
+`audio`, `document` o cualquier archivo para descargables), pero ese filtro no
+oculta carpetas vacías ni carpetas que todavía no contengan ese tipo. La búsqueda
+se ejecuta en servidor sobre toda la unidad y al limpiarla vuelve a la carpeta
+abierta. Cada página usa cursor de 50 assets y las carpetas tienen paginación
+independiente; una subida nueva se guarda en la carpeta que el usuario tiene
+abierta. El backend deriva el negocio de la sesión y nunca expone carpetas de
+otra cuenta.
 
 El contrato canonico para contenido asociable es:
 
