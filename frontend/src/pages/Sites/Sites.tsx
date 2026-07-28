@@ -1193,6 +1193,11 @@ const VIDEO_TRICK_PROGRESS_PEAK_MAX = 96
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
 const VIDEO_PREVIEW_STEP_SECONDS = 0.25
+const VIDEO_PREVIEW_RANGE_CHANGE_EVENT = 'ristak:video-preview-range-change'
+const videoPreviewRangeSettingKeys = ['videoPreviewEnabled', 'videoPreviewStart', 'videoPreviewEnd']
+const hasVideoPreviewRangePatch = (patch: Record<string, unknown>) => (
+  videoPreviewRangeSettingKeys.some(key => Object.prototype.hasOwnProperty.call(patch, key))
+)
 const VIDEO_PREVIEW_FRAME_COUNT = 12
 const VIDEO_PREVIEW_FRAME_INDEXES = Array.from({ length: VIDEO_PREVIEW_FRAME_COUNT }, (_, index) => index)
 const VIDEO_FORM_GATE_FIT_ENTER_PX = 12
@@ -19408,6 +19413,59 @@ const findImportedVideoActionTargetElement = (doc: Document, targetId: string): 
   }
 }
 
+const applyImportedVideoPreviewRange = (
+  target: HTMLElement | null,
+  settings: Record<string, unknown>
+) => {
+  if (!target) return false
+  const host = target.matches('.rstk-video-player')
+    ? target
+    : target.closest<HTMLElement>('.rstk-video-player') ||
+      target.querySelector<HTMLElement>('.rstk-video-player') ||
+      target
+  const video = host.matches('video')
+    ? host as HTMLVideoElement
+    : host.querySelector<HTMLVideoElement>('video[data-rstk-video-preview-start], video[data-rstk-video-media], video')
+  if (!video) return false
+
+  const duration = Number(video.duration)
+  const range = normalizeVideoPreviewRange(settings, Number.isFinite(duration) ? duration : undefined)
+  const enabled = settings.videoPreviewEnabled !== false &&
+    settings.videoAutoplay !== true &&
+    settings.videoDisableEditorPlayback !== true
+  video.setAttribute('data-rstk-video-preview', enabled ? 'true' : 'false')
+  video.setAttribute('data-rstk-video-preview-start', String(range.start))
+  video.setAttribute('data-rstk-video-preview-end', String(range.end))
+
+  const detail = {
+    enabled,
+    start: range.start,
+    end: range.end,
+    handled: false
+  }
+  const CustomEventConstructor = target.ownerDocument.defaultView?.CustomEvent || CustomEvent
+  host.dispatchEvent(new CustomEventConstructor(VIDEO_PREVIEW_RANGE_CHANGE_EVENT, { detail }))
+
+  // Los previews anteriores a este bridge no conocen el evento. El fallback
+  // conserva el salto inmediato mientras el iframe termina de regenerarse.
+  if (!detail.handled) {
+    if (enabled) {
+      video.dataset.rstkVideoPreviewing = 'true'
+      video.muted = true
+      try {
+        video.currentTime = range.start
+      } catch {
+        // loadedmetadata aplicará el rango actualizado cuando el archivo esté listo.
+      }
+      void video.play().catch(() => undefined)
+    } else {
+      delete video.dataset.rstkVideoPreviewing
+      video.pause()
+    }
+  }
+  return true
+}
+
 const getImportedChoiceLabel = (input: HTMLInputElement, doc: Document) => {
   const id = input.getAttribute('id') || ''
   const explicitLabel = input.getAttribute('aria-label') || input.getAttribute('data-rstk-label') || input.getAttribute('data-ristak-label') || input.getAttribute('data-ristack-label')
@@ -21615,6 +21673,24 @@ const ImportedHtmlEditorPanel: React.FC<{
   const importedNativeElementGlobalSaveWasActiveRef = useRef(saving)
   importedNativeElementGlobalSaveActiveRef.current = saving
   const importedNativeElementSiteRef = useRef(site)
+  const syncImportedVideoPreviewRange = useCallback((
+    settings: Record<string, unknown>,
+    target: { id?: string; descriptor?: ImportedFrameElementDescriptor }
+  ) => {
+    ;[iframeRef.current, codePreviewIframeRef.current].forEach(frame => {
+      try {
+        const doc = frame?.contentDocument
+        if (!doc) return
+        const element = target.descriptor
+          ? findImportedFrameElementByDescriptor(doc, target.descriptor)
+          : findImportedVideoActionTargetElement(doc, target.id || '')
+        applyImportedVideoPreviewRange(element, settings)
+      } catch {
+        // El preview normal usa same-origin; si cambia, la regeneración del
+        // iframe sigue siendo el respaldo seguro.
+      }
+    })
+  }, [])
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
   const activeImportedPageIdRef = useRef(activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
@@ -22256,6 +22332,10 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const patchImportedNativeElementDraft = useCallback((slot: ImportedNativeElementSlot, patch: Record<string, unknown>) => {
     importedNativeElementDraftVersionsRef.current[slot.key] = (importedNativeElementDraftVersionsRef.current[slot.key] || 0) + 1
+    const nextSettings = {
+      ...getImportedNativeElementDraftSettings(slot),
+      ...patch
+    }
     const nextDrafts = {
       ...importedNativeElementDraftsRef.current,
       [slot.key]: {
@@ -22267,7 +22347,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     importedNativeElementDraftSlotsRef.current[slot.key] = slot
     setImportedNativeElementDrafts(nextDrafts)
     onNativeDraftDirtyChange(site.id, true)
-  }, [onNativeDraftDirtyChange, site.id])
+    if (slot.type === 'video' && hasVideoPreviewRangePatch(patch)) {
+      syncImportedVideoPreviewRange(nextSettings, { id: slot.id })
+    }
+  }, [getImportedNativeElementDraftSettings, onNativeDraftDirtyChange, site.id, syncImportedVideoPreviewRange])
 
   const validateImportedNativeElementSlotSettings = useCallback((slot: ImportedNativeElementSlot, settings: Record<string, unknown>) => {
     if (slot.type === 'form' && !getEmbeddedFormSourceId({ settings } as SiteBlock)) {
@@ -24919,9 +25002,16 @@ const ImportedHtmlEditorPanel: React.FC<{
                 mediaUrl={codeElementEditor.mediaUrl || codeElementEditor.value}
                 sections="playback"
                 onPatchSettings={(patch) => {
+                  const nextSettings = cleanImportedVideoSettings({
+                    ...(codeElementEditor.videoSettings || {}),
+                    ...patch
+                  }, codeElementEditor.mediaUrl || codeElementEditor.value)
+                  if (hasVideoPreviewRangePatch(patch)) {
+                    syncImportedVideoPreviewRange(nextSettings, { descriptor: codeElementEditor.descriptor })
+                  }
                   setCodeElementEditor(current => current ? {
                     ...current,
-                    videoSettings: cleanImportedVideoSettings({ ...(current.videoSettings || {}), ...patch }, current.mediaUrl || current.value)
+                    videoSettings: nextSettings
                   } : current)
                 }}
                 onSave={() => undefined}
@@ -25096,9 +25186,16 @@ const ImportedHtmlEditorPanel: React.FC<{
                 mediaUrl={videoEditor.value}
                 sections="playback"
                 onPatchSettings={(patch) => {
+                  const nextSettings = cleanImportedVideoSettings({
+                    ...videoEditor.settings,
+                    ...patch
+                  }, videoEditor.value)
+                  if (hasVideoPreviewRangePatch(patch)) {
+                    syncImportedVideoPreviewRange(nextSettings, { id: videoEditor.selection.editId })
+                  }
                   setImportedVideoEditorState(current => current ? {
                     ...current,
-                    settings: cleanImportedVideoSettings({ ...current.settings, ...patch }, current.value)
+                    settings: nextSettings
                   } : current)
                 }}
                 onSave={() => void saveImportedVideoEditor()}
@@ -37220,6 +37317,8 @@ const VideoPlayerPreview: React.FC<{
   const adaptiveQuality = settings.videoAdaptiveQuality !== false
   const muted = settings.videoMuted !== false
   const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
+  const previewRangeSettingsKey = `${previewEnabled}:${String(settings.videoPreviewStart ?? '')}:${String(settings.videoPreviewEnd ?? '')}`
+  const previousPreviewRangeSettingsKeyRef = useRef(previewRangeSettingsKey)
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
   const [currentSpeed, setCurrentSpeed] = useState(speed)
@@ -37598,8 +37697,11 @@ const VideoPlayerPreview: React.FC<{
 
   const getActivePreviewRange = useCallback(() => {
     const duration = videoRef.current?.duration
-    return normalizeVideoPreviewRange(settings, Number.isFinite(duration) ? duration : undefined)
-  }, [settings])
+    return normalizeVideoPreviewRange({
+      videoPreviewStart: settings.videoPreviewStart,
+      videoPreviewEnd: settings.videoPreviewEnd
+    }, Number.isFinite(duration) ? duration : undefined)
+  }, [settings.videoPreviewEnd, settings.videoPreviewStart])
 
   const syncDetectedOrientation = useCallback(() => {
     const video = videoRef.current
@@ -37627,14 +37729,14 @@ const VideoPlayerPreview: React.FC<{
     setProgress(0)
   }, [])
 
-  const startPreviewLoop = useCallback(() => {
+  const startPreviewLoop = useCallback((restartAtRangeStart = false) => {
     const video = videoRef.current
     if (!video || !previewLoopEnabled || hasStartedPlaybackRef.current) return
     const range = getActivePreviewRange()
     previewLoopRef.current = true
     video.dataset.rstkVideoPreviewing = 'true'
     video.muted = true
-    if (video.currentTime < range.start || video.currentTime >= range.end) {
+    if (video.readyState >= 1 && (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end)) {
       video.currentTime = range.start
     }
     setProgress(0)
@@ -37751,6 +37853,19 @@ const VideoPlayerPreview: React.FC<{
       video.removeEventListener('canplay', start)
     }
   }, [noTrackSrc, previewLoopEnabled, startPreviewLoop, stopPreviewLoop])
+
+  useEffect(() => {
+    const previousKey = previousPreviewRangeSettingsKeyRef.current
+    previousPreviewRangeSettingsKeyRef.current = previewRangeSettingsKey
+    if (previousKey === previewRangeSettingsKey) return
+
+    const video = videoRef.current
+    if (!video || !previewLoopEnabled) return
+    hasStartedPlaybackRef.current = false
+    delete video.dataset.rstkVideoRealPlayed
+    setHasStartedPlayback(false)
+    startPreviewLoop(true)
+  }, [previewLoopEnabled, previewRangeSettingsKey, startPreviewLoop])
 
   const syncVideoState = () => {
     const video = videoRef.current

@@ -26264,7 +26264,7 @@ function buildVideoPlayerRuntimeScript() {
 	        const startsWithHiddenControls = hasControlBar && host.classList.contains('rstk-video-controls-hidden');
 	        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
 	        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
-	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
+	        let previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let previewing = false;
 	        let hasUserPlayed = Boolean(video.autoplay);
 	        let controlsAreVisible = Boolean(hasUserPlayed && !startsWithHiddenControls);
@@ -26468,13 +26468,13 @@ function buildVideoPlayerRuntimeScript() {
 	          video.currentTime = 0;
 	          setProgressRatio(0);
 	        };
-	        const startPreviewLoop = () => {
+	        const startPreviewLoop = (restartAtRangeStart = false) => {
 	          if (!previewEnabled || hasUserPlayed) return;
 	          const range = normalizePreviewRange(video);
 	          previewing = true;
 	          video.dataset.rstkVideoPreviewing = 'true';
 	          video.muted = true;
-	          if (video.currentTime < range.start || video.currentTime >= range.end) video.currentTime = range.start;
+	          if (video.readyState >= 1 && (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end)) video.currentTime = range.start;
 	          video.play().then(sync).catch(() => {
 	            stopPreviewLoop();
 	            sync();
@@ -26549,6 +26549,29 @@ function buildVideoPlayerRuntimeScript() {
 	          }
 	          hideSoundNotice();
 	        };
+	        const handlePreviewRangeChange = event => {
+	          if (!editorPreview) return;
+	          const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+	          detail.handled = true;
+	          const nextStart = Number(detail.start);
+	          const nextEnd = Number(detail.end);
+	          if (Number.isFinite(nextStart)) video.setAttribute('data-rstk-video-preview-start', String(nextStart));
+	          if (Number.isFinite(nextEnd)) video.setAttribute('data-rstk-video-preview-end', String(nextEnd));
+	          previewEnabled = detail.enabled !== false && !video.autoplay;
+	          video.setAttribute('data-rstk-video-preview', previewEnabled ? 'true' : 'false');
+	          if (!previewEnabled) {
+	            stopPreviewLoop();
+	            if (!hasUserPlayed && !video.paused) video.pause();
+	            sync();
+	            return;
+	          }
+	          hasUserPlayed = false;
+	          delete video.dataset.rstkVideoRealPlayed;
+	          setControlsVisible(false);
+	          syncControlBarAccess();
+	          startPreviewLoop(true);
+	        };
+	        host.addEventListener('ristak:video-preview-range-change', handlePreviewRangeChange);
 	        const togglePlayback = unmute => {
 	          const wasPreviewing = previewing;
 	          if (wasPreviewing) stopPreviewLoop();

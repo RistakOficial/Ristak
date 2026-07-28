@@ -686,7 +686,10 @@ Ristak guarda cada zona como bloque real del sitio importado:
   acciones, gates y Meta/CAPI con los IDs del mismo asset/Stream, sin iframe de
   Bunny ni un segundo reproductor. Preview/editor conserva tracking apagado,
   pero sí carga y reproduce el medio para comprobar loop, controles y
-  animaciones antes de publicar.
+  animaciones antes de publicar. Al mover el inicio o el final del loop, el
+  reproductor del canvas y el iframe del editor HTML saltan en ese mismo cambio
+  al nuevo inicio para mostrar el tramo actualizado sin esperar al autosave; esta
+  reproducción sigue siendo de editor y no habilita tracking.
   El sanitizador sigue eliminando scripts inline, handlers `on*`, `src` físicos
   del autor y cualquier llave de Bunny; esos datos nunca forman parte del HTML.
 

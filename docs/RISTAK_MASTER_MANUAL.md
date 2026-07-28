@@ -5388,7 +5388,10 @@ controles falsos. Sus grupos de control son:
   `videoTrickProgressEnabled`, `videoTrickProgressRampPercent` y
   `videoTrickProgressPeakPercent`. `videoAdaptiveQuality` viene activo; `false`
   prioriza la mayor variante HLS disponible. Autoplay fuerza `videoMuted=true`
-  porque los navegadores bloquean la reproducción automática con audio.
+  porque los navegadores bloquean la reproducción automática con audio. Al
+  mover el inicio, el final o el rango completo del loop, el canvas visual y el
+  preview del editor HTML saltan inmediatamente al nuevo inicio y reproducen
+  ese tramo; no esperan a que termine el loop anterior ni al guardado.
 - Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
   `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
   `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene
