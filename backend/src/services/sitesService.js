@@ -2476,6 +2476,52 @@ function normalizeImportedFieldOptions(options = []) {
     .slice(0, 30)
 }
 
+function getImportedStableFieldIdFromAttrs(attrs = {}) {
+  return cleanString(
+    attrs['data-rstk-field-id'] ||
+    attrs['data-ristack-field-id'] ||
+    attrs['data-ristak-field-id']
+  )
+}
+
+function getImportedChoiceGroupIdentity(formHtml = '', candidate = {}, type = '', attrs = {}, sourceName = '', fallback = '') {
+  const declaredStableFieldId = getImportedStableFieldIdFromAttrs(attrs)
+  const choiceName = cleanString(attrs.name)
+  if (!choiceName) {
+    return {
+      fieldId: normalizeImportedFieldKey(declaredStableFieldId || sourceName, fallback),
+      hasStableFieldId: Boolean(declaredStableFieldId),
+      members: [{ attrs, index: candidate.index }]
+    }
+  }
+
+  const members = []
+  const choicePattern = /<input\b([^>]*?)\s*(\/?)>/gi
+  let choiceMatch
+  while ((choiceMatch = choicePattern.exec(formHtml))) {
+    const choiceAttrs = parseHtmlAttributes(choiceMatch[1] || '')
+    const choiceType = cleanString(choiceAttrs.type || 'text').toLowerCase()
+    if (choiceType !== type || cleanString(choiceAttrs.name) !== choiceName) continue
+    members.push({ attrs: choiceAttrs, index: choiceMatch.index })
+  }
+
+  const stableIds = members.map(member => getImportedStableFieldIdFromAttrs(member.attrs))
+  const sharedStableFieldId = stableIds.length > 0 &&
+    stableIds.every(Boolean) &&
+    new Set(stableIds).size === 1
+    ? stableIds[0]
+    : ''
+
+  // En HTML, name define la identidad de un grupo radio/checkbox. Algunos
+  // generadores antiguos pusieron un data-rstk-field-id diferente en cada
+  // opción; en ese caso esos IDs describen opciones, no preguntas distintas.
+  return {
+    fieldId: normalizeImportedFieldKey(sharedStableFieldId || choiceName, fallback),
+    hasStableFieldId: Boolean(sharedStableFieldId),
+    members: members.length ? members : [{ attrs, index: candidate.index }]
+  }
+}
+
 function extractImportedFields(formHtml = '', formIndex = 0) {
   const fields = []
   const candidates = []
@@ -2506,12 +2552,16 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
     const type = tag === 'input' ? cleanString(attrs.type || 'text').toLowerCase() : tag
     if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue
 
-    const stableFieldId = cleanString(attrs['data-rstk-field-id'] || attrs['data-ristack-field-id'] || attrs['data-ristak-field-id'])
+    const stableFieldId = getImportedStableFieldIdFromAttrs(attrs)
     const explicitField = cleanString(attrs['data-rstk-field'] || attrs['data-ristack-field'] || attrs['data-ristak-field'])
     const explicitCustomField = cleanString(attrs['data-rstk-custom-field'] || attrs['data-ristack-custom-field'] || attrs['data-ristak-custom-field'])
     const sourceName = cleanString(attrs.name || attrs.id || stableFieldId || explicitField || explicitCustomField || `field_${formIndex + 1}_${index + 1}`)
-    const fieldId = normalizeImportedFieldKey(stableFieldId || sourceName, `field_${formIndex + 1}_${index + 1}`)
     const isChoiceField = tag === 'input' && ['radio', 'checkbox'].includes(type)
+    const fieldFallback = `field_${formIndex + 1}_${index + 1}`
+    const choiceGroup = isChoiceField
+      ? getImportedChoiceGroupIdentity(formHtml, candidate, type, attrs, sourceName, fieldFallback)
+      : null
+    const fieldId = choiceGroup?.fieldId || normalizeImportedFieldKey(stableFieldId || sourceName, fieldFallback)
     const explicitFieldLabel = cleanString(
       attrs['data-rstk-label'] ||
       attrs['data-ristak-label'] ||
@@ -2538,24 +2588,16 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
         }
       }
     } else if (tag === 'input' && ['radio', 'checkbox'].includes(type)) {
-      const choiceName = cleanString(attrs.name || attrs.id)
-      if (choiceName) {
-        const choicePattern = /<input\b([^>]*?)\s*(\/?)>/gi
-        let choiceMatch
-        while ((choiceMatch = choicePattern.exec(formHtml))) {
-          const choiceAttrs = parseHtmlAttributes(choiceMatch[1] || '')
-          const choiceType = cleanString(choiceAttrs.type || 'text').toLowerCase()
-          const sameGroup = choiceType === type && cleanString(choiceAttrs.name || choiceAttrs.id) === choiceName
-          if (!sameGroup) continue
-          const choiceLabel = cleanString(
-            choiceAttrs['data-rstk-label'] ||
-            choiceAttrs['data-ristak-label'] ||
-            choiceAttrs['data-ristack-label'] ||
-            choiceAttrs['aria-label']
-          ) || getLabelForField(formHtml, choiceAttrs, choiceMatch.index) || cleanString(choiceAttrs.value)
-          const value = cleanString(choiceAttrs.value || choiceLabel)
-          if (value || choiceLabel) options.push({ label: choiceLabel || value, value })
-        }
+      for (const member of choiceGroup?.members || []) {
+        const choiceAttrs = member.attrs || {}
+        const choiceLabel = cleanString(
+          choiceAttrs['data-rstk-label'] ||
+          choiceAttrs['data-ristak-label'] ||
+          choiceAttrs['data-ristack-label'] ||
+          choiceAttrs['aria-label']
+        ) || getLabelForField(formHtml, choiceAttrs, member.index) || cleanString(choiceAttrs.value)
+        const value = cleanString(choiceAttrs.value || choiceLabel)
+        if (value || choiceLabel) options.push({ label: choiceLabel || value, value })
       }
     }
 
@@ -2564,7 +2606,7 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
       sourceName,
       name: cleanString(attrs.name),
       htmlId: cleanString(attrs.id),
-      hasStableFieldId: Boolean(stableFieldId),
+      hasStableFieldId: choiceGroup?.hasStableFieldId ?? Boolean(stableFieldId),
       type,
       tag,
       placeholder: cleanString(attrs.placeholder),
@@ -4169,6 +4211,30 @@ function countImportedMappedFields(mappings = []) {
   ), 0)
 }
 
+function hasImportedExplodedChoiceGroups(forms = []) {
+  return (Array.isArray(forms) ? forms : []).some(form => {
+    if (form?.present === false) return false
+    const counts = new Map()
+    for (const field of Array.isArray(form?.fields) ? form.fields : []) {
+      if (field?.present === false) continue
+      const type = normalizeImportedFieldKey(field?.type, '')
+      const sourceName = normalizeImportedFieldKey(field?.sourceName || field?.source_name || field?.name, '')
+      if (!['radio', 'checkbox'].includes(type) || !sourceName) continue
+      const key = `${type}:${sourceName}`
+      counts.set(key, (counts.get(key) || 0) + 1)
+      if (counts.get(key) > 1) return true
+    }
+    return false
+  })
+}
+
+function getImportedActiveFormIds(forms = []) {
+  return new Set((Array.isArray(forms) ? forms : [])
+    .filter(form => form?.present !== false)
+    .map(form => normalizeImportedFieldKey(form?.formId || form?.form_id || form?.id, ''))
+    .filter(Boolean))
+}
+
 function importedFormMappingIdentity(mapping = {}) {
   return [
     normalizeImportedAssetPath(mapping.pagePath || mapping.page_path || ''),
@@ -4237,6 +4303,20 @@ function findExistingImportedFormMapping(existingMappings = [], nextForm = {}) {
   return exactMatches.length === 1 ? exactMatches[0] : null
 }
 
+function importedFieldMappingAssignmentSignature(field = {}) {
+  return JSON.stringify({
+    destinationType: cleanString(field.destinationType || field.destination_type),
+    destinationKey: normalizeImportedFieldKey(field.destinationKey || field.destination_key, ''),
+    saveMode: cleanString(field.saveMode || field.save_mode),
+    ignored: Boolean(field.ignored || field.destinationType === 'ignored' || field.destination_type === 'ignored'),
+    customFieldDefinitionId: cleanString(field.customFieldDefinitionId || field.custom_field_definition_id),
+    customFieldKey: normalizeImportedFieldKey(field.customFieldKey || field.custom_field_key, ''),
+    customFieldLabel: cleanString(field.customFieldLabel || field.custom_field_label),
+    customFieldDataType: cleanString(field.customFieldDataType || field.custom_field_data_type),
+    customFieldSyncTarget: cleanString(field.customFieldSyncTarget || field.custom_field_sync_target)
+  })
+}
+
 function findExistingImportedFieldMapping(existingMappings = [], nextForm = {}, nextField = {}) {
   const existingForm = findExistingImportedFormMapping(existingMappings, nextForm)
   if (!existingForm) return null
@@ -4255,10 +4335,27 @@ function findExistingImportedFieldMapping(existingMappings = [], nextForm = {}, 
   if (nextField?.hasStableFieldId === true) return null
   const sourceMatches = fields.filter(field => (
     !isImportedAmbiguousFieldMapping(field) &&
+    field?.present !== false &&
     field?.hasStableFieldId !== true &&
     normalizedSourceName && normalizeImportedFieldKey(field?.sourceName, '') === normalizedSourceName
   ))
-  return sourceMatches.length === 1 ? sourceMatches[0] : null
+  if (sourceMatches.length === 1) return sourceMatches[0]
+
+  // Recuperación puntual de HTML generado con un ID distinto por opción. Si
+  // todos los radios/checkboxes del mismo name tenían exactamente la misma
+  // asociación, el nuevo campo lógico puede heredarla sin adivinar. Un grupo
+  // con destinos distintos queda sin herencia para no pisar datos del usuario.
+  const nextType = normalizeImportedFieldKey(nextField.type, '')
+  if (!['radio', 'checkbox'].includes(nextType) || !normalizedSourceName) return null
+  const choiceMatches = fields.filter(field => (
+    !isImportedAmbiguousFieldMapping(field) &&
+    field?.present !== false &&
+    normalizeImportedFieldKey(field?.type, '') === nextType &&
+    normalizeImportedFieldKey(field?.sourceName, '') === normalizedSourceName
+  ))
+  if (!choiceMatches.length) return null
+  const assignmentSignatures = new Set(choiceMatches.map(importedFieldMappingAssignmentSignature))
+  return assignmentSignatures.size === 1 ? choiceMatches[0] : null
 }
 
 function mergeImportedFormMappings(existingMappings = [], nextMappings = []) {
@@ -12922,7 +13019,27 @@ function getImportedSiteMappingAutoUpgrade(row = {}, { allowConfirmedHtml = '' }
     countImportedDetectedFields(detectedForms),
     countImportedMappedFields(formMappings)
   )
-  if (countImportedDetectedFields(redetectedForms) <= storedFieldCount) return null
+  const storedFormIds = new Set([
+    ...getImportedActiveFormIds(detectedForms),
+    ...getImportedActiveFormIds(formMappings)
+  ])
+  const redetectedFormIds = getImportedActiveFormIds(redetectedForms)
+  const redetectionCoversStoredForms = storedFormIds.size > 0 &&
+    [...storedFormIds].every(formId => redetectedFormIds.has(formId))
+  const storedUsesPageAssets = [...detectedForms, ...formMappings].some(form => (
+    form?.present !== false && cleanString(form?.pagePath || form?.page_path)
+  ))
+  const choiceNormalizationNeeded = (
+    hasImportedExplodedChoiceGroups(detectedForms) ||
+    hasImportedExplodedChoiceGroups(formMappings)
+  ) &&
+    !hasImportedExplodedChoiceGroups(redetectedForms) &&
+    redetectionCoversStoredForms &&
+    !storedUsesPageAssets
+  if (
+    countImportedDetectedFields(redetectedForms) <= storedFieldCount &&
+    !choiceNormalizationNeeded
+  ) return null
 
   return {
     detectedForms: redetectedForms,
@@ -13718,6 +13835,19 @@ async function updateImportedSiteFieldMappingUnlocked(siteId, input = {}) {
     throw error
   }
 
+  // El panel detecta sobre los archivos HTML activos, incluidos ZIP/multipágina.
+  // Rebasamos el PATCH sobre esa misma vista canónica para que una importación
+  // legacy con una fila por opción pueda guardar inmediatamente la pregunta
+  // agrupada, aun cuando html_sanitized sólo represente la página principal.
+  const currentImport = await getImportedSiteBySiteId(siteId)
+  const liveMappings = (Array.isArray(currentImport?.formMappings) ? currentImport.formMappings : [])
+    .filter(mapping => mapping?.present !== false)
+    .map(mapping => ({
+      ...mapping,
+      fields: (Array.isArray(mapping?.fields) ? mapping.fields : [])
+        .filter(field => field?.present !== false)
+    }))
+
   await db.transaction(async tx => {
     const lockSuffix = databaseDialect === 'postgres' ? ' FOR UPDATE' : ''
     const row = await tx.get(`
@@ -13731,7 +13861,10 @@ async function updateImportedSiteFieldMappingUnlocked(siteId, input = {}) {
       throw error
     }
 
-    const mappings = parseJson(row.form_mappings_json, [])
+    const storedMappings = parseJson(row.form_mappings_json, [])
+    const mappings = liveMappings.length
+      ? mergeImportedFormMappings(storedMappings, liveMappings)
+      : storedMappings
     const formMatches = (Array.isArray(mappings) ? mappings : []).filter(mapping => (
       mapping?.present !== false &&
       importedFormMappingStableId(mapping) === formId
@@ -26734,27 +26867,44 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         field.getAttribute('data-ristack-field-id') ||
         ''
       );
-      const getFieldKey = (field, fallback) => (
-        getStableFieldId(field) ||
-        field.getAttribute('name') ||
-        field.getAttribute('id') ||
-        field.getAttribute('data-rstk-field') ||
-        field.getAttribute('data-ristak-field') ||
-        field.getAttribute('data-ristack-field') ||
-        fallback
-      );
       const getChoiceFields = (field, form, type) => {
-        const stableFieldId = getStableFieldId(field);
-        if (stableFieldId) {
-          return Array.from(form.querySelectorAll('input')).filter(item => (
-            String(item.type || '').toLowerCase() === type &&
-            getStableFieldId(item) === stableFieldId
-          ));
-        }
         const name = field.getAttribute('name');
-        if (!name) return [field];
-        return Array.from(form.querySelectorAll('[name="' + cssEscape(name) + '"]'))
-          .filter(item => String(item.type || '').toLowerCase() === type);
+        if (name) {
+          return Array.from(form.querySelectorAll('[name="' + cssEscape(name) + '"]'))
+            .filter(item => String(item.type || '').toLowerCase() === type);
+        }
+        const stableFieldId = getStableFieldId(field);
+        if (!stableFieldId) return [field];
+        return Array.from(form.querySelectorAll('input')).filter(item => (
+          String(item.type || '').toLowerCase() === type &&
+          getStableFieldId(item) === stableFieldId
+        ));
+      };
+      const getChoiceFieldKey = (field, form, type) => {
+        const name = field.getAttribute('name') || '';
+        const choiceFields = getChoiceFields(field, form, type);
+        const stableIds = choiceFields.map(getStableFieldId);
+        const sharedStableFieldId = stableIds.length &&
+          stableIds.every(Boolean) &&
+          new Set(stableIds).size === 1
+          ? stableIds[0]
+          : '';
+        return sharedStableFieldId || name || getStableFieldId(field) || field.getAttribute('id') || '';
+      };
+      const getFieldKey = (field, form, fallback) => {
+        const type = String(field.type || '').toLowerCase();
+        if (type === 'radio' || type === 'checkbox') {
+          return getChoiceFieldKey(field, form, type) || fallback;
+        }
+        return (
+          getStableFieldId(field) ||
+          field.getAttribute('name') ||
+          field.getAttribute('id') ||
+          field.getAttribute('data-rstk-field') ||
+          field.getAttribute('data-ristak-field') ||
+          field.getAttribute('data-ristack-field') ||
+          fallback
+        );
       };
       const readFieldValue = (field, form) => {
         const type = String(field.type || '').toLowerCase();
@@ -26774,12 +26924,14 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
       };
       const collectRawFields = (form) => {
         const raw = {};
+        const seenKeys = new Set();
         const fields = Array.from(form.querySelectorAll('input, select, textarea'));
         fields.forEach((field, index) => {
           const type = String(field.type || '').toLowerCase();
           if (['submit', 'button', 'reset', 'image', 'hidden'].includes(type)) return;
-          const key = getFieldKey(field, 'field_' + (index + 1));
-          if (!key) return;
+          const key = getFieldKey(field, form, 'field_' + (index + 1));
+          if (!key || seenKeys.has(key)) return;
+          seenKeys.add(key);
           const value = readFieldValue(field, form);
           if (Array.isArray(value) ? value.length > 0 : String(value || '').trim()) {
             raw[key] = value;

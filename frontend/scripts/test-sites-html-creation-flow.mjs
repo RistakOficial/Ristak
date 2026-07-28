@@ -205,6 +205,31 @@ assert.match(
   'una carga vieja del editor no debe reemplazar una seleccion mas reciente'
 )
 
+const importedPanelChoiceDetectionSource = sourceBetween(
+  'const getImportedPanelChoiceGroupIdentity =',
+  'const collectImportedPanelFormFields ='
+)
+assert.match(
+  importedPanelChoiceDetectionSource,
+  /const choiceName = \(input\.getAttribute\('name'\) \|\| ''\)\.trim\(\)/,
+  'radio y checkbox deben usar name como identidad semantica del grupo'
+)
+assert.match(
+  importedPanelChoiceDetectionSource,
+  /stableIds\.every\(Boolean\)[\s\S]*?new Set\(stableIds\)\.size === 1[\s\S]*?fieldId: sharedStableFieldId \|\| choiceName/,
+  'el panel solo debe conservar data-rstk-field-id cuando todas las opciones comparten el mismo'
+)
+assert.match(
+  importedPanelChoiceDetectionSource,
+  /groupKey: `\$\{inputType\}:name:\$\{choiceName\}`/,
+  'cada pregunta de opciones debe producir una sola fila por type + name'
+)
+assert.doesNotMatch(
+  importedPanelChoiceDetectionSource,
+  /const groupKey = `\$\{inputType\}:\$\{fieldId\}`/,
+  'un ID diferente por opcion no debe volver a multiplicar preguntas en el panel'
+)
+
 const importedFieldMappingRowSource = sourceBetween(
   '<div key={`${field.fieldId}:${fieldIndex}`} className={styles.importedFieldMappingRow}>',
   '</div>\n                        )'

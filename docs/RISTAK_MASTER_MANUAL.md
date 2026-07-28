@@ -6003,6 +6003,19 @@ payload ambiguo. El mapping canonico anterior queda dormido y vuelve a activarse
 automaticamente cuando el ID vuelve a ser unico; no se obliga al usuario a
 configurarlo otra vez.
 
+Como compatibilidad defensiva con HTML antiguo o generado fuera de estas reglas,
+un conjunto de `radio` o `checkbox` que comparte `type` y `name` se trata como
+una sola pregunta aunque cada opcion haya recibido por error un
+`data-rstk-field-id` diferente. En ese caso `name` se vuelve la identidad
+canonica del grupo: el Panel de contenido muestra una sola fila con todas sus
+opciones y el runtime publico envia un solo valor escalar para radio o un arreglo
+para checkbox. Las importaciones en revision que ya guardaron una fila por
+opcion se normalizan al releer el mismo HTML; la asociacion anterior se conserva
+automaticamente solo cuando todas las filas repetidas apuntaban al mismo destino.
+Esta recuperacion es exclusiva de controles de opcion, porque en HTML el `name`
+compartido define su grupo; no debilita la identidad estable de inputs,
+textareas o selects independientes.
+
 Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente interno
 tratan este contrato como una compuerta obligatoria de entrega, no como una
 recomendacion. Si el HTML contiene un formulario propio de captacion, la IA no

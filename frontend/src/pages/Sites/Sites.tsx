@@ -20222,10 +20222,15 @@ const readImportedChoiceGroupHasDisqualify = (input: HTMLInputElement, doc: Docu
   return groupInputs.some(item => readImportedOptionActions(item).some(action => importedDisqualifyActions.has(action.action)))
 }
 
-const getImportedPanelStableFieldId = (element: Element) => String(
+const getImportedPanelDeclaredStableFieldId = (element: Element) => String(
   element.getAttribute('data-rstk-field-id') ||
   element.getAttribute('data-ristak-field-id') ||
   element.getAttribute('data-ristack-field-id') ||
+  ''
+).trim()
+
+const getImportedPanelStableFieldId = (element: Element) => String(
+  getImportedPanelDeclaredStableFieldId(element) ||
   element.getAttribute('name') ||
   element.getAttribute('id') ||
   element.getAttribute('data-rstk-field') ||
@@ -20233,6 +20238,35 @@ const getImportedPanelStableFieldId = (element: Element) => String(
   element.getAttribute('data-ristack-field') ||
   ''
 ).trim()
+
+const getImportedPanelChoiceGroupIdentity = (input: HTMLInputElement, root: ParentNode) => {
+  const inputType = (input.getAttribute('type') || '').toLowerCase()
+  const choiceName = (input.getAttribute('name') || '').trim()
+  const fallbackFieldId = getImportedPanelStableFieldId(input)
+  if (!choiceName) {
+    return {
+      fieldId: fallbackFieldId,
+      stable: Boolean(getImportedPanelDeclaredStableFieldId(input)),
+      groupKey: `${inputType}:field:${fallbackFieldId}`
+    }
+  }
+
+  const groupInputs = Array.from(root.querySelectorAll<HTMLInputElement>(
+    `input[type="${inputType}"][name="${escapeImportedSelectorValue(choiceName)}"]`
+  ))
+  const stableIds = groupInputs.map(getImportedPanelDeclaredStableFieldId)
+  const sharedStableFieldId = stableIds.length > 0 &&
+    stableIds.every(Boolean) &&
+    new Set(stableIds).size === 1
+    ? stableIds[0]
+    : ''
+
+  return {
+    fieldId: sharedStableFieldId || choiceName,
+    stable: Boolean(sharedStableFieldId),
+    groupKey: `${inputType}:name:${choiceName}`
+  }
+}
 
 const collectImportedPanelFormGroups = (doc: Document): ImportedPanelFormGroup[] => {
   const explicitForms = Array.from(doc.querySelectorAll<HTMLFormElement>('form'))
@@ -20263,25 +20297,22 @@ const collectImportedPanelFormGroups = (doc: Document): ImportedPanelFormGroup[]
       const tagName = fieldElement.tagName.toLowerCase() as ImportedPanelFormField['tagName']
       const inputType = tagName === 'input' ? (fieldElement.getAttribute('type') || 'text').toLowerCase() : tagName
       if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(inputType)) continue
-      const declaredFieldId = String(
-        fieldElement.getAttribute('data-rstk-field-id') ||
-        fieldElement.getAttribute('data-ristak-field-id') ||
-        fieldElement.getAttribute('data-ristack-field-id') ||
-        ''
-      ).trim()
-      const fieldId = getImportedPanelStableFieldId(fieldElement) || `field_${result.length + 1}`
-      const fieldName = fieldElement.getAttribute('name') || fieldElement.getAttribute('id') || fieldId
+      const declaredFieldId = getImportedPanelDeclaredStableFieldId(fieldElement)
+      const fallbackFieldId = getImportedPanelStableFieldId(fieldElement) || `field_${result.length + 1}`
+      const fieldName = fieldElement.getAttribute('name') || fieldElement.getAttribute('id') || fallbackFieldId
 
       if (['radio', 'checkbox'].includes(inputType)) {
-        const groupKey = `${inputType}:${fieldId}`
+        const input = fieldElement as HTMLInputElement
+        const choiceIdentity = getImportedPanelChoiceGroupIdentity(input, element)
+        const fieldId = choiceIdentity.fieldId || fallbackFieldId
+        const groupKey = choiceIdentity.groupKey
         if (seenChoiceGroups.has(groupKey)) continue
         seenChoiceGroups.add(groupKey)
-        const input = fieldElement as HTMLInputElement
         result.push({
           key: `${formId}:${groupKey}`,
           formId,
           fieldId,
-          stable: Boolean(declaredFieldId),
+          stable: choiceIdentity.stable,
           kind: 'choice',
           label: getImportedChoiceGroupLabel(input, doc) || fieldName || 'Opciones',
           typeLabel: importedPanelFieldTypeLabels[inputType],
@@ -20295,6 +20326,7 @@ const collectImportedPanelFormGroups = (doc: Document): ImportedPanelFormGroup[]
       }
 
       const input = fieldElement as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+      const fieldId = fallbackFieldId
       const fieldOptions = tagName === 'select' ? readImportedFormFieldOptions(input, doc) : []
       result.push({
         key: `${formId}:${fieldId}`,

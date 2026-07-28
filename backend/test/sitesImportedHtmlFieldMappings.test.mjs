@@ -356,6 +356,283 @@ test('wrapped labels and choice-group labels stay semantic while option labels r
   }
 })
 
+test('per-option ids collapse into four logical questions and legacy mappings normalize without losing their association', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'preguntas-con-ids-por-opcion.html',
+      name: `Preguntas HTML agrupadas ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="perfil-medico" data-rstk-label="Perfil médico">
+          <fieldset>
+            <legend>¿Cuál es tu rol?</legend>
+            <label><input type="radio" name="rol_decision" value="propietario" data-rstk-field-id="rol-propietario-socio"> Propietario</label>
+            <label><input type="radio" name="rol_decision" value="director" data-rstk-field-id="rol-director-decisor"> Director</label>
+            <label><input type="radio" name="rol_decision" value="sin_decision" data-rstk-field-id="rol-sin-decision"> No decido</label>
+          </fieldset>
+          <fieldset>
+            <legend>¿En qué estado está tu consultorio?</legend>
+            <label><input type="radio" name="estado_consultorio" value="operando" data-rstk-field-id="estado-operando"> Operando</label>
+            <label><input type="radio" name="estado_consultorio" value="abriendo" data-rstk-field-id="estado-abriendo"> Abriendo</label>
+            <label><input type="radio" name="estado_consultorio" value="idea" data-rstk-field-id="estado-idea"> Es una idea</label>
+          </fieldset>
+          <label for="especialidad">Especialidad</label>
+          <select id="especialidad" name="especialidad" data-rstk-field-id="especialidad">
+            <option value="medicina_general">Medicina general</option>
+            <option value="pediatria">Pediatría</option>
+          </select>
+          <fieldset>
+            <legend>¿Cuándo quieres implementarlo?</legend>
+            <label><input type="radio" name="plazo_implementacion" value="ahora" data-rstk-field-id="plazo-ahora"> Ahora</label>
+            <label><input type="radio" name="plazo_implementacion" value="mes" data-rstk-field-id="plazo-un-mes"> En un mes</label>
+            <label><input type="radio" name="plazo_implementacion" value="despues" data-rstk-field-id="plazo-despues"> Después</label>
+          </fieldset>
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    let form = activeMapping(created.import, '', 'perfil_medico')
+    const activeFields = form.fields.filter(field => field.present !== false)
+    assert.deepEqual(
+      activeFields.map(field => [field.fieldId, field.hasStableFieldId]),
+      [
+        ['rol_decision', false],
+        ['estado_consultorio', false],
+        ['especialidad', true],
+        ['plazo_implementacion', false]
+      ]
+    )
+    assert.deepEqual(mappingField(form, 'rol_decision').options.map(option => option.value), [
+      'propietario',
+      'director',
+      'sin_decision'
+    ])
+
+    const sourceForm = await getSite(form.formSiteId, { includeBlocks: true, includeSubmissions: false })
+    const importedBlocks = sourceForm.blocks.filter(block => block.settings?.importedHtmlSource === true)
+    assert.deepEqual(
+      importedBlocks.map(block => [block.blockType, block.label]),
+      [
+        ['radio', '¿Cuál es tu rol?'],
+        ['radio', '¿En qué estado está tu consultorio?'],
+        ['dropdown', 'Especialidad'],
+        ['radio', '¿Cuándo quieres implementarlo?']
+      ]
+    )
+
+    await updateImportedSiteFieldMapping(siteId, {
+      pagePath: '',
+      formId: 'perfil_medico',
+      fieldId: 'rol_decision',
+      destinationType: 'standard',
+      destinationKey: 'message'
+    })
+    const configured = await getImportedSiteBySiteId(siteId)
+    form = activeMapping(configured, '', 'perfil_medico')
+    const detectedForm = configured.detectedForms.find(candidate => candidate.id === 'perfil_medico')
+    const detectedRole = detectedForm.fields.find(field => field.id === 'rol_decision')
+    const mappedRole = mappingField(form, 'rol_decision')
+    const explodedRoleIds = ['rol_propietario_socio', 'rol_director_decisor', 'rol_sin_decision']
+    const legacyDetectedForms = configured.detectedForms.map(candidate => (
+      candidate.id !== 'perfil_medico'
+        ? candidate
+        : {
+            ...candidate,
+            fields: candidate.fields.flatMap(field => (
+              field.id !== 'rol_decision'
+                ? [field]
+                : explodedRoleIds.map(id => ({
+                    ...detectedRole,
+                    id,
+                    hasStableFieldId: true
+                  }))
+            ))
+          }
+    ))
+    const legacyMappings = configured.formMappings.map(candidate => (
+      candidate.formId !== 'perfil_medico' || candidate.present === false
+        ? candidate
+        : {
+            ...candidate,
+            fields: candidate.fields.flatMap(field => (
+              field.fieldId !== 'rol_decision' || field.present === false
+                ? [field]
+                : explodedRoleIds.map(fieldId => ({
+                    ...mappedRole,
+                    fieldId,
+                    hasStableFieldId: true
+                  }))
+            ))
+          }
+    ))
+    await db.run(`
+      UPDATE public_site_imports SET
+        detected_forms_json = ?,
+        form_mappings_json = ?,
+        status = 'mapping_pending',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+    `, [JSON.stringify(legacyDetectedForms), JSON.stringify(legacyMappings), siteId])
+
+    const normalized = await getImportedSiteBySiteId(siteId)
+    form = activeMapping(normalized, '', 'perfil_medico')
+    assert.equal(form.fields.filter(field => field.present !== false).length, 4)
+    assertIncludes(mappingField(form, 'rol_decision'), {
+      destinationType: 'standard',
+      destinationKey: 'message',
+      hasStableFieldId: false,
+      present: true
+    })
+    assert.equal(
+      form.fields.filter(field => explodedRoleIds.includes(field.fieldId) && field.present === false).length,
+      3
+    )
+
+    const persistedRow = await db.get(
+      'SELECT detected_forms_json, form_mappings_json FROM public_site_imports WHERE site_id = ?',
+      [siteId]
+    )
+    const persistedDetected = JSON.parse(persistedRow.detected_forms_json)
+    const persistedMappings = JSON.parse(persistedRow.form_mappings_json)
+    assert.equal(persistedDetected[0].fields.length, 4)
+    assert.equal(
+      persistedMappings[0].fields.filter(field => field.present !== false).length,
+      4
+    )
+  } finally {
+    if (siteId) {
+      const imported = await getImportedSiteBySiteId(siteId).catch(() => null)
+      sourceFormIds.push(...(imported?.formMappings || []).map(mapping => mapping.formSiteId))
+    }
+    await deleteSites([siteId, ...sourceFormIds])
+  }
+})
+
+test('a legacy choice group on a secondary HTML page can be associated without dropping the rest of the import', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'flujo-multipagina.html',
+      name: `Grupo secundario HTML ${suffix}`,
+      siteType: 'landing_page',
+      pages: [
+        {
+          id: 'inicio',
+          title: 'Inicio',
+          filename: 'inicio.html',
+          html: '<!doctype html><html><body><h1>Inicio</h1></body></html>'
+        },
+        {
+          id: 'perfil',
+          title: 'Perfil',
+          filename: 'perfil.html',
+          html: `<!doctype html><html><body>
+            <form data-rstk-form-id="prioridad-contacto" data-rstk-label="Prioridad">
+              <fieldset>
+                <legend>Prioridad de implementación</legend>
+                <label><input type="radio" name="prioridad" value="alta" data-rstk-field-id="prioridad-alta"> Alta</label>
+                <label><input type="radio" name="prioridad" value="media" data-rstk-field-id="prioridad-media"> Media</label>
+                <label><input type="radio" name="prioridad" value="baja" data-rstk-field-id="prioridad-baja"> Baja</label>
+              </fieldset>
+              <button type="submit">Enviar</button>
+            </form>
+          </body></html>`
+        }
+      ]
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    const canonicalForm = activeMapping(created.import, 'perfil.html', 'prioridad_contacto')
+    const canonicalDetectedForm = created.import.detectedForms.find(form => form.id === 'prioridad_contacto')
+    const canonicalField = mappingField(canonicalForm, 'prioridad')
+    const canonicalDetectedField = canonicalDetectedForm.fields.find(field => field.id === 'prioridad')
+    const explodedIds = ['prioridad_alta', 'prioridad_media', 'prioridad_baja']
+    const legacyDetectedForms = created.import.detectedForms.map(form => (
+      form.id !== 'prioridad_contacto'
+        ? form
+        : {
+            ...form,
+            fields: explodedIds.map(id => ({
+              ...canonicalDetectedField,
+              id,
+              hasStableFieldId: true
+            }))
+          }
+    ))
+    const legacyMappings = created.import.formMappings.map(form => (
+      form.formId !== 'prioridad_contacto'
+        ? form
+        : {
+            ...form,
+            fields: explodedIds.map(fieldId => ({
+              ...canonicalField,
+              fieldId,
+              hasStableFieldId: true
+            }))
+          }
+    ))
+    await db.run(`
+      UPDATE public_site_imports SET
+        detected_forms_json = ?,
+        form_mappings_json = ?,
+        status = 'mapping_pending',
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+    `, [JSON.stringify(legacyDetectedForms), JSON.stringify(legacyMappings), siteId])
+
+    const live = await getImportedSiteBySiteId(siteId)
+    assert.equal(
+      activeMapping(live, 'perfil.html', 'prioridad_contacto').fields.filter(field => field.present !== false).length,
+      1
+    )
+    const beforePatchRow = await db.get(
+      'SELECT form_mappings_json FROM public_site_imports WHERE site_id = ?',
+      [siteId]
+    )
+    assert.equal(
+      JSON.parse(beforePatchRow.form_mappings_json)[0].fields.filter(field => field.present !== false).length,
+      3,
+      'la autodetección de la página principal no debe borrar formularios de otra página'
+    )
+
+    const patched = await updateImportedSiteFieldMapping(siteId, {
+      pagePath: 'perfil.html',
+      formId: 'prioridad_contacto',
+      fieldId: 'prioridad',
+      destinationType: 'standard',
+      destinationKey: 'message'
+    })
+    const patchedForm = activeMapping(patched, 'perfil.html', 'prioridad_contacto')
+    assert.equal(patchedForm.fields.filter(field => field.present !== false).length, 1)
+    assertIncludes(mappingField(patchedForm, 'prioridad'), {
+      destinationType: 'standard',
+      destinationKey: 'message',
+      present: true
+    })
+    assert.equal(
+      patchedForm.fields.filter(field => explodedIds.includes(field.fieldId) && field.present === false).length,
+      3
+    )
+  } finally {
+    if (siteId) {
+      const imported = await getImportedSiteBySiteId(siteId).catch(() => null)
+      sourceFormIds.push(...(imported?.formMappings || []).map(mapping => mapping.formSiteId))
+    }
+    await deleteSites([siteId, ...sourceFormIds])
+  }
+})
+
 test('radio and checkbox groups stay as one field and stable-id changes create a new mapping', async () => {
   const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
   let siteId = ''

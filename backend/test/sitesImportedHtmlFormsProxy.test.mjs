@@ -404,7 +404,9 @@ test('stable field ids separate repeated names and drop removed or arbitrary raw
     const rendered = await renderPublicSiteHtml({ ...created.site, status: 'published' }, {
       pageId: 'page-1', trackingEnabled: false, preview: false
     })
-    assert.match(rendered, /const getFieldKey = \(field, fallback\) => \(\s*getStableFieldId\(field\) \|\|\s*field\.getAttribute\('name'\)/)
+    assert.match(rendered, /const getFieldKey = \(field, form, fallback\) => \{/)
+    assert.match(rendered, /const getChoiceFieldKey = \(field, form, type\) => \{/)
+    assert.match(rendered, /new Set\(stableIds\)\.size === 1/)
     assert.match(rendered, /getChoiceFields\(field, form, type\)/)
 
     const result = await createSubmissionFromRequest(
@@ -452,7 +454,7 @@ test('stable field ids separate repeated names and drop removed or arbitrary raw
   }
 })
 
-test('public imported submit keeps stable radio scalar and checkbox array values', async () => {
+test('public imported submit groups per-option ids by name and keeps radio scalar plus checkbox array values', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const interestsKey = `intereses_grupo_${suffix}`.toLowerCase()
   const previousConfig = {
@@ -478,13 +480,13 @@ test('public imported submit keeps stable radio scalar and checkbox array values
         <form data-rstk-form-id="preferencias-contacto" data-rstk-label="Preferencias">
           <fieldset>
             <legend>Plan</legend>
-            <label><input type="radio" name="plan" value="starter" data-rstk-field-id="plan-elegido"> Starter</label>
-            <label><input type="radio" name="plan" value="pro" data-rstk-field-id="plan-elegido"> Pro</label>
+            <label><input type="radio" name="plan" value="starter" data-rstk-field-id="plan-starter"> Starter</label>
+            <label><input type="radio" name="plan" value="pro" data-rstk-field-id="plan-pro"> Pro</label>
           </fieldset>
           <fieldset>
             <legend>Intereses</legend>
-            <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="intereses-seleccionados"> Ventas</label>
-            <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="intereses-seleccionados"> Soporte</label>
+            <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="interes-ventas"> Ventas</label>
+            <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="interes-soporte"> Soporte</label>
           </fieldset>
           <button type="submit">Guardar preferencias</button>
         </form>
@@ -498,22 +500,23 @@ test('public imported submit keeps stable radio scalar and checkbox array values
     assert.deepEqual(
       detectedForm.fields.map(field => [field.fieldId, field.type, field.options.map(option => option.value)]),
       [
-        ['plan_elegido', 'radio', ['starter', 'pro']],
-        ['intereses_seleccionados', 'checkbox', ['ventas', 'soporte']]
+        ['plan', 'radio', ['starter', 'pro']],
+        ['intereses', 'checkbox', ['ventas', 'soporte']]
       ]
     )
+    assert.ok(detectedForm.fields.every(field => field.hasStableFieldId === false))
 
     await updateImportedSiteFieldMapping(siteId, {
       pagePath: '',
       formId: 'preferencias_contacto',
-      fieldId: 'plan_elegido',
+      fieldId: 'plan',
       destinationType: 'standard',
       destinationKey: 'message'
     })
     await updateImportedSiteFieldMapping(siteId, {
       pagePath: '',
       formId: 'preferencias_contacto',
-      fieldId: 'intereses_seleccionados',
+      fieldId: 'intereses',
       destinationType: 'new_custom',
       destinationKey: interestsKey
     })
@@ -536,8 +539,8 @@ test('public imported submit keeps stable radio scalar and checkbox array values
         siteId,
         importedFormId: 'preferencias-contacto',
         rawFields: {
-          'plan-elegido': 'pro',
-          'intereses-seleccionados': ['ventas', 'soporte']
+          plan: 'pro',
+          intereses: ['ventas', 'soporte']
         }
       }
     )
@@ -548,8 +551,8 @@ test('public imported submit keeps stable radio scalar and checkbox array values
     )
     assert.ok(submission.form_site_id)
     assert.deepEqual(JSON.parse(submission.raw_fields_json), {
-      'plan-elegido': 'pro',
-      'intereses-seleccionados': ['ventas', 'soporte']
+      plan: 'pro',
+      intereses: ['ventas', 'soporte']
     })
     const mapped = JSON.parse(submission.mapped_fields_json)
     assert.deepEqual(mapped.standard, { message: 'pro' })
