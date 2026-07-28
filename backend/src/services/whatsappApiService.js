@@ -250,6 +250,10 @@ const QR_FALLBACK_READY_STATUSES = new Set(['connected', 'reconnecting', 'restar
 const API_FALLBACK_ERROR_PATTERN = /\b(MESSAGING LIMIT|RATE.?LIMIT|RESTRICT(?:ED|ION)?|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|DISCONNECTED|MIGRATED)\b/i
 const API_CONNECTION_ERROR_PATTERN = /\b(ACCESS TOKEN|OAUTH|AUTHENTICATION|AUTHORIZATION|MISSING PERMISSIONS?|PERMISSION DENIED|UNSUPPORTED POST REQUEST|OBJECT .* DOES NOT EXIST|NOT CONNECTED|NO EST[AÁ] CONECTAD[OA]|NO SE ENCUENTRA CONECTAD[OA])\b/i
 const API_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(RECIPIENT|CUSTOMER|USER|DESTINATION|TO PHONE|UNSUBSCRIBED|OPTED.?OUT|BLOCKED BY USER|USER BLOCKED)\b/i
+const TEMPLATE_PARAMETER_COUNT_ERROR_CODE = '132000'
+const TEMPLATE_PARAMETER_COUNT_ERROR_PATTERN = /\bbody\b[\s\S]*\bnumber of localizable_params\b[\s\S]*\bdoes not match\b[\s\S]*\bexpected number of params\b/i
+const TEMPLATE_PARAMETER_QR_FALLBACK_REASON = 'WhatsApp rechazó definitivamente la plantilla por una cantidad incorrecta de variables; Ristak la envió como texto por el respaldo QR.'
+const TEMPLATE_QR_FALLBACK_MAX_AGE_MS = 15 * 60 * 1000
 
 const REQUIRED_WEBHOOK_EVENTS = [
   'whatsapp.inbound_message.received',
@@ -4112,6 +4116,309 @@ async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessa
       entityId: businessPhoneNumberId,
       raw: { message: normalizedMessage }
     })
+  }
+}
+
+function isDeterministicTemplateParameterFailure({
+  messageType,
+  status,
+  errorCode,
+  errorMessage
+} = {}) {
+  return (
+    cleanString(messageType).toLowerCase() === 'template' &&
+    normalizeMessageDeliveryStatus(status) === 'failed' &&
+    cleanString(errorCode) === TEMPLATE_PARAMETER_COUNT_ERROR_CODE &&
+    TEMPLATE_PARAMETER_COUNT_ERROR_PATTERN.test(cleanString(errorMessage))
+  )
+}
+
+async function findAuthorizedTemplateSendForProviderMessage({
+  provider,
+  providerMessageIds = []
+} = {}) {
+  const messageIds = [...new Set(
+    (Array.isArray(providerMessageIds) ? providerMessageIds : [])
+      .map(cleanString)
+      .filter(Boolean)
+  )]
+  if (!messageIds.length) return null
+
+  const placeholders = messageIds.map(() => '?').join(', ')
+  return db.get(`
+    SELECT id, created_at
+    FROM whatsapp_api_template_sends
+    WHERE qr_fallback_authorized = 1
+      AND LOWER(COALESCE(provider, 'ycloud')) = ?
+      AND (
+        provider_message_id IN (${placeholders})
+        OR ycloud_message_id IN (${placeholders})
+        OR wamid IN (${placeholders})
+      )
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, [
+    cleanString(provider).toLowerCase() || PROVIDER_NAME,
+    ...messageIds,
+    ...messageIds,
+    ...messageIds
+  ]).catch(() => null)
+}
+
+async function readCompletedTemplateQrFallback({ messageId, attempt } = {}) {
+  if (cleanString(attempt?.status).toLowerCase() !== 'sent') return null
+  const stored = await db.get(`
+    SELECT status, transport, routing_reason, provider_message_id, wamid
+    FROM whatsapp_api_messages
+    WHERE id = ?
+    LIMIT 1
+  `, [messageId]).catch(() => null)
+  if (cleanString(stored?.transport).toLowerCase() !== 'qr') return null
+
+  const fallbackReason = cleanString(stored.routing_reason || attempt.fallback_reason)
+  return {
+    applied: true,
+    response: {
+      id: cleanString(stored.provider_message_id || attempt.qr_message_id),
+      wamid: cleanString(stored.wamid || stored.provider_message_id || attempt.qr_message_id),
+      status: normalizeMessageDeliveryStatus(stored.status) || 'sent',
+      transport: 'qr',
+      fallback: true,
+      fallbackFrom: 'api',
+      fallbackReason,
+      routingReason: fallbackReason,
+      localMessageId: messageId
+    }
+  }
+}
+
+/**
+ * Excepción segura al contrato observer-only de los webhooks:
+ *
+ * Meta/YCloud puede aceptar una plantilla y rechazarla después con 132000 porque
+ * el snapshot del proveedor esperaba otra cantidad de variables. Ese rechazo es
+ * determinista y prueba que el mensaje oficial nunca fue entregado. Sólo entonces,
+ * y sólo si la solicitud original autorizó QR, reclamamos una vez el envío como
+ * texto. La fila de intentos es una barrera at-most-once: un webhook duplicado o
+ * concurrente nunca puede originar un segundo mensaje QR.
+ */
+async function maybeFallbackRejectedTemplateViaQr({
+  messageId,
+  provider,
+  providerMessageId,
+  ycloudMessageId,
+  metaMessageId,
+  wamid,
+  messageType,
+  status,
+  errorCode,
+  errorMessage
+} = {}) {
+  if (!isDeterministicTemplateParameterFailure({
+    messageType,
+    status,
+    errorCode,
+    errorMessage
+  })) {
+    return { applied: false, pending: false }
+  }
+
+  const stored = await db.get(`
+    SELECT id, provider, provider_message_id, ycloud_message_id, meta_message_id,
+           wamid, business_phone_number_id, contact_id, phone, from_phone, to_phone,
+           business_phone, direction, message_type, message_text, status, transport,
+           raw_payload_json, error_code, error_message, message_timestamp, created_at
+    FROM whatsapp_api_messages
+    WHERE id = ?
+    LIMIT 1
+  `, [messageId]).catch(() => null)
+
+  if (
+    !stored?.id ||
+    cleanString(stored.direction).toLowerCase() !== 'outbound' ||
+    cleanString(stored.message_type).toLowerCase() !== 'template' ||
+    cleanString(stored.transport).toLowerCase() !== 'api' ||
+    normalizeMessageDeliveryStatus(stored.status) !== 'failed' ||
+    !cleanString(stored.message_text)
+  ) {
+    return { applied: false, pending: false }
+  }
+
+  // Un backfill o replay histórico jamás debe revivir una plantilla vieja. El
+  // respaldo sólo es válido cerca del intento original, mientras el usuario aún
+  // espera que ese mismo envío salga.
+  const sentAt = Date.parse(stored.message_timestamp || stored.created_at || '')
+  if (Number.isFinite(sentAt) && Date.now() - sentAt > TEMPLATE_QR_FALLBACK_MAX_AGE_MS) {
+    return { applied: false, pending: false }
+  }
+
+  const identifiers = [
+    providerMessageId,
+    ycloudMessageId,
+    metaMessageId,
+    wamid,
+    stored.provider_message_id,
+    stored.ycloud_message_id,
+    stored.meta_message_id,
+    stored.wamid
+  ]
+  const authorizedSend = await findAuthorizedTemplateSendForProviderMessage({
+    provider: provider || stored.provider,
+    providerMessageIds: identifiers
+  })
+  if (!authorizedSend?.id) {
+    return { applied: false, pending: false }
+  }
+  const authorizedAt = Date.parse(authorizedSend.created_at || '')
+  if (Number.isFinite(authorizedAt) && Date.now() - authorizedAt > TEMPLATE_QR_FALLBACK_MAX_AGE_MS) {
+    return { applied: false, pending: false }
+  }
+
+  const fromPhone = normalizePhoneForStorage(stored.business_phone || stored.from_phone) ||
+    cleanString(stored.business_phone || stored.from_phone)
+  const toPhone = normalizePhoneForStorage(stored.phone || stored.to_phone) ||
+    cleanString(stored.phone || stored.to_phone)
+  const fallbackPhoneRow = await findQrFallbackPhoneRowForSender({
+    phoneNumberId: stored.business_phone_number_id,
+    fromPhone
+  })
+  if (!fallbackPhoneRow?.id || !fromPhone || !toPhone) {
+    return { applied: false, pending: false }
+  }
+
+  const cleanProvider = cleanString(provider || stored.provider).toLowerCase() || PROVIDER_NAME
+  const cleanProviderMessageId = cleanString(
+    providerMessageId ||
+    stored.ycloud_message_id ||
+    stored.meta_message_id ||
+    stored.provider_message_id ||
+    stored.wamid
+  )
+  const claim = await db.run(`
+    INSERT INTO whatsapp_api_qr_fallback_attempts (
+      api_message_id, provider, provider_message_id, error_code, error_message,
+      fallback_reason, qr_phone_number_id, status, attempt_count, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'claimed', 1, CURRENT_TIMESTAMP)
+    ON CONFLICT(api_message_id) DO NOTHING
+  `, [
+    messageId,
+    cleanProvider,
+    cleanProviderMessageId || null,
+    cleanString(errorCode || stored.error_code) || null,
+    cleanString(errorMessage || stored.error_message) || null,
+    TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+    fallbackPhoneRow.id
+  ])
+
+  if (Number(claim?.changes || 0) !== 1) {
+    const previousAttempt = await db.get(`
+      SELECT *
+      FROM whatsapp_api_qr_fallback_attempts
+      WHERE api_message_id = ?
+      LIMIT 1
+    `, [messageId]).catch(() => null)
+    const completed = await readCompletedTemplateQrFallback({
+      messageId,
+      attempt: previousAttempt
+    })
+    if (completed) return completed
+    return {
+      applied: false,
+      pending: cleanString(previousAttempt?.status).toLowerCase() === 'claimed'
+    }
+  }
+
+  try {
+    const qrResponse = await sendTextViaQrFallback({
+      phoneNumberId: fallbackPhoneRow.id,
+      fromPhone,
+      toPhone,
+      body: stored.message_text,
+      externalId: `template-qr-fallback:${messageId}`,
+      contactId: stored.contact_id,
+      fallbackReason: TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+      persist: false
+    })
+    const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
+    const qrWamid = cleanString(qrResponse.wamid || qrResponse.id)
+    const qrStatus = normalizeMessageDeliveryStatus(qrResponse.status) || 'sent'
+    const protocolMessageKeyId = resolveWhatsAppProtocolMessageKey({
+      transport: 'qr',
+      wamid: qrWamid
+    })
+    const originalPayload = parseJsonValue(stored.raw_payload_json, {}) || {}
+    const rawPayload = safeJson({
+      ...originalPayload,
+      apiFailure: {
+        provider: cleanProvider,
+        providerMessageId: cleanProviderMessageId || null,
+        errorCode: cleanString(errorCode || stored.error_code) || null,
+        errorMessage: cleanString(errorMessage || stored.error_message) || null
+      },
+      qrFallback: {
+        applied: true,
+        reason: TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+        phoneNumberId: fallbackPhoneRow.id,
+        messageId: qrMessageId || null,
+        status: qrStatus
+      }
+    })
+
+    await db.transaction(async transactionDatabase => {
+      await transactionDatabase.run(`
+        UPDATE whatsapp_api_messages
+        SET source_adapter = 'baileys',
+            origin = 'whatsapp.qr.message.fallback_sent',
+            provider_message_id = ?,
+            wamid = ?,
+            protocol_message_key_id = ?,
+            transport = 'qr',
+            routing_reason = ?,
+            status = ?,
+            error_code = NULL,
+            error_message = NULL,
+            raw_payload_json = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND LOWER(COALESCE(direction, '')) = 'outbound'
+          AND LOWER(COALESCE(message_type, '')) = 'template'
+      `, [
+        qrMessageId || null,
+        qrWamid || null,
+        protocolMessageKeyId || null,
+        TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+        qrStatus,
+        rawPayload,
+        messageId
+      ])
+      await transactionDatabase.run(`
+        UPDATE whatsapp_api_qr_fallback_attempts
+        SET qr_message_id = ?,
+            status = 'sent',
+            last_error = NULL,
+            sent_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE api_message_id = ?
+      `, [qrMessageId || qrWamid || null, messageId])
+    })
+
+    return {
+      applied: true,
+      response: {
+        ...qrResponse,
+        localMessageId: messageId
+      }
+    }
+  } catch (error) {
+    await db.run(`
+      UPDATE whatsapp_api_qr_fallback_attempts
+      SET status = 'failed',
+          last_error = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE api_message_id = ?
+    `, [cleanString(error?.message).slice(0, 2000) || 'El respaldo QR falló', messageId]).catch(() => undefined)
+    logger.error(`[WhatsApp API] El respaldo QR de la plantilla rechazada ${messageId} falló: ${error.message}`)
+    return { applied: false, pending: false, failed: true }
   }
 }
 
@@ -8274,9 +8581,10 @@ async function upsertMessage({
   const canonicalStatus = canonicalQrFallbackApplied
     ? (normalizeMessageDeliveryStatus(existingMessage?.status) || status)
     : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
-  // Los webhooks sólo observan y concilian estado; nunca originan un segundo
-  // envío. Si reportan una restricción real, marcan la API como no disponible
-  // para que la SIGUIENTE solicitud autorizada pueda usar su respaldo.
+  // Por regla general, los webhooks sólo observan y concilian estado. La única
+  // excepción es un rechazo 132000 de plantilla por cantidad de variables: Meta
+  // prueba ahí que el mensaje nunca se entregó y una solicitud que autorizó QR
+  // puede reclamar exactamente una vez su respaldo como texto.
   const effectiveErrorCode = errorCode || cleanString(existingMessage?.error_code)
   const effectiveErrorMessage = errorMessage || cleanString(existingMessage?.error_message)
   const effectiveFailure = incomingStatus === 'failed' || normalizeMessageDeliveryStatus(existingMessage?.status) === 'failed'
@@ -8298,14 +8606,44 @@ async function upsertMessage({
     })
   }
 
-  const finalTransport = canonicalQrFallbackApplied ? 'qr' : cleanTransport
+  const deterministicTemplateFallback = canonicalQrFallbackApplied
+    ? { applied: false, pending: false }
+    : await maybeFallbackRejectedTemplateViaQr({
+        messageId,
+        provider,
+        providerMessageId,
+        ycloudMessageId,
+        metaMessageId,
+        wamid,
+        messageType,
+        status: canonicalStatus,
+        errorCode: effectiveErrorCode,
+        errorMessage: effectiveErrorMessage
+      })
+  const fallbackApplied = Boolean(deterministicTemplateFallback.applied)
+  const fallbackResponse = fallbackApplied ? deterministicTemplateFallback.response : null
+  const finalTransport = canonicalQrFallbackApplied || fallbackApplied ? 'qr' : cleanTransport
   const finalSourceAdapter = resolveWhatsAppSourceAdapter({ provider, transport: finalTransport })
   const finalRoutingReason = cleanString(
+    fallbackResponse?.fallbackReason ||
+    fallbackResponse?.routingReason ||
     (canonicalQrFallbackApplied ? existingMessage?.routing_reason : routingReason)
   )
-  const finalStatus = canonicalStatus
+  const finalStatus = fallbackApplied
+    ? (normalizeMessageDeliveryStatus(fallbackResponse?.status) || 'sent')
+    : canonicalStatus
+  const finalProviderMessageId = fallbackApplied
+    ? cleanString(fallbackResponse?.id || fallbackResponse?.wamid)
+    : canonicalQrFallbackApplied
+      ? cleanString(existingMessage?.provider_message_id || existingMessage?.wamid)
+      : providerMessageId
+  const finalOrigin = fallbackApplied
+    ? 'whatsapp.qr.message.fallback_sent'
+    : canonicalQrFallbackApplied
+      ? cleanString(existingMessage?.origin || origin)
+      : origin
 
-  if (finalSourceAdapter !== sourceAdapter) {
+  if (!fallbackApplied && finalSourceAdapter !== sourceAdapter) {
     await db.run(`
       UPDATE whatsapp_api_messages
       SET source_adapter = ?, updated_at = CURRENT_TIMESTAMP
@@ -8361,9 +8699,9 @@ async function upsertMessage({
     direction: identity.direction,
     provider,
     sourceAdapter: finalSourceAdapter,
-    providerMessageId,
+    providerMessageId: finalProviderMessageId,
     historyImport: historyImport === true,
-    origin,
+    origin: finalOrigin,
     businessEcho,
     phone: identity.phone,
     businessPhone: identity.businessPhone,
@@ -8371,9 +8709,9 @@ async function upsertMessage({
     transport: finalTransport,
     status: finalStatus,
     routingReason: finalRoutingReason,
-    fallbackApplied: false,
-    fallbackResponse: null,
-    fallbackReason: '',
+    fallbackApplied,
+    fallbackResponse,
+    fallbackReason: fallbackApplied ? finalRoutingReason : '',
     contactName: localContact.contactName,
     profileName,
     messageText,
@@ -8391,7 +8729,10 @@ async function upsertMessage({
     messageTimestamp
   })
 
-  if (identity.direction !== 'inbound' || isNewMessage) {
+  if (
+    !deterministicTemplateFallback.pending &&
+    (identity.direction !== 'inbound' || isNewMessage)
+  ) {
     publishChatMessageEvent({
       contactId: localContact.id,
       messageId,
@@ -11938,7 +12279,14 @@ function templateSendSnapshot(template = {}, renderedText = '') {
   }
 }
 
-async function saveTemplateSend({ template, requestBody, response, variables, renderedText = '' }) {
+async function saveTemplateSend({
+  template,
+  requestBody,
+  response,
+  variables,
+  renderedText = '',
+  allowQrFallback = false
+}) {
   const id = hashId('waapi_tpl_send', response?.id || requestBody.externalId || `${requestBody.from}|${requestBody.to}|${template.name}|${Date.now()}`)
   const identifiers = resolveWhatsAppMessageIdentifiers({
     provider: requestBody.provider || response?.provider || PROVIDER_NAME,
@@ -11951,9 +12299,10 @@ async function saveTemplateSend({ template, requestBody, response, variables, re
     INSERT INTO whatsapp_api_template_sends (
       id, provider, source_adapter, provider_message_id,
       template_id, template_name, language, to_phone, from_phone,
-      ycloud_message_id, wamid, status, variables_json, raw_payload_json,
+      ycloud_message_id, wamid, status, qr_fallback_authorized,
+      variables_json, raw_payload_json,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
       provider = excluded.provider,
@@ -11961,6 +12310,7 @@ async function saveTemplateSend({ template, requestBody, response, variables, re
       provider_message_id = excluded.provider_message_id,
       ycloud_message_id = excluded.ycloud_message_id,
       wamid = excluded.wamid,
+      qr_fallback_authorized = excluded.qr_fallback_authorized,
       raw_payload_json = excluded.raw_payload_json,
       updated_at = CURRENT_TIMESTAMP
   `, [
@@ -11976,6 +12326,7 @@ async function saveTemplateSend({ template, requestBody, response, variables, re
     identifiers.ycloudMessageId || null,
     cleanString(response?.wamid) || null,
     cleanString(response?.status) || 'accepted',
+    allowQrFallback ? 1 : 0,
     safeJson(variables || []),
     safeJson({
       request: requestBody,
@@ -12125,7 +12476,8 @@ export async function sendWhatsAppApiTemplateMessage({
       },
       response: qrResponse,
       variables: normalizedVariables,
-      renderedText: text
+      renderedText: text,
+      allowQrFallback
     })
 
     return {
@@ -12202,7 +12554,8 @@ export async function sendWhatsAppApiTemplateMessage({
     },
     response,
     variables: normalizedVariables,
-    renderedText: renderedTemplateText
+    renderedText: renderedTemplateText,
+    allowQrFallback
   })
 
   const persistedMessage = await upsertMessage({

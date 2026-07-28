@@ -1802,7 +1802,11 @@ contenido o destinatario, `131047`, `131053`, timeout, red o HTTP 5xx jamás
 autorizan Baileys. La ventana cerrada exige plantilla oficial. Sólo una
 indisponibilidad inequívoca del transporte (desconexión, autorización perdida,
 suspensión/restricción o límite confirmado) permite el respaldo. Cuando Meta
-pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando.
+pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando. La
+única excepción de contenido es una plantilla aceptada y luego rechazada con
+`132000` por una cantidad distinta de `localizable_params`: como ese mensaje
+nunca pudo entregarse, Ristak puede enviar su texto renderizado por QR si la
+solicitud original lo autorizó, el QR está listo y no han pasado 15 minutos.
 
 Esta prioridad es independiente del orden de conexión. Cuando termina de
 conectarse cualquier proveedor registrado como API oficial, el backend marca esa
@@ -1899,9 +1903,13 @@ contacto; nunca debe requerir varios toques para apagar el mismo agente en
 WhatsApp y SMS.
 
 Un webhook sólo concilia estado y puede marcar la API como restringida para
-solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
-acciones masivas usan `allowQrFallback=false`: si la API falla, el lote registra
-el error y se detiene sin derramarse a Baileys.
+solicitudes futuras. La única excepción que puede originar respaldo es el
+`132000` de cantidad de variables de una plantilla que la API aceptó pero nunca
+entregó. Antes de mandar por QR, el backend exige la autorización congelada del
+envío original y crea un claim durable por mensaje; eventos repetidos o
+concurrentes no envían otra copia. Campañas y acciones masivas usan
+`allowQrFallback=false`: si la API falla, el lote registra el error y se detiene
+sin derramarse a Baileys.
 
 En Meta directo, la respuesta síncrona de Graph se guarda como el mensaje
 saliente real con su texto, `wamid`, `meta_message_id`, `contact_id` y
@@ -2912,16 +2920,22 @@ Cuando una solicitud saliente intenta WhatsApp API oficial por YCloud o Meta
 Direct y recibe una indisponibilidad inequívoca, `whatsappApiService` puede usar
 el QR asociado al mismo teléfono sólo si esa solicitud tenía
 `allowQrFallback=true`. La decisión y el envío ocurren dentro de esa única
-solicitud; ninguna capa superior vuelve a interpretar texto de errores y ningún
-webhook manda mensajes. Si el proveedor aceptó la solicitud y después reporta
-`failed`, se conserva el fallo API: no se crea un segundo envío silencioso.
+solicitud y ninguna capa superior vuelve a interpretar texto de errores. Si el
+proveedor aceptó la solicitud y después reporta `failed`, se conserva el fallo
+API, salvo una plantilla con código `132000` y el texto preciso de cantidad
+incorrecta de `localizable_params`. En esa excepción, el webhook puede mandar el
+texto renderizado por QR dentro de los primeros 15 minutos, únicamente con
+autorización original y claim `at-most-once`; la misma fila cambia a
+`transport=qr`, conserva el ID oficial para auditoría y la UI muestra un solo
+globo.
 
 La ventana cerrada, una plantilla pendiente/rechazada, errores de contenido o
 media (`131053`) y errores de conversación (`131047`) no son indisponibilidad de
-la API y nunca cambian a QR. Para texto o media fuera de 24 horas, el flujo se
-detiene y ofrece una plantilla oficial. Si un fallback legítimo confirma el
-envío, el historial registra el transporte real `qr` y la UI muestra un solo
-globo; no se oculta una segunda fila para aparentar deduplicación.
+la API y nunca cambian a QR; el `132000` anterior es la única excepción de
+contenido. Para texto o media fuera de 24 horas, el flujo se detiene y ofrece una
+plantilla oficial. Si un fallback legítimo confirma el envío, el historial
+registra el transporte real `qr` y la UI muestra un solo globo; no se oculta una
+segunda fila para aparentar deduplicación.
 Una vez que Baileys devuelve `key.id`, el request manual responde `sent` sin
 esperar hasta 20 segundos por `delivered`/`read`. Los ACK posteriores se guardan
 en background y actualizan la misma fila; si el ACK llega antes del INSERT, el

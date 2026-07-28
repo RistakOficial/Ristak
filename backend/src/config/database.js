@@ -5286,6 +5286,7 @@ async function initTablesUnlocked() {
         ycloud_message_id TEXT,
         wamid TEXT,
         status TEXT,
+        qr_fallback_authorized INTEGER NOT NULL DEFAULT 0,
         variables_json TEXT,
         raw_payload_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -5297,7 +5298,8 @@ async function initTablesUnlocked() {
     for (const [columnName, columnType] of [
       ['provider', "TEXT DEFAULT 'ycloud'"],
       ['source_adapter', "TEXT DEFAULT 'ycloud'"],
-      ['provider_message_id', 'TEXT']
+      ['provider_message_id', 'TEXT'],
+      ['qr_fallback_authorized', 'INTEGER NOT NULL DEFAULT 0']
     ]) {
       try {
         await db.run(`ALTER TABLE whatsapp_api_template_sends ADD COLUMN ${columnName} ${columnType}`)
@@ -5305,6 +5307,27 @@ async function initTablesUnlocked() {
         // Columna ya existe, ignorar.
       }
     }
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_api_qr_fallback_attempts (
+        api_message_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        provider_message_id TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        fallback_reason TEXT NOT NULL,
+        qr_phone_number_id TEXT,
+        qr_message_id TEXT,
+        status TEXT NOT NULL DEFAULT 'claimed',
+        attempt_count INTEGER NOT NULL DEFAULT 1,
+        last_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        sent_at DATETIME,
+        FOREIGN KEY (api_message_id) REFERENCES whatsapp_api_messages(id) ON DELETE CASCADE,
+        FOREIGN KEY (qr_phone_number_id) REFERENCES whatsapp_api_phone_numbers(id) ON DELETE SET NULL
+      )
+    `)
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS distributed_locks (
@@ -5505,6 +5528,8 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_alerts_entity ON whatsapp_api_alerts(entity_type, entity_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_created ON whatsapp_api_template_sends(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_status ON whatsapp_api_template_sends(status)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_fallback ON whatsapp_api_template_sends(qr_fallback_authorized, provider, provider_message_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_qr_fallback_status ON whatsapp_api_qr_fallback_attempts(status, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_distributed_locks_until ON distributed_locks(locked_until)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_phone ON whatsapp_qr_sessions(phone_number_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_status ON whatsapp_qr_sessions(status, updated_at)')
