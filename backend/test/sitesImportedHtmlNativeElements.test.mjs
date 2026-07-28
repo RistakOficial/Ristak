@@ -1241,6 +1241,8 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal((html.match(/data-rstk-video-gate-resume="true"/g) || []).length, 2)
     assert.equal((html.match(/data-rstk-video-gate-seek-policy="watched_only"/g) || []).length, 2)
     assert.equal((html.match(/data-rstk-video-gate-progress-key="admision-v1"/g) || []).length, 2)
+    assert.equal(html.includes(`const PROGRESS_SITE_SCOPE = ${JSON.stringify(site.id)}`), true)
+    assert.equal(html.includes('const PROGRESS_PAGE_SCOPE = "page-1"'), true)
     assert.match(html, /data-rstk-video-gate-shell="agenda-admision"[^>]*data-rstk-video-gate-state="locked"/)
     assert.match(html, /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-locked-mode="blur"[^>]*data-rstk-video-gate-state="locked"[^>]* inert[^>]*aria-hidden="true"/)
     assert.doesNotMatch(

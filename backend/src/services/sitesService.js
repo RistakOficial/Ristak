@@ -17612,6 +17612,8 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const GATE_SOURCE_SELECTOR = '[data-rstk-video-gate-id] video,[data-ristak-video-gate-id] video,[data-ristack-video-gate-id] video';
       const POPUP_ID = ${JSON.stringify(POPUP_SURFACE_ID)};
       const PREVIEW_SAFE = ${options.previewSafe ? 'true' : 'false'};
+      const PROGRESS_SITE_SCOPE = ${JSON.stringify(cleanString(options.progressSiteId || ''))};
+      const PROGRESS_PAGE_SCOPE = ${JSON.stringify(cleanString(options.progressPageId || ''))};
       const PREVIEW_SAFE_ACTIONS = new Set(['show', 'hide', 'scroll_to']);
       const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent']);
       const attached = new WeakSet();
@@ -17805,8 +17807,8 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           : 2592000;
         let pathScope = 'page';
         try { pathScope = String(window.location && window.location.pathname || 'page'); } catch (_) {}
-        const siteId = video.getAttribute('data-rstk-video-action-site-id') || 'site';
-        const pageId = video.getAttribute('data-rstk-video-action-page-id') || pathScope;
+        const siteId = video.getAttribute('data-rstk-video-action-site-id') || PROGRESS_SITE_SCOPE || 'site';
+        const pageId = video.getAttribute('data-rstk-video-action-page-id') || PROGRESS_PAGE_SCOPE || pathScope;
         return {
           enabled: mode !== 'none',
           mode,
@@ -28475,7 +28477,12 @@ function buildImportedVideoGateRuntimeScript(html = '') {
   </script>`
 }
 
-function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, actionsPreviewSafe = false } = {}) {
+function buildImportedVideoRuntimeInjection(html = '', {
+  actionsEnabled = true,
+  actionsPreviewSafe = false,
+  progressSiteId = '',
+  progressPageId = ''
+} = {}) {
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
@@ -28486,7 +28493,14 @@ function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, 
     IMPORTED_VIDEO_PLAYER_CSS,
     hasPlayer ? buildVideoPlayerRuntimeScript() : '',
     hasVideoGate ? buildImportedVideoGateRuntimeScript(source) : '',
-    hasActions ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
+    hasActions
+      ? buildVideoActionsRuntimeScript([], {
+        force: true,
+        previewSafe: actionsPreviewSafe,
+        progressSiteId,
+        progressPageId
+      })
+      : ''
   ].filter(Boolean).join('')
 }
 
@@ -30770,7 +30784,9 @@ async function renderImportedPublicSiteHtml(site, {
   const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
   const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, {
     actionsEnabled: true,
-    actionsPreviewSafe: preview
+    actionsPreviewSafe: preview,
+    progressSiteId: site.id,
+    progressPageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID
   })
   const importedVideoFormGateRuntime = buildVideoFormGateRuntimeScript(importedVideoLookupBlocks, {
     force: /data-rstk-video-form-gate\b/i.test(html)
@@ -30863,7 +30879,10 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     )
     html = importedNativeRender.html
     const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
-    const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
+    const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, {
+      progressSiteId: site.id,
+      progressPageId: page?.id || DEFAULT_FUNNEL_PAGE_ID
+    })
     const importedVideoFormGateRuntime = buildVideoFormGateRuntimeScript(importedVideoLookupBlocks, {
       force: /data-rstk-video-form-gate\b/i.test(html)
     })

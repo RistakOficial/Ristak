@@ -845,7 +845,7 @@ Una VSL puede conservar el avance real del gate sin JavaScript propio:
   data-rstk-native-id="vsl-desktop"
   data-rstk-video-gate-id="admision"
   data-rstk-video-gate-trigger="unique_watched_percent"
-  data-rstk-video-gate-value="91.442"
+  data-rstk-video-gate-value="91.3424"
   data-rstk-video-gate-persist="visitor"
   data-rstk-video-gate-resume="true"
   data-rstk-video-gate-seek-policy="watched_only"
@@ -860,6 +860,11 @@ y la unión de fragmentos vistos durante 30 días; `session` usa
 comparten avance cuando usan la misma `progress-key`, incluso si sus duraciones
 exactas difieren. Esa key debe versionarse al reemplazar el contenido para no
 heredar progreso de otra VSL.
+
+Ristak agrega automáticamente el ID estable del sitio y de la página a la clave
+de almacenamiento. Por eso una vista previa nueva conserva el mismo avance sin
+depender del token temporal de su URL, y dos páginas distintas no contaminan su
+progreso aunque reutilicen la misma `progress-key`.
 
 Con `resume="true"`, el primer play de una visita posterior arranca en el punto
 guardado. `seek-policy="watched_only"` permite retroceder y volver hasta el

@@ -5301,7 +5301,9 @@ salto por delante del frente ya cubierto. `session` limita la memoria a la
 pestaña y `data-rstk-video-gate-progress-ttl` cambia la vigencia en segundos.
 Desktop y móvil comparten el mismo registro mediante
 `data-rstk-video-gate-progress-key`; esa clave se versiona cuando cambia el
-contenido. Con `unique_watched_percent`, volver a mirar un rango previo no
+contenido. Ristak la aísla además por ID estable de sitio y página, de modo que
+los previews con URL temporal reanudan el mismo avance sin mezclar páginas. Con
+`unique_watched_percent`, volver a mirar un rango previo no
 descuenta el contador hasta alcanzar material nuevo. El hook
 `data-rstk-video-gate-remaining-time` traduce el porcentaje restante a `MM:SS`
 con la duración del video que lidera el gate.
