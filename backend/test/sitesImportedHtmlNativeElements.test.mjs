@@ -1109,6 +1109,7 @@ test('imported HTML custom video receives Bunny HLS without mounting the Bunny o
     })
 
     assert.match(html, new RegExp(`data-rstk-video-src="${playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(html, new RegExp(`data-rstk-video-fallback-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
     assert.match(html, /data-rstk-video-provider="bunny_stream"/)
     assert.match(html, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
     assert.match(html, /const HLS_SCRIPT_URL/)
@@ -1121,7 +1122,9 @@ test('imported HTML custom video receives Bunny HLS without mounting the Bunny o
       preview: true,
       importedNativePreviewMock: true
     })
-    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(editorHtml, new RegExp(`<video[^>]*\\ssrc="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.doesNotMatch(editorHtml, /data-rstk-video-fallback-src=/)
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
     assert.match(editorHtml, /if \(source && isHlsSource\(source\)\)/)

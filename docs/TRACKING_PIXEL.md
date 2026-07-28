@@ -664,10 +664,13 @@ Ristak guarda cada zona como bloque real del sitio importado:
   diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI
   configurados. En publicado conserva el reproductor personalizable de Ristak y
   manda los eventos first-party a `/video-event`; cuando existe una playlist HLS
-  validada la usa dentro del player de Ristak tanto en editor como en publicado.
+  validada la usa dentro del player de Ristak en publicado.
   **Resolución inteligente** viene activa y deja que Bunny elija la variante
   adecuada para la conexión; al apagarla el player prioriza la variante más alta.
-  Bunny Storage queda como fallback cuando no hay HLS validado.
+  Editor/preview prefieren el MP4 de Bunny Storage cuando existe y mantienen
+  tracking apagado. En publicado, ese MP4 también queda conectado como
+  recuperación automática si HLS falla; el cambio de fuente ocurre en el mismo
+  `<video>` y no crea otra sesión ni eventos duplicados.
   Este modo nunca sustituye el player nativo por el iframe visual de Bunny Stream.
   `videoMobilePortraitCrop` viene activo en el editor visual y en el editor HTML:
   para un video horizontal, únicamente cambia el frame móvil a 9:16 y aplica un

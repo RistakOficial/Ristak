@@ -5185,9 +5185,12 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   estándar, backend crea además el espejo Storage sin cargar el archivo completo
   en memoria. El perfil premium conserva el máster en Stream y no lo descarga ni
   lo vuelve a subir a través de Render: preview y publicado consumen HLS directo.
-  Editor, preview y publicado usan la playlist HLS validada de Stream dentro del
-  mismo reproductor, sin importar si existe además un espejo Storage; un asset
-  sin HLS usa Storage como fallback. Publicar nunca
+  Publicado usa la playlist HLS validada de Stream dentro del mismo reproductor.
+  Editor y preview prefieren el espejo MP4 de Storage cuando existe para no
+  depender de hls.js ni de un manifiesto todavía en proceso; un asset premium
+  Stream-only conserva HLS porque deliberadamente no tiene copia. Cuando
+  publicado elige HLS, conecta además el MP4 como recuperación automática ante
+  un error fatal, falta de soporte o falla de carga del runtime. Publicar nunca
   sustituye un video nativo listo por el iframe visual de Stream: conserva
   exactamente el botón, colores, barra, controles, acciones y formulario
   configurados. Editor y preview mantienen tracking apagado; publicado envía los
@@ -5197,7 +5200,8 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
   aviso de sonido y formulario sobre video. El runtime de acciones por tiempo es
   adicional y no sustituye al runtime del reproductor. La vista `srcDoc` embebida
-  dentro del editor carga el mismo MP4/HLS y respeta preview, loop, autoplay,
+  dentro del editor carga el MP4 estable o, para Stream-only, HLS, y respeta
+  preview, loop, autoplay,
   controles y animaciones para que la edición sea fiel al resultado publicado.
   Solo usa `preload="none"` y detiene la reproducción cuando el usuario activa
   explícitamente **No reproducir mientras se edita**. El tracking permanece
@@ -5236,8 +5240,9 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   Cancelar elimina la reserva y el video
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
-  legacy respaldados solo por Storage conservan ese MP4 como fallback dentro del
-  reproductor nativo de Ristak en editor y publicado. Player.js queda como compatibilidad
+  legacy respaldados solo por Storage conservan ese MP4 dentro del reproductor
+  nativo de Ristak. Los videos estándar sincronizados lo usan directamente en
+  editor/preview y como recuperación automática de HLS en publicado. Player.js queda como compatibilidad
   para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
   externos sin archivo Storage asociado; las acciones del reproductor nativo se
   conectan directamente al elemento de video.
@@ -5500,7 +5505,8 @@ sigue siendo media opaca para Ristak. Pago tambien permanece siempre nativo porq
 la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo. Los videos
-cargan MP4 o HLS, reproducen el loop configurado y mantienen tracking apagado;
+cargan el MP4 estable cuando existe o HLS en assets Stream-only, reproducen el
+loop configurado y mantienen tracking apagado;
 solo se pausan si el usuario activa **No reproducir mientras se edita**. Las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
 de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por
