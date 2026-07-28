@@ -454,6 +454,11 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.match(videoAggregateCall, /breakdownAssetIds:\s*body\.videoBreakdownAssetIds/)
   assert.match(videoAggregateCall, /includeSiteBreakdown:\s*false/)
 
+  const videoDetailHandlerStart = controllerSource.indexOf('export async function getSitesVideoAnalyticsHandler')
+  const videoDetailHandlerEnd = controllerSource.indexOf('\nexport async function ', videoDetailHandlerStart + 1)
+  const videoDetailHandlerSource = controllerSource.slice(videoDetailHandlerStart, videoDetailHandlerEnd)
+  assert.match(videoDetailHandlerSource, /siteId:\s*req\.query\.siteId\s*\|\|\s*req\.query\.site_id/)
+
   assert.doesNotMatch(frontendSource, /siteVideoAssetsPreviewPromise/)
   assert.doesNotMatch(frontendSource, /loadSiteVideoAssetsForPreview/)
   assert.doesNotMatch(frontendSource, /analyticsSiteIds\.has\(sourceSiteId\)/)
@@ -500,4 +505,14 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.match(summaryCall, /videoScope:/)
   assert.match(summaryCall, /videoBreakdownAssetIds:/)
   assert.match(summaryCall, /videoAssetIds:\s*sitesAnalyticsVideoId\s*\?/)
+
+  const videoDetailCallStart = frontendSource.indexOf('sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {')
+  const videoDetailCallEnd = frontendSource.indexOf('})\n      .then', videoDetailCallStart)
+  const videoDetailCall = frontendSource.slice(videoDetailCallStart, videoDetailCallEnd)
+  assert.match(videoDetailCall, /siteId:\s*sitesAnalyticsSiteId\s*\|\|\s*undefined/)
+
+  const videoDetailServiceStart = frontendServiceSource.indexOf('getVideoAnalytics(assetId: string')
+  const videoDetailServiceEnd = frontendServiceSource.indexOf('\n  verifyDomain(', videoDetailServiceStart)
+  const videoDetailServiceSource = frontendServiceSource.slice(videoDetailServiceStart, videoDetailServiceEnd)
+  assert.match(videoDetailServiceSource, /if \(input\.siteId\) params\.siteId = input\.siteId/)
 })

@@ -11785,6 +11785,7 @@ export const Sites: React.FC = () => {
 
     sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
+      siteId: sitesAnalyticsSiteId || undefined,
       viewerLimit: 200
     })
       .then((analytics) => {
@@ -11803,7 +11804,7 @@ export const Sites: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [dateRange.end, dateRange.start, section, sitesAnalyticsSiteType, sitesAnalyticsVideoId])
+  }, [dateRange.end, dateRange.start, section, sitesAnalyticsSiteId, sitesAnalyticsSiteType, sitesAnalyticsVideoId])
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     const requestId = editorOpenRequestRef.current + 1

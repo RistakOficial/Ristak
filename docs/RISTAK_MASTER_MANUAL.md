@@ -980,7 +980,10 @@ formularios publicados, modo website/funnel y un ID opcional; `aggregate`,
 la entidad queda fuera de la primera pagina. `breakdownSiteIds` solo pide el
 detalle del elemento seleccionado y se intersecta con el scope. El contrato
 rechaza scopes o modos desconocidos y exige un rango completo de fechas de
-calendario del negocio. El contrato legacy por `siteIds` sigue disponible para
+calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
+estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango
+inválido responde `400` y jamás degrada la consulta a todo el historial. El
+contrato legacy por `siteIds` sigue disponible para
 consumidores anteriores, pero ningun flujo nuevo debe enumerar el catalogo.
 
 La fuente canonica de Sites es first-party. Una vista es `native_site_view` o
@@ -1002,7 +1005,9 @@ superar 100%. Envio, conversion y persona que convirtio son cifras distintas y
 la interfaz debe nombrarlas como tales. La atribucion exige el `visitor_id` del
 evento de conversion o, como fallback, su `session_id`; compartir `contact_id`
 en el CRM no prueba que dos identidades web sean la misma visita. Una conversion
-sin esas señales queda calificada pero no atribuida. El scope historico representa las
+sin esas señales queda calificada pero no atribuida. La vista reconciliada debe
+haber ocurrido a más tardar en el instante del evento de conversión; una visita
+posterior nunca puede atribuir retroactivamente una conversión. El scope historico representa las
 entidades actualmente publicadas; no se debe afirmar que reconstruye una
 version/publicacion que la base no conserva.
 
@@ -1029,7 +1034,10 @@ paginados, pero `inventory`, `topAssetsByStarts` y `topAssetsByWatch` salen del
 alcance completo en servidor. Un video guardado sin Bunny Stream conserva
 analitica first-party; la respuesta del proveedor es un bloque opcional separado
 y nunca rellena o reemplaza la medicion propia. Los videos del formulario interno
-de calendario se excluyen del inventario y de todos los scopes analiticos.
+de calendario se excluyen del inventario y de todos los scopes analiticos. Cuando
+la interfaz selecciona un origen exacto, el detalle de ese video transmite
+`siteId` hasta el ledger: tarjetas, curva y espectadores no mezclan otras páginas
+que reutilicen el mismo asset.
 
 Video usa el ledger `video_playback_events` como fuente analitica; la tabla
 `video_playback_sessions` queda como proyeccion para Journey/contactos. En

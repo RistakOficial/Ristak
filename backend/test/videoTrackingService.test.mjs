@@ -646,6 +646,16 @@ test('video scopes honor the exact site, exclude calendar forms, label assets, a
     const websiteViewer = details.viewers.find(viewer => viewer.visitorId === visitorId)
     assert.equal(websiteViewer?.pageUrl, 'https://example.test/a-new')
     assert.equal(websiteViewer?.blockLabel, 'block_new')
+
+    const exactWebsiteDetails = await getVideoPlaybackViewers({
+      assetId,
+      siteId: webSiteA,
+      limit: 20
+    })
+    assert.equal(exactWebsiteDetails.summary.playbackStarts, 1)
+    assert.equal(exactWebsiteDetails.viewers.length, 1)
+    assert.equal(exactWebsiteDetails.viewers[0]?.pageUrl, 'https://example.test/z-old')
+    assert.equal(exactWebsiteDetails.viewers[0]?.blockLabel, 'block_old')
   } finally {
     const placeholders = playbackIds.map(() => '?').join(',')
     if (playbackIds.length) {
@@ -664,4 +674,26 @@ test('video scopes honor the exact site, exclude calendar forms, label assets, a
       [webSiteA, webSiteB, formSite, calendarFormSite]
     ).catch(() => undefined)
   }
+})
+
+test('video analytics rejects incomplete, invalid, and reversed calendar ranges', async () => {
+  for (const range of [
+    { dateFrom: '2026-02-30', dateTo: '2026-03-01' },
+    { dateFrom: '2026-03-20T00:00:00Z', dateTo: '2026-03-20' },
+    { dateFrom: '2026-03-21', dateTo: '2026-03-20' },
+    { dateFrom: '2026-03-20' }
+  ]) {
+    await assert.rejects(
+      () => getVideoPlaybackAggregate(range),
+      error => error?.status === 400 && /fecha|dateFrom/i.test(error.message)
+    )
+  }
+
+  await assert.rejects(
+    () => getVideoPlaybackViewers({
+      assetId: 'asset_missing',
+      dateTo: '2026-03-20'
+    }),
+    error => error?.status === 400 && /dateFrom y dateTo/i.test(error.message)
+  )
 })

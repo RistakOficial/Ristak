@@ -539,6 +539,10 @@ export interface SitesVideoAnalyticsDetail {
   providerAnalyticsError?: string
 }
 
+export interface SitesVideoAnalyticsInput extends MediaStreamAnalyticsInput {
+  siteId?: string
+}
+
 export interface SitesAnalyticsSiteScope {
   siteType: 'sites' | 'forms'
   landingMode?: 'website' | 'funnel' | 'all'
@@ -1723,12 +1727,13 @@ export const sitesService = {
     })
   },
 
-  getVideoAnalytics(assetId: string, input: MediaStreamAnalyticsInput = {}) {
+  getVideoAnalytics(assetId: string, input: SitesVideoAnalyticsInput = {}) {
     const params: Record<string, string> = {}
     if (input.dateFrom) params.dateFrom = input.dateFrom
     if (input.dateTo) params.dateTo = input.dateTo
     if (input.hourly !== undefined) params.hourly = String(input.hourly)
     if (input.viewerLimit) params.viewerLimit = String(input.viewerLimit)
+    if (input.siteId) params.siteId = input.siteId
     return apiClient.get<SitesVideoAnalyticsDetail>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
   },
 

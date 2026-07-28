@@ -9644,6 +9644,8 @@ export async function listSites({
       FROM conversion_signals signal
       INNER JOIN scoped_views view
         ON view.resolved_site_id = signal.resolved_site_id
+       AND signal.conversion_started_at IS NOT NULL
+       AND ${getSitesAnalyticsAtOrBeforeCondition('view.started_at', 'signal.conversion_started_at')}
        AND (
          (signal.visitor_id IS NOT NULL AND signal.visitor_id != '' AND signal.visitor_id = view.visitor_id)
          OR (
@@ -10173,15 +10175,48 @@ async function resolveSitesAnalyticsDateFilters(input = {}) {
   const dateFrom = input.dateFrom || input.date_from
   const dateTo = input.dateTo || input.date_to
   if (!dateFrom && !dateTo) return {}
+  if (!dateFrom || !dateTo) {
+    const error = new Error('Selecciona dateFrom y dateTo para consultar analíticas de Sites.')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedDateFrom = String(dateFrom).trim()
+  const normalizedDateTo = String(dateTo).trim()
+  const parseCalendarDate = (value, fieldName) => {
+    const parsed = DateTime.fromFormat(value, 'yyyy-MM-dd', {
+      zone: 'UTC',
+      locale: 'en',
+      setZone: true
+    })
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+      !parsed.isValid ||
+      parsed.toFormat('yyyy-MM-dd') !== value
+    ) {
+      const error = new Error(`${fieldName} debe ser una fecha calendario válida en formato YYYY-MM-DD.`)
+      error.status = 400
+      throw error
+    }
+    return parsed
+  }
+  const parsedDateFrom = parseCalendarDate(normalizedDateFrom, 'dateFrom')
+  const parsedDateTo = parseCalendarDate(normalizedDateTo, 'dateTo')
+  if (parsedDateFrom.toMillis() > parsedDateTo.toMillis()) {
+    const error = new Error('dateFrom no puede ser posterior a dateTo.')
+    error.status = 400
+    throw error
+  }
+
   const range = await resolveDateRangeWithGHLTimezone({
-    startDate: dateFrom || dateTo,
-    endDate: dateTo || dateFrom
+    startDate: normalizedDateFrom,
+    endDate: normalizedDateTo
   })
   return {
     dateFrom: range.startUtc,
     dateTo: range.endUtc,
-    requestedDateFrom: dateFrom || dateTo || '',
-    requestedDateTo: dateTo || dateFrom || '',
+    requestedDateFrom: normalizedDateFrom,
+    requestedDateTo: normalizedDateTo,
     appliedTimezone: range.appliedTimezone
   }
 }
@@ -10270,6 +10305,12 @@ function getSitesAnalyticsSessionStartCondition(currentColumn, previousColumn) {
     ? `EXTRACT(EPOCH FROM ((${currentColumn})::timestamptz - (${previousColumn})::timestamptz))`
     : `(julianday(${currentColumn}) - julianday(${previousColumn})) * 86400.0`
   return `${previousColumn} IS NULL OR ${inactivitySeconds} > 1800`
+}
+
+function getSitesAnalyticsAtOrBeforeCondition(currentColumn, upperBoundColumn) {
+  return databaseDialect === 'postgres'
+    ? `(${currentColumn})::timestamptz <= (${upperBoundColumn})::timestamptz`
+    : `julianday(${currentColumn}) <= julianday(${upperBoundColumn})`
 }
 
 function getSitesAnalyticsJsonTextExpression(alias = 'source', key = '') {
@@ -10837,6 +10878,8 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
         FROM conversion_signals signal
         INNER JOIN scoped_views view
           ON view.resolved_site_id = signal.resolved_site_id
+         AND signal.conversion_started_at IS NOT NULL
+         AND ${getSitesAnalyticsAtOrBeforeCondition('view.started_at', 'signal.conversion_started_at')}
          AND (
            (signal.visitor_id IS NOT NULL AND signal.visitor_id != '' AND signal.visitor_id = view.visitor_id)
            OR (
@@ -11028,6 +11071,8 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
       FROM conversion_signals signal
       INNER JOIN scoped_views view
         ON view.resolved_site_id = signal.resolved_site_id
+       AND signal.conversion_started_at IS NOT NULL
+       AND ${getSitesAnalyticsAtOrBeforeCondition('view.started_at', 'signal.conversion_started_at')}
        AND (
          (signal.visitor_id IS NOT NULL AND signal.visitor_id != '' AND signal.visitor_id = view.visitor_id)
          OR (

@@ -565,6 +565,75 @@ test('sites analytics summary never fans one CRM contact out to multiple convert
   }
 })
 
+test('sites analytics summary never attributes a conversion to a view that happened later', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const siteId = `site_conversion_time_${suffix}`
+  const submissionId = `submission_conversion_time_${suffix}`
+  const visitorId = `visitor_conversion_time_${suffix}`
+  const sessionId = `session_conversion_time_${suffix}`
+  const conversionAt = '2026-02-19T18:00:00.000Z'
+  const laterViewAt = '2026-02-19T19:00:00.000Z'
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [siteId, 'Landing temporal', `landing-temporal-${suffix}`, 'landing_page', 'published']
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, status, created_at
+      ) VALUES (?, ?, '{}', 'received', ?)`,
+      [submissionId, siteId, conversionAt]
+    )
+    await db.run(`
+      INSERT INTO sessions (
+        session_id, visitor_id, event_id, tracking_source, event_name,
+        submission_id, started_at, created_at, site_id
+      ) VALUES (?, ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?, ?)
+    `, [
+      sessionId,
+      visitorId,
+      `event_${suffix}_conversion`,
+      submissionId,
+      conversionAt,
+      conversionAt,
+      siteId
+    ])
+    await db.run(`
+      INSERT INTO sessions (
+        session_id, visitor_id, event_id, tracking_source, event_name,
+        started_at, created_at, site_id
+      ) VALUES (?, ?, ?, 'native_site', 'native_site_view', ?, ?, ?)
+    `, [
+      sessionId,
+      visitorId,
+      `event_${suffix}_later_view`,
+      laterViewAt,
+      laterViewAt,
+      siteId
+    ])
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [siteId],
+      dateFrom: '2026-02-19',
+      dateTo: '2026-02-19'
+    })
+    const stats = summary.bySiteId[siteId]
+
+    assert.equal(stats.views, 1)
+    assert.equal(stats.qualifiedConversions, 1)
+    assert.equal(stats.convertingVisitors, 0)
+    assert.equal(stats.unattributedConversions, 1)
+    assert.equal(stats.conversionRate, 0)
+    assert.equal(summary.aggregate.convertingVisitors, 0)
+    assert.equal(summary.aggregate.unattributedConversions, 1)
+  } finally {
+    await db.run('DELETE FROM public_site_submissions WHERE id = ?', [submissionId]).catch(() => undefined)
+    await db.run('DELETE FROM sessions WHERE event_id LIKE ?', [`event_${suffix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
+  }
+})
+
 test('sites analytics summary keeps an embedded standard-form checkpoint partial for both form and outer landing', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const landingId = `landing_embedded_checkpoint_${suffix}`
@@ -818,6 +887,28 @@ test('sites analytics v2 rechaza scopes ambiguos y consultas globales sin rango'
       siteScope: { siteType: 'sites', landingMode: 'all', status: 'published' }
     }),
     error => error?.status === 400 && /rango de fechas/i.test(error.message)
+  )
+
+  for (const range of [
+    { dateFrom: '2026-02-30', dateTo: '2026-03-01' },
+    { dateFrom: '2026-03-20T00:00:00Z', dateTo: '2026-03-20' },
+    { dateFrom: '2026-03-21', dateTo: '2026-03-20' }
+  ]) {
+    await assert.rejects(
+      () => getSitesTrackingSummary({
+        siteScope: { siteType: 'sites', landingMode: 'all', status: 'published' },
+        ...range
+      }),
+      error => error?.status === 400 && /fecha|dateFrom/i.test(error.message)
+    )
+  }
+
+  await assert.rejects(
+    () => getSitesTrackingSummary({
+      siteIds: ['site_missing'],
+      dateFrom: '2026-03-20'
+    }),
+    error => error?.status === 400 && /dateFrom y dateTo/i.test(error.message)
   )
 })
 

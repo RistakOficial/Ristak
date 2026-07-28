@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { DateTime } from 'luxon'
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import {
@@ -904,10 +905,45 @@ function buildPlaybackWhere(filters = {}, params = []) {
 }
 
 async function resolvePlaybackDateFilters(input = {}) {
-  if (!input.dateFrom && !input.dateTo) return {}
+  const dateFrom = input.dateFrom || input.date_from
+  const dateTo = input.dateTo || input.date_to
+  if (!dateFrom && !dateTo) return {}
+  if (!dateFrom || !dateTo) {
+    const error = new Error('Selecciona dateFrom y dateTo para consultar analíticas de video.')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedDateFrom = String(dateFrom).trim()
+  const normalizedDateTo = String(dateTo).trim()
+  const parseCalendarDate = (value, fieldName) => {
+    const parsed = DateTime.fromFormat(value, 'yyyy-MM-dd', {
+      zone: 'UTC',
+      locale: 'en',
+      setZone: true
+    })
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+      !parsed.isValid ||
+      parsed.toFormat('yyyy-MM-dd') !== value
+    ) {
+      const error = new Error(`${fieldName} debe ser una fecha calendario válida en formato YYYY-MM-DD.`)
+      error.status = 400
+      throw error
+    }
+    return parsed
+  }
+  const parsedDateFrom = parseCalendarDate(normalizedDateFrom, 'dateFrom')
+  const parsedDateTo = parseCalendarDate(normalizedDateTo, 'dateTo')
+  if (parsedDateFrom.toMillis() > parsedDateTo.toMillis()) {
+    const error = new Error('dateFrom no puede ser posterior a dateTo.')
+    error.status = 400
+    throw error
+  }
+
   const range = await resolveDateRangeWithGHLTimezone({
-    startDate: input.dateFrom || input.dateTo,
-    endDate: input.dateTo || input.dateFrom
+    startDate: normalizedDateFrom,
+    endDate: normalizedDateTo
   })
   return {
     dateFrom: range.startUtc,

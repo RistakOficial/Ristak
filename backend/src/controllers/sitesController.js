@@ -438,6 +438,7 @@ export async function getSitesVideoAnalyticsHandler(req, res) {
     const dateTo = req.query.dateTo || req.query.date_to
     const firstPartyTracking = await getVideoPlaybackViewers({
       assetId: req.params.assetId,
+      siteId: req.query.siteId || req.query.site_id,
       dateFrom,
       dateTo,
       hourly: req.query.hourly,

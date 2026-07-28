@@ -124,7 +124,11 @@ identidad, pero no es por sí solo el contador canónico.
 Una persona que convirtió sólo se atribuye por `visitor_id` o, si falta, por
 `session_id` del evento de conversión. Un `contact_id` compartido no basta para
 fusionar visitantes; la conversión queda como no atribuida si faltan ambas
-señales web.
+señales web. La vista atribuida debe tener `started_at` anterior o igual al
+instante de conversión; una vista futura no puede convertir a alguien de forma
+retroactiva. Las consultas reciben ambos extremos como días reales
+`YYYY-MM-DD`, en orden; cualquier rango incompleto o inválido responde `400` en
+vez de quitar silenciosamente el filtro temporal.
 
 El editor y las sesiones temporales de preview usan `trackingEnabled: false`.
 También desactivan tracking los modos reservados como `no_track=1`,
@@ -288,7 +292,9 @@ mismo tiempo, perder segundos o eventos repetidos en el ledger. No se debe
 backfillear una fuente desde la otra. La respuesta declara `quality` como
 `verified`, `mixed_legacy`, `legacy_only` o `empty`; cualquier valor legacy debe
 mostrarse con advertencia. Bunny u otro proveedor puede aparecer como comparación
-separada, nunca como fallback de la medición first-party.
+separada, nunca como fallback de la medición first-party. El detalle de un asset
+acepta `siteId`: si se eligió un origen exacto, todas sus métricas y espectadores
+quedan limitados a ese sitio aunque el mismo video exista en otros.
 
 ### Matriz Rápida De Diagnóstico
 
