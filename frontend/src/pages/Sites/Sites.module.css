@@ -12503,10 +12503,14 @@
   display: grid;
   gap: 0;
   min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--design-control-radius, 10px);
+  background: transparent;
 }
 
 .accordionSection[data-open="true"] {
-  gap: 12px;
+  border-color: var(--sites-editor-section-border, var(--color-border-subtle));
+  background: var(--design-panel-bg, var(--surface));
 }
 
 .accordionHeader {
@@ -12538,8 +12542,10 @@
 
 /* Sección abierta: el encabezado se "enciende" con un toque de acento. */
 .accordionSection[data-open="true"] .accordionHeader {
+  border: 0;
+  border-bottom: 1px solid var(--sites-editor-section-border, var(--color-border-subtle));
+  border-radius: calc(var(--design-control-radius, 10px) - 1px) calc(var(--design-control-radius, 10px) - 1px) 0 0;
   background: color-mix(in srgb, var(--color-primary) 8%, var(--design-panel-bg, var(--color-background-secondary)));
-  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--sites-editor-section-border, var(--color-border-subtle)));
 }
 
 /* El título dentro del botón: sin el divisor/borde heredado (ahora el
@@ -12565,7 +12571,7 @@
   display: grid;
   gap: 10px;
   min-width: 0;
-  padding: 2px 4px 4px;
+  padding: 12px;
 }
 
 .visibilityDeviceGrid {
@@ -20397,6 +20403,31 @@
   border-radius: var(--radius-ctl);
   background: var(--surface);
   padding: 10px;
+}
+
+/* Cuando el reproductor vive dentro de una categoría del inspector, la
+   categoría abierta ya es el contenedor. Sus grupos son subcategorías planas:
+   comparten fondo y se separan con una sola línea, sin tarjetas anidadas. */
+.accordionBody > .videoSettingsBox {
+  gap: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.accordionBody > .videoSettingsBox > .videoSettingsSection {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 0 14px;
+}
+
+.accordionBody > .videoSettingsBox > .videoSettingsSection + .videoSettingsSection {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.accordionBody > .videoSettingsBox > .videoSettingsSection:last-child {
+  padding-bottom: 0;
 }
 
 .videoSettingsSectionHeader {
