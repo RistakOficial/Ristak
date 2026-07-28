@@ -74,7 +74,10 @@ import {
   MousePointerClick,
   PanelBottom,
   PanelTop,
+  PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Paperclip,
   Pause,
   Pencil,
@@ -21564,9 +21567,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [contentError, setContentError] = useState('')
   const [importedEditorCustomFields, setImportedEditorCustomFields] = useState<CustomFieldDefinition[]>(customFields)
   const [importedEditorCustomFieldFolders, setImportedEditorCustomFieldFolders] = useState<CustomFieldFolder[]>(customFieldFolders)
-  const [codeEditorWidth, setCodeEditorWidth] = useState(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
-  const codeEditorWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  const [codeEditorWidth, setCodeEditorWidth] = useState(0)
+  const codeEditorWidthRef = useRef(0)
   const lastCodeEditorExpandedWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  const [nativeInspectorOpen, setNativeInspectorOpen] = useState(true)
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
   const [codeAssistantPrompt, setCodeAssistantPrompt] = useState('')
@@ -22641,7 +22645,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
-    const hasInspector = true
+    const hasInspector = nativeInspectorOpen
     let frame = 0
     let latestWidth = codeEditorWidthRef.current
     const rect = container.getBoundingClientRect()
@@ -22682,7 +22686,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     document.body.classList.add('rstk-code-resizing')
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp, { once: true })
-  }, [selectedImportedNativeElementSlot])
+  }, [nativeInspectorOpen, selectedImportedNativeElementSlot])
 
   useEffect(() => {
     codeEditorWidthRef.current = codeEditorWidth
@@ -25926,6 +25930,8 @@ const ImportedHtmlEditorPanel: React.FC<{
                         const missingCustomField = Boolean((field.destinationType === 'custom' || field.saveMode === 'custom') && field.customFieldDefinitionId && !selectedCustomField)
                         const currentValue = importedFieldMappingOverrides[routeKey] || getPanelFieldRouteValue(field)
                         const newCustomValue = currentValue.startsWith('new_custom:') ? currentValue : `new_custom:${field.customFieldKey || field.destinationKey || normalizeImportedDestinationKey(field.sourceName || field.fieldId, 'campo_personalizado')}`
+                        const prioritizedSystemFields = getPrioritizedImportedSystemFieldOptions(field, currentValue)
+                        const prioritizedCustomFields = getPrioritizedImportedCustomFields(activeImportedCustomFields, currentValue)
                         const pending = importedFieldMappingPendingKeys.has(routeKey)
                         const duplicateFieldId = duplicateFieldIds.has(normalizeImportedDestinationKey(field.fieldId || field.sourceName, ''))
                         const detectedField = detectedGroup?.fields.find(candidate => (
@@ -25952,24 +25958,26 @@ const ImportedHtmlEditorPanel: React.FC<{
                               aria-label={`Guardar ${field.label || field.sourceName || field.fieldId} como`}
                               onChange={(event) => queueImportedFieldMappingChange(form, field, event.target.value)}
                             >
-                              {missingCustomField && (
-                                <option value={currentValue} disabled>Reasociar · {field.customFieldLabel || field.destinationKey}</option>
-                              )}
-                              <optgroup label="Dato del contacto">
-                                {importedStandardFieldOptions.map(option => (
+                              <optgroup label="Campos del sistema">
+                                {prioritizedSystemFields.map(option => (
                                   <option key={option.value} value={`standard:${option.value}`}>{option.label}</option>
                                 ))}
                               </optgroup>
-                              {activeImportedCustomFields.length > 0 && (
-                                <optgroup label="Campo personalizado">
-                                  {activeImportedCustomFields.map(customField => (
+                              {missingCustomField && (
+                                <optgroup label="Asociación anterior">
+                                  <option value={currentValue} disabled>Reasociar · {field.customFieldLabel || field.destinationKey}</option>
+                                </optgroup>
+                              )}
+                              {prioritizedCustomFields.length > 0 && (
+                                <optgroup label="Campos personalizados existentes">
+                                  {prioritizedCustomFields.map(customField => (
                                     <option key={customField.definitionId} value={`custom:${customField.definitionId}`}>
                                       {customField.label || customField.name || customField.fieldKey}
                                     </option>
                                   ))}
                                 </optgroup>
                               )}
-                              <optgroup label="Campo nuevo">
+                              <optgroup label="Crear campo nuevo">
                                 <option value={newCustomValue}>Crear · {field.label || field.destinationKey || field.fieldId}</option>
                               </optgroup>
                               <option value="ignored">No guardar</option>
@@ -26286,7 +26294,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     )
   })()
 
-  const codeEditorHasNativeInspector = Boolean(importedNativeElementsPanel)
+  const codeEditorHasNativeInspector = Boolean(importedNativeElementsPanel && nativeInspectorOpen)
   const codeEditorCollapsed = codeEditorWidth <= 0
   const codeEditorSourceWidth = getImportedCodePanelSourceWidth(codeEditorWidth, codeEditorHasNativeInspector)
   const codeEditorSourceTrack = getImportedCodePanelSourceTrack(codeEditorWidth, codeEditorHasNativeInspector)
@@ -26312,6 +26320,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         } as React.CSSProperties}
       >
         <section
+          id="imported-html-code-editor"
           className={`${styles.importedCodeSourcePane} ${codeEditorCollapsed ? styles.importedCodeSourcePaneCollapsed : ''} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
           aria-hidden={codeEditorCollapsed}
         >
@@ -26531,15 +26540,15 @@ const ImportedHtmlEditorPanel: React.FC<{
           className={`${styles.importedCodeResizeHandle} ${codeEditorCollapsed ? styles.importedCodeResizeHandleCollapsed : ''}`}
           role="separator"
           aria-orientation="vertical"
-          aria-label={codeEditorCollapsed ? 'Mostrar código HTML' : 'Cambiar tamaño entre código y vista'}
+          aria-label="Cambiar tamaño entre código y vista"
+          aria-hidden={codeEditorCollapsed}
           aria-valuemin={0}
           aria-valuemax={IMPORTED_CODE_PANEL_MAX_WIDTH}
           aria-valuenow={Math.round(codeEditorWidth)}
-          tabIndex={0}
+          tabIndex={codeEditorCollapsed ? -1 : 0}
           onPointerDown={handleCodeSplitPointerDown}
           onDoubleClick={() => {
-            if (codeEditorCollapsed) expandCodeEditorPanel()
-            else setCodeEditorWidth(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+            setCodeEditorWidth(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
           }}
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -26550,20 +26559,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             if (event.key === 'End') setCodeEditorWidth(IMPORTED_CODE_PANEL_MAX_WIDTH)
           }}
         >
-          {codeEditorCollapsed ? (
-            <button
-              type="button"
-              className={styles.importedCodeResizeExpandButton}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={expandCodeEditorPanel}
-              aria-label="Mostrar código HTML"
-              title="Mostrar código HTML"
-            >
-              <PanelLeftOpen size={16} />
-            </button>
-          ) : (
-            <span />
-          )}
+          <span />
         </div>
 
         <section className={[
@@ -26571,8 +26567,37 @@ const ImportedHtmlEditorPanel: React.FC<{
           codePreviewNotice ? styles.importedCodePreviewPaneWithNotice : ''
         ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
-            <span>{popupCodeActive ? 'Vista de pop up' : 'Vista de página'}</span>
-            <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              leftIcon={codeEditorCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+              onClick={codeEditorCollapsed ? expandCodeEditorPanel : collapseCodeEditorPanel}
+              aria-expanded={!codeEditorCollapsed}
+              aria-controls="imported-html-code-editor"
+              aria-label={codeEditorCollapsed ? 'Abrir editor de código' : 'Ocultar editor de código'}
+              title={codeEditorCollapsed ? 'Abrir editor de código' : 'Ocultar editor de código'}
+            >
+              {codeEditorCollapsed ? 'Abrir editor de código' : 'Ocultar editor'}
+            </Button>
+            <div className={styles.importedCodePreviewHeaderMeta}>
+              <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
+              {importedNativeElementsPanel && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => setNativeInspectorOpen(current => !current)}
+                  aria-expanded={nativeInspectorOpen}
+                  aria-controls="imported-html-native-inspector"
+                  aria-label={nativeInspectorOpen ? 'Ocultar panel derecho' : 'Mostrar panel derecho'}
+                  title={nativeInspectorOpen ? 'Ocultar panel derecho' : 'Mostrar panel derecho'}
+                >
+                  {nativeInspectorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+                </Button>
+              )}
+            </div>
           </div>
           {codePreviewNotice && (
             <div className={styles.importedCodeSelectionNotice}>
@@ -26612,8 +26637,12 @@ const ImportedHtmlEditorPanel: React.FC<{
             )}
           </div>
         </section>
-        {importedNativeElementsPanel && (
-          <aside className={`${styles.propertiesPanel} ${styles.importedCodeNativeInspectorPane}`} aria-label="Configurar elementos Ristak detectados">
+        {codeEditorHasNativeInspector && (
+          <aside
+            id="imported-html-native-inspector"
+            className={`${styles.propertiesPanel} ${styles.importedCodeNativeInspectorPane}`}
+            aria-label="Configurar elementos Ristak detectados"
+          >
             {importedNativeElementsPanel}
           </aside>
         )}
@@ -27109,12 +27138,15 @@ const ImportedHtmlEditorPanel: React.FC<{
   )
 }
 
-const importedStandardFieldOptions = [
+const importedSystemFieldOptions = [
   { value: 'full_name', label: 'Nombre completo' },
-  { value: 'first_name', label: 'Nombre' },
-  { value: 'last_name', label: 'Apellido' },
   { value: 'email', label: 'Correo electrónico' },
   { value: 'phone', label: 'Teléfono / WhatsApp' },
+  { value: 'city', label: 'Ciudad' },
+  { value: 'address_1', label: 'Dirección 1' },
+  { value: 'company', label: 'Empresa' },
+  { value: 'first_name', label: 'Nombre' },
+  { value: 'last_name', label: 'Apellido' },
   { value: 'message', label: 'Mensaje o nota' }
 ]
 
@@ -27254,6 +27286,33 @@ const importedStandardFieldAliases: Record<string, string[]> = {
     'detalles',
     'description',
     'descripción'
+  ],
+  city: [
+    'city',
+    'ciudad',
+    'localidad'
+  ],
+  company: [
+    'company',
+    'company_name',
+    'business',
+    'business_name',
+    'empresa',
+    'nombre_empresa',
+    'nombre_del_negocio'
+  ],
+  address_1: [
+    'address',
+    'address_1',
+    'address1',
+    'address_line_1',
+    'street_address',
+    'direccion',
+    'direccion_1',
+    'direccion_principal',
+    'domicilio',
+    'location',
+    'ubicacion'
   ]
 }
 
@@ -27264,9 +27323,9 @@ const hasImportedStandardAlias = (text: string, aliases: string[]) =>
     return new RegExp(`(?:^|\\s)${normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`).test(text)
   })
 
-const inferImportedStandardKey = (field: ImportedSiteFieldMapping) => {
+const detectImportedSystemKey = (field: ImportedSiteFieldMapping) => {
   const current = normalizeImportedDestinationKey(field.destinationKey, '')
-  if (importedStandardFieldOptions.some(option => option.value === current)) return current
+  if (importedSystemFieldOptions.some(option => option.value === current)) return current
   const type = normalizeImportedDestinationKey(field.type, '')
   const text = [
     field.type,
@@ -27277,11 +27336,34 @@ const inferImportedStandardKey = (field: ImportedSiteFieldMapping) => {
   if (type === 'tel') return 'phone'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.email)) return 'email'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.phone)) return 'phone'
+  if (hasImportedStandardAlias(text, importedStandardFieldAliases.address_1)) return 'address_1'
+  if (hasImportedStandardAlias(text, importedStandardFieldAliases.company)) return 'company'
+  if (hasImportedStandardAlias(text, importedStandardFieldAliases.city)) return 'city'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.last_name)) return 'last_name'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.first_name)) return 'first_name'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.full_name)) return 'full_name'
   if (hasImportedStandardAlias(text, importedStandardFieldAliases.message)) return 'message'
+  return ''
+}
+
+const inferImportedStandardKey = (field: ImportedSiteFieldMapping) => {
+  const detected = detectImportedSystemKey(field)
+  if (detected) return detected
   return 'full_name'
+}
+
+const getPrioritizedImportedSystemFieldOptions = (
+  field: ImportedSiteFieldMapping,
+  currentValue = ''
+) => {
+  const selectedKey = currentValue.startsWith('standard:')
+    ? normalizeImportedDestinationKey(currentValue.slice('standard:'.length), '')
+    : detectImportedSystemKey(field)
+  if (!selectedKey) return importedSystemFieldOptions
+  return [
+    ...importedSystemFieldOptions.filter(option => option.value === selectedKey),
+    ...importedSystemFieldOptions.filter(option => option.value !== selectedKey)
+  ]
 }
 
 const getImportedActiveCustomFields = (customFields: CustomFieldDefinition[]) =>
@@ -27303,6 +27385,20 @@ const findImportedCustomFieldDefinition = (
     (definitionId && customField.definitionId === definitionId) ||
     (customKey && normalizeImportedDestinationKey(customField.fieldKey || customField.key, '') === customKey)
   )) || null
+}
+
+const getPrioritizedImportedCustomFields = (
+  customFields: CustomFieldDefinition[],
+  currentValue = ''
+) => {
+  const selectedDefinitionId = currentValue.startsWith('custom:')
+    ? currentValue.slice('custom:'.length)
+    : ''
+  if (!selectedDefinitionId) return customFields
+  return [
+    ...customFields.filter(field => field.definitionId === selectedDefinitionId),
+    ...customFields.filter(field => field.definitionId !== selectedDefinitionId)
+  ]
 }
 
 interface SitesLibraryPanelProps {
