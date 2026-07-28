@@ -162,6 +162,8 @@ import {
   siteTemplates,
   sitesService,
   type SitesAnalyticsSummary,
+  type SitesVideoAnalyticsDetail,
+  type SitesVideoTimelineReachSegment,
   type PublicSite,
   type SitesAICreationKind,
   type SitesAICreationMessage,
@@ -190,12 +192,10 @@ import { campaignsService, type ConnectedSocialProfile } from '@/services/campai
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, {
   isMediaUploadCancelledError,
-  type FirstPartyVideoRetentionSegment,
   type FirstPartyVideoViewer,
   type MediaAsset,
   type MediaFolderSummary,
   type MediaPageInfo,
-  type MediaStreamAnalytics,
   type StreamChartPoint
 } from '@/services/mediaService'
 import { getApiBaseUrl } from '@/services/apiBaseUrl'
@@ -3081,25 +3081,22 @@ const getSubmissionAnswerPreview = (submission: SiteSubmission, site?: PublicSit
 }
 
 const formatSitesCompactNumber = (value?: number | null) => {
-  const parsed = Number(value || 0)
-  if (!Number.isFinite(parsed)) return '0'
-  return new Intl.NumberFormat('es-MX', { notation: parsed >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(parsed)
-}
-
-const formatSitesDecimal = (value?: number | null) => {
-  const parsed = Number(value || 0)
-  if (!Number.isFinite(parsed)) return '0'
-  return new Intl.NumberFormat('es-MX', { maximumFractionDigits: 1 }).format(parsed)
+  if (value === null || value === undefined) return 'Sin dato'
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 'Sin dato'
+  return new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(parsed)
 }
 
 const formatSitesPercent = (value?: number | null) => {
-  const parsed = Number(value || 0)
-  if (!Number.isFinite(parsed)) return '0%'
-  return `${new Intl.NumberFormat('es-MX', { maximumFractionDigits: parsed >= 10 ? 0 : 1 }).format(parsed)}%`
+  if (value === null || value === undefined) return 'Sin dato'
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 'Sin dato'
+  return `${new Intl.NumberFormat('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(parsed)}%`
 }
 
 const getSitesCompletionTone = (value?: number | null): BadgeVariant => {
-  const rate = Number(value || 0)
+  if (value === null || value === undefined) return 'neutral'
+  const rate = Number(value)
   if (!Number.isFinite(rate)) return 'neutral'
   if (rate >= 80) return 'success'
   if (rate >= 50) return 'warning'
@@ -3107,8 +3104,11 @@ const getSitesCompletionTone = (value?: number | null): BadgeVariant => {
 }
 
 const formatSitesSeconds = (value?: number | null) => {
-  const total = Math.max(0, Math.round(Number(value || 0)))
-  if (!Number.isFinite(total) || total <= 0) return '0s'
+  if (value === null || value === undefined) return 'Sin dato'
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 'Sin dato'
+  const total = Math.max(0, Math.round(parsed))
+  if (total <= 0) return '0s'
   if (total < 60) return `${total}s`
   const minutes = Math.floor(total / 60)
   const seconds = total % 60
@@ -3159,11 +3159,6 @@ const getMediaStreamSourceRecord = (asset?: MediaAsset | null) => {
   return source && typeof source === 'object' ? source as Record<string, unknown> : {}
 }
 
-const getMediaStreamVideoRecord = (asset?: MediaAsset | null) => {
-  const video = getMediaStreamRecord(asset).video
-  return video && typeof video === 'object' ? video as Record<string, unknown> : {}
-}
-
 const getMediaStreamVideoId = (asset?: MediaAsset | null) => {
   const videoId = getMediaStreamRecord(asset).videoId
   return typeof videoId === 'string' ? videoId.trim() : ''
@@ -3182,54 +3177,25 @@ const readSitesNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-const getSiteAnalyticsStats = (site: PublicSite) => {
-  const views = readSitesNumber(site.trackingStats?.views)
-  const visitors = readSitesNumber(site.trackingStats?.visitors)
-  const sessions = readSitesNumber(site.trackingStats?.sessions)
-  const conversions = readSitesNumber(site.trackingStats?.conversions) || readSitesNumber(site.submissionsCount)
-  const conversionRate = readSitesNumber(site.trackingStats?.conversionRate)
+const SITES_ANALYTICS_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic']
 
-  return {
-    views,
-    visitors,
-    sessions,
-    conversions,
-    conversionRate: conversionRate || (visitors > 0 ? Number(((conversions / visitors) * 100).toFixed(1)) : 0)
-  }
+const formatSitesChartLabel = (value = '') => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:(?:T|\s)(\d{2})(?::(\d{2}))?)?/.exec(value)
+  if (!match) return value
+  const month = SITES_ANALYTICS_MONTHS[Number(match[2]) - 1] || match[2]
+  const day = match[3]
+  const hour = match[4]
+  const minute = match[5] || '00'
+  return hour ? `${day} ${month} ${hour}:${minute}` : `${day} ${month}`
 }
 
-const formatSitesChartLabel = (value = '', compact = false) => {
-  const calendarDate = getDateOnlyFromCalendarLikeString(value)
-  return formatBusinessDateTime(value, {
-    fallback: value,
-    intlOptions: compact || calendarDate
-      ? { day: '2-digit', month: 'short' }
-      : { day: '2-digit', month: 'short', hour: '2-digit' }
-  })
-}
-
-const buildSitesChartPoints = (points: StreamChartPoint[] = [], mode: 'count' | 'seconds' = 'count') => (
+const buildSitesChartPoints = (points: StreamChartPoint[] = []) => (
   points.map(point => ({
     ...point,
-    label: formatSitesChartLabel(point.label || point.periodKey || '', mode === 'count'),
-    value: mode === 'seconds' ? Math.round((Number(point.value || 0) / 60) * 10) / 10 : Number(point.value || 0)
+    label: formatSitesChartLabel(point.label || point.periodKey || ''),
+    value: Number(point.value || 0)
   }))
 )
-
-const hasSitesChartValue = (points: StreamChartPoint[] = []) => (
-  points.some(point => Number(point.value || 0) > 0)
-)
-
-const selectSitesChartSource = (
-  primary: StreamChartPoint[] = [],
-  fallback: StreamChartPoint[] = [],
-  preferPrimary = false
-) => {
-  if (preferPrimary && primary.length) return primary
-  if (hasSitesChartValue(primary)) return primary
-  if (hasSitesChartValue(fallback)) return fallback
-  return primary.length ? primary : fallback
-}
 
 const clampSitesPercent = (value: unknown) => {
   const number = Number(value)
@@ -3244,33 +3210,12 @@ const formatSitesTimecode = (value: unknown) => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-const buildSitesRetentionSegments = (
-  firstPartySegments: FirstPartyVideoRetentionSegment[] = [],
-  bunnyHeatmap: MediaStreamAnalytics['heatmap'] = []
-): FirstPartyVideoRetentionSegment[] => {
-  if (firstPartySegments.length) return firstPartySegments
-  return bunnyHeatmap.map((point, index) => ({
-    segment: index,
-    startPercent: index,
-    endPercent: index + 1,
-    startSeconds: 0,
-    endSeconds: 0,
-    label: point.label || `${point.segment}`,
-    retainedSessions: 0,
-    skippedSessions: 0,
-    replayedSessions: 0,
-    retentionPercent: clampSitesPercent(point.intensity),
-    replayRatePercent: 0,
-    intensity: clampSitesPercent(point.intensity)
-  }))
-}
-
-const buildSitesRetentionCurvePoints = (segments: FirstPartyVideoRetentionSegment[]) => {
+const buildSitesReachCurvePoints = (segments: SitesVideoTimelineReachSegment[]) => {
   if (!segments.length) return ''
   const lastIndex = Math.max(1, segments.length - 1)
   return segments.map((segment, index) => {
     const x = (index / lastIndex) * 100
-    const y = 100 - clampSitesPercent(segment.retentionPercent)
+    const y = 100 - clampSitesPercent(segment.reachPercent)
     return `${x.toFixed(2)},${y.toFixed(2)}`
   }).join(' ')
 }
@@ -3290,24 +3235,6 @@ const getSitesViewerMeta = (viewer: FirstPartyVideoViewer) => {
   const page = viewer.publicPageTitle || viewer.pageUrl
   const block = viewer.blockLabel
   return [block, page].filter(Boolean).join(' · ') || (viewer.contactId ? 'Contacto identificado' : 'Sin contacto')
-}
-
-const buildSitesViewerHeatmapSegments = (viewer: FirstPartyVideoViewer, segmentCount = 18) => {
-  const progress = clampSitesPercent(viewer.maxProgressPercent)
-  const replayed = Number(viewer.playCount || 0) > 1
-  const completed = Boolean(viewer.completed) || progress >= 99
-
-  return Array.from({ length: segmentCount }, (_, index) => {
-    const start = (index / segmentCount) * 100
-    const end = ((index + 1) / segmentCount) * 100
-    const watched = completed || start < progress
-    const hot = replayed && watched && end <= progress
-    return {
-      index,
-      label: `${Math.round(start)}-${Math.round(end)}%`,
-      state: !watched ? 'skipped' : hot ? 'replayed' : 'played'
-    }
-  })
 }
 
 const getSiteTypeFilterMatch = (site: PublicSite, selectedType: SitesAnalyticsSiteType) => {
@@ -3335,61 +3262,6 @@ const getSiteAnalyticsVideoLabel = (asset: MediaAsset, sitesById: Map<string, Pu
   const videoName = shortenSitesText(getMediaAssetDisplayName(asset), siteName ? 34 : 54)
   return [videoName, siteName ? shortenSitesText(siteName, 24) : ''].filter(Boolean).join(' · ')
 }
-
-const getSiteAnalyticsVideoMetric = (asset: MediaAsset, key: string) => (
-  readSitesNumber(getMediaStreamVideoRecord(asset)[key])
-)
-
-type SitesVideoAggregateRow = {
-  asset: MediaAsset
-  key: string
-  label: string
-  sourceSiteId: string
-  sourceLabel: string
-  streamVideoId: string
-  playbackSessions: number
-  playedSessions: number
-  totalViewers: number
-  completions: number
-  views: number
-  watchTime: number
-  averageWatchTime: number
-  engagementScore: number
-}
-
-const buildSitesVideoAggregateRows = (
-  videos: MediaAsset[],
-  sitesById: Map<string, PublicSite>,
-  aggregateByAssetId: SitesAnalyticsSummary['videos']['byAssetId'] | null = null
-): SitesVideoAggregateRow[] => (
-  videos.map((asset) => {
-    const sourceSiteId = getMediaSourceSiteId(asset)
-    const sourceLabel = sitesById.get(sourceSiteId)?.name || getMediaSourceSiteName(asset) || 'Sin origen'
-    const aggregate = aggregateByAssetId?.[asset.id] || null
-    const views = aggregate ? readSitesNumber(aggregate.plays) : getSiteAnalyticsVideoMetric(asset, 'views')
-    const watchTime = aggregate ? readSitesNumber(aggregate.watchedSeconds) : getSiteAnalyticsVideoMetric(asset, 'totalWatchTime')
-    return {
-      asset,
-      key: asset.id,
-      label: getSiteAnalyticsVideoLabel(asset, sitesById),
-      sourceSiteId,
-      sourceLabel,
-      streamVideoId: getMediaStreamVideoId(asset),
-      playbackSessions: aggregate ? readSitesNumber(aggregate.playbackSessions) : 0,
-      playedSessions: aggregate ? readSitesNumber(aggregate.playedSessions) : views,
-      totalViewers: aggregate ? readSitesNumber(aggregate.totalViewers) : 0,
-      completions: aggregate ? readSitesNumber(aggregate.completions) : 0,
-      views,
-      watchTime,
-      averageWatchTime: aggregate
-        ? readSitesNumber(aggregate.averageWatchSeconds)
-        : getSiteAnalyticsVideoMetric(asset, 'averageWatchTime') || (views > 0 ? watchTime / views : 0),
-      engagementScore: aggregate
-        ? readSitesNumber(aggregate.avgProgressPercent)
-        : getSiteAnalyticsVideoMetric(asset, 'engagementScore')
-    }
-  })
-)
 
 const slugifyName = (value: string) => value
   .normalize('NFD')
@@ -9276,7 +9148,6 @@ export const Sites: React.FC = () => {
   const [siteVideoCurrentCursor, setSiteVideoCurrentCursor] = useState<string | null>(null)
   const [siteVideoCursorHistory, setSiteVideoCursorHistory] = useState<string[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
-  const [siteVideoResolvedScopeKey, setSiteVideoResolvedScopeKey] = useState('')
   const siteVideoRequestRef = useRef(0)
   const sitesAnalyticsCatalogRequestRef = useRef(0)
   const sitesAnalyticsDefaultScopeReadyRef = useRef('')
@@ -9297,7 +9168,7 @@ export const Sites: React.FC = () => {
   const [sitesAnalyticsSummary, setSitesAnalyticsSummary] = useState<SitesAnalyticsSummary | null>(null)
   const [sitesAnalyticsSummaryLoading, setSitesAnalyticsSummaryLoading] = useState(false)
   const [sitesAnalyticsSummaryError, setSitesAnalyticsSummaryError] = useState('')
-  const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
+  const [sitesVideoAnalytics, setSitesVideoAnalytics] = useState<SitesVideoAnalyticsDetail | null>(null)
   const [sitesVideoAnalyticsLoading, setSitesVideoAnalyticsLoading] = useState(false)
   const [sitesVideoAnalyticsError, setSitesVideoAnalyticsError] = useState('')
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -9833,8 +9704,6 @@ export const Sites: React.FC = () => {
     analyticsVideoOriginOptions.forEach(origin => options.set(origin.id, origin))
     return [...options.values()]
   }, [analyticsCatalogSites, analyticsVideoOriginOptions, sitesAnalyticsSiteType])
-  const analyticsSelectedSiteReady = !sitesAnalyticsSiteId ||
-    analyticsCatalogSites.some(site => site.id === sitesAnalyticsSiteId)
   const filteredAnalyticsVideos = useMemo(() => (
     siteVideoAssets.filter((asset) => {
       const sourceSiteId = getMediaSourceSiteId(asset)
@@ -9843,46 +9712,6 @@ export const Sites: React.FC = () => {
       return true
     })
   ), [siteVideoAssets, sitesAnalyticsSiteId])
-  const siteVideoScopeKey = useMemo(() => JSON.stringify([
-    sitesAnalyticsSiteType,
-    sitesAnalyticsLandingMode,
-    sitesAnalyticsSiteId
-  ]), [sitesAnalyticsLandingMode, sitesAnalyticsSiteId, sitesAnalyticsSiteType])
-  const analyticsCatalogScopeKey = useMemo(() => JSON.stringify([
-    sitesAnalyticsSiteType,
-    sitesAnalyticsSiteType === 'sites' ? sitesAnalyticsLandingMode : 'all'
-  ]), [sitesAnalyticsLandingMode, sitesAnalyticsSiteType])
-  const scopedAnalyticsSites = useMemo(
-    () => {
-      if (!sitesAnalyticsSiteId) return analyticsSites
-      const selected = analyticsCatalogSites.find(site => site.id === sitesAnalyticsSiteId) ||
-        analyticsSites.find(site => site.id === sitesAnalyticsSiteId)
-      return selected ? [selected] : []
-    },
-    [analyticsCatalogSites, analyticsSites, sitesAnalyticsSiteId]
-  )
-  const scopedAnalyticsVideos = useMemo(
-    () => sitesAnalyticsVideoId
-      ? filteredAnalyticsVideos.filter(asset => asset.id === sitesAnalyticsVideoId)
-      : filteredAnalyticsVideos,
-    [filteredAnalyticsVideos, sitesAnalyticsVideoId]
-  )
-  const analyticsBreakdownSiteIds = useMemo(
-    () => scopedAnalyticsSites.slice(0, 100).map(site => site.id),
-    [scopedAnalyticsSites]
-  )
-  const analyticsBreakdownSiteKey = useMemo(
-    () => analyticsBreakdownSiteIds.join('|'),
-    [analyticsBreakdownSiteIds]
-  )
-  const analyticsVideoBreakdownIds = useMemo(
-    () => scopedAnalyticsVideos.slice(0, 100).map(asset => asset.id),
-    [scopedAnalyticsVideos]
-  )
-  const analyticsVideoBreakdownKey = useMemo(
-    () => analyticsVideoBreakdownIds.join('|'),
-    [analyticsVideoBreakdownIds]
-  )
   const selectedAnalyticsVideo = useMemo(() => (
     sitesAnalyticsVideoId
       ? filteredAnalyticsVideos.find(asset => asset.id === sitesAnalyticsVideoId) || null
@@ -9916,11 +9745,7 @@ export const Sites: React.FC = () => {
         if (cancelled) return
         setSiteVideoAssets(current => current.some(item => item.id === asset.id) ? current : [asset, ...current])
       })
-      .catch(() => {
-        if (cancelled) return
-        setSitesAnalyticsVideoId('')
-        updateSitesAnalyticsQuery({ videoId: '' })
-      })
+      .catch(() => undefined)
     return () => {
       cancelled = true
     }
@@ -11834,7 +11659,6 @@ export const Sites: React.FC = () => {
 
   const loadSiteVideos = async (cursor: string | null = null, cursorHistory: string[] = []) => {
     const requestId = siteVideoRequestRef.current + 1
-    const requestScopeKey = siteVideoScopeKey
     siteVideoRequestRef.current = requestId
     setLoadingSiteVideos(true)
     try {
@@ -11862,7 +11686,6 @@ export const Sites: React.FC = () => {
     } finally {
       if (siteVideoRequestRef.current === requestId) {
         setLoadingSiteVideos(false)
-        if (!cursor) setSiteVideoResolvedScopeKey(requestScopeKey)
       }
     }
   }
@@ -11881,15 +11704,6 @@ export const Sites: React.FC = () => {
       return
     }
 
-    const catalogReady = sitesAnalyticsCatalog.defaultScopeReadyKey === analyticsCatalogScopeKey
-    const videoWindowReady = siteVideoResolvedScopeKey === siteVideoScopeKey
-    if (!catalogReady || !analyticsSelectedSiteReady || !videoWindowReady) {
-      setSitesAnalyticsSummary(null)
-      setSitesAnalyticsSummaryError('')
-      setSitesAnalyticsSummaryLoading(true)
-      return
-    }
-
     let cancelled = false
     const controller = new AbortController()
     setSitesAnalyticsSummaryLoading(true)
@@ -11904,16 +11718,18 @@ export const Sites: React.FC = () => {
           status: 'published' as const,
           ...(sitesAnalyticsSiteId ? { siteId: sitesAnalyticsSiteId } : {})
         },
-        breakdownSiteIds: analyticsBreakdownSiteIds,
+        breakdownSiteIds: sitesAnalyticsSiteId ? [sitesAnalyticsSiteId] : [],
         ...(sitesAnalyticsSiteType === 'forms' && sitesAnalyticsSiteId
           ? { formFunnelSiteId: sitesAnalyticsSiteId }
           : {})
       }),
-      videoBreakdownAssetIds: analyticsVideoBreakdownIds,
+      videoAssetIds: sitesAnalyticsVideoId ? [sitesAnalyticsVideoId] : [],
+      videoBreakdownAssetIds: sitesAnalyticsVideoId ? [sitesAnalyticsVideoId] : [],
       videoSiteIds: sitesAnalyticsSiteId ? [sitesAnalyticsSiteId] : [],
       videoScope: {
         siteType: sitesAnalyticsSiteType,
-        landingMode: sitesAnalyticsLandingMode
+        landingMode: sitesAnalyticsLandingMode,
+        ...(sitesAnalyticsSiteId ? { siteId: sitesAnalyticsSiteId } : {})
       },
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end)
     }, { signal: controller.signal })
@@ -11936,19 +11752,13 @@ export const Sites: React.FC = () => {
       controller.abort()
     }
   }, [
-    analyticsCatalogScopeKey,
-    analyticsBreakdownSiteKey,
-    analyticsSelectedSiteReady,
-    analyticsVideoBreakdownKey,
     dateRange.end,
     dateRange.start,
     section,
-    siteVideoResolvedScopeKey,
-    siteVideoScopeKey,
-    sitesAnalyticsCatalog.defaultScopeReadyKey,
     sitesAnalyticsLandingMode,
     sitesAnalyticsSiteId,
-    sitesAnalyticsSiteType
+    sitesAnalyticsSiteType,
+    sitesAnalyticsVideoId
   ])
 
   useEffect(() => {
@@ -11958,9 +11768,7 @@ export const Sites: React.FC = () => {
       setSitesVideoAnalyticsLoading(false)
       return
     }
-    const asset = selectedAnalyticsVideo
-    const streamVideoId = getMediaStreamVideoId(asset)
-    if (!asset || !streamVideoId) {
+    if (!sitesAnalyticsVideoId) {
       setSitesVideoAnalytics(null)
       setSitesVideoAnalyticsError('')
       setSitesVideoAnalyticsLoading(false)
@@ -11969,9 +11777,10 @@ export const Sites: React.FC = () => {
 
     let cancelled = false
     setSitesVideoAnalyticsLoading(true)
+    setSitesVideoAnalytics(null)
     setSitesVideoAnalyticsError('')
 
-    sitesService.getVideoAnalytics(asset.id, {
+    sitesService.getVideoAnalytics(sitesAnalyticsVideoId, {
       ...getSitesAnalyticsRange(dateRange.start, dateRange.end),
       viewerLimit: 200
     })
@@ -11991,7 +11800,7 @@ export const Sites: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [dateRange.end, dateRange.start, section, selectedAnalyticsVideo, sitesAnalyticsSiteType])
+  }, [dateRange.end, dateRange.start, section, sitesAnalyticsSiteType, sitesAnalyticsVideoId])
 
   const openSite = async (siteId: string, pageId?: string, options?: { replaceRoute?: boolean }) => {
     const requestId = editorOpenRequestRef.current + 1
@@ -15915,10 +15724,8 @@ export const Sites: React.FC = () => {
               />
             ) : section === 'analytics' ? (
               <SitesAnalyticsPanel
-                sites={scopedAnalyticsSites}
                 siteOptions={analyticsSiteOptions}
                 sitesById={sitesById}
-                videos={scopedAnalyticsVideos}
                 videoOptions={filteredAnalyticsVideos}
                 selectedSiteType={sitesAnalyticsSiteType}
                 selectedLandingMode={sitesAnalyticsLandingMode}
@@ -15931,7 +15738,8 @@ export const Sites: React.FC = () => {
                 loadingVideos={loadingSiteVideos}
                 hasMoreVideos={siteVideoPageInfo.hasMore}
                 hasPreviousVideos={siteVideoCursorHistory.length > 0}
-                loadingAnalytics={sitesAnalyticsSummaryLoading || sitesVideoAnalyticsLoading}
+                loadingSummary={sitesAnalyticsSummaryLoading}
+                loadingVideoAnalytics={sitesVideoAnalyticsLoading}
                 analyticsError={sitesVideoAnalyticsError}
                 analyticsSummaryError={sitesAnalyticsSummaryError}
                 startDate={formatDateToISO(dateRange.start)}
@@ -45372,10 +45180,8 @@ const FormResponsesQuickPanel: React.FC<{
 }
 
 interface SitesAnalyticsPanelProps {
-  sites: PublicSite[]
   siteOptions: Array<Pick<PublicSite, 'id' | 'name'>>
   sitesById: Map<string, PublicSite>
-  videos: MediaAsset[]
   videoOptions: MediaAsset[]
   selectedSiteType: SitesAnalyticsSiteType
   selectedLandingMode: SitesAnalyticsLandingMode
@@ -45384,11 +45190,12 @@ interface SitesAnalyticsPanelProps {
   loadingSiteOptions: boolean
   selectedVideo: MediaAsset | null
   analyticsSummary: SitesAnalyticsSummary | null
-  analytics: MediaStreamAnalytics | null
+  analytics: SitesVideoAnalyticsDetail | null
   loadingVideos: boolean
   hasMoreVideos: boolean
   hasPreviousVideos: boolean
-  loadingAnalytics: boolean
+  loadingSummary: boolean
+  loadingVideoAnalytics: boolean
   analyticsError: string
   analyticsSummaryError: string
   startDate: string
@@ -45404,10 +45211,8 @@ interface SitesAnalyticsPanelProps {
 }
 
 const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
-  sites,
   siteOptions,
   sitesById,
-  videos,
   videoOptions,
   selectedSiteType,
   selectedLandingMode,
@@ -45420,7 +45225,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   loadingVideos,
   hasMoreVideos,
   hasPreviousVideos,
-  loadingAnalytics,
+  loadingSummary,
+  loadingVideoAnalytics,
   analyticsError,
   analyticsSummaryError,
   startDate,
@@ -45580,113 +45386,124 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     { value: 'website', label: 'Sitios web' },
     { value: 'funnel', label: 'Embudos' }
   ]
-  const siteRows = sites.map(site => ({
-    site,
-    stats: analyticsSummary?.sites?.[site.id] || getSiteAnalyticsStats(site),
-    videoCount: videos.filter(asset => getMediaSourceSiteId(asset) === site.id).length
-  }))
-  const selectedSiteRow = selectedSiteId
-    ? siteRows.find(row => row.site.id === selectedSiteId) || null
+  const selectedSiteStats = selectedSiteId
+    ? analyticsSummary?.bySiteId?.[selectedSiteId] || null
     : null
   const selectedFormFunnel = selectedSiteId
     ? analyticsSummary?.formFunnels?.[selectedSiteId] || null
     : null
-  const pageTrackingAggregate = {
-    views: siteRows.reduce((total, row) => total + row.stats.views, 0),
-    visitors: siteRows.reduce((total, row) => total + row.stats.visitors, 0),
-    sessions: siteRows.reduce((total, row) => total + row.stats.sessions, 0),
-    conversions: siteRows.reduce((total, row) => total + row.stats.conversions, 0)
-  }
   const trackingAggregate = analyticsSummary?.aggregate || null
-  const totalSiteViews = trackingAggregate?.views ?? pageTrackingAggregate.views
-  const totalVisitors = trackingAggregate?.visitors ?? pageTrackingAggregate.visitors
-  const totalSessions = trackingAggregate?.sessions ?? pageTrackingAggregate.sessions
-  const totalConversions = trackingAggregate?.conversions ?? pageTrackingAggregate.conversions
-  const conversionRate = trackingAggregate?.conversionRate ?? (
-    totalVisitors > 0 ? Number(((totalConversions / totalVisitors) * 100).toFixed(1)) : 0
-  )
-  const aggregateEntityCount = trackingAggregate?.entityCount ?? sites.length
-  const averageConversions = aggregateEntityCount > 0 ? totalConversions / aggregateEntityCount : 0
-  const publishedCount = aggregateEntityCount
-  const latestUpdatedSite = [...siteRows]
-    .sort((a, b) => parseSortableDateValue(b.site.updatedAt) - parseSortableDateValue(a.site.updatedAt))[0]?.site || null
-  const rowsByViews = [...siteRows].sort((a, b) => b.stats.views - a.stats.views)
-  const rowsByConversions = [...siteRows].sort((a, b) =>
-    b.stats.conversions - a.stats.conversions || b.stats.conversionRate - a.stats.conversionRate
-  )
-  const rowsByConversionRate = [...siteRows].sort((a, b) =>
-    b.stats.conversionRate - a.stats.conversionRate || b.stats.conversions - a.stats.conversions
-  )
-  const rowsByVideoCount = [...siteRows].filter(row => row.videoCount > 0).sort((a, b) => b.videoCount - a.videoCount)
+  const totalSiteViews = trackingAggregate?.views ?? null
+  const totalVisitors = trackingAggregate?.visitors ?? null
+  const totalSessions = trackingAggregate?.sessions ?? null
+  const totalSubmissions = trackingAggregate?.submissions ?? null
+  const totalQualifiedConversions = trackingAggregate?.qualifiedConversions ?? null
+  const totalConvertingVisitors = trackingAggregate?.convertingVisitors ?? null
+  const totalUnattributedConversions = trackingAggregate?.unattributedConversions ?? null
+  const conversionRate = trackingAggregate && trackingAggregate.visitors > 0
+    ? trackingAggregate.conversionRate
+    : null
+  const aggregateEntityCount = analyticsSummary?.inventory?.entities?.current ?? null
+  const activeEntityCount = analyticsSummary?.inventory?.entities?.activeInRange ?? null
+  const rowsByViews = analyticsSummary?.rankings?.byViews || []
+  const rowsByConversions = analyticsSummary?.rankings?.byConversions || []
+  const rowsByConversionRate = analyticsSummary?.rankings?.byConversionRate || []
+  const entitySeriesChart = (analyticsSummary?.series || []).map(point => ({
+    label: formatSitesChartLabel(point.periodKey),
+    value: isFormsView ? point.completedSubmissions : point.views,
+    value2: isFormsView ? point.qualifiedConversions : point.sessions
+  }))
   const aggregateVideoStats = analyticsSummary?.videos || null
   const aggregateVideoSummary = aggregateVideoStats?.summary || null
-  const videoRows = buildSitesVideoAggregateRows(videos, sitesById, aggregateVideoStats?.byAssetId || null)
-  const videoOriginRows = [...videoRows.reduce((origins, row) => {
-    if (!row.sourceSiteId) return origins
-    const current = origins.get(row.sourceSiteId)
-    origins.set(row.sourceSiteId, {
-      id: row.sourceSiteId,
-      label: row.sourceLabel,
-      count: (current?.count || 0) + 1
-    })
-    return origins
-  }, new Map<string, { id: string; label: string; count: number }>()).values()]
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
-  const videoRowsByViews = [...videoRows].sort((a, b) => b.views - a.views || b.watchTime - a.watchTime)
-  const videoRowsByWatchTime = [...videoRows].sort((a, b) => b.watchTime - a.watchTime || b.views - a.views)
-  const videoRowsByAverageWatch = [...videoRows].sort((a, b) => b.averageWatchTime - a.averageWatchTime || b.views - a.views)
-  const selectedVideoStats = getMediaStreamVideoRecord(selectedVideo)
+  const videoInventory = analyticsSummary?.inventory?.videos || null
+  const videoRowsByViews = aggregateVideoStats?.topAssetsByStarts || []
+  const videoRowsByWatchTime = aggregateVideoStats?.topAssetsByWatch || []
   const firstPartyTracking = analytics?.firstPartyTracking || null
   const firstPartySummary = firstPartyTracking?.summary || null
-  const totalVideoViews = aggregateVideoSummary
-    ? readSitesNumber(aggregateVideoSummary.plays)
-    : videoRows.reduce((total, row) => total + row.views, 0)
-  const totalVideoWatchTime = aggregateVideoSummary
-    ? readSitesNumber(aggregateVideoSummary.watchedSeconds)
-    : videoRows.reduce((total, row) => total + row.watchTime, 0)
-  const selectedVideoMode = Boolean(selectedVideoId && selectedVideo)
-  const totalStreamVideos = videoRows.filter(row => row.streamVideoId).length
-  const totalVideoOrigins = new Set(videoRows.map(row => row.sourceSiteId).filter(Boolean)).size
-  const aggregateAverageWatchTime = aggregateVideoSummary
-    ? readSitesNumber(aggregateVideoSummary.averageWatchSeconds)
-    : totalVideoViews > 0 ? totalVideoWatchTime / totalVideoViews : 0
-  const aggregateEngagementValues = videoRows.map(row => row.engagementScore).filter(value => value > 0)
-  const aggregateEngagementScore = aggregateVideoSummary
-    ? readSitesNumber(aggregateVideoSummary.avgProgressPercent)
-    : aggregateEngagementValues.length
-      ? aggregateEngagementValues.reduce((total, value) => total + value, 0) / aggregateEngagementValues.length
-      : null
+  const selectedVideoMode = Boolean(selectedVideoId)
+  const totalVideoViews = aggregateVideoSummary?.playbackStarts ?? aggregateVideoSummary?.plays ?? null
+  const totalVideoWatchTime = aggregateVideoSummary?.watchedSeconds ?? null
+  const aggregateAverageWatchTime = aggregateVideoSummary?.averageWatchSeconds ?? null
+  const aggregateEngagementScore = aggregateVideoSummary?.averageTimelineReachPercent ??
+    aggregateVideoSummary?.avgProgressPercent ??
+    null
+  const videoRankingLabel = (row: NonNullable<typeof videoRowsByViews>[number]) => (
+    row.assetTitle ||
+    row.assetName ||
+    `Video ${String(row.assetId || '').slice(-8) || 'sin nombre'}`
+  )
   const aggregateVideoChart = videoRowsByViews
     .slice(0, 10)
     .reverse()
     .map(row => ({
-      label: shortenSitesText(getMediaAssetDisplayName(row.asset), 18),
-      value: row.views,
-      value2: Math.round((row.watchTime / 60) * 10) / 10
+      label: shortenSitesText(videoRankingLabel(row), 18),
+      value: row.playbackStarts ?? row.plays,
+      value2: row.watchedSeconds
     }))
-  const aggregateViewsChart = buildSitesChartPoints(aggregateVideoStats?.viewsChart || [], 'count')
-  const aggregateWatchTimeChart = buildSitesChartPoints(aggregateVideoStats?.watchTimeChart || [], 'seconds')
-  const videoViews = selectedVideo ? (firstPartySummary?.plays ?? analytics?.summary.views ?? readSitesNumber(selectedVideoStats.views)) : totalVideoViews
-  const videoLoads = selectedVideo ? (firstPartySummary?.playbackSessions ?? 0) : (aggregateVideoSummary?.playbackSessions ?? videoRows.reduce((total, row) => total + row.playbackSessions, 0))
-  const uniqueVideoViewers = selectedVideo ? (firstPartySummary?.totalViewers ?? 0) : (aggregateVideoSummary?.totalViewers ?? videoRows.reduce((total, row) => total + row.totalViewers, 0))
-  const videoWatchTime = selectedVideo ? (firstPartySummary?.watchedSeconds ?? analytics?.summary.watchTime ?? readSitesNumber(selectedVideoStats.totalWatchTime)) : totalVideoWatchTime
-  const averageWatchTime = selectedVideo ? (firstPartySummary?.averageWatchSeconds ?? analytics?.summary.averageWatchTime ?? readSitesNumber(selectedVideoStats.averageWatchTime)) : 0
-  const engagementScore = selectedVideo ? (firstPartySummary?.avgProgressPercent ?? analytics?.summary.engagementScore ?? null) : null
-  const playRate = selectedVideo ? firstPartySummary?.playRatePercent ?? null : null
-  const completionRate = selectedVideo ? firstPartySummary?.completionRatePercent ?? null : null
-  const dropOffRate = selectedVideo ? firstPartySummary?.dropOffPercent ?? null : null
-  const streamVideoId = getMediaStreamVideoId(selectedVideo)
-  const viewsChart = buildSitesChartPoints(
-    selectSitesChartSource(firstPartyTracking?.viewsChart || [], analytics?.viewsChart || [], readSitesNumber(firstPartySummary?.plays) > 0),
-    'count'
+  const aggregateViewsChart = buildSitesChartPoints(
+    aggregateVideoStats?.series?.playbackStarts || aggregateVideoStats?.viewsChart || []
   )
-  const watchTimeChart = buildSitesChartPoints(
-    selectSitesChartSource(firstPartyTracking?.watchTimeChart || [], analytics?.watchTimeChart || [], readSitesNumber(firstPartySummary?.watchedSeconds) > 0),
-    'seconds'
+  const aggregateWatchTimeChart = buildSitesChartPoints(
+    aggregateVideoStats?.series?.watchedSeconds || aggregateVideoStats?.watchTimeChart || []
   )
-  const heatmap = analytics?.heatmap || []
-  const retentionSegments = buildSitesRetentionSegments(firstPartyTracking?.retentionSegments || [], heatmap)
-  const retentionCurvePoints = buildSitesRetentionCurvePoints(retentionSegments)
+  const videoViews = selectedVideoMode
+    ? firstPartySummary?.playbackStarts ?? firstPartySummary?.plays ?? null
+    : totalVideoViews
+  const videoLoads = selectedVideoMode
+    ? firstPartySummary?.playerLoads ?? firstPartySummary?.playbackSessions ?? null
+    : aggregateVideoSummary?.playerLoads ?? aggregateVideoSummary?.playbackSessions ?? null
+  const uniqueVideoViewers = selectedVideoMode
+    ? firstPartySummary?.uniqueViewers ?? firstPartySummary?.totalViewers ?? null
+    : aggregateVideoSummary?.uniqueViewers ?? aggregateVideoSummary?.totalViewers ?? null
+  const videoWatchTime = selectedVideoMode
+    ? firstPartySummary?.watchedSeconds ?? null
+    : totalVideoWatchTime
+  const playbackStartCount = selectedVideoMode
+    ? firstPartySummary?.playbackStarts ?? firstPartySummary?.plays ?? null
+    : aggregateVideoSummary?.playbackStarts ?? aggregateVideoSummary?.plays ?? null
+  const averageWatchTime = playbackStartCount && playbackStartCount > 0
+    ? (selectedVideoMode
+        ? firstPartySummary?.averageWatchSeconds ?? null
+        : aggregateAverageWatchTime)
+    : null
+  const engagementScore = playbackStartCount && playbackStartCount > 0
+    ? (selectedVideoMode
+        ? firstPartySummary?.averageTimelineReachPercent ?? firstPartySummary?.avgProgressPercent ?? null
+        : aggregateEngagementScore)
+    : null
+  const playRate = videoLoads && videoLoads > 0
+    ? (selectedVideoMode
+        ? firstPartySummary?.playRatePercent ?? null
+        : aggregateVideoSummary?.playRatePercent ?? null)
+    : null
+  const completionRate = playbackStartCount && playbackStartCount > 0
+    ? (selectedVideoMode
+        ? firstPartySummary?.completionRatePercent ?? null
+        : aggregateVideoSummary?.completionRatePercent ?? null)
+    : null
+  const incompleteRate = playbackStartCount && playbackStartCount > 0
+    ? (selectedVideoMode
+        ? firstPartySummary?.incompleteRatePercent ?? null
+        : aggregateVideoSummary?.incompleteRatePercent ?? null)
+    : null
+  const viewsChart = buildSitesChartPoints(selectedVideoMode
+    ? firstPartyTracking?.series?.playbackStarts ||
+      firstPartyTracking?.viewsChart ||
+      []
+    : aggregateVideoStats?.series?.playbackStarts ||
+      aggregateVideoStats?.viewsChart ||
+      []
+  )
+  const watchTimeChart = buildSitesChartPoints(selectedVideoMode
+    ? firstPartyTracking?.series?.watchedSeconds ||
+      firstPartyTracking?.watchTimeChart ||
+      []
+    : aggregateVideoStats?.series?.watchedSeconds ||
+      aggregateVideoStats?.watchTimeChart ||
+      []
+  )
+  const reachSegments = firstPartyTracking?.timelineReachCurve || []
+  const retentionCurvePoints = buildSitesReachCurvePoints(reachSegments)
   const retentionAreaPath = buildSitesRetentionAreaPath(retentionCurvePoints)
   const retentionPlayheadStyle = {
     '--video-retention-playhead': `${retentionPlaybackPercent}%`
@@ -45696,51 +45513,51 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   } as React.CSSProperties
   const retentionDisplayDuration = retentionDurationSeconds ||
     readSitesNumber(selectedVideo?.duration) ||
-    retentionSegments[retentionSegments.length - 1]?.endSeconds ||
+    reachSegments[reachSegments.length - 1]?.endSeconds ||
     0
   const videoViewers = firstPartyTracking?.viewers || []
-  const currentVideoLabel = selectedVideo ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById) : 'Sin video seleccionado'
+  const currentVideoLabel = selectedVideo
+    ? getSiteAnalyticsVideoLabel(selectedVideo, sitesById)
+    : selectedVideoId ? `Video ${selectedVideoId.slice(-8)}` : 'Sin video seleccionado'
   const scopeSiteLabel = selectedSiteId
     ? sitesById.get(selectedSiteId)?.name || siteOptions.find(site => site.id === selectedSiteId)?.name || 'Sitio seleccionado'
     : typeLabel
-  const availableEntityText = `${siteOptions.length} ${siteOptions.length === 1 ? entityLabel : entityPluralLabel} visible${siteOptions.length === 1 ? '' : 's'} para elegir`
-  const dashboardEntityText = `${formatSitesCompactNumber(aggregateEntityCount)} ${aggregateEntityCount === 1 ? entityLabel : entityPluralLabel} en el alcance · ${sites.length} en la muestra visible`
   const scopeDescription = isVideosView
-    ? `${videos.length} video${videos.length === 1 ? '' : 's'} cargado${videos.length === 1 ? '' : 's'}${hasPreviousVideos || hasMoreVideos ? ' · hay más disponibles' : ''}${selectedVideoMode ? ` · ${currentVideoLabel}` : ' · vista agregada'}`
-    : `${availableEntityText} · ${dashboardEntityText} · ${videos.length} video${videos.length === 1 ? '' : 's'} dentro`
+    ? `${formatSitesCompactNumber(videoInventory?.total)} videos en el alcance · ${formatSitesCompactNumber(videoInventory?.originsTotal)} orígenes · ${selectedVideoMode ? currentVideoLabel : 'vista agregada'} · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
+    : `${formatSitesCompactNumber(aggregateEntityCount)} ${entityPluralLabel} publicados · ${formatSitesCompactNumber(activeEntityCount)} con actividad en el periodo · ${analyticsSummary?.meta?.timezone || 'zona de la cuenta'}`
   const kpiCards = isVideosView
     ? selectedVideoMode
       ? [
-          { key: 'videos', icon: <Video size={16} />, label: hasPreviousVideos || hasMoreVideos ? 'Videos cargados' : 'Videos', value: formatSitesCompactNumber(videos.length) },
+          { key: 'videos', icon: <Video size={16} />, label: 'Videos en alcance', value: formatSitesCompactNumber(videoInventory?.total) },
           { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews) },
-          { key: 'viewers', icon: <Eye size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(uniqueVideoViewers) },
+          { key: 'viewers', icon: <Eye size={16} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
           { key: 'play-rate', icon: <MousePointerClick size={16} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate) },
           { key: 'watch-time', icon: <Clock3 size={16} />, label: 'Tiempo visto', value: formatSitesSeconds(videoWatchTime) },
-          { key: 'engagement', icon: <Flame size={16} />, label: 'Interacción', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore) }
+          { key: 'engagement', icon: <Flame size={16} />, label: 'Alcance promedio', value: formatSitesPercent(engagementScore) }
         ]
       : [
-          { key: 'videos', icon: <Video size={16} />, label: hasPreviousVideos || hasMoreVideos ? 'Videos cargados' : 'Videos', value: formatSitesCompactNumber(videos.length) },
+          { key: 'videos', icon: <Video size={16} />, label: 'Videos', value: formatSitesCompactNumber(videoInventory?.total) },
           { key: 'plays', icon: <Play size={16} />, label: 'Reproducciones', value: formatSitesCompactNumber(totalVideoViews) },
-          { key: 'origins', icon: <LayoutTemplate size={16} />, label: 'Orígenes', value: formatSitesCompactNumber(totalVideoOrigins) },
-          { key: 'stream', icon: <CheckCircle2 size={16} />, label: 'Con Stream', value: `${formatSitesCompactNumber(totalStreamVideos)}/${formatSitesCompactNumber(videos.length)}` },
+          { key: 'viewers', icon: <Eye size={16} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers) },
+          { key: 'origins', icon: <LayoutTemplate size={16} />, label: 'Orígenes', value: formatSitesCompactNumber(videoInventory?.originsTotal) },
           { key: 'watch-time', icon: <Clock3 size={16} />, label: 'Tiempo visto', value: formatSitesSeconds(totalVideoWatchTime) },
-          { key: 'average', icon: <Flame size={16} />, label: 'Promedio visto', value: formatSitesSeconds(aggregateAverageWatchTime) }
+          { key: 'average', icon: <Flame size={16} />, label: 'Alcance promedio', value: formatSitesPercent(engagementScore) }
         ]
     : isFormsView
       ? [
-          { key: 'forms', icon: <FormInput size={16} />, label: 'Formularios', value: formatSitesCompactNumber(aggregateEntityCount) },
           { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
           { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
-          { key: 'submissions', icon: <ListChecks size={16} />, label: 'Envíos', value: formatSitesCompactNumber(totalConversions) },
+          { key: 'submissions', icon: <ListChecks size={16} />, label: 'Envíos finales', value: formatSitesCompactNumber(totalSubmissions) },
+          { key: 'qualified', icon: <CheckCircle2 size={16} />, label: 'Conversiones calificadas', value: formatSitesCompactNumber(totalQualifiedConversions) },
+          { key: 'converted-visitors', icon: <Globe2 size={16} />, label: 'Visitantes que convirtieron', value: formatSitesCompactNumber(totalConvertingVisitors) },
           { key: 'conversion', icon: <BarChart3 size={16} />, label: 'Conversión', value: formatSitesPercent(conversionRate) },
-          { key: 'average', icon: <MousePointerClick size={16} />, label: 'Envíos/form', value: formatSitesDecimal(averageConversions) }
         ]
       : [
-          { key: 'sites', icon: <LayoutTemplate size={16} />, label: landingModeLabel, value: formatSitesCompactNumber(aggregateEntityCount) },
           { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
           { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
           { key: 'sessions', icon: <MousePointerClick size={16} />, label: 'Sesiones', value: formatSitesCompactNumber(totalSessions) },
-          { key: 'conversion', icon: <ListChecks size={16} />, label: 'Conversiones', value: formatSitesCompactNumber(totalConversions) },
+          { key: 'qualified', icon: <CheckCircle2 size={16} />, label: 'Conversiones calificadas', value: formatSitesCompactNumber(totalQualifiedConversions) },
+          { key: 'conversion', icon: <ListChecks size={16} />, label: 'Visitantes que convirtieron', value: formatSitesCompactNumber(totalConvertingVisitors) },
           { key: 'rate', icon: <BarChart3 size={16} />, label: 'Conversión', value: formatSitesPercent(conversionRate) }
         ]
 
@@ -45762,25 +45579,22 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   )
 
   const renderSelectedConversionPanel = () => {
-    if (!selectedSiteRow || isFormsView || isVideosView) return null
+    if (!selectedSiteStats || isFormsView || isVideosView) return null
 
-    const stats = selectedSiteRow.stats
-    const selectedRate = stats.visitors > 0
-      ? stats.conversionRate
-      : stats.views > 0 ? (stats.conversions / stats.views) * 100 : 0
+    const stats = selectedSiteStats
 
     return (
       <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
         <div className={styles.sitesAnalyticsChartTitle}>
           <span>Conversión del {entityLabel} seleccionado</span>
-          <strong>{formatSitesPercent(selectedRate)}</strong>
+          <strong>{formatSitesPercent(stats.visitors > 0 ? stats.conversionRate : null)}</strong>
         </div>
         <div className={styles.sitesAnalyticsConversionPath}>
           {[
             { key: 'views', icon: <Eye size={15} />, label: 'Vistas', value: formatSitesCompactNumber(stats.views) },
             { key: 'visitors', icon: <Globe2 size={15} />, label: 'Visitantes', value: formatSitesCompactNumber(stats.visitors) },
             { key: 'sessions', icon: <MousePointerClick size={15} />, label: 'Sesiones', value: formatSitesCompactNumber(stats.sessions) },
-            { key: 'conversions', icon: <ListChecks size={15} />, label: 'Convirtieron', value: formatSitesCompactNumber(stats.conversions) }
+            { key: 'conversions', icon: <ListChecks size={15} />, label: 'Visitantes que convirtieron', value: formatSitesCompactNumber(stats.convertingVisitors) }
           ].map(metric => (
             <div key={metric.key}>
               {metric.icon}
@@ -45794,31 +45608,29 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   }
 
   const renderSelectedFormFunnelPanel = () => {
-    if (!selectedSiteRow || !isFormsView || !selectedSiteId) return null
+    if (!selectedSiteStats || !isFormsView || !selectedSiteId) return null
 
-    const stats = selectedSiteRow.stats
+    const stats = selectedSiteStats
     const funnel = selectedFormFunnel
     const fields = funnel?.fields || []
-    const starts = funnel?.starts ?? Math.max(stats.visitors, stats.conversions)
-    const submissions = funnel?.submissions ?? stats.conversions
-    const conversionRate = funnel?.conversionRate ?? (starts > 0 ? (submissions / starts) * 100 : stats.conversionRate)
-    const weakestField = fields.reduce<typeof fields[number] | null>((current, field) => (
-      !current || field.missedCount > current.missedCount ? field : current
-    ), null)
+    const finalSubmissions = funnel?.submissions ?? stats.submissions
+    const completedSubmissions = funnel?.completedSubmissions ?? stats.completedSubmissions
+    const terminalExitSubmissions = funnel?.terminalExitSubmissions ?? stats.terminalExitSubmissions
+    const legacyUnknownSubmissions = funnel?.legacyUnknownSubmissions ?? stats.legacyUnknownSubmissions
 
     return (
       <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
         <div className={styles.sitesAnalyticsChartTitle}>
-          <span>Completición por pregunta</span>
-          <strong>{formatSitesPercent(conversionRate)} finaliza</strong>
+          <span>Cobertura de respuestas</span>
+          <strong>{formatSitesCompactNumber(finalSubmissions)} envíos finales evaluados</strong>
         </div>
 
         <div className={styles.formFunnelSummary}>
           {[
             { key: 'views', icon: <Eye size={15} />, label: 'Vistas', value: formatSitesCompactNumber(funnel?.views ?? stats.views) },
-            { key: 'starts', icon: <Globe2 size={15} />, label: 'Visitantes', value: formatSitesCompactNumber(starts) },
-            { key: 'submissions', icon: <ListChecks size={15} />, label: 'Envíos', value: formatSitesCompactNumber(submissions) },
-            { key: 'weakest', icon: <ArrowDown size={15} />, label: 'Más fricción', value: weakestField ? weakestField.label : 'Sin dato' }
+            { key: 'submissions', icon: <ListChecks size={15} />, label: 'Envíos finales', value: formatSitesCompactNumber(finalSubmissions) },
+            { key: 'completed', icon: <CheckCircle2 size={15} />, label: 'Completados', value: formatSitesCompactNumber(completedSubmissions) },
+            { key: 'terminal', icon: <ArrowDown size={15} />, label: 'Salidas terminales', value: formatSitesCompactNumber(terminalExitSubmissions) }
           ].map(metric => (
             <div key={metric.key}>
               {metric.icon}
@@ -45828,14 +45640,20 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           ))}
         </div>
 
-        {loadingAnalytics && !funnel ? (
-          <div className={styles.sitesAnalyticsChartEmpty}>Calculando completición del formulario...</div>
-        ) : fields.length ? (
+        {legacyUnknownSubmissions > 0 && (
+          <div className={styles.sitesAnalyticsScope} role="status">
+            <strong>Cobertura parcial</strong>
+            <span>{formatSitesCompactNumber(legacyUnknownSubmissions)} envíos antiguos no permiten comprobar si fueron finales.</span>
+          </div>
+        )}
+
+        {fields.length ? (
           <div className={styles.formFunnelSteps}>
             {fields.map(field => {
-              const tone = getSitesCompletionTone(field.stepCompletionRate)
+              const answerRate = field.finalSubmissions > 0 ? field.answerRate : null
+              const tone = getSitesCompletionTone(answerRate)
               const progressStyle = {
-                '--form-funnel-progress': `${clampSitesPercent(field.stepCompletionRate)}%`
+                '--form-funnel-progress': `${clampSitesPercent(answerRate)}%`
               } as React.CSSProperties
               return (
                 <div key={field.blockId} className={styles.formFunnelStep}>
@@ -45843,15 +45661,15 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                     <span className={styles.formFunnelStepNumber}>{field.stepIndex}</span>
                     <div>
                       <strong>{field.label}</strong>
-                      <span>{field.required ? 'Obligatoria' : 'Opcional'} · {formatSitesCompactNumber(field.reachedCount)} llegaron</span>
+                      <span>{field.required ? 'Obligatoria' : 'Opcional'} · {formatSitesCompactNumber(field.finalSubmissions)} envíos finales evaluados</span>
                     </div>
                   </div>
                   <div className={styles.formFunnelStepStats}>
                     <Badge variant={tone} className={styles.formFunnelStatus}>
-                      {formatSitesPercent(field.stepCompletionRate)}
+                      {formatSitesPercent(answerRate)}
                     </Badge>
                     <span>{formatSitesCompactNumber(field.answeredCount)} respondieron</span>
-                    <span>{formatSitesCompactNumber(field.missedCount)} sin respuesta</span>
+                    <span>{formatSitesCompactNumber(field.unansweredCount)} sin respuesta</span>
                   </div>
                   <div className={styles.formFunnelTrack} data-tone={tone} style={progressStyle}>
                     <span />
@@ -45861,24 +45679,14 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
             })}
           </div>
         ) : (
-          <div className={styles.sitesAnalyticsChartEmpty}>Este formulario todavía no tiene preguntas registrables.</div>
+          <div className={styles.sitesAnalyticsChartEmpty}>No hay campos registrables con cobertura de respuestas para este formulario.</div>
         )}
       </div>
     )
   }
 
   const renderEntityAnalytics = () => {
-    if (analyticsSummaryError) {
-      return (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <AlertTriangle size={24} />
-          <strong>No se cargaron las analíticas</strong>
-          <p>{analyticsSummaryError}</p>
-        </div>
-      )
-    }
-
-    if (!sites.length && aggregateEntityCount === 0) {
+    if (aggregateEntityCount === 0) {
       return (
         <div className={styles.sitesAnalyticsEmpty}>
           {isFormsView ? <FormInput size={24} /> : <LayoutTemplate size={24} />}
@@ -45895,17 +45703,17 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         <div className={styles.sitesAnalyticsGrid}>
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>{isFormsView ? 'Formularios con más envíos (muestra visible)' : `${entityPluralTitle} con más vistas (muestra visible)`}</span>
-              <strong>{formatSitesCompactNumber(isFormsView ? totalConversions : totalSiteViews)}</strong>
+              <span>{isFormsView ? 'Formularios con más conversiones calificadas' : `${entityPluralTitle} con más vistas`}</span>
+              <strong>{formatSitesCompactNumber(isFormsView ? totalQualifiedConversions : totalSiteViews)}</strong>
             </div>
             {renderDetailRows(
               (isFormsView ? rowsByConversions : rowsByViews).slice(0, 5).map(row => ({
-                key: row.site.id,
+                key: row.siteId,
                 icon: isFormsView ? <ListChecks size={15} /> : <Eye size={15} />,
-                label: row.site.name,
+                label: row.name,
                 value: isFormsView
-                  ? `${formatSitesCompactNumber(row.stats.conversions)} envíos`
-                  : `${formatSitesCompactNumber(row.stats.views)} vistas`
+                  ? `${formatSitesCompactNumber(row.qualifiedConversions)} conversiones`
+                  : `${formatSitesCompactNumber(row.views)} vistas`
               })),
               `Sin actividad registrada en estos ${entityPluralLabel}.`
             )}
@@ -45913,15 +45721,15 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Conversión por {entityLabel} (muestra visible)</span>
+              <span>Conversión por {entityLabel}</span>
               <strong>{formatSitesPercent(conversionRate)}</strong>
             </div>
             {renderDetailRows(
               rowsByConversionRate.slice(0, 5).map(row => ({
-                key: row.site.id,
+                key: row.siteId,
                 icon: <BarChart3 size={15} />,
-                label: row.site.name,
-                value: `${formatSitesPercent(row.stats.conversionRate)} · ${formatSitesCompactNumber(row.stats.conversions)}`
+                label: row.name,
+                value: `${formatSitesPercent(row.conversionRate)} · ${formatSitesCompactNumber(row.convertingVisitors)} visitantes`
               })),
               `Sin conversiones registradas en estos ${entityPluralLabel}.`
             )}
@@ -45929,17 +45737,24 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>Videos dentro de {entityPluralLabel} (muestra visible)</span>
-              <strong>{formatSitesCompactNumber(videos.length)}</strong>
+              <span>Actividad por periodo</span>
+              <strong>{analyticsSummary?.meta?.timezone || 'Zona de la cuenta'}</strong>
             </div>
-            {renderDetailRows(
-              rowsByVideoCount.slice(0, 5).map(row => ({
-                key: row.site.id,
-                icon: <Video size={15} />,
-                label: row.site.name,
-                value: `${formatSitesCompactNumber(row.videoCount)} video${row.videoCount === 1 ? '' : 's'}`
-              })),
-              `No hay videos asociados a estos ${entityPluralLabel}.`
+            {entitySeriesChart.length ? (
+              <AreaChart
+                data={entitySeriesChart}
+                height={220}
+                color="var(--accent)"
+                color2="var(--pos)"
+                showLegend
+                legendLabels={isFormsView
+                  ? { label1: 'Envíos completados', label2: 'Conversiones calificadas' }
+                  : { label1: 'Vistas', label2: 'Sesiones' }}
+                formatValue={(value) => formatSitesCompactNumber(value)}
+                formatTooltipValue={(value) => formatSitesCompactNumber(value)}
+              />
+            ) : (
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin actividad registrada en el periodo.</div>
             )}
           </div>
 
@@ -45949,13 +45764,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               <strong>{formatSitesCompactNumber(aggregateEntityCount)} {entityPluralLabel}</strong>
             </div>
             {renderDetailRows([
-              { key: 'published', icon: <CheckCircle2 size={15} />, label: 'En vivo', value: formatSitesCompactNumber(publishedCount) },
-              ...(latestUpdatedSite ? [{
-                key: 'latest',
-                icon: <CalendarDays size={15} />,
-                label: `Último cambio visible: ${latestUpdatedSite.name}`,
-                value: 'En vivo'
-              }] : [])
+              { key: 'published', icon: <CheckCircle2 size={15} />, label: 'Publicados actualmente', value: formatSitesCompactNumber(aggregateEntityCount) },
+              { key: 'active', icon: <BarChart3 size={15} />, label: 'Con actividad en el periodo', value: formatSitesCompactNumber(activeEntityCount) }
             ], `Sin elementos en vivo para estos ${entityPluralLabel}.`)}
           </div>
         </div>
@@ -45964,22 +45774,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   }
 
   const renderAggregateVideoAnalytics = () => {
-    if (analyticsSummaryError) {
-      return (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <AlertTriangle size={24} />
-          <strong>No se cargaron los datos de videos</strong>
-          <p>{analyticsSummaryError}</p>
-        </div>
-      )
-    }
-
-    if (!videos.length) {
+    if (videoInventory?.total === 0) {
       return (
         <div className={styles.sitesAnalyticsEmpty}>
           <Video size={24} />
           <strong>Sin videos en este filtro</strong>
-          <p>Cuando un sitio o formulario use un video sincronizado, aquí saldrán sus métricas agregadas.</p>
+          <p>Cuando un sitio o formulario use un video, aquí aparecerán sus métricas first-party.</p>
         </div>
       )
     }
@@ -46014,8 +45814,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   height={190}
                   color="var(--pos)"
                   showLegend={false}
-                  formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
-                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
+                  formatValue={(value) => formatSitesSeconds(value)}
+                  formatTooltipValue={(value) => `${formatSitesSeconds(value)} vistos`}
                 />
               </div>
             ) : null}
@@ -46034,32 +45834,32 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               color="var(--accent)"
               color2="var(--pos)"
               showLegend
-              legendLabels={{ label1: 'Reproducciones', label2: 'Min vistos' }}
+              legendLabels={{ label1: 'Reproducciones', label2: 'Segundos vistos' }}
               formatValue={(value) => formatSitesCompactNumber(value)}
               formatTooltipValue={(value, key) => (
                 key === 'value2'
-                  ? `${formatSitesCompactNumber(value)} min vistos`
+                  ? `${formatSitesSeconds(value)} vistos`
                   : `${formatSitesCompactNumber(value)} reproducciones`
               )}
             />
           ) : (
-            <div className={styles.sitesAnalyticsChartEmpty}>Sin reproducciones sincronizadas todavía.</div>
+            <div className={styles.sitesAnalyticsChartEmpty}>Sin ranking server-side disponible para este periodo.</div>
           )}
         </div>
 
         <div className={styles.sitesAnalyticsChartBlock}>
           <div className={styles.sitesAnalyticsChartTitle}>
             <span>Videos con más reproducciones</span>
-            <strong>{formatSitesCompactNumber(videoRowsByViews[0]?.views || 0)} top</strong>
+            <strong>{formatSitesCompactNumber(videoRowsByViews[0]?.playbackStarts ?? videoRowsByViews[0]?.plays)}</strong>
           </div>
           {renderDetailRows(
             videoRowsByViews.slice(0, 6).map(row => ({
-              key: row.key,
+              key: row.assetId || videoRankingLabel(row),
               icon: <Play size={15} />,
-              label: row.label,
-              value: `${formatSitesCompactNumber(row.views)} reproducciones`
+              label: videoRankingLabel(row),
+              value: `${formatSitesCompactNumber(row.playbackStarts ?? row.plays)} reproducciones`
             })),
-            'Sin reproducciones registradas en estos videos.'
+            'Sin ranking server-side de reproducciones disponible.'
           )}
         </div>
 
@@ -46070,42 +45870,44 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           </div>
           {renderDetailRows(
             videoRowsByWatchTime.slice(0, 6).map(row => ({
-              key: row.key,
+              key: row.assetId || videoRankingLabel(row),
               icon: <Clock3 size={15} />,
-              label: row.label,
-              value: `${formatSitesSeconds(row.watchTime)} · ${formatSitesSeconds(row.averageWatchTime)} prom.`
+              label: videoRankingLabel(row),
+              value: `${formatSitesSeconds(row.watchedSeconds)} · ${formatSitesSeconds(row.averageWatchSeconds)} prom.`
             })),
-            'Sin tiempo visto registrado.'
+            'Sin ranking server-side de tiempo visto disponible.'
           )}
         </div>
 
         <div className={styles.sitesAnalyticsChartBlock}>
           <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Orígenes con videos</span>
-            <strong>{formatSitesCompactNumber(totalVideoOrigins)}</strong>
-          </div>
-          {renderDetailRows(
-            videoOriginRows.slice(0, 6).map(row => ({
-              key: row.id,
-              icon: <LayoutTemplate size={15} />,
-              label: row.label,
-              value: `${formatSitesCompactNumber(row.count)} video${row.count === 1 ? '' : 's'}`
-            })),
-            'Sin orígenes asociados.'
-          )}
-        </div>
-
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Calidad de consumo</span>
-            <strong>{aggregateEngagementScore === null ? 'Sin interacción' : formatSitesPercent(aggregateEngagementScore)}</strong>
+            <span>Inventario del alcance</span>
+            <strong>{formatSitesCompactNumber(videoInventory?.total)} videos</strong>
           </div>
           {renderDetailRows([
-            { key: 'stream-ready', icon: <CheckCircle2 size={15} />, label: 'Videos listos en Stream', value: `${formatSitesCompactNumber(totalStreamVideos)} de ${formatSitesCompactNumber(videos.length)}` },
-            { key: 'average-watch', icon: <Flame size={15} />, label: 'Promedio visto por reproducción', value: formatSitesSeconds(aggregateAverageWatchTime) },
-            { key: 'top-average', icon: <BarChart3 size={15} />, label: videoRowsByAverageWatch[0]?.label || 'Top promedio', value: videoRowsByAverageWatch[0] ? formatSitesSeconds(videoRowsByAverageWatch[0].averageWatchTime) : 'Sin dato' },
-            { key: 'storage-only', icon: <Video size={15} />, label: 'Sólo storage / sin Stream', value: formatSitesCompactNumber(Math.max(0, videos.length - totalStreamVideos)) }
-          ], 'Sin métricas suficientes.')}
+            { key: 'origins', icon: <LayoutTemplate size={15} />, label: 'Orígenes publicados', value: formatSitesCompactNumber(videoInventory?.originsTotal) },
+            { key: 'stream-ready', icon: <CheckCircle2 size={15} />, label: 'Con Stream disponible', value: formatSitesCompactNumber(videoInventory?.streamReady) },
+            { key: 'storage-only', icon: <Video size={15} />, label: 'Sólo storage', value: formatSitesCompactNumber(videoInventory?.storageOnly) }
+          ], 'Sin inventario server-side disponible.')}
+        </div>
+
+        <div className={styles.sitesAnalyticsChartBlock}>
+          <div className={styles.sitesAnalyticsChartTitle}>
+            <span>Calidad de medición first-party</span>
+            <strong>{aggregateVideoStats?.quality?.status === 'verified'
+              ? 'Verificada'
+              : aggregateVideoStats?.quality?.status === 'mixed_legacy'
+                ? 'Cobertura parcial'
+                : aggregateVideoStats?.quality?.status === 'legacy_only'
+                  ? 'Sólo histórico heredado'
+                  : 'Sin eventos'}</strong>
+          </div>
+          {renderDetailRows([
+            { key: 'average-watch', icon: <Flame size={15} />, label: 'Promedio visto por reproducción', value: formatSitesSeconds(averageWatchTime) },
+            { key: 'timeline-reach', icon: <BarChart3 size={15} />, label: 'Alcance promedio de la línea de tiempo', value: formatSitesPercent(engagementScore) },
+            { key: 'incomplete', icon: <ArrowDown size={15} />, label: 'Reproducciones incompletas', value: formatSitesPercent(incompleteRate) },
+            { key: 'verified-events', icon: <CheckCircle2 size={15} />, label: 'Eventos verificados', value: formatSitesCompactNumber(aggregateVideoStats?.quality?.verifiedEvents) }
+          ], 'Sin métricas first-party suficientes.')}
         </div>
       </div>
     )
@@ -46116,23 +45918,9 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       return renderAggregateVideoAnalytics()
     }
 
-    if (!selectedVideo) {
+    if (loadingVideoAnalytics && !firstPartyTracking) {
       return (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <Video size={24} />
-          <strong>Video no disponible</strong>
-          <p>El video seleccionado ya no existe en este filtro. Elige otro video o vuelve a todos.</p>
-        </div>
-      )
-    }
-
-    if (!streamVideoId) {
-      return (
-        <div className={styles.sitesAnalyticsEmpty}>
-          <BarChart3 size={24} />
-          <strong>Video sin analíticas</strong>
-          <p>Este archivo existe en storage, pero todavía no tiene ID de Stream para consultar reproducciones.</p>
-        </div>
+        <Loading page="analytics" message="Cargando actividad first-party del video..." />
       )
     }
 
@@ -46146,16 +45934,26 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       )
     }
 
+    if (!firstPartyTracking) {
+      return (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <BarChart3 size={24} />
+          <strong>Sin datos first-party</strong>
+          <p>Este video todavía no tiene eventos medidos en el periodo seleccionado.</p>
+        </div>
+      )
+    }
+
     const primaryVideoMetrics = [
       { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime), hint: 'Tiempo promedio por reproducción.' },
       { key: 'viewers', icon: <Eye size={15} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers), hint: 'Personas o visitantes distintos detectados.' },
       { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del reproductor', value: formatSitesCompactNumber(videoLoads), hint: 'Veces que el reproductor quedó listo en la página.' },
-      { key: 'engagement', icon: <Flame size={15} />, label: 'Interacción promedio', value: engagementScore === null ? 'Sin dato' : formatSitesPercent(engagementScore), hint: 'Promedio del máximo visto por sesión.' },
+      { key: 'engagement', icon: <Flame size={15} />, label: 'Alcance promedio', value: formatSitesPercent(engagementScore), hint: 'Promedio del punto máximo alcanzado en la línea de tiempo.' },
       { key: 'plays', icon: <Play size={15} />, label: 'Reproducciones', value: formatSitesCompactNumber(videoViews), hint: `${formatSitesCompactNumber(videoLoads)} cargas detectadas.` },
-      { key: 'play-rate', icon: <MousePointerClick size={15} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate), hint: 'Sesiones que sí reprodujeron el video.' },
-      { key: 'completion', icon: <CheckCircle2 size={15} />, label: 'Finalización', value: completionRate === null ? 'Sin dato' : formatSitesPercent(completionRate), hint: `${firstPartySummary?.completions ?? 0} reproducciones completas.` },
-      { key: 'drop-off', icon: <ArrowDown size={15} />, label: 'Abandono', value: dropOffRate === null ? 'Sin dato' : formatSitesPercent(dropOffRate), hint: 'Promedio que se perdió antes del final.' },
-      { key: 'identified', icon: <Eye size={15} />, label: 'Contactos identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts ?? 0), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors ?? 0)} visitantes anónimos.` }
+      { key: 'play-rate', icon: <MousePointerClick size={15} />, label: 'Tasa de reproducción', value: playRate === null ? 'Sin dato' : formatSitesPercent(playRate), hint: 'Reproductores cargados que iniciaron reproducción.' },
+      { key: 'completion', icon: <CheckCircle2 size={15} />, label: 'Finalización', value: completionRate === null ? 'Sin dato' : formatSitesPercent(completionRate), hint: `${formatSitesCompactNumber(firstPartySummary?.completedPlaybacks)} reproducciones completas.` },
+      { key: 'incomplete', icon: <ArrowDown size={15} />, label: 'Sin finalización', value: formatSitesPercent(incompleteRate), hint: `${formatSitesCompactNumber(firstPartySummary?.incompletePlaybacks)} reproducciones iniciadas no registraron finalización en el periodo.` },
+      { key: 'identified', icon: <Eye size={15} />, label: 'Contactos identificados', value: formatSitesCompactNumber(firstPartySummary?.identifiedContacts), hint: `${formatSitesCompactNumber(firstPartySummary?.anonymousVisitors)} visitantes anónimos.` }
     ]
 
     return (
@@ -46172,7 +45970,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
               <div className={styles.videoDetailEngagementBlock}>
                 <div className={styles.videoDetailBreakdownTitle}>
                   <Flame size={15} />
-                  <span>Interacción del video</span>
+                  <span>Actividad first-party del video</span>
                 </div>
                 <div className={styles.videoEngagementMetricList}>
                   {primaryVideoMetrics.map(metric => (
@@ -46191,10 +45989,10 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <div className={styles.videoRetentionPanel}>
             <div className={styles.videoRetentionHeader}>
               <div>
-                <span>Curva de retención</span>
-                <strong>{retentionSegments.length ? `${formatSitesPercent(retentionSegments[retentionSegments.length - 1]?.retentionPercent || 0)} llega al final` : 'Sin datos'}</strong>
+                <span>Curva de alcance</span>
+                <strong>{reachSegments.length ? `${formatSitesPercent(reachSegments[reachSegments.length - 1]?.reachPercent)} alcanzó el último tramo` : 'Sin datos'}</strong>
               </div>
-              {loadingAnalytics && <em>Actualizando...</em>}
+              {loadingVideoAnalytics && <em>Actualizando...</em>}
             </div>
             <div className={styles.videoRetentionChart}>
               {retentionPreviewUrl ? (
@@ -46243,7 +46041,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 onLostPointerCapture={stopRetentionScrubbing}
                 onKeyDown={handleRetentionScrubKeyDown}
               >
-                {retentionSegments.length && retentionCurvePoints ? (
+                {reachSegments.length && retentionCurvePoints ? (
                   <>
                     <svg className={styles.videoRetentionCurve} viewBox="0 0 100 100" preserveAspectRatio="none">
                       <path d={retentionAreaPath} />
@@ -46259,8 +46057,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                 ) : null}
                 <span className={styles.videoRetentionPlayhead} aria-hidden="true" />
               </div>
-              {!retentionSegments.length || !retentionCurvePoints ? (
-                <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar retención.</div>
+              {!reachSegments.length || !retentionCurvePoints ? (
+                <div className={styles.videoRetentionEmptyNote}>Aún no hay suficientes reproducciones para dibujar la curva de alcance.</div>
               ) : null}
               {retentionPreviewUrl ? (
                 <div className={styles.videoRetentionControls}>
@@ -46309,13 +46107,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           <section className={styles.videoAnalyticsSection}>
             <div className={styles.videoAnalyticsSectionHeader}>
               <div>
-                <span>Mapas de calor por visitante</span>
+                <span>Actividad reciente por visitante</span>
                 <strong>{formatSitesCompactNumber(videoViewers.length)} recientes</strong>
-              </div>
-              <div className={styles.viewerHeatmapLegend}>
-                <span><i className={styles.viewerHeatmapPlayed} />Visto</span>
-                <span><i className={styles.viewerHeatmapReplayed} />Repetido</span>
-                <span><i className={styles.viewerHeatmapSkipped} />Saltado</span>
               </div>
             </div>
             {videoViewers.length ? (
@@ -46326,27 +46119,18 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                       <strong>{getSitesViewerName(viewer)}</strong>
                       <span>{getSitesViewerMeta(viewer)}</span>
                     </div>
-                    <div className={styles.viewerHeatmapTrack} aria-label={`Mapa de calor de ${getSitesViewerName(viewer)}`}>
-                      {buildSitesViewerHeatmapSegments(viewer).map(segment => (
-                        <span
-                          key={segment.index}
-                          className={
-                            segment.state === 'replayed'
-                              ? styles.viewerHeatmapReplayed
-                              : segment.state === 'played'
-                                ? styles.viewerHeatmapPlayed
-                                : styles.viewerHeatmapSkipped
-                          }
-                          title={`${segment.label}: ${segment.state === 'skipped' ? 'saltado' : segment.state === 'replayed' ? 'repetido' : 'visto'}`}
-                        />
-                      ))}
+                    <div className={styles.viewerIdentity}>
+                      <strong>{formatSitesSeconds(viewer.watchedSeconds)} vistos</strong>
+                      <span>
+                        {formatSitesCompactNumber(viewer.playbackCount)} reproducciones · {viewer.completed ? 'Finalizó' : 'Sin finalización'}
+                      </span>
                     </div>
-                    <strong className={styles.viewerProgress}>{formatSitesPercent(viewer.maxProgressPercent)}</strong>
+                    <strong className={styles.viewerProgress}>{formatSitesPercent(viewer.maxProgressPercent)} alcanzado</strong>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className={styles.sitesAnalyticsChartEmpty}>Sin visitantes identificados todavía.</div>
+              <div className={styles.sitesAnalyticsChartEmpty}>Sin actividad por visitante todavía.</div>
             )}
           </section>
         </div>
@@ -46379,8 +46163,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   height={190}
                   color="var(--pos)"
                   showLegend={false}
-                  formatValue={(value) => `${formatSitesCompactNumber(value)}m`}
-                  formatTooltipValue={(value) => `${formatSitesCompactNumber(value)} min vistos`}
+                  formatValue={(value) => formatSitesSeconds(value)}
+                  formatTooltipValue={(value) => `${formatSitesSeconds(value)} vistos`}
                 />
               </div>
             ) : null}
@@ -46390,12 +46174,35 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     )
   }
 
+  const selectedVideoDetailLoading = isVideosView && selectedVideoMode && loadingVideoAnalytics && !analytics
+  const contentError = analyticsSummaryError || (isVideosView && selectedVideoMode ? analyticsError : '')
+  const analyticsUnavailable = analyticsSummary?.meta?.status === 'unavailable'
+  const contentLoading = !contentError && (!analyticsSummary || loadingSummary || selectedVideoDetailLoading)
+  const aggregateVideoLegacyCoverage = aggregateVideoStats?.quality?.status === 'mixed_legacy' ||
+    aggregateVideoStats?.quality?.status === 'legacy_only'
+  const selectedVideoLegacyCoverage = firstPartyTracking?.quality?.status === 'mixed_legacy' ||
+    firstPartyTracking?.quality?.status === 'legacy_only'
+  const coverageWarnings = [
+    ...(analyticsSummary?.meta?.warnings || []),
+    ...(isVideosView && aggregateVideoLegacyCoverage
+      ? aggregateVideoStats.quality.warnings
+      : []),
+    ...(isVideosView && selectedVideoLegacyCoverage
+      ? firstPartyTracking.quality.warnings
+      : [])
+  ].filter((warning, index, warnings) => warning && warnings.indexOf(warning) === index)
+  const hasPartialCoverage = analyticsSummary?.meta?.status === 'partial' ||
+    (isVideosView && (aggregateVideoLegacyCoverage || selectedVideoLegacyCoverage))
+
   return (
-    <section className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`} aria-busy={loadingSiteOptions || loadingVideos || (isVideosView && loadingAnalytics)}>
+    <section
+      className={`${styles.dataPanel} ${styles.sitesAnalyticsPanel}`}
+      aria-busy={loadingSiteOptions || loadingVideos || loadingSummary || (isVideosView && loadingVideoAnalytics)}
+    >
       <div className={`${styles.builderHeader} ${styles.sitesAnalyticsHeader}`}>
         <div className={styles.sitesAnalyticsTitleBlock}>
           <h2>Analíticas</h2>
-          <p>Rendimiento individual de sitios, formularios y videos publicados en Stream.</p>
+          <p>Métricas first-party de sitios, formularios y videos publicados.</p>
         </div>
         <div className={styles.sitesAnalyticsHeaderTypePicker}>
           <TabList
@@ -46478,35 +46285,70 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         </div>
       </div>
 
-      <div className={styles.sitesAnalyticsKpis}>
-        {kpiCards.map(card => (
-          <div key={card.key}>
-            {card.icon}
-            <span>{card.label}</span>
-            <strong>{card.value}</strong>
-          </div>
-        ))}
-      </div>
-
-      <div className={styles.sitesAnalyticsScope}>
-        <strong>{scopeSiteLabel}</strong>
-        <span>{scopeDescription}</span>
-      </div>
-
-      {isVideosView ? renderVideoAnalytics() : renderEntityAnalytics()}
-      {isVideosView && !selectedVideoId && (hasPreviousVideos || hasMoreVideos) && (
-        <div className={styles.editorActions}>
-          {hasPreviousVideos && (
-            <Button variant="secondary" disabled={loadingVideos} onClick={onPreviousVideos}>
-              Videos anteriores
-            </Button>
-          )}
-          {hasMoreVideos && (
-            <Button variant="secondary" loading={loadingVideos} onClick={onNextVideos}>
-              Siguientes {sitesVideoPageSize}
-            </Button>
-          )}
+      {contentLoading ? (
+        <Loading page="analytics" message="Cargando métricas exactas..." />
+      ) : contentError ? (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <AlertTriangle size={24} />
+          <strong>No se cargaron las analíticas</strong>
+          <p>{contentError}</p>
         </div>
+      ) : analyticsUnavailable || !analyticsSummary ? (
+        <div className={styles.sitesAnalyticsEmpty}>
+          <AlertTriangle size={24} />
+          <strong>Datos no disponibles</strong>
+          <p>No hay cobertura verificable para el alcance y periodo seleccionados.</p>
+        </div>
+      ) : (
+        <>
+          {hasPartialCoverage && (
+            <div className={styles.sitesAnalyticsScope} role="status">
+              <strong>Cobertura parcial</strong>
+              <span>{coverageWarnings.join(' · ') || 'Parte del histórico no puede verificarse con el mismo nivel de precisión.'}</span>
+            </div>
+          )}
+
+          <div className={styles.sitesAnalyticsKpis}>
+            {kpiCards.map(card => (
+              <div key={card.key}>
+                {card.icon}
+                <span>{card.label}</span>
+                <strong>{card.value}</strong>
+              </div>
+            ))}
+          </div>
+
+          <div className={styles.sitesAnalyticsScope}>
+            <strong>{scopeSiteLabel}</strong>
+            <span>{scopeDescription}</span>
+          </div>
+
+          {!isVideosView && totalUnattributedConversions !== null && totalUnattributedConversions > 0 && (
+            <div className={styles.sitesAnalyticsScope} role="status">
+              <strong>Conversiones sin atribución web</strong>
+              <span>
+                {formatSitesCompactNumber(totalUnattributedConversions)} conversiones calificadas no tienen identidad web comprobable.
+                Se conservan en el total, pero no se adjudican a un visitante ni inflan la tasa.
+              </span>
+            </div>
+          )}
+
+          {isVideosView ? renderVideoAnalytics() : renderEntityAnalytics()}
+          {isVideosView && !selectedVideoId && (hasPreviousVideos || hasMoreVideos) && (
+            <div className={styles.editorActions}>
+              {hasPreviousVideos && (
+                <Button variant="secondary" disabled={loadingVideos} onClick={onPreviousVideos}>
+                  Videos anteriores
+                </Button>
+              )}
+              {hasMoreVideos && (
+                <Button variant="secondary" loading={loadingVideos} onClick={onNextVideos}>
+                  Siguientes {sitesVideoPageSize}
+                </Button>
+              )}
+            </div>
+          )}
+        </>
       )}
     </section>
   )

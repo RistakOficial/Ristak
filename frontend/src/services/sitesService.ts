@@ -295,6 +295,15 @@ export interface SitesTrackingStats {
   views: number
   visitors: number
   sessions: number
+  submissions: number
+  completedSubmissions: number
+  terminalExitSubmissions: number
+  qualifiedConversions: number
+  disqualifiedSubmissions: number
+  partialSubmissions: number
+  legacyUnknownSubmissions: number
+  convertingVisitors: number
+  unattributedConversions: number
   conversions: number
   conversionRate: number
 }
@@ -303,54 +312,231 @@ export interface SitesTrackingAggregate extends SitesTrackingStats {
   entityCount: number
 }
 
+export interface SitesTrackingSeriesPoint {
+  periodKey: string
+  views: number
+  visitors: number
+  sessions: number
+  submissions: number
+  completedSubmissions: number
+  qualifiedConversions: number
+  disqualifiedSubmissions: number
+  partialSubmissions: number
+  legacyUnknownSubmissions: number
+}
+
+export interface SitesTrackingRankingItem extends SitesTrackingStats {
+  siteId: string
+  name: string
+  updatedAt?: string | null
+}
+
 export interface SitesFormFunnelField {
   blockId: string
   label: string
   blockType: SiteBlockType
   required: boolean
   stepIndex: number
-  reachedCount: number
+  finalSubmissions: number
   answeredCount: number
-  missedCount: number
+  unansweredCount: number
   answerRate: number
-  stepCompletionRate: number
-  missedRate: number
 }
 
 export interface SitesFormFunnelAnalytics {
   siteId: string
-  starts: number
   views: number
   visitors: number
   submissions: number
+  completedSubmissions: number
+  terminalExitSubmissions: number
+  qualifiedConversions: number
+  disqualifiedSubmissions: number
+  partialSubmissions: number
+  legacyUnknownSubmissions: number
   conversionRate: number
+  measurement: 'saved_submission_answer_coverage'
   fields: SitesFormFunnelField[]
 }
 
-export type SitesVideoAnalyticsSummary = FirstPartyVideoTracking['summary']
+export interface SitesVideoAnalyticsSummary {
+  playerLoads: number
+  playbackStarts: number
+  playActions: number
+  uniqueViewers: number
+  completedPlaybacks: number
+  incompletePlaybacks: number
+  incompleteRatePercent: number | null
+  averageTimelineReachPercent: number
+  playbackSessions: number
+  playedSessions: number
+  identifiedContacts: number
+  anonymousVisitors: number
+  totalViewers: number
+  plays: number
+  watchedSeconds: number
+  avgProgressPercent: number
+  averageWatchSeconds: number
+  playRatePercent: number
+  completions: number
+  completionRatePercent: number
+  dropOffPercent: number | null
+}
 
 export interface SitesVideoAnalyticsAggregateItem extends SitesVideoAnalyticsSummary {
   assetId?: string
+  assetName?: string | null
+  assetTitle?: string | null
+  streamVideoId?: string | null
   siteId?: string
 }
 
+export interface SitesVideoAnalyticsRankingItem extends SitesVideoAnalyticsSummary {
+  assetId: string
+  assetName?: string | null
+  assetTitle?: string | null
+  streamVideoId?: string | null
+}
+
+export interface SitesVideoAnalyticsQuality {
+  source: 'first_party'
+  status: 'empty' | 'legacy_only' | 'mixed_legacy' | 'verified'
+  totalEvents: number
+  verifiedEvents: number
+  legacyEvents: number
+  adjustedTimeEvents: number
+  contextConflicts: number
+  warnings: string[]
+}
+
+export interface SitesVideoTimelineReachSegment {
+  kind: 'timeline_reach'
+  segment: number
+  startPercent: number
+  endPercent: number
+  startSeconds: number
+  endSeconds: number
+  label: string
+  eligiblePlaybacks: number
+  reachedPlaybacks: number
+  reachPercent: number
+}
+
+export type SitesFirstPartyVideoTracking = Omit<
+  FirstPartyVideoTracking,
+  'summary' | 'retentionSegments'
+> & {
+  schemaVersion: 2
+  meta: {
+    source: 'first_party'
+    status: 'empty' | 'legacy_only' | 'mixed_legacy' | 'verified'
+    timezone: string
+    startUtc: string
+    endUtc: string
+    asOf: string
+    warnings: string[]
+  }
+  quality: SitesVideoAnalyticsQuality
+  summary: SitesVideoAnalyticsSummary
+  series?: {
+    playbackStarts: StreamChartPoint[]
+    watchedSeconds: StreamChartPoint[]
+  }
+  timelineReachCurve: SitesVideoTimelineReachSegment[]
+  retentionSegments: []
+  heatmap: null
+}
+
 export interface SitesVideoAnalyticsAggregate {
-  dateFrom?: string
-  dateTo?: string
+  schemaVersion: 2
+  dateFrom: string
+  dateTo: string
+  meta: {
+    source: 'first_party'
+    status: 'empty' | 'legacy_only' | 'mixed_legacy' | 'verified'
+    timezone: string
+    startUtc?: string
+    endUtc?: string
+    asOf?: string
+    warnings: string[]
+    quality?: SitesVideoAnalyticsQuality
+  }
   summary: SitesVideoAnalyticsSummary
   viewsChart: StreamChartPoint[]
   watchTimeChart: StreamChartPoint[]
   byAssetId: Record<string, SitesVideoAnalyticsAggregateItem>
   bySiteId: Record<string, SitesVideoAnalyticsAggregateItem>
+  quality: SitesVideoAnalyticsQuality
+  topAssetsByStarts: SitesVideoAnalyticsRankingItem[]
+  topAssetsByWatch: SitesVideoAnalyticsRankingItem[]
+  series: {
+    playbackStarts: StreamChartPoint[]
+    watchedSeconds: StreamChartPoint[]
+  }
+  timelineReachCurve: SitesVideoTimelineReachSegment[]
+  heatmap: null
+  retentionSegments: []
+}
+
+export interface SitesAnalyticsMeta {
+  source: 'first_party'
+  status: 'ready' | 'partial' | 'unavailable'
+  timezone: string
+  requestedDateFrom: string
+  requestedDateTo: string
+  startUtc: string
+  endUtc: string
+  asOf: string
+  scopeMode: string
+  warnings: string[]
+}
+
+export interface SitesAnalyticsCoverage {
+  source: 'first_party'
+  status: 'ready' | 'partial' | 'unavailable'
+  legacyViewEvents: number
+  timestampAdjustedEvents: number
+  legacyUnknownSubmissions: number
+  scopeMode: string
+}
+
+export interface SitesAnalyticsInventory {
+  entities: {
+    current: number
+    activeInRange: number
+  }
+  videos: {
+    total: number
+    streamReady: number
+    storageOnly: number
+    originsTotal: number
+  }
 }
 
 export interface SitesAnalyticsSummary {
+  schemaVersion: 3
   dateFrom?: string
   dateTo?: string
+  meta: SitesAnalyticsMeta
+  coverage: SitesAnalyticsCoverage
+  inventory: SitesAnalyticsInventory
   aggregate: SitesTrackingAggregate
-  sites: Record<string, SitesTrackingStats>
-  formFunnels?: Record<string, SitesFormFunnelAnalytics>
+  series: SitesTrackingSeriesPoint[]
+  rankings: {
+    byViews: SitesTrackingRankingItem[]
+    byConversions: SitesTrackingRankingItem[]
+    byConversionRate: SitesTrackingRankingItem[]
+  }
+  bySiteId: Record<string, SitesTrackingStats>
+  sites?: Record<string, SitesTrackingStats>
+  formFunnels: Record<string, SitesFormFunnelAnalytics>
   videos: SitesVideoAnalyticsAggregate
+}
+
+export interface SitesVideoAnalyticsDetail {
+  firstPartyTracking: SitesFirstPartyVideoTracking
+  providerAnalytics?: MediaStreamAnalytics | null
+  providerAnalyticsError?: string
 }
 
 export interface SitesAnalyticsSiteScope {
@@ -371,6 +557,7 @@ export interface SitesAnalyticsSummaryInput {
   videoScope?: {
     siteType: 'sites' | 'forms' | 'videos'
     landingMode?: 'website' | 'funnel' | 'all'
+    siteId?: string
   }
   dateFrom?: string
   dateTo?: string
@@ -1542,7 +1729,7 @@ export const sitesService = {
     if (input.dateTo) params.dateTo = input.dateTo
     if (input.hourly !== undefined) params.hourly = String(input.hourly)
     if (input.viewerLimit) params.viewerLimit = String(input.viewerLimit)
-    return apiClient.get<MediaStreamAnalytics>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
+    return apiClient.get<SitesVideoAnalyticsDetail>(`/sites/video-analytics/${encodeURIComponent(assetId)}`, { params })
   },
 
   verifyDomain(domain: string) {

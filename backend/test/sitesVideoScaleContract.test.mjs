@@ -7,7 +7,10 @@ import { db } from '../src/config/database.js'
 import {
   getSitesVideoAssetsHandler
 } from '../src/controllers/sitesController.js'
-import { getVideoPlaybackAggregate } from '../src/services/videoTrackingService.js'
+import {
+  getVideoPlaybackAggregate,
+  recordVideoPlaybackEvent
+} from '../src/services/videoTrackingService.js'
 
 const sitesControllerSourceUrl = new URL('../src/controllers/sitesController.js', import.meta.url)
 const sitesFrontendSourceUrl = new URL('../../frontend/src/pages/Sites/Sites.tsx', import.meta.url)
@@ -312,32 +315,43 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
 
     for (const row of rows) {
       const timestamp = '2099-07-14T12:00:00.000Z'
-      await db.run(
-        `INSERT INTO video_playback_sessions (
-           id, playback_id, visitor_id, session_id,
-           media_asset_id, stream_video_id, site_id,
-           play_count, watched_seconds, max_progress_percent, ended,
-           first_event_at, started_at, last_event_at, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          crypto.randomUUID(),
-          `${marker}_playback_${row.suffix}`,
-          `${marker}_visitor_${row.suffix}`,
-          `${marker}_session_${row.suffix}`,
-          row.assetId,
-          `${marker}_stream_${row.suffix}`,
-          row.siteId,
-          row.plays,
-          row.watchedSeconds,
-          row.progress,
-          row.ended,
-          timestamp,
-          timestamp,
-          timestamp,
-          timestamp,
-          timestamp
-        ]
-      )
+      const playbackId = `${marker}_playback_${row.suffix}`
+      const base = {
+        visitor_id: `${marker}_visitor_${row.suffix}`,
+        session_id: `${marker}_session_${row.suffix}`
+      }
+      const record = (eventName, sequence, data = {}) => recordVideoPlaybackEvent({
+        ...base,
+        event_name: eventName,
+        ts: Date.parse(timestamp) + sequence * 1000,
+        data: {
+          event_id: `${playbackId}:${sequence}`,
+          event_sequence: sequence,
+          ingestion_version: 2,
+          playback_id: playbackId,
+          media_asset_id: row.assetId,
+          stream_video_id: `${marker}_stream_${row.suffix}`,
+          site_id: row.siteId,
+          page_id: 'page_scale',
+          block_id: `block_${row.suffix}`,
+          duration_seconds: 100,
+          ...data
+        }
+      })
+      let sequence = 1
+      await record('video_ready', sequence++)
+      for (let playIndex = 0; playIndex < row.plays; playIndex += 1) {
+        await record('video_play', sequence++)
+      }
+      await record('video_progress', sequence++, {
+        position_seconds: row.progress,
+        watched_delta_seconds: row.watchedSeconds,
+        watch_from_seconds: Math.max(0, row.progress - row.watchedSeconds),
+        watch_to_seconds: row.progress
+      })
+      if (row.ended) {
+        await record('video_ended', sequence++, { position_seconds: 100 })
+      }
     }
 
     const aggregate = await getVideoPlaybackAggregate({
@@ -347,7 +361,8 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
     })
 
     assert.equal(aggregate.summary.playbackSessions, 2)
-    assert.equal(aggregate.summary.plays, 3)
+    assert.equal(aggregate.summary.plays, 2)
+    assert.equal(aggregate.summary.playActions, 3)
     assert.equal(aggregate.summary.watchedSeconds, 30)
     assert.deepEqual(Object.keys(aggregate.byAssetId).sort(), selectedAssets.sort())
     assert.equal(aggregate.bySiteId[selectedSiteId]?.playbackSessions, 2)
@@ -364,7 +379,8 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
       breakdownAssetIds: selectedAssets
     })
     assert.equal(scopedAggregate.summary.playbackSessions, 2)
-    assert.equal(scopedAggregate.summary.plays, 3)
+    assert.equal(scopedAggregate.summary.plays, 2)
+    assert.equal(scopedAggregate.summary.playActions, 3)
     assert.deepEqual(Object.keys(scopedAggregate.byAssetId).sort(), selectedAssets.sort())
     assert.deepEqual(scopedAggregate.bySiteId, {})
 
@@ -374,7 +390,8 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
       breakdownAssetIds: [...selectedAssets, `${marker}_asset_outside`]
     })
     assert.equal(explicitScopedAggregate.summary.playbackSessions, 2)
-    assert.equal(explicitScopedAggregate.summary.plays, 3)
+    assert.equal(explicitScopedAggregate.summary.plays, 2)
+    assert.equal(explicitScopedAggregate.summary.playActions, 3)
     assert.equal(explicitScopedAggregate.byAssetId[`${marker}_asset_outside`].plays, 0)
 
     await db.run("UPDATE public_sites SET status = 'draft' WHERE id = ?", [selectedSiteId])
@@ -394,6 +411,7 @@ test('el agregado de reproducciones acepta siteIds sin enumerar los assetIds del
     })
     assert.equal(wrongModeAggregate.summary.playbackSessions, 0)
   } finally {
+    await db.run('DELETE FROM video_playback_events WHERE playback_id LIKE ?', [`${marker}_playback_%`]).catch(() => undefined)
     await db.run('DELETE FROM video_playback_sessions WHERE playback_id LIKE ?', [`${marker}_playback_%`]).catch(() => undefined)
     await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [selectedSiteId, otherSiteId]).catch(() => undefined)
   }
@@ -420,13 +438,19 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   assert.match(backendSitesSource, /cursorTimestampExpression = databaseDialect === 'postgres'/)
   assert.match(backendSitesSource, /\(\$\{timestampExpression\}\)::text/)
   assert.match(backendSitesSource, /\$\{cursorTimestampExpression\} AS cursor_created_at/)
+  assert.match(backendSitesSource, /event_sequence:\s*Math\.max\(1,\s*Math\.floor\(num\(meta\.eventSequence\)\)\)/)
+  assert.match(backendSitesSource, /const postBody = \(\) => fetch\(ENDPOINT/)
+  assert.match(backendSitesSource, /postBody\(\)\.catch\(\(\) => \{\s*postBody\(\)\.catch/s)
+  assert.match(backendSitesSource, /player\.on\('seeked', timing => emit\('video_seeked', timing \|\| \{\}, true, false, false\)\)/)
+  assert.match(backendSitesSource, /window\.addEventListener\('pagehide', \(\) => \{\s*emit\('video_progress', \{\s*seconds: state\.positionSeconds,[\s\S]*?\}, true, true, false\)/)
+  assert.match(backendSitesSource, /video\.addEventListener\('seeking', \(\) => \{[\s\S]*?emit\('video_progress', true, false, false, true\)/)
 
   const analyticsHandlerStart = controllerSource.indexOf('export async function getSitesAnalyticsSummaryHandler')
   const analyticsHandlerEnd = controllerSource.indexOf('\nexport async function ', analyticsHandlerStart + 1)
   const analyticsHandlerSource = controllerSource.slice(analyticsHandlerStart, analyticsHandlerEnd)
   const videoAggregateCall = analyticsHandlerSource.match(/getVideoPlaybackAggregate\(\{[\s\S]*?\}\)/)?.[0] || ''
   assert.match(videoAggregateCall, /siteIds:\s*body\.videoSiteIds/)
-  assert.match(videoAggregateCall, /siteScope:\s*body\.videoScope/)
+  assert.match(videoAggregateCall, /siteScope:\s*(?:body\.videoScope|videoScope)/)
   assert.match(videoAggregateCall, /breakdownAssetIds:\s*body\.videoBreakdownAssetIds/)
   assert.match(videoAggregateCall, /includeSiteBreakdown:\s*false/)
 
@@ -470,10 +494,10 @@ test('el frontend pide previews por streamVideoId y resume Sites por scope sin e
   const summaryCallEnd = frontendSource.indexOf('}, { signal: controller.signal })', summaryCallStart)
   const summaryCall = frontendSource.slice(summaryCallStart, summaryCallEnd)
   assert.match(summaryCall, /siteScope:/)
-  assert.match(summaryCall, /breakdownSiteIds:\s*analyticsBreakdownSiteIds/)
+  assert.match(summaryCall, /breakdownSiteIds:\s*sitesAnalyticsSiteId\s*\?/)
   assert.doesNotMatch(summaryCall, /siteIds:/)
   assert.match(summaryCall, /videoSiteIds:/)
   assert.match(summaryCall, /videoScope:/)
   assert.match(summaryCall, /videoBreakdownAssetIds:/)
-  assert.doesNotMatch(summaryCall, /videoAssetIds:/)
+  assert.match(summaryCall, /videoAssetIds:\s*sitesAnalyticsVideoId\s*\?/)
 })

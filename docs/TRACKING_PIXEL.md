@@ -105,8 +105,26 @@ El tracking nativo de Sites sólo debe considerarse probado en vivo cuando:
 El renderer público inyecta el runtime nativo con
 `tracking_source = 'native_site'`, contexto del Site y de la página, cookies first-party
 `ristak_vid`/`ristak_sid`, UTMs, click IDs y datos del navegador. La vista genera
-`native_site_view`; una conversión válida puede generar
-`native_site_conversion` y vincularse al contacto.
+`native_site_view` con `event_id` único; un retry conserva una sola fila por ese
+ID. El lector sólo acepta `native_site_view`/`page_view` si la fila también
+declara `tracking_source = 'native_site'`. Una conversión válida puede generar
+`native_site_conversion`, pero sólo cuando el envío es final y no quedó
+descalificado.
+
+El instante canónico de un evento nativo usa `started_at`. El backend conserva el
+timestamp original en `client_started_at`, pero si es inválido o difiere más de
+cinco minutos de la recepción marca `timestamp_adjusted = 1` y usa la hora del
+servidor. Esto evita que el reloj del dispositivo mueva tráfico a otro día sin
+ocultar la evidencia original.
+
+Analytics define visitante con `visitor_id` first-party y sesión como actividad
+continua con no más de 30 minutos entre vistas. La sesión se reconstruye desde
+los eventos del alcance; `session_id` sigue siendo una señal útil de ingesta e
+identidad, pero no es por sí solo el contador canónico.
+Una persona que convirtió sólo se atribuye por `visitor_id` o, si falta, por
+`session_id` del evento de conversión. Un `contact_id` compartido no basta para
+fusionar visitantes; la conversión queda como no atribuida si faltan ambas
+señales web.
 
 El editor y las sesiones temporales de preview usan `trackingEnabled: false`.
 También desactivan tracking los modos reservados como `no_track=1`,
@@ -176,8 +194,9 @@ es un secret y no resuelve el problema.
   por separado.
 - Una optimización que cambia cookies, storage, caché, headers, dominio público,
   renderer o rutas debe repetir las pruebas externa y nativa.
-- No cuentes filas como sesiones. Usa `COUNT(*)` para eventos y
-  `COUNT(DISTINCT session_id)` para sesiones.
+- No cuentes filas como sesiones. Los eventos se cuentan por `event_id`/fila y
+  las sesiones se reconstruyen por identidad y brechas mayores a 30 minutos.
+  `COUNT(DISTINCT session_id)` sólo sirve como diagnóstico del runtime.
 
 ### Prueba End-To-End Obligatoria
 
@@ -196,9 +215,11 @@ navegación del browser.
      responder `200`.
    - Site nativo: el `POST /collect` suele ser same-origin; que no exista
      preflight es válido.
-6. Consulta la DB y conserva `id`, `session_id`, `event_name`,
-   `tracking_source`, contexto de Site/página, `page_url` y `started_at`.
-7. Reporta por separado cantidad de eventos y cantidad de sesiones únicas.
+6. Consulta la DB y conserva `id`, `event_id`, `session_id`, `event_name`,
+   `tracking_source`, contexto de Site/página, `page_url`, `started_at`,
+   `client_started_at` y `timestamp_adjusted`.
+7. Reporta por separado cantidad de eventos y sesiones canónicas; si la consulta
+   manual sólo cuenta `session_id`, etiquétala como diagnóstico, no como KPI.
 8. Guarda una captura de la página real y, cuando sea posible, evidencia de
    Network o del resultado exacto de DB sin exponer credenciales.
 
@@ -207,24 +228,29 @@ Consulta de comprobación, reemplazando `<MARCA_UNICA>`:
 ```sql
 SELECT
   id,
+  event_id,
   session_id,
   event_name,
   tracking_source,
   site_id,
   public_page_id,
   page_url,
-  started_at
+  started_at,
+  client_started_at,
+  timestamp_adjusted
 FROM sessions
 WHERE page_url LIKE '%<MARCA_UNICA>%'
 ORDER BY started_at DESC;
 ```
 
-Conteo correcto:
+Conteo de ingesta para la marca (no sustituye la sesión canónica por inactividad):
 
 ```sql
 SELECT
-  COUNT(*) AS events,
-  COUNT(DISTINCT session_id) AS unique_sessions
+  COUNT(*) AS accepted_event_rows,
+  COUNT(DISTINCT event_id) AS idempotent_events,
+  COUNT(DISTINCT visitor_id) AS visitors,
+  COUNT(DISTINCT session_id) AS runtime_session_ids
 FROM sessions
 WHERE page_url LIKE '%<MARCA_UNICA>%';
 ```
@@ -232,6 +258,37 @@ WHERE page_url LIKE '%<MARCA_UNICA>%';
 `started_at` se guarda como instante de base de datos. Para comunicar una hora
 de negocio, conviértela con el timezone configurado y declara cuál se usó; no
 deduzcas la fecha por el reloj o timezone del navegador.
+
+### Contrato De Analíticas De Video
+
+Los eventos publicados de video usan `tracking_source = native_site_video` y
+`/video-event`. La fuente analítica es `video_playback_events`; la tabla
+`video_playback_sessions` es una proyección para Journey/identidad y no debe
+usarse para recomponer métricas históricas.
+
+En ingesta v2 son obligatorios `event_id`, `event_sequence` monotónica por
+`playback_id`, versión y hash de payload. El ledger se inserta antes de mutar la
+proyección. Un retry idéntico responde como deduplicado sin volver a sumar; el
+mismo ID o secuencia con otro payload se rechaza. El reproductor acumula
+`watched_delta_seconds` entre heartbeats y vacía el acumulado al pausar, buscar,
+terminar o salir. Saltar con seek no cuenta el tramo saltado como tiempo visto.
+
+Las definiciones canónicas son:
+
+- carga: primer `video_ready` de un playback;
+- reproducción iniciada: primer `video_play`; reanudar no suma otra;
+- tiempo visto: suma de deltas aceptados por `event_at`;
+- completada: existe `video_ended`; llegar o buscar hasta 99% no completa;
+- alcance: máximo playhead alcanzado, presentado como **Curva de alcance**, no
+  retención;
+- heatmap de intervalos: no disponible mientras no exista telemetría suficiente.
+
+El histórico previo a v2 puede sumar retries dos veces en la proyección y, al
+mismo tiempo, perder segundos o eventos repetidos en el ledger. No se debe
+backfillear una fuente desde la otra. La respuesta declara `quality` como
+`verified`, `mixed_legacy`, `legacy_only` o `empty`; cualquier valor legacy debe
+mostrarse con advertencia. Bunny u otro proveedor puede aparecer como comparación
+separada, nunca como fallback de la medición first-party.
 
 ### Matriz Rápida De Diagnóstico
 

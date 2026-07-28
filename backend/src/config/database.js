@@ -6386,7 +6386,10 @@ async function initTablesUnlocked() {
         full_name TEXT,
         email TEXT,
         event_name TEXT NOT NULL DEFAULT 'page_view',
+        event_id TEXT,
         started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        client_started_at TIMESTAMP,
+        timestamp_adjusted INTEGER DEFAULT 0,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         page_url TEXT,
@@ -6462,6 +6465,9 @@ async function initTablesUnlocked() {
 
     for (const [columnName, columnType] of [
       ['tracking_source', "TEXT DEFAULT 'external_pixel'"],
+      ['event_id', 'TEXT'],
+      ['client_started_at', 'TIMESTAMP'],
+      ['timestamp_adjusted', 'INTEGER DEFAULT 0'],
       ['site_id', 'TEXT'],
       ['site_slug', 'TEXT'],
       ['site_name', 'TEXT'],
@@ -6491,6 +6497,7 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_visitor ON sessions(visitor_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_event_id_unique ON sessions(event_id) WHERE event_id IS NOT NULL AND event_id != \'\'')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_utm ON sessions(utm_source, utm_medium, utm_campaign)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_ids ON sessions(gclid, fbclid, msclkid, ttclid)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_campaign ON sessions(campaign_id, adset_id, ad_group_id, ad_id)')
@@ -6499,6 +6506,8 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_tracking_source ON sessions(tracking_source)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site ON sessions(site_id, site_type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_site ON sessions(form_site_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site_tracking_started ON sessions(site_id, tracking_source, event_name, started_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_tracking_started ON sessions(form_site_id, tracking_source, event_name, started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_identity_hash ON sessions(identity_hash)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_device_network ON sessions(device_signature, network_signature)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_match_method ON sessions(match_method, match_confidence)')
@@ -6598,6 +6607,9 @@ async function initTablesUnlocked() {
       CREATE TABLE IF NOT EXISTS video_playback_events (
         id ${usePostgres ? 'UUID PRIMARY KEY DEFAULT gen_random_uuid()' : 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))'},
         event_id TEXT UNIQUE,
+        event_sequence INTEGER,
+        ingestion_version INTEGER DEFAULT 1,
+        payload_hash TEXT,
         playback_id TEXT NOT NULL,
         visitor_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
@@ -6608,22 +6620,48 @@ async function initTablesUnlocked() {
         stream_library_id TEXT,
         stream_video_id TEXT,
         video_provider TEXT DEFAULT 'bunny_stream',
+        tracking_source TEXT DEFAULT 'native_site_video',
+        context_verified INTEGER DEFAULT 0,
+        event_time_quality TEXT DEFAULT 'legacy',
         site_id TEXT,
         public_page_id TEXT,
         block_id TEXT,
         page_url TEXT,
 
+        watch_from_seconds REAL,
+        watch_to_seconds REAL,
         position_seconds REAL DEFAULT 0,
         duration_seconds REAL DEFAULT 0,
         progress_percent REAL DEFAULT 0,
         watched_delta_seconds REAL DEFAULT 0,
         payload_json TEXT,
+        client_event_at TIMESTAMP,
         event_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL
       )
     `)
+
+    for (const [columnName, columnType] of [
+      ['event_sequence', 'INTEGER'],
+      ['ingestion_version', 'INTEGER DEFAULT 1'],
+      ['payload_hash', 'TEXT'],
+      ['tracking_source', "TEXT DEFAULT 'native_site_video'"],
+      ['context_verified', 'INTEGER DEFAULT 0'],
+      ['event_time_quality', "TEXT DEFAULT 'legacy'"],
+      ['watch_from_seconds', 'REAL'],
+      ['watch_to_seconds', 'REAL'],
+      ['client_event_at', 'TIMESTAMP']
+    ]) {
+      try {
+        await db.run(`ALTER TABLE video_playback_events ADD COLUMN ${columnName} ${columnType}`)
+      } catch (err) {
+        if (!err.message.includes('duplicate column') && !err.message.includes('already exists')) {
+          logger.warn(`Advertencia al migrar video_playback_events.${columnName}: ${err.message}`)
+        }
+      }
+    }
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_playback ON video_playback_sessions(playback_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_sessions_contact ON video_playback_sessions(contact_id)')
@@ -6639,6 +6677,11 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_playback ON video_playback_events(playback_id, event_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_contact ON video_playback_events(contact_id, event_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_stream_video ON video_playback_events(stream_video_id, event_at)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_video_events_playback_sequence ON video_playback_events(playback_id, event_sequence) WHERE event_sequence IS NOT NULL')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_asset_time_type ON video_playback_events(media_asset_id, event_at, event_name, playback_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_site_time_type ON video_playback_events(site_id, event_at, event_name, media_asset_id, playback_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_playback_type_time ON video_playback_events(playback_id, event_name, event_at, id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_video_events_visitor_time ON video_playback_events(visitor_id, event_at, playback_id)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS tracking_identity_matches (
