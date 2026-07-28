@@ -305,6 +305,15 @@ another account.
   visual player chrome is mounted. Inline scripts, `on*` handlers and Bunny API
   credentials remain prohibited and sanitized. A standalone code-owned
   `<video>` outside this custom native-slot contract remains legacy/opaque media.
+- The native `data-rstk-native-render="ristak"` slot also exposes the complete
+  lower-control surface through `data-rstk-video-settings`: `floating` keeps a
+  detached panel, `docked` attaches an edge-to-edge lower panel, and `minimal`
+  removes the panel while preserving its controls. HTML may set the panel and
+  control colors independently from the central play button, plus width, inset,
+  height, gap, horizontal/vertical padding, border width, radius, blur and
+  shadow. These values are rendered by the same contract in the editor canvas,
+  authenticated preview URL and published site; Bunny supplies the media/HLS,
+  not the visual chrome.
 - Published/live native video blocks use validated HLS inside the same
   customizable Ristak player whenever Bunny has finished preparing it. Editor
   and preview prefer the stable Storage MP4 when one exists; Stream-only premium

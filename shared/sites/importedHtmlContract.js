@@ -183,6 +183,7 @@ const IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS = new Set([
   'videoOverlayPlay',
   'videoControlBar',
   'videoControlBarInitiallyVisible',
+  'videoControlBarShadow',
   'videoControlPlay',
   'videoControlProgress',
   'videoControlVolume',
@@ -202,7 +203,7 @@ const IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS = new Set([
 
 const IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS = Object.freeze({
   videoControlsMode: new Set(['clean', 'native', 'none']),
-  videoControlBarStyle: new Set(['floating', 'docked']),
+  videoControlBarStyle: new Set(['floating', 'docked', 'minimal']),
   videoTimelineMode: new Set(['duration', 'live_frontier']),
   videoOrientation: new Set(['auto', 'landscape', 'portrait']),
   videoPortraitWidthMode: new Set(['auto', 'fill', 'framed']),
@@ -214,6 +215,14 @@ const IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS = Object.freeze({
 
 const IMPORTED_HTML_VIDEO_PLAYER_NUMBER_RANGES = Object.freeze({
   videoControlPanelRadius: [0, 48],
+  videoControlBarWidthPercent: [40, 100],
+  videoControlBarInset: [0, 32],
+  videoControlBarHeight: [36, 72],
+  videoControlBarGap: [0, 20],
+  videoControlBarPaddingX: [0, 24],
+  videoControlBarPaddingY: [0, 18],
+  videoControlBarBorderWidth: [0, 4],
+  videoControlBarBlur: [0, 30],
   videoTrickProgressRampPercent: [5, 85],
   videoTrickProgressPeakPercent: [55, 96],
   videoPreviewStart: [0, 86400],
@@ -233,6 +242,8 @@ const IMPORTED_HTML_VIDEO_PLAYER_PAINT_KEYS = new Set([
   'videoPlayerBorderColor',
   'videoPlayerColor',
   'videoPlayColor',
+  'videoControlBarBackground',
+  'videoControlBarColor',
   'videoSoundColor'
 ])
 
@@ -397,8 +408,8 @@ export function normalizeImportedHtmlVideoPlayerManifest(value = '') {
 export const IMPORTED_HTML_VIDEO_PLAYER_RULES = Object.freeze([
   `En un slot con data-rstk-native-render="ristak" puedes declarar ${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} como un objeto JSON. Ristak aplica exactamente el mismo reproductor y las mismas opciones del editor normal; ese modo usa el player visual de Ristak y el slot queda vacío.`,
   'Visibilidad total: videoControlsMode acepta clean, native o none. En clean controla por separado videoOverlayPlay, videoControlBar, videoControlBarInitiallyVisible, videoControlPlay, videoControlProgress, videoControlTime, videoControlVolume, videoControlSpeed y videoControlSettings.',
-  'Diseño total: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoControlBarStyle (floating|docked), videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize, videoSoundColor y videoControlPanelRadius. floating crea un globo separado de los bordes; docked acopla un panel de ancho completo al borde inferior.',
-  'Pareja de color obligatoria: videoPlayerColor define el fondo común del botón play y de la barra, y videoPlayColor define sus iconos, texto y progreso. Si diseñas o cambias uno, declara y revisa ambos juntos en el mismo data-rstk-video-settings; nunca cambies uno de forma aislada. Deben pertenecer a la misma paleta y mantener contraste legible sobre frames claros y oscuros. Salvo que el usuario pida otro acento, videoSoundColor debe seguir videoPlayColor.',
+  'Diseño total de la barra nativa: videoControlBarStyle acepta floating, docked o minimal. floating crea una superficie separada de los bordes; docked la pega al borde inferior y la expande de lado a lado; minimal conserva los controles sin panel, borde, desenfoque ni sombra. Ajusta videoControlBarBackground, videoControlBarColor, videoControlBarWidthPercent, videoControlBarInset, videoControlBarHeight, videoControlBarGap, videoControlBarPaddingX, videoControlBarPaddingY, videoControlBarBorderWidth, videoControlBarBlur, videoControlBarShadow y videoControlPanelRadius. Un radio 0 produce esquinas rectas.',
+  'Diseño del marco y play: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize y videoSoundColor. videoPlayerColor/videoPlayColor siguen siendo los colores del botón principal; la barra usa sus propios colores y solo hereda esos valores cuando videoControlBarBackground/videoControlBarColor no están declarados. Mantén contraste legible sobre frames claros y oscuros.',
   'Reproducción total: configura videoMuted, videoAutoplay, videoLoop, videoAdaptiveQuality, videoDefaultSpeed, videoPreviewEnabled, videoPreviewStart, videoPreviewEnd, videoDisableEditorPlayback, videoSoundHint, videoSoundNoticeText, videoSoundNoticeHideAfter, videoTrickProgressEnabled, videoTrickProgressRampPercent y videoTrickProgressPeakPercent. videoAdaptiveQuality viene activo y deja que Bunny adapte la resolución a la conexión; false prioriza la mayor variante disponible. Autoplay siempre se normaliza a silenciado porque así lo exigen los navegadores.',
   'Línea de tiempo: videoTimelineMode acepta duration o live_frontier. duration es el reproductor normal y muestra la duración completa desde el inicio. live_frontier presenta el video como una transmisión en vivo: la barra, la duración, el porcentaje y el tiempo restante terminan en el punto máximo que esa persona ya alcanzó, muestran EN VIVO en ese borde y no revelan visualmente el futuro. En el presente la barra debe verse llena de extremo a extremo, sin pista gris, espacio vacío, duración total ni restante futuro; al retroceder, la parte atenuada representa exclusivamente el tramo ya visto que falta recorrer para volver al borde EN VIVO. Es una decisión de interfaz, no una condición de desbloqueo.',
   'Para una VSL sin futuro visible combina videoTimelineMode:"live_frontier" (o data-rstk-video-timeline-mode="live_frontier" en el slot custom) con data-rstk-video-gate-seek-policy="watched_only". El modo live_frontier solo cambia lo que se muestra; watched_only es lo que impide adelantar más allá del punto realmente visto.',
@@ -415,7 +426,7 @@ export const IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE = `<div
   data-rstk-native-id="video-principal"
   data-rstk-native-render="ristak"
   data-rstk-label="Video principal"
-  data-rstk-video-settings='{"videoControlsMode":"clean","videoControlBarStyle":"floating","videoTimelineMode":"duration","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoAdaptiveQuality":true,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoMobilePortraitCrop":true,"videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoControlBarStyle":"docked","videoTimelineMode":"duration","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarInitiallyVisible":true,"videoControlBarBackground":"rgba(0,0,0,.68)","videoControlBarColor":"#ffffff","videoControlBarWidthPercent":100,"videoControlBarInset":0,"videoControlBarHeight":50,"videoControlBarGap":6,"videoControlBarPaddingX":10,"videoControlBarPaddingY":8,"videoControlBarBorderWidth":1,"videoControlBarBlur":18,"videoControlBarShadow":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":0,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoAdaptiveQuality":true,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoMobilePortraitCrop":true,"videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
 ></div>`
 
 export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor visual de Ristak con configuración completa:') {
@@ -453,7 +464,7 @@ export const IMPORTED_HTML_CUSTOM_VIDEO_SKELETON = `<section
 >
   <video data-rstk-video-media playsinline preload="metadata" aria-label="Video principal"></video>
 
-  <div class="controles-propios">
+  <div class="controles-propios" data-rstk-video-control-bar>
     <button type="button" data-rstk-video-command="toggle">Reproducir / pausar</button>
     <button type="button" data-rstk-video-command="toggle-mute">Sonido</button>
     <div data-rstk-video-progress-track role="slider" tabindex="0" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">

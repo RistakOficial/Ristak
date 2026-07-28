@@ -1853,6 +1853,17 @@ test('declarative HTML video player settings reconcile without overwriting manua
     videoOverlayPlay: true,
     videoControlBar: true,
     videoControlBarStyle: 'docked',
+    videoControlBarBackground: 'rgba(2, 6, 23, .78)',
+    videoControlBarColor: '#e0f2fe',
+    videoControlBarWidthPercent: 100,
+    videoControlBarInset: 0,
+    videoControlBarHeight: 54,
+    videoControlBarGap: 10,
+    videoControlBarPaddingX: 12,
+    videoControlBarPaddingY: 8,
+    videoControlBarBorderWidth: 2,
+    videoControlBarBlur: 20,
+    videoControlBarShadow: false,
     videoControlProgress: false,
     videoControlVolume: false,
     videoPlayerRadius: 18,
@@ -1893,6 +1904,11 @@ test('declarative HTML video player settings reconcile without overwriting manua
     assert.equal(videoBlock.settings.videoControlProgress, false)
     assert.equal(videoBlock.settings.videoControlVolume, false)
     assert.equal(videoBlock.settings.videoControlBarStyle, 'docked')
+    assert.equal(videoBlock.settings.videoControlBarBackground, 'rgba(2, 6, 23, .78)')
+    assert.equal(videoBlock.settings.videoControlBarColor, '#e0f2fe')
+    assert.equal(videoBlock.settings.videoControlBarHeight, 54)
+    assert.equal(videoBlock.settings.videoControlBarGap, 10)
+    assert.equal(videoBlock.settings.videoControlBarShadow, false)
     assert.equal(videoBlock.settings.videoPlayShape, 'round')
     assert.equal(videoBlock.settings.videoMobilePortraitCrop, false)
     assert.equal(videoBlock.settings.responsive.tablet.mediaWidth, 72)
@@ -1967,6 +1983,11 @@ test('declarative HTML video player settings reconcile without overwriting manua
     assert.match(html, /<div class="rstk-video-progress" data-rstk-video-progress-track/)
     assert.match(html, /--rstk-video-radius:30px/)
     assert.match(html, /class="[^"]*rstk-video-control-bar-docked/)
+    assert.match(html, /--rstk-video-control-bg:rgba\(2, 6, 23, 0\.78\)/)
+    assert.match(html, /--rstk-video-control-color:#e0f2fe/)
+    assert.match(html, /--rstk-video-control-height:54px/)
+    assert.match(html, /--rstk-video-control-gap:10px/)
+    assert.match(html, /--rstk-video-control-shadow:none/)
     assert.doesNotMatch(html, /class="[^"]*rstk-video-mobile-portrait-crop/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)

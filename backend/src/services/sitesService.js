@@ -24104,7 +24104,7 @@ const DEFAULT_VIDEO_PLAY_ICON_STYLE = 'solid'
 const VIDEO_PLAY_SHAPES = new Set(['round', 'rectangle'])
 const DEFAULT_VIDEO_PLAY_SHAPE = 'rectangle'
 const VIDEO_CONTROLS_MODES = new Set(['native', 'clean', 'none'])
-const VIDEO_CONTROL_BAR_STYLES = new Set(['floating', 'docked'])
+const VIDEO_CONTROL_BAR_STYLES = new Set(['floating', 'docked', 'minimal'])
 const DEFAULT_VIDEO_CONTROL_BAR_STYLE = 'floating'
 const LEGACY_VIDEO_PLAY_SIZE = 82
 const LEGACY_VIDEO_PLAY_ICON_SIZE = 32
@@ -24119,6 +24119,24 @@ const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
 const DEFAULT_VIDEO_CONTROL_PANEL_RADIUS = 24
 const VIDEO_CONTROL_PANEL_RADIUS_MAX = 48
+const DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT = 100
+const VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN = 40
+const VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX = 100
+const DEFAULT_VIDEO_CONTROL_BAR_INSET = 12
+const VIDEO_CONTROL_BAR_INSET_MAX = 32
+const DEFAULT_VIDEO_CONTROL_BAR_HEIGHT = 46
+const VIDEO_CONTROL_BAR_HEIGHT_MIN = 36
+const VIDEO_CONTROL_BAR_HEIGHT_MAX = 72
+const DEFAULT_VIDEO_CONTROL_BAR_GAP = 6
+const VIDEO_CONTROL_BAR_GAP_MAX = 20
+const DEFAULT_VIDEO_CONTROL_BAR_PADDING_X = 8
+const VIDEO_CONTROL_BAR_PADDING_X_MAX = 24
+const DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y = 7
+const VIDEO_CONTROL_BAR_PADDING_Y_MAX = 18
+const DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH = 1
+const VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX = 4
+const DEFAULT_VIDEO_CONTROL_BAR_BLUR = 18
+const VIDEO_CONTROL_BAR_BLUR_MAX = 30
 const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
@@ -24333,6 +24351,20 @@ function normalizeVideoControlPanelRadius(settings = {}) {
 function normalizeVideoControlBarStyle(settings = {}) {
   const style = cleanString(settings.videoControlBarStyle)
   return VIDEO_CONTROL_BAR_STYLES.has(style) ? style : DEFAULT_VIDEO_CONTROL_BAR_STYLE
+}
+
+function normalizeVideoControlBarNumber(settings = {}, key = '', fallback = 0, min = 0, max = 100) {
+  const value = Number(settings[key])
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
+}
+
+function getVideoControlBarBackground(settings = {}) {
+  return normalizeCssPaint(settings.videoControlBarBackground, getVideoPlayerButtonColor(settings))
+    || getVideoPlayerButtonColor(settings)
+}
+
+function getVideoControlBarColor(settings = {}) {
+  return normalizeCssColor(settings.videoControlBarColor, getVideoPlayIconColor(settings))
 }
 
 function getVideoSoundNoticeText(settings = {}) {
@@ -24765,6 +24797,67 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const playColor = getVideoPlayIconColor(settings)
   const controlPanelRadius = normalizeVideoControlPanelRadius(settings)
   const controlBarStyle = normalizeVideoControlBarStyle(settings)
+  const controlBarBackground = getVideoControlBarBackground(settings)
+  const controlBarColor = getVideoControlBarColor(settings)
+  const controlBarWidthPercent = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarWidthPercent',
+    DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT,
+    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN,
+    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX
+  )
+  const controlBarInset = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarInset',
+    DEFAULT_VIDEO_CONTROL_BAR_INSET,
+    0,
+    VIDEO_CONTROL_BAR_INSET_MAX
+  )
+  const controlBarHeight = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarHeight',
+    DEFAULT_VIDEO_CONTROL_BAR_HEIGHT,
+    VIDEO_CONTROL_BAR_HEIGHT_MIN,
+    VIDEO_CONTROL_BAR_HEIGHT_MAX
+  )
+  const controlBarGap = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarGap',
+    DEFAULT_VIDEO_CONTROL_BAR_GAP,
+    0,
+    VIDEO_CONTROL_BAR_GAP_MAX
+  )
+  const controlBarPaddingX = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarPaddingX',
+    DEFAULT_VIDEO_CONTROL_BAR_PADDING_X,
+    0,
+    VIDEO_CONTROL_BAR_PADDING_X_MAX
+  )
+  const controlBarPaddingY = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarPaddingY',
+    DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y,
+    0,
+    VIDEO_CONTROL_BAR_PADDING_Y_MAX
+  )
+  const controlBarBorderWidth = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarBorderWidth',
+    DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH,
+    0,
+    VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX
+  )
+  const controlBarBlur = normalizeVideoControlBarNumber(
+    settings,
+    'videoControlBarBlur',
+    DEFAULT_VIDEO_CONTROL_BAR_BLUR,
+    0,
+    VIDEO_CONTROL_BAR_BLUR_MAX
+  )
+  const controlBarShadow = settings.videoControlBarShadow === false
+    ? 'none'
+    : '0 14px 36px -24px color-mix(in srgb,currentColor 35%,transparent)'
   const playShape = normalizeVideoPlayShape(settings)
   const playSize = normalizeVideoPlaySize(settings)
   const playWidth = playShape === 'rectangle' ? Math.round(playSize * 1.45) : playSize
@@ -24796,6 +24889,17 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     `--rstk-video-player-color:${escapeHtml(playerColor)}`,
     `--rstk-video-play-color:${escapeHtml(playColor)}`,
     `--rstk-video-control-radius:${escapeHtml(String(controlPanelRadius))}px`,
+    `--rstk-video-control-bg:${escapeHtml(controlBarBackground)}`,
+    `--rstk-video-control-color:${escapeHtml(controlBarColor)}`,
+    `--rstk-video-control-width:${escapeHtml(String(controlBarWidthPercent))}%`,
+    `--rstk-video-control-inset:${escapeHtml(String(controlBarInset))}px`,
+    `--rstk-video-control-height:${escapeHtml(String(controlBarHeight))}px`,
+    `--rstk-video-control-gap:${escapeHtml(String(controlBarGap))}px`,
+    `--rstk-video-control-padding-x:${escapeHtml(String(controlBarPaddingX))}px`,
+    `--rstk-video-control-padding-y:${escapeHtml(String(controlBarPaddingY))}px`,
+    `--rstk-video-control-border-width:${escapeHtml(String(controlBarBorderWidth))}px`,
+    `--rstk-video-control-blur:${escapeHtml(String(controlBarBlur))}px`,
+    `--rstk-video-control-shadow:${escapeHtml(controlBarShadow)}`,
     `--rstk-video-play-width:${escapeHtml(String(playWidth))}px`,
     `--rstk-video-play-size:${escapeHtml(String(playSize))}px`,
     `--rstk-video-play-radius:${escapeHtml(String(playRadius))}px`,
@@ -27548,10 +27652,15 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-sound-icon svg{display:block;width:22px;height:22px;flex:0 0 auto;shape-rendering:geometricPrecision}
   .rstk-video-sound-text{position:relative;z-index:1;max-width:min(260px,calc(100vw - 150px));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:1rem;font-weight:500;line-height:1.25}
   .rstk-video-is-playing .rstk-video-sound{display:none}
-  .rstk-video-control-bar{position:absolute;left:12px;right:12px;bottom:12px;z-index:4;box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;min-height:46px;border:1px solid color-mix(in srgb,currentColor 16%,transparent);border-radius:var(--rstk-video-control-radius,24px);background:var(--rstk-video-player-color,#000);color:var(--rstk-video-play-color,#fff);box-shadow:0 14px 36px -24px color-mix(in srgb,var(--rstk-video-player-color,currentColor) 88%,transparent);padding:7px 8px;backdrop-filter:blur(18px) saturate(135%);-webkit-backdrop-filter:blur(18px) saturate(135%);transition:opacity .2s ease,transform .2s ease}
-  .rstk-video-control-bar-docked .rstk-video-control-bar{left:0;right:0;bottom:0;min-height:50px;border-right:0;border-bottom:0;border-left:0;border-radius:calc(var(--rstk-video-control-radius,24px) * .5) calc(var(--rstk-video-control-radius,24px) * .5) 0 0;padding:8px 10px max(8px,env(safe-area-inset-bottom))}
-  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translateY(8px)}
-  .rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:0;pointer-events:none;transform:translateY(8px)}
+  .rstk-video-control-bar{position:absolute;left:50%;right:auto;bottom:var(--rstk-video-control-inset,12px);z-index:4;box-sizing:border-box;display:flex;align-items:center;width:min(calc(100% - var(--rstk-video-control-inset,12px) - var(--rstk-video-control-inset,12px)),max(180px,var(--rstk-video-control-width,100%)));min-width:0;min-height:var(--rstk-video-control-height,46px);gap:var(--rstk-video-control-gap,6px);border:var(--rstk-video-control-border-width,1px) solid color-mix(in srgb,currentColor 16%,transparent);border-radius:var(--rstk-video-control-radius,24px);background:var(--rstk-video-control-bg,var(--rstk-video-player-color,#000));color:var(--rstk-video-control-color,var(--rstk-video-play-color,#fff));box-shadow:var(--rstk-video-control-shadow,0 14px 36px -24px color-mix(in srgb,currentColor 35%,transparent));opacity:1;padding:var(--rstk-video-control-padding-y,7px) var(--rstk-video-control-padding-x,8px);pointer-events:auto;transform:translateX(-50%);transition:opacity .2s ease,transform .2s ease;backdrop-filter:blur(var(--rstk-video-control-blur,18px)) saturate(135%);-webkit-backdrop-filter:blur(var(--rstk-video-control-blur,18px)) saturate(135%)}
+  .rstk-video-control-bar-docked .rstk-video-control-bar{left:0;right:auto;bottom:0;width:100%;border-right:0;border-bottom:0;border-left:0;border-radius:var(--rstk-video-control-radius,24px) var(--rstk-video-control-radius,24px) 0 0;padding-bottom:max(var(--rstk-video-control-padding-y,7px),env(safe-area-inset-bottom));transform:none}
+  .rstk-video-control-bar-minimal .rstk-video-control-bar{border:0;background:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none}
+  .rstk-video-controls-hidden .rstk-video-control-bar{opacity:0;pointer-events:none;transform:translate(-50%,8px)}
+  .rstk-video-control-bar-docked.rstk-video-controls-hidden .rstk-video-control-bar{transform:translateY(8px)}
+  .rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:1;pointer-events:auto;transform:translateX(-50%)}
+  .rstk-video-control-bar-docked.rstk-video-controls-hidden .rstk-video-control-bar:focus-within{transform:none}
+  .rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within{opacity:0;pointer-events:none;transform:translate(-50%,8px)}
+  .rstk-video-control-bar-docked.rstk-video-controls-start-hidden.rstk-video-controls-hidden .rstk-video-control-bar:focus-within{transform:translateY(8px)}
   .rstk-video-control-button{flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;border:0;border-radius:999px;background:color-mix(in srgb,currentColor 12%,transparent);color:inherit;cursor:pointer;padding:0;transition:background .16s ease,transform .16s ease}
   .rstk-video-control-button:hover{background:color-mix(in srgb,currentColor 20%,transparent)}
   .rstk-video-control-button:active{transform:scale(.96)}
@@ -27585,7 +27694,7 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-settings-check{display:none;place-items:center;flex:0 0 auto}
   .rstk-video-settings-option-active .rstk-video-settings-check{display:grid}
   .rstk-video-settings-check svg{width:14px;height:14px}
-  @container (max-width:360px){.rstk-video-control-bar{gap:4px;padding-inline:6px}.rstk-video-control-bar-docked .rstk-video-control-bar{padding-inline:7px}.rstk-video-timecode{min-width:72px;font-size:.62rem}.rstk-video-settings-menu{right:-3px}}
+  @container (max-width:360px){.rstk-video-timecode{min-width:72px;font-size:.62rem}.rstk-video-settings-menu{right:-3px}}
 </style>`
 
 function buildVideoPlayerRuntimeScript() {

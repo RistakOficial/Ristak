@@ -20597,15 +20597,52 @@
   padding: 10px;
 }
 
+.videoElementPreviewBar {
+  min-height: 82px;
+  align-items: end;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--text) 82%, var(--surface)),
+      color-mix(in srgb, var(--accent) 44%, var(--text))
+    );
+}
+
 .videoElementBarSample {
-  width: min(100%, 250px);
+  width: min(
+    calc(100% - var(--video-settings-control-inset, 12px) - var(--video-settings-control-inset, 12px)),
+    max(80px, var(--video-settings-control-width, 100%))
+  );
+  min-height: var(--video-settings-control-height, 46px);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--video-settings-control-gap, 8px);
+  border: var(--video-settings-control-border-width, 1px) solid color-mix(in srgb, currentColor 16%, transparent);
   border-radius: var(--video-settings-control-radius, var(--radius-pill));
-  background: var(--video-settings-play-bg, var(--accent));
-  color: var(--video-settings-play-color, var(--on-accent));
-  padding: 7px 9px;
+  background: var(--video-settings-control-bg, var(--video-settings-play-bg, var(--accent)));
+  color: var(--video-settings-control-color, var(--video-settings-play-color, var(--on-accent)));
+  box-shadow: var(--video-settings-control-shadow, var(--shadow-pop));
+  padding: var(--video-settings-control-padding-y, 7px) var(--video-settings-control-padding-x, 9px);
+  backdrop-filter: blur(var(--video-settings-control-blur, 18px));
+  -webkit-backdrop-filter: blur(var(--video-settings-control-blur, 18px));
+}
+
+.videoElementBarSampleDocked {
+  width: calc(100% + 20px);
+  margin: 0 -10px -10px;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: var(--video-settings-control-radius, var(--radius-ctl)) var(--video-settings-control-radius, var(--radius-ctl)) 0 0;
+}
+
+.videoElementBarSampleMinimal {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .videoElementBarPlay {

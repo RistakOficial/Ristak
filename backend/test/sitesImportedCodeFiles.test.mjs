@@ -36,7 +36,18 @@ test('imported HTML video player manifest validates every supported control and 
     videoControlsMode: 'clean',
     videoOverlayPlay: false,
     videoControlBar: true,
-    videoControlBarStyle: 'docked',
+    videoControlBarStyle: 'minimal',
+    videoControlBarShadow: false,
+    videoControlBarBackground: 'rgba(2, 6, 23, .74)',
+    videoControlBarColor: '#e0f2fe',
+    videoControlBarWidthPercent: 91,
+    videoControlBarInset: 7,
+    videoControlBarHeight: 52,
+    videoControlBarGap: 9,
+    videoControlBarPaddingX: 13,
+    videoControlBarPaddingY: 10,
+    videoControlBarBorderWidth: 3,
+    videoControlBarBlur: 22,
     videoTimelineMode: 'live_frontier',
     videoControlPlay: false,
     videoControlProgress: false,
@@ -64,7 +75,18 @@ test('imported HTML video player manifest validates every supported control and 
   assert.equal(valid.valid, true)
   assert.equal(valid.settings.videoOverlayPlay, false)
   assert.equal(valid.settings.videoControlProgress, false)
-  assert.equal(valid.settings.videoControlBarStyle, 'docked')
+  assert.equal(valid.settings.videoControlBarStyle, 'minimal')
+  assert.equal(valid.settings.videoControlBarShadow, false)
+  assert.equal(valid.settings.videoControlBarBackground, 'rgba(2, 6, 23, .74)')
+  assert.equal(valid.settings.videoControlBarColor, '#e0f2fe')
+  assert.equal(valid.settings.videoControlBarWidthPercent, 91)
+  assert.equal(valid.settings.videoControlBarInset, 7)
+  assert.equal(valid.settings.videoControlBarHeight, 52)
+  assert.equal(valid.settings.videoControlBarGap, 9)
+  assert.equal(valid.settings.videoControlBarPaddingX, 13)
+  assert.equal(valid.settings.videoControlBarPaddingY, 10)
+  assert.equal(valid.settings.videoControlBarBorderWidth, 3)
+  assert.equal(valid.settings.videoControlBarBlur, 22)
   assert.equal(valid.settings.videoTimelineMode, 'live_frontier')
   assert.equal(valid.settings.videoPlaySize, 160)
   assert.equal(valid.settings.mediaWidth, 30)
@@ -74,6 +96,9 @@ test('imported HTML video player manifest validates every supported control and 
   assert.equal(valid.settings.responsive.tablet.mediaAlign, 'left')
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlProgress'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarStyle'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarBackground'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarWidthPercent'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarShadow'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoTimelineMode'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoAdaptiveQuality'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoMobilePortraitCrop'))
@@ -892,12 +917,15 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoPlayerGuide, /videoControlProgress/)
   assert.match(videoPlayerGuide, /videoControlPanelRadius/)
   assert.match(videoPlayerGuide, /videoAdaptiveQuality/)
-  assert.match(videoPlayerGuide, /videoControlBarStyle \(floating\|docked\)/)
+  assert.match(videoPlayerGuide, /videoControlBarStyle acepta floating, docked o minimal/)
   assert.match(videoPlayerGuide, /videoTimelineMode acepta duration o live_frontier/)
-  assert.match(videoPlayerGuide, /globo separado de los bordes/)
-  assert.match(videoPlayerGuide, /panel de ancho completo al borde inferior/)
-  assert.match(videoPlayerGuide, /Pareja de color obligatoria/)
-  assert.match(videoPlayerGuide, /nunca cambies uno de forma aislada/)
+  assert.match(videoPlayerGuide, /superficie separada de los bordes/)
+  assert.match(videoPlayerGuide, /expande de lado a lado/)
+  assert.match(videoPlayerGuide, /minimal conserva los controles sin panel/)
+  assert.match(videoPlayerGuide, /videoControlBarBackground/)
+  assert.match(videoPlayerGuide, /videoControlBarWidthPercent/)
+  assert.match(videoPlayerGuide, /videoControlBarShadow/)
+  assert.match(customVideoGuide, /data-rstk-video-control-bar/)
   assert.match(videoPlayerGuide, /videoMobilePortraitCrop/)
   assert.match(videoPlayerGuide, /sin modificar el archivo/)
   assert.match(videoPlayerGuide, /Una sola superficie manda/)
@@ -1020,12 +1048,15 @@ test('video design panel exposes responsive portrait sizing without storing the 
   assert.match(source, /Forma de la barra/)
   assert.match(source, /Globo flotante/)
   assert.match(source, /Panel inferior/)
+  assert.match(source, /Controles libres/)
   assert.match(source, /onPatchSettings\(\{ videoControlBarStyle: nextStyle \}\)/)
-  assert.match(source, /Fondo · botón y barra/)
-  assert.match(source, /Contraste · iconos y progreso/)
-  assert.match(source, /videoPlayerColor: value,\s+videoPlayColor: getVideoPlayIconColor\(settings\)/)
-  assert.match(source, /videoPlayerColor: getVideoPlayerButtonColor\(settings\),\s+videoPlayColor: value/)
-  assert.match(source, /se configuran como una pareja visual y deben conservar contraste legible/)
+  assert.match(source, /Fondo del panel/)
+  assert.match(source, /Controles y progreso/)
+  assert.match(source, /Ancho del panel/)
+  assert.match(source, /Separación del borde/)
+  assert.match(source, /Sombra del panel/)
+  assert.match(source, /Fondo del botón play/)
+  assert.match(source, /Icono del botón play/)
   assert.match(source, /data-rstk-video-settings-toggle/)
   assert.match(source, /aria-haspopup="menu"/)
   assert.match(source, /aria-expanded=\{settingsMenuOpen\}/)

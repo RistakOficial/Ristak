@@ -142,8 +142,14 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-overlay:focus-visible \.rstk-video-play-dot\{[^}]*filter:brightness\(\.86\)[^}]*outline:2px solid currentColor/)
   assert.match(html, /\.rstk-video-play-dot:active\{filter:brightness\(\.78\);transform:scale\(\.98\)\}/)
   assert.doesNotMatch(html, /\[data-rstk-video-command\][^{]*:hover/)
-  assert.match(html, /\.rstk-video-control-bar\{[^}]*display:flex[^}]*border-radius:var\(--rstk-video-control-radius,24px\)[^}]*background:var\(--rstk-video-player-color/)
-  assert.match(html, /\.rstk-video-control-bar\{[^}]*min-height:46px[^}]*box-shadow:0 14px 36px -24px/)
+  assert.match(html, /--rstk-video-control-bg:rgba\(15, 23, 42, 0\.72\)/)
+  assert.match(html, /--rstk-video-control-color:#f8fafc/)
+  assert.match(html, /--rstk-video-control-width:100%/)
+  assert.match(html, /--rstk-video-control-inset:12px/)
+  assert.match(html, /--rstk-video-control-height:46px/)
+  assert.match(html, /--rstk-video-control-shadow:0 14px 36px -24px color-mix\(in srgb,currentColor 35%,transparent\)/)
+  assert.match(html, /\.rstk-video-control-bar\{[^}]*display:flex[^}]*min-height:var\(--rstk-video-control-height,46px\)[^}]*border-radius:var\(--rstk-video-control-radius,24px\)[^}]*background:var\(--rstk-video-control-bg/)
+  assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:var\(--rstk-video-control-shadow/)
   assert.match(html, /data-rstk-video-toggle/)
   assert.match(html, /<button[^>]*data-rstk-video-settings-toggle[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/)
   assert.match(html, /data-rstk-video-settings-menu role="menu"[^>]*hidden/)
@@ -414,7 +420,16 @@ test('video player can dock the custom control bar to the lower edge', async () 
     videoControlsMode: 'clean',
     videoControlBar: true,
     videoControlBarStyle: 'docked',
-    videoControlPanelRadius: 18
+    videoControlPanelRadius: 0,
+    videoControlBarBackground: 'rgba(2, 6, 23, .82)',
+    videoControlBarColor: '#bae6fd',
+    videoControlBarHeight: 58,
+    videoControlBarGap: 11,
+    videoControlBarPaddingX: 14,
+    videoControlBarPaddingY: 9,
+    videoControlBarBorderWidth: 2,
+    videoControlBarBlur: 24,
+    videoControlBarShadow: false
   }), {
     pageId: 'page-1',
     trackingEnabled: false,
@@ -424,9 +439,44 @@ test('video player can dock the custom control bar to the lower edge', async () 
 
   assert.match(signature.classes, /\brstk-video-control-bar-docked\b/)
   assert.doesNotMatch(signature.classes, /\brstk-video-control-bar-floating\b/)
+  assert.match(signature.style, /--rstk-video-control-bg:rgba\(2, 6, 23, 0\.82\)/)
+  assert.match(signature.style, /--rstk-video-control-color:#bae6fd/)
+  assert.match(signature.style, /--rstk-video-control-height:58px/)
+  assert.match(signature.style, /--rstk-video-control-gap:11px/)
+  assert.match(signature.style, /--rstk-video-control-padding-x:14px/)
+  assert.match(signature.style, /--rstk-video-control-padding-y:9px/)
+  assert.match(signature.style, /--rstk-video-control-border-width:2px/)
+  assert.match(signature.style, /--rstk-video-control-blur:24px/)
+  assert.match(signature.style, /--rstk-video-control-shadow:none/)
+  assert.match(signature.style, /--rstk-video-control-radius:0px/)
   assert.match(
     html,
-    /\.rstk-video-control-bar-docked \.rstk-video-control-bar\{[^}]*left:0[^}]*right:0[^}]*bottom:0[^}]*min-height:50px[^}]*border-right:0[^}]*border-bottom:0[^}]*border-left:0[^}]*border-radius:calc\(var\(--rstk-video-control-radius,24px\) \* \.5\) calc\(var\(--rstk-video-control-radius,24px\) \* \.5\) 0 0/
+    /\.rstk-video-control-bar-docked \.rstk-video-control-bar\{[^}]*left:0[^}]*right:auto[^}]*bottom:0[^}]*width:100%[^}]*border-right:0[^}]*border-bottom:0[^}]*border-left:0[^}]*border-radius:var\(--rstk-video-control-radius,24px\) var\(--rstk-video-control-radius,24px\) 0 0/
+  )
+})
+
+test('video player can remove the native control panel without losing its controls', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoControlBar: true,
+    videoControlBarStyle: 'minimal',
+    videoControlBarWidthPercent: 72,
+    videoControlBarInset: 4
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.classes, /\brstk-video-control-bar-minimal\b/)
+  assert.equal(signature.hasControlBar, true)
+  assert.equal(signature.hasPlayControl, true)
+  assert.match(signature.style, /--rstk-video-control-width:72%/)
+  assert.match(signature.style, /--rstk-video-control-inset:4px/)
+  assert.match(
+    html,
+    /\.rstk-video-control-bar-minimal \.rstk-video-control-bar\{border:0;background:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none\}/
   )
 })
 

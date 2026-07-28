@@ -1139,7 +1139,8 @@ const videoPlayShapeOptions = [
 type VideoPlayShape = typeof videoPlayShapeOptions[number]['value']
 const videoControlBarStyleOptions = [
   { value: 'floating', label: 'Globo flotante' },
-  { value: 'docked', label: 'Panel inferior' }
+  { value: 'docked', label: 'Panel inferior · borde a borde' },
+  { value: 'minimal', label: 'Controles libres · sin panel' }
 ] as const
 type VideoControlBarStyle = typeof videoControlBarStyleOptions[number]['value']
 const videoSoundNoticeDurationOptions = [
@@ -1178,6 +1179,14 @@ const DEFAULT_VIDEO_PLAY_ICON_SIZE = 95
 const DEFAULT_VIDEO_PLAY_RADIUS = 0
 const VIDEO_PLAY_RECTANGLE_RADIUS_MAX = 90
 const DEFAULT_VIDEO_CONTROL_PANEL_RADIUS = 24
+const DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT = 100
+const DEFAULT_VIDEO_CONTROL_BAR_INSET = 12
+const DEFAULT_VIDEO_CONTROL_BAR_HEIGHT = 46
+const DEFAULT_VIDEO_CONTROL_BAR_GAP = 6
+const DEFAULT_VIDEO_CONTROL_BAR_PADDING_X = 8
+const DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y = 7
+const DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH = 1
+const DEFAULT_VIDEO_CONTROL_BAR_BLUR = 18
 const DEFAULT_VIDEO_TRICK_PROGRESS_RAMP_PERCENT = 35
 const DEFAULT_VIDEO_TRICK_PROGRESS_PEAK_PERCENT = 88
 const VIDEO_CONTROLS_IDLE_MS = 2600
@@ -1187,6 +1196,16 @@ const VIDEO_PLAY_SIZE_MAX = 160
 const VIDEO_PLAY_ICON_SIZE_MIN = 18
 const VIDEO_PLAY_ICON_SIZE_MAX = 95
 const VIDEO_CONTROL_PANEL_RADIUS_MAX = 48
+const VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN = 40
+const VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX = 100
+const VIDEO_CONTROL_BAR_INSET_MAX = 32
+const VIDEO_CONTROL_BAR_HEIGHT_MIN = 36
+const VIDEO_CONTROL_BAR_HEIGHT_MAX = 72
+const VIDEO_CONTROL_BAR_GAP_MAX = 20
+const VIDEO_CONTROL_BAR_PADDING_X_MAX = 24
+const VIDEO_CONTROL_BAR_PADDING_Y_MAX = 18
+const VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX = 4
+const VIDEO_CONTROL_BAR_BLUR_MAX = 30
 const VIDEO_TRICK_PROGRESS_RAMP_MIN = 5
 const VIDEO_TRICK_PROGRESS_RAMP_MAX = 85
 const VIDEO_TRICK_PROGRESS_PEAK_MIN = 55
@@ -1221,6 +1240,15 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlSettings: true,
   videoControlTime: true,
   videoControlPanelRadius: DEFAULT_VIDEO_CONTROL_PANEL_RADIUS,
+  videoControlBarWidthPercent: DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT,
+  videoControlBarInset: DEFAULT_VIDEO_CONTROL_BAR_INSET,
+  videoControlBarHeight: DEFAULT_VIDEO_CONTROL_BAR_HEIGHT,
+  videoControlBarGap: DEFAULT_VIDEO_CONTROL_BAR_GAP,
+  videoControlBarPaddingX: DEFAULT_VIDEO_CONTROL_BAR_PADDING_X,
+  videoControlBarPaddingY: DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y,
+  videoControlBarBorderWidth: DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH,
+  videoControlBarBlur: DEFAULT_VIDEO_CONTROL_BAR_BLUR,
+  videoControlBarShadow: true,
   videoTrickProgressEnabled: false,
   videoTrickProgressRampPercent: DEFAULT_VIDEO_TRICK_PROGRESS_RAMP_PERCENT,
   videoTrickProgressPeakPercent: DEFAULT_VIDEO_TRICK_PROGRESS_PEAK_PERCENT,
@@ -4034,6 +4062,12 @@ const getVideoControlBarStyle = (settings: Record<string, unknown>): VideoContro
   const rawStyle = getSettingString(settings, 'videoControlBarStyle')
   return isVideoControlBarStyle(rawStyle) ? rawStyle : DEFAULT_VIDEO_CONTROL_BAR_STYLE
 }
+
+const getVideoControlBarBackground = (settings: Record<string, unknown>) =>
+  getSettingString(settings, 'videoControlBarBackground') || getVideoPlayerButtonColor(settings)
+
+const getVideoControlBarColor = (settings: Record<string, unknown>) =>
+  getSettingString(settings, 'videoControlBarColor') || getVideoPlayIconColor(settings)
 
 const shouldShowVideoControlBar = (settings: Record<string, unknown>) =>
   settings.videoControlBar !== false
@@ -31008,10 +31042,48 @@ const VideoSettingsElementPreview: React.FC<{
   const showControlSettings = shouldShowVideoControlSettings(settings)
   const showControlTime = shouldShowVideoControlTime(settings)
   const controlPanelRadius = `${getVideoControlPanelRadiusValue(settings)}px`
+  const controlBarStyle = getVideoControlBarStyle(settings)
+  const controlBarWidth = `${getSettingNumber(
+    settings,
+    'videoControlBarWidthPercent',
+    DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT,
+    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN,
+    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX
+  )}%`
+  const controlBarInset = `${getSettingNumber(
+    settings,
+    'videoControlBarInset',
+    DEFAULT_VIDEO_CONTROL_BAR_INSET,
+    0,
+    VIDEO_CONTROL_BAR_INSET_MAX
+  )}px`
+  const controlBarHeight = `${getSettingNumber(
+    settings,
+    'videoControlBarHeight',
+    DEFAULT_VIDEO_CONTROL_BAR_HEIGHT,
+    VIDEO_CONTROL_BAR_HEIGHT_MIN,
+    VIDEO_CONTROL_BAR_HEIGHT_MAX
+  )}px`
+  const controlBarGap = `${getSettingNumber(settings, 'videoControlBarGap', DEFAULT_VIDEO_CONTROL_BAR_GAP, 0, VIDEO_CONTROL_BAR_GAP_MAX)}px`
+  const controlBarPaddingX = `${getSettingNumber(settings, 'videoControlBarPaddingX', DEFAULT_VIDEO_CONTROL_BAR_PADDING_X, 0, VIDEO_CONTROL_BAR_PADDING_X_MAX)}px`
+  const controlBarPaddingY = `${getSettingNumber(settings, 'videoControlBarPaddingY', DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y, 0, VIDEO_CONTROL_BAR_PADDING_Y_MAX)}px`
+  const controlBarBorderWidth = `${getSettingNumber(
+    settings,
+    'videoControlBarBorderWidth',
+    DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH,
+    0,
+    VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX
+  )}px`
+  const controlBarBlur = `${getSettingNumber(settings, 'videoControlBarBlur', DEFAULT_VIDEO_CONTROL_BAR_BLUR, 0, VIDEO_CONTROL_BAR_BLUR_MAX)}px`
+  const controlBarClassName = [
+    styles.videoElementBarSample,
+    controlBarStyle === 'docked' ? styles.videoElementBarSampleDocked : '',
+    controlBarStyle === 'minimal' ? styles.videoElementBarSampleMinimal : ''
+  ].filter(Boolean).join(' ')
 
   return (
     <div
-      className={styles.videoElementPreview}
+      className={`${styles.videoElementPreview} ${type === 'bar' ? styles.videoElementPreviewBar : ''}`}
       style={{
         ['--video-settings-play-bg' as string]: playerColor,
         ['--video-settings-play-color' as string]: playColor,
@@ -31020,11 +31092,22 @@ const VideoSettingsElementPreview: React.FC<{
         ['--video-settings-play-radius' as string]: playRadius,
         ['--video-settings-play-icon-size' as string]: `${Math.max(1, Math.round(playIconSizeValue * playPreviewScale))}px`,
         ['--video-settings-control-radius' as string]: controlPanelRadius,
+        ['--video-settings-control-width' as string]: controlBarWidth,
+        ['--video-settings-control-inset' as string]: controlBarInset,
+        ['--video-settings-control-height' as string]: controlBarHeight,
+        ['--video-settings-control-gap' as string]: controlBarGap,
+        ['--video-settings-control-padding-x' as string]: controlBarPaddingX,
+        ['--video-settings-control-padding-y' as string]: controlBarPaddingY,
+        ['--video-settings-control-border-width' as string]: controlBarBorderWidth,
+        ['--video-settings-control-blur' as string]: controlBarBlur,
+        ['--video-settings-control-bg' as string]: getVideoControlBarBackground(settings),
+        ['--video-settings-control-color' as string]: getVideoControlBarColor(settings),
+        ['--video-settings-control-shadow' as string]: settings.videoControlBarShadow === false ? 'none' : 'var(--shadow-pop)',
         ['--video-settings-sound-color' as string]: soundColor
       } as React.CSSProperties}
     >
       {type === 'bar' && (
-        <span className={styles.videoElementBarSample}>
+        <span className={controlBarClassName}>
           {showControlPlay && <span className={styles.videoElementBarPlay}><Play size={11} fill="currentColor" /></span>}
           {settings.videoControlProgress !== false && <i />}
           {showControlTime && <em>0:12 / -2:18</em>}
@@ -31068,6 +31151,7 @@ const VideoPlayerSettingsControls: React.FC<{
   const showPlaybackSections = sections === 'all' || sections === 'playback'
   const showChromeSections = sections === 'all' || sections === 'chrome'
   const showCustomControlBar = shouldShowVideoControlBar(settings)
+  const controlBarStyle = getVideoControlBarStyle(settings)
   const playShape = getVideoPlayShape(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
   const trickProgressEnabled = timelineMode !== 'live_frontier' && settings.videoTrickProgressEnabled === true
@@ -31416,7 +31500,7 @@ const VideoPlayerSettingsControls: React.FC<{
             <label className={styles.field}>
               <span>Forma de la barra</span>
               <CustomSelect
-                value={getVideoControlBarStyle(settings)}
+                value={controlBarStyle}
                 disabled={!showCustomControlBar}
                 onChange={(event) => {
                   const nextStyle = isVideoControlBarStyle(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROL_BAR_STYLE
@@ -31429,6 +31513,129 @@ const VideoPlayerSettingsControls: React.FC<{
                 ))}
               </CustomSelect>
             </label>
+            <p className={styles.muted}>
+              Flotante conserva separación alrededor; Panel inferior ocupa todo el borde; Controles libres elimina fondo, borde, blur y sombra.
+            </p>
+            <div className={styles.twoColumn}>
+              <ColorField
+                label="Fondo del panel"
+                value={getVideoControlBarBackground(settings)}
+                allowGradient={false}
+                onChange={(value) => onPatchSettings({ videoControlBarBackground: value })}
+                onCommit={onSave}
+              />
+              <ColorField
+                label="Controles y progreso"
+                value={getVideoControlBarColor(settings)}
+                allowGradient={false}
+                onChange={(value) => onPatchSettings({ videoControlBarColor: value })}
+                onCommit={onSave}
+              />
+            </div>
+            {controlBarStyle !== 'docked' ? (
+              <div className={styles.twoColumn}>
+                <VideoDimensionSliderField
+                  label="Ancho del panel"
+                  value={getSettingNumber(
+                    settings,
+                    'videoControlBarWidthPercent',
+                    DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT,
+                    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN,
+                    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX
+                  )}
+                  min={VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN}
+                  max={VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX}
+                  unit="%"
+                  onChange={(value) => onPatchSettings({ videoControlBarWidthPercent: value })}
+                  onCommit={onSave}
+                />
+                <VideoDimensionSliderField
+                  label="Separación del borde"
+                  value={getSettingNumber(settings, 'videoControlBarInset', DEFAULT_VIDEO_CONTROL_BAR_INSET, 0, VIDEO_CONTROL_BAR_INSET_MAX)}
+                  min={0}
+                  max={VIDEO_CONTROL_BAR_INSET_MAX}
+                  onChange={(value) => onPatchSettings({ videoControlBarInset: value })}
+                  onCommit={onSave}
+                />
+              </div>
+            ) : (
+              <p className={styles.muted}>El panel inferior queda integrado al borde y usa automáticamente todo el ancho.</p>
+            )}
+            <div className={styles.twoColumn}>
+              <VideoDimensionSliderField
+                label="Altura mínima"
+                value={getSettingNumber(settings, 'videoControlBarHeight', DEFAULT_VIDEO_CONTROL_BAR_HEIGHT, VIDEO_CONTROL_BAR_HEIGHT_MIN, VIDEO_CONTROL_BAR_HEIGHT_MAX)}
+                min={VIDEO_CONTROL_BAR_HEIGHT_MIN}
+                max={VIDEO_CONTROL_BAR_HEIGHT_MAX}
+                onChange={(value) => onPatchSettings({ videoControlBarHeight: value })}
+                onCommit={onSave}
+              />
+              <VideoDimensionSliderField
+                label="Espacio entre controles"
+                value={getSettingNumber(settings, 'videoControlBarGap', DEFAULT_VIDEO_CONTROL_BAR_GAP, 0, VIDEO_CONTROL_BAR_GAP_MAX)}
+                min={0}
+                max={VIDEO_CONTROL_BAR_GAP_MAX}
+                onChange={(value) => onPatchSettings({ videoControlBarGap: value })}
+                onCommit={onSave}
+              />
+            </div>
+            <div className={styles.twoColumn}>
+              <VideoDimensionSliderField
+                label="Relleno horizontal"
+                value={getSettingNumber(settings, 'videoControlBarPaddingX', DEFAULT_VIDEO_CONTROL_BAR_PADDING_X, 0, VIDEO_CONTROL_BAR_PADDING_X_MAX)}
+                min={0}
+                max={VIDEO_CONTROL_BAR_PADDING_X_MAX}
+                onChange={(value) => onPatchSettings({ videoControlBarPaddingX: value })}
+                onCommit={onSave}
+              />
+              <VideoDimensionSliderField
+                label="Relleno vertical"
+                value={getSettingNumber(settings, 'videoControlBarPaddingY', DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y, 0, VIDEO_CONTROL_BAR_PADDING_Y_MAX)}
+                min={0}
+                max={VIDEO_CONTROL_BAR_PADDING_Y_MAX}
+                onChange={(value) => onPatchSettings({ videoControlBarPaddingY: value })}
+                onCommit={onSave}
+              />
+            </div>
+            {controlBarStyle !== 'minimal' && (
+              <>
+                <div className={styles.twoColumn}>
+                  <VideoDimensionSliderField
+                    label="Grosor del borde"
+                    value={getSettingNumber(
+                      settings,
+                      'videoControlBarBorderWidth',
+                      DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH,
+                      0,
+                      VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX
+                    )}
+                    min={0}
+                    max={VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX}
+                    onChange={(value) => onPatchSettings({ videoControlBarBorderWidth: value })}
+                    onCommit={onSave}
+                  />
+                  <VideoDimensionSliderField
+                    label="Desenfoque"
+                    value={getSettingNumber(settings, 'videoControlBarBlur', DEFAULT_VIDEO_CONTROL_BAR_BLUR, 0, VIDEO_CONTROL_BAR_BLUR_MAX)}
+                    min={0}
+                    max={VIDEO_CONTROL_BAR_BLUR_MAX}
+                    onChange={(value) => onPatchSettings({ videoControlBarBlur: value })}
+                    onCommit={onSave}
+                  />
+                </div>
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={settings.videoControlBarShadow !== false}
+                    onChange={(event) => {
+                      onPatchSettings({ videoControlBarShadow: event.target.checked })
+                      window.setTimeout(onSave, 0)
+                    }}
+                  />
+                  <span>Sombra del panel</span>
+                </label>
+              </>
+            )}
             <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
@@ -31668,7 +31875,7 @@ const VideoPlayerSettingsControls: React.FC<{
             )}
             <div className={styles.twoColumn}>
               <ColorField
-                label="Fondo · botón y barra"
+                label="Fondo del botón play"
                 value={getVideoPlayerButtonColor(settings)}
                 allowGradient={false}
                 onChange={(value) => onPatchSettings({
@@ -31678,7 +31885,7 @@ const VideoPlayerSettingsControls: React.FC<{
                 onCommit={onSave}
               />
               <ColorField
-                label="Contraste · iconos y progreso"
+                label="Icono del botón play"
                 value={getVideoPlayIconColor(settings)}
                 allowGradient={false}
                 onChange={(value) => onPatchSettings({
@@ -31688,7 +31895,7 @@ const VideoPlayerSettingsControls: React.FC<{
                 onCommit={onSave}
               />
             </div>
-            <p className={styles.muted}>El fondo del reproductor y el ícono de play se configuran como una pareja visual y deben conservar contraste legible.</p>
+            <p className={styles.muted}>El fondo del botón play y su ícono se configuran como una pareja visual y deben conservar contraste legible.</p>
             <div className={styles.twoColumn}>
               <VideoDimensionSliderField
                 label="Tamaño del play"
@@ -37396,6 +37603,37 @@ const VideoPlayerPreview: React.FC<{
   const playerColor = getVideoPlayerButtonColor(settings)
   const playColor = getVideoPlayIconColor(settings)
   const controlPanelRadius = `${getVideoControlPanelRadiusValue(settings)}px`
+  const controlBarBackground = getVideoControlBarBackground(settings)
+  const controlBarColor = getVideoControlBarColor(settings)
+  const controlBarWidth = `${getSettingNumber(
+    settings,
+    'videoControlBarWidthPercent',
+    DEFAULT_VIDEO_CONTROL_BAR_WIDTH_PERCENT,
+    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MIN,
+    VIDEO_CONTROL_BAR_WIDTH_PERCENT_MAX
+  )}%`
+  const controlBarInset = `${getSettingNumber(settings, 'videoControlBarInset', DEFAULT_VIDEO_CONTROL_BAR_INSET, 0, VIDEO_CONTROL_BAR_INSET_MAX)}px`
+  const controlBarHeight = `${getSettingNumber(
+    settings,
+    'videoControlBarHeight',
+    DEFAULT_VIDEO_CONTROL_BAR_HEIGHT,
+    VIDEO_CONTROL_BAR_HEIGHT_MIN,
+    VIDEO_CONTROL_BAR_HEIGHT_MAX
+  )}px`
+  const controlBarGap = `${getSettingNumber(settings, 'videoControlBarGap', DEFAULT_VIDEO_CONTROL_BAR_GAP, 0, VIDEO_CONTROL_BAR_GAP_MAX)}px`
+  const controlBarPaddingX = `${getSettingNumber(settings, 'videoControlBarPaddingX', DEFAULT_VIDEO_CONTROL_BAR_PADDING_X, 0, VIDEO_CONTROL_BAR_PADDING_X_MAX)}px`
+  const controlBarPaddingY = `${getSettingNumber(settings, 'videoControlBarPaddingY', DEFAULT_VIDEO_CONTROL_BAR_PADDING_Y, 0, VIDEO_CONTROL_BAR_PADDING_Y_MAX)}px`
+  const controlBarBorderWidth = `${getSettingNumber(
+    settings,
+    'videoControlBarBorderWidth',
+    DEFAULT_VIDEO_CONTROL_BAR_BORDER_WIDTH,
+    0,
+    VIDEO_CONTROL_BAR_BORDER_WIDTH_MAX
+  )}px`
+  const controlBarBlur = `${getSettingNumber(settings, 'videoControlBarBlur', DEFAULT_VIDEO_CONTROL_BAR_BLUR, 0, VIDEO_CONTROL_BAR_BLUR_MAX)}px`
+  const controlBarShadow = settings.videoControlBarShadow === false
+    ? 'none'
+    : '0 14px 36px -24px color-mix(in srgb, currentColor 35%, transparent)'
   const playShape = getVideoPlayShape(settings)
   const playSizeValue = getVideoPlaySizeValue(settings)
   const playSize = `${playSizeValue}px`
@@ -38363,6 +38601,17 @@ const VideoPlayerPreview: React.FC<{
         ['--rstk-video-player-color' as string]: playerColor,
         ['--rstk-video-play-color' as string]: playColor,
         ['--rstk-video-control-radius' as string]: controlPanelRadius,
+        ['--rstk-video-control-bg' as string]: controlBarBackground,
+        ['--rstk-video-control-color' as string]: controlBarColor,
+        ['--rstk-video-control-width' as string]: controlBarWidth,
+        ['--rstk-video-control-inset' as string]: controlBarInset,
+        ['--rstk-video-control-height' as string]: controlBarHeight,
+        ['--rstk-video-control-gap' as string]: controlBarGap,
+        ['--rstk-video-control-padding-x' as string]: controlBarPaddingX,
+        ['--rstk-video-control-padding-y' as string]: controlBarPaddingY,
+        ['--rstk-video-control-border-width' as string]: controlBarBorderWidth,
+        ['--rstk-video-control-blur' as string]: controlBarBlur,
+        ['--rstk-video-control-shadow' as string]: controlBarShadow,
         ['--rstk-video-play-width' as string]: playWidth,
         ['--rstk-video-play-size' as string]: playSize,
         ['--rstk-video-play-radius' as string]: playRadius,

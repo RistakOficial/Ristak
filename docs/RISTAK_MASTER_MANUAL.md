@@ -5613,7 +5613,8 @@ controles falsos. Sus grupos de control son:
 
 - Visibilidad: `videoControlsMode` (`clean`, `native` o `none`),
   `videoOverlayPlay`, `videoControlBar`,
-  `videoControlBarStyle` (`floating` o `docked`),
+  `videoControlBarStyle` (`floating`, `docked` o `minimal`),
+  `videoControlBarShadow`,
   `videoControlBarInitiallyVisible`, `videoControlPlay`,
   `videoControlProgress`, `videoControlTime`, `videoControlVolume`,
   `videoControlSpeed` y `videoControlSettings`.
@@ -5633,20 +5634,32 @@ controles falsos. Sus grupos de control son:
   elementos solicitados no se eliminan para hacer caber la barra: el layout
   reduce espacios y tipografía de forma fluida, mantiene centros y alturas
   comunes, y conserva botón, progreso, tiempo, volumen y configuración dentro
-  del frame tanto en `floating` como en `docked`.
-- Diseño: fondo, borde y radio del frame; color y radio del panel; color, forma,
-  radio, tamaño, estilo e icono del play; y color del aviso de sonido mediante
+  del frame en las tres superficies.
+- Diseño: fondo, borde y radio del frame; superficie, color, dimensiones y
+  espaciado independientes de la barra; color, forma, radio, tamaño, estilo e
+  icono del play; y color del aviso de sonido mediante
   `videoPlayerBackground`, `videoPlayerRadius`, `videoPlayerBorderColor`,
-  `videoPlayerBorderWidth`, `videoPlayerColor`, `videoControlPanelRadius`,
+  `videoPlayerBorderWidth`, `videoPlayerColor`, `videoControlBarBackground`,
+  `videoControlBarColor`, `videoControlBarWidthPercent`,
+  `videoControlBarInset`, `videoControlBarHeight`, `videoControlBarGap`,
+  `videoControlBarPaddingX`, `videoControlBarPaddingY`,
+  `videoControlBarBorderWidth`, `videoControlBarBlur`,
+  `videoControlBarShadow`, `videoControlPanelRadius`,
   `videoPlayColor`, `videoPlayShape`, `videoPlayRadius`, `videoPlaySize`,
   `videoPlayIconStyle`, `videoPlayIconSize` y `videoSoundColor`.
   `videoControlBarStyle=floating` separa la barra de los bordes como un globo;
   `docked` la convierte en un panel de ancho completo acoplado al borde
-  inferior. `videoPlayerColor` es el fondo compartido por la barra y el botón
-  central, mientras `videoPlayColor` gobierna iconos, texto y progreso. Las
-  reglas de creación y edición por IA deben declarar y revisar siempre ambos
-  colores juntos, como una sola pareja de diseño con contraste legible; no
-  pueden cambiar uno aisladamente. `videoSoundColor` sigue normalmente a
+  inferior; `minimal` elimina la superficie, borde, blur y sombra sin quitar
+  los controles. El radio `0` produce esquinas rectas y `docked` siempre llega
+  a ambos extremos del video. En `floating` y `minimal`, ancho e inset permiten
+  decidir cuánto ocupa y qué tan separado queda del borde. Alto, separación
+  entre controles, padding, borde, blur y sombra se aplican igual en canvas,
+  preview por URL y sitio publicado.
+  `videoPlayerColor` y `videoPlayColor` pertenecen al botón central.
+  `videoControlBarBackground` y `videoControlBarColor` controlan la barra y
+  heredan los colores del play únicamente cuando no se declaran. Las reglas de
+  creación y edición por IA deben mantener contraste legible entre cada fondo y
+  sus controles. `videoSoundColor` sigue normalmente a
   `videoPlayColor`, salvo que el usuario solicite un acento distinto. El play
   central que genera Ristak se oscurece sutilmente al pasar un mouse, responde
   al foco de teclado y se comprime al presionarlo, con el mismo comportamiento
@@ -5707,7 +5720,7 @@ Ejemplo:
   data-rstk-native-element="video"
   data-rstk-native-id="video-principal"
   data-rstk-label="Video principal"
-  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarStyle":"floating","videoControlPlay":true,"videoControlProgress":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayShape":"round","videoPlaySize":96,"videoPlayColor":"#fff","videoMuted":true,"videoAutoplay":false,"videoOrientation":"auto","videoMobilePortraitCrop":true,"responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarStyle":"docked","videoControlBarBackground":"rgba(0,0,0,.68)","videoControlBarColor":"#fff","videoControlBarHeight":50,"videoControlBarGap":6,"videoControlBarPaddingX":10,"videoControlBarPaddingY":8,"videoControlBarBorderWidth":1,"videoControlBarBlur":18,"videoControlBarShadow":true,"videoControlPanelRadius":0,"videoControlPlay":true,"videoControlProgress":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayShape":"round","videoPlaySize":96,"videoPlayColor":"#fff","videoMuted":true,"videoAutoplay":false,"videoOrientation":"auto","videoMobilePortraitCrop":true,"responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
 ></div>
 ```
 
