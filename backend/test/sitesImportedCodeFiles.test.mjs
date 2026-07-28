@@ -1022,8 +1022,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(mobileGuide, /data-rstk-video-settings='\{"videoMobilePortraitCrop":true\}'/)
   assert.match(mobileGuide, /el silencio del usuario siempre elige esta opción/)
   assert.match(mobileGuide, /ÚNICAMENTE cuando el usuario pida de forma explícita dos videos/)
-  assert.match(mobileGuide, /conserva cada asociación de archivo de forma independiente/)
-  assert.match(mobileGuide, /permanece vacía: nunca reutiliza ni copia el archivo de la otra/)
+  assert.match(mobileGuide, /usa temporalmente el archivo de la hermana como respaldo/)
+  assert.match(mobileGuide, /la coincidencia exacta siempre gana/)
   assert.match(mobileGuide, /videoMobilePortraitCrop:false/)
   assert.match(mobileGuide, /No infieras esa excepción solo porque el archivo original sea horizontal/)
   assert.match(mobileGuide, /conserva dos variantes de video ya declaradas si la solicitud no trata sobre ellas/)
@@ -1065,8 +1065,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(source, /buildImportedHtmlDeviceVisibilityStyle\(device\)/)
   assert.match(source, /data-rstk-device-visibility/)
   assert.match(source, /onLoad=\{\(event\) => syncImportedNativeElementSelectionForFrame\(event\.currentTarget\)\}/)
-  assert.doesNotMatch(source, /findImportedNativeResponsiveFallbackBlock/)
-  assert.match(source, /El video que elijas quedará asociado únicamente a/)
+  assert.match(source, /findImportedNativeResponsiveFallbackBlock/)
+  assert.match(source, /usa temporalmente el video de la otra versión como respaldo/)
   assert.doesNotMatch(
     source,
     /if\s*\(activeQueue\)\s*return activeQueue/,
