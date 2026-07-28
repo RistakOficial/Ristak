@@ -1,81 +1,69 @@
-# Meta OAuth: Ads disponible y Social condicionado por App Review
+# Meta Business OAuth oficial
 
 ## Proposito
 
 Este documento define el contrato OAuth oficial de Meta para instalaciones de
-Ristak y la compuerta temporal usada mientras Meta termina el App Review. La
-regla vigente desde el **20 de julio de 2026** es separar las autorizaciones por
-capacidad:
+Ristak. Desde el **27 de julio de 2026**, una cuenta nueva usa una sola
+autorización **Meta Business** para anuncios, Pages, Messenger e Instagram.
+WhatsApp mantiene su propio Embedded Signup v4 porque entrega credenciales y
+activos diferentes.
 
-- `ads`: lectura de cuentas publicitarias, campañas e Insights con `ads_read`,
-  más Dataset/Pixel opcional para Conversions API. Está disponible para clientes.
-- `social`: Facebook Pages, Instagram profesional, mensajes, comentarios y
-  webhooks. Permanece bloqueado para clientes mientras falten permisos avanzados.
-- `legacy`: login combinado anterior. Sólo existe para conservar conexiones ya
-  activas y compatibilidad; nunca es el botón inicial de un cliente nuevo.
+El backend conserva tres nombres internos por compatibilidad:
 
-La separación evita que un permiso social todavía no aprobado haga fallar una
-conexión Ads que sí puede funcionar. El token Ads nunca habilita Messenger,
-Instagram, comentarios ni webhooks, y una lista parcial de Pages nunca se pinta
-como si el inbox social ya estuviera conectado.
+- `legacy`: alias técnico histórico de la autorización unificada. Aunque el wire
+  protocol conserve ese valor, la UI y la operación lo llaman **Meta Business**.
+- `ads`: conexión separada anterior de Ads.
+- `social`: conexión separada anterior de Facebook e Instagram.
 
-## Estado temporal de App Review (fuente de verdad)
+Las conexiones separadas siguen funcionando y pueden desconectarse sin afectar
+la unificada. No son la entrada de una cuenta nueva.
 
-Mientras `meta_oauth_review_mode=true` en Installer, esta sección manda sobre
-cualquier descripción histórica del login combinado.
+## Estado productivo aprobado (fuente de verdad)
 
-### Permisos disponibles en la app central
+`meta_oauth_review_mode=false` es el estado productivo. La bandera permanece como
+interruptor de contingencia para instalaciones separadas anteriores, no como
+paso normal de onboarding.
 
-| Permiso | Estado al 2026-07-20 | Uso actual |
+### Permisos aprobados en la app central
+
+| Permiso | Estado al 2026-07-27 | Uso actual |
 | --- | --- | --- |
 | `ads_read` | aprobado | conexión Meta Ads, campañas, Insights y Dataset/CAPI |
 | `business_management` | aprobado | base para inventario/portafolio cuando el flujo lo requiera |
-| `pages_show_list` | aprobado | identificar Pages autorizables; no habilita el inbox |
-| `pages_read_engagement` | aprobado | lectura base de Page; no permite responder ni suscribir webhooks |
+| `pages_show_list` | aprobado | identificar Pages autorizables |
+| `pages_manage_metadata` | aprobado | suscribir la Page a webhooks |
+| `pages_read_engagement` | aprobado | leer contenido y metadata de Page |
+| `pages_read_user_content` | aprobado | recibir comentarios de personas |
+| `pages_manage_engagement` | aprobado | responder comentarios de Facebook |
+| `pages_messaging` | aprobado | recibir y responder Messenger |
+| `instagram_basic` | aprobado | identificar Instagram profesional enlazado |
+| `instagram_manage_comments` | aprobado | recibir y responder comentarios de Instagram |
+| `instagram_manage_messages` | aprobado | recibir y responder Instagram Direct |
 | `public_profile` | aprobado | identidad básica exigida por Meta |
 | `whatsapp_business_management` | aprobado | WhatsApp Embedded Signup separado |
 | `whatsapp_business_messaging` | aprobado | mensajería WhatsApp separada |
+| `whatsapp_business_manage_events` | aprobado | Dataset y eventos de conversión de WhatsApp |
 
-Los permisos sociales necesarios para producto siguen pendientes, entre ellos
-`pages_manage_metadata`, `pages_read_user_content`,
-`pages_manage_engagement`, `pages_messaging`, `instagram_basic`,
-`instagram_manage_comments` e `instagram_manage_messages`. Por eso
-`pages_show_list` y `pages_read_engagement` se conservan como base aprobada, pero
-no se ofrece una “conexión social parcial” que no podría recibir o responder.
+El Config ID **Meta Business** incluye los once permisos de Ads/Social de la
+tabla. El Config ID **WhatsApp API v4** incluye los tres permisos
+`whatsapp_business_*`. No se agregan `ads_management`, publicación de posts ni
+permisos de Instagram Login que el producto no usa.
 
-### Comportamiento visible durante la revisión
+### Comportamiento visible productivo
 
-1. Una cuenta sin OAuth ve **Conectar Meta Ads**. Ese botón usa
-   `/api/meta/oauth/ads/*` y el Config ID `meta_ads_login_config_id`.
-2. Después del callback, la persona elige una cuenta publicitaria obligatoria y
-   un Dataset opcional; nada queda activo hasta pulsar **Guardar**.
-3. La pestaña **Redes sociales** muestra **Pendiente de aprobación** y explica
-   qué falta. No abre OAuth ni enciende switches sociales.
-4. `/initialization` manda a `Configuración > Meta` para que la selección de
-   activos ocurra en una sola superficie y no se pierda una sesión intermedia.
-5. Las conexiones `legacy` y `social|ads` existentes siguen funcionando; no se
-   migran, revocan ni reconectan automáticamente.
-6. WhatsApp Embedded Signup conserva su Config ID, permisos, token y webhooks;
-   este cambio no lo mezcla con Meta Ads ni con Social.
-
-### Activación cuando Meta apruebe Social
-
-No hace falta volver a rediseñar el flujo ni desplegar otro parche de permisos.
-El procedimiento operativo es:
-
-1. Confirmar en App Dashboard que **todos** los permisos sociales requeridos
-   tienen Advanced Access y que el Config ID Social los incluye.
-2. Ejecutar el recorrido real de App Review con una Page e Instagram de prueba:
-   callback, selección, `subscribed_apps`, relay, mensaje, DM y comentarios.
-3. Mantener configurados `meta_social_login_config_id`, App ID, App Secret y
-   webhook central en Installer, sin copiar secretos a Ristak.
-4. Cambiar `meta_oauth_review_mode` a `false` desde la configuración interna de
-   Installer. La pantalla de Ristak consulta ese valor con
-   `POST /api/meta/oauth/social/status/refresh`.
-5. Verificar que el badge pendiente cambia por **Conectar Facebook e Instagram**
-   y completar una conexión de cliente antes de anunciar disponibilidad.
-6. Sólo después de esas pruebas considerar si conviene volver al login combinado;
-   el flujo dividido sigue siendo el default seguro y funcional.
+1. Una cuenta sin OAuth ve **Conectar Meta Business** y usa
+   `/api/meta/oauth/*` con `meta_business_login_config_id`.
+2. El callback vuelve a una sola sesión de selección que contiene cuentas
+   publicitarias, Datasets, Pages e Instagram.
+3. La cuenta publicitaria y la Page son obligatorias para sus respectivas
+   capacidades; Dataset e Instagram son opcionales.
+4. Cada sección guarda su selección de forma explícita. Cambiar un dropdown no
+   hace llamadas ni reemplaza la conexión activa.
+5. Las conexiones `ads|social` anteriores permanecen como compatibilidad. Una
+   autorización unificada nueva sólo sustituye la conexión activa cuando
+   `finalize` termina.
+6. WhatsApp Embedded Signup v4 permanece separado y nunca reutiliza el token de
+   Meta Business.
 
 La migración sigue siendo no destructiva: una autorización cancelada, expirada
 o incompleta no sustituye la conexión activa de su tipo ni borra los respaldos
@@ -90,11 +78,9 @@ cifrados existentes.
    wizard de System User ni ruta visible para pegar tokens. Después de guardar,
    ambos dropdowns permanecen visibles con el nombre legible del activo y pueden
    cambiarse sin desconectar Meta.
-2. **Redes sociales**: durante App Review muestra un estado pendiente sin
-   controles operativos. Cuando `meta_oauth_review_mode=false`, habilita el OAuth
-   Social, la selección de **Página** e Instagram y los controles de mensajes y
-   comentarios. La UI nunca pide una credencial de Messenger ni muestra una guía
-   de Meta Developers.
+2. **Redes sociales**: usa la misma autorización Meta Business para seleccionar
+   **Página** e Instagram y activar mensajes y comentarios. La UI nunca pide una
+   credencial de Messenger ni muestra una guía de Meta Developers.
    Cuando todavía no hay una selección, cada dropdown OAuth guía con
    **Selecciona tu cuenta publicitaria**, **Selecciona tu Dataset o pixel**,
    **Selecciona tu página** o **Selecciona tu cuenta de Instagram** en lugar de
@@ -106,15 +92,17 @@ cifrados existentes.
 
 `/ads` es alias de `/settings/meta-ads/cuenta`; `/social` y `/mensajes` son
 aliases de `/settings/meta-ads/redes-sociales`. Una cuenta sin configurar no ve
-pestañas ni formularios: ve directamente **Conectar Meta Ads**. Esto también aplica
+pestañas ni formularios: ve directamente **Conectar Meta Business**. Esto también aplica
 si la base conserva un `manual_system_user` heredado; las rutas antiguas del
 wizard muestran la misma entrada segura y no reactivan el método manual.
 
 ## WhatsApp Embedded Signup especializado
 
-WhatsApp no usa el callback ni el `meta_business_login_config_id` de la conexion
-Meta general. Su Config ID es `whatsapp_business_login_config_id` y su superficie
-publica es `/meta/whatsapp/connect` en Ristak Installer.
+WhatsApp no usa el callback ni el `meta_business_login_config_id` de la conexión
+Meta general. Su Config ID productivo es
+`whatsapp_business_login_config_v4_id` y su superficie pública es
+`/meta/whatsapp/connect` en Ristak Installer. El Config ID v2 sólo queda como
+registro histórico y nunca es fallback de una conexión nueva.
 
 1. Ristak genera un `state` HMAC ligado a licencia, instalacion, dominio y TTL.
 2. Installer valida ese contrato y carga Facebook JavaScript SDK solo en su
@@ -123,8 +111,9 @@ publica es `/meta/whatsapp/connect` en Ristak Installer.
    `override_default_response_type=true` y
    `featureType=whatsapp_business_app_onboarding` para Coexistence.
 4. Installer canjea el code en backend, valida
-   `whatsapp_business_management` y `whatsapp_business_messaging`, y comprueba
-   que el Phone Number ID pertenece al WABA autorizado.
+   `whatsapp_business_management`, `whatsapp_business_messaging` y
+   `whatsapp_business_manage_events`, y comprueba que el Phone Number ID
+   pertenece al WABA autorizado.
 5. El token se entrega servidor-a-servidor a la instalacion; nunca aparece en
    el navegador.
 
@@ -139,16 +128,18 @@ Installer es el unico dueno de la app central de Meta y guarda de forma segura:
 
 - `meta_app_id`;
 - `meta_app_secret`;
-- `meta_ads_login_config_id`, Config ID canónico para nuevas conexiones Ads;
-- `meta_social_login_config_id`, Config ID Social que queda detrás de
-  `meta_oauth_review_mode` hasta terminar App Review;
-- `meta_business_login_config_id`, conservado para el login combinado legacy;
+- `meta_business_login_config_id`, Config ID canónico de Meta Business;
+- `meta_ads_login_config_id` y `meta_social_login_config_id`, conservados para
+  conexiones separadas anteriores;
+- `whatsapp_business_login_config_v4_id`, Config ID canónico y separado de
+  WhatsApp;
 - `meta_webhook_verify_token`;
-- `meta_oauth_review_mode`, compuerta operativa guardada en configuración interna.
+- `meta_oauth_review_mode`, interruptor de contingencia guardado en configuración
+  interna y apagado en producción.
 
-La API histórica llama `legacy` al tipo sin segmento. Es compatibilidad para la
-conexión combinada anterior y usa `meta_business_login_config_id`; no debe
-iniciarse para cuentas nuevas durante la revisión.
+La API histórica llama `legacy` al tipo sin segmento. Ese alias permanece en el
+wire protocol por compatibilidad, pero ahora representa la conexión oficial
+unificada y es la entrada canónica para cuentas nuevas.
 
 Installer crea y consume `state`, canjea el authorization code
 server-to-server e intenta ampliar el User Access Token cuando Meta todavía lo
@@ -167,18 +158,19 @@ credenciales existentes con prioridad.
 
 ### Ristak instalado
 
-Las conexiones nuevas viven cifradas en:
+Las conexiones viven cifradas en:
 
-- `meta_oauth_integrations`: conexión activa por `social|ads`, con credencial,
-  selección y estado independientes;
-- `meta_oauth_integration_sessions`: sesión temporal cifrada por tipo, con TTL y
-  consumo único;
+- `meta_config`: conexión Meta Business oficial unificada, con token, selección
+  y estado sanitizado;
+- `meta_oauth_pending_sessions`: sesiones temporales del flujo oficial, con TTL
+  y consumo único;
+- `meta_oauth_integrations`: conexiones separadas anteriores `social|ads`, con
+  credencial, selección y estado independientes;
+- `meta_oauth_integration_sessions`: sesiones temporales de compatibilidad por
+  tipo;
 - `meta_oauth_authorized_assets`: inventario cifrado ligado al `connection_id`.
-  Usa IDs separados `split:ads|split:social` para que los dropdowns conserven
-  nombres y opciones después de guardar; `unified` permanece para legacy;
-- `meta_config`: conexión manual o OAuth combinado legacy; permanece como
-  compatibilidad y no se sobreescribe al iniciar una conexión separada;
-- `meta_oauth_pending_sessions`: sesiones del login combinado legacy;
+  `unified` es el inventario oficial; `split:ads|split:social` conserva nombres
+  y opciones de conexiones anteriores;
 - `meta_oauth_connection_backups`: respaldo cifrado del System User Token
   manual sustituido por OAuth.
 
@@ -187,10 +179,9 @@ expiraciones y permisos sanitizados.
 
 ## Permisos por conexión
 
-El flujo Ads nuevo solicita únicamente `ads_read`. El flujo Social solicita los
-permisos `pages_*` e `instagram_*` de la tabla y sólo se habilita cuando todos
-están aprobados. El Config ID combinado legacy conserva el conjunto completo
-porque instalaciones existentes pueden seguir usándolo:
+El flujo oficial Meta Business solicita el conjunto completo aprobado en una
+sola autorización. Las conexiones separadas anteriores conservan sus subconjuntos
+Ads o Social únicamente para compatibilidad:
 
 | Capacidad | Permiso |
 | --- | --- |
@@ -223,43 +214,34 @@ https://www.facebook.com/v25.0/dialog/oauth
   &config_id={META_BUSINESS_LOGIN_CONFIG_ID}
 ```
 
-## Flujo completo por tipo
+## Flujo completo
 
-1. Configuración consulta estados locales con
-   `GET /api/meta/oauth/:integrationKind/status` y verifica la compuerta de
-   Installer sólo mediante el POST explícito
-   `/api/meta/oauth/:integrationKind/status/refresh`.
-2. **Conectar Meta Ads** solicita
-   `POST /api/meta/oauth/ads/connect-url`. Social sólo solicita su URL si
-   `reviewPending=false`; el frontend y el backend mantienen tipos separados.
+1. Configuración consulta el estado local con `GET /api/meta/oauth/status`.
+2. **Conectar Meta Business** solicita `POST /api/meta/oauth/connect-url`.
 3. El broker central valida el origin de la instalación —con licencia gestionada o con identidad
    técnica standalone—, crea un `state` con TTL y abre
-   el Config ID de ese tipo. `config_id` sustituye a `scope`; no se mandan ambos.
+   `meta_business_login_config_id`. `config_id` sustituye a `scope`; no se mandan
+   ambos.
 4. Meta vuelve al callback único de Installer. Installer consume el `state`,
    canjea el code y valida identidad, App ID, expiraciones, permisos y
    `granular_scopes`.
-5. Installer enumera sólo los activos de esa familia: Ad Accounts/Datasets para
-   Ads; Pages/Instagram para Social. El handoff opaco conserva
-   `integration_kind` y Ristak rechaza cruces entre tipos.
+5. Installer enumera Ad Accounts, Datasets, Pages e Instagram en un solo
+   candidato. El handoff opaco conserva `integration_kind=legacy` como alias
+   técnico de Meta Business.
 6. Ristak reclama el handoff en backend y crea una sesión local cifrada. La
-   conexión anterior del mismo tipo sigue activa hasta completar el commit.
-7. Ads exige elegir una cuenta publicitaria y permite dejar Dataset vacío.
-   Social exige una Page y permite Instagram vacío.
+   conexión anterior sigue activa hasta completar el commit.
+7. La selección exige cuenta publicitaria y Page. Dataset e Instagram son
+   opcionales.
 8. Al finalizar, Ristak conserva localmente el inventario cifrado y el estado
    devuelve `assetSnapshot` más `selectedAssets`; por eso el nombre y el dropdown
-   no desaparecen al guardar o recargar. Un `status/refresh` explícito recupera
-   ese inventario desde Installer para conexiones separadas creadas antes de
-   esta regla. Las conexiones unificadas anteriores hacen el mismo backfill una
-   sola vez cuando la pantalla detecta que todavía no existe el inventario
-   `unified`.
+   no desaparecen al guardar o recargar. Si una conexión unificada anterior no
+   tiene inventario `unified`, la pantalla ejecuta un backfill una sola vez.
 9. Cambiar un dropdown sólo cambia el borrador local. Al pulsar **Guardar**, el
-   frontend obtiene una sesión corta con
-   `POST /api/meta/oauth/:integrationKind/reconfigure` y después llama a
-   `finalize`; Ads inicia su sync y Social registra su relay/backfill. Un fallo de
-   un tipo no desactiva el otro.
-10. **Autorizar nuevos activos** repite únicamente el OAuth del tipo activo. Las
-   conexiones combinadas existentes conservan sus endpoints sin segmento para
-   selección y reconexión legacy.
+   frontend obtiene una sesión corta con `POST /api/meta/oauth/reconfigure` y
+   después llama a `POST /api/meta/oauth/finalize`; Ads inicia su sync y Social
+   registra relay/backfill.
+10. **Autorizar nuevos activos** repite el OAuth oficial completo. Los endpoints
+    segmentados `ads|social` siguen disponibles sólo para conexiones anteriores.
 
 El callback devuelve `meta_oauth_kind` y
 `meta_oauth_integration_kind=ads|social|legacy`. Ristak limpia esos parámetros
@@ -269,9 +251,9 @@ del navegador inmediatamente y completa exactamente el flujo declarado.
 
 Reglas no negociables:
 
-- El commit `ads` exige una Ad Account autorizada y el commit `social` exige una
-  Page autorizada. Dataset e Instagram son opcionales; cada módulo sólo funciona
-  si además se eligió el activo opcional que necesita.
+- El commit oficial exige una Ad Account y una Page autorizadas. Dataset e
+  Instagram son opcionales; cada módulo sólo funciona si además se eligió el
+  activo opcional que necesita.
 - La Page debe pertenecer al mismo portafolio que la cuenta publicitaria cuando
   Meta entrega esa relacion.
 - Instagram debe estar enlazado a la Page elegida.
@@ -279,13 +261,12 @@ Reglas no negociables:
 - `granular_scopes.target_ids` debe incluir cada activo elegido; si Meta no
   devuelve `target_ids`, Ristak no inventa una allowlist vacia.
 - El Page Token y su proof deben corresponder a la Page seleccionada.
-- En conexiones separadas, `complete` crea la sesión cifrada inicial. Después
-  de guardar, los selectores se reconstruyen desde el inventario local sin
-  exponer credenciales; si cambia la selección, **Guardar** obtiene una sesión
-  one-time con `POST /api/meta/oauth/:integrationKind/reconfigure` y ejecuta un
-  solo `finalize`. En conexiones combinadas legacy, los selectores pueden obtener una sesión con
-  `POST /api/meta/oauth/reconfigure` y guardar con el endpoint sin segmento.
-  Cambiar un dropdown nunca llama a la API.
+- En la conexión oficial, `complete` crea la sesión cifrada inicial. Después de
+  guardar, los selectores se reconstruyen desde el inventario local sin exponer
+  credenciales; si cambia la selección, **Guardar** obtiene una sesión one-time
+  con `POST /api/meta/oauth/reconfigure` y ejecuta un solo `finalize`. Las
+  conexiones separadas anteriores usan el equivalente segmentado. Cambiar un
+  dropdown nunca llama a la API.
 - Los activos creados después del consentimiento no se agregan solos: requieren
   **Autorizar nuevos activos**.
 
@@ -370,12 +351,10 @@ relistar el portafolio. El contrato es:
   lectura de confirmación; después el polling no toca esos endpoints.
 - El catálogo **Perfil de red social** de Sites usa
   `POST /api/meta/social-profiles/refresh` al solicitar datos actuales. Recorre
-  la allowlist local y consulta cada Page con su Page Token/proof. Mientras la
-  conexión Social separada siga detrás de App Review, si no existe otra
-  credencial Social/legacy puede descubrir las Pages con el User Token OAuth Ads
-  activo y validado, pero sólo cuando conserva `pages_show_list` y
-  `pages_read_engagement`; este fallback es exclusivo de lectura para Sites y no
-  habilita mensajes, comentarios, publicaciones ni webhooks. El `GET`
+  la allowlist local y consulta cada Page con su Page Token/proof. Una conexión
+  separada anterior que sólo tenga Ads puede descubrir Pages para lectura si
+  conserva `pages_show_list` y `pages_read_engagement`; ese fallback no habilita
+  mensajes, comentarios, publicaciones ni webhooks. El `GET`
   `/api/meta/social-profiles` permanece pasivo. Foto, identidad y seguidores se
   recuperan por grupos tolerantes a fallos para que un field rechazado no borre
   los demás. Un conteo ausente es desconocido (`null`), no cero.
@@ -392,8 +371,8 @@ la app y bloquee callbacks OAuth legítimos con el código `4` de Meta.
 
 El cambio conserva tres capas sin mezclarlas:
 
-- conexiones OAuth separadas nuevas en `meta_oauth_integrations`;
-- conexión unificada legacy en `meta_config`;
+- conexión Meta Business oficial en `meta_config`;
+- conexiones OAuth separadas anteriores en `meta_oauth_integrations`;
 - System User Token manual respaldado de forma cifrada, sólo como dato de
   migracion y continuidad heredada; no es una conexion visible ni admite nuevas
   escrituras desde producto.
@@ -414,7 +393,7 @@ Al desconectar:
   separada que servía de fallback, si existe;
 - Ristak puede conservar/restaurar internamente la configuracion manual cifrada
   para no destruir el respaldo, pero Configuracion la trata como desconectada y
-  vuelve a mostrar **Conectar Meta Ads**;
+  vuelve a mostrar **Conectar Meta Business**;
 - los crons se recalculan segun la conexion que realmente quede activa.
 
 El broker admite fallback bidireccional `legacy <-> social` para la misma Page.
@@ -423,24 +402,26 @@ reviva. Una Page distinta nunca es desactivada por accidente.
 
 ## Endpoints internos
 
-Ristak instalado, autenticado y protegido por el modulo `campaigns`:
+Ristak instalado, autenticado y protegido por el modulo `campaigns`, usa como
+endpoints canónicos:
+
+- `GET /api/meta/oauth/status`;
+- `POST /api/meta/oauth/connect-url`;
+- `POST /api/meta/oauth/complete`;
+- `POST /api/meta/oauth/reconfigure`;
+- `POST /api/meta/oauth/finalize`;
+- `POST /api/meta/oauth/disconnect`;
+- `POST /api/meta/social-profiles/refresh`;
+- `POST /webhooks/meta/installer-relay`, publico, firmado y anti-replay.
+
+Compatibilidad de conexiones separadas anteriores:
 
 - `GET /api/meta/oauth/:integrationKind/status`;
 - `POST /api/meta/oauth/:integrationKind/status/refresh`;
 - `POST /api/meta/oauth/:integrationKind/connect-url`;
 - `POST /api/meta/oauth/:integrationKind/complete`;
 - `POST /api/meta/oauth/:integrationKind/finalize`;
-- `POST /api/meta/oauth/:integrationKind/disconnect`;
-
-Compatibilidad del login combinado legacy:
-
-- `GET /api/meta/oauth/status`;
-- `POST /api/meta/oauth/connect-url`;
-- `POST /api/meta/oauth/complete`;
-- `POST /api/meta/oauth/finalize`;
-- `POST /api/meta/oauth/disconnect`;
-- `POST /api/meta/social-profiles/refresh`;
-- `POST /webhooks/meta/installer-relay`, publico, firmado y anti-replay.
+- `POST /api/meta/oauth/:integrationKind/disconnect`.
 
 Las rutas heredadas `POST /api/meta/config`,
 `POST /api/meta/save-and-sync`, `POST /api/meta/sync-from-highlevel`,
@@ -448,9 +429,9 @@ Las rutas heredadas `POST /api/meta/config`,
 `GET /api/meta/config/reveal/access_token` ya no son metodos de conexion:
 responden `410 META_OAUTH_REQUIRED` para dirigir al login oficial.
 
-Los endpoints segmentados `social|ads` son los canónicos para conexiones nuevas.
-La UI llama Ads durante la revisión y sólo llama Social cuando Installer reporta
-`reviewPending=false`.
+Los endpoints sin segmento son canónicos para conexiones nuevas. El valor
+`reviewPending=false` es el estado productivo; los endpoints segmentados
+`social|ads` sólo mantienen compatibilidad con conexiones previas.
 
 Installer, autenticado por licencia salvo callbacks publicos:
 
@@ -487,9 +468,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
   clientes externos.
 - App Domain de Installer, HTTPS, Strict Mode y callback exacto en Valid OAuth
   Redirect URIs.
-- Config IDs separados para Ads y Social. Ads debe contener sólo los permisos
-  aprobados que usa; Social debe contener el conjunto social completo antes de
-  apagar `meta_oauth_review_mode`. El Config ID combinado queda como legacy.
+- Config ID Meta Business con los once permisos aprobados de Ads/Social y Config
+  ID WhatsApp v4 separado con los tres permisos `whatsapp_business_*`.
+- `meta_oauth_review_mode=false`; la compuerta sólo se usa ante una contingencia.
 - Privacy Policy y Data Deletion URL publicas.
 - Webhooks de Pages, Messenger e Instagram apuntando al broker central.
 - Advanced Access individual para los permisos usados y `public_profile` antes
@@ -504,16 +485,17 @@ Installer, autenticado por licencia salvo callbacks publicos:
 
 ## Pruebas de aceptacion
 
-1. Sin conexión, la UI ofrece **Conectar Meta Ads** y nunca abre el Config ID
-   combinado.
-2. Con `meta_oauth_review_mode=true`, Redes sociales muestra el estado pendiente,
-   no abre OAuth y no habilita switches por tener sólo permisos base de Pages.
-3. Ads solicita `ads_read`; un faltante social no puede producir
-   `meta_scopes_missing` en ese flujo.
-4. El handoff Ads contiene sólo Ad Accounts/Datasets, conserva
-   `integration_kind=ads` y se consume una sola vez.
-5. La cuenta publicitaria es obligatoria para finalizar; el Dataset es opcional.
-   Ningún `onChange` persiste datos y **Guardar** ejecuta un único finalize Ads.
+1. Sin conexión, la UI ofrece **Conectar Meta Business** y abre el Config ID
+   unificado oficial.
+2. El Config ID exige el conjunto completo aprobado; un permiso faltante produce
+   `meta_scopes_missing` y no crea una conexión parcial.
+3. El handoff contiene Ad Accounts, Datasets, Pages e Instagram, conserva
+   `integration_kind=legacy` como alias técnico y se consume una sola vez.
+4. La cuenta publicitaria y la Page son obligatorias; Dataset e Instagram son
+   opcionales. Ningún `onChange` persiste datos y **Guardar** ejecuta un único
+   finalize oficial.
+5. Las conexiones segmentadas anteriores siguen funcionando sin mezclarse ni
+   revocarse automáticamente.
 6. El dropdown de Dataset contiene sólo relaciones confirmadas por
    `adspixels`, `adaccounts` o `shared_accounts`; aparecer en `ads_dataset`,
    `owned_pixels` o `client_pixels` sin relación de cuenta no basta. Cambiar de
@@ -524,30 +506,29 @@ Installer, autenticado por licencia salvo callbacks publicos:
    anterior.
 8. Con Dataset validado, CAPI queda activa y Dataset Test puede enviar un evento
    controlado; sin Dataset, Ads/reportes siguen activos y CAPI queda apagado.
-9. Cuando la compuerta cambia a `false`, aparece **Conectar Facebook e
-   Instagram**. Social exige Page, mantiene Instagram opcional, registra relay y
-   nunca usa el token Ads como Page Token.
+9. La misma conexión oficial habilita Facebook e Instagram, registra relay y
+   nunca usa el User Token como sustituto del Page Token.
 10. Handoff ajeno, activo granular incorrecto, firma invalida y replay se
    rechazan.
 11. Reconectar o fallar no borra el respaldo cifrado ni los fallbacks OAuth
     separados.
 12. Una instalacion con sólo `manual_system_user` se presenta como desconectada,
-    no muestra tokens/webhooks manuales y ofrece **Conectar Meta Ads**; los
+    no muestra tokens/webhooks manuales y ofrece **Conectar Meta Business**; los
     endpoints manuales responden `410 META_OAUTH_REQUIRED`.
 13. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
     mezclan con el login ni los controles sociales.
-14. **Autorizar nuevos activos** abre sólo el Config ID del tipo conectado;
-    reconectar Ads no cambia Social y viceversa.
+14. **Autorizar nuevos activos** abre el Config ID oficial completo; una conexión
+    segmentada anterior conserva el Config ID de su propio tipo.
 15. Después de guardar o recargar, Cuenta publicitaria y Dataset siguen siendo
     dropdowns, muestran sus nombres y permiten cambiar entre activos ya
-    autorizados. Una conexión Ads separada o unificada anterior recupera ese
-    inventario durante el primer `status/refresh` sin desconectarse.
+    autorizados. Una conexión segmentada o unificada anterior recupera ese
+    inventario durante el primer refresh necesario sin desconectarse.
 16. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
     conserva el último snapshot si Graph falla y nunca presenta `0` cuando Meta
-    no devolvió el conteo. También funciona durante App Review con una conexión
-    Ads USER validada que sí tenga permisos de lectura de Pages, sin convertir
-    esa credencial en token operativo de Social. El System User heredado conserva
-    prioridad cuando ya está configurado.
+    no devolvió el conteo. Una conexión Ads anterior con permisos de lectura de
+    Pages puede conservar el fallback de sólo lectura, sin convertirse en token
+    operativo de Social. El System User heredado conserva prioridad cuando ya
+    está configurado.
 
 ## Fuentes oficiales
 

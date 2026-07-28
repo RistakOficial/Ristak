@@ -106,7 +106,7 @@ export async function getCurrentVersion() {
     }
 
     const result = await db.get(
-      'SELECT version FROM meta_api_version ORDER BY updated_at DESC LIMIT 1'
+      'SELECT version FROM meta_api_version ORDER BY updated_at DESC, id DESC LIMIT 1'
     )
     return normalizeMetaApiVersion(result?.version) || DEFAULT_META_API_VERSION
   } catch (error) {
@@ -148,7 +148,7 @@ export async function saveVersion(version) {
 export async function getVersionHistory(limit = 10) {
   try {
     const history = await db.all(
-      'SELECT version, updated_at FROM meta_api_version ORDER BY updated_at DESC LIMIT ?',
+      'SELECT version, updated_at FROM meta_api_version ORDER BY updated_at DESC, id DESC LIMIT ?',
       [limit]
     )
     return history || []
@@ -160,7 +160,8 @@ export async function getVersionHistory(limit = 10) {
 
 /**
  * Inicializa la versión desde BD al arrancar el servidor
- * Respeta META_API_VERSION si esta definido; si no, usa la ultima version guardada.
+ * Respeta META_API_VERSION si esta definido; si no, usa la ultima version
+ * guardada siempre que no sea anterior al piso probado actual.
  */
 export async function initializeVersion() {
   try {
@@ -172,11 +173,18 @@ export async function initializeVersion() {
     }
 
     const result = await db.get(
-      'SELECT version FROM meta_api_version ORDER BY updated_at DESC LIMIT 1'
+      'SELECT version FROM meta_api_version ORDER BY updated_at DESC, id DESC LIMIT 1'
     )
     const storedVersion = normalizeMetaApiVersion(result?.version)
 
     if (storedVersion) {
+      if (compareMetaApiVersions(storedVersion, DEFAULT_META_API_VERSION) < 0) {
+        await saveVersion(DEFAULT_META_API_VERSION)
+        logger.info(
+          `✅ Versión de Meta API actualizada de ${storedVersion} a ${DEFAULT_META_API_VERSION}`
+        )
+        return DEFAULT_META_API_VERSION
+      }
       setMetaApiVersion(storedVersion)
       logger.info(`✅ Versión de Meta API inicializada desde BD: ${storedVersion}`)
       return storedVersion

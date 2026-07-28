@@ -4259,52 +4259,42 @@ prueba. No la debilites por comodidad.
 
 Ristak usa Meta en varias areas:
 
-### Conexión OAuth, App Review y retirada del método manual
+### Conexión OAuth oficial y retirada del método manual
 
-- Desde el **20 de julio de 2026**, las conexiones nuevas usan OAuth separado
-  por capacidad. **Meta Ads** está disponible con `ads_read`; **Redes sociales**
-  queda detrás de `meta_oauth_review_mode` mientras Meta termina Advanced Access
-  para mensajes, comentarios y webhooks.
-- La app central ya tiene aprobados `ads_read`, `business_management`,
-  `pages_show_list`, `pages_read_engagement`, `public_profile`,
-  `whatsapp_business_management` y `whatsapp_business_messaging`. Los permisos
-  base de Pages no bastan para el inbox: siguen faltando
-  `pages_manage_metadata`, `pages_read_user_content`,
-  `pages_manage_engagement`, `pages_messaging`, `instagram_basic`,
-  `instagram_manage_comments` e `instagram_manage_messages`.
-- Una cuenta nueva ve **Conectar Meta Ads**. El botón usa
-  `/api/meta/oauth/ads/*`, vuelve a Meta Ads y exige elegir una cuenta
-  publicitaria antes de **Guardar**; el Dataset es opcional. `/initialization`
-  manda a esa pantalla para no perder la sesión de selección.
-- Cuando sólo Ads está conectado, la pestaña **Redes sociales** muestra
-  **Pendiente de aprobación** y no expone OAuth ni switches falsamente
-  funcionales. Al cambiar `meta_oauth_review_mode=false` en Installer, la misma
-  pantalla habilita **Conectar Facebook e Instagram** mediante
-  `/api/meta/oauth/social/*`.
+- Desde el **27 de julio de 2026**, las conexiones nuevas usan una sola
+  autorización **Meta Business** para anuncios, Datasets, Pages, Messenger e
+  Instagram. La app central tiene aprobado el conjunto completo de once permisos
+  de Ads/Social; `meta_oauth_review_mode=false` es el estado productivo.
+- Una cuenta nueva ve **Conectar Meta Business**. El botón usa
+  `/api/meta/oauth/*`, abre `meta_business_login_config_id` y vuelve con Ad
+  Accounts, Datasets, Pages e Instagram en una sola sesión. Cuenta publicitaria
+  y Page son obligatorias; Dataset e Instagram son opcionales.
 - Installer es el único dueño de `meta_app_secret`,
-  `meta_ads_login_config_id`, `meta_social_login_config_id`,
-  `meta_business_login_config_id` y la compuerta de revisión. Los secretos nunca
-  se copian a una instalación.
-- Las conexiones separadas activas viven cifradas por `ads|social` en
-  `meta_oauth_integrations`; sus sesiones one-time viven en
-  `meta_oauth_integration_sessions`. Sus inventarios autorizados viven cifrados
-  en `meta_oauth_authorized_assets` bajo `split:ads|split:social`, ligados al
-  `connection_id`. La conexión combinada anterior permanece en `meta_config`
-  como `legacy`, con sesiones en `meta_oauth_pending_sessions` e inventario
-  `unified` en la misma tabla de activos.
+  `meta_business_login_config_id`, `whatsapp_business_login_config_v4_id`, los
+  Config IDs separados anteriores y la compuerta de contingencia. Los secretos
+  nunca se copian a una instalación.
+- La conexión oficial vive cifrada en `meta_config`, con sesiones one-time en
+  `meta_oauth_pending_sessions` e inventario `unified` en
+  `meta_oauth_authorized_assets`. El nombre interno `legacy` se conserva sólo en
+  el protocolo para no romper clientes anteriores; en producto significa Meta
+  Business.
+- Las conexiones separadas anteriores `ads|social` permanecen en
+  `meta_oauth_integrations`, con sesiones en
+  `meta_oauth_integration_sessions` e inventarios `split:ads|split:social`. No
+  son la entrada de una cuenta nueva ni se revocan automáticamente.
 - Las rutas canónicas para cuentas nuevas son
-  `/api/meta/oauth/:integrationKind/{status,status/refresh,connect-url,complete,reconfigure,finalize,disconnect}`.
-  Los endpoints sin segmento siguen sólo para conexiones combinadas legacy. Las
-  rutas manuales de guardado/revelado/importación responden
+  `/api/meta/oauth/{status,connect-url,complete,reconfigure,finalize,disconnect}`.
+  Los endpoints segmentados continúan sólo para compatibilidad. Las rutas
+  manuales de guardado/revelado/importación responden
   `410 META_OAUTH_REQUIRED`.
 - Ristak reclama cada handoff server-to-server, valida que
   `integration_kind=ads|social|legacy` coincida y mantiene la conexión anterior
-  hasta que el nuevo tipo termina su `finalize`. Un fallo Ads no toca Social y
-  viceversa.
-- Para liberar Social: verificar permisos completos y Config ID en App
-  Dashboard, probar Page/Instagram/relay/mensajes/comentarios, cambiar
-  `meta_oauth_review_mode` a `false` en Installer y completar una conexión real
-  antes de anunciarla. El procedimiento completo vive en `docs/META_OAUTH.md`.
+  hasta que el flujo termina su `finalize`. En el flujo oficial,
+  `integration_kind=legacy` es el alias técnico de Meta Business.
+- El Config ID oficial fue validado con los once permisos de producto y el de
+  WhatsApp v4 con `whatsapp_business_management`,
+  `whatsapp_business_messaging` y `whatsapp_business_manage_events`. El
+  procedimiento completo vive en `docs/META_OAUTH.md`.
 - Al iniciar OAuth, Ristak convierte la ruta de regreso en una URL absoluta del
   host publico que origino la solicitud. Installer valida ese origin contra la
   instalacion antes de guardarlo en `state`; asi el callback central no manda al
@@ -8036,7 +8026,7 @@ Registro de ubicacion:
 | Base de datos produccion | `DATABASE_URL` | Si en Render/Postgres | SQLite local si no existe |
 | URL publica/CORS | `APP_URL`, `PUBLIC_URL`, `RENDER_EXTERNAL_URL`, `CORS_ALLOWED_ORIGINS` | No siempre | Necesaria para webhooks y links correctos |
 | HighLevel | `highlevel_config` y servicios HighLevel | No | Tokens deben estar cifrados o gestionados internamente |
-| Meta Ads/Dataset/social | OAuth `ads|social` cifrado en `meta_oauth_integrations` y sesiones en `meta_oauth_integration_sessions`; login combinado legacy en `meta_config` con allowlist/sesiones propias; App Secret, Config IDs y `meta_oauth_review_mode` en DB de Installer | No | Ads se conecta con permisos aprobados; Social se habilita al terminar App Review. Manual queda como compatibilidad y `meta_test_event_code` activa Test Events |
+| Meta Business/Ads/Dataset/social | OAuth oficial unificado cifrado en `meta_config`, sesiones `meta_oauth_pending_sessions` e inventario `unified`; conexiones separadas anteriores en `meta_oauth_integrations`; App Secret, Config IDs y contingencia en DB de Installer | No | La conexión nueva autoriza Ads, Pages, Messenger e Instagram en un solo flujo aprobado. Manual y split quedan como compatibilidad; `meta_test_event_code` activa Test Events |
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |

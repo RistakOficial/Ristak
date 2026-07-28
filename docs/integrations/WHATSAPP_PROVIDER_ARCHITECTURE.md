@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-15.
+Ultima actualizacion: 2026-07-27.
 
 ## Proposito
 
@@ -151,6 +151,11 @@ evita que un evento tardío mande una segunda copia sin autorización.
 | YCloud | Sí | YCloud | Sí, cuando la cuenta lo habilita | `POST /webhook/whatsapp-api/ycloud` | `YCloud-Signature` con secreto del endpoint |
 | Meta directo | Sí | Ninguno para Graph; Installer coordina el onboarding y retransmite webhooks por instalación | Sí | `POST /api/whatsapp-api/meta/webhook-relay` | Firma HMAC interna de Installer |
 | WhatsApp QR | No; usa WhatsApp Web | Baileys | No es Coexistence oficial | Eventos del socket Baileys | Estado de vinculación QR cifrado |
+
+Meta directo construye todas sus URLs con la versión compartida de Graph que
+expone `getMetaApiVersion()`; actualmente es `v25.0`. No usa una versión
+independiente desde `META_GRAPH_VERSION`, porque eso permitiría que WhatsApp
+quedara rezagado respecto al resto de la integración Meta.
 
 Meta directo puede dejar de usar el relay de Installer cuando cada instalación
 tenga callback público directo y verificación Meta completa. Ese cambio debe
@@ -434,10 +439,10 @@ instalación gestionada siempre reutiliza su `license_key` e `installation_id`; 
 duplica la conexión ni altera el contrato de relay.
 
 Installer es dueño de `meta_app_id`, `meta_app_secret`,
-`whatsapp_business_login_config_id`,
-`whatsapp_business_login_config_v4_id` y del webhook central. La clave sin
-sufijo conserva temporalmente el flujo v2; la v4 tiene prioridad y deja que Meta
-detecte Coexistence o Cloud API según el número ingresado. El JavaScript SDK usa
+`whatsapp_business_login_config_v4_id` y del webhook central. La clave v4 es
+obligatoria; la configuración v2 anterior sólo permanece como referencia y no
+se usa como fallback. Meta detecta Coexistence o Cloud API según el número
+ingresado. El JavaScript SDK usa
 `featureType=whatsapp_business_app_onboarding` para mantener disponible
 Coexistence. Recibe el `code` y los IDs de la sesión, y el backend central:
 

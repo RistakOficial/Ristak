@@ -103,7 +103,7 @@ test('CRUD y sincronización de plantillas Meta directo usan Graph e identidad n
     })
     assert.equal(created.provider, 'meta_direct')
     assert.equal(created.providerTemplateId, templateId)
-    assert.equal(requests[0].path, `/v22.0/${wabaId}/message_templates`)
+    assert.equal(requests[0].path, `/v25.0/${wabaId}/message_templates`)
     assert.equal('wabaId' in requests[0].body, false)
 
     const createdSnapshot = await db.get(
@@ -142,7 +142,7 @@ test('CRUD y sincronización de plantillas Meta directo usan Graph e identidad n
       providerTemplateId: templateId
     })
     const deleteRequest = requests.find(request => request.method === 'DELETE')
-    assert.equal(deleteRequest.path, `/v22.0/${wabaId}/message_templates`)
+    assert.equal(deleteRequest.path, `/v25.0/${wabaId}/message_templates`)
     assert.equal(deleteRequest.query.get('name'), templateName)
     assert.equal(deleteRequest.query.get('hsm_id'), templateId)
     assert.equal(await db.get('SELECT id FROM whatsapp_api_templates WHERE id = ?', [templateId]), null)

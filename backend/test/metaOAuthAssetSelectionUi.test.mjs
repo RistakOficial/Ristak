@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(__dirname, '..', '..')
 const readSource = relativePath => readFile(join(repoRoot, relativePath), 'utf8')
 
-test('Meta usa OAuth separado, habilita Ads aprobado y guarda activos sólo al confirmar cada sección', async () => {
+test('Meta Business es la entrada oficial unificada y conserva compatibilidad con OAuth separado', async () => {
   const [screen, styles, select, oauthService] = await Promise.all([
     readSource('frontend/src/pages/Settings/MetaAdsIntegration.tsx'),
     readSource('frontend/src/pages/Settings/MetaAdsIntegration.module.css'),
@@ -34,7 +34,10 @@ test('Meta usa OAuth separado, habilita Ads aprobado y guarda activos sólo al c
   assert.match(screen, /metaOAuthService\.completeIntegration\(integrationKind/)
   assert.match(screen, /metaOAuthService\.reconfigureIntegration\(metaOAuthSessionKind\)/)
   assert.match(screen, /metaOAuthService\.finalizeIntegration\(metaOAuthSessionKind, commitSelection\)/)
-  assert.match(screen, /startMetaAuthorization\('ads'\)/)
+  assert.match(screen, /startMetaAuthorization\('legacy'\)/)
+  assert.match(screen, /Conecta Meta Business/)
+  assert.match(screen, /Conectar Meta Business/)
+  assert.match(screen, /anuncios, páginas, Messenger e Instagram/)
   assert.match(screen, /isSocialReviewPending/)
   assert.match(screen, /Pendiente de aprobación/)
   assert.match(screen, /startMetaAuthorization\('social'\)/)
@@ -92,7 +95,7 @@ test('Meta usa OAuth separado, habilita Ads aprobado y guarda activos sólo al c
   assert.doesNotMatch(screen, /Desconectar Meta OAuth|Desconectar OAuth/)
   assert.match(styles, /\.metaHeader\[data-ristak-page-header\][\s\S]*?border-bottom: 0/)
   assert.match(screen, /const isMetaConfigured = isOAuthConnection/)
-  assert.match(screen, /Usa el acceso oficial ya aprobado por Meta/)
+  assert.match(screen, /aplicación oficial de Ristak aprobada por Meta/)
   assert.match(screen, /todavía faltan los accesos de mensajes, comentarios y webhooks/)
   assert.doesNotMatch(screen, /const isManualWizardRoute/)
   const renderedScreen = screen.slice(screen.indexOf('\n  return ('))

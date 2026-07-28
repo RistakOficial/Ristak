@@ -3077,21 +3077,21 @@ export const MetaAdsIntegration: React.FC = () => {
                   <MetaBrandMark size={42} />
                 </span>
                 <div className={styles.metaConnectCopy}>
-                  <h3 id="meta-connect-title">Conecta Meta Ads</h3>
+                  <h3 id="meta-connect-title">Conecta Meta Business</h3>
                   <p>
-                    Usa el acceso oficial ya aprobado por Meta para reportes de anuncios y Conversions API. Facebook e Instagram se conectarán aparte cuando Meta termine de aprobar sus permisos sociales.
+                    Autoriza una sola vez tus anuncios, páginas, Messenger e Instagram con la aplicación oficial de Ristak aprobada por Meta.
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="primary"
-                  onClick={() => void startMetaAuthorization('ads')}
-                  disabled={isConnectingAdsOAuth || splitMetaOAuthStatuses.ads === null || splitMetaOAuthStatuses.ads?.available === false}
+                  onClick={() => void startMetaAuthorization('legacy')}
+                  disabled={isConnectingLegacyOAuth || metaOAuthStatus === null || metaOAuthStatus?.available === false}
                 >
-                  {isConnectingAdsOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={18} />}
-                  {isConnectingAdsOAuth ? 'Abriendo Meta' : 'Conectar Meta Ads'}
+                  {isConnectingLegacyOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={18} />}
+                  {isConnectingLegacyOAuth ? 'Abriendo Meta' : 'Conectar Meta Business'}
                 </Button>
-                {splitMetaOAuthStatuses.ads?.error ? <p className={styles.oauthWarning}>{splitMetaOAuthStatuses.ads.error}</p> : null}
+                {metaOAuthStatus?.error ? <p className={styles.oauthWarning}>{metaOAuthStatus.error}</p> : null}
               </section>
             )}
 

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import nodeFetch from 'node-fetch'
 import sharp from 'sharp'
 import { db, getAppConfig, repairWhatsAppApiContactIdentityFromMessages, setAppConfig } from '../config/database.js'
+import { getMetaApiVersion } from '../config/constants.js'
 import {
   findContactByPhoneCandidates,
   generateContactId,
@@ -97,8 +98,6 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const YCLOUD_API_BASE_URL = String(process.env.YCLOUD_API_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/+$/, '')
 const YCLOUD_REQUEST_TIMEOUT_MS = 20_000
-const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0'
-const META_GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`
 const SOURCE_NAME = 'WhatsApp_API'
 const PROVIDER_NAME = WHATSAPP_PROVIDER_YCLOUD
 const META_DIRECT_PROVIDER_NAME = WHATSAPP_PROVIDER_META_DIRECT
@@ -10198,7 +10197,8 @@ async function metaDirectGraphRequest(path, {
 } = {}) {
   const cleanToken = cleanString(token)
   if (!cleanToken) throw new Error('Falta el token de Meta directo')
-  const url = new URL(`${META_GRAPH_BASE_URL}${path}`)
+  const metaGraphVersion = getMetaApiVersion()
+  const url = new URL(`https://graph.facebook.com/${metaGraphVersion}${path}`)
   for (const [key, value] of Object.entries(query || {})) {
     if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value))
   }
@@ -10754,7 +10754,7 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
       ...payload,
       id: payload.id || payload.event_id || hashId('meta_evt', rawBody || safeJson(payload)),
       type: cleanString(payload.type) || 'meta.direct.webhook',
-      apiVersion: META_GRAPH_VERSION
+      apiVersion: getMetaApiVersion()
     },
     rawBody,
     endpointId: headers.installationId || 'installer_relay',
