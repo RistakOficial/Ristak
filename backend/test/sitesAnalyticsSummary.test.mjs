@@ -654,7 +654,13 @@ test('sites analytics summary keeps an embedded standard-form checkpoint partial
       `INSERT INTO public_site_submissions (
         id, site_id, form_site_id, response_json, meta_json, status, created_at
       ) VALUES (?, ?, ?, '{}', ?, 'received', ?)`,
-      [submissionId, landingId, formId, JSON.stringify({ formFinalSubmit: false }), inRange]
+      [
+        submissionId,
+        landingId,
+        formId,
+        JSON.stringify({ formFinalSubmit: false, formFinalMarkerVersion: 2 }),
+        inRange
+      ]
     )
 
     const summary = await getSitesTrackingSummary({
@@ -673,6 +679,208 @@ test('sites analytics summary keeps an embedded standard-form checkpoint partial
   } finally {
     await db.run('DELETE FROM public_site_submissions WHERE id = ?', [submissionId]).catch(() => undefined)
     await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [landingId, formId]).catch(() => undefined)
+  }
+})
+
+test('sites analytics excludes ambiguous legacy landing submissions even when a conversion event exists', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const landingId = `landing_embedded_final_${suffix}`
+  const formId = `form_embedded_final_${suffix}`
+  const qualifiedSubmissionId = `submission_embedded_qualified_${suffix}`
+  const disqualifiedSubmissionId = `submission_embedded_disqualified_${suffix}`
+  const eventPrefix = `event_embedded_final_${suffix}`
+  const inRange = '2026-02-22T18:00:00.000Z'
+
+  const insertEvent = async ({
+    eventSuffix,
+    eventName,
+    visitorId,
+    sessionId,
+    submissionId = null,
+    startedAt
+  }) => {
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        site_id,
+        form_site_id,
+        submission_id
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?, ?, ?)
+    `, [
+      sessionId,
+      visitorId,
+      `${eventPrefix}_${eventSuffix}`,
+      eventName,
+      startedAt,
+      startedAt,
+      landingId,
+      formId,
+      submissionId
+    ])
+  }
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [landingId, 'Landing final legacy', `landing-embedded-final-${suffix}`, 'landing_page', 'published']
+    )
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [formId, 'Formulario final legacy', `form-embedded-final-${suffix}`, 'standard_form', 'published']
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, form_site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, '{}', ?, 'received', ?)`,
+      [qualifiedSubmissionId, landingId, formId, JSON.stringify({ formFinalSubmit: false }), inRange]
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, form_site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, '{}', ?, 'disqualified', ?)`,
+      [
+        disqualifiedSubmissionId,
+        landingId,
+        formId,
+        JSON.stringify({ formFinalSubmit: false }),
+        '2026-02-22T18:10:00.000Z'
+      ]
+    )
+
+    await insertEvent({
+      eventSuffix: 'qualified_view',
+      eventName: 'native_site_view',
+      visitorId: `visitor_qualified_${suffix}`,
+      sessionId: `session_qualified_${suffix}`,
+      startedAt: '2026-02-22T17:59:00.000Z'
+    })
+    await insertEvent({
+      eventSuffix: 'qualified_conversion',
+      eventName: 'native_site_conversion',
+      visitorId: `visitor_qualified_${suffix}`,
+      sessionId: `session_qualified_${suffix}`,
+      submissionId: qualifiedSubmissionId,
+      startedAt: '2026-02-22T18:00:01.000Z'
+    })
+    await insertEvent({
+      eventSuffix: 'disqualified_view',
+      eventName: 'native_site_view',
+      visitorId: `visitor_disqualified_${suffix}`,
+      sessionId: `session_disqualified_${suffix}`,
+      startedAt: '2026-02-22T18:09:00.000Z'
+    })
+    await insertEvent({
+      eventSuffix: 'disqualified_legacy_conversion',
+      eventName: 'native_site_conversion',
+      visitorId: `visitor_disqualified_${suffix}`,
+      sessionId: `session_disqualified_${suffix}`,
+      submissionId: disqualifiedSubmissionId,
+      startedAt: '2026-02-22T18:10:01.000Z'
+    })
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [landingId, formId],
+      dateFrom: '2026-02-22',
+      dateTo: '2026-02-22'
+    })
+
+    for (const siteId of [landingId, formId]) {
+      const stats = summary.bySiteId[siteId]
+      assert.equal(stats.views, 2)
+      assert.equal(stats.visitors, 2)
+      assert.equal(stats.sessions, 2)
+      assert.equal(stats.submissions, 1)
+      assert.equal(stats.completedSubmissions, 0)
+      assert.equal(stats.terminalExitSubmissions, 1)
+      assert.equal(stats.qualifiedConversions, 0)
+      assert.equal(stats.disqualifiedSubmissions, 1)
+      assert.equal(stats.partialSubmissions, 0)
+      assert.equal(stats.legacyUnknownSubmissions, 1)
+      assert.equal(stats.convertingVisitors, 0)
+      assert.equal(stats.unattributedConversions, 0)
+      assert.equal(stats.conversionRate, 0)
+    }
+    assert.equal(summary.aggregate.legacyUnknownSubmissions, 1)
+    assert.equal(summary.aggregate.disqualifiedSubmissions, 1)
+    assert.equal(summary.coverage.legacyUnknownSubmissions, 1)
+    assert.equal(summary.coverage.status, 'partial')
+    assert.match(summary.meta.warnings.join(' '), /1 envío\(s\) antiguos no permiten probar si fueron finales/)
+  } finally {
+    await db.run('DELETE FROM sessions WHERE event_id LIKE ?', [`${eventPrefix}%`]).catch(() => undefined)
+    await db.run(
+      'DELETE FROM public_site_submissions WHERE id IN (?, ?)',
+      [qualifiedSubmissionId, disqualifiedSubmissionId]
+    ).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [landingId, formId]).catch(() => undefined)
+  }
+})
+
+test('sites analytics keeps a standalone standard-form checkpoint partial even if legacy tracking contains a conversion event', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const formId = `form_standalone_checkpoint_${suffix}`
+  const submissionId = `submission_standalone_checkpoint_${suffix}`
+  const eventId = `event_standalone_checkpoint_${suffix}`
+  const inRange = '2026-02-22T19:00:00.000Z'
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [formId, 'Formulario standalone checkpoint', `form-standalone-checkpoint-${suffix}`, 'standard_form', 'published']
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, form_site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, '{}', ?, 'received', ?)`,
+      [submissionId, formId, formId, JSON.stringify({ formFinalSubmit: false }), inRange]
+    )
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        site_id,
+        form_site_id,
+        submission_id
+      ) VALUES (?, ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?, ?, ?)
+    `, [
+      `session_standalone_checkpoint_${suffix}`,
+      `visitor_standalone_checkpoint_${suffix}`,
+      eventId,
+      '2026-02-22T19:00:01.000Z',
+      '2026-02-22T19:00:01.000Z',
+      formId,
+      formId,
+      submissionId
+    ])
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [formId],
+      dateFrom: '2026-02-22',
+      dateTo: '2026-02-22'
+    })
+    const stats = summary.bySiteId[formId]
+
+    assert.equal(stats.submissions, 0)
+    assert.equal(stats.completedSubmissions, 0)
+    assert.equal(stats.partialSubmissions, 1)
+    assert.equal(stats.qualifiedConversions, 0)
+    assert.equal(stats.conversions, 0)
+    assert.equal(summary.aggregate.legacyUnknownSubmissions, 0)
+    assert.equal(summary.coverage.legacyUnknownSubmissions, 0)
+  } finally {
+    await db.run('DELETE FROM sessions WHERE event_id = ?', [eventId]).catch(() => undefined)
+    await db.run('DELETE FROM public_site_submissions WHERE id = ?', [submissionId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [formId]).catch(() => undefined)
   }
 })
 

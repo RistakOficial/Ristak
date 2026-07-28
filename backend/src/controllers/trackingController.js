@@ -1262,6 +1262,13 @@ export async function collectEvent(req, res) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
 
+    // Este evento es evidencia interna de que /api/sites/public/submit sí guardó
+    // una conversión. /collect es público y nunca debe poder fabricarlo desde el
+    // navegador o desde un tercero.
+    if (String(event_name).trim().toLowerCase() === 'native_site_conversion') {
+      return res.status(400).json({ error: 'Reserved event name' })
+    }
+
     const noTrackReason = getNoTrackReason({ req, body: req.body, data })
     if (noTrackReason) {
       return res.json({ ok: true, skipped: true, reason: noTrackReason })

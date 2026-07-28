@@ -111,6 +111,26 @@ declara `tracking_source = 'native_site'`. Una conversión válida puede generar
 `native_site_conversion`, pero sólo cuando el envío es final y no quedó
 descalificado.
 
+El payload público marca `formFinalSubmit = true` para el envío final de una
+landing, formulario interactivo o última página de un formulario estándar, y
+declara `formFinalMarkerVersion = 2`. Las landings históricas con formulario
+embebido podían guardar `formFinalSubmit = false`; además, el runtime antiguo
+podía emitir `native_site_conversion` después de un submit prematuro. Como
+ninguna de esas dos señales prueba el final por separado, Analytics clasifica
+los `false` afectados sin versión 2 como `legacy_unknown`, los excluye de
+conversiones y reporta cobertura `partial`. Un checkpoint de formulario estándar
+standalone también permanece parcial aunque exista un evento legacy. El runtime
+actual impide que Enter o un submit implícito guarde/convierta antes del último
+paso de formularios estándar, interactivos y embebidos. El índice versionado
+`137*` acelera la reconciliación de cada conversión guardada con su envío sin
+escanear todas las sesiones.
+
+`native_site_conversion` está reservado al backend: se emite después de que
+`/api/sites/public/submit` guarda un envío calificado. El endpoint público
+`/collect` lo rechaza, aun si el cliente intenta declarar
+`tracking_source = native_site`; así un tercero no puede fabricar la evidencia
+de conversión usada por Analytics.
+
 El instante canónico de un evento nativo usa `started_at`. El backend conserva el
 timestamp original en `client_started_at`, pero si es inválido o difiere más de
 cinco minutos de la recepción marca `timestamp_adjusted = 1` y usa la hora del

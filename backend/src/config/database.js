@@ -6549,6 +6549,7 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_site ON sessions(form_site_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site_tracking_started ON sessions(site_id, tracking_source, event_name, started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_tracking_started ON sessions(form_site_id, tracking_source, event_name, started_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_submission_tracking_event ON sessions(submission_id, tracking_source, event_name, started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_identity_hash ON sessions(identity_hash)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_device_network ON sessions(device_signature, network_signature)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_match_method ON sessions(match_method, match_confidence)')

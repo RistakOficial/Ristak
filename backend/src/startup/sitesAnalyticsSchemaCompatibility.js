@@ -47,6 +47,15 @@ const SQLITE_INDEX_DEFINITIONS = Object.freeze([
       ON sessions(form_site_id, tracking_source, event_name, started_at)`
   }),
   Object.freeze({
+    table: 'sessions',
+    name: 'idx_sessions_submission_tracking_event',
+    unique: false,
+    columns: Object.freeze(['submission_id', 'tracking_source', 'event_name', 'started_at']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_sessions_submission_tracking_event
+      ON sessions(submission_id, tracking_source, event_name, started_at)`
+  }),
+  Object.freeze({
     table: 'video_playback_events',
     name: 'idx_video_events_playback_sequence',
     unique: true,

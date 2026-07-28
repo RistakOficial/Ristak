@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
+import { collectEvent } from '../src/controllers/trackingController.js'
 import { createSession } from '../src/services/trackingService.js'
 
 test('native Sites tracking deduplicates event_id atomically and records timestamp correction', async () => {
@@ -49,4 +50,44 @@ test('native Sites tracking deduplicates event_id atomically and records timesta
     await db.run('DELETE FROM tracking_identity_matches WHERE session_id = ?', [sessionId]).catch(() => undefined)
     await db.run('DELETE FROM sessions WHERE event_id = ?', [eventId]).catch(() => undefined)
   }
+})
+
+test('/collect rejects the server-only native_site_conversion event before persisting it', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const sessionId = `public_spoofed_conversion_${suffix}`
+  const response = {
+    statusCode: 200,
+    payload: null,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    json(payload) {
+      this.payload = payload
+      return this
+    }
+  }
+
+  await collectEvent({
+    headers: { 'content-length': '400', 'user-agent': 'Ristak reserved-event test' },
+    body: {
+      visitor_id: `visitor_${suffix}`,
+      session_id: sessionId,
+      event_name: ' Native_Site_Conversion ',
+      ts: new Date().toISOString(),
+      data: {
+        tracking_source: 'native_site',
+        submission_id: `submission_${suffix}`
+      }
+    },
+    ip: '127.0.0.1',
+    socket: { remoteAddress: '127.0.0.1' }
+  }, response)
+
+  assert.equal(response.statusCode, 400)
+  assert.deepEqual(response.payload, { error: 'Reserved event name' })
+  assert.equal(
+    Number((await db.get('SELECT COUNT(*) AS total FROM sessions WHERE session_id = ?', [sessionId]))?.total || 0),
+    0
+  )
 })

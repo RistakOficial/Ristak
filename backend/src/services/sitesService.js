@@ -10334,6 +10334,34 @@ function getSitesAnalyticsExplicitFalseMetaExpression(alias = 'source', keys = [
     .join(' OR ')})`
 }
 
+function getSitesAnalyticsLegacyAmbiguousFinalExpression(alias = 'source', ownerAlias = 'owner') {
+  const explicitIntermediate = getSitesAnalyticsExplicitFalseMetaExpression(alias, [
+    'formFinalSubmit',
+    'form_final_submit'
+  ])
+  const finalMarkerVersion = `COALESCE(
+    NULLIF(${getSitesAnalyticsJsonTextExpression(alias, 'formFinalMarkerVersion')}, ''),
+    NULLIF(${getSitesAnalyticsJsonTextExpression(alias, 'form_final_marker_version')}, ''),
+    ''
+  )`
+  const affectedLegacyRuntime = `(
+    COALESCE(${ownerAlias}.site_type, '') != 'standard_form'
+    OR (
+      ${alias}.site_id IS NOT NULL
+      AND ${alias}.site_id != ''
+      AND ${alias}.form_site_id IS NOT NULL
+      AND ${alias}.form_site_id != ''
+      AND ${alias}.site_id != ${alias}.form_site_id
+    )
+  )`
+
+  return `(
+    ${explicitIntermediate}
+    AND ${affectedLegacyRuntime}
+    AND ${finalMarkerVersion} NOT IN ('2', 'v2')
+  )`
+}
+
 function getSitesAnalyticsSubmissionKindExpression(alias = 'source', ownerAlias = 'owner') {
   const explicitIntermediate = getSitesAnalyticsExplicitFalseMetaExpression(alias, [
     'formFinalSubmit',
@@ -10362,11 +10390,14 @@ function getSitesAnalyticsSubmissionKindExpression(alias = 'source', ownerAlias 
     'redirect', 'site_page', 'show_message', 'disqualify',
     'disqualify_after_submit', 'end_form'
   ))`
+  const serverDisqualified = `LOWER(COALESCE(${alias}.status, 'received')) = 'disqualified'`
+  const ambiguousLegacyFinal = getSitesAnalyticsLegacyAmbiguousFinalExpression(alias, ownerAlias)
 
   return `CASE
     WHEN ${importedOrVideoGate} THEN 'completed'
     WHEN ${completed} THEN 'completed'
-    WHEN ${immediateTerminal} OR ${terminalRule} THEN 'terminal_exit'
+    WHEN ${serverDisqualified} OR ${immediateTerminal} OR ${terminalRule} THEN 'terminal_exit'
+    WHEN ${ambiguousLegacyFinal} THEN 'legacy_unknown'
     WHEN ${explicitIntermediate} THEN 'checkpoint'
     WHEN COALESCE(${ownerAlias}.site_type, '') != 'standard_form' THEN 'completed'
     ELSE 'legacy_unknown'
@@ -31200,7 +31231,8 @@ export async function renderPublicSiteHtml(site, {
         ruleSubmit = false,
         ruleAction = '',
         ruleFieldId = '',
-        immediateDisqualify = false
+        immediateDisqualify = false,
+        finalSubmit = false
       } = {}) => {
         const url = new URL(window.location.href);
         const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
@@ -31223,7 +31255,8 @@ export async function renderPublicSiteHtml(site, {
             ruleAction,
             ruleFieldId,
             immediateDisqualify,
-            formFinalSubmit: isStandardForm && !ruleSubmit && !isStandardFormIntermediatePage,
+            formFinalMarkerVersion: 2,
+            formFinalSubmit: Boolean(finalSubmit),
             tracking: nativeTracking,
             fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
             fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
@@ -31472,7 +31505,12 @@ export async function renderPublicSiteHtml(site, {
       form.querySelectorAll('[data-rstk-payment-submit]').forEach((button) => {
         button.addEventListener('click', () => {
           if (button.disabled) return;
-          form.requestSubmit();
+          form.dataset.allowPendingStepSubmit = 'true';
+          try {
+            form.requestSubmit();
+          } finally {
+            delete form.dataset.allowPendingStepSubmit;
+          }
         });
       });
 
@@ -31581,6 +31619,50 @@ export async function renderPublicSiteHtml(site, {
         };
       });
 
+      const resolvePendingFormStep = ({
+        standardFormIntermediate,
+        standardFormNextButton,
+        interactive,
+        interactiveIndex,
+        interactivePageCount,
+        interactiveNextButton,
+        embeddedStates,
+        activeElement,
+        submitter
+      } = {}) => {
+        if (standardFormIntermediate) {
+          return { kind: 'standard', nextButton: standardFormNextButton || null };
+        }
+        if (interactive && interactivePageCount > 0 && interactiveIndex < interactivePageCount - 1) {
+          return { kind: 'interactive', nextButton: interactiveNextButton || null };
+        }
+        const states = embeddedStates || [];
+        const submitterState = submitter
+          ? states.find(candidate => candidate && candidate.formHost && candidate.formHost.contains(submitter))
+          : null;
+        if (submitterState) {
+          if (submitterState.pageIds.length === 0 || submitterState.index >= submitterState.pageIds.length - 1) return null;
+          return { kind: 'embedded', nextButton: submitterState.nextButton || null, state: submitterState };
+        }
+        const activeState = states.find((candidate) => {
+          if (!candidate || candidate.pageIds.length === 0 || candidate.index >= candidate.pageIds.length - 1) return false;
+          return Boolean(activeElement && candidate.formHost && candidate.formHost.contains(activeElement));
+        });
+        return activeState ? { kind: 'embedded', nextButton: activeState.nextButton || null, state: activeState } : null;
+      };
+
+      const getPendingRuntimeStep = (submitter = null) => resolvePendingFormStep({
+        standardFormIntermediate: isStandardFormIntermediatePage,
+        standardFormNextButton: formNextButton,
+        interactive: isInteractive,
+        interactiveIndex: index,
+        interactivePageCount: stepPages.length,
+        interactiveNextButton: nextButton,
+        embeddedStates: embeddedForms,
+        activeElement: document.activeElement,
+        submitter
+      });
+
       const getEmbeddedPageFields = (state) => {
         const currentPageId = state.pageIds[state.index] || '';
         return fields.filter(field => (field.getAttribute('data-page-id') || '') === currentPageId);
@@ -31676,7 +31758,12 @@ export async function renderPublicSiteHtml(site, {
         delete form.dataset.standardFormNextAfterPayment;
         if (pageHasPaymentBlock(pageId)) {
           if (targetUrl) form.dataset.standardFormNextAfterPayment = targetUrl;
-          form.requestSubmit();
+          form.dataset.allowPendingStepSubmit = 'true';
+          try {
+            form.requestSubmit();
+          } finally {
+            delete form.dataset.allowPendingStepSubmit;
+          }
           return;
         }
         if (targetUrl) {
@@ -31792,6 +31879,14 @@ export async function renderPublicSiteHtml(site, {
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const ruleSubmit = form.dataset.ruleSubmit === 'true';
+        const allowPendingStepSubmit = form.dataset.allowPendingStepSubmit === 'true';
+        delete form.dataset.allowPendingStepSubmit;
+        const pendingRuntimeStep = ruleSubmit ? null : getPendingRuntimeStep(event.submitter);
+        if (pendingRuntimeStep && !allowPendingStepSubmit) {
+          const forwardButton = pendingRuntimeStep.nextButton;
+          if (forwardButton && !forwardButton.hidden && !forwardButton.disabled) forwardButton.click();
+          return;
+        }
         const rulePageId = form.dataset.rulePageId || getCurrentPageId();
         const ruleAction = form.dataset.ruleAction || '';
         const ruleFieldId = form.dataset.ruleFieldId || '';
@@ -31841,7 +31936,8 @@ export async function renderPublicSiteHtml(site, {
             ruleSubmit,
             ruleAction,
             ruleFieldId,
-            immediateDisqualify
+            immediateDisqualify,
+            finalSubmit: !ruleSubmit && !pendingRuntimeStep && !isStandardFormIntermediatePage
           });
           const postSubmission = async (payload) => {
             const response = await fetch('/api/sites/public/submit', {
@@ -35430,12 +35526,13 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     body.meta?.videoFormGateBlockId ||
     body.meta?.video_form_gate_block_id
   )
-  const isFinalStandardFormSubmit = site.siteType === 'standard_form' && normalizeBoolean(
+  const isExplicitFinalSubmit = normalizeBoolean(
     body.finalSubmit ||
     body.final_submit ||
     body.meta?.formFinalSubmit ||
     body.meta?.form_final_submit
   )
+  const isFinalStandardFormSubmit = site.siteType === 'standard_form' && isExplicitFinalSubmit
   const isRuleSubmit = normalizeBoolean(
     body.ruleSubmit ||
     body.rule_submit ||
@@ -35725,7 +35822,7 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     submittedPageId: effectiveSubmittedPageId,
     submissionId,
     submissionStatus: ruleEvaluation.status,
-    finalSubmission: site.siteType !== 'standard_form' || isFinalStandardFormSubmit || isRuleSubmit,
+    finalSubmission: isExplicitFinalSubmit || Boolean(videoFormGateContext),
     contactId,
     contact: inferredContact,
     req,

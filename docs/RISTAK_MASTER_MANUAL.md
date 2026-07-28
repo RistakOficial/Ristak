@@ -1004,10 +1004,12 @@ detener la ingesta durante el deploy. SQLite repara antes del marcador de
 bootstrap únicamente las columnas ausentes —porque su motor no soporta
 `ADD COLUMN IF NOT EXISTS`— y la migración `136` valida el esquema e índices
 antes de registrar el ledger. Ambos motores comprueban tabla, método B-tree,
-orden de columnas,
-unicidad y predicado de cada índice; un homónimo incorrecto no se acepta por su
-nombre. Si la preparación no queda completa, el arranque falla cerrado y no
-publica una instalación que acepte telemetría con esquema parcial.
+orden de columnas, unicidad y predicado de cada índice; un homónimo incorrecto
+no se acepta por su nombre. Si la preparación no queda completa, el arranque
+falla cerrado y no publica una instalación que acepte telemetría con esquema
+parcial.
+Las migraciones `137*` agregan el índice que permite contrastar cada envío
+histórico con `native_site_conversion` sin escanear el ledger completo.
 
 Los envios guardados se clasifican server-side como `completed`,
 `terminal_exit`, `checkpoint` o `legacy_unknown`. Una conversion calificada es
@@ -1023,6 +1025,23 @@ haber ocurrido a más tardar en el instante del evento de conversión; una visit
 posterior nunca puede atribuir retroactivamente una conversión. El scope historico representa las
 entidades actualmente publicadas; no se debe afirmar que reconstruye una
 version/publicacion que la base no conserva.
+
+El runtime marca `formFinalSubmit = true` en el envío final de landings,
+formularios interactivos y la última página de formularios estándar, acompañado
+de `formFinalMarkerVersion = 2`. En el histórico, algunas landings con
+formulario embebido guardaron ese marcador como `false` aun después del envío
+final. El runtime antiguo también podía emitir `native_site_conversion` después
+de un submit prematuro, por lo que ese evento no prueba por sí solo que el
+formulario llegó al final. Analytics mantiene los `false` de esos contextos que
+no traen la versión 2 como `legacy_unknown`, los excluye de conversiones y
+declara cobertura `partial`; fabricar una cifra sería peor que reconocer que el
+histórico no dejó evidencia suficiente. Un checkpoint de formulario estándar
+tampoco se convierte en final sólo por tener un evento legacy. El runtime actual
+bloquea el submit implícito (por ejemplo, Enter) antes del último paso de
+formularios estándar, interactivos y embebidos, y lo transforma en la acción
+Siguiente. Además, `/collect` rechaza `native_site_conversion`: ese evento queda
+reservado al guardado server-side del envío y no puede fabricarse desde la
+ingesta pública.
 
 Analiticas usa `analytics_selector`, un catalogo paginado independiente de las
 bibliotecas visuales y de sus carpetas. Solo incluye entidades publicadas; los

@@ -686,7 +686,7 @@ test('la migracion 092 de Sites tracking corre completa e idempotente en SQLite 
   }
 })
 
-test('la migración 136 repara un esquema legado de Sites Analytics y queda idempotente en SQLite real', async () => {
+test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y quedan idempotentes en SQLite real', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ristak-sites-analytics-schema-'))
   const database = openMemoryDatabase()
   const sqliteMigration = new URL(
@@ -695,6 +695,18 @@ test('la migración 136 repara un esquema legado de Sites Analytics y queda idem
   )
   const postgresMigration = new URL(
     '../migrations/versioned/136a_sites_analytics_tracking_schema.postgres.sql',
+    import.meta.url
+  )
+  const submissionEvidenceSqliteMigration = new URL(
+    '../migrations/versioned/137_sites_analytics_submission_evidence.sqlite.sql',
+    import.meta.url
+  )
+  const submissionEvidencePostgresMigration = new URL(
+    '../migrations/versioned/137a_sites_analytics_submission_evidence.postgres.sql',
+    import.meta.url
+  )
+  const submissionEvidenceContractMigration = new URL(
+    '../migrations/versioned/137b_sites_analytics_submission_evidence_contract.postgres.sql',
     import.meta.url
   )
 
@@ -706,7 +718,8 @@ test('la migración 136 repara un esquema legado de Sites Analytics y queda idem
         started_at TIMESTAMP NOT NULL,
         tracking_source TEXT DEFAULT 'external_pixel',
         site_id TEXT,
-        form_site_id TEXT
+        form_site_id TEXT,
+        submission_id TEXT
       );
 
       CREATE TABLE video_playback_events (
@@ -744,6 +757,7 @@ test('la migración 136 repara un esquema legado de Sites Analytics y queda idem
       'idx_sessions_event_id_unique',
       'idx_sessions_form_tracking_started',
       'idx_sessions_site_tracking_started',
+      'idx_sessions_submission_tracking_event',
       'idx_video_events_asset_time_type',
       'idx_video_events_playback_sequence',
       'idx_video_events_playback_type_time',
@@ -754,9 +768,21 @@ test('la migración 136 repara un esquema legado de Sites Analytics y queda idem
 
     await copyFile(sqliteMigration, join(directory, '136_sites_analytics_tracking_schema.sqlite.sql'))
     await copyFile(postgresMigration, join(directory, '136a_sites_analytics_tracking_schema.postgres.sql'))
+    await copyFile(
+      submissionEvidenceSqliteMigration,
+      join(directory, '137_sites_analytics_submission_evidence.sqlite.sql')
+    )
+    await copyFile(
+      submissionEvidencePostgresMigration,
+      join(directory, '137a_sites_analytics_submission_evidence.postgres.sql')
+    )
+    await copyFile(
+      submissionEvidenceContractMigration,
+      join(directory, '137b_sites_analytics_submission_evidence_contract.postgres.sql')
+    )
 
     const firstRun = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
-    assert.deepEqual(firstRun, { applied: 1, skipped: 1 })
+    assert.deepEqual(firstRun, { applied: 2, skipped: 3 })
 
     const sessionColumns = await database.all('PRAGMA table_info("sessions")')
     assert.deepEqual(
@@ -831,7 +857,8 @@ test('la reparación SQLite falla cerrado ante un índice homónimo con definici
         started_at TIMESTAMP NOT NULL,
         tracking_source TEXT DEFAULT 'external_pixel',
         site_id TEXT,
-        form_site_id TEXT
+        form_site_id TEXT,
+        submission_id TEXT
       );
 
       CREATE TABLE video_playback_events (
@@ -871,7 +898,7 @@ test('la reparación SQLite falla cerrado ante un índice homónimo con definici
   }
 })
 
-test('el tren PostgreSQL 136 separa columnas, índices concurrentes y validación canónica', async () => {
+test('los trenes PostgreSQL 136/137 separan columnas, índices concurrentes y validación canónica', async () => {
   const columnSql = await readFile(
     new URL('../migrations/versioned/136a_sites_analytics_tracking_schema.postgres.sql', import.meta.url),
     'utf8'
@@ -903,7 +930,8 @@ test('el tren PostgreSQL 136 separa columnas, índices concurrentes y validació
     ['136f_sites_analytics_video_asset_scope.postgres.sql', 'idx_video_events_asset_time_type'],
     ['136g_sites_analytics_video_site_scope.postgres.sql', 'idx_video_events_site_time_type'],
     ['136h_sites_analytics_video_playback_scope.postgres.sql', 'idx_video_events_playback_type_time'],
-    ['136i_sites_analytics_video_visitor_scope.postgres.sql', 'idx_video_events_visitor_time']
+    ['136i_sites_analytics_video_visitor_scope.postgres.sql', 'idx_video_events_visitor_time'],
+    ['137a_sites_analytics_submission_evidence.postgres.sql', 'idx_sessions_submission_tracking_event']
   ]
   for (const [file, index] of concurrentMigrations) {
     const sql = await readFile(new URL(`../migrations/versioned/${file}`, import.meta.url), 'utf8')
@@ -929,6 +957,23 @@ test('el tren PostgreSQL 136 separa columnas, índices concurrentes y validació
   assert.match(validationSql, /\bactual_columns\b/)
   assert.match(validationSql, /\bnormalized_predicate\b/)
   assert.match(validationSql, /\bRAISE EXCEPTION\b/)
+
+  const submissionEvidenceValidationSql = await readFile(
+    new URL(
+      '../migrations/versioned/137b_sites_analytics_submission_evidence_contract.postgres.sql',
+      import.meta.url
+    ),
+    'utf8'
+  )
+  assert.match(submissionEvidenceValidationSql, /\bpg_index\b/)
+  assert.match(submissionEvidenceValidationSql, /\bpg_am\b/)
+  assert.match(submissionEvidenceValidationSql, /\bindisvalid\b/)
+  assert.match(submissionEvidenceValidationSql, /\bindisready\b/)
+  assert.match(submissionEvidenceValidationSql, /'submission_id'/)
+  assert.match(submissionEvidenceValidationSql, /'tracking_source'/)
+  assert.match(submissionEvidenceValidationSql, /'event_name'/)
+  assert.match(submissionEvidenceValidationSql, /'started_at'/)
+  assert.match(submissionEvidenceValidationSql, /\bRAISE EXCEPTION\b/)
 })
 
 test('la migracion 093 de bibliotecas Sites tolera JSON corrupto y crea ambos índices SQLite', async () => {

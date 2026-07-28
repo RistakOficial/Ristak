@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
+import vm from 'node:vm'
 
-import { getAppConfig, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createBlock,
   createSite,
@@ -120,6 +121,10 @@ test('linked forms keep their disqualification rules when submitted from a landi
     })
     assert.match(rendered, /const completionAction = "next_page_if_qualified";/)
     assert.match(rendered, /const completionUsesFormRules = true;/)
+    assert.match(rendered, /formFinalMarkerVersion: 2,/)
+    assert.match(rendered, /formFinalSubmit: Boolean\(finalSubmit\),/)
+    assert.match(rendered, /finalSubmit: !ruleSubmit && !pendingRuntimeStep && !isStandardFormIntermediatePage/)
+    assert.doesNotMatch(rendered, /formFinalSubmit: isStandardForm &&/)
 
     // Compatibilidad: los embeds viejos no registraban si next_page era el
     // default automático. Si el fuente sí descalifica, se reparan al hidratar.
@@ -188,6 +193,32 @@ test('linked forms keep their disqualification rules when submitted from a landi
     assert.equal(result.status, 'disqualified')
     assert.equal(result.message, 'No calificas para continuar.')
     assert.equal(result.rules.actions[0]?.action, 'disqualify_after_submit')
+
+    const checkpoint = await createSubmissionFromRequest({
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      hostname: 'example.test',
+      path: `/${landing.slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }, {
+      siteId: landing.id,
+      pageId: 'page-1',
+      responses: {
+        [emailBlock.id]: `embedded-checkpoint-${suffix}@example.test`,
+        [qualificationBlock.id]: 'Sí'
+      },
+      meta: {
+        formFinalMarkerVersion: 2,
+        formFinalSubmit: false,
+        visitorId: `embedded-checkpoint-visitor-${suffix}`,
+        sessionId: `embedded-checkpoint-session-${suffix}`
+      }
+    })
+    const conversionRow = await db.get(
+      "SELECT id FROM sessions WHERE submission_id = ? AND event_name = 'native_site_conversion' LIMIT 1",
+      [checkpoint.submissionId]
+    )
+    assert.equal(conversionRow, null)
   } finally {
     if (landing?.id) await deleteSite(landing.id).catch(() => undefined)
     if (sourceForm?.id) await deleteSite(sourceForm.id).catch(() => undefined)
@@ -373,6 +404,85 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /embeddedForms\.forEach\(renderEmbeddedForm\)/)
   assert.match(html, /state\.index = 0;/)
   assert.ok(html.includes("setHiddenAndSyncMedia(content, (content.getAttribute('data-embedded-page-content') || '') !== currentPageId);"))
+
+  const resolverMatch = html.match(
+    /const resolvePendingFormStep = ([\s\S]*?);\n\n      const getPendingRuntimeStep/
+  )
+  assert.ok(resolverMatch, 'el runtime debe exponer un resolver puro para impedir envíos antes del último paso')
+  const resolvePendingFormStep = vm.runInNewContext(`(${resolverMatch[1]})`)
+  const activeElement = {}
+  const embeddedNextButton = { hidden: false, disabled: false }
+  const embeddedState = {
+    pageIds: ['step-1', 'step-2'],
+    index: 0,
+    formHost: { contains: candidate => candidate === activeElement },
+    nextButton: embeddedNextButton
+  }
+
+  const pendingInteractive = resolvePendingFormStep({
+    interactive: true,
+    interactiveIndex: 0,
+    interactivePageCount: 2,
+    interactiveNextButton: { hidden: false },
+    embeddedStates: []
+  })
+  assert.equal(pendingInteractive.kind, 'interactive')
+
+  const standardNextButton = { hidden: false, disabled: false }
+  const pendingStandard = resolvePendingFormStep({
+    standardFormIntermediate: true,
+    standardFormNextButton: standardNextButton,
+    interactive: false,
+    embeddedStates: []
+  })
+  assert.equal(pendingStandard.kind, 'standard')
+  assert.equal(pendingStandard.nextButton, standardNextButton)
+
+  const pendingEmbedded = resolvePendingFormStep({
+    interactive: false,
+    interactiveIndex: 0,
+    interactivePageCount: 0,
+    embeddedStates: [embeddedState],
+    activeElement
+  })
+  assert.equal(pendingEmbedded.kind, 'embedded')
+  assert.equal(pendingEmbedded.nextButton, embeddedNextButton)
+
+  embeddedState.index = 1
+  assert.equal(resolvePendingFormStep({
+    interactive: false,
+    interactiveIndex: 0,
+    interactivePageCount: 0,
+    embeddedStates: [embeddedState],
+    activeElement
+  }), null)
+
+  const pendingActiveElement = {}
+  const finalSubmitter = {}
+  const pendingOtherState = {
+    pageIds: ['other-1', 'other-2'],
+    index: 0,
+    formHost: { contains: candidate => candidate === pendingActiveElement },
+    nextButton: { hidden: false, disabled: false }
+  }
+  const finalSubmitterState = {
+    pageIds: ['final-1', 'final-2'],
+    index: 1,
+    formHost: { contains: candidate => candidate === finalSubmitter },
+    nextButton: { hidden: true, disabled: false }
+  }
+  assert.equal(resolvePendingFormStep({
+    interactive: false,
+    interactiveIndex: 0,
+    interactivePageCount: 0,
+    embeddedStates: [pendingOtherState, finalSubmitterState],
+    activeElement: pendingActiveElement,
+    submitter: finalSubmitter
+  }), null, 'el submitter de un embed final manda sobre el foco stale de otro embed')
+
+  assert.match(html, /const pendingRuntimeStep = ruleSubmit \? null : getPendingRuntimeStep\(event\.submitter\);/)
+  assert.match(html, /if \(pendingRuntimeStep && !allowPendingStepSubmit\)/)
+  assert.match(html, /if \(forwardButton && !forwardButton\.hidden && !forwardButton\.disabled\) forwardButton\.click\(\);/)
 })
 
 test('multistep form runtime pauses media when switching questions', async () => {
