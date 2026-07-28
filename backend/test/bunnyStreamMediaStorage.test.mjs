@@ -90,6 +90,8 @@ async function createBunnyMockServer() {
   let streamVideoTitle = 'Hero video (sites) site_1'
   let streamVideoCollectionId = ''
   let streamVideoStatus = 4
+  let fetchedStreamVideoTitle = ''
+  let fetchedStreamVideoCollectionId = ''
   let centralStorageConfig = null
   const streamOriginalBuffer = Buffer.from('fake original video bytes from Bunny Stream')
   let tusUploadLength = streamOriginalBuffer.length
@@ -255,6 +257,51 @@ async function createBunnyMockServer() {
         return
       }
 
+      if (path === '/stream/library/123/videos' && req.method === 'GET') {
+        const search = url.searchParams.get('search') || ''
+        const collection = url.searchParams.get('collection') || ''
+        requests.push({
+          kind: 'stream-list-videos',
+          search,
+          collection,
+          accessKey: req.headers.accesskey
+        })
+        const matchesFetch = Boolean(fetchedStreamVideoTitle) &&
+          (!search || search === fetchedStreamVideoTitle) &&
+          (!collection || collection === fetchedStreamVideoCollectionId)
+        sendJson(res, 200, {
+          totalItems: matchesFetch ? 1 : 0,
+          currentPage: 1,
+          itemsPerPage: 25,
+          items: matchesFetch ? [{
+            videoLibraryId: 123,
+            guid: 'stream-video-fetch-1',
+            title: fetchedStreamVideoTitle,
+            dateUploaded: '2026-07-28T00:00:00Z',
+            status: streamVideoStatus,
+            width: 1920,
+            height: 1080,
+            length: 121,
+            collectionId: fetchedStreamVideoCollectionId
+          }] : []
+        })
+        return
+      }
+
+      if (path === '/stream/library/123/videos/fetch' && req.method === 'POST') {
+        const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
+        fetchedStreamVideoTitle = body.title || ''
+        fetchedStreamVideoCollectionId = url.searchParams.get('collectionId') || ''
+        requests.push({
+          kind: 'stream-fetch-video',
+          body,
+          collectionId: fetchedStreamVideoCollectionId,
+          accessKey: req.headers.accesskey
+        })
+        sendJson(res, 200, { success: true, message: 'queued', statusCode: 200 })
+        return
+      }
+
       if (path === '/stream/library/123/videos/stream-video-1' && req.method === 'POST') {
         const body = JSON.parse((await readRequestBuffer(req)).toString('utf8') || '{}')
         requests.push({ kind: 'stream-update-video', body, accessKey: req.headers.accesskey })
@@ -329,6 +376,40 @@ async function createBunnyMockServer() {
             hasOriginal: true
           },
           videoPlaylistUrl: `${baseUrl}/stream-delivery/stream-video-1/playlist.m3u8`,
+          originalUrl: null,
+          isPlayable: true
+        })
+        return
+      }
+
+      if (path === '/stream/library/123/videos/stream-video-fetch-1' && req.method === 'GET') {
+        requests.push({ kind: 'stream-get-fetched-video', accessKey: req.headers.accesskey })
+        sendJson(res, 200, {
+          videoLibraryId: 123,
+          guid: 'stream-video-fetch-1',
+          title: fetchedStreamVideoTitle,
+          dateUploaded: '2026-07-28T00:00:00Z',
+          status: streamVideoStatus,
+          width: 1920,
+          height: 1080,
+          length: 121,
+          collectionId: fetchedStreamVideoCollectionId
+        })
+        return
+      }
+
+      if (path === '/stream/library/123/videos/stream-video-fetch-1/play' && req.method === 'GET') {
+        requests.push({ kind: 'stream-get-fetched-play-data', accessKey: req.headers.accesskey })
+        sendJson(res, 200, {
+          video: {
+            videoLibraryId: 123,
+            guid: 'stream-video-fetch-1',
+            status: streamVideoStatus,
+            availableResolutions: '360p,720p,1080p',
+            hasMP4Fallback: true,
+            hasOriginal: true
+          },
+          videoPlaylistUrl: `${baseUrl}/stream-delivery/stream-video-fetch-1/playlist.m3u8`,
           originalUrl: null,
           isPlayable: true
         })
@@ -1404,6 +1485,73 @@ test('videos existentes en Bunny Storage se sincronizan a Bunny Stream al agrega
     assert.ok(bunny.requests.some(request => request.kind === 'storage-get'))
     assert.ok(bunny.requests.some(request => request.kind === 'stream-create-video'))
     assert.ok(bunny.requests.some(request => request.kind === 'stream-upload-video'))
+  } finally {
+    if (mediaAssetId) {
+      const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')
+      await softDeleteMediaAsset(mediaAssetId).catch(() => undefined)
+    }
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    bunny.close()
+    restoreEnv(previousEnv)
+  }
+})
+
+test('videos existentes en Bunny Storage se encolan para importación remota sin descargarlos por Render', async () => {
+  const previousEnv = snapshotEnv()
+  const bunny = await createBunnyMockServer()
+  let db = null
+  let mediaAssetId = ''
+
+  try {
+    configureBunnyEnv(bunny.baseUrl)
+
+    const [mediaStorageService, database] = await Promise.all([
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const created = await mediaStorageService.uploadMediaAsset({
+      buffer: Buffer.from('fake mp4 bytes for remote fetch'),
+      filename: 'existing-large-video.mp4',
+      mimeType: 'video/mp4',
+      module: 'chat',
+      moduleEntityId: 'conversation_remote_fetch',
+      businessId: 'default',
+      isPublic: true,
+      skipCompression: true
+    })
+    mediaAssetId = created.id
+
+    const queued = await mediaStorageService.queueMediaAssetBunnyStreamSync(created.id, {
+      module: 'sites',
+      moduleEntityId: 'site_remote_fetch'
+    })
+
+    assert.equal(queued.metadata.stream.syncStatus, 'pending')
+    assert.equal(queued.metadata.stream.syncMode, 'remote_fetch')
+    assert.equal(queued.metadata.stream.source.module, 'sites')
+    assert.equal(queued.metadata.stream.source.moduleEntityId, 'site_remote_fetch')
+
+    const synced = await waitForValue(async () => {
+      const current = await mediaStorageService.getMediaAsset(created.id)
+      return current.metadata.stream.videoId ? current : null
+    }, { label: 'remote Bunny Stream fetch' })
+
+    assert.equal(synced.metadata.stream.syncStatus, 'uploaded')
+    assert.equal(synced.metadata.stream.syncMode, 'remote_fetch')
+    assert.equal(synced.metadata.stream.videoId, 'stream-video-fetch-1')
+    const fetchRequest = bunny.requests.find(request => request.kind === 'stream-fetch-video')
+    assert.ok(fetchRequest)
+    assert.equal(fetchRequest.body.url, created.publicUrl)
+    assert.match(fetchRequest.body.title, new RegExp(`\\[Ristak ${created.id}\\]$`))
+    assert.equal(fetchRequest.collectionId, 'collection-sites-forms')
+    assert.equal(bunny.requests.some(request => request.kind === 'storage-get'), false)
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-create-video'), false)
+    assert.equal(bunny.requests.some(request => request.kind === 'stream-upload-video'), false)
   } finally {
     if (mediaAssetId) {
       const { softDeleteMediaAsset } = await import('../src/services/mediaStorageService.js')

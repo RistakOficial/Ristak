@@ -67,6 +67,9 @@ const BUNNY_STREAM_COLLECTION_CACHE_TTL_MS = Math.max(
   60_000,
   Number(process.env.BUNNY_STREAM_COLLECTION_CACHE_TTL_MS || 10 * 60 * 1000) || 10 * 60 * 1000
 )
+const BUNNY_STREAM_REMOTE_FETCH_POLL_INTERVAL_MS = 2_000
+const BUNNY_STREAM_REMOTE_FETCH_POLL_ATTEMPTS = 30
+const BUNNY_STREAM_REMOTE_FETCH_DEDUP_TTL_MS = 24 * 60 * 60 * 1000
 const BUNNY_STREAM_TIMEOUT_MS = Math.max(
   10_000,
   Number(process.env.BUNNY_STREAM_TIMEOUT_MS || 120_000) || 120_000
@@ -154,6 +157,7 @@ let premiumBunnyStreamLibraryCache = {
   promise: null
 }
 const bunnyStreamCollectionCache = new Map()
+const bunnyStreamRemoteFetchAssetIds = new Set()
 
 const BUNNY_STREAM_MEDIA_MODULES = new Set(['sites', 'forms', 'landing'])
 const RESUMABLE_VIDEO_MIME_BY_EXTENSION = new Map([
@@ -1641,6 +1645,12 @@ function buildBunnyStreamTitle({ originalFilename = '', module = '', moduleEntit
     .slice(0, 180)
 }
 
+function buildBunnyStreamRemoteFetchTitle({ originalFilename = '', id = '' } = {}) {
+  const marker = ` [Ristak ${cleanString(id).slice(0, 80)}]`
+  const base = filenameBase(originalFilename).replace(/[-_]+/g, ' ').trim() || 'Ristak video'
+  return `${base.slice(0, Math.max(1, 180 - marker.length))}${marker}`.slice(0, 180)
+}
+
 function isBunnyStreamEligibleVideo({ mediaType = '', module = '' } = {}) {
   return cleanString(mediaType).toLowerCase() === 'video' && BUNNY_STREAM_MEDIA_MODULES.has(normalizeModule(module))
 }
@@ -1762,6 +1772,53 @@ async function createBunnyStreamVideo(config, { title, collectionId }) {
       body: {
         title,
         ...(collectionId ? { collectionId } : {})
+      }
+    }
+  )
+}
+
+async function listBunnyStreamVideos(config, { title, collectionId } = {}) {
+  const payload = await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos`,
+    {
+      query: {
+        page: 1,
+        itemsPerPage: 25,
+        search: cleanString(title),
+        collection: cleanString(collectionId),
+        orderBy: 'date'
+      }
+    }
+  )
+  return Array.isArray(payload?.items) ? payload.items : []
+}
+
+async function findBunnyStreamVideoByTitle(config, { title, collectionId } = {}) {
+  const normalizedTitle = cleanString(title)
+  const normalizedCollectionId = cleanString(collectionId)
+  const videos = await listBunnyStreamVideos(config, {
+    title: normalizedTitle,
+    collectionId: normalizedCollectionId
+  })
+  return videos.find((video) => (
+    cleanString(video?.title) === normalizedTitle &&
+    (!normalizedCollectionId || cleanString(video?.collectionId) === normalizedCollectionId)
+  )) || null
+}
+
+async function fetchBunnyStreamVideoFromUrl(config, { url, title, collectionId } = {}) {
+  return await bunnyStreamRequest(
+    config,
+    `/library/${encodeURIComponent(config.bunnyStreamLibraryId)}/videos/fetch`,
+    {
+      method: 'POST',
+      query: {
+        collectionId: cleanString(collectionId)
+      },
+      body: {
+        url: cleanString(url),
+        title: cleanString(title)
       }
     }
   )
@@ -2028,6 +2085,205 @@ async function updateMediaAssetStream({ asset, stream }) {
       asset.id
     ]
   )
+}
+
+function isRecentBunnyStreamRemoteFetch(value) {
+  const timestamp = Date.parse(cleanString(value))
+  return Number.isFinite(timestamp) && Date.now() - timestamp < BUNNY_STREAM_REMOTE_FETCH_DEDUP_TTL_MS
+}
+
+async function persistRemoteFetchPendingStream({
+  asset,
+  config,
+  usageContext,
+  clientAccount,
+  collection,
+  title,
+  fetchAcceptedAt,
+  fetchResult
+}) {
+  const currentStream = asset.metadata?.stream || {}
+  const stream = {
+    ...currentStream,
+    provider: 'bunny_stream',
+    enabled: true,
+    providerReady: true,
+    syncStatus: 'pending',
+    syncMode: 'remote_fetch',
+    queuedAt: currentStream.queuedAt || nowIso(),
+    libraryId: config.bunnyStreamLibraryId,
+    collectionId: collection?.id || currentStream.collectionId || config.bunnyStreamCollectionId || null,
+    collectionName: collection?.name || currentStream.collectionName || buildBunnyStreamCollectionName(config, clientAccount),
+    title,
+    fetchTitle: title,
+    clientAccount,
+    source: {
+      ...(currentStream.source || {}),
+      ...bunnyStreamSourceForAsset(asset, usageContext, clientAccount)
+    },
+    ...(fetchAcceptedAt ? { fetchAcceptedAt } : {}),
+    ...(fetchResult ? {
+      fetchResult: {
+        success: fetchResult.success === undefined ? null : boolValue(fetchResult.success),
+        statusCode: fetchResult.statusCode ?? null,
+        message: fetchResult.message ?? null
+      }
+    } : {}),
+    error: null,
+    code: null,
+    failedAt: null
+  }
+  await updateMediaAssetStream({ asset, stream })
+  return stream
+}
+
+async function runQueuedBunnyStreamRemoteFetch(assetId, {
+  config,
+  usageContext,
+  clientAccount,
+  title
+}) {
+  let asset = await getMediaAsset(assetId)
+  if (asset.status === 'deleted' || cleanString(asset.metadata?.stream?.videoId)) return
+
+  const collection = await ensureBunnyStreamCollection(config, clientAccount)
+  if (!collection?.id) {
+    throw errorWithStatus('Bunny Stream no regresó una colección usable para esta cuenta.', 502, 'bunny_stream_collection_required')
+  }
+
+  let video = await findBunnyStreamVideoByTitle(config, {
+    title,
+    collectionId: collection.id
+  })
+  const currentStream = asset.metadata?.stream || {}
+  let fetchAcceptedAt = cleanString(currentStream.fetchAcceptedAt)
+
+  if (!video && !isRecentBunnyStreamRemoteFetch(fetchAcceptedAt)) {
+    const sourceUrl = bunnyPublicUrl(config, asset.bunnyPath)
+    const fetchResult = await fetchBunnyStreamVideoFromUrl(config, {
+      url: sourceUrl,
+      title,
+      collectionId: collection.id
+    })
+    fetchAcceptedAt = nowIso()
+    await persistRemoteFetchPendingStream({
+      asset,
+      config,
+      usageContext,
+      clientAccount,
+      collection,
+      title,
+      fetchAcceptedAt,
+      fetchResult
+    })
+    asset = await getMediaAsset(assetId)
+
+    const fetchedVideoId = cleanString(fetchResult?.guid || fetchResult?.videoId || fetchResult?.id)
+    if (fetchedVideoId) {
+      video = {
+        ...fetchResult,
+        guid: fetchedVideoId,
+        title,
+        collectionId: collection.id
+      }
+    }
+  }
+
+  for (let attempt = 0; !video && attempt < BUNNY_STREAM_REMOTE_FETCH_POLL_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, BUNNY_STREAM_REMOTE_FETCH_POLL_INTERVAL_MS))
+    }
+    video = await findBunnyStreamVideoByTitle(config, {
+      title,
+      collectionId: collection.id
+    })
+  }
+
+  if (!video) {
+    const pendingAsset = await getMediaAsset(assetId)
+    await persistRemoteFetchPendingStream({
+      asset: pendingAsset,
+      config,
+      usageContext,
+      clientAccount,
+      collection,
+      title,
+      fetchAcceptedAt
+    })
+    logger.warn(`[MediaStorage] Bunny Stream aceptó la importación remota de ${assetId}, pero todavía no publica su videoId.`)
+    return
+  }
+
+  const videoId = cleanString(video.guid || video.videoId || video.id)
+  const completeVideo = await getBunnyStreamVideo(config, videoId).catch((error) => {
+    logger.warn(`[MediaStorage] Bunny Stream importó ${videoId}, pero no se pudo leer metadata inicial: ${error.message}`)
+    return video
+  })
+  const delivery = await getBunnyStreamVideoPlayData(config, videoId)
+    .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config))
+    .catch((error) => {
+      logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${videoId}: ${error.message}`)
+      return null
+    })
+  const freshAsset = await getMediaAsset(assetId)
+  const stream = {
+    ...(freshAsset.metadata?.stream || {}),
+    provider: 'bunny_stream',
+    enabled: true,
+    providerReady: true,
+    syncStatus: 'uploaded',
+    syncMode: 'remote_fetch',
+    syncedAt: nowIso(),
+    libraryId: config.bunnyStreamLibraryId,
+    collectionId: collection.id,
+    collectionName: collection.name || buildBunnyStreamCollectionName(config, clientAccount),
+    videoId,
+    title,
+    fetchTitle: title,
+    fetchAcceptedAt: fetchAcceptedAt || nowIso(),
+    clientAccount,
+    source: bunnyStreamSourceForAsset(freshAsset, usageContext, clientAccount),
+    ...(delivery ? { delivery } : {}),
+    video: normalizeBunnyStreamVideo(completeVideo) || normalizeBunnyStreamVideo(video),
+    error: null,
+    code: null,
+    failedAt: null
+  }
+  await updateMediaAssetStream({ asset: freshAsset, stream })
+  logger.info(`[MediaStorage] Bunny Stream importación remota completada: ${assetId} -> ${videoId}`)
+}
+
+function scheduleBunnyStreamRemoteFetch(assetId, context) {
+  if (bunnyStreamRemoteFetchAssetIds.has(assetId)) return
+  bunnyStreamRemoteFetchAssetIds.add(assetId)
+  setImmediate(() => {
+    runQueuedBunnyStreamRemoteFetch(assetId, context)
+      .catch(async (error) => {
+        logger.warn(`[MediaStorage] Bunny Stream importación remota falló para ${assetId}: ${error.message}`)
+        const asset = await getMediaAsset(assetId).catch(() => null)
+        if (!asset || asset.status === 'deleted') return
+        const currentStream = asset.metadata?.stream || {}
+        await updateMediaAssetStream({
+          asset,
+          stream: {
+            ...currentStream,
+            syncStatus: isRecentBunnyStreamRemoteFetch(currentStream.fetchAcceptedAt) ? 'pending' : 'failed',
+            ...(isRecentBunnyStreamRemoteFetch(currentStream.fetchAcceptedAt) ? {
+              lastCheckedAt: nowIso()
+            } : {
+              failedAt: nowIso(),
+              error: error.message,
+              code: error.code || 'bunny_stream_remote_fetch_failed'
+            })
+          }
+        }).catch((persistError) => {
+          logger.warn(`[MediaStorage] No se pudo guardar el fallo de importación remota para ${assetId}: ${persistError.message}`)
+        })
+      })
+      .finally(() => {
+        bunnyStreamRemoteFetchAssetIds.delete(assetId)
+      })
+  })
 }
 
 async function uploadToBunny({ config, objectPath, buffer, mimeType, deadlineAt = 0 }) {
@@ -6400,6 +6656,63 @@ export async function getMediaAssetDataUrl(assetId) {
     mimeType,
     filename
   }
+}
+
+export async function queueMediaAssetBunnyStreamSync(assetId, context = {}) {
+  const asset = await getMediaAsset(assetId)
+  const usageContext = bunnyStreamUsageContext(asset, context)
+  const clientAccount = await resolveClientAccountContext({
+    ...context,
+    businessId: asset.businessId,
+    metadata: asset.metadata
+  })
+  if (!isBunnyStreamEligibleVideo({ mediaType: asset.mediaType, module: usageContext.module })) {
+    throw errorWithStatus('Este archivo no es un video de sitios o formularios.', 400, 'bunny_stream_not_applicable')
+  }
+  if (cleanString(asset.metadata?.stream?.videoId)) return asset
+
+  const runtimeConfig = await getStorageRuntimeConfig()
+  const config = bunnyStreamConfigForAsset(runtimeConfig, asset)
+  if (!config.bunnyStreamEnabled || !config.bunnyStreamConfigured) {
+    const reason = config.bunnyStreamEnabled ? 'stream_not_configured' : 'stream_disabled'
+    await updateMediaAssetStream({
+      asset,
+      stream: buildSkippedBunnyStreamMetadata(config, reason, clientAccount)
+    })
+    return await getMediaAsset(asset.id)
+  }
+  if (asset.storageProvider !== 'bunny' || !cleanString(asset.bunnyPath)) {
+    await updateMediaAssetStream({
+      asset,
+      stream: {
+        ...buildSkippedBunnyStreamMetadata(config, 'remote_fetch_requires_bunny_storage', clientAccount),
+        source: bunnyStreamSourceForAsset(asset, usageContext, clientAccount)
+      }
+    })
+    return await getMediaAsset(asset.id)
+  }
+
+  const title = buildBunnyStreamRemoteFetchTitle({
+    originalFilename: asset.originalFilename,
+    id: asset.id
+  })
+  await persistRemoteFetchPendingStream({
+    asset,
+    config,
+    usageContext,
+    clientAccount,
+    collection: null,
+    title,
+    fetchAcceptedAt: cleanString(asset.metadata?.stream?.fetchAcceptedAt)
+  })
+  const queuedAsset = await getMediaAsset(asset.id)
+  scheduleBunnyStreamRemoteFetch(asset.id, {
+    config,
+    usageContext,
+    clientAccount,
+    title
+  })
+  return queuedAsset
 }
 
 export async function syncMediaAssetBunnyStream(assetId, context = {}) {

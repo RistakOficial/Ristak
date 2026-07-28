@@ -1004,6 +1004,13 @@ export const mediaService = {
     return apiClient.post<MediaAsset>(`/media/assets/${encodeURIComponent(assetId)}/stream/sync`, input)
   },
 
+  queueAssetStreamSync(assetId: string, input: {
+    module?: string
+    moduleEntityId?: string
+  } = {}) {
+    return apiClient.post<MediaAsset>(`/media/assets/${encodeURIComponent(assetId)}/stream/queue`, input)
+  },
+
   getAssetStreamAnalytics(assetId: string, input: MediaStreamAnalyticsInput = {}) {
     const params: Record<string, string> = {}
     if (input.dateFrom) params.dateFrom = input.dateFrom

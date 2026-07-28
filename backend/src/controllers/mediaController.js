@@ -22,6 +22,7 @@ import {
   moveMediaAssets,
   moveMediaSelection,
   prepareBunnyStreamResumableUpload,
+  queueMediaAssetBunnyStreamSync,
   replaceMediaAsset,
   retryMediaAsset,
   resolveMediaAssetSelection,
@@ -1181,6 +1182,19 @@ export async function syncMediaAssetStreamHandler(req, res) {
     res.json({ success: true, data: asset })
   } catch (error) {
     sendError(res, error, 'Error sincronizando metadata de Bunny Stream')
+  }
+}
+
+export async function queueMediaAssetStreamHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const asset = await queueMediaAssetBunnyStreamSync(req.params.assetId, {
+      module: body.module || req.query?.module,
+      moduleEntityId: body.moduleEntityId || body.module_entity_id || req.query?.moduleEntityId || req.query?.module_entity_id
+    })
+    res.status(202).json({ success: true, data: asset })
+  } catch (error) {
+    sendError(res, error, 'Error encolando preparación de Bunny Stream')
   }
 }
 

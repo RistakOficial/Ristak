@@ -60,6 +60,7 @@ Authenticated app endpoints:
 - `DELETE /api/media/assets/:id`
 - `PUT /api/media/assets/:id/replace`
 - `POST /api/media/assets/:id/retry`
+- `POST /api/media/assets/:id/stream/queue`
 - `POST /api/media/assets/:id/stream/sync`
 - `GET /api/media/diagnostics`
 
@@ -217,11 +218,19 @@ another account.
   RAM, which creates their separate editor/preview source. Premium media accounts
   do not relay that large original through Render or duplicate it in Storage:
   the Stream master is retained by Bunny and its adaptive HLS feeds preview and
-  published playback directly. Legacy assets can still be copied from Bunny
-  Storage to Stream through the compatibility/sync path. Other modules do not
-  sync to Stream automatically.
+  published playback directly. When Sites selects an existing video from Bunny
+  Storage, the association completes immediately and
+  `POST /api/media/assets/:id/stream/queue` asks Bunny Stream to fetch the CDN URL
+  asynchronously. Bunny transfers that source directly; Render never downloads
+  or buffers the complete video. The request is deduplicated by asset identity
+  and a pending import remains retryable after a process restart. The original
+  Storage URL stays usable while Stream imports and transcodes it. Other modules
+  do not sync to Stream automatically.
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
-- Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
+- Bunny Stream video metadata is stored under `media_assets.metadata_json.stream`.
+  `POST /api/media/assets/:id/stream/sync` remains the explicit repair/refresh
+  path after transcoding, including the legacy Stream-only mirror case; it is not
+  the selection path for an existing Storage video.
 - When Bunny exposes playback data, Ristak stores the validated adaptive HLS URL
   under `metadata_json.stream.delivery.playlistUrl`. The public Sites renderer
   uses that HLS source inside the native Ristak player. A Storage MP4 remains the

@@ -24,6 +24,7 @@ import {
   moveMediaSelectionHandler,
   finalizeResumableVideoUploadHandler,
   prepareResumableVideoUploadHandler,
+  queueMediaAssetStreamHandler,
   replaceMediaAssetHandler,
   retryMediaAssetHandler,
   serveMediaAssetFileHandler,
@@ -218,6 +219,7 @@ router.delete('/assets/selection', requireMediaLicense, requireMediaAccess, dele
 router.delete('/assets/:assetId', requireMediaLicense, requireMediaAccess, deleteMediaAssetHandler)
 router.put('/assets/:assetId/replace', requireMediaLicense, requireMediaAccess, classifyMediaUpload, uploadSingleFile, replaceMediaAssetHandler)
 router.post('/assets/:assetId/retry', requireMediaLicense, requireMediaAccess, retryMediaAssetHandler)
+router.post('/assets/:assetId/stream/queue', requireMediaLicense, requireMediaAccess, queueMediaAssetStreamHandler)
 router.post('/assets/:assetId/stream/sync', requireMediaLicense, requireMediaAccess, syncMediaAssetStreamHandler)
 
 export default router

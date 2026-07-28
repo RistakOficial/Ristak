@@ -4908,7 +4908,11 @@ ese nivel con Bunny Storage: así descubre carpetas y archivos creados manualmen
 fuera de Ristak, los indexa de forma idempotente y les aplica el mismo filtro por
 tipo. La lectura siempre queda encerrada bajo `accounts/<slug>`; no es recursiva,
 no expone carpetas de otra cuenta y una falla temporal de Bunny conserva visible
-el inventario que Ristak ya tenía.
+el inventario que Ristak ya tenía. Elegir un video existente lo asocia primero,
+sin esperar otra transferencia. Si todavía no tiene identidad de Bunny Stream,
+Ristak encola una importación directa desde su URL de Storage: Bunny mueve el
+archivo por su red y Render no descarga ni retiene el video completo en memoria.
+El MP4 de Storage sigue funcionando mientras Stream lo importa y transcodifica.
 
 El contrato canonico para contenido asociable es:
 
@@ -6037,6 +6041,11 @@ Capacidades:
   administrativa de Media.
 - Subida TUS directa y resumible para videos de Sites/Forms, en chunks, sin que
   el upload inicial atraviese el proceso Render ni exponga la API key.
+- Selección inmediata de videos existentes en Bunny Storage. Sites conserva su
+  URL funcional y encola una importación remota a Stream; Bunny hace la
+  transferencia entre servicios y Render no materializa el archivo completo.
+  La operación se deduplica por asset y puede continuar o retomarse después de
+  un reinicio sin crear videos repetidos.
 - Preparacion/finalizacion idempotente en `media_assets`: reserva cuota mientras
   sube y queda `ready` solo después de verificar por TUS el tamaño y avance que
   Bunny recibió y confirmar el original en Stream. Las cuentas estándar

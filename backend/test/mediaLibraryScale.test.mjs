@@ -816,4 +816,7 @@ test('el backfill SQLite conserva la ruta visible y el contrato frontend no desc
   assert.match(sitesMediaPicker, /setCurrentFolderPath\(folderPath\)/)
   assert.match(sitesMediaPicker, /Ruta de carpetas de Media/)
   assert.match(sitesMediaPicker, /Solo \{kindLabels\.plural\}/)
+  assert.match(sitesMediaPicker, /mediaService\.queueAssetStreamSync\(asset\.id/)
+  assert.doesNotMatch(sitesMediaPicker, /mediaService\.syncAssetStream\(asset\.id/)
+  assert.doesNotMatch(sitesMediaPicker, /Sincronizando/)
 })

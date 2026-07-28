@@ -29862,7 +29862,6 @@ const SitesMediaPickerModal: React.FC<{
   const [loading, setLoading] = useState(true)
   const [loadingFolders, setLoadingFolders] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [syncingAssetId, setSyncingAssetId] = useState('')
   const [selectingAssetId, setSelectingAssetId] = useState('')
   const [deletingAssetId, setDeletingAssetId] = useState('')
   const selectionInFlightRef = useRef(false)
@@ -29873,7 +29872,7 @@ const SitesMediaPickerModal: React.FC<{
   const feminineKind = kind === 'image'
   const kindArticle = feminineKind ? 'la' : 'el'
   const kindSelectionTitle = `${kindLabels.singular.charAt(0).toUpperCase()}${kindLabels.singular.slice(1)} ${feminineKind ? 'seleccionada' : 'seleccionado'}`
-  const mediaPickerBusy = uploading || Boolean(syncingAssetId) || Boolean(selectingAssetId)
+  const mediaPickerBusy = uploading || Boolean(selectingAssetId)
   const folderParts = getMediaPickerFolderParts(currentFolderPath)
   const currentFolderName = formatMediaPickerFolderName(folderParts[folderParts.length - 1])
   const uploadText = uploading ? 'Subiendo...' : `Subir ${kindLabels.singular} a ${currentFolderName}`
@@ -29995,34 +29994,16 @@ const SitesMediaPickerModal: React.FC<{
     selectionInFlightRef.current = true
     setSelectingAssetId(asset.id)
 
-    let selectedAsset = asset
     let shouldClose = false
     try {
-      if (kind === 'video') {
-        setSyncingAssetId(asset.id)
-        try {
-          const synced = await mediaService.syncAssetStream(asset.id, {
-            module: 'sites',
-            moduleEntityId
-          })
-          selectedAsset = synced
-          setAssets(current => current.map(item => item.id === synced.id ? synced : item))
-          const streamMetadata = synced.metadata?.stream
-          const streamStatus = streamMetadata && typeof streamMetadata === 'object'
-            ? String((streamMetadata as { syncStatus?: unknown }).syncStatus || '')
-            : ''
-          if (streamStatus === 'failed' || streamStatus === 'skipped') {
-            showToast('warning', 'Video agregado sin metadata de Stream', 'Ristak lo mostrará, pero Bunny Stream no regresó metadata lista.')
-          }
-        } catch (error) {
-          showToast('warning', 'Video agregado sin metadata de Stream', error instanceof Error ? error.message : 'Ristak lo mostrará, pero no pudo sincronizarlo con Bunny Stream.')
-        } finally {
-          setSyncingAssetId('')
-        }
-      }
-
-      const accepted = await onSelect(getMediaPickerAssetUrl(selectedAsset) || url, selectedAsset)
+      const accepted = await onSelect(url, asset)
       shouldClose = accepted !== false
+      if (shouldClose && kind === 'video') {
+        void mediaService.queueAssetStreamSync(asset.id, {
+          module: 'sites',
+          moduleEntityId
+        }).catch(() => undefined)
+      }
     } catch (error) {
       showToast('error', 'No se pudo asociar', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
@@ -30323,7 +30304,6 @@ const SitesMediaPickerModal: React.FC<{
                       const videoThumbnailUrl = previewUrl && previewUrl !== assetUrl ? previewUrl : ''
                       const name = getMediaPickerAssetName(asset)
                       const deleting = deletingAssetId === asset.id
-                      const syncing = syncingAssetId === asset.id
                       const selecting = selectingAssetId === asset.id
                       const disabled = mediaPickerBusy || deleting
 
@@ -30332,7 +30312,7 @@ const SitesMediaPickerModal: React.FC<{
                           key={asset.id}
                           className={styles.mediaPickerAsset}
                           aria-disabled={disabled}
-                          aria-busy={syncing || selecting || deleting}
+                          aria-busy={selecting || deleting}
                         >
                           <button
                             type="button"
@@ -30367,8 +30347,8 @@ const SitesMediaPickerModal: React.FC<{
                               disabled={disabled}
                               aria-label={`Elegir ${name}`}
                             >
-                              {(syncing || selecting) && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
-                              <span>{syncing ? 'Sincronizando' : selecting ? 'Asociando' : 'Elegir'}</span>
+                              {selecting && <RefreshCw size={13} className={styles.previewSpin} aria-hidden="true" />}
+                              <span>{selecting ? 'Asociando' : 'Elegir'}</span>
                             </button>
                             <button
                               type="button"
