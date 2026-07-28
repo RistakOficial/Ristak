@@ -166,7 +166,7 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /data-rstk-video-seek-policy/)
   assert.match(html, /data-rstk-video-max-seek-ratio/)
   assert.match(html, /if \(seekPolicy === 'watched_only'\) nextProgress = Math\.min\(nextProgress, maxSeekRatio\)/)
-  assert.match(html, /syncTimecode\(duration\)/)
+  assert.match(html, /syncTimecode\(metrics\)/)
   assert.match(html, /const setSettingsMenuOpen = open =>/)
   assert.match(html, /settingsMenu\.hidden = !settingsMenuOpen/)
   assert.match(html, /event\.key !== 'Escape'/)
@@ -182,6 +182,33 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /box-shadow:none!important/)
   assert.match(html, /12cqw/)
   assert.match(html, /18cqw/)
+})
+
+test('live frontier timeline exposes only the watched edge and replaces native browser controls', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'native',
+    videoTimelineMode: 'live_frontier',
+    videoControlBar: true,
+    videoControlProgress: true,
+    videoControlTime: true
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  const signature = getVideoPlayerVisualSignature(html)
+  assert.equal(signature.nativeControls, false)
+  assert.match(signature.classes, /\brstk-video-custom-controls\b/)
+  assert.match(html, /data-rstk-video-timeline-mode="live_frontier"/)
+  assert.match(html, /const timelineMetrics = \(\) =>/)
+  assert.match(html, /storedFrontier/)
+  assert.match(html, /metrics\.liveEdge \? 'EN VIVO'/)
+  assert.match(html, /data-rstk-video-live-edge/)
+  assert.match(html, /--rstk-video-source-duration-seconds/)
+  assert.match(html, /const seekToAbsoluteTime = seconds =>/)
+  assert.match(html, /safeRatio \* visibleDuration/)
+  assert.match(html, /timelineAttributeObserver/)
 })
 
 test('video player keeps legacy overlay mode playable when videoControls was false', async () => {

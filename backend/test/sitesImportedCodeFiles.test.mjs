@@ -37,6 +37,7 @@ test('imported HTML video player manifest validates every supported control and 
     videoOverlayPlay: false,
     videoControlBar: true,
     videoControlBarStyle: 'docked',
+    videoTimelineMode: 'live_frontier',
     videoControlPlay: false,
     videoControlProgress: false,
     videoControlVolume: false,
@@ -64,6 +65,7 @@ test('imported HTML video player manifest validates every supported control and 
   assert.equal(valid.settings.videoOverlayPlay, false)
   assert.equal(valid.settings.videoControlProgress, false)
   assert.equal(valid.settings.videoControlBarStyle, 'docked')
+  assert.equal(valid.settings.videoTimelineMode, 'live_frontier')
   assert.equal(valid.settings.videoPlaySize, 160)
   assert.equal(valid.settings.mediaWidth, 30)
   assert.equal(valid.settings.videoMuted, true)
@@ -72,6 +74,7 @@ test('imported HTML video player manifest validates every supported control and 
   assert.equal(valid.settings.responsive.tablet.mediaAlign, 'left')
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlProgress'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarStyle'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoTimelineMode'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoAdaptiveQuality'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoMobilePortraitCrop'))
 
@@ -91,6 +94,10 @@ test('imported HTML video player manifest validates every supported control and 
   const invalidControlBarStyle = normalizeImportedHtmlVideoPlayerManifest('{"videoControlBarStyle":"sidebar"}')
   assert.equal(invalidControlBarStyle.valid, false)
   assert.match(invalidControlBarStyle.error, /videoControlBarStyle contiene un valor no permitido/)
+
+  const invalidTimelineMode = normalizeImportedHtmlVideoPlayerManifest('{"videoTimelineMode":"fake_live"}')
+  assert.equal(invalidTimelineMode.valid, false)
+  assert.match(invalidTimelineMode.error, /videoTimelineMode contiene un valor no permitido/)
 })
 
 test('imported HTML editable video expands its containing slot for the default mobile 9:16 crop', async () => {
@@ -774,9 +781,14 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /activate_checkout, meta_event y reveal_form_action/)
   assert.match(instructions, /timeline_reached/)
   assert.match(instructions, /playback_seconds/)
+  assert.match(instructions, /unique_watched_seconds/)
   assert.match(instructions, /unique_watched_percent/)
   assert.match(instructions, /adelantar la barra sí cuenta/)
-  assert.match(instructions, /3 minutos = 180/)
+  assert.match(instructions, /13 minutos = 780/)
+  assert.match(instructions, /videoTimelineMode/)
+  assert.match(instructions, /live_frontier/)
+  assert.match(instructions, /data-rstk-video-gate-progress-days/)
+  assert.match(instructions, /1 a 36500/)
   assert.match(instructions, /data-rstk-video-action-target/)
   assert.match(instructions, /"deleted":true/)
   assert.match(instructions, /No escribas JavaScript para escuchar el video/)
@@ -871,6 +883,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoPlayerGuide, /videoControlPanelRadius/)
   assert.match(videoPlayerGuide, /videoAdaptiveQuality/)
   assert.match(videoPlayerGuide, /videoControlBarStyle \(floating\|docked\)/)
+  assert.match(videoPlayerGuide, /videoTimelineMode acepta duration o live_frontier/)
   assert.match(videoPlayerGuide, /globo separado de los bordes/)
   assert.match(videoPlayerGuide, /panel de ancho completo al borde inferior/)
   assert.match(videoPlayerGuide, /Pareja de color obligatoria/)
@@ -888,6 +901,10 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoGateGuide, /data-rstk-video-gate-id/)
   assert.match(videoGateGuide, /data-rstk-video-gate-remaining/)
   assert.match(videoGateGuide, /data-rstk-video-gate-content/)
+  assert.match(videoGateGuide, /unique_watched_seconds/)
+  assert.match(videoGateGuide, /data-rstk-video-gate-progress-days/)
+  assert.match(videoGateGuide, /Los 30 días son únicamente el valor predeterminado/)
+  assert.match(customVideoGuide, /data-rstk-video-live-edge/)
   assert.match(videoGateGuide, /data-rstk-video-gate-shell/)
   assert.match(videoGateGuide, /data-rstk-video-gate-locked-mode="blur"/)
   assert.match(videoGateGuide, /NO dibujes un calendario bloqueado falso y otro calendario real debajo/)
@@ -984,6 +1001,9 @@ test('video design panel exposes responsive portrait sizing without storing the 
   assert.match(source, /checked=\{isVideoMobilePortraitCropEnabled\(settings\)\}/)
   assert.match(source, /onPatchSettings\(\{ videoMobilePortraitCrop: checked \}\)/)
   assert.match(source, /centra el recorte móvil sin modificar el archivo/)
+  assert.match(source, /Video normal · duración completa/)
+  assert.match(source, /Tipo en vivo · solo hasta lo visto/)
+  assert.match(source, /videoTimelineMode: nextTimelineMode/)
   assert.match(source, /Forma de la barra/)
   assert.match(source, /Globo flotante/)
   assert.match(source, /Panel inferior/)

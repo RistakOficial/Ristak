@@ -105,6 +105,14 @@ test('video action normalization keeps legacy time rules and accepts declarative
       action: 'show',
       targetBlockId: 'skip-target',
       before: 'hidden'
+    },
+    {
+      id: 'unique-seconds',
+      triggerType: 'unique_watched_seconds',
+      triggerValue: 780,
+      action: 'show',
+      targetBlockId: 'unique-seconds-target',
+      before: 'hidden'
     }
   ]), {
     pageId: 'page-1',
@@ -117,6 +125,7 @@ test('video action normalization keeps legacy time rules and accepts declarative
   const playback = actions.find(action => action.id === 'nested-playback')
   const coverage = actions.find(action => action.id === 'snake-coverage')
   const minimumCoverage = actions.find(action => action.id === 'minimum-coverage')
+  const uniqueSeconds = actions.find(action => action.id === 'unique-seconds')
 
   assert.deepEqual(
     { timeSeconds: legacy.timeSeconds, triggerType: legacy.triggerType, triggerValue: legacy.triggerValue },
@@ -136,6 +145,10 @@ test('video action normalization keeps legacy time rules and accepts declarative
     { timeSeconds: 0, triggerType: 'unique_watched_percent', triggerValue: 100 }
   )
   assert.equal(minimumCoverage.triggerValue, 1)
+  assert.deepEqual(
+    { triggerType: uniqueSeconds.triggerType, triggerValue: uniqueSeconds.triggerValue },
+    { triggerType: 'unique_watched_seconds', triggerValue: 780 }
+  )
 })
 
 test('video runtime separates timeline seeks, active playback time and unique watched coverage', async () => {
@@ -161,6 +174,14 @@ test('video runtime separates timeline seeks, active playback time and unique wa
       triggerValue: 4,
       action: 'show',
       targetBlockId: 'coverage-target',
+      before: 'hidden'
+    },
+    {
+      id: 'unique-seconds-rule',
+      triggerType: 'unique_watched_seconds',
+      triggerValue: 4,
+      action: 'show',
+      targetBlockId: 'unique-seconds-target',
       before: 'hidden'
     },
     {
@@ -194,6 +215,14 @@ test('video runtime separates timeline seeks, active playback time and unique wa
       return this.attrs.get(name) || ''
     }
 
+    setAttribute(name, value) {
+      this.attrs.set(name, String(value))
+    }
+
+    removeAttribute(name) {
+      this.attrs.delete(name)
+    }
+
     addEventListener(name, listener) {
       const listeners = this.listeners.get(name) || []
       listeners.push(listener)
@@ -207,7 +236,7 @@ test('video runtime separates timeline seeks, active playback time and unique wa
 
   const actions = getPublicActions(html)
   const video = new FakeVideo(actions)
-  const targets = new Map(['timeline-target', 'playback-target', 'coverage-target', 'skip-target'].map(id => {
+  const targets = new Map(['timeline-target', 'playback-target', 'coverage-target', 'unique-seconds-target', 'skip-target'].map(id => {
     const attrs = new Map([
       ['data-rstk-video-action-hidden', 'true'],
       ['aria-hidden', 'true']
@@ -256,6 +285,7 @@ test('video runtime separates timeline seeks, active playback time and unique wa
   assert.equal(isHidden('timeline-target'), false)
   assert.equal(isHidden('playback-target'), true)
   assert.equal(isHidden('coverage-target'), true)
+  assert.equal(isHidden('unique-seconds-target'), true)
 
   nowMs = 200
   video.currentTime = 0
@@ -304,12 +334,14 @@ test('video runtime separates timeline seeks, active playback time and unique wa
   video.dispatch('timeupdate')
   assert.equal(isHidden('playback-target'), false)
   assert.equal(isHidden('coverage-target'), true)
+  assert.equal(isHidden('unique-seconds-target'), true)
 
   // Ver dos segundos nuevos completa 4% de contenido único.
   nowMs = 11700
   video.currentTime = 4
   video.dispatch('timeupdate')
   assert.equal(isHidden('coverage-target'), false)
+  assert.equal(isHidden('unique-seconds-target'), false)
 })
 
 test('Bunny bridge closes the final watched range before ended actions run', async () => {

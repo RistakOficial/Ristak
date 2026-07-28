@@ -5228,7 +5228,12 @@ control visible, usar `controls` nativos o construir botones declarativos con
 `data-rstk-video-command`, barra con `data-rstk-video-progress-track` y
 contadores con `data-rstk-video-current-time`, `data-rstk-video-duration`,
 `data-rstk-video-remaining-time` y `data-rstk-video-percent`. El runtime publica
-además estado y progreso en atributos y variables CSS del slot. Scripts inline,
+además estado y progreso en atributos y variables CSS del slot. Con
+`data-rstk-video-timeline-mode="duration"` esos hooks usan la duración completa;
+con `live_frontier` sólo exponen la franja alcanzada y el slot publica
+`data-rstk-video-live-edge="true|false"`. El HTML puede personalizar colores,
+controles, animaciones y composición sin adoptar la piel visual de Ristak.
+Scripts inline,
 handlers `on*`, URLs privadas y llaves de Bunny siguen eliminándose: libertad
 visual completa no equivale a ejecutar JavaScript arbitrario junto a las
 sesiones del CRM.
@@ -5308,10 +5313,11 @@ bloqueado y otro real debajo. El HTML puede ajustar la intensidad con
 el estado bloqueado deja visibles `date` y `time`, elige temporalmente el primer
 día con disponibilidad del mes y pinta sus horarios reales; las preguntas,
 contacto y confirmación permanecen ocultos. Al desbloquear se borra esa
-preselección y el flujo regresa a `date`. En
-`playback_seconds` suma únicamente reproducción activa: seek, buffering y el
-preview automático no cuentan. `unique_watched_percent` usa fragmentos vistos
-sin inflar el avance por repetir, y `timeline_reached` sí permite adelantar.
+preselección y el flujo regresa a `date`. `playback_seconds` suma únicamente
+reproducción activa: seek, buffering y el preview automático no cuentan, pero
+repetir un tramo sí acumula. `unique_watched_seconds` exige una cantidad exacta
+de segundos distintos vistos; `unique_watched_percent` expresa esa misma unión
+como porcentaje, y `timeline_reached` sí permite adelantar.
 Variantes móvil/escritorio con el mismo gate comparten el mayor progreso
 individual; nunca se suman entre sí. El contador sale del mismo estado real y no
 de decenas de spans o reglas por segundo.
@@ -5319,19 +5325,34 @@ de decenas de spans o reglas por segundo.
 Para VSL con continuidad entre visitas, el slot puede declarar
 `data-rstk-video-gate-persist="visitor"`,
 `data-rstk-video-gate-resume="true"` y
-`data-rstk-video-gate-seek-policy="watched_only"`. El runtime guarda por 30 días
-la posición normalizada, el tiempo reproducido y los rangos realmente vistos;
+`data-rstk-video-gate-seek-policy="watched_only"`. El runtime guarda la posición
+normalizada, el tiempo reproducido y los rangos realmente vistos;
 al volver, reanuda desde el último punto, permite retroceder y bloquea cualquier
 salto por delante del frente ya cubierto. `session` limita la memoria a la
-pestaña y `data-rstk-video-gate-progress-ttl` cambia la vigencia en segundos.
+pestaña. La vigencia se elige con `data-rstk-video-gate-progress-days` entre 1 y
+36500 días; `data-rstk-video-gate-progress-ttl` permite segundos exactos y tiene
+prioridad si se declaran ambos. Treinta días es sólo el fallback cuando el HTML
+no elige una vigencia.
 Desktop y móvil comparten el mismo registro mediante
 `data-rstk-video-gate-progress-key`; esa clave se versiona cuando cambia el
 contenido. Ristak la aísla además por ID estable de sitio y página, de modo que
 los previews con URL temporal reanudan el mismo avance sin mezclar páginas. Con
-`unique_watched_percent`, volver a mirar un rango previo no
+`unique_watched_seconds` o `unique_watched_percent`, volver a mirar un rango previo no
 descuenta el contador hasta alcanzar material nuevo. El hook
-`data-rstk-video-gate-remaining-time` traduce el porcentaje restante a `MM:SS`
-con la duración del video que lidera el gate.
+`data-rstk-video-gate-remaining-time` muestra directamente los segundos
+restantes o traduce el porcentaje restante a `MM:SS` con la duración del video
+que lidera el gate.
+
+La presentación de la línea de tiempo es independiente del gate.
+`videoTimelineMode:"duration"` muestra desde el inicio la duración física
+completa, como un reproductor normal. `videoTimelineMode:"live_frontier"` hace
+que barra, duración, porcentaje y restante terminen en el máximo punto alcanzado:
+en el borde muestran `EN VIVO` y, al retroceder, enseñan cuánto falta para volver
+al frente visto. Como los controles nativos del navegador siempre revelarían el
+archivo completo, Ristak usa sus controles limpios en ese modo. La combinación
+recomendada para VSL es `live_frontier` + `watched_only` +
+`unique_watched_seconds`; el primero controla la representación, el segundo
+bloquea el futuro y el tercero acredita únicamente contenido nuevo.
 
 La ruta **Previsualizar** conserva esta lógica completa. El atributo informativo
 `data-rstk-video-render-preview="true"` identifica el documento de preview, pero
@@ -5626,6 +5647,15 @@ controles falsos. Sus grupos de control son:
   **Resolución inteligente** está activa o la variante más alta si está apagada.
   Este cambio de calidad no convierte el teaser en reproducción real ni afecta
   tracking, acciones o gates.
+- Línea de tiempo: `videoTimelineMode` acepta `duration` o `live_frontier`.
+  `duration` muestra el archivo completo desde el inicio. `live_frontier`
+  calcula barra, duración, porcentaje y restante contra el punto máximo ya
+  alcanzado: marca `EN VIVO` en el borde y, después de retroceder, muestra la
+  distancia para volver. En este modo Ristak sustituye `native` por `clean`
+  porque los controles del navegador revelarían la duración física. También
+  desactiva el progreso truqueado, que contradice una frontera en vivo. Esta
+  presentación no reemplaza `data-rstk-video-gate-seek-policy="watched_only"`;
+  esa política es la que impide adelantar.
 - Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
   `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
   `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene
@@ -5679,7 +5709,7 @@ target con `data-rstk-video-action-hidden="true"` desde el HTML inicial para
 evitar parpadeos entre preview y sitio publicado. Al mostrar un target también
 retira un atributo `hidden` legacy si el autor lo había dejado en el elemento.
 
-El panel de acciones ofrece las mismas tres condiciones para un video nativo del
+El panel de acciones ofrece las mismas cuatro condiciones para un video nativo del
 editor visual y para un slot `data-rstk-native-element="video"` de HTML
 importado:
 
@@ -5688,6 +5718,9 @@ importado:
 - `playback_seconds` (**Reprodujo X tiempo**) acumula solamente tiempo real de
   reloj mientras la reproducción está activa. Pausas, buffering y saltos por
   seek no suman; volver a reproducir un fragmento sí acumula tiempo adicional.
+- `unique_watched_seconds` (**Vio X tiempo distinto**) calcula la unión de los
+  fragmentos realmente reproducidos y la compara contra una cantidad exacta de
+  segundos. Saltar o repetir una zona ya acreditada no suma.
 - `unique_watched_percent` (**Vio X% del video**) calcula la union de los
   fragmentos que realmente se reprodujeron contra la duración total. Saltar a
   otra posición no rellena el tramo omitido y repetir una zona ya vista no infla
@@ -5712,8 +5745,9 @@ acción se declaran `targetBlockIds`, `targetPageId`, `redirectUrl`, `value`,
 `before`, `pauseUntilComplete`, `metaCapiEnabled`, `metaEventName`,
 `metaEventParameters` y `repeatMode`.
 
-`triggerValue` se expresa en segundos para `timeline_reached` y
-`playback_seconds` (`3 minutos = 180`), y como porcentaje de `1` a `100` para
+`triggerValue` se expresa en segundos para `timeline_reached`,
+`playback_seconds` y `unique_watched_seconds` (`13 minutos = 780`), y como
+porcentaje de `1` a `100` para
 `unique_watched_percent`.
 
 ```html

@@ -191,6 +191,7 @@ const IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS = new Set([
 const IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS = Object.freeze({
   videoControlsMode: new Set(['clean', 'native', 'none']),
   videoControlBarStyle: new Set(['floating', 'docked']),
+  videoTimelineMode: new Set(['duration', 'live_frontier']),
   videoOrientation: new Set(['auto', 'landscape', 'portrait']),
   videoPortraitWidthMode: new Set(['auto', 'fill', 'framed']),
   videoFit: new Set(['cover', 'contain', 'fill']),
@@ -387,6 +388,8 @@ export const IMPORTED_HTML_VIDEO_PLAYER_RULES = Object.freeze([
   'Diseño total: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoControlBarStyle (floating|docked), videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize, videoSoundColor y videoControlPanelRadius. floating crea un globo separado de los bordes; docked acopla un panel de ancho completo al borde inferior.',
   'Pareja de color obligatoria: videoPlayerColor define el fondo común del botón play y de la barra, y videoPlayColor define sus iconos, texto y progreso. Si diseñas o cambias uno, declara y revisa ambos juntos en el mismo data-rstk-video-settings; nunca cambies uno de forma aislada. Deben pertenecer a la misma paleta y mantener contraste legible sobre frames claros y oscuros. Salvo que el usuario pida otro acento, videoSoundColor debe seguir videoPlayColor.',
   'Reproducción total: configura videoMuted, videoAutoplay, videoLoop, videoAdaptiveQuality, videoDefaultSpeed, videoPreviewEnabled, videoPreviewStart, videoPreviewEnd, videoDisableEditorPlayback, videoSoundHint, videoSoundNoticeText, videoSoundNoticeHideAfter, videoTrickProgressEnabled, videoTrickProgressRampPercent y videoTrickProgressPeakPercent. videoAdaptiveQuality viene activo y deja que Bunny adapte la resolución a la conexión; false prioriza la mayor variante disponible. Autoplay siempre se normaliza a silenciado porque así lo exigen los navegadores.',
+  'Línea de tiempo: videoTimelineMode acepta duration o live_frontier. duration es el reproductor normal y muestra la duración completa desde el inicio. live_frontier presenta el video como una transmisión en vivo: la barra, la duración, el porcentaje y el tiempo restante terminan en el punto máximo que esa persona ya alcanzó, muestran EN VIVO en ese borde y no revelan visualmente el futuro. Es una decisión de interfaz, no una condición de desbloqueo.',
+  'Para una VSL sin futuro visible combina videoTimelineMode:"live_frontier" (o data-rstk-video-timeline-mode="live_frontier" en el slot custom) con data-rstk-video-gate-seek-policy="watched_only". El modo live_frontier solo cambia lo que se muestra; watched_only es lo que impide adelantar más allá del punto realmente visto.',
   'Formato y tamaño: configura videoOrientation (auto|landscape|portrait), videoPortraitWidthMode (auto|fill|framed), videoMobilePortraitCrop, videoFit (cover|contain|fill), mediaWidth, mediaAlign y responsive con overrides tablet/mobile de mediaWidth y mediaAlign. videoMobilePortraitCrop viene activo: en celular convierte únicamente el marco de un video horizontal a 9:16 y centra el recorte sin modificar el archivo. El slot sigue sin llevar geometría CSS propia.',
   'Una sola superficie manda: el reproductor nativo es el único frame visible. El slot y su padre inmediato no deben dibujar otro borde, fondo, sombra, padding, overflow recortado ni una relación de aspecto con aspect-ratio o ::before; si necesitas limitar el ancho, usa únicamente max-width y margin-inline en un padre neutro.',
   'Decisión implícita: si la petición habla de un solo video o no especifica variantes, usa un solo slot y videoMobilePortraitCrop:true. Solo usa dos slots por dispositivo o videoMobilePortraitCrop:false cuando el usuario lo pida explícitamente; que el archivo original sea horizontal no desactiva el recorte móvil.',
@@ -400,7 +403,7 @@ export const IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE = `<div
   data-rstk-native-id="video-principal"
   data-rstk-native-render="ristak"
   data-rstk-label="Video principal"
-  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarStyle":"floating","videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoAdaptiveQuality":true,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoMobilePortraitCrop":true,"videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoControlBarStyle":"floating","videoTimelineMode":"duration","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoAdaptiveQuality":true,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoMobilePortraitCrop":true,"videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
 ></div>`
 
 export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor visual de Ristak con configuración completa:') {
@@ -416,9 +419,11 @@ export const IMPORTED_HTML_CUSTOM_VIDEO_RULES = Object.freeze([
   'Usa data-rstk-native-render="custom" cuando el usuario pida que el HTML/CSS controle literalmente todo el reproductor. Ristak conserva el contenido del slot, conecta el archivo elegido en Media/Bunny y no monta encima el contenedor visual predeterminado.',
   'El slot custom debe tener un data-rstk-native-id estable y contener exactamente un <video data-rstk-video-media>. No escribas src ni URLs físicas de Bunny: Ristak inyecta automáticamente MP4 o HLS, respeta videoAdaptiveQuality, conecta tracking first-party, acciones y gates sin exponer API keys.',
   'El HTML decide si existen controles. Puedes omitirlos todos, usar controls nativos en <video>, o crear cualquier combinación propia con data-rstk-video-command="play|pause|toggle|mute|unmute|toggle-mute|restart|fullscreen".',
+  'En live_frontier no uses controls nativos del navegador: revelan la duración física completa. Ristak los retira automáticamente y deja activo el reproductor custom o sus controles clean para que el futuro siga oculto.',
   'Para una barra propia usa data-rstk-video-progress-track en el área interactiva y data-rstk-video-progress en el relleno. Ristak actualiza el ancho del relleno, aria-valuenow y permite click, arrastre y teclado sobre el track.',
-  'Para contadores vivos usa data-rstk-video-current-time, data-rstk-video-duration, data-rstk-video-remaining-time y data-rstk-video-percent. Ristak escribe los valores formateados; el HTML decide tipografía, posición, animación y si se muestran.',
-  'El slot publica data-rstk-video-state="idle|playing|paused|ended", data-rstk-video-muted="true|false", data-rstk-video-ready="true|false" y las variables CSS --rstk-video-current-seconds, --rstk-video-duration-seconds, --rstk-video-progress-percent. Úsalas para estados visuales sin JavaScript propio.',
+  'Para contadores vivos usa data-rstk-video-current-time, data-rstk-video-duration, data-rstk-video-remaining-time y data-rstk-video-percent. Ristak escribe los valores formateados; el HTML decide tipografía, posición, animación y si se muestran. En live_frontier, duration y remaining describen únicamente la franja ya alcanzada, no la duración física completa.',
+  'El slot publica data-rstk-video-state="idle|playing|paused|ended", data-rstk-video-muted="true|false", data-rstk-video-ready="true|false", data-rstk-video-timeline-mode="duration|live_frontier", data-rstk-video-live-edge="true|false" y las variables CSS --rstk-video-current-seconds, --rstk-video-duration-seconds, --rstk-video-source-duration-seconds y --rstk-video-progress-percent. Úsalas para estados visuales sin JavaScript propio.',
+  'Elige el comportamiento con data-rstk-video-timeline-mode="duration|live_frontier" en el slot custom. duration muestra la duración completa. live_frontier hace que la barra termine en el mayor punto alcanzado, permite volver a lo ya visto y vuelve a marcar el borde como en vivo al regresar. Combínalo con data-rstk-video-gate-seek-policy="watched_only" si el futuro debe quedar realmente bloqueado.',
   'data-rstk-video-click-toggle="false" en el slot desactiva el play/pause al tocar directamente el video. Omítelo o usa true si quieres que tocar la imagen también alterne la reproducción.',
   'Todo el markup decorativo permanece bajo tu control: overlays, títulos, CTA, SVG, imágenes, GIFs, un contador o un perrito bailando pueden vivir dentro del mismo slot. Ristak no los reordena ni les aplica el CSS visual del player nativo.',
   'Los scripts inline, handlers onClick y llaves de Bunny siguen prohibidos por seguridad. Para reaccionar al progreso del video usa data-rstk-video-rules, data-rstk-video-gate-* y los estados/hooks anteriores; Ristak ejecuta esa lógica sobre el video real.',
@@ -432,6 +437,7 @@ export const IMPORTED_HTML_CUSTOM_VIDEO_SKELETON = `<section
   data-rstk-native-render="custom"
   data-rstk-label="Video principal"
   data-rstk-video-click-toggle="false"
+  data-rstk-video-timeline-mode="duration"
 >
   <video data-rstk-video-media playsinline preload="metadata" aria-label="Video principal"></video>
 
@@ -464,9 +470,12 @@ export function buildImportedHtmlCustomVideoRulesText(heading = 'Reproductor de 
 
 export const IMPORTED_HTML_VIDEO_GATE_RULES = Object.freeze([
   'Para bloquear de verdad un calendario, formulario, checkout o sección hasta que se vea un video, declara data-rstk-video-gate-id="id-estable" en el slot nativo de video y data-rstk-video-gate-value con el umbral. Ristak mide el reproductor real; no escribas JavaScript ni una regla por cada segundo.',
-  'data-rstk-video-gate-trigger acepta playback_seconds, unique_watched_percent o timeline_reached. Usa playback_seconds cuando adelantar o mover la barra NO debe contar: seek, buffering y el preview automático no cuentan. Usa unique_watched_percent cuando el umbral sea un porcentaje de fragmentos realmente vistos; timeline_reached sí acepta que el visitante adelante.',
-  'Para una VSL que deba recordar avance, declara data-rstk-video-gate-persist="visitor", data-rstk-video-gate-resume="true" y data-rstk-video-gate-seek-policy="watched_only". Ristak guarda localmente la posición y los fragmentos realmente vistos, reanuda al volver, permite retroceder y bloquea cualquier adelanto más allá del punto máximo ya visto. Repetir un tramo anterior no vuelve a descontar el gate cuando el trigger es unique_watched_percent.',
-  'data-rstk-video-gate-persist acepta visitor, session o none. visitor conserva el avance hasta 30 días por defecto; session dura la pestaña. Cambia el TTL con data-rstk-video-gate-progress-ttl en segundos y usa data-rstk-video-gate-progress-key con el mismo valor en las variantes desktop/mobile para compartir avance. Cambia esa key cuando reemplaces el contenido del video y necesites reiniciar el historial.',
+  'data-rstk-video-gate-trigger acepta playback_seconds, unique_watched_seconds, unique_watched_percent o timeline_reached. playback_seconds suma tiempo activo aunque repita un tramo. unique_watched_seconds exige X segundos distintos realmente vistos; unique_watched_percent expresa esa misma unión como porcentaje. En los triggers unique_watched_*, seek, buffering y el preview automático no cuentan, y repetir una parte ya acreditada tampoco infla el avance. timeline_reached sí acepta que el visitante adelante.',
+  'Para una VSL que deba recordar avance, declara data-rstk-video-gate-persist="visitor", data-rstk-video-gate-resume="true" y data-rstk-video-gate-seek-policy="watched_only". Ristak guarda localmente la posición y los fragmentos realmente vistos, reanuda al volver, permite retroceder y bloquea cualquier adelanto más allá del punto máximo ya visto.',
+  'Persistencia y desbloqueo son decisiones independientes. data-rstk-video-gate-value define cuánto debe ver; data-rstk-video-gate-progress-days define durante cuántos días se recuerda el avance del visitante y acepta libremente de 1 a 36500. También puedes usar data-rstk-video-gate-progress-ttl en segundos para precisión avanzada; si declaras ambos, progress-ttl tiene prioridad. Los 30 días son únicamente el valor predeterminado cuando no declaras ninguno, nunca una regla fija.',
+  'data-rstk-video-gate-persist acepta visitor, session o none. visitor usa almacenamiento local del mismo navegador/dispositivo durante la vigencia elegida; session dura la pestaña y none no conserva avance. Usa data-rstk-video-gate-progress-key con el mismo valor en variantes desktop/mobile para compartir avance y cambia esa key cuando reemplaces el contenido del video y necesites reiniciar el historial.',
+  'Para una meta exacta como 13:00 usa data-rstk-video-gate-trigger="unique_watched_seconds" y data-rstk-video-gate-value="780". Esto evita convertir manualmente minutos a porcentajes y sigue siendo correcto aunque los archivos desktop/mobile tengan duraciones físicas diferentes.',
+  'Para una experiencia tipo directo usa videoTimelineMode:"live_frontier" en data-rstk-video-settings, o data-rstk-video-timeline-mode="live_frontier" en un reproductor custom, junto con seek-policy="watched_only" y un trigger unique_watched_seconds/percent. El futuro queda fuera de la barra; al retroceder se ve la distancia hasta volver al borde EN VIVO.',
   'La sesión abierta con Previsualizar sí es interactiva: después de que la persona pulsa play, Ristak debe descontar el tiempo y ejecutar las mismas reglas que en publicado. Sólo el loop automático decorativo anterior al primer play queda excluido.',
   'El reproductor nativo publica un único estado real para currentTime, duration, timelinePercent, playbackSeconds y uniqueWatchedPercent. Los gates y data-rstk-video-rules consumen ese mismo estado; el HTML no debe crear setInterval, cronómetros propios ni intentar leer directamente Bunny.',
   'Marca el diseño que debe verse mientras está bloqueado con data-rstk-video-gate-locked="id-estable", el número vivo con data-rstk-video-gate-remaining="id-estable" y envuelve TODO el contenido real con data-rstk-video-gate-content="id-estable". Por default Ristak oculta e inutiliza ese contenido desde el primer render y lo muestra únicamente al llegar al umbral.',
@@ -484,8 +493,14 @@ export const IMPORTED_HTML_VIDEO_GATE_EXAMPLE = `<div
   data-rstk-native-id="video-principal"
   data-rstk-label="Video principal"
   data-rstk-video-gate-id="agenda-admision"
-  data-rstk-video-gate-trigger="playback_seconds"
-  data-rstk-video-gate-value="30"
+  data-rstk-video-settings='{"videoTimelineMode":"live_frontier"}'
+  data-rstk-video-gate-trigger="unique_watched_seconds"
+  data-rstk-video-gate-value="780"
+  data-rstk-video-gate-persist="visitor"
+  data-rstk-video-gate-resume="true"
+  data-rstk-video-gate-seek-policy="watched_only"
+  data-rstk-video-gate-progress-days="45"
+  data-rstk-video-gate-progress-key="vsl-admision-v1"
 ></div>
 
 <section data-rstk-video-gate-shell="agenda-admision">
@@ -499,7 +514,7 @@ export const IMPORTED_HTML_VIDEO_GATE_EXAMPLE = `<div
 
   <section data-rstk-video-gate-locked="agenda-admision" role="status" aria-live="polite">
     <p>Tu solicitud de inscripción se habilitará al avanzar en este video.</p>
-    <p>Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos de reproducción.</p>
+    <p>Faltan <strong data-rstk-video-gate-remaining-time="agenda-admision">13:00</strong> de contenido distinto.</p>
   </section>
 </section>`
 

@@ -187,8 +187,11 @@ agenda falsa separada. El HTML puede ajustar `--rstk-video-gate-blur` y
 `--rstk-video-gate-locked-opacity`. Mientras el calendario compuesto está
 bloqueado, el runtime muestra `date` y `time` juntos con el primer día disponible
 del mes y sus horarios reales; mantiene ocultos los pasos de preguntas, contacto,
-confirmación y éxito. Al desbloquear limpia la preselección y vuelve a `date`. Con
-`playback_seconds`, seek, buffering y preview automático no cuentan. Dos
+confirmación y éxito. Al desbloquear limpia la preselección y vuelve a `date`.
+Con `playback_seconds`, seek, buffering y preview automático no cuentan, pero
+repetir un tramo sí acumula. `unique_watched_seconds` exige una cantidad exacta
+de segundos distintos vistos y `unique_watched_percent` expresa esa misma
+cobertura como porcentaje. Dos
 variantes responsive comparten el mayor progreso individual y nunca se suman.
 Al desbloquear, el flujo comienza en `date`; `time` y todas las preguntas siguen
 ocultos hasta que el visitante seleccione los pasos previos.

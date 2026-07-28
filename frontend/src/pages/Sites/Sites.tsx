@@ -1207,6 +1207,7 @@ const VIDEO_FORM_GATE_FIT_MAX_HEIGHT = 820
 const VIDEO_FORM_GATE_FIT_WIDE_MIN_WIDTH = 420
 const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControlsMode: DEFAULT_VIDEO_CONTROLS_MODE,
+  videoTimelineMode: 'duration',
   videoControls: false,
   videoOverlayPlay: true,
   videoControlBar: true,
@@ -1674,7 +1675,7 @@ const POPUP_SURFACE_ID = 'site-popup'
 const isEditorSurfaceSelection = (id: string) => id === PAGE_SELECTED_ID || id === POPUP_SELECTED_ID
 type VideoActionKind = 'show' | 'hide' | 'open_form' | 'open_video_form' | 'show_popup' | 'site_page' | 'redirect' | 'change_text' | 'change_link' | 'scroll_to' | 'activate_checkout' | 'meta_event' | 'reveal_form_action'
 type VideoActionBeforeState = 'hidden' | 'visible' | 'unchanged'
-type VideoActionTriggerType = 'timeline_reached' | 'playback_seconds' | 'unique_watched_percent'
+type VideoActionTriggerType = 'timeline_reached' | 'playback_seconds' | 'unique_watched_seconds' | 'unique_watched_percent'
 type VideoFormGateAnimation = 'fade' | 'instant' | 'slide_up'
 type VideoFormGateCompletionAction = 'continue_video' | 'redirect' | 'show_targets' | 'hide_targets'
 type VideoFormGateRepeatMode = 'every_visit' | 'session' | 'remember_visitor'
@@ -1714,7 +1715,7 @@ const VIDEO_ACTION_TIMELINE_FALLBACK_SECONDS = 600
 const VIDEO_ACTION_TIMELINE_PADDING_SECONDS = 60
 const videoActionKinds: VideoActionKind[] = ['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action']
 const videoActionBeforeStates: VideoActionBeforeState[] = ['hidden', 'visible', 'unchanged']
-const videoActionTriggerTypes: VideoActionTriggerType[] = ['timeline_reached', 'playback_seconds', 'unique_watched_percent']
+const videoActionTriggerTypes: VideoActionTriggerType[] = ['timeline_reached', 'playback_seconds', 'unique_watched_seconds', 'unique_watched_percent']
 const primaryVideoActionKinds: VideoActionKind[] = ['reveal_form_action', 'show', 'hide', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'meta_event']
 const videoActionTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
 const videoActionMultiTargetKinds = new Set<VideoActionKind>(['show', 'hide', 'open_form'])
@@ -1760,6 +1761,7 @@ const videoActionBeforeLabels: Record<VideoActionBeforeState, string> = {
 const videoActionTriggerTypeOptions: Array<{ value: VideoActionTriggerType; label: string }> = [
   { value: 'timeline_reached', label: 'Llegó al momento X del video' },
   { value: 'playback_seconds', label: 'Reprodujo durante X tiempo' },
+  { value: 'unique_watched_seconds', label: 'Vio X tiempo distinto del video' },
   { value: 'unique_watched_percent', label: 'Vio X% distinto del video' }
 ]
 
@@ -2713,7 +2715,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 ${buildImportedHtmlVideoGateRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
-- Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y seek/buffering no cuentan; unique_watched_percent = vio X% de fragmentos distintos y adelantar/repetir no infla el porcentaje. triggerValue usa segundos en las dos primeras (3 minutos = 180) y un número de 1 a 100 en porcentaje.
+- Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y repetir sí acumula; unique_watched_seconds = vio X segundos de fragmentos distintos; unique_watched_percent = vio X% de fragmentos distintos. seek, buffering y repetir un rango ya acreditado no inflan los triggers unique_watched_*. triggerValue usa segundos en las tres primeras (13 minutos = 780) y un número de 1 a 100 en porcentaje.
 - Nunca agregues JavaScript para medir el video u ocultar/mostrar targets. Ristak ejecuta las reglas. Conserva data-rstk-video-rules al editar otra cosa; quitar el atributo o una regla de la lista no borra configuraciones. Para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No lo hagas en data-rstk-calendar-book-form: ese submit pertenece al elemento calendar y, solo después de reservar, Ristak emite el evento que el usuario haya elegido para ese calendario en Ajustes (Schedule es únicamente el default recomendado).
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
@@ -6188,6 +6190,9 @@ const getVideoActionTriggerConditionText = (rule: VideoActionRule, videoLabel = 
   if (rule.triggerType === 'playback_seconds') {
     return `el visitante haya reproducido el ${videoLabel} durante ${formatVideoActionTime(rule.triggerValue)}`
   }
+  if (rule.triggerType === 'unique_watched_seconds') {
+    return `el visitante haya visto ${formatVideoActionTime(rule.triggerValue)} de contenido distinto del ${videoLabel}`
+  }
   if (rule.triggerType === 'unique_watched_percent') {
     return `el visitante haya visto ${clampVideoActionPercent(rule.triggerValue)}% del contenido del ${videoLabel}`
   }
@@ -6196,7 +6201,10 @@ const getVideoActionTriggerConditionText = (rule: VideoActionRule, videoLabel = 
 
 const getVideoActionTriggerHint = (triggerType: VideoActionTriggerType) => {
   if (triggerType === 'playback_seconds') {
-    return 'Solo suma mientras el video se reproduce; adelantar la barra no cuenta.'
+    return 'Solo suma mientras el video se reproduce; adelantar no cuenta y repetir un tramo sí acumula tiempo.'
+  }
+  if (triggerType === 'unique_watched_seconds') {
+    return 'Cuenta tiempo de fragmentos distintos; adelantar o repetir una parte ya vista no aumenta el avance.'
   }
   if (triggerType === 'unique_watched_percent') {
     return 'Cuenta fragmentos distintos vistos; adelantar o repetir la misma parte no aumenta el porcentaje.'
@@ -28624,7 +28632,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       buildImportedHtmlVideoPlayerRulesText(),
       buildImportedHtmlVideoGateRulesText(),
       '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',
-      '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (seek y buffering no cuentan) y unique_watched_percent para "vio X% real" (solo fragmentos distintos; repetir no infla). triggerValue usa segundos en las dos primeras (3 minutos = 180) y de 1 a 100 en porcentaje.',
+      '- Usa timeline_reached para "llegó al minuto X" (adelantar sí cuenta), playback_seconds para "reprodujo X tiempo" (repetir acumula), unique_watched_seconds para "vio X tiempo real distinto" y unique_watched_percent para "vio X% real distinto". seek, buffering y repetir un rango ya acreditado no inflan los triggers unique_watched_*. triggerValue usa segundos en las tres primeras (13 minutos = 780) y de 1 a 100 en porcentaje.',
       '- Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules=\'[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]\'></div>.',
       buildImportedHtmlVideoActionTargetRulesText(),
       '- No escribas JavaScript para medir o reaccionar al video. Conserva data-rstk-video-rules al editar; para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.',
@@ -31046,6 +31054,7 @@ const VideoPlayerSettingsControls: React.FC<{
   onSave: () => void
 }> = ({ settings, mediaUrl = '', sections = 'all', onPatchSettings, onSave }) => {
   const controlsMode = getVideoControlsMode(settings)
+  const timelineMode = getSettingString(settings, 'videoTimelineMode') === 'live_frontier' ? 'live_frontier' : 'duration'
   const showCustomControls = controlsMode === 'clean'
   const showFrameSection = sections === 'all' || sections === 'chrome'
   const showPlaybackSections = sections === 'all' || sections === 'playback'
@@ -31053,7 +31062,7 @@ const VideoPlayerSettingsControls: React.FC<{
   const showCustomControlBar = shouldShowVideoControlBar(settings)
   const playShape = getVideoPlayShape(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
-  const trickProgressEnabled = settings.videoTrickProgressEnabled === true
+  const trickProgressEnabled = timelineMode !== 'live_frontier' && settings.videoTrickProgressEnabled === true
   const metadataSource = mediaUrl || getSettingString(settings, 'mediaUrl')
   const metadataPreviewEnabled = settings.videoPreviewEnabled !== false
   const storedDurationSource = getSettingString(settings, 'videoDurationSource')
@@ -31172,17 +31181,40 @@ const VideoPlayerSettingsControls: React.FC<{
               value={controlsMode}
               onChange={(event) => {
                 const nextMode = isVideoControlsMode(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROLS_MODE
+                const compatibleMode = timelineMode === 'live_frontier' && nextMode === 'native' ? 'clean' : nextMode
                 onPatchSettings({
-                  videoControlsMode: nextMode,
-                  videoControls: nextMode === 'native'
+                  videoControlsMode: compatibleMode,
+                  videoControls: compatibleMode === 'native'
                 })
               }}
               onBlur={onSave}
             >
               {videoControlsModeOptions.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+                <option key={option.value} value={option.value} disabled={timelineMode === 'live_frontier' && option.value === 'native'}>{option.label}</option>
               ))}
             </CustomSelect>
+          </label>
+          <label className={styles.field}>
+            <span>Línea de tiempo</span>
+            <CustomSelect
+              value={timelineMode}
+              onChange={(event) => {
+                const nextTimelineMode = event.target.value === 'live_frontier' ? 'live_frontier' : 'duration'
+                onPatchSettings({
+                  videoTimelineMode: nextTimelineMode,
+                  ...(nextTimelineMode === 'live_frontier' ? {
+                    videoControlsMode: controlsMode === 'native' ? 'clean' : controlsMode,
+                    videoControls: false,
+                    videoTrickProgressEnabled: false
+                  } : {})
+                })
+              }}
+              onBlur={onSave}
+            >
+              <option value="duration">Video normal · duración completa</option>
+              <option value="live_frontier">Tipo en vivo · solo hasta lo visto</option>
+            </CustomSelect>
+            <small className={styles.muted}>El modo tipo en vivo oculta el futuro visualmente. Para impedir adelantos úsalo con la política watched_only de una VSL.</small>
           </label>
           <div className={styles.twoColumn}>
             <label className={styles.field}>
@@ -31508,13 +31540,13 @@ const VideoPlayerSettingsControls: React.FC<{
                 <input
                   type="checkbox"
                   checked={trickProgressEnabled}
-                  disabled={!showCustomControlBar || settings.videoControlProgress === false}
+                  disabled={timelineMode === 'live_frontier' || !showCustomControlBar || settings.videoControlProgress === false}
                   onChange={(event) => {
                     onPatchSettings({ videoTrickProgressEnabled: event.target.checked })
                     window.setTimeout(onSave, 0)
                   }}
                 />
-                <span>Reproductor truqueado</span>
+                <span>{timelineMode === 'live_frontier' ? 'Avance truqueado no aplica en vivo' : 'Reproductor truqueado'}</span>
               </label>
             </div>
             {trickProgressEnabled && settings.videoControlProgress !== false && (
@@ -37298,6 +37330,7 @@ const VideoPlayerPreview: React.FC<{
   const previewPlayPendingRef = useRef(false)
   const previewRetryTimerRef = useRef<number | null>(null)
   const previewRetryCountRef = useRef(0)
+  const maxReachedTimeRef = useRef(0)
   const startPreviewLoopRef = useRef<(restartAtRangeStart?: boolean) => void>(() => undefined)
   const progressAnimationFrameRef = useRef<number | null>(null)
   const editorPlaybackDisabled = editable && settings.videoDisableEditorPlayback === true
@@ -37319,7 +37352,11 @@ const VideoPlayerPreview: React.FC<{
   const [detectedOrientation, setDetectedOrientation] = useState<Exclude<VideoOrientation, 'auto'> | ''>('')
   const showControlBarInitially = shouldShowVideoControlBarInitially(settings)
   const [controlsVisible, setControlsVisible] = useState(Boolean(autoplay && showControlBarInitially))
-  const controlsMode = getVideoControlsMode(settings)
+  const timelineMode = getSettingString(settings, 'videoTimelineMode') === 'live_frontier' ? 'live_frontier' : 'duration'
+  const requestedControlsMode = getVideoControlsMode(settings)
+  const controlsMode = timelineMode === 'live_frontier' && requestedControlsMode === 'native'
+    ? 'clean'
+    : requestedControlsMode
   const showNativeControls = controlsMode === 'native' && !editorPlaybackDisabled
   const showOverlay = controlsMode === 'clean'
   const showCentralPlay = settings.videoOverlayPlay !== false
@@ -37459,8 +37496,18 @@ const VideoPlayerPreview: React.FC<{
   }, [])
   const getVisibleVideoProgressRatio = useCallback(() => {
     if (previewLoopRef.current && !hasStartedPlaybackRef.current) return 0
+    if (timelineMode === 'live_frontier') {
+      const video = videoRef.current
+      if (!video) return 0
+      const currentTime = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0
+      if (hasStartedPlaybackRef.current) {
+        maxReachedTimeRef.current = Math.max(maxReachedTimeRef.current, currentTime)
+      }
+      const visibleDuration = Math.max(currentTime, maxReachedTimeRef.current)
+      return visibleDuration > 0 ? Math.min(1, currentTime / visibleDuration) : 0
+    }
     return getVideoTrickProgressRatio(settings, getVideoProgressRatio())
-  }, [getVideoProgressRatio, settings])
+  }, [getVideoProgressRatio, settings, timelineMode])
   const syncProgressFromVideo = useCallback(() => {
     const video = videoRef.current
     if (!video) {
@@ -37473,8 +37520,11 @@ const VideoPlayerPreview: React.FC<{
     const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0
     setProgress(getVisibleVideoProgressRatio())
     setCurrentTimeSeconds(previewLoopRef.current && !hasStartedPlaybackRef.current ? 0 : currentTime)
-    setDurationSeconds(duration > 0 ? duration : 0)
-  }, [getVisibleVideoProgressRatio])
+    const visibleDuration = timelineMode === 'live_frontier'
+      ? Math.min(duration || Infinity, Math.max(currentTime, maxReachedTimeRef.current))
+      : duration
+    setDurationSeconds(Number.isFinite(visibleDuration) && visibleDuration > 0 ? visibleDuration : 0)
+  }, [getVisibleVideoProgressRatio, timelineMode])
   const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     clearControlsHideTimer()
     if (!showCustomControlBar) return
@@ -37637,6 +37687,7 @@ const VideoPlayerPreview: React.FC<{
 
   useEffect(() => {
     setDetectedOrientation('')
+    maxReachedTimeRef.current = 0
   }, [noTrackSrc])
 
   useEffect(() => {
@@ -38206,14 +38257,15 @@ const VideoPlayerPreview: React.FC<{
       setControlsVisible(false)
       return false
     }
-    const duration = Number.isFinite(video.duration) ? video.duration : 0
-    if (duration <= 0) return false
+    const sourceDuration = Number.isFinite(video.duration) ? video.duration : 0
+    const seekableDuration = timelineMode === 'live_frontier' ? durationSeconds : sourceDuration
+    if (sourceDuration <= 0 || seekableDuration <= 0) return false
     stopPreviewLoop()
     const nextProgress = Math.max(0, Math.min(1, ratio))
-    video.currentTime = nextProgress * duration
-    setProgress(getVideoTrickProgressRatio(settings, nextProgress))
+    video.currentTime = nextProgress * seekableDuration
+    setProgress(timelineMode === 'live_frontier' ? nextProgress : getVideoTrickProgressRatio(settings, nextProgress))
     setCurrentTimeSeconds(video.currentTime)
-    setDurationSeconds(duration)
+    setDurationSeconds(seekableDuration)
     syncVideoState()
     return true
   }
@@ -38260,7 +38312,8 @@ const VideoPlayerPreview: React.FC<{
     if (shouldLetEditorSelect) return
     if (!hasStartedPlaybackRef.current) return
     const video = videoRef.current
-    const duration = video && Number.isFinite(video.duration) ? video.duration : 0
+    const sourceDuration = video && Number.isFinite(video.duration) ? video.duration : 0
+    const duration = timelineMode === 'live_frontier' ? durationSeconds : sourceDuration
     if (!video || duration <= 0) return
     const stepSeconds = event.shiftKey ? 10 : 5
     let nextTime = video.currentTime
@@ -38281,13 +38334,16 @@ const VideoPlayerPreview: React.FC<{
     : currentTimeSeconds
   const remainingTimeSeconds = Math.max(0, durationSeconds - displayedTimeSeconds)
   const elapsedTimeLabel = formatSitesTimecode(displayedTimeSeconds)
-  const remainingTimeLabel = `-${formatSitesTimecode(remainingTimeSeconds)}`
+  const isLiveEdge = timelineMode === 'live_frontier' && durationSeconds > 0 && remainingTimeSeconds <= 0.6
+  const remainingTimeLabel = isLiveEdge ? 'EN VIVO' : `-${formatSitesTimecode(remainingTimeSeconds)}`
 
   return (
     <div
       ref={playerRef}
       className={className}
       data-rstk-selection-surface="true"
+      data-rstk-video-timeline-mode={timelineMode}
+      data-rstk-video-live-edge={isLiveEdge ? 'true' : 'false'}
       style={{
         ['--rstk-video-bg' as string]: playerBackground,
         ['--rstk-video-radius' as string]: playerRadius,
@@ -38379,6 +38435,11 @@ const VideoPlayerPreview: React.FC<{
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(progress * 100)}
+              aria-valuetext={isLiveEdge
+                ? 'En vivo'
+                : timelineMode === 'live_frontier'
+                  ? `${formatSitesTimecode(remainingTimeSeconds)} para volver al punto visto`
+                  : undefined}
               onPointerDown={handleProgressPointerDown}
               onPointerMove={handleProgressPointerMove}
               onPointerUp={handleProgressPointerEnd}
@@ -38389,7 +38450,14 @@ const VideoPlayerPreview: React.FC<{
             </div>
           )}
           {showCustomTime && (
-            <span className="rstk-video-timecode" aria-label={`Tiempo del video ${elapsedTimeLabel}, queda ${formatSitesTimecode(remainingTimeSeconds)}`}>
+            <span
+              className="rstk-video-timecode"
+              aria-label={isLiveEdge
+                ? `Tiempo del video ${elapsedTimeLabel}, en vivo`
+                : timelineMode === 'live_frontier'
+                  ? `Tiempo del video ${elapsedTimeLabel}, faltan ${formatSitesTimecode(remainingTimeSeconds)} para volver al punto visto`
+                  : `Tiempo del video ${elapsedTimeLabel}, queda ${formatSitesTimecode(remainingTimeSeconds)}`}
+            >
               <span>{elapsedTimeLabel}</span>
               <span>{remainingTimeLabel}</span>
             </span>
@@ -42952,7 +43020,7 @@ const VideoActionsPanel: React.FC<{
           </div>
           <p className={styles.videoActionHint}>
             {rule.action === 'open_video_form'
-              ? 'El formulario de video se abre por momento del video; las demás acciones permiten elegir cualquiera de las tres condiciones.'
+              ? 'El formulario de video se abre por momento del video; las demás acciones permiten elegir cualquiera de las cuatro condiciones.'
               : getVideoActionTriggerHint(rule.triggerType)}
           </p>
           {isPercentTrigger ? (
@@ -42972,14 +43040,22 @@ const VideoActionsPanel: React.FC<{
           ) : (
             <label className={styles.videoActionTimeMeta}>
               <span className={styles.videoActionTimeLabel}>
-                {isTimelineTrigger ? 'Momento del video:' : 'Tiempo reproducido:'}
+                {isTimelineTrigger
+                  ? 'Momento del video:'
+                  : rule.triggerType === 'unique_watched_seconds'
+                    ? 'Tiempo distinto visto:'
+                    : 'Tiempo reproducido:'}
               </span>
               <input
                 className={styles.videoActionTimeInput}
                 value={timeInput}
                 placeholder="03:45"
                 inputMode="numeric"
-                aria-label={isTimelineTrigger ? 'Momento del video' : 'Tiempo reproducido'}
+                aria-label={isTimelineTrigger
+                  ? 'Momento del video'
+                  : rule.triggerType === 'unique_watched_seconds'
+                    ? 'Tiempo distinto visto'
+                    : 'Tiempo reproducido'}
                 onChange={(event) => handleTimeInputChange(rule, event.target.value)}
                 onBlur={() => handleTimeInputBlur(rule)}
               />

@@ -812,8 +812,10 @@ Para bloquear contenido por reproducción sin escribir JavaScript, el slot
   data-rstk-native-element="video"
   data-rstk-native-id="video-principal"
   data-rstk-video-gate-id="agenda-admision"
-  data-rstk-video-gate-trigger="playback_seconds"
-  data-rstk-video-gate-value="30">
+  data-rstk-video-settings='{"videoTimelineMode":"live_frontier"}'
+  data-rstk-video-gate-trigger="unique_watched_seconds"
+  data-rstk-video-gate-value="780"
+  data-rstk-video-gate-seek-policy="watched_only">
 </div>
 
 <section data-rstk-video-gate-shell="agenda-admision">
@@ -826,8 +828,7 @@ Para bloquear contenido por reproducción sin escribir JavaScript, el slot
   </section>
 
   <section data-rstk-video-gate-locked="agenda-admision">
-    Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong>
-    segundos.
+    Faltan <strong data-rstk-video-gate-remaining-time="agenda-admision">13:00</strong>.
   </section>
 </section>
 ```
@@ -844,8 +845,9 @@ En calendarios compuestos, el estado bloqueado muestra simultáneamente los paso
 reales detrás del blur. Las preguntas y datos de contacto siguen ocultos. Al
 desbloquear, esa preselección se limpia y el flujo vuelve a `date` para que el
 visitante elija su propia fecha.
-`playback_seconds` no acredita adelantos ni buffering;
-`unique_watched_percent` mide fragmentos distintos vistos y
+`playback_seconds` no acredita adelantos ni buffering, pero sí acumula cuando se
+repite un tramo. `unique_watched_seconds` mide segundos distintos vistos,
+`unique_watched_percent` expresa esos fragmentos como porcentaje y
 `timeline_reached` sí permite seek. Dos videos responsive pueden compartir el
 mismo gate; se usa su mayor progreso individual, no la suma. El HTML puede
 ajustar el efecto con `--rstk-video-gate-blur` y
@@ -858,19 +860,24 @@ Una VSL puede conservar el avance real del gate sin JavaScript propio:
   data-rstk-native-element="video"
   data-rstk-native-id="vsl-desktop"
   data-rstk-video-gate-id="admision"
-  data-rstk-video-gate-trigger="unique_watched_percent"
-  data-rstk-video-gate-value="91.3424"
+  data-rstk-video-settings='{"videoTimelineMode":"live_frontier"}'
+  data-rstk-video-gate-trigger="unique_watched_seconds"
+  data-rstk-video-gate-value="780"
   data-rstk-video-gate-persist="visitor"
   data-rstk-video-gate-resume="true"
   data-rstk-video-gate-seek-policy="watched_only"
+  data-rstk-video-gate-progress-days="45"
   data-rstk-video-gate-progress-key="vsl-admision-v1">
 </div>
 ```
 
 `visitor` guarda en `localStorage` la posición normalizada, el tiempo reproducido
-y la unión de fragmentos vistos durante 30 días; `session` usa
-`sessionStorage`, y `none` no persiste. El TTL opcional se declara con
-`data-rstk-video-gate-progress-ttl` en segundos. Las variantes desktop/mobile
+y la unión de fragmentos vistos; `session` usa `sessionStorage`, y `none` no
+persiste. La vigencia se elige libremente con
+`data-rstk-video-gate-progress-days` entre 1 y 36500 días. Para precisión avanzada
+puede declararse `data-rstk-video-gate-progress-ttl` en segundos, que tiene
+prioridad si ambos aparecen. Treinta días es solamente el fallback cuando el
+HTML no declara ninguno. Las variantes desktop/mobile
 comparten avance cuando usan la misma `progress-key`, incluso si sus duraciones
 exactas difieren. Esa key debe versionarse al reemplazar el contenido para no
 heredar progreso de otra VSL.
@@ -883,11 +890,28 @@ progreso aunque reutilicen la misma `progress-key`.
 Con `resume="true"`, el primer play de una visita posterior arranca en el punto
 guardado. `seek-policy="watched_only"` permite retroceder y volver hasta el
 frente ya visto, pero bloquea adelantos. Al combinarlo con
-`unique_watched_percent`, repetir un tramo anterior no reduce el restante: el
-contador sólo avanza al cubrir fragmentos nuevos. El valor
-`data-rstk-video-gate-remaining-time` convierte el porcentaje faltante a tiempo
-real usando la duración del video activo, por lo que conserva una lectura
-`MM:SS` aun cuando el gate mida cobertura única.
+`unique_watched_seconds` o `unique_watched_percent`, repetir un tramo anterior
+no reduce el restante: el contador sólo avanza al cubrir fragmentos nuevos. El
+valor `data-rstk-video-gate-remaining-time` muestra directamente los segundos
+restantes para `unique_watched_seconds`, o convierte el porcentaje faltante a
+tiempo real usando la duración del video activo. Así conserva una lectura
+`MM:SS` en ambos contratos de cobertura única.
+
+`videoTimelineMode:"duration"` conserva un reproductor normal y expone la
+duración completa. `videoTimelineMode:"live_frontier"` presenta únicamente la
+franja alcanzada: mientras la persona avanza, la barra termina en `EN VIVO`; si
+retrocede, el restante representa la distancia para volver a su frente visto.
+En este modo los controles nativos del navegador se sustituyen por la barra
+limpia, porque el navegador siempre revelaría la duración física. El modo
+`live_frontier` es presentación; la política `watched_only` es la que hace
+efectivo el bloqueo de adelantos.
+
+Un reproductor HTML propio usa la misma semántica mediante
+`data-rstk-video-timeline-mode="live_frontier"`. Sus hooks
+`data-rstk-video-duration`, `data-rstk-video-remaining-time`,
+`data-rstk-video-percent` y la barra reciben únicamente la franja visible. El
+slot publica `data-rstk-video-live-edge`, además de las variables CSS de tiempo,
+para que el autor pinte cualquier paleta, animación o indicador sin JavaScript.
 
 Si el calendario usa frontend propio, el HTML debe marcar
 `data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo

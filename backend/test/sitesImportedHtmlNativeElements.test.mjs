@@ -1149,12 +1149,13 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
               data-rstk-native-element="video"
               data-rstk-native-id="video-gate-desktop"
               data-rstk-video-gate-id="agenda-admision"
-              data-rstk-video-gate-trigger="unique_watched_percent"
-              data-rstk-video-gate-value="25"
+              data-rstk-video-gate-trigger="unique_watched_seconds"
+              data-rstk-video-gate-value="30"
               data-rstk-video-gate-persist="visitor"
               data-rstk-video-gate-resume="true"
               data-rstk-video-gate-seek-policy="watched_only"
               data-rstk-video-gate-progress-key="admision-v1"
+              data-rstk-video-gate-progress-days="45"
             ></div>
           </section>
           <section data-rstk-device-only="mobile">
@@ -1162,12 +1163,13 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
               data-rstk-native-element="video"
               data-rstk-native-id="video-gate-mobile"
               data-rstk-video-gate-id="agenda-admision"
-              data-rstk-video-gate-trigger="unique_watched_percent"
-              data-rstk-video-gate-value="25"
+              data-rstk-video-gate-trigger="unique_watched_seconds"
+              data-rstk-video-gate-value="30"
               data-rstk-video-gate-persist="visitor"
               data-rstk-video-gate-resume="true"
               data-rstk-video-gate-seek-policy="watched_only"
               data-rstk-video-gate-progress-key="admision-v1"
+              data-rstk-video-gate-progress-days="45"
             ></div>
           </section>
           <section data-rstk-video-gate-shell="agenda-admision">
@@ -1192,7 +1194,7 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
               </form>
             </section>
             <section data-rstk-video-gate-locked="agenda-admision">
-              Falta <strong data-rstk-video-gate-remaining="agenda-admision">25</strong>%.
+              Falta <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos distintos.
               Tiempo: <strong data-rstk-video-gate-remaining-time="agenda-admision">00:30</strong>.
             </section>
           </section>
@@ -1241,6 +1243,7 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal((html.match(/data-rstk-video-gate-resume="true"/g) || []).length, 2)
     assert.equal((html.match(/data-rstk-video-gate-seek-policy="watched_only"/g) || []).length, 2)
     assert.equal((html.match(/data-rstk-video-gate-progress-key="admision-v1"/g) || []).length, 2)
+    assert.equal((html.match(/data-rstk-video-gate-progress-days="45"/g) || []).length, 2)
     assert.equal(html.includes(`const PROGRESS_SITE_SCOPE = ${JSON.stringify(site.id)}`), true)
     assert.equal(html.includes('const PROGRESS_PAGE_SCOPE = "page-1"'), true)
     assert.match(html, /data-rstk-video-gate-shell="agenda-admision"[^>]*data-rstk-video-gate-state="locked"/)
@@ -1308,21 +1311,23 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
 
     const source = new FakeElement({
       'data-rstk-video-gate-id': 'agenda-admision',
-      'data-rstk-video-gate-trigger': 'unique_watched_percent',
-      'data-rstk-video-gate-value': '25',
+      'data-rstk-video-gate-trigger': 'unique_watched_seconds',
+      'data-rstk-video-gate-value': '30',
       'data-rstk-video-gate-persist': 'visitor',
       'data-rstk-video-gate-resume': 'true',
       'data-rstk-video-gate-seek-policy': 'watched_only',
-      'data-rstk-video-gate-progress-key': 'admision-v1'
+      'data-rstk-video-gate-progress-key': 'admision-v1',
+      'data-rstk-video-gate-progress-days': '45'
     })
     const mobileSource = new FakeElement({
       'data-rstk-video-gate-id': 'agenda-admision',
-      'data-rstk-video-gate-trigger': 'unique_watched_percent',
-      'data-rstk-video-gate-value': '25',
+      'data-rstk-video-gate-trigger': 'unique_watched_seconds',
+      'data-rstk-video-gate-value': '30',
       'data-rstk-video-gate-persist': 'visitor',
       'data-rstk-video-gate-resume': 'true',
       'data-rstk-video-gate-seek-policy': 'watched_only',
-      'data-rstk-video-gate-progress-key': 'admision-v1'
+      'data-rstk-video-gate-progress-key': 'admision-v1',
+      'data-rstk-video-gate-progress-days': '45'
     })
     const locked = new FakeElement({ 'data-rstk-video-gate-locked': 'agenda-admision' })
     const shell = new FakeElement({ 'data-rstk-video-gate-shell': 'agenda-admision' })
@@ -1459,7 +1464,7 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal(legacyContent.hidden, true)
     assert.equal(legacyContent.attrs.has('inert'), true)
     assert.equal(locked.hidden, false)
-    assert.equal(remaining.textContent, '25')
+    assert.equal(remaining.textContent, '30')
     assert.equal(remainingTime.textContent, '00:30')
     assert.equal(remaining.textContentWriteCount, 1)
     assert.equal(window.ristakGetVideoProgress('agenda-admision')?.playbackSeconds, 0)
@@ -1471,40 +1476,43 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     nowMs = 10_000
     video.currentTime = 10
     video.dispatch('timeupdate')
-    assert.equal(remaining.textContent, '17')
+    assert.equal(remaining.textContent, '20')
     assert.equal(remainingTime.textContent, '00:20')
     assert.equal(window.ristakGetVideoProgress('agenda-admision')?.currentTimeSeconds, 10)
     assert.equal(window.ristakGetVideoProgress('agenda-admision')?.playbackSeconds, 10)
     assert.equal(video.getAttribute('data-rstk-video-playback-seconds'), '10')
+    assert.equal(video.getAttribute('data-rstk-video-unique-watched-seconds'), '10')
     assert.equal(video.getAttribute('data-rstk-video-unique-watched-percent'), '8.333')
     assert.equal(progressEvents.at(-1)?.detail?.sourceId, 'agenda-admision')
     assert.equal(progressEvents.at(-1)?.detail?.playbackSeconds, 10)
     video.dispatch('pause')
-    assert.equal(remaining.textContent, '17')
+    assert.equal(remaining.textContent, '20')
     const persistedKey = [...localStorage.values.keys()].find(key => key.includes('admision-v1'))
     assert.ok(persistedKey)
     const persistedProgress = JSON.parse(localStorage.getItem(persistedKey))
+    assert.ok(Math.abs((persistedProgress.expiresAt - persistedProgress.savedAt) - 45 * 86400 * 1000) < 100)
+    assert.equal(persistedProgress.uniqueWatchedSeconds, 10)
     assert.equal(Number(persistedProgress.resumeRatio.toFixed(3)), 0.083)
     assert.deepEqual(persistedProgress.watchedRanges.map(range => range.map(value => Number(value.toFixed(3)))), [[0, 0.083]])
     video.dispatch('play')
 
     mobileVideo.dispatch('play')
     assert.equal(mobileVideo.getAttribute('data-rstk-video-resume-ratio'), '')
-    mobileVideo.duration = 120
+    mobileVideo.duration = 90
     mobileVideo.dispatch('loadedmetadata')
     assert.equal(Number(Number(mobileVideo.getAttribute('data-rstk-video-resume-ratio')).toFixed(3)), 0.083)
-    assert.equal(Number(mobileVideo.currentTime.toFixed(3)), 10)
-    assert.equal(mobileVideo.getAttribute('data-rstk-video-resume-applied'), 'true')
-    nowMs += 10_000
-    mobileVideo.currentTime = 10
-    mobileVideo.dispatch('timeupdate')
-    assert.equal(remaining.textContent, '17')
+    assert.equal(Number(mobileVideo.currentTime.toFixed(3)), 7.5)
+	    assert.equal(mobileVideo.getAttribute('data-rstk-video-resume-applied'), 'true')
+	    nowMs += 10_000
+	    mobileVideo.currentTime = 7.5
+	    mobileVideo.dispatch('timeupdate')
+	    assert.equal(remaining.textContent, '20')
 
     video.currentTime = 29
     video.dispatch('seeking')
     assert.equal(Number(video.currentTime.toFixed(3)), 10)
     video.dispatch('seeked')
-    assert.equal(remaining.textContent, '17')
+    assert.equal(remaining.textContent, '20')
     assert.equal(content.hidden, false)
     assert.equal(content.attrs.has('inert'), true)
     assert.equal(legacyContent.hidden, true)

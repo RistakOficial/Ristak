@@ -7342,7 +7342,7 @@ ${buildImportedHtmlCustomSocialProfileRulesText()}
 - Si cualquier opción puede descalificar, agrega data-rstk-conversion-condition="qualified_only" al <form> final. Ristak guarda todos los submits, pero solo manda Pixel/CAPI cuando el resultado sea calificado.
 - Nunca llames fbq, gtag, dataLayer ni eventos de conversión manuales desde el HTML por click o submit. Ristak emite la conversión después del veredicto del backend.
 - Acciones declarativas de video: escribe data-rstk-video-rules como una lista JSON en el MISMO slot nativo de video. Cada regla necesita id estable, triggerType, triggerValue, action y targetBlockIds cuando la acción usa elementos de la página. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
-- Condiciones válidas: timeline_reached significa "llegó al minuto X" y adelantar la barra sí cuenta; playback_seconds significa "reprodujo X segundos/minutos" y solo suma reproducción activa, no seek ni buffering; unique_watched_percent significa "vio X% real del contenido" y suma la unión de fragmentos reproducidos, sin inflar por adelantar o repetir. triggerValue siempre va en segundos para timeline_reached/playback_seconds (3 minutos = 180) y de 1 a 100 para unique_watched_percent.
+- Condiciones válidas: timeline_reached significa "llegó al minuto X" y adelantar la barra sí cuenta; playback_seconds significa "reprodujo X segundos/minutos" y suma reproducción activa incluso si repite un tramo; unique_watched_seconds exige X segundos distintos realmente vistos; unique_watched_percent expresa esa misma unión como porcentaje. seek, buffering y repetir un rango ya acreditado no inflan los triggers unique_watched_*. triggerValue usa segundos en timeline_reached/playback_seconds/unique_watched_seconds (13 minutos = 780) y de 1 a 100 en unique_watched_percent.
 ${buildImportedHtmlVideoActionTargetRulesText()}
 ${buildImportedHtmlVideoGateRulesText()}
 - No escribas JavaScript para escuchar el video, ocultar, mostrar o medir progreso. Ristak interpreta las reglas y permite afinarlas en el panel.
@@ -17314,7 +17314,7 @@ function buildVideoTrackingAttributes({ enabled = false, block = {}, asset = nul
 const VIDEO_ACTION_KINDS = new Set(['show', 'hide', 'open_form', 'open_video_form', 'show_popup', 'site_page', 'redirect', 'change_text', 'change_link', 'scroll_to', 'activate_checkout', 'meta_event', 'reveal_form_action'])
 const VIDEO_ACTION_BEFORE_STATES = new Set(['hidden', 'visible', 'unchanged'])
 const VIDEO_ACTION_TARGET_KINDS = new Set(['show', 'hide', 'open_form', 'change_text', 'change_link', 'scroll_to', 'activate_checkout'])
-const VIDEO_ACTION_TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent'])
+const VIDEO_ACTION_TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_seconds', 'unique_watched_percent'])
 
 function normalizeVideoActionTime(value) {
   const number = Number(value)
@@ -17695,7 +17695,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const PROGRESS_SITE_SCOPE = ${JSON.stringify(cleanString(options.progressSiteId || ''))};
       const PROGRESS_PAGE_SCOPE = ${JSON.stringify(cleanString(options.progressPageId || ''))};
       const PREVIEW_SAFE_ACTIONS = new Set(['show', 'hide', 'scroll_to']);
-      const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent']);
+      const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_seconds', 'unique_watched_percent']);
       const attached = new WeakSet();
       const normalizeParsedAction = action => {
         const triggerType = TRIGGER_TYPES.has(String(action.triggerType || ''))
@@ -17848,12 +17848,17 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const watchedSeconds = state => state.watchedRanges.reduce((total, range) => (
         total + Math.max(0, Number(range[1] || 0) - Number(range[0] || 0))
       ), 0);
+      const uniqueWatchedSeconds = state => Math.max(
+        watchedSeconds(state),
+        Math.max(0, Number(state.persistedUniqueWatchedSeconds || 0))
+      );
       const GATE_ID_ATTRS = ['data-rstk-video-gate-id','data-ristak-video-gate-id','data-ristack-video-gate-id'];
       const GATE_PERSIST_ATTRS = ['data-rstk-video-gate-persist','data-ristak-video-gate-persist','data-ristack-video-gate-persist'];
       const GATE_RESUME_ATTRS = ['data-rstk-video-gate-resume','data-ristak-video-gate-resume','data-ristack-video-gate-resume'];
       const GATE_SEEK_POLICY_ATTRS = ['data-rstk-video-gate-seek-policy','data-ristak-video-gate-seek-policy','data-ristack-video-gate-seek-policy'];
       const GATE_PROGRESS_KEY_ATTRS = ['data-rstk-video-gate-progress-key','data-ristak-video-gate-progress-key','data-ristack-video-gate-progress-key'];
       const GATE_PROGRESS_TTL_ATTRS = ['data-rstk-video-gate-progress-ttl','data-ristak-video-gate-progress-ttl','data-ristack-video-gate-progress-ttl'];
+      const GATE_PROGRESS_DAYS_ATTRS = ['data-rstk-video-gate-progress-days','data-ristak-video-gate-progress-days','data-ristack-video-gate-progress-days'];
       const progressRecordCache = new Map();
       const readFirstAttribute = (element, names) => {
         if (!element || typeof element.getAttribute !== 'function') return '';
@@ -17881,10 +17886,18 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           ? requestedSeekPolicy
           : 'free';
         const progressKey = readFirstAttribute(source, GATE_PROGRESS_KEY_ATTRS) || gateId;
-        const rawTtl = Number(readFirstAttribute(source, GATE_PROGRESS_TTL_ATTRS));
-        const ttlSeconds = Number.isFinite(rawTtl)
-          ? Math.max(3600, Math.min(31536000, rawTtl))
-          : 2592000;
+        const rawTtlText = readFirstAttribute(source, GATE_PROGRESS_TTL_ATTRS);
+        const rawDaysText = readFirstAttribute(source, GATE_PROGRESS_DAYS_ATTRS);
+        const rawTtl = Number(rawTtlText);
+        const rawDays = Number(rawDaysText);
+        const requestedTtlSeconds = rawTtlText && Number.isFinite(rawTtl)
+          ? rawTtl
+          : rawDaysText && Number.isFinite(rawDays)
+            ? rawDays * 86400
+            : 2592000;
+        // Evita fechas inválidas por HTML malformado, sin convertir 30 días en
+        // una regla de negocio: el autor puede elegir hasta 100 años.
+        const ttlSeconds = Math.max(3600, Math.min(3153600000, requestedTtlSeconds));
         let pathScope = 'page';
         try { pathScope = String(window.location && window.location.pathname || 'page'); } catch (_) {}
         const siteId = video.getAttribute('data-rstk-video-action-site-id') || PROGRESS_SITE_SCOPE || 'site';
@@ -17940,6 +17953,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         }
         const normalized = {
           playbackSeconds: Math.max(0, Number(record.playbackSeconds || 0)),
+          uniqueWatchedSeconds: Math.max(0, Number(record.uniqueWatchedSeconds || 0)),
           watchedRanges: normalizeStoredRanges(record.watchedRanges),
           resumeRatio: Math.max(0, Math.min(1, Number(record.resumeRatio || 0))),
           savedAt: Math.max(0, Number(record.savedAt || 0)),
@@ -17955,6 +17969,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         });
         return {
           playbackSeconds: Math.max(0, Number(current?.playbackSeconds || 0), Number(next?.playbackSeconds || 0)),
+          uniqueWatchedSeconds: Math.max(0, Number(current?.uniqueWatchedSeconds || 0), Number(next?.uniqueWatchedSeconds || 0)),
           watchedRanges,
           resumeRatio: Math.max(0, Math.min(1, Number(next?.resumeRatio ?? current?.resumeRatio ?? 0))),
           savedAt: Math.max(0, Number(next?.savedAt || Date.now())),
@@ -17984,6 +17999,10 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         if (!record) return false;
         const duration = finiteMediaDuration(state.video);
         state.playbackSeconds = Math.max(state.playbackSeconds, record.playbackSeconds);
+        state.persistedUniqueWatchedSeconds = Math.max(
+          Number(state.persistedUniqueWatchedSeconds || 0),
+          Number(record.uniqueWatchedSeconds || 0)
+        );
         if (duration > 0) {
           record.watchedRanges.forEach(range => {
             state.watchedRanges = mergeWatchedRange(
@@ -18008,7 +18027,11 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
             }
           }
         }
-        state.persistedProgressLoaded = Boolean(record.playbackSeconds > 0 || record.watchedRanges.length);
+        state.persistedProgressLoaded = Boolean(
+          record.playbackSeconds > 0 ||
+          record.uniqueWatchedSeconds > 0 ||
+          record.watchedRanges.length
+        );
         return state.persistedProgressLoaded;
       };
       const maxWatchedRatio = state => {
@@ -18035,6 +18058,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         const resumeRatio = Math.max(0, Math.min(1, finiteMediaTime(state.video) / duration));
         writeProgressRecord(config, {
           playbackSeconds: state.playbackSeconds,
+          uniqueWatchedSeconds: uniqueWatchedSeconds(state),
           watchedRanges: normalizedRangesForState(state),
           resumeRatio,
           savedAt: Date.now(),
@@ -18079,9 +18103,10 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const buildProgressSnapshot = (state, realPlaybackStarted) => {
         const currentTimeSeconds = finiteMediaTime(state.video);
         const durationSeconds = finiteMediaDuration(state.video);
-        const uniqueWatchedSeconds = watchedSeconds(state);
+        const uniqueWatchedSecondsValue = uniqueWatchedSeconds(state);
+        const rangeWatchedSeconds = watchedSeconds(state);
         const uniqueWatchedPercent = durationSeconds > 0
-          ? Math.min(100, (uniqueWatchedSeconds / durationSeconds) * 100)
+          ? Math.min(100, (rangeWatchedSeconds / durationSeconds) * 100)
           : 0;
         return {
           sourceId: getProgressSourceId(state.video),
@@ -18089,7 +18114,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           durationSeconds,
           timelinePercent: durationSeconds > 0 ? Math.min(100, (currentTimeSeconds / durationSeconds) * 100) : 0,
           playbackSeconds: state.playbackSeconds,
-          uniqueWatchedSeconds,
+          uniqueWatchedSeconds: uniqueWatchedSecondsValue,
           uniqueWatchedPercent,
           realPlaybackStarted: Boolean(realPlaybackStarted),
           playing: Boolean(
@@ -18131,6 +18156,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           state.video.setAttribute('data-rstk-video-duration', String(Number(snapshot.durationSeconds.toFixed(3))));
           state.video.setAttribute('data-rstk-video-timeline-percent', String(Number(snapshot.timelinePercent.toFixed(3))));
           state.video.setAttribute('data-rstk-video-playback-seconds', String(Number(snapshot.playbackSeconds.toFixed(3))));
+          state.video.setAttribute('data-rstk-video-unique-watched-seconds', String(Number(snapshot.uniqueWatchedSeconds.toFixed(3))));
           state.video.setAttribute('data-rstk-video-unique-watched-percent', String(Number(snapshot.uniqueWatchedPercent.toFixed(3))));
           state.video.setAttribute('data-rstk-video-playing', snapshot.playing ? 'true' : 'false');
           syncSeekPolicyAttributes(state);
@@ -18190,6 +18216,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       };
       const getActionProgress = (state, action) => {
         if (action.triggerType === 'playback_seconds') return state.playbackSeconds;
+        if (action.triggerType === 'unique_watched_seconds') return uniqueWatchedSeconds(state);
         if (action.triggerType === 'unique_watched_percent') {
           const duration = finiteMediaDuration(state.video);
           return duration > 0 ? Math.min(100, (watchedSeconds(state) / duration) * 100) : 0;
@@ -18450,6 +18477,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           buffering: false,
           seeking: false,
           playbackSeconds: 0,
+          persistedUniqueWatchedSeconds: 0,
           watchedRanges: [],
           persistence: persistenceConfigForVideo(video),
           persistedProgressLoaded: false,
@@ -24127,6 +24155,10 @@ function normalizeVideoControlsMode(settings = {}) {
   if (VIDEO_CONTROLS_MODES.has(requestedMode)) return requestedMode
   return settings.videoControls === false ? 'none' : 'clean'
 }
+
+function normalizeVideoTimelineMode(settings = {}) {
+  return cleanString(settings.videoTimelineMode) === 'live_frontier' ? 'live_frontier' : 'duration'
+}
 const VIDEO_SPEED_OPTIONS = ['0.75', '1', '1.25', '1.5', '2']
 const VIDEO_PREVIEW_MAX_SPAN_SECONDS = 40
 const VIDEO_PREVIEW_DEFAULT_SECONDS = 40
@@ -24610,7 +24642,14 @@ function renderSubmitButtonContent(label, subtitle = '', settings = {}, { labelA
 }
 
 function renderVideoPlayer(src, block, settings = {}, options = {}) {
-  const controlsMode = normalizeVideoControlsMode(settings)
+  const timelineMode = normalizeVideoTimelineMode(settings)
+  const requestedControlsMode = normalizeVideoControlsMode(settings)
+  // Los controles nativos del navegador siempre revelan la duración física y
+  // permiten apuntar al futuro. En modo live_frontier usamos la barra limpia,
+  // que sí puede representar únicamente la franja alcanzada.
+  const controlsMode = timelineMode === 'live_frontier' && requestedControlsMode === 'native'
+    ? 'clean'
+    : requestedControlsMode
   const showNativeControls = controlsMode === 'native'
   const showOverlay = controlsMode === 'clean'
   const showCentralPlay = settings.videoOverlayPlay !== false
@@ -24726,6 +24765,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     `data-rstk-video-editor-preview="${editorPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-adaptive-quality="${settings.videoAdaptiveQuality !== false ? 'true' : 'false'}"`,
     `data-rstk-video-orientation-mode="${escapeHtml(orientationMode)}"`,
+    `data-rstk-video-timeline-mode="${escapeHtml(timelineMode)}"`,
     `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
     `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
     `data-rstk-video-preview-end="${escapeHtml(String(previewRange.end))}"`,
@@ -27635,6 +27675,49 @@ function buildVideoPlayerRuntimeScript() {
 	          if (typeof hls.startLoad === 'function') hls.startLoad(video.currentTime || -1);
 	        };
 	        const slotId = String(host.getAttribute('data-rstk-native-slot-id') || video.getAttribute('data-rstk-video-slot-id') || '');
+	        const timelineModeAttrs = ['data-rstk-video-timeline-mode','data-ristak-video-timeline-mode','data-ristack-video-timeline-mode'];
+	        const readTimelineMode = element => {
+	          if (!element || typeof element.getAttribute !== 'function') return '';
+	          for (const name of timelineModeAttrs) {
+	            const value = String(element.getAttribute(name) || '').trim().toLowerCase();
+	            if (value === 'live_frontier' || value === 'duration') return value;
+	          }
+	          return '';
+	        };
+	        const resolveTimelineMode = () => {
+	          const hostMode = readTimelineMode(host);
+	          if (hostMode) return hostMode;
+	          const selector = timelineModeAttrs.map(name => '[' + name + ']').join(',');
+	          const ancestor = host.parentElement && typeof host.parentElement.closest === 'function'
+	            ? host.parentElement.closest(selector)
+	            : null;
+	          return readTimelineMode(ancestor) || readTimelineMode(video) || 'duration';
+	        };
+	        const timelineMetrics = () => {
+	          const sourceDuration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+	          const rawElapsed = previewing && !hasUserPlayed ? 0 : Number(video.currentTime);
+	          const current = Math.max(0, Number.isFinite(rawElapsed) ? rawElapsed : 0);
+	          const mode = resolveTimelineMode();
+	          const storedMaxRatio = Number(video.getAttribute('data-rstk-video-max-seek-ratio'));
+	          const storedFrontier = sourceDuration > 0 && Number.isFinite(storedMaxRatio)
+	            ? Math.max(0, Math.min(sourceDuration, storedMaxRatio * sourceDuration))
+	            : 0;
+	          const visibleDuration = mode === 'live_frontier'
+	            ? Math.min(sourceDuration || Infinity, Math.max(current, storedFrontier))
+	            : sourceDuration;
+	          const elapsed = Math.min(visibleDuration || Infinity, current);
+	          const remaining = Math.max(0, visibleDuration - elapsed);
+	          const ratio = visibleDuration > 0 ? Math.max(0, Math.min(1, elapsed / visibleDuration)) : 0;
+	          const liveEdge = mode === 'live_frontier' && visibleDuration > 0 && remaining <= 0.6;
+	          return { mode, sourceDuration, visibleDuration, elapsed, remaining, ratio, liveEdge };
+	        };
+	        const enforceTimelineControls = () => {
+	          if (resolveTimelineMode() !== 'live_frontier' || !video.hasAttribute('controls')) return;
+	          video.controls = false;
+	          video.removeAttribute('controls');
+	          host.classList.remove('rstk-video-native-controls');
+	        };
+	        enforceTimelineControls();
 	        const formatProgressPercent = ratio => {
 	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
 	          return Number((safeRatio * 100).toFixed(3)) + '%';
@@ -27649,32 +27732,57 @@ function buildVideoPlayerRuntimeScript() {
 	          const minutes = Math.floor(totalSeconds / 60);
 	          const seconds = totalSeconds % 60;
 	          return minutes + ':' + String(seconds).padStart(2, '0');
-	        };
-	        const syncTimecode = duration => {
-	          if (!timecode && !timeElapsed && !timeRemaining && !customCurrentTimes.length && !customDurations.length && !customRemainingTimes.length && !customPercents.length) return;
-	          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
-	          const rawElapsed = previewing && !hasUserPlayed ? 0 : video.currentTime;
-	          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(rawElapsed) ? rawElapsed : 0));
-	          const remaining = Math.max(0, safeDuration - elapsed);
+		        };
+		        const syncTimecode = metrics => {
+		          const safeDuration = metrics.visibleDuration;
+	          const elapsed = metrics.elapsed;
+	          const remaining = metrics.remaining;
 	          const elapsedLabel = formatTimecode(elapsed);
 	          const remainingLabel = formatTimecode(remaining);
 	          const durationLabel = formatTimecode(safeDuration);
-	          const percentLabel = formatProgressPercent(safeDuration > 0 ? elapsed / safeDuration : 0);
+	          const percentLabel = formatProgressPercent(metrics.ratio);
 	          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
-	          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
+	          if (timeRemaining) timeRemaining.textContent = metrics.liveEdge ? 'EN VIVO' : '-' + remainingLabel;
 	          customCurrentTimes.forEach(element => { element.textContent = elapsedLabel; });
 	          customDurations.forEach(element => { element.textContent = durationLabel; });
 	          customRemainingTimes.forEach(element => { element.textContent = remainingLabel; });
 	          customPercents.forEach(element => { element.textContent = percentLabel; });
-	          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
+	          if (timecode) {
+	            timecode.setAttribute(
+	              'aria-label',
+	              metrics.liveEdge
+	                ? 'Tiempo del video ' + elapsedLabel + ', en vivo'
+	                : metrics.mode === 'live_frontier'
+	                  ? 'Tiempo del video ' + elapsedLabel + ', faltan ' + remainingLabel + ' para volver al punto visto'
+	                  : 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel
+	            );
+	          }
+	          if (host.getAttribute('data-rstk-video-timeline-mode') !== metrics.mode) {
+	            host.setAttribute('data-rstk-video-timeline-mode', metrics.mode);
+	          }
+	          const liveEdgeValue = metrics.liveEdge ? 'true' : 'false';
+	          if (host.getAttribute('data-rstk-video-live-edge') !== liveEdgeValue) {
+	            host.setAttribute('data-rstk-video-live-edge', liveEdgeValue);
+	          }
 	          host.style.setProperty('--rstk-video-current-seconds', String(Number(elapsed.toFixed(3))));
 	          host.style.setProperty('--rstk-video-duration-seconds', String(Number(safeDuration.toFixed(3))));
+	          host.style.setProperty('--rstk-video-source-duration-seconds', String(Number(metrics.sourceDuration.toFixed(3))));
 	          host.style.setProperty('--rstk-video-progress-percent', percentLabel);
 	        };
 	        const syncProgress = () => {
-	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
-	          setProgressRatio(duration > 0 ? video.currentTime / duration : 0);
-	          syncTimecode(duration);
+	          const metrics = timelineMetrics();
+	          setProgressRatio(metrics.ratio);
+	          if (progressTrack) {
+	            progressTrack.setAttribute(
+	              'aria-valuetext',
+	              metrics.liveEdge
+	                ? 'En vivo'
+	                : metrics.mode === 'live_frontier'
+	                  ? formatTimecode(metrics.remaining) + ' para volver al punto visto'
+	                  : formatProgressPercent(metrics.ratio)
+	            );
+	          }
+	          syncTimecode(metrics);
 	        };
 	        const stopProgressFrame = () => {
 	          if (!progressFrame) return;
@@ -27902,7 +28010,7 @@ function buildVideoPlayerRuntimeScript() {
 	          });
 	          sync();
 	        };
-	        const seekToProgressRatio = ratio => {
+	        const seekToAbsoluteTime = seconds => {
 	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
 	          if (duration <= 0) return false;
 	          if (!hasUserPlayed) {
@@ -27913,13 +28021,22 @@ function buildVideoPlayerRuntimeScript() {
 	          const seekPolicy = String(video.getAttribute('data-rstk-video-seek-policy') || 'free');
 	          const storedMaxRatio = Number(video.getAttribute('data-rstk-video-max-seek-ratio'));
 	          const maxSeekRatio = Number.isFinite(storedMaxRatio) ? Math.max(0, Math.min(1, storedMaxRatio)) : 1;
-	          let nextProgress = Math.max(0, Math.min(1, ratio));
+	          let nextProgress = Math.max(0, Math.min(1, Number(seconds || 0) / duration));
 	          if (seekPolicy === 'watched_only') nextProgress = Math.min(nextProgress, maxSeekRatio);
 	          if (seekPolicy === 'none') nextProgress = Math.min(nextProgress, Math.max(0, Math.min(1, video.currentTime / duration)));
 	          video.currentTime = nextProgress * duration;
 	          setProgressRatio(nextProgress);
 	          sync();
 	          return true;
+	        };
+	        const seekToProgressRatio = ratio => {
+	          const metrics = timelineMetrics();
+	          const visibleDuration = metrics.mode === 'live_frontier'
+	            ? metrics.visibleDuration
+	            : metrics.sourceDuration;
+	          if (!(visibleDuration > 0)) return false;
+	          const safeRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+	          return seekToAbsoluteTime(safeRatio * visibleDuration);
 	        };
 	        const seekToClientPosition = (clientX, track) => {
 	          const targetTrack = track || progressTrack;
@@ -28081,7 +28198,7 @@ function buildVideoPlayerRuntimeScript() {
 	            seek: seconds => {
 	              const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
 	              if (Number.isFinite(duration) && duration > 0) {
-	                seekToProgressRatio(Math.max(0, Number(seconds || 0)) / duration);
+	                seekToAbsoluteTime(Math.max(0, Number(seconds || 0)));
 	              } else {
 	                video.currentTime = Math.max(0, Number(seconds || 0));
 	                sync();
@@ -28156,7 +28273,10 @@ function buildVideoPlayerRuntimeScript() {
 	            });
 	          });
 	          progressTrack.addEventListener('keydown', event => {
-	            const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	            const metrics = timelineMetrics();
+	            const duration = metrics.mode === 'live_frontier'
+	              ? metrics.visibleDuration
+	              : metrics.sourceDuration;
 	            if (duration <= 0) return;
 	            const stepSeconds = event.shiftKey ? 10 : 5;
 	            let nextTime = video.currentTime;
@@ -28168,7 +28288,7 @@ function buildVideoPlayerRuntimeScript() {
 	            event.preventDefault();
 	            event.stopPropagation();
 	            showControlsTemporarily();
-	            seekToProgressRatio(nextTime / duration);
+	            seekToAbsoluteTime(nextTime);
 	          });
 	        }
 	        if (speedSelect) {
@@ -28203,6 +28323,18 @@ function buildVideoPlayerRuntimeScript() {
 	        video.addEventListener('canplay', resumePreviewLoop);
 	        video.addEventListener('seeked', resumePreviewLoop);
 	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
+	        const timelineAttributeObserver = new MutationObserver(() => {
+	          enforceTimelineControls();
+	          sync();
+	        });
+	        timelineAttributeObserver.observe(video, {
+	          attributes: true,
+	          attributeFilter: ['data-rstk-video-max-seek-ratio','data-rstk-video-seek-policy','data-rstk-video-timeline-mode','data-ristak-video-timeline-mode','data-ristack-video-timeline-mode']
+	        });
+	        timelineAttributeObserver.observe(host, {
+	          attributes: true,
+	          attributeFilter: ['data-rstk-video-timeline-mode','data-ristak-video-timeline-mode','data-ristack-video-timeline-mode']
+	        });
 	        const emitCustomVideoEvent = eventName => {
 	          try {
 	            host.dispatchEvent(new CustomEvent('ristak:video-' + eventName, {
@@ -28353,7 +28485,7 @@ function buildImportedVideoGateRuntimeScript(html = '') {
       const LOCKED_MODE_ATTRS = ['data-rstk-video-gate-locked-mode','data-ristak-video-gate-locked-mode','data-ristack-video-gate-locked-mode'];
       const REMAINING_ATTRS = ['data-rstk-video-gate-remaining','data-ristak-video-gate-remaining','data-ristack-video-gate-remaining'];
       const REMAINING_TIME_ATTRS = ['data-rstk-video-gate-remaining-time','data-ristak-video-gate-remaining-time','data-ristack-video-gate-remaining-time'];
-      const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_percent']);
+      const TRIGGER_TYPES = new Set(['timeline_reached', 'playback_seconds', 'unique_watched_seconds', 'unique_watched_percent']);
       const gates = new Map();
       const readAttr = (element, names) => {
         for (const name of names) {
@@ -28504,6 +28636,7 @@ function buildImportedVideoGateRuntimeScript(html = '') {
         return video.closest(SOURCE_SELECTOR);
       };
       const progressForMetrics = (gate, metrics) => {
+        if (gate.triggerType === 'unique_watched_seconds') return Number(metrics.uniqueWatchedSeconds || 0);
         if (gate.triggerType === 'unique_watched_percent') return Number(metrics.uniqueWatchedPercent || 0);
         if (gate.triggerType === 'timeline_reached') return Number(metrics.timelineReached || 0);
         return Number(metrics.playbackSeconds || 0);
@@ -29666,6 +29799,7 @@ function renderImportedCustomVideoMedia(innerHtml = '', block = null, context = 
     'data-rstk-video-preview': attrs['data-rstk-video-preview'] || 'false',
     'data-rstk-video-speed': attrs['data-rstk-video-speed'] || String(settings.videoDefaultSpeed || 1),
     'data-rstk-video-orientation-mode': attrs['data-rstk-video-orientation-mode'] || 'auto',
+    'data-rstk-video-timeline-mode': attrs['data-rstk-video-timeline-mode'] || normalizeVideoTimelineMode(settings),
     ...(delivery?.src ? { 'data-rstk-video-src': delivery.src } : {}),
     ...(delivery?.fallbackSrc ? { 'data-rstk-video-fallback-src': delivery.fallbackSrc } : {}),
     ...(delivery?.src && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
