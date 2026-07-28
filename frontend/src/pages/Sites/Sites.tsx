@@ -7030,6 +7030,7 @@ type RistakHlsInstance = {
   loadSource: (source: string) => void
   attachMedia: (media: HTMLMediaElement) => void
   destroy: () => void
+  startLoad?: (startPosition?: number) => void
   on?: (eventName: string, handler: () => void) => void
   levels?: unknown[]
   startLevel?: number
@@ -31184,7 +31185,7 @@ const VideoPlayerSettingsControls: React.FC<{
             <div className={styles.videoFormGateSwitchRow}>
               <div>
                 <strong>Resolución inteligente</strong>
-                <span>Con Bunny, adapta la calidad a la conexión para cargar más rápido. Apágala para priorizar la mayor resolución disponible.</span>
+                <span>Ajusta automáticamente la calidad del video según la conexión para cargar más rápido y reducir pausas. Apágala para priorizar la mayor resolución disponible.</span>
               </div>
               <Switch
                 checked={settings.videoAdaptiveQuality !== false}
@@ -37664,7 +37665,7 @@ const VideoPlayerPreview: React.FC<{
     }
 
     let cancelled = false
-    if (canPlayNativeHls(video)) {
+    if (adaptiveQuality && canPlayNativeHls(video)) {
       video.src = noTrackSrc
       video.load()
       return
@@ -37683,7 +37684,11 @@ const VideoPlayerPreview: React.FC<{
         return
       }
 
-      const hls = new Hls({ enableWorker: true, startLevel: adaptiveQuality ? -1 : undefined })
+      const hls = new Hls({
+        enableWorker: true,
+        startLevel: adaptiveQuality ? -1 : 0,
+        autoStartLoad: adaptiveQuality
+      })
       hlsRef.current = hls
       if (!adaptiveQuality && Hls.Events?.MANIFEST_PARSED) {
         hls.on?.(Hls.Events.MANIFEST_PARSED, () => {
@@ -37691,6 +37696,7 @@ const VideoPlayerPreview: React.FC<{
           hls.startLevel = highestLevel
           hls.loadLevel = highestLevel
           hls.currentLevel = highestLevel
+          hls.startLoad?.(-1)
         })
       }
       hls.loadSource(noTrackSrc)

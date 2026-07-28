@@ -1387,7 +1387,7 @@ test('video player prepares HLS sources for Bunny Stream playback', async () => 
   assert.match(html, /hls\.js@1\/dist\/hls\.min\.js/)
 })
 
-test('video player defaults to intelligent resolution and can prioritize the highest Bunny rendition', async () => {
+test('video player defaults to intelligent resolution and can prioritize the highest HLS rendition', async () => {
   const playlistUrl = 'https://vz-123.b-cdn.net/quality-choice/playlist.m3u8'
   const intelligentHtml = await renderPublicSiteHtml(baseSite({
     mediaUrl: playlistUrl,
@@ -1409,8 +1409,106 @@ test('video player defaults to intelligent resolution and can prioritize the hig
     preview: false
   })
   assert.match(qualityFirstHtml, /data-rstk-video-adaptive-quality="false"/)
+  assert.match(qualityFirstHtml, /if \(adaptiveQuality && canPlayNativeHls\(video\)\)/)
+  assert.match(qualityFirstHtml, /startLevel: adaptiveQuality \? -1 : 0/)
+  assert.match(qualityFirstHtml, /autoStartLoad: adaptiveQuality/)
   assert.match(qualityFirstHtml, /const highestLevel = Math\.max/)
   assert.match(qualityFirstHtml, /hls\.currentLevel = highestLevel/)
+  assert.match(qualityFirstHtml, /hls\.startLoad\(-1\)/)
+  assert.match(qualityFirstHtml, /if \(!activateNativeHls\(\) && !activateFallback\(\)\)/)
+
+  const hlsBranchStart = qualityFirstHtml.indexOf('if (source && isHlsSource(source)) {')
+  const hlsBranchEnd = qualityFirstHtml.indexOf('const rawSpeed =', hlsBranchStart)
+  assert.ok(hlsBranchStart >= 0 && hlsBranchEnd > hlsBranchStart, 'expected published HLS runtime branch')
+  const hlsBranchSource = qualityFirstHtml.slice(hlsBranchStart, hlsBranchEnd)
+  const instances = []
+
+  class FakeHls {
+    static Events = {
+      ERROR: 'error',
+      MANIFEST_PARSED: 'manifest'
+    }
+
+    static isSupported() {
+      return true
+    }
+
+    constructor(options) {
+      this.options = options
+      this.levels = [{}, {}, {}]
+      this.handlers = new Map()
+      this.startPositions = []
+      instances.push(this)
+    }
+
+    on(eventName, handler) {
+      this.handlers.set(eventName, handler)
+    }
+
+    loadSource(source) {
+      this.source = source
+    }
+
+    attachMedia(media) {
+      this.media = media
+    }
+
+    startLoad(position) {
+      this.startPositions.push(position)
+    }
+  }
+
+  const video = {
+    src: '',
+    loadCalls: 0,
+    load() {
+      this.loadCalls += 1
+    },
+    removeAttribute() {}
+  }
+  const host = {}
+  const runHlsBranch = vm.runInNewContext(`(
+    async ({
+      source,
+      video,
+      host,
+      adaptiveQuality,
+      isHlsSource,
+      canPlayNativeHls,
+      loadHls,
+      activateNativeHls,
+      activateFallback
+    }) => {
+      ${hlsBranchSource}
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+  )`)
+
+  await runHlsBranch({
+    source: playlistUrl,
+    video,
+    host,
+    adaptiveQuality: false,
+    isHlsSource: () => true,
+    canPlayNativeHls: () => true,
+    loadHls: async () => FakeHls,
+    activateNativeHls: () => false,
+    activateFallback: () => false
+  })
+
+  assert.equal(instances.length, 1)
+  assert.equal(instances[0].options.autoStartLoad, false)
+  assert.equal(instances[0].options.startLevel, 0)
+  assert.equal(instances[0].source, playlistUrl)
+  assert.equal(instances[0].media, video)
+  assert.equal(video.src, '', 'native HLS must not bypass the explicit highest-quality mode')
+
+  instances[0].handlers.get(FakeHls.Events.MANIFEST_PARSED)?.()
+  assert.equal(instances[0].startLevel, 2)
+  assert.equal(instances[0].loadLevel, 2)
+  assert.equal(instances[0].currentLevel, 2)
+  assert.deepEqual(instances[0].startPositions, [-1])
 })
 
 test('live Bunny Stream iframe uses the same editable video frame settings', async () => {

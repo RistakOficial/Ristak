@@ -26175,6 +26175,12 @@ function buildVideoPlayerRuntimeScript() {
 	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
 	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
 	        let fallbackActivated = false;
+	        const activateNativeHls = () => {
+	          if (!canPlayNativeHls(video)) return false;
+	          video.src = source;
+	          video.load();
+	          return true;
+	        };
 	        const activateFallback = () => {
 	          if (fallbackActivated || !fallbackSource || fallbackSource === source) return false;
 	          fallbackActivated = true;
@@ -26188,7 +26194,7 @@ function buildVideoPlayerRuntimeScript() {
 	          return true;
 	        };
 	        if (source && isHlsSource(source)) {
-	          if (canPlayNativeHls(video)) {
+	          if (adaptiveQuality && canPlayNativeHls(video)) {
 	            video.addEventListener('error', activateFallback, { once: true });
 	            video.src = source;
 	            video.load();
@@ -26197,13 +26203,17 @@ function buildVideoPlayerRuntimeScript() {
 	            video.load();
 	            loadHls().then(Hls => {
 	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
-	                if (!activateFallback()) {
+	                if (!activateNativeHls() && !activateFallback()) {
 	                  video.src = source;
 	                  video.load();
 	                }
 	                return;
 	              }
-	              const hls = new Hls({ enableWorker: true, startLevel: adaptiveQuality ? -1 : undefined });
+	              const hls = new Hls({
+	                enableWorker: true,
+	                startLevel: adaptiveQuality ? -1 : 0,
+	                autoStartLoad: adaptiveQuality
+	              });
 	              host.rstkHls = hls;
 	              if (Hls.Events && Hls.Events.ERROR) {
 	                hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -26216,12 +26226,13 @@ function buildVideoPlayerRuntimeScript() {
 	                  hls.startLevel = highestLevel;
 	                  hls.loadLevel = highestLevel;
 	                  hls.currentLevel = highestLevel;
+	                  hls.startLoad(-1);
 	                });
 	              }
 	              hls.loadSource(source);
 	              hls.attachMedia(video);
 	            }).catch(() => {
-	              if (!activateFallback()) {
+	              if (!activateNativeHls() && !activateFallback()) {
 	                video.src = source;
 	                video.load();
 	              }

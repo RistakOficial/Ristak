@@ -5259,11 +5259,15 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   móvil. Los videos verticales no cambian y un formulario expandido sobre el
   reproductor conserva el espacio necesario para su contenido.
   El panel derecho también muestra **Resolución inteligente**, activa por
-  defecto incluso en videos guardados antes de existir el ajuste. Con HLS, el
-  modo activo deja que Bunny/hls.js seleccione la variante según el ancho de
-  banda para reducir esperas y buffering; al apagarlo, el reproductor prioriza
-  la mayor resolución disponible. En un MP4 único no existen variantes entre
-  las cuales elegir, por lo que el ajuste no altera ese archivo.
+  defecto incluso en videos guardados antes de existir el ajuste. El editor la
+  explica sin mencionar al proveedor técnico: el modo activo adapta la calidad
+  del video a la conexión para reducir esperas y pausas; al apagarlo, el
+  reproductor prioriza la mayor resolución disponible. Con HLS, Ristak usa
+  selección automática en el modo activo y, al apagarlo, prefiere hls.js,
+  espera el manifiesto, fija la variante más alta y después inicia la carga.
+  Si hls.js no está disponible, HLS nativo queda como respaldo compatible. En
+  un MP4 único no existen variantes entre las cuales elegir, por lo que el
+  ajuste no altera ese archivo.
   Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado y el total
   recibido por Bunny. En estándar también exige que el espejo Storage tenga el
   mismo tamaño; en premium exige la identidad Stream y persiste su HLS sin

@@ -10,6 +10,7 @@
     "test:chat-delivery-state": "node scripts/test-chat-message-delivery-state.mjs",
     "test:chat-channel": "node scripts/test-chat-message-channel.mjs",
     "test:sites-video-rule-contract": "node scripts/test-sites-video-rule-contract.mjs",
+    "test:sites-video-resolution-contract": "node scripts/test-sites-video-resolution-contract.mjs",
     "test:sites-html-creation-flow": "node scripts/test-sites-html-creation-flow.mjs",
     "test:sites-imported-form-meta-trigger": "node scripts/test-sites-imported-form-meta-trigger.mjs",
     "test:sites-embedded-form-inspector": "node scripts/test-sites-embedded-form-inspector.mjs",

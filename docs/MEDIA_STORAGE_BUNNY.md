@@ -309,10 +309,13 @@ another account.
   customizable Ristak player whenever Bunny has finished preparing it. Editor
   and preview prefer the stable Storage MP4 when one exists; Stream-only premium
   assets use HLS because they intentionally have no duplicate.
-  The right-side video setting **Resolución inteligente** defaults to enabled:
-  HLS adapts bitrate and resolution to the connection. When disabled, hls.js
-  leaves automatic selection and prioritizes Bunny's highest available rendition;
-  browsers with native HLS retain final control over their own playback pipeline.
+  The right-side video setting **Resolución inteligente** defaults to enabled.
+  Its editor copy explains the playback behavior without exposing the storage
+  provider: HLS adapts bitrate and resolution to the connection. When disabled,
+  Ristak prefers hls.js even in browsers with native HLS support, pauses automatic
+  fragment loading until the manifest is known and then fixes the highest available
+  rendition before playback starts. If hls.js is unavailable, native HLS remains
+  the final compatibility fallback and retains control over its playback pipeline.
   This choice does not surrender the saved button, colors, controls, video
   actions or form gate to a provider iframe. Preview playback loads the real
   media but keeps Ristak tracking disabled; published playback emits first-party
