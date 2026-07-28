@@ -22,6 +22,7 @@ import {
   paySiteCheckout,
   prepareSiteCheckoutInstallments,
   prepareSiteVideoStoragePreviews,
+  replaceImportedSiteFromUpload,
   getSitesFontCss,
   getSitesFontFile,
   getSite,
@@ -495,11 +496,15 @@ export async function createSiteWithAIHtmlHandler(req, res) {
 
 export async function importSiteHtmlHandler(req, res) {
   try {
-    const result = await createImportedSiteFromHtml({
+    const input = {
       ...(req.body || {}),
       userId: req.user?.userId || req.user?.id
-    })
-    res.status(201).json({ success: true, data: result })
+    }
+    const siteId = String(input.siteId || input.site_id || '').trim()
+    const result = siteId
+      ? await replaceImportedSiteFromUpload(siteId, input)
+      : await createImportedSiteFromHtml(input)
+    res.status(siteId ? 200 : 201).json({ success: true, data: result })
   } catch (error) {
     logger.error(`Error importando HTML de site: ${error.message}`)
     error.status = error.status || 400

@@ -4813,15 +4813,36 @@ la IA de Ristak y el asistente de compatibilidad para ChatGPT, Claude o Codex;
 todas terminan en el mismo editor y contrato de reglas HTML.
 
 Con el editor ya abierto, la barra superior mantiene `Subir paginas` junto al
-selector de paginas. El control acepta HTML o ZIP y reutiliza el mismo flujo de
-importacion: guarda primero cualquier cambio pendiente del sitio abierto, crea
-el nuevo proyecto importado con el mismo tipo de sitio y lo abre directamente en
-el editor. No mezcla silenciosamente codigo externo con los bloques del proyecto
-que estaba abierto. La transicion queda fijada al ID del proyecto importado: el
-sincronizador de la URL no puede restaurar el sitio anterior mientras cambia la
-ruta y cualquier carga pendiente de ese sitio se descarta. Por eso la lista de
-paginas no debe alternar ni parpadear entre el proyecto fuente y el recien
-importado.
+selector de paginas. El control acepta HTML o ZIP y guarda primero cualquier
+cambio pendiente. Si se usa desde el flujo `Nuevo`, crea otro proyecto; si se usa
+dentro de un sitio HTML importado, reemplaza el codigo del mismo `site_id` y no
+obliga a volver a asociar sus elementos.
+
+La resubida reconcilia cada pagina primero por ruta normalizada, despues por un
+basename unico y, para la pagina principal de un HTML sencillo, por la identidad
+activa. Conserva el ID y la configuracion de la pagina encontrada. Los cambios
+de carpeta quedan como aliases internos para futuras versiones. Si dos paginas
+nuevas tienen el mismo basename o la coincidencia deja de ser unica, Ristak no
+adivina: crea identidades nuevas y conserva la anterior como respaldo inactivo.
+El archivo acotado vive en `theme.importedPageIdentityArchive`; guarda identidad,
+aliases y ultima configuracion de pagina, nunca credenciales ni contenido
+privado adicional.
+
+Al conservar el ID de pagina, los bloques nativos siguen conectados por
+`data-rstk-native-id` + tipo + pagina. Los formularios conservan sus rutas por
+`data-rstk-form-id`/`data-rstk-field-id`, y los archivos elegidos en Media siguen
+conectados por `data-rstk-asset-id` o `data-rstk-background-asset-id`. Si una
+pagina, slot, formulario, campo o asset key desaparece del HTML nuevo, deja de
+estar activo y no se renderiza; su bloque, mapping o binding queda guardado como
+respaldo. Si reaparece después con la misma identidad estable, recupera su
+configuracion anterior. Cambiar o duplicar esos IDs declara otro elemento y
+nunca autoriza copiar asociaciones ambiguas.
+
+En una importacion nueva, la transicion queda fijada al ID del proyecto creado:
+el sincronizador de la URL no puede restaurar el sitio anterior mientras cambia
+la ruta y cualquier carga pendiente se descarta. En una resubida, la ruta
+permanece sobre el mismo proyecto y conserva la pagina activa cuando todavía
+existe.
 
 Dentro del editor HTML, la guía `Reglas HTML y versión móvil` inicia plegada y el
 usuario puede abrirla u ocultarla sin perder contenido. Exige una versión móvil

@@ -1354,6 +1354,7 @@ export const sitesService = {
     filename: string
     fileBase64: string
     metaCapiEnabled?: boolean
+    siteId?: string
   }) {
     return apiClient.post<ImportedSiteCreateResult>('/sites/import-html', payload)
   },

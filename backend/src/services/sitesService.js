@@ -444,6 +444,8 @@ const IMPORTED_ASSET_TOTAL_MAX_BYTES = 25 * 1024 * 1024
 const IMPORTED_CODE_FILE_MAX_BYTES = 8 * 1024 * 1024
 const IMPORTED_POPUP_CODE_PATH = 'ristak-popup.html'
 const IMPORTED_ZIP_MAX_FILES = 250
+const IMPORTED_PAGE_IDENTITY_ARCHIVE_LIMIT = 500
+const IMPORTED_PAGE_IDENTITY_ALIAS_LIMIT = 24
 const IMPORTED_HTML_EXTENSIONS = new Set(['html', 'htm'])
 const IMPORTED_ASSET_CONTENT_TYPES = new Map([
   ['html', 'text/html; charset=utf-8'],
@@ -11164,6 +11166,175 @@ function makeImportedZipPage(assetPath, index = 0, originalTitle = '', pageId = 
   }
 }
 
+function importedPageIdentityPath(value = '') {
+  return normalizeImportedAssetPath(value).toLowerCase()
+}
+
+function importedPageIdentityBasename(value = '') {
+  const path = importedPageIdentityPath(value)
+  return path.split('/').pop() || ''
+}
+
+function normalizeImportedPageIdentityArchiveEntry(rawEntry = {}) {
+  const pageSource = isPlainObject(rawEntry?.page) ? rawEntry.page : rawEntry
+  const id = cleanString(rawEntry?.id || pageSource?.id)
+  if (!id) return null
+
+  const normalizedPage = normalizePageList([{ ...pageSource, id }])[0]
+  if (!normalizedPage) return null
+
+  const paths = [
+    ...(Array.isArray(rawEntry?.paths) ? rawEntry.paths : []),
+    ...(Array.isArray(rawEntry?.aliases) ? rawEntry.aliases : []),
+    pageSource?.importedAssetPath,
+    pageSource?.imported_asset_path
+  ]
+    .map(normalizeImportedAssetPath)
+    .filter(Boolean)
+
+  return {
+    id,
+    paths: [...new Set(paths)].slice(-IMPORTED_PAGE_IDENTITY_ALIAS_LIMIT),
+    page: { ...normalizedPage, id }
+  }
+}
+
+function collectImportedPageIdentityArchive(site = null) {
+  if (!site) return []
+
+  const theme = isPlainObject(site.theme) ? site.theme : {}
+  const storedEntries = Array.isArray(theme.importedPageIdentityArchive)
+    ? theme.importedPageIdentityArchive
+    : Array.isArray(theme.imported_page_identity_archive)
+      ? theme.imported_page_identity_archive
+      : []
+  const activePages = normalizeSitePages(site)
+  const entriesById = new Map()
+
+  const mergeEntry = (rawEntry, active = false) => {
+    const entry = normalizeImportedPageIdentityArchiveEntry(rawEntry)
+    if (!entry) return
+    const current = entriesById.get(entry.id)
+    const paths = [...new Set([
+      ...(current?.paths || []),
+      ...entry.paths
+    ])].slice(-IMPORTED_PAGE_IDENTITY_ALIAS_LIMIT)
+    entriesById.set(entry.id, {
+      id: entry.id,
+      paths,
+      page: active || !current?.page ? entry.page : current.page,
+      active: Boolean(active || current?.active)
+    })
+  }
+
+  storedEntries.forEach(entry => mergeEntry(entry, false))
+  activePages.forEach(page => mergeEntry({ id: page.id, page, paths: [page.importedAssetPath] }, true))
+  return [...entriesById.values()]
+}
+
+function mergeImportedPageIdentitySettings(sourcePage = {}, previousPage = null, id = '', index = 0) {
+  const nextPage = { ...sourcePage }
+  if (previousPage) {
+    for (const [key, value] of Object.entries(previousPage)) {
+      if (['id', 'sortOrder', 'importedAssetPath', 'importedOriginalTitle'].includes(key)) continue
+      nextPage[key] = value
+    }
+  }
+
+  return {
+    ...nextPage,
+    id,
+    sortOrder: index,
+    importedAssetPath: normalizeImportedAssetPath(sourcePage.importedAssetPath),
+    ...(cleanString(sourcePage.importedOriginalTitle)
+      ? { importedOriginalTitle: cleanString(sourcePage.importedOriginalTitle) }
+      : {})
+  }
+}
+
+function reconcileImportedPageIdentities(sourcePages = [], currentSite = null) {
+  const normalizedSourcePages = normalizePageList(sourcePages)
+  const existingEntries = collectImportedPageIdentityArchive(currentSite)
+  const activePages = currentSite ? normalizeSitePages(currentSite) : []
+  const activePageIds = new Set(activePages.map(page => page.id))
+  const reservedIds = new Set(existingEntries.map(entry => entry.id))
+  const usedIds = new Set()
+  const matchedEntryIds = new Set()
+  const sourceBasenameCounts = new Map()
+  normalizedSourcePages.forEach(page => {
+    const basename = importedPageIdentityBasename(page.importedAssetPath)
+    if (basename) sourceBasenameCounts.set(basename, (sourceBasenameCounts.get(basename) || 0) + 1)
+  })
+
+  const availableEntries = () => existingEntries.filter(entry => !matchedEntryIds.has(entry.id))
+  const findUniqueEntry = predicate => {
+    const matches = availableEntries().filter(predicate)
+    return matches.length === 1 ? matches[0] : null
+  }
+
+  const pages = normalizedSourcePages.map((sourcePage, index) => {
+    const sourcePath = importedPageIdentityPath(sourcePage.importedAssetPath)
+    const sourceBasename = importedPageIdentityBasename(sourcePath)
+    let matchedEntry = sourcePath
+      ? findUniqueEntry(entry => entry.paths.some(path => importedPageIdentityPath(path) === sourcePath))
+      : null
+
+    if (!matchedEntry && sourceBasename && sourceBasenameCounts.get(sourceBasename) === 1) {
+      matchedEntry = findUniqueEntry(entry => (
+        entry.paths.some(path => importedPageIdentityBasename(path) === sourceBasename)
+      ))
+    }
+
+    if (!matchedEntry && index === 0) {
+      const activeWithoutPath = availableEntries().filter(entry => (
+        activePageIds.has(entry.id) &&
+        !importedPageIdentityPath(entry.page?.importedAssetPath)
+      ))
+      if (!sourcePath && activePages.length > 0) {
+        matchedEntry = availableEntries().find(entry => entry.id === activePages[0].id) || null
+      } else if (activeWithoutPath.length === 1) {
+        matchedEntry = activeWithoutPath[0]
+      }
+    }
+
+    let id = cleanString(matchedEntry?.id)
+    if (!id) {
+      const unavailableIds = new Set([...reservedIds, ...usedIds])
+      id = normalizeImportedPageId(sourcePage.id, index, unavailableIds)
+    }
+
+    matchedEntryIds.add(id)
+    usedIds.add(id)
+    return mergeImportedPageIdentitySettings(sourcePage, matchedEntry?.page || null, id, index)
+  })
+
+  const archiveById = new Map(existingEntries.map(entry => [entry.id, {
+    id: entry.id,
+    paths: [...entry.paths],
+    page: entry.page
+  }]))
+
+  pages.forEach(page => {
+    const current = archiveById.get(page.id)
+    const path = normalizeImportedAssetPath(page.importedAssetPath)
+    archiveById.set(page.id, {
+      id: page.id,
+      paths: [...new Set([
+        ...(current?.paths || []),
+        ...(path ? [path] : [])
+      ])].slice(-IMPORTED_PAGE_IDENTITY_ALIAS_LIMIT),
+      page
+    })
+  })
+
+  const activeEntries = pages.map(page => archiveById.get(page.id)).filter(Boolean)
+  const dormantEntries = [...archiveById.values()].filter(entry => !usedIds.has(entry.id))
+  const archive = [...activeEntries, ...dormantEntries]
+    .slice(0, IMPORTED_PAGE_IDENTITY_ARCHIVE_LIMIT)
+
+  return { pages, archive }
+}
+
 async function extractImportedZipArchive(filename = '', buffer = Buffer.alloc(0)) {
   if (!buffer.length) {
     const error = new Error('El ZIP esta vacio')
@@ -11377,19 +11548,25 @@ async function addImportedEditableImageAsset(siteId, currentImport, input = {}) 
   return asset.publicUrl
 }
 
-async function prepareImportedZipContent({ filename, fileBase64, siteId, importId }) {
+async function prepareImportedZipContent({ filename, fileBase64, siteId, importId, currentSite = null }) {
   const archive = await extractImportedZipArchive(filename, decodeBase64Buffer(fileBase64))
   const availablePaths = new Set(archive.files.map(file => file.assetPath))
-  const pageIdByAssetPath = new Map(archive.htmlPaths.map((assetPath, index) => [
-    normalizeImportedAssetPath(assetPath),
-    index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`
-  ]))
+  const fileByPath = new Map(archive.files.map(file => [file.assetPath, file]))
+  const sourcePages = archive.htmlPaths.map((assetPath, index) => {
+    const sourceHtml = fileByPath.get(assetPath)?.content?.toString('utf8') || ''
+    return makeImportedZipPage(
+      assetPath,
+      index,
+      getImportedHtmlTitle(sourceHtml, `Página ${index + 1}`)
+    )
+  })
+  const pageIdentity = reconcileImportedPageIdentities(sourcePages, currentSite)
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(pageIdentity.pages)
   const usedFormIds = new Set()
   const detectedForms = []
   const assets = []
   const securityReport = [...archive.report]
-  const pageIndexByPath = new Map(archive.htmlPaths.map((assetPath, index) => [assetPath, index]))
-  const pagesByPath = new Map()
+  const pagesByPath = new Map(pageIdentity.pages.map(page => [page.importedAssetPath, page]))
   let rawHtml = ''
   let sanitizedHtml = ''
 
@@ -11413,13 +11590,6 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
         rawHtml = pageRawHtml
         sanitizedHtml = pageHtml
       }
-
-      const pageIndex = pageIndexByPath.get(file.assetPath) ?? pagesByPath.size
-      pagesByPath.set(file.assetPath, makeImportedZipPage(
-        file.assetPath,
-        pageIndex,
-        getImportedHtmlTitle(sanitized.html, `Página ${pageIndex + 1}`)
-      ))
 
       assets.push(buildImportedAssetRow({
         importId,
@@ -11469,11 +11639,12 @@ async function prepareImportedZipContent({ filename, fileBase64, siteId, importI
     },
     detectedForms,
     pages: archive.htmlPaths.map(assetPath => pagesByPath.get(assetPath)).filter(Boolean),
+    pageIdentityArchive: pageIdentity.archive,
     assets
   }
 }
 
-async function prepareGeneratedImportedPagesContent({ pages = [], siteId, importId }) {
+async function prepareGeneratedImportedPagesContent({ pages = [], siteId, importId, currentSite = null }) {
   const normalizedPages = normalizeGeneratedImportedPages(pages)
   if (!normalizedPages.length) {
     const error = new Error('La IA no devolvió páginas HTML válidas para importar')
@@ -11482,7 +11653,11 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
   }
 
   const availablePaths = new Set(normalizedPages.map(page => page.filename))
-  const pageIdByAssetPath = buildImportedPageIdByAssetPath(normalizedPages)
+  const sourcePages = normalizedPages.map((page, index) => (
+    makeImportedZipPage(page.filename, index, page.title, page.id)
+  ))
+  const pageIdentity = reconcileImportedPageIdentities(sourcePages, currentSite)
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(pageIdentity.pages)
   const usedFormIds = new Set()
   const detectedForms = []
   const assets = []
@@ -11527,7 +11702,8 @@ async function prepareGeneratedImportedPagesContent({ pages = [], siteId, import
       report: Array.from(new Set(securityReport))
     },
     detectedForms,
-    pages: normalizedPages.map((page, index) => makeImportedZipPage(page.filename, index, page.title, page.id)),
+    pages: pageIdentity.pages,
+    pageIdentityArchive: pageIdentity.archive,
     assets
   }
 }
@@ -12287,6 +12463,9 @@ export async function createImportedSiteFromHtml(input = {}) {
     const rawHtml = input.html || decodeBase64Text(input.fileBase64 || input.contentBase64 || input.content)
     const sanitized = sanitizeImportedHtml(rawHtml)
     const detectedForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), '', new Set())
+    const pageIdentity = reconcileImportedPageIdentities([
+      makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Página 1'))
+    ])
     prepared = {
       importType: 'html',
       rawHtml,
@@ -12295,7 +12474,8 @@ export async function createImportedSiteFromHtml(input = {}) {
         report: sanitized.report
       },
       detectedForms,
-      pages: [makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Página 1'))],
+      pages: pageIdentity.pages,
+      pageIdentityArchive: pageIdentity.archive,
       assets: []
     }
   }
@@ -12314,7 +12494,10 @@ export async function createImportedSiteFromHtml(input = {}) {
     importAssetCount: prepared.assets.length,
     pages: Array.isArray(prepared.pages) && prepared.pages.length
       ? prepared.pages
-      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
+      : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }],
+    importedPageIdentityArchive: Array.isArray(prepared.pageIdentityArchive)
+      ? prepared.pageIdentityArchive
+      : []
   }
   const metaDefaults = await resolveConnectedMetaSiteCreateDefaults(input, {
     siteType,
@@ -12558,6 +12741,152 @@ export async function updateImportedSiteFieldMapping(siteId, input = {}) {
   )
 }
 
+async function prepareImportedSiteUploadReplacement(siteId, currentImport, currentSite, input = {}) {
+  const filename = cleanString(input.filename || input.name || currentImport.originalFilename || 'pagina.html')
+  const extension = filename.split('.').pop()?.toLowerCase() || ''
+  if (![...IMPORTED_HTML_EXTENSIONS, 'zip'].includes(extension)) {
+    const error = new Error('Sube un archivo .html o .zip')
+    error.status = 400
+    throw error
+  }
+
+  if (extension === 'zip') {
+    return {
+      filename,
+      prepared: await prepareImportedZipContent({
+        filename,
+        fileBase64: input.fileBase64 || input.contentBase64 || input.content,
+        siteId,
+        importId: currentImport.id,
+        currentSite
+      })
+    }
+  }
+
+  const rawHtml = input.html || decodeBase64Text(input.fileBase64 || input.contentBase64 || input.content)
+  const sanitized = sanitizeImportedHtml(rawHtml)
+  const detectedForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), '', new Set())
+  const pageIdentity = reconcileImportedPageIdentities([
+    makeImportedZipPage('', 0, getImportedHtmlTitle(sanitized.html, 'Página 1'))
+  ], currentSite)
+
+  return {
+    filename,
+    prepared: {
+      importType: 'html',
+      rawHtml,
+      sanitized: {
+        html: assignImportedFormIds(sanitized.html, detectedForms),
+        report: sanitized.report
+      },
+      detectedForms,
+      pages: pageIdentity.pages,
+      pageIdentityArchive: pageIdentity.archive,
+      assets: []
+    }
+  }
+}
+
+async function replaceImportedSiteFromUploadUnlocked(siteId, input = {}) {
+  const currentImport = await getImportedSiteBySiteId(siteId)
+  if (!currentImport) {
+    const error = new Error('El sitio abierto no usa HTML importado')
+    error.status = 409
+    throw error
+  }
+
+  const currentSite = await getSite(siteId, { includeBlocks: false })
+  if (!currentSite || !isImportedHtmlSite(currentSite)) {
+    const error = new Error('El sitio abierto no usa HTML importado')
+    error.status = 409
+    throw error
+  }
+
+  const { filename, prepared } = await prepareImportedSiteUploadReplacement(
+    siteId,
+    currentImport,
+    currentSite,
+    input
+  )
+  const nextMappings = mergeImportedFormMappings(
+    currentImport.formMappings,
+    buildDefaultImportedFormMappings(prepared.detectedForms)
+  )
+  const publicTitle = getImportedHtmlTitle(
+    prepared.sanitized.html,
+    currentSite.title || filename.replace(/\.[^.]+$/, '') || 'Página importada'
+  )
+  const publicDescription = getImportedHtmlDescription(
+    prepared.sanitized.html,
+    currentSite.description || ''
+  )
+  const nextTheme = {
+    ...DEFAULT_THEME,
+    ...(currentSite.theme || {}),
+    template: IMPORTED_SITE_TEMPLATE,
+    importedHtml: true,
+    importId: currentImport.id,
+    importType: prepared.importType,
+    importAssetCount: prepared.assets.length,
+    pages: prepared.pages,
+    importedPageIdentityArchive: prepared.pageIdentityArchive
+  }
+
+  await db.run(`
+    UPDATE public_site_imports SET
+      original_filename = ?,
+      import_type = ?,
+      html_original = ?,
+      html_sanitized = ?,
+      detected_forms_json = ?,
+      form_mappings_json = ?,
+      security_report_json = ?,
+      status = 'mapping_pending',
+      updated_at = CURRENT_TIMESTAMP
+    WHERE site_id = ?
+  `, [
+    filename,
+    prepared.importType,
+    prepared.rawHtml,
+    prepared.sanitized.html,
+    jsonString(prepared.detectedForms),
+    jsonString(nextMappings),
+    jsonString(prepared.sanitized.report),
+    siteId
+  ])
+
+  await replaceImportedSiteAssets(siteId, prepared.assets)
+
+  await db.run(`
+    UPDATE public_sites SET
+      title = ?,
+      description = ?,
+      theme_json = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    publicTitle,
+    publicDescription || null,
+    jsonString(nextTheme),
+    siteId
+  ])
+
+  await syncAndPersistImportedFormSourceSites(siteId)
+  await reconcileImportedHtmlVideoDeclarationsForSite(siteId)
+
+  return {
+    site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
+    import: await getImportedSiteBySiteId(siteId)
+  }
+}
+
+export async function replaceImportedSiteFromUpload(siteId, input = {}) {
+  return withImportedSiteMutationLock(
+    siteId,
+    () => replaceImportedSiteFromUploadUnlocked(siteId, input)
+  )
+}
+
 async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
   const currentImport = await getImportedSiteBySiteId(siteId)
   if (!currentImport) {
@@ -12577,7 +12906,8 @@ async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
     const prepared = await prepareGeneratedImportedPagesContent({
       pages: input.pages,
       siteId,
-      importId: currentImport.id
+      importId: currentImport.id,
+      currentSite
     })
     const nextMappings = mergeImportedFormMappings(
       currentImport.formMappings,
@@ -12593,7 +12923,8 @@ async function replaceImportedSiteHtmlUnlocked(siteId, input = {}) {
       importId: currentImport.id,
       importType: prepared.importType,
       importAssetCount: prepared.assets.length,
-      pages: prepared.pages
+      pages: prepared.pages,
+      importedPageIdentityArchive: prepared.pageIdentityArchive
     }
 
     await db.run(`

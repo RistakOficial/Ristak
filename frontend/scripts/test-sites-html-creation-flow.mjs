@@ -125,13 +125,23 @@ const importedFileHandlerSource = sourceBetween(
 )
 assert.match(
   importedFileHandlerSource,
-  /pendingImportedSiteRedirectRef\.current = \{[\s\S]*?sourceSiteId: openEditorSiteId,[\s\S]*?siteId: site\.id,[\s\S]*?editorPath/,
-  'subir paginas desde un editor debe registrar la transicion antes de seleccionar el sitio importado'
+  /const replacementSiteId = openEditorSite && isImportedHtmlSite\(openEditorSite\)[\s\S]*?\{ siteId: replacementSiteId \}/,
+  'subir páginas desde un editor HTML debe actualizar el sitio abierto en lugar de crear otro'
+)
+assert.match(
+  importedFileHandlerSource,
+  /pendingImportedSiteRedirectRef\.current = replacementSiteId[\s\S]*?\? null[\s\S]*?: \{[\s\S]*?sourceSiteId: openEditorSiteId,[\s\S]*?siteId: site\.id,[\s\S]*?editorPath/,
+  'solo una importación nueva debe registrar la transición hacia otro sitio'
 )
 assert.match(
   importedFileHandlerSource,
   /editorOpenRequestRef\.current \+= 1[\s\S]*?setSelectedSite\(site\)[\s\S]*?navigate\(editorPath\)/,
   'la importacion debe invalidar cargas viejas antes de abrir el proyecto nuevo'
+)
+assert.match(
+  importedFileHandlerSource,
+  /replacementSiteId \? 'Sitio HTML actualizado' : 'HTML importado'/,
+  'la resubida debe confirmar que actualizó el código y conservó asociaciones'
 )
 
 const routeRestoreSource = sourceBetween(

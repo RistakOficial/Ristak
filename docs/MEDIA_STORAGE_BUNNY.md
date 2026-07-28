@@ -245,6 +245,11 @@ another account.
   current `media_asset_id`. Replacing the selected file changes the binding
   without changing HTML. Reusing one key anywhere in the same site intentionally
   reuses the same asset; independent zones need different keys.
+  Reuploading HTML/ZIP from the open imported-site editor updates that same
+  `site_id`, so these bindings survive code revisions. A key omitted by the new
+  HTML becomes inactive because nothing renders it, but its binding remains as a
+  recoverable backup and is reused if the same stable key returns. Ambiguous or
+  changed keys never inherit another binding by filename or visual position.
   Download slots declared on `<a>` can bind any Media type, including images,
   audio, video, PDFs and archives. Ristak only lists resolvable HTML targets as
   slots, silently saves a dirty code draft before opening Media, and suppresses

@@ -13502,7 +13502,11 @@ export const Sites: React.FC = () => {
       return
     }
 
-    const openEditorSiteId = selectedSiteRef.current?.id || ''
+    const openEditorSite = selectedSiteRef.current
+    const openEditorSiteId = openEditorSite?.id || ''
+    const replacementSiteId = openEditorSite && isImportedHtmlSite(openEditorSite)
+      ? openEditorSite.id
+      : ''
     if (openEditorSiteId && hasPendingEditorSaveWork(openEditorSiteId)) {
       const saved = await flushPendingEditorSaves({ silent: true })
       if (!saved) return
@@ -13517,21 +13521,27 @@ export const Sites: React.FC = () => {
         siteType,
         filename: file.name,
         fileBase64,
-        metaCapiEnabled: metaConnected
+        metaCapiEnabled: metaConnected,
+        ...(replacementSiteId ? { siteId: replacementSiteId } : {})
       })
       const site = normalizeSiteForEditor(result.site)
-      const nextPageId = normalizeFunnelPages(site)[0]?.id || DEFAULT_FUNNEL_PAGE_ID
+      const nextPages = normalizeFunnelPages(site)
+      const nextPageId = replacementSiteId && nextPages.some(page => page.id === activePageId)
+        ? activePageId
+        : nextPages[0]?.id || DEFAULT_FUNNEL_PAGE_ID
       const editorPath = buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
         pageId: nextPageId,
         device
       })
-      pendingImportedSiteRedirectRef.current = {
-        sourceSiteId: openEditorSiteId,
-        siteId: site.id,
-        editorPath
-      }
+      pendingImportedSiteRedirectRef.current = replacementSiteId
+        ? null
+        : {
+            sourceSiteId: openEditorSiteId,
+            siteId: site.id,
+            editorPath
+          }
       // Invalida cualquier GET del restaurador de ruta que siga esperando al
       // sitio anterior. Una respuesta vieja nunca debe reemplazar el importado.
       editorOpenRequestRef.current += 1
@@ -13547,8 +13557,10 @@ export const Sites: React.FC = () => {
       navigate(editorPath)
       showToast(
         'success',
-        'HTML importado',
-        'Ristak detectó el contenido y los campos. Puedes asociarlos directamente desde el panel derecho.'
+        replacementSiteId ? 'Sitio HTML actualizado' : 'HTML importado',
+        replacementSiteId
+          ? 'Se actualizó el código y se conservaron las asociaciones de las páginas y elementos que siguen presentes.'
+          : 'Ristak detectó el contenido y los campos. Puedes asociarlos directamente desde el panel derecho.'
       )
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo importar el HTML')
