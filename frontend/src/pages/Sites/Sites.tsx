@@ -142,7 +142,7 @@ import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useIntegratio
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
-import { getFloatingLayerZIndex } from '@/utils/layering'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { createRistakId } from '@/utils/idGenerator'
 import {
   blockLabels,
@@ -29439,6 +29439,7 @@ const swatchBackground = (color: string) => {
 // Ristak paint control: solid color or editable multi-stop gradient.
 const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = true, onChange, onCommit }) => {
   const rootRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
   const paint = allowGradient ? normalizeCssPaint(value, '#ffffff') : normalizeCssColor(value, '#ffffff')
   const isGradient = allowGradient && isCssGradient(paint)
   const gradient = useMemo(() => parseEditableGradient(paint, paintFallbackColor(paint, '#111827')), [paint])
@@ -29454,13 +29455,27 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
   const alphaTransparent = formatCssColor({ r: rgba.r, g: rgba.g, b: rgba.b, a: 0 })
   const [text, setText] = useState(paint)
   const [open, setOpen] = useState(false)
+  const {
+    style: popoverStyle,
+    placement: popoverPlacement
+  } = useAnchoredPortal(rootRef, open, {
+    panelRef: popoverRef,
+    placement: 'auto',
+    align: 'end',
+    gap: 6,
+    minWidth: 340,
+    maxWidth: 340,
+    maxHeight: 760,
+    matchWidth: false
+  })
 
   useEffect(() => { setText(allowGradient ? normalizeCssPaint(value, '#ffffff') : normalizeCssColor(value, '#ffffff')) }, [allowGradient, value])
 
   useEffect(() => {
     if (!open) return undefined
     const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
         setOpen(false)
         onCommit()
       }
@@ -29600,8 +29615,13 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
           onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitText() } }}
         />
       </div>
-      {open && (
-        <div className={styles.colorPopover}>
+      {open && createPortal(
+        <div
+          ref={popoverRef}
+          className={styles.colorPopover}
+          style={popoverStyle}
+          data-placement={popoverPlacement}
+        >
           <div
             className={styles.colorPlane}
             style={{ backgroundColor: hueColor }}
@@ -29752,7 +29772,8 @@ const ColorField: React.FC<ColorFieldProps> = ({ label, value, allowGradient = t
             <button type="button" onClick={() => patchActiveColor({ a: 0 })}>Transparente</button>
             <button type="button" onClick={() => { setOpen(false); onCommit() }}>Listo</button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -32900,6 +32921,18 @@ const EditorSettingsDropdown: React.FC<{
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const { disabled, seoIssues } = props
+  const {
+    style: panelStyle,
+    placement: panelPlacement
+  } = useAnchoredPortal(dropdownRef, open, {
+    gap: 10,
+    matchWidth: false,
+    minWidth: 520,
+    maxWidth: 520,
+    maxHeight: 680,
+    panelRef,
+    viewportPadding: 16
+  })
 
   useEffect(() => {
     if (!open) return
@@ -32961,10 +32994,12 @@ const EditorSettingsDropdown: React.FC<{
         <ChevronDown size={13} />
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div
           ref={panelRef}
           className={styles.editorSettingsPanel}
+          style={panelStyle}
+          data-placement={panelPlacement}
           data-ristak-dropdown-panel
           onWheelCapture={(event) => event.stopPropagation()}
           onTouchMoveCapture={(event) => event.stopPropagation()}
@@ -32973,7 +33008,8 @@ const EditorSettingsDropdown: React.FC<{
             {...props}
             onBeforeOpenNested={() => setOpen(false)}
           />
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -33171,6 +33207,19 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const [dragOrderedPageIds, setDragOrderedPageIds] = useState<string[] | null>(null)
   const dragOrderedPageIdsRef = useRef<string[] | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
+  const pagesPanelRef = useRef<HTMLDivElement | null>(null)
+  const {
+    style: pagesPanelStyle,
+    placement: pagesPanelPlacement
+  } = useAnchoredPortal(dropdownRef, open, {
+    gap: 10,
+    matchWidth: false,
+    minWidth: 420,
+    maxWidth: 420,
+    maxHeight: 720,
+    panelRef: pagesPanelRef,
+    viewportPadding: 16
+  })
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
   const hasFixedPageSection = colorFinalPages
   const websiteMode = pageMode === 'website' && !hasFixedPageSection
@@ -33340,8 +33389,16 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
         <ChevronDown size={15} className={styles.pagesDropdownChevron} />
       </button>
 
-      {open && (
-        <div className={styles.pagesDropdownPanel} role="dialog" aria-label="Páginas del sitio">
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={pagesPanelRef}
+          className={styles.pagesDropdownPanel}
+          style={pagesPanelStyle}
+          data-placement={pagesPanelPlacement}
+          data-ristak-dropdown-panel
+          role="dialog"
+          aria-label="Páginas del sitio"
+        >
           {onChangeMode && (
             <div style={{ padding: '10px 12px 0' }}>
               <div
@@ -33524,7 +33581,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
               </div>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -40104,38 +40162,18 @@ const ToolbarConfigPopover: React.FC<{
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({})
-
-  const reposition = useCallback(() => {
-    const trigger = triggerRef.current
-    if (!trigger) return
-    const rect = trigger.getBoundingClientRect()
-    const pad = 12
-    const gap = 6
-    const width = Math.min(360, window.innerWidth - pad * 2)
-    const left = Math.min(Math.max(pad, rect.right - width), window.innerWidth - width - pad)
-    const top = Math.min(rect.bottom + gap, window.innerHeight - pad)
-    setPanelStyle({
-      position: 'fixed',
-      top,
-      left,
-      width,
-      maxHeight: Math.max(160, window.innerHeight - top - pad),
-      zIndex: getFloatingLayerZIndex(trigger, 'popover'),
-    } as React.CSSProperties)
-  }, [])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    reposition()
-    const onResize = () => setOpen(false)
-    window.addEventListener('scroll', reposition, true)
-    window.addEventListener('resize', onResize)
-    return () => {
-      window.removeEventListener('scroll', reposition, true)
-      window.removeEventListener('resize', onResize)
-    }
-  }, [open, reposition])
+  const {
+    style: panelStyle,
+    placement: panelPlacement
+  } = useAnchoredPortal(triggerRef, open, {
+    align: 'end',
+    gap: 6,
+    matchWidth: false,
+    minWidth: 360,
+    maxWidth: 360,
+    maxHeight: 560,
+    panelRef
+  })
 
   useEffect(() => {
     if (!open) return
@@ -40179,6 +40217,7 @@ const ToolbarConfigPopover: React.FC<{
           ref={panelRef}
           className={styles.editorToolbarConfigPanel}
           style={panelStyle}
+          data-placement={panelPlacement}
           data-ristak-dropdown-panel
           role="dialog"
           aria-label={title}

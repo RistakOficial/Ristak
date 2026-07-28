@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus, Trash2, X } from 'lucide-react'
 import type {
   AgentCondition,
@@ -12,6 +13,7 @@ import type { Calendar } from '@/services/calendarsService'
 import { NumberInput, TagPicker, useContactTags } from '@/components/common'
 import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { contactTagsService } from '@/services/contactTagsService'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import styles from './AIAgentSettings.module.css'
@@ -684,13 +686,23 @@ const DropdownMenu: React.FC<{
 }> = ({ label, items, small, onSelect }) => {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const {
+    style: menuStyle,
+    placement: menuPlacement
+  } = useAnchoredPortal(wrapRef, open, {
+    gap: 6,
+    minWidth: 220,
+    maxHeight: 320,
+    panelRef
+  })
 
   useEffect(() => {
     if (!open) return
     const handleClickOutside = (event: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
+      const target = event.target as Node
+      if (wrapRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -706,8 +718,15 @@ const DropdownMenu: React.FC<{
         <Plus size={small ? 12 : 14} />
         {label}
       </button>
-      {open && (
-        <div className={styles.ruleAddMenu} role="menu">
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={panelRef}
+          className={styles.ruleAddMenu}
+          style={menuStyle}
+          data-placement={menuPlacement}
+          data-ristak-dropdown-panel
+          role="menu"
+        >
           {items.map((item) => (
             <button
               key={item.id}
@@ -722,7 +741,8 @@ const DropdownMenu: React.FC<{
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

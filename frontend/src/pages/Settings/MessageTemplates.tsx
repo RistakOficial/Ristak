@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -36,6 +37,9 @@ import {
 } from 'lucide-react'
 import {
   Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
   Loading,
   CustomSelect,
   PageHeader,
@@ -49,6 +53,7 @@ import {
 import { PhoneChatPreview, type PhoneChatPreviewMessage } from '@/components/phone/PhoneChatPreview'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import {
   getMessageTemplateProviderStatus,
   messageTemplatesService,
@@ -74,11 +79,9 @@ const DRAG_DATA_TYPE = 'application/x-ristak-template-manager'
 const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const META_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 type TemplateFolderFilter = 'all' | 'unfiled' | string
-type VariablePickerDirection = 'above' | 'below'
 
 const getButtonValueTarget = (index: number): MessageTemplateVariableTarget => `buttons.${index}.value`
 const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
-const VARIABLE_PICKER_MIN_SPACE = 300
 
 interface VariablePickerGroup {
   id: string
@@ -500,12 +503,21 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   const [bulkWorking, setBulkWorking] = useState(false)
   const [dragging, setDragging] = useState<{ templateIds: string[]; folderIds: string[] } | null>(null)
   const [activeVariablePicker, setActiveVariablePicker] = useState<string | null>(null)
-  const [variablePickerDirections, setVariablePickerDirections] = useState<Record<string, VariablePickerDirection>>({})
   const [variableSearchDrafts, setVariableSearchDrafts] = useState<Record<string, string>>({})
   const [expandedVariableCategories, setExpandedVariableCategories] = useState<Set<string>>(() => new Set())
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null)
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null)
   const focusedTemplateSearchRef = useRef('')
+  const activeVariableAnchorRef = useRef<HTMLElement>(null)
+  const variablePickerPanelRef = useRef<HTMLDivElement>(null)
+  const {
+    style: variablePickerStyle,
+    placement: variablePickerPlacement
+  } = useAnchoredPortal(activeVariableAnchorRef, Boolean(activeVariablePicker), {
+    gap: 6,
+    maxHeight: 320,
+    panelRef: variablePickerPanelRef
+  })
 
   useEffect(() => {
     loadBundle()
@@ -1287,16 +1299,7 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
   }
 
   const openVariablePicker = (pickerKey: string, trigger: HTMLElement) => {
-    const bounds = trigger.getBoundingClientRect()
-    const spaceBelow = window.innerHeight - bounds.bottom
-    const spaceAbove = bounds.top
-    const direction: VariablePickerDirection = spaceBelow < VARIABLE_PICKER_MIN_SPACE && spaceAbove > spaceBelow
-      ? 'above'
-      : 'below'
-
-    setVariablePickerDirections((current) => (
-      current[pickerKey] === direction ? current : { ...current, [pickerKey]: direction }
-    ))
+    activeVariableAnchorRef.current = trigger
     setActiveVariablePicker(pickerKey)
   }
 
@@ -1356,7 +1359,6 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
           const pickerGroups = buildVariablePickerGroups(bundle.variables, searchValue)
           const pickerMatches = pickerGroups.flatMap((group) => group.items)
           const pickerOpen = activeVariablePicker === pickerKey && !selectedVariable
-          const pickerDirection = variablePickerDirections[pickerKey] || 'below'
           const selectVariable = (variable: MessageTemplateVariable) => {
             updateVariableBinding(target, index, {
               label: variable.label,
@@ -1424,9 +1426,12 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                           aria-autocomplete="list"
                         />
                       </div>
-                      {pickerOpen && (
+                      {pickerOpen && typeof document !== 'undefined' && createPortal(
                         <div
-                          className={`${styles.variablePickerMenu} ${pickerDirection === 'above' ? styles.variablePickerMenuAbove : ''}`}
+                          ref={variablePickerPanelRef}
+                          className={styles.variablePickerMenu}
+                          style={variablePickerStyle}
+                          data-placement={variablePickerPlacement}
                           data-ristak-dropdown-panel
                         >
                           {pickerGroups.length ? (
@@ -1470,7 +1475,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                           ) : (
                             <div className={styles.variablePickerEmpty}>Sin variables encontradas</div>
                           )}
-                        </div>
+                        </div>,
+                        document.body
                       )}
                     </>
                   )}
@@ -1758,18 +1764,21 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                   <span style={{ paddingLeft: depth ? depth * 12 : 0 }}>{folder.name}</span>
                   <b>{templateCountsByFolder.get(folder.id) || 0}</b>
                 </button>
-                <button
-                  type="button"
-                  className={styles.folderMenuButton}
-                  aria-label={`Opciones de ${folder.name}`}
-                  aria-expanded={openFolderMenuId === folder.id}
-                  title="Opciones"
-                  onClick={() => setOpenFolderMenuId((current) => current === folder.id ? null : folder.id)}
+                <DropdownMenu
+                  open={openFolderMenuId === folder.id}
+                  onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
                 >
-                  <MoreHorizontal size={16} />
-                </button>
-                {openFolderMenuId === folder.id && (
-                  <div className={styles.folderMenu} role="menu">
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={styles.folderMenuButton}
+                      aria-label={`Opciones de ${folder.name}`}
+                      title="Opciones"
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" sideOffset={4} className={styles.folderMenu}>
                     <button
                       type="button"
                       role="menuitem"
@@ -1781,8 +1790,8 @@ export const MessageTemplates: React.FC<MessageTemplatesProps> = ({
                       <Trash2 size={14} />
                       <span>Eliminar carpeta</span>
                     </button>
-                  </div>
-                )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
           </div>

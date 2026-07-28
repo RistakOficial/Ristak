@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Filter,
   ChevronDown,
@@ -19,6 +20,7 @@ import {
 import { AdHierarchyMenu } from './AdHierarchyMenu'
 import { HelpTooltip } from '../HelpTooltip'
 import { buildSearchIndex, prepareSearchQuery, searchIndexIncludes } from '@/utils/searchText'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 
 // Estructura del árbol de filtros con todas las categorías disponibles
 interface FilterNode {
@@ -116,19 +118,34 @@ export function TreeFilter({
   const [isOpen, setIsOpen] = useState(false)
   const [showSearchResults, setShowSearchResults] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const treePanelPreferredWidth = hoveredCategory === 'ads' && availableData.adsHierarchy?.length
+    ? 1216
+    : 448
+  const {
+    style: panelStyle,
+    placement: panelPlacement
+  } = useAnchoredPortal(dropdownRef, isOpen, {
+    gap: 8,
+    matchWidth: false,
+    minWidth: treePanelPreferredWidth,
+    maxWidth: treePanelPreferredWidth,
+    maxHeight: 560,
+    panelRef
+  })
   const loadedCategorySet = useMemo(() => new Set(loadedCategories), [loadedCategories])
   const loadingCategorySet = useMemo(() => new Set(loadingCategories), [loadingCategories])
 
   // Cerrar dropdown cuando se hace click afuera
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-        setHoveredCategory(null)
-        setShowSearchResults(false)
-        setSearchTerm('')
-      }
+      const target = event.target as Node
+      if (dropdownRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setIsOpen(false)
+      setHoveredCategory(null)
+      setShowSearchResults(false)
+      setSearchTerm('')
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -641,11 +658,18 @@ export function TreeFilter({
       </HelpTooltip>
 
       {/* Dropdown principal con menú tipo navegación */}
-      {isOpen && (
+      {isOpen && typeof document !== 'undefined' && createPortal(
         <div
-          className="absolute top-full left-0 mt-2 z-50 bg-[var(--surface)] rounded-[var(--radius-card)] animate-fadeIn flex"
-          style={{ border: '1px solid var(--border)', boxShadow: 'var(--shadow-pop)' }}
+          ref={panelRef}
+          className="fixed z-50 bg-[var(--surface)] rounded-[var(--radius-card)] animate-fadeIn flex"
+          style={{
+            ...panelStyle,
+            overflowX: 'auto',
+            border: '1px solid var(--border)',
+            boxShadow: 'var(--shadow-pop)'
+          }}
           onMouseLeave={handleCategoryLeave}
+          data-placement={panelPlacement}
           data-ristak-dropdown-panel
         >
           {/* Panel izquierdo: Categorías principales */}
@@ -913,7 +937,8 @@ export function TreeFilter({
               )}
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

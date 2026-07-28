@@ -1148,11 +1148,9 @@
   }
 
   .aiProviderDropdownMenu {
-    position: static;
     width: 100%;
     min-width: 0;
     max-height: 420px;
-    margin-top: 8px;
   }
 
   .iconBox {
@@ -1748,9 +1746,6 @@
 }
 
 .aiProviderDropdownMenu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
   z-index: 40;
   width: min(520px, calc(100vw - 48px));
   max-height: min(480px, calc(100vh - 160px));

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ArrowUp,
   Archive,
@@ -38,7 +39,7 @@ import {
   X
 } from 'lucide-react'
 import { FaFacebook, FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
-import { useAppConfig } from '@/hooks'
+import { useAnchoredPortal, useAppConfig } from '@/hooks'
 import {
   AppointmentModal,
   Button,
@@ -3278,7 +3279,10 @@ export const DesktopChat: React.FC = () => {
   const photoInputRef = useRef<HTMLInputElement | null>(null)
   const documentInputRef = useRef<HTMLInputElement | null>(null)
   const composerMenuRef = useRef<HTMLDivElement | null>(null)
+  const composerFloatingMenuRef = useRef<HTMLDivElement | null>(null)
+  const templateFloatingPanelRef = useRef<HTMLDivElement | null>(null)
   const agentComposerMenuRef = useRef<HTMLDivElement | null>(null)
+  const agentComposerFloatingMenuRef = useRef<HTMLDivElement | null>(null)
   const voiceRecorderRef = useRef<MediaRecorder | null>(null)
   const voiceStreamRef = useRef<MediaStream | null>(null)
   const voiceChunksRef = useRef<Blob[]>([])
@@ -3435,6 +3439,42 @@ export const DesktopChat: React.FC = () => {
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   const [conversationAgentBusy, setConversationAgentBusy] = useState(false)
   const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ManualAgentSendPrompt | null>(null)
+  const {
+    style: composerFloatingMenuStyle,
+    placement: composerFloatingMenuPlacement
+  } = useAnchoredPortal(composerMenuRef, composerMenuOpen, {
+    panelRef: composerFloatingMenuRef,
+    placement: 'auto',
+    gap: 10,
+    minWidth: 190,
+    maxWidth: 190,
+    maxHeight: 360,
+    matchWidth: false
+  })
+  const {
+    style: templateFloatingPanelStyle,
+    placement: templateFloatingPanelPlacement
+  } = useAnchoredPortal(composerMenuRef, templatePanelOpen, {
+    panelRef: templateFloatingPanelRef,
+    placement: 'auto',
+    gap: 10,
+    minWidth: 420,
+    maxWidth: 420,
+    maxHeight: 560,
+    matchWidth: false
+  })
+  const {
+    style: agentComposerFloatingMenuStyle,
+    placement: agentComposerFloatingMenuPlacement
+  } = useAnchoredPortal(agentComposerMenuRef, agentComposerMenuOpen, {
+    panelRef: agentComposerFloatingMenuRef,
+    placement: 'auto',
+    gap: 10,
+    minWidth: 300,
+    maxWidth: 300,
+    maxHeight: 520,
+    matchWidth: false
+  })
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
@@ -3951,6 +3991,8 @@ export const DesktopChat: React.FC = () => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target
       if (target instanceof Node && composerMenuRef.current?.contains(target)) return
+      if (target instanceof Node && composerFloatingMenuRef.current?.contains(target)) return
+      if (target instanceof Node && templateFloatingPanelRef.current?.contains(target)) return
       setComposerMenuOpen(false)
       setTemplatePanelOpen(false)
     }
@@ -3974,6 +4016,7 @@ export const DesktopChat: React.FC = () => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target
       if (target instanceof Node && agentComposerMenuRef.current?.contains(target)) return
+      if (target instanceof Node && agentComposerFloatingMenuRef.current?.contains(target)) return
       setAgentComposerMenuOpen(false)
       setAgentPickerOpen(false)
     }
@@ -7924,8 +7967,15 @@ export const DesktopChat: React.FC = () => {
     )
 
     if (templatePanelMode === 'create') {
-      return (
-        <div className={styles.templatePanel} role="dialog" aria-label="Crear plantilla desde el chat">
+      return createPortal(
+        <div
+          ref={templateFloatingPanelRef}
+          className={styles.templatePanel}
+          style={templateFloatingPanelStyle}
+          data-placement={templateFloatingPanelPlacement}
+          role="dialog"
+          aria-label="Crear plantilla desde el chat"
+        >
           {renderPanelHeader('Nueva plantilla', 'Guárdala sin salir del chat.', true)}
           <form
             className={styles.templateForm}
@@ -7974,13 +8024,21 @@ export const DesktopChat: React.FC = () => {
               Guardar y enviar a revisión
             </Button>
           </form>
-        </div>
+        </div>,
+        document.body
       )
     }
 
     if (templatePanelMode === 'select') {
-      return (
-        <div className={styles.templatePanel} role="dialog" aria-label="Seleccionar plantilla guardada">
+      return createPortal(
+        <div
+          ref={templateFloatingPanelRef}
+          className={styles.templatePanel}
+          style={templateFloatingPanelStyle}
+          data-placement={templateFloatingPanelPlacement}
+          role="dialog"
+          aria-label="Seleccionar plantilla guardada"
+        >
           {renderPanelHeader('Seleccionar plantilla', `${templates.length} guardada${templates.length === 1 ? '' : 's'}`, true)}
           <SearchField
             className={styles.templateSearchField}
@@ -8046,12 +8104,20 @@ export const DesktopChat: React.FC = () => {
               })}
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )
     }
 
-    return (
-      <div className={styles.templatePanel} role="dialog" aria-label="Plantillas del chat">
+    return createPortal(
+      <div
+        ref={templateFloatingPanelRef}
+        className={styles.templatePanel}
+        style={templateFloatingPanelStyle}
+        data-placement={templateFloatingPanelPlacement}
+        role="dialog"
+        aria-label="Plantillas del chat"
+      >
         {renderPanelHeader('Plantillas', templatesLoaded && !canSelectTemplates ? 'Crea la primera plantilla.' : 'Trabaja sin salir del chat.')}
         <div className={styles.templateChoiceList}>
           {templatesLoading && !templatesLoaded ? (
@@ -8083,7 +8149,8 @@ export const DesktopChat: React.FC = () => {
             <button type="button" onClick={() => { void loadTemplates() }}>Reintentar</button>
           </div>
         ) : null}
-      </div>
+      </div>,
+      document.body
     )
   }
 
@@ -8100,8 +8167,15 @@ export const DesktopChat: React.FC = () => {
 	    )
 
 	    if (showPicker) {
-      return (
-        <div className={styles.agentComposerMenu} role="menu" aria-label="Seleccionar chatbot">
+      return createPortal(
+        <div
+          ref={agentComposerFloatingMenuRef}
+          className={styles.agentComposerMenu}
+          style={agentComposerFloatingMenuStyle}
+          data-placement={agentComposerFloatingMenuPlacement}
+          role="menu"
+          aria-label="Seleccionar chatbot"
+        >
           <div className={styles.agentComposerMenuHeader}>
             <strong>Asignar agente</strong>
             <span>{noPublishedAgents ? 'No hay agentes publicados.' : 'Elige quién atenderá este chat.'}</span>
@@ -8129,12 +8203,20 @@ export const DesktopChat: React.FC = () => {
           ) : (
             <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Chatbot.</p>
           )}
-        </div>
+        </div>,
+        document.body
       )
     }
 
-	    return (
-	      <div className={styles.agentComposerMenu} role="menu" aria-label="Acciones del chatbot">
+	    return createPortal(
+	      <div
+          ref={agentComposerFloatingMenuRef}
+          className={styles.agentComposerMenu}
+          style={agentComposerFloatingMenuStyle}
+          data-placement={agentComposerFloatingMenuPlacement}
+          role="menu"
+          aria-label="Acciones del chatbot"
+        >
 	        <div className={styles.agentComposerMenuHeader}>
 	          <strong>{contactAgentStates.length > 1 ? 'Agentes asignados' : (activeAgentDef?.name || contactAgentStates[0]?.agentName || 'Chatbot')}</strong>
 	          <span>{contactAgentStates.length > 1 ? `${contactAgentStates.length} agentes en este chat` : conversationAgentStatusLabel}</span>
@@ -8218,8 +8300,9 @@ export const DesktopChat: React.FC = () => {
             <small>Activa este chat con otro agente.</small>
           </span>
         </button>
-      </div>
-    )
+	      </div>,
+        document.body
+	    )
   }
 
   const renderComposerAgentControl = () => (
@@ -9932,8 +10015,15 @@ export const DesktopChat: React.FC = () => {
 	                        >
 	                          <Plus size={20} />
 	                        </button>
-	                        {composerMenuOpen ? (
-	                          <div className={styles.composerMenu} role="menu" aria-label="Opciones de mensaje">
+	                        {composerMenuOpen ? createPortal(
+	                          <div
+                              ref={composerFloatingMenuRef}
+                              className={styles.composerMenu}
+                              style={composerFloatingMenuStyle}
+                              data-placement={composerFloatingMenuPlacement}
+                              role="menu"
+                              aria-label="Opciones de mensaje"
+                            >
 	                            <button type="button" role="menuitem" onClick={() => handleComposerMenuAction('templates')}>
 	                              <FileText size={16} />
 	                              <span>Plantillas</span>
@@ -9956,7 +10046,8 @@ export const DesktopChat: React.FC = () => {
 	                              <Banknote size={16} />
 	                              <span>CLABE</span>
 	                            </button>
-	                          </div>
+	                          </div>,
+                            document.body
 	                        ) : null}
 	                        {renderTemplatePanel()}
 	                      </div>

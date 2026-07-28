@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { Badge, type BadgeVariant } from '../Badge'; // GCAL-007
@@ -15,6 +16,7 @@ import { CalendarEvent, Calendar, calendarsService, FreeSlot, BlockedSlot, RawBl
 import { apiUrl } from '@/services/apiBaseUrl';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTimezone } from '@/contexts/TimezoneContext';
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
 import { DEFAULT_TIMEZONE, addDateOnlyDays, localDateTimeInputToUTCISOString, todayDateOnlyInTimezone } from '@/utils/timezone';
 import styles from './AppointmentModal.module.css';
@@ -1244,6 +1246,26 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const isPhonePanel = presentation === 'phonePanel';
   const isEmbedded = presentation === 'embedded';
   const isPhoneSurface = isMobileSheet || isPhonePanel || isEmbedded;
+  const contactSearchAnchorRef = useRef<HTMLDivElement>(null);
+  const contactDropdownRef = useRef<HTMLDivElement>(null);
+  const guestSearchAnchorRef = useRef<HTMLDivElement>(null);
+  const guestDropdownRef = useRef<HTMLDivElement>(null);
+  const {
+    style: contactDropdownStyle,
+    placement: contactDropdownPlacement
+  } = useAnchoredPortal(contactSearchAnchorRef, showContactDropdown && !isPhoneSurface, {
+    gap: 4,
+    maxHeight: 280,
+    panelRef: contactDropdownRef
+  });
+  const {
+    style: guestDropdownStyle,
+    placement: guestDropdownPlacement
+  } = useAnchoredPortal(guestSearchAnchorRef, showGuestDropdown && !isPhoneSurface, {
+    gap: 4,
+    maxHeight: 280,
+    panelRef: guestDropdownRef
+  });
   const [phonePanelRendered, setPhonePanelRendered] = useState(isOpen);
   const [phonePanelClosing, setPhonePanelClosing] = useState(false);
   const phonePanelCloseTimerRef = useRef<number | null>(null);
@@ -1512,6 +1534,41 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
   const renderContactField = () => {
     if (!showContactAssignment) return null;
 
+    const contactDropdown = showContactDropdown ? (
+      <div
+        ref={contactDropdownRef}
+        className={styles.dropdown}
+        style={isPhoneSurface ? undefined : contactDropdownStyle}
+        data-placement={isPhoneSurface ? undefined : contactDropdownPlacement}
+        data-ristak-dropdown-panel
+      >
+        {searchingContact && contacts.length === 0 ? (
+          <div className={styles.dropdownEmpty}>
+            Buscando contactos...
+          </div>
+        ) : contacts.length > 0 ? (
+          contacts.map((contact) => (
+            <button
+              key={contact.id}
+              type="button"
+              className={styles.dropdownItem}
+              data-ristak-dropdown-item
+              onClick={() => handleSelectContact(contact)}
+            >
+              <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
+              <p className={styles.dropdownDetail}>
+                {contact.email || contact.phone || 'Sin información de contacto'}
+              </p>
+            </button>
+          ))
+        ) : (
+          <div className={styles.dropdownEmpty}>
+            No se encontraron contactos
+          </div>
+        )}
+      </div>
+    ) : null;
+
     return (
       <div className={styles.field}>
         <label className={styles.label}>
@@ -1538,7 +1595,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
             )}
           </div>
         ) : isCreateMode ? (
-          <div className={styles.searchWrapper}>
+          <div ref={contactSearchAnchorRef} className={styles.searchWrapper}>
             <div className={styles.searchInput}>
               <Search size={16} className={styles.searchIcon} />
               <input
@@ -1552,33 +1609,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
               {searchingContact && <Loader2 size={16} className={styles.loadingIcon} />}
             </div>
 
-            {showContactDropdown && (
-              <div className={styles.dropdown} data-ristak-dropdown-panel>
-                {searchingContact && contacts.length === 0 ? (
-                  <div className={styles.dropdownEmpty}>
-                    Buscando contactos...
-                  </div>
-                ) : contacts.length > 0 ? (
-                  contacts.map((contact) => (
-                    <button
-                      key={contact.id}
-                      type="button"
-                      className={styles.dropdownItem}
-                      data-ristak-dropdown-item
-                      onClick={() => handleSelectContact(contact)}
-                    >
-                      <p className={styles.dropdownName}>{contact.name || 'Sin nombre'}</p>
-                      <p className={styles.dropdownDetail}>
-                        {contact.email || contact.phone || 'Sin información de contacto'}
-                      </p>
-                    </button>
-                  ))
-                ) : (
-                  <div className={styles.dropdownEmpty}>
-                    No se encontraron contactos
-                  </div>
-                )}
-              </div>
+            {contactDropdown && (
+              !isPhoneSurface && typeof document !== 'undefined'
+                ? createPortal(contactDropdown, document.body)
+                : contactDropdown
             )}
           </div>
         ) : (
@@ -1590,6 +1624,41 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
 
   const renderGuestsSection = () => {
     if (!showGuestsSection) return null;
+
+    const guestDropdown = showGuestDropdown ? (
+      <div
+        ref={guestDropdownRef}
+        className={styles.dropdown}
+        style={isPhoneSurface ? undefined : guestDropdownStyle}
+        data-placement={isPhoneSurface ? undefined : guestDropdownPlacement}
+        data-ristak-dropdown-panel
+      >
+        {searchingGuest && guestContacts.length === 0 ? (
+          <div className={styles.dropdownEmpty}>
+            Buscando invitados...
+          </div>
+        ) : guestContacts.length > 0 ? (
+          guestContacts.map((contact) => (
+            <button
+              key={contact.id}
+              type="button"
+              className={styles.dropdownItem}
+              data-ristak-dropdown-item
+              onClick={() => handleSelectGuestContact(contact)}
+            >
+              <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
+              <p className={styles.dropdownDetail}>
+                {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
+              </p>
+            </button>
+          ))
+        ) : (
+          <div className={styles.dropdownEmpty}>
+            No se encontraron contactos
+          </div>
+        )}
+      </div>
+    ) : null;
 
     return (
       <div className={`${styles.sectionBlock} ${styles.guestsSectionCompact}`}>
@@ -1624,7 +1693,7 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
           <>
             <p className={styles.helpText}>Busca un contacto guardado o agrega uno nuevo para esta cita.</p>
 
-            <div className={styles.searchWrapper}>
+            <div ref={guestSearchAnchorRef} className={styles.searchWrapper}>
               <div className={styles.searchInput}>
                 <Search size={16} className={styles.searchIcon} />
                 <input
@@ -1638,33 +1707,10 @@ export const AppointmentModal: React.FC<AppointmentModalProps> = ({
                 {searchingGuest && <Loader2 size={16} className={styles.loadingIcon} />}
               </div>
 
-              {showGuestDropdown && (
-                <div className={styles.dropdown} data-ristak-dropdown-panel>
-                  {searchingGuest && guestContacts.length === 0 ? (
-                    <div className={styles.dropdownEmpty}>
-                      Buscando invitados...
-                    </div>
-                  ) : guestContacts.length > 0 ? (
-                    guestContacts.map((contact) => (
-                      <button
-                        key={contact.id}
-                        type="button"
-                        className={styles.dropdownItem}
-                        data-ristak-dropdown-item
-                        onClick={() => handleSelectGuestContact(contact)}
-                      >
-                        <p className={styles.dropdownName}>{getContactDisplayName(contact)}</p>
-                        <p className={styles.dropdownDetail}>
-                          {getContactDelivery(contact) || 'Sin WhatsApp ni correo'}
-                        </p>
-                      </button>
-                    ))
-                  ) : (
-                    <div className={styles.dropdownEmpty}>
-                      No se encontraron contactos
-                    </div>
-                  )}
-                </div>
+              {guestDropdown && (
+                !isPhoneSurface && typeof document !== 'undefined'
+                  ? createPortal(guestDropdown, document.body)
+                  : guestDropdown
               )}
             </div>
 

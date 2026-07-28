@@ -135,7 +135,9 @@ const DelayPopover: React.FC<{
   const WIDTH = 260
   const openRight = window.innerWidth - anchor.right > WIDTH + 28
   const left = openRight ? anchor.right + 14 : Math.max(8, anchor.left - WIDTH - 14)
-  const top = Math.max(8, Math.min(anchor.top - 8, window.innerHeight - 220))
+  const maxHeight = Math.max(0, window.innerHeight - 16)
+  const estimatedHeight = Math.min(220, maxHeight)
+  const top = Math.max(8, Math.min(anchor.top - 8, window.innerHeight - estimatedHeight - 8))
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -157,7 +159,8 @@ const DelayPopover: React.FC<{
     <div
       ref={ref}
       className={styles.delayPopover}
-      style={{ left, top, width: WIDTH }}
+      style={{ left, top, width: WIDTH, maxHeight, overflowY: 'auto' }}
+      data-ristak-dropdown-panel
       data-automation-interactive="true"
     >
       <div className={styles.delayPopoverHeader}>

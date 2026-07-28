@@ -8,6 +8,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig } from '@/hooks'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { contactTagsService } from '@/services/contactTagsService'
 import { apiUrl } from '@/services/apiBaseUrl'
 import apiClient from '@/services/apiClient'
@@ -225,9 +226,18 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
   const [cancellationResult, setCancellationResult] = useState<AccountCancellationResult | null>(null)
   const [savingRetentionOffer, setSavingRetentionOffer] = useState(false)
   const [cancellingAccount, setCancellingAccount] = useState(false)
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null)
   const customerTriggerRef = useRef<HTMLButtonElement>(null)
   const leadTriggerRef = useRef<HTMLButtonElement>(null)
+  const labelsDropdownRef = useRef<HTMLDivElement>(null)
+  const activeLabelsTriggerRef = openDropdown === 'lead' ? leadTriggerRef : customerTriggerRef
+  const {
+    style: labelsDropdownStyle,
+    placement: labelsDropdownPlacement
+  } = useAnchoredPortal(activeLabelsTriggerRef, Boolean(openDropdown), {
+    gap: 4,
+    maxHeight: 240,
+    panelRef: labelsDropdownRef
+  })
   const businessLogoInputRef = useRef<HTMLInputElement | null>(null)
   const localeBootstrappedRef = useRef(false)
 
@@ -491,16 +501,10 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
         setOpenDropdown(null)
       }
     }
-    const handleClose = () => setOpenDropdown(null)
-
     if (openDropdown) {
       document.addEventListener('click', handleClickOutside)
-      window.addEventListener('scroll', handleClose, true)
-      window.addEventListener('resize', handleClose)
       return () => {
         document.removeEventListener('click', handleClickOutside)
-        window.removeEventListener('scroll', handleClose, true)
-        window.removeEventListener('resize', handleClose)
       }
     }
   }, [openDropdown])
@@ -509,11 +513,6 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
     if (openDropdown === type) {
       setOpenDropdown(null)
       return
-    }
-    const ref = type === 'customer' ? customerTriggerRef : leadTriggerRef
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect()
-      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width })
     }
     setOpenDropdown(type)
   }
@@ -1428,16 +1427,12 @@ const AccountSettingsContent: React.FC<{ view: AccountSettingsView }> = ({ view 
                   </div>
                 </div>
 
-                {openDropdown && dropdownPos && createPortal(
+                {openDropdown && typeof document !== 'undefined' && createPortal(
                   <div
+                    ref={labelsDropdownRef}
                     data-labels-dropdown
-                    style={{
-                      position: 'fixed',
-                      top: dropdownPos.top,
-                      left: dropdownPos.left,
-                      width: dropdownPos.width,
-                      zIndex: 'var(--z-index-dropdown)'
-                    }}
+                    style={labelsDropdownStyle}
+                    data-placement={labelsDropdownPlacement}
                   >
                     <div className={styles.dropdownMenu} data-ristak-dropdown-panel>
                       {openDropdown === 'customer'

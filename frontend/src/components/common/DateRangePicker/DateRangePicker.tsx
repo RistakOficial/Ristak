@@ -1,8 +1,10 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Calendar, ChevronLeft, ChevronRight, ChevronDown, Clock, TrendingUp } from 'lucide-react'
 import styles from './DateRangePicker.module.css'
 import { formatDateToISO } from '@/utils/format'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 
 interface DateRangePickerProps {
@@ -182,15 +184,28 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   const [hoveredDate, setHoveredDate] = useState<Date | null>(null)
   const [selectingEndDate, setSelectingEndDate] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
-  const [dropdownPosition, setDropdownPosition] = useState<React.CSSProperties | undefined>()
   const containerRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const {
+    style: dropdownPosition,
+    placement: dropdownPlacement
+  } = useAnchoredPortal(containerRef, isOpen, {
+    align: 'end',
+    gap: 8,
+    matchWidth: false,
+    minWidth: 860,
+    maxWidth: 860,
+    maxHeight: 640,
+    panelRef,
+    viewportPadding: 16
+  })
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-        setActiveField(null)
-      }
+      const target = event.target as Node
+      if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setIsOpen(false)
+      setActiveField(null)
     }
 
     if (isOpen) {
@@ -228,46 +243,11 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     }
   }, [startDate, endDate])
 
-  const updateDropdownPosition = useCallback(() => {
-    if (typeof window === 'undefined' || !containerRef.current) {
-      setDropdownPosition(undefined)
-      return
-    }
-
-    const rect = containerRef.current.getBoundingClientRect()
-    const viewportPadding = 16
-    const maxWidth = Math.max(320, window.innerWidth - viewportPadding * 2)
-    const width = Math.min(860, maxWidth)
-    const maxLeft = Math.max(viewportPadding, window.innerWidth - width - viewportPadding)
-    const preferredLeft = rect.right - width
-    const left = Math.min(Math.max(viewportPadding, preferredLeft), maxLeft)
-    const top = rect.bottom + 8
-
-    setDropdownPosition({
-      top,
-      left,
-      width,
-      maxHeight: Math.max(320, window.innerHeight - top - viewportPadding)
-    })
-  }, [])
-
   useEffect(() => {
     if (!isOpen) {
       setOpenDropdown(null)
-      setDropdownPosition(undefined)
-      return
     }
-
-    updateDropdownPosition()
-
-    window.addEventListener('resize', updateDropdownPosition)
-    window.addEventListener('scroll', updateDropdownPosition, true)
-
-    return () => {
-      window.removeEventListener('resize', updateDropdownPosition)
-      window.removeEventListener('scroll', updateDropdownPosition, true)
-    }
-  }, [isOpen, updateDropdownPosition])
+  }, [isOpen])
 
   const toggleDropdown = (isLeft: boolean, type: 'month' | 'year') => {
     const key = `${isLeft ? 'left' : 'right'}-${type}`
@@ -315,7 +295,6 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
       setActiveField(null)
       return
     }
-    updateDropdownPosition()
     const parsedStart = parseLocalDate(startDate)
     const parsedEnd = parseLocalDate(endDate)
     setTempStart(parsedStart)
@@ -330,9 +309,6 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
   }
 
   const handleSingleOpen = () => {
-    if (!isOpen) {
-      updateDropdownPosition()
-    }
     setIsOpen(!isOpen)
   }
 
@@ -652,8 +628,15 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
         </button>
       )}
 
-      {isOpen && (
-        <div className={styles.dropdown} style={dropdownPosition} data-date-range-dropdown>
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={panelRef}
+          className={styles.dropdown}
+          style={dropdownPosition}
+          data-placement={dropdownPlacement}
+          data-date-range-dropdown
+          data-ristak-dropdown-panel
+        >
           <div className={styles.sidebar}>
             <h4 className={styles.sidebarTitle}>Seleccionar fechas</h4>
             <div className={styles.presetList}>
@@ -739,7 +722,8 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

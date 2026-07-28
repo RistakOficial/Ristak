@@ -12376,9 +12376,6 @@
 }
 
 .colorPopover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
   z-index: var(--z-index-popover);
   width: min(340px, calc(100vw - 48px));
   max-height: min(78vh, 760px);
@@ -13211,16 +13208,6 @@
 .colorPopover {
   z-index: var(--z-index-popover);
   box-shadow: 0 24px 70px -42px rgba(15, 23, 42, 0.75);
-}
-
-.twoColumn > .colorField:first-child .colorPopover {
-  left: 0;
-  right: auto;
-}
-
-.twoColumn > .colorField:last-child .colorPopover {
-  left: auto;
-  right: 0;
 }
 
 .colorSlider input,

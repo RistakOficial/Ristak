@@ -153,11 +153,11 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
     right: 16,
     top: '50%',
     transform: 'translateY(-50%)',
-    width: Math.min(DOCKED_WIDTH, bounds.width - 32),
-    height: Math.min(bounds.height * 0.84, bounds.height - 32)
+    width: Math.max(0, Math.min(DOCKED_WIDTH, bounds.width - 32)),
+    height: Math.max(0, Math.min(bounds.height * 0.84, bounds.height - 32))
   }
-  const anchoredWidth = Math.min(ANCHORED_WIDTH, Math.max(320, bounds.width - EDGE_GUTTER * 2))
-  const anchoredVisibleHeight = Math.min(190, Math.max(90, bounds.height - EDGE_GUTTER * 2))
+  const anchoredWidth = Math.max(0, Math.min(ANCHORED_WIDTH, bounds.width - EDGE_GUTTER * 2))
+  const anchoredVisibleHeight = Math.max(0, Math.min(190, bounds.height - EDGE_GUTTER * 2))
   const alignBeforeAnchor = placement === 'below-end' || placement === 'left-start'
   const anchoredLeft =
     alignBeforeAnchor
@@ -169,8 +169,8 @@ export const StepPickerBubble: React.FC<StepPickerBubbleProps> = ({
       : Math.max(EDGE_GUTTER, Math.min(anchor.y, bounds.height - Math.min(560, bounds.height - EDGE_GUTTER * 2) - EDGE_GUTTER))
   const anchoredMaxHeight =
     placement === 'below-end' || placement === 'left-start'
-      ? Math.max(90, Math.min(620, bounds.height - anchoredTop - EDGE_GUTTER))
-      : Math.min(560, bounds.height - EDGE_GUTTER * 2)
+      ? Math.max(0, Math.min(620, bounds.height - anchoredTop - EDGE_GUTTER))
+      : Math.max(0, Math.min(560, bounds.height - EDGE_GUTTER * 2))
   const anchoredStyle: React.CSSProperties = {
     left: Math.max(EDGE_GUTTER, Math.min(anchoredLeft, bounds.width - anchoredWidth - EDGE_GUTTER)),
     top: anchoredTop,

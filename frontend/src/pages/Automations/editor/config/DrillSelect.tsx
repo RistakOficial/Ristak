@@ -1,7 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, Check, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -36,7 +37,15 @@ export const DrillSelect: React.FC<DrillSelectProps> = ({
   const [open, setOpen] = useState(false)
   const [groupId, setGroupId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [position, setPosition] = useState({ top: 0, left: 0, width: 0, maxHeight: 0 })
+  const {
+    style: position,
+    placement: dropdownPlacement
+  } = useAnchoredPortal(triggerRef, open, {
+    gap: 6,
+    minWidth: 360,
+    maxHeight: 420,
+    panelRef: dropdownRef
+  })
 
   const visibleGroups = groups.filter((group) => group.items.length > 0)
   const selected = visibleGroups.flatMap((group) => group.items).find((item) => item.value === value)
@@ -50,33 +59,6 @@ export const DrillSelect: React.FC<DrillSelectProps> = ({
     setQuery('')
     setOpen(true)
   }
-
-  useLayoutEffect(() => {
-    if (!open) return
-    const place = () => {
-      const rect = triggerRef.current?.getBoundingClientRect()
-      if (!rect) return
-      const viewportPadding = 12
-      const gap = 6
-      const targetWidth = Math.min(Math.max(rect.width, 360), window.innerWidth - viewportPadding * 2)
-      const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
-      const spaceAbove = rect.top - viewportPadding
-      const openAbove = spaceBelow < 260 && spaceAbove > spaceBelow
-      const availableSpace = Math.max(220, openAbove ? spaceAbove - gap : spaceBelow - gap)
-      const maxHeight = Math.min(420, availableSpace)
-      setPosition({
-        top: openAbove
-          ? Math.max(viewportPadding, rect.top - maxHeight - gap)
-          : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - maxHeight),
-        left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - targetWidth - viewportPadding),
-        width: targetWidth,
-        maxHeight
-      })
-    }
-    place()
-    window.addEventListener('resize', place)
-    return () => window.removeEventListener('resize', place)
-  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -131,7 +113,9 @@ export const DrillSelect: React.FC<DrillSelectProps> = ({
           <div
             ref={dropdownRef}
             className={styles.drillDropdown}
-            style={{ top: position.top, left: position.left, width: position.width, maxHeight: position.maxHeight }}
+            style={position}
+            data-placement={dropdownPlacement}
+            data-ristak-dropdown-panel
             data-automation-interactive="true"
           >
             <div className={styles.drillSearch}>

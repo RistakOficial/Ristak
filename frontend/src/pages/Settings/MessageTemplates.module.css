@@ -1157,11 +1157,6 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.variablePickerMenuAbove {
-  top: auto;
-  bottom: calc(100% + 6px);
-}
-
 .variablePickerMenu::-webkit-scrollbar {
   width: 8px;
 }

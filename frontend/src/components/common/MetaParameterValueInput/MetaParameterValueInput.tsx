@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Braces, ChevronDown, ChevronRight } from 'lucide-react'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import styles from './MetaParameterValueInput.module.css'
 
 export interface MetaParameterVariable {
@@ -53,7 +54,20 @@ export const MetaParameterValueInput: React.FC<MetaParameterValueInputProps> = (
   const popoverRef = useRef<HTMLDivElement>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
-  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties | null>(null)
+  const {
+    style: popoverStyle,
+    placement: popoverPlacement
+  } = useAnchoredPortal(rootRef, pickerOpen, {
+    panelRef: popoverRef,
+    placement: 'auto',
+    align: 'end',
+    gap: 6,
+    minWidth: 320,
+    maxWidth: 320,
+    maxHeight: 340,
+    matchWidth: false,
+    viewportPadding: 10
+  })
   const groupedVariables = useMemo(() => {
     const groups = new Map<string, { label: string; variables: MetaParameterVariable[] }>()
     variables.forEach((variable) => {
@@ -78,42 +92,7 @@ export const MetaParameterValueInput: React.FC<MetaParameterValueInputProps> = (
   const closePicker = useCallback(() => {
     setPickerOpen(false)
     setExpandedCategories(new Set())
-    setPopoverStyle(null)
   }, [])
-
-  const updatePopoverPosition = useCallback(() => {
-    const root = rootRef.current
-    if (!root || !pickerOpen) return
-
-    const rect = root.getBoundingClientRect()
-    const margin = 10
-    const gap = 6
-    const width = Math.min(320, window.innerWidth - margin * 2)
-    const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))
-    const spaceBelow = window.innerHeight - rect.bottom - margin
-    const spaceAbove = rect.top - margin
-    const openBelow = spaceBelow >= 240 || spaceBelow > spaceAbove
-    const availableHeight = Math.max(180, (openBelow ? spaceBelow : spaceAbove) - gap)
-
-    setPopoverStyle({
-      top: openBelow ? rect.bottom + gap : rect.top - gap,
-      left,
-      width,
-      maxHeight: Math.min(340, availableHeight),
-      ...(openBelow ? {} : { transform: 'translateY(-100%)' })
-    })
-  }, [pickerOpen])
-
-  useEffect(() => {
-    if (!pickerOpen) return
-    updatePopoverPosition()
-    window.addEventListener('resize', updatePopoverPosition)
-    window.addEventListener('scroll', updatePopoverPosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePopoverPosition)
-      window.removeEventListener('scroll', updatePopoverPosition, true)
-    }
-  }, [pickerOpen, updatePopoverPosition])
 
   useEffect(() => {
     if (!pickerOpen) return
@@ -159,13 +138,14 @@ export const MetaParameterValueInput: React.FC<MetaParameterValueInputProps> = (
     window.setTimeout(() => inputRef.current?.focus(), 0)
   }
 
-  const variablePopover = pickerOpen && popoverStyle && (
+  const variablePopover = pickerOpen && (
     <div
       ref={popoverRef}
       className={styles.popover}
       role="dialog"
       aria-label="Mapear variable"
       style={popoverStyle}
+      data-placement={popoverPlacement}
     >
       <div className={styles.popoverBody}>
         {groupedVariables.map(group => {

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
 import { Badge, Button, Card, CheckboxMultiSelect, CustomSelect, ExpandableTextareaField, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
@@ -25,7 +26,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability, useAppConfig } from '@/hooks'
+import { useAIAgentAvailability, useAnchoredPortal, useAppConfig } from '@/hooks'
 import { hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
   conversationalAgentService,
@@ -4176,6 +4177,21 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const [providerApiKey, setProviderApiKey] = useState('')
   const [providerSaving, setProviderSaving] = useState(false)
   const [activationConflict, setActivationConflict] = useState<AgentActivationConflictModalState | null>(null)
+  const aiProvidersTriggerRef = useRef<HTMLDivElement>(null)
+  const aiProvidersPanelRef = useRef<HTMLDivElement>(null)
+  const {
+    style: aiProvidersPanelStyle,
+    placement: aiProvidersPanelPlacement
+  } = useAnchoredPortal(aiProvidersTriggerRef, aiProvidersExpanded, {
+    panelRef: aiProvidersPanelRef,
+    placement: 'auto',
+    align: 'end',
+    gap: 8,
+    minWidth: 520,
+    maxWidth: 520,
+    maxHeight: 480,
+    matchWidth: false
+  })
   const saveTimersRef = useRef<Map<string, number>>(new Map())
   const saveQueuesRef = useRef<Map<string, Promise<ConversationalAgentDef | null>>>(new Map())
   const saveRevisionsRef = useRef<Map<string, number>>(new Map())
@@ -4196,6 +4212,25 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     openAIAvailability.businessProfile?.industry || ''
   ].join('|')
   agentsRef.current = agents
+
+  useEffect(() => {
+    if (!aiProvidersExpanded) return
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target
+      if (target instanceof Node && aiProvidersTriggerRef.current?.contains(target)) return
+      if (target instanceof Node && aiProvidersPanelRef.current?.contains(target)) return
+      setAIProvidersExpanded(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAIProvidersExpanded(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [aiProvidersExpanded])
 
   const applyServerAgentsPreservingDrafts = useCallback((
     serverAgents: ConversationalAgentDef[],
@@ -4886,7 +4921,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         subtitle="Supervisa los chatbots que atienden conversaciones, cumplen metas y escalan chats cuando necesitan ayuda humana."
         actions={(
           <>
-            <div className={styles.aiProviderDropdown}>
+            <div ref={aiProvidersTriggerRef} className={styles.aiProviderDropdown}>
               <Button
                 variant="secondary"
                 size="sm"
@@ -4902,8 +4937,14 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                   className={`${styles.aiProviderManagerToggleIcon} ${aiProvidersExpanded ? styles.aiProviderManagerToggleIconOpen : ''}`}
                 />
               </Button>
-              {aiProvidersExpanded && (
-                <div id="conversational-ai-provider-list" className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}>
+              {aiProvidersExpanded && createPortal(
+                <div
+                  ref={aiProvidersPanelRef}
+                  id="conversational-ai-provider-list"
+                  className={`${styles.aiProviderManagerList} ${styles.aiProviderDropdownMenu}`}
+                  style={aiProvidersPanelStyle}
+                  data-placement={aiProvidersPanelPlacement}
+                >
                   {conversationalAIProviderOptions.map((provider) => {
                     const status = getProviderStatus(aiProviders, provider.id)
                     const connected = Boolean(status?.connected)
@@ -4931,7 +4972,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
                       </div>
                     )
                   })}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
             <Button

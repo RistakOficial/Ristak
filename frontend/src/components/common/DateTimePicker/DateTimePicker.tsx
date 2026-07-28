@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Calendar, ChevronLeft, ChevronRight, Clock, X } from 'lucide-react'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import styles from './DateTimePicker.module.css'
 
 interface DateTimePickerProps {
@@ -22,6 +24,19 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
   const [isOpen, setIsOpen] = useState(false)
   const [viewDate, setViewDate] = useState<Date>(value ? new Date(value) : new Date())
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const {
+    style: dropdownStyle,
+    placement: dropdownPlacement
+  } = useAnchoredPortal(triggerRef, isOpen, {
+    gap: 8,
+    matchWidth: false,
+    minWidth: 440,
+    maxWidth: 520,
+    maxHeight: 560,
+    panelRef
+  })
 
   // Parse current value
   const currentDate = value ? new Date(value) : null
@@ -32,9 +47,9 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
   // Close on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
+      const target = event.target as Node
+      if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setIsOpen(false)
     }
 
     if (isOpen) {
@@ -165,6 +180,7 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
       )}
 
       <button
+        ref={triggerRef}
         type="button"
         className={styles.trigger}
         onClick={() => setIsOpen(!isOpen)}
@@ -187,8 +203,14 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
         )}
       </button>
 
-      {isOpen && (
-        <div className={styles.dropdown} data-ristak-dropdown-panel>
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={panelRef}
+          className={styles.dropdown}
+          style={dropdownStyle}
+          data-placement={dropdownPlacement}
+          data-ristak-dropdown-panel
+        >
           <div className={styles.dropdownContent}>
             {/* Calendar */}
             <div className={styles.calendar}>
@@ -318,7 +340,8 @@ export function DateTimePicker({ value, onChange, label, placeholder, required, 
               Listo
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

@@ -12,7 +12,18 @@ import {
   Trash2,
   X
 } from 'lucide-react'
-import { Button, CustomSelect, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
+import {
+  Button,
+  CustomSelect,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  PageHeader,
+  SearchField,
+  Table,
+  TableSelectionToolbar,
+  type Column
+} from '@/components/common'
 import { Badge } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
 import {
@@ -715,27 +726,35 @@ export const CustomFields: React.FC = () => {
                   <span>{folder.name}</span>
                   <b>{folderCounts.get(folder.id) || 0}</b>
                 </button>
-                <button
-                  type="button"
-                  className={styles.folderMenuButton}
-                  aria-label={`Opciones de ${folder.name}`}
-                  aria-expanded={openFolderMenuId === folder.id}
-                  title="Opciones"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    setOpenFolderMenuId(current => current === folder.id ? null : folder.id)
-                  }}
+                <DropdownMenu
+                  open={openFolderMenuId === folder.id}
+                  onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
                 >
-                  <MoreHorizontal size={16} />
-                </button>
-                {openFolderMenuId === folder.id && (
-                  <div className={styles.folderMenu} role="menu">
-                    <button type="button" role="menuitem" onClick={() => handleArchiveFolder(folder)}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={styles.folderMenuButton}
+                      aria-label={`Opciones de ${folder.name}`}
+                      title="Opciones"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" sideOffset={4} className={styles.folderMenu}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenFolderMenuId(null)
+                        handleArchiveFolder(folder)
+                      }}
+                    >
                       <Trash2 size={14} />
                       <span>Eliminar carpeta</span>
                     </button>
-                  </div>
-                )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
           </div>

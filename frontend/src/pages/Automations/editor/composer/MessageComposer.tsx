@@ -13,6 +13,7 @@ import {
   tokenFor,
   type FlowVariable
 } from '../variablesCatalog'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -108,6 +109,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 }) => {
   const editorRef = useRef<HTMLDivElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
   const lastEmittedRef = useRef<string>('')
   // Último rango del cursor dentro del editor (se pierde al hacer clic en
   // los pickers, así que lo recordamos para insertar donde estaba escribiendo)
@@ -117,13 +119,19 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const [query, setQuery] = useState('')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set())
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(() => new Set())
-  const [popoverPosition, setPopoverPosition] = useState<{
-    top: number
-    left: number
-    width: number
-    maxHeight: number
-    transform?: string
-  } | null>(null)
+  const popoverWidth = pickerOpen === 'variables' ? 430 : 292
+  const {
+    style: popoverPosition,
+    placement: popoverPlacement
+  } = useAnchoredPortal(wrapRef, Boolean(pickerOpen), {
+    align: 'end',
+    gap: 8,
+    matchWidth: false,
+    minWidth: popoverWidth,
+    maxWidth: popoverWidth,
+    maxHeight: pickerOpen === 'variables' ? 420 : 300,
+    panelRef: popoverRef
+  })
   const flowVariables = React.useContext(FlowVariablesContext)
 
   useEffect(() => {
@@ -330,7 +338,6 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     setQuery('')
     setExpandedCategories(new Set())
     setExpandedNodes(new Set())
-    setPopoverPosition(null)
   }, [])
 
   const togglePicker = (nextPicker: 'variables' | 'emoji') => {
@@ -397,44 +404,6 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       )
     })
 
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const updatePopoverPosition = useCallback(() => {
-    const wrap = wrapRef.current
-    if (!wrap || !pickerOpen) return
-
-    const rect = wrap.getBoundingClientRect()
-    const margin = 12
-    const gap = 8
-    const preferredWidth = pickerOpen === 'variables' ? 430 : 292
-    const width = Math.min(preferredWidth, window.innerWidth - margin * 2)
-    const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin))
-    const spaceBelow = window.innerHeight - rect.bottom - margin
-    const spaceAbove = rect.top - margin
-    const openBelow = spaceBelow >= 260 || spaceBelow > spaceAbove
-    const availableHeight = Math.max(220, (openBelow ? spaceBelow : spaceAbove) - gap)
-    const maxHeight = Math.min(pickerOpen === 'variables' ? 420 : 300, availableHeight)
-    const top = openBelow ? rect.bottom + gap : rect.top - gap
-
-    setPopoverPosition({
-      top,
-      left,
-      width,
-      maxHeight,
-      ...(openBelow ? {} : { transform: 'translateY(-100%)' })
-    })
-  }, [pickerOpen])
-
-  useEffect(() => {
-    if (!pickerOpen) return
-    updatePopoverPosition()
-    window.addEventListener('resize', updatePopoverPosition)
-    window.addEventListener('scroll', updatePopoverPosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePopoverPosition)
-      window.removeEventListener('scroll', updatePopoverPosition, true)
-    }
-  }, [pickerOpen, updatePopoverPosition])
-
   useEffect(() => {
     if (!pickerOpen) return
     const handlePointerDown = (event: PointerEvent) => {
@@ -451,13 +420,15 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
   const isEmpty = !value || !value.replace(new RegExp(escapeRegExp('​'), 'g'), '').trim()
 
-  const variablePopover = pickerOpen === 'variables' && popoverPosition && (
+  const variablePopover = pickerOpen === 'variables' && (
     <div
       ref={popoverRef}
       className={styles.composerPopover}
       role="dialog"
       aria-label="Insertar variable"
       style={popoverPosition}
+      data-placement={popoverPlacement}
+      data-ristak-dropdown-panel
     >
       <div className={styles.composerPopoverSearch}>
         <Search size={12} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
@@ -513,13 +484,15 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     </div>
   )
 
-  const emojiPopover = pickerOpen === 'emoji' && popoverPosition && (
+  const emojiPopover = pickerOpen === 'emoji' && (
     <div
       ref={popoverRef}
       className={styles.composerPopover}
       role="dialog"
       aria-label="Insertar emoji"
       style={popoverPosition}
+      data-placement={popoverPlacement}
+      data-ristak-dropdown-panel
     >
       <div className={styles.composerEmojiGrid}>
         {EMOJIS.map((emoji) => (

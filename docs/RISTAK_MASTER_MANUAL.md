@@ -206,8 +206,9 @@ capa intenta abrir en el lado solicitado, cambia arriba/abajo cuando falta
 espacio y limita su alto con scroll interno cuando ninguna dirección alcanza.
 Las páginas consumidoras pueden ajustar apariencia y ancho, pero no deben fijar
 coordenadas CSS que anulen el cálculo global. Esto incluye los menús de tres
-puntos de Sites, Automatizaciones y los demás módulos que usan la primitiva
-compartida.
+puntos y carpetas, la búsqueda global, los resultados de contactos, los
+selectores de citas y fechas, el chat de escritorio, los modelos de IA y los
+popovers de Sites y Automatizaciones.
 
 El estado remoto compartido no debe duplicarse en componentes que solo consultan
 una vez al montar. `frontend/src/services/integrationsService.ts` publica un

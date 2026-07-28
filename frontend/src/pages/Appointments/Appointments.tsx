@@ -1,13 +1,29 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField, CustomSelect } from '@/components/common';
+import {
+  AppointmentModal,
+  BlockedSlotModal,
+  Button,
+  Card,
+  CustomSelect,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Loading,
+  PageContainer,
+  PageHeader,
+  SearchField,
+  TabList
+} from '@/components/common';
 import { KpiCard } from '@/components/common/KpiCard/KpiCard';
 import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, CalendarCheck, Sparkles, Copy, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot, type RawBlockedSlot } from '@/services/calendarsService';
 import { Badge, type BadgeVariant } from '@/components/common/Badge';
 import { getAppointmentStatusBadge } from '@/utils/statusBadges';
@@ -540,6 +556,15 @@ export const Appointments: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const searchDropdownRef = useRef<HTMLDivElement | null>(null);
+  const {
+    style: searchDropdownStyle,
+    placement: searchDropdownPlacement
+  } = useAnchoredPortal(searchInputRef, isSearchDropdownOpen, {
+    gap: 8,
+    maxHeight: 400,
+    panelRef: searchDropdownRef
+  });
   const handledOpenAppointmentRef = useRef<string | null>(null);
   const calendarsRequestRef = useRef(0);
   const eventsRequestRef = useRef(0);
@@ -1781,7 +1806,14 @@ export const Appointments: React.FC = () => {
                     className={styles.searchOverlay}
                     onClick={() => setIsSearchDropdownOpen(false)}
                   />
-                  <div className={styles.searchDropdown} data-ristak-dropdown-panel>
+                  {typeof document !== 'undefined' && createPortal(
+                    <div
+                      ref={searchDropdownRef}
+                      className={styles.searchDropdown}
+                      style={searchDropdownStyle}
+                      data-placement={searchDropdownPlacement}
+                      data-ristak-dropdown-panel
+                    >
                     {searchResults.map((event) => {
                       const eventDate = new Date(event.startTime);
                       return (
@@ -1810,7 +1842,9 @@ export const Appointments: React.FC = () => {
                         </button>
                       );
                     })}
-                  </div>
+                    </div>,
+                    document.body
+                  )}
                 </>
               )}
 
@@ -1821,11 +1855,20 @@ export const Appointments: React.FC = () => {
                     className={styles.searchOverlay}
                     onClick={() => setIsSearchDropdownOpen(false)}
                   />
-                  <div className={styles.searchDropdown} data-ristak-dropdown-panel>
-                    <div className={styles.searchEmpty}>
-                      No se encontraron citas
-                    </div>
-                  </div>
+                  {typeof document !== 'undefined' && createPortal(
+                    <div
+                      ref={searchDropdownRef}
+                      className={styles.searchDropdown}
+                      style={searchDropdownStyle}
+                      data-placement={searchDropdownPlacement}
+                      data-ristak-dropdown-panel
+                    >
+                      <div className={styles.searchEmpty}>
+                        No se encontraron citas
+                      </div>
+                    </div>,
+                    document.body
+                  )}
                 </>
               )}
             </div>
@@ -1928,68 +1971,66 @@ export const Appointments: React.FC = () => {
               <div className={styles.dateSelectors}>
                 {/* Dropdown de mes */}
                 <div className={styles.dateSelectorWrapper}>
-                  <button
-                    className={styles.dateSelector}
-                    onClick={() => setIsMonthDropdownOpen(!isMonthDropdownOpen)}
+                  <DropdownMenu
+                    open={isMonthDropdownOpen}
+                    onOpenChange={setIsMonthDropdownOpen}
                   >
-                    <span>{MONTH_NAMES[currentDate.getMonth()]}</span>
-                    <ChevronDown size={14} className={`${styles.selectorIcon} ${isMonthDropdownOpen ? styles.selectorIconOpen : ''}`} />
-                  </button>
-                  {isMonthDropdownOpen && (
-                    <>
-                      <div className={styles.selectorOverlay} onClick={() => setIsMonthDropdownOpen(false)} />
-                      <div className={styles.selectorMenu}>
-                        {MONTH_NAMES.map((month, index) => (
-                          <button
+                    <DropdownMenuTrigger asChild>
+                      <button type="button" className={styles.dateSelector}>
+                        <span>{MONTH_NAMES[currentDate.getMonth()]}</span>
+                        <ChevronDown size={14} className={`${styles.selectorIcon} ${isMonthDropdownOpen ? styles.selectorIconOpen : ''}`} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" sideOffset={8} className={styles.selectorMenu}>
+                      {MONTH_NAMES.map((month, index) => (
+                          <DropdownMenuItem
                             key={index}
                             className={`${styles.selectorItem} ${currentDate.getMonth() === index ? styles.selectorItemActive : ''}`}
-	                            onClick={() => {
+	                            onSelect={() => {
 	                              const newDate = new Date(currentDate);
 	                              newDate.setMonth(index);
 	                              setCurrentDate(newDate);
                                 navigateCalendarView({ date: newDate });
-	                              setIsMonthDropdownOpen(false);
 	                            }}
+                            data-selected={currentDate.getMonth() === index ? 'true' : undefined}
                           >
                             {month}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
+                          </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 {/* Dropdown de año */}
                 <div className={styles.dateSelectorWrapper}>
-                  <button
-                    className={styles.dateSelector}
-                    onClick={() => setIsYearDropdownOpen(!isYearDropdownOpen)}
+                  <DropdownMenu
+                    open={isYearDropdownOpen}
+                    onOpenChange={setIsYearDropdownOpen}
                   >
-                    <span>{currentDate.getFullYear()}</span>
-                    <ChevronDown size={14} className={`${styles.selectorIcon} ${isYearDropdownOpen ? styles.selectorIconOpen : ''}`} />
-                  </button>
-                  {isYearDropdownOpen && (
-                    <>
-                      <div className={styles.selectorOverlay} onClick={() => setIsYearDropdownOpen(false)} />
-                      <div className={styles.selectorMenu}>
-                        {Array.from({ length: 11 }, (_, i) => currentDate.getFullYear() - 5 + i).map((year) => (
-                          <button
+                    <DropdownMenuTrigger asChild>
+                      <button type="button" className={styles.dateSelector}>
+                        <span>{currentDate.getFullYear()}</span>
+                        <ChevronDown size={14} className={`${styles.selectorIcon} ${isYearDropdownOpen ? styles.selectorIconOpen : ''}`} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" sideOffset={8} className={styles.selectorMenu}>
+                      {Array.from({ length: 11 }, (_, i) => currentDate.getFullYear() - 5 + i).map((year) => (
+                          <DropdownMenuItem
                             key={year}
                             className={`${styles.selectorItem} ${currentDate.getFullYear() === year ? styles.selectorItemActive : ''}`}
-	                            onClick={() => {
+	                            onSelect={() => {
 	                              const newDate = new Date(currentDate);
 	                              newDate.setFullYear(year);
 	                              setCurrentDate(newDate);
                                 navigateCalendarView({ date: newDate });
-	                              setIsYearDropdownOpen(false);
 	                            }}
+                            data-selected={currentDate.getFullYear() === year ? 'true' : undefined}
                           >
                             {year}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
+                          </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
 

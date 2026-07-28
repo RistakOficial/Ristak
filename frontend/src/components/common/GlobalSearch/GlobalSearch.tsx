@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import {
   Calendar,
@@ -12,6 +13,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/utils/cn'
 import { SearchField } from '@/components/common/SearchField'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { globalSearchService, type GlobalSearchCategory, type GlobalSearchItem, type GlobalSearchItemType } from '@/services/globalSearchService'
 import { getRouteAccess, hasModuleAccess, type AccessControlledUser } from '@/utils/accessControl'
 import { buildSearchIndex, searchIndexIncludes } from '@/utils/searchText'
@@ -131,6 +133,7 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
   const { user } = useAuth()
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const cacheRef = useRef(new Map<string, GlobalSearchCategory[]>())
   const latestCategoriesRef = useRef<GlobalSearchCategory[]>([])
   const [query, setQuery] = useState('')
@@ -141,6 +144,15 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
   const [activeIndex, setActiveIndex] = useState(0)
 
   const trimmedQuery = query.trim()
+  const showDropdown = isOpen && Boolean(trimmedQuery)
+  const {
+    style: dropdownStyle,
+    placement: dropdownPlacement
+  } = useAnchoredPortal(rootRef, showDropdown, {
+    gap: 8,
+    maxHeight: 620,
+    panelRef
+  })
 
   const flatResults = useMemo(() => {
     return categories.flatMap((category) =>
@@ -153,9 +165,9 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
+      const target = event.target as Node
+      if (rootRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setIsOpen(false)
     }
 
     document.addEventListener('mousedown', handleClickOutside)
@@ -265,7 +277,6 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
     }
   }
 
-  const showDropdown = isOpen && Boolean(trimmedQuery)
   let globalIndex = 0
 
   return (
@@ -291,8 +302,16 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
         aria-controls="global-search-results"
       />
 
-      {showDropdown && (
-        <div id="global-search-results" className={styles.dropdown} role="listbox" data-ristak-dropdown-panel>
+      {showDropdown && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={panelRef}
+          id="global-search-results"
+          className={styles.dropdown}
+          style={dropdownStyle}
+          data-placement={dropdownPlacement}
+          role="listbox"
+          data-ristak-dropdown-panel
+        >
           {loading && categories.length === 0 && (
             <div className={styles.stateRow}>Buscando...</div>
           )}
@@ -340,7 +359,8 @@ export const GlobalSearch: React.FC<GlobalSearchProps> = ({ className }) => {
               </div>
             </section>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
