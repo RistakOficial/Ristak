@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Bell, CalendarCheck, Sparkles, Trash2 } from 'lucide-react'
-import { Modal, Button, CustomSelect, NumberInput, Switch } from '@/components/common'
+import { Modal, Button, CheckboxMultiSelect, CustomSelect, NumberInput, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import {
   type AppointmentReminder,
@@ -79,28 +79,42 @@ const getDefaultTemplateName = (
     : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
 }
 
-const CONFIRMATION_SUCCESS_ACTION_OPTIONS: { value: ReminderConfirmationSuccessAction; label: string; description: string }[] = [
+const CONFIRMATION_SUCCESS_ACTION_OPTIONS: {
+  value: ReminderConfirmationSuccessAction
+  label: string
+  disabled?: boolean
+}[] = [
   {
     value: 'chat_card',
-    label: 'Agregar tarjetita en el chat',
-    description: 'Ristak deja una tarjeta visible en la conversación indicando que la cita quedó confirmada.'
+    label: 'Agregar tarjeta de confirmación en el chat'
   },
   {
     value: 'notify_push',
-    label: 'Mandarme notificación push',
-    description: 'Te avisa cuando la IA detecta que la persona sí confirmó su cita.'
+    label: 'Mandarme notificación push'
   },
   {
     value: 'chat_badge',
-    label: 'Mostrar etiqueta "Asistirá a cita"',
-    description: 'El chat muestra esa etiqueta en compu y celular hasta que pase la hora de la cita.'
+    label: 'Mostrar etiqueta "Asistirá a cita"'
   },
   {
     value: 'mark_confirmed',
-    label: 'Sólo marcar la cita confirmada',
-    description: 'La cita cambia a confirmada sin agregar avisos extra.'
+    label: 'Marcar la cita como confirmada',
+    disabled: true
   }
 ]
+
+const DEFAULT_CONFIRMATION_SUCCESS_ACTIONS = CONFIRMATION_SUCCESS_ACTION_OPTIONS.map(option => option.value)
+
+const normalizeConfirmationSuccessActions = (
+  actions?: ReminderConfirmationSuccessAction[],
+  legacyAction?: ReminderConfirmationSuccessAction
+) => {
+  const selected = new Set(actions?.length ? actions : legacyAction ? [legacyAction] : DEFAULT_CONFIRMATION_SUCCESS_ACTIONS)
+  selected.add('mark_confirmed')
+  return CONFIRMATION_SUCCESS_ACTION_OPTIONS
+    .map(option => option.value)
+    .filter(action => selected.has(action))
+}
 
 const NO_CONFIRM_ACTION_OPTIONS: { value: ReminderNoConfirmAction; label: string; description: string }[] = [
   {
@@ -182,7 +196,7 @@ const createNewReminderDraft = (): AppointmentReminderInput => ({
   smartEnd: '21:00',
   smartOverflow: 'before',
   noConfirmAction: 'no_action',
-  confirmationSuccessAction: 'chat_card'
+  confirmationSuccessActions: [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
 })
 
 export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> = ({
@@ -225,7 +239,10 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
           smartEnd: reminder.smartEnd,
           smartOverflow: reminder.smartOverflow,
           noConfirmAction: reminder.noConfirmAction,
-          confirmationSuccessAction: reminder.confirmationSuccessAction
+          confirmationSuccessActions: normalizeConfirmationSuccessActions(
+            reminder.confirmationSuccessActions,
+            reminder.confirmationSuccessAction
+          )
         }
       : createNewReminderDraft())
     setSaving(false)
@@ -296,9 +313,6 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const selectedTemplatePreview = useMemo(() => buildTemplatePreview(selectedTemplate), [selectedTemplate])
   const selectedTemplateApproved = getTemplateReviewStatus(selectedTemplate) === 'APPROVED'
-  const selectedConfirmationSuccessAction = CONFIRMATION_SUCCESS_ACTION_OPTIONS.find(
-    option => option.value === (draft.confirmationSuccessAction || 'chat_card')
-  ) || CONFIRMATION_SUCCESS_ACTION_OPTIONS[0]
   const selectedNoConfirmAction = NO_CONFIRM_ACTION_OPTIONS.find(
     option => option.value === (draft.noConfirmAction || 'no_action')
   ) || NO_CONFIRM_ACTION_OPTIONS[0]
@@ -423,6 +437,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       messageType,
       aiEnabled: enabled ? true : false,
       bypassAutomations: enabled ? prev.bypassAutomations : false,
+      confirmationSuccessActions: enabled
+        ? [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
+        : prev.confirmationSuccessActions,
       ...(shouldSwitchTemplate && nextTemplate
         ? {
             templateId: nextTemplate.id,
@@ -442,7 +459,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         ...draft,
         channel: selectedChannelId,
         contentMode,
-        qrFallbackEnabled: isWhatsAppApiChannel
+        qrFallbackEnabled: isWhatsAppApiChannel,
+        confirmationSuccessActions: normalizeConfirmationSuccessActions(
+          draft.confirmationSuccessActions,
+          draft.confirmationSuccessAction
+        )
       })
       onClose()
     } catch (error) {
@@ -569,17 +590,21 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     <div className={styles.confirmationActionBox}>
                       <div className={styles.field}>
                         <label className={styles.fieldLabel}>Qué quieres que pase cuando se detecte que confirmó la cita</label>
-                        <CustomSelect
-                          value={draft.confirmationSuccessAction || 'chat_card'}
-                          options={CONFIRMATION_SUCCESS_ACTION_OPTIONS.map(option => ({
-                            value: option.value,
-                            label: option.label
-                          }))}
-                          onValueChange={(value) => set('confirmationSuccessAction', value as ReminderConfirmationSuccessAction)}
-                          aria-label="Acción cuando el contacto confirma la cita"
-                          portal
+                        <CheckboxMultiSelect
+                          value={normalizeConfirmationSuccessActions(
+                            draft.confirmationSuccessActions,
+                            draft.confirmationSuccessAction
+                          )}
+                          options={CONFIRMATION_SUCCESS_ACTION_OPTIONS}
+                          onChange={(value) => set(
+                            'confirmationSuccessActions',
+                            normalizeConfirmationSuccessActions(value)
+                          )}
+                          aria-label="Acciones cuando el contacto confirma la cita"
                         />
-                        <span className={styles.helpText}>{selectedConfirmationSuccessAction.description}</span>
+                        <span className={styles.helpText}>
+                          La cita siempre se marca como confirmada. Ristak también ejecuta todas las acciones que dejes marcadas.
+                        </span>
                       </div>
                     </div>
                   </>

@@ -5,6 +5,7 @@ import crypto from 'node:crypto'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createBlock,
+  createImportedSiteFromHtml,
   createSite,
   createSubmissionFromRequest,
   deleteSite,
@@ -166,6 +167,139 @@ test('native form system fields save to contact and locked system fields', async
         await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [cityDefinition.id]).catch(() => undefined)
         await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [cityDefinition.id]).catch(() => undefined)
       }
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('imported HTML detects contact and location fields as system destinations without creating duplicate custom fields', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const systemKeys = ['city', 'address_1', 'company']
+  const previousDefinitions = new Map()
+  for (const fieldKey of systemKeys) {
+    previousDefinitions.set(fieldKey, await db.get(
+      'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+      [fieldKey]
+    ))
+  }
+
+  const suffix = crypto.randomUUID()
+  const email = `html-system-${suffix}@example.test`
+  let siteId = ''
+  let sourceFormId = ''
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'campos-sistema.html',
+      name: `HTML campos sistema ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-system" data-rstk-label="Contacto">
+          <label>Nombre completo <input name="full_name" data-rstk-field-id="full-name"></label>
+          <label>Correo <input name="email" type="email" data-rstk-field-id="email"></label>
+          <label>WhatsApp <input name="whatsapp" type="tel" data-rstk-field-id="whatsapp"></label>
+          <label>Ciudad <input name="city" data-rstk-field-id="city"></label>
+          <label>Ubicación <input name="location" data-rstk-field-id="location"></label>
+          <label>Empresa <input name="company" data-rstk-field-id="company"></label>
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+
+    const fields = created.import.formMappings[0]?.fields || []
+    assert.deepEqual(
+      fields.map(field => [field.fieldId, field.destinationType, field.destinationKey]),
+      [
+        ['full_name', 'standard', 'full_name'],
+        ['email', 'standard', 'email'],
+        ['whatsapp', 'standard', 'phone'],
+        ['city', 'standard', 'city'],
+        ['location', 'standard', 'address_1'],
+        ['company', 'standard', 'company']
+      ]
+    )
+
+    await updateSite(siteId, { status: 'published' })
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${created.site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId,
+        importedFormId: 'lead_system',
+        rawFields: {
+          full_name: 'Ana Sistema',
+          email,
+          whatsapp: '+52 656 123 4567',
+          city: 'Ciudad Juárez',
+          location: 'Av. Principal 123',
+          company: 'Ristak'
+        }
+      }
+    )
+
+    assert.equal(result.mappedFields.standard.full_name, 'Ana Sistema')
+    assert.equal(result.mappedFields.standard.email, email)
+    assert.equal(result.mappedFields.standard.phone, '+52 656 123 4567')
+    assert.deepEqual(result.mappedFields.system, {
+      city: 'Ciudad Juárez',
+      address_1: 'Av. Principal 123',
+      company: 'Ristak'
+    })
+    assert.equal(result.mappedFields.custom?.city, undefined)
+    assert.equal(result.mappedFields.custom?.address_1, undefined)
+    assert.equal(result.mappedFields.custom?.company, undefined)
+
+    const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [result.contactId])
+    const systemFields = parseContactCustomFields(contact.custom_fields)
+      .filter(field => systemKeys.includes(field.fieldKey))
+      .sort((a, b) => a.fieldKey.localeCompare(b.fieldKey))
+    assert.deepEqual(
+      systemFields.map(field => [field.fieldKey, field.value, field.sourceType, field.syncTarget]),
+      [
+        ['address_1', 'Av. Principal 123', 'system', 'none'],
+        ['city', 'Ciudad Juárez', 'system', 'none'],
+        ['company', 'Ristak', 'system', 'none']
+      ]
+    )
+  } finally {
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+    for (const fieldKey of systemKeys) {
+      if (previousDefinitions.get(fieldKey)?.id) continue
+      const definition = await db.get(
+        'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+        [fieldKey]
+      )
+      if (!definition?.id) continue
+      await db.run(
+        'DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?',
+        [definition.id]
+      ).catch(() => undefined)
+      await db.run(
+        'DELETE FROM contact_custom_field_definitions WHERE id = ?',
+        [definition.id]
+      ).catch(() => undefined)
     }
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)

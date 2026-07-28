@@ -517,6 +517,10 @@ const IMPORTED_EDITABLE_CONTENT_TYPES = new Set([
 const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
 const NATIVE_FORM_STANDARD_SYSTEM_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email'])
 const NATIVE_FORM_CUSTOM_SYSTEM_FIELDS = new Set(['city', 'company', 'address_1'])
+const IMPORTED_FORM_SYSTEM_FIELDS = new Set([
+  ...IMPORTED_FORM_STANDARD_FIELDS,
+  ...NATIVE_FORM_CUSTOM_SYSTEM_FIELDS
+])
 const NATIVE_FORM_SYSTEM_FIELD_LABELS = {
   full_name: 'Nombre completo',
   first_name: 'Primer nombre',
@@ -526,6 +530,23 @@ const NATIVE_FORM_SYSTEM_FIELD_LABELS = {
   city: 'Ciudad',
   company: 'Empresa',
   address_1: 'Direccion 1'
+}
+const IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES = {
+  city: ['city', 'ciudad', 'localidad'],
+  company: ['company', 'company_name', 'business', 'business_name', 'empresa', 'nombre_empresa', 'nombre_del_negocio'],
+  address_1: [
+    'address',
+    'address_1',
+    'address1',
+    'address_line_1',
+    'street_address',
+    'direccion',
+    'direccion_1',
+    'direccion_principal',
+    'domicilio',
+    'location',
+    'ubicacion'
+  ]
 }
 const IMPORTED_AMBIGUOUS_PERSON_NAME_ALIASES = [
   'name',
@@ -2086,6 +2107,9 @@ function isImportedAmbiguousMappedPersonNameField(field = {}) {
 function getImportedStandardAliasKey(haystack = '') {
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.email)) return 'email'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.phone)) return 'phone'
+  if (hasImportedAlias(haystack, IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES.address_1)) return 'address_1'
+  if (hasImportedAlias(haystack, IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES.company)) return 'company'
+  if (hasImportedAlias(haystack, IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES.city)) return 'city'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.last_name)) return 'last_name'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.first_name)) return 'first_name'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.full_name)) return 'full_name'
@@ -3992,7 +4016,7 @@ function inferImportedFieldDestination(field = {}) {
     return { destinationType: 'custom', destinationKey: explicitCustom, confidence: 0.98 }
   }
 
-  if (explicit && IMPORTED_FORM_STANDARD_FIELDS.has(explicit)) {
+  if (explicit && IMPORTED_FORM_SYSTEM_FIELDS.has(explicit)) {
     return { destinationType: 'standard', destinationKey: explicit, confidence: 0.98 }
   }
 
@@ -4415,7 +4439,7 @@ function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping,
     importedIgnored: destinationType === 'ignored'
   }
 
-  if (destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
+  if (destinationType === 'standard' && IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
     settings.systemFieldKey = destinationKey
   } else if (destinationType !== 'ignored') {
     settings.customFieldKey = normalizeImportedFieldKey(fieldMapping?.customFieldKey || destinationKey, 'custom_field')
@@ -13436,8 +13460,8 @@ function cleanImportedFieldRoutePatch(currentField = {}, input = {}, definition 
 
   if (destinationType === 'standard') {
     const destinationKey = normalizeImportedFieldKey(input.destinationKey || input.destination_key, '')
-    if (!IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
-      const error = new Error('El dato de contacto seleccionado no es valido')
+    if (!IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
+      const error = new Error('El campo del sistema seleccionado no es valido')
       error.status = 400
       throw error
     }
@@ -19750,12 +19774,21 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  // HLS conserva las variantes de Bunny tanto en editor como en publicado. El
-  // modo noTrack solo apaga analítica; no debe degradar ni ocultar la reproducción.
-  const playerVideoUrl = resolvedStream?.playlistUrl || directVideoUrl
+  // En editor/preview preferimos el MP4 ya preparado en Storage: no depende de
+  // cargar hls.js dentro del iframe y permite revisar loop, autoplay y controles
+  // aun cuando el manifiesto Stream siga procesándose. El sitio publicado usa
+  // HLS para calidad adaptativa y conserva el MP4 como recuperación automática.
+  const preferStablePreviewSource = Boolean(context.noTrack && directVideoUrl)
+  const playerVideoUrl = preferStablePreviewSource
+    ? directVideoUrl
+    : (resolvedStream?.playlistUrl || directVideoUrl)
+  const fallbackSrc = !preferStablePreviewSource && resolvedStream?.playlistUrl
+    ? directVideoUrl
+    : ''
   if (playerVideoUrl) {
     return renderVideoPlayer(playerVideoUrl, block, settings, {
       noTrack: false,
+      fallbackSrc,
       tracking: {
         enabled: !context.noTrack,
         asset,
@@ -19808,10 +19841,15 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
     const liveStreamAsset = getLiveStreamAssetForStorageVideo(rawVideoUrl, context)
     const stream = getMediaAssetStreamMetadata(liveStreamAsset)
     const storageUrl = getDirectMediaAssetVideoUrl(liveStreamAsset)
-    const src = stream?.playlistUrl || storageUrl || directVideoUrl
+    const stableSrc = storageUrl || directVideoUrl
+    const preferStablePreviewSource = Boolean(context.noTrack && stableSrc)
+    const src = preferStablePreviewSource
+      ? stableSrc
+      : (stream?.playlistUrl || stableSrc)
     if (!src) return null
     return {
       src,
+      fallbackSrc: !preferStablePreviewSource && stream?.playlistUrl ? stableSrc : '',
       asset: liveStreamAsset || null,
       stream,
       provider: stream?.videoId ? 'bunny_stream' : 'html5_video'
@@ -19823,10 +19861,14 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
   const asset = getStorageAssetForStreamVideoUrl(embedVideoUrl, context)
   const stream = getMediaAssetStreamMetadata(asset) || getStreamMetadataForVideoUrl(embedVideoUrl, context)
   const storageUrl = getDirectMediaAssetVideoUrl(asset)
-  const src = stream?.playlistUrl || storageUrl
+  const preferStablePreviewSource = Boolean(context.noTrack && storageUrl)
+  const src = preferStablePreviewSource
+    ? storageUrl
+    : (stream?.playlistUrl || storageUrl)
   if (!src) return null
   return {
     src,
+    fallbackSrc: !preferStablePreviewSource && stream?.playlistUrl ? storageUrl : '',
     asset: asset || null,
     stream,
     provider: stream?.videoId ? 'bunny_stream' : 'html5_video'
@@ -24264,6 +24306,10 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   ].join(';')
 
   const videoSrc = options.noTrack ? appendNoTrackParam(src) : src
+  const fallbackVideoSrc = cleanString(options.fallbackSrc)
+  const usableFallbackVideoSrc = fallbackVideoSrc && fallbackVideoSrc !== videoSrc
+    ? fallbackVideoSrc
+    : ''
   const hlsSource = isHlsVideoUrl(videoSrc)
   const trackingEnabled = Boolean(options.tracking?.enabled)
   const trackingAttrs = buildVideoTrackingAttributes({
@@ -24280,6 +24326,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const videoSourceAttrs = [
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
+    usableFallbackVideoSrc ? `data-rstk-video-fallback-src="${escapeHtml(usableFallbackVideoSrc)}"` : '',
     `data-rstk-video-render-preview="${renderPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-editor-preview="${editorPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-adaptive-quality="${settings.videoAdaptiveQuality !== false ? 'true' : 'false'}"`,
@@ -27057,10 +27104,25 @@ function buildVideoPlayerRuntimeScript() {
 	        const video = host.querySelector('video');
 	        if (!video) return;
 	        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
+	        const fallbackSource = video.getAttribute('data-rstk-video-fallback-src') || '';
 	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
 	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
+	        let fallbackActivated = false;
+	        const activateFallback = () => {
+	          if (fallbackActivated || !fallbackSource || fallbackSource === source) return false;
+	          fallbackActivated = true;
+	          const activeHls = host.rstkHls;
+	          if (activeHls && typeof activeHls.destroy === 'function') {
+	            try { activeHls.destroy(); } catch (_) {}
+	          }
+	          host.rstkHls = null;
+	          video.src = fallbackSource;
+	          video.load();
+	          return true;
+	        };
 	        if (source && isHlsSource(source)) {
 	          if (canPlayNativeHls(video)) {
+	            video.addEventListener('error', activateFallback, { once: true });
 	            video.src = source;
 	            video.load();
 	          } else {
@@ -27068,12 +27130,19 @@ function buildVideoPlayerRuntimeScript() {
 	            video.load();
 	            loadHls().then(Hls => {
 	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
-	                video.src = source;
-	                video.load();
+	                if (!activateFallback()) {
+	                  video.src = source;
+	                  video.load();
+	                }
 	                return;
 	              }
 	              const hls = new Hls({ enableWorker: true, startLevel: adaptiveQuality ? -1 : undefined });
 	              host.rstkHls = hls;
+	              if (Hls.Events && Hls.Events.ERROR) {
+	                hls.on(Hls.Events.ERROR, (_event, data) => {
+	                  if (data && data.fatal) activateFallback();
+	                });
+	              }
 	              if (!adaptiveQuality && Hls.Events && Hls.Events.MANIFEST_PARSED) {
 	                hls.on(Hls.Events.MANIFEST_PARSED, () => {
 	                  const highestLevel = Math.max(0, ((hls.levels && hls.levels.length) || 1) - 1);
@@ -27085,8 +27154,10 @@ function buildVideoPlayerRuntimeScript() {
 	              hls.loadSource(source);
 	              hls.attachMedia(video);
 	            }).catch(() => {
-	              video.src = source;
-	              video.load();
+	              if (!activateFallback()) {
+	                video.src = source;
+	                video.load();
+	              }
 	            });
 	          }
 	        }
@@ -29030,6 +29101,7 @@ function renderImportedCustomVideoMedia(innerHtml = '', block = null, context = 
     'data-rstk-video-speed': attrs['data-rstk-video-speed'] || String(settings.videoDefaultSpeed || 1),
     'data-rstk-video-orientation-mode': attrs['data-rstk-video-orientation-mode'] || 'auto',
     ...(delivery?.src ? { 'data-rstk-video-src': delivery.src } : {}),
+    ...(delivery?.fallbackSrc ? { 'data-rstk-video-fallback-src': delivery.fallbackSrc } : {}),
     ...(delivery?.src && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
     title: attrs.title || block?.label || 'Video'
   }
@@ -32534,7 +32606,7 @@ function buildImportedAutomationFormResponses({ rawFields = {}, mappedFields = {
       value
     })
   })
-  ;['standard', 'custom', 'ignored'].forEach(section => {
+  ;['standard', 'system', 'custom', 'ignored'].forEach(section => {
     Object.entries(mappedFields?.[section] || {}).forEach(([key, value]) => {
       if (isEmptyImportedValue(value)) return
       setAutomationAnswerAlias(output.byKey, key, value)
@@ -33966,6 +34038,7 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
   const formMapping = getImportedFormMapping(imported, formId, { allowSingleLegacyFallback })
   const mappedFields = {
     standard: {},
+    system: {},
     custom: {},
     ignored: {}
   }
@@ -34010,6 +34083,18 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
       continue
     }
 
+    if (destinationType === 'standard' && NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(destinationKey)) {
+      mappedFields.system[destinationKey] = value
+      addImportedCustomField(customFields, {
+        ...field,
+        destinationKey,
+        customFieldKey: destinationKey,
+        customFieldLabel: getNativeSystemFieldLabel(destinationKey, field.label),
+        customFieldSyncTarget: 'none'
+      }, value, context)
+      continue
+    }
+
     mappedFields.custom[destinationKey] = value
     addImportedCustomField(customFields, { ...field, destinationKey }, value, context)
   }
@@ -34033,6 +34118,19 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
 
     if (inferred.destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(inferred.destinationKey)) {
       mappedFields.standard[inferred.destinationKey] = value
+      continue
+    }
+
+    if (inferred.destinationType === 'standard' && NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(inferred.destinationKey)) {
+      mappedFields.system[inferred.destinationKey] = value
+      addImportedCustomField(customFields, {
+        ...fallbackField,
+        destinationKey: inferred.destinationKey,
+        customFieldKey: inferred.destinationKey,
+        customFieldLabel: getNativeSystemFieldLabel(inferred.destinationKey, fallbackField.label),
+        customFieldSyncTarget: 'none',
+        confidence: inferred.confidence
+      }, value, context)
       continue
     }
 
@@ -34077,7 +34175,7 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
   const contactId = contactResult.contactId
   if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactResult
 
-  const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
+  const storageContext = {
     sourceType: 'imported_html',
     sourceId: imported?.id || '',
     sourceSiteId: site.id,
@@ -34085,7 +34183,29 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
     sourceFormId: formMapping?.formId || meta?.importedFormId || '',
     sourceFormName: formMapping?.formTitle || '',
     syncTarget: 'local'
-  })
+  }
+  const systemFields = customFields.filter(field => (
+    NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(cleanString(field?.fieldKey || field?.key))
+  ))
+  const userFields = customFields.filter(field => (
+    !NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(cleanString(field?.fieldKey || field?.key))
+  ))
+  const preparedFields = [
+    ...(userFields.length
+      ? await prepareContactCustomFieldsForStorage(userFields, storageContext)
+      : []),
+    ...(systemFields.length
+      ? await prepareContactCustomFieldsForStorage(systemFields.map(field => ({
+        ...field,
+        sourceType: 'system'
+      })), {
+        ...storageContext,
+        sourceType: 'system',
+        allowSystemContactCustomFields: true
+      })
+      : [])
+  ]
+  if (!preparedFields.length) return contactResult
   const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
   const merged = mergeContactCustomFields(
     parseContactCustomFields(existing?.custom_fields),

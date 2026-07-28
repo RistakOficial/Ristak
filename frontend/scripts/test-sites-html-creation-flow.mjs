@@ -119,6 +119,47 @@ assert.match(
   'el panel del asistente solo debe montarse cuando el usuario lo abra'
 )
 
+assert.match(
+  sitesSource,
+  /const \[codeEditorWidth, setCodeEditorWidth\] = useState\(0\)/,
+  'el editor de código de una página HTML debe iniciar oculto'
+)
+assert.match(
+  sitesSource,
+  /const \[nativeInspectorOpen, setNativeInspectorOpen\] = useState\(true\)/,
+  'el panel derecho de elementos detectados debe iniciar abierto'
+)
+assert.match(
+  sitesSource,
+  /aria-label=\{codeEditorCollapsed \? 'Abrir editor de código' : 'Ocultar editor de código'\}/,
+  'el encabezado de la vista debe abrir y ocultar el editor de código'
+)
+assert.doesNotMatch(
+  sitesSource,
+  /className=\{styles\.importedCodeResizeExpandButton\}/,
+  'el separador colapsado no debe conservar un segundo botón para abrir el código'
+)
+assert.match(
+  sitesStyles,
+  /\.importedCodeEditorPanelCodeCollapsed\s*\{\s*grid-template-columns:\s*0 0 minmax\(0, 1fr\);/,
+  'ocultar el código también debe eliminar el espacio del separador anterior'
+)
+assert.doesNotMatch(
+  sitesStyles,
+  /\.importedCodeResizeExpandButton/,
+  'los estilos del botón anterior no deben dejar una variante visual huérfana'
+)
+assert.match(
+  sitesSource,
+  /const codeEditorHasNativeInspector = Boolean\(importedNativeElementsPanel && nativeInspectorOpen\)/,
+  'la cuadrícula debe liberar el espacio del panel derecho cuando el usuario lo oculta'
+)
+assert.match(
+  sitesSource,
+  /aria-label=\{nativeInspectorOpen \? 'Ocultar panel derecho' : 'Mostrar panel derecho'\}/,
+  'el control del panel derecho debe comunicar claramente ambas acciones'
+)
+
 const importedFileHandlerSource = sourceBetween(
   'const handleImportHtmlFile = async',
   'const handleImportedContentUpdated ='
@@ -183,6 +224,48 @@ assert.match(
   sitesStyles,
   /\.importedFieldMappingStatus\s*\{[\s\S]*?justify-self:\s*end;[\s\S]*?\}/,
   'la etiqueta de estado no debe estirarse a todo el ancho de la cuadricula'
+)
+
+const importedSystemFieldOptionsSource = sourceBetween(
+  'const importedSystemFieldOptions = [',
+  'const normalizeImportedDestinationKey ='
+)
+const importedSystemFieldLabels = [...importedSystemFieldOptionsSource.matchAll(/label: '([^']+)'/g)]
+  .map(match => match[1])
+assert.deepEqual(
+  importedSystemFieldLabels,
+  [
+    'Nombre completo',
+    'Correo electrónico',
+    'Teléfono / WhatsApp',
+    'Ciudad',
+    'Dirección 1',
+    'Empresa',
+    'Nombre',
+    'Apellido',
+    'Mensaje o nota'
+  ],
+  'el selector debe priorizar identidad, contacto y ubicación antes de los destinos secundarios'
+)
+
+const importedFieldPrioritySource = sourceBetween(
+  'const getPrioritizedImportedSystemFieldOptions =',
+  'interface SitesLibraryPanelProps'
+)
+assert.match(
+  importedFieldPrioritySource,
+  /currentValue\.startsWith\('standard:'\)[\s\S]*?filter\(option => option\.value === selectedKey\)[\s\S]*?filter\(option => option\.value !== selectedKey\)/,
+  'la asociación de sistema detectada o elegida debe subir al primer lugar sin duplicarse'
+)
+assert.match(
+  importedFieldPrioritySource,
+  /currentValue\.startsWith\('custom:'\)[\s\S]*?filter\(field => field\.definitionId === selectedDefinitionId\)[\s\S]*?filter\(field => field\.definitionId !== selectedDefinitionId\)/,
+  'el campo personalizado existente ya asociado debe subir antes de los demás personalizados'
+)
+assert.match(
+  importedFieldMappingRowSource,
+  /<optgroup label="Campos del sistema">[\s\S]*?<optgroup label="Campos personalizados existentes">[\s\S]*?<optgroup label="Crear campo nuevo">/,
+  'los destinos existentes deben aparecer antes de la opción que crea un campo nuevo'
 )
 
 console.log('Sites HTML creation flow contract OK')

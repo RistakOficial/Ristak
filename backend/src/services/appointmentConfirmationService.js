@@ -5,12 +5,16 @@ import { classifyConfirmationResponse } from '../agents/appointmentConfirmationA
 import { sendAppNotificationPayload, sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
+import {
+  LEGACY_CONFIRMATION_SUCCESS_ACTIONS,
+  normalizeConfirmationSuccessActions,
+  serializeConfirmationSuccessActions
+} from './appointmentConfirmationActions.js'
 
 export { isAffirmativeReply }
 
 // Tiempo de espera tras el último mensaje del contacto antes de clasificar (2 minutos).
 const DEBOUNCE_MS = 2 * 60 * 1000
-const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 
 function makeWindowId() {
   return createRistakId('confirmation_window')
@@ -96,11 +100,6 @@ function buildStoredMessage({ text, receivedAt, messageId, fallbackReceivedAt })
   const cleanMessageId = String(messageId || '').trim()
   if (cleanMessageId) stored.messageId = cleanMessageId
   return stored
-}
-
-function normalizeConfirmationSuccessAction(value) {
-  const clean = String(value || '').trim()
-  return CONFIRMATION_SUCCESS_ACTIONS.has(clean) ? clean : 'chat_card'
 }
 
 function confirmationMessagesAppendExpression() {
@@ -257,7 +256,10 @@ export async function handleInboundForConfirmation({
     makeWindowId(), id, pending.appointment_id, pending.send_id,
     JSON.stringify(storedMessage ? [storedMessage] : []),
     bypassAutomations ? 1 : 0,
-    normalizeConfirmationSuccessAction(pending.confirmation_success_action),
+    serializeConfirmationSuccessActions(
+      pending.confirmation_success_action,
+      LEGACY_CONFIRMATION_SUCCESS_ACTIONS
+    ),
     now, now, now
   ])
   logger.info(`[Confirmación IA] Respuesta acumulada para contacto ${id}, cita ${pending.appointment_id}`)
@@ -420,10 +422,13 @@ async function processConfirmationWindow(candidate, cutoff) {
     `, [appointmentId])
     publishAppointmentChanged(contactId, appointmentId)
     await resyncAppointmentToGoogle(appointmentId)
-    await executeConfirmationSuccessAction({
+    await executeConfirmationSuccessActions({
       contactId,
       appointmentId,
-      action: normalizeConfirmationSuccessAction(win.confirmation_success_action || reminderData?.confirmation_success_action),
+      actions: normalizeConfirmationSuccessActions(
+        win.confirmation_success_action || reminderData?.confirmation_success_action,
+        LEGACY_CONFIRMATION_SUCCESS_ACTIONS
+      ),
       resultDetail,
       reminderData
     })
@@ -470,8 +475,11 @@ async function processConfirmationWindow(candidate, cutoff) {
   }
 }
 
-async function executeConfirmationSuccessAction({ contactId, appointmentId, action, resultDetail, reminderData }) {
-  const normalizedAction = normalizeConfirmationSuccessAction(action)
+async function executeConfirmationSuccessActions({ contactId, appointmentId, actions, resultDetail, reminderData }) {
+  const normalizedActions = normalizeConfirmationSuccessActions(
+    actions,
+    LEGACY_CONFIRMATION_SUCCESS_ACTIONS
+  )
   const appointment = await db.get(`
     SELECT a.id, a.title, a.start_time, a.calendar_id, a.contact_id, c.first_name, c.full_name
     FROM appointments a
@@ -482,7 +490,7 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
   const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
   const appointmentTitle = String(appointment?.title || 'cita').trim()
 
-  if (normalizedAction === 'chat_badge') {
+  if (normalizedActions.includes('chat_badge')) {
     await db.run(`
       UPDATE appointments
       SET confirmation_badge_until = COALESCE(start_time, ?), date_updated = CURRENT_TIMESTAMP
@@ -490,10 +498,9 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
     `, [new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), appointmentId])
     publishAppointmentChanged(contactId, appointmentId)
     logger.info(`[Confirmación IA] Etiqueta visual temporal activada para cita ${appointmentId}`)
-    return
   }
 
-  if (normalizedAction === 'notify_push') {
+  if (normalizedActions.includes('notify_push')) {
     await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
       appointmentId,
       contactId,
@@ -506,10 +513,9 @@ async function executeConfirmationSuccessAction({ contactId, appointmentId, acti
       logger.warn(`[Confirmación IA] No se pudo enviar push de cita confirmada: ${error.message}`)
     })
     logger.info(`[Confirmación IA] Notificación de confirmación enviada para cita ${appointmentId}`)
-    return
   }
 
-  if (normalizedAction === 'chat_card') {
+  if (normalizedActions.includes('chat_card')) {
     logger.info(`[Confirmación IA] Tarjeta de confirmación disponible en journey para cita ${appointmentId}`)
   }
 }

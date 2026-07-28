@@ -160,9 +160,18 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   lleguen al agente conversacional o a automatizaciones. No se reproducen al
   terminar; si el negocio necesita contestar preguntas logísticas debe dejarlo
   apagado.
-- Cuando la IA confirma, siempre cambia el estado real de la cita y ejecuta
-  únicamente el aviso seleccionado: tarjeta, push, etiqueta o sólo marcar.
-  Elegir tarjeta/etiqueta/solo marcar no manda también un push oculto.
+- Cuando la IA confirma, siempre cambia el estado real de la cita. El editor usa
+  `CheckboxMultiSelect` para combinar tarjeta en el chat, push y etiqueta
+  temporal `Asistirá a cita`; **Marcar la cita como confirmada** permanece
+  seleccionado porque es el resultado obligatorio de este modo.
+- Al activar **Usar como confirmación de cita**, las cuatro acciones visibles
+  nacen seleccionadas. Las filas históricas que guardaban una sola acción
+  conservan sólo ese aviso adicional al normalizarse, para no activar pushes o
+  etiquetas silenciosamente.
+- `confirmation_success_action` conserva su nombre histórico, pero las
+  configuraciones nuevas guardan un arreglo JSON ordenado. El backend sigue
+  aceptando valores escalares anteriores y la consulta del journey reconoce
+  ambos formatos.
 - Con IA apagada, una respuesta afirmativa simple sigue confirmando la cita sin
   abrir una ventana; las acciones para interpretar negativas quedan ocultas.
 - Si el switch está apagado, el mensaje se guarda como `messageType: 'reminder'`

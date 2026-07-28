@@ -127,7 +127,21 @@ teléfono, la solicitud tiene `allowQrFallback=true` y el fallo confirma pérdid
 de conexión/autorización, suspensión, restricción o límite del transporte. No
 aplica a ventana cerrada, plantilla no aprobada, destinatario, contenido,
 `131047`, `131053`, timeout, red ni HTTP 5xx. Campañas/broadcasts siempre usan
-`allowQrFallback=false`.
+`allowQrFallback=false`. Existe una excepción deliberadamente estrecha para una
+plantilla que la API aceptó y el proveedor después rechazó por validación
+estructural de variables, cuerpo, componentes o idioma. El código numérico no
+decide porque cambia entre proveedores y versiones: el mensaje del fallo debe
+contener tanto el elemento estructural como una señal inequívoca de desajuste,
+ausencia o invalidez. Si el intento original autorizó QR, tiene texto
+renderizado, ocurrió hace menos de 15 minutos y el respaldo está listo, Ristak
+manda ese mismo texto por QR.
+
+La excepción semántica excluye expresamente timeout, red, HTTP 408/429/5xx,
+errores temporales o reintentables, ventana de conversación, destinatario y
+multimedia. También excluye el estado local pendiente/rechazado/no aprobado de
+una plantilla: el fallback no sirve para saltarse la revisión de Meta. Un código
+desconocido con un error estructural definitivo sí puede aplicar; un código
+conocido con texto ambiguo no.
 
 Los nodos de WhatsApp en Automatizaciones y los recordatorios/avisos de Citas
 autorizan este ruteo estricto automáticamente. En esas superficies,
@@ -140,9 +154,13 @@ oficiales cuando existe API; estar pendientes/rechazadas o tener la ventana de
 explícita de fallback.
 
 El webhook es un observador: persiste estados y puede marcar la API restringida
-para solicitudes futuras, pero jamás origina un envío QR. Si una solicitud fue
-aceptada y después llega `failed`, se conserva como fallo API. Esta frontera
-evita que un evento tardío mande una segunda copia sin autorización.
+para solicitudes futuras; un `failed` posterior normalmente se conserva como
+fallo API. La única excepción es el rechazo estructural definitivo de plantilla
+descrito arriba. `whatsapp_api_qr_fallback_attempts` reclama el mensaje antes de
+tocar Baileys y deja una barrera `at-most-once`: webhooks duplicados o
+concurrentes no pueden mandar una segunda copia. Un intento QR que falla después
+del claim no se reintenta automáticamente porque ya no se puede probar con
+certeza que WhatsApp Web no lo aceptó.
 
 ## Matriz de implementaciones
 
@@ -198,6 +216,11 @@ Compatibilidad histórica:
 - `whatsapp_api_webhook_events.provider` separa eventos YCloud y Meta directo.
 - `whatsapp_api_template_sends` conserva `provider`, `source_adapter` y
   `provider_message_id` además de los campos legacy.
+- `whatsapp_api_template_sends.qr_fallback_authorized` congela la autorización
+  de la solicitud original; nunca se infiere después por tener un QR conectado.
+- `whatsapp_api_qr_fallback_attempts` es el claim y auditoría durable de la
+  excepción semántica de validación estructural. Su PK es el mensaje API
+  canónico.
 - `whatsapp_api_contacts` conserva teléfono y, cuando el proveedor los entregue,
   `whatsapp_user_id`, `parent_whatsapp_user_id` y `username`.
 - Después del rollout de BSUID, no se debe asumir que el teléfono es el único
@@ -390,7 +413,11 @@ nuevo sigue el flujo estándar de Cloud API.
    pero solo un proveedor API debe ser el remitente activo para un número en un
    momento dado. No se debe enviar el mismo request por ambos “por seguridad”.
 7. Baileys puede ser fallback explícito. El resultado final debe registrar
-   `transport=qr` y `source_adapter=baileys`.
+   `transport=qr` y `source_adapter=baileys`. Para un rechazo asíncrono
+   estructural y definitivo de plantilla, debe actualizar la misma fila canónica,
+   preservar el ID oficial en `ycloud_message_id`/`meta_message_id` y reclamar
+   primero `whatsapp_api_qr_fallback_attempts`. El código de error se audita, pero
+   no gobierna la clasificación.
 8. La preferencia global del tenant no decide el proveedor de salida. Cada
    mensaje usa el proveedor de la fila `phoneNumberId` elegida.
 9. Al arrancar una versión que introduce la identidad de protocolo, Ristak
@@ -563,7 +590,10 @@ user de Meta ni la API key de YCloud.
 - Esquema compatible con instalaciones existentes:
   `backend/src/config/database.js` y
   `backend/migrations/versioned/031_whatsapp_provider_foundation.sql` más
-  `032_whatsapp_template_provider_foundation.sql`.
+  `032_whatsapp_template_provider_foundation.sql`. El claim idempotente del
+  fallback de plantillas vive en
+  `135_whatsapp_template_qr_fallback.sqlite.sql` /
+  `135a_whatsapp_template_qr_fallback.postgres.sql`.
 
 ## Checklist operativo de Meta directo
 

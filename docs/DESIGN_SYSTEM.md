@@ -145,6 +145,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |
 | Switch / toggle | `<Switch>` (recipe `[data-sw]`) | un checkbox estilizado a mano |
 | Select enriquecido | `<CustomSelect>` | — |
+| Select múltiple con checks | `<CheckboxMultiSelect>`; usa `disabled` en opciones obligatorias | un dropdown local con checkboxes propios |
 | Fecha individual en escritorio | `<DatePicker>`; recibe y devuelve `YYYY-MM-DD`, admite `min`/`max` y portalea el calendario sobre modales | un `<input type="date">` transparente o un calendario local de página |
 | Código telefónico internacional | `<PhoneCountryCodeSelect>`; muestra únicamente bandera + código (`🇲🇽 +52`) | un select local que agregue el nombre del país |
 | Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |

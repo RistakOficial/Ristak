@@ -50,6 +50,7 @@ function storedMessageTexts(raw) {
 
 async function withConfirmationFixture({
   confirmationSuccessAction = 'chat_card',
+  confirmationSuccessActions,
   noConfirmAction = 'no_action',
   aiEnabled = true,
   bypassAutomations = true
@@ -79,7 +80,9 @@ async function withConfirmationFixture({
       name: `Confirmacion IA ${suffix}`,
       messageType: 'confirmation',
       aiEnabled,
-      confirmationSuccessAction,
+      ...(confirmationSuccessActions
+        ? { confirmationSuccessActions }
+        : { confirmationSuccessAction }),
       noConfirmAction,
       bypassAutomations,
       offsetValue: 1,
@@ -138,7 +141,10 @@ test('confirmacion IA espera el ultimo mensaje del contacto y clasifica tras 2 m
       [contactId, appointmentId]
     )
     assert.equal(window.status, 'waiting')
-    assert.equal(window.confirmation_success_action, 'chat_badge')
+    assert.deepEqual(
+      JSON.parse(window.confirmation_success_action),
+      ['chat_badge', 'mark_confirmed']
+    )
     assert.equal(Number(window.message_revision), 2)
     assert.deepEqual(storedMessageTexts(window.accumulated_messages), ['Si confirmo', 'ahi estare'])
 
@@ -344,6 +350,57 @@ test('accion notify_push envia payload push cuando la IA detecta confirmacion', 
     assert.equal(appointment.status, 'confirmed')
     assert.equal(appointment.appointment_status, 'confirmed')
     assert.equal(appointment.confirmation_badge_until, null)
+  })
+})
+
+test('acciones múltiples ejecutan tarjeta, push y etiqueta en una sola confirmación', async () => {
+  await withConfirmationFixture({
+    confirmationSuccessActions: ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+  }, async ({ contactId, appointmentId, startTime }) => {
+    const payloads = []
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó todas las acciones'
+    }))
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    await handleInboundForConfirmation({ contactId, text: 'Sí, nos vemos allá' })
+    const window = await db.get(
+      `SELECT id, confirmation_success_action
+       FROM appointment_confirmation_windows
+       WHERE contact_id = ? AND appointment_id = ?`,
+      [contactId, appointmentId]
+    )
+    assert.deepEqual(
+      JSON.parse(window.confirmation_success_action),
+      ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+    )
+
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    const appointment = await db.get(
+      'SELECT status, appointment_status, confirmation_badge_until FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.status, 'confirmed')
+    assert.equal(appointment.appointment_status, 'confirmed')
+    assert.equal(appointment.confirmation_badge_until, startTime)
+    assert.equal(payloads.length, 1)
+    assert.equal(payloads[0].payload.category, 'appointment_confirmed')
+
+    const res = makeResponseRecorder()
+    await getContactJourney({ params: { id: contactId }, query: {} }, res)
+    const card = res.payload.data.find(event => (
+      event.type === 'appointment_confirmation' &&
+      event.data?.appointment_id === appointmentId
+    ))
+    assert.ok(card)
+    assert.equal(card.data.result_detail, 'Confirmó todas las acciones')
   })
 })
 

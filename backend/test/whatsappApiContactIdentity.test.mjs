@@ -25,6 +25,7 @@ import {
   runYCloudHistoryBackfillBatch,
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiReactionMessage,
+  sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
   setYCloudFetchForTest,
   syncYCloudContacts,
@@ -1682,7 +1683,7 @@ test('un timeout o 5xx ambiguo de API nunca dispara tambien el respaldo QR', asy
   }
 })
 
-test('un fallo reportado dentro del webhook nunca origina un segundo envío QR', async () => {
+test('fallos genéricos o de restricción reportados por API no originan un segundo envío QR', async () => {
   const id = randomUUID()
   const phone = `+52994${Date.now().toString().slice(-7)}`
   const businessPhone = '+526561000002'
@@ -1852,6 +1853,379 @@ test('un fallo reportado dentro del webhook nunca origina un segundo envío QR',
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ?', [restrictionMessageId]).catch(() => undefined)
     await cleanup({ contactId, messageId: ycloudMessageId, phone })
+  }
+})
+
+test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el código', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52992${suffix}`
+  const semanticPhone = `+52994${suffix}`
+  const ambiguousPhone = `+52995${suffix}`
+  const recipientPhone = `+52996${suffix}`
+  const blockedPhone = `+52993${suffix}`
+  const businessPhone = `+52657${suffix}`
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const phoneNumberId = `phone_template_132000_${id}`
+  const contactId = `rstk_contact_template_132000_${id}`
+  const semanticContactId = `rstk_contact_template_semantic_${id}`
+  const ambiguousContactId = `rstk_contact_template_ambiguous_${id}`
+  const recipientContactId = `rstk_contact_template_recipient_${id}`
+  const blockedContactId = `rstk_contact_template_132000_blocked_${id}`
+  const templateId = `template_132000_${id}`
+  const templateName = `seguimiento_132000_${id.replace(/-/g, '_')}`
+  const providerMessageId = `ycloud_template_132000_${id}`
+  const semanticProviderMessageId = `ycloud_template_semantic_${id}`
+  const ambiguousProviderMessageId = `ycloud_template_ambiguous_${id}`
+  const recipientProviderMessageId = `ycloud_template_recipient_${id}`
+  const blockedProviderMessageId = `ycloud_template_132000_blocked_${id}`
+  const errorMessage = 'body: number of localizable_params (1) does not match the expected number of params (2)'
+  const renderedText = 'Hola Eduardo, oye una pregunta... ¿en dónde me encontraste?'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [
+    keys.enabled,
+    keys.apiKey,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.provider,
+    'whatsapp_qr_drip_settings'
+  ]
+  const sentMessages = []
+  let nextProviderMessageId = providerMessageId
+
+  const processFailure = async ({
+    eventId,
+    messageId,
+    toPhone,
+    errorCode = '132000',
+    failureMessage = errorMessage
+  }) => {
+    const payload = {
+      id: eventId,
+      type: 'whatsapp.message.updated',
+      apiVersion: 'v2',
+      createTime: new Date().toISOString(),
+      whatsappMessage: {
+        id: messageId,
+        wamid: `wamid.${messageId}`,
+        status: 'failed',
+        from: businessPhone,
+        to: toPhone,
+        wabaId: 'waba_template_132000',
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: 'es_MX' }
+        },
+        errorCode,
+        errorMessage: failureMessage,
+        createTime: new Date().toISOString()
+      }
+    }
+    return processYCloudWhatsAppWebhook({
+      payload,
+      rawBody: JSON.stringify(payload),
+      signatureHeader: '',
+      endpointId: ''
+    })
+  }
+
+  await cleanup({ contactId, phone })
+  await cleanup({ contactId: semanticContactId, phone: semanticPhone })
+  await cleanup({ contactId: ambiguousContactId, phone: ambiguousPhone })
+  await cleanup({ contactId: recipientContactId, phone: recipientPhone })
+  await cleanup({ contactId: blockedContactId, phone: blockedPhone })
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run(`
+    DELETE FROM whatsapp_api_alerts
+    WHERE entity_id IN (?, ?, 'business_account')
+  `, [phoneNumberId, 'waba_template_132000']).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_template_132000_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_template_132000')
+      await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig('whatsapp_qr_drip_settings', {
+        enabled: false,
+        delaySeconds: 30,
+        delayUnit: 'seconds'
+      })
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status,
+          qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_template_132000', ?, ?, 'Template 132000 Test',
+          1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_sessions (
+          id, phone_number_id, expected_phone, connected_phone, status,
+          consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [`qr_${phoneNumberId}`, phoneNumberId, businessPhone, businessPhone, QR_CONSENT_TEXT])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+        VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+      `, [phoneNumberId, JSON.stringify({ me: { id: connectedJid }, registered: true })])
+
+      const components = [{
+        type: 'BODY',
+        text: 'Hola {{1}}, oye una pregunta... ¿en dónde me encontraste?'
+      }]
+      await db.run(`
+        INSERT INTO whatsapp_api_templates (
+          id, official_template_id, provider_template_id, provider, source_adapter,
+          waba_id, name, language, status, components_json, raw_payload_json
+        ) VALUES (?, ?, ?, 'ycloud', 'ycloud', 'waba_template_132000', ?, 'es_MX',
+          'APPROVED', ?, ?)
+      `, [
+        templateId,
+        `official_${id}`,
+        `provider_${id}`,
+        templateName,
+        JSON.stringify(components),
+        JSON.stringify({ components })
+      ])
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({
+        connectedJid,
+        sentMessages,
+        ackDelayMs: 0
+      }))
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        if (parsed.pathname.endsWith('/whatsapp/messages') && String(options.method || '').toUpperCase() === 'POST') {
+          const requestBody = JSON.parse(options.body || '{}')
+          return ycloudJsonResponse({
+            id: nextProviderMessageId,
+            from: businessPhone,
+            to: requestBody.to,
+            status: 'accepted',
+            type: 'template',
+            template: requestBody.template,
+            createTime: new Date().toISOString()
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      await sendWhatsAppApiTemplateMessage({
+        to: phone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      assert.equal(sentMessages.length, 0)
+      assert.equal(await db.get(`
+        SELECT qr_fallback_authorized
+        FROM whatsapp_api_template_sends
+        WHERE provider_message_id = ?
+      `, [providerMessageId]).then(row => row?.qr_fallback_authorized), 1)
+
+      await Promise.all([
+        processFailure({
+          eventId: `evt_template_132000_a_${id}`,
+          messageId: providerMessageId,
+          toPhone: phone
+        }),
+        processFailure({
+          eventId: `evt_template_132000_b_${id}`,
+          messageId: providerMessageId,
+          toPhone: phone
+        })
+      ])
+
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, renderedText)
+
+      const fallbackRow = await db.get(`
+        SELECT provider, source_adapter, provider_message_id, ycloud_message_id,
+               transport, routing_reason, status, error_code, error_message,
+               message_text, raw_payload_json
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [providerMessageId])
+      assert.equal(fallbackRow.provider, 'ycloud')
+      assert.equal(fallbackRow.source_adapter, 'baileys')
+      assert.equal(fallbackRow.provider_message_id, sentMessages[0].id)
+      assert.equal(fallbackRow.transport, 'qr')
+      assert.match(fallbackRow.routing_reason, /antes de entregarla/)
+      assert.ok(['sent', 'delivered'].includes(fallbackRow.status))
+      assert.equal(fallbackRow.error_code, null)
+      assert.equal(fallbackRow.error_message, null)
+      assert.equal(fallbackRow.message_text, renderedText)
+      assert.equal(JSON.parse(fallbackRow.raw_payload_json).qrFallback.applied, true)
+
+      const attempt = await db.get(`
+        SELECT status, attempt_count, qr_message_id
+        FROM whatsapp_api_qr_fallback_attempts
+        WHERE api_message_id = (
+          SELECT id FROM whatsapp_api_messages WHERE ycloud_message_id = ?
+        )
+      `, [providerMessageId])
+      assert.equal(attempt.status, 'sent')
+      assert.equal(attempt.attempt_count, 1)
+      assert.equal(attempt.qr_message_id, sentMessages[0].id)
+
+      await processFailure({
+        eventId: `evt_template_132000_c_${id}`,
+        messageId: providerMessageId,
+        toPhone: phone
+      })
+      assert.equal(sentMessages.length, 1)
+
+      nextProviderMessageId = semanticProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: semanticPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: semanticContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_semantic_${id}`,
+        messageId: semanticProviderMessageId,
+        toPhone: semanticPhone,
+        errorCode: '987654',
+        failureMessage: 'Template body parameters are invalid: expected 2 but received 1.'
+      })
+      assert.equal(sentMessages.length, 2)
+      assert.equal(sentMessages[1].payload.text, renderedText)
+      assert.equal(await db.get(`
+        SELECT transport
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [semanticProviderMessageId]).then(row => row?.transport), 'qr')
+
+      nextProviderMessageId = ambiguousProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: ambiguousPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: ambiguousContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_ambiguous_${id}`,
+        messageId: ambiguousProviderMessageId,
+        toPhone: ambiguousPhone,
+        errorCode: '599',
+        failureMessage: 'Template body parameters are invalid after an upstream timeout; retry later.'
+      })
+      assert.equal(sentMessages.length, 2)
+      const ambiguousRow = await db.get(`
+        SELECT id, transport, status
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [ambiguousProviderMessageId])
+      assert.equal(ambiguousRow.transport, 'api')
+      assert.equal(ambiguousRow.status, 'failed')
+      assert.equal(await db.get(`
+        SELECT COUNT(*) AS total
+        FROM whatsapp_api_qr_fallback_attempts
+        WHERE api_message_id = ?
+      `, [ambiguousRow.id]).then(row => Number(row?.total || 0)), 0)
+
+      nextProviderMessageId = recipientProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: recipientPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: recipientContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_recipient_${id}`,
+        messageId: recipientProviderMessageId,
+        toPhone: recipientPhone,
+        errorCode: '777777',
+        failureMessage: 'Template body is unavailable because the recipient blocked this business.'
+      })
+      assert.equal(sentMessages.length, 2)
+      assert.equal(await db.get(`
+        SELECT transport
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [recipientProviderMessageId]).then(row => row?.transport), 'api')
+
+      nextProviderMessageId = blockedProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: blockedPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: blockedContactId,
+        phoneNumberId,
+        allowQrFallback: false
+      })
+      assert.equal(await db.get(`
+        SELECT qr_fallback_authorized
+        FROM whatsapp_api_template_sends
+        WHERE provider_message_id = ?
+      `, [blockedProviderMessageId]).then(row => row?.qr_fallback_authorized), 0)
+
+      await processFailure({
+        eventId: `evt_template_132000_blocked_${id}`,
+        messageId: blockedProviderMessageId,
+        toPhone: blockedPhone
+      })
+      assert.equal(sentMessages.length, 2)
+
+      const blockedRow = await db.get(`
+        SELECT id, transport, status, error_code, error_message
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [blockedProviderMessageId])
+      assert.equal(blockedRow.transport, 'api')
+      assert.equal(blockedRow.status, 'failed')
+      assert.equal(blockedRow.error_code, '132000')
+      assert.equal(blockedRow.error_message, errorMessage)
+      assert.equal(await db.get(`
+        SELECT COUNT(*) AS total
+        FROM whatsapp_api_qr_fallback_attempts
+        WHERE api_message_id = ?
+      `, [blockedRow.id]).then(row => Number(row?.total || 0)), 0)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_id = ?', [templateId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId]).catch(() => undefined)
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run(`
+      DELETE FROM whatsapp_api_alerts
+      WHERE entity_id IN (?, ?, 'business_account')
+    `, [phoneNumberId, 'waba_template_132000']).catch(() => undefined)
+    await cleanup({ contactId, phone })
+    await cleanup({ contactId: semanticContactId, phone: semanticPhone })
+    await cleanup({ contactId: ambiguousContactId, phone: ambiguousPhone })
+    await cleanup({ contactId: recipientContactId, phone: recipientPhone })
+    await cleanup({ contactId: blockedContactId, phone: blockedPhone })
   }
 })
 

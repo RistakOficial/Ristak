@@ -1840,7 +1840,15 @@ contenido o destinatario, `131047`, `131053`, timeout, red o HTTP 5xx jamás
 autorizan Baileys. La ventana cerrada exige plantilla oficial. Sólo una
 indisponibilidad inequívoca del transporte (desconexión, autorización perdida,
 suspensión/restricción o límite confirmado) permite el respaldo. Cuando Meta
-pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando.
+pierde permisos, sólo su fila queda inactiva y YCloud/QR continúan operando. La
+única excepción de contenido es una plantilla aceptada y luego rechazada por una
+validación estructural inequívoca de variables, cuerpo, componentes o idioma.
+Como ese mensaje nunca pudo entregarse, Ristak puede enviar su texto renderizado
+por QR si la solicitud original lo autorizó, el QR está listo y no han pasado
+15 minutos. El código numérico se conserva para auditoría, pero no decide: puede
+variar entre proveedor y versión. Timeouts, red, HTTP 408/429/5xx, fallos
+temporales, destinatario, ventana y multimedia quedan fuera aunque el texto
+también mencione una plantilla.
 
 Esta prioridad es independiente del orden de conexión. Cuando termina de
 conectarse cualquier proveedor registrado como API oficial, el backend marca esa
@@ -1937,7 +1945,13 @@ contacto; nunca debe requerir varios toques para apagar el mismo agente en
 WhatsApp y SMS.
 
 Un webhook sólo concilia estado y puede marcar la API como restringida para
-solicitudes futuras; nunca origina por sí mismo un reenvío QR. Campañas y
+solicitudes futuras. La única excepción que puede originar respaldo es el
+rechazo estructural definitivo de una plantilla que la API aceptó pero nunca
+entregó. La clasificación exige en el texto del proveedor un elemento de
+variables/cuerpo/componentes/idioma y una señal inequívoca de desajuste, ausencia
+o invalidez; no depende de un número exacto. Antes de mandar por QR, el backend
+exige la autorización congelada del envío original y crea un claim durable por
+mensaje; eventos repetidos o concurrentes no envían otra copia. Campañas y
 acciones masivas usan `allowQrFallback=false`: si la API falla, el lote registra
 el error y se detiene sin derramarse a Baileys.
 
@@ -2950,16 +2964,25 @@ Cuando una solicitud saliente intenta WhatsApp API oficial por YCloud o Meta
 Direct y recibe una indisponibilidad inequívoca, `whatsappApiService` puede usar
 el QR asociado al mismo teléfono sólo si esa solicitud tenía
 `allowQrFallback=true`. La decisión y el envío ocurren dentro de esa única
-solicitud; ninguna capa superior vuelve a interpretar texto de errores y ningún
-webhook manda mensajes. Si el proveedor aceptó la solicitud y después reporta
-`failed`, se conserva el fallo API: no se crea un segundo envío silencioso.
+solicitud y ninguna capa superior vuelve a interpretar texto de errores. Si el
+proveedor aceptó la solicitud y después reporta `failed`, se conserva el fallo
+API, salvo una plantilla con un rechazo estructural definitivo de variables,
+cuerpo, componentes o idioma. El número del error puede cambiar; el texto debe
+demostrar el tipo de validación y que fue un rechazo inequívoco. En esa excepción,
+el webhook puede mandar el texto renderizado por QR dentro de los primeros 15
+minutos, únicamente con autorización original y claim `at-most-once`; la misma
+fila cambia a `transport=qr`, conserva el ID oficial para auditoría y la UI
+muestra un solo globo.
 
 La ventana cerrada, una plantilla pendiente/rechazada, errores de contenido o
 media (`131053`) y errores de conversación (`131047`) no son indisponibilidad de
-la API y nunca cambian a QR. Para texto o media fuera de 24 horas, el flujo se
-detiene y ofrece una plantilla oficial. Si un fallback legítimo confirma el
-envío, el historial registra el transporte real `qr` y la UI muestra un solo
-globo; no se oculta una segunda fila para aparentar deduplicación.
+la API y nunca cambian a QR; la validación estructural definitiva anterior es la
+única excepción de contenido. Tampoco cambian a QR los timeout, errores de red,
+HTTP 408/429/5xx o respuestas temporales/reintentables. Para texto o media fuera
+de 24 horas, el flujo se detiene y ofrece una plantilla oficial. Si un fallback
+legítimo confirma el envío, el historial registra el transporte real `qr` y la
+UI muestra un solo globo; no se oculta una segunda fila para aparentar
+deduplicación.
 Una vez que Baileys devuelve `key.id`, el request manual responde `sent` sin
 esperar hasta 20 segundos por `delivered`/`read`. Los ACK posteriores se guardan
 en background y actualizan la misma fila; si el ACK llega antes del INSERT, el
@@ -3889,7 +3912,16 @@ Una cuenta nueva recibe una sola fila inicial: `Confirmación 1 día antes`, con
 nada hasta que el usuario revise y active su configuracion. Esta fila lleva
 `system_key='default_one_day_before'` y un índice único parcial. Así dos
 instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Además,
-cada mensaje automático guarda una `schedule_key` única compuesta por el ancla
+cada confirmación nueva selecciona por defecto sus acciones combinables:
+tarjeta en el chat, notificación push, etiqueta temporal `Asistirá a cita` y
+marcar la cita como confirmada. Esta última es obligatoria; las otras tres se
+pueden activar o quitar desde un dropdown con checks. Las filas históricas
+conservan su único aviso anterior para evitar efectos nuevos silenciosos. La
+columna `confirmation_success_action` acepta ese valor escalar legado o el
+arreglo JSON nuevo, y las ventanas de confirmación guardan una copia de la
+selección vigente al recibir la respuesta.
+
+Cada mensaje automático guarda una `schedule_key` única compuesta por el ancla
 (`before_appointment` o `after_booking`) y la duración normalizada en
 milisegundos. Dos configuraciones que caerían en el mismo momento —por ejemplo,
 `60 minutos antes` y `1 hora antes`— se consideran el mismo horario sin importar
@@ -4833,6 +4865,13 @@ deteccion. El usuario tambien puede pedirle al asistente que devuelva el HTML
 completo modificado. El codigo de cada pagina se puede pegar y editar
 directamente; el preview no modifica copy, imagenes, botones, campos o secciones
 por si solo y solo permite seleccionar slots funcionales de Ristak.
+Al entrar a una pagina HTML, el editor de codigo izquierdo inicia oculto para
+dar prioridad a la vista previa. El encabezado de la vista muestra
+`Abrir editor de código` y, mientras el panel esta visible,
+`Ocultar editor`; al reabrirlo recupera el ultimo ancho utilizado.
+El inspector derecho de contenido y elementos detectados inicia abierto y tiene
+su propio control para ocultarse o mostrarse sin cambiar el estado del editor de
+codigo.
 
 Al crear un sitio web, la pantalla inicial muestra solo tres caminos en una misma
 fila: `En blanco`, `Desde plantilla` y `Crear desde HTML`. La última opción
@@ -5216,9 +5255,12 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   estándar, backend crea además el espejo Storage sin cargar el archivo completo
   en memoria. El perfil premium conserva el máster en Stream y no lo descarga ni
   lo vuelve a subir a través de Render: preview y publicado consumen HLS directo.
-  Editor, preview y publicado usan la playlist HLS validada de Stream dentro del
-  mismo reproductor, sin importar si existe además un espejo Storage; un asset
-  sin HLS usa Storage como fallback. Publicar nunca
+  Publicado usa la playlist HLS validada de Stream dentro del mismo reproductor.
+  Editor y preview prefieren el espejo MP4 de Storage cuando existe para no
+  depender de hls.js ni de un manifiesto todavía en proceso; un asset premium
+  Stream-only conserva HLS porque deliberadamente no tiene copia. Cuando
+  publicado elige HLS, conecta además el MP4 como recuperación automática ante
+  un error fatal, falta de soporte o falla de carga del runtime. Publicar nunca
   sustituye un video nativo listo por el iframe visual de Stream: conserva
   exactamente el botón, colores, barra, controles, acciones y formulario
   configurados. Editor y preview mantienen tracking apagado; publicado envía los
@@ -5228,7 +5270,8 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
   aviso de sonido y formulario sobre video. El runtime de acciones por tiempo es
   adicional y no sustituye al runtime del reproductor. La vista `srcDoc` embebida
-  dentro del editor carga el mismo MP4/HLS y respeta preview, loop, autoplay,
+  dentro del editor carga el MP4 estable o, para Stream-only, HLS, y respeta
+  preview, loop, autoplay,
   controles y animaciones para que la edición sea fiel al resultado publicado.
   Solo usa `preload="none"` y detiene la reproducción cuando el usuario activa
   explícitamente **No reproducir mientras se edita**. El tracking permanece
@@ -5267,8 +5310,9 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   Cancelar elimina la reserva y el video
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
-  legacy respaldados solo por Storage conservan ese MP4 como fallback dentro del
-  reproductor nativo de Ristak en editor y publicado. Player.js queda como compatibilidad
+  legacy respaldados solo por Storage conservan ese MP4 dentro del reproductor
+  nativo de Ristak. Los videos estándar sincronizados lo usan directamente en
+  editor/preview y como recuperación automática de HLS en publicado. Player.js queda como compatibilidad
   para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
   externos sin archivo Storage asociado; las acciones del reproductor nativo se
   conectan directamente al elemento de video.
@@ -5531,7 +5575,8 @@ sigue siendo media opaca para Ristak. Pago tambien permanece siempre nativo porq
 la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo. Los videos
-cargan MP4 o HLS, reproducen el loop configurado y mantienen tracking apagado;
+cargan el MP4 estable cuando existe o HLS en assets Stream-only, reproducen el
+loop configurado y mantienen tracking apagado;
 solo se pausan si el usuario activa **No reproducir mientras se edita**. Las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
 de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por
@@ -5640,10 +5685,18 @@ su `name` o `id` normal para el submit. Las opciones radio o checkbox que forman
 un solo campo se agrupan en un `fieldset` con `legend` (o una etiqueta accesible
 equivalente) y comparten esa identidad logica; otro campo distinto no puede
 reutilizarla en el mismo formulario. Desde la fila de cada campo el usuario
-elige un dato estandar del contacto, un campo personalizado existente, crear un
-campo personalizado nuevo (`destinationType/saveMode = new_custom`) o no
-guardarlo. Por eso no hace falta crear previamente todo el catalogo ni salir del
-panel. En cada fila, el estado (`Asociado`, `Pendiente`, `Guardando` o una alerta)
+elige un campo del sistema, un campo personalizado existente, crear un campo
+personalizado nuevo (`destinationType/saveMode = new_custom`) o no guardarlo.
+El selector coloca primero la asociacion ya detectada o guardada y ordena los
+destinos del sistema por prioridad operativa: nombre completo, correo,
+telefono/WhatsApp, ciudad, direccion, empresa, nombre, apellido y mensaje. Los
+campos personalizados ya existentes aparecen despues, subiendo al inicio del
+grupo el que ya esta asociado; `Crear campo nuevo` queda al final para evitar
+duplicar un destino existente por accidente. Ciudad, direccion y empresa se
+guardan como campos administrados por el sistema (`city`, `address_1`,
+`company`), no como personalizados paralelos. Por eso no hace falta crear
+previamente todo el catalogo ni salir del panel. En cada fila, el estado
+(`Asociado`, `Pendiente`, `Guardando` o una alerta)
 se muestra como una etiqueta compacta a la derecha del titulo; el selector de
 destino conserva una fila completa debajo y el estado nunca se presenta como
 una barra de ancho completo. Los titulos detectados deben ignorar snippets tecnicos de Ristak

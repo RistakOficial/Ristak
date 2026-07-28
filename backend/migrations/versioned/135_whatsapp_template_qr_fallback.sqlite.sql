@@ -1,0 +1,2 @@
+-- initTables agrega qr_fallback_authorized y whatsapp_api_qr_fallback_attempts
+-- antes de ejecutar las migraciones versionadas en SQLite.

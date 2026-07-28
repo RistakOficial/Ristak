@@ -15,7 +15,7 @@ test('el arranque concurrente crea una sola vez el recordatorio predeterminado',
 
   const seededRows = await db.all(`
     SELECT id, name, system_key, enabled, message_type, timing_anchor,
-      offset_value, offset_unit, template_name
+      offset_value, offset_unit, template_name, confirmation_success_action
     FROM appointment_reminders
     WHERE system_key = 'default_one_day_before'
   `)
@@ -27,6 +27,39 @@ test('el arranque concurrente crea una sola vez el recordatorio predeterminado',
   assert.equal(seededRows[0].offset_value, 1)
   assert.equal(seededRows[0].offset_unit, 'days')
   assert.equal(seededRows[0].template_name, 'confirmacion_cita_dia_anterior')
+  assert.deepEqual(
+    JSON.parse(seededRows[0].confirmation_success_action),
+    ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+  )
+})
+
+test('un cliente anterior no borra acciones múltiples si reenvía el valor singular sin cambiarlo', async () => {
+  await db.run('DELETE FROM appointment_reminders')
+  const reminder = await createAppointmentReminder({
+    name: 'Confirmación con acciones múltiples',
+    messageType: 'confirmation',
+    timingAnchor: 'after_booking',
+    offsetValue: 17,
+    offsetUnit: 'minutes',
+    confirmationSuccessActions: ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+  })
+
+  const unchangedLegacySave = await updateAppointmentReminder(reminder.id, {
+    name: 'Editado desde cliente anterior',
+    confirmationSuccessAction: 'chat_card'
+  })
+  assert.deepEqual(
+    unchangedLegacySave.confirmationSuccessActions,
+    ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+  )
+
+  const intentionalLegacyChange = await updateAppointmentReminder(reminder.id, {
+    confirmationSuccessAction: 'notify_push'
+  })
+  assert.deepEqual(
+    intentionalLegacyChange.confirmationSuccessActions,
+    ['notify_push', 'mark_confirmed']
+  )
 })
 
 test('un aviso al agendar nunca conserva la plantilla predeterminada del día anterior', async () => {
