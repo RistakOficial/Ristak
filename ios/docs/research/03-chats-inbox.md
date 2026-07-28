@@ -39,6 +39,7 @@ Fuente: `backend/src/controllers/contactsController.js:2190-2640`.
 | `offset` | number | `0` | `max(floor(n),0)`. Paginación pura por offset; NO devuelve total ni `hasMore` — el cliente infiere "hay más" si `data.length >= limit`. |
 | `businessPhoneNumberId` | string | `''` | Filtra mensajes WhatsApp por id de número de negocio (`whatsapp_api_phone_numbers.id`). El backend expande a números "relacionados" (mismo teléfono en varias filas: `phone_number`, `display_phone_number`, `qr_connected_phone`; líneas 204-241). |
 | `businessPhone` | string | `''` | Alternativa/complemento por valor de teléfono (se normaliza y expande a candidatos). Los clientes mandan AMBOS cuando el filtro por número está activo (`PhoneChat.tsx:7133-7138`). |
+| `goalCompletedUnreviewed` (alias `goal_completed_unreviewed`) | boolean-ish | off | Filtra ANTES de paginar las conversaciones con un estado terminal `completed`, una señal canónica de objetivo cumplido y `signal_at` posterior al `last_read_at` más reciente de cualquier usuario humano. |
 | `warmProfilePictures` (alias `warmProfiles`) | `'true'\|'1'\|'yes'\|'si'\|'sí'` | off | Si truthy, el backend refresca fotos de perfil WhatsApp (API limit 60, QR limit 24) antes de responder. Ambos clientes lo mandan `'true'` en la bandeja. |
 
 Comportamiento clave del query SQL:
@@ -99,6 +100,7 @@ Comportamiento clave del query SQL:
 | `lastMessageTransport` | string | `'api'` \| `'qr'` (WhatsApp), `'smtp'`/`'ghl_email'` (email), `''` para Meta. |
 | `messageCount` | number | Total de mensajes del contacto (todas las fuentes incluidas en el query). |
 | `unreadCount` | number | No leídos PARA EL USUARIO autenticado (≥0). |
+| `agentGoalCompletedUnreviewed` | boolean | `true` cuando un agente con `agent_id` terminó la meta con señal `ready_for_human`, `ready_to_schedule`, `ready_to_buy`, `appointment_booked` o `purchase_completed` después de la última apertura humana registrada. |
 | `hasCommentMessage` | boolean | El contacto tiene ≥1 comentario FB/IG (a nivel mensaje). |
 | `hasPrivateDm` | boolean | El contacto tiene ≥1 DM Meta real (no comentario). |
 
@@ -127,6 +129,12 @@ Estado por usuario en tabla `chat_read_states (user_id, contact_id, unread_count
 
 Los no-leídos suben cuando llega un inbound (`recordInboundChatUnread`): +1 por
 cada usuario activo cuyo `last_read_at` sea anterior al mensaje.
+
+El mismo `last_read_at` funciona como acuse global de revisión para metas del
+agente: el filtro compara `signal_at` contra el máximo de todos los usuarios, no
+solo contra quien consulta. Por eso abrir el chat desde iOS o desktop lo retira
+del filtro para todo el equipo; si el agente cumple otra meta después, vuelve a
+aparecer. Entrar al filtro no marca nada: se requiere abrir una conversación.
 
 ### 1.3 `GET /api/contacts/search` — búsqueda de contactos (sin mensajes)
 
@@ -325,6 +333,7 @@ Fuente: `PhoneChat.tsx:507-712, 6187-6458, 8061-8257` y RN
 | id | Chip | Regla de coincidencia (client-side) |
 |---|---|---|
 | `all` | `Todos` (bloqueado, no removible) | Sin filtro. Descripción: «Muestra todas las conversaciones activas.» |
+| `goal_completed` | `Meta completada` + glifo de robot | Chip automático, no configurable en el manager. Solo aparece si hay al menos un agente `enabled`; carga `/contacts/chats?goalCompletedUnreviewed=true` para filtrar antes de paginar y no abre automáticamente la primera fila. |
 | `unread` | `No leídos` (con contador `unreadTotal`, `99+` si >99) | `unreadCount > 0`. En RN además se fuerza 0 si el último mensaje es saliente (§4.6). «Sólo conversaciones con mensajes pendientes.» |
 | `appointments` | `Agendados` | `status=='appointment' \|\| hasAppointments` (RN añade `nextAppointmentDate`). «Contactos con cita guardada.» |
 | `customers` | `Clientes` (label custom `customersLabel`) | `status=='customer' \|\| purchases>0` (RN añade `ltv>0`). «Contactos marcados como clientes o con compras.» |
@@ -399,6 +408,10 @@ any/all/none; números con eq/neq/gt/gte/lt/lte/between (semántica en
   botones `Agregar`/`Quitar` que actualizan de inmediato
   `mobile_chat_filter_chip_ids`; permite crear/editar/borrar presets
   condicionales y `Restaurar filtros base`.
+- `Meta completada` no se guarda en `mobile_chat_filter_chip_ids` ni se puede
+  quitar desde el manager: la disponibilidad se deriva de los agentes activos.
+  Si se pausa el último agente mientras ese filtro está abierto, vuelve a
+  `Todos` y recarga la bandeja normal.
 - Id de preset activo (`activeChatFilterPresetId`, `PhoneChat.tsx:6452-6458`):
   prioridad `comments` → preset custom → `phone:<id>` → avanzado → quick.
 - Al quitar de rápidos el chip activo, o guardar una lista que no lo incluye,

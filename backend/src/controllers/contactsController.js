@@ -118,11 +118,31 @@ import {
   getHighLevelConversationalChannelPreference,
   setHighLevelConversationalChannelPreference
 } from '../services/highLevelConversationalChannelRoutingService.js'
+import { CONVERSATIONAL_AGENT_COMPLETION_SIGNAL_VALUES } from '../utils/conversationalAgentCompletion.js'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
 const PROVIDER_READ_RECEIPT_TIMEOUT_MS = 3500
 const CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS = 8000
+const CHAT_AGENT_COMPLETION_SIGNALS_SQL = CONVERSATIONAL_AGENT_COMPLETION_SIGNAL_VALUES
+  .map(value => `'${value.replaceAll("'", "''")}'`)
+  .join(', ')
+
+const buildUnreviewedAgentGoalCondition = (contactAlias = 'c') => `
+  EXISTS (
+    SELECT 1
+    FROM conversational_agent_state completed_agent_state
+    WHERE completed_agent_state.contact_id = ${contactAlias}.id
+      AND completed_agent_state.status = 'completed'
+      AND COALESCE(completed_agent_state.agent_id, '') <> ''
+      AND completed_agent_state.signal IN (${CHAT_AGENT_COMPLETION_SIGNALS_SQL})
+      AND ${timestampSortExpression('completed_agent_state.signal_at')} > COALESCE((
+        SELECT MAX(${timestampSortExpression('human_review_state.last_read_at')})
+        FROM chat_read_states human_review_state
+        WHERE human_review_state.contact_id = ${contactAlias}.id
+      ), 0)
+  )
+`
 
 export const getContactConversationalChannelPreference = async (req, res) => {
   try {
@@ -599,7 +619,8 @@ const buildChatContactsCursorScope = ({
   phoneNumberIdFilter,
   businessPhoneFilter,
   relatedBusinessPhoneFilters,
-  includeMetaSocialMessages
+  includeMetaSocialMessages,
+  goalCompletedUnreviewed
 }) => hashPaginationCursorScope('chat-contacts', {
   v: 1,
   search: cleanString(searchTerm).toLowerCase(),
@@ -609,6 +630,7 @@ const buildChatContactsCursorScope = ({
   resolvedBusinessPhoneNumberIds: paginationCursorListScope(relatedBusinessPhoneFilters?.phoneIds),
   resolvedBusinessPhones: paginationCursorListScope(relatedBusinessPhoneFilters?.phoneCandidates),
   includeMetaSocialMessages: Boolean(includeMetaSocialMessages),
+  goalCompletedUnreviewed: Boolean(goalCompletedUnreviewed),
   sort: 'last_message_sort:desc,contact_id:desc'
 })
 
@@ -2330,6 +2352,7 @@ const mapChatContactRowForResponse = (contact = {}) => ({
   lastMessageTransport: contact.last_message_transport || '',
   messageCount: Number(contact.message_count || 0),
   unreadCount: Number(contact.unread_count || 0),
+  agentGoalCompletedUnreviewed: Boolean(Number(contact.agent_goal_completed_unreviewed || 0)),
   hasCommentMessage: Boolean(Number(contact.meta_has_comment_message || 0)),
   hasPrivateDm: Boolean(Number(contact.meta_has_private_dm || 0))
 })
@@ -3013,6 +3036,9 @@ export const getChatContacts = async (req, res) => {
     const limitNumber = Math.min(Math.max(Number(limit) || CHAT_CONTACTS_DEFAULT_LIMIT, 1), CHAT_CONTACTS_MAX_LIMIT)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const searchTerm = cleanString(q)
+    const goalCompletedUnreviewed = isTruthyQueryValue(
+      req.query.goalCompletedUnreviewed || req.query.goal_completed_unreviewed
+    )
     const cursorMessageDate = cleanString(beforeMessageDate)
     const cursorMessageSort = parseNumericCursor(beforeMessageSort)
     const requestedMessageScope = cleanString(beforeMessageScope)
@@ -3045,6 +3071,10 @@ export const getChatContacts = async (req, res) => {
     if (hiddenCondition) {
       conditions.push(hiddenCondition)
     }
+    const unreviewedAgentGoalCondition = buildUnreviewedAgentGoalCondition('c')
+    if (goalCompletedUnreviewed) {
+      conditions.push(unreviewedAgentGoalCondition)
+    }
 
     const chatContactsCursorScope = buildChatContactsCursorScope({
       searchTerm,
@@ -3052,7 +3082,8 @@ export const getChatContacts = async (req, res) => {
       phoneNumberIdFilter,
       businessPhoneFilter,
       relatedBusinessPhoneFilters,
-      includeMetaSocialMessages
+      includeMetaSocialMessages,
+      goalCompletedUnreviewed
     })
     if (requestedMessageScope.length > 512) {
       throw chatContactsCursorRequestError('Cursor de chats inválido')
@@ -3145,6 +3176,7 @@ export const getChatContacts = async (req, res) => {
           CASE WHEN latest_whatsapp.direction = 'inbound' THEN latest_whatsapp.business_phone ELSE NULL END AS first_inbound_business_phone,
           CASE WHEN latest_whatsapp.direction = 'inbound' THEN latest_whatsapp.business_phone_number_id ELSE NULL END AS first_inbound_business_phone_number_id,
           latest_whatsapp.transport AS last_message_transport,
+          ${unreviewedAgentGoalCondition} AS agent_goal_completed_unreviewed,
           0 AS unread_count
         FROM latest_whatsapp
         JOIN contacts c ON c.id = latest_whatsapp.contact_id
@@ -3580,6 +3612,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
         lim.business_phone_number_id AS last_inbound_business_phone_number_id,
         fim.business_phone AS first_inbound_business_phone,
         fim.business_phone_number_id AS first_inbound_business_phone_number_id,
+        ${unreviewedAgentGoalCondition} AS agent_goal_completed_unreviewed,
         0 AS unread_count
       FROM ranked_chats
       JOIN contacts c ON c.id = ranked_chats.contact_id

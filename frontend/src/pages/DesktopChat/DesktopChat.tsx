@@ -160,7 +160,7 @@ import { useAccountCurrency } from '@/hooks/useAccountCurrency'
 import { stripRistakAdIdMarkersFromText } from '@/utils/whatsappAttributionText'
 import styles from './DesktopChat.module.css'
 
-type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers'
+type ChatFilter = 'all' | 'goal_completed' | 'agent' | 'unread' | 'appointments' | 'customers'
 type AgentInboxStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email'
 type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown'
@@ -254,6 +254,7 @@ interface DesktopChatContact extends Contact {
   firstInboundBusinessPhoneNumberId?: string
   messageCount?: number
   unreadCount?: number
+  agentGoalCompletedUnreviewed?: boolean
   profilePhotoUrl?: string | null
   avatarUrl?: string | null
   photoUrl?: string | null
@@ -432,7 +433,7 @@ interface ContactInfoAppointment {
   assignedUserId?: string | null
 }
 
-const BASE_CHAT_FILTERS: Array<{ id: Exclude<ChatFilter, 'customers'>; label: string }> = [
+const BASE_CHAT_FILTERS: Array<{ id: Exclude<ChatFilter, 'customers' | 'goal_completed'>; label: string }> = [
   { id: 'all', label: 'Todos' },
   { id: 'unread', label: 'No leídos' },
   { id: 'appointments', label: 'Con cita' }
@@ -3265,10 +3266,6 @@ export const DesktopChat: React.FC = () => {
   const customersLabel = labels.customers?.trim() || DEFAULT_CRM_LABELS.customers
   const leadsLabel = labels.leads?.trim() || DEFAULT_CRM_LABELS.leads
   const customerWithArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer)
-  const chatFilters = useMemo<Array<{ id: ChatFilter; label: string }>>(() => ([
-    ...BASE_CHAT_FILTERS,
-    { id: 'customers', label: customersLabel }
-  ]), [customersLabel])
   const stageFilterOptions = useMemo(() => ([
     BASE_STAGE_FILTER_OPTIONS[0],
     { value: 'lead', label: leadsLabel },
@@ -3302,6 +3299,8 @@ export const DesktopChat: React.FC = () => {
   // Sirve para que al limpiar la búsqueda la recarga REEMPLACE en vez de fusionar sobre los
   // resultados de búsqueda anteriores.
   const chatListLoadedSearchRef = useRef('')
+  const chatGoalCompletedFilterRef = useRef(false)
+  const chatListLoadedGoalCompletedFilterRef = useRef(false)
   const activeContactIdRef = useRef('')
   const contactJourneyRef = useRef<JourneyEvent[]>([])
   const messagePanePinnedToBottomRef = useRef(true)
@@ -3423,6 +3422,14 @@ export const DesktopChat: React.FC = () => {
   const [agentStateLists, setAgentStateLists] = useState<Record<string, ConversationAgentState[]>>({})
   const [agentDefs, setAgentDefs] = useState<ConversationalAgentDef[]>([])
   const conversationAgentEnabled = agentDefs.some((agent) => agent.enabled)
+  const chatFilters = useMemo<Array<{ id: ChatFilter; label: string; agentIcon?: boolean }>>(() => ([
+    BASE_CHAT_FILTERS[0],
+    ...(conversationAgentEnabled
+      ? [{ id: 'goal_completed' as const, label: 'Meta completada', agentIcon: true }]
+      : []),
+    ...BASE_CHAT_FILTERS.slice(1),
+    { id: 'customers', label: customersLabel }
+  ]), [conversationAgentEnabled, customersLabel])
   const [agentInboxStatusFilter, setAgentInboxStatusFilter] = useState<AgentInboxStatusFilter>(DEFAULT_AGENT_INBOX_STATUS_FILTER)
   const [agentComposerMenuOpen, setAgentComposerMenuOpen] = useState(false)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
@@ -3769,9 +3776,10 @@ export const DesktopChat: React.FC = () => {
 	            ? states.some((state) => isAgentInboxStateVisible(state, agentInboxStatusFilter))
 	            : isAgentInboxStateVisible(agentStates[contact.id], agentInboxStatusFilter)
 	        )
-	      }
+      }
       if (archivedViewOpen) return archivedChatIdSet.has(contact.id)
       if (archivedChatIdSet.has(contact.id)) return false
+      if (chatFilter === 'goal_completed') return true
       if (agentPriorityChatIdSet.has(contact.id)) return false
       return true
     }),
@@ -3802,6 +3810,7 @@ export const DesktopChat: React.FC = () => {
         // con sus comentarios fusionados dentro de su conversación.
         if (isComment) return false
         if (chatFilter === 'agent') return true
+        if (chatFilter === 'goal_completed') return contact.agentGoalCompletedUnreviewed === true
         if (chatFilter === 'unread') return Number(contact.unreadCount || 0) > 0
         if (chatFilter === 'appointments') return Boolean(contact.hasAppointments || contact.nextAppointmentDate)
         if (chatFilter === 'customers') return contact.status === 'customer'
@@ -3860,14 +3869,20 @@ export const DesktopChat: React.FC = () => {
     const idSet = new Set(contactIds.filter(Boolean))
     if (!idSet.size) return
     chatsRef.current = chatsRef.current.map((contact) => (
-      idSet.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
+      idSet.has(contact.id)
+        ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false }
+        : contact
     ))
     setChats((current) => {
       const next = current.map((contact) => (
-        idSet.has(contact.id) ? { ...contact, unreadCount: 0 } : contact
+        idSet.has(contact.id)
+          ? { ...contact, unreadCount: 0, agentGoalCompletedUnreviewed: false }
+          : contact
       ))
       chatsRef.current = next
-      writeCachedChatList(next)
+      if (!chatGoalCompletedFilterRef.current) {
+        writeCachedChatList(next)
+      }
       return next
     })
   }, [])
@@ -3894,10 +3909,17 @@ export const DesktopChat: React.FC = () => {
       })
   }, [showToast])
   useEffect(() => {
-    if (!activeContactId || Number(activeContact?.unreadCount || 0) <= 0) return
+    if (!activeContactId ||
+        (Number(activeContact?.unreadCount || 0) <= 0 && activeContact?.agentGoalCompletedUnreviewed !== true)) return
     markChatsReadLocally([activeContactId])
     persistChatsRead([activeContactId])
-  }, [activeContact?.unreadCount, activeContactId, markChatsReadLocally, persistChatsRead])
+  }, [
+    activeContact?.agentGoalCompletedUnreviewed,
+    activeContact?.unreadCount,
+    activeContactId,
+    markChatsReadLocally,
+    persistChatsRead
+  ])
   useEffect(() => {
     archivedChatIdSetRef.current = archivedChatIdSet
   }, [archivedChatIdSet])
@@ -4010,6 +4032,7 @@ export const DesktopChat: React.FC = () => {
     ? 'No hay chats archivados'
     : agentAssignedViewOpen
     ? hasAgentInboxListFilters && hasTextOrAdvancedChatFilters ? 'No encontré chats del bot' : agentInboxEmptyTitle
+    : chatFilter === 'goal_completed' ? 'No hay metas por revisar'
     : hasActiveChatFilters ? 'No encontré chats' : chats.length === 0 ? 'Todavía no hay conversaciones' : 'No hay chats en esta vista'
   const emptyChatDescription = archivedViewOpen
     ? 'Cuando archives una conversación, aparecerá en esta sección.'
@@ -4017,6 +4040,8 @@ export const DesktopChat: React.FC = () => {
     ? hasTextOrAdvancedChatFilters
       ? 'Prueba con menos filtros o busca otro contacto atendido por el bot.'
       : agentInboxEmptyDescription
+    : chatFilter === 'goal_completed'
+    ? 'Cuando un agente cumpla su objetivo, la conversación aparecerá aquí hasta que una persona la abra.'
     : hasActiveChatFilters
     ? 'Prueba con menos filtros o busca otro contacto.'
     : chats.length === 0
@@ -4379,12 +4404,21 @@ export const DesktopChat: React.FC = () => {
     }
   ]), [advancedFilters, stageFilterOptions])
 
-  const loadChats = useCallback(async (options: { silent?: boolean; append?: boolean; search?: string } = {}) => {
+  const loadChats = useCallback(async (options: {
+    silent?: boolean
+    append?: boolean
+    search?: string
+    goalCompletedUnreviewed?: boolean
+  } = {}) => {
     const silent = options.silent === true
     const append = options.append === true
     const normalizedSearch = String(options.search ?? chatQuery).trim()
     const hasSearch = normalizedSearch.length > 0
-    const cursorScope = normalizedSearch.toLocaleLowerCase('es-MX')
+    const goalCompletedUnreviewed = options.goalCompletedUnreviewed
+      ?? chatGoalCompletedFilterRef.current
+    const cursorScope = `${normalizedSearch.toLocaleLowerCase('es-MX')}|goal:${goalCompletedUnreviewed ? '1' : '0'}`
+    const requestedServerScopeChanged =
+      chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
     const appendCursor = chatListCursorRef.current
 
     if (append) {
@@ -4400,7 +4434,7 @@ export const DesktopChat: React.FC = () => {
     if (!append) {
       setChatsError('')
       // Loader de pantalla completa solo si todavía no hay nada que mostrar.
-      if (chatsRef.current.length === 0 || hasSearch) {
+      if (chatsRef.current.length === 0 || hasSearch || requestedServerScopeChanged) {
         setChatsLoading(true)
       }
       // Coalescamos cargas no-append concurrentes. La recarga explícita trae una sola página
@@ -4428,7 +4462,8 @@ export const DesktopChat: React.FC = () => {
             ...(cursor.beforeMessageScope ? { beforeMessageScope: cursor.beforeMessageScope } : {}),
             beforeContactId: cursor.beforeContactId
           } : {}),
-          ...(hasSearch ? { q: normalizedSearch } : {})
+          ...(hasSearch ? { q: normalizedSearch } : {}),
+          ...(goalCompletedUnreviewed ? { goalCompletedUnreviewed: 'true' } : {})
         },
         signal: controller.signal
       })
@@ -4454,16 +4489,26 @@ export const DesktopChat: React.FC = () => {
         if (chatsRequestRef.current !== controller) return
 
         chatListLoadedSearchRef.current = normalizedSearch
+        chatListLoadedGoalCompletedFilterRef.current = goalCompletedUnreviewed
         chatListCursorRef.current = getChatListKeysetCursor(pageChats, cursorScope)
         chatListHasAppendedRef.current = false
         chatListHasMoreRef.current = pageChats.length >= CHAT_LIST_PAGE_SIZE && Boolean(chatListCursorRef.current)
-        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, pageChats))
-        setChats(pageChats)
+        const searchRows = dedupeChatsById([
+          ...pageChats,
+          ...(goalCompletedUnreviewed
+            ? chatsRef.current
+              .filter((contact) => contact.id === activeContactIdRef.current)
+              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            : [])
+        ])
+        setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, searchRows))
+        setChats(searchRows)
         setActiveContactId((current) => {
           const removedStates = removedChatStatesRef.current
-          if (current && pageChats.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
+          if (current && searchRows.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
             return current
           }
+          if (goalCompletedUnreviewed) return ''
           const archivedSet = archivedChatIdSetRef.current
           const agentSet = agentPriorityChatIdSetRef.current
           return getDefaultActiveChatId(pageChats, archivedSet, agentSet, removedStates)
@@ -4476,9 +4521,14 @@ export const DesktopChat: React.FC = () => {
         const freshPage = await fetchChatPage(null)
         if (chatsRequestRef.current !== controller) return
 
+        const serverScopeChanged =
+          chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
+        chatListLoadedGoalCompletedFilterRef.current = goalCompletedUnreviewed
         const currentCursor = chatListCursorRef.current
         const preserveDeepCursor = Boolean(
-          chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+          !serverScopeChanged &&
+          chatListHasAppendedRef.current &&
+          currentCursor?.scope === cursorScope
         )
         const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
         if (!preserveDeepCursor) {
@@ -4492,13 +4542,24 @@ export const DesktopChat: React.FC = () => {
         // "cargar más" que pudiera estar corriendo en paralelo.
         setChats((current) => dedupeChatsById([
           ...freshPage,
-          ...reconcileCachedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE)
+          ...(goalCompletedUnreviewed
+            ? current
+              .filter((contact) => contact.id === activeContactIdRef.current)
+              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            : []),
+          ...(serverScopeChanged || goalCompletedUnreviewed
+            ? []
+            : reconcileCachedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
         ]))
         const mergedForCache = dedupeChatsById([
           ...freshPage,
-          ...reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE)
+          ...(serverScopeChanged || goalCompletedUnreviewed
+            ? []
+            : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
-        writeCachedChatList(mergedForCache)
+        if (!goalCompletedUnreviewed) {
+          writeCachedChatList(mergedForCache)
+        }
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, mergedForCache))
       } else {
         // Carga inicial / refresco / al limpiar la búsqueda: UNA sola página rápida fusionada
@@ -4510,15 +4571,24 @@ export const DesktopChat: React.FC = () => {
         // Si veníamos de una búsqueda, REEMPLAZAMOS (no fusionamos sobre esos resultados).
         const fromSearch = chatListLoadedSearchRef.current !== ''
         chatListLoadedSearchRef.current = ''
+        const serverScopeChanged =
+          chatListLoadedGoalCompletedFilterRef.current !== goalCompletedUnreviewed
+        chatListLoadedGoalCompletedFilterRef.current = goalCompletedUnreviewed
+        const replaceList = fromSearch || serverScopeChanged || goalCompletedUnreviewed
         const merged = dedupeChatsById([
           ...freshPage,
-          ...(fromSearch ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
+          ...(goalCompletedUnreviewed
+            ? chatsRef.current
+              .filter((contact) => contact.id === activeContactIdRef.current)
+              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            : []),
+          ...(replaceList ? [] : reconcileCachedChatTail(freshPage, chatsRef.current, CHAT_LIST_PAGE_SIZE))
         ])
 
         // La frontera keyset representa la última página real, no las filas del caché.
         const currentCursor = chatListCursorRef.current
         const preserveDeepCursor = Boolean(
-          !fromSearch && chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
+          !replaceList && chatListHasAppendedRef.current && currentCursor?.scope === cursorScope
         )
         const freshCursor = getChatListKeysetCursor(freshPage, cursorScope)
         if (!preserveDeepCursor) {
@@ -4528,19 +4598,27 @@ export const DesktopChat: React.FC = () => {
         chatListHasMoreRef.current = (
           freshPage.length >= CHAT_LIST_PAGE_SIZE && Boolean(freshCursor)
         ) || (preserveDeepCursor && chatListHasMoreRef.current)
-        writeCachedChatList(merged)
+        if (!goalCompletedUnreviewed) {
+          writeCachedChatList(merged)
+        }
         setRemovedChatStates((current) => pruneRevealedRemovedChatStates(current, merged))
         // setChats funcional: no pisar un "cargar más" que el usuario haya disparado al hacer
         // scroll mientras llegaba esta primera página.
         setChats((current) => dedupeChatsById([
           ...freshPage,
-          ...(fromSearch ? [] : reconcileCachedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
+          ...(goalCompletedUnreviewed
+            ? current
+              .filter((contact) => contact.id === activeContactIdRef.current)
+              .map((contact) => ({ ...contact, agentGoalCompletedUnreviewed: false }))
+            : []),
+          ...(replaceList ? [] : reconcileCachedChatTail(freshPage, current, CHAT_LIST_PAGE_SIZE))
         ]))
         setActiveContactId((current) => {
           const removedStates = removedChatStatesRef.current
           if (current && merged.some((contact) => contact.id === current && !isChatRemovedFromList(contact, getRemovedChatState(removedStates, contact.id)))) {
             return current
           }
+          if (goalCompletedUnreviewed) return ''
           const archivedSet = archivedChatIdSetRef.current
           const agentSet = agentPriorityChatIdSetRef.current
           return getDefaultActiveChatId(merged, archivedSet, agentSet, removedStates)
@@ -4578,6 +4656,27 @@ export const DesktopChat: React.FC = () => {
       }
     }
   }, [chatQuery])
+
+  useEffect(() => {
+    if (!conversationAgentEnabled && chatFilter === 'goal_completed') {
+      setChatFilter('all')
+    }
+  }, [chatFilter, conversationAgentEnabled])
+
+  useEffect(() => {
+    const goalCompletedUnreviewed =
+      conversationAgentEnabled && chatFilter === 'goal_completed'
+    if (chatGoalCompletedFilterRef.current === goalCompletedUnreviewed) return
+
+    chatGoalCompletedFilterRef.current = goalCompletedUnreviewed
+    chatListCursorRef.current = null
+    chatListHasAppendedRef.current = false
+    chatListHasMoreRef.current = true
+    if (goalCompletedUnreviewed) {
+      setActiveContactId('')
+    }
+    void loadChats({ goalCompletedUnreviewed })
+  }, [chatFilter, conversationAgentEnabled, loadChats])
 
   const loadMoreChatsIfNeeded = useCallback((event?: React.UIEvent<HTMLDivElement>) => {
     if (chatListLoadingMoreRef.current || !chatListHasMoreRef.current) return
@@ -6493,7 +6592,7 @@ export const DesktopChat: React.FC = () => {
   const handleSelectChat = useCallback((contact: DesktopChatContact) => {
     setActiveContactId(contact.id)
     acknowledgeAgentPriorityOnOpen(contact.id)
-    if (Number(contact.unreadCount || 0) > 0) {
+    if (Number(contact.unreadCount || 0) > 0 || contact.agentGoalCompletedUnreviewed === true) {
       markChatsReadLocally([contact.id])
       persistChatsRead([contact.id])
     }
@@ -6969,7 +7068,9 @@ export const DesktopChat: React.FC = () => {
 	              }
 	            : contact
 	        ))
-	        writeCachedChatList(next)
+	        if (!chatGoalCompletedFilterRef.current) {
+	          writeCachedChatList(next)
+	        }
 	        return next
 	      })
 
@@ -7211,7 +7312,9 @@ export const DesktopChat: React.FC = () => {
             }
           : contact
       ))
-      writeCachedChatList(next)
+      if (!chatGoalCompletedFilterRef.current) {
+        writeCachedChatList(next)
+      }
       return next
     })
 
@@ -9006,7 +9109,8 @@ export const DesktopChat: React.FC = () => {
                         setChatFilter(filter.id)
                       }}
                     >
-                      {filter.label}
+                      {filter.agentIcon ? <Bot size={14} aria-hidden="true" /> : null}
+                      <span>{filter.label}</span>
                     </button>
                   ))}
                   {commentsFeatureEnabled ? (

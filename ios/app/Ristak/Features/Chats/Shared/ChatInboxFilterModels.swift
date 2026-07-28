@@ -9,6 +9,7 @@ import Foundation
 
 enum ChatQuickFilter: String, CaseIterable, Sendable {
     case all
+    case goalCompleted = "goal_completed"
     case unread
     case appointments
     case customers
@@ -19,6 +20,7 @@ enum ChatQuickFilter: String, CaseIterable, Sendable {
     var managerDescription: String {
         switch self {
         case .all: return "Muestra todas las conversaciones activas."
+        case .goalCompleted: return "Metas cumplidas que ningún usuario ha revisado."
         case .unread: return "Sólo conversaciones con mensajes pendientes."
         case .appointments: return "Contactos con cita guardada."
         case .customers: return "Contactos marcados como clientes o con compras."
@@ -152,6 +154,10 @@ enum ChatInboxFilter: Hashable, Sendable {
 
     var isCommentsLens: Bool {
         self == .quick(.comments)
+    }
+
+    var usesGoalCompletedServerScope: Bool {
+        self == .quick(.goalCompleted)
     }
 }
 

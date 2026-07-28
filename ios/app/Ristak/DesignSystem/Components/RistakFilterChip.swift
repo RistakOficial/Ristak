@@ -10,12 +10,18 @@ struct RistakFilterChip: View {
     /// Contador opcional (se muestra "99+" arriba de 99).
     var count: Int? = nil
     var isSelected: Bool = false
+    var showsAgentBotIcon: Bool = false
     var action: () -> Void = {}
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let systemImage {
+                if showsAgentBotIcon {
+                    AgentBotGlyph(
+                        color: isSelected ? RistakTheme.onAccent : RistakTheme.textPrimary,
+                        size: 14
+                    )
+                } else if let systemImage {
                     Image(systemName: systemImage)
                         .font(.caption.weight(.semibold))
                 }

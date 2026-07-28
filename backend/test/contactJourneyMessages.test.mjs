@@ -106,6 +106,7 @@ async function cleanup(contactId, phone, extraPhones = []) {
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
@@ -1281,6 +1282,129 @@ test('chat contacts returns persisted unread counts for requester', async () => 
     await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => undefined)
     await cleanup(contactId, phone)
+  }
+})
+
+test('chat contacts filters completed agent goals until any human reviews the chat', async () => {
+  const id = randomUUID()
+  const contactId = `chat_goal_review_${id}`
+  const agentId = `agent_goal_review_${id}`
+  const phone = `+52993${Date.now().toString().slice(-7)}`
+  const firstUsername = `chat_goal_first_${id}`
+  const secondUsername = `chat_goal_second_${id}`
+  const contactName = `Meta Pendiente ${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: contactName,
+      first_name: 'Meta',
+      source: 'manual',
+      created_at: '2099-07-05T12:00:00.000Z',
+      updated_at: '2099-07-05T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_goal_review_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Conversación con objetivo cumplido',
+      message_timestamp: '2099-07-05T12:01:00.000Z',
+      created_at: '2099-07-05T12:01:00.000Z'
+    })
+    await insertRow('conversational_agents', {
+      id: agentId,
+      name: 'Agente de prueba de metas',
+      enabled: 1
+    })
+    await insertRow('conversational_agent_state', {
+      id: `state_goal_review_${id}`,
+      contact_id: contactId,
+      agent_id: agentId,
+      status: 'completed',
+      signal: 'ready_for_human',
+      signal_at: '2099-07-05T12:02:00.000Z',
+      updated_at: '2099-07-05T12:02:00.000Z'
+    })
+    for (const [username, fullName] of [
+      [firstUsername, 'Primera persona'],
+      [secondUsername, 'Segunda persona']
+    ]) {
+      await db.run(
+        `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [username, `${username}@example.test`, 'test_hash', fullName, 'admin', 1]
+      )
+    }
+    const firstUser = await db.get('SELECT id FROM users WHERE username = ?', [firstUsername])
+    const secondUser = await db.get('SELECT id FROM users WHERE username = ?', [secondUsername])
+    await insertRow('chat_read_states', {
+      user_id: String(firstUser.id),
+      contact_id: contactId,
+      unread_count: 0,
+      last_read_at: '2099-07-05T12:01:30.000Z'
+    })
+
+    let filtered = await readChatContacts({
+      q: contactName,
+      limit: '10',
+      goalCompletedUnreviewed: 'true'
+    }, { userId: firstUser.id })
+    assert.equal(filtered.length, 1)
+    assert.equal(filtered[0].id, contactId)
+    assert.equal(filtered[0].agentGoalCompletedUnreviewed, true)
+
+    await insertRow('chat_read_states', {
+      user_id: String(secondUser.id),
+      contact_id: contactId,
+      unread_count: 0,
+      last_read_at: '2099-07-05T12:03:00.000Z'
+    })
+
+    filtered = await readChatContacts({
+      q: contactName,
+      limit: '10',
+      goalCompletedUnreviewed: 'true'
+    }, { userId: firstUser.id })
+    assert.deepEqual(filtered, [])
+
+    const reviewedChat = (await readChatContacts(
+      { q: contactName, limit: '10' },
+      { userId: firstUser.id }
+    )).find((item) => item.id === contactId)
+    assert.equal(reviewedChat?.agentGoalCompletedUnreviewed, false)
+
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET signal_at = ?, updated_at = ?
+       WHERE contact_id = ? AND agent_id = ?`,
+      [
+        '2099-07-05T12:04:00.000Z',
+        '2099-07-05T12:04:00.000Z',
+        contactId,
+        agentId
+      ]
+    )
+    filtered = await readChatContacts({
+      q: contactName,
+      limit: '10',
+      goalCompletedUnreviewed: 'true'
+    }, { userId: secondUser.id })
+    assert.equal(filtered.length, 1)
+    assert.equal(filtered[0].agentGoalCompletedUnreviewed, true)
+  } finally {
+    await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM users WHERE username IN (?, ?)', [firstUsername, secondUsername]).catch(() => undefined)
+    await cleanup(contactId, phone)
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
   }
 })
 

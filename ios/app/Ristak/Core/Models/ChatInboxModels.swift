@@ -57,6 +57,9 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
     var lastMessageTransport: String
     var messageCount: Int
     var unreadCount: Int
+    /// El agente cumplió una meta después de la última apertura registrada por
+    /// cualquier usuario humano de la cuenta.
+    var agentGoalCompletedUnreviewed: Bool
     let hasCommentMessage: Bool
     let hasPrivateDm: Bool
 
@@ -77,6 +80,7 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
         case lastInboundBusinessPhone, lastInboundBusinessPhoneNumberId
         case firstInboundBusinessPhone, firstInboundBusinessPhoneNumberId
         case lastMessageTransport, messageCount, unreadCount
+        case agentGoalCompletedUnreviewed
         case hasCommentMessage, hasPrivateDm
     }
 
@@ -125,6 +129,7 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
         lastMessageTransport = container.flexibleString(forKey: .lastMessageTransport) ?? ""
         messageCount = container.flexibleInt(forKey: .messageCount) ?? 0
         unreadCount = container.flexibleInt(forKey: .unreadCount) ?? 0
+        agentGoalCompletedUnreviewed = container.flexibleBool(forKey: .agentGoalCompletedUnreviewed) ?? false
         hasCommentMessage = container.flexibleBool(forKey: .hasCommentMessage) ?? false
         hasPrivateDm = container.flexibleBool(forKey: .hasPrivateDm) ?? false
     }

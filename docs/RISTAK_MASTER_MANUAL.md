@@ -2157,6 +2157,19 @@ Configuracion > Privacidad guarda
 el marcado local como leido, pero no manda acuses externos de visto a WhatsApp
 API/YCloud, WhatsApp QR/Baileys, Messenger ni Instagram.
 
+Desktop e iOS muestran automáticamente el filtro **Meta completada** con icono
+de robot cuando existe al menos un agente conversacional habilitado. No es un
+filtro local ni una preferencia que el usuario pueda quitar: `/contacts/chats`
+recibe `goalCompletedUnreviewed=true` y selecciona antes de paginar únicamente
+estados `completed` con una señal canónica de objetivo cuyo `signal_at` sea
+posterior a la apertura humana más reciente del contacto. El campo de respuesta
+`agentGoalCompletedUnreviewed` expone la misma regla. Tocar el filtro no cuenta
+como revisión ni abre automáticamente la primera fila; abrir una conversación
+sí actualiza `chat_read_states`, la retira para todo el equipo y mantiene el
+hilo visible mientras la persona lo revisa. Si después el agente completa una
+nueva meta, el chat reaparece. Al deshabilitar el último agente el chip
+desaparece y cualquier vista activa regresa a `Todos`.
+
 En el chat movil, el selector de canal del composer no debe mostrar rutas
 fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
 `phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.

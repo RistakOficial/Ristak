@@ -33,6 +33,7 @@ import { withConversationalAgentTestMutationLock } from './conversationalAgentTe
 import { CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT } from './conversationalAppointmentPreviewOfferService.js'
 import { loadConversationalAgentMetricAggregates } from './conversationalAgentMetricsProjectionService.js'
 import { isHighLevelConnected } from './integrationConnectionStateService.js'
+import { CONVERSATIONAL_AGENT_COMPLETION_SIGNALS } from '../utils/conversationalAgentCompletion.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 
 /**
@@ -9708,14 +9709,6 @@ export async function recordConversationalAgentEvent({
     return { id: null, inserted: false }
   }
 }
-
-const CONVERSATIONAL_AGENT_COMPLETION_SIGNALS = new Set([
-  'ready_for_human',
-  'ready_to_schedule',
-  'ready_to_buy',
-  'appointment_booked',
-  'purchase_completed'
-])
 
 function isCompletionSignalEvent(row) {
   if (row?.event_type !== 'signal_set') return false

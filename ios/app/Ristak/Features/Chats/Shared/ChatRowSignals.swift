@@ -211,6 +211,7 @@ enum ChatRowSignals {
     static func matchesQuick(_ quick: ChatQuickFilter, contact: ChatContact) -> Bool {
         switch quick {
         case .all: return true
+        case .goalCompleted: return contact.agentGoalCompletedUnreviewed
         case .unread: return contact.visibleUnreadCount > 0
         case .appointments: return isAppointment(contact)
         case .customers: return isCustomer(contact)

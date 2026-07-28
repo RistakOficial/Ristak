@@ -22,6 +22,7 @@ struct ChatsService: Sendable {
         offset: Int = 0,
         businessPhoneNumberId: String? = nil,
         businessPhone: String? = nil,
+        goalCompletedUnreviewed: Bool = false,
         warmProfilePictures: Bool = true,
         timeout: TimeInterval = APIClient.dashboardTimeout
     ) async throws -> [ChatContact] {
@@ -33,6 +34,7 @@ struct ChatsService: Sendable {
                 "offset": String(offset),
                 "businessPhoneNumberId": businessPhoneNumberId,
                 "businessPhone": businessPhone,
+                "goalCompletedUnreviewed": goalCompletedUnreviewed ? "true" : nil,
                 "warmProfilePictures": warmProfilePictures ? "true" : "false",
             ],
             timeout: timeout
@@ -46,6 +48,7 @@ struct ChatsService: Sendable {
         offset: Int = 0,
         businessPhoneNumberId: String? = nil,
         businessPhone: String? = nil,
+        goalCompletedUnreviewed: Bool = false,
         warmProfilePictures: Bool = true
     ) async throws -> ChatInboxPage {
         let contacts = try await fetchChats(
@@ -54,6 +57,7 @@ struct ChatsService: Sendable {
             offset: offset,
             businessPhoneNumberId: businessPhoneNumberId,
             businessPhone: businessPhone,
+            goalCompletedUnreviewed: goalCompletedUnreviewed,
             warmProfilePictures: warmProfilePictures
         )
         return ChatInboxPage(

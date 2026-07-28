@@ -9,6 +9,7 @@ struct ChatFilterChipModel: Identifiable, Equatable {
     let title: String
     var count: Int?
     var isSelected: Bool
+    var showsAgentBotIcon: Bool = false
     /// Separador vertical antes del chip (`Comentarios`, doc 03 §4.1).
     var leadingDivider: Bool = false
 
@@ -188,6 +189,9 @@ final class InboxViewModel {
     private(set) var whatsAppStatus: WhatsAppAPIStatus?
     private(set) var customLabels: DashboardCustomLabels = .defaults
     private(set) var openAIConfigured = false
+    /// El filtro automático de metas sólo existe mientras haya al menos un
+    /// agente conversacional habilitado.
+    private(set) var conversationAgentEnabled = false
     /// Visibilidad del chip Comentarios (flags Meta, doc 03 §6.11). Fail-open.
     private(set) var commentsFeatureEnabled = true
     private(set) var tagsCatalog: [ContactTag] = [] {
@@ -238,6 +242,7 @@ final class InboxViewModel {
         invalidateSatelliteContextLoad()
         namespace = newNamespace
         localState.configure(namespace: newNamespace)
+        refreshAgentAvailability()
 
         if previous != nil, previous != newNamespace {
             clearAccountScopedState()
@@ -303,6 +308,7 @@ final class InboxViewModel {
         validatedDestinationContactIDs.removeAll()
         searchText = ""
         searchServerUnavailable = false
+        activeFilter = .quick(.all)
         selectedIDs = []
         isSelecting = false
         isSelectingAll = false
@@ -310,6 +316,7 @@ final class InboxViewModel {
         whatsAppStatus = nil
         customLabels = .defaults
         openAIConfigured = false
+        conversationAgentEnabled = false
         commentsFeatureEnabled = true
         tagsCatalog = []
         tagsLoaded = false
@@ -502,6 +509,7 @@ final class InboxViewModel {
         let whatsAppStatus: WhatsAppAPIStatus?
         let customLabels: DashboardCustomLabels?
         let openAIConfigured: Bool?
+        let conversationAgentEnabled: Bool?
         let commentsFeatureEnabled: Bool?
         let tagsCatalog: [ContactTag]?
     }
@@ -513,18 +521,23 @@ final class InboxViewModel {
         async let statusTask = try? WhatsAppNumbersService.status()
         async let labelsTask = try? AnalyticsService.customLabels()
         async let integrationsTask = try? IntegrationsService.status()
+        async let agentsTask = try? ConversationalAgentService.agents()
         async let metaFlagsTask = fetchMetaCommentsFlags()
         async let tagsTask = try? tagsService.fetchTags()
 
         let status = await statusTask
         let labels = await labelsTask
         let integrations = await integrationsTask
+        let agents = await agentsTask
         let flags = await metaFlagsTask
         let tags = await tagsTask
         return SatelliteContextSnapshot(
             whatsAppStatus: status,
             customLabels: labels,
             openAIConfigured: integrations.map { $0.openai?.isUsable == true },
+            conversationAgentEnabled: agents.map { definitions in
+                definitions.contains { $0.enabled }
+            },
             // /movil usa OR de los switches de COMENTARIOS, sin exigir que la
             // integración Meta esté conectada. Fetch fallido conserva fail-open.
             commentsFeatureEnabled: flags.map { $0.facebook || $0.instagram },
@@ -538,10 +551,34 @@ final class InboxViewModel {
         if let status = snapshot.whatsAppStatus { whatsAppStatus = status }
         if let labels = snapshot.customLabels { customLabels = labels }
         if let configured = snapshot.openAIConfigured { openAIConfigured = configured }
+        if let enabled = snapshot.conversationAgentEnabled {
+            applyAgentAvailability(enabled)
+        }
         if let enabled = snapshot.commentsFeatureEnabled { commentsFeatureEnabled = enabled }
         if let tags = snapshot.tagsCatalog {
             tagsCatalog = tags
             tagsLoaded = true
+        }
+    }
+
+    /// Relee el snapshot que actualiza el Hub al encender o pausar agentes y
+    /// revalida en red cuando no hay una carga satélite en curso.
+    func refreshAgentAvailability() {
+        if let cached = RistakSnapshotCache.shared.value(
+            [ConversationalAgentDef].self,
+            for: RistakCacheKey.conversationalAgents
+        ) {
+            applyAgentAvailability(cached.contains { $0.enabled })
+        }
+        if primaryLoadFinished {
+            scheduleSatelliteContextLoad()
+        }
+    }
+
+    private func applyAgentAvailability(_ enabled: Bool) {
+        conversationAgentEnabled = enabled
+        if !enabled, activeFilter.usesGoalCompletedServerScope {
+            select(filter: .quick(.all))
         }
     }
 
@@ -596,14 +633,17 @@ final class InboxViewModel {
             offset: offset,
             businessPhoneNumberId: params.id,
             businessPhone: params.phone,
+            goalCompletedUnreviewed: activeFilter.usesGoalCompletedServerScope,
             warmProfilePictures: warmProfilePictures
         )
     }
 
-    /// Clave de los parámetros vigentes de fetch (solo el número; la búsqueda
-    /// ya no toca la bandeja).
+    /// Clave de los parámetros vigentes de fetch. La búsqueda no toca la
+    /// bandeja, pero número y meta completada sí cambian el conjunto del servidor.
     private var currentFetchKey: String {
-        phoneQueryParams().id ?? ""
+        let phoneID = phoneQueryParams().id ?? ""
+        let goalScope = activeFilter.usesGoalCompletedServerScope ? "goal:1" : "goal:0"
+        return "\(phoneID)|\(goalScope)"
     }
 
     /// Recarga completa (primera página) respetando query y filtro de número.
@@ -1263,7 +1303,8 @@ final class InboxViewModel {
         // Solo cacheamos la vista por defecto (sin filtro de número): es lo que
         // se pinta al instante en el arranque en frío. La búsqueda ya no toca
         // `rows`, así que siempre reflejan la bandeja completa.
-        guard !activeFilter.isPhoneFilter else { return }
+        guard !activeFilter.isPhoneFilter,
+              !activeFilter.usesGoalCompletedServerScope else { return }
         ChatInboxDiskCache.save(rows)
     }
 
@@ -1357,6 +1398,7 @@ final class InboxViewModel {
 
     func select(filter: ChatInboxFilter) {
         let wasPhone = activeFilter.isPhoneFilter
+        let wasGoalCompleted = activeFilter.usesGoalCompletedServerScope
         guard activeFilter != filter else { return }
         activeFilter = filter
         commentsPlatform = .all
@@ -1364,13 +1406,14 @@ final class InboxViewModel {
         switch filter {
         case .phone(let id):
             persistSelectedPhoneID(id)
-            Task { await reloadFromServer(showSpinner: true) }
         default:
             // Tocar cualquier filtro no-numérico regresa el número a 'all'.
             if wasPhone {
                 persistSelectedPhoneID("all")
-                Task { await reloadFromServer(showSpinner: true) }
             }
+        }
+        if wasPhone || filter.isPhoneFilter || wasGoalCompleted || filter.usesGoalCompletedServerScope {
+            Task { await reloadFromServer(showSpinner: true) }
         }
     }
 
@@ -1572,6 +1615,7 @@ final class InboxViewModel {
         let idSet = Set(ids)
         for index in rows.indices where idSet.contains(rows[index].id) {
             rows[index].unreadCount = 0
+            rows[index].agentGoalCompletedUnreviewed = false
         }
         syncUnreadBadge()
     }
@@ -1711,7 +1755,12 @@ final class InboxViewModel {
 
     var chipModels: [ChatFilterChipModel] {
         var models: [ChatFilterChipModel] = []
-        for chipID in visibleChipIDs {
+        var chipIDs = visibleChipIDs.filter { $0 != ChatQuickFilter.goalCompleted.rawValue }
+        if conversationAgentEnabled {
+            let insertionIndex = min(1, chipIDs.count)
+            chipIDs.insert(ChatQuickFilter.goalCompleted.rawValue, at: insertionIndex)
+        }
+        for chipID in chipIDs {
             guard let filter = ChatInboxFilter(chipID: chipID) else { continue }
             guard let model = chipModel(for: filter) else { continue }
             models.append(model)
@@ -1728,6 +1777,7 @@ final class InboxViewModel {
                 title: quickChipTitle(quick),
                 count: quick == .unread ? unreadTotal : nil,
                 isSelected: activeFilter == filter,
+                showsAgentBotIcon: quick == .goalCompleted,
                 leadingDivider: quick == .comments
             )
         case .phone(let id):
@@ -1760,6 +1810,7 @@ final class InboxViewModel {
     private func quickChipTitle(_ quick: ChatQuickFilter) -> String {
         switch quick {
         case .all: return "Todos"
+        case .goalCompleted: return "Meta completada"
         case .unread: return "No leídos"
         case .appointments: return "Agendados"
         case .customers: return customLabels.customers
@@ -1774,15 +1825,17 @@ final class InboxViewModel {
         let visible = Set(visibleChipIDs)
         var sections: [ChatFilterManagerSection] = []
 
-        let quickEntries = ChatQuickFilter.allCases.map { quick in
-            ChatFilterManagerEntry(
-                chipID: quick.rawValue,
-                title: quickChipTitle(quick),
-                subtitle: quick.managerDescription,
-                isVisible: visible.contains(quick.rawValue),
-                isLocked: quick == .all
-            )
-        }
+        let quickEntries = ChatQuickFilter.allCases
+            .filter { $0 != .goalCompleted }
+            .map { quick in
+                ChatFilterManagerEntry(
+                    chipID: quick.rawValue,
+                    title: quickChipTitle(quick),
+                    subtitle: quick.managerDescription,
+                    isVisible: visible.contains(quick.rawValue),
+                    isLocked: quick == .all
+                )
+            }
         sections.append(ChatFilterManagerSection(title: "Rápidos", entries: quickEntries))
 
         if phoneFilterEnabled {

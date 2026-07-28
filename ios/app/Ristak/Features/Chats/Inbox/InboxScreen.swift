@@ -87,7 +87,10 @@ struct InboxScreen: View {
                     .accessibilityIdentifier("ristak-inbox-new-chat")
                 }
             }
-            .sheet(isPresented: $showsAgentHub) {
+            .sheet(
+                isPresented: $showsAgentHub,
+                onDismiss: { viewModel.refreshAgentAvailability() }
+            ) {
                 AgentHubSheet()
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -372,7 +375,8 @@ struct InboxScreen: View {
             RistakFilterChip(
                 title: chip.title,
                 count: chip.count,
-                isSelected: chip.isSelected
+                isSelected: chip.isSelected,
+                showsAgentBotIcon: chip.showsAgentBotIcon
             ) {
                 viewModel.select(filter: chip.filter)
             }

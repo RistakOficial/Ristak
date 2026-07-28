@@ -109,7 +109,10 @@ solo en capa flotante; copy en español.
   (`accessConfig`) gateando secciones y acciones.
 - **Chats** (pantalla principal): bandeja con paginación/merge, búsqueda,
   chips de filtro reales + manager persistido en `app_config`, números de
-  WhatsApp, presets condicionales, archivados y silenciados (locales), fila
+  WhatsApp, presets condicionales, y el chip automático **Meta completada** con
+  robot cuando existe al menos un agente activo. Ese chip muestra objetivos
+  cumplidos pendientes de revisión y retira una conversación cuando cualquier
+  usuario humano la abre. Incluye archivados y silenciados (locales), fila
   fija del Asistente AI, selección múltiple con alcance visible o todo el inbox
   (incluidas conversaciones no cargadas) y acciones masivas, long-press
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
