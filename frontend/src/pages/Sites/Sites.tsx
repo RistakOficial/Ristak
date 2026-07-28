@@ -1224,6 +1224,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoMuted: true,
   videoAutoplay: false,
   videoLoop: false,
+  videoAdaptiveQuality: true,
   videoDefaultSpeed: 1,
   videoOrientation: DEFAULT_VIDEO_ORIENTATION,
   videoMobilePortraitCrop: true,
@@ -7027,6 +7028,10 @@ type RistakHlsInstance = {
   attachMedia: (media: HTMLMediaElement) => void
   destroy: () => void
   on?: (eventName: string, handler: () => void) => void
+  levels?: unknown[]
+  startLevel?: number
+  loadLevel?: number
+  currentLevel?: number
 }
 
 type RistakHlsConstructor = {
@@ -31080,6 +31085,20 @@ const VideoPlayerSettingsControls: React.FC<{
                 <span>Autoplay</span>
               </label>
             </div>
+            <div className={styles.videoFormGateSwitchRow}>
+              <div>
+                <strong>Resolución inteligente</strong>
+                <span>Con Bunny, adapta la calidad a la conexión para cargar más rápido. Apágala para priorizar la mayor resolución disponible.</span>
+              </div>
+              <Switch
+                checked={settings.videoAdaptiveQuality !== false}
+                onChange={(checked) => {
+                  onPatchSettings({ videoAdaptiveQuality: checked })
+                  window.setTimeout(onSave, 0)
+                }}
+                aria-label="Usar resolución inteligente para el video"
+              />
+            </div>
             <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
@@ -37101,6 +37120,7 @@ const VideoPlayerPreview: React.FC<{
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
   const soundNoticePersistent = soundNoticeHideAfter === 0
   const previewEnabled = settings.videoPreviewEnabled !== false
+  const adaptiveQuality = settings.videoAdaptiveQuality !== false
   const muted = settings.videoMuted !== false
   const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
   const loop = Boolean(settings.videoLoop) || autoplay
@@ -37567,8 +37587,16 @@ const VideoPlayerPreview: React.FC<{
         return
       }
 
-      const hls = new Hls({ enableWorker: true })
+      const hls = new Hls({ enableWorker: true, startLevel: adaptiveQuality ? -1 : undefined })
       hlsRef.current = hls
+      if (!adaptiveQuality && Hls.Events?.MANIFEST_PARSED) {
+        hls.on?.(Hls.Events.MANIFEST_PARSED, () => {
+          const highestLevel = Math.max(0, (hls.levels?.length || 1) - 1)
+          hls.startLevel = highestLevel
+          hls.loadLevel = highestLevel
+          hls.currentLevel = highestLevel
+        })
+      }
       hls.loadSource(noTrackSrc)
       hls.attachMedia(currentVideo)
       if (autoplay && Hls.Events?.MANIFEST_PARSED) {
@@ -37587,7 +37615,7 @@ const VideoPlayerPreview: React.FC<{
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [autoplay, isHlsSource, noTrackSrc, stopPreviewLoop])
+  }, [adaptiveQuality, autoplay, isHlsSource, noTrackSrc, stopPreviewLoop])
 
   useEffect(() => {
     const video = videoRef.current

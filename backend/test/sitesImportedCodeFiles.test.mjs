@@ -50,6 +50,7 @@ test('imported HTML video player manifest validates every supported control and 
     videoPlayIconStyle: 'spark',
     videoAutoplay: true,
     videoMuted: false,
+    videoAdaptiveQuality: false,
     videoMobilePortraitCrop: false,
     videoSoundNoticeText: 'Toca para escuchar',
     mediaWidth: 20,
@@ -66,10 +67,12 @@ test('imported HTML video player manifest validates every supported control and 
   assert.equal(valid.settings.videoPlaySize, 160)
   assert.equal(valid.settings.mediaWidth, 30)
   assert.equal(valid.settings.videoMuted, true)
+  assert.equal(valid.settings.videoAdaptiveQuality, false)
   assert.equal(valid.settings.videoMobilePortraitCrop, false)
   assert.equal(valid.settings.responsive.tablet.mediaAlign, 'left')
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlProgress'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarStyle'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoAdaptiveQuality'))
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoMobilePortraitCrop'))
 
   const tombstone = normalizeImportedHtmlVideoPlayerManifest('{"videoControlVolume":null}')
@@ -756,6 +759,7 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /videoOverlayPlay/)
   assert.match(instructions, /videoControlProgress/)
   assert.match(instructions, /videoControlVolume/)
+  assert.match(instructions, /videoAdaptiveQuality/)
   assert.match(instructions, /videoControlBarStyle/)
   assert.match(instructions, /videoPlayShape/)
   assert.match(instructions, /videoPlayIconStyle/)
@@ -865,6 +869,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoPlayerGuide, /videoOverlayPlay/)
   assert.match(videoPlayerGuide, /videoControlProgress/)
   assert.match(videoPlayerGuide, /videoControlPanelRadius/)
+  assert.match(videoPlayerGuide, /videoAdaptiveQuality/)
   assert.match(videoPlayerGuide, /videoControlBarStyle \(floating\|docked\)/)
   assert.match(videoPlayerGuide, /globo separado de los bordes/)
   assert.match(videoPlayerGuide, /panel de ancho completo al borde inferior/)

@@ -5178,9 +5178,9 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   estándar, backend crea además el espejo Storage sin cargar el archivo completo
   en memoria. El perfil premium conserva el máster en Stream y no lo descarga ni
   lo vuelve a subir a través de Render: preview y publicado consumen HLS directo.
-  Editor y canvas usan Storage cuando existe o HLS validado para el perfil
-  premium. Publicado/en vivo siempre prefiere la playlist adaptativa de Stream
-  dentro del mismo reproductor; un asset estándar sin HLS usa Storage. Publicar nunca
+  Editor, preview y publicado usan la playlist HLS validada de Stream dentro del
+  mismo reproductor, sin importar si existe además un espejo Storage; un asset
+  sin HLS usa Storage como fallback. Publicar nunca
   sustituye un video nativo listo por el iframe visual de Stream: conserva
   exactamente el botón, colores, barra, controles, acciones y formulario
   configurados. Editor y preview mantienen tracking apagado; publicado envía los
@@ -5190,11 +5190,11 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   orientación, HLS, play/pausa, volumen, velocidad, progreso, barra responsive,
   aviso de sonido y formulario sobre video. El runtime de acciones por tiempo es
   adicional y no sustituye al runtime del reproductor. La vista `srcDoc` embebida
-  dentro del editor es deliberadamente conservadora: monta el player con
-  `preload="none"`, no inicia el loop automático y no conecta HLS hasta una
-  reproducción real. Así puede mostrar a la vez variantes desktop/mobile sin
-  descargar ni decodificar videos ocultos; preview-session y publicado conservan
-  la reproducción configurada. El runtime del candado actualiza el tiempo restante
+  dentro del editor carga el mismo MP4/HLS y respeta preview, loop, autoplay,
+  controles y animaciones para que la edición sea fiel al resultado publicado.
+  Solo usa `preload="none"` y detiene la reproducción cuando el usuario activa
+  explícitamente **No reproducir mientras se edita**. El tracking permanece
+  apagado en ambos casos. El runtime del candado actualiza el tiempo restante
   sólo cuando el texto realmente cambia y su observador ignora mutaciones de texto;
   esto evita ciclos de render infinitos entre el contador y `MutationObserver`.
   Un asset legacy que solo vive en Stream y no tiene HLS muestra brevemente
@@ -5215,6 +5215,12 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   de escritorio no se modifican. Desactivarlo conserva el formato horizontal en
   móvil. Los videos verticales no cambian y un formulario expandido sobre el
   reproductor conserva el espacio necesario para su contenido.
+  El panel derecho también muestra **Resolución inteligente**, activa por
+  defecto incluso en videos guardados antes de existir el ajuste. Con HLS, el
+  modo activo deja que Bunny/hls.js seleccione la variante según el ancho de
+  banda para reducir esperas y buffering; al apagarlo, el reproductor prioriza
+  la mayor resolución disponible. En un MP4 único no existen variantes entre
+  las cuales elegir, por lo que el ajuste no altera ese archivo.
   Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado y el total
   recibido por Bunny. En estándar también exige que el espejo Storage tenga el
   mismo tamaño; en premium exige la identidad Stream y persiste su HLS sin
@@ -5223,8 +5229,8 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   Cancelar elimina la reserva y el video
   pendiente, y las sesiones abandonadas de más de siete días se limpian al
   siguiente intento de subida. Los videos
-  legacy respaldados por Storage conservan su preview compatible y cambian a
-  reproducción nativa de Ristak en publicado. Player.js queda como compatibilidad
+  legacy respaldados solo por Storage conservan ese MP4 como fallback dentro del
+  reproductor nativo de Ristak en editor y publicado. Player.js queda como compatibilidad
   para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
   externos sin archivo Storage asociado; las acciones del reproductor nativo se
   conectan directamente al elemento de video.
@@ -5235,7 +5241,8 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   controles de diseño del player de Ristak porque frame, botón de play, controles,
   overlays, contadores, SVG, GIF y animaciones pertenecen al código. Ristak
   elimina fuentes `<source>` o `src` escritas por el autor, inyecta MP4/HLS sin
-  exponer credenciales, inicializa HLS cuando hace falta y mantiene
+  exponer credenciales, inicializa HLS cuando hace falta, respeta
+  `videoAdaptiveQuality` y mantiene
   `/video-event`, Pixel/CAPI, acciones, formularios sobre video y gates. El
   runtime reconoce comandos declarativos `play`, `pause`, `toggle`, `mute`,
   `unmute`, `toggle-mute`, `restart` y `fullscreen`; actualiza barra, tiempo,
@@ -5322,12 +5329,13 @@ controles falsos. Sus grupos de control son:
   `videoPlayColor`, salvo que el usuario solicite un acento distinto.
 - Reproducción: autoplay silenciado, loop, velocidad inicial, preview, aviso de
   sonido y progreso visual mediante `videoMuted`, `videoAutoplay`, `videoLoop`,
-  `videoDefaultSpeed`, `videoPreviewEnabled`, `videoPreviewStart`,
+  `videoAdaptiveQuality`, `videoDefaultSpeed`, `videoPreviewEnabled`, `videoPreviewStart`,
   `videoPreviewEnd`, `videoDisableEditorPlayback`, `videoSoundHint`,
   `videoSoundNoticeText`, `videoSoundNoticeHideAfter`,
   `videoTrickProgressEnabled`, `videoTrickProgressRampPercent` y
-  `videoTrickProgressPeakPercent`. Autoplay fuerza `videoMuted=true` porque los
-  navegadores bloquean la reproducción automática con audio.
+  `videoTrickProgressPeakPercent`. `videoAdaptiveQuality` viene activo; `false`
+  prioriza la mayor variante HLS disponible. Autoplay fuerza `videoMuted=true`
+  porque los navegadores bloquean la reproducción automática con audio.
 - Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
   `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
   `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene
@@ -5484,7 +5492,9 @@ controles visuales viven en el código. Un `<video>` suelto fuera de ese contrat
 sigue siendo media opaca para Ristak. Pago tambien permanece siempre nativo porque
 la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
-mostrar los elementos nativos ya montados tal como se veran en vivo; las
+mostrar los elementos nativos ya montados tal como se veran en vivo. Los videos
+cargan MP4 o HLS, reproducen el loop configurado y mantienen tracking apagado;
+solo se pausan si el usuario activa **No reproducir mientras se edita**. Las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
 de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por
 `data-rstk-native-id` + tipo + pagina, de modo que dos paginas importadas no

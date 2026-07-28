@@ -905,11 +905,25 @@ test('imported HTML native video slots render the real Ristak player and video a
       preview: true,
       importedNativePreviewMock: true
     })
-    assert.match(editorHtml, /data-rstk-video-preview="false"/)
+    assert.match(editorHtml, /data-rstk-video-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
-    assert.match(editorHtml, /preload="none"/)
+    assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
+    assert.match(editorHtml, /preload="auto"/)
     assert.match(editorHtml, /const editorPreview = video\.getAttribute\('data-rstk-video-editor-preview'\) === 'true'/)
-    assert.match(editorHtml, /source && isHlsSource\(source\) && !editorPreview/)
+    assert.match(editorHtml, /if \(source && isHlsSource\(source\)\)/)
+    assert.doesNotMatch(editorHtml, /source && isHlsSource\(source\) && !editorPreview/)
+
+    const pausedEditorSite = structuredClone(currentSite)
+    const pausedVideo = pausedEditorSite.blocks.find(block => block.blockType === 'video')
+    pausedVideo.settings.videoDisableEditorPlayback = true
+    const pausedEditorHtml = await renderPublicSiteHtml(pausedEditorSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+    assert.match(pausedEditorHtml, /data-rstk-video-preview="false"/)
+    assert.match(pausedEditorHtml, /preload="none"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
@@ -1024,7 +1038,8 @@ test('imported HTML custom video keeps its complete design while Ristak injects 
     })
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-src="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
-    assert.doesNotMatch(editorHtml, /<video[^>]*\ssrc="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.match(editorHtml, /<video[^>]*\ssrc="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
     assert.match(editorHtml, /class="dog-overlay"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
@@ -1099,6 +1114,19 @@ test('imported HTML custom video receives Bunny HLS without mounting the Bunny o
     assert.match(html, /const HLS_SCRIPT_URL/)
     assert.match(html, /data-rstk-video-command="fullscreen"/)
     assert.doesNotMatch(html, /<iframe[^>]+mediadelivery\.net|<div class="[^"]*rstk-video-stream-frame|<div class="[^"]*rstk-video-custom-controls/)
+
+    const editorHtml = await renderPublicSiteHtml(await getSite(site.id, { includeBlocks: true }), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
+    assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
+    assert.match(editorHtml, /if \(source && isHlsSource\(source\)\)/)
+    assert.doesNotMatch(editorHtml, /data-rstk-video-track="true"/)
+    assert.doesNotMatch(editorHtml, /player\.mediadelivery\.net\/embed/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)

@@ -232,10 +232,11 @@ another account.
   path after transcoding, including the legacy Stream-only mirror case; it is not
   the selection path for an existing Storage video.
 - When Bunny exposes playback data, Ristak stores the validated adaptive HLS URL
-  under `metadata_json.stream.delivery.playlistUrl`. The public Sites renderer
-  uses that HLS source inside the native Ristak player. A Storage MP4 remains the
-  editor/no-track source and binary fallback when it exists; a premium Stream-only
-  asset uses the same HLS in preview with Ristak tracking disabled.
+  under `metadata_json.stream.delivery.playlistUrl`. Sites uses that HLS source
+  inside the native Ristak player in editor, preview and published rendering.
+  Editor/preview keep Ristak tracking disabled without replacing HLS with another
+  source. A Storage MP4 remains the binary fallback when no validated playlist
+  exists.
 - Imported HTML Sites are code-first: pasting complete HTML or uploading an
   HTML/ZIP creates the site/pages and detects media slots before any Media asset
   is selected. `data-rstk-asset-id` and `data-rstk-background-asset-id` declare
@@ -291,21 +292,25 @@ another account.
   `data-rstk-native-render="custom"` instead keeps the author's complete HTML/CSS
   player and requires exactly one descendant `<video data-rstk-video-media>`.
   Ristak removes author-supplied `src`/`<source>`, injects the selected Storage
-  MP4 or validated Stream HLS playlist, initializes adaptive playback and keeps
+  MP4 or validated Stream HLS playlist, initializes playback according to
+  `videoAdaptiveQuality` and keeps
   first-party tracking, actions and gates on that same element. Buttons, native
   controls, overlays, progress, counters, fullscreen affordances and animations
   are declarative HTML owned by the page; neither the Bunny iframe nor Ristak's
   visual player chrome is mounted. Inline scripts, `on*` handlers and Bunny API
   credentials remain prohibited and sanitized. A standalone code-owned
   `<video>` outside this custom native-slot contract remains legacy/opaque media.
-- Editor and canvas use the Bunny Storage URL when that mirror exists; premium
-  Stream-only video uses its validated HLS playlist directly. Published/live
-  native video blocks prefer that HLS inside the same customizable Ristak player,
-  so visitors get adaptive bitrate without surrendering the saved button, colors,
-  controls, video actions or form gate to a provider iframe. Preview playback
-  keeps Ristak tracking disabled; published playback emits first-party video
-  events while preserving the Media asset and Stream ids. Standard assets
-  without a validated HLS URL keep the Storage MP4 fallback.
+- Editor, preview and published/live native video blocks use validated HLS inside
+  the same customizable Ristak player whenever Bunny has finished preparing it.
+  The right-side video setting **Resolución inteligente** defaults to enabled:
+  HLS adapts bitrate and resolution to the connection. When disabled, hls.js
+  leaves automatic selection and prioritizes Bunny's highest available rendition;
+  browsers with native HLS retain final control over their own playback pipeline.
+  This choice does not surrender the saved button, colors, controls, video
+  actions or form gate to a provider iframe. Preview playback loads the real
+  media but keeps Ristak tracking disabled; published playback emits first-party
+  video events while preserving the Media asset and Stream ids. Assets without a
+  validated HLS URL keep the Storage MP4 fallback.
 - During a direct TUS upload the temporary asset has
   `storage_provider='bunny_stream'` and an iframe `public_url`. Finalization
   validates the TUS byte count and confirms the original in Stream. Standard

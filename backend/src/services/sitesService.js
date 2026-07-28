@@ -18841,7 +18841,6 @@ async function buildVideoStorageAssetsByStreamVideoId(blocks = [], { enabled = f
 }
 
 function getLiveStreamAssetForStorageVideo(rawVideoUrl, context = {}) {
-  if (context.noTrack) return null
   const lookupUrl = normalizeMediaLookupUrl(rawVideoUrl)
   if (!lookupUrl) return null
   return context.videoStreamAssetsByStorageUrl?.get(lookupUrl) || null
@@ -18886,13 +18885,9 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  // El editor conserva la copia MP4 de Storage cuando existe. El perfil premium,
-  // que evita duplicar archivos pesados a través del backend, usa HLS también en
-  // preview sin activar tracking de Ristak. Publicado siempre prefiere HLS:
-  // mantiene reproductor/acciones y Bunny adapta la resolución a la conexión.
-  const playerVideoUrl = !context.noTrack && resolvedStream?.playlistUrl
-    ? resolvedStream.playlistUrl
-    : directVideoUrl || resolvedStream?.playlistUrl
+  // HLS conserva las variantes de Bunny tanto en editor como en publicado. El
+  // modo noTrack solo apaga analítica; no debe degradar ni ocultar la reproducción.
+  const playerVideoUrl = resolvedStream?.playlistUrl || directVideoUrl
   if (playerVideoUrl) {
     return renderVideoPlayer(playerVideoUrl, block, settings, {
       noTrack: false,
@@ -18948,9 +18943,7 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
     const liveStreamAsset = getLiveStreamAssetForStorageVideo(rawVideoUrl, context)
     const stream = getMediaAssetStreamMetadata(liveStreamAsset)
     const storageUrl = getDirectMediaAssetVideoUrl(liveStreamAsset)
-    const src = !context.noTrack && stream?.playlistUrl
-      ? stream.playlistUrl
-      : storageUrl || directVideoUrl || stream?.playlistUrl
+    const src = stream?.playlistUrl || storageUrl || directVideoUrl
     if (!src) return null
     return {
       src,
@@ -18965,9 +18958,7 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
   const asset = getStorageAssetForStreamVideoUrl(embedVideoUrl, context)
   const stream = getMediaAssetStreamMetadata(asset) || getStreamMetadataForVideoUrl(embedVideoUrl, context)
   const storageUrl = getDirectMediaAssetVideoUrl(asset)
-  const src = !context.noTrack && stream?.playlistUrl
-    ? stream.playlistUrl
-    : storageUrl || stream?.playlistUrl
+  const src = stream?.playlistUrl || storageUrl
   if (!src) return null
   return {
     src,
@@ -23271,21 +23262,21 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const soundNoticePersistent = soundNoticeHideAfter === 0
   const previewEnabled = settings.videoPreviewEnabled !== false
   const muted = settings.videoMuted !== false
-  const autoplay = Boolean(settings.videoAutoplay)
+  const editorPreviewMode = Boolean(options.context?.importedNativePreviewMock)
+  const editorPlaybackDisabled = editorPreviewMode && settings.videoDisableEditorPlayback === true
+  const autoplay = Boolean(settings.videoAutoplay) && !editorPlaybackDisabled
   // Marcador informativo para el atributo data-rstk-video-render-preview (nadie lo
   // consume en runtime); ya NO altera el comportamiento del render.
   const renderPreviewMode = Boolean(options.context?.preview)
-  // El preview embebido del editor puede montar varias versiones responsivas del
-  // mismo video dentro de srcDoc. No debe descargar ni decodificar assets grandes
-  // al abrir la pantalla: el editor intercepta la interacción para seleccionar el
-  // slot, mientras preview-session y publicado conservan la reproducción real.
-  const editorPreviewMode = Boolean(options.context?.importedNativePreviewMock)
+  // El editor HTML reproduce el mismo medio que el sitio para que loop, autoplay,
+  // controles y diseño puedan verificarse ahí. La única pausa deliberada es la
+  // opción explícita "No reproducir mientras se edita".
   // Paridad preview/publicado (pipeline #8): el candado inicial de la barra ya no
   // se fuerza en preview; depende solo del autoplay, igual que en el sitio publicado.
   const controlBarLockedAtStart = showCustomControlBar && !autoplay
   const initialControlsVisible = showCustomControlBar && !controlBarLockedAtStart && showControlBarInitially
-  const previewLoopEnabled = previewEnabled && !autoplay && !editorPreviewMode
-  const preloadMode = editorPreviewMode ? 'none' : previewEnabled ? 'auto' : 'metadata'
+  const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
+  const preloadMode = editorPlaybackDisabled ? 'none' : previewEnabled ? 'auto' : 'metadata'
   const previewRange = normalizeVideoPreviewRange(settings)
   const showSoundNotice = showOverlay && soundHint && !autoplay
   const loop = Boolean(settings.videoLoop) || autoplay
@@ -23358,6 +23349,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-render-preview="${renderPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-editor-preview="${editorPreviewMode ? 'true' : 'false'}"`,
+    `data-rstk-video-adaptive-quality="${settings.videoAdaptiveQuality !== false ? 'true' : 'false'}"`,
     `data-rstk-video-orientation-mode="${escapeHtml(orientationMode)}"`,
     `data-rstk-video-preview="${previewLoopEnabled ? 'true' : 'false'}"`,
     `data-rstk-video-preview-start="${escapeHtml(String(previewRange.start))}"`,
@@ -26133,7 +26125,8 @@ function buildVideoPlayerRuntimeScript() {
 	        if (!video) return;
 	        const source = video.getAttribute('data-rstk-video-src') || video.getAttribute('src') || '';
 	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
-	        if (source && isHlsSource(source) && !editorPreview) {
+	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
+	        if (source && isHlsSource(source)) {
 	          if (canPlayNativeHls(video)) {
 	            video.src = source;
 	            video.load();
@@ -26146,8 +26139,16 @@ function buildVideoPlayerRuntimeScript() {
 	                video.load();
 	                return;
 	              }
-	              const hls = new Hls({ enableWorker: true });
+	              const hls = new Hls({ enableWorker: true, startLevel: adaptiveQuality ? -1 : undefined });
 	              host.rstkHls = hls;
+	              if (!adaptiveQuality && Hls.Events && Hls.Events.MANIFEST_PARSED) {
+	                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+	                  const highestLevel = Math.max(0, ((hls.levels && hls.levels.length) || 1) - 1);
+	                  hls.startLevel = highestLevel;
+	                  hls.loadLevel = highestLevel;
+	                  hls.currentLevel = highestLevel;
+	                });
+	              }
 	              hls.loadSource(source);
 	              hls.attachMedia(video);
 	            }).catch(() => {
@@ -28091,11 +28092,12 @@ function renderImportedCustomVideoMedia(innerHtml = '', block = null, context = 
     'data-rstk-video-media': 'true',
     'data-rstk-video-custom-media': 'true',
     'data-rstk-video-editor-preview': editorPreview ? 'true' : 'false',
+    'data-rstk-video-adaptive-quality': settings.videoAdaptiveQuality !== false ? 'true' : 'false',
     'data-rstk-video-preview': attrs['data-rstk-video-preview'] || 'false',
     'data-rstk-video-speed': attrs['data-rstk-video-speed'] || String(settings.videoDefaultSpeed || 1),
     'data-rstk-video-orientation-mode': attrs['data-rstk-video-orientation-mode'] || 'auto',
     ...(delivery?.src ? { 'data-rstk-video-src': delivery.src } : {}),
-    ...(delivery?.src && !editorPreview && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
+    ...(delivery?.src && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
     title: attrs.title || block?.label || 'Video'
   }
   const nextVideo = `<video${renderHtmlAttributes(nextAttrs)}>${mediaBody}</video>`
@@ -29263,7 +29265,7 @@ async function renderImportedPublicSiteHtml(site, {
   const importedNoTrack = !trackingEnabled || preview
   const importedVideoLookupBlocks = site.blocks || []
   const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
-    buildVideoStreamAssetsByStorageUrl(importedVideoLookupBlocks, { enabled: !importedNoTrack }),
+    buildVideoStreamAssetsByStorageUrl(importedVideoLookupBlocks, { enabled: true }),
     buildVideoStorageAssetsByStreamVideoId(importedVideoLookupBlocks, { enabled: true })
   ])
   const importedVideoRenderContext = {
@@ -29361,7 +29363,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     const importedNoTrack = !trackingEnabled
     const importedVideoLookupBlocks = site.blocks || []
     const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
-      buildVideoStreamAssetsByStorageUrl(importedVideoLookupBlocks, { enabled: !importedNoTrack }),
+      buildVideoStreamAssetsByStorageUrl(importedVideoLookupBlocks, { enabled: true }),
       buildVideoStorageAssetsByStreamVideoId(importedVideoLookupBlocks, { enabled: true })
     ])
     const importedVideoRenderContext = {
@@ -29623,7 +29625,7 @@ export async function renderPublicSiteHtml(site, {
   const revealFormActionControlled = (isStandardFormType || isLandingType) && hasVideoRevealFormActionRule(blocks)
   const noTrack = !trackingEnabled || preview
   const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
-    buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: !noTrack }),
+    buildVideoStreamAssetsByStorageUrl(videoLookupBlocks, { enabled: true }),
     buildVideoStorageAssetsByStreamVideoId(videoLookupBlocks, { enabled: true })
   ])
 	  // Fondo de contraste para blockText: el ÚNICO helper compartido (content #8)
