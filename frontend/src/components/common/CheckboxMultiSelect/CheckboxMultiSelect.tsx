@@ -11,6 +11,7 @@ import styles from './CheckboxMultiSelect.module.css'
 export interface CheckboxMultiSelectOption<T extends string = string> {
   value: T
   label: string
+  disabled?: boolean
 }
 
 export interface CheckboxMultiSelectProps<T extends string = string> {
@@ -60,7 +61,9 @@ export function CheckboxMultiSelect<T extends string = string>({
           <DropdownMenuCheckboxItem
             key={option.value}
             checked={selected.has(option.value)}
+            disabled={option.disabled}
             onCheckedChange={(checked) => {
+              if (option.disabled) return
               const next = checked
                 ? options.filter((item) => selected.has(item.value) || item.value === option.value).map((item) => item.value)
                 : value.filter((item) => item !== option.value)

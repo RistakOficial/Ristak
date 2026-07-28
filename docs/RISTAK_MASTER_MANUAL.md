@@ -3865,7 +3865,16 @@ Una cuenta nueva recibe una sola fila inicial: `Confirmación 1 día antes`, con
 nada hasta que el usuario revise y active su configuracion. Esta fila lleva
 `system_key='default_one_day_before'` y un índice único parcial. Así dos
 instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Además,
-cada mensaje automático guarda una `schedule_key` única compuesta por el ancla
+cada confirmación nueva selecciona por defecto sus acciones combinables:
+tarjeta en el chat, notificación push, etiqueta temporal `Asistirá a cita` y
+marcar la cita como confirmada. Esta última es obligatoria; las otras tres se
+pueden activar o quitar desde un dropdown con checks. Las filas históricas
+conservan su único aviso anterior para evitar efectos nuevos silenciosos. La
+columna `confirmation_success_action` acepta ese valor escalar legado o el
+arreglo JSON nuevo, y las ventanas de confirmación guardan una copia de la
+selección vigente al recibir la respuesta.
+
+Cada mensaje automático guarda una `schedule_key` única compuesta por el ancla
 (`before_appointment` o `after_booking`) y la duración normalizada en
 milisegundos. Dos configuraciones que caerían en el mismo momento —por ejemplo,
 `60 minutos antes` y `1 hora antes`— se consideran el mismo horario sin importar

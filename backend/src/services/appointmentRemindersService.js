@@ -35,6 +35,12 @@ import {
   renderMessageText,
   parseStoredUtcDateTime
 } from './appointmentReminderLogic.js'
+import {
+  DEFAULT_CONFIRMATION_SUCCESS_ACTIONS,
+  LEGACY_CONFIRMATION_SUCCESS_ACTIONS,
+  normalizeConfirmationSuccessActions,
+  serializeConfirmationSuccessActions
+} from './appointmentConfirmationActions.js'
 
 export {
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
@@ -77,7 +83,6 @@ const AUTOMATIC_REMINDER_CHANNELS = new Set(['booking_channel', 'available_chann
 const REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel', 'whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
 const REAL_REMINDER_CHANNELS = ['whatsapp', 'whatsapp_qr', 'instagram', 'messenger', 'email']
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
-const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
   notice: 'cita_programada',
@@ -265,6 +270,10 @@ function normalizeReminderRow(row = {}) {
   const contentMode = isWhatsAppReminderChannel(channel)
     ? (CONTENT_MODES.has(rawContentMode) ? rawContentMode : (hasTemplate ? 'template' : 'direct'))
     : 'direct'
+  const confirmationSuccessActions = normalizeConfirmationSuccessActions(
+    row.confirmation_success_action,
+    LEGACY_CONFIRMATION_SUCCESS_ACTIONS
+  )
   return {
     id: cleanString(row.id),
     name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
@@ -287,7 +296,10 @@ function normalizeReminderRow(row = {}) {
     smartEnd: cleanString(row.smart_end) || '21:00',
     smartOverflow: SMART_OVERFLOWS.has(cleanString(row.smart_overflow)) ? cleanString(row.smart_overflow) : 'before',
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
-    confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(row.confirmation_success_action)) ? cleanString(row.confirmation_success_action) : 'chat_card',
+    confirmationSuccessActions,
+    // Compatibilidad temporal para clientes anteriores que todavía esperan un
+    // único valor. El backend nuevo usa siempre confirmationSuccessActions.
+    confirmationSuccessAction: confirmationSuccessActions.find(action => action !== 'mark_confirmed') || 'mark_confirmed',
     bypassAutomations: Number(row.bypass_automations || 0) === 1,
     // Compatibilidad de API: el respaldo ya no es una preferencia manual. La
     // capa central lo habilita sólo para un QR conectado al mismo número.
@@ -779,6 +791,22 @@ function sanitizeReminderInput(input = {}, base = {}) {
       : messageType === 'confirmation'
         ? DEFAULT_CONFIRMATION_TEXT
         : DEFAULT_REMINDER_TEXT)
+  const hasConfirmationSuccessActions = Object.prototype.hasOwnProperty.call(input, 'confirmationSuccessActions')
+  const hasLegacyConfirmationSuccessAction = Object.prototype.hasOwnProperty.call(input, 'confirmationSuccessAction')
+  const legacyActionIsUnchanged = (
+    hasLegacyConfirmationSuccessAction &&
+    Array.isArray(base.confirmationSuccessActions) &&
+    cleanString(input.confirmationSuccessAction) === cleanString(base.confirmationSuccessAction)
+  )
+  const confirmationSuccessActionsSource = hasConfirmationSuccessActions
+    ? input.confirmationSuccessActions
+    : hasLegacyConfirmationSuccessAction && !legacyActionIsUnchanged
+      ? input.confirmationSuccessAction
+      : base.confirmationSuccessActions ?? base.confirmationSuccessAction ?? DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
+  const confirmationSuccessActions = normalizeConfirmationSuccessActions(
+    confirmationSuccessActionsSource,
+    DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
+  )
 
   return {
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
@@ -801,7 +829,11 @@ function sanitizeReminderInput(input = {}, base = {}) {
     smartEnd,
     smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before',
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
-    confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(merged.confirmationSuccessAction)) ? cleanString(merged.confirmationSuccessAction) : 'chat_card',
+    confirmationSuccessActions,
+    confirmationSuccessAction: serializeConfirmationSuccessActions(
+      confirmationSuccessActions,
+      DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
+    ),
     bypassAutomations: merged.bypassAutomations === true ? 1 : 0,
     // Se conserva la columna para clientes anteriores, pero el ruteo real es
     // automático y siempre queda autorizado para WhatsApp API. La capa central

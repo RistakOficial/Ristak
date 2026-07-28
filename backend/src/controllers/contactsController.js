@@ -118,6 +118,7 @@ import {
   getHighLevelConversationalChannelPreference,
   setHighLevelConversationalChannelPreference
 } from '../services/highLevelConversationalChannelRoutingService.js'
+import { confirmationSuccessActionSqlContains } from '../services/appointmentConfirmationActions.js'
 import { CONVERSATIONAL_AGENT_COMPLETION_SIGNAL_VALUES } from '../utils/conversationalAgentCompletion.js'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
@@ -6368,7 +6369,7 @@ export const getContactJourney = async (req, res) => {
            WHERE w.contact_id = ?
              AND w.status = 'done'
              AND w.result = 'confirmed'
-             AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
+             AND ${confirmationSuccessActionSqlContains('w.confirmation_success_action', 'chat_card')}
            ORDER BY ${timestampSortExpression(confirmationTimestampExpression)} DESC, w.id DESC
            LIMIT ?`,
           [id, journeyMessageLimit]
@@ -7107,7 +7108,7 @@ export const getContactJourney = async (req, res) => {
          WHERE w.contact_id = ?
            AND w.status = 'done'
            AND w.result = 'confirmed'
-           AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
+           AND ${confirmationSuccessActionSqlContains('w.confirmation_success_action', 'chat_card')}
            ${journeyMessageBeforeClause(
              appointmentConfirmationTimestampExpression,
              journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id'),

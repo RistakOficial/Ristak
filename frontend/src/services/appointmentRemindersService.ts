@@ -50,7 +50,9 @@ export interface AppointmentReminder {
   smartEnd: string
   smartOverflow: ReminderSmartOverflow
   noConfirmAction: ReminderNoConfirmAction
-  confirmationSuccessAction: ReminderConfirmationSuccessAction
+  confirmationSuccessActions: ReminderConfirmationSuccessAction[]
+  /** Compatibilidad con servidores/clientes anteriores al multiselect. */
+  confirmationSuccessAction?: ReminderConfirmationSuccessAction
   bypassAutomations: boolean
   qrFallbackEnabled: boolean
   position: number
