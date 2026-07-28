@@ -4795,6 +4795,13 @@ deteccion. El usuario tambien puede pedirle al asistente que devuelva el HTML
 completo modificado. El codigo de cada pagina se puede pegar y editar
 directamente; el preview no modifica copy, imagenes, botones, campos o secciones
 por si solo y solo permite seleccionar slots funcionales de Ristak.
+Al entrar a una pagina HTML, el editor de codigo izquierdo inicia oculto para
+dar prioridad a la vista previa. El encabezado de la vista muestra
+`Abrir editor de código` y, mientras el panel esta visible,
+`Ocultar editor`; al reabrirlo recupera el ultimo ancho utilizado.
+El inspector derecho de contenido y elementos detectados inicia abierto y tiene
+su propio control para ocultarse o mostrarse sin cambiar el estado del editor de
+codigo.
 
 Al crear un sitio web, la pantalla inicial muestra solo tres caminos en una misma
 fila: `En blanco`, `Desde plantilla` y `Crear desde HTML`. La última opción

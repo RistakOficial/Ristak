@@ -119,6 +119,47 @@ assert.match(
   'el panel del asistente solo debe montarse cuando el usuario lo abra'
 )
 
+assert.match(
+  sitesSource,
+  /const \[codeEditorWidth, setCodeEditorWidth\] = useState\(0\)/,
+  'el editor de código de una página HTML debe iniciar oculto'
+)
+assert.match(
+  sitesSource,
+  /const \[nativeInspectorOpen, setNativeInspectorOpen\] = useState\(true\)/,
+  'el panel derecho de elementos detectados debe iniciar abierto'
+)
+assert.match(
+  sitesSource,
+  /aria-label=\{codeEditorCollapsed \? 'Abrir editor de código' : 'Ocultar editor de código'\}/,
+  'el encabezado de la vista debe abrir y ocultar el editor de código'
+)
+assert.doesNotMatch(
+  sitesSource,
+  /className=\{styles\.importedCodeResizeExpandButton\}/,
+  'el separador colapsado no debe conservar un segundo botón para abrir el código'
+)
+assert.match(
+  sitesStyles,
+  /\.importedCodeEditorPanelCodeCollapsed\s*\{\s*grid-template-columns:\s*0 0 minmax\(0, 1fr\);/,
+  'ocultar el código también debe eliminar el espacio del separador anterior'
+)
+assert.doesNotMatch(
+  sitesStyles,
+  /\.importedCodeResizeExpandButton/,
+  'los estilos del botón anterior no deben dejar una variante visual huérfana'
+)
+assert.match(
+  sitesSource,
+  /const codeEditorHasNativeInspector = Boolean\(importedNativeElementsPanel && nativeInspectorOpen\)/,
+  'la cuadrícula debe liberar el espacio del panel derecho cuando el usuario lo oculta'
+)
+assert.match(
+  sitesSource,
+  /aria-label=\{nativeInspectorOpen \? 'Ocultar panel derecho' : 'Mostrar panel derecho'\}/,
+  'el control del panel derecho debe comunicar claramente ambas acciones'
+)
+
 const importedFileHandlerSource = sourceBetween(
   'const handleImportHtmlFile = async',
   'const handleImportedContentUpdated ='

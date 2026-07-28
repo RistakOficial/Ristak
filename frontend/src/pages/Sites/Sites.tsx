@@ -74,7 +74,10 @@ import {
   MousePointerClick,
   PanelBottom,
   PanelTop,
+  PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Paperclip,
   Pause,
   Pencil,
@@ -21564,9 +21567,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [contentError, setContentError] = useState('')
   const [importedEditorCustomFields, setImportedEditorCustomFields] = useState<CustomFieldDefinition[]>(customFields)
   const [importedEditorCustomFieldFolders, setImportedEditorCustomFieldFolders] = useState<CustomFieldFolder[]>(customFieldFolders)
-  const [codeEditorWidth, setCodeEditorWidth] = useState(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
-  const codeEditorWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  const [codeEditorWidth, setCodeEditorWidth] = useState(0)
+  const codeEditorWidthRef = useRef(0)
   const lastCodeEditorExpandedWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  const [nativeInspectorOpen, setNativeInspectorOpen] = useState(true)
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
   const [codeAssistantPrompt, setCodeAssistantPrompt] = useState('')
@@ -22641,7 +22645,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
-    const hasInspector = true
+    const hasInspector = nativeInspectorOpen
     let frame = 0
     let latestWidth = codeEditorWidthRef.current
     const rect = container.getBoundingClientRect()
@@ -22682,7 +22686,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     document.body.classList.add('rstk-code-resizing')
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp, { once: true })
-  }, [selectedImportedNativeElementSlot])
+  }, [nativeInspectorOpen, selectedImportedNativeElementSlot])
 
   useEffect(() => {
     codeEditorWidthRef.current = codeEditorWidth
@@ -26290,7 +26294,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     )
   })()
 
-  const codeEditorHasNativeInspector = Boolean(importedNativeElementsPanel)
+  const codeEditorHasNativeInspector = Boolean(importedNativeElementsPanel && nativeInspectorOpen)
   const codeEditorCollapsed = codeEditorWidth <= 0
   const codeEditorSourceWidth = getImportedCodePanelSourceWidth(codeEditorWidth, codeEditorHasNativeInspector)
   const codeEditorSourceTrack = getImportedCodePanelSourceTrack(codeEditorWidth, codeEditorHasNativeInspector)
@@ -26316,6 +26320,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         } as React.CSSProperties}
       >
         <section
+          id="imported-html-code-editor"
           className={`${styles.importedCodeSourcePane} ${codeEditorCollapsed ? styles.importedCodeSourcePaneCollapsed : ''} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
           aria-hidden={codeEditorCollapsed}
         >
@@ -26535,15 +26540,15 @@ const ImportedHtmlEditorPanel: React.FC<{
           className={`${styles.importedCodeResizeHandle} ${codeEditorCollapsed ? styles.importedCodeResizeHandleCollapsed : ''}`}
           role="separator"
           aria-orientation="vertical"
-          aria-label={codeEditorCollapsed ? 'Mostrar código HTML' : 'Cambiar tamaño entre código y vista'}
+          aria-label="Cambiar tamaño entre código y vista"
+          aria-hidden={codeEditorCollapsed}
           aria-valuemin={0}
           aria-valuemax={IMPORTED_CODE_PANEL_MAX_WIDTH}
           aria-valuenow={Math.round(codeEditorWidth)}
-          tabIndex={0}
+          tabIndex={codeEditorCollapsed ? -1 : 0}
           onPointerDown={handleCodeSplitPointerDown}
           onDoubleClick={() => {
-            if (codeEditorCollapsed) expandCodeEditorPanel()
-            else setCodeEditorWidth(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+            setCodeEditorWidth(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
           }}
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -26554,20 +26559,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             if (event.key === 'End') setCodeEditorWidth(IMPORTED_CODE_PANEL_MAX_WIDTH)
           }}
         >
-          {codeEditorCollapsed ? (
-            <button
-              type="button"
-              className={styles.importedCodeResizeExpandButton}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={expandCodeEditorPanel}
-              aria-label="Mostrar código HTML"
-              title="Mostrar código HTML"
-            >
-              <PanelLeftOpen size={16} />
-            </button>
-          ) : (
-            <span />
-          )}
+          <span />
         </div>
 
         <section className={[
@@ -26575,8 +26567,37 @@ const ImportedHtmlEditorPanel: React.FC<{
           codePreviewNotice ? styles.importedCodePreviewPaneWithNotice : ''
         ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
-            <span>{popupCodeActive ? 'Vista de pop up' : 'Vista de página'}</span>
-            <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              leftIcon={codeEditorCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+              onClick={codeEditorCollapsed ? expandCodeEditorPanel : collapseCodeEditorPanel}
+              aria-expanded={!codeEditorCollapsed}
+              aria-controls="imported-html-code-editor"
+              aria-label={codeEditorCollapsed ? 'Abrir editor de código' : 'Ocultar editor de código'}
+              title={codeEditorCollapsed ? 'Abrir editor de código' : 'Ocultar editor de código'}
+            >
+              {codeEditorCollapsed ? 'Abrir editor de código' : 'Ocultar editor'}
+            </Button>
+            <div className={styles.importedCodePreviewHeaderMeta}>
+              <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
+              {importedNativeElementsPanel && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => setNativeInspectorOpen(current => !current)}
+                  aria-expanded={nativeInspectorOpen}
+                  aria-controls="imported-html-native-inspector"
+                  aria-label={nativeInspectorOpen ? 'Ocultar panel derecho' : 'Mostrar panel derecho'}
+                  title={nativeInspectorOpen ? 'Ocultar panel derecho' : 'Mostrar panel derecho'}
+                >
+                  {nativeInspectorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+                </Button>
+              )}
+            </div>
           </div>
           {codePreviewNotice && (
             <div className={styles.importedCodeSelectionNotice}>
@@ -26616,8 +26637,12 @@ const ImportedHtmlEditorPanel: React.FC<{
             )}
           </div>
         </section>
-        {importedNativeElementsPanel && (
-          <aside className={`${styles.propertiesPanel} ${styles.importedCodeNativeInspectorPane}`} aria-label="Configurar elementos Ristak detectados">
+        {codeEditorHasNativeInspector && (
+          <aside
+            id="imported-html-native-inspector"
+            className={`${styles.propertiesPanel} ${styles.importedCodeNativeInspectorPane}`}
+            aria-label="Configurar elementos Ristak detectados"
+          >
             {importedNativeElementsPanel}
           </aside>
         )}

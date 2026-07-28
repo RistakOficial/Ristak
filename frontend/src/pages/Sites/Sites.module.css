@@ -650,11 +650,11 @@
 }
 
 .importedCodeEditorPanelCodeCollapsed {
-  grid-template-columns: 0 40px minmax(0, 1fr);
+  grid-template-columns: 0 0 minmax(0, 1fr);
 }
 
 .importedCodeEditorPanelCodeCollapsed.importedCodeEditorPanelWithInspector {
-  grid-template-columns: 0 40px minmax(0, 1fr) minmax(340px, 410px);
+  grid-template-columns: 0 0 minmax(0, 1fr) minmax(340px, 410px);
 }
 
 .importedCodeNativeInspectorPane {
@@ -718,6 +718,21 @@
   font-size: 0.78rem;
   font-weight: 760;
   letter-spacing: 0;
+}
+
+.importedCodePreviewHeaderMeta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.importedCodePreviewHeaderMeta strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .importedCodeTitleBlock {
@@ -1012,31 +1027,12 @@
 }
 
 .importedCodeResizeHandleCollapsed {
-  min-width: 40px;
+  min-width: 0;
+  width: 0;
+  height: 0;
   cursor: default;
-  border-inline: 1px solid var(--color-border-subtle);
-  background: var(--color-background-primary);
-}
-
-.importedCodeResizeExpandButton {
-  width: 30px;
-  height: 30px;
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-background-secondary);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
-}
-
-.importedCodeResizeExpandButton:hover,
-.importedCodeResizeExpandButton:focus-visible {
-  border-color: rgba(var(--color-primary-rgb), 0.42);
-  background: var(--color-background-tertiary);
-  color: var(--color-primary);
-  outline: none;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .importedCodeResizeHandle span {
@@ -4252,12 +4248,12 @@
 
   .importedCodeEditorPanelCodeCollapsed {
     grid-template-columns: 1fr;
-    grid-template-rows: 0 40px minmax(520px, 1fr);
+    grid-template-rows: 0 0 minmax(520px, 1fr);
   }
 
   .importedCodeEditorPanelCodeCollapsed.importedCodeEditorPanelWithInspector {
     grid-template-columns: 1fr;
-    grid-template-rows: 0 40px minmax(520px, 1fr) minmax(360px, auto);
+    grid-template-rows: 0 0 minmax(520px, 1fr) minmax(360px, auto);
   }
 
   .importedCodeResizeHandle {
@@ -4269,11 +4265,9 @@
   }
 
   .importedCodeResizeHandleCollapsed {
-    min-height: 40px;
+    min-height: 0;
     width: 100%;
-    height: 40px;
-    border-inline: 0;
-    border-block: 1px solid var(--color-border-subtle);
+    height: 0;
   }
 
   .importedCodeResizeHandle span {
@@ -21872,12 +21866,12 @@
 
   .importedCodeEditorPanel.importedCodeEditorPanelCodeCollapsed {
     grid-template-columns: 1fr;
-    grid-template-rows: 0 40px minmax(520px, 1fr);
+    grid-template-rows: 0 0 minmax(520px, 1fr);
   }
 
   .importedCodeEditorPanel.importedCodeEditorPanelCodeCollapsed.importedCodeEditorPanelWithInspector {
     grid-template-columns: 1fr;
-    grid-template-rows: 0 40px minmax(520px, 1fr) minmax(360px, auto);
+    grid-template-rows: 0 0 minmax(520px, 1fr) minmax(360px, auto);
   }
 }
 
