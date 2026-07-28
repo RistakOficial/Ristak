@@ -185,4 +185,46 @@ assert.match(
   'la etiqueta de estado no debe estirarse a todo el ancho de la cuadricula'
 )
 
+const importedSystemFieldOptionsSource = sourceBetween(
+  'const importedSystemFieldOptions = [',
+  'const normalizeImportedDestinationKey ='
+)
+const importedSystemFieldLabels = [...importedSystemFieldOptionsSource.matchAll(/label: '([^']+)'/g)]
+  .map(match => match[1])
+assert.deepEqual(
+  importedSystemFieldLabels,
+  [
+    'Nombre completo',
+    'Correo electrónico',
+    'Teléfono / WhatsApp',
+    'Ciudad',
+    'Dirección 1',
+    'Empresa',
+    'Nombre',
+    'Apellido',
+    'Mensaje o nota'
+  ],
+  'el selector debe priorizar identidad, contacto y ubicación antes de los destinos secundarios'
+)
+
+const importedFieldPrioritySource = sourceBetween(
+  'const getPrioritizedImportedSystemFieldOptions =',
+  'interface SitesLibraryPanelProps'
+)
+assert.match(
+  importedFieldPrioritySource,
+  /currentValue\.startsWith\('standard:'\)[\s\S]*?filter\(option => option\.value === selectedKey\)[\s\S]*?filter\(option => option\.value !== selectedKey\)/,
+  'la asociación de sistema detectada o elegida debe subir al primer lugar sin duplicarse'
+)
+assert.match(
+  importedFieldPrioritySource,
+  /currentValue\.startsWith\('custom:'\)[\s\S]*?filter\(field => field\.definitionId === selectedDefinitionId\)[\s\S]*?filter\(field => field\.definitionId !== selectedDefinitionId\)/,
+  'el campo personalizado existente ya asociado debe subir antes de los demás personalizados'
+)
+assert.match(
+  importedFieldMappingRowSource,
+  /<optgroup label="Campos del sistema">[\s\S]*?<optgroup label="Campos personalizados existentes">[\s\S]*?<optgroup label="Crear campo nuevo">/,
+  'los destinos existentes deben aparecer antes de la opción que crea un campo nuevo'
+)
+
 console.log('Sites HTML creation flow contract OK')

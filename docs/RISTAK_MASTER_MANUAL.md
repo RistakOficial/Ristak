@@ -5602,10 +5602,18 @@ su `name` o `id` normal para el submit. Las opciones radio o checkbox que forman
 un solo campo se agrupan en un `fieldset` con `legend` (o una etiqueta accesible
 equivalente) y comparten esa identidad logica; otro campo distinto no puede
 reutilizarla en el mismo formulario. Desde la fila de cada campo el usuario
-elige un dato estandar del contacto, un campo personalizado existente, crear un
-campo personalizado nuevo (`destinationType/saveMode = new_custom`) o no
-guardarlo. Por eso no hace falta crear previamente todo el catalogo ni salir del
-panel. En cada fila, el estado (`Asociado`, `Pendiente`, `Guardando` o una alerta)
+elige un campo del sistema, un campo personalizado existente, crear un campo
+personalizado nuevo (`destinationType/saveMode = new_custom`) o no guardarlo.
+El selector coloca primero la asociacion ya detectada o guardada y ordena los
+destinos del sistema por prioridad operativa: nombre completo, correo,
+telefono/WhatsApp, ciudad, direccion, empresa, nombre, apellido y mensaje. Los
+campos personalizados ya existentes aparecen despues, subiendo al inicio del
+grupo el que ya esta asociado; `Crear campo nuevo` queda al final para evitar
+duplicar un destino existente por accidente. Ciudad, direccion y empresa se
+guardan como campos administrados por el sistema (`city`, `address_1`,
+`company`), no como personalizados paralelos. Por eso no hace falta crear
+previamente todo el catalogo ni salir del panel. En cada fila, el estado
+(`Asociado`, `Pendiente`, `Guardando` o una alerta)
 se muestra como una etiqueta compacta a la derecha del titulo; el selector de
 destino conserva una fila completa debajo y el estado nunca se presenta como
 una barra de ancho completo. Los titulos detectados deben ignorar snippets tecnicos de Ristak

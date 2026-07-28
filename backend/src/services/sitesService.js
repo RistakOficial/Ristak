@@ -513,6 +513,10 @@ const IMPORTED_EDITABLE_CONTENT_TYPES = new Set([
 const IMPORTED_FORM_STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email', 'message'])
 const NATIVE_FORM_STANDARD_SYSTEM_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone', 'email'])
 const NATIVE_FORM_CUSTOM_SYSTEM_FIELDS = new Set(['city', 'company', 'address_1'])
+const IMPORTED_FORM_SYSTEM_FIELDS = new Set([
+  ...IMPORTED_FORM_STANDARD_FIELDS,
+  ...NATIVE_FORM_CUSTOM_SYSTEM_FIELDS
+])
 const NATIVE_FORM_SYSTEM_FIELD_LABELS = {
   full_name: 'Nombre completo',
   first_name: 'Primer nombre',
@@ -522,6 +526,23 @@ const NATIVE_FORM_SYSTEM_FIELD_LABELS = {
   city: 'Ciudad',
   company: 'Empresa',
   address_1: 'Direccion 1'
+}
+const IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES = {
+  city: ['city', 'ciudad', 'localidad'],
+  company: ['company', 'company_name', 'business', 'business_name', 'empresa', 'nombre_empresa', 'nombre_del_negocio'],
+  address_1: [
+    'address',
+    'address_1',
+    'address1',
+    'address_line_1',
+    'street_address',
+    'direccion',
+    'direccion_1',
+    'direccion_principal',
+    'domicilio',
+    'location',
+    'ubicacion'
+  ]
 }
 const IMPORTED_AMBIGUOUS_PERSON_NAME_ALIASES = [
   'name',
@@ -2082,6 +2103,9 @@ function isImportedAmbiguousMappedPersonNameField(field = {}) {
 function getImportedStandardAliasKey(haystack = '') {
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.email)) return 'email'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.phone)) return 'phone'
+  if (hasImportedAlias(haystack, IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES.address_1)) return 'address_1'
+  if (hasImportedAlias(haystack, IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES.company)) return 'company'
+  if (hasImportedAlias(haystack, IMPORTED_CUSTOM_SYSTEM_FIELD_ALIASES.city)) return 'city'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.last_name)) return 'last_name'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.first_name)) return 'first_name'
   if (hasImportedAlias(haystack, IMPORTED_STANDARD_FIELD_ALIASES.full_name)) return 'full_name'
@@ -3988,7 +4012,7 @@ function inferImportedFieldDestination(field = {}) {
     return { destinationType: 'custom', destinationKey: explicitCustom, confidence: 0.98 }
   }
 
-  if (explicit && IMPORTED_FORM_STANDARD_FIELDS.has(explicit)) {
+  if (explicit && IMPORTED_FORM_SYSTEM_FIELDS.has(explicit)) {
     return { destinationType: 'standard', destinationKey: explicit, confidence: 0.98 }
   }
 
@@ -4411,7 +4435,7 @@ function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping,
     importedIgnored: destinationType === 'ignored'
   }
 
-  if (destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
+  if (destinationType === 'standard' && IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
     settings.systemFieldKey = destinationKey
   } else if (destinationType !== 'ignored') {
     settings.customFieldKey = normalizeImportedFieldKey(fieldMapping?.customFieldKey || destinationKey, 'custom_field')
@@ -12571,8 +12595,8 @@ function cleanImportedFieldRoutePatch(currentField = {}, input = {}, definition 
 
   if (destinationType === 'standard') {
     const destinationKey = normalizeImportedFieldKey(input.destinationKey || input.destination_key, '')
-    if (!IMPORTED_FORM_STANDARD_FIELDS.has(destinationKey)) {
-      const error = new Error('El dato de contacto seleccionado no es valido')
+    if (!IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
+      const error = new Error('El campo del sistema seleccionado no es valido')
       error.status = 400
       throw error
     }
@@ -31601,7 +31625,7 @@ function buildImportedAutomationFormResponses({ rawFields = {}, mappedFields = {
       value
     })
   })
-  ;['standard', 'custom', 'ignored'].forEach(section => {
+  ;['standard', 'system', 'custom', 'ignored'].forEach(section => {
     Object.entries(mappedFields?.[section] || {}).forEach(([key, value]) => {
       if (isEmptyImportedValue(value)) return
       setAutomationAnswerAlias(output.byKey, key, value)
@@ -33020,6 +33044,7 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
   const formMapping = getImportedFormMapping(imported, formId, { allowSingleLegacyFallback })
   const mappedFields = {
     standard: {},
+    system: {},
     custom: {},
     ignored: {}
   }
@@ -33064,6 +33089,18 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
       continue
     }
 
+    if (destinationType === 'standard' && NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(destinationKey)) {
+      mappedFields.system[destinationKey] = value
+      addImportedCustomField(customFields, {
+        ...field,
+        destinationKey,
+        customFieldKey: destinationKey,
+        customFieldLabel: getNativeSystemFieldLabel(destinationKey, field.label),
+        customFieldSyncTarget: 'none'
+      }, value, context)
+      continue
+    }
+
     mappedFields.custom[destinationKey] = value
     addImportedCustomField(customFields, { ...field, destinationKey }, value, context)
   }
@@ -33087,6 +33124,19 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
 
     if (inferred.destinationType === 'standard' && IMPORTED_FORM_STANDARD_FIELDS.has(inferred.destinationKey)) {
       mappedFields.standard[inferred.destinationKey] = value
+      continue
+    }
+
+    if (inferred.destinationType === 'standard' && NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(inferred.destinationKey)) {
+      mappedFields.system[inferred.destinationKey] = value
+      addImportedCustomField(customFields, {
+        ...fallbackField,
+        destinationKey: inferred.destinationKey,
+        customFieldKey: inferred.destinationKey,
+        customFieldLabel: getNativeSystemFieldLabel(inferred.destinationKey, fallbackField.label),
+        customFieldSyncTarget: 'none',
+        confidence: inferred.confidence
+      }, value, context)
       continue
     }
 
@@ -33131,7 +33181,7 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
   const contactId = contactResult.contactId
   if (!contactId || !Array.isArray(customFields) || customFields.length === 0) return contactResult
 
-  const preparedFields = await prepareContactCustomFieldsForStorage(customFields, {
+  const storageContext = {
     sourceType: 'imported_html',
     sourceId: imported?.id || '',
     sourceSiteId: site.id,
@@ -33139,7 +33189,29 @@ async function upsertImportedContactFromSubmission({ site, contact, customFields
     sourceFormId: formMapping?.formId || meta?.importedFormId || '',
     sourceFormName: formMapping?.formTitle || '',
     syncTarget: 'local'
-  })
+  }
+  const systemFields = customFields.filter(field => (
+    NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(cleanString(field?.fieldKey || field?.key))
+  ))
+  const userFields = customFields.filter(field => (
+    !NATIVE_FORM_CUSTOM_SYSTEM_FIELDS.has(cleanString(field?.fieldKey || field?.key))
+  ))
+  const preparedFields = [
+    ...(userFields.length
+      ? await prepareContactCustomFieldsForStorage(userFields, storageContext)
+      : []),
+    ...(systemFields.length
+      ? await prepareContactCustomFieldsForStorage(systemFields.map(field => ({
+        ...field,
+        sourceType: 'system'
+      })), {
+        ...storageContext,
+        sourceType: 'system',
+        allowSystemContactCustomFields: true
+      })
+      : [])
+  ]
+  if (!preparedFields.length) return contactResult
   const existing = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
   const merged = mergeContactCustomFields(
     parseContactCustomFields(existing?.custom_fields),
