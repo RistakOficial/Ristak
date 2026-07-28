@@ -267,6 +267,7 @@ import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlCustomVideoRulesText,
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
@@ -1917,6 +1918,7 @@ type ImportedNativeElementSlot = {
   declaredVideoActions?: VideoActionRule[]
   videoRulesAttributePresent?: boolean
   videoRulesError?: string
+  customVideoHooksError?: string
   socialProfileHooksError?: string
 }
 type ImportedNativeElementSaveOptions = {
@@ -2255,7 +2257,7 @@ const isImportedCalendarBookingFormElement = (form: HTMLFormElement) => {
 }
 
 const getImportedNativeElementRenderMode = (element: Element, type: ImportedNativeElementType): ImportedNativeElementRenderMode => {
-  if (type !== 'calendar' && type !== 'social_profile') return 'ristak'
+  if (type !== 'calendar' && type !== 'video' && type !== 'social_profile') return 'ristak'
   const token = normalizeImportedNativeToken(getImportedNativeElementAttr(element, [
     'data-rstk-native-render',
     'data-ristak-native-render',
@@ -2268,6 +2270,26 @@ const getImportedNativeElementRenderMode = (element: Element, type: ImportedNati
     'data-ristack-calendar-render'
   ]))
   return ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(token) ? 'custom' : 'ristak'
+}
+
+const importedCustomVideoMediaSelector = [
+  'video[data-rstk-video-media]',
+  'video[data-ristak-video-media]',
+  'video[data-ristack-video-media]'
+].join(',')
+
+const getImportedCustomVideoHooksError = (
+  element: Element,
+  type: ImportedNativeElementType,
+  renderMode: ImportedNativeElementRenderMode
+) => {
+  if (type !== 'video' || renderMode !== 'custom') return ''
+  const mediaElements = Array.from(element.querySelectorAll(importedCustomVideoMediaSelector))
+  if (mediaElements.length === 1) return ''
+  if (!mediaElements.length) {
+    return 'El reproductor HTML propio necesita un <video data-rstk-video-media> dentro del slot.'
+  }
+  return 'El reproductor HTML propio debe tener exactamente un <video data-rstk-video-media>.'
 }
 
 const getImportedNativeElementSlotId = (element: Element, type: ImportedNativeElementType, index: number) => {
@@ -2455,6 +2477,7 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
         const videoPlayerManifest = parseImportedNativeVideoPlayerManifest(element, type, explicitSlotId)
         const videoRuleManifest = parseImportedNativeVideoRuleManifest(element, type, explicitSlotId)
         const renderMode = getImportedNativeElementRenderMode(element, type)
+        const customVideoHooksError = getImportedCustomVideoHooksError(element, type, renderMode)
         const socialProfileHooksError = getImportedCustomSocialProfileHooksError(element, type, renderMode)
         const key = `${type}:${id}`
         if (seen.has(key)) return null
@@ -2476,6 +2499,7 @@ const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[
             declaredVideoActions: videoRuleManifest.rules,
             videoRulesError: videoRuleManifest.error
           } : {}),
+          ...(customVideoHooksError ? { customVideoHooksError } : {}),
           ...(socialProfileHooksError ? { socialProfileHooksError } : {})
         }
       })
@@ -2668,11 +2692,13 @@ ${buildImportedHtmlFaviconRulesText()}
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 ${buildImportedHtmlCustomCalendarRulesText()}
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
-- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
-- El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
+- Para usar el reproductor visual de Ristak: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-native-render="ristak" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque real del editor: subida/URL, controles, diseño, acciones, formulario de video y eventos Meta/CAPI.
+- Para controlar literalmente todo el reproductor desde HTML/CSS usa data-rstk-native-render="custom" y exactamente un <video data-rstk-video-media> dentro. Ristak conecta el archivo elegido en Media/Bunny, tracking y acciones sin reemplazar el markup propio.
+- Solo el slot de video render="ristak" deja la geometría en manos de Ristak: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. En custom, el HTML/CSS sí gobierna frame, controles, overlays y animaciones.
 - No fabriques franjas laterales, marcos negros ni una falsa relación de aspecto alrededor del slot. En modo automático, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en móvil conservando 9:16; el usuario también puede elegir ancho completo o manual por vista desde el panel.
-- El padre inmediato del slot solo puede limitar max-width, margen y alineación. No lo conviertas en otro reproductor con height/min-height, aspect-ratio, padding porcentual, overflow hidden, borde, fondo, sombra ni pseudo-elementos ::before/::after para reservar proporción; el único frame visible debe ser el player nativo.
+- En render="ristak", el padre inmediato solo puede limitar max-width, margen y alineación. No lo conviertas en otro reproductor con height/min-height, aspect-ratio, padding porcentual, overflow hidden, borde, fondo, sombra ni pseudo-elementos ::before/::after para reservar proporción.
 ${buildImportedHtmlVideoPlayerRulesText()}
+${buildImportedHtmlCustomVideoRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 ${buildImportedHtmlVideoGateRulesText()}
@@ -2693,7 +2719,7 @@ ${buildImportedHtmlVideoGateRulesText()}
 - Multimedia code-first: declara claves semánticas aunque el archivo todavía no exista. Imagen: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="...">. Fondo: <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal">...</section>. Audio: <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio>. Descarga: <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a>.
 - Un descargable puede asociar cualquier archivo de Media: imagen, audio, video, PDF o ZIP. No pongas data-rstk-asset-id en div o picture; usa los tags canónicos anteriores para que Ristak pueda escribir la URL real.
 - Las claves multimedia son globales al sitio: usa una clave única por contenido y repítela solo si varias zonas deben mostrar exactamente el mismo archivo. Nunca sustituyas una clave por la URL física de Storage o Bunny.
-- Para video configurable, reproductor, acciones y formularios sobre video usa siempre el slot nativo de video. Un video HTML propio queda opaco y no se configura desde Ristak.
+- Un <video> suelto, fuera de un slot nativo custom, queda opaco para Ristak. Si el HTML debe controlar el reproductor y Ristak debe conectar Bunny, usa el contrato data-rstk-native-render="custom".
 - Secciones que sean targets de video deben usar id y data-rstk-video-action-target únicos.
 - Evita navegación automática, submits automáticos y window.open.
 
@@ -20813,8 +20839,10 @@ Reglas para esta edición:
 - No respondas con needs_more_info ni con preguntas para cambios de posición, alineación, orden, tamaño, video, botón, titular o layout. Haz tu mejor edición con el HTML actual.
 - Si el usuario pide titular arriba, video debajo y botón debajo, convierte esa zona en un layout vertical centrado y conserva los estilos visuales importantes.
 - Si el usuario menciona que algo "se transparenta", "se ve muy transparente", "no se lee", "se pierde", "muy claro" o "poco contraste", usa el resumen visual para localizar fondos/textos con alpha u opacidad baja y vuelve esa parte más sólida/legible sin cambiar contenido.
-- Si la solicitud pide un video configurable, agrega un slot nativo de video. Un video HTML propio queda bajo control exclusivo del código.
+- Si la solicitud pide un video configurable, conserva o agrega un slot nativo. Usa render="ristak" para el player visual de Ristak y render="custom" + <video data-rstk-video-media> cuando el HTML/CSS deba controlar toda la experiencia.
 - Conserva formularios, campos, rutas de datos y acciones de botones existentes salvo que el usuario pida cambiarlos.
+
+${buildImportedHtmlCustomVideoRulesText('Contrato de reproductor HTML propio que debes conservar:')}
 
 ${buildImportedHtmlVideoActionTargetRulesText('Contrato de elementos controlables que debes conservar:')}
 
@@ -21773,6 +21801,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     const duplicateNativeElementIds = new Set<string>()
     const invalidVideoRuleDeclarations = new Set<string>()
     const invalidVideoPlayerDeclarations = new Set<string>()
+    const invalidCustomVideoDeclarations = new Set<string>()
     const invalidSocialProfileDeclarations = new Set<string>()
 
     effectiveImportedHtmlFiles.forEach(file => {
@@ -21817,6 +21846,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         detectImportedNativeElementSlots(file.html).forEach(slot => {
           if (slot.videoPlayerSettingsError) invalidVideoPlayerDeclarations.add(`${file.label} · ${slot.label}: ${slot.videoPlayerSettingsError}`)
           if (slot.videoRulesError) invalidVideoRuleDeclarations.add(`${file.label} · ${slot.label}: ${slot.videoRulesError}`)
+          if (slot.customVideoHooksError) invalidCustomVideoDeclarations.add(`${file.label} · ${slot.label}: ${slot.customVideoHooksError}`)
           if (slot.socialProfileHooksError) invalidSocialProfileDeclarations.add(`${file.label} · ${slot.label}: ${slot.socialProfileHooksError}`)
         })
       } catch {
@@ -21830,6 +21860,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       duplicateNativeElementIds: [...duplicateNativeElementIds],
       invalidVideoPlayerDeclarations: [...invalidVideoPlayerDeclarations],
       invalidVideoRuleDeclarations: [...invalidVideoRuleDeclarations],
+      invalidCustomVideoDeclarations: [...invalidCustomVideoDeclarations],
       invalidSocialProfileDeclarations: [...invalidSocialProfileDeclarations]
     }
   }, [effectiveImportedHtmlFiles])
@@ -21850,6 +21881,9 @@ const ImportedHtmlEditorPanel: React.FC<{
         : '',
       importedEditorIdentityDiagnostics.invalidVideoPlayerDeclarations.length
         ? `Ajustes del reproductor inválidos: ${importedEditorIdentityDiagnostics.invalidVideoPlayerDeclarations.slice(0, 2).join(', ')}.`
+        : '',
+      importedEditorIdentityDiagnostics.invalidCustomVideoDeclarations.length
+        ? `Reproductores HTML incompletos: ${importedEditorIdentityDiagnostics.invalidCustomVideoDeclarations.slice(0, 2).join(', ')}.`
         : '',
       importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.length
         ? `Perfiles sociales incompletos: ${importedEditorIdentityDiagnostics.invalidSocialProfileDeclarations.slice(0, 2).join(', ')}.`
@@ -21956,7 +21990,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       '- Fondo: <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal">...</section>',
       '- Audio: <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio>',
       '- Descargable: <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a>',
-      '- Video configurable: <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>',
+      '- Video con player Ristak: <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-native-render="ristak" data-rstk-label="Video principal"></div>',
+      '- Video completamente diseñado en HTML/CSS: <section data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-native-render="custom"><video data-rstk-video-media playsinline></video>...</section>',
       '- Un descargable acepta cualquier archivo de Media. No declares claves de archivo en div o picture: no tienen un destino URL compatible.',
       '- Las claves de archivo son globales al sitio. Repite una clave solo cuando quieras reutilizar exactamente el mismo contenido.',
       '',
@@ -25955,13 +25990,13 @@ const ImportedHtmlEditorPanel: React.FC<{
           <div className={styles.importedContentAssetList}>
             {importedNativeElementSlots.map(slot => {
               const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
-              const slotError = slot.socialProfileHooksError || slot.videoPlayerSettingsError || slot.videoRulesError
+              const slotError = slot.customVideoHooksError || slot.socialProfileHooksError || slot.videoPlayerSettingsError || slot.videoRulesError
               return (
                 <div key={slot.key} className={styles.importedContentAssetRow}>
                   <span className={styles.importedContentAssetIcon}>{renderSlotIcon(slot.type)}</span>
                   <span className={styles.importedFormFieldRowMain}>
                     <strong>{slot.label}</strong>
-                    <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{['calendar', 'social_profile'].includes(slot.type) && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
+                    <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{['calendar', 'video', 'social_profile'].includes(slot.type) && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
                   </span>
                   <Badge variant={slotError ? 'warning' : block ? 'success' : 'neutral'}>{slotError ? 'Corrige el código' : block ? 'Configurado' : 'Pendiente'}</Badge>
                   <Button
@@ -25987,6 +26022,9 @@ const ImportedHtmlEditorPanel: React.FC<{
 
         {selectedSlot && draftBlock && (
           <div className={styles.importedNativeElementControls}>
+            {selectedSlot.customVideoHooksError && (
+              <p className={styles.importedContentHubError}>{selectedSlot.customVideoHooksError}</p>
+            )}
             {selectedSlot.socialProfileHooksError && (
               <p className={styles.importedContentHubError}>{selectedSlot.socialProfileHooksError}</p>
             )}
@@ -26089,7 +26127,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               <InspectorTabbedPanel
                 key={`imported-native-video-${selectedSlot.key}`}
                 title="Video"
-                subtitle="Misma configuración del editor de sitios"
+                subtitle={selectedSlot.renderMode === 'custom' ? 'Bunny conectado a tu HTML/CSS' : 'Misma configuración del editor de sitios'}
                 className={styles.importedNativeElementInspector}
                 defaultTab="edit"
                 tabs={[
@@ -26102,6 +26140,11 @@ const ImportedHtmlEditorPanel: React.FC<{
                         {selectedResponsiveFallbackBlock && (
                           <p className={styles.importedFormFieldsHint}>
                             Esta vista usa temporalmente el video de la otra versión. Elige otro archivo aquí para guardar una versión independiente.
+                          </p>
+                        )}
+                        {selectedSlot.renderMode === 'custom' && (
+                          <p className={styles.importedFormFieldsHint}>
+                            Elige aquí el archivo de Bunny. Tu HTML decide controles, overlays, contadores, animaciones y todo el diseño del reproductor.
                           </p>
                         )}
                         <AccordionGroup>
@@ -26130,26 +26173,32 @@ const ImportedHtmlEditorPanel: React.FC<{
                     label: 'Diseño',
                     icon: <Sparkles size={14} />,
                     content: (
-                      <AccordionGroup>
-                        <InlineBlockStyleControls
-                          site={nativeElementSite}
-                          block={draftBlock}
-                          blocks={nativeElementBlocks}
-                          mode="all"
-                          device={device}
-                          onPatchSettings={patchSelectedVideoSettings}
-                          onSave={autosaveSelectedNativeElement}
-                        />
-                        <AccordionSection id="imported-native-video-player" title="Reproductor" defaultGroupOpen>
-                          <VideoPlayerSettingsControls
-                            settings={draftSettings}
-                            mediaUrl={getSettingString(draftSettings, 'mediaUrl')}
-                            sections="chrome"
+                      selectedSlot.renderMode === 'custom' ? (
+                        <p className={styles.importedFormFieldsHint}>
+                          Este modo no monta el player visual de Ristak. Edita el HTML/CSS para mostrar u ocultar controles, cambiar el frame o agregar cualquier elemento dentro del reproductor.
+                        </p>
+                      ) : (
+                        <AccordionGroup>
+                          <InlineBlockStyleControls
+                            site={nativeElementSite}
+                            block={draftBlock}
+                            blocks={nativeElementBlocks}
+                            mode="all"
+                            device={device}
                             onPatchSettings={patchSelectedVideoSettings}
                             onSave={autosaveSelectedNativeElement}
                           />
-                        </AccordionSection>
-                      </AccordionGroup>
+                          <AccordionSection id="imported-native-video-player" title="Reproductor" defaultGroupOpen>
+                            <VideoPlayerSettingsControls
+                              settings={draftSettings}
+                              mediaUrl={getSettingString(draftSettings, 'mediaUrl')}
+                              sections="chrome"
+                              onPatchSettings={patchSelectedVideoSettings}
+                              onSave={autosaveSelectedNativeElement}
+                            />
+                          </AccordionSection>
+                        </AccordionGroup>
+                      )
                     )
                   },
                   {
@@ -28537,7 +28586,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Video:',
       '- La página usará video nativo de Ristak.',
-      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>.',
+      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-native-render="ristak" data-rstk-label="Video principal"></div>.',
       '- Ristak configurará el video real, controles, diseño, acciones y eventos desde el editor.',
       '- No pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que fuercen orientación en el slot. Para ubicarlo usa un contenedor padre; Ristak detecta la orientación real del archivo y controla su proporción y ancho responsive.',
       '- No dibujes franjas laterales ni un marco negro falso. En automático, el video vertical queda contenido en computadora y usa todo el ancho disponible en móvil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.',
@@ -28553,9 +28602,8 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     )
   } else if (answers.video === 'html') {
     sections.push(
-      'Video:',
-      '- ChatGPT, Claude o Codex diseñarán el video con compatibilidad Ristak.',
-      '- El video HTML queda bajo control total del código y no se edita desde Ristak. Para reproductor, acciones y formularios sobre video usa el video nativo.',
+      buildImportedHtmlCustomVideoRulesText('Video:'),
+      '- ChatGPT, Claude o Codex diseñarán todo el reproductor con HTML/CSS; Ristak seguirá permitiendo elegir el archivo de Media/Bunny y conservará tracking, acciones y formularios sobre el video.',
       ''
     )
   } else {

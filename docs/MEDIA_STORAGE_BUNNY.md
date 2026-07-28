@@ -265,12 +265,12 @@ another account.
   operation; anonymous download requests never trigger that work or proxy the
   Stream player HTML. The physical CDN URL is never written into the
   downloadable anchor.
-- Premium imported-HTML video uses a native slot such as
-  `<div data-rstk-native-element="video" data-rstk-native-id="video-01"></div>`.
-  This preserves the complete Sites player configuration and the adaptive
-  preview/published-player contract. A code-owned `<video>` is kept only as
-  HTML/legacy media and does not gain the native player's customization contract.
-  The native slot itself must not own player geometry (`width`, fixed heights,
+- Premium imported-HTML video supports two explicit native-slot render modes.
+  `data-rstk-native-render="ristak"` uses an empty slot such as
+  `<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-native-render="ristak"></div>`
+  and preserves the complete Sites player configuration and adaptive
+  preview/published-player contract. That native slot itself must not own player
+  geometry (`width`, fixed heights,
   `aspect-ratio`, percentage padding, clipped overflow, or forced orientation);
   layout belongs on an outer parent. Imported preview/live rendering neutralizes
   legacy slot geometry, detects the real media orientation, and mounts the same
@@ -288,6 +288,16 @@ another account.
   its own block, preview and published rendering use the single configured sibling
   as a fallback; saving a file in the pending slot creates an independent exact
   binding, which then overrides the fallback.
+  `data-rstk-native-render="custom"` instead keeps the author's complete HTML/CSS
+  player and requires exactly one descendant `<video data-rstk-video-media>`.
+  Ristak removes author-supplied `src`/`<source>`, injects the selected Storage
+  MP4 or validated Stream HLS playlist, initializes adaptive playback and keeps
+  first-party tracking, actions and gates on that same element. Buttons, native
+  controls, overlays, progress, counters, fullscreen affordances and animations
+  are declarative HTML owned by the page; neither the Bunny iframe nor Ristak's
+  visual player chrome is mounted. Inline scripts, `on*` handlers and Bunny API
+  credentials remain prohibited and sanitized. A standalone code-owned
+  `<video>` outside this custom native-slot contract remains legacy/opaque media.
 - Editor and canvas use the Bunny Storage URL when that mirror exists; premium
   Stream-only video uses its validated HLS playlist directly. Published/live
   native video blocks prefer that HLS inside the same customizable Ristak player,

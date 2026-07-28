@@ -1314,7 +1314,7 @@ test('video player none mode removes overlay and audio prompt', async () => {
   assert.match(html, /rstk-video-no-controls/)
   assert.doesNotMatch(html, /<button type="button" class="rstk-video-overlay" data-rstk-video-overlay/)
   assert.doesNotMatch(html, /<span class="rstk-video-sound">/)
-  assert.match(html, /if \(!overlay && !host\.classList\.contains\('rstk-video-native-controls'\)\)/)
+  assert.match(html, /if \(!overlay && !host\.classList\.contains\('rstk-video-native-controls'\) && host\.getAttribute\('data-rstk-video-click-toggle'\) !== 'false'\)/)
   assert.match(html, /video\.addEventListener\('click', event =>/)
   assert.match(html, /togglePlayback\(!hasUserPlayed\)/)
 })

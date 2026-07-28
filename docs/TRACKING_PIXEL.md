@@ -637,13 +637,17 @@ persistido o un evento tardio del reproductor no puede volver a mostrar
 Cuando el HTML externo quiere usar la misma configuracion nativa del editor de
 Sites, debe declarar una zona con `data-rstk-native-element` y
 `data-rstk-native-id`. El editor solo reconoce `form`, `calendar`, `payment` y
-`video`.
+`video` y `social-profile`.
 
 ```html
 <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot"></div>
 <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>
 <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal"></div>
-<div data-rstk-native-element="video" data-rstk-native-id="video-principal"></div>
+<div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-native-render="ristak"></div>
+<section data-rstk-native-element="video" data-rstk-native-id="video-custom" data-rstk-native-render="custom">
+  <video data-rstk-video-media playsinline></video>
+  <button type="button" data-rstk-video-command="toggle">Reproducir / pausar</button>
+</section>
 ```
 
 Ristak guarda cada zona como bloque real del sitio importado:
@@ -655,19 +659,30 @@ Ristak guarda cada zona como bloque real del sitio importado:
   configuracion de disponibilidad, campos, pagos, completado y Meta.
 - `payment`: usa el mismo `PaymentGateControls` del editor; el evento `Purchase`
   sale del cobro confirmado, no del click.
-- `video`: usa el mismo bloque de video del editor: subida/URL, controles,
+- `video` con `data-rstk-native-render="ristak"`: usa el mismo bloque de video
+  del editor: subida/URL, controles,
   diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI
   configurados. En publicado conserva el reproductor personalizable de Ristak y
   manda los eventos first-party a `/video-event`; cuando existe una playlist HLS
   validada usa esa entrega adaptativa dentro del player de Ristak. Bunny Storage
   queda para editor/fallback cuando existe; el perfil premium también usa HLS en
   preview con tracking apagado y no crea una copia binaria a través de Render.
-  Ningún modo sustituye el player nativo por el iframe visual de Bunny Stream.
+  Este modo nunca sustituye el player nativo por el iframe visual de Bunny Stream.
   `videoMobilePortraitCrop` viene activo en el editor visual y en el editor HTML:
   para un video horizontal, únicamente cambia el frame móvil a 9:16 y aplica un
   recorte centrado, sin transformar ni duplicar el asset. Por ello no crea otro
   reproductor, sesión ni fuente de eventos; tracking y acciones siguen leyendo
   el mismo elemento de video.
+- `video` con `data-rstk-native-render="custom"`: el HTML/CSS conserva todo el
+  frame, controles, overlays, contadores y animaciones; Ristak solo conecta al
+  `<video data-rstk-video-media>` la fuente MP4/HLS elegida en Media/Bunny y el
+  runtime first-party. Puede no existir botón de play, usar controles nativos o
+  declarar comandos `play|pause|toggle|mute|unmute|toggle-mute|restart|fullscreen`,
+  progreso y contadores propios. Publicado sigue enviando `/video-event`,
+  acciones, gates y Meta/CAPI con los IDs del mismo asset/Stream, sin iframe de
+  Bunny ni un segundo reproductor. Preview/editor conserva tracking apagado.
+  El sanitizador sigue eliminando scripts inline, handlers `on*`, `src` físicos
+  del autor y cualquier llave de Bunny; esos datos nunca forman parte del HTML.
 
 Para bloquear contenido por reproducción sin escribir JavaScript, el slot
 `video` puede declarar:

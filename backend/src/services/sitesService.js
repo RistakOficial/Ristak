@@ -68,6 +68,7 @@ import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
+  buildImportedHtmlCustomVideoRulesText,
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
@@ -7285,10 +7286,12 @@ Contrato de código cerrado y contenido:
 - Contenido estable code-first: <img data-rstk-asset-id="inicio-imagen-01" data-rstk-label="Imagen principal" alt="..."> para imagen; <section data-rstk-background-asset-id="inicio-fondo-01" data-rstk-label="Fondo principal"> para fondo; <audio data-rstk-asset-id="inicio-audio-01" data-rstk-label="Audio principal" controls></audio> para audio; <a data-rstk-asset-id="inicio-descarga-01" data-rstk-label="PDF informativo" download>Descargar</a> para descargables.
 - Un descargable puede asociar cualquier archivo de Media: imagen, audio, video, PDF o ZIP. No pongas data-rstk-asset-id en div o picture; usa los tags canonicos anteriores para que Ristak pueda escribir la URL real.
 - Nunca reemplaces una clave por una URL física. No esperes un catálogo previo: primero declara la zona en el HTML y Ristak permitirá asociar el archivo después.
-- Para video configurable usa <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-label="Video principal"></div>. Un video HTML propio queda opaco y no recibe reproductor ni acciones de Ristak.
-- El slot nativo de video NO define la geometria del reproductor: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. Ristak detecta la orientacion real del archivo y controla proporcion, ancho responsive y tamaño desde el editor.
+- Para usar el reproductor visual de Ristak, deja un slot vacio: <div data-rstk-native-element="video" data-rstk-native-id="inicio-video-01" data-rstk-native-render="ristak" data-rstk-label="Video principal"></div>.
+- Para diseñar literalmente todo el reproductor con HTML/CSS, usa data-rstk-native-render="custom" y coloca exactamente un <video data-rstk-video-media> dentro. Ristak conecta el archivo elegido en Media/Bunny, el tracking y las acciones sin sustituir tu markup.
+- Solo el slot render="ristak" deja la geometria en manos de Ristak: no le pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases CSS que lo fuercen vertical u horizontal. Si necesitas ubicarlo, envuelve el slot en un contenedor padre. El modo custom sí controla su geometria, overlays y controles desde el HTML/CSS.
 - No fabriques franjas laterales, marcos negros ni una relacion de aspecto falsa alrededor del slot. En modo automatico, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en movil conservando 9:16; el usuario tambien puede elegir ancho completo o manual por vista desde el panel.
 ${buildImportedHtmlVideoPlayerRulesText()}
+${buildImportedHtmlCustomVideoRulesText()}
 ${buildImportedHtmlVideoGateRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 - En botones, cuando sepas la acción, agrega data-rstk-button-actions como JSON. Ejemplo: data-rstk-button-actions='[{"action":"submit"},{"action":"next_page"}]'.
@@ -7329,13 +7332,15 @@ Conversiones Meta/CAPI para HTML importado:
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
 ${buildImportedHtmlCustomCalendarRulesText()}
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
-- Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, las tres condiciones de acciones, formularios dentro del video y eventos Meta/CAPI configurados.
+- Video con reproductor de Ristak: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-native-render="ristak" data-rstk-label="Video principal"></div>. Ristak usa el bloque real con subida/URL, controles, diseno, acciones, formularios y eventos Meta/CAPI.
+- Video con reproductor HTML propio: usa data-rstk-native-render="custom" y exactamente un <video data-rstk-video-media> dentro. Bunny entrega el MP4/HLS; el HTML/CSS conserva control total del frame, controles, contadores, overlays y animaciones.
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
 ${buildImportedHtmlVideoGateRulesText()}
-- El slot de video debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en el slot. Ristak toma la orientacion del archivo y monta el mismo reproductor responsive del editor.
+- El slot de video render="ristak" debe quedar sin width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual ni overflow que recorte. Para columnas o posicion usa un padre externo; nunca fijes vertical/horizontal en ese modo. El modo custom gobierna esos estilos desde el propio HTML/CSS.
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
 ${buildImportedHtmlVideoPlayerRulesText()}
+${buildImportedHtmlCustomVideoRulesText()}
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No hagas esto en data-rstk-calendar-book-form: ese submit pertenece al elemento calendar y, solo después de reservar, Ristak emite el evento que el usuario haya elegido para ese calendario en Ajustes (Schedule es únicamente el default recomendado).
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
@@ -18931,6 +18936,46 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
   return ''
 }
 
+function resolveHtml5VideoDelivery(block = {}, context = {}) {
+  const settings = block.settings || {}
+  const rawVideoUrl = settings.mediaUrl || block.content
+  const directVideoUrl = isDirectVideoUrl(rawVideoUrl)
+    ? safePublicMediaUrl(rawVideoUrl, 'video')
+    : ''
+
+  if (directVideoUrl) {
+    const liveStreamAsset = getLiveStreamAssetForStorageVideo(rawVideoUrl, context)
+    const stream = getMediaAssetStreamMetadata(liveStreamAsset)
+    const storageUrl = getDirectMediaAssetVideoUrl(liveStreamAsset)
+    const src = !context.noTrack && stream?.playlistUrl
+      ? stream.playlistUrl
+      : storageUrl || directVideoUrl || stream?.playlistUrl
+    if (!src) return null
+    return {
+      src,
+      asset: liveStreamAsset || null,
+      stream,
+      provider: stream?.videoId ? 'bunny_stream' : 'html5_video'
+    }
+  }
+
+  const embedVideoUrl = normalizeVideoEmbedUrl(rawVideoUrl)
+  if (!embedVideoUrl || !getBunnyStreamVideoIdFromUrl(embedVideoUrl)) return null
+  const asset = getStorageAssetForStreamVideoUrl(embedVideoUrl, context)
+  const stream = getMediaAssetStreamMetadata(asset) || getStreamMetadataForVideoUrl(embedVideoUrl, context)
+  const storageUrl = getDirectMediaAssetVideoUrl(asset)
+  const src = !context.noTrack && stream?.playlistUrl
+    ? stream.playlistUrl
+    : storageUrl || stream?.playlistUrl
+  if (!src) return null
+  return {
+    src,
+    asset: asset || null,
+    stream,
+    provider: stream?.videoId ? 'bunny_stream' : 'html5_video'
+  }
+}
+
 function collectBunnyStreamVideoIdsFromHtml(html = '') {
   const ids = new Set()
   String(html || '').replace(/\s(?:src|data-rstk-video-url)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi, (_match, doubleValue, singleValue, bareValue) => {
@@ -26117,6 +26162,10 @@ function buildVideoPlayerRuntimeScript() {
 	        const timecode = host.querySelector('[data-rstk-video-timecode]');
 	        const timeElapsed = host.querySelector('[data-rstk-video-time-elapsed]');
 	        const timeRemaining = host.querySelector('[data-rstk-video-time-remaining]');
+	        const customCurrentTimes = Array.from(host.querySelectorAll('[data-rstk-video-current-time]'));
+	        const customDurations = Array.from(host.querySelectorAll('[data-rstk-video-duration]'));
+	        const customRemainingTimes = Array.from(host.querySelectorAll('[data-rstk-video-remaining-time]'));
+	        const customPercents = Array.from(host.querySelectorAll('[data-rstk-video-percent]'));
 	        const speedSelect = host.querySelector('[data-rstk-video-speed-select]');
 	        const settingsControl = host.querySelector('[data-rstk-video-settings-control]');
 	        const settingsToggle = host.querySelector('[data-rstk-video-settings-toggle]');
@@ -26124,6 +26173,7 @@ function buildVideoPlayerRuntimeScript() {
 	        const speedOptions = Array.from(host.querySelectorAll('[data-rstk-video-speed-option]'));
 	        const toggleButtons = Array.from(host.querySelectorAll('[data-rstk-video-toggle]'));
 	        const muteButtons = Array.from(host.querySelectorAll('[data-rstk-video-mute]'));
+	        const commandButtons = Array.from(host.querySelectorAll('[data-rstk-video-command]'));
 	        const soundNotice = host.querySelector('.rstk-video-sound');
 	        const controlBar = host.querySelector('[data-rstk-video-control-bar]');
 	        const hasControlBar = Boolean(controlBar);
@@ -26137,6 +26187,7 @@ function buildVideoPlayerRuntimeScript() {
 	        let settingsMenuOpen = false;
 	        let controlsHideTimer = 0;
 	        let progressFrame = 0;
+	        const slotId = String(host.getAttribute('data-rstk-native-slot-id') || video.getAttribute('data-rstk-video-slot-id') || '');
 	        const formatProgressPercent = ratio => {
 	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
 	          return Number((safeRatio * 100).toFixed(3)) + '%';
@@ -26153,16 +26204,25 @@ function buildVideoPlayerRuntimeScript() {
 	          return minutes + ':' + String(seconds).padStart(2, '0');
 	        };
 	        const syncTimecode = duration => {
-	          if (!timecode && !timeElapsed && !timeRemaining) return;
+	          if (!timecode && !timeElapsed && !timeRemaining && !customCurrentTimes.length && !customDurations.length && !customRemainingTimes.length && !customPercents.length) return;
 	          const safeDuration = Math.max(0, Number.isFinite(duration) ? duration : 0);
 	          const rawElapsed = previewing && !hasUserPlayed ? 0 : video.currentTime;
 	          const elapsed = Math.min(safeDuration || Infinity, Math.max(0, Number.isFinite(rawElapsed) ? rawElapsed : 0));
 	          const remaining = Math.max(0, safeDuration - elapsed);
 	          const elapsedLabel = formatTimecode(elapsed);
 	          const remainingLabel = formatTimecode(remaining);
+	          const durationLabel = formatTimecode(safeDuration);
+	          const percentLabel = formatProgressPercent(safeDuration > 0 ? elapsed / safeDuration : 0);
 	          if (timeElapsed) timeElapsed.textContent = elapsedLabel;
 	          if (timeRemaining) timeRemaining.textContent = '-' + remainingLabel;
+	          customCurrentTimes.forEach(element => { element.textContent = elapsedLabel; });
+	          customDurations.forEach(element => { element.textContent = durationLabel; });
+	          customRemainingTimes.forEach(element => { element.textContent = remainingLabel; });
+	          customPercents.forEach(element => { element.textContent = percentLabel; });
 	          if (timecode) timecode.setAttribute('aria-label', 'Tiempo del video ' + elapsedLabel + ', queda ' + remainingLabel);
+	          host.style.setProperty('--rstk-video-current-seconds', String(Number(elapsed.toFixed(3))));
+	          host.style.setProperty('--rstk-video-duration-seconds', String(Number(safeDuration.toFixed(3))));
+	          host.style.setProperty('--rstk-video-progress-percent', percentLabel);
 	        };
 	        const syncProgress = () => {
 	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
@@ -26371,11 +26431,26 @@ function buildVideoPlayerRuntimeScript() {
 	          host.classList.toggle('rstk-video-is-playing', !video.paused && !previewing);
 	          host.classList.toggle('rstk-video-is-previewing', !video.paused && previewing);
 	          host.classList.toggle('rstk-video-is-muted', video.muted || video.volume === 0);
+	          const publicState = video.ended
+	            ? 'ended'
+	            : !video.paused && !previewing
+	              ? 'playing'
+	              : hasUserPlayed
+	                ? 'paused'
+	                : 'idle';
+	          host.setAttribute('data-rstk-video-state', publicState);
+	          host.setAttribute('data-rstk-video-muted', video.muted || video.volume === 0 ? 'true' : 'false');
+	          host.setAttribute('data-rstk-video-ready', video.readyState >= 1 ? 'true' : 'false');
 	          syncProgress();
 	          if (!video.paused) startProgressFrame();
 	          else stopProgressFrame();
 	          toggleButtons.forEach(button => button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video'));
 	          muteButtons.forEach(button => button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video'));
+	          commandButtons.forEach(button => {
+	            const command = String(button.getAttribute('data-rstk-video-command') || '').toLowerCase();
+	            if (command === 'toggle') button.setAttribute('aria-label', video.paused || previewing ? 'Reproducir video' : 'Pausar video');
+	            if (command === 'toggle-mute') button.setAttribute('aria-label', video.muted || video.volume === 0 ? 'Activar sonido' : 'Silenciar video');
+	          });
 	          if (hasControlBar) {
 	            if (shouldHideControlsAtStart()) {
 	              clearControlsHideTimer();
@@ -26414,6 +26489,68 @@ function buildVideoPlayerRuntimeScript() {
 	            sync();
 	          }
 	        };
+	        const playVideo = () => {
+	          if (previewing) stopPreviewLoop();
+	          restartFromBeginningForUserPlayback();
+	          markUserPlayback();
+	          return video.play().catch(() => {});
+	        };
+	        const pauseVideo = () => {
+	          video.pause();
+	          sync();
+	        };
+	        const setMuted = muted => {
+	          video.muted = Boolean(muted);
+	          if (!video.muted && video.volume === 0) video.volume = 1;
+	          sync();
+	        };
+	        const restartVideo = () => {
+	          if (previewing) stopPreviewLoop();
+	          markUserPlayback();
+	          video.currentTime = 0;
+	          return video.play().catch(() => {});
+	        };
+	        const enterFullscreen = () => {
+	          try {
+	            if (host.requestFullscreen) return host.requestFullscreen();
+	            if (video.webkitEnterFullscreen) return video.webkitEnterFullscreen();
+	          } catch (_) {}
+	          return undefined;
+	        };
+	        commandButtons.forEach(button => {
+	          button.addEventListener('click', event => {
+	            event.preventDefault();
+	            event.stopPropagation();
+	            const command = String(button.getAttribute('data-rstk-video-command') || '').trim().toLowerCase();
+	            if (command === 'play') { playVideo(); return; }
+	            if (command === 'pause') { pauseVideo(); return; }
+	            if (command === 'toggle') { togglePlayback(false); return; }
+	            if (command === 'mute') { setMuted(true); return; }
+	            if (command === 'unmute') { setMuted(false); return; }
+	            if (command === 'toggle-mute') { setMuted(!(video.muted || video.volume === 0)); return; }
+	            if (command === 'restart') { restartVideo(); return; }
+	            if (command === 'fullscreen') enterFullscreen();
+	          });
+	        });
+	        window.ristakVideos = window.ristakVideos || {};
+	        if (slotId) {
+	          window.ristakVideos[slotId] = {
+	            element: video,
+	            host,
+	            play: playVideo,
+	            pause: pauseVideo,
+	            toggle: () => togglePlayback(false),
+	            mute: () => setMuted(true),
+	            unmute: () => setMuted(false),
+	            restart: restartVideo,
+	            fullscreen: enterFullscreen,
+	            seek: seconds => {
+	              const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
+	              video.currentTime = Math.max(0, Math.min(duration, Number(seconds || 0)));
+	              sync();
+	            }
+	          };
+	        }
 	        const overlay = host.querySelector('[data-rstk-video-overlay]');
 	        if (overlay) {
 	          overlay.addEventListener('click', event => {
@@ -26427,7 +26564,7 @@ function buildVideoPlayerRuntimeScript() {
 	            togglePlayback(true);
 	          });
 	        }
-	        if (!overlay && !host.classList.contains('rstk-video-native-controls')) {
+	        if (!overlay && !host.classList.contains('rstk-video-native-controls') && host.getAttribute('data-rstk-video-click-toggle') !== 'false') {
 	          video.addEventListener('click', event => {
 	            if (editorPreview) return;
 	            event.preventDefault();
@@ -26522,6 +26659,23 @@ function buildVideoPlayerRuntimeScript() {
 	        });
 	        video.addEventListener('canplay', startPreviewLoop);
 	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
+	        const emitCustomVideoEvent = eventName => {
+	          try {
+	            host.dispatchEvent(new CustomEvent('ristak:video-' + eventName, {
+	              bubbles: true,
+	              detail: {
+	                slotId,
+	                currentTime: Number(video.currentTime || 0),
+	                duration: Number.isFinite(video.duration) ? Number(video.duration) : 0,
+	                muted: Boolean(video.muted || video.volume === 0),
+	                state: host.getAttribute('data-rstk-video-state') || 'idle'
+	              }
+	            }));
+	          } catch (_) {}
+	        };
+	        ['loadedmetadata', 'play', 'pause', 'timeupdate', 'volumechange', 'ended'].forEach(eventName => {
+	          video.addEventListener(eventName, () => emitCustomVideoEvent(eventName));
+	        });
 	        if (video.readyState >= 1) {
 	          syncVideoOrientation(host, video);
 	          startPreviewLoop();
@@ -26951,7 +27105,7 @@ function getImportedNativeElementSlot(attrs = {}, index = 0) {
     id,
     type,
     label,
-    renderMode: ['calendar', 'social_profile'].includes(type) && ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(rawRenderMode) ? 'custom' : 'ristak'
+    renderMode: ['calendar', 'video', 'social_profile'].includes(type) && ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(rawRenderMode) ? 'custom' : 'ristak'
   }
 }
 
@@ -27895,6 +28049,97 @@ function renderImportedCustomCalendarSlot(tagName = 'div', attrs = {}, innerHtml
   })}>${innerHtml}</${tagName}>`
 }
 
+function renderImportedCustomVideoMedia(innerHtml = '', block = null, context = {}, delivery = null) {
+  const source = String(innerHtml || '')
+  const explicitPattern = /<video\b([^>]*\bdata-(?:rstk|ristak|ristack)-video-media(?:\s|=|$)[^>]*)>([\s\S]*?)<\/video\s*>/i
+  const fallbackPattern = /<video\b([^>]*)>([\s\S]*?)<\/video\s*>/i
+  const match = source.match(explicitPattern) || source.match(fallbackPattern)
+  if (!match) return { html: source, mounted: false, nativeControls: false }
+
+  const attrs = parseHtmlAttributes(match[1] || '')
+  const mediaBody = String(match[2] || '').replace(/<source\b[^>]*\/?>/gi, '')
+  const settings = block?.settings || {}
+  const editorPreview = Boolean(context.importedNativePreviewMock)
+  const trackingEnabled = Boolean(block && delivery && !context.noTrack)
+  const trackingAttrs = block && delivery
+    ? parseHtmlAttributes(buildVideoTrackingAttributes({
+        enabled: trackingEnabled,
+        block,
+        asset: delivery.asset,
+        stream: delivery.stream,
+        provider: delivery.provider,
+        playbackId: trackingEnabled ? crypto.randomUUID() : ''
+      }))
+    : {}
+  const actionAttrs = block
+    ? parseHtmlAttributes(renderVideoActionAttributes(block, settings, context))
+    : {}
+
+  delete attrs.src
+  delete attrs['data-rstk-video-src']
+  delete attrs['data-ristak-video-src']
+  delete attrs['data-ristack-video-src']
+  Object.keys(attrs)
+    .filter(key => /^(?:data-(?:rstk|ristak|ristack)-)?(?:video-track|video-provider|playback-id|media-asset-id|stream-library-id|stream-video-id|block-id|block-label)$/i.test(key))
+    .forEach(key => delete attrs[key])
+
+  const nextAttrs = {
+    ...attrs,
+    ...actionAttrs,
+    ...trackingAttrs,
+    'data-rstk-video-media': 'true',
+    'data-rstk-video-custom-media': 'true',
+    'data-rstk-video-editor-preview': editorPreview ? 'true' : 'false',
+    'data-rstk-video-preview': attrs['data-rstk-video-preview'] || 'false',
+    'data-rstk-video-speed': attrs['data-rstk-video-speed'] || String(settings.videoDefaultSpeed || 1),
+    'data-rstk-video-orientation-mode': attrs['data-rstk-video-orientation-mode'] || 'auto',
+    ...(delivery?.src ? { 'data-rstk-video-src': delivery.src } : {}),
+    ...(delivery?.src && !editorPreview && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
+    title: attrs.title || block?.label || 'Video'
+  }
+  const nextVideo = `<video${renderHtmlAttributes(nextAttrs)}>${mediaBody}</video>`
+  return {
+    html: source.replace(match[0], nextVideo),
+    mounted: true,
+    nativeControls: Object.prototype.hasOwnProperty.call(attrs, 'controls')
+  }
+}
+
+function renderImportedCustomVideoSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, block = null, context = {}, runtimeState = {}) {
+  runtimeState.hasVideo = true
+  const delivery = block ? resolveHtml5VideoDelivery(block, context) : null
+  const media = renderImportedCustomVideoMedia(innerHtml, block, context, delivery)
+  const sourceState = !block
+    ? 'unconfigured'
+    : !media.mounted
+      ? 'missing-media-hook'
+      : delivery?.src
+        ? 'ready'
+        : 'unavailable'
+  const classes = [
+    attrs.class,
+    'rstk-video-player',
+    media.nativeControls ? 'rstk-video-native-controls' : '',
+    'rstk-imported-native-slot',
+    'rstk-imported-native-video',
+    'rstk-imported-native-custom',
+    'rstk-imported-native-custom-video'
+  ].filter(Boolean).join(' ')
+  const rootAttrs = {
+    ...attrs,
+    class: classes,
+    'data-rstk-native-mounted': 'true',
+    'data-rstk-native-type': 'video',
+    'data-rstk-native-slot-id': slot.id || '',
+    'data-rstk-native-block-id': block?.id || '',
+    'data-rstk-video-source-state': sourceState,
+    'data-rstk-video-state': 'idle',
+    'data-rstk-video-muted': 'false',
+    'data-rstk-video-ready': 'false'
+  }
+  return `<${tagName}${renderHtmlAttributes(rootAttrs)}>${media.html}</${tagName}>`
+}
+
 async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, blocks = [], context = {}, runtimeState = {}) {
   runtimeState.hasNativeElements = true
   const slotKey = `${cleanString(slot.pageId || context.pageId)}:${cleanString(slot.type)}:${cleanString(slot.id)}`
@@ -27909,6 +28154,9 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   const block = exactBlock || findImportedNativeResponsiveFallbackBlock(blocks, slot)
   if (slot.type === 'calendar' && slot.renderMode === 'custom') {
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
+  }
+  if (slot.type === 'video' && slot.renderMode === 'custom') {
+    return renderImportedCustomVideoSlot(tagName, attrs, innerHtml, slot, block, context, runtimeState)
   }
   if (slot.type === 'social_profile' && slot.renderMode === 'custom') {
     return renderImportedCustomSocialProfileSlot(tagName, attrs, innerHtml, slot, block, context)

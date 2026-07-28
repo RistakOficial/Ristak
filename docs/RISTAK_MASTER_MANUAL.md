@@ -4968,8 +4968,8 @@ audio, el editor la marca para reasociar y el renderer no inyecta el archivo
 incompatible anterior.
 
 Los slots nativos que Ristak renderiza (`form`, `calendar` con
-`data-rstk-native-render="ristak"`, `payment`, `video` y `social-profile` con
-render nativo) deben ser huecos
+`data-rstk-native-render="ristak"`, `payment`, `video` con render nativo y
+`social-profile` con render nativo) deben ser huecos
 limpios: contenedores vacios, sin texto placeholder, mocks, tarjetas, bordes
 punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni
 wrappers decorativos dentro, detras o encima. El HTML externo solo decide la
@@ -4980,12 +4980,13 @@ un padre neutro sin borde/fondo visible. Al montarlo, el renderer neutraliza en
 el wrapper `height`, `min-height`, `max-height`, tamaños lógicos, `aspect-ratio`
 y crecimiento flex heredados del CSS de página completa; así una regla original
 para `body` no convierte cada elemento nativo en una pantalla vacía. Las
-excepciones son `calendar` y
-`social-profile` con `data-rstk-native-render="custom"`, porque ahi el frontend
-importado si es el elemento visual y Ristak solo conecta los datos y operaciones
+excepciones son `calendar`, `video` y `social-profile` con
+`data-rstk-native-render="custom"`, porque ahi el frontend importado si es el
+elemento visual y Ristak solo conecta los datos, el archivo y las operaciones
 reales.
 
-El slot nativo de `video` tampoco es dueño de su geometria. No debe declarar
+El slot de `video` con `data-rstk-native-render="ristak"` tampoco es dueño de su
+geometria. No debe declarar
 `width`/`max-width`, `height`/`min-height`/`max-height`, `aspect-ratio`, padding
 porcentual, `overflow` recortado ni una clase que fuerce orientación vertical u
 horizontal. Si el diseño necesita columna, ancho de sección o posicionamiento,
@@ -4994,7 +4995,23 @@ esas restricciones legacy del slot, detecta la orientación real por metadata o
 por las dimensiones cargadas del archivo y aplica la proporción, ancho responsive
 y controles configurados en el editor.
 
-El panel define tres comportamientos para el ancho de un video vertical. En
+El modo `data-rstk-native-render="custom"` invierte deliberadamente esa
+responsabilidad. El slot conserva todo su HTML/CSS, frame, relación de aspecto,
+overlays, controles, contadores y animaciones, y debe contener exactamente un
+`<video data-rstk-video-media>`. Ese `<video>` no declara `src` ni una URL física
+de Bunny: Ristak inyecta el MP4 o la playlist HLS asociada desde Media y conserva
+tracking, acciones y gates sobre el mismo elemento. El autor puede omitir todo
+control visible, usar `controls` nativos o construir botones declarativos con
+`data-rstk-video-command`, barra con `data-rstk-video-progress-track` y
+contadores con `data-rstk-video-current-time`, `data-rstk-video-duration`,
+`data-rstk-video-remaining-time` y `data-rstk-video-percent`. El runtime publica
+además estado y progreso en atributos y variables CSS del slot. Scripts inline,
+handlers `on*`, URLs privadas y llaves de Bunny siguen eliminándose: libertad
+visual completa no equivale a ejecutar JavaScript arbitrario junto a las
+sesiones del CRM.
+
+En `data-rstk-native-render="ristak"`, el panel define tres comportamientos para
+el ancho de un video vertical. En
 `Automático`, el reproductor queda centrado y contenido en computadora y ocupa
 todo el ancho disponible en móvil, siempre conservando 9:16. `Completo` ocupa
 todo el ancho en todas las vistas. `Manual` respeta el porcentaje configurado
@@ -5002,7 +5019,8 @@ por separado en computadora, tablet y móvil. El HTML importado no debe fabricar
 franjas laterales, un marco negro ni otra relación de aspecto: el slot permanece
 neutro y el reproductor nativo resuelve su geometría.
 
-El padre inmediato del slot también debe ser neutro. Puede limitar `max-width`,
+El padre inmediato del slot renderizado por Ristak también debe ser neutro.
+Puede limitar `max-width`,
 aplicar `margin-inline` o participar en la alineación, pero no puede convertirse
 en un segundo reproductor con `height`/`min-height`, `aspect-ratio`, padding
 porcentual, `overflow` recortado, borde, fondo, sombra o pseudo-elementos
@@ -5013,9 +5031,10 @@ reserve proporción mediante `aspect-ratio` o el truco de padding en un
 pseudo-elemento y neutralizan solo ese frame legacy. Los padres neutros que
 controlan ancho, margen o alineación no se alteran.
 
-La instrucción compartida para creación y chat HTML resuelve primero cuántos
-videos necesita la página. Si la petición menciona un solo video o no especifica
-variantes, la IA debe declarar exactamente un slot nativo compartido, sin
+La instrucción compartida para creación y chat HTML resuelve primero si el
+usuario quiere el player visual de Ristak o control total HTML/CSS. En el primer
+modo, si la petición menciona un solo video o no especifica variantes, la IA debe
+declarar exactamente un slot nativo compartido, sin
 `data-rstk-device-only`, y configurar
 `data-rstk-video-settings='{"videoMobilePortraitCrop":true}'`. Ésta es la
 decisión implícita: el mismo archivo conserva su formato normal en computadora
@@ -5144,11 +5163,12 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   publicado anteriormente, pero ya no es la estructura indicada a las IA.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
-- `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,
+- `video` con `data-rstk-native-render="ristak"`: renderiza el bloque de video
+  real de Ristak con la misma subida/URL,
   controles, diseno, acciones por tiempo, formulario de video y eventos
   Meta/CAPI que el editor normal. El formulario de video usa el mismo panel,
   campos, reglas de completado, diseno y submit publico del bloque nativo; el
-  HTML externo solo reserva la zona donde se monta el reproductor.
+  HTML externo solo reserva la zona vacía donde se monta el reproductor.
   Un video nuevo se prepara en backend y se sube directo a Bunny Stream con TUS
   resumible y firma temporal; la API key nunca llega al navegador. En cuentas
   estándar, backend crea además el espejo Storage sin cargar el archivo completo
@@ -5204,6 +5224,19 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   para un asset Stream-only que todavía no tiene espejo y para embeds Bunny
   externos sin archivo Storage asociado; las acciones del reproductor nativo se
   conectan directamente al elemento de video.
+- `video` con `data-rstk-native-render="custom"`: conserva literalmente el
+  frontend del HTML importado y sustituye server-side únicamente el
+  `<video data-rstk-video-media>` por el mismo elemento conectado a Media/Bunny.
+  El editor sigue permitiendo elegir o subir el archivo, pero no muestra los
+  controles de diseño del player de Ristak porque frame, botón de play, controles,
+  overlays, contadores, SVG, GIF y animaciones pertenecen al código. Ristak
+  elimina fuentes `<source>` o `src` escritas por el autor, inyecta MP4/HLS sin
+  exponer credenciales, inicializa HLS cuando hace falta y mantiene
+  `/video-event`, Pixel/CAPI, acciones, formularios sobre video y gates. El
+  runtime reconoce comandos declarativos `play`, `pause`, `toggle`, `mute`,
+  `unmute`, `toggle-mute`, `restart` y `fullscreen`; actualiza barra, tiempo,
+  porcentaje, `data-rstk-video-state`, estado de sonido y variables CSS. No monta
+  el iframe visual de Bunny ni el chrome visual predeterminado de Ristak.
 - `social-profile` con `data-rstk-native-render="ristak"`: renderiza el bloque
   completo del editor normal. Ese modo nativo es el default cuando el usuario no
   pide otra composición: conserva exactamente la fila compacta y transparente,
@@ -5239,7 +5272,8 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   copiables para ChatGPT, Claude o Codex, el renderer neutraliza geometría legacy
   en esa raíz al montarla para que un HTML anterior no genere un vacío gigante.
 
-El reproductor nativo de video de un HTML importado acepta el contrato
+El reproductor nativo de video `data-rstk-native-render="ristak"` de un HTML
+importado acepta el contrato
 declarativo `data-rstk-video-settings` en el mismo slot que se conecta a Ristak.
 Ese objeto JSON usa las mismas propiedades y el mismo renderer del bloque de
 video normal; no crea un segundo reproductor ni permite que el HTML dibuje
@@ -5434,13 +5468,16 @@ configuracion de ese elemento; arriba aparece una flecha con `Volver`, que
 regresa al mapeo general de la pagina y conserva el elemento desde el que se
 entro. El encabezado de detalle es el único separador antes del inspector; los
 controles no agregan una segunda línea contigua. No se abre otra ventana ni se
-mezcla la configuracion avanzada con todas las filas del resumen. Para un video
-premium y personalizable, el HTML debe reservar
-`<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-label="Video principal"></div>`;
-usar un `<video>` HTML propio lo deja bajo control del codigo y no sustituye el
-player nativo. El slot nativo conserva la misma fuente/subida, diseno del frame,
-boton de play, colores, controles, acciones por tiempo, formulario de video y
-eventos Meta/CAPI del editor visual. Pago tambien permanece siempre nativo porque
+mezcla la configuracion avanzada con todas las filas del resumen. Para usar el
+player visual personalizable de Ristak, el HTML reserva un slot vacío
+`<div data-rstk-native-element="video" data-rstk-native-id="video-01" data-rstk-native-render="ristak" data-rstk-label="Video principal"></div>`.
+Para que el HTML/CSS controle literalmente todo el reproductor declara
+`data-rstk-native-render="custom"` y exactamente un
+`<video data-rstk-video-media>` dentro. En ambos modos el inspector permite
+elegir la misma fuente de Media/Bunny y conserva acciones por tiempo, formulario
+de video y eventos Meta/CAPI; en custom la pestaña Diseño indica que esos
+controles visuales viven en el código. Un `<video>` suelto fuera de ese contrato
+sigue siendo media opaca para Ristak. Pago tambien permanece siempre nativo porque
 la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML sin
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo; las
@@ -5455,7 +5492,8 @@ asociaciones directas ejecutan el mismo preflight sobre todos los borradores
 efectivos del sitio: detienen la operacion si existe un `data-rstk-form-id`
 repetido globalmente, un `data-rstk-field-id` repetido dentro de su formulario,
   un `data-rstk-native-id` repetido dentro de la pagina, ajustes declarativos del
-  reproductor invalidos, reglas de video invalidas
+  reproductor invalidos, reglas de video invalidas, un video custom sin
+  exactamente un `<video data-rstk-video-media>`
 o un perfil social custom sin sus cuatro hooks obligatorios. Asi la UI no puede avisar
 del error despues de haber dejado codigo ambiguo en un sitio publicado. El
 inspector derecho guarda automaticamente cambios validos

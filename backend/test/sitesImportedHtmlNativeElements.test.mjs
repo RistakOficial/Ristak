@@ -915,6 +915,196 @@ test('imported HTML native video slots render the real Ristak player and video a
   }
 })
 
+test('imported HTML custom video keeps its complete design while Ristak injects playback, controls and tracking', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <head>
+          <style>
+            .player-owned { position: relative; aspect-ratio: 21 / 9; overflow: hidden; }
+            .player-owned[data-rstk-video-state="playing"] .dog-overlay { animation: dance .6s infinite alternate; }
+            @keyframes dance { to { transform: rotate(12deg) translateY(-8px); } }
+          </style>
+        </head>
+        <body>
+          <main>
+            <section
+              class="player-owned"
+              data-rstk-native-element="video"
+              data-rstk-native-id="video-custom"
+              data-rstk-native-render="custom"
+              data-rstk-video-click-toggle="false"
+            >
+              <video class="media-owned" data-rstk-video-media playsinline preload="metadata">
+                <source src="https://inventado.test/no-debe-vivir.mp4" type="video/mp4">
+              </video>
+              <button class="play-owned" type="button" data-rstk-video-command="toggle">Play propio</button>
+              <button class="sound-owned" type="button" data-rstk-video-command="toggle-mute">Sonido propio</button>
+              <div class="progress-owned" data-rstk-video-progress-track role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="100">
+                <i data-rstk-video-progress></i>
+              </div>
+              <span class="current-owned" data-rstk-video-current-time>0:00</span>
+              <span class="duration-owned" data-rstk-video-duration>0:00</span>
+              <span class="remaining-owned" data-rstk-video-remaining-time>0:00</span>
+              <span class="percent-owned" data-rstk-video-percent>0%</span>
+              <div class="dog-overlay"><img src="https://example.test/perrito-bailando.gif" alt="Perrito bailando"></div>
+              <script>window.noDebeEjecutarse = true</script>
+              <button type="button" onclick="window.noDebeEjecutarse=true">Decoración segura</button>
+            </section>
+            <section id="oferta-custom" data-rstk-video-action-target="oferta-custom">Oferta</section>
+          </main>
+        </body>
+      </html>
+    `, `HTML custom video ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video personalizado',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-custom',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'custom',
+        mediaUrl: 'https://cdn.example.test/custom-player.mp4',
+        videoActions: [{
+          id: 'mostrar-oferta',
+          triggerType: 'unique_watched_percent',
+          triggerValue: 50,
+          action: 'show',
+          targetBlockId: 'oferta-custom',
+          targetBlockIds: ['oferta-custom'],
+          before: 'hidden'
+        }]
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(html, /class="player-owned rstk-video-player[^"]*rstk-imported-native-custom-video"/)
+    assert.match(html, /data-rstk-native-slot-id="video-custom"/)
+    assert.match(html, /data-rstk-video-source-state="ready"/)
+    assert.match(html, /<video class="media-owned"[^>]*data-rstk-video-media="true"/)
+    assert.match(html, /data-rstk-video-src="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.match(html, /src="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.match(html, /data-rstk-video-track="true"/)
+    assert.match(html, /data-rstk-video-provider="html5_video"/)
+    assert.match(html, /data-rstk-playback-id="[^"]+"/)
+    assert.match(html, /data-rstk-video-actions=/)
+    assert.match(html, /class="play-owned"[^>]*data-rstk-video-command="toggle"/)
+    assert.match(html, /class="sound-owned"[^>]*data-rstk-video-command="toggle-mute"/)
+    assert.match(html, /data-rstk-video-current-time/)
+    assert.match(html, /data-rstk-video-duration/)
+    assert.match(html, /data-rstk-video-remaining-time/)
+    assert.match(html, /data-rstk-video-percent/)
+    assert.match(html, /perrito-bailando\.gif/)
+    assert.match(html, /window\.ristakVideos/)
+    assert.match(html, /ristak:video-/)
+    assert.match(html, /--rstk-video-progress-percent/)
+    assert.match(html, /host\.getAttribute\('data-rstk-video-click-toggle'\) !== 'false'/)
+    assert.doesNotMatch(html, /inventado\.test/)
+    assert.doesNotMatch(html, /<source\b/)
+    assert.doesNotMatch(html, /noDebeEjecutarse|onclick=/)
+    assert.doesNotMatch(html, /<div class="[^"]*rstk-video-custom-controls|<button[^>]+data-rstk-video-overlay|<div[^>]+data-rstk-video-control-bar/)
+
+    const editorHtml = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+    assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
+    assert.match(editorHtml, /data-rstk-video-src="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.doesNotMatch(editorHtml, /<video[^>]*\ssrc="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.match(editorHtml, /class="dog-overlay"/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported HTML custom video receives Bunny HLS without mounting the Bunny or Ristak visual player', async () => {
+  let siteId = ''
+  const assetId = `site_imported_custom_stream_${Date.now()}`
+  const storageUrl = `https://cdn.example.test/sites/${assetId}.mp4`
+  const streamVideoId = `stream-${assetId}`
+  const playlistUrl = `https://video.example.test/${streamVideoId}/playlist.m3u8`
+
+  try {
+    await db.run(
+      `INSERT INTO media_assets (
+        id, business_id, original_filename, stored_filename, bunny_path,
+        public_url, mime_type, media_type, extension,
+        size_original, size_processed, quota_size, status,
+        storage_provider, module, module_entity_id, is_public, metadata_json
+      ) VALUES (?, 'default', 'custom-video.mp4', 'custom-video.mp4', ?, ?, 'video/mp4', 'video', 'mp4', 128, 128, 128, 'ready', 'bunny', 'sites', ?, 1, ?)`,
+      [
+        assetId,
+        `sites/${assetId}.mp4`,
+        storageUrl,
+        'site_imported_custom_video',
+        JSON.stringify({
+          stream: {
+            provider: 'bunny_stream',
+            syncStatus: 'uploaded',
+            libraryId: '123456',
+            videoId: streamVideoId,
+            delivery: { playlistUrl }
+          }
+        })
+      ]
+    )
+
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html><body>
+        <section class="cinema-owned" data-rstk-native-element="video" data-rstk-native-id="bunny-custom" data-rstk-native-render="custom">
+          <video data-rstk-video-media playsinline></video>
+          <button type="button" data-rstk-video-command="fullscreen">Pantalla completa</button>
+        </section>
+      </body></html>
+    `, `HTML custom Bunny video ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Bunny personalizado',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'bunny-custom',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'custom',
+        mediaUrl: storageUrl
+      }
+    })
+
+    const html = await renderPublicSiteHtml(await getSite(site.id, { includeBlocks: true }), {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+
+    assert.match(html, new RegExp(`data-rstk-video-src="${playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(html, /data-rstk-video-provider="bunny_stream"/)
+    assert.match(html, new RegExp(`data-rstk-stream-video-id="${streamVideoId}"`))
+    assert.match(html, /const HLS_SCRIPT_URL/)
+    assert.match(html, /data-rstk-video-command="fullscreen"/)
+    assert.doesNotMatch(html, /<iframe[^>]+mediadelivery\.net|<div class="[^"]*rstk-video-stream-frame|<div class="[^"]*rstk-video-custom-controls/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+  }
+})
+
 test('native video gate keeps the real calendar inert, shows live remaining playback, and ignores seeks', async () => {
   let siteId = ''
 

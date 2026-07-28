@@ -741,8 +741,15 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /Cierra el contenedor raíz inmediatamente después del diseño visual del perfil/)
   assert.match(instructions, /sin un bloque vacío ni una altura de pantalla completa/)
   assert.match(instructions, /No inventes .*seguidores.*no llames Meta desde el navegador/i)
-  assert.match(instructions, /Un video HTML propio queda opaco/)
-  assert.match(instructions, /El slot nativo de video NO define la geometria del reproductor/)
+  assert.match(instructions, /Para diseñar literalmente todo el reproductor con HTML\/CSS/)
+  assert.match(instructions, /Solo el slot render="ristak" deja la geometria en manos de Ristak/)
+  assert.match(instructions, /Reproductor de video 100% controlado por HTML\/CSS/)
+  assert.match(instructions, /<video data-rstk-video-media>/)
+  assert.match(instructions, /data-rstk-video-command="play\|pause\|toggle\|mute\|unmute\|toggle-mute\|restart\|fullscreen"/)
+  assert.match(instructions, /data-rstk-video-current-time/)
+  assert.match(instructions, /data-rstk-video-remaining-time/)
+  assert.match(instructions, /un perrito bailando/)
+  assert.match(instructions, /No escribas src ni URLs físicas de Bunny/)
   assert.match(instructions, /padding porcentual/)
   assert.match(instructions, /data-rstk-video-rules/)
   assert.match(instructions, /data-rstk-video-settings/)
@@ -812,6 +819,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const {
     buildImportedHtmlCustomCalendarRulesText,
     buildImportedHtmlCustomSocialProfileRulesText,
+    buildImportedHtmlCustomVideoRulesText,
     buildImportedHtmlVideoGateRulesText,
     buildImportedHtmlVideoPlayerRulesText,
     buildImportedHtmlVideoActionTargetRulesText,
@@ -828,6 +836,7 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   const builder = builderMatch[0]
   const calendarGuide = buildImportedHtmlCustomCalendarRulesText()
   const socialProfileGuide = buildImportedHtmlCustomSocialProfileRulesText()
+  const customVideoGuide = buildImportedHtmlCustomVideoRulesText()
   const videoPlayerGuide = buildImportedHtmlVideoPlayerRulesText()
   const videoGateGuide = buildImportedHtmlVideoGateRulesText()
   const videoTargetGuide = buildImportedHtmlVideoActionTargetRulesText()
@@ -836,16 +845,22 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(guide, /buildImportedHtmlFaviconRulesText/)
   assert.match(guide, /La única excepción es el <form data-rstk-calendar-book-form>/)
   assert.match(guide, /buildImportedHtmlCustomCalendarRulesText/)
-  assert.match(guide, /El slot nativo de video no controla la geometría/)
-  assert.match(guide, /Ristak detecta la orientación real del archivo/)
+  assert.match(guide, /Solo el slot de video render="ristak" deja la geometría en manos de Ristak/)
+  assert.match(guide, /Ristak conecta el archivo elegido en Media\/Bunny/)
   assert.match(guide, /ocupa todo el ancho disponible en móvil conservando 9:16/)
   assert.match(guide, /No fabriques franjas laterales, marcos negros/)
   assert.match(guide, /buildImportedHtmlCustomSocialProfileRulesText/)
   assert.match(guide, /buildImportedHtmlVideoPlayerRulesText/)
+  assert.match(guide, /buildImportedHtmlCustomVideoRulesText/)
   assert.match(guide, /buildImportedHtmlVideoActionTargetRulesText/)
   assert.match(guide, /buildImportedHtmlVideoGateRulesText/)
   assert.match(builder, /buildImportedHtmlVideoPlayerRulesText/)
+  assert.match(builder, /buildImportedHtmlCustomVideoRulesText/)
   assert.match(builder, /buildImportedHtmlVideoGateRulesText/)
+  assert.match(customVideoGuide, /data-rstk-native-render="custom"/)
+  assert.match(customVideoGuide, /<video data-rstk-video-media>/)
+  assert.match(customVideoGuide, /data-rstk-video-command/)
+  assert.match(customVideoGuide, /un perrito bailando/)
   assert.match(videoPlayerGuide, /data-rstk-video-settings/)
   assert.match(videoPlayerGuide, /videoOverlayPlay/)
   assert.match(videoPlayerGuide, /videoControlProgress/)

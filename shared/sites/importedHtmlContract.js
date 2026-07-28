@@ -63,9 +63,10 @@ export const IMPORTED_HTML_MOBILE_RULES = Object.freeze([
   'En móvil convierte grids y filas de varias columnas a una sola columna cuando sea necesario, conserva el orden lógico del contenido y usa padding lateral seguro.',
   'Usa anchos fluidos (width: 100% y max-width), min-width: 0 y box-sizing: border-box. Evita anchos fijos, min-width de escritorio y 100vw dentro de contenedores con padding.',
   'Imágenes, video, audio e iframes deben respetar max-width: 100%; las imágenes y videos conservan su proporción con height: auto o aspect-ratio.',
-  `Decisión predeterminada para video nativo: al crear un video, si la petición menciona un solo video o no pide explícitamente archivos distintos por dispositivo, declara exactamente UN slot compartido, sin ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}, y usa data-rstk-video-settings='{"videoMobilePortraitCrop":true}'. El mismo archivo conserva su formato normal en computadora y, cuando es horizontal, recibe un recorte centrado 9:16 en celular; el silencio del usuario siempre elige esta opción y nunca autoriza duplicar el slot.`,
+  `Decisión predeterminada para video nativo renderizado por Ristak: al crear un video, si la petición menciona un solo video o no pide explícitamente archivos distintos por dispositivo, declara exactamente UN slot compartido, sin ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}, y usa data-rstk-video-settings='{"videoMobilePortraitCrop":true}'. El mismo archivo conserva su formato normal en computadora y, cuando es horizontal, recibe un recorte centrado 9:16 en celular; el silencio del usuario siempre elige esta opción y nunca autoriza duplicar el slot.`,
   `Crea dos slots de video —uno para computadora y otro para móvil— ÚNICAMENTE cuando el usuario pida de forma explícita dos videos, dos archivos, una versión diferente por dispositivo o material específico para celular. Usa la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile, y envuelve cada slot en su contenedor ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE} correspondiente; Ristak enlaza el panel con la variante visible y usa la configurada como respaldo mientras la otra siga pendiente.`,
-  'En uno o dos videos nativos, deja cada slot en el flujo normal y completamente vacío. Su padre puede controlar únicamente max-width, margen y alineación; no debe convertirse en otro reproductor con height, min-height, aspect-ratio, overflow recortado, padding porcentual, borde, fondo, sombra ni pseudo-elementos ::before/::after para reservar proporción. El frame visible y su proporción pertenecen al reproductor de Ristak.',
+  'En uno o dos videos con data-rstk-native-render="ristak", deja cada slot en el flujo normal y completamente vacío. Su padre puede controlar únicamente max-width, margen y alineación; no debe convertirse en otro reproductor con height, min-height, aspect-ratio, overflow recortado, padding porcentual, borde, fondo, sombra ni pseudo-elementos ::before/::after para reservar proporción. El frame visible y su proporción pertenecen al reproductor de Ristak.',
+  'En un video con data-rstk-native-render="custom", el HTML/CSS sí es dueño del frame, la proporción, los overlays y los controles. Haz que el contenedor custom y su <video data-rstk-video-media> sean fluidos, sin scroll horizontal y con controles táctiles de al menos 44px; Ristak únicamente conecta la fuente Bunny/HLS y los hooks declarados.',
   'Conserva el video horizontal también en celular ÚNICAMENTE si el usuario pide explícitamente "sin recorte 9:16", "sin versión vertical", "horizontal en celular" o desactivar esa adaptación; en ese caso declara videoMobilePortraitCrop:false. No infieras esa excepción solo porque el archivo original sea horizontal.',
   'Al editar HTML existente, conserva dos variantes de video ya declaradas si la solicitud no trata sobre ellas. Si la petición reemplaza explícitamente esas variantes por un solo video, vuelve al slot compartido con videoMobilePortraitCrop:true.',
   'Controles táctiles deben medir al menos 44px de alto. En móvil, inputs, selects y textareas usan font-size de al menos 16px para evitar zoom automático del navegador.',
@@ -380,7 +381,7 @@ export function normalizeImportedHtmlVideoPlayerManifest(value = '') {
 }
 
 export const IMPORTED_HTML_VIDEO_PLAYER_RULES = Object.freeze([
-  `En el mismo slot nativo de video puedes declarar ${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} como un objeto JSON. Ristak aplica exactamente el mismo reproductor y las mismas opciones del editor normal; no dibujes controles HTML ni escribas JavaScript propio.`,
+  `En un slot con data-rstk-native-render="ristak" puedes declarar ${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} como un objeto JSON. Ristak aplica exactamente el mismo reproductor y las mismas opciones del editor normal; ese modo usa el player visual de Ristak y el slot queda vacío.`,
   'Visibilidad total: videoControlsMode acepta clean, native o none. En clean controla por separado videoOverlayPlay, videoControlBar, videoControlBarInitiallyVisible, videoControlPlay, videoControlProgress, videoControlTime, videoControlVolume, videoControlSpeed y videoControlSettings.',
   'Diseño total: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoControlBarStyle (floating|docked), videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize, videoSoundColor y videoControlPanelRadius. floating crea un globo separado de los bordes; docked acopla un panel de ancho completo al borde inferior.',
   'Pareja de color obligatoria: videoPlayerColor define el fondo común del botón play y de la barra, y videoPlayColor define sus iconos, texto y progreso. Si diseñas o cambias uno, declara y revisa ambos juntos en el mismo data-rstk-video-settings; nunca cambies uno de forma aislada. Deben pertenecer a la misma paleta y mantener contraste legible sobre frames claros y oscuros. Salvo que el usuario pida otro acento, videoSoundColor debe seguir videoPlayColor.',
@@ -396,16 +397,67 @@ export const IMPORTED_HTML_VIDEO_PLAYER_RULES = Object.freeze([
 export const IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE = `<div
   data-rstk-native-element="video"
   data-rstk-native-id="video-principal"
+  data-rstk-native-render="ristak"
   data-rstk-label="Video principal"
   data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarStyle":"floating","videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoMobilePortraitCrop":true,"videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
 ></div>`
 
-export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor de video HTML con control total:') {
+export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor visual de Ristak con configuración completa:') {
   return [
     heading,
     ...IMPORTED_HTML_VIDEO_PLAYER_RULES.map(rule => `- ${rule}`),
     '- Ejemplo completo:',
     IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE
+  ].join('\n')
+}
+
+export const IMPORTED_HTML_CUSTOM_VIDEO_RULES = Object.freeze([
+  'Usa data-rstk-native-render="custom" cuando el usuario pida que el HTML/CSS controle literalmente todo el reproductor. Ristak conserva el contenido del slot, conecta el archivo elegido en Media/Bunny y no monta encima el contenedor visual predeterminado.',
+  'El slot custom debe tener un data-rstk-native-id estable y contener exactamente un <video data-rstk-video-media>. No escribas src ni URLs físicas de Bunny: Ristak inyecta automáticamente MP4 o HLS adaptativo, tracking first-party, acciones y gates sin exponer API keys.',
+  'El HTML decide si existen controles. Puedes omitirlos todos, usar controls nativos en <video>, o crear cualquier combinación propia con data-rstk-video-command="play|pause|toggle|mute|unmute|toggle-mute|restart|fullscreen".',
+  'Para una barra propia usa data-rstk-video-progress-track en el área interactiva y data-rstk-video-progress en el relleno. Ristak actualiza el ancho del relleno, aria-valuenow y permite click, arrastre y teclado sobre el track.',
+  'Para contadores vivos usa data-rstk-video-current-time, data-rstk-video-duration, data-rstk-video-remaining-time y data-rstk-video-percent. Ristak escribe los valores formateados; el HTML decide tipografía, posición, animación y si se muestran.',
+  'El slot publica data-rstk-video-state="idle|playing|paused|ended", data-rstk-video-muted="true|false", data-rstk-video-ready="true|false" y las variables CSS --rstk-video-current-seconds, --rstk-video-duration-seconds, --rstk-video-progress-percent. Úsalas para estados visuales sin JavaScript propio.',
+  'data-rstk-video-click-toggle="false" en el slot desactiva el play/pause al tocar directamente el video. Omítelo o usa true si quieres que tocar la imagen también alterne la reproducción.',
+  'Todo el markup decorativo permanece bajo tu control: overlays, títulos, CTA, SVG, imágenes, GIFs, un contador o un perrito bailando pueden vivir dentro del mismo slot. Ristak no los reordena ni les aplica el CSS visual del player nativo.',
+  'Los scripts inline, handlers onClick y llaves de Bunny siguen prohibidos por seguridad. Para reaccionar al progreso del video usa data-rstk-video-rules, data-rstk-video-gate-* y los estados/hooks anteriores; Ristak ejecuta esa lógica sobre el video real.',
+  'El modo custom conserva las acciones de video, formularios sobre video, gates, Meta/CAPI y /video-event. Cambiar el diseño HTML no crea otra fuente de tracking ni un iframe de Bunny.'
+])
+
+export const IMPORTED_HTML_CUSTOM_VIDEO_SKELETON = `<section
+  class="reproductor-propio"
+  data-rstk-native-element="video"
+  data-rstk-native-id="video-principal"
+  data-rstk-native-render="custom"
+  data-rstk-label="Video principal"
+  data-rstk-video-click-toggle="false"
+>
+  <video data-rstk-video-media playsinline preload="metadata" aria-label="Video principal"></video>
+
+  <div class="controles-propios">
+    <button type="button" data-rstk-video-command="toggle">Reproducir / pausar</button>
+    <button type="button" data-rstk-video-command="toggle-mute">Sonido</button>
+    <div data-rstk-video-progress-track role="slider" tabindex="0" aria-label="Progreso del video" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <span data-rstk-video-progress></span>
+    </div>
+    <span data-rstk-video-current-time>0:00</span>
+    <span aria-hidden="true">/</span>
+    <span data-rstk-video-duration>0:00</span>
+    <span><span data-rstk-video-remaining-time>0:00</span> restantes</span>
+    <span data-rstk-video-percent>0%</span>
+  </div>
+
+  <div class="overlay-libre" aria-hidden="true">
+    <!-- Aquí puede vivir cualquier decoración HTML/CSS, imagen, GIF o animación. -->
+  </div>
+</section>`
+
+export function buildImportedHtmlCustomVideoRulesText(heading = 'Reproductor de video 100% controlado por HTML/CSS:') {
+  return [
+    heading,
+    ...IMPORTED_HTML_CUSTOM_VIDEO_RULES.map(rule => `- ${rule}`),
+    '- Estructura mínima (cambia clases, contenido y CSS; conserva los hooks que uses):',
+    IMPORTED_HTML_CUSTOM_VIDEO_SKELETON
   ].join('\n')
 }
 
