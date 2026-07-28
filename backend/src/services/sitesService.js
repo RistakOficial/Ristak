@@ -17766,6 +17766,204 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       const watchedSeconds = state => state.watchedRanges.reduce((total, range) => (
         total + Math.max(0, Number(range[1] || 0) - Number(range[0] || 0))
       ), 0);
+      const GATE_ID_ATTRS = ['data-rstk-video-gate-id','data-ristak-video-gate-id','data-ristack-video-gate-id'];
+      const GATE_PERSIST_ATTRS = ['data-rstk-video-gate-persist','data-ristak-video-gate-persist','data-ristack-video-gate-persist'];
+      const GATE_RESUME_ATTRS = ['data-rstk-video-gate-resume','data-ristak-video-gate-resume','data-ristack-video-gate-resume'];
+      const GATE_SEEK_POLICY_ATTRS = ['data-rstk-video-gate-seek-policy','data-ristak-video-gate-seek-policy','data-ristack-video-gate-seek-policy'];
+      const GATE_PROGRESS_KEY_ATTRS = ['data-rstk-video-gate-progress-key','data-ristak-video-gate-progress-key','data-ristack-video-gate-progress-key'];
+      const GATE_PROGRESS_TTL_ATTRS = ['data-rstk-video-gate-progress-ttl','data-ristak-video-gate-progress-ttl','data-ristack-video-gate-progress-ttl'];
+      const progressRecordCache = new Map();
+      const readFirstAttribute = (element, names) => {
+        if (!element || typeof element.getAttribute !== 'function') return '';
+        for (const name of names) {
+          const value = String(element.getAttribute(name) || '').trim();
+          if (value) return value;
+        }
+        return '';
+      };
+      const gateSourceForVideo = video => {
+        if (!video || typeof video.closest !== 'function') return null;
+        return video.closest('[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]');
+      };
+      const safeStoragePart = value => String(value || 'scope').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 120) || 'scope';
+      const persistenceConfigForVideo = video => {
+        const source = gateSourceForVideo(video);
+        const gateId = readFirstAttribute(source, GATE_ID_ATTRS);
+        if (!source || !gateId) return { enabled: false, resume: false, seekPolicy: 'free', storageKey: '' };
+        const requestedMode = readFirstAttribute(source, GATE_PERSIST_ATTRS).toLowerCase();
+        const mode = requestedMode === 'visitor' || requestedMode === 'session' ? requestedMode : 'none';
+        const resumeRaw = readFirstAttribute(source, GATE_RESUME_ATTRS).toLowerCase();
+        const resume = resumeRaw === 'true' || resumeRaw === '1' || resumeRaw === 'yes';
+        const requestedSeekPolicy = readFirstAttribute(source, GATE_SEEK_POLICY_ATTRS).toLowerCase();
+        const seekPolicy = requestedSeekPolicy === 'watched_only' || requestedSeekPolicy === 'none'
+          ? requestedSeekPolicy
+          : 'free';
+        const progressKey = readFirstAttribute(source, GATE_PROGRESS_KEY_ATTRS) || gateId;
+        const rawTtl = Number(readFirstAttribute(source, GATE_PROGRESS_TTL_ATTRS));
+        const ttlSeconds = Number.isFinite(rawTtl)
+          ? Math.max(3600, Math.min(31536000, rawTtl))
+          : 2592000;
+        let pathScope = 'page';
+        try { pathScope = String(window.location && window.location.pathname || 'page'); } catch (_) {}
+        const siteId = video.getAttribute('data-rstk-video-action-site-id') || 'site';
+        const pageId = video.getAttribute('data-rstk-video-action-page-id') || pathScope;
+        return {
+          enabled: mode !== 'none',
+          mode,
+          resume,
+          seekPolicy,
+          ttlSeconds,
+          storageKey: [
+            'ristak:video-gate-progress:v1',
+            safeStoragePart(siteId),
+            safeStoragePart(pageId),
+            safeStoragePart(progressKey)
+          ].join(':')
+        };
+      };
+      const storageForMode = mode => {
+        try {
+          return mode === 'session' ? window.sessionStorage : window.localStorage;
+        } catch (_) {
+          return null;
+        }
+      };
+      const normalizeStoredRanges = ranges => {
+        let normalized = [];
+        (Array.isArray(ranges) ? ranges : []).slice(0, 240).forEach(range => {
+          if (!Array.isArray(range) || range.length < 2) return;
+          const start = Math.max(0, Math.min(1, Number(range[0]) || 0));
+          const end = Math.max(start, Math.min(1, Number(range[1]) || 0));
+          normalized = mergeWatchedRange(normalized, start, end, 1);
+        });
+        return normalized;
+      };
+      const readProgressRecord = config => {
+        if (!config?.enabled || !config.storageKey) return null;
+        if (progressRecordCache.has(config.storageKey)) return progressRecordCache.get(config.storageKey);
+        let record = null;
+        try {
+          const storage = storageForMode(config.mode);
+          record = JSON.parse(storage && storage.getItem(config.storageKey) || 'null');
+        } catch (_) {
+          record = null;
+        }
+        if (!record || typeof record !== 'object' || Number(record.expiresAt || 0) <= Date.now()) {
+          try {
+            const storage = storageForMode(config.mode);
+            if (storage) storage.removeItem(config.storageKey);
+          } catch (_) {}
+          progressRecordCache.set(config.storageKey, null);
+          return null;
+        }
+        const normalized = {
+          playbackSeconds: Math.max(0, Number(record.playbackSeconds || 0)),
+          watchedRanges: normalizeStoredRanges(record.watchedRanges),
+          resumeRatio: Math.max(0, Math.min(1, Number(record.resumeRatio || 0))),
+          savedAt: Math.max(0, Number(record.savedAt || 0)),
+          expiresAt: Math.max(Date.now(), Number(record.expiresAt || 0))
+        };
+        progressRecordCache.set(config.storageKey, normalized);
+        return normalized;
+      };
+      const mergeProgressRecords = (current, next) => {
+        let watchedRanges = normalizeStoredRanges(current?.watchedRanges);
+        normalizeStoredRanges(next?.watchedRanges).forEach(range => {
+          watchedRanges = mergeWatchedRange(watchedRanges, range[0], range[1], 1);
+        });
+        return {
+          playbackSeconds: Math.max(0, Number(current?.playbackSeconds || 0), Number(next?.playbackSeconds || 0)),
+          watchedRanges,
+          resumeRatio: Math.max(0, Math.min(1, Number(next?.resumeRatio ?? current?.resumeRatio ?? 0))),
+          savedAt: Math.max(0, Number(next?.savedAt || Date.now())),
+          expiresAt: Math.max(Date.now(), Number(next?.expiresAt || current?.expiresAt || Date.now()))
+        };
+      };
+      const writeProgressRecord = (config, record) => {
+        if (!config?.enabled || !config.storageKey || !record) return;
+        const merged = mergeProgressRecords(progressRecordCache.get(config.storageKey), record);
+        progressRecordCache.set(config.storageKey, merged);
+        try {
+          const storage = storageForMode(config.mode);
+          if (storage) storage.setItem(config.storageKey, JSON.stringify(merged));
+        } catch (_) {}
+      };
+      const normalizedRangesForState = state => {
+        const duration = finiteMediaDuration(state.video);
+        if (!(duration > 0)) return [];
+        return normalizeStoredRanges(state.watchedRanges.map(range => [
+          Math.max(0, Number(range[0] || 0) / duration),
+          Math.max(0, Number(range[1] || 0) / duration)
+        ]));
+      };
+      const hydratePersistedProgress = state => {
+        if (!state?.persistence?.enabled) return false;
+        const record = readProgressRecord(state.persistence);
+        if (!record) return false;
+        const duration = finiteMediaDuration(state.video);
+        state.playbackSeconds = Math.max(state.playbackSeconds, record.playbackSeconds);
+        if (duration > 0) {
+          record.watchedRanges.forEach(range => {
+            state.watchedRanges = mergeWatchedRange(
+              state.watchedRanges,
+              range[0] * duration,
+              range[1] * duration,
+              duration
+            );
+          });
+          if (state.persistence.resume && !state.resumeRatioApplied && record.resumeRatio > 0) {
+            state.video.setAttribute('data-rstk-video-resume-ratio', String(record.resumeRatio));
+            state.resumeRatioApplied = true;
+          }
+        }
+        state.persistedProgressLoaded = Boolean(record.playbackSeconds > 0 || record.watchedRanges.length);
+        return state.persistedProgressLoaded;
+      };
+      const maxWatchedRatio = state => {
+        const duration = finiteMediaDuration(state.video);
+        if (!(duration > 0)) return 0;
+        return Math.max(0, Math.min(1, state.watchedRanges.reduce((maxValue, range) => (
+          Math.max(maxValue, Number(range[1] || 0) / duration)
+        ), 0)));
+      };
+      const syncSeekPolicyAttributes = state => {
+        if (!state?.video || typeof state.video.setAttribute !== 'function') return;
+        const policy = state.persistence?.seekPolicy || 'free';
+        state.video.setAttribute('data-rstk-video-seek-policy', policy);
+        state.video.setAttribute('data-rstk-video-max-seek-ratio', String(Number(maxWatchedRatio(state).toFixed(6))));
+      };
+      const persistProgress = (state, force = false) => {
+        const config = state?.persistence;
+        if (!config?.enabled || isPreviewPlayback(state.video)) return;
+        const now = monotonicNowSeconds();
+        if (!force && Number.isFinite(state.lastPersistWallTime) && now - state.lastPersistWallTime < 0.75) return;
+        const duration = finiteMediaDuration(state.video);
+        if (!(duration > 0)) return;
+        state.lastPersistWallTime = now;
+        const resumeRatio = Math.max(0, Math.min(1, finiteMediaTime(state.video) / duration));
+        writeProgressRecord(config, {
+          playbackSeconds: state.playbackSeconds,
+          watchedRanges: normalizedRangesForState(state),
+          resumeRatio,
+          savedAt: Date.now(),
+          expiresAt: Date.now() + config.ttlSeconds * 1000
+        });
+      };
+      const clampSeekToWatched = state => {
+        const policy = state?.persistence?.seekPolicy || 'free';
+        if (policy === 'free' || isPreviewPlayback(state.video) || !hasRealPlaybackStarted(state.video)) return false;
+        const duration = finiteMediaDuration(state.video);
+        if (!(duration > 0)) return false;
+        const previousTime = Math.max(0, Number(state.lastMeasurementMediaTime) || 0);
+        const maxAllowedTime = policy === 'none'
+          ? previousTime
+          : Math.max(previousTime, maxWatchedRatio(state) * duration);
+        const requestedTime = finiteMediaTime(state.video);
+        if (requestedTime <= maxAllowedTime + 0.35) return false;
+        state.video.currentTime = Math.max(0, Math.min(duration, maxAllowedTime));
+        state.video.setAttribute('data-rstk-video-seek-blocked', 'true');
+        return true;
+      };
       const progressSnapshotsById = new Map();
       const progressSnapshotsByVideo = new WeakMap();
       const getProgressSourceId = video => {
@@ -17843,6 +18041,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           state.video.setAttribute('data-rstk-video-playback-seconds', String(Number(snapshot.playbackSeconds.toFixed(3))));
           state.video.setAttribute('data-rstk-video-unique-watched-percent', String(Number(snapshot.uniqueWatchedPercent.toFixed(3))));
           state.video.setAttribute('data-rstk-video-playing', snapshot.playing ? 'true' : 'false');
+          syncSeekPolicyAttributes(state);
         }
         try {
           if (typeof window.CustomEvent === 'function' && typeof window.dispatchEvent === 'function') {
@@ -18050,6 +18249,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         if (mode === 'remember_visitor') setCookie(keys.cookie, value, ttlSeconds);
       };
       const syncState = state => {
+        hydratePersistedProgress(state);
         const realPlaybackStarted = ensureRealPlaybackStarted(state.video);
         if (realPlaybackStarted && !state.video.paused && !state.video.ended && !state.seeking && !state.buffering && !isPreviewPlayback(state.video)) {
           state.playbackActive = true;
@@ -18057,12 +18257,16 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         samplePlaybackProgress(state, realPlaybackStarted);
         const progressSnapshot = buildProgressSnapshot(state, realPlaybackStarted);
         publishProgressSnapshot(state, progressSnapshot);
+        persistProgress(state);
         if (typeof window.ristakSyncVideoGates === 'function') {
           window.ristakSyncVideoGates(state.video, {
-            realPlaybackStarted: progressSnapshot.realPlaybackStarted,
+            realPlaybackStarted: progressSnapshot.realPlaybackStarted || state.persistedProgressLoaded,
             timelineReached: progressSnapshot.currentTimeSeconds,
             playbackSeconds: progressSnapshot.playbackSeconds,
-            uniqueWatchedPercent: progressSnapshot.uniqueWatchedPercent
+            uniqueWatchedSeconds: progressSnapshot.uniqueWatchedSeconds,
+            uniqueWatchedPercent: progressSnapshot.uniqueWatchedPercent,
+            durationSeconds: progressSnapshot.durationSeconds,
+            restored: state.persistedProgressLoaded
           });
         }
         state.actions.forEach(action => {
@@ -18155,11 +18359,17 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           seeking: false,
           playbackSeconds: 0,
           watchedRanges: [],
+          persistence: persistenceConfigForVideo(video),
+          persistedProgressLoaded: false,
+          resumeRatioApplied: false,
+          lastPersistWallTime: null,
           lastMeasurementMediaTime: null,
           lastMeasurementWallTime: null,
           lastProgressPublishWallTime: null,
           lastProgressStatusKey: ''
         };
+        hydratePersistedProgress(state);
+        syncSeekPolicyAttributes(state);
         let frameId = 0;
         const stopFrameSync = () => {
           if (!frameId) return;
@@ -18179,6 +18389,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           else stopFrameSync();
         };
         const handlePlay = () => {
+          hydratePersistedProgress(state);
           markRealPlayback(video);
           state.buffering = false;
           state.seeking = false;
@@ -18187,6 +18398,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           sync();
         };
         const handlePlaying = () => {
+          hydratePersistedProgress(state);
           state.buffering = false;
           state.playbackActive = hasRealPlaybackStarted(video) && !isPreviewPlayback(video);
           resetMeasurementBaseline(state);
@@ -18200,12 +18412,14 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           stopFrameSync();
         };
         const handleSeeking = () => {
+          clampSeekToWatched(state);
           state.seeking = true;
           state.playbackActive = false;
           resetMeasurementBaseline(state);
           sync();
         };
         const handleSeeked = () => {
+          video.removeAttribute('data-rstk-video-seek-blocked');
           state.seeking = false;
           state.playbackActive = hasRealPlaybackStarted(video) && !video.paused && !video.ended && !state.buffering && !isPreviewPlayback(video);
           resetMeasurementBaseline(state);
@@ -18214,6 +18428,7 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         const handleInactive = () => {
           syncState(state);
           state.playbackActive = false;
+          persistProgress(state, true);
           resetMeasurementBaseline(state);
           stopFrameSync();
         };
@@ -18224,6 +18439,14 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         video.addEventListener('seeking', handleSeeking, { passive: true });
         video.addEventListener('seeked', handleSeeked, { passive: true });
         ['pause', 'ended'].forEach(eventName => video.addEventListener(eventName, handleInactive, { passive: true }));
+        if (window && typeof window.addEventListener === 'function') {
+          window.addEventListener('pagehide', () => persistProgress(state, true), { passive: true });
+        }
+        if (document && typeof document.addEventListener === 'function') {
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') persistProgress(state, true);
+          }, { passive: true });
+        }
         resetMeasurementBaseline(state);
         sync();
         attached.add(video);
@@ -27493,6 +27716,14 @@ function buildVideoPlayerRuntimeScript() {
 	        };
 	        const restartFromBeginningForUserPlayback = () => {
 	          if (hasUserPlayed) return;
+	          const duration = Number.isFinite(video.duration) ? video.duration : 0;
+	          const resumeRatio = Math.max(0, Math.min(1, Number(video.getAttribute('data-rstk-video-resume-ratio') || 0)));
+	          if (duration > 0 && resumeRatio > 0.001 && resumeRatio < 0.995) {
+	            video.currentTime = resumeRatio * duration;
+	            setProgressRatio(resumeRatio);
+	            video.setAttribute('data-rstk-video-resume-applied', 'true');
+	            return;
+	          }
 	          const currentTime = Number(video.currentTime || 0);
 	          if (!Number.isFinite(currentTime) || currentTime <= 0.01) return;
 	          video.currentTime = 0;
@@ -27564,7 +27795,12 @@ function buildVideoPlayerRuntimeScript() {
 	            return false;
 	          }
 	          if (previewing) stopPreviewLoop();
-	          const nextProgress = Math.max(0, Math.min(1, ratio));
+	          const seekPolicy = String(video.getAttribute('data-rstk-video-seek-policy') || 'free');
+	          const storedMaxRatio = Number(video.getAttribute('data-rstk-video-max-seek-ratio'));
+	          const maxSeekRatio = Number.isFinite(storedMaxRatio) ? Math.max(0, Math.min(1, storedMaxRatio)) : 1;
+	          let nextProgress = Math.max(0, Math.min(1, ratio));
+	          if (seekPolicy === 'watched_only') nextProgress = Math.min(nextProgress, maxSeekRatio);
+	          if (seekPolicy === 'none') nextProgress = Math.min(nextProgress, Math.max(0, Math.min(1, video.currentTime / duration)));
 	          video.currentTime = nextProgress * duration;
 	          setProgressRatio(nextProgress);
 	          sync();
@@ -27725,8 +27961,12 @@ function buildVideoPlayerRuntimeScript() {
 	            fullscreen: enterFullscreen,
 	            seek: seconds => {
 	              const duration = Number.isFinite(video.duration) ? video.duration : Infinity;
-	              video.currentTime = Math.max(0, Math.min(duration, Number(seconds || 0)));
-	              sync();
+	              if (Number.isFinite(duration) && duration > 0) {
+	                seekToProgressRatio(Math.max(0, Number(seconds || 0)) / duration);
+	              } else {
+	                video.currentTime = Math.max(0, Number(seconds || 0));
+	                sync();
+	              }
 	            }
 	          };
 	        }
@@ -28033,7 +28273,9 @@ function buildImportedVideoGateRuntimeScript(html = '') {
           gate = {
             ...definition,
             progressByVideo: new Map(),
+            metricsByVideo: new Map(),
             progress: 0,
+            durationSeconds: 0,
             unlocked: false,
             invalid: false
           };
@@ -28101,6 +28343,9 @@ function buildImportedVideoGateRuntimeScript(html = '') {
         const state = gate.invalid ? 'error' : gate.unlocked ? 'unlocked' : 'locked';
         const remaining = Math.max(0, gate.triggerValue - gate.progress);
         const displayRemaining = Math.max(0, Math.ceil(remaining - 0.0001));
+        const remainingTimeSeconds = gate.triggerType === 'unique_watched_percent' && gate.durationSeconds > 0
+          ? gate.durationSeconds * remaining / 100
+          : remaining;
         selectGateNodes(CONTENT_ATTRS, gate.id).forEach(element => {
           setContentState(element, gate.unlocked && !gate.invalid);
           if (element.style && typeof element.style.setProperty === 'function') {
@@ -28120,7 +28365,9 @@ function buildImportedVideoGateRuntimeScript(html = '') {
           setGateStateAttribute(element, state);
         });
         selectGateNodes(REMAINING_TIME_ATTRS, gate.id).forEach(element => {
-          setTextContent(element, formatRemainingTime(remaining));
+          if (gate.triggerType !== 'unique_watched_percent' || gate.durationSeconds > 0) {
+            setTextContent(element, formatRemainingTime(Math.max(0, remainingTimeSeconds - 0.0001)));
+          }
           setGateStateAttribute(element, state);
         });
         document.querySelectorAll(SOURCE_SELECTOR).forEach(source => {
@@ -28162,8 +28409,17 @@ function buildImportedVideoGateRuntimeScript(html = '') {
           const progress = Math.max(0, progressForMetrics(gate, metrics));
           const previousProgress = Number(gate.progressByVideo.get(video) || 0);
           gate.progressByVideo.set(video, Math.max(previousProgress, progress));
+          gate.metricsByVideo.set(video, {
+            progress: Math.max(previousProgress, progress),
+            durationSeconds: Math.max(0, Number(metrics.durationSeconds || 0)),
+            uniqueWatchedSeconds: Math.max(0, Number(metrics.uniqueWatchedSeconds || 0))
+          });
         }
         gate.progress = Math.max(0, ...Array.from(gate.progressByVideo.values()));
+        const leadingMetrics = Array.from(gate.metricsByVideo.values()).sort((left, right) => (
+          Number(right.progress || 0) - Number(left.progress || 0)
+        ))[0];
+        gate.durationSeconds = Math.max(0, Number(leadingMetrics?.durationSeconds || gate.durationSeconds || 0));
         const wasUnlocked = gate.unlocked;
         if (gate.progress + 0.0001 >= gate.triggerValue) gate.unlocked = true;
         renderGate(gate);

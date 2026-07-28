@@ -837,6 +837,39 @@ mismo gate; se usa su mayor progreso individual, no la suma. El HTML puede
 ajustar el efecto con `--rstk-video-gate-blur` y
 `--rstk-video-gate-locked-opacity`.
 
+Una VSL puede conservar el avance real del gate sin JavaScript propio:
+
+```html
+<div
+  data-rstk-native-element="video"
+  data-rstk-native-id="vsl-desktop"
+  data-rstk-video-gate-id="admision"
+  data-rstk-video-gate-trigger="unique_watched_percent"
+  data-rstk-video-gate-value="91.442"
+  data-rstk-video-gate-persist="visitor"
+  data-rstk-video-gate-resume="true"
+  data-rstk-video-gate-seek-policy="watched_only"
+  data-rstk-video-gate-progress-key="vsl-admision-v1">
+</div>
+```
+
+`visitor` guarda en `localStorage` la posición normalizada, el tiempo reproducido
+y la unión de fragmentos vistos durante 30 días; `session` usa
+`sessionStorage`, y `none` no persiste. El TTL opcional se declara con
+`data-rstk-video-gate-progress-ttl` en segundos. Las variantes desktop/mobile
+comparten avance cuando usan la misma `progress-key`, incluso si sus duraciones
+exactas difieren. Esa key debe versionarse al reemplazar el contenido para no
+heredar progreso de otra VSL.
+
+Con `resume="true"`, el primer play de una visita posterior arranca en el punto
+guardado. `seek-policy="watched_only"` permite retroceder y volver hasta el
+frente ya visto, pero bloquea adelantos. Al combinarlo con
+`unique_watched_percent`, repetir un tramo anterior no reduce el restante: el
+contador sólo avanza al cubrir fragmentos nuevos. El valor
+`data-rstk-video-gate-remaining-time` convierte el porcentaje faltante a tiempo
+real usando la duración del video activo, por lo que conserva una lectura
+`MM:SS` aun cuando el gate mida cobertura única.
+
 Si el calendario usa frontend propio, el HTML debe marcar
 `data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo
 e inyecta helpers publicos:

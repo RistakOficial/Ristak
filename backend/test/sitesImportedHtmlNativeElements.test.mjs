@@ -1136,7 +1136,7 @@ test('imported HTML custom video receives Bunny HLS without mounting the Bunny o
   }
 })
 
-test('native video gate keeps the real calendar inert, shows live remaining playback, and ignores seeks', async () => {
+test('native video gate persists unique progress, resumes, blocks forward seeks, and keeps the real calendar inert', async () => {
   let siteId = ''
 
   try {
@@ -1149,8 +1149,12 @@ test('native video gate keeps the real calendar inert, shows live remaining play
               data-rstk-native-element="video"
               data-rstk-native-id="video-gate-desktop"
               data-rstk-video-gate-id="agenda-admision"
-              data-rstk-video-gate-trigger="playback_seconds"
-              data-rstk-video-gate-value="30"
+              data-rstk-video-gate-trigger="unique_watched_percent"
+              data-rstk-video-gate-value="25"
+              data-rstk-video-gate-persist="visitor"
+              data-rstk-video-gate-resume="true"
+              data-rstk-video-gate-seek-policy="watched_only"
+              data-rstk-video-gate-progress-key="admision-v1"
             ></div>
           </section>
           <section data-rstk-device-only="mobile">
@@ -1158,8 +1162,12 @@ test('native video gate keeps the real calendar inert, shows live remaining play
               data-rstk-native-element="video"
               data-rstk-native-id="video-gate-mobile"
               data-rstk-video-gate-id="agenda-admision"
-              data-rstk-video-gate-trigger="playback_seconds"
-              data-rstk-video-gate-value="30"
+              data-rstk-video-gate-trigger="unique_watched_percent"
+              data-rstk-video-gate-value="25"
+              data-rstk-video-gate-persist="visitor"
+              data-rstk-video-gate-resume="true"
+              data-rstk-video-gate-seek-policy="watched_only"
+              data-rstk-video-gate-progress-key="admision-v1"
             ></div>
           </section>
           <section data-rstk-video-gate-shell="agenda-admision">
@@ -1184,7 +1192,8 @@ test('native video gate keeps the real calendar inert, shows live remaining play
               </form>
             </section>
             <section data-rstk-video-gate-locked="agenda-admision">
-              Faltan <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos.
+              Falta <strong data-rstk-video-gate-remaining="agenda-admision">25</strong>%.
+              Tiempo: <strong data-rstk-video-gate-remaining-time="agenda-admision">00:30</strong>.
             </section>
           </section>
           <aside data-rstk-video-gate-content="agenda-admision">Contenido legacy oculto</aside>
@@ -1228,6 +1237,10 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     })
 
     assert.equal((html.match(/data-rstk-video-gate-id="agenda-admision"/g) || []).length, 2)
+    assert.equal((html.match(/data-rstk-video-gate-persist="visitor"/g) || []).length, 2)
+    assert.equal((html.match(/data-rstk-video-gate-resume="true"/g) || []).length, 2)
+    assert.equal((html.match(/data-rstk-video-gate-seek-policy="watched_only"/g) || []).length, 2)
+    assert.equal((html.match(/data-rstk-video-gate-progress-key="admision-v1"/g) || []).length, 2)
     assert.match(html, /data-rstk-video-gate-shell="agenda-admision"[^>]*data-rstk-video-gate-state="locked"/)
     assert.match(html, /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-locked-mode="blur"[^>]*data-rstk-video-gate-state="locked"[^>]* inert[^>]*aria-hidden="true"/)
     assert.doesNotMatch(
@@ -1293,13 +1306,21 @@ test('native video gate keeps the real calendar inert, shows live remaining play
 
     const source = new FakeElement({
       'data-rstk-video-gate-id': 'agenda-admision',
-      'data-rstk-video-gate-trigger': 'playback_seconds',
-      'data-rstk-video-gate-value': '30'
+      'data-rstk-video-gate-trigger': 'unique_watched_percent',
+      'data-rstk-video-gate-value': '25',
+      'data-rstk-video-gate-persist': 'visitor',
+      'data-rstk-video-gate-resume': 'true',
+      'data-rstk-video-gate-seek-policy': 'watched_only',
+      'data-rstk-video-gate-progress-key': 'admision-v1'
     })
     const mobileSource = new FakeElement({
       'data-rstk-video-gate-id': 'agenda-admision',
-      'data-rstk-video-gate-trigger': 'playback_seconds',
-      'data-rstk-video-gate-value': '30'
+      'data-rstk-video-gate-trigger': 'unique_watched_percent',
+      'data-rstk-video-gate-value': '25',
+      'data-rstk-video-gate-persist': 'visitor',
+      'data-rstk-video-gate-resume': 'true',
+      'data-rstk-video-gate-seek-policy': 'watched_only',
+      'data-rstk-video-gate-progress-key': 'admision-v1'
     })
     const locked = new FakeElement({ 'data-rstk-video-gate-locked': 'agenda-admision' })
     const shell = new FakeElement({ 'data-rstk-video-gate-shell': 'agenda-admision' })
@@ -1316,6 +1337,8 @@ test('native video gate keeps the real calendar inert, shows live remaining play
       'aria-hidden': 'true'
     })
     const remaining = new FakeElement({ 'data-rstk-video-gate-remaining': 'agenda-admision' })
+    const remainingTime = new FakeElement({ 'data-rstk-video-gate-remaining-time': 'agenda-admision' })
+    remainingTime.textContent = '00:30'
 
     class FakeVideo extends FakeElement {
       constructor(gateSource) {
@@ -1362,7 +1385,7 @@ test('native video gate keeps the real calendar inert, shows live remaining play
         if (selector.includes('video-gate-shell')) return [shell]
         if (selector.includes('video-gate-locked')) return [locked]
         if (selector.includes('video-gate-content')) return [content, legacyContent]
-        if (selector.includes('video-gate-remaining-time')) return []
+        if (selector.includes('video-gate-remaining-time')) return [remainingTime]
         if (selector.includes('video-gate-remaining')) return [remaining]
         return []
       },
@@ -1378,9 +1401,30 @@ test('native video gate keeps the real calendar inert, shows live remaining play
         this.detail = options.detail
       }
     }
+    class FakeStorage {
+      constructor() {
+        this.values = new Map()
+      }
+
+      getItem(key) {
+        return this.values.has(key) ? this.values.get(key) : null
+      }
+
+      setItem(key, value) {
+        this.values.set(key, String(value))
+      }
+
+      removeItem(key) {
+        this.values.delete(key)
+      }
+    }
+    const localStorage = new FakeStorage()
+    const sessionStorage = new FakeStorage()
     const window = {
       CSS: { escape: value => String(value) },
       CustomEvent: FakeCustomEvent,
+      localStorage,
+      sessionStorage,
       performance: { now: () => nowMs },
       requestAnimationFrame: () => {
         nextFrameId += 1
@@ -1412,7 +1456,8 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.equal(legacyContent.hidden, true)
     assert.equal(legacyContent.attrs.has('inert'), true)
     assert.equal(locked.hidden, false)
-    assert.equal(remaining.textContent, '30')
+    assert.equal(remaining.textContent, '25')
+    assert.equal(remainingTime.textContent, '00:30')
     assert.equal(remaining.textContentWriteCount, 1)
     assert.equal(window.ristakGetVideoProgress('agenda-admision')?.playbackSeconds, 0)
 
@@ -1423,7 +1468,8 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     nowMs = 10_000
     video.currentTime = 10
     video.dispatch('timeupdate')
-    assert.equal(remaining.textContent, '20')
+    assert.equal(remaining.textContent, '17')
+    assert.equal(remainingTime.textContent, '00:20')
     assert.equal(window.ristakGetVideoProgress('agenda-admision')?.currentTimeSeconds, 10)
     assert.equal(window.ristakGetVideoProgress('agenda-admision')?.playbackSeconds, 10)
     assert.equal(video.getAttribute('data-rstk-video-playback-seconds'), '10')
@@ -1431,19 +1477,26 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     assert.equal(progressEvents.at(-1)?.detail?.sourceId, 'agenda-admision')
     assert.equal(progressEvents.at(-1)?.detail?.playbackSeconds, 10)
     video.dispatch('pause')
-    assert.equal(remaining.textContent, '20')
+    assert.equal(remaining.textContent, '17')
+    const persistedKey = [...localStorage.values.keys()].find(key => key.includes('admision-v1'))
+    assert.ok(persistedKey)
+    const persistedProgress = JSON.parse(localStorage.getItem(persistedKey))
+    assert.equal(Number(persistedProgress.resumeRatio.toFixed(3)), 0.083)
+    assert.deepEqual(persistedProgress.watchedRanges.map(range => range.map(value => Number(value.toFixed(3)))), [[0, 0.083]])
     video.dispatch('play')
 
     mobileVideo.dispatch('play')
+    assert.equal(Number(Number(mobileVideo.getAttribute('data-rstk-video-resume-ratio')).toFixed(3)), 0.083)
     nowMs += 10_000
     mobileVideo.currentTime = 10
     mobileVideo.dispatch('timeupdate')
-    assert.equal(remaining.textContent, '20')
+    assert.equal(remaining.textContent, '17')
 
-    video.dispatch('seeking')
     video.currentTime = 29
+    video.dispatch('seeking')
+    assert.equal(Number(video.currentTime.toFixed(3)), 10)
     video.dispatch('seeked')
-    assert.equal(remaining.textContent, '20')
+    assert.equal(remaining.textContent, '17')
     assert.equal(content.hidden, false)
     assert.equal(content.attrs.has('inert'), true)
     assert.equal(legacyContent.hidden, true)
@@ -1455,6 +1508,7 @@ test('native video gate keeps the real calendar inert, shows live remaining play
     }
 
     assert.equal(remaining.textContent, '0')
+    assert.equal(remainingTime.textContent, '00:00')
     assert.equal(content.hidden, false)
     assert.equal(content.attrs.has('inert'), false)
     assert.equal(content.attrs.has('aria-hidden'), false)

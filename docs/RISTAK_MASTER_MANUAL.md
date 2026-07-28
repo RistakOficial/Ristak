@@ -5278,6 +5278,21 @@ Variantes móvil/escritorio con el mismo gate comparten el mayor progreso
 individual; nunca se suman entre sí. El contador sale del mismo estado real y no
 de decenas de spans o reglas por segundo.
 
+Para VSL con continuidad entre visitas, el slot puede declarar
+`data-rstk-video-gate-persist="visitor"`,
+`data-rstk-video-gate-resume="true"` y
+`data-rstk-video-gate-seek-policy="watched_only"`. El runtime guarda por 30 días
+la posición normalizada, el tiempo reproducido y los rangos realmente vistos;
+al volver, reanuda desde el último punto, permite retroceder y bloquea cualquier
+salto por delante del frente ya cubierto. `session` limita la memoria a la
+pestaña y `data-rstk-video-gate-progress-ttl` cambia la vigencia en segundos.
+Desktop y móvil comparten el mismo registro mediante
+`data-rstk-video-gate-progress-key`; esa clave se versiona cuando cambia el
+contenido. Con `unique_watched_percent`, volver a mirar un rango previo no
+descuenta el contador hasta alcanzar material nuevo. El hook
+`data-rstk-video-gate-remaining-time` traduce el porcentaje restante a `MM:SS`
+con la duración del video que lidera el gate.
+
 La ruta **Previsualizar** conserva esta lógica completa. El atributo informativo
 `data-rstk-video-render-preview="true"` identifica el documento de preview, pero
 no invalida una reproducción iniciada por el visitante; únicamente
