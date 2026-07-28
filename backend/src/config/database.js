@@ -25,6 +25,7 @@ import {
   runCancelablePostgresQuery,
   waitForDatabaseRetry
 } from '../utils/postgresCancelableQuery.js'
+import { ensureSqliteSitesAnalyticsTrackingSchema } from '../startup/sitesAnalyticsSchemaCompatibility.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2530,6 +2531,21 @@ async function initTablesUnlocked() {
       await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_app_config_config_key ON app_config(config_key)')
     } catch (err) {
       logger.warn('Advertencia al asegurar unicidad de app_config.config_key:', err.message)
+    }
+
+    const sitesAnalyticsSchemaRepair = await ensureSqliteSitesAnalyticsTrackingSchema({
+      database: db,
+      dialect: databaseDialect
+    })
+    if (
+      sitesAnalyticsSchemaRepair.addedColumns.length > 0 ||
+      sitesAnalyticsSchemaRepair.createdIndexes.length > 0
+    ) {
+      logger.info(
+        '[Esquema] Compatibilidad de Sites Analytics reparada: ' +
+        `${sitesAnalyticsSchemaRepair.addedColumns.length} columna(s), ` +
+        `${sitesAnalyticsSchemaRepair.createdIndexes.length} índice(s).`
+      )
     }
 
     const schemaBootstrap = await db.get(

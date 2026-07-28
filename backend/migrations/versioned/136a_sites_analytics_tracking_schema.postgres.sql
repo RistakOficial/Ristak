@@ -1,0 +1,15 @@
+ALTER TABLE sessions
+  ADD COLUMN IF NOT EXISTS event_id TEXT,
+  ADD COLUMN IF NOT EXISTS client_started_at TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS timestamp_adjusted INTEGER DEFAULT 0;
+
+ALTER TABLE video_playback_events
+  ADD COLUMN IF NOT EXISTS event_sequence INTEGER,
+  ADD COLUMN IF NOT EXISTS ingestion_version INTEGER DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS payload_hash TEXT,
+  ADD COLUMN IF NOT EXISTS tracking_source TEXT DEFAULT 'native_site_video',
+  ADD COLUMN IF NOT EXISTS context_verified INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS event_time_quality TEXT DEFAULT 'legacy',
+  ADD COLUMN IF NOT EXISTS watch_from_seconds DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS watch_to_seconds DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS client_event_at TIMESTAMP;

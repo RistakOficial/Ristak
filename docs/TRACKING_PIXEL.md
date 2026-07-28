@@ -276,6 +276,11 @@ proyección. Un retry idéntico responde como deduplicado sin volver a sumar; el
 mismo ID o secuencia con otro payload se rechaza. El reproductor acumula
 `watched_delta_seconds` entre heartbeats y vacía el acumulado al pausar, buscar,
 terminar o salir. Saltar con seek no cuenta el tramo saltado como tiempo visto.
+Las migraciones versionadas `136*` agregan estos campos e índices a instalaciones
+existentes antes de que el backend quede listo; un esquema parcial detiene el
+arranque en vez de perder o duplicar eventos silenciosamente. En PostgreSQL cada
+índice se construye concurrentemente y por separado; el cierre valida su tabla,
+método B-tree, columnas, unicidad y predicado, no sólo el nombre.
 
 Las definiciones canónicas son:
 

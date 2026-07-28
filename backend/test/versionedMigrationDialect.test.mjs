@@ -5,9 +5,11 @@ import { join } from 'node:path'
 import test from 'node:test'
 import sqlite3Module from 'sqlite3'
 import {
+  assertConcurrentPostgresMigrationIsIsolated,
   migrationRunsForDialect,
   runVersionedMigrations
 } from '../src/startup/runMigrations.js'
+import { ensureSqliteSitesAnalyticsTrackingSchema } from '../src/startup/sitesAnalyticsSchemaCompatibility.js'
 
 const sqlite3 = sqlite3Module.verbose()
 
@@ -682,6 +684,251 @@ test('la migracion 092 de Sites tracking corre completa e idempotente en SQLite 
     await database.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('la migración 136 repara un esquema legado de Sites Analytics y queda idempotente en SQLite real', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-sites-analytics-schema-'))
+  const database = openMemoryDatabase()
+  const sqliteMigration = new URL(
+    '../migrations/versioned/136_sites_analytics_tracking_schema.sqlite.sql',
+    import.meta.url
+  )
+  const postgresMigration = new URL(
+    '../migrations/versioned/136a_sites_analytics_tracking_schema.postgres.sql',
+    import.meta.url
+  )
+
+  try {
+    await database.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        event_name TEXT NOT NULL,
+        started_at TIMESTAMP NOT NULL,
+        tracking_source TEXT DEFAULT 'external_pixel',
+        site_id TEXT,
+        form_site_id TEXT
+      );
+
+      CREATE TABLE video_playback_events (
+        id TEXT PRIMARY KEY,
+        event_id TEXT UNIQUE,
+        playback_id TEXT NOT NULL,
+        visitor_id TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        media_asset_id TEXT,
+        site_id TEXT,
+        event_at TIMESTAMP NOT NULL
+      );
+    `)
+
+    const repair = await ensureSqliteSitesAnalyticsTrackingSchema({
+      database,
+      dialect: 'sqlite'
+    })
+    assert.deepEqual(repair.addedColumns, [
+      'sessions.event_id',
+      'sessions.client_started_at',
+      'sessions.timestamp_adjusted',
+      'video_playback_events.event_sequence',
+      'video_playback_events.ingestion_version',
+      'video_playback_events.payload_hash',
+      'video_playback_events.tracking_source',
+      'video_playback_events.context_verified',
+      'video_playback_events.event_time_quality',
+      'video_playback_events.watch_from_seconds',
+      'video_playback_events.watch_to_seconds',
+      'video_playback_events.client_event_at'
+    ])
+
+    const expectedIndexes = [
+      'idx_sessions_event_id_unique',
+      'idx_sessions_form_tracking_started',
+      'idx_sessions_site_tracking_started',
+      'idx_video_events_asset_time_type',
+      'idx_video_events_playback_sequence',
+      'idx_video_events_playback_type_time',
+      'idx_video_events_site_time_type',
+      'idx_video_events_visitor_time'
+    ]
+    assert.deepEqual([...repair.createdIndexes].sort(), expectedIndexes)
+
+    await copyFile(sqliteMigration, join(directory, '136_sites_analytics_tracking_schema.sqlite.sql'))
+    await copyFile(postgresMigration, join(directory, '136a_sites_analytics_tracking_schema.postgres.sql'))
+
+    const firstRun = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
+    assert.deepEqual(firstRun, { applied: 1, skipped: 1 })
+
+    const sessionColumns = await database.all('PRAGMA table_info("sessions")')
+    assert.deepEqual(
+      sessionColumns
+        .map(row => row.name)
+        .filter(name => ['event_id', 'client_started_at', 'timestamp_adjusted'].includes(name))
+        .sort(),
+      ['client_started_at', 'event_id', 'timestamp_adjusted']
+    )
+
+    const videoColumns = await database.all('PRAGMA table_info("video_playback_events")')
+    assert.deepEqual(
+      videoColumns
+        .map(row => row.name)
+        .filter(name => [
+          'event_sequence',
+          'ingestion_version',
+          'payload_hash',
+          'tracking_source',
+          'context_verified',
+          'event_time_quality',
+          'watch_from_seconds',
+          'watch_to_seconds',
+          'client_event_at'
+        ].includes(name))
+        .sort(),
+      [
+        'client_event_at',
+        'context_verified',
+        'event_sequence',
+        'event_time_quality',
+        'ingestion_version',
+        'payload_hash',
+        'tracking_source',
+        'watch_from_seconds',
+        'watch_to_seconds'
+      ]
+    )
+
+    const indexes = await database.all(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'index'
+        AND name LIKE 'idx_%'
+      ORDER BY name
+    `)
+    assert.deepEqual(indexes.map(row => row.name), expectedIndexes)
+
+    const secondRepair = await ensureSqliteSitesAnalyticsTrackingSchema({
+      database,
+      dialect: 'sqlite'
+    })
+    assert.deepEqual(secondRepair, { addedColumns: [], createdIndexes: [] })
+    assert.deepEqual(
+      await runVersionedMigrations({ database, dialect: 'sqlite', directory }),
+      { applied: 0, skipped: 0 }
+    )
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la reparación SQLite falla cerrado ante un índice homónimo con definición incorrecta', async () => {
+  const database = openMemoryDatabase()
+
+  try {
+    await database.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        event_name TEXT NOT NULL,
+        started_at TIMESTAMP NOT NULL,
+        tracking_source TEXT DEFAULT 'external_pixel',
+        site_id TEXT,
+        form_site_id TEXT
+      );
+
+      CREATE TABLE video_playback_events (
+        id TEXT PRIMARY KEY,
+        event_id TEXT UNIQUE,
+        playback_id TEXT NOT NULL,
+        visitor_id TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        media_asset_id TEXT,
+        site_id TEXT,
+        event_at TIMESTAMP NOT NULL
+      );
+
+      CREATE INDEX idx_sessions_event_id_unique
+        ON sessions(site_id);
+    `)
+
+    await assert.rejects(
+      ensureSqliteSitesAnalyticsTrackingSchema({
+        database,
+        dialect: 'sqlite'
+      }),
+      error => (
+        error?.code === 'SITES_ANALYTICS_INDEX_CONTRACT_MISMATCH' &&
+        error?.indexName === 'idx_sessions_event_id_unique'
+      )
+    )
+
+    const columns = await database.all('PRAGMA table_info("sessions")')
+    assert.equal(
+      columns.some(row => row.name === 'event_id'),
+      false,
+      'la transacción completa debe revertirse cuando el índice no es canónico'
+    )
+  } finally {
+    await database.close()
+  }
+})
+
+test('el tren PostgreSQL 136 separa columnas, índices concurrentes y validación canónica', async () => {
+  const columnSql = await readFile(
+    new URL('../migrations/versioned/136a_sites_analytics_tracking_schema.postgres.sql', import.meta.url),
+    'utf8'
+  )
+
+  for (const column of [
+    'event_id',
+    'client_started_at',
+    'timestamp_adjusted',
+    'event_sequence',
+    'ingestion_version',
+    'payload_hash',
+    'tracking_source',
+    'context_verified',
+    'event_time_quality',
+    'watch_from_seconds',
+    'watch_to_seconds',
+    'client_event_at'
+  ]) {
+    assert.match(columnSql, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}\\b`))
+  }
+  assert.doesNotMatch(columnSql, /\bCREATE\s+(?:UNIQUE\s+)?INDEX\b/i)
+
+  const concurrentMigrations = [
+    ['136b_sites_analytics_sessions_event_id.postgres.sql', 'idx_sessions_event_id_unique'],
+    ['136c_sites_analytics_sessions_site_scope.postgres.sql', 'idx_sessions_site_tracking_started'],
+    ['136d_sites_analytics_sessions_form_scope.postgres.sql', 'idx_sessions_form_tracking_started'],
+    ['136e_sites_analytics_video_sequence.postgres.sql', 'idx_video_events_playback_sequence'],
+    ['136f_sites_analytics_video_asset_scope.postgres.sql', 'idx_video_events_asset_time_type'],
+    ['136g_sites_analytics_video_site_scope.postgres.sql', 'idx_video_events_site_time_type'],
+    ['136h_sites_analytics_video_playback_scope.postgres.sql', 'idx_video_events_playback_type_time'],
+    ['136i_sites_analytics_video_visitor_scope.postgres.sql', 'idx_video_events_visitor_time']
+  ]
+  for (const [file, index] of concurrentMigrations) {
+    const sql = await readFile(new URL(`../migrations/versioned/${file}`, import.meta.url), 'utf8')
+    assert.doesNotThrow(() => assertConcurrentPostgresMigrationIsIsolated(sql, file))
+    assert.match(
+      sql,
+      new RegExp(`CREATE (?:UNIQUE )?INDEX CONCURRENTLY IF NOT EXISTS ${index}\\b`)
+    )
+  }
+
+  const validationSql = await readFile(
+    new URL('../migrations/versioned/136j_sites_analytics_index_contract.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(validationSql, /\bpg_index\b/)
+  assert.match(validationSql, /\bpg_get_expr\b/)
+  assert.match(validationSql, /\bindisunique\b/)
+  assert.match(validationSql, /\bindisvalid\b/)
+  assert.match(validationSql, /\bindisready\b/)
+  assert.match(validationSql, /\bpg_am\b/)
+  assert.match(validationSql, /\bactual_access_method\b/)
+  assert.match(validationSql, /'btree'/)
+  assert.match(validationSql, /\bactual_columns\b/)
+  assert.match(validationSql, /\bnormalized_predicate\b/)
+  assert.match(validationSql, /\bRAISE EXCEPTION\b/)
 })
 
 test('la migracion 093 de bibliotecas Sites tolera JSON corrupto y crea ambos índices SQLite', async () => {
