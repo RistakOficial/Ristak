@@ -366,10 +366,15 @@ test('readiness sirve snapshot warming acotado y queda exacto despues de reparar
     )
     const multi = await getMessageAnalyticsSummary(range, { groupBy: 'day' })
     const whatsapp = await getWhatsAppApiAnalyticsSummary(range, { groupBy: 'day' })
-    assert.equal(multi.metrics.contacts, 0)
+    assert.equal(
+      multi.metrics.contacts,
+      1,
+      'V4 obtiene nuevas conversaciones de su propio snapshot y no hereda el warming legacy'
+    )
+    assert.equal(multi.metrics.newConversations, 1)
     assert.equal(whatsapp.metrics.contacts, 0)
-    assert.equal(multi.status.firstSeenProjection, 'warming')
-    assert.equal(multi.status.firstSeenProjectionComplete, false)
+    assert.equal(multi.status.firstSeenProjection, 'ready')
+    assert.equal(multi.status.firstSeenProjectionComplete, true)
     assert.equal(whatsapp.status.firstSeenProjection, 'warming')
 
     await runMessageFirstSeenProjectionBackfill()

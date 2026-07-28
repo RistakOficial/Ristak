@@ -15,7 +15,9 @@ import {
 import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
 import {
   getTrackingConversionProjectionStatus,
-  queryTrackingConversionProjection
+  linkedWebSessionEvidenceCondition,
+  queryTrackingConversionProjection,
+  webEvidenceCausalityCondition
 } from './trackingConversionProjectionService.js'
 
 const TRACKING_VIEW_EVENTS = ['session_start', 'page_view', 'native_site_view']
@@ -830,13 +832,7 @@ async function querySessionMetrics(range, filters, groupBy, { includeSeries, sig
 }
 
 function contactAnalyticsSourceCondition(alias = 'c') {
-  return `(
-    (${alias}.visitor_id IS NOT NULL AND ${alias}.visitor_id != '')
-    OR LOWER(COALESCE(${alias}.source, '')) LIKE '%whatsapp%'
-    OR EXISTS (SELECT 1 FROM whatsapp_api_messages wam WHERE wam.contact_id = ${alias}.id)
-    OR EXISTS (SELECT 1 FROM whatsapp_api_attribution waa WHERE waa.contact_id = ${alias}.id)
-    OR EXISTS (SELECT 1 FROM whatsapp_attribution wa WHERE wa.contact_id = ${alias}.id)
-  )`
+  return linkedWebSessionEvidenceCondition(alias, 'web_evidence')
 }
 
 function emptyConversionMetrics() {
@@ -854,10 +850,11 @@ async function queryConversionMetrics(range, filters, groupBy, { includeSeries, 
 
   if (activeWebFilters) {
     const sessionConditions = [
-      `sf.contact_id = c.id`,
+      `sf.visitor_id = c.visitor_id`,
       `sf.started_at >= ?`,
       `sf.started_at < ?`,
-      `sf.started_at >= c.created_at`
+      `LOWER(COALESCE(sf.event_name, '')) IN (${viewEventSql})`,
+      webEvidenceCausalityCondition('sf.started_at', 'c.created_at')
     ]
     params.push(range.startUtc, range.endExclusiveUtc)
     sessionConditions.push(...buildSessionFilterConditions(withoutConversionStage(filters), 'sf', params))

@@ -12,10 +12,11 @@ import {
 import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { logger } from '../utils/logger.js'
+import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { loadResolvedContactSources } from './contactSourceService.js'
 import { scheduleCrmListProjectionBackfill } from './crmListProjectionService.js'
 
-export const CONTACT_ORIGIN_PROJECTION_VERSION = 1
+export const CONTACT_ORIGIN_PROJECTION_VERSION = 2
 
 const STATE_ID = 1
 const BACKFILL_JOB_KEY = 'contact-origin-projection'
@@ -379,12 +380,18 @@ function targetGenerations(state) {
 async function loadCurrentContacts(database, ids) {
   if (!ids.length) return new Map()
   const resolved = await loadResolvedContactSources(ids, { database })
-  const activity = await database.all(`
-    SELECT contact_id, first_payment_date
-    FROM contact_list_activity
-    WHERE contact_id IN (${placeholders(ids)})
-  `, ids)
-  const paymentByContact = new Map(activity.map(row => [text(row.contact_id), row.first_payment_date]))
+  const successfulStatusPlaceholders = placeholders(SUCCESS_PAYMENT_STATUSES)
+  const payments = await database.all(`
+    SELECT p.contact_id,
+      MIN(COALESCE(p.paid_at, p.date, p.created_at)) AS first_payment_date
+    FROM payments p
+    WHERE p.contact_id IN (${placeholders(ids)})
+      AND COALESCE(p.amount, 0) > 0
+      AND LOWER(COALESCE(p.status, '')) IN (${successfulStatusPlaceholders})
+      AND ${nonTestPaymentCondition('p')}
+    GROUP BY p.contact_id
+  `, [...ids, ...SUCCESS_PAYMENT_STATUSES])
+  const paymentByContact = new Map(payments.map(row => [text(row.contact_id), row.first_payment_date]))
   return new Map([...resolved.entries()].map(([id, entry]) => [text(id), {
     ...entry,
     firstPaymentDate: paymentByContact.get(text(id)) || null
@@ -398,6 +405,9 @@ function normalizeContactFact(entry, generation, timezone) {
     contact_id: text(entry.contact.id),
     projection_version: CONTACT_ORIGIN_PROJECTION_VERSION,
     resolved_source: text(entry.source) || 'Desconocido',
+    acquisition_surface: text(entry.acquisitionSurface) || 'unknown',
+    acquisition_kind: text(entry.acquisitionKind) || 'unattributed',
+    evidence_type: text(entry.evidenceType) || 'no_verified_evidence',
     lead_business_date: safeBusinessDate(entry.contact.created_at, timezone) || RANGE_ORIGIN,
     first_payment_business_date: safeBusinessDate(entry.firstPaymentDate, timezone)
   }
@@ -410,6 +420,9 @@ function normalizeStoredContactFact(row) {
     contact_id: text(row.contact_id),
     projection_version: Number(row.projection_version),
     resolved_source: text(row.resolved_source),
+    acquisition_surface: text(row.acquisition_surface) || 'unknown',
+    acquisition_kind: text(row.acquisition_kind) || 'unattributed',
+    evidence_type: text(row.evidence_type) || 'no_verified_evidence',
     lead_business_date: dateOnlyValue(row.lead_business_date),
     first_payment_business_date: row.first_payment_business_date
       ? dateOnlyValue(row.first_payment_business_date)
@@ -420,6 +433,7 @@ function normalizeStoredContactFact(row) {
 function contactFactsEqual(left, right) {
   if (!left || !right) return false
   return ['generation', 'contact_id', 'projection_version', 'resolved_source',
+    'acquisition_surface', 'acquisition_kind', 'evidence_type',
     'lead_business_date', 'first_payment_business_date']
     .every(column => String(left[column] ?? '') === String(right[column] ?? ''))
 }
@@ -479,20 +493,25 @@ async function applyDailyDeltas(database, deltaMap) {
 
 async function writeContactFacts(database, facts) {
   for (const batch of chunks(facts)) {
-    const valuesSql = batch.map(() => '(?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').join(', ')
+    const valuesSql = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').join(', ')
     await database.run(`
       INSERT INTO contact_origin_contact_fact(
         generation, contact_id, projection_version, resolved_source,
+        acquisition_surface, acquisition_kind, evidence_type,
         lead_business_date, first_payment_business_date, updated_at
       ) VALUES ${valuesSql}
       ON CONFLICT(generation, contact_id) DO UPDATE SET
         projection_version = excluded.projection_version,
         resolved_source = excluded.resolved_source,
+        acquisition_surface = excluded.acquisition_surface,
+        acquisition_kind = excluded.acquisition_kind,
+        evidence_type = excluded.evidence_type,
         lead_business_date = excluded.lead_business_date,
         first_payment_business_date = excluded.first_payment_business_date,
         updated_at = CURRENT_TIMESTAMP
     `, batch.flatMap(row => [
       row.generation, row.contact_id, row.projection_version, row.resolved_source,
+      row.acquisition_surface, row.acquisition_kind, row.evidence_type,
       row.lead_business_date, row.first_payment_business_date
     ]))
   }
@@ -650,6 +669,7 @@ async function projectContactsForGeneration(database, target, ids, currentContac
   if (!generation || !ids.length) return { projected: 0, changed: 0 }
   const oldRows = await database.all(`
     SELECT generation, contact_id, projection_version, resolved_source,
+      acquisition_surface, acquisition_kind, evidence_type,
       lead_business_date, first_payment_business_date
     FROM contact_origin_contact_fact
     WHERE generation = ? AND contact_id IN (${placeholders(ids)})
@@ -1579,6 +1599,375 @@ export async function queryContactOriginBreakdowns(range, {
         generation,
         projection: {
           status: status.status,
+          pending: Boolean(status.pending),
+          ready: Boolean(status.ready)
+        }
+      }
+    })
+  ))
+}
+
+const ACQUISITION_POPULATIONS = new Set(['contacts', 'buyers'])
+const ACQUISITION_DIMENSIONS = new Set(['channel', 'entry', 'source'])
+const ACQUISITION_GROUPS = new Set(['day', 'week', 'month', 'year'])
+const ACQUISITION_SURFACES = new Set([
+  'website', 'whatsapp', 'messenger', 'instagram', 'email',
+  'manual', 'import', 'api', 'other', 'unknown'
+])
+const ACQUISITION_CHANNEL_NAMES = Object.freeze({
+  website: 'Sitio web',
+  whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
+  instagram: 'Instagram',
+  email: 'Correo',
+  manual: 'Creación manual',
+  import: 'Importación',
+  api: 'API',
+  other: 'Otro',
+  unknown: 'Sin origen comprobable'
+})
+
+function acquisitionArgument(value, allowed, fallback, label) {
+  const normalized = text(value || fallback).toLowerCase()
+  if (allowed.has(normalized)) return normalized
+  throw Object.assign(new Error(`${label} no es válido para analíticas de adquisición.`), {
+    code: 'INVALID_ACQUISITION_ANALYTICS_ARGUMENT',
+    status: 400
+  })
+}
+
+function normalizeAcquisitionChannels(channels) {
+  if (channels === null || channels === undefined || channels === '') return []
+  const values = Array.isArray(channels) ? channels : String(channels).split(',')
+  const normalized = uniqueIds(values.map(value => text(value).toLowerCase()))
+  const invalid = normalized.filter(value => !ACQUISITION_SURFACES.has(value))
+  if (invalid.length) {
+    throw Object.assign(new Error(`Canal de adquisición no válido: ${invalid.join(', ')}.`), {
+      code: 'INVALID_ACQUISITION_CHANNEL',
+      status: 400
+    })
+  }
+  return normalized
+}
+
+function normalizeAcquisitionSources(sources) {
+  if (sources === null || sources === undefined || sources === '') return []
+  const values = Array.isArray(sources) ? sources : String(sources).split(',')
+  return uniqueIds(values
+    .map(value => text(value).toLowerCase())
+    .filter(Boolean))
+}
+
+function acquisitionDimensionExpression(dimension) {
+  if (dimension === 'channel') return 'facts.acquisition_surface'
+  if (dimension === 'entry') {
+    return `facts.acquisition_surface || '.' || facts.acquisition_kind`
+  }
+  return 'facts.resolved_source'
+}
+
+function acquisitionBucketExpression(column, groupBy) {
+  if (databaseDialect === 'postgres') {
+    if (groupBy === 'week') return `TO_CHAR(DATE_TRUNC('week', ${column}), 'YYYY-MM-DD')`
+    if (groupBy === 'month') return `TO_CHAR(${column}, 'YYYY-MM')`
+    if (groupBy === 'year') return `TO_CHAR(${column}, 'YYYY')`
+    return `TO_CHAR(${column}, 'YYYY-MM-DD')`
+  }
+  if (groupBy === 'week') {
+    return `DATE(${column}, '-' || ((CAST(STRFTIME('%w', ${column}) AS INTEGER) + 6) % 7) || ' days')`
+  }
+  if (groupBy === 'month') return `SUBSTR(${column}, 1, 7)`
+  if (groupBy === 'year') return `SUBSTR(${column}, 1, 4)`
+  return `SUBSTR(${column}, 1, 10)`
+}
+
+function acquisitionEntryName(key) {
+  const [surface = 'unknown', kind = 'unattributed'] = text(key).split(/[.:]/)
+  const channel = ACQUISITION_CHANNEL_NAMES[surface] || ACQUISITION_CHANNEL_NAMES.unknown
+  if (kind === 'paid_ad') {
+    if (surface === 'website') return 'Anuncio hacia sitio web'
+    if (surface === 'whatsapp') return 'Anuncio directo a WhatsApp'
+    if (surface === 'messenger') return 'Anuncio directo a Messenger'
+    if (surface === 'instagram') return 'Anuncio directo a Instagram'
+    return `${channel} con anuncio comprobado`
+  }
+  if (['website', 'whatsapp', 'messenger', 'instagram'].includes(surface)) {
+    return `${channel} sin anuncio detectado`
+  }
+  return channel
+}
+
+function acquisitionDimensionName(key, dimension) {
+  if (dimension === 'channel') {
+    return ACQUISITION_CHANNEL_NAMES[key] || ACQUISITION_CHANNEL_NAMES.unknown
+  }
+  if (dimension === 'entry') return acquisitionEntryName(key)
+  return text(key) || 'Desconocido'
+}
+
+function addCountRows(target, rows, field, direction = 1) {
+  for (const row of rows || []) {
+    const key = text(row[field])
+    if (!key) continue
+    target.set(key, (target.get(key) || 0) + direction * Number(row.value || 0))
+  }
+}
+
+async function queryAcquisitionDistributionRows(database, {
+  generation,
+  population,
+  dimension,
+  startDate,
+  endDate,
+  channels,
+  sources,
+  contactIds = null,
+  signal
+}) {
+  if (Array.isArray(contactIds) && contactIds.length === 0) return []
+  const dateColumn = population === 'buyers'
+    ? 'facts.first_payment_business_date'
+    : 'facts.lead_business_date'
+  const dimensionExpression = acquisitionDimensionExpression(dimension)
+  const channelCondition = channels.length
+    ? `AND facts.acquisition_surface IN (${placeholders(channels)})`
+    : ''
+  const sourceCondition = sources.length
+    ? `AND LOWER(COALESCE(facts.resolved_source, '')) IN (${placeholders(sources)})`
+    : ''
+  const contactCondition = Array.isArray(contactIds)
+    ? `AND facts.contact_id IN (${placeholders(contactIds)})`
+    : ''
+  return database.all(`
+    SELECT ${dimensionExpression} AS dimension_key,
+      COUNT(DISTINCT facts.contact_id) AS value
+    FROM contact_origin_contact_fact facts
+    WHERE facts.generation = ?
+      AND ${dateColumn} >= ? AND ${dateColumn} <= ?
+      ${channelCondition}
+      ${sourceCondition}
+      ${contactCondition}
+    GROUP BY ${dimensionExpression}
+    ORDER BY value DESC, dimension_key ASC
+  `, [
+    generation,
+    startDate,
+    endDate,
+    ...channels,
+    ...sources,
+    ...(contactIds || [])
+  ], { signal })
+}
+
+async function queryAcquisitionTrendRows(database, {
+  generation,
+  metric,
+  groupBy,
+  startDate,
+  endDate,
+  channels,
+  sources,
+  contactIds = null,
+  signal
+}) {
+  if (Array.isArray(contactIds) && contactIds.length === 0) return []
+  const dateColumn = metric === 'buyers'
+    ? 'facts.first_payment_business_date'
+    : 'facts.lead_business_date'
+  const bucket = acquisitionBucketExpression(dateColumn, groupBy)
+  const channelCondition = channels.length
+    ? `AND facts.acquisition_surface IN (${placeholders(channels)})`
+    : ''
+  const sourceCondition = sources.length
+    ? `AND LOWER(COALESCE(facts.resolved_source, '')) IN (${placeholders(sources)})`
+    : ''
+  const contactCondition = Array.isArray(contactIds)
+    ? `AND facts.contact_id IN (${placeholders(contactIds)})`
+    : ''
+  return database.all(`
+    SELECT ${bucket} AS period_label, COUNT(DISTINCT facts.contact_id) AS value
+    FROM contact_origin_contact_fact facts
+    WHERE facts.generation = ?
+      AND ${dateColumn} >= ? AND ${dateColumn} <= ?
+      ${channelCondition}
+      ${sourceCondition}
+      ${contactCondition}
+    GROUP BY ${bucket}
+    ORDER BY period_label ASC
+  `, [
+    generation,
+    startDate,
+    endDate,
+    ...channels,
+    ...sources,
+    ...(contactIds || [])
+  ], { signal })
+}
+
+async function queryHiddenAcquisitionRows(database, hiddenContactIds, query, options) {
+  const rows = []
+  for (const batch of chunks(hiddenContactIds, HIDDEN_QUERY_BATCH_SIZE)) {
+    rows.push(...await query(database, { ...options, contactIds: batch }))
+  }
+  return rows
+}
+
+/**
+ * Consulta exacta y generacional para las métricas de adquisición.
+ *
+ * `population` decide qué fecha entra al rango (alta o primer pago exitoso
+ * live). `dimension` sólo cambia el desglose; nunca cambia la población.
+ * `trend` siempre entrega ambas series sobre el mismo filtro de canales.
+ */
+export async function queryContactAcquisitionAnalytics(range, {
+  population = 'contacts',
+  dimension = 'channel',
+  channels = [],
+  sources = [],
+  groupBy = 'day',
+  hiddenFilters = [],
+  signal
+} = {}) {
+  const safePopulation = acquisitionArgument(
+    population,
+    ACQUISITION_POPULATIONS,
+    'contacts',
+    'La población'
+  )
+  const safeDimension = acquisitionArgument(
+    dimension,
+    ACQUISITION_DIMENSIONS,
+    'channel',
+    'La dimensión'
+  )
+  const safeGroupBy = acquisitionArgument(groupBy, ACQUISITION_GROUPS, 'day', 'La agrupación')
+  const safeChannels = normalizeAcquisitionChannels(channels)
+  const safeSources = normalizeAcquisitionSources(sources)
+
+  return withQueryDeadline(signal, async deadlineSignal => (
+    withPinnedGeneration(range, deadlineSignal, async (database, status) => {
+      if (!status.available) throw projectionWarmingError(status)
+      const generation = Number(status.activeGeneration)
+      const timezone = resolveTimezone(range?.appliedTimezone || status.timezone)
+      const startDate = safeBusinessDate(range?.startUtc, timezone)
+      const endDate = safeBusinessDate(range?.endUtc, timezone)
+      if (!startDate || !endDate || startDate > endDate) {
+        throw Object.assign(new Error('El rango de adquisición no es válido.'), {
+          code: 'INVALID_DATE_RANGE',
+          status: 400
+        })
+      }
+      const hasHiddenFilters = Array.isArray(hiddenFilters) && hiddenFilters.length > 0
+      const hiddenContactIds = hasHiddenFilters
+        ? await loadBoundedHiddenContactIds(database, hiddenFilters, deadlineSignal)
+        : []
+      const baseOptions = {
+        generation,
+        startDate,
+        endDate,
+        channels: safeChannels,
+        sources: safeSources,
+        signal: deadlineSignal
+      }
+
+      const distributionTotals = new Map()
+      addCountRows(distributionTotals, await queryAcquisitionDistributionRows(database, {
+        ...baseOptions,
+        population: safePopulation,
+        dimension: safeDimension
+      }), 'dimension_key')
+      addCountRows(distributionTotals, await queryHiddenAcquisitionRows(
+        database,
+        hiddenContactIds,
+        queryAcquisitionDistributionRows,
+        {
+          ...baseOptions,
+          population: safePopulation,
+          dimension: safeDimension
+        }
+      ), 'dimension_key', -1)
+
+      const canReuseDistributionForAvailableChannels = (
+        safeDimension === 'channel' && safeChannels.length === 0
+      )
+      const availableChannelTotals = canReuseDistributionForAvailableChannels
+        ? new Map(distributionTotals)
+        : new Map()
+      if (!canReuseDistributionForAvailableChannels) {
+        addCountRows(availableChannelTotals, await queryAcquisitionDistributionRows(database, {
+          ...baseOptions,
+          channels: [],
+          population: safePopulation,
+          dimension: 'channel'
+        }), 'dimension_key')
+        addCountRows(availableChannelTotals, await queryHiddenAcquisitionRows(
+          database,
+          hiddenContactIds,
+          queryAcquisitionDistributionRows,
+          {
+            ...baseOptions,
+            channels: [],
+            population: safePopulation,
+            dimension: 'channel'
+          }
+        ), 'dimension_key', -1)
+      }
+
+      const trendTotals = {
+        contacts: new Map(),
+        buyers: new Map()
+      }
+      for (const metric of ['contacts', 'buyers']) {
+        addCountRows(trendTotals[metric], await queryAcquisitionTrendRows(database, {
+          ...baseOptions,
+          metric,
+          groupBy: safeGroupBy
+        }), 'period_label')
+        addCountRows(trendTotals[metric], await queryHiddenAcquisitionRows(
+          database,
+          hiddenContactIds,
+          queryAcquisitionTrendRows,
+          {
+            ...baseOptions,
+            metric,
+            groupBy: safeGroupBy
+          }
+        ), 'period_label', -1)
+      }
+
+      const distribution = [...distributionTotals.entries()]
+        .map(([key, value]) => ({
+          key,
+          name: acquisitionDimensionName(key, safeDimension),
+          value: Math.max(0, value)
+        }))
+        .filter(row => row.value > 0)
+        .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name))
+      const trendLabels = new Set([
+        ...trendTotals.contacts.keys(),
+        ...trendTotals.buyers.keys()
+      ])
+      const trend = [...trendLabels]
+        .sort((left, right) => left.localeCompare(right))
+        .map(label => ({
+          label,
+          contacts: Math.max(0, trendTotals.contacts.get(label) || 0),
+          buyers: Math.max(0, trendTotals.buyers.get(label) || 0)
+        }))
+
+      return {
+        population: safePopulation,
+        dimension: safeDimension,
+        total: distribution.reduce((sum, row) => sum + row.value, 0),
+        distribution,
+        trend,
+        availableChannels: [...availableChannelTotals.entries()]
+          .filter(([, value]) => value > 0)
+          .map(([channel]) => channel)
+          .sort((left, right) => left.localeCompare(right)),
+        generation,
+        status: {
+          projection: status.status,
           pending: Boolean(status.pending),
           ready: Boolean(status.ready)
         }

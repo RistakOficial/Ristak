@@ -32,7 +32,9 @@ test('summary agrega en SQL, respeta timezone/filtros e impone facets acotadas',
   const businessDate = '2088-07-14'
   const contactId = `${prefix}_contact`
   const contactCreatedAt = DateTime.fromISO(`${businessDate}T10:00:00`, { zone: timezone }).toUTC().toISO()
-  const firstVisitAt = DateTime.fromISO(`${businessDate}T23:00:00`, { zone: timezone }).toUTC()
+  // La visita causal debe preceder el alta. Una visita futura jamás convierte
+  // retrospectivamente a un contacto en registro web.
+  const firstVisitAt = DateTime.fromISO(`${businessDate}T09:00:00`, { zone: timezone }).toUTC()
   const nextBusinessDayAt = DateTime.fromISO('2088-07-15T00:30:00', { zone: timezone }).toUTC().toISO()
 
   await setAppConfig(ACCOUNT_TIMEZONE_CONFIG_KEY, timezone)
@@ -66,7 +68,7 @@ test('summary agrega en SQL, respeta timezone/filtros e impone facets acotadas',
       `, [
         randomUUID(),
         `${prefix}_session_${String(index).padStart(3, '0')}`,
-        `${prefix}_visitor_${String(index).padStart(3, '0')}`,
+        `${prefix}_canonical_visitor`,
         contactId,
         timestamp,
         timestamp,

@@ -24,6 +24,7 @@ import {
   getVisitorsList,
   getContactsByDate,
   getContactConversionsByDate,
+  getAcquisitionAnalyticsSummaryHandler,
   getMessagesSummary,
   getWhatsAppSummary,
   getContactConversionsList
@@ -63,6 +64,10 @@ router.use(requireAuth)
 // exigimos el módulo 'analytics' para que la API directa también respete el rol.
 router.use(requireModuleAccess('analytics'))
 const requireWebAnalyticsFeature = requireFeature('web_analytics')
+const requireWebAnalyticsForVisitorPopulation = (req, res, next) => {
+  if (String(req.body?.population || 'contacts') !== 'visitors') return next()
+  return requireWebAnalyticsFeature(req, res, next)
+}
 
 // CRUD de sesiones
 router.get('/sessions', requireWebAnalyticsFeature, getSessionsHandler)
@@ -85,6 +90,11 @@ router.post('/visitor-source-preference', requireWebAnalyticsFeature, setVisitor
 // Contrato agregado y acotado para Analíticas (no devuelve eventos crudos).
 router.post('/analytics/summary', requireWebAnalyticsFeature, getTrackingAnalyticsSummaryHandler)
 router.post('/analytics/facets', requireWebAnalyticsFeature, getTrackingAnalyticsFacetHandler)
+router.post(
+  '/analytics/acquisition-summary',
+  requireWebAnalyticsForVisitorPopulation,
+  getAcquisitionAnalyticsSummaryHandler
+)
 
 // Obtener visitantes por ad_id desde sessions
 router.get('/visitors-by-ad', requireWebAnalyticsFeature, getVisitorsByAd)

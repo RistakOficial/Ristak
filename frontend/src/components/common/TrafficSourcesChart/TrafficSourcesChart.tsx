@@ -12,6 +12,7 @@ interface TrafficData {
 
 interface TrafficSourcesChartProps {
   data: TrafficData[]
+  total?: number
   loading?: boolean
   title?: string
   totalLabel?: string
@@ -108,6 +109,7 @@ const describeArc = (startAngle: number, endAngle: number) => {
 
 export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
   data,
+  total,
   loading = false,
   title = 'Fuentes de Tráfico',
   totalLabel = 'visitantes únicos',
@@ -156,7 +158,11 @@ export const TrafficSourcesChart: React.FC<TrafficSourcesChartProps> = ({
       }))
   }, [data])
 
-  const totalVisits = normalizedData.reduce((sum, item) => sum + item.value, 0)
+  const segmentTotal = normalizedData.reduce((sum, item) => sum + item.value, 0)
+  const explicitTotal = Number(total)
+  const totalVisits = Number.isFinite(explicitTotal) && explicitTotal >= 0
+    ? explicitTotal
+    : segmentTotal
 
   const chartData = useMemo<ChartSource[]>(() => {
     return normalizedData.map((item) => ({

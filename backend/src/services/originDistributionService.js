@@ -175,41 +175,69 @@ async function getWhatsAppFirstSeenCount(range, hiddenFilters) {
   })
 }
 
-async function getMessageConnectionStatus(signal) {
-  // Los tres estados locales comparten una sola ida a la base. La configuracion
-  // Meta conserva su contrato de merge/decryption, pero se lee despues para no
-  // volver al burst de cuatro conexiones que competia con el agregado pesado.
+export async function getMessageConnectionStatus(signal) {
+  // WhatsApp y Email comparten una sola lectura cancelable. Meta conserva su
+  // contrato de merge/decryption en una segunda ola; así ninguna carga abre
+  // tres conexiones auxiliares a la vez ni continúa después de cancelar.
   const localStatus = await db.get(
     `SELECT
-      EXISTS(SELECT 1 FROM whatsapp_api_phone_numbers LIMIT 1) AS whatsapp_connected,
-      EXISTS(SELECT 1 FROM meta_social_contacts LIMIT 1) AS meta_contact_connected,
-      (SELECT config_value
-       FROM app_config
-       WHERE config_key = 'email_smtp_config'
-       LIMIT 1) AS email_config_value`,
+      EXISTS(
+        SELECT 1
+        FROM whatsapp_api_phone_numbers phone
+        WHERE LOWER(COALESCE(phone.status, '')) IN ('connected', 'active', 'online', 'ready')
+          OR LOWER(COALESCE(phone.qr_status, '')) IN ('connected', 'active', 'online', 'ready')
+          OR COALESCE(phone.api_send_enabled, 0) = 1
+          OR COALESCE(phone.qr_send_enabled, 0) = 1
+      ) AS whatsapp_connected,
+      (
+        SELECT config_value
+        FROM app_config
+        WHERE config_key = 'email_smtp_config'
+        LIMIT 1
+      ) AS email_config_value,
+      EXISTS(
+        SELECT 1
+        FROM app_config
+        WHERE config_key = 'email_smtp_password'
+          AND TRIM(COALESCE(config_value, '')) != ''
+      ) AS email_password_configured`,
     [],
     { signal }
   ).catch(fallbackUnlessAborted({
     whatsapp_connected: false,
-    meta_contact_connected: false,
-    email_config_value: null
+    email_config_value: null,
+    email_password_configured: false
   }, signal))
-  const metaConfig = await getMetaSocialConfig({ migratePlaintext: false })
+  const metaConfig = await getMetaSocialConfig({ migratePlaintext: false, signal })
     .catch(fallbackUnlessAborted(null, signal))
-
   const emailConfig = parseJsonSafe(localStatus?.email_config_value, {})
+  const emailInbound = emailConfig?.inbound && typeof emailConfig.inbound === 'object'
+    ? emailConfig.inbound
+    : {}
+  const emailConnected = Boolean(
+    emailConfig?.connected &&
+    hasText(emailConfig.host) &&
+    hasText(emailConfig.username) &&
+    (
+      localStatus?.email_password_configured === true ||
+      Number(localStatus?.email_password_configured || 0) === 1
+    ) &&
+    emailInbound.enabled === true &&
+    hasText(emailInbound.host) &&
+    hasText(emailInbound.username)
+  )
+
   return {
     whatsapp: localStatus?.whatsapp_connected === true || Number(localStatus?.whatsapp_connected || 0) === 1,
-    messenger: hasText(metaConfig?.page_id) || localStatus?.meta_contact_connected === true || Number(localStatus?.meta_contact_connected || 0) === 1,
-    instagram: hasText(metaConfig?.instagram_account_id) || localStatus?.meta_contact_connected === true || Number(localStatus?.meta_contact_connected || 0) === 1,
-    email: Boolean(emailConfig?.connected)
+    messenger: hasText(metaConfig?.page_id),
+    instagram: hasText(metaConfig?.instagram_account_id),
+    email: Boolean(emailConnected)
   }
 }
 
 export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filters = {}, signal } = {}) {
   const normalizedGroupBy = ['day', 'month', 'year'].includes(groupBy) ? groupBy : 'day'
   const normalizedFilters = normalizeMessageFilters(filters)
-  const hasActiveFilters = normalizedFilters.channels.length > 0 || normalizedFilters.sources.length > 0
   const hiddenFilters = await getHiddenContactFilters({ signal })
   // Mantener el mismo payload sin abrir hasta seis conexiones a la vez. El
   // agregado es la parte dominante; los snapshots auxiliares se leen después.
@@ -223,20 +251,20 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
   // Schema ausente o warming falla desde la proyeccion con 503. No existe un
   // fallback a los tres historiales: proteger la base es parte del contrato.
   const aggregateRows = projected.rows
-  // El agregado ya termino antes de abrir auxiliares. A partir de aqui solo hay
-  // dos tareas acotadas: estado de conexiones y first-seen; asi recuperamos una
-  // ola completa de latencia sin competir con el scan principal.
-  const [connectionStatus, firstSeenCount] = await Promise.all([
-    getMessageConnectionStatus(signal),
-    hasActiveFilters
-      ? Promise.resolve({ count: null, projectionReady: true, projectionStatus: 'filtered' })
-      : getMessageFirstSeenCount(range, hiddenFilters, signal)
-  ])
+  // El agregado V4 ya materializa nuevas conversaciones con alcance global y
+  // filtros exactos. No se consulta un segundo read model ni se sustituye el
+  // dato con max(conversaciones, first-seen).
+  const connectionStatus = await getMessageConnectionStatus(signal)
   const metricsRow = aggregateRows.find(row => row.row_type === 'metrics') || {}
-  const inboundMessages = Number(metricsRow.count_value || 0)
-  const conversations = Number(metricsRow.secondary_value || 0)
-  const attributedConversations = Number(metricsRow.tertiary_value || 0)
-  const allMessages = Number(metricsRow.all_messages_value || 0)
+  const inboundMessages = Number(projected.metrics?.messages ?? metricsRow.count_value ?? 0)
+  const conversations = Number(projected.metrics?.conversations ?? metricsRow.secondary_value ?? 0)
+  const newConversations = Number(
+    projected.metrics?.newConversations ?? metricsRow.new_conversations_value ?? 0
+  )
+  const attributedConversations = Number(
+    projected.metrics?.attributedConversations ?? metricsRow.tertiary_value ?? 0
+  )
+  const allMessages = Number(projected.metrics?.allMessages ?? metricsRow.all_messages_value ?? 0)
   const connected = Object.values(connectionStatus).some(Boolean)
   const toFilterOption = row => ({
     name: String(row.label || row.value || ''),
@@ -249,16 +277,24 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
     metrics: {
       inboundMessages,
       conversations,
-      contacts: hasActiveFilters || firstSeenCount?.projectionStatus === 'unavailable'
-        ? Math.max(conversations, Number(firstSeenCount?.count || 0))
-        : Number(firstSeenCount?.count || 0),
+      newConversations,
+      attributedConversations,
+      // Alias temporal: consumidores antiguos recibían aquí primeras
+      // conversaciones, no contactos del CRM.
+      contacts: newConversations,
       attributionRate: conversations > 0
         ? Number(((attributedConversations / conversations) * 100).toFixed(1))
         : 0
     },
-    trend: aggregateRows
+    trend: (projected.trend || aggregateRows
       .filter(row => row.row_type === 'trend')
-      .map(row => ({ label: String(row.label || ''), messages: Number(row.count_value || 0) }))
+      .map(row => ({
+        label: String(row.label || ''),
+        messages: Number(row.messages_value ?? row.count_value ?? 0),
+        conversations: Number(row.conversations_value ?? row.secondary_value ?? 0),
+        newConversations: Number(row.new_conversations_value ?? row.tertiary_value ?? 0),
+        attributedConversations: Number(row.attributed_conversations_value || 0)
+      })))
       .sort((a, b) => a.label.localeCompare(b.label)),
     filters: {
       channels: aggregateRows
@@ -279,8 +315,8 @@ export async function getMessageAnalyticsSummary(range, { groupBy = 'day', filte
       messageProjectionReadPath: projected.status.readPath || 'message_analytics_projection',
       messageProjectionGeneration: projected.status.activeGeneration || null,
       messageProjectionPending: Boolean(projected.status.pending),
-      firstSeenProjection: firstSeenCount?.projectionStatus || 'unavailable',
-      firstSeenProjectionComplete: Boolean(firstSeenCount?.projectionReady)
+      firstSeenProjection: projected.status.status,
+      firstSeenProjectionComplete: Boolean(projected.status.ready)
     },
     performance: {
       readPath: projected.status.readPath || 'message_analytics_projection',

@@ -7,6 +7,7 @@ import { databaseDialect, db } from '../src/config/database.js'
 import {
   MESSAGE_ANALYTICS_PROJECTION_VERSION,
   queryMessageAnalyticsProjectionAggregateRows,
+  queryMessageAnalyticsPopulation,
   readMessageAnalyticsProjectionState,
   runMessageAnalyticsProjectionBackfill
 } from '../src/services/messageAnalyticsProjectionService.js'
@@ -287,6 +288,155 @@ test('worker PostgreSQL ejecuta backfill, replay, doble generación y query exac
       FROM message_analytics_fact
       WHERE generation = ? AND source_kind = 'email' AND source_message_id = ?
     `, [buildingGeneration, liveId])).total), 1)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_attribution WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM meta_social_messages WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM email_messages WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
+    await setTimezone('UTC').catch(() => undefined)
+  }
+})
+
+test('separa mensajes, conversaciones activas y primeras conversaciones globales con filtros', {
+  skip: databaseDialect !== 'postgres',
+  concurrency: false,
+  timeout: 60_000
+}, async () => {
+  await ensureSchema()
+  await setTimezone('UTC')
+  await resetProjection()
+  const prefix = `message_metrics_${randomUUID().replaceAll('-', '')}`
+  const returningContact = `${prefix}_returning`
+  const directContact = `${prefix}_direct`
+  const paidContact = `${prefix}_paid`
+  const instagramContact = `${prefix}_instagram`
+  const instagramPaidContact = `${prefix}_instagram_paid`
+  const dayOne = '2202-03-01T10:00:00.000Z'
+  const dayTwo = '2202-03-02T10:00:00.000Z'
+  const selectedRange = {
+    startUtc: '2202-03-02T00:00:00.000Z',
+    endUtc: '2202-03-02T23:59:59.999Z',
+    appliedTimezone: 'UTC'
+  }
+
+  try {
+    for (const contactId of [
+      returningContact,
+      directContact,
+      paidContact,
+      instagramContact,
+      instagramPaidContact
+    ]) {
+      await db.run(`
+        INSERT INTO contacts(id, full_name, source, created_at, updated_at)
+        VALUES (?, 'Temporal metrics', NULL, ?, ?)
+      `, [contactId, dayOne, dayOne])
+    }
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages(
+        id, contact_id, direction, message_type, message_timestamp,
+        detected_source_url, detected_ctwa_clid, created_at, updated_at
+      ) VALUES
+        (?, ?, 'inbound', 'text', ?, NULL, NULL, ?, ?),
+        (?, ?, 'inbound', 'text', ?, NULL, NULL, ?, ?),
+        (?, ?, 'inbound', 'text', ?, 'https://facebook.com/profile', NULL, ?, ?),
+        (?, ?, 'inbound', 'text', ?, NULL, 'ctwa-confirmed', ?, ?)
+    `, [
+      `${prefix}_returning_old`, returningContact, dayOne, dayOne, dayOne,
+      `${prefix}_returning_active`, returningContact, dayTwo, dayTwo, dayTwo,
+      `${prefix}_direct_url`, directContact, dayTwo, dayTwo, dayTwo,
+      `${prefix}_paid_ctwa`, paidContact, dayTwo, dayTwo, dayTwo
+    ])
+    await db.run(`
+      INSERT INTO meta_social_messages(
+        id, platform, contact_id, sender_id, direction, message_type,
+        message_timestamp, referral_json, created_at, updated_at
+      ) VALUES
+        (?, 'instagram', ?, ?, 'inbound', 'text', ?,
+         '{"headline":"Oferta","source_url":"https://instagram.com/p/demo"}', ?, ?),
+        (?, 'instagram', ?, ?, 'inbound', 'text', ?,
+         '{"ad_id":"confirmed-ad"}', ?, ?)
+    `, [
+      `${prefix}_instagram_headline`, instagramContact, `${prefix}_sender_a`,
+      dayTwo, dayTwo, dayTwo,
+      `${prefix}_instagram_ad`, instagramPaidContact, `${prefix}_sender_b`,
+      dayTwo, dayTwo, dayTwo
+    ])
+
+    await runUntilReady()
+
+    const aggregate = await queryMessageAnalyticsProjectionAggregateRows(selectedRange)
+    assert.deepEqual(aggregate.metrics, {
+      messages: 5,
+      conversations: 5,
+      newConversations: 4,
+      attributedConversations: 2,
+      allMessages: 5
+    })
+    assert.deepEqual(aggregate.trend, [{
+      label: '2202-03-02',
+      messages: 5,
+      conversations: 5,
+      newConversations: 4,
+      attributedConversations: 2
+    }])
+
+    const whatsappOnly = await queryMessageAnalyticsProjectionAggregateRows(selectedRange, {
+      filters: { channels: ['whatsapp'] }
+    })
+    assert.equal(whatsappOnly.metrics.messages, 3)
+    assert.equal(whatsappOnly.metrics.conversations, 3)
+    assert.equal(whatsappOnly.metrics.newConversations, 2)
+    assert.equal(whatsappOnly.metrics.attributedConversations, 1)
+
+    const entryPopulation = await queryMessageAnalyticsPopulation(selectedRange, {
+      population: 'conversations',
+      dimension: 'entry'
+    })
+    assert.equal(entryPopulation.total, 5)
+    assert.equal(
+      entryPopulation.distribution.reduce((sum, item) => sum + item.value, 0),
+      entryPopulation.total
+    )
+    assert.deepEqual(
+      Object.fromEntries(entryPopulation.distribution.map(item => [item.key, item.value])),
+      {
+        'instagram.paid_ad': 1,
+        'instagram.unattributed': 1,
+        'whatsapp.paid_ad': 1,
+        'whatsapp.unattributed': 2
+      }
+    )
+
+    const newWhatsapp = await queryMessageAnalyticsPopulation(selectedRange, {
+      population: 'newConversations',
+      dimension: 'source',
+      filters: { channels: ['whatsapp'] }
+    })
+    assert.equal(newWhatsapp.total, 2, 'la conversación que inició el día anterior no vuelve a ser nueva')
+    assert.deepEqual(newWhatsapp.availableChannels, ['instagram', 'whatsapp'])
+    assert.equal(
+      newWhatsapp.distribution.reduce((sum, item) => sum + item.value, 0),
+      newWhatsapp.total
+    )
+
+    const state = await readMessageAnalyticsProjectionState()
+    const evidenceRows = await db.all(`
+      SELECT source_message_id, attributed
+      FROM message_analytics_fact
+      WHERE generation = ? AND source_message_id LIKE ?
+      ORDER BY source_message_id
+    `, [Number(state.active_generation), `${prefix}%`])
+    const evidence = Object.fromEntries(evidenceRows.map(row => [
+      row.source_message_id,
+      row.attributed === true || Number(row.attributed) === 1
+    ]))
+    assert.equal(evidence[`${prefix}_direct_url`], false, 'una URL sola no prueba un anuncio')
+    assert.equal(evidence[`${prefix}_instagram_headline`], false, 'un headline solo no prueba un anuncio')
+    assert.equal(evidence[`${prefix}_paid_ctwa`], true)
+    assert.equal(evidence[`${prefix}_instagram_ad`], true)
   } finally {
     await db.run('DELETE FROM whatsapp_api_attribution WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_messages WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)

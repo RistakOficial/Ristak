@@ -26,6 +26,7 @@ import { SiMacos, SiIos } from 'react-icons/si'
 import {
   getContactConversionsByDate,
   getContactConversionContacts,
+  getAcquisitionAnalyticsSummary,
   getMessageAnalyticsSummary,
   getTrackingAnalyticsFacet,
   getTrackingAnalyticsSummary,
@@ -35,6 +36,8 @@ import {
   type ContactsByDate,
   type ContactConversionListType,
   type ContactConversionsByDate,
+  type AcquisitionAnalyticsChannel,
+  type AcquisitionAnalyticsSummary,
   type MessageAnalyticsSummary,
   type TrackingAnalyticsFacetItem,
   type TrackingAnalyticsFacetDimension,
@@ -54,7 +57,12 @@ import { useNotification } from '../../contexts/NotificationContext'
 type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'all' | 'custom'
 type AnalyticsMainChartView = 'traffic' | 'visitors-registrations' | 'sessions-visitors' | 'identity-returning'
-type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'messages-appointments' | 'appointments-patients'
+type AnalyticsMessageChartView =
+  | 'messages-conversations'
+  | 'conversations-new'
+  | 'attributed-unattributed'
+  | 'contacts-buyers'
+type AnalyticsConversionChartView = 'registrations-customers' | 'appointments-attendances' | 'prospects-customers' | 'appointments-patients'
 
 const monthNamesShort = [
   'ene', 'feb', 'mar', 'abr', 'may', 'jun',
@@ -70,11 +78,18 @@ const viewTabs: Array<{ value: ViewType; label: string }> = [
 const analyticsViewTypes: ViewType[] = ['day', 'month', 'year']
 const analyticsMonthPresets: MonthPreset[] = ['last12', 'thisYear', 'all', 'custom']
 const analyticsMainChartViews: AnalyticsMainChartView[] = ['traffic', 'visitors-registrations', 'sessions-visitors', 'identity-returning']
-const analyticsConversionChartViews: AnalyticsConversionChartView[] = ['registrations-customers', 'appointments-attendances', 'prospects-customers', 'messages-appointments', 'appointments-patients']
+const analyticsMessageChartViews: AnalyticsMessageChartView[] = [
+  'messages-conversations',
+  'conversations-new',
+  'attributed-unattributed',
+  'contacts-buyers'
+]
+const analyticsConversionChartViews: AnalyticsConversionChartView[] = ['registrations-customers', 'appointments-attendances', 'prospects-customers', 'appointments-patients']
 const defaultAnalyticsViewType: ViewType = 'month'
 const isAnalyticsViewType = (value?: string): value is ViewType => analyticsViewTypes.includes(value as ViewType)
 const isAnalyticsMonthPreset = (value?: string | null): value is MonthPreset => analyticsMonthPresets.includes(value as MonthPreset)
 const isAnalyticsMainChartView = (value?: string): value is AnalyticsMainChartView => analyticsMainChartViews.includes(value as AnalyticsMainChartView)
+const isAnalyticsMessageChartView = (value?: string | null): value is AnalyticsMessageChartView => analyticsMessageChartViews.includes(value as AnalyticsMessageChartView)
 const isAnalyticsConversionChartView = (value?: string): value is AnalyticsConversionChartView => analyticsConversionChartViews.includes(value as AnalyticsConversionChartView)
 const parseAnalyticsRoute = (pathname: string) => {
   const segments = pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
@@ -396,8 +411,17 @@ const CONVERSION_STAGES: ConversionStage[] = [
 ]
 
 const MESSAGE_FILTER_FIELDS = new Set(['message_channel', 'message_source'])
+const MESSAGE_ACQUISITION_CHANNELS: AcquisitionAnalyticsChannel[] = [
+  'whatsapp',
+  'messenger',
+  'instagram',
+  'email'
+]
 
 const isMessageFilterField = (field: string) => MESSAGE_FILTER_FIELDS.has(field)
+const isMessageAcquisitionChannel = (value: string): value is AcquisitionAnalyticsChannel => (
+  MESSAGE_ACQUISITION_CHANNELS.includes(value as AcquisitionAnalyticsChannel)
+)
 
 const hasSelectedFilters = (filters: Record<string, string[]>) =>
   Object.values(filters).some(values => values.length > 0)
@@ -852,21 +876,62 @@ const completeConversionTrendPeriods = (
 const buildMessageTrendData = (
   summary: MessageAnalyticsSummary | null,
   viewType: ViewType,
-  range: { from: string; to: string }
+  range: { from: string; to: string },
+  view: Exclude<AnalyticsMessageChartView, 'contacts-buyers'>
 ): TrafficPoint[] => {
-  const messagesByPeriod = new Map<string, number>()
+  const valuesByPeriod = new Map<string, { value: number; value2: number }>()
 
   ;(summary?.trend || []).forEach(item => {
     const period = normalizePeriodKey(String(item.label || ''), viewType)
     if (!period) return
-    messagesByPeriod.set(period, (messagesByPeriod.get(period) || 0) + Number(item.messages || 0))
+    const messages = Number(item.messages || 0)
+    const conversations = Number(item.conversations || 0)
+    const newConversations = Number(item.newConversations || 0)
+    const attributed = Number(item.attributedConversations || 0)
+    const next = view === 'conversations-new'
+      ? { value: conversations, value2: newConversations }
+      : view === 'attributed-unattributed'
+        ? { value: attributed, value2: Math.max(0, conversations - attributed) }
+        : { value: messages, value2: conversations }
+    const current = valuesByPeriod.get(period) || { value: 0, value2: 0 }
+    valuesByPeriod.set(period, {
+      value: current.value + next.value,
+      value2: current.value2 + next.value2
+    })
   })
 
   return completeTrafficPeriods(
-    Array.from(messagesByPeriod.entries()).map(([period, messages]) => ({
+    Array.from(valuesByPeriod.entries()).map(([period, values]) => ({
       label: formatPeriodLabel(period, viewType),
-      value: messages,
-      value2: 0,
+      value: values.value,
+      value2: values.value2,
+      ...getPeriodPointMeta(period, viewType)
+    })),
+    viewType,
+    range
+  )
+}
+
+const buildMessagingAcquisitionTrendData = (
+  summary: AcquisitionAnalyticsSummary | null,
+  viewType: ViewType,
+  range: { from: string; to: string }
+): TrafficPoint[] => {
+  const valuesByPeriod = new Map<string, { contacts: number; buyers: number }>()
+  ;(summary?.trend || []).forEach(item => {
+    const period = normalizePeriodKey(String(item.label || ''), viewType)
+    if (!period) return
+    const current = valuesByPeriod.get(period) || { contacts: 0, buyers: 0 }
+    valuesByPeriod.set(period, {
+      contacts: current.contacts + Number(item.contacts || 0),
+      buyers: current.buyers + Number(item.buyers || 0)
+    })
+  })
+  return completeTrafficPeriods(
+    Array.from(valuesByPeriod.entries()).map(([period, values]) => ({
+      label: formatPeriodLabel(period, viewType),
+      value: values.contacts,
+      value2: values.buyers,
       ...getPeriodPointMeta(period, viewType)
     })),
     viewType,
@@ -1166,30 +1231,6 @@ const mergeVisitorRegistrationData = (
   })
 }
 
-const mergeMessagesWithAppointments = (
-  waData: TrafficPoint[],
-  convData: ConversionTrendPoint[]
-): TrafficPoint[] => {
-  const waByLabel = new Map(waData.map(item => [item.label, item]))
-  const convByLabel = new Map(convData.map(item => [item.label, item]))
-  const labels = [
-    ...waData.map(item => item.label),
-    ...convData.map(item => item.label).filter(label => !waByLabel.has(label))
-  ]
-  return labels.map(label => {
-    const wa = waByLabel.get(label)
-    const conversion = convByLabel.get(label)
-    return {
-      label,
-      value: wa?.value || 0,
-      value2: conversion?.appointments || 0,
-      periodKey: conversion?.periodKey || wa?.periodKey,
-      periodStart: conversion?.periodStart || wa?.periodStart,
-      periodEnd: conversion?.periodEnd || wa?.periodEnd
-    }
-  })
-}
-
 const mapTrendToChartData = <T extends { label: string }>(
   trendData: T[],
   valueKey: keyof T,
@@ -1302,6 +1343,12 @@ const Analytics: React.FC = () => {
     () => isAnalyticsMonthPreset(searchParams.get('preset')) ? searchParams.get('preset') as MonthPreset : 'last12',
     [searchParams]
   )
+  const routeMessageChartView = React.useMemo<AnalyticsMessageChartView>(
+    () => isAnalyticsMessageChartView(searchParams.get('messageView'))
+      ? searchParams.get('messageView') as AnalyticsMessageChartView
+      : 'messages-conversations',
+    [searchParams]
+  )
   const { dateRange, setDateRange } = useDateRange()
   const { convertToLocalTime, timezone } = useTimezone()
   const businessToday = React.useMemo(() => getBusinessToday(timezone), [timezone])
@@ -1325,6 +1372,13 @@ const Analytics: React.FC = () => {
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
   const [hasLoadedMessageAnalytics, setHasLoadedMessageAnalytics] = useState(false)
+  const [messageAnalyticsError, setMessageAnalyticsError] = useState<string | null>(null)
+  const [messageAnalyticsRetryKey, setMessageAnalyticsRetryKey] = useState(0)
+  const [messagingAcquisition, setMessagingAcquisition] = useState<AcquisitionAnalyticsSummary | null>(null)
+  const [messagingAcquisitionLoading, setMessagingAcquisitionLoading] = useState(false)
+  const [messagingAcquisitionError, setMessagingAcquisitionError] = useState<string | null>(null)
+  const [messagingAcquisitionRetryKey, setMessagingAcquisitionRetryKey] = useState(0)
+  const messagingAcquisitionScopeRef = React.useRef('')
   const [analyticsError, setAnalyticsError] = useState<string | null>(null)
   const [analyticsRetryKey, setAnalyticsRetryKey] = useState(0)
   const [hasWebAnalyticsSnapshot, setHasWebAnalyticsSnapshot] = useState(false)
@@ -1338,7 +1392,7 @@ const Analytics: React.FC = () => {
   const customersLabel = appLabels.customers?.trim() || `${customerLabel}s`
   const leadsLabelLower = leadsLabel.toLocaleLowerCase('es-MX')
   const customersLabelLower = customersLabel.toLocaleLowerCase('es-MX')
-  const newContactsLabel = 'Contactos nuevos'
+  const newContactsLabel = 'Contactos del sitio'
   const newContactsLabelLower = newContactsLabel.toLocaleLowerCase('es-MX')
 
   const conversionFilters = React.useMemo<Array<{ stage: ConversionStage; label: string }>>(() => [
@@ -1384,6 +1438,7 @@ const Analytics: React.FC = () => {
   const [monthPreset, setMonthPreset] = useState<MonthPreset>(routeMonthPreset)
   const [yearRange, setYearRange] = useState(routeYearRange)
   const [selectedMainChartView, setSelectedMainChartView] = useState<AnalyticsMainChartView>(routeState.mainChart)
+  const [selectedMessageChartView, setSelectedMessageChartView] = useState<AnalyticsMessageChartView>(routeMessageChartView)
   const [selectedConversionChartView, setSelectedConversionChartView] = useState<AnalyticsConversionChartView>(routeState.conversionChart)
   const handleTrackingSessionsChanged = useCallback(() => {
     setAnalyticsRetryKey(current => current + 1)
@@ -1411,6 +1466,10 @@ const Analytics: React.FC = () => {
     setSelectedMainChartView(current => current === routeState.mainChart ? current : routeState.mainChart)
     setSelectedConversionChartView(current => current === routeState.conversionChart ? current : routeState.conversionChart)
   }, [routeState.conversionChart, routeState.mainChart, routeState.viewType])
+
+  useEffect(() => {
+    setSelectedMessageChartView(current => current === routeMessageChartView ? current : routeMessageChartView)
+  }, [routeMessageChartView])
 
   useEffect(() => {
     setMonthPreset(current => current === routeMonthPreset ? current : routeMonthPreset)
@@ -1506,6 +1565,44 @@ const Analytics: React.FC = () => {
     () => JSON.stringify(messageSummaryFilters),
     [messageSummaryFilters]
   )
+  const messagingAcquisitionInput = React.useMemo(() => {
+    const selectedChannels = messageSummaryFilters.channels
+      .map(value => String(value || '').trim().toLowerCase())
+      .filter(isMessageAcquisitionChannel)
+
+    return {
+      start: apiRange.from,
+      end: apiRange.to,
+      population: 'contacts' as const,
+      dimension: 'channel' as const,
+      channels: selectedChannels.length > 0
+        ? selectedChannels
+        : MESSAGE_ACQUISITION_CHANNELS,
+      groupBy: viewType,
+      filters: {
+        sources: messageSummaryFilters.sources
+      }
+    }
+  }, [
+    apiRange.from,
+    apiRange.to,
+    messageSummaryFilterKey,
+    messageSummaryFilters,
+    viewType
+  ])
+  const messagingAcquisitionScopeKey = React.useMemo(
+    () => JSON.stringify(messagingAcquisitionInput),
+    [messagingAcquisitionInput]
+  )
+  const messagingAcquisitionScopeIsCurrent = (
+    messagingAcquisitionScopeRef.current === messagingAcquisitionScopeKey
+  )
+  const scopedMessagingAcquisition = messagingAcquisitionScopeIsCurrent
+    ? messagingAcquisition
+    : null
+  const scopedMessagingAcquisitionError = messagingAcquisitionScopeIsCurrent
+    ? messagingAcquisitionError
+    : null
 
   const webSummaryFilters = React.useMemo<Record<string, string[]>>(() => (
     Object.fromEntries(
@@ -1847,6 +1944,7 @@ const Analytics: React.FC = () => {
     const controller = new AbortController()
     const requestId = ++messageAnalyticsRequestIdRef.current
     setMessageLoading(true)
+    setMessageAnalyticsError(null)
 
     const fetchMessageAnalytics = async () => {
       try {
@@ -1859,18 +1957,15 @@ const Analytics: React.FC = () => {
         )
 
         if (cancelled || messageAnalyticsRequestIdRef.current !== requestId) return
+        setMessageAnalyticsError(null)
         setMessageAnalytics(summary)
         const nextFilterData = getMessageFilterData(summary)
         setMessageFilterData(hasAvailableFilterOptions(nextFilterData) ? nextFilterData : {})
       } catch (error) {
         if (cancelled || messageAnalyticsRequestIdRef.current !== requestId) return
-        setMessageAnalytics(null)
-        setMessageFilterData({})
         console.error('No se pudo cargar el resumen de mensajes de Analíticas:', error)
-        showToast(
-          'error',
-          'No se cargó el resumen de mensajes',
-          error instanceof Error ? error.message : 'Intenta nuevamente'
+        setMessageAnalyticsError(
+          error instanceof Error ? error.message : 'No pudimos cargar el resumen de mensajes.'
         )
       } finally {
         if (!cancelled && messageAnalyticsRequestIdRef.current === requestId) {
@@ -1889,15 +1984,60 @@ const Analytics: React.FC = () => {
   }, [
     apiRange.from,
     apiRange.to,
+    messageAnalyticsRetryKey,
     messageSummaryFilterKey,
     messageSummaryFilters,
-    showToast,
     viewType
+  ])
+
+  useEffect(() => {
+    if (selectedMessageChartView !== 'contacts-buyers') {
+      setMessagingAcquisitionLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    let active = true
+    if (messagingAcquisitionScopeRef.current !== messagingAcquisitionScopeKey) {
+      messagingAcquisitionScopeRef.current = messagingAcquisitionScopeKey
+      setMessagingAcquisition(null)
+    }
+    setMessagingAcquisitionLoading(true)
+    setMessagingAcquisitionError(null)
+
+    getAcquisitionAnalyticsSummary(messagingAcquisitionInput, controller.signal)
+      .then(result => {
+        if (!active) return
+        setMessagingAcquisition(result)
+      })
+      .catch(error => {
+        if (!active || controller.signal.aborted) return
+        setMessagingAcquisitionError(
+          error instanceof Error ? error.message : 'No pudimos cargar contactos y compradores de mensajes.'
+        )
+      })
+      .finally(() => {
+        if (active) setMessagingAcquisitionLoading(false)
+      })
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [
+    messagingAcquisitionInput,
+    messagingAcquisitionRetryKey,
+    messagingAcquisitionScopeKey,
+    selectedMessageChartView
   ])
 
   const messageMetrics = messageAnalytics?.metrics
 
-  const webMetrics = [
+  const webMetrics: Array<{
+    title: string
+    value: string
+    delta?: number
+    icon: React.ElementType<{ className?: string }>
+  }> = [
     {
       title: 'Visualizaciones',
       value: formatChartNumber(metrics.pageViews || 0),
@@ -1924,29 +2064,29 @@ const Analytics: React.FC = () => {
     }
   ]
 
-  const messageMetricCards = [
+  const messageMetricCards: typeof webMetrics = [
     {
       title: 'Mensajes Entrantes',
       value: formatChartNumber(messageMetrics?.inboundMessages || 0),
-      delta: 0,
+      delta: undefined,
       icon: MessageCircle
     },
     {
       title: 'Conversaciones',
       value: formatChartNumber(messageMetrics?.conversations || 0),
-      delta: 0,
+      delta: undefined,
       icon: Users
     },
     {
-      title: 'Contactos nuevos',
-      value: formatChartNumber(messageMetrics?.contacts || 0),
-      delta: 0,
+      title: 'Nuevas conversaciones',
+      value: formatChartNumber(messageMetrics?.newConversations ?? messageMetrics?.contacts ?? 0),
+      delta: undefined,
       icon: UserCheck
     },
     {
-      title: 'Con Atribución',
-      value: `${(messageMetrics?.attributionRate || 0).toFixed(1)}%`,
-      delta: 0,
+      title: 'Conversaciones de anuncio',
+      value: formatChartNumber(messageMetrics?.attributedConversations || 0),
+      delta: undefined,
       icon: Target
     }
   ]
@@ -1962,8 +2102,12 @@ const Analytics: React.FC = () => {
     messageAnalytics?.status?.hasData ||
     (messageMetrics?.inboundMessages || 0) > 0 ||
     (messageMetrics?.conversations || 0) > 0 ||
-    (messageMetrics?.contacts || 0) > 0 ||
-    (messageAnalytics?.trend || []).some(item => (item.messages || 0) > 0)
+    (messageMetrics?.newConversations ?? messageMetrics?.contacts ?? 0) > 0 ||
+    (messageAnalytics?.trend || []).some(item => (
+      (item.messages || 0) > 0 ||
+      (item.conversations || 0) > 0 ||
+      (item.newConversations || 0) > 0
+    ))
   )
   const analyticsRefreshing = loading || !hasLoadedAnalytics
   const messageAnalyticsRefreshing = messageLoading || !hasLoadedMessageAnalytics
@@ -2181,8 +2325,32 @@ const Analytics: React.FC = () => {
   const hasActiveFiltersForCharts = showWebAnalyticsBlocks && hasSelectedWebFilters(selectedFilters)
 
   const messageTrendData = React.useMemo<TrafficPoint[]>(() => (
-    buildMessageTrendData(messageAnalytics, viewType, apiRange)
-  ), [apiRange.from, apiRange.to, viewType, messageAnalytics])
+    selectedMessageChartView === 'contacts-buyers'
+      ? buildMessagingAcquisitionTrendData(scopedMessagingAcquisition, viewType, apiRange)
+      : buildMessageTrendData(messageAnalytics, viewType, apiRange, selectedMessageChartView)
+  ), [
+    apiRange.from,
+    apiRange.to,
+    messageAnalytics,
+    scopedMessagingAcquisition,
+    selectedMessageChartView,
+    viewType
+  ])
+
+  const messageChartOptions = React.useMemo<Array<{ value: AnalyticsMessageChartView; label: string }>>(() => [
+    { value: 'messages-conversations', label: 'Mensajes vs Conversaciones' },
+    { value: 'conversations-new', label: 'Conversaciones vs Nuevas' },
+    { value: 'attributed-unattributed', label: 'Anuncio vs Sin anuncio' },
+    { value: 'contacts-buyers', label: 'Contactos de mensajes vs Compradores' }
+  ], [])
+
+  const handleMessageChartViewChange = (value: string) => {
+    if (!isAnalyticsMessageChartView(value)) return
+    setSelectedMessageChartView(value)
+    const nextParams = new URLSearchParams(searchParams)
+    setSearchParam(nextParams, 'messageView', value, 'messages-conversations')
+    setSearchParams(nextParams, { replace: true })
+  }
 
   const mainChartOptions = React.useMemo<Array<{ value: AnalyticsMainChartView; label: string }>>(() => (
     [
@@ -2220,16 +2388,12 @@ const Analytics: React.FC = () => {
       { value: 'prospects-customers', label: `${leadsLabel} vs ${customersLabel}` }
     ]
 
-    if (showMessageAnalyticsBlocks) {
-      options.push({ value: 'messages-appointments', label: 'Mensajes vs Citas' })
-    }
-
     options.push(
       { value: 'appointments-patients', label: `Citas vs ${customersLabel}` }
     )
 
     return options
-  }, [customersLabel, leadsLabel, newContactsLabel, showMessageAnalyticsBlocks])
+  }, [customersLabel, leadsLabel, newContactsLabel])
 
   useEffect(() => {
     const validValues = conversionChartOptions.map(opt => opt.value)
@@ -2293,15 +2457,59 @@ const Analytics: React.FC = () => {
     }
   }, [dailyConversions, dailyTraffic, newContactsLabel, periodLabel, selectedMainChartView, sessionTrendData])
 
-  const messageChartConfig = React.useMemo<ChartMetricConfig>(() => ({
-    title: 'Mensajes',
-    description: `Mensajes recibidos por ${periodLabel}`,
-    label1: 'Mensajes',
-    color: ANALYTICS_CHART_COLORS.messages,
-    color2: ANALYTICS_CHART_COLORS.appointments,
-    data: messageTrendData,
-    emptyMessage: 'Sin mensajes disponibles en este rango'
-  }), [periodLabel, messageTrendData])
+  const messageChartConfig = React.useMemo<ChartMetricConfig>(() => {
+    if (selectedMessageChartView === 'conversations-new') {
+      return {
+        title: 'Conversaciones vs Nuevas',
+        description: `Distingue actividad de identidades que escriben por primera vez por ${periodLabel}`,
+        label1: 'Conversaciones',
+        label2: 'Nuevas conversaciones',
+        color: ANALYTICS_CHART_COLORS.messages,
+        color2: ANALYTICS_CHART_COLORS.registrations,
+        data: messageTrendData,
+        emptyMessage: 'Sin conversaciones disponibles en este rango'
+      }
+    }
+    if (selectedMessageChartView === 'attributed-unattributed') {
+      return {
+        title: 'Anuncio vs Sin anuncio',
+        description: `Separa conversaciones con evidencia de anuncio de las que no la tienen por ${periodLabel}`,
+        label1: 'Con anuncio comprobado',
+        label2: 'Sin anuncio detectado',
+        color: ANALYTICS_CHART_COLORS.customers,
+        color2: ANALYTICS_CHART_COLORS.messages,
+        data: messageTrendData,
+        emptyMessage: 'Sin conversaciones atribuibles en este rango'
+      }
+    }
+    if (selectedMessageChartView === 'contacts-buyers') {
+      return {
+        title: 'Contactos de mensajes vs Compradores',
+        description: `Compara contactos adquiridos por mensajería con compradores de ese mismo origen por ${periodLabel}`,
+        label1: 'Contactos de mensajes',
+        label2: 'Compradores',
+        color: ANALYTICS_CHART_COLORS.registrations,
+        color2: ANALYTICS_CHART_COLORS.customers,
+        data: messageTrendData,
+        emptyMessage: scopedMessagingAcquisitionError || 'Sin contactos o compradores originados en mensajes'
+      }
+    }
+    return {
+      title: 'Mensajes vs Conversaciones',
+      description: `Compara el volumen de entradas con identidades activas por ${periodLabel}`,
+      label1: 'Mensajes entrantes',
+      label2: 'Conversaciones',
+      color: ANALYTICS_CHART_COLORS.messages,
+      color2: ANALYTICS_CHART_COLORS.visitors,
+      data: messageTrendData,
+      emptyMessage: 'Sin mensajes disponibles en este rango'
+    }
+  }, [
+    messageTrendData,
+    periodLabel,
+    scopedMessagingAcquisitionError,
+    selectedMessageChartView
+  ])
 
   const conversionChartConfig = React.useMemo<ChartMetricConfig>(() => {
     switch (selectedConversionChartView) {
@@ -2327,17 +2535,6 @@ const Analytics: React.FC = () => {
           data: mapTrendToChartData(conversionTrendData, 'prospects', 'customers'),
           emptyMessage: `Sin ${leadsLabelLower} o ${customersLabelLower} disponibles`
         }
-      case 'messages-appointments':
-        return {
-          title: 'Mensajes vs Citas',
-          description: `Cuántos mensajes llegan versus citas agendadas por ${periodLabel}`,
-          label1: 'Mensajes',
-          label2: 'Citas',
-          color: ANALYTICS_CHART_COLORS.messages,
-          color2: ANALYTICS_CHART_COLORS.appointments,
-          data: mergeMessagesWithAppointments(messageTrendData, conversionTrendData),
-          emptyMessage: 'Sin mensajes o citas disponibles'
-        }
       case 'appointments-patients':
         return {
           title: `Citas vs ${customersLabel}`,
@@ -2362,11 +2559,14 @@ const Analytics: React.FC = () => {
           emptyMessage: `Sin ${newContactsLabelLower} o ${customersLabelLower} disponibles`
         }
     }
-  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, newContactsLabel, newContactsLabelLower, periodLabel, selectedConversionChartView, messageTrendData])
+  }, [conversionTrendData, customersLabel, customersLabelLower, leadsLabel, leadsLabelLower, newContactsLabel, newContactsLabelLower, periodLabel, selectedConversionChartView])
 
   const webChartHasData = webChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const messageChartHasData = messageChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
   const conversionChartHasData = conversionChartConfig.data.some(item => (item.value || 0) > 0 || (item.value2 || 0) > 0)
+  const messageChartRefreshing = selectedMessageChartView === 'contacts-buyers'
+    ? messagingAcquisitionLoading || !messagingAcquisitionScopeIsCurrent
+    : messageAnalyticsRefreshing
 
   const getConversionClickConfig = useCallback((seriesKey: ChartSeriesKey): {
     listType: ContactConversionListType
@@ -2382,10 +2582,6 @@ const Analytics: React.FC = () => {
         return seriesKey === 'value'
           ? { listType: 'appointments', modalType: 'appointments', title: 'Citas' }
           : { listType: 'attendances', modalType: 'attendances', title: 'Asistencias' }
-      case 'messages-appointments':
-        return seriesKey === 'value2'
-          ? { listType: 'appointments', modalType: 'appointments', title: 'Citas' }
-          : null
       case 'appointments-patients':
         return seriesKey === 'value'
           ? { listType: 'appointments', modalType: 'appointments', title: 'Citas' }
@@ -2536,9 +2732,7 @@ const Analytics: React.FC = () => {
     })
   }, [getConversionClickConfig, hasActiveFiltersForCharts, loadConversionContactPage])
 
-  const conversionAnalyticsRefreshing = selectedConversionChartView === 'messages-appointments'
-    ? messageAnalyticsRefreshing
-    : analyticsRefreshing
+  const conversionAnalyticsRefreshing = analyticsRefreshing
 
   return (
     <PageContainer>
@@ -2683,6 +2877,30 @@ const Analytics: React.FC = () => {
           </Card>
         )}
 
+        {messageAnalyticsError && (
+          <Card variant="glass" className="p-4">
+            <div role="alert" aria-live="assertive" className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="font-display text-sm font-semibold text-[var(--text)]">El resumen de mensajes no respondió</p>
+                <p className="mt-1 text-sm text-[var(--text-mute)]">
+                  {messageAnalytics
+                    ? 'Conservamos el último resultado correcto; no lo reemplazamos por ceros.'
+                    : messageAnalyticsError}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={messageLoading}
+                onClick={() => setMessageAnalyticsRetryKey(current => current + 1)}
+              >
+                {messageLoading ? 'Reintentando…' : 'Reintentar'}
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {/* Métricas por canal */}
         {metricSections.length > 0 && (
           <div className={sourceGridClassName}>
@@ -2782,7 +3000,12 @@ const Analytics: React.FC = () => {
           <Card variant="glass" className="p-6">
             <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0 flex-1">
-                <h2 className="font-display text-lg font-semibold text-[var(--text)]">{messageChartConfig.title}</h2>
+                <ViewSelector
+                  variant="title"
+                  options={messageChartOptions}
+                  value={selectedMessageChartView}
+                  onChange={handleMessageChartViewChange}
+                />
                 <p className="mt-1 text-sm text-[var(--text-mute)]">
                   {messageChartConfig.description}
                 </p>
@@ -2793,12 +3016,30 @@ const Analytics: React.FC = () => {
                     <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: messageChartConfig.color }} />
                     <span className="font-medium">{messageChartConfig.label1}</span>
                   </span>
+                  {messageChartConfig.label2 && (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: messageChartConfig.color2 }} />
+                      <span className="font-medium">{messageChartConfig.label2}</span>
+                    </span>
+                  )}
                 </div>
+                {selectedMessageChartView === 'contacts-buyers' && scopedMessagingAcquisitionError && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={messagingAcquisitionLoading}
+                    title={scopedMessagingAcquisitionError}
+                    onClick={() => setMessagingAcquisitionRetryKey(current => current + 1)}
+                  >
+                    {messagingAcquisitionLoading ? 'Reintentando…' : 'Reintentar'}
+                  </Button>
+                )}
               </div>
             </div>
 
             <div className="relative w-full" style={{ minHeight: 340, height: 340 }}>
-              {messageAnalyticsRefreshing ? (
+              {messageChartRefreshing ? (
                 <div data-ristak-chart-empty className="flex h-full items-end justify-between gap-3 rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] p-5" role="status" aria-live="polite" aria-label="Cargando mensajes">
                   {[48, 70, 58, 84, 62, 74].map((height, index) => (
                     <span
@@ -2816,12 +3057,27 @@ const Analytics: React.FC = () => {
                   showGrid
                   color={messageChartConfig.color}
                   color2={messageChartConfig.color2}
-                  legendLabels={{ label1: messageChartConfig.label1 }}
+                  legendLabels={{ label1: messageChartConfig.label1, label2: messageChartConfig.label2 }}
                   formatValue={formatTrafficAxis}
                   formatTooltipValue={formatTrafficTooltip}
                 />
               ) : (
-                <div data-ristak-chart-empty className="flex h-full items-center justify-center rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] px-4 text-center text-sm text-[var(--text-mute)]">
+                <div
+                  data-ristak-chart-empty
+                  className="flex h-full items-center justify-center rounded-xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--surface) 82%, transparent)] px-4 text-center text-sm text-[var(--text-mute)]"
+                  role={
+                    selectedMessageChartView === 'contacts-buyers' &&
+                    scopedMessagingAcquisitionError
+                      ? 'alert'
+                      : undefined
+                  }
+                  aria-live={
+                    selectedMessageChartView === 'contacts-buyers' &&
+                    scopedMessagingAcquisitionError
+                      ? 'assertive'
+                      : undefined
+                  }
+                >
                   {messageChartConfig.emptyMessage}
                 </div>
               )}
@@ -2833,6 +3089,7 @@ const Analytics: React.FC = () => {
 
         {/* Grid de Gráficas: Conversión y Distribución */}
         <div className={showWebAnalyticsBlocks ? 'grid gap-4 lg:grid-cols-2' : 'grid gap-4'}>
+          {showWebAnalyticsBlocks && (
           <Card
             variant="glass"
             className="p-6 h-full [&>[data-ristak-card-content]]:flex [&>[data-ristak-card-content]]:h-full [&>[data-ristak-card-content]]:flex-col"
@@ -2899,8 +3156,19 @@ const Analytics: React.FC = () => {
               )}
             </div>
           </Card>
+          )}
 
-          {showWebAnalyticsBlocks && <OriginDistributionCard />}
+          {(showWebAnalyticsBlocks || showMessageAnalyticsBlocks) && (
+            <OriginDistributionCard
+              startDate={apiRange.from}
+              endDate={apiRange.to}
+              groupBy={viewType}
+              webFilters={webSummaryFilters}
+              hasWebAnalyticsAccess={hasWebAnalyticsAccess}
+              websiteAvailable={webTrackingConfigured || hasWebAnalyticsData}
+              availableMessageChannels={messageAnalytics?.status?.channels || {}}
+            />
+          )}
         </div>
 
         {/* Grid de stats cards */}

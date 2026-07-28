@@ -111,11 +111,16 @@ test('resumen multicanal conserva contrato con miles de mensajes y respuesta aco
     assert.deepEqual(Object.keys(summary.metrics), [
       'inboundMessages',
       'conversations',
+      'newConversations',
+      'attributedConversations',
       'contacts',
       'attributionRate'
     ])
     assert.equal(summary.metrics.inboundMessages, 3_000)
     assert.equal(summary.metrics.conversations, 75)
+    assert.equal(summary.metrics.newConversations, 75)
+    assert.equal(summary.metrics.contacts, 75)
+    assert.equal(summary.metrics.attributedConversations, 0)
     assert.ok(summary.trend.length <= 31)
     assert.ok(summary.filters.channels.length <= 4)
     assert.ok(summary.filters.sources.length <= 50)
@@ -188,7 +193,13 @@ test('tendencia de mensajes agrupa por la zona del negocio y no por UTC', async 
       appliedTimezone: 'America/Ciudad_Juarez'
     }, { groupBy: 'day' })
 
-    assert.deepEqual(summary.trend, [{ label: '2096-06-01', messages: 1 }])
+    assert.deepEqual(summary.trend, [{
+      label: '2096-06-01',
+      messages: 1,
+      conversations: 1,
+      newConversations: 1,
+      attributedConversations: 0
+    }])
   } finally {
     await db.run('DELETE FROM email_messages WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
   }

@@ -10,13 +10,19 @@ import { getGroupExpression } from '../src/services/analyticsService.js'
 import { runCrmListProjectionBackfill } from '../src/services/crmListProjectionService.js'
 import { migrationRunsForDialect, runVersionedMigrations } from '../src/startup/runMigrations.js'
 import {
+  clearTrackingAnalyticsSummaryCache,
+  getTrackingAnalyticsSummary
+} from '../src/services/trackingAnalyticsService.js'
+import {
   runTrackingAnalyticsProjectionBackfill
 } from '../src/services/trackingAnalyticsProjectionService.js'
 import {
   getTrackingConversionProjectionStatus,
+  linkedWebSessionEvidenceCondition,
   queryTrackingConversionProjection,
   runTrackingConversionProjectionBackfill,
-  supportsTrackingConversionProjectionFilters
+  supportsTrackingConversionProjectionFilters,
+  TRACKING_CONVERSION_PROJECTION_VERSION
 } from '../src/services/trackingConversionProjectionService.js'
 import {
   ACCOUNT_TIMEZONE_CONFIG_KEY,
@@ -117,13 +123,7 @@ async function queryLegacyConversionSql(range, { groupBy = 'day', includeSeries 
       FROM contacts c
       WHERE c.created_at >= ?
         AND c.created_at < ?
-        AND (
-          (c.visitor_id IS NOT NULL AND c.visitor_id != '')
-          OR LOWER(COALESCE(c.source, '')) LIKE '%whatsapp%'
-          OR EXISTS (SELECT 1 FROM whatsapp_api_messages wam WHERE wam.contact_id = c.id)
-          OR EXISTS (SELECT 1 FROM whatsapp_api_attribution waa WHERE waa.contact_id = c.id)
-          OR EXISTS (SELECT 1 FROM whatsapp_attribution wa WHERE wa.contact_id = c.id)
-        )
+        AND ${linkedWebSessionEvidenceCondition('c', 'legacy_web_evidence')}
     ),
     payment_facts AS (
       SELECT p.contact_id, COUNT(*) AS payment_count
@@ -221,10 +221,22 @@ async function convergeTrackingProjection() {
 }
 
 async function insertContact({ id, timestamp, source = 'tracking', visitor = true, appointmentDate = null }) {
+  const visitorId = visitor ? `${id}_visitor` : null
   await db.run(`
     INSERT INTO contacts (id, full_name, source, visitor_id, appointment_date, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [id, id, source, visitor ? `${id}_visitor` : null, appointmentDate, timestamp, timestamp])
+  `, [id, id, source, visitorId, appointmentDate, timestamp, timestamp])
+  if (!visitorId) return
+
+  const evidenceAt = DateTime.fromISO(String(timestamp), { setZone: true })
+    .toUTC()
+    .minus({ minutes: 1 })
+    .toISO()
+  await db.run(`
+    INSERT INTO sessions(
+      id, session_id, visitor_id, contact_id, event_name, started_at, created_at
+    ) VALUES (?, ?, ?, ?, 'page_view', ?, ?)
+  `, [randomUUID(), `${id}_web_evidence`, visitorId, id, evidenceAt, evidenceAt])
 }
 
 async function convergeConversionProjection() {
@@ -244,6 +256,7 @@ async function convergeConversionProjection() {
 }
 
 test('116 separa dialectos y los triggers sólo coalescen la llave en la cola', async () => {
+  assert.equal(TRACKING_CONVERSION_PROJECTION_VERSION, 2)
   assert.equal(migrationRunsForDialect('116_tracking_conversion_projection.sqlite.sql', 'sqlite'), true)
   assert.equal(migrationRunsForDialect('116_tracking_conversion_projection.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('116a_tracking_conversion_projection.postgres.sql', 'postgres'), true)
@@ -277,6 +290,11 @@ test('116 separa dialectos y los triggers sólo coalescen la llave en la cola', 
   assert.match(sourceBatch, /active_appointments_count/i)
   assert.match(sourceBatch, /WHEN COALESCE\(cla\.active_appointments_count, 0\) <= 0 THEN 0/i)
   assert.match(sourceBatch, /FROM appointments exceptional_no_show[\s\S]*= 'no-show'/i)
+  assert.match(sourceBatch, /linkedWebSessionEvidenceCondition\('c', 'web_evidence'\)/i)
+  assert.match(serviceSource, /FROM sessions \$\{sessionAlias\}/i)
+  assert.match(serviceSource, /sessionAlias\}\.visitor_id = \$\{contactAlias\}\.visitor_id/i)
+  assert.match(serviceSource, /WEB_VIEW_EVENT_SQL = [^\n]*'native_site_view'/i)
+  assert.doesNotMatch(sourceBatch, /whatsapp_(?:api_)?(?:messages|attribution)/i)
   assert.doesNotMatch(sourceBatch, /NOT IN\s*\(/i, 'el backfill no repite un probe general de citas por contacto')
 })
 
@@ -525,10 +543,89 @@ test('la proyeccion conserva la semantica del SQL legacy para actual, anterior y
     assert.deepEqual(projectedInvalidStage.current.metrics, emptyMetrics())
     assert.deepEqual(projectedInvalidStage.current.series, [])
 
-    assert.equal(projected.current.metrics.registrations, 8, 'el contacto manual sin fuente analitica queda fuera')
+    assert.equal(projected.current.metrics.registrations, 7, 'mensajería y contactos manuales quedan fuera de la cohorte web')
     assert.equal(projected.current.metrics.purchases, 2, 'test, failed y monto cero no cuentan')
   } finally {
     await cleanup(prefix)
+  }
+})
+
+test('23 contactos web no se contaminan con 483 contactos de WhatsApp', async () => {
+  await runVersionedMigrations()
+  await setTimezone('UTC')
+
+  const prefix = uniquePrefix()
+  const date = '2094-08-19'
+  const createdAt = `${date}T12:00:00.000Z`
+  const evidenceAt = `${date}T11:59:00.000Z`
+  const currentRange = businessRange(date, '2094-08-20', 'UTC')
+  const previousRange = businessRange('2094-08-18', date, 'UTC')
+
+  await cleanup(prefix)
+  clearTrackingAnalyticsSummaryCache()
+  try {
+    await db.transaction(async transaction => {
+      for (let index = 0; index < 23; index += 1) {
+        const contactId = `${prefix}_web_${index}`
+        const visitorId = `${contactId}_visitor`
+        await transaction.run(`
+          INSERT INTO contacts(id, full_name, source, visitor_id, created_at, updated_at)
+          VALUES (?, ?, 'ristak_site:fixture', ?, ?, ?)
+        `, [contactId, contactId, visitorId, createdAt, createdAt])
+        await transaction.run(`
+          INSERT INTO sessions(
+            id, session_id, visitor_id, contact_id, event_name, started_at, created_at
+          ) VALUES (?, ?, ?, ?, 'page_view', ?, ?)
+        `, [
+          randomUUID(),
+          `${contactId}_session`,
+          visitorId,
+          contactId,
+          evidenceAt,
+          evidenceAt
+        ])
+      }
+
+      for (let index = 0; index < 483; index += 1) {
+        const contactId = `${prefix}_whatsapp_${index}`
+        await transaction.run(`
+          INSERT INTO contacts(id, full_name, source, visitor_id, created_at, updated_at)
+          VALUES (?, ?, 'WhatsApp API', NULL, ?, ?)
+        `, [contactId, contactId, createdAt, createdAt])
+      }
+    })
+
+    await runCrmListProjectionBackfill({ batchSize: 500, yieldMs: 0 })
+    await convergeConversionProjection()
+
+    const projected = await queryTrackingConversionProjection({
+      currentRange,
+      previousRange,
+      groupBy: 'day'
+    })
+    assert.equal(projected.current.metrics.registrations, 23)
+    assert.equal(projected.current.metrics.prospects, 23)
+
+    const projectedFixtureFacts = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM tracking_conversion_contact_fact
+      WHERE contact_id LIKE ?
+    `, [`${prefix}%`])
+    assert.equal(Number(projectedFixtureFacts.total), 23)
+
+    const legacy = await getTrackingAnalyticsSummary({
+      start: date,
+      end: date,
+      groupBy: 'day',
+      filters: {},
+      includeFacets: true,
+      allowStale: false
+    })
+    assert.equal(legacy.metrics.current.registrations, 23)
+  } finally {
+    clearTrackingAnalyticsSummaryCache()
+    await cleanup(prefix)
+    await convergeConversionProjection()
   }
 })
 
@@ -558,14 +655,11 @@ test('la cola incremental mantiene elegibilidad, etapa, compras, no-show y borra
     `, [messageId, contactId, at, at])
     await convergeConversionProjection()
     let projected = await read()
-    assert.deepEqual(projected.current.metrics, {
-      registrations: 1,
-      prospects: 1,
-      appointments: 0,
-      attendances: 0,
-      customers: 0,
-      purchases: 0
-    })
+    assert.deepEqual(
+      projected.current.metrics,
+      emptyMetrics(),
+      'un mensaje de WhatsApp no convierte al contacto en tráfico web'
+    )
 
     const paymentId = `${prefix}_payment`
     await db.run(`
@@ -574,14 +668,13 @@ test('la cola incremental mantiene elegibilidad, etapa, compras, no-show y borra
     `, [paymentId, contactId, at, at, at])
     await convergeConversionProjection()
     projected = await read()
-    assert.equal(projected.current.metrics.customers, 1)
-    assert.equal(projected.current.metrics.purchases, 1)
+    assert.deepEqual(projected.current.metrics, emptyMetrics())
 
     await db.run(`UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ?`, [at, paymentId])
     await convergeConversionProjection()
     projected = await read()
     assert.equal(projected.current.metrics.customers, 0)
-    assert.equal(projected.current.metrics.prospects, 1)
+    assert.equal(projected.current.metrics.prospects, 0)
 
     const appointmentId = `${prefix}_appointment`
     await db.run(`
@@ -591,7 +684,7 @@ test('la cola incremental mantiene elegibilidad, etapa, compras, no-show y borra
     await convergeConversionProjection()
     projected = await read()
     assert.equal(projected.current.metrics.appointments, 0, 'no-show con guion no cuenta como cita activa')
-    assert.equal(projected.current.metrics.prospects, 1)
+    assert.equal(projected.current.metrics.prospects, 0)
 
     await db.run(`
       UPDATE appointments
@@ -600,13 +693,11 @@ test('la cola incremental mantiene elegibilidad, etapa, compras, no-show y borra
     `, [appointmentId])
     await convergeConversionProjection()
     projected = await read()
-    assert.equal(projected.current.metrics.appointments, 1)
-    assert.equal(projected.current.metrics.attendances, 1)
-    assert.equal(projected.current.stageCounts.appointmentAttended, 1)
+    assert.deepEqual(projected.current.metrics, emptyMetrics())
 
     await db.run('DELETE FROM whatsapp_api_messages WHERE id = ?', [messageId])
     await convergeConversionProjection()
-    assert.equal((await read()).current.metrics.registrations, 0, 'sin fuente analítica deja el fact aunque conserve actividad')
+    assert.equal((await read()).current.metrics.registrations, 0)
 
     const attributionId = `${prefix}_attribution`
     await db.run(`
@@ -614,7 +705,7 @@ test('la cola incremental mantiene elegibilidad, etapa, compras, no-show y borra
       VALUES (?, ?, ?)
     `, [attributionId, contactId, at])
     await convergeConversionProjection()
-    assert.equal((await read()).current.metrics.attendances, 1)
+    assert.equal((await read()).current.metrics.registrations, 0)
 
     await db.run('DELETE FROM whatsapp_api_attribution WHERE id = ?', [attributionId])
     await convergeConversionProjection()
@@ -622,7 +713,45 @@ test('la cola incremental mantiene elegibilidad, etapa, compras, no-show y borra
 
     await db.run(`UPDATE contacts SET source = 'WhatsApp API' WHERE id = ?`, [contactId])
     await convergeConversionProjection()
-    assert.equal((await read()).current.metrics.registrations, 1)
+    assert.equal(
+      (await read()).current.metrics.registrations,
+      0,
+      'ni fuente, mensaje ni atribución de WhatsApp contaminan conversiones web'
+    )
+
+    const visitorId = `${prefix}_web_visitor`
+    const webEvidenceAt = '2096-03-04T11:59:00.000Z'
+    await db.run(`
+      INSERT INTO sessions(
+        id, session_id, visitor_id, contact_id, event_name, started_at, created_at
+      ) VALUES (?, ?, ?, ?, 'page_view', ?, ?)
+    `, [
+      randomUUID(),
+      `${prefix}_web_session`,
+      visitorId,
+      contactId,
+      webEvidenceAt,
+      webEvidenceAt
+    ])
+    await db.run('UPDATE contacts SET visitor_id = ? WHERE id = ?', [visitorId, contactId])
+    await convergeConversionProjection()
+    projected = await read()
+    assert.equal(projected.current.metrics.registrations, 1)
+    assert.equal(projected.current.metrics.appointments, 1)
+    assert.equal(projected.current.metrics.attendances, 1)
+    assert.equal(projected.current.stageCounts.appointmentAttended, 1)
+
+    await db.run(`UPDATE payments SET status = 'paid', updated_at = ? WHERE id = ?`, [at, paymentId])
+    await convergeConversionProjection()
+    projected = await read()
+    assert.equal(projected.current.metrics.customers, 1)
+    assert.equal(projected.current.metrics.purchases, 1)
+
+    await db.run(`UPDATE payments SET status = 'failed', updated_at = ? WHERE id = ?`, [at, paymentId])
+    await convergeConversionProjection()
+    projected = await read()
+    assert.equal(projected.current.metrics.customers, 0)
+    assert.equal(projected.current.metrics.attendances, 1)
 
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     await convergeConversionProjection()
@@ -676,7 +805,7 @@ test('timezone rebuild mueve el día civil y un restart conserva el estado durab
   }
 })
 
-test('los filtros web usan facts 113+116 y respetan started_at posterior al registro', async () => {
+test('los filtros web usan facts 113+116 y sólo atribuyen vistas causales', async () => {
   await runVersionedMigrations()
   await setTimezone('UTC')
   await runCrmListProjectionBackfill({ batchSize: 100, yieldMs: 0 })
@@ -690,6 +819,7 @@ test('los filtros web usan facts 113+116 y respetan started_at posterior al regi
     await insertContact({ id: contactId, timestamp: '2098-04-10T12:00:00.000Z' })
     const sessions = [
       [randomUUID(), `${prefix}_before`, '2098-04-10T11:00:00.000Z', 'antes', 'newsletter'],
+      [randomUUID(), `${prefix}_clock_skew`, '2098-04-10T12:04:00.000Z', 'tolerancia', 'native'],
       [randomUUID(), `${prefix}_after`, '2098-04-10T13:00:00.000Z', 'despues', 'fb']
     ]
     for (const [id, sessionId, startedAt, campaign, source] of sessions) {
@@ -710,14 +840,21 @@ test('los filtros web usan facts 113+116 y respetan started_at posterior al regi
       filters: { utm_campaign: ['antes'], device_type: ['mobile'] }
     })
     assert.equal(before.readPath, 'tracking_conversion_contact_fact_filtered')
-    assert.equal(before.current.metrics.registrations, 0, 'un evento anterior al alta no atribuye la conversión')
+    assert.equal(before.current.metrics.registrations, 1, 'la vista anterior al alta sí puede originar la conversión')
 
     const after = await queryTrackingConversionProjection({
       currentRange,
       previousRange,
       filters: { utm_campaign: ['despues'], utm_source: ['fb'], device_type: ['mobile'] }
     })
-    assert.equal(after.current.metrics.registrations, 1)
+    assert.equal(after.current.metrics.registrations, 0, 'una visita futura no reclama una conversión ya creada')
+
+    const clockSkew = await queryTrackingConversionProjection({
+      currentRange,
+      previousRange,
+      filters: { utm_campaign: ['tolerancia'], utm_source: ['native'], device_type: ['mobile'] }
+    })
+    assert.equal(clockSkew.current.metrics.registrations, 1, 'se tolera sólo el desfase corto del beacon')
 
     const broadenedSource = await queryTrackingConversionProjection({
       currentRange,

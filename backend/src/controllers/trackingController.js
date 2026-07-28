@@ -9,6 +9,10 @@ import { resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../
 import { getGroupExpression } from '../services/analyticsService.js'
 import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
 import {
+  acquisitionAnalyticsContract,
+  getAcquisitionAnalyticsSummary
+} from '../services/acquisitionAnalyticsService.js'
+import {
   buildTrackingSearchDocumentExpression,
   getTrackingAnalyticsFacet,
   getTrackingAnalyticsSummary,
@@ -3351,6 +3355,123 @@ export async function getMessagesSummary(req, res) {
     if (isTrackingRequestAbort(error, requestScope.signal)) return
     logger.error('Error obteniendo resumen de mensajes para analíticas:', error)
     res.status(500).json({ error: 'Internal server error' })
+  } finally {
+    requestScope.cleanup()
+  }
+}
+
+/**
+ * POST /api/tracking/analytics/acquisition-summary
+ * Dona y tendencias con poblaciones explícitas. Nunca mezcla visitantes web,
+ * conversaciones y contactos dentro del mismo denominador.
+ */
+function isValidAcquisitionDateOnly(value) {
+  const normalized = String(value || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return false
+  const parsed = new Date(`${normalized}T00:00:00.000Z`)
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === normalized
+}
+
+export async function getAcquisitionAnalyticsSummaryHandler(req, res) {
+  const requestScope = createTrackingRequestAbortScope(res, {
+    timeoutMs: TRACKING_AUXILIARY_QUERY_DEADLINE_MS
+  })
+  try {
+    const {
+      start,
+      end,
+      population = 'contacts',
+      dimension = 'entry',
+      channels = [],
+      groupBy = 'day',
+      filters = {}
+    } = req.body || {}
+
+    const normalizedStart = String(start || '').trim()
+    const normalizedEnd = String(end || '').trim()
+    if (
+      !isValidAcquisitionDateOnly(normalizedStart) ||
+      !isValidAcquisitionDateOnly(normalizedEnd)
+    ) {
+      return res.status(400).json({ error: 'start y end deben ser fechas reales con formato YYYY-MM-DD' })
+    }
+    if (normalizedStart > normalizedEnd) {
+      return res.status(400).json({ error: 'start no puede ser posterior a end' })
+    }
+    if (!acquisitionAnalyticsContract.populations.includes(String(population))) {
+      return res.status(400).json({ error: 'Población de adquisición no soportada' })
+    }
+    if (!acquisitionAnalyticsContract.dimensions.includes(String(dimension))) {
+      return res.status(400).json({ error: 'Dimensión de adquisición no soportada' })
+    }
+    if (!acquisitionAnalyticsContract.groups.includes(String(groupBy))) {
+      return res.status(400).json({ error: 'Agrupación temporal no soportada' })
+    }
+    if (!Array.isArray(channels) || channels.some(channel => (
+      !acquisitionAnalyticsContract.channels.includes(String(channel))
+    ))) {
+      return res.status(400).json({ error: 'Canal de adquisición no soportado' })
+    }
+    if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
+      return res.status(400).json({ error: 'Los filtros deben ser un objeto' })
+    }
+    const filterEntries = Object.entries(filters)
+    if (
+      filterEntries.length > 32 ||
+      filterEntries.some(([field, values]) => (
+        String(field).length > 80 ||
+        !Array.isArray(values) ||
+        values.length > 100 ||
+        values.some(value => typeof value !== 'string' || value.length > 500)
+      ))
+    ) {
+      return res.status(400).json({ error: 'Los filtros exceden los límites permitidos' })
+    }
+
+    const range = await resolveDateRangeWithGHLTimezone({
+      startDate: normalizedStart,
+      endDate: normalizedEnd,
+      signal: requestScope.signal
+    })
+    const data = await getAcquisitionAnalyticsSummary(range, {
+      population,
+      dimension,
+      channels,
+      groupBy,
+      filters,
+      signal: requestScope.signal
+    })
+
+    if (requestScope.timedOut) throw new Error('tracking_acquisition_deadline')
+    if (requestScope.signal.aborted || res.writableEnded || res.finished) return
+    res.json({ success: true, data })
+  } catch (error) {
+    if (
+      error?.code === 'contact_origin_projection_warming' ||
+      error?.code === 'message_analytics_projection_warming' ||
+      error?.code === 'tracking_analytics_projection_warming'
+    ) {
+      if (res.writableEnded || res.finished) return
+      res.setHeader?.('Retry-After', '2')
+      return res.status(503).json({
+        error: 'La atribución todavía se está preparando. Reintenta en unos segundos.',
+        code: error.code,
+        retryable: true,
+        projectionStatus: error.projectionStatus || 'warming'
+      })
+    }
+    if (requestScope.timedOut) {
+      if (res.writableEnded || res.finished) return
+      return res.status(503).json({
+        error: 'La atribución tardó demasiado y fue cancelada. Intenta nuevamente.',
+        code: 'tracking_acquisition_deadline',
+        retryable: true
+      })
+    }
+    if (isTrackingRequestAbort(error, requestScope.signal)) return
+    logger.error('Error obteniendo atribución para Analíticas:', error)
+    res.status(Number(error?.status) >= 400 && Number(error?.status) < 500 ? Number(error.status) : 500)
+      .json({ error: Number(error?.status) < 500 ? error.message : 'Internal server error' })
   } finally {
     requestScope.cleanup()
   }

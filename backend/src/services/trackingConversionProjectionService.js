@@ -15,9 +15,11 @@ import { getContactListProjectionStatus } from './crmListProjectionService.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
 
-export const TRACKING_CONVERSION_PROJECTION_VERSION = 1
+export const TRACKING_CONVERSION_PROJECTION_VERSION = 2
 
 const PROJECTION_STATE_ID = 1
+const WEB_EVIDENCE_CLOCK_SKEW_MINUTES = 5
+const WEB_VIEW_EVENT_SQL = "'session_start', 'page_view', 'native_site_view'"
 const BACKFILL_JOB_KEY = 'tracking-conversion-projection'
 const POSTGRES_BATCH_SIZE = 500
 const SQLITE_BATCH_SIZE = 150
@@ -111,6 +113,43 @@ function chunks(rows, size) {
 function hasFilterValues(values) {
   return (Array.isArray(values) ? values : [values])
     .some(value => textValue(value) !== '')
+}
+
+/**
+ * La creación del contacto puede quedar unos segundos antes que el último
+ * beacon del navegador por latencia o desfase de reloj. Esa tolerancia no
+ * convierte una visita futura real en adquisición web: cualquier visita fuera
+ * de estos cinco minutos queda excluida.
+ */
+export function webEvidenceCausalityCondition(
+  evidenceTimestampExpression,
+  contactCreatedAtExpression
+) {
+  if (databaseDialect === 'postgres') {
+    return `${evidenceTimestampExpression} <= ${contactCreatedAtExpression} + INTERVAL '${WEB_EVIDENCE_CLOCK_SKEW_MINUTES} minutes'`
+  }
+  return `julianday(${evidenceTimestampExpression}) <= julianday(${contactCreatedAtExpression}) + (${WEB_EVIDENCE_CLOCK_SKEW_MINUTES}.0 / 1440.0)`
+}
+
+/**
+ * Un visitor_id aislado no demuestra tráfico web. La cohorte sólo acepta un
+ * contacto cuando ese identificador tiene al menos una vista real ocurrida
+ * antes (o dentro de la tolerancia de reloj) de la creación del contacto.
+ */
+export function linkedWebSessionEvidenceCondition(contactAlias = 'c', sessionAlias = 'web_evidence') {
+  return `(
+    NULLIF(TRIM(COALESCE(${contactAlias}.visitor_id, '')), '') IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM sessions ${sessionAlias}
+      WHERE ${sessionAlias}.visitor_id = ${contactAlias}.visitor_id
+        AND LOWER(COALESCE(${sessionAlias}.event_name, '')) IN (${WEB_VIEW_EVENT_SQL})
+        AND ${webEvidenceCausalityCondition(
+          `${sessionAlias}.started_at`,
+          `${contactAlias}.created_at`
+        )}
+    )
+  )`
 }
 
 /**
@@ -264,13 +303,8 @@ async function readSourceRowsByIds(transaction, ids) {
         c.id AS contact_id,
         c.created_at,
         COALESCE(cla.purchases_count, 0) AS purchases_count,
-        CASE WHEN (
-          (c.visitor_id IS NOT NULL AND c.visitor_id != '')
-          OR LOWER(COALESCE(c.source, '')) LIKE '%whatsapp%'
-          OR EXISTS (SELECT 1 FROM whatsapp_api_messages wam WHERE wam.contact_id = c.id)
-          OR EXISTS (SELECT 1 FROM whatsapp_api_attribution waa WHERE waa.contact_id = c.id)
-          OR EXISTS (SELECT 1 FROM whatsapp_attribution wa WHERE wa.contact_id = c.id)
-        ) THEN 1 ELSE 0 END AS eligible,
+        CASE WHEN ${linkedWebSessionEvidenceCondition('c', 'web_evidence')}
+          THEN 1 ELSE 0 END AS eligible,
         CASE
           WHEN c.appointment_date IS NOT NULL THEN 1
           WHEN COALESCE(cla.active_appointments_count, 0) <= 0 THEN 0
@@ -936,8 +970,11 @@ async function queryFilteredFactRows(current, previous, filters, stages, { signa
       WHERE event_fact.business_date >= ${datePlaceholder}
         AND event_fact.business_date <= ${datePlaceholder}
         AND event_fact.contact_key != ''
-        AND event_fact.event_count > 0
-        AND event_fact.started_at >= candidate_fact.contact_created_at
+        AND event_fact.view_count > 0
+        AND ${webEvidenceCausalityCondition(
+          'event_fact.started_at',
+          'candidate_fact.contact_created_at'
+        )}
         ${currentConditions.length ? `AND ${currentConditions.join(' AND ')}` : ''}
     ),
     previous_candidates ${materialized} (
@@ -950,8 +987,11 @@ async function queryFilteredFactRows(current, previous, filters, stages, { signa
       WHERE event_fact.business_date >= ${datePlaceholder}
         AND event_fact.business_date <= ${datePlaceholder}
         AND event_fact.contact_key != ''
-        AND event_fact.event_count > 0
-        AND event_fact.started_at >= candidate_fact.contact_created_at
+        AND event_fact.view_count > 0
+        AND ${webEvidenceCausalityCondition(
+          'event_fact.started_at',
+          'candidate_fact.contact_created_at'
+        )}
         ${previousConditions.length ? `AND ${previousConditions.join(' AND ')}` : ''}
     )
     SELECT 'current' AS period_scope, CAST(cf.business_date AS TEXT) AS business_date,

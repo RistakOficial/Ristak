@@ -3,6 +3,135 @@ import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '..
 
 // Fuentes "genéricas" que no aportan información de plataforma real.
 const GENERIC_SOURCES = new Set(['Directo', 'Desconocido', 'Otro'])
+const CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES = 5
+const CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MS =
+  CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES * 60 * 1000
+
+export const CONTACT_ACQUISITION_SURFACES = Object.freeze([
+  'website',
+  'whatsapp',
+  'messenger',
+  'instagram',
+  'email',
+  'manual',
+  'import',
+  'api',
+  'other',
+  'unknown'
+])
+
+export const CONTACT_ACQUISITION_KINDS = Object.freeze(['paid_ad', 'unattributed'])
+
+function normalizedToken(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+}
+
+function hasAnyToken(value, tokens) {
+  const normalized = normalizedToken(value)
+  return Boolean(normalized) && tokens.some(token => normalized.includes(token))
+}
+
+function explicitAcquisitionSurface(source) {
+  const normalized = normalizedToken(source)
+  if (!normalized || ['directo', 'direct', 'desconocido', 'unknown'].includes(normalized)) return null
+  if (hasAnyToken(normalized, [
+    'ristak_site', 'ristak_form', 'formulario', 'native_site', 'native site',
+    'sitio web', 'website', 'web form', 'webform', 'landing', 'ristak_calendar'
+  ]) || normalized === 'site' || normalized === 'web' || normalized === 'form') {
+    return 'website'
+  }
+  if (hasAnyToken(normalized, [
+    'whatsapp_api', 'whatsapp api', 'whatsapp', 'waapi', 'ycloud',
+    'click_to_whatsapp', 'click-to-whatsapp', 'ctwa', 'wa.me'
+  ])) return 'whatsapp'
+  if (hasAnyToken(normalized, ['messenger', 'facebook messenger', 'm.me'])) return 'messenger'
+  if (hasAnyToken(normalized, ['instagram', 'instagram dm']) || normalized === 'ig') return 'instagram'
+  if (hasAnyToken(normalized, ['email', 'correo', 'newsletter']) || normalized === 'mail') return 'email'
+  if (hasAnyToken(normalized, ['manual', 'creado manualmente', 'created manually'])) return 'manual'
+  if (hasAnyToken(normalized, ['import', 'csv', 'archivo'])) return 'import'
+  if (hasAnyToken(normalized, ['webhook', 'integration api', 'integracion api']) ||
+    normalized === 'api') return 'api'
+  if (['otro', 'other'].includes(normalized)) return 'other'
+  return null
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(String(value ?? ''))
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function isCausalEvidence(contact, evidence) {
+  if (!evidence) return false
+  const contactCreatedAt = timestampMs(contact?.created_at)
+  const evidenceAt = timestampMs(evidence.started_at || evidence.created_at)
+  if (contactCreatedAt === null || evidenceAt === null) return true
+  return evidenceAt <= contactCreatedAt + CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MS
+}
+
+function sessionViewCount(session) {
+  if (!session) return 0
+  if (session.view_count !== null && session.view_count !== undefined) {
+    return Math.max(0, Number(session.view_count) || 0)
+  }
+  if (session.event_name !== null && session.event_name !== undefined) {
+    return normalizedToken(session.event_name) === 'page_view' ? 1 : 0
+  }
+  // Compatibilidad para consumidores históricos de resolveContactSource().
+  // El loader del read model siempre manda view_count explícito.
+  return 1
+}
+
+function verifiedWebSession(contact, session) {
+  return sessionViewCount(session) > 0 && isCausalEvidence(contact, session)
+}
+
+function hasPaidWebEvidence(contact, session) {
+  const signals = [
+    contact?.attribution_ad_id,
+    session?.gclid,
+    session?.fbclid,
+    session?.wbraid,
+    session?.gbraid,
+    session?.msclkid,
+    session?.ttclid,
+    session?.campaign_id,
+    session?.ad_id
+  ]
+  if (signals.some(value => firstText(value) !== null)) return true
+  return hasAnyToken(firstText(session?.utm_medium, contact?.attribution_medium), [
+    'cpc', 'ppc', 'paid', 'display', 'social_ad', 'social ad', 'retarget'
+  ]) || hasAnyToken(session?.channel, ['paid', 'advertising', 'ads'])
+}
+
+function paidMessagingSignal(value) {
+  const normalized = normalizedToken(value).replaceAll('-', '_').replaceAll(' ', '_')
+  return [
+    'ad',
+    'ads',
+    'paid',
+    'paid_ad',
+    'click_to_whatsapp',
+    'click_to_message',
+    'ctwa'
+  ].includes(normalized)
+}
+
+function hasPaidMessagingEvidence(contact, attribution) {
+  const contactPaidSignal = firstText(contact?.attribution_ad_id, contact?.attribution_ctwa_clid)
+  if (contactPaidSignal !== null) return true
+  if (!isCausalEvidence(contact, attribution)) return false
+  if (firstText(
+    attribution?.referral_ctwa_clid,
+    attribution?.ad_id_thru_message
+  ) !== null) return true
+  if (paidMessagingSignal(attribution?.referral_source_type)) return true
+  return paidMessagingSignal(attribution?.referral_entry_point) &&
+    firstText(attribution?.referral_source_id) !== null
+}
 
 function sqlSignal(expression) {
   return `LOWER(TRIM(CAST(COALESCE(${expression}, '') AS TEXT)))`
@@ -78,6 +207,17 @@ export async function loadFirstWhatsAppAttributions(contactIds = []) {
   const ids = Array.from(new Set(contactIds.filter(Boolean)))
   const byContact = new Map()
   if (!ids.length) return byContact
+  const keepEarliest = row => {
+    if (!row?.contact_id) return
+    const current = byContact.get(row.contact_id)
+    if (!current) {
+      byContact.set(row.contact_id, row)
+      return
+    }
+    const currentTime = timestampMs(current.created_at) ?? Number.POSITIVE_INFINITY
+    const nextTime = timestampMs(row.created_at) ?? Number.POSITIVE_INFINITY
+    if (nextTime < currentTime) byContact.set(row.contact_id, row)
+  }
 
   const placeholders = ids.map(() => '?').join(', ')
 
@@ -100,11 +240,7 @@ export async function loadFirstWhatsAppAttributions(contactIds = []) {
     ORDER BY created_at ASC, id ASC
   `, ids)
 
-  officialRows.forEach(row => {
-    if (row.contact_id && !byContact.has(row.contact_id)) {
-      byContact.set(row.contact_id, row)
-    }
-  })
+  officialRows.forEach(keepEarliest)
 
   const apiRows = await db.all(`
     SELECT
@@ -115,7 +251,7 @@ export async function loadFirstWhatsAppAttributions(contactIds = []) {
       COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
       COALESCE(attr.detected_body, msg.detected_body) as referral_body,
       COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
-      COALESCE(attr.detected_source_id, msg.detected_source_id) as ad_id_thru_message,
+      NULL as ad_id_thru_message,
       COALESCE(attr.detected_source_app, msg.detected_source_app) as referral_source_app,
       COALESCE(attr.detected_entry_point, msg.detected_entry_point) as referral_entry_point,
       COALESCE(msg.message_timestamp, msg.created_at) as created_at,
@@ -134,11 +270,7 @@ export async function loadFirstWhatsAppAttributions(contactIds = []) {
     ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.id ASC
   `, ids)
 
-  apiRows.forEach(row => {
-    if (row.contact_id && !byContact.has(row.contact_id)) {
-      byContact.set(row.contact_id, row)
-    }
-  })
+  apiRows.forEach(keepEarliest)
 
   return byContact
 }
@@ -150,6 +282,18 @@ async function loadFirstWhatsAppAttributionsForProjection(contactIds = [], {
   const ids = Array.from(new Set(contactIds.filter(Boolean)))
   const byContact = new Map()
   if (!ids.length) return byContact
+  const keepEarliest = row => {
+    if (!row?.contact_id) return
+    const key = String(row.contact_id)
+    const current = byContact.get(key)
+    if (!current) {
+      byContact.set(key, row)
+      return
+    }
+    const currentTime = timestampMs(current.created_at) ?? Number.POSITIVE_INFINITY
+    const nextTime = timestampMs(row.created_at) ?? Number.POSITIVE_INFINITY
+    if (nextTime < currentTime) byContact.set(key, row)
+  }
 
   const placeholders = ids.map(() => '?').join(', ')
 
@@ -208,11 +352,7 @@ async function loadFirstWhatsAppAttributionsForProjection(contactIds = [], {
       WHERE source_rank = 1
     `, ids, { signal })
 
-  officialRows.forEach(row => {
-    if (row.contact_id && !byContact.has(row.contact_id)) {
-      byContact.set(row.contact_id, row)
-    }
-  })
+  officialRows.forEach(keepEarliest)
 
   const apiRows = databaseDialect === 'postgres'
     ? await database.all(`
@@ -224,7 +364,7 @@ async function loadFirstWhatsAppAttributionsForProjection(contactIds = [], {
         COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
         COALESCE(attr.detected_body, msg.detected_body) as referral_body,
         COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
-        COALESCE(attr.detected_source_id, msg.detected_source_id) as ad_id_thru_message,
+        NULL as ad_id_thru_message,
         COALESCE(attr.detected_source_app, msg.detected_source_app) as referral_source_app,
         COALESCE(attr.detected_entry_point, msg.detected_entry_point) as referral_entry_point,
         COALESCE(msg.message_timestamp, msg.created_at) as created_at,
@@ -256,7 +396,7 @@ async function loadFirstWhatsAppAttributionsForProjection(contactIds = [], {
           COALESCE(attr.detected_headline, msg.detected_headline) as referral_headline,
           COALESCE(attr.detected_body, msg.detected_body) as referral_body,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as referral_ctwa_clid,
-          COALESCE(attr.detected_source_id, msg.detected_source_id) as ad_id_thru_message,
+          NULL as ad_id_thru_message,
           COALESCE(attr.detected_source_app, msg.detected_source_app) as referral_source_app,
           COALESCE(attr.detected_entry_point, msg.detected_entry_point) as referral_entry_point,
           COALESCE(msg.message_timestamp, msg.created_at) as created_at,
@@ -297,11 +437,7 @@ async function loadFirstWhatsAppAttributionsForProjection(contactIds = [], {
       WHERE source_rank = 1
     `, ids, { signal })
 
-  apiRows.forEach(row => {
-    if (row.contact_id && !byContact.has(row.contact_id)) {
-      byContact.set(row.contact_id, row)
-    }
-  })
+  apiRows.forEach(keepEarliest)
 
   return byContact
 }
@@ -334,7 +470,21 @@ export async function loadResolvedContactSources(contactIds = [], {
         matched.referrer_url,
         matched.site_source_name,
         matched.utm_source,
-        matched.source_platform
+        matched.utm_medium,
+        matched.source_platform,
+        matched.channel,
+        matched.gclid,
+        matched.fbclid,
+        matched.wbraid,
+        matched.gbraid,
+        matched.msclkid,
+        matched.ttclid,
+        matched.campaign_id,
+        matched.ad_id,
+        matched.started_at,
+        matched.created_at,
+        matched.event_name,
+        matched.view_count
       FROM contacts sc
       LEFT JOIN LATERAL (
         SELECT candidates.*
@@ -342,10 +492,15 @@ export async function loadResolvedContactSources(contactIds = [], {
           SELECT by_contact.*
           FROM (
             SELECT
-              s.id, s.referrer_url, s.site_source_name, s.utm_source,
-              s.source_platform, s.started_at, s.created_at, 1 AS match_priority
+              s.id, s.referrer_url, s.site_source_name, s.utm_source, s.utm_medium,
+              s.source_platform, s.channel, s.gclid, s.fbclid, s.wbraid, s.gbraid,
+              s.msclkid, s.ttclid, s.campaign_id, s.ad_id, s.started_at, s.created_at,
+              s.event_name, 1 AS view_count, 1 AS match_priority
             FROM sessions s
             WHERE s.contact_id = sc.id
+              AND LOWER(COALESCE(s.event_name, 'page_view')) = 'page_view'
+              AND COALESCE(s.started_at, s.created_at)
+                <= sc.created_at + INTERVAL '${CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES} minutes'
             ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
             LIMIT 1
           ) by_contact
@@ -355,12 +510,17 @@ export async function loadResolvedContactSources(contactIds = [], {
           SELECT by_visitor.*
           FROM (
             SELECT
-              s.id, s.referrer_url, s.site_source_name, s.utm_source,
-              s.source_platform, s.started_at, s.created_at, 2 AS match_priority
+              s.id, s.referrer_url, s.site_source_name, s.utm_source, s.utm_medium,
+              s.source_platform, s.channel, s.gclid, s.fbclid, s.wbraid, s.gbraid,
+              s.msclkid, s.ttclid, s.campaign_id, s.ad_id, s.started_at, s.created_at,
+              s.event_name, 1 AS view_count, 2 AS match_priority
             FROM sessions s
             WHERE sc.visitor_id IS NOT NULL
               AND sc.visitor_id != ''
               AND s.visitor_id = sc.visitor_id
+              AND LOWER(COALESCE(s.event_name, 'page_view')) = 'page_view'
+              AND COALESCE(s.started_at, s.created_at)
+                <= sc.created_at + INTERVAL '${CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES} minutes'
             ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
             LIMIT 1
           ) by_visitor
@@ -370,12 +530,17 @@ export async function loadResolvedContactSources(contactIds = [], {
           SELECT by_email.*
           FROM (
             SELECT
-              s.id, s.referrer_url, s.site_source_name, s.utm_source,
-              s.source_platform, s.started_at, s.created_at, 3 AS match_priority
+              s.id, s.referrer_url, s.site_source_name, s.utm_source, s.utm_medium,
+              s.source_platform, s.channel, s.gclid, s.fbclid, s.wbraid, s.gbraid,
+              s.msclkid, s.ttclid, s.campaign_id, s.ad_id, s.started_at, s.created_at,
+              s.event_name, 1 AS view_count, 3 AS match_priority
             FROM sessions s
             WHERE sc.email IS NOT NULL
               AND sc.email != ''
               AND LOWER(s.email) = LOWER(sc.email)
+              AND LOWER(COALESCE(s.event_name, 'page_view')) = 'page_view'
+              AND COALESCE(s.started_at, s.created_at)
+                <= sc.created_at + INTERVAL '${CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES} minutes'
             ORDER BY s.started_at ASC, s.created_at ASC, s.id ASC
             LIMIT 1
           ) by_email
@@ -387,7 +552,7 @@ export async function loadResolvedContactSources(contactIds = [], {
     `, ids, { signal })
     : await database.all(`
       WITH selected_contacts AS (
-        SELECT id, visitor_id, email
+        SELECT id, visitor_id, email, created_at
         FROM contacts
         WHERE id IN (${placeholders})
       ), session_matches AS (
@@ -397,12 +562,28 @@ export async function loadResolvedContactSources(contactIds = [], {
           s.referrer_url,
           s.site_source_name,
           s.utm_source,
+          s.utm_medium,
           s.source_platform,
+          s.channel,
+          s.gclid,
+          s.fbclid,
+          s.wbraid,
+          s.gbraid,
+          s.msclkid,
+          s.ttclid,
+          s.campaign_id,
+          s.ad_id,
           s.started_at,
           s.created_at,
+          s.event_name,
+          1 AS view_count,
           1 AS match_priority
         FROM selected_contacts sc
-        INNER JOIN sessions s ON s.contact_id = sc.id
+        INNER JOIN sessions s
+          ON s.contact_id = sc.id
+         AND LOWER(COALESCE(s.event_name, 'page_view')) = 'page_view'
+         AND julianday(COALESCE(s.started_at, s.created_at))
+           <= julianday(sc.created_at) + (${CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES}.0 / 1440.0)
 
         UNION ALL
 
@@ -412,15 +593,30 @@ export async function loadResolvedContactSources(contactIds = [], {
           s.referrer_url,
           s.site_source_name,
           s.utm_source,
+          s.utm_medium,
           s.source_platform,
+          s.channel,
+          s.gclid,
+          s.fbclid,
+          s.wbraid,
+          s.gbraid,
+          s.msclkid,
+          s.ttclid,
+          s.campaign_id,
+          s.ad_id,
           s.started_at,
           s.created_at,
+          s.event_name,
+          1 AS view_count,
           2 AS match_priority
         FROM selected_contacts sc
         INNER JOIN sessions s
           ON sc.visitor_id IS NOT NULL
          AND sc.visitor_id != ''
          AND s.visitor_id = sc.visitor_id
+         AND LOWER(COALESCE(s.event_name, 'page_view')) = 'page_view'
+         AND julianday(COALESCE(s.started_at, s.created_at))
+           <= julianday(sc.created_at) + (${CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES}.0 / 1440.0)
 
         UNION ALL
 
@@ -430,15 +626,30 @@ export async function loadResolvedContactSources(contactIds = [], {
           s.referrer_url,
           s.site_source_name,
           s.utm_source,
+          s.utm_medium,
           s.source_platform,
+          s.channel,
+          s.gclid,
+          s.fbclid,
+          s.wbraid,
+          s.gbraid,
+          s.msclkid,
+          s.ttclid,
+          s.campaign_id,
+          s.ad_id,
           s.started_at,
           s.created_at,
+          s.event_name,
+          1 AS view_count,
           3 AS match_priority
         FROM selected_contacts sc
         INNER JOIN sessions s
           ON sc.email IS NOT NULL
          AND sc.email != ''
          AND LOWER(s.email) = LOWER(sc.email)
+         AND LOWER(COALESCE(s.event_name, 'page_view')) = 'page_view'
+         AND julianday(COALESCE(s.started_at, s.created_at))
+           <= julianday(sc.created_at) + (${CONTACT_ACQUISITION_CAUSAL_TOLERANCE_MINUTES}.0 / 1440.0)
       ), ranked AS (
         SELECT
           session_matches.*,
@@ -448,7 +659,9 @@ export async function loadResolvedContactSources(contactIds = [], {
           ) AS source_rank
         FROM session_matches
       )
-      SELECT selected_contact_id, referrer_url, site_source_name, utm_source, source_platform
+      SELECT selected_contact_id, referrer_url, site_source_name, utm_source, utm_medium,
+        source_platform, channel, gclid, fbclid, wbraid, gbraid, msclkid, ttclid,
+        campaign_id, ad_id, started_at, created_at, event_name, view_count
       FROM ranked
       WHERE source_rank = 1
     `, ids, { signal })
@@ -457,14 +670,20 @@ export async function loadResolvedContactSources(contactIds = [], {
   const whatsappByContact = await loadFirstWhatsAppAttributionsForProjection(ids, { database, signal })
   return new Map(contacts.map(contact => [
     String(contact.id),
-    {
-      contact,
-      source: resolveContactSource(
+    (() => {
+      const acquisition = resolveContactAcquisition(
         contact,
         sessionsByContact.get(String(contact.id)) || null,
         whatsappByContact.get(String(contact.id)) || null
       )
-    }
+      return {
+        contact,
+        source: acquisition.source,
+        acquisitionSurface: acquisition.surface,
+        acquisitionKind: acquisition.kind,
+        evidenceType: acquisition.evidenceType
+      }
+    })()
   ]))
 }
 
@@ -501,32 +720,117 @@ export function buildContactAttributionFields(contact = {}, whatsappAttribution 
 }
 
 /**
- * Resuelve la fuente de tráfico normalizada de UN contacto combinando, por prioridad:
- *  1. Señal de la primera sesión web (referrer/utm/site_source/source_platform).
- *  2. Plataforma de atribución de WhatsApp / Meta Ads (ad_id/ctwa_clid).
- *  3. Campos de atribución guardados en el propio contacto.
- * @returns {string} nombre de fuente (Facebook, Instagram, WhatsApp, Meta Ads, Directo, ...)
+ * Clasifica una sola vez las tres dimensiones que suelen confundirse:
+ * - surface: por dónde nació el contacto.
+ * - kind: si existe evidencia comprobable de anuncio.
+ * - source: plataforma de marketing normalizada.
+ *
+ * La fuente explícita del contacto manda sobre evidencia secundaria. En
+ * particular, una visita posterior nunca puede convertir WhatsApp en website.
  */
-export function resolveContactSource(contact = {}, firstSession = null, whatsappAttribution = null) {
-  if (firstSession) {
+export function resolveContactAcquisition(
+  contact = {},
+  firstSession = null,
+  whatsappAttribution = null
+) {
+  const explicitSurface = explicitAcquisitionSurface(contact.source)
+  const webIsCausal = verifiedWebSession(contact, firstSession)
+  const whatsappIsCausal = isCausalEvidence(contact, whatsappAttribution)
+  const ownMessagingEvidence = firstText(
+    contact.attribution_ctwa_clid,
+    hasAnyToken(contact.attribution_session_source, ['whatsapp', 'waapi', 'ycloud', 'ctwa'])
+      ? contact.attribution_session_source
+      : null
+  ) !== null
+
+  let surface = explicitSurface
+  let evidenceType = explicitSurface ? 'explicit_source' : 'no_verified_evidence'
+  if (!surface) {
+    const candidates = []
+    if (webIsCausal) {
+      candidates.push({
+        surface: 'website',
+        evidenceType: hasPaidWebEvidence(contact, firstSession) ? 'web_paid_touch' : 'web_session'
+      })
+    }
+    if (whatsappIsCausal || ownMessagingEvidence) {
+      candidates.push({
+        surface: 'whatsapp',
+        evidenceType: hasPaidMessagingEvidence(contact, whatsappAttribution)
+          ? 'whatsapp_paid_touch'
+          : 'whatsapp_attribution'
+      })
+    }
+    if (candidates.length === 1) {
+      surface = candidates[0].surface
+      evidenceType = candidates[0].evidenceType
+    } else if (candidates.length > 1) {
+      surface = 'unknown'
+      evidenceType = 'conflicting_causal_evidence'
+    }
+  }
+  if (!surface) {
+    const normalizedSource = normalizedToken(contact.source)
+    const genericSource = !normalizedSource ||
+      ['directo', 'direct', 'desconocido', 'unknown'].includes(normalizedSource)
+    surface = genericSource ? 'unknown' : 'other'
+    evidenceType = genericSource ? 'no_verified_evidence' : 'unclassified_source'
+  }
+
+  const paidEvidence = surface === 'website'
+    ? (webIsCausal && hasPaidWebEvidence(contact, firstSession)) ||
+      firstText(contact.attribution_ad_id) !== null
+    : ['whatsapp', 'messenger', 'instagram'].includes(surface)
+      ? hasPaidMessagingEvidence(contact, whatsappAttribution)
+      : false
+  const kind = paidEvidence ? 'paid_ad' : 'unattributed'
+  if (paidEvidence && evidenceType === 'explicit_source') {
+    evidenceType = surface === 'website' ? 'web_paid_touch' : 'whatsapp_paid_touch'
+  }
+
+  let source = null
+  if (surface === 'website' && webIsCausal) {
     const webSource = normalizeTrafficSource({
       referrer_url: firstSession.referrer_url,
       site_source_name: firstSession.site_source_name,
       utm_source: firstSession.utm_source,
       source_platform: firstSession.source_platform
     })
-    if (!GENERIC_SOURCES.has(webSource)) return webSource
+    if (!GENERIC_SOURCES.has(webSource)) source = webSource
+  }
+  if (!source && ['whatsapp', 'messenger', 'instagram'].includes(surface)) {
+    const causalAttribution = whatsappIsCausal ? whatsappAttribution : null
+    const { whatsappAttributionPlatform } = buildContactAttributionFields(contact, causalAttribution)
+    // Un source_id genérico puede ser un post, perfil o cualquier referral de
+    // WhatsApp. Sólo permitimos la etiqueta "Meta Ads" si otra señal demuestra
+    // que realmente fue un anuncio.
+    if (whatsappAttributionPlatform &&
+      (whatsappAttributionPlatform !== 'Meta Ads' || paidEvidence)) {
+      source = whatsappAttributionPlatform
+    }
+  }
+  if (!source) {
+    source = normalizeTrafficSource({
+      referrer_url: contact.attribution_url,
+      site_source_name: contact.attribution_session_source,
+      utm_source: contact.attribution_medium,
+      source: contact.source
+    })
   }
 
-  const { whatsappAttributionPlatform } = buildContactAttributionFields(contact, whatsappAttribution)
-  if (whatsappAttributionPlatform) return whatsappAttributionPlatform
+  return {
+    source: source || 'Desconocido',
+    surface: CONTACT_ACQUISITION_SURFACES.includes(surface) ? surface : 'unknown',
+    kind: CONTACT_ACQUISITION_KINDS.includes(kind) ? kind : 'unattributed',
+    evidenceType
+  }
+}
 
-  return normalizeTrafficSource({
-    referrer_url: contact.attribution_url,
-    site_source_name: contact.attribution_session_source,
-    utm_source: contact.attribution_medium,
-    source: contact.source
-  })
+/**
+ * Compatibilidad para consumidores anteriores que sólo necesitan la plataforma.
+ */
+export function resolveContactSource(contact = {}, firstSession = null, whatsappAttribution = null) {
+  return resolveContactAcquisition(contact, firstSession, whatsappAttribution).source
 }
 
 const CONTACT_SOURCE_SELECTION_COLUMNS = `

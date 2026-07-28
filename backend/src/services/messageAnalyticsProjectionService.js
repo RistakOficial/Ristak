@@ -14,7 +14,7 @@ import { isDeployShutdownStarted } from '../utils/deployDrainTracker.js'
 import { buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { logger } from '../utils/logger.js'
 
-export const MESSAGE_ANALYTICS_PROJECTION_VERSION = 3
+export const MESSAGE_ANALYTICS_PROJECTION_VERSION = 4
 
 const STATE_ID = 1
 const BACKFILL_JOB_KEY = 'message-analytics-projection'
@@ -200,6 +200,73 @@ function classifiedSource(signalValue, { attributedId = false, fallback = 'Whats
   return fallback
 }
 
+function paidSignal(value) {
+  const normalized = text(value).toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')
+  return [
+    'ad',
+    'ads',
+    'paid',
+    'paid_ad',
+    'click_to_whatsapp',
+    'click_to_message',
+    'ctwa'
+  ].includes(normalized)
+}
+
+function whatsappHasStrongAttribution(row) {
+  const attributions = Array.isArray(row.attributions) ? row.attributions : []
+  if ([
+    row.detected_ctwa_clid,
+    row.contact_attribution_ctwa_clid,
+    row.contact_attribution_ad_id,
+    ...attributions.map(attribution => attribution.detected_ctwa_clid)
+  ].some(value => text(value))) {
+    return true
+  }
+
+  return [row, ...attributions].some(attribution =>
+    paidSignal(attribution?.detected_source_type) ||
+    (
+      paidSignal(attribution?.detected_entry_point) &&
+      Boolean(text(attribution?.detected_source_id))
+    )
+  )
+}
+
+function metaReferralHasStrongAttribution(value) {
+  let parsed
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value) : value
+  } catch {
+    return false
+  }
+
+  const inspect = candidate => {
+    if (!candidate || typeof candidate !== 'object') return false
+    if (Array.isArray(candidate)) return candidate.some(inspect)
+    for (const [rawKey, rawValue] of Object.entries(candidate)) {
+      const key = text(rawKey).toLowerCase().replaceAll('-', '_')
+      if (
+        ['ad_id', 'adid', 'ctwa_clid', 'click_id'].includes(key) &&
+        Boolean(text(rawValue))
+      ) {
+        return true
+      }
+      if (
+        ['source', 'source_type', 'referral_type', 'entry_type', 'type'].includes(key) &&
+        paidSignal(rawValue)
+      ) {
+        return true
+      }
+      if (['is_ad', 'is_paid'].includes(key) && booleanValue(rawValue)) return true
+      if (rawValue && typeof rawValue === 'object' && inspect(rawValue)) return true
+    }
+    return false
+  }
+
+  return inspect(parsed)
+}
+
 function normalizeIdentity(sourceKind, row) {
   const contactId = text(row.contact_id)
   if (contactId) return indexedKey(`contact:${contactId}`, 'identity')
@@ -245,15 +312,8 @@ function normalizeWhatsAppSource(row) {
     row.contact_attribution_medium,
     row.contact_source
   )
-  const hasAttributedId = [
-    ...attributions.flatMap(attribution => [attribution.detected_source_id, attribution.detected_ctwa_clid]),
-    row.detected_source_id,
-    row.detected_ctwa_clid,
-    row.contact_attribution_ad_id,
-    row.contact_attribution_ctwa_clid
-  ].some(value => text(value))
   return classifiedSource(signalParts.filter(Boolean).join(' '), {
-    attributedId: hasAttributedId,
+    attributedId: whatsappHasStrongAttribution(row),
     fallback: 'WhatsApp'
   })
 }
@@ -273,7 +333,7 @@ function normalizeMetaSource(row) {
   if (referral.includes('youtube') || referral.includes('youtu.be')) return 'YouTube'
   if (referral.includes('bing') || referral.includes('microsoft') || referral.includes('msclkid')) return 'Bing'
   if (referral.includes('linkedin') || referral.includes('lnkd')) return 'LinkedIn'
-  if (referral.includes('source_id') || referral.includes('ad_id') || referral.includes('"source":"ads"')) return 'Meta Ads'
+  if (metaReferralHasStrongAttribution(row.referral_json)) return 'Meta Ads'
   return channelLabel(normalizeChannel(row.platform, 'messenger'))
 }
 
@@ -297,8 +357,8 @@ function normalizeSourceFact(sourceKind, row, generation, timezone) {
     source = 'Email'
   }
   const attributed = sourceKind === 'whatsapp'
-    ? !['WhatsApp', 'Directo', 'Desconocido', 'Otro'].includes(source)
-    : (sourceKind === 'meta' && source === 'Meta Ads')
+    ? whatsappHasStrongAttribution(row)
+    : (sourceKind === 'meta' && metaReferralHasStrongAttribution(row.referral_json))
 
   return {
     generation,
@@ -2611,6 +2671,8 @@ function originRangeRowOrder(left, right) {
 function compileHiddenAnalyticsCorrection(rows, hiddenContactIds, filters, groupBy) {
   const grouped = new Map()
   const trendMessages = new Map()
+  const trendConversations = new Map()
+  const trendAttributedConversations = new Map()
   const channelIdentities = new Map()
   const sourceIdentities = new Map()
   const originSources = new Map()
@@ -2643,6 +2705,32 @@ function compileHiddenAnalyticsCorrection(rows, hiddenContactIds, filters, group
       attributedConversations += 1
     }
 
+    const hiddenPeriods = new Set(hiddenFiltered.map(row =>
+      periodValueForBusinessDate(row.business_date, groupBy)
+    ))
+    const visiblePeriods = new Set(visibleFiltered.map(row =>
+      periodValueForBusinessDate(row.business_date, groupBy)
+    ))
+    for (const period of hiddenPeriods) {
+      if (!visiblePeriods.has(period)) {
+        trendConversations.set(period, Number(trendConversations.get(period) || 0) + 1)
+      }
+    }
+    const hiddenAttributedPeriods = new Set(hiddenFiltered
+      .filter(row => Number(row.attributed_message_count || 0) > 0)
+      .map(row => periodValueForBusinessDate(row.business_date, groupBy)))
+    const visibleAttributedPeriods = new Set(visibleFiltered
+      .filter(row => Number(row.attributed_message_count || 0) > 0)
+      .map(row => periodValueForBusinessDate(row.business_date, groupBy)))
+    for (const period of hiddenAttributedPeriods) {
+      if (!visibleAttributedPeriods.has(period)) {
+        trendAttributedConversations.set(
+          period,
+          Number(trendAttributedConversations.get(period) || 0) + 1
+        )
+      }
+    }
+
     for (const channel of new Set(hiddenRows.map(row => text(row.channel)).filter(Boolean))) {
       if (!visibleRows.some(row => text(row.channel) === channel)) {
         channelIdentities.set(channel, Number(channelIdentities.get(channel) || 0) + 1)
@@ -2670,6 +2758,8 @@ function compileHiddenAnalyticsCorrection(rows, hiddenContactIds, filters, group
     conversations,
     attributedConversations,
     trendMessages,
+    trendConversations,
+    trendAttributedConversations,
     channelIdentities,
     sourceIdentities,
     originSources,
@@ -2796,6 +2886,113 @@ async function readPhoneMetadataRows(database, generation, dateRange, phoneKeys,
   return rows
 }
 
+function globalFirstDailyPredicate(candidateAlias = 'daily', priorAlias = 'prior') {
+  return `(
+    ${priorAlias}.first_occurred_at < ${candidateAlias}.first_occurred_at OR
+    (
+      ${priorAlias}.first_occurred_at = ${candidateAlias}.first_occurred_at AND
+      ${priorAlias}.first_source_kind < ${candidateAlias}.first_source_kind
+    ) OR
+    (
+      ${priorAlias}.first_occurred_at = ${candidateAlias}.first_occurred_at AND
+      ${priorAlias}.first_source_kind = ${candidateAlias}.first_source_kind AND
+      ${priorAlias}.first_source_message_id < ${candidateAlias}.first_source_message_id
+    )
+  )`
+}
+
+function populationRowOrder(left, right) {
+  return String(left.first_occurred_at).localeCompare(String(right.first_occurred_at)) ||
+    text(left.first_source_kind).localeCompare(text(right.first_source_kind)) ||
+    text(left.first_source_message_id).localeCompare(text(right.first_source_message_id)) ||
+    text(left.channel).localeCompare(text(right.channel)) ||
+    text(left.source).localeCompare(text(right.source))
+}
+
+function uniqueVisiblePopulationRows(rows, hiddenContactIds = new Set()) {
+  const byIdentity = new Map()
+  for (const row of [...(rows || [])].sort(populationRowOrder)) {
+    const identity = text(row.identity_key)
+    if (!identity || hiddenContactIds.has(text(row.contact_id)) || byIdentity.has(identity)) continue
+    byIdentity.set(identity, row)
+  }
+  return [...byIdentity.values()]
+}
+
+async function queryNewConversationRows(database, generation, dateRange, {
+  groupBy,
+  filters,
+  signal
+}) {
+  const dailyFilter = dailyRollupFilterSql(filters, 'daily')
+  const period = periodExpression(groupBy, 'daily')
+  return database.all(`
+    SELECT
+      daily.identity_key,
+      daily.contact_id,
+      daily.business_date,
+      ${period} AS period,
+      daily.channel,
+      daily.channel_label,
+      daily.source,
+      daily.attributed_message_count,
+      first_fact.attributed AS first_attributed,
+      daily.first_occurred_at,
+      daily.first_source_kind,
+      daily.first_source_message_id
+    FROM message_analytics_daily_identity daily
+    LEFT JOIN message_analytics_fact first_fact
+      ON first_fact.generation = daily.generation
+     AND first_fact.source_kind = daily.first_source_kind
+     AND first_fact.source_message_id = daily.first_source_message_id
+    WHERE daily.generation = ?
+      AND daily.business_date >= ? AND daily.business_date <= ?
+      ${dailyFilter.sql}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM message_analytics_daily_identity prior
+        WHERE prior.generation = daily.generation
+          AND prior.identity_key = daily.identity_key
+          AND ${globalFirstDailyPredicate('daily', 'prior')}
+      )
+    ORDER BY daily.first_occurred_at ASC, daily.first_source_kind ASC,
+             daily.first_source_message_id ASC, daily.channel ASC, daily.source ASC
+  `, [
+    generation,
+    dateRange.startDate,
+    dateRange.endDate,
+    ...dailyFilter.params
+  ], { signal })
+}
+
+async function queryConversationTrendRows(database, generation, dateRange, {
+  groupBy,
+  filters,
+  signal
+}) {
+  const dailyFilter = dailyRollupFilterSql(filters, 'daily')
+  const period = periodExpression(groupBy, 'daily')
+  return database.all(`
+    SELECT
+      ${period} AS period,
+      COUNT(DISTINCT daily.identity_key) AS conversation_total,
+      COUNT(DISTINCT CASE
+        WHEN daily.attributed_message_count > 0 THEN daily.identity_key
+      END) AS attributed_conversation_total
+    FROM message_analytics_daily_identity daily
+    WHERE daily.generation = ?
+      AND daily.business_date >= ? AND daily.business_date <= ?
+      ${dailyFilter.sql}
+    GROUP BY ${period}
+    ORDER BY ${period} ASC
+  `, [
+    generation,
+    dateRange.startDate,
+    dateRange.endDate,
+    ...dailyFilter.params
+  ], { signal })
+}
+
 async function queryRangeRollupAggregateRows(database, status, dateRange, {
   groupBy,
   filters,
@@ -2879,48 +3076,122 @@ async function queryRangeRollupAggregateRows(database, status, dateRange, {
     ),
     all_messages: Math.max(0, Number(metrics?.all_messages || 0) - correction.allMessages)
   }
-  if (typeof onAfterMetrics === 'function') await onAfterMetrics(metrics)
 
   const trendFilter = dailyRollupFilterSql(filters, 'daily')
   const period = periodExpression(groupBy, 'daily')
-  const trendRows = await database.all(`
-    SELECT ${period} AS period, SUM(daily.message_count) AS message_total
-    FROM message_analytics_daily_rollup daily
-    WHERE daily.generation = ? AND daily.business_date >= ? AND daily.business_date <= ?
-      ${trendFilter.sql}
-    GROUP BY ${period}
-    ORDER BY ${period} ASC
-  `, [status.activeGeneration, dateRange.startDate, dateRange.endDate, ...trendFilter.params], { signal })
+  // Estas lecturas recorren el read model completo del rango. Mantener dos
+  // carriles evita que una sola pantalla abra tres conexiones pesadas a la vez.
+  // La segunda ola queda después de onAfterMetrics para conservar la prueba de
+  // snapshot fijado mientras el worker procesa cambios en paralelo.
+  const [trendRows, newConversationCandidates] = await Promise.all([
+    database.all(`
+      SELECT ${period} AS period, SUM(daily.message_count) AS message_total
+      FROM message_analytics_daily_rollup daily
+      WHERE daily.generation = ? AND daily.business_date >= ? AND daily.business_date <= ?
+        ${trendFilter.sql}
+      GROUP BY ${period}
+      ORDER BY ${period} ASC
+    `, [
+      status.activeGeneration,
+      dateRange.startDate,
+      dateRange.endDate,
+      ...trendFilter.params
+    ], { signal }),
+    queryNewConversationRows(database, status.activeGeneration, dateRange, {
+      groupBy,
+      filters,
+      signal
+    })
+  ])
+  const visibleNewConversationRows = uniqueVisiblePopulationRows(
+    newConversationCandidates,
+    hiddenData.hiddenContactIds
+  )
+  metrics.new_conversations = visibleNewConversationRows.length
+  if (typeof onAfterMetrics === 'function') await onAfterMetrics(metrics)
 
-  const facetRows = await database.all(`
-    SELECT 'channel' AS facet_kind, delta.channel AS value, SUM(delta.range_delta) AS identity_count
-    FROM message_analytics_range_delta delta
-    WHERE delta.generation = ? AND delta.metric_kind = 'conversation'
-      AND delta.scope_kind = 'channel' AND delta.channel != ''
-      AND delta.start_boundary <= ? AND delta.occurrence_date <= ?
-    GROUP BY delta.channel
-    HAVING SUM(delta.range_delta) > 0
-    UNION ALL
-    SELECT 'source' AS facet_kind, delta.source AS value, SUM(delta.range_delta) AS identity_count
-    FROM message_analytics_range_delta delta
-    WHERE delta.generation = ? AND delta.metric_kind = 'conversation'
-      AND delta.scope_kind = 'source' AND delta.source != ''
-      AND delta.start_boundary <= ? AND delta.occurrence_date <= ?
-    GROUP BY delta.source
-    HAVING SUM(delta.range_delta) > 0
-  `, [
-    status.activeGeneration, dateRange.startDate, dateRange.endDate,
-    status.activeGeneration, dateRange.startDate, dateRange.endDate
-  ], { signal })
-  const correctedTrendRows = trendRows
-    .map(row => ({
-      ...row,
+  const [conversationTrendRows, facetRows] = await Promise.all([
+    queryConversationTrendRows(database, status.activeGeneration, dateRange, {
+      groupBy,
+      filters,
+      signal
+    }),
+    database.all(`
+      SELECT 'channel' AS facet_kind, delta.channel AS value, SUM(delta.range_delta) AS identity_count
+      FROM message_analytics_range_delta delta
+      WHERE delta.generation = ? AND delta.metric_kind = 'conversation'
+        AND delta.scope_kind = 'channel' AND delta.channel != ''
+        AND delta.start_boundary <= ? AND delta.occurrence_date <= ?
+      GROUP BY delta.channel
+      HAVING SUM(delta.range_delta) > 0
+      UNION ALL
+      SELECT 'source' AS facet_kind, delta.source AS value, SUM(delta.range_delta) AS identity_count
+      FROM message_analytics_range_delta delta
+      WHERE delta.generation = ? AND delta.metric_kind = 'conversation'
+        AND delta.scope_kind = 'source' AND delta.source != ''
+        AND delta.start_boundary <= ? AND delta.occurrence_date <= ?
+      GROUP BY delta.source
+      HAVING SUM(delta.range_delta) > 0
+    `, [
+      status.activeGeneration, dateRange.startDate, dateRange.endDate,
+      status.activeGeneration, dateRange.startDate, dateRange.endDate
+    ], { signal })
+  ])
+  const trendsByPeriod = new Map()
+  for (const row of trendRows) {
+    const periodKey = text(row.period)
+    trendsByPeriod.set(periodKey, {
+      period: periodKey,
       message_total: Math.max(
         0,
-        Number(row.message_total || 0) - Number(correction.trendMessages.get(text(row.period)) || 0)
-      )
-    }))
-    .filter(row => Number(row.message_total) > 0)
+        Number(row.message_total || 0) - Number(correction.trendMessages.get(periodKey) || 0)
+      ),
+      conversation_total: 0,
+      attributed_conversation_total: 0,
+      new_conversation_total: 0
+    })
+  }
+  for (const row of conversationTrendRows) {
+    const periodKey = text(row.period)
+    const current = trendsByPeriod.get(periodKey) || {
+      period: periodKey,
+      message_total: 0,
+      conversation_total: 0,
+      attributed_conversation_total: 0,
+      new_conversation_total: 0
+    }
+    current.conversation_total = Math.max(
+      0,
+      Number(row.conversation_total || 0) -
+        Number(correction.trendConversations.get(periodKey) || 0)
+    )
+    current.attributed_conversation_total = Math.max(
+      0,
+      Number(row.attributed_conversation_total || 0) -
+        Number(correction.trendAttributedConversations.get(periodKey) || 0)
+    )
+    trendsByPeriod.set(periodKey, current)
+  }
+  for (const row of visibleNewConversationRows) {
+    const periodKey = text(row.period)
+    const current = trendsByPeriod.get(periodKey) || {
+      period: periodKey,
+      message_total: 0,
+      conversation_total: 0,
+      attributed_conversation_total: 0,
+      new_conversation_total: 0
+    }
+    current.new_conversation_total += 1
+    trendsByPeriod.set(periodKey, current)
+  }
+  const correctedTrendRows = [...trendsByPeriod.values()]
+    .filter(row =>
+      Number(row.message_total) > 0 ||
+      Number(row.conversation_total) > 0 ||
+      Number(row.attributed_conversation_total) > 0 ||
+      Number(row.new_conversation_total) > 0
+    )
+    .sort((left, right) => left.period.localeCompare(right.period))
   const channelRows = facetRows
     .filter(row => row.facet_kind === 'channel')
     .map(row => ({
@@ -2954,16 +3225,24 @@ async function queryRangeRollupAggregateRows(database, status, dateRange, {
       count_value: metrics?.inbound_messages || 0,
       secondary_value: metrics?.conversations || 0,
       tertiary_value: metrics?.attributed_conversations || 0,
-      all_messages_value: metrics?.all_messages || 0
+      all_messages_value: metrics?.all_messages || 0,
+      messages_value: metrics?.inbound_messages || 0,
+      conversations_value: metrics?.conversations || 0,
+      new_conversations_value: metrics?.new_conversations || 0,
+      attributed_conversations_value: metrics?.attributed_conversations || 0
     },
     ...correctedTrendRows.map(row => ({
       row_type: 'trend',
       label: row.period,
       value: '',
       count_value: row.message_total,
-      secondary_value: 0,
-      tertiary_value: 0,
-      all_messages_value: 0
+      secondary_value: row.conversation_total,
+      tertiary_value: row.new_conversation_total,
+      all_messages_value: 0,
+      messages_value: row.message_total,
+      conversations_value: row.conversation_total,
+      new_conversations_value: row.new_conversation_total,
+      attributed_conversations_value: row.attributed_conversation_total
     })),
     ...channelRows.map(row => ({
       row_type: 'channel_filter',
@@ -2992,6 +3271,20 @@ async function queryRangeRollupAggregateRows(database, status, dateRange, {
         : (scope ? 'range_rollup' : 'range_rollup_exact_multiselect'),
       hiddenCorrectionIdentities: correction.affectedIdentities
     },
+    metrics: {
+      messages: Number(metrics?.inbound_messages || 0),
+      conversations: Number(metrics?.conversations || 0),
+      newConversations: Number(metrics?.new_conversations || 0),
+      attributedConversations: Number(metrics?.attributed_conversations || 0),
+      allMessages: Number(metrics?.all_messages || 0)
+    },
+    trend: correctedTrendRows.map(row => ({
+      label: row.period,
+      messages: Number(row.message_total || 0),
+      conversations: Number(row.conversation_total || 0),
+      newConversations: Number(row.new_conversation_total || 0),
+      attributedConversations: Number(row.attributed_conversation_total || 0)
+    })),
     rows
   }
 }
@@ -3016,6 +3309,216 @@ export async function queryMessageAnalyticsProjectionAggregateRows(range, {
       signal,
       onAfterMetrics
     })
+  }, { schedule })
+}
+
+async function queryConversationPopulationRows(database, generation, dateRange, {
+  filters,
+  hiddenFilters,
+  signal
+}) {
+  const dailyFilter = dailyRollupFilterSql(filters, 'daily')
+  const visibleContactCondition = buildHiddenContactsCondition(
+    hiddenFilters,
+    'population_contact',
+    false
+  )
+  const hiddenContactFilter = visibleContactCondition
+    ? `AND (population_contact.id IS NULL OR ${visibleContactCondition})`
+    : ''
+  return database.all(`
+    WITH ranked_population AS (
+      SELECT
+        daily.identity_key,
+        daily.contact_id,
+        daily.business_date,
+        daily.channel,
+        daily.channel_label,
+        daily.source,
+        daily.attributed_message_count,
+        first_fact.attributed AS first_attributed,
+        daily.first_occurred_at,
+        daily.first_source_kind,
+        daily.first_source_message_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY daily.identity_key
+          ORDER BY daily.first_occurred_at ASC, daily.first_source_kind ASC,
+                   daily.first_source_message_id ASC, daily.channel ASC, daily.source ASC
+        ) AS population_rank
+      FROM message_analytics_daily_identity daily
+      LEFT JOIN message_analytics_fact first_fact
+        ON first_fact.generation = daily.generation
+       AND first_fact.source_kind = daily.first_source_kind
+       AND first_fact.source_message_id = daily.first_source_message_id
+      LEFT JOIN contacts population_contact
+        ON population_contact.id = daily.contact_id
+      WHERE daily.generation = ?
+        AND daily.business_date >= ? AND daily.business_date <= ?
+        ${dailyFilter.sql}
+        ${hiddenContactFilter}
+    )
+    SELECT *
+    FROM ranked_population
+    WHERE population_rank = 1
+    ORDER BY first_occurred_at ASC, first_source_kind ASC,
+             first_source_message_id ASC, channel ASC, source ASC
+  `, [
+    generation,
+    dateRange.startDate,
+    dateRange.endDate,
+    ...dailyFilter.params
+  ], { signal })
+}
+
+function messagePopulationCategory(row, dimension) {
+  const channel = normalizeChannel(row.channel, 'whatsapp')
+  if (dimension === 'channel') {
+    return {
+      key: channel,
+      name: channelLabel(channel)
+    }
+  }
+  if (dimension === 'source') {
+    const source = text(row.source) || channelLabel(channel)
+    return {
+      key: source.toLowerCase(),
+      name: source
+    }
+  }
+
+  const paid = booleanValue(row.first_attributed)
+  const key = `${channel}.${paid ? 'paid_ad' : 'unattributed'}`
+  const names = {
+    whatsapp: paid ? 'Anuncio directo a WhatsApp' : 'WhatsApp sin anuncio comprobado',
+    messenger: paid ? 'Anuncio directo a Messenger' : 'Messenger sin anuncio comprobado',
+    instagram: paid ? 'Anuncio directo a Instagram' : 'Instagram sin anuncio comprobado',
+    email: paid ? 'Email con atribución comprobada' : 'Email sin anuncio comprobado'
+  }
+  return { key, name: names[channel] || names.whatsapp }
+}
+
+/**
+ * Devuelve poblaciones de mensajería que sí se pueden sumar: una identidad
+ * aparece exactamente una vez en la distribución. `conversations` toma la
+ * primera interacción de la identidad dentro del rango; `newConversations`
+ * exige que esa interacción también sea su primera entrada inbound histórica.
+ */
+export async function queryMessageAnalyticsPopulation(range, {
+  population = 'conversations',
+  dimension = 'channel',
+  groupBy = 'day',
+  filters = {},
+  hiddenFilters = [],
+  signal,
+  schedule = false
+} = {}) {
+  const normalizedPopulation = population === 'newConversations'
+    ? 'newConversations'
+    : 'conversations'
+  const normalizedDimension = ['channel', 'source', 'entry'].includes(dimension)
+    ? dimension
+    : 'channel'
+  const normalizedGroupBy = ['day', 'month', 'year'].includes(groupBy) ? groupBy : 'day'
+
+  return withPinnedMessageAnalyticsGeneration(range, signal, async (database, status) => {
+    if (!status.schemaAvailable) throw projectionWarmingError(status)
+    if (!status.available) throw projectionWarmingError(status)
+    const dateRange = rangeBusinessDates(range)
+    const normalizedFilters = normalizeFilters(filters)
+    const hiddenContactIds = await resolveHiddenContactIds(database, hiddenFilters, signal)
+    const queryPopulationRows = scopedFilters => normalizedPopulation === 'newConversations'
+      ? queryNewConversationRows(database, status.activeGeneration, dateRange, {
+          groupBy: normalizedGroupBy,
+          filters: scopedFilters,
+          signal
+        })
+      : queryConversationPopulationRows(database, status.activeGeneration, dateRange, {
+          filters: scopedFilters,
+          hiddenFilters,
+          signal
+        })
+    const candidateRows = await queryPopulationRows(normalizedFilters)
+    const populationRows = uniqueVisiblePopulationRows(candidateRows, hiddenContactIds)
+    const channelScopeRows = normalizedFilters.channels.length
+      ? uniqueVisiblePopulationRows(
+          await queryPopulationRows({ ...normalizedFilters, channels: [] }),
+          hiddenContactIds
+        )
+      : populationRows
+    const availableChannels = [...new Set(channelScopeRows
+      .map(row => normalizeChannel(row.channel, 'whatsapp'))
+      .filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right))
+    const distributionByKey = new Map()
+    for (const row of populationRows) {
+      const category = messagePopulationCategory(row, normalizedDimension)
+      const current = distributionByKey.get(category.key) || { ...category, value: 0 }
+      current.value += 1
+      distributionByKey.set(category.key, current)
+    }
+
+    let trend
+    if (normalizedPopulation === 'newConversations') {
+      const values = new Map()
+      for (const row of populationRows) {
+        const period = periodValueForBusinessDate(row.business_date, normalizedGroupBy)
+        values.set(period, Number(values.get(period) || 0) + 1)
+      }
+      trend = [...values.entries()]
+        .sort((left, right) => left[0].localeCompare(right[0]))
+        .map(([label, value]) => ({ label, value }))
+    } else {
+      const hiddenData = await readHiddenAnalyticsCorrectionRows(
+        database,
+        status.activeGeneration,
+        dateRange,
+        hiddenFilters,
+        signal
+      )
+      const correction = compileHiddenAnalyticsCorrection(
+        hiddenData.rows,
+        hiddenData.hiddenContactIds,
+        normalizedFilters,
+        normalizedGroupBy
+      )
+      const rows = await queryConversationTrendRows(
+        database,
+        status.activeGeneration,
+        dateRange,
+        {
+          groupBy: normalizedGroupBy,
+          filters: normalizedFilters,
+          signal
+        }
+      )
+      trend = rows
+        .map(row => ({
+          label: text(row.period),
+          value: Math.max(
+            0,
+            Number(row.conversation_total || 0) -
+              Number(correction.trendConversations.get(text(row.period)) || 0)
+          )
+        }))
+        .filter(row => row.value > 0)
+    }
+
+    const distribution = [...distributionByKey.values()]
+      .sort((left, right) => right.value - left.value || left.name.localeCompare(right.name))
+    return {
+      population: normalizedPopulation,
+      dimension: normalizedDimension,
+      total: populationRows.length,
+      distribution,
+      trend,
+      availableChannels,
+      status: {
+        ...status,
+        readPath: hiddenFilters.length
+          ? 'message_population_projection_hidden'
+          : 'message_population_projection'
+      }
+    }
   }, { schedule })
 }
 

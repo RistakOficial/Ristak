@@ -332,8 +332,16 @@ test('message analytics summary combines WhatsApp, Messenger, Instagram and Emai
 
     assert.equal(summary.metrics.inboundMessages, 4)
     assert.equal(summary.metrics.conversations, 4)
+    assert.equal(summary.metrics.newConversations, 4)
+    assert.equal(summary.metrics.attributedConversations, 1)
     assert.equal(summary.metrics.contacts, 4)
-    assert.deepEqual(summary.trend, [{ label: '2099-07', messages: 4 }])
+    assert.deepEqual(summary.trend, [{
+      label: '2099-07',
+      messages: 4,
+      conversations: 4,
+      newConversations: 4,
+      attributedConversations: 1
+    }])
     assert.equal(summary.status.messageProjection, 'ready')
     assert.equal(summary.status.messageProjectionComplete, true)
     assert.equal(summary.status.messageProjectionReadPath, 'range_rollup')
@@ -347,7 +355,7 @@ test('message analytics summary combines WhatsApp, Messenger, Instagram and Emai
     assert.equal(channels.get('email'), 1)
 
     const sources = new Map(summary.filters.sources.map(item => [item.value, item.count]))
-    assert.equal(sources.get('Meta Ads'), 1)
+    assert.equal(sources.get('WhatsApp'), 1, 'detected_source_id aislado no prueba un anuncio')
     assert.equal(sources.get('Messenger'), 1)
     assert.equal(sources.get('Instagram'), 1)
     assert.equal(sources.get('Email'), 1)
@@ -361,7 +369,7 @@ test('message analytics summary combines WhatsApp, Messenger, Instagram and Emai
 
     const filteredBySource = await getMessageAnalyticsSummary(range, {
       groupBy: 'month',
-      filters: { sources: ['meta ads'] }
+      filters: { sources: ['whatsapp'] }
     })
     assert.equal(filteredBySource.metrics.inboundMessages, 1)
     assert.equal(filteredBySource.metrics.conversations, 1)

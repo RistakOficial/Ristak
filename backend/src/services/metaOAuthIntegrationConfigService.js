@@ -46,13 +46,17 @@ async function openSecret(row, column, label, { migratePlaintext = true } = {}) 
   }
 }
 
-export async function getActiveMetaOAuthIntegration(integrationKind, { migratePlaintext = true } = {}) {
+export async function getActiveMetaOAuthIntegration(
+  integrationKind,
+  { migratePlaintext = true, signal } = {}
+) {
   const kind = normalizeMetaOAuthIntegrationKind(integrationKind)
   const row = await db.get(
     `SELECT * FROM meta_oauth_integrations
      WHERE integration_kind = ? AND status = 'active'
      ORDER BY connected_at DESC, updated_at DESC LIMIT 1`,
-    [kind]
+    [kind],
+    { signal }
   ).catch(error => {
     // Durante el primer arranque de una instalación vieja la tabla puede aún no
     // existir; el fallback legacy debe seguir funcionando hasta terminar init.

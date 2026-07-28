@@ -575,9 +575,9 @@ async function decryptMetaConfigSecret(config, column, label, { migratePlaintext
   }
 }
 
-export async function getLegacyMetaConfig({ migratePlaintext = true } = {}) {
+export async function getLegacyMetaConfig({ migratePlaintext = true, signal } = {}) {
   try {
-    const config = await db.get('SELECT * FROM meta_config LIMIT 1')
+    const config = await db.get('SELECT * FROM meta_config LIMIT 1', [], { signal })
 
     if (!config) {
       return null
@@ -601,7 +601,13 @@ export async function getLegacyMetaConfig({ migratePlaintext = true } = {}) {
 
     return config
   } catch (error) {
-    logger.error('Error obteniendo configuración de Meta:', error.message)
+    if (
+      !signal?.aborted &&
+      error?.name !== 'AbortError' &&
+      error?.code !== 'ABORT_ERR'
+    ) {
+      logger.error('Error obteniendo configuración de Meta:', error.message)
+    }
     throw error
   }
 }
@@ -630,10 +636,10 @@ export async function getMetaConfig({ migratePlaintext = true } = {}) {
  * hereda el token Ads; mientras no exista OAuth Social conserva el flujo
  * combinado/manual de meta_config como fallback.
  */
-export async function getMetaSocialConfig({ migratePlaintext = true } = {}) {
+export async function getMetaSocialConfig({ migratePlaintext = true, signal } = {}) {
   const [legacy, social] = await Promise.all([
-    getLegacyMetaConfig({ migratePlaintext }),
-    getActiveMetaOAuthIntegration('social', { migratePlaintext })
+    getLegacyMetaConfig({ migratePlaintext, signal }),
+    getActiveMetaOAuthIntegration('social', { migratePlaintext, signal })
   ])
   if (
     legacy?.access_token &&

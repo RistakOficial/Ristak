@@ -423,11 +423,14 @@ la UI conserva la lista vacia hasta que el usuario conecta/refresca o ejecuta el
 POST de sincronizacion; nunca dispara `refresh` por el simple hecho de abrir el
 editor.
 
-Analytics usa dos contratos protegidos por `analytics` + `web_analytics`. La
-analítica web sólo pertenece al plan Profesional: `basic` y `medium` no muestran
-ni solicitan sesiones, visitantes, páginas vistas, tráfico o distribuciones web,
-aunque una configuración heredada todavía marque `web_analytics=true`. El gate
-se repite en backend para que ocultar la interfaz no sea la única protección.
+Analytics separa sus contratos por población. Los contratos de tráfico web están
+protegidos por `analytics` + `web_analytics`; mensajería y adquisición de
+contactos/compradores requieren `analytics`. La población `visitors` del contrato
+de adquisición vuelve a exigir `web_analytics` en backend. La analítica web sólo
+pertenece al plan Profesional: `basic` y `medium` no muestran ni solicitan
+sesiones, visitantes, páginas vistas, tráfico o distribuciones web, aunque una
+configuración heredada todavía marque `web_analytics=true`. El gate se repite en
+backend para que ocultar la interfaz no sea la única protección.
 
 Los contratos son:
 
@@ -442,6 +445,14 @@ Los contratos son:
   dispositivos, navegadores, sistemas, ubicaciones, paginas, Sites, formularios,
   canales y jerarquia publicitaria se cargan por intencion real; el contrato no
   acepta una lista de dimensiones que permita reconstruir las 16 de golpe.
+- `POST /api/tracking/analytics/acquisition-summary`: recibe rango, población
+  (`visitors`, `conversations`, `newConversations`, `contacts` o `buyers`),
+  dimensión (`channel`, `entry` o `source`), canales y agrupación. Cada respuesta
+  conserva un solo grano y categorías mutuamente exclusivas: nunca suma
+  visitantes anónimos con conversaciones ni presenta esa suma como personas
+  únicas. `contacts` usa la fecha de alta; `buyers` cuenta `DISTINCT contact_id`
+  por su primer pago live exitoso con importe positivo dentro del rango, no el
+  número de compras. Pagos de prueba, fallidos o con importe cero no califican.
 - `POST /api/tracking/sessions/search`: devuelve entre 20 y 100 filas angostas,
   `hasMore` y un cursor opaco basado en `started_at + id`. No calcula total. La
   tabla pide 50 y mantiene como maximo 100 filas en memoria/DOM, con busqueda
@@ -451,7 +462,12 @@ Los contratos son:
 
 El contrato web `includeFacets=false` se calcula exclusivamente desde
 `tracking_analytics_range_delta` / `tracking_analytics_presence` (proyeccion 113)
-y `tracking_conversion_daily_rollup` (proyeccion 116). Esa lectura nunca cae de
+y `tracking_conversion_daily_rollup` (proyeccion 116, modelo 2). Un contacto sólo
+entra en `registrations` si conserva `visitor_id` y existe una vista web real del
+mismo visitante ocurrida antes de su alta, con una tolerancia técnica máxima de
+cinco minutos. El texto de `contacts.source`, la existencia de mensajes o una
+atribución WhatsApp no califican como evidencia web; una visita futura tampoco
+puede apropiarse de una conversión pasada. Esa lectura nunca cae de
 regreso a scans de `sessions`, `contacts`, `payments` o `appointments`: si cualquiera de
 las dos proyecciones todavia no converge para la zona horaria de la cuenta,
 responde `503 tracking_analytics_projection_warming` o
@@ -567,7 +583,7 @@ unicas y conserva los IDs UTM crudos para filtros. El payload se poda a 8
 plataformas, 8 campanas por plataforma, 5 conjuntos por campana, 5 anuncios por
 conjunto y 750 nodos globales. Las etiquetas URL-encoded se decodifican sin
 alterar esos IDs. `GET /api/tracking/messages-summary` lee exclusivamente la
-generacion activa del read model `114*`/`115*`: hechos angostos, rollup diario y
+generacion activa del read model `114*`/`115*` (modelo 4): hechos angostos, rollup diario y
 ledger exacto de rangos para WhatsApp, Meta y correo. El request ya no ejecuta el
 `UNION` legacy sobre `whatsapp_api_messages`, `meta_social_messages` y
 `email_messages`, ni lo conserva como fallback. Si la version, timezone,
@@ -575,16 +591,20 @@ generacion o ledger de rangos aun no estan disponibles, responde
 `503 message_analytics_projection_warming` con `Retry-After`; nunca fabrica ceros
 ni vuelve a recorrer los historiales.
 
-La respuesta conserva las metricas, tendencia y filtros existentes y agrega
-observabilidad en `performance.readPath`, estado/generacion de la proyeccion y el
-header `X-Ristak-Read-Path`. El agregado proyectado termina antes de abrir las dos
-lecturas auxiliares acotadas: estado local de conexiones mediante `EXISTS` y
-conteo first-seen. La misma senal de aborto llega a todas las lecturas para que
-abandonar la vista no deje trabajo huerfano. El GET no agenda backfills; el
-scheduler de mantenimiento es el unico responsable de hacer converger la
-proyeccion.
+La respuesta distingue `inboundMessages`, `conversations`,
+`newConversations` y `attributedConversations`; la tendencia devuelve esas mismas
+series por bucket. `newConversations` significa que el primer inbound histórico
+de la identidad cae dentro del rango, no que se creó un contacto del CRM.
+`attributedConversations` exige evidencia fuerte de anuncio; URL, headline o
+`detected_source_id` aislado no bastan. El campo legacy `contacts` permanece sólo
+como alias temporal de `newConversations`. También expone
+`performance.readPath`, estado/generacion de la proyeccion y el header
+`X-Ristak-Read-Path`. El agregado proyectado termina antes de leer el estado
+local de conexiones; la misma señal de aborto llega a ambas lecturas. El GET no
+agenda backfills; el scheduler de mantenimiento es el único responsable de hacer
+converger la proyección.
 
-El conteo de contactos por primer mensaje inbound no vuelve a ejecutar
+El conteo histórico por primer mensaje inbound no vuelve a ejecutar
 `MIN(...) GROUP BY` sobre todo el historial. La proyeccion versionada
 `message_first_seen_ledger` deja un sentinel por mensaje de WhatsApp, Meta y
 email; `message_identity_first_seen_global` conserva el primer mensaje por
@@ -601,7 +621,9 @@ materializado disponible y `status.firstSeenProjection=warming` con
 `firstSeenProjectionComplete=false`; si el esquema aun no está disponible
 responden cero con `unavailable`. Ningún GET ejecuta el antiguo
 `MIN(...) GROUP BY`, agenda el backfill ni bloquea la página. Al llegar a
-`ready`, el mismo camino queda exacto. Las migraciones aditivas e indices de
+`ready`, el mismo camino queda exacto. En Analytics, la métrica visible de nuevas
+conversaciones sale del modelo 4 de mensajes; las tablas `099*` siguen siendo un
+contrato compatible para otros consumidores. Las migraciones aditivas e indices de
 backfill viven en `099*`.
 
 Los indices aditivos del contrato viven en
@@ -652,13 +674,28 @@ de red/ejecucion de 20 segundos empieza solamente al obtener un carril. Asi una
 tercera familia no pierde su presupuesto mientras espera y tampoco extiende un
 loader a 40-45 segundos. Salir de la ruta elimina una entrada pendiente antes de
 abrir su `fetch`.
-`OriginDistributionCard` solicita `dimension=<visible>&includeBreakdowns=0`:
+En Dashboard, `OriginDistributionCard` solicita
+`dimension=<visible>&includeBreakdowns=0`:
 el backend agrega solo esa dimension y no calcula leads, citas, conversiones ni
 numeros WhatsApp que la card no renderiza. Cada dimension queda cacheada por
 cuenta/rango durante 30 segundos, de modo que cambiar el selector reutiliza el
 resultado sin rehacer las otras cinco agregaciones. Si una dimension falla, la
 card conserva las demas y ofrece reintento local; no borra datos validos ni
 reactiva el loader global.
+
+En `/analytics`, la card usa
+`POST /api/tracking/analytics/acquisition-summary` con el rango exacto calculado
+por la página. El usuario elige población, desglose y canal. `Origen de
+contactos` y `Origen de compradores` leen `contact_origin_contact_fact` modelo 2,
+que materializa `acquisition_surface`, `acquisition_kind`, `evidence_type` y la
+fuente de marketing por contacto. Las categorías `website.paid_ad`,
+`website.unattributed`, `whatsapp.paid_ad` y `whatsapp.unattributed` separan el
+destino del anuncio de la plataforma publicitaria. Una fuente explícita de
+WhatsApp no cambia por una visita web posterior. La migración `138*` agrega las
+columnas e índices y fuerza una generación nueva; durante el rebuild el reader
+responde warming, nunca mezcla V1 y V2. Canales desconectados sin datos no se
+ofrecen; si existe historia en el rango, la UI puede conservarlos como
+`(histórico)` sin fingir una conexión actual.
 
 El caso visible `dimension=sources` con web y WhatsApp activos tiene un carril
 proyectado propio: combina el ledger de rangos de tracking `119*` con la

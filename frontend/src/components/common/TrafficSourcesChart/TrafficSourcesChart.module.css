@@ -21,7 +21,12 @@
 }
 
 .headerAction {
+  display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .title {
@@ -47,6 +52,18 @@
 .totalLabel {
   font-size: 0.875rem;
   color: var(--color-text-tertiary);
+}
+
+@media (max-width: 48rem) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .headerAction {
+    justify-content: flex-start;
+    width: 100%;
+  }
 }
 
 .chartContainer {

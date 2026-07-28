@@ -494,10 +494,18 @@ export interface MessageAnalyticsSummary {
   metrics?: {
     inboundMessages?: number
     conversations?: number
+    newConversations?: number
+    attributedConversations?: number
     contacts?: number
     attributionRate?: number
   }
-  trend?: Array<{ label: string; messages?: number }>
+  trend?: Array<{
+    label: string
+    messages?: number
+    conversations?: number
+    newConversations?: number
+    attributedConversations?: number
+  }>
   filters?: {
     channels?: MessageAnalyticsFilterOption[]
     sources?: MessageAnalyticsFilterOption[]
@@ -512,6 +520,52 @@ export interface MessageAnalyticsSummary {
 }
 
 export type WhatsAppAnalyticsSummary = MessageAnalyticsSummary
+
+export type AcquisitionAnalyticsPopulation =
+  | 'visitors'
+  | 'conversations'
+  | 'newConversations'
+  | 'contacts'
+  | 'buyers'
+
+export type AcquisitionAnalyticsDimension = 'channel' | 'entry' | 'source'
+export type AcquisitionAnalyticsChannel = 'website' | 'whatsapp' | 'messenger' | 'instagram' | 'email'
+
+export interface AcquisitionAnalyticsInput {
+  start: string
+  end: string
+  population: AcquisitionAnalyticsPopulation
+  dimension: AcquisitionAnalyticsDimension
+  channels?: AcquisitionAnalyticsChannel[]
+  groupBy?: TrackingAnalyticsGroupBy
+  filters?: Record<string, string[]>
+}
+
+export interface AcquisitionAnalyticsSummary {
+  population: AcquisitionAnalyticsPopulation
+  dimension: AcquisitionAnalyticsDimension
+  total: number
+  availableChannels?: AcquisitionAnalyticsChannel[]
+  distribution: Array<{ key: string; name: string; value: number }>
+  trend: Array<{
+    label: string
+    visitors?: number
+    conversations?: number
+    newConversations?: number
+    contacts?: number
+    buyers?: number
+  }>
+  status?: {
+    projection?: string
+    pending?: boolean
+    ready?: boolean
+  }
+  range: {
+    start: string
+    end: string
+    timezone: string
+  }
+}
 
 /**
  * Obtiene conteo de contactos con visitor_id por fecha de creación
@@ -561,6 +615,27 @@ export async function getMessageAnalyticsSummary(
     signal,
     request: requestSignal => apiClient.get<MessageAnalyticsSummary>(
       `/tracking/messages-summary?${params.toString()}`,
+      { signal: requestSignal }
+    )
+  })
+}
+
+/**
+ * Obtiene una sola población analítica con categorías mutuamente exclusivas.
+ * El backend mantiene separados visitantes, conversaciones, contactos y
+ * compradores; este cliente no suma identidades incompatibles.
+ */
+export async function getAcquisitionAnalyticsSummary(
+  input: AcquisitionAnalyticsInput,
+  signal?: AbortSignal
+): Promise<AcquisitionAnalyticsSummary> {
+  return withRequestTimeout({
+    timeoutMs: ANALYTICS_REQUEST_TIMEOUT_MS,
+    timeoutMessage: 'La atribución tardó demasiado. Reintenta la carga.',
+    signal,
+    request: requestSignal => apiClient.post<AcquisitionAnalyticsSummary>(
+      '/tracking/analytics/acquisition-summary',
+      input,
       { signal: requestSignal }
     )
   })
