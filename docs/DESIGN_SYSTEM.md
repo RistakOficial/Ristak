@@ -369,6 +369,12 @@ negativos `--neg`.
   incluidos acordeones secundarios, se ordenan con títulos, espacio y divisores,
   nunca con otra card. Inputs, selects, botones, previews, sliders y mensajes de
   estado sí conservan la forma que comunica su función.
+  El editor HTML sigue el mismo principio a nivel de workspace: Código, Vista
+  previa e Inspector comparten una sola superficie continua. Sus columnas no
+  llevan card, radio, sombra ni espacio exterior propio; se separan únicamente
+  mediante el divisor redimensionable y líneas entre paneles. Abrir o cerrar una
+  columna no debe revelar otra caja envolvente. Los controles internos conservan
+  su forma.
 - **Gráficas**: series desde `--accent` / `--accent-2` / `--pos` / `--neg` /
   `--design-chart-*` (mapeados). Grid `--chart-grid`.
 - **Marcas de terceros** (Meta/Google/WhatsApp/etc.): su color de marca solo en

@@ -219,6 +219,61 @@ if (sitesStyles.includes(directVideoNesting)) {
   })
 }
 
+const htmlPaneContractStart = '/* HTML EDITOR FLAT-PANE CONTRACT — START'
+const htmlPaneContractEnd = '/* HTML EDITOR FLAT-PANE CONTRACT — END */'
+const htmlPaneContractStartIndex = sitesStyles.indexOf(htmlPaneContractStart)
+const htmlPaneContractEndIndex = sitesStyles.indexOf(htmlPaneContractEnd)
+
+if (htmlPaneContractStartIndex === -1 || htmlPaneContractEndIndex === -1) {
+  violations.push({
+    file: 'src/pages/Sites/Sites.module.css',
+    line: 1,
+    check: 'Jerarquia plana del editor HTML de Sites',
+    value: 'Contrato visual ausente',
+    hint: 'Restaura la superficie unica de Codigo, vista previa e inspector.',
+  })
+} else {
+  const htmlPaneContract = sitesStyles.slice(htmlPaneContractStartIndex, htmlPaneContractEndIndex)
+  const requiredHtmlPaneSelectors = [
+    '.importedCodeEditorPanel.importedCodeEditorPanelWithInspector',
+    '.importedCodeEditorPanel > :is(.importedCodeSourcePane, .importedCodePreviewPane)',
+    '.importedCodeEditorPanel > .importedCodeResizeHandle::before',
+    '.propertiesPanel.importedCodeNativeInspectorPane',
+    'border-left: 1px solid var(--border) !important',
+    'border-radius: 0 !important',
+    'column-gap: 0',
+    'grid-column: auto !important',
+  ]
+
+  for (const selector of requiredHtmlPaneSelectors) {
+    if (htmlPaneContract.includes(selector)) continue
+
+    violations.push({
+      file: 'src/pages/Sites/Sites.module.css',
+      line: lineNumberForIndex(sitesStyles, htmlPaneContractStartIndex),
+      check: 'Jerarquia plana del editor HTML de Sites',
+      value: `Falta ${selector}`,
+      hint: 'Codigo, vista previa e inspector deben compartir superficie y separarse solo con divisores.',
+    })
+  }
+}
+
+const compactHtmlPaneStart = sitesStyles.indexOf('@media (max-width: 1680px), (max-height: 900px)')
+const compactHtmlPaneEnd = sitesStyles.indexOf('@media (max-width: 1540px), (max-height: 820px)', compactHtmlPaneStart)
+const compactHtmlPaneRules = compactHtmlPaneStart === -1 || compactHtmlPaneEnd === -1
+  ? ''
+  : sitesStyles.slice(compactHtmlPaneStart, compactHtmlPaneEnd)
+
+if (!compactHtmlPaneRules.includes('.importedCodeEditorPanelWithInspector')) {
+  violations.push({
+    file: 'src/pages/Sites/Sites.module.css',
+    line: lineNumberForIndex(sitesStyles, Math.max(compactHtmlPaneStart, 0)),
+    check: 'Columnas del editor HTML en escritorio compacto',
+    value: 'Falta la cuadricula con inspector',
+    hint: 'Conserva Codigo, vista previa e inspector en una misma fila hasta el breakpoint apilado.',
+  })
+}
+
 if (violations.length > 0) {
   console.error('Design system audit failed. Reusable UI patterns must live in frontend/src/components/common or global recipes.\n')
 

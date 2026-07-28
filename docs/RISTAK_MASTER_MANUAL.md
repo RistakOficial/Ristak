@@ -4854,6 +4854,12 @@ y `Controles` en Video; tipografia; opciones; formulario o ajustes avanzados—
 se presentan como subcategorias con separadores y espacio, no como tarjetas de
 agrupacion anidadas. Campos, selectores, previews, sliders y otros controles
 funcionales conservan su forma para seguir siendo reconocibles e interactivos.
+En el editor HTML importado, Código, Vista previa y el Inspector de elementos
+Ristak forman una sola superficie de trabajo. Las columnas quedan unidas y se
+separan con líneas simples; no tienen cards, radios, sombras ni huecos exteriores
+independientes. El divisor de Código conserva su área de arrastre y, al abrir o
+cerrar Código o el Inspector, la superficie restante ocupa el espacio sin
+mostrar otro contenedor envolvente.
 Cada bloque o elemento editable incluye en el inspector derecho la categoria
 `Visibilidad`, con dos controles independientes: `Computadora` y `Celular`.
 Ambos nacen activos para mantener el comportamiento historico. Apagar uno oculta
