@@ -373,7 +373,10 @@ relistar el portafolio. El contrato es:
   Recorre en lotes las filas de `meta_social_contacts` sin avatar durable, usa un
   advisory lock por plataforma y guarda progreso en
   `meta_social_profile_backfill_state_{messenger|instagram}`. Al completarse no
-  vuelve a consultar Graph en siguientes arranques. Reconectar Meta vuelve a
+  vuelve a consultar Graph en siguientes arranques con la misma autorización.
+  El estado guarda una firma no secreta de la conexión; pasar de Legacy/manual
+  al OAuth oficial o volver a autorizar cambia esa firma y habilita un nuevo
+  intento sobre los perfiles que Meta había rechazado. Reconectar Meta vuelve a
   importar el historial y agenda la hidratacion despues de crear los contactos.
 - Meta puede negar el perfil de una persona que solo comento, bloqueo la cuenta
   o no dio consentimiento de mensajeria. Ese caso conserva iniciales/nombre y no

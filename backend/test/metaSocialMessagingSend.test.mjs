@@ -1195,6 +1195,7 @@ test('backfillMetaSocialContactProfilePictures completa una sola vez los avatare
           const state = JSON.parse(await getAppConfig(stateKey))
           assert.equal(state.version, META_SOCIAL_PROFILE_BACKFILL_VERSION)
           assert.equal(state.status, 'complete')
+          assert.match(state.authorizationSignature, /^[a-f0-9]{24}$/)
 
           const profileCallsBefore = calls.filter(call => call.url.startsWith(`/${senderId}?`)).length
           const repeated = await backfillMetaSocialContactProfilePictures({
@@ -1206,6 +1207,32 @@ test('backfillMetaSocialContactProfilePictures completa una sola vez los avatare
           assert.equal(repeated.skipped, true)
           assert.equal(repeated.skipReason, 'already-complete')
           assert.equal(profileCallsAfter, profileCallsBefore)
+
+          // Cambiar de Legacy/manual al OAuth oficial altera la autorización.
+          // La corrida previa no debe bloquear el reintento de esos mismos PSID.
+          await db.run(`
+            UPDATE meta_config
+            SET connection_mode = 'oauth_user',
+                oauth_connection_id = 'oauth-profile-backfill-reconnected',
+                oauth_app_id = 'official-meta-app-profile-backfill',
+                oauth_connected_at = CURRENT_TIMESTAMP,
+                oauth_validated_at = CURRENT_TIMESTAMP
+          `)
+          await db.run(
+            'UPDATE meta_social_contacts SET profile_picture_url = NULL WHERE id = ?',
+            [socialProfileId]
+          )
+
+          const reconnected = await backfillMetaSocialContactProfilePictures({
+            platform: 'messenger',
+            reason: 'test-official-reconnect',
+            requestYieldMs: 0
+          })
+          const profileCallsAfterReconnect = calls.filter(call => call.url.startsWith(`/${senderId}?`)).length
+          assert.equal(reconnected.skipped, false)
+          assert.equal(reconnected.status, 'complete')
+          assert.notEqual(reconnected.authorizationSignature, state.authorizationSignature)
+          assert.equal(profileCallsAfterReconnect, profileCallsAfter + 1)
         } finally {
           await db.run('DELETE FROM meta_social_contacts WHERE id = ? OR sender_id = ?', [socialProfileId, senderId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)

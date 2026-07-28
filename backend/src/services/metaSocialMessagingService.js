@@ -2100,6 +2100,30 @@ function parseMetaSocialProfileBackfillState(value) {
   }
 }
 
+function buildMetaSocialProfileBackfillAuthorizationSignature(platform, config = {}) {
+  // La firma sólo usa metadatos no secretos. Su propósito es detectar que una
+  // instalación dejó Legacy/manual y volvió a autorizar la app oficial; en ese
+  // momento los PSID/IGSID deben reintentarse aunque una corrida anterior haya
+  // terminado sin fotos por permisos insuficientes.
+  const identity = {
+    platform,
+    connectionMode: cleanString(config.connection_mode).toLowerCase(),
+    connectionId: cleanString(config.oauth_connection_id),
+    appId: cleanString(config.oauth_app_id || config.app_id),
+    pageId: cleanString(config.page_id),
+    instagramAccountId: platform === 'instagram'
+      ? cleanString(config.instagram_account_id)
+      : '',
+    connectedAt: cleanString(config.oauth_connected_at),
+    validatedAt: cleanString(config.oauth_validated_at)
+  }
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify(identity))
+    .digest('hex')
+    .slice(0, 24)
+}
+
 function isMetaSocialAvatarMissingOrTemporary(value = '') {
   const url = cleanString(value)
   return !url || isMetaHostedMediaUrl(url)
@@ -2204,21 +2228,6 @@ async function runMetaSocialContactProfileBackfill({
   const stateKey = getMetaSocialProfileBackfillStateKey(platform)
   const previousState = parseMetaSocialProfileBackfillState(await getAppConfig(stateKey))
 
-  if (
-    !force &&
-    previousState.version === META_SOCIAL_PROFILE_BACKFILL_VERSION &&
-    previousState.status === 'complete'
-  ) {
-    return {
-      provider: 'meta',
-      platform,
-      version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
-      skipped: true,
-      skipReason: 'already-complete',
-      ...previousState
-    }
-  }
-
   const [messagingEnabled, commentsEnabled] = await Promise.all([
     isMetaSocialMessagingEnabled(platform),
     isMetaSocialCommentsEnabled(platform)
@@ -2245,6 +2254,23 @@ async function runMetaSocialContactProfileBackfill({
     }
   }
 
+  const authorizationSignature = buildMetaSocialProfileBackfillAuthorizationSignature(platform, config)
+  if (
+    !force &&
+    previousState.version === META_SOCIAL_PROFILE_BACKFILL_VERSION &&
+    previousState.status === 'complete' &&
+    previousState.authorizationSignature === authorizationSignature
+  ) {
+    return {
+      provider: 'meta',
+      platform,
+      version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+      skipped: true,
+      skipReason: 'already-complete',
+      ...previousState
+    }
+  }
+
   const credentials = await resolveMetaSocialGraphCredentials(platform, config, { safe: true })
   if (!credentials.token) {
     return {
@@ -2258,9 +2284,11 @@ async function runMetaSocialContactProfileBackfill({
 
   const resumePrevious = !force &&
     previousState.version === META_SOCIAL_PROFILE_BACKFILL_VERSION &&
-    previousState.status !== 'complete'
+    previousState.status !== 'complete' &&
+    previousState.authorizationSignature === authorizationSignature
   const state = {
     version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+    authorizationSignature,
     status: 'running',
     reason: cleanString(reason) || 'manual',
     cursor: resumePrevious ? cleanString(previousState.cursor) : '',

@@ -4708,8 +4708,11 @@ Ristak usa Meta en varias areas:
   lock por plataforma y persiste su cursor/resultado en
   `meta_social_profile_backfill_state_messenger` o
   `meta_social_profile_backfill_state_instagram`. Al quedar `complete`, los
-  siguientes deploys no repiten llamadas. Si Meta estaba desconectado, el estado
-  no se marca y la conexion posterior importa historial antes de agendar fotos.
+  siguientes deploys con la misma autorización no repiten llamadas. El estado
+  incluye una firma no secreta de la conexión: migrar de Legacy/manual al OAuth
+  oficial o volver a autorizar cambia la firma y reabre el backfill sin borrar
+  datos a mano. Si Meta estaba desconectado, el estado no se marca y la conexion
+  posterior importa historial antes de agendar fotos.
   Comentarios sin consentimiento de mensajeria, usuarios bloqueados o perfiles
   que Meta no exponga conservan iniciales; no se genera una imagen ficticia.
 - Business Messaging events.
