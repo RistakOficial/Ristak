@@ -203,6 +203,9 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   donde se muestran la fecha y hora reales de la cita.
 - Un mensaje nuevo vive sólo como borrador local hasta que el usuario pulsa
   **Guardar**; abrir y cancelar el modal no crea una fila provisional de un día.
+- El editor principal no se cierra al tocar el fondo ni al pulsar Escape. Sólo
+  las acciones explícitas **Cancelar**, **Guardar** y la **X** lo cierran, para
+  evitar perder por accidente una configuración todavía no guardada.
 - Cada recordatorio o aviso guarda una `schedule_key` única construida con el
   ancla y la duración normalizada. Por eso `60 minutos antes` y `1 hora antes`
   ocupan el mismo momento aunque cambien canal, plantilla, texto o modo de

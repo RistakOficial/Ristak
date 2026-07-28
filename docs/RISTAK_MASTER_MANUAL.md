@@ -3904,7 +3904,10 @@ arranque antes de llegar a los índices.
 
 Al pulsar **Agregar**, el frontend abre un borrador local y no persiste nada
 hasta **Guardar**. Esto evita crear provisionalmente otro recordatorio de un día
-antes y garantiza que cerrar el modal no deje filas huérfanas activas.
+antes y garantiza que cerrar el modal no deje filas huérfanas activas. El editor
+principal ignora clics en el fondo y la tecla Escape: sólo **Cancelar**,
+**Guardar** o la **X** lo cierran, para que un toque accidental no descarte el
+trabajo en curso.
 
 En PostgreSQL, las columnas de citas y envios siguen siendo
 `timestamp without time zone` con el valor normalizado a UTC. Al leerlas, el
