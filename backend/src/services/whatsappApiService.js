@@ -246,13 +246,17 @@ const API_FALLBACK_PHONE_STATUSES = new Set([
 const QR_FALLBACK_READY_STATUSES = new Set(['connected', 'reconnecting', 'restarting', 'connection_replaced'])
 // El respaldo QR sólo puede activarse cuando la API oficial dejó de ser un
 // transporte utilizable para ESE número/cuenta. Los errores de conversación
-// (ventana de 24 h), destinatario, contenido o validación no autorizan Baileys.
+// (ventana de 24 h), destinatario o contenido no autorizan Baileys. Más abajo
+// existe una excepción acotada para validación estructural definitiva de plantilla.
 const API_FALLBACK_ERROR_PATTERN = /\b(MESSAGING LIMIT|RATE.?LIMIT|RESTRICT(?:ED|ION)?|BANNED|BLOCKED|DISABLED|SUSPENDED|LOCKED|NOT ALLOWED|NOT_ALLOWED|DISCONNECTED|MIGRATED)\b/i
 const API_CONNECTION_ERROR_PATTERN = /\b(ACCESS TOKEN|OAUTH|AUTHENTICATION|AUTHORIZATION|MISSING PERMISSIONS?|PERMISSION DENIED|UNSUPPORTED POST REQUEST|OBJECT .* DOES NOT EXIST|NOT CONNECTED|NO EST[AÁ] CONECTAD[OA]|NO SE ENCUENTRA CONECTAD[OA])\b/i
 const API_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(RECIPIENT|CUSTOMER|USER|DESTINATION|TO PHONE|UNSUBSCRIBED|OPTED.?OUT|BLOCKED BY USER|USER BLOCKED)\b/i
-const TEMPLATE_PARAMETER_COUNT_ERROR_CODE = '132000'
-const TEMPLATE_PARAMETER_COUNT_ERROR_PATTERN = /\bbody\b[\s\S]*\bnumber of localizable_params\b[\s\S]*\bdoes not match\b[\s\S]*\bexpected number of params\b/i
-const TEMPLATE_PARAMETER_QR_FALLBACK_REASON = 'WhatsApp rechazó definitivamente la plantilla por una cantidad incorrecta de variables; Ristak la envió como texto por el respaldo QR.'
+const TEMPLATE_STRUCTURE_CONTEXT_PATTERN = /\b(LOCALIZABLE_PARAMS?|PARAMETERS?|PARAMS?|PAR[ÁA]METROS?|COMPONENTS?|COMPONENTES?|BODY|CUERPO|HEADER|ENCABEZADO|BUTTONS?|BOTONES?|LANGUAGE|LOCALE|IDIOMA)\b/i
+const TEMPLATE_VALIDATION_REJECTION_PATTERN = /\b(DOES NOT MATCH|MISMATCH(?:ED)?|EXPECTED|MISSING|REQUIRED|INVALID|INCORRECT|WRONG|NOT FOUND|DOES NOT EXIST|NOT AVAILABLE|UNAVAILABLE|UNSUPPORTED|TOO MANY|NOT ENOUGH|NO COINCIDE|ESPERAD[OA]S?|FALTANTE|REQUERID[OA]S?|INV[ÁA]LID[OA]S?|INCORRECT[OA]S?|NO EXISTE|NO DISPONIBLE)\b/i
+const TEMPLATE_FALLBACK_AMBIGUOUS_ERROR_PATTERN = /\b(408|429|5\d\d|TIMEOUT|TIMED OUT|ETIMEDOUT|ECONNRESET|ECONNREFUSED|NETWORK|SOCKET|UPSTREAM|TEMPORAR(?:Y|ILY)|TRANSIENT|TRY AGAIN|RETRY|RATE.?LIMIT|SERVICE UNAVAILABLE|INTERNAL SERVER|BAD GATEWAY|GATEWAY TIMEOUT|UNKNOWN ERROR|CONNECTION|RED|CONEXI[ÓO]N|TEMPORAL|TRANSITORI[OA]|REINTENTAR|SERVICIO NO DISPONIBLE|SERVIDOR INTERNO)\b/i
+const TEMPLATE_FALLBACK_NON_TEXT_ERROR_PATTERN = /\b(131047|131053|24.?HOUR|CUSTOMER SERVICE WINDOW|OUTSIDE (?:THE )?WINDOW|MEDIA|AUDIO|VIDEO|IMAGE|DOCUMENT|STICKER|MIME(?:TYPE)?|DOWNLOAD|UPLOAD|VENTANA DE (?:ATENCI[ÓO]N|CONVERSACI[ÓO]N)|FUERA DE (?:LA )?VENTANA|MULTIMEDIA|IMAGEN|DOCUMENTO|DESCARGA)\b/i
+const TEMPLATE_FALLBACK_RECIPIENT_ERROR_PATTERN = /\b(DESTINATARI[OA]S?|CLIENTE|USUARI[OA]S?|N[ÚU]MERO DE DESTINO|DIO DE BAJA|BLOQUEAD[OA] POR (?:EL )?USUARIO)\b/i
+const TEMPLATE_REJECTION_QR_FALLBACK_REASON = 'WhatsApp rechazó definitivamente la plantilla antes de entregarla; Ristak la envió como texto por el respaldo QR.'
 const TEMPLATE_QR_FALLBACK_MAX_AGE_MS = 15 * 60 * 1000
 
 const REQUIRED_WEBHOOK_EVENTS = [
@@ -4119,17 +4123,33 @@ async function activateOfficialApiRestrictionFromFailedMessage({ normalizedMessa
   }
 }
 
-function isDeterministicTemplateParameterFailure({
+function isDeterministicTemplatePreDeliveryFailure({
   messageType,
   status,
   errorCode,
   errorMessage
 } = {}) {
+  if (
+    cleanString(messageType).toLowerCase() !== 'template' ||
+    normalizeMessageDeliveryStatus(status) !== 'failed'
+  ) {
+    return false
+  }
+
+  const failureText = `${cleanString(errorCode)} ${cleanString(errorMessage)}`.trim()
+  if (
+    !failureText ||
+    TEMPLATE_FALLBACK_AMBIGUOUS_ERROR_PATTERN.test(failureText) ||
+    TEMPLATE_FALLBACK_NON_TEXT_ERROR_PATTERN.test(failureText) ||
+    API_FALLBACK_RECIPIENT_ERROR_PATTERN.test(failureText) ||
+    TEMPLATE_FALLBACK_RECIPIENT_ERROR_PATTERN.test(failureText)
+  ) {
+    return false
+  }
+
   return (
-    cleanString(messageType).toLowerCase() === 'template' &&
-    normalizeMessageDeliveryStatus(status) === 'failed' &&
-    cleanString(errorCode) === TEMPLATE_PARAMETER_COUNT_ERROR_CODE &&
-    TEMPLATE_PARAMETER_COUNT_ERROR_PATTERN.test(cleanString(errorMessage))
+    TEMPLATE_STRUCTURE_CONTEXT_PATTERN.test(failureText) &&
+    TEMPLATE_VALIDATION_REJECTION_PATTERN.test(failureText)
   )
 }
 
@@ -4195,12 +4215,14 @@ async function readCompletedTemplateQrFallback({ messageId, attempt } = {}) {
 /**
  * Excepción segura al contrato observer-only de los webhooks:
  *
- * Meta/YCloud puede aceptar una plantilla y rechazarla después con 132000 porque
- * el snapshot del proveedor esperaba otra cantidad de variables. Ese rechazo es
- * determinista y prueba que el mensaje oficial nunca fue entregado. Sólo entonces,
- * y sólo si la solicitud original autorizó QR, reclamamos una vez el envío como
- * texto. La fila de intentos es una barrera at-most-once: un webhook duplicado o
- * concurrente nunca puede originar un segundo mensaje QR.
+ * Meta/YCloud puede aceptar una plantilla y rechazarla después por validación de
+ * variables, componentes o idioma. Los códigos cambian entre
+ * proveedor y versión, así que clasificamos el texto semánticamente y vetamos
+ * fallos ambiguos de red, servidor, ventana, destinatario o multimedia. Sólo
+ * cuando el rechazo prueba que la plantilla no salió, y la solicitud original
+ * autorizó QR, reclamamos una vez el envío como texto. La fila de intentos es una
+ * barrera at-most-once: un webhook duplicado o concurrente nunca puede originar
+ * un segundo mensaje QR.
  */
 async function maybeFallbackRejectedTemplateViaQr({
   messageId,
@@ -4214,7 +4236,7 @@ async function maybeFallbackRejectedTemplateViaQr({
   errorCode,
   errorMessage
 } = {}) {
-  if (!isDeterministicTemplateParameterFailure({
+  if (!isDeterministicTemplatePreDeliveryFailure({
     messageType,
     status,
     errorCode,
@@ -4306,7 +4328,7 @@ async function maybeFallbackRejectedTemplateViaQr({
     cleanProviderMessageId || null,
     cleanString(errorCode || stored.error_code) || null,
     cleanString(errorMessage || stored.error_message) || null,
-    TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+    TEMPLATE_REJECTION_QR_FALLBACK_REASON,
     fallbackPhoneRow.id
   ])
 
@@ -4336,7 +4358,7 @@ async function maybeFallbackRejectedTemplateViaQr({
       body: stored.message_text,
       externalId: `template-qr-fallback:${messageId}`,
       contactId: stored.contact_id,
-      fallbackReason: TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+      fallbackReason: TEMPLATE_REJECTION_QR_FALLBACK_REASON,
       persist: false
     })
     const qrMessageId = cleanString(qrResponse.id || qrResponse.wamid)
@@ -4357,7 +4379,7 @@ async function maybeFallbackRejectedTemplateViaQr({
       },
       qrFallback: {
         applied: true,
-        reason: TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+        reason: TEMPLATE_REJECTION_QR_FALLBACK_REASON,
         phoneNumberId: fallbackPhoneRow.id,
         messageId: qrMessageId || null,
         status: qrStatus
@@ -4386,7 +4408,7 @@ async function maybeFallbackRejectedTemplateViaQr({
         qrMessageId || null,
         qrWamid || null,
         protocolMessageKeyId || null,
-        TEMPLATE_PARAMETER_QR_FALLBACK_REASON,
+        TEMPLATE_REJECTION_QR_FALLBACK_REASON,
         qrStatus,
         rawPayload,
         messageId
@@ -8582,9 +8604,10 @@ async function upsertMessage({
     ? (normalizeMessageDeliveryStatus(existingMessage?.status) || status)
     : pickBestMessageDeliveryStatus(existingMessage?.status, incomingStatus)
   // Por regla general, los webhooks sólo observan y concilian estado. La única
-  // excepción es un rechazo 132000 de plantilla por cantidad de variables: Meta
-  // prueba ahí que el mensaje nunca se entregó y una solicitud que autorizó QR
-  // puede reclamar exactamente una vez su respaldo como texto.
+  // excepción es un rechazo definitivo de validación de plantilla: el contenido
+  // del fallo prueba que el mensaje no salió, aunque el código del proveedor
+  // cambie, y una solicitud que autorizó QR puede reclamar exactamente una vez
+  // su respaldo como texto. Fallos ambiguos siguen siendo sólo observación.
   const effectiveErrorCode = errorCode || cleanString(existingMessage?.error_code)
   const effectiveErrorMessage = errorMessage || cleanString(existingMessage?.error_message)
   const effectiveFailure = incomingStatus === 'failed' || normalizeMessageDeliveryStatus(existingMessage?.status) === 'failed'

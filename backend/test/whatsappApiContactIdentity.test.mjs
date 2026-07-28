@@ -1856,28 +1856,51 @@ test('fallos genéricos o de restricción reportados por API no originan un segu
   }
 })
 
-test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFallback=false', async () => {
+test('rechazos definitivos de plantilla usan QR una sola vez aunque cambie el código', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)
   const phone = `+52992${suffix}`
+  const semanticPhone = `+52994${suffix}`
+  const ambiguousPhone = `+52995${suffix}`
+  const recipientPhone = `+52996${suffix}`
   const blockedPhone = `+52993${suffix}`
   const businessPhone = `+52657${suffix}`
   const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
   const phoneNumberId = `phone_template_132000_${id}`
   const contactId = `rstk_contact_template_132000_${id}`
+  const semanticContactId = `rstk_contact_template_semantic_${id}`
+  const ambiguousContactId = `rstk_contact_template_ambiguous_${id}`
+  const recipientContactId = `rstk_contact_template_recipient_${id}`
   const blockedContactId = `rstk_contact_template_132000_blocked_${id}`
   const templateId = `template_132000_${id}`
   const templateName = `seguimiento_132000_${id.replace(/-/g, '_')}`
   const providerMessageId = `ycloud_template_132000_${id}`
+  const semanticProviderMessageId = `ycloud_template_semantic_${id}`
+  const ambiguousProviderMessageId = `ycloud_template_ambiguous_${id}`
+  const recipientProviderMessageId = `ycloud_template_recipient_${id}`
   const blockedProviderMessageId = `ycloud_template_132000_blocked_${id}`
   const errorMessage = 'body: number of localizable_params (1) does not match the expected number of params (2)'
   const renderedText = 'Hola Eduardo, oye una pregunta... ¿en dónde me encontraste?'
   const keys = getWhatsAppApiConfigKeys()
-  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+  const configKeys = [
+    keys.enabled,
+    keys.apiKey,
+    keys.senderPhone,
+    keys.phoneNumberId,
+    keys.wabaId,
+    keys.provider,
+    'whatsapp_qr_drip_settings'
+  ]
   const sentMessages = []
   let nextProviderMessageId = providerMessageId
 
-  const processFailure = async (eventId, messageId, toPhone) => {
+  const processFailure = async ({
+    eventId,
+    messageId,
+    toPhone,
+    errorCode = '132000',
+    failureMessage = errorMessage
+  }) => {
     const payload = {
       id: eventId,
       type: 'whatsapp.message.updated',
@@ -1895,8 +1918,8 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
           name: templateName,
           language: { code: 'es_MX' }
         },
-        errorCode: '132000',
-        errorMessage,
+        errorCode,
+        errorMessage: failureMessage,
         createTime: new Date().toISOString()
       }
     }
@@ -1909,6 +1932,9 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
   }
 
   await cleanup({ contactId, phone })
+  await cleanup({ contactId: semanticContactId, phone: semanticPhone })
+  await cleanup({ contactId: ambiguousContactId, phone: ambiguousPhone })
+  await cleanup({ contactId: recipientContactId, phone: recipientPhone })
   await cleanup({ contactId: blockedContactId, phone: blockedPhone })
   await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
@@ -1928,6 +1954,11 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
       await setAppConfig(keys.phoneNumberId, phoneNumberId)
       await setAppConfig(keys.wabaId, 'waba_template_132000')
       await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig('whatsapp_qr_drip_settings', {
+        enabled: false,
+        delaySeconds: 30,
+        delayUnit: 'seconds'
+      })
 
       await db.run(`
         INSERT INTO whatsapp_api_phone_numbers (
@@ -2008,8 +2039,16 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
       `, [providerMessageId]).then(row => row?.qr_fallback_authorized), 1)
 
       await Promise.all([
-        processFailure(`evt_template_132000_a_${id}`, providerMessageId, phone),
-        processFailure(`evt_template_132000_b_${id}`, providerMessageId, phone)
+        processFailure({
+          eventId: `evt_template_132000_a_${id}`,
+          messageId: providerMessageId,
+          toPhone: phone
+        }),
+        processFailure({
+          eventId: `evt_template_132000_b_${id}`,
+          messageId: providerMessageId,
+          toPhone: phone
+        })
       ])
 
       assert.equal(sentMessages.length, 1)
@@ -2026,7 +2065,7 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
       assert.equal(fallbackRow.source_adapter, 'baileys')
       assert.equal(fallbackRow.provider_message_id, sentMessages[0].id)
       assert.equal(fallbackRow.transport, 'qr')
-      assert.match(fallbackRow.routing_reason, /cantidad incorrecta de variables/)
+      assert.match(fallbackRow.routing_reason, /antes de entregarla/)
       assert.ok(['sent', 'delivered'].includes(fallbackRow.status))
       assert.equal(fallbackRow.error_code, null)
       assert.equal(fallbackRow.error_message, null)
@@ -2044,8 +2083,92 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
       assert.equal(attempt.attempt_count, 1)
       assert.equal(attempt.qr_message_id, sentMessages[0].id)
 
-      await processFailure(`evt_template_132000_c_${id}`, providerMessageId, phone)
+      await processFailure({
+        eventId: `evt_template_132000_c_${id}`,
+        messageId: providerMessageId,
+        toPhone: phone
+      })
       assert.equal(sentMessages.length, 1)
+
+      nextProviderMessageId = semanticProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: semanticPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: semanticContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_semantic_${id}`,
+        messageId: semanticProviderMessageId,
+        toPhone: semanticPhone,
+        errorCode: '987654',
+        failureMessage: 'Template body parameters are invalid: expected 2 but received 1.'
+      })
+      assert.equal(sentMessages.length, 2)
+      assert.equal(sentMessages[1].payload.text, renderedText)
+      assert.equal(await db.get(`
+        SELECT transport
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [semanticProviderMessageId]).then(row => row?.transport), 'qr')
+
+      nextProviderMessageId = ambiguousProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: ambiguousPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: ambiguousContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_ambiguous_${id}`,
+        messageId: ambiguousProviderMessageId,
+        toPhone: ambiguousPhone,
+        errorCode: '599',
+        failureMessage: 'Template body parameters are invalid after an upstream timeout; retry later.'
+      })
+      assert.equal(sentMessages.length, 2)
+      const ambiguousRow = await db.get(`
+        SELECT id, transport, status
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [ambiguousProviderMessageId])
+      assert.equal(ambiguousRow.transport, 'api')
+      assert.equal(ambiguousRow.status, 'failed')
+      assert.equal(await db.get(`
+        SELECT COUNT(*) AS total
+        FROM whatsapp_api_qr_fallback_attempts
+        WHERE api_message_id = ?
+      `, [ambiguousRow.id]).then(row => Number(row?.total || 0)), 0)
+
+      nextProviderMessageId = recipientProviderMessageId
+      await sendWhatsAppApiTemplateMessage({
+        to: recipientPhone,
+        from: businessPhone,
+        templateId,
+        variables: { 1: 'Eduardo' },
+        contactId: recipientContactId,
+        phoneNumberId,
+        allowQrFallback: true
+      })
+      await processFailure({
+        eventId: `evt_template_recipient_${id}`,
+        messageId: recipientProviderMessageId,
+        toPhone: recipientPhone,
+        errorCode: '777777',
+        failureMessage: 'Template body is unavailable because the recipient blocked this business.'
+      })
+      assert.equal(sentMessages.length, 2)
+      assert.equal(await db.get(`
+        SELECT transport
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [recipientProviderMessageId]).then(row => row?.transport), 'api')
 
       nextProviderMessageId = blockedProviderMessageId
       await sendWhatsAppApiTemplateMessage({
@@ -2063,12 +2186,12 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
         WHERE provider_message_id = ?
       `, [blockedProviderMessageId]).then(row => row?.qr_fallback_authorized), 0)
 
-      await processFailure(
-        `evt_template_132000_blocked_${id}`,
-        blockedProviderMessageId,
-        blockedPhone
-      )
-      assert.equal(sentMessages.length, 1)
+      await processFailure({
+        eventId: `evt_template_132000_blocked_${id}`,
+        messageId: blockedProviderMessageId,
+        toPhone: blockedPhone
+      })
+      assert.equal(sentMessages.length, 2)
 
       const blockedRow = await db.get(`
         SELECT id, transport, status, error_code, error_message
@@ -2099,6 +2222,9 @@ test('132000 de plantilla usa una sola vez el QR autorizado y respeta allowQrFal
       WHERE entity_id IN (?, ?, 'business_account')
     `, [phoneNumberId, 'waba_template_132000']).catch(() => undefined)
     await cleanup({ contactId, phone })
+    await cleanup({ contactId: semanticContactId, phone: semanticPhone })
+    await cleanup({ contactId: ambiguousContactId, phone: ambiguousPhone })
+    await cleanup({ contactId: recipientContactId, phone: recipientPhone })
     await cleanup({ contactId: blockedContactId, phone: blockedPhone })
   }
 })
