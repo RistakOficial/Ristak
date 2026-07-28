@@ -1,6 +1,8 @@
 import { db } from '../config/database.js'
+import { logger } from './logger.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
+let hiddenContactFiltersInflight = null
 
 /**
  * ACL-005 / SEC-012: Escapa de forma segura un valor que se interpolará dentro
@@ -62,21 +64,48 @@ function buildFilterMatchCondition(filters, expressions = []) {
  * @returns {Promise<Array<{text: string, type: string}>>} Array de filtros con texto y tipo
  */
 export async function getHiddenContactFilters(options = {}) {
-  try {
-    const filters = await db.all(
-      'SELECT filter_text, match_type FROM hidden_contact_filters ORDER BY created_at DESC',
-      [],
-      options?.signal ? { signal: options.signal } : undefined
-    )
-    return filters.map(f => ({
-      text: f.filter_text,
-      type: f.match_type || 'contains' // default a 'contains' para compatibilidad
-    }))
-  } catch (error) {
-    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error
-    // Si hay error, devolver array vacío para no romper queries
-    return []
+  if (options?.signal?.aborted) {
+    const error = new Error('La lectura de contactos ocultos fue cancelada')
+    error.name = 'AbortError'
+    error.code = 'ABORT_ERR'
+    throw error
   }
+
+  // Esta lectura es una compuerta de privacidad, no un dato opcional. Antes,
+  // cualquier error se convertía silenciosamente en `[]` y el resto de la
+  // consulta continuaba sin filtro: justo el peor comportamiento posible.
+  //
+  // Tampoco ligamos la lectura compartida al AbortSignal de una sola petición.
+  // Analíticas dispara varias lecturas en paralelo; si una cerraba/cancelaba su
+  // request podía dejar al resto sin reglas. Compartimos únicamente la consulta
+  // en curso y cada consumidor vuelve a revisar su propia señal al recibirla.
+  if (!hiddenContactFiltersInflight) {
+    const readPromise = db.all(
+      'SELECT filter_text, match_type FROM hidden_contact_filters ORDER BY created_at DESC'
+    ).then(filters => filters.map(f => ({
+      text: f.filter_text,
+      type: f.match_type || 'contains'
+    }))).catch(error => {
+      logger.error(`No se pudieron cargar las reglas de contactos ocultos; la lectura protegida se detiene: ${error.message}`)
+      throw error
+    })
+
+    const trackedPromise = readPromise.finally(() => {
+      if (hiddenContactFiltersInflight === trackedPromise) {
+        hiddenContactFiltersInflight = null
+      }
+    })
+    hiddenContactFiltersInflight = trackedPromise
+  }
+
+  const filters = await hiddenContactFiltersInflight
+  if (options?.signal?.aborted) {
+    const error = new Error('La lectura de contactos ocultos fue cancelada')
+    error.name = 'AbortError'
+    error.code = 'ABORT_ERR'
+    throw error
+  }
+  return filters.map(filter => ({ ...filter }))
 }
 
 /**

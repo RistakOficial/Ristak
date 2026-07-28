@@ -35,6 +35,64 @@ function marker(label) {
   return `${label}_${Date.now()}_${Math.random().toString(16).slice(2)}`
 }
 
+test('la compuerta de contactos ocultos comparte la lectura y nunca falla abierta', async () => {
+  const originalAll = db.all
+  const firstController = new AbortController()
+  let filterReads = 0
+  let receivedOptions
+  let releaseRead
+
+  try {
+    db.all = async (sql, params, options) => {
+      if (!String(sql).includes('FROM hidden_contact_filters')) {
+        return originalAll(sql, params, options)
+      }
+      filterReads += 1
+      receivedOptions = options
+      await new Promise(resolve => {
+        releaseRead = resolve
+      })
+      return [{ filter_text: 'contacto_privado', match_type: 'contains' }]
+    }
+
+    const cancelledConsumer = getHiddenContactFilters({ signal: firstController.signal })
+    const cancelledAssertion = assert.rejects(
+      cancelledConsumer,
+      error => error?.name === 'AbortError' && error?.code === 'ABORT_ERR'
+    )
+    const activeConsumer = getHiddenContactFilters()
+
+    firstController.abort()
+    releaseRead()
+
+    await cancelledAssertion
+    assert.deepEqual(await activeConsumer, [
+      { text: 'contacto_privado', type: 'contains' }
+    ])
+    assert.equal(filterReads, 1)
+    assert.equal(
+      receivedOptions,
+      undefined,
+      'la cancelación de un request no debe cancelar la lectura compartida'
+    )
+
+    db.all = async (sql, params, options) => {
+      if (String(sql).includes('FROM hidden_contact_filters')) {
+        throw new Error('hidden filters unavailable')
+      }
+      return originalAll(sql, params, options)
+    }
+
+    await assert.rejects(
+      getHiddenContactFilters(),
+      /hidden filters unavailable/,
+      'un error de configuración debe detener la lectura protegida, no mostrar todos los contactos'
+    )
+  } finally {
+    db.all = originalAll
+  }
+})
+
 async function cleanup(prefix, filterText) {
   await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)

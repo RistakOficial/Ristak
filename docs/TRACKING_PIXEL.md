@@ -566,6 +566,10 @@ Las reglas de contactos ocultos se aplican antes de paginar y su firma forma
 parte del cursor. Se excluyen tanto filas enlazadas por `contact_id` como
 historial anonimo que comparta `visitor_id` o `session_id` con una persona
 oculta; esas filas tampoco consumen lugares de la pagina.
+La consulta de reglas es una compuerta fail-closed: las cargas concurrentes de
+Analiticas comparten la lectura en curso sin atarla al `AbortSignal` de una sola
+peticion. Si esa lectura falla, `/sessions/search` devuelve error en vez de
+continuar con un arreglo vacio y exponer eventos ocultos.
 
 ### `GET /api/tracking/sessions/:id`
 

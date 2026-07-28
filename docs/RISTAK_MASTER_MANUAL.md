@@ -1658,6 +1658,12 @@ Capacidades:
   reportes, metricas, notificaciones, selectores, API externa, MCP, eventos y
   analiticas de tracking, Sites, formularios y video. Esta configuracion no
   depende de que HighLevel este conectado o siquiera habilitado.
+- La lectura de `hidden_contact_filters` es una compuerta de privacidad y falla
+  cerrada. Las consultas paralelas pueden compartir una sola lectura en curso,
+  pero la cancelacion de un request no cancela esa lectura para los demas. Si la
+  base no puede entregar las reglas, la superficie protegida responde con error
+  y reintento en lugar de interpretar el fallo como “no existen reglas” y
+  mostrar datos que debian permanecer ocultos.
 - La exclusion sigue la identidad relacionada, no solo el texto de la fila que
   se esta mostrando. Debe reconocer `contact_id`, ID de visitante, ID de sesion,
   submission, playback y campos de identidad desnormalizados. Una fila historica
