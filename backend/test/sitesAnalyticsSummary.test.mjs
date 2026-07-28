@@ -19,11 +19,12 @@ function handlerResponse() {
   }
 }
 
-test('sites analytics summary respects selected site ids and date range', async () => {
+test('sites analytics summary uses first-party events and caps conversion rate by unique converting visitors', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const siteId = `site_analytics_${suffix}`
   const formId = `form_analytics_${suffix}`
   const submissionId = `submission_analytics_${suffix}`
+  const secondSiteSubmissionId = `submission_analytics_second_${suffix}`
   const formSubmissionId = `form_submission_analytics_${suffix}`
   const inRange = '2026-01-15T18:00:00.000Z'
   const outOfRange = '2026-01-10T18:00:00.000Z'
@@ -42,54 +43,166 @@ test('sites analytics summary respects selected site ids and date range', async 
       INSERT INTO sessions (
         session_id,
         visitor_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         site_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_site`, `visitor_${suffix}_site`, 'native_site_view', inRange, inRange, siteId])
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_site`,
+      `visitor_${suffix}_site`,
+      `event_${suffix}_site_view`,
+      'native_site_view',
+      inRange,
+      inRange,
+      siteId
+    ])
 
     await db.run(`
       INSERT INTO sessions (
         session_id,
         visitor_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         site_id,
         submission_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_site`, `visitor_${suffix}_site`, 'native_site_conversion', inRange, inRange, siteId, submissionId])
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_site`,
+      `visitor_${suffix}_site`,
+      `event_${suffix}_site_conversion_a`,
+      'native_site_conversion',
+      inRange,
+      inRange,
+      siteId,
+      submissionId
+    ])
 
     await db.run(`
       INSERT INTO sessions (
         session_id,
         visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        site_id,
+        submission_id
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_site`,
+      `visitor_${suffix}_site`,
+      `event_${suffix}_site_conversion_b`,
+      'native_site_conversion',
+      inRange,
+      inRange,
+      siteId,
+      secondSiteSubmissionId
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         site_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_old`, `visitor_${suffix}_old`, 'native_site_view', outOfRange, outOfRange, siteId])
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_old`,
+      `visitor_${suffix}_old`,
+      `event_${suffix}_old_view`,
+      'native_site_view',
+      outOfRange,
+      outOfRange,
+      siteId
+    ])
 
     await db.run(`
       INSERT INTO sessions (
         session_id,
         visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, 'external_pixel', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_external`,
+      `visitor_${suffix}_external`,
+      `event_${suffix}_external_view`,
+      'native_site_view',
+      inRange,
+      inRange,
+      siteId
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         form_site_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_form`, `visitor_${suffix}_form`, 'page_view', inRange, inRange, formId])
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_form`,
+      `visitor_${suffix}_form`,
+      `event_${suffix}_form_view`,
+      'page_view',
+      inRange,
+      inRange,
+      formId
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        form_site_id,
+        submission_id
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_form`,
+      `visitor_${suffix}_form`,
+      `event_${suffix}_form_conversion`,
+      'native_site_conversion',
+      inRange,
+      inRange,
+      formId,
+      formSubmissionId
+    ])
 
     await db.run(
       'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
       [submissionId, siteId, '{}', inRange]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, form_site_id, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
-      [formSubmissionId, siteId, formId, '{}', inRange]
+      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
+      [secondSiteSubmissionId, siteId, '{}', inRange]
+    )
+    await db.run(
+      'INSERT INTO public_site_submissions (id, site_id, response_json, meta_json, created_at) VALUES (?, ?, ?, ?, ?)',
+      [formSubmissionId, formId, '{}', JSON.stringify({ formFinalSubmit: true }), inRange]
     )
 
     const summary = await getSitesTrackingSummary({
@@ -101,17 +214,56 @@ test('sites analytics summary respects selected site ids and date range', async 
     assert.equal(summary.bySiteId[siteId].views, 1)
     assert.equal(summary.bySiteId[siteId].visitors, 1)
     assert.equal(summary.bySiteId[siteId].sessions, 1)
+    assert.equal(summary.bySiteId[siteId].submissions, 2)
+    assert.equal(summary.bySiteId[siteId].completedSubmissions, 2)
+    assert.equal(summary.bySiteId[siteId].qualifiedConversions, 2)
+    assert.equal(summary.bySiteId[siteId].convertingVisitors, 1)
+    assert.equal(summary.bySiteId[siteId].unattributedConversions, 0)
     assert.equal(summary.bySiteId[siteId].conversions, 2)
-    assert.equal(summary.bySiteId[siteId].conversionRate, 200)
+    assert.equal(summary.bySiteId[siteId].conversionRate, 100)
     assert.equal(summary.bySiteId[formId].views, 1)
     assert.equal(summary.bySiteId[formId].visitors, 1)
     assert.equal(summary.bySiteId[formId].sessions, 1)
+    assert.equal(summary.bySiteId[formId].submissions, 1)
+    assert.equal(summary.bySiteId[formId].qualifiedConversions, 1)
+    assert.equal(summary.bySiteId[formId].convertingVisitors, 1)
     assert.equal(summary.bySiteId[formId].conversions, 1)
-    assert.equal(summary.aggregate.views, 2)
-    assert.equal(summary.aggregate.visitors, 2)
-    assert.equal(summary.aggregate.sessions, 2)
-    assert.equal(summary.aggregate.conversions, 2)
-    assert.equal(summary.aggregate.entityCount, 2)
+    assert.equal(summary.bySiteId[formId].conversionRate, 100)
+    assert.deepEqual(summary.aggregate, {
+      views: 2,
+      visitors: 2,
+      sessions: 2,
+      submissions: 3,
+      completedSubmissions: 3,
+      terminalExitSubmissions: 0,
+      qualifiedConversions: 3,
+      disqualifiedSubmissions: 0,
+      partialSubmissions: 0,
+      legacyUnknownSubmissions: 0,
+      convertingVisitors: 2,
+      unattributedConversions: 0,
+      conversions: 3,
+      conversionRate: 100,
+      entityCount: 2
+    })
+    assert.equal(summary.schemaVersion, 3)
+    assert.equal(summary.meta.source, 'first_party')
+    assert.equal(summary.coverage.status, 'ready')
+    assert.equal(summary.coverage.legacyViewEvents, 0)
+    assert.equal(summary.coverage.timestampAdjustedEvents, 0)
+    assert.equal(summary.rankings.byConversions[0]?.siteId, siteId)
+    assert.deepEqual(summary.series, [{
+      periodKey: '2026-01-15',
+      views: 2,
+      visitors: 2,
+      sessions: 2,
+      submissions: 3,
+      completedSubmissions: 3,
+      qualifiedConversions: 3,
+      disqualifiedSubmissions: 0,
+      partialSubmissions: 0,
+      legacyUnknownSubmissions: 0
+    }])
     assert.deepEqual(Object.keys(summary.formFunnels), [siteId, formId])
     assert.equal(summary.formFunnels[siteId].submissions, 2)
     assert.equal(summary.formFunnels[formId].submissions, 1)
@@ -130,16 +282,21 @@ test('sites analytics summary respects selected site ids and date range', async 
     assert.equal(emptyRange.bySiteId[siteId].conversions, 0)
     assert.equal(emptyRange.bySiteId[formId].views, 0)
   } finally {
-    await db.run('DELETE FROM public_site_submissions WHERE id IN (?, ?)', [submissionId, formSubmissionId]).catch(() => undefined)
+    await db.run(
+      'DELETE FROM public_site_submissions WHERE id IN (?, ?, ?)',
+      [submissionId, secondSiteSubmissionId, formSubmissionId]
+    ).catch(() => undefined)
     await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`session_${suffix}%`]).catch(() => undefined)
     await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [siteId, formId]).catch(() => undefined)
   }
 })
 
-test('sites analytics summary deduplicates visitors by contact identity', async () => {
+test('sites analytics summary deduplicates visitors by visitor_id without merging distinct visitors by contact', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const siteId = `site_identity_${suffix}`
   const inRange = '2026-02-12T18:00:00.000Z'
+  const withinSession = '2026-02-12T18:10:00.000Z'
+  const afterInactivity = '2026-02-12T18:41:00.000Z'
   const contactId = `contact_identity_${suffix}`
 
   try {
@@ -158,35 +315,113 @@ test('sites analytics summary deduplicates visitors by contact identity', async 
         session_id,
         visitor_id,
         contact_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         site_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_a`, `visitor_${suffix}_old`, contactId, 'native_site_view', inRange, inRange, siteId])
+      ) VALUES (?, ?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_a`,
+      `visitor_${suffix}_old`,
+      contactId,
+      `event_${suffix}_identity_a`,
+      'native_site_view',
+      inRange,
+      inRange,
+      siteId
+    ])
 
     await db.run(`
       INSERT INTO sessions (
         session_id,
         visitor_id,
         contact_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         site_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_b`, `visitor_${suffix}_new`, contactId, 'page_view', inRange, inRange, siteId])
+      ) VALUES (?, ?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_a_repeat`,
+      `visitor_${suffix}_old`,
+      contactId,
+      `event_${suffix}_identity_a_repeat`,
+      'page_view',
+      withinSession,
+      withinSession,
+      siteId
+    ])
 
     await db.run(`
       INSERT INTO sessions (
         session_id,
         visitor_id,
+        contact_id,
+        event_id,
+        tracking_source,
         event_name,
         started_at,
         created_at,
         site_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `, [`session_${suffix}_anonymous`, `visitor_${suffix}_anonymous`, 'native_site_view', inRange, inRange, siteId])
+      ) VALUES (?, ?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_a_after_inactivity`,
+      `visitor_${suffix}_old`,
+      contactId,
+      `event_${suffix}_identity_a_after_inactivity`,
+      'page_view',
+      afterInactivity,
+      afterInactivity,
+      siteId
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        contact_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_b`,
+      `visitor_${suffix}_new`,
+      contactId,
+      `event_${suffix}_identity_b`,
+      'page_view',
+      inRange,
+      inRange,
+      siteId
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, 'native_site', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_anonymous`,
+      `visitor_${suffix}_anonymous`,
+      `event_${suffix}_identity_anonymous`,
+      'native_site_view',
+      inRange,
+      inRange,
+      siteId
+    ])
 
     const summary = await getSitesTrackingSummary({
       siteIds: [siteId],
@@ -194,9 +429,9 @@ test('sites analytics summary deduplicates visitors by contact identity', async 
       dateTo: '2026-02-12'
     })
 
-    assert.equal(summary.bySiteId[siteId].views, 3)
-    assert.equal(summary.bySiteId[siteId].visitors, 2)
-    assert.equal(summary.bySiteId[siteId].sessions, 3)
+    assert.equal(summary.bySiteId[siteId].views, 5)
+    assert.equal(summary.bySiteId[siteId].visitors, 3)
+    assert.equal(summary.bySiteId[siteId].sessions, 4)
   } finally {
     await db.run('DELETE FROM sessions WHERE session_id LIKE ?', [`session_${suffix}%`]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -204,7 +439,244 @@ test('sites analytics summary deduplicates visitors by contact identity', async 
   }
 })
 
-test('sites analytics summary includes form completion by question', async () => {
+test('sites analytics summary never fans one CRM contact out to multiple converting web visitors', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const siteId = `site_conversion_identity_${suffix}`
+  const contactId = `contact_conversion_identity_${suffix}`
+  const attributedSubmissionId = `submission_attributed_${suffix}`
+  const unattributedSubmissionId = `submission_unattributed_${suffix}`
+  const inRange = '2026-02-18T18:00:00.000Z'
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [siteId, 'Landing conversion identity', `landing-conversion-identity-${suffix}`, 'landing_page', 'published']
+    )
+    await db.run(
+      `INSERT INTO contacts (id, full_name, source, created_at, updated_at)
+       VALUES (?, 'Contacto compartido', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+
+    for (const visitorSuffix of ['a', 'b']) {
+      await db.run(`
+        INSERT INTO sessions (
+          session_id,
+          visitor_id,
+          contact_id,
+          event_id,
+          tracking_source,
+          event_name,
+          started_at,
+          created_at,
+          site_id
+        ) VALUES (?, ?, ?, ?, 'native_site', 'native_site_view', ?, ?, ?)
+      `, [
+        `session_${suffix}_${visitorSuffix}`,
+        `visitor_${suffix}_${visitorSuffix}`,
+        contactId,
+        `event_${suffix}_view_${visitorSuffix}`,
+        inRange,
+        inRange,
+        siteId
+      ])
+    }
+
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, contact_id, response_json, status, created_at
+      ) VALUES (?, ?, ?, '{}', 'received', ?)`,
+      [attributedSubmissionId, siteId, contactId, inRange]
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, contact_id, response_json, status, created_at
+      ) VALUES (?, ?, ?, '{}', 'received', ?)`,
+      [unattributedSubmissionId, siteId, contactId, inRange]
+    )
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        contact_id,
+        event_id,
+        tracking_source,
+        event_name,
+        submission_id,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES (?, ?, ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?, ?)
+    `, [
+      `session_${suffix}_a`,
+      `visitor_${suffix}_a`,
+      contactId,
+      `event_${suffix}_conversion_attributed`,
+      attributedSubmissionId,
+      inRange,
+      inRange,
+      siteId
+    ])
+
+    await db.run(`
+      INSERT INTO sessions (
+        session_id,
+        visitor_id,
+        contact_id,
+        event_id,
+        tracking_source,
+        event_name,
+        submission_id,
+        started_at,
+        created_at,
+        site_id
+      ) VALUES ('', '', ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?, ?)
+    `, [
+      contactId,
+      `event_${suffix}_conversion_contact_only`,
+      unattributedSubmissionId,
+      inRange,
+      inRange,
+      siteId
+    ])
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [siteId],
+      dateFrom: '2026-02-18',
+      dateTo: '2026-02-18'
+    })
+    const stats = summary.bySiteId[siteId]
+
+    assert.equal(stats.views, 2)
+    assert.equal(stats.visitors, 2)
+    assert.equal(stats.qualifiedConversions, 2)
+    assert.equal(stats.convertingVisitors, 1)
+    assert.equal(stats.unattributedConversions, 1)
+    assert.equal(stats.conversionRate, 50)
+  } finally {
+    await db.run(
+      'DELETE FROM public_site_submissions WHERE id IN (?, ?)',
+      [attributedSubmissionId, unattributedSubmissionId]
+    ).catch(() => undefined)
+    await db.run('DELETE FROM sessions WHERE event_id LIKE ?', [`event_${suffix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
+  }
+})
+
+test('sites analytics summary never attributes a conversion to a view that happened later', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const siteId = `site_conversion_time_${suffix}`
+  const submissionId = `submission_conversion_time_${suffix}`
+  const visitorId = `visitor_conversion_time_${suffix}`
+  const sessionId = `session_conversion_time_${suffix}`
+  const conversionAt = '2026-02-19T18:00:00.000Z'
+  const laterViewAt = '2026-02-19T19:00:00.000Z'
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [siteId, 'Landing temporal', `landing-temporal-${suffix}`, 'landing_page', 'published']
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, status, created_at
+      ) VALUES (?, ?, '{}', 'received', ?)`,
+      [submissionId, siteId, conversionAt]
+    )
+    await db.run(`
+      INSERT INTO sessions (
+        session_id, visitor_id, event_id, tracking_source, event_name,
+        submission_id, started_at, created_at, site_id
+      ) VALUES (?, ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?, ?)
+    `, [
+      sessionId,
+      visitorId,
+      `event_${suffix}_conversion`,
+      submissionId,
+      conversionAt,
+      conversionAt,
+      siteId
+    ])
+    await db.run(`
+      INSERT INTO sessions (
+        session_id, visitor_id, event_id, tracking_source, event_name,
+        started_at, created_at, site_id
+      ) VALUES (?, ?, ?, 'native_site', 'native_site_view', ?, ?, ?)
+    `, [
+      sessionId,
+      visitorId,
+      `event_${suffix}_later_view`,
+      laterViewAt,
+      laterViewAt,
+      siteId
+    ])
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [siteId],
+      dateFrom: '2026-02-19',
+      dateTo: '2026-02-19'
+    })
+    const stats = summary.bySiteId[siteId]
+
+    assert.equal(stats.views, 1)
+    assert.equal(stats.qualifiedConversions, 1)
+    assert.equal(stats.convertingVisitors, 0)
+    assert.equal(stats.unattributedConversions, 1)
+    assert.equal(stats.conversionRate, 0)
+    assert.equal(summary.aggregate.convertingVisitors, 0)
+    assert.equal(summary.aggregate.unattributedConversions, 1)
+  } finally {
+    await db.run('DELETE FROM public_site_submissions WHERE id = ?', [submissionId]).catch(() => undefined)
+    await db.run('DELETE FROM sessions WHERE event_id LIKE ?', [`event_${suffix}%`]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
+  }
+})
+
+test('sites analytics summary keeps an embedded standard-form checkpoint partial for both form and outer landing', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const landingId = `landing_embedded_checkpoint_${suffix}`
+  const formId = `form_embedded_checkpoint_${suffix}`
+  const submissionId = `submission_embedded_checkpoint_${suffix}`
+  const inRange = '2026-02-22T18:00:00.000Z'
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [landingId, 'Landing con formulario', `landing-embedded-checkpoint-${suffix}`, 'landing_page', 'published']
+    )
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [formId, 'Formulario embebido', `form-embedded-checkpoint-${suffix}`, 'standard_form', 'published']
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, form_site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, '{}', ?, 'received', ?)`,
+      [submissionId, landingId, formId, JSON.stringify({ formFinalSubmit: false }), inRange]
+    )
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [landingId, formId],
+      dateFrom: '2026-02-22',
+      dateTo: '2026-02-22'
+    })
+
+    for (const siteId of [landingId, formId]) {
+      assert.equal(summary.bySiteId[siteId].submissions, 0)
+      assert.equal(summary.bySiteId[siteId].completedSubmissions, 0)
+      assert.equal(summary.bySiteId[siteId].partialSubmissions, 1)
+      assert.equal(summary.bySiteId[siteId].qualifiedConversions, 0)
+      assert.equal(summary.bySiteId[siteId].conversions, 0)
+    }
+  } finally {
+    await db.run('DELETE FROM public_site_submissions WHERE id = ?', [submissionId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id IN (?, ?)', [landingId, formId]).catch(() => undefined)
+  }
+})
+
+test('sites analytics summary measures terminal answer coverage and keeps incomplete or legacy submissions out of conversions', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const formId = `form_funnel_${suffix}`
   const q1 = `question_one_${suffix}`
@@ -233,24 +705,81 @@ test('sites analytics summary includes form completion by question', async () =>
     )
 
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`submission_${suffix}_complete`, formId, JSON.stringify({ [q1]: 'Raul', [q2]: 'raul@example.com', [q3]: '+5216560000000' }), inRange]
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        `submission_${suffix}_complete_zero_false`,
+        formId,
+        JSON.stringify({ [q1]: 'Raul', [q2]: 0, [q3]: false }),
+        JSON.stringify({ formFinalSubmit: true }),
+        'received',
+        inRange
+      ]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`submission_${suffix}_partial`, formId, JSON.stringify({ [q1]: 'Ana', [q2]: 'ana@example.com' }), inRange]
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        `submission_${suffix}_complete_sparse`,
+        formId,
+        JSON.stringify({ [q1]: 'Ana', [q2]: '', [q3]: null }),
+        JSON.stringify({ formFinalSubmit: true }),
+        'received',
+        inRange
+      ]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`submission_${suffix}_first`, formId, JSON.stringify({ [q1]: 'Luis' }), inRange]
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        `submission_${suffix}_terminal_disqualified`,
+        formId,
+        JSON.stringify({ [q1]: 'Luis', [q2]: 0 }),
+        JSON.stringify({ immediateDisqualify: true }),
+        'disqualified',
+        inRange
+      ]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`submission_${suffix}_malformed`, formId, '{malformed', inRange]
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        `submission_${suffix}_checkpoint`,
+        formId,
+        JSON.stringify({ [q1]: 'Checkpoint', [q2]: 99, [q3]: true }),
+        JSON.stringify({ formFinalSubmit: false }),
+        'received',
+        inRange
+      ]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`submission_${suffix}_old`, formId, JSON.stringify({ [q1]: 'Viejo', [q2]: 'old@example.com', [q3]: '1234567890' }), outOfRange]
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?)`,
+      [
+        `submission_${suffix}_legacy_unknown`,
+        formId,
+        JSON.stringify({ [q1]: 'Legacy', [q2]: 42, [q3]: true }),
+        'received',
+        inRange
+      ]
+    )
+    await db.run(
+      `INSERT INTO public_site_submissions (
+        id, site_id, response_json, meta_json, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        `submission_${suffix}_old`,
+        formId,
+        JSON.stringify({ [q1]: 'Viejo', [q2]: 1, [q3]: true }),
+        JSON.stringify({ formFinalSubmit: true }),
+        'received',
+        outOfRange
+      ]
     )
 
     const summary = await getSitesTrackingSummary({
@@ -261,17 +790,57 @@ test('sites analytics summary includes form completion by question', async () =>
     })
 
     const funnel = summary.formFunnels[formId]
-    assert.equal(funnel.submissions, 4)
-    assert.equal(funnel.starts, 4)
+    assert.equal(summary.bySiteId[formId].submissions, 3)
+    assert.equal(summary.bySiteId[formId].completedSubmissions, 2)
+    assert.equal(summary.bySiteId[formId].terminalExitSubmissions, 1)
+    assert.equal(summary.bySiteId[formId].qualifiedConversions, 2)
+    assert.equal(summary.bySiteId[formId].disqualifiedSubmissions, 1)
+    assert.equal(summary.bySiteId[formId].partialSubmissions, 1)
+    assert.equal(summary.bySiteId[formId].legacyUnknownSubmissions, 1)
+    assert.equal(summary.bySiteId[formId].conversions, 2)
+    assert.equal(summary.bySiteId[formId].convertingVisitors, 0)
+    assert.equal(summary.bySiteId[formId].unattributedConversions, 2)
+    assert.equal(summary.bySiteId[formId].conversionRate, 0)
+    assert.equal(summary.coverage.status, 'partial')
+    assert.equal(summary.coverage.legacyUnknownSubmissions, 1)
+    assert.equal(summary.meta.status, 'partial')
+    assert.equal(summary.meta.warnings.some(warning => /no permiten probar si fueron finales/i.test(warning)), true)
+    assert.equal(funnel.submissions, 3)
+    assert.equal(funnel.completedSubmissions, 2)
+    assert.equal(funnel.terminalExitSubmissions, 1)
+    assert.equal(funnel.qualifiedConversions, 2)
+    assert.equal(funnel.disqualifiedSubmissions, 1)
+    assert.equal(funnel.partialSubmissions, 1)
+    assert.equal(funnel.legacyUnknownSubmissions, 1)
+    assert.equal(funnel.measurement, 'saved_submission_answer_coverage')
+    assert.equal(Object.hasOwn(funnel, 'starts'), false)
     assert.equal(funnel.fields.length, 3)
     assert.deepEqual(
-      funnel.fields.map(field => [field.label, field.answeredCount, field.answerRate, field.stepCompletionRate]),
+      funnel.fields.map(field => [
+        field.label,
+        field.finalSubmissions,
+        field.answeredCount,
+        field.unansweredCount,
+        field.answerRate
+      ]),
       [
-        ['Nombre', 3, 75, 75],
-        ['Correo', 2, 50, 66.7],
-        ['WhatsApp', 1, 25, 50]
+        ['Nombre', 3, 3, 0, 100],
+        ['Correo', 3, 2, 1, 66.7],
+        ['WhatsApp', 3, 1, 2, 33.3]
       ]
     )
+    assert.deepEqual(summary.series, [{
+      periodKey: '2026-03-20',
+      views: 0,
+      visitors: 0,
+      sessions: 0,
+      submissions: 3,
+      completedSubmissions: 2,
+      qualifiedConversions: 2,
+      disqualifiedSubmissions: 1,
+      partialSubmissions: 1,
+      legacyUnknownSubmissions: 1
+    }])
   } finally {
     await db.run('DELETE FROM public_site_submissions WHERE site_id = ?', [formId]).catch(() => undefined)
     await db.run('DELETE FROM public_site_blocks WHERE site_id = ?', [formId]).catch(() => undefined)
@@ -286,6 +855,15 @@ test('sites analytics summary returns an empty aggregate without scope or legacy
     views: 0,
     visitors: 0,
     sessions: 0,
+    submissions: 0,
+    completedSubmissions: 0,
+    terminalExitSubmissions: 0,
+    qualifiedConversions: 0,
+    disqualifiedSubmissions: 0,
+    partialSubmissions: 0,
+    legacyUnknownSubmissions: 0,
+    convertingVisitors: 0,
+    unattributedConversions: 0,
     conversions: 0,
     conversionRate: 0,
     entityCount: 0
@@ -309,6 +887,28 @@ test('sites analytics v2 rechaza scopes ambiguos y consultas globales sin rango'
       siteScope: { siteType: 'sites', landingMode: 'all', status: 'published' }
     }),
     error => error?.status === 400 && /rango de fechas/i.test(error.message)
+  )
+
+  for (const range of [
+    { dateFrom: '2026-02-30', dateTo: '2026-03-01' },
+    { dateFrom: '2026-03-20T00:00:00Z', dateTo: '2026-03-20' },
+    { dateFrom: '2026-03-21', dateTo: '2026-03-20' }
+  ]) {
+    await assert.rejects(
+      () => getSitesTrackingSummary({
+        siteScope: { siteType: 'sites', landingMode: 'all', status: 'published' },
+        ...range
+      }),
+      error => error?.status === 400 && /fecha|dateFrom/i.test(error.message)
+    )
+  }
+
+  await assert.rejects(
+    () => getSitesTrackingSummary({
+      siteIds: ['site_missing'],
+      dateFrom: '2026-03-20'
+    }),
+    error => error?.status === 400 && /dateFrom y dateTo/i.test(error.message)
   )
 })
 
@@ -353,9 +953,23 @@ test('sites analytics summary scales beyond 120 sites and bounds explicit detail
     const eventSuffix = `${siteId}_${form ? 'form' : 'site'}`
     await db.run(`
       INSERT INTO sessions (
-        session_id, visitor_id, event_name, started_at, created_at, ${form ? 'form_site_id' : 'site_id'}
-      ) VALUES (?, ?, 'native_site_view', ?, ?, ?)
-    `, [`scale_session_${eventSuffix}`, `scale_visitor_${eventSuffix}`, eventAt, eventAt, siteId])
+        session_id,
+        visitor_id,
+        event_id,
+        tracking_source,
+        event_name,
+        started_at,
+        created_at,
+        ${form ? 'form_site_id' : 'site_id'}
+      ) VALUES (?, ?, ?, 'native_site', 'native_site_view', ?, ?, ?)
+    `, [
+      `scale_session_${eventSuffix}`,
+      `scale_visitor_${eventSuffix}`,
+      `scale_event_${eventSuffix}`,
+      eventAt,
+      eventAt,
+      siteId
+    ])
   }
 
   try {
@@ -393,12 +1007,24 @@ test('sites analytics summary scales beyond 120 sites and bounds explicit detail
       [secondFormQuestionId, secondPublishedFormId, 'email', 'Correo', 1, '[]', '{}']
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`${prefix}_submission_a`, publishedFormId, JSON.stringify({ [formQuestionId]: 'Raul' }), eventAt]
+      'INSERT INTO public_site_submissions (id, site_id, response_json, meta_json, created_at) VALUES (?, ?, ?, ?, ?)',
+      [
+        `${prefix}_submission_a`,
+        publishedFormId,
+        JSON.stringify({ [formQuestionId]: 'Raul' }),
+        JSON.stringify({ formFinalSubmit: true }),
+        eventAt
+      ]
     )
     await db.run(
-      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
-      [`${prefix}_submission_b`, secondPublishedFormId, JSON.stringify({ [secondFormQuestionId]: 'raul@example.com' }), eventAt]
+      'INSERT INTO public_site_submissions (id, site_id, response_json, meta_json, created_at) VALUES (?, ?, ?, ?, ?)',
+      [
+        `${prefix}_submission_b`,
+        secondPublishedFormId,
+        JSON.stringify({ [secondFormQuestionId]: 'raul@example.com' }),
+        JSON.stringify({ formFinalSubmit: true }),
+        eventAt
+      ]
     )
 
     const pageModeExpression = databaseDialect === 'postgres'
@@ -441,6 +1067,8 @@ test('sites analytics summary scales beyond 120 sites and bounds explicit detail
     assert.equal(websiteSummary.aggregate.entityCount, 125)
     assert.equal(Object.keys(websiteSummary.bySiteId).length, 100)
     assert.equal(Object.hasOwn(websiteSummary.bySiteId, outsideFirstWindowId), false)
+    assert.equal(websiteSummary.rankings.byViews[0]?.siteId, outsideFirstWindowId)
+    assert.equal(websiteSummary.rankings.byViews[0]?.views, 1)
     assert.deepEqual(websiteSummary.formFunnels, {})
 
     const allLandingSummary = await getSitesTrackingSummary({

@@ -4,6 +4,7 @@ import dns from 'node:dns/promises'
 import path from 'node:path'
 import JSZip from 'jszip'
 import fetch from 'node-fetch'
+import { DateTime } from 'luxon'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/database.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
@@ -26,7 +27,10 @@ import {
   getPhoneCountryOptions,
   normalizePhoneForAccount
 } from '../utils/accountLocale.js'
-import { resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
+import {
+  resolveDateRangeWithGHLTimezone,
+  sqliteTimezoneModifierExpression
+} from '../utils/dateUtils.js'
 import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
 import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
 import {
@@ -42,7 +46,7 @@ import {
   findMediaAssetsByPublicUrls
 } from './mediaStorageService.js'
 import { getMetaConfig, hasConnectedMetaDatasetConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
-import { createSession, getVisitorIdentityExpression, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
+import { createSession, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 import {
   buildMetaBrowserUserData,
   buildMetaParameterUserData,
@@ -5073,8 +5077,12 @@ function mapSite(row) {
       visitors: Number(row.tracking_visitors || 0),
       sessions: Number(row.tracking_sessions || 0),
       conversions: Number(row.tracking_conversions || 0),
+      convertingVisitors: Number(row.tracking_converting_visitors || 0),
       conversionRate: Number(row.tracking_visitors || 0) > 0
-        ? Number(((Number(row.tracking_conversions || 0) / Number(row.tracking_visitors || 0)) * 100).toFixed(1))
+        ? Number(((Math.min(
+            Number(row.tracking_visitors || 0),
+            Number(row.tracking_converting_visitors || 0)
+          ) / Number(row.tracking_visitors || 0)) * 100).toFixed(1))
         : 0
     }
   }
@@ -9208,14 +9216,15 @@ function buildAnalyticsSiteSelectorScope({
 } = {}) {
   const normalizedSiteType = normalizeAnalyticsSelectorSiteType(siteType)
   const normalizedLandingMode = normalizeAnalyticsSelectorLandingMode(landingMode)
-  const clauses = [`${alias}.status = 'published'`]
-  const params = []
+  const clauses = [
+    `${alias}.status = 'published'`,
+    `${alias}.id != ?`,
+    `${getSiteLibrarySourceSqlExpression(alias)} != 'calendar'`
+  ]
+  const params = [CALENDAR_DEFAULT_FORM_SITE_ID]
 
   if (normalizedSiteType === 'forms') {
     clauses.push(`${alias}.site_type IN ('standard_form', 'interactive_form')`)
-    clauses.push(`${alias}.id != ?`)
-    clauses.push(`${getSiteLibrarySourceSqlExpression(alias)} != 'calendar'`)
-    params.push(CALENDAR_DEFAULT_FORM_SITE_ID)
   } else if (normalizedSiteType === 'sites') {
     clauses.push(`${alias}.site_type = 'landing_page'`)
     if (normalizedLandingMode) {
@@ -9500,56 +9509,164 @@ export async function listSites({
       LIMIT ?
     ),
     scoped_submissions AS (
-      SELECT ps.id AS resolved_site_id, sub.id
+      SELECT
+        ps.id AS resolved_site_id,
+        sub.id,
+        sub.status,
+        ${getSitesAnalyticsSubmissionKindExpression('sub', 'ps')} AS submission_kind
       FROM paged_sites ps
       INNER JOIN public_site_submissions sub ON sub.site_id = ps.id
       UNION ALL
-      SELECT ps.id AS resolved_site_id, sub.id
+      SELECT
+        ps.id AS resolved_site_id,
+        sub.id,
+        sub.status,
+        ${getSitesAnalyticsSubmissionKindExpression('sub', 'ps')} AS submission_kind
       FROM paged_sites ps
       INNER JOIN public_site_submissions sub ON sub.form_site_id = ps.id
       WHERE sub.site_id IS NULL OR sub.site_id != sub.form_site_id
     ),
     submission_metrics AS (
-      SELECT resolved_site_id, COUNT(DISTINCT id) AS submissions_count
+      SELECT
+        resolved_site_id,
+        COUNT(DISTINCT CASE
+          WHEN submission_kind IN ('completed', 'terminal_exit') THEN id
+          ELSE NULL
+        END) AS submissions_count,
+        COUNT(DISTINCT CASE
+          WHEN submission_kind = 'completed'
+            AND LOWER(COALESCE(status, 'received')) != 'disqualified'
+          THEN id
+          ELSE NULL
+        END) AS qualified_conversions
       FROM scoped_submissions
       GROUP BY resolved_site_id
     ),
-    scoped_sessions AS (
+    scoped_views AS (
       SELECT
         ps.id AS resolved_site_id,
+        ts.id AS event_row_id,
         ts.contact_id,
         ts.visitor_id,
         ts.session_id,
-        ts.event_name,
-        ts.submission_id
+        ts.started_at
       FROM paged_sites ps
       INNER JOIN sessions ts ON ts.site_id = ps.id
+      WHERE ${getSitesAnalyticsViewEventCondition('ts')}
       UNION ALL
       SELECT
         ps.id AS resolved_site_id,
+        ts.id AS event_row_id,
         ts.contact_id,
         ts.visitor_id,
         ts.session_id,
-        ts.event_name,
-        ts.submission_id
+        ts.started_at
       FROM paged_sites ps
       INNER JOIN sessions ts ON ts.form_site_id = ps.id
-      WHERE ts.site_id IS NULL OR ts.site_id != ts.form_site_id
+      WHERE (ts.site_id IS NULL OR ts.site_id != ts.form_site_id)
+        AND ${getSitesAnalyticsViewEventCondition('ts')}
+    ),
+    ordered_views AS (
+      SELECT
+        scoped.*,
+        LAG(scoped.started_at) OVER (
+          PARTITION BY scoped.resolved_site_id, ${getSitesAnalyticsSessionIdentityExpression('scoped')}
+          ORDER BY scoped.started_at ASC, scoped.event_row_id ASC
+        ) AS previous_started_at
+      FROM scoped_views scoped
     ),
     tracking_metrics AS (
       SELECT
-        ts.resolved_site_id,
-        COUNT(CASE WHEN ts.event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-        COUNT(DISTINCT ${getVisitorIdentityExpression('ts')}) AS tracking_visitors,
-        COUNT(DISTINCT CASE WHEN ts.session_id IS NOT NULL AND ts.session_id != '' THEN ts.session_id END) AS tracking_sessions,
-        COUNT(DISTINCT CASE
-          WHEN ts.event_name = 'native_site_conversion'
-            AND ts.submission_id IS NOT NULL
-            AND ts.submission_id != ''
-          THEN ts.submission_id
-        END) AS tracking_conversions
-      FROM scoped_sessions ts
-      GROUP BY ts.resolved_site_id
+        ordered.resolved_site_id,
+        COUNT(DISTINCT ordered.event_row_id) AS tracking_views,
+        COUNT(DISTINCT ${getSitesAnalyticsVisitorExpression('ordered')}) AS tracking_visitors,
+        SUM(CASE
+          WHEN ${getSitesAnalyticsSessionStartCondition('ordered.started_at', 'ordered.previous_started_at')}
+            THEN 1
+          ELSE 0
+        END) AS tracking_sessions
+      FROM ordered_views ordered
+      GROUP BY ordered.resolved_site_id
+    ),
+    raw_conversion_signals AS (
+      SELECT
+        submission.resolved_site_id,
+        submission.id AS submission_id,
+        event.id AS conversion_event_row_id,
+        event.visitor_id,
+        event.session_id,
+        event.started_at AS conversion_started_at
+      FROM scoped_submissions submission
+      LEFT JOIN sessions event
+        ON event.submission_id = submission.id
+       AND event.event_name = 'native_site_conversion'
+       AND LOWER(COALESCE(event.tracking_source, '')) = 'native_site'
+      WHERE submission.submission_kind = 'completed'
+        AND LOWER(COALESCE(submission.status, 'received')) != 'disqualified'
+    ),
+    conversion_signals AS (
+      SELECT *
+      FROM (
+        SELECT
+          raw.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY raw.resolved_site_id, raw.submission_id
+            ORDER BY
+              CASE
+                WHEN raw.visitor_id IS NOT NULL AND raw.visitor_id != '' THEN 0
+                WHEN raw.session_id IS NOT NULL AND raw.session_id != '' THEN 1
+                ELSE 2
+              END,
+              raw.conversion_started_at DESC,
+              raw.conversion_event_row_id DESC
+          ) AS signal_rank
+        FROM raw_conversion_signals raw
+      ) ranked
+      WHERE ranked.signal_rank = 1
+    ),
+    matched_candidates AS (
+      SELECT
+        signal.resolved_site_id,
+        signal.submission_id,
+        ${getSitesAnalyticsVisitorExpression('view')} AS visitor_key,
+        ROW_NUMBER() OVER (
+          PARTITION BY signal.resolved_site_id, signal.submission_id
+          ORDER BY
+            CASE
+              WHEN signal.visitor_id IS NOT NULL
+                AND signal.visitor_id != ''
+                AND signal.visitor_id = view.visitor_id THEN 0
+              ELSE 1
+            END,
+            view.started_at DESC,
+            view.event_row_id DESC
+        ) AS match_rank
+      FROM conversion_signals signal
+      INNER JOIN scoped_views view
+        ON view.resolved_site_id = signal.resolved_site_id
+       AND signal.conversion_started_at IS NOT NULL
+       AND ${getSitesAnalyticsAtOrBeforeCondition('view.started_at', 'signal.conversion_started_at')}
+       AND (
+         (signal.visitor_id IS NOT NULL AND signal.visitor_id != '' AND signal.visitor_id = view.visitor_id)
+         OR (
+           (signal.visitor_id IS NULL OR signal.visitor_id = '')
+           AND signal.session_id IS NOT NULL
+           AND signal.session_id != ''
+           AND signal.session_id = view.session_id
+         )
+       )
+    ),
+    matched AS (
+      SELECT resolved_site_id, submission_id, visitor_key
+      FROM matched_candidates
+      WHERE match_rank = 1
+    ),
+    converter_metrics AS (
+      SELECT
+        matched.resolved_site_id,
+        COUNT(DISTINCT matched.visitor_key) AS tracking_converting_visitors
+      FROM matched
+      GROUP BY matched.resolved_site_id
     )
     SELECT
       ps.*,
@@ -9557,10 +9674,12 @@ export async function listSites({
       COALESCE(tm.tracking_views, 0) AS tracking_views,
       COALESCE(tm.tracking_visitors, 0) AS tracking_visitors,
       COALESCE(tm.tracking_sessions, 0) AS tracking_sessions,
-      COALESCE(tm.tracking_conversions, 0) AS tracking_conversions
+      COALESCE(sm.qualified_conversions, 0) AS tracking_conversions,
+      COALESCE(cm.tracking_converting_visitors, 0) AS tracking_converting_visitors
     FROM paged_sites ps
     LEFT JOIN submission_metrics sm ON sm.resolved_site_id = ps.id
     LEFT JOIN tracking_metrics tm ON tm.resolved_site_id = ps.id
+    LEFT JOIN converter_metrics cm ON cm.resolved_site_id = ps.id
       ORDER BY ${getSiteListCursorSortExpression('ps')} DESC, ps.id DESC
     `, [...queryParams, pageLimit + 1]),
     wantsFacets ? getSiteLibraryFacets(libraryView) : Promise.resolve(null)
@@ -9751,9 +9870,11 @@ export async function listSitesVideoAssets({
     "m.media_type = 'video'",
     "m.status = 'ready'",
     'm.deleted_at IS NULL',
-    "ps.status = 'published'"
+    "ps.status = 'published'",
+    'ps.id != ?',
+    `${getSiteLibrarySourceSqlExpression('ps')} != 'calendar'`
   ]
-  const params = [normalizedBusinessId]
+  const params = [normalizedBusinessId, CALENDAR_DEFAULT_FORM_SITE_ID]
 
   if (normalizedSiteId) {
     clauses.push('ps.id = ?')
@@ -9808,6 +9929,75 @@ export async function listSitesVideoAssets({
     facets: [],
     folders: [],
     folderPageInfo: { limit: 0, hasMore: false, nextCursor: null }
+  }
+}
+
+/**
+ * Inventario completo de videos dentro del alcance analítico actual. A diferencia
+ * del selector paginado, este agregado siempre cubre todos los assets publicados.
+ */
+export async function getSitesVideoInventorySummary({
+  businessId = 'default',
+  siteType = 'videos',
+  landingMode = 'all',
+  siteId = ''
+} = {}) {
+  const normalizedBusinessId = cleanString(businessId) || 'default'
+  const normalizedType = ['sites', 'forms', 'videos'].includes(cleanString(siteType))
+    ? cleanString(siteType)
+    : 'videos'
+  const normalizedLandingMode = ['website', 'funnel'].includes(cleanString(landingMode))
+    ? cleanString(landingMode)
+    : ''
+  const normalizedSiteId = cleanString(siteId)
+  const clauses = [
+    'm.business_id = ?',
+    "m.module IN ('sites', 'forms')",
+    "m.media_type = 'video'",
+    "m.status = 'ready'",
+    'm.deleted_at IS NULL',
+    "ps.status = 'published'",
+    'ps.id != ?',
+    `${getSiteLibrarySourceSqlExpression('ps')} != 'calendar'`
+  ]
+  const params = [normalizedBusinessId, CALENDAR_DEFAULT_FORM_SITE_ID]
+
+  if (normalizedSiteId) {
+    clauses.push('ps.id = ?')
+    params.push(normalizedSiteId)
+  }
+  if (normalizedType === 'forms') {
+    clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
+  } else if (normalizedType === 'sites') {
+    clauses.push("ps.site_type = 'landing_page'")
+    if (normalizedLandingMode) {
+      clauses.push(`${getSitePageModeSqlExpression('ps')} = ?`)
+      params.push(normalizedLandingMode)
+    }
+  }
+
+  const row = await db.get(`
+    SELECT
+      COUNT(DISTINCT m.id) AS total,
+      COUNT(DISTINCT CASE
+        WHEN m.stream_video_id IS NOT NULL AND m.stream_video_id != '' THEN m.id
+        ELSE NULL
+      END) AS stream_ready,
+      COUNT(DISTINCT CASE
+        WHEN m.stream_video_id IS NULL OR m.stream_video_id = '' THEN m.id
+        ELSE NULL
+      END) AS storage_only,
+      COUNT(DISTINCT ps.id) AS origins_total
+    FROM media_assets m
+    INNER JOIN public_sites ps ON ps.id = m.module_entity_id
+    WHERE ${clauses.join(' AND ')}
+  `, params)
+
+  return {
+    total: Number(row?.total || 0),
+    streamReady: Number(row?.stream_ready || 0),
+    storageOnly: Number(row?.storage_only || 0),
+    originsTotal: Number(row?.origins_total || 0)
   }
 }
 
@@ -9880,26 +10070,8 @@ export async function updateSiteFolder(folderId, input = {}) {
 }
 
 async function getSiteTrackingStats(siteId) {
-  const row = await db.get(`
-    SELECT
-      COUNT(CASE WHEN event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-      COUNT(DISTINCT ${getVisitorIdentityExpression()}) AS tracking_visitors,
-      COUNT(DISTINCT session_id) AS tracking_sessions,
-      COUNT(DISTINCT CASE WHEN event_name = 'native_site_conversion' THEN submission_id END) AS tracking_conversions
-    FROM sessions
-    WHERE site_id = ? OR form_site_id = ?
-  `, [siteId, siteId])
-
-  const visitors = Number(row?.tracking_visitors || 0)
-  const conversions = Number(row?.tracking_conversions || 0)
-
-  return {
-    views: Number(row?.tracking_views || 0),
-    visitors,
-    sessions: Number(row?.tracking_sessions || 0),
-    conversions,
-    conversionRate: visitors > 0 ? Number(((conversions / visitors) * 100).toFixed(1)) : 0
-  }
+  const summary = await getSitesTrackingSummary({ siteIds: [siteId] })
+  return summary.bySiteId[siteId] || emptySiteTrackingStats({ siteId })
 }
 
 function normalizeSitesAnalyticsIds(values = [], maxItems = 500) {
@@ -9955,6 +10127,7 @@ function buildSitesTrackingScopeConditions(siteScope) {
   if (siteScope.siteType === 'forms') {
     clauses.push("ps.site_type IN ('standard_form', 'interactive_form')")
     clauses.push('ps.id != ?')
+    clauses.push(`${getSiteLibrarySourceSqlExpression('ps')} != 'calendar'`)
     params.push(CALENDAR_DEFAULT_FORM_SITE_ID)
   } else {
     clauses.push("ps.site_type = 'landing_page'")
@@ -9978,7 +10151,7 @@ function buildSitesTrackingScopeSelection(siteScope, legacySiteIds = []) {
     if (!legacySiteIds.length) return null
     return {
       sql: `
-        SELECT ps.id
+        SELECT ps.id, ps.name, ps.site_type, ps.status, ps.updated_at
         FROM public_sites ps
         WHERE ps.id IN (${legacySiteIds.map(() => '?').join(',')})
       `,
@@ -9990,7 +10163,7 @@ function buildSitesTrackingScopeSelection(siteScope, legacySiteIds = []) {
 
   return {
     sql: `
-      SELECT ps.id
+      SELECT ps.id, ps.name, ps.site_type, ps.status, ps.updated_at
       FROM public_sites ps
       WHERE ${clauses.join(' AND ')}
     `,
@@ -9998,31 +10171,53 @@ function buildSitesTrackingScopeSelection(siteScope, legacySiteIds = []) {
   }
 }
 
-async function filterSitesAnalyticsIdsByScope(siteIds = [], siteScope = null) {
-  if (!siteIds.length || !siteScope) return siteIds
-
-  const { clauses, params } = buildSitesTrackingScopeConditions(siteScope)
-  clauses.push(`ps.id IN (${siteIds.map(() => '?').join(',')})`)
-  const rows = await db.all(`
-    SELECT ps.id
-    FROM public_sites ps
-    WHERE ${clauses.join(' AND ')}
-  `, [...params, ...siteIds])
-  const allowedIds = new Set(rows.map(row => cleanString(row.id)).filter(Boolean))
-  return siteIds.filter(siteId => allowedIds.has(siteId))
-}
-
 async function resolveSitesAnalyticsDateFilters(input = {}) {
   const dateFrom = input.dateFrom || input.date_from
   const dateTo = input.dateTo || input.date_to
   if (!dateFrom && !dateTo) return {}
+  if (!dateFrom || !dateTo) {
+    const error = new Error('Selecciona dateFrom y dateTo para consultar analíticas de Sites.')
+    error.status = 400
+    throw error
+  }
+
+  const normalizedDateFrom = String(dateFrom).trim()
+  const normalizedDateTo = String(dateTo).trim()
+  const parseCalendarDate = (value, fieldName) => {
+    const parsed = DateTime.fromFormat(value, 'yyyy-MM-dd', {
+      zone: 'UTC',
+      locale: 'en',
+      setZone: true
+    })
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+      !parsed.isValid ||
+      parsed.toFormat('yyyy-MM-dd') !== value
+    ) {
+      const error = new Error(`${fieldName} debe ser una fecha calendario válida en formato YYYY-MM-DD.`)
+      error.status = 400
+      throw error
+    }
+    return parsed
+  }
+  const parsedDateFrom = parseCalendarDate(normalizedDateFrom, 'dateFrom')
+  const parsedDateTo = parseCalendarDate(normalizedDateTo, 'dateTo')
+  if (parsedDateFrom.toMillis() > parsedDateTo.toMillis()) {
+    const error = new Error('dateFrom no puede ser posterior a dateTo.')
+    error.status = 400
+    throw error
+  }
+
   const range = await resolveDateRangeWithGHLTimezone({
-    startDate: dateFrom || dateTo,
-    endDate: dateTo || dateFrom
+    startDate: normalizedDateFrom,
+    endDate: normalizedDateTo
   })
   return {
     dateFrom: range.startUtc,
-    dateTo: range.endUtc
+    dateTo: range.endUtc,
+    requestedDateFrom: normalizedDateFrom,
+    requestedDateTo: normalizedDateTo,
+    appliedTimezone: range.appliedTimezone
   }
 }
 
@@ -10032,6 +10227,15 @@ function emptySiteTrackingStats(extra = {}) {
     views: 0,
     visitors: 0,
     sessions: 0,
+    submissions: 0,
+    completedSubmissions: 0,
+    terminalExitSubmissions: 0,
+    qualifiedConversions: 0,
+    disqualifiedSubmissions: 0,
+    partialSubmissions: 0,
+    legacyUnknownSubmissions: 0,
+    convertingVisitors: 0,
+    unattributedConversions: 0,
     conversions: 0,
     conversionRate: 0
   }
@@ -10044,20 +10248,160 @@ function emptySitesTrackingAggregate() {
   }
 }
 
-function siteTrackingStatsFromRows(trackingRow = {}, submissionsRow = {}, extra = {}) {
-  const visitors = Number(trackingRow?.tracking_visitors || 0)
-  const trackingConversions = Number(trackingRow?.tracking_conversions || 0)
-  const submissionConversions = Number(submissionsRow?.submissions_count || 0)
-  const conversions = Math.max(trackingConversions, submissionConversions)
+function siteTrackingStatsFromRows(row = {}, extra = {}) {
+  const visitors = Number(row?.tracking_visitors || row?.visitors || 0)
+  const qualifiedConversions = Number(row?.qualified_conversions || row?.qualifiedConversions || 0)
+  const convertingVisitors = Math.min(
+    visitors,
+    Number(row?.converting_visitors || row?.convertingVisitors || 0)
+  )
 
   return {
     ...extra,
-    views: Number(trackingRow?.tracking_views || 0),
+    views: Number(row?.tracking_views || row?.views || 0),
     visitors,
-    sessions: Number(trackingRow?.tracking_sessions || 0),
-    conversions,
-    conversionRate: visitors > 0 ? Number(((conversions / visitors) * 100).toFixed(1)) : 0
+    sessions: Number(row?.tracking_sessions || row?.sessions || 0),
+    submissions: Number(row?.submissions_count || row?.submissions || 0),
+    completedSubmissions: Number(row?.completed_submissions || row?.completedSubmissions || 0),
+    terminalExitSubmissions: Number(row?.terminal_exit_submissions || row?.terminalExitSubmissions || 0),
+    qualifiedConversions,
+    disqualifiedSubmissions: Number(row?.disqualified_submissions || row?.disqualifiedSubmissions || 0),
+    partialSubmissions: Number(row?.partial_submissions || row?.partialSubmissions || 0),
+    legacyUnknownSubmissions: Number(row?.legacy_unknown_submissions || row?.legacyUnknownSubmissions || 0),
+    convertingVisitors,
+    unattributedConversions: Math.max(
+      0,
+      Number(row?.unattributed_conversions ?? (qualifiedConversions - Number(row?.attributed_conversions || 0)))
+    ),
+    conversions: qualifiedConversions,
+    conversionRate: formatSiteAnalyticsRate(convertingVisitors, visitors)
   }
+}
+
+function getSitesAnalyticsVisitorExpression(alias = 'source') {
+  return `CASE
+    WHEN ${alias}.visitor_id IS NOT NULL AND ${alias}.visitor_id != '' THEN 'visitor:' || ${alias}.visitor_id
+    WHEN ${alias}.session_id IS NOT NULL AND ${alias}.session_id != '' THEN 'session:' || ${alias}.session_id
+    ELSE NULL
+  END`
+}
+
+function getSitesAnalyticsSessionIdentityExpression(alias = 'source') {
+  return `COALESCE(
+    ${getSitesAnalyticsVisitorExpression(alias)},
+    'event:' || CAST(${alias}.event_row_id AS TEXT)
+  )`
+}
+
+function getSitesAnalyticsViewEventCondition(alias = 'source') {
+  return `(
+    LOWER(COALESCE(${alias}.tracking_source, '')) = 'native_site'
+    AND ${alias}.event_name IN ('native_site_view', 'page_view')
+  )`
+}
+
+function getSitesAnalyticsSessionStartCondition(currentColumn, previousColumn) {
+  const inactivitySeconds = databaseDialect === 'postgres'
+    ? `EXTRACT(EPOCH FROM ((${currentColumn})::timestamptz - (${previousColumn})::timestamptz))`
+    : `(julianday(${currentColumn}) - julianday(${previousColumn})) * 86400.0`
+  return `${previousColumn} IS NULL OR ${inactivitySeconds} > 1800`
+}
+
+function getSitesAnalyticsAtOrBeforeCondition(currentColumn, upperBoundColumn) {
+  return databaseDialect === 'postgres'
+    ? `(${currentColumn})::timestamptz <= (${upperBoundColumn})::timestamptz`
+    : `julianday(${currentColumn}) <= julianday(${upperBoundColumn})`
+}
+
+function getSitesAnalyticsJsonTextExpression(alias = 'source', key = '') {
+  const source = getSafeSiteJsonExpression(`${alias}.meta_json`)
+  return databaseDialect === 'postgres'
+    ? `LOWER(BTRIM(COALESCE(${source} ->> '${key}', '')))`
+    : `LOWER(TRIM(CAST(COALESCE(json_extract(${source}, '$.${key}'), '') AS TEXT)))`
+}
+
+function getSitesAnalyticsTruthyMetaExpression(alias = 'source', keys = []) {
+  if (!keys.length) return '0 = 1'
+  return `(${keys
+    .map(key => `${getSitesAnalyticsJsonTextExpression(alias, key)} IN ('1', 'true', 'yes', 'on')`)
+    .join(' OR ')})`
+}
+
+function getSitesAnalyticsExplicitFalseMetaExpression(alias = 'source', keys = []) {
+  if (!keys.length) return '0 = 1'
+  return `(${keys
+    .map(key => `${getSitesAnalyticsJsonTextExpression(alias, key)} IN ('0', 'false', 'no', 'off')`)
+    .join(' OR ')})`
+}
+
+function getSitesAnalyticsSubmissionKindExpression(alias = 'source', ownerAlias = 'owner') {
+  const explicitIntermediate = getSitesAnalyticsExplicitFalseMetaExpression(alias, [
+    'formFinalSubmit',
+    'form_final_submit'
+  ])
+  const completed = getSitesAnalyticsTruthyMetaExpression(alias, [
+    'formFinalSubmit',
+    'form_final_submit'
+  ])
+  const importedOrVideoGate = getSitesAnalyticsTruthyMetaExpression(alias, [
+    'importedHtml',
+    'imported_html',
+    'videoFormGate',
+    'video_form_gate'
+  ])
+  const immediateTerminal = getSitesAnalyticsTruthyMetaExpression(alias, [
+    'immediateDisqualify',
+    'immediate_disqualify'
+  ])
+  const ruleSubmit = getSitesAnalyticsTruthyMetaExpression(alias, ['ruleSubmit', 'rule_submit'])
+  const ruleAction = `COALESCE(
+    NULLIF(${getSitesAnalyticsJsonTextExpression(alias, 'ruleAction')}, ''),
+    NULLIF(${getSitesAnalyticsJsonTextExpression(alias, 'rule_action')}, '')
+  )`
+  const terminalRule = `(${ruleSubmit} AND ${ruleAction} IN (
+    'redirect', 'site_page', 'show_message', 'disqualify',
+    'disqualify_after_submit', 'end_form'
+  ))`
+
+  return `CASE
+    WHEN ${importedOrVideoGate} THEN 'completed'
+    WHEN ${completed} THEN 'completed'
+    WHEN ${immediateTerminal} OR ${terminalRule} THEN 'terminal_exit'
+    WHEN ${explicitIntermediate} THEN 'checkpoint'
+    WHEN COALESCE(${ownerAlias}.site_type, '') != 'standard_form' THEN 'completed'
+    ELSE 'legacy_unknown'
+  END`
+}
+
+function getSitesAnalyticsTerminalSubmissionCondition(alias = 'source', ownerAlias = 'owner') {
+  return `${getSitesAnalyticsSubmissionKindExpression(alias, ownerAlias)} IN ('completed', 'terminal_exit')`
+}
+
+function getSitesAnalyticsDayExpression(column, dateFilters = {}) {
+  if (databaseDialect === 'postgres') {
+    const safeTimezone = String(dateFilters.appliedTimezone || 'UTC').replace(/'/g, "''")
+    return `TO_CHAR((${column})::timestamptz AT TIME ZONE '${safeTimezone}', 'YYYY-MM-DD')`
+  }
+  const modifier = sqliteTimezoneModifierExpression(
+    column,
+    dateFilters.appliedTimezone || 'UTC',
+    { startUtc: dateFilters.dateFrom, endUtc: dateFilters.dateTo }
+  )
+  return `strftime('%Y-%m-%d', datetime(${column}, ${modifier}))`
+}
+
+function buildSitesAnalyticsDateKeys(dateFilters = {}) {
+  const start = DateTime.fromISO(String(dateFilters.requestedDateFrom || ''), { zone: 'UTC' }).startOf('day')
+  const end = DateTime.fromISO(String(dateFilters.requestedDateTo || ''), { zone: 'UTC' }).startOf('day')
+  if (!start.isValid || !end.isValid || start > end) return []
+
+  const keys = []
+  let cursor = start
+  while (cursor <= end) {
+    keys.push(cursor.toISODate())
+    cursor = cursor.plus({ days: 1 })
+  }
+  return keys
 }
 
 function formatSiteAnalyticsRate(numerator, denominator) {
@@ -10079,46 +10423,24 @@ function getSiteAnalyticsAnsweredValueCondition(alias = 'answer') {
     return `(
       CASE ${alias}.answer_type
         WHEN 'string' THEN BTRIM(${alias}.answer_value #>> '{}') != ''
-        WHEN 'number' THEN (${alias}.answer_value #>> '{}')::numeric != 0
-        WHEN 'boolean' THEN ${alias}.answer_value = 'true'::jsonb
+        WHEN 'number' THEN TRUE
+        WHEN 'boolean' THEN TRUE
         WHEN 'object' THEN ${alias}.answer_value != '{}'::jsonb
-        WHEN 'array' THEN EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements(${alias}.answer_value) item(value)
-          WHERE CASE jsonb_typeof(item.value)
-            WHEN 'string' THEN BTRIM(item.value #>> '{}') != ''
-            WHEN 'number' THEN (item.value #>> '{}')::numeric != 0
-            WHEN 'boolean' THEN item.value = 'true'::jsonb
-            WHEN 'object' THEN TRUE
-            WHEN 'array' THEN jsonb_array_length(item.value) > 0
-            ELSE FALSE
-          END
-        )
+        WHEN 'array' THEN jsonb_array_length(${alias}.answer_value) > 0
         ELSE FALSE
       END
     )`
   }
 
   return `(
-    CASE ${alias}.answer_type
+      CASE ${alias}.answer_type
       WHEN 'text' THEN TRIM(CAST(${alias}.answer_value AS TEXT)) != ''
-      WHEN 'integer' THEN CAST(${alias}.answer_value AS REAL) != 0
-      WHEN 'real' THEN CAST(${alias}.answer_value AS REAL) != 0
+      WHEN 'integer' THEN 1
+      WHEN 'real' THEN 1
       WHEN 'true' THEN 1
+      WHEN 'false' THEN 1
       WHEN 'object' THEN EXISTS (SELECT 1 FROM json_each(${alias}.answer_value))
-      WHEN 'array' THEN EXISTS (
-        SELECT 1
-        FROM json_each(${alias}.answer_value) item
-        WHERE CASE item.type
-          WHEN 'text' THEN TRIM(CAST(item.value AS TEXT)) != ''
-          WHEN 'integer' THEN CAST(item.value AS REAL) != 0
-          WHEN 'real' THEN CAST(item.value AS REAL) != 0
-          WHEN 'true' THEN 1
-          WHEN 'object' THEN 1
-          WHEN 'array' THEN json_array_length(item.value) > 0
-          ELSE 0
-        END
-      )
+      WHEN 'array' THEN json_array_length(${alias}.answer_value) > 0
       ELSE 0
     END
   )`
@@ -10155,27 +10477,62 @@ async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
   const rows = await db.all(`
     WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
     scoped_submissions AS (
-      SELECT submission.site_id AS resolved_site_id, submission.id
+      SELECT
+        submission.site_id AS resolved_site_id,
+        submission.id,
+        submission.status,
+        ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind
       FROM public_site_submissions submission
       INNER JOIN requested_sites requested ON requested.id = submission.site_id
+      LEFT JOIN public_sites owner ON owner.id = submission.site_id
       WHERE submission.site_id IS NOT NULL
         ${dateClause}
       UNION ALL
-      SELECT submission.form_site_id AS resolved_site_id, submission.id
+      SELECT
+        submission.form_site_id AS resolved_site_id,
+        submission.id,
+        submission.status,
+        ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind
       FROM public_site_submissions submission
       INNER JOIN requested_sites requested ON requested.id = submission.form_site_id
+      LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
       WHERE submission.form_site_id IS NOT NULL
         AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
         ${dateClause}
     )
-    SELECT resolved_site_id, COUNT(DISTINCT id) AS submissions_count
+    SELECT
+      resolved_site_id,
+      COUNT(DISTINCT CASE
+        WHEN submission_kind IN ('completed', 'terminal_exit') THEN id ELSE NULL
+      END) AS submissions_count,
+      COUNT(DISTINCT CASE WHEN submission_kind = 'completed' THEN id ELSE NULL END) AS completed_submissions,
+      COUNT(DISTINCT CASE WHEN submission_kind = 'terminal_exit' THEN id ELSE NULL END) AS terminal_exit_submissions,
+      COUNT(DISTINCT CASE
+        WHEN submission_kind = 'completed' AND LOWER(COALESCE(status, 'received')) != 'disqualified' THEN id
+        ELSE NULL
+      END) AS qualified_conversions,
+      COUNT(DISTINCT CASE
+        WHEN submission_kind IN ('completed', 'terminal_exit')
+          AND LOWER(COALESCE(status, 'received')) = 'disqualified' THEN id
+        ELSE NULL
+      END) AS disqualified_submissions,
+      COUNT(DISTINCT CASE WHEN submission_kind = 'checkpoint' THEN id ELSE NULL END) AS partial_submissions,
+      COUNT(DISTINCT CASE WHEN submission_kind = 'legacy_unknown' THEN id ELSE NULL END) AS legacy_unknown_submissions
     FROM scoped_submissions
     GROUP BY resolved_site_id
   `, [...siteIds, ...dateParams, ...dateParams])
 
   return new Map(rows.map(row => [
     cleanString(row.resolved_site_id),
-    Number(row.submissions_count || 0)
+    {
+      submissions: Number(row.submissions_count || 0),
+      completedSubmissions: Number(row.completed_submissions || 0),
+      terminalExitSubmissions: Number(row.terminal_exit_submissions || 0),
+      qualifiedConversions: Number(row.qualified_conversions || 0),
+      disqualifiedSubmissions: Number(row.disqualified_submissions || 0),
+      partialSubmissions: Number(row.partial_submissions || 0),
+      legacyUnknownSubmissions: Number(row.legacy_unknown_submissions || 0)
+    }
   ]))
 }
 
@@ -10203,14 +10560,18 @@ async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
         SELECT submission.site_id AS resolved_site_id, submission.id, submission.response_json
         FROM public_site_submissions submission
         INNER JOIN requested_sites requested ON requested.id = submission.site_id
+        LEFT JOIN public_sites owner ON owner.id = submission.site_id
         WHERE submission.site_id IS NOT NULL
+          AND ${getSitesAnalyticsTerminalSubmissionCondition('submission', 'owner')}
           ${dateClause}
         UNION ALL
         SELECT submission.form_site_id AS resolved_site_id, submission.id, submission.response_json
         FROM public_site_submissions submission
         INNER JOIN requested_sites requested ON requested.id = submission.form_site_id
+        LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
         WHERE submission.form_site_id IS NOT NULL
           AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+          AND ${getSitesAnalyticsTerminalSubmissionCondition('submission', 'owner')}
           ${dateClause}
       ),
       field_scope(site_id, block_id) AS (VALUES ${fieldValues}),
@@ -10285,36 +10646,44 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
   for (const siteId of siteIds) {
     const fields = collectFieldBlocks(blocksBySite.get(siteId) || [])
     const stats = statsBySite[siteId] || emptySiteTrackingStats({ siteId })
-    const submissionsCount = submissionCounts.get(siteId) || 0
-    const starts = Math.max(Number(stats.visitors || 0), submissionsCount)
-    let previousAnsweredCount = starts
+    const submissionStats = submissionCounts.get(siteId) || {
+      submissions: 0,
+      completedSubmissions: 0,
+      terminalExitSubmissions: 0,
+      qualifiedConversions: 0,
+      disqualifiedSubmissions: 0,
+      partialSubmissions: 0,
+      legacyUnknownSubmissions: 0
+    }
+    const submissionsCount = submissionStats.submissions
 
     result[siteId] = {
       siteId,
-      starts,
       views: Number(stats.views || 0),
       visitors: Number(stats.visitors || 0),
       submissions: submissionsCount,
-      conversionRate: formatSiteAnalyticsRate(submissionsCount, starts),
+      completedSubmissions: submissionStats.completedSubmissions,
+      terminalExitSubmissions: submissionStats.terminalExitSubmissions,
+      qualifiedConversions: submissionStats.qualifiedConversions,
+      disqualifiedSubmissions: submissionStats.disqualifiedSubmissions,
+      partialSubmissions: submissionStats.partialSubmissions,
+      legacyUnknownSubmissions: submissionStats.legacyUnknownSubmissions,
+      conversionRate: Number(stats.conversionRate || 0),
+      measurement: 'saved_submission_answer_coverage',
       fields: fields.map((field, index) => {
         const answeredCount = answeredByField.get(`${siteId}\u0000${field.id}`) || 0
-        const reachedCount = index === 0 ? starts : previousAnsweredCount
-        const missedCount = Math.max(0, reachedCount - answeredCount)
-        const row = {
+        const unansweredCount = Math.max(0, submissionsCount - answeredCount)
+        return {
           blockId: field.id,
           label: getSiteAnalyticsFieldLabel(field, index),
           blockType: field.blockType,
           required: Boolean(field.required),
           stepIndex: index + 1,
-          reachedCount,
+          finalSubmissions: submissionsCount,
           answeredCount,
-          missedCount,
-          answerRate: formatSiteAnalyticsRate(answeredCount, starts),
-          stepCompletionRate: formatSiteAnalyticsRate(answeredCount, reachedCount),
-          missedRate: formatSiteAnalyticsRate(missedCount, reachedCount)
+          unansweredCount,
+          answerRate: formatSiteAnalyticsRate(answeredCount, submissionsCount)
         }
-        previousAnsweredCount = answeredCount
-        return row
       })
     }
   }
@@ -10330,94 +10699,227 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
   if (!siteIds.length) return bySiteId
 
   const requestedSiteValues = siteIds.map(() => '(?)').join(',')
-  const dateClause = dateFilters.dateFrom && dateFilters.dateTo
-    ? 'AND s.created_at >= ? AND s.created_at <= ?'
+  const eventDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND s.started_at >= ? AND s.started_at <= ?'
     : ''
-  const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+  const eventDateParams = dateFilters.dateFrom && dateFilters.dateTo
+    ? [dateFilters.dateFrom, dateFilters.dateTo]
+    : []
+  const submissionDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND submission.created_at >= ? AND submission.created_at <= ?'
+    : ''
+  const submissionDateParams = dateFilters.dateFrom && dateFilters.dateTo
     ? [dateFilters.dateFrom, dateFilters.dateTo]
     : []
 
-  const [trackingRows, submissionRows] = await Promise.all([
+  const [trackingRows, submissionCounts, converterRows] = await Promise.all([
     db.all(`
       WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
-      scoped_sessions AS (
+      scoped_views AS (
         SELECT
+          s.id AS event_row_id,
           s.site_id AS resolved_site_id,
           s.contact_id,
           s.visitor_id,
           s.session_id,
-          s.event_name,
-          s.submission_id
+          s.started_at
         FROM sessions s
         INNER JOIN requested_sites requested ON requested.id = s.site_id
         WHERE s.site_id IS NOT NULL
           AND s.site_id != ''
-          ${dateClause}
+          AND ${getSitesAnalyticsViewEventCondition('s')}
+          ${eventDateClause}
         UNION ALL
         SELECT
+          s.id AS event_row_id,
           s.form_site_id AS resolved_site_id,
           s.contact_id,
           s.visitor_id,
           s.session_id,
-          s.event_name,
-          s.submission_id
+          s.started_at
         FROM sessions s
         INNER JOIN requested_sites requested ON requested.id = s.form_site_id
         WHERE s.form_site_id IS NOT NULL
           AND s.form_site_id != ''
           AND (s.site_id IS NULL OR s.site_id != s.form_site_id)
-          ${dateClause}
+          AND ${getSitesAnalyticsViewEventCondition('s')}
+          ${eventDateClause}
+      ),
+      ordered_views AS (
+        SELECT
+          scoped.*,
+          LAG(scoped.started_at) OVER (
+            PARTITION BY scoped.resolved_site_id, ${getSitesAnalyticsSessionIdentityExpression('scoped')}
+            ORDER BY scoped.started_at ASC, scoped.event_row_id ASC
+          ) AS previous_started_at
+        FROM scoped_views scoped
       )
       SELECT
-        scoped.resolved_site_id AS site_id,
-        COUNT(CASE WHEN scoped.event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-        COUNT(DISTINCT ${getVisitorIdentityExpression('scoped')}) AS tracking_visitors,
-        COUNT(DISTINCT CASE WHEN scoped.session_id IS NOT NULL AND scoped.session_id != '' THEN scoped.session_id ELSE NULL END) AS tracking_sessions,
-        COUNT(DISTINCT CASE WHEN scoped.event_name = 'native_site_conversion' AND scoped.submission_id IS NOT NULL AND scoped.submission_id != '' THEN scoped.submission_id ELSE NULL END) AS tracking_conversions
-      FROM scoped_sessions scoped
-      WHERE scoped.resolved_site_id IS NOT NULL AND scoped.resolved_site_id != ''
-      GROUP BY scoped.resolved_site_id
+        ordered.resolved_site_id AS site_id,
+        COUNT(DISTINCT ordered.event_row_id) AS tracking_views,
+        COUNT(DISTINCT ${getSitesAnalyticsVisitorExpression('ordered')}) AS tracking_visitors,
+        SUM(CASE
+          WHEN ${getSitesAnalyticsSessionStartCondition('ordered.started_at', 'ordered.previous_started_at')}
+            THEN 1
+          ELSE 0
+        END) AS tracking_sessions
+      FROM ordered_views ordered
+      WHERE ordered.resolved_site_id IS NOT NULL AND ordered.resolved_site_id != ''
+      GROUP BY ordered.resolved_site_id
     `, [
       ...siteIds,
-      ...dateParams,
-      ...dateParams
+      ...eventDateParams,
+      ...eventDateParams
     ]),
+    getSitesFormSubmissionCounts(siteIds, dateFilters),
     db.all(`
       WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
-      scoped_submissions AS (
-        SELECT s.site_id AS resolved_site_id, s.id
-        FROM public_site_submissions s
+      scoped_views AS (
+        SELECT
+          s.id AS event_row_id,
+          s.site_id AS resolved_site_id,
+          ${getSitesAnalyticsVisitorExpression('s')} AS visitor_key,
+          s.visitor_id,
+          s.session_id,
+          s.started_at
+        FROM sessions s
         INNER JOIN requested_sites requested ON requested.id = s.site_id
-        WHERE s.site_id IS NOT NULL
-          ${dateClause}
+        WHERE ${getSitesAnalyticsViewEventCondition('s')}
+          ${eventDateClause}
         UNION ALL
-        SELECT s.form_site_id AS resolved_site_id, s.id
-        FROM public_site_submissions s
+        SELECT
+          s.id AS event_row_id,
+          s.form_site_id AS resolved_site_id,
+          ${getSitesAnalyticsVisitorExpression('s')} AS visitor_key,
+          s.visitor_id,
+          s.session_id,
+          s.started_at
+        FROM sessions s
         INNER JOIN requested_sites requested ON requested.id = s.form_site_id
-        WHERE s.form_site_id IS NOT NULL
-          AND (s.site_id IS NULL OR s.site_id != s.form_site_id)
-          ${dateClause}
+        WHERE (s.site_id IS NULL OR s.site_id != s.form_site_id)
+          AND ${getSitesAnalyticsViewEventCondition('s')}
+          ${eventDateClause}
+      ),
+      qualified_submissions AS (
+        SELECT
+          submission.site_id AS resolved_site_id,
+          submission.id AS submission_id,
+          submission.contact_id
+        FROM public_site_submissions submission
+        INNER JOIN requested_sites requested ON requested.id = submission.site_id
+        LEFT JOIN public_sites owner ON owner.id = submission.site_id
+        WHERE ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} = 'completed'
+          AND LOWER(COALESCE(submission.status, 'received')) != 'disqualified'
+          ${submissionDateClause}
+        UNION ALL
+        SELECT
+          submission.form_site_id AS resolved_site_id,
+          submission.id AS submission_id,
+          submission.contact_id
+        FROM public_site_submissions submission
+        INNER JOIN requested_sites requested ON requested.id = submission.form_site_id
+        LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
+        WHERE (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+          AND ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} = 'completed'
+          AND LOWER(COALESCE(submission.status, 'received')) != 'disqualified'
+          ${submissionDateClause}
+      ),
+      raw_conversion_signals AS (
+        SELECT
+          qualified.resolved_site_id,
+          qualified.submission_id,
+          event.id AS conversion_event_row_id,
+          event.visitor_id,
+          event.session_id,
+          event.started_at AS conversion_started_at
+        FROM qualified_submissions qualified
+        LEFT JOIN sessions event
+          ON event.submission_id = qualified.submission_id
+         AND event.event_name = 'native_site_conversion'
+         AND LOWER(COALESCE(event.tracking_source, '')) = 'native_site'
+      ),
+      conversion_signals AS (
+        SELECT *
+        FROM (
+          SELECT
+            raw.*,
+            ROW_NUMBER() OVER (
+              PARTITION BY raw.resolved_site_id, raw.submission_id
+              ORDER BY
+                CASE
+                  WHEN raw.visitor_id IS NOT NULL AND raw.visitor_id != '' THEN 0
+                  WHEN raw.session_id IS NOT NULL AND raw.session_id != '' THEN 1
+                  ELSE 2
+                END,
+                raw.conversion_started_at DESC,
+                raw.conversion_event_row_id DESC
+            ) AS signal_rank
+          FROM raw_conversion_signals raw
+        ) ranked
+        WHERE ranked.signal_rank = 1
+      ),
+      matched_candidates AS (
+        SELECT
+          signal.resolved_site_id,
+          signal.submission_id,
+          view.visitor_key,
+          ROW_NUMBER() OVER (
+            PARTITION BY signal.resolved_site_id, signal.submission_id
+            ORDER BY
+              CASE
+                WHEN signal.visitor_id IS NOT NULL
+                  AND signal.visitor_id != ''
+                  AND signal.visitor_id = view.visitor_id THEN 0
+                ELSE 1
+              END,
+              view.started_at DESC,
+              view.event_row_id DESC
+          ) AS match_rank
+        FROM conversion_signals signal
+        INNER JOIN scoped_views view
+          ON view.resolved_site_id = signal.resolved_site_id
+         AND signal.conversion_started_at IS NOT NULL
+         AND ${getSitesAnalyticsAtOrBeforeCondition('view.started_at', 'signal.conversion_started_at')}
+         AND (
+           (signal.visitor_id IS NOT NULL AND signal.visitor_id != '' AND signal.visitor_id = view.visitor_id)
+           OR (
+             (signal.visitor_id IS NULL OR signal.visitor_id = '')
+             AND signal.session_id IS NOT NULL
+             AND signal.session_id != ''
+             AND signal.session_id = view.session_id
+           )
+         )
+      ),
+      matched AS (
+        SELECT resolved_site_id, submission_id, visitor_key
+        FROM matched_candidates
+        WHERE match_rank = 1
       )
       SELECT
-        scoped.resolved_site_id AS site_id,
-        COUNT(DISTINCT scoped.id) AS submissions_count
-      FROM scoped_submissions scoped
-      WHERE scoped.resolved_site_id IS NOT NULL AND scoped.resolved_site_id != ''
-      GROUP BY scoped.resolved_site_id
+        resolved_site_id AS site_id,
+        COUNT(DISTINCT visitor_key) AS converting_visitors,
+        COUNT(DISTINCT submission_id) AS attributed_conversions
+      FROM matched
+      GROUP BY resolved_site_id
     `, [
       ...siteIds,
-      ...dateParams,
-      ...dateParams
+      ...eventDateParams,
+      ...eventDateParams,
+      ...submissionDateParams,
+      ...submissionDateParams
     ])
   ])
 
   const trackingBySite = new Map(trackingRows.map(row => [cleanString(row.site_id), row]))
-  const submissionsBySite = new Map(submissionRows.map(row => [cleanString(row.site_id), row]))
+  const convertersBySite = new Map(converterRows.map(row => [cleanString(row.site_id), row]))
 
   for (const siteId of siteIds) {
     bySiteId[siteId] = siteTrackingStatsFromRows(
-      trackingBySite.get(siteId),
-      submissionsBySite.get(siteId),
+      {
+        ...(trackingBySite.get(siteId) || {}),
+        ...(submissionCounts.get(siteId) || {}),
+        ...(convertersBySite.get(siteId) || {})
+      },
       { siteId }
     )
   }
@@ -10428,10 +10930,16 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
 async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
   if (!scopeSelection) return emptySitesTrackingAggregate()
 
-  const dateClause = dateFilters.dateFrom && dateFilters.dateTo
-    ? 'AND source.created_at >= ? AND source.created_at <= ?'
+  const eventDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND source.started_at >= ? AND source.started_at <= ?'
     : ''
-  const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+  const eventDateParams = dateFilters.dateFrom && dateFilters.dateTo
+    ? [dateFilters.dateFrom, dateFilters.dateTo]
+    : []
+  const submissionDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND submission.created_at >= ? AND submission.created_at <= ?'
+    : ''
+  const submissionDateParams = dateFilters.dateFrom && dateFilters.dateTo
     ? [dateFilters.dateFrom, dateFilters.dateTo]
     : []
 
@@ -10439,77 +10947,440 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
     WITH scoped_sites AS (
       ${scopeSelection.sql}
     ),
-    scoped_sessions AS (
+    scoped_views AS (
       SELECT
+        source.id AS event_row_id,
+        source.site_id AS resolved_site_id,
         source.contact_id,
         source.visitor_id,
         source.session_id,
-        source.event_name,
-        source.submission_id
+        source.started_at
       FROM sessions source
       INNER JOIN scoped_sites scope ON scope.id = source.site_id
       WHERE source.site_id IS NOT NULL
         AND source.site_id != ''
-        ${dateClause}
+        AND ${getSitesAnalyticsViewEventCondition('source')}
+        ${eventDateClause}
       UNION ALL
       SELECT
+        source.id AS event_row_id,
+        source.form_site_id AS resolved_site_id,
         source.contact_id,
         source.visitor_id,
         source.session_id,
-        source.event_name,
-        source.submission_id
+        source.started_at
       FROM sessions source
       INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
       WHERE source.form_site_id IS NOT NULL
         AND source.form_site_id != ''
         AND (source.site_id IS NULL OR source.site_id != source.form_site_id)
-        ${dateClause}
+        AND ${getSitesAnalyticsViewEventCondition('source')}
+        ${eventDateClause}
     ),
-    tracking_aggregate AS (
+    ordered_views AS (
       SELECT
-        COUNT(CASE WHEN scoped.event_name IN ('native_site_view', 'session_start', 'page_view') THEN 1 END) AS tracking_views,
-        COUNT(DISTINCT ${getVisitorIdentityExpression('scoped')}) AS tracking_visitors,
-        COUNT(DISTINCT CASE WHEN scoped.session_id IS NOT NULL AND scoped.session_id != '' THEN scoped.session_id ELSE NULL END) AS tracking_sessions,
-        COUNT(DISTINCT CASE WHEN scoped.event_name = 'native_site_conversion' AND scoped.submission_id IS NOT NULL AND scoped.submission_id != '' THEN scoped.submission_id ELSE NULL END) AS tracking_conversions
-      FROM scoped_sessions scoped
+        scoped.*,
+        LAG(scoped.started_at) OVER (
+          PARTITION BY ${getSitesAnalyticsSessionIdentityExpression('scoped')}
+          ORDER BY scoped.started_at ASC, scoped.event_row_id ASC
+        ) AS previous_started_at
+      FROM scoped_views scoped
     ),
     scoped_submissions AS (
-      SELECT source.id
-      FROM public_site_submissions source
-      INNER JOIN scoped_sites scope ON scope.id = source.site_id
-      WHERE 1 = 1
-        ${dateClause}
+      SELECT
+        submission.site_id AS resolved_site_id,
+        submission.id AS submission_id,
+        submission.contact_id,
+        submission.status,
+        ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind
+      FROM public_site_submissions submission
+      INNER JOIN scoped_sites scope ON scope.id = submission.site_id
+      LEFT JOIN public_sites owner ON owner.id = submission.site_id
+      WHERE submission.site_id IS NOT NULL
+        ${submissionDateClause}
       UNION ALL
-      SELECT source.id
-      FROM public_site_submissions source
-      INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
-      WHERE (source.site_id IS NULL OR source.site_id != source.form_site_id)
-        ${dateClause}
+      SELECT
+        submission.form_site_id AS resolved_site_id,
+        submission.id AS submission_id,
+        submission.contact_id,
+        submission.status,
+        ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind
+      FROM public_site_submissions submission
+      INNER JOIN scoped_sites scope ON scope.id = submission.form_site_id
+      LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
+      WHERE submission.form_site_id IS NOT NULL
+        AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+        ${submissionDateClause}
     ),
-    submission_aggregate AS (
-      SELECT COUNT(DISTINCT id) AS submissions_count
+    qualified_submissions AS (
+      SELECT DISTINCT resolved_site_id, submission_id, contact_id
       FROM scoped_submissions
+      WHERE submission_kind = 'completed'
+        AND LOWER(COALESCE(status, 'received')) != 'disqualified'
+    ),
+    raw_conversion_signals AS (
+      SELECT
+        qualified.resolved_site_id,
+        qualified.submission_id,
+        event.id AS conversion_event_row_id,
+        event.visitor_id,
+        event.session_id,
+        event.started_at AS conversion_started_at
+      FROM qualified_submissions qualified
+      LEFT JOIN sessions event
+        ON event.submission_id = qualified.submission_id
+       AND event.event_name = 'native_site_conversion'
+       AND LOWER(COALESCE(event.tracking_source, '')) = 'native_site'
+    ),
+    conversion_signals AS (
+      SELECT *
+      FROM (
+        SELECT
+          raw.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY raw.resolved_site_id, raw.submission_id
+            ORDER BY
+              CASE
+                WHEN raw.visitor_id IS NOT NULL AND raw.visitor_id != '' THEN 0
+                WHEN raw.session_id IS NOT NULL AND raw.session_id != '' THEN 1
+                ELSE 2
+              END,
+              raw.conversion_started_at DESC,
+              raw.conversion_event_row_id DESC
+          ) AS signal_rank
+        FROM raw_conversion_signals raw
+      ) ranked
+      WHERE ranked.signal_rank = 1
+    ),
+    matched_candidates AS (
+      SELECT
+        signal.submission_id,
+        ${getSitesAnalyticsVisitorExpression('view')} AS visitor_key,
+        ROW_NUMBER() OVER (
+          PARTITION BY signal.resolved_site_id, signal.submission_id
+          ORDER BY
+            CASE
+              WHEN signal.visitor_id IS NOT NULL
+                AND signal.visitor_id != ''
+                AND signal.visitor_id = view.visitor_id THEN 0
+              ELSE 1
+            END,
+            view.started_at DESC,
+            view.event_row_id DESC
+        ) AS match_rank
+      FROM conversion_signals signal
+      INNER JOIN scoped_views view
+        ON view.resolved_site_id = signal.resolved_site_id
+       AND signal.conversion_started_at IS NOT NULL
+       AND ${getSitesAnalyticsAtOrBeforeCondition('view.started_at', 'signal.conversion_started_at')}
+       AND (
+         (signal.visitor_id IS NOT NULL AND signal.visitor_id != '' AND signal.visitor_id = view.visitor_id)
+         OR (
+           (signal.visitor_id IS NULL OR signal.visitor_id = '')
+           AND signal.session_id IS NOT NULL
+           AND signal.session_id != ''
+           AND signal.session_id = view.session_id
+         )
+       )
+    ),
+    matched AS (
+      SELECT submission_id, visitor_key
+      FROM matched_candidates
+      WHERE match_rank = 1
     )
     SELECT
-      tracking_aggregate.tracking_views,
-      tracking_aggregate.tracking_visitors,
-      tracking_aggregate.tracking_sessions,
-      tracking_aggregate.tracking_conversions,
-      submission_aggregate.submissions_count,
+      (SELECT COUNT(DISTINCT event_row_id) FROM scoped_views) AS tracking_views,
+      (SELECT COUNT(DISTINCT ${getSitesAnalyticsVisitorExpression('scoped_views')}) FROM scoped_views) AS tracking_visitors,
+      (SELECT COALESCE(SUM(CASE
+        WHEN ${getSitesAnalyticsSessionStartCondition('started_at', 'previous_started_at')} THEN 1
+        ELSE 0
+      END), 0) FROM ordered_views) AS tracking_sessions,
+      (SELECT COUNT(DISTINCT CASE
+        WHEN submission_kind IN ('completed', 'terminal_exit') THEN submission_id ELSE NULL
+      END) FROM scoped_submissions) AS submissions_count,
+      (SELECT COUNT(DISTINCT CASE WHEN submission_kind = 'completed' THEN submission_id ELSE NULL END)
+        FROM scoped_submissions) AS completed_submissions,
+      (SELECT COUNT(DISTINCT CASE WHEN submission_kind = 'terminal_exit' THEN submission_id ELSE NULL END)
+        FROM scoped_submissions) AS terminal_exit_submissions,
+      (SELECT COUNT(DISTINCT CASE
+        WHEN submission_kind = 'completed' AND LOWER(COALESCE(status, 'received')) != 'disqualified'
+          THEN submission_id ELSE NULL
+      END) FROM scoped_submissions) AS qualified_conversions,
+      (SELECT COUNT(DISTINCT CASE
+        WHEN submission_kind IN ('completed', 'terminal_exit')
+          AND LOWER(COALESCE(status, 'received')) = 'disqualified'
+          THEN submission_id ELSE NULL
+      END) FROM scoped_submissions) AS disqualified_submissions,
+      (SELECT COUNT(DISTINCT CASE WHEN submission_kind = 'checkpoint' THEN submission_id ELSE NULL END)
+        FROM scoped_submissions) AS partial_submissions,
+      (SELECT COUNT(DISTINCT CASE WHEN submission_kind = 'legacy_unknown' THEN submission_id ELSE NULL END)
+        FROM scoped_submissions) AS legacy_unknown_submissions,
+      (SELECT COUNT(DISTINCT visitor_key) FROM matched) AS converting_visitors,
+      (SELECT COUNT(DISTINCT submission_id) FROM matched) AS attributed_conversions,
       (SELECT COUNT(*) FROM scoped_sites) AS entity_count
-    FROM tracking_aggregate
-    CROSS JOIN submission_aggregate
   `, [
     ...scopeSelection.params,
-    ...dateParams,
-    ...dateParams,
-    ...dateParams,
-    ...dateParams
+    ...eventDateParams,
+    ...eventDateParams,
+    ...submissionDateParams,
+    ...submissionDateParams
   ])
 
   return {
-    ...siteTrackingStatsFromRows(row, row),
+    ...siteTrackingStatsFromRows(row),
     entityCount: Number(row?.entity_count || 0)
+  }
+}
+
+async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
+  if (!scopeSelection || !dateFilters.dateFrom || !dateFilters.dateTo) return []
+
+  const viewPeriodExpression = getSitesAnalyticsDayExpression('source.started_at', dateFilters)
+  const submissionPeriodExpression = getSitesAnalyticsDayExpression('submission.created_at', dateFilters)
+  const [viewRows, submissionRows] = await Promise.all([
+    db.all(`
+      WITH scoped_sites AS (
+        ${scopeSelection.sql}
+      ),
+      scoped_views AS (
+        SELECT
+          ${viewPeriodExpression} AS period_key,
+          source.id AS event_row_id,
+          source.visitor_id,
+          source.session_id,
+          source.started_at
+        FROM sessions source
+        INNER JOIN scoped_sites scope ON scope.id = source.site_id
+        WHERE ${getSitesAnalyticsViewEventCondition('source')}
+          AND source.started_at >= ? AND source.started_at <= ?
+        UNION ALL
+        SELECT
+          ${viewPeriodExpression} AS period_key,
+          source.id AS event_row_id,
+          source.visitor_id,
+          source.session_id,
+          source.started_at
+        FROM sessions source
+        INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
+        WHERE (source.site_id IS NULL OR source.site_id != source.form_site_id)
+          AND ${getSitesAnalyticsViewEventCondition('source')}
+          AND source.started_at >= ? AND source.started_at <= ?
+      ),
+      ordered_views AS (
+        SELECT
+          scoped.*,
+          LAG(scoped.started_at) OVER (
+            PARTITION BY ${getSitesAnalyticsSessionIdentityExpression('scoped')}
+            ORDER BY scoped.started_at ASC, scoped.event_row_id ASC
+          ) AS previous_started_at
+        FROM scoped_views scoped
+      )
+      SELECT
+        period_key,
+        COUNT(DISTINCT event_row_id) AS views,
+        COUNT(DISTINCT ${getSitesAnalyticsVisitorExpression('ordered_views')}) AS visitors,
+        SUM(CASE
+          WHEN ${getSitesAnalyticsSessionStartCondition('started_at', 'previous_started_at')} THEN 1
+          ELSE 0
+        END) AS sessions
+      FROM ordered_views
+      GROUP BY period_key
+      ORDER BY period_key ASC
+    `, [
+      ...scopeSelection.params,
+      dateFilters.dateFrom,
+      dateFilters.dateTo,
+      dateFilters.dateFrom,
+      dateFilters.dateTo
+    ]),
+    db.all(`
+      WITH scoped_sites AS (
+        ${scopeSelection.sql}
+      ),
+      scoped_submissions AS (
+        SELECT
+          ${submissionPeriodExpression} AS period_key,
+          submission.id AS submission_id,
+          submission.status,
+          ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind
+        FROM public_site_submissions submission
+        INNER JOIN scoped_sites scope ON scope.id = submission.site_id
+        LEFT JOIN public_sites owner ON owner.id = submission.site_id
+        WHERE submission.created_at >= ? AND submission.created_at <= ?
+        UNION ALL
+        SELECT
+          ${submissionPeriodExpression} AS period_key,
+          submission.id AS submission_id,
+          submission.status,
+          ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind
+        FROM public_site_submissions submission
+        INNER JOIN scoped_sites scope ON scope.id = submission.form_site_id
+        LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
+        WHERE (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+          AND submission.created_at >= ? AND submission.created_at <= ?
+      )
+      SELECT
+        period_key,
+        COUNT(DISTINCT CASE
+          WHEN submission_kind IN ('completed', 'terminal_exit') THEN submission_id ELSE NULL
+        END) AS submissions,
+        COUNT(DISTINCT CASE WHEN submission_kind = 'completed' THEN submission_id ELSE NULL END) AS completed_submissions,
+        COUNT(DISTINCT CASE
+          WHEN submission_kind = 'completed' AND LOWER(COALESCE(status, 'received')) != 'disqualified'
+            THEN submission_id ELSE NULL
+        END) AS qualified_conversions,
+        COUNT(DISTINCT CASE
+          WHEN submission_kind IN ('completed', 'terminal_exit')
+            AND LOWER(COALESCE(status, 'received')) = 'disqualified'
+            THEN submission_id ELSE NULL
+        END) AS disqualified_submissions,
+        COUNT(DISTINCT CASE WHEN submission_kind = 'checkpoint' THEN submission_id ELSE NULL END) AS partial_submissions,
+        COUNT(DISTINCT CASE WHEN submission_kind = 'legacy_unknown' THEN submission_id ELSE NULL END) AS legacy_unknown_submissions
+      FROM scoped_submissions
+      GROUP BY period_key
+      ORDER BY period_key ASC
+    `, [
+      ...scopeSelection.params,
+      dateFilters.dateFrom,
+      dateFilters.dateTo,
+      dateFilters.dateFrom,
+      dateFilters.dateTo
+    ])
+  ])
+
+  const byPeriod = new Map(buildSitesAnalyticsDateKeys(dateFilters).map(periodKey => [
+    periodKey,
+    {
+      periodKey,
+      views: 0,
+      visitors: 0,
+      sessions: 0,
+      submissions: 0,
+      completedSubmissions: 0,
+      qualifiedConversions: 0,
+      disqualifiedSubmissions: 0,
+      partialSubmissions: 0,
+      legacyUnknownSubmissions: 0
+    }
+  ]))
+
+  for (const row of viewRows) {
+    const periodKey = cleanString(row.period_key)
+    if (!periodKey) continue
+    const current = byPeriod.get(periodKey) || { periodKey }
+    byPeriod.set(periodKey, {
+      ...current,
+      views: Number(row.views || 0),
+      visitors: Number(row.visitors || 0),
+      sessions: Number(row.sessions || 0)
+    })
+  }
+  for (const row of submissionRows) {
+    const periodKey = cleanString(row.period_key)
+    if (!periodKey) continue
+    const current = byPeriod.get(periodKey) || { periodKey }
+    byPeriod.set(periodKey, {
+      ...current,
+      submissions: Number(row.submissions || 0),
+      completedSubmissions: Number(row.completed_submissions || 0),
+      qualifiedConversions: Number(row.qualified_conversions || 0),
+      disqualifiedSubmissions: Number(row.disqualified_submissions || 0),
+      partialSubmissions: Number(row.partial_submissions || 0),
+      legacyUnknownSubmissions: Number(row.legacy_unknown_submissions || 0)
+    })
+  }
+
+  return [...byPeriod.values()].sort((left, right) => left.periodKey.localeCompare(right.periodKey))
+}
+
+async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}) {
+  if (!scopeSelection || !dateFilters.dateFrom || !dateFilters.dateTo) {
+    return {
+      source: 'first_party',
+      status: 'ready',
+      legacyViewEvents: 0,
+      timestampAdjustedEvents: 0,
+      legacyUnknownSubmissions: 0
+    }
+  }
+
+  const row = await db.get(`
+    WITH scoped_sites AS (
+      ${scopeSelection.sql}
+    ),
+    scoped_views AS (
+      SELECT source.event_id, source.timestamp_adjusted
+      FROM sessions source
+      INNER JOIN scoped_sites scope ON scope.id = source.site_id
+      WHERE ${getSitesAnalyticsViewEventCondition('source')}
+        AND source.started_at >= ? AND source.started_at <= ?
+      UNION ALL
+      SELECT source.event_id, source.timestamp_adjusted
+      FROM sessions source
+      INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
+      WHERE (source.site_id IS NULL OR source.site_id != source.form_site_id)
+        AND ${getSitesAnalyticsViewEventCondition('source')}
+        AND source.started_at >= ? AND source.started_at <= ?
+    )
+    SELECT
+      COUNT(CASE WHEN event_id IS NULL OR event_id = '' THEN 1 END) AS legacy_view_events,
+      COUNT(CASE WHEN timestamp_adjusted = 1 THEN 1 END) AS timestamp_adjusted_events
+    FROM scoped_views
+  `, [
+    ...scopeSelection.params,
+    dateFilters.dateFrom,
+    dateFilters.dateTo,
+    dateFilters.dateFrom,
+    dateFilters.dateTo
+  ])
+
+  return {
+    source: 'first_party',
+    status: Number(row?.legacy_view_events || 0) > 0 ? 'partial' : 'ready',
+    legacyViewEvents: Number(row?.legacy_view_events || 0),
+    timestampAdjustedEvents: Number(row?.timestamp_adjusted_events || 0),
+    legacyUnknownSubmissions: 0
+  }
+}
+
+async function getSitesTrackingBreakdownInChunks(siteIds = [], dateFilters = {}) {
+  const result = {}
+  const chunkSize = 150
+  for (let offset = 0; offset < siteIds.length; offset += chunkSize) {
+    Object.assign(result, await getSitesTrackingBreakdown(siteIds.slice(offset, offset + chunkSize), dateFilters))
+  }
+  return result
+}
+
+function buildSitesTrackingRankings(scopedSites = [], statsBySite = {}, limit = 10) {
+  const rows = scopedSites.map(site => ({
+    siteId: cleanString(site.id),
+    name: cleanString(site.name) || 'Sin nombre',
+    updatedAt: site.updated_at || null,
+    ...(statsBySite[site.id] || emptySiteTrackingStats())
+  }))
+  const stable = (left, right) => left.siteId.localeCompare(right.siteId)
+
+  return {
+    byViews: [...rows]
+      .sort((left, right) => right.views - left.views || right.visitors - left.visitors || stable(left, right))
+      .slice(0, limit),
+    byConversions: [...rows]
+      .sort((left, right) => (
+        right.qualifiedConversions - left.qualifiedConversions ||
+        right.convertingVisitors - left.convertingVisitors ||
+        stable(left, right)
+      ))
+      .slice(0, limit),
+    byConversionRate: [...rows]
+      .filter(row => row.visitors > 0)
+      .sort((left, right) => (
+        right.conversionRate - left.conversionRate ||
+        right.convertingVisitors - left.convertingVisitors ||
+        right.visitors - left.visitors ||
+        stable(left, right)
+      ))
+      .slice(0, limit)
   }
 }
 
@@ -10547,18 +11418,17 @@ export async function getSitesTrackingSummary(input = {}) {
   const requestedFormFunnelSiteIds = legacyMode
     ? legacySiteIds
     : formFunnelSiteId ? [formFunnelSiteId] : []
-  const internalBreakdownSiteIds = normalizeSitesAnalyticsIds([
-    ...breakdownSiteIds,
-    ...requestedFormFunnelSiteIds
-  ], legacyMode ? 500 : 101)
   const scopeSelection = buildSitesTrackingScopeSelection(siteScope, legacySiteIds)
   const dateFilters = await resolveSitesAnalyticsDateFilters(input)
-  const [aggregate, scopedInternalBreakdownSiteIds] = await Promise.all([
+  const [scopedSites, aggregate, series, coverage] = await Promise.all([
+    scopeSelection ? db.all(scopeSelection.sql, scopeSelection.params) : Promise.resolve([]),
     getSitesTrackingAggregate(scopeSelection, dateFilters),
-    filterSitesAnalyticsIdsByScope(internalBreakdownSiteIds, siteScope)
+    getSitesTrackingSeries(scopeSelection, dateFilters),
+    getSitesTrackingCoverage(scopeSelection, dateFilters)
   ])
-  const internalStatsBySite = await getSitesTrackingBreakdown(scopedInternalBreakdownSiteIds, dateFilters)
-  const scopedInternalIds = new Set(scopedInternalBreakdownSiteIds)
+  const scopedSiteIds = scopedSites.map(site => cleanString(site.id)).filter(Boolean)
+  const scopedInternalIds = new Set(scopedSiteIds)
+  const internalStatsBySite = await getSitesTrackingBreakdownInChunks(scopedSiteIds, dateFilters)
   const scopedBreakdownSiteIds = breakdownSiteIds.filter(siteId => scopedInternalIds.has(siteId))
   const scopedFormFunnelSiteIds = requestedFormFunnelSiteIds.filter(siteId => scopedInternalIds.has(siteId))
   const bySiteId = Object.fromEntries(scopedBreakdownSiteIds.map(siteId => [
@@ -10568,11 +11438,51 @@ export async function getSitesTrackingSummary(input = {}) {
   const formFunnels = scopedFormFunnelSiteIds.length
     ? await getSitesFormFunnelSummary(scopedFormFunnelSiteIds, dateFilters, internalStatsBySite)
     : {}
+  const rankings = buildSitesTrackingRankings(scopedSites, internalStatsBySite)
+  const activeEntityCount = scopedSiteIds.filter(siteId => {
+    const stats = internalStatsBySite[siteId]
+    return Boolean(stats && (stats.views > 0 || stats.submissions > 0 || stats.partialSubmissions > 0))
+  }).length
+  const finalCoverage = {
+    ...coverage,
+    status: coverage.status === 'partial' || aggregate.legacyUnknownSubmissions > 0 ? 'partial' : 'ready',
+    legacyUnknownSubmissions: aggregate.legacyUnknownSubmissions,
+    scopeMode: siteScope?.status === 'published' ? 'current_published' : legacyMode ? 'explicit_ids' : 'empty'
+  }
 
   return {
+    schemaVersion: 3,
     dateFrom: dateFilters.dateFrom || '',
     dateTo: dateFilters.dateTo || '',
+    meta: {
+      source: 'first_party',
+      status: finalCoverage.status,
+      timezone: dateFilters.appliedTimezone || '',
+      requestedDateFrom: dateFilters.requestedDateFrom || '',
+      requestedDateTo: dateFilters.requestedDateTo || '',
+      startUtc: dateFilters.dateFrom || '',
+      endUtc: dateFilters.dateTo || '',
+      asOf: new Date().toISOString(),
+      scopeMode: finalCoverage.scopeMode,
+      warnings: [
+        ...(finalCoverage.legacyViewEvents > 0
+          ? [`${finalCoverage.legacyViewEvents} vista(s) son legacy y no tienen event_id atómico.`]
+          : []),
+        ...(finalCoverage.legacyUnknownSubmissions > 0
+          ? [`${finalCoverage.legacyUnknownSubmissions} envío(s) antiguos no permiten probar si fueron finales.`]
+          : [])
+      ]
+    },
+    coverage: finalCoverage,
+    inventory: {
+      entities: {
+        current: aggregate.entityCount,
+        activeInRange: activeEntityCount
+      }
+    },
     aggregate,
+    series,
+    rankings,
     bySiteId,
     formFunnels
   }
@@ -21521,6 +22431,7 @@ function buildNativeSiteTrackingScript(context) {
       const VISITOR_COOKIE_NAME = 'ristak_vid';
       const SESSION_COOKIE_NAME = 'ristak_sid';
       const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+      const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
       let metaParamBuilderPromise = null;
       const valueMeansNoTrack = (value, trackingParam = false) => {
         if (value === null || typeof value === 'undefined') return false;
@@ -21667,11 +22578,15 @@ function buildNativeSiteTrackingScript(context) {
         const data = readJson(sessionStorage, 'ristak');
         const storedSessionId = normalizeIdentityValue(data.session_id);
         const cookieSessionId = normalizeIdentityValue(readCookie(SESSION_COOKIE_NAME));
-        if (!storedSessionId) {
-          data.session_id = cookieSessionId || generateSessionId();
+        const now = Date.now();
+        const lastActivity = Number(data.last_activity || data.session_start || 0);
+        const expired = lastActivity > 0 && now - lastActivity > SESSION_INACTIVITY_MS;
+        if (!storedSessionId || expired) {
+          data.session_id = !expired && cookieSessionId ? cookieSessionId : generateSessionId();
           data.session_start = Date.now();
-          data.first_pv = !cookieSessionId;
+          data.first_pv = !cookieSessionId || expired;
         }
+        data.last_activity = now;
         writeJson(sessionStorage, 'ristak', data);
         writeCookie(SESSION_COOKIE_NAME, data.session_id);
         return data.session_id;
@@ -22194,13 +23109,16 @@ function buildNativeSiteTrackingScript(context) {
       };
 
       const sendEvent = (eventName, extra = {}) => {
+        const eventId = (window.crypto && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : [generateSessionId(), Date.now()].join(':');
         const payload = {
           visitor_id: getVisitorId(),
           session_id: getSessionId(),
           contact_id: extra.contact_id || getSavedContactId(),
           event_name: eventName,
           ts: Date.now(),
-          data: buildTrackingData(extra)
+          data: buildTrackingData(Object.assign({ event_id: eventId }, extra))
         };
         fetch(ENDPOINT, {
           method: 'POST',
@@ -22431,7 +23349,9 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           tracking_source: 'native_site_video',
           video_event_name: eventName,
           playback_id: meta.playbackId,
-          event_id: meta.eventId || [meta.playbackId, eventName, Math.floor(position), Date.now()].join(':'),
+          event_id: meta.eventId || makeId(),
+          event_sequence: Math.max(1, Math.floor(num(meta.eventSequence))),
+          ingestion_version: 2,
           media_asset_id: meta.mediaAssetId || null,
           stream_library_id: meta.streamLibraryId || null,
           stream_video_id: meta.streamVideoId || null,
@@ -22442,7 +23362,13 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           position_seconds: position,
           duration_seconds: duration,
           progress_percent: percent,
-          watched_delta_seconds: clamp(meta.watchedDeltaSeconds, 0, 30)
+          watched_delta_seconds: clamp(meta.watchedDeltaSeconds, 0, 30),
+          watch_from_seconds: meta.watchFromSeconds === null || typeof meta.watchFromSeconds === 'undefined'
+            ? null
+            : clamp(meta.watchFromSeconds, 0, 86400),
+          watch_to_seconds: meta.watchToSeconds === null || typeof meta.watchToSeconds === 'undefined'
+            ? null
+            : clamp(meta.watchToSeconds, 0, 86400)
         });
         const payload = {
           visitor_id: identity.visitorId,
@@ -22459,12 +23385,17 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
             if (navigator.sendBeacon(ENDPOINT, blob)) return;
           } catch (_) {}
         }
-        fetch(ENDPOINT, {
+        const postBody = () => fetch(ENDPOINT, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body,
           keepalive: true
-        }).catch(() => {});
+        }).then(response => {
+          if (!response.ok) throw new Error('video_event_rejected');
+        });
+        postBody().catch(() => {
+          postBody().catch(() => {});
+        });
       };
       const readMeta = element => ({
         playbackId: clean(element.dataset.rstkPlaybackId) || makeId(),
@@ -22524,11 +23455,16 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
       };
       const createState = meta => ({
         ...meta,
+        eventSequence: 0,
         lastPosition: 0,
         lastSentAt: 0,
         sentMilestones: new Set(),
         durationSeconds: 0,
-        positionSeconds: 0
+        positionSeconds: 0,
+        pendingWatchedSeconds: 0,
+        pendingWatchFromSeconds: null,
+        pendingWatchToSeconds: null,
+        isPlaying: false
       });
       const shouldSendProgress = (state, percent, position) => {
         const now = Date.now();
@@ -22540,13 +23476,32 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         if (now - state.lastSentAt >= 5000 && Math.abs(position - state.lastPosition) >= 1) return true;
         return false;
       };
-      const updateStateTiming = (state, seconds, duration) => {
+      const updateStateTiming = (state, seconds, duration, options = {}) => {
         const position = clamp(seconds, 0, 86400);
         const total = clamp(duration || state.durationSeconds, 0, 86400);
-        const delta = position > state.positionSeconds && position - state.positionSeconds <= 10 ? position - state.positionSeconds : 0;
+        const previousPosition = state.positionSeconds;
+        const delta = options.accrue !== false && state.isPlaying && position > previousPosition && position - previousPosition <= 10
+          ? position - previousPosition
+          : 0;
+        if (delta > 0) {
+          if (state.pendingWatchFromSeconds === null) state.pendingWatchFromSeconds = previousPosition;
+          state.pendingWatchToSeconds = position;
+          state.pendingWatchedSeconds = Math.min(30, state.pendingWatchedSeconds + delta);
+        }
         state.positionSeconds = position;
         if (total) state.durationSeconds = total;
-        return { position, duration: state.durationSeconds, delta };
+        return { position, duration: state.durationSeconds };
+      };
+      const takePendingWatch = state => {
+        const pending = {
+          watchedDeltaSeconds: clamp(state.pendingWatchedSeconds, 0, 30),
+          watchFromSeconds: state.pendingWatchFromSeconds,
+          watchToSeconds: state.pendingWatchToSeconds
+        };
+        state.pendingWatchedSeconds = 0;
+        state.pendingWatchFromSeconds = null;
+        state.pendingWatchToSeconds = null;
+        return pending;
       };
       const trackBunnyIframe = iframe => {
         const trackedIframe = ensureStreamIframe(iframe);
@@ -22556,22 +23511,25 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         loadPlayerJs().then(playerjs => {
           if (!playerjs || !playerjs.Player) return;
           const player = new playerjs.Player(trackedIframe);
-          const emit = (eventName, timing = {}, force = false, beacon = false) => {
-            const info = updateStateTiming(state, timing.seconds, timing.duration);
+          const emit = (eventName, timing = {}, force = false, beacon = false, accrue = true) => {
+            const info = updateStateTiming(state, timing.seconds, timing.duration, { accrue });
             const percent = info.duration > 0 ? (info.position / info.duration) * 100 : 0;
             if (!force && eventName === 'video_progress' && !shouldSendProgress(state, percent, info.position)) return;
             state.lastSentAt = Date.now();
             state.lastPosition = info.position;
+            const pendingWatch = takePendingWatch(state);
+            state.eventSequence += 1;
             sendPayload(eventName, {
               ...state,
               positionSeconds: info.position,
               durationSeconds: info.duration,
               progressPercent: percent,
-              watchedDeltaSeconds: info.delta,
-              eventId: eventName === 'video_progress'
-                ? [state.playbackId, eventName, Math.floor(info.position / 5) * 5].join(':')
-                : undefined
+              ...pendingWatch
             }, { beacon });
+            if (eventName === 'video_play') state.isPlaying = true;
+            if (eventName === 'video_pause' || eventName === 'video_ended' || eventName === 'video_error') {
+              state.isPlaying = false;
+            }
           };
           player.on('ready', () => {
             if (player.getDuration) {
@@ -22585,10 +23543,16 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           });
           player.on('play', timing => emit('video_play', timing || {}, true));
           player.on('pause', timing => emit('video_pause', timing || {}, true));
-          player.on('seeked', timing => emit('video_seeked', timing || {}, true));
+          player.on('seeked', timing => emit('video_seeked', timing || {}, true, false, false));
           player.on('ended', timing => emit('video_ended', timing || { seconds: state.durationSeconds, duration: state.durationSeconds }, true, true));
           player.on('error', timing => emit('video_error', timing || {}, true, true));
           player.on('timeupdate', timing => emit('video_progress', timing || {}, false));
+          window.addEventListener('pagehide', () => {
+            emit('video_progress', {
+              seconds: state.positionSeconds,
+              duration: state.durationSeconds
+            }, true, true, false);
+          });
         }).catch(() => {});
       };
       const trackNativeVideo = video => {
@@ -22598,29 +23562,43 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         if (!video.dataset.rstkPlaybackId) video.dataset.rstkPlaybackId = makeId();
         const state = createState(readMeta(video));
         state.videoProvider = state.videoProvider || 'html5_video';
-        const emit = (eventName, force = false, beacon = false) => {
+        const emit = (eventName, force = false, beacon = false, accrue = true, preservePosition = false) => {
           if (video.dataset.rstkVideoPreviewing === 'true' && eventName !== 'video_ready' && eventName !== 'video_error') return;
           const duration = Number.isFinite(video.duration) ? video.duration : state.durationSeconds;
-          const info = updateStateTiming(state, video.currentTime || 0, duration || 0);
+          const position = preservePosition ? state.positionSeconds : video.currentTime || 0;
+          const info = updateStateTiming(state, position, duration || 0, { accrue });
           const percent = info.duration > 0 ? (info.position / info.duration) * 100 : 0;
           if (!force && eventName === 'video_progress' && !shouldSendProgress(state, percent, info.position)) return;
           state.lastSentAt = Date.now();
           state.lastPosition = info.position;
+          const pendingWatch = takePendingWatch(state);
+          state.eventSequence += 1;
           sendPayload(eventName, {
             ...state,
             positionSeconds: info.position,
             durationSeconds: info.duration,
             progressPercent: percent,
-            watchedDeltaSeconds: info.delta,
-            eventId: eventName === 'video_progress'
-              ? [state.playbackId, eventName, Math.floor(info.position / 5) * 5].join(':')
-              : undefined
+            ...pendingWatch
           }, { beacon });
+          if (eventName === 'video_play') state.isPlaying = true;
+          if (eventName === 'video_pause' || eventName === 'video_ended' || eventName === 'video_error') {
+            state.isPlaying = false;
+          }
         };
         video.addEventListener('loadedmetadata', () => emit('video_ready', true));
         video.addEventListener('play', () => emit('video_play', true));
         video.addEventListener('pause', () => emit('video_pause', true));
-        video.addEventListener('seeked', () => emit('video_seeked', true));
+        let resumeAfterSeek = false;
+        video.addEventListener('seeking', () => {
+          resumeAfterSeek = resumeAfterSeek || (state.isPlaying && !video.paused);
+          emit('video_progress', true, false, false, true);
+          state.isPlaying = false;
+        });
+        video.addEventListener('seeked', () => {
+          emit('video_seeked', true, false, false);
+          state.isPlaying = resumeAfterSeek && !video.paused;
+          resumeAfterSeek = false;
+        });
         video.addEventListener('ended', () => emit('video_ended', true, true));
         video.addEventListener('error', () => emit('video_error', true, true));
         video.addEventListener('timeupdate', () => emit('video_progress', false));
@@ -32930,8 +33908,20 @@ async function sendSiteVideoActionMetaEvent({ site, block, rule, eventName, para
   }
 }
 
-async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, submissionId, contactId, contact, req, meta }) {
+async function recordNativeSiteConversionEvent({
+  site,
+  blocks,
+  submittedPageId,
+  submissionId,
+  submissionStatus = 'received',
+  finalSubmission = true,
+  contactId,
+  contact,
+  req,
+  meta
+}) {
   if (shouldSkipTracking({ req, meta })) return
+  if (!finalSubmission || cleanString(submissionStatus).toLowerCase() === 'disqualified') return
 
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id) || `site_visitor_${submissionId}`
   const sessionId = cleanString(meta?.sessionId || meta?.session_id) || `site_session_${submissionId}`
@@ -32961,6 +33951,7 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
     public_page_id: submittedPageId || page?.id || '',
     public_page_title: page?.title || '',
     conversion_type: importedConversionMeta?.conversionType || 'form_submit',
+    conversion_status: cleanString(submissionStatus).toLowerCase() || 'received',
     submission_id: submissionId,
     url: cleanString(meta?.pageUrl) || tracking.url || `https://${site.domain || cleanString(meta?.host) || ''}`,
     referrer: cleanString(meta?.referrer) || tracking.referrer || null,
@@ -33486,6 +34477,8 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
     blocks: [],
     submittedPageId: DEFAULT_FUNNEL_PAGE_ID,
     submissionId,
+    submissionStatus,
+    finalSubmission: true,
     contactId,
     contact,
     req,
@@ -34731,6 +35724,8 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     blocks: submissionBlocks,
     submittedPageId: effectiveSubmittedPageId,
     submissionId,
+    submissionStatus: ruleEvaluation.status,
+    finalSubmission: site.siteType !== 'standard_form' || isFinalStandardFormSubmit || isRuleSubmit,
     contactId,
     contact: inferredContact,
     req,

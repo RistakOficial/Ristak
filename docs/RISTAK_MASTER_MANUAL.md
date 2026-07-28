@@ -973,51 +973,97 @@ snapshot compartido de Integraciones y continua con CAPI apagado cuando el plan
 no incluye Meta o su lectura falla. Ese 403/fallo no bloquea la creacion ni
 dispara reintentos infinitos de perfiles sociales.
 
-`POST /api/sites/analytics/summary` no recibe el universo de IDs cargado en el
-navegador. `siteScope` selecciona en SQL sitios o formularios publicados, modo
-website/funnel y un ID opcional; `aggregate` calcula metricas y `entityCount`
-sobre todo ese alcance, incluso si la entidad queda fuera de la primera pagina.
-`breakdownSiteIds` se intersecta con el scope y se limita a 100 filas visibles;
-`formFunnelSiteId` calcula preguntas unicamente para el formulario seleccionado.
-El contrato v2 rechaza scopes o modos desconocidos y exige siempre un rango
-completo de fechas del negocio, para que una apertura no pueda escanear por
-accidente todo el historico. El contrato legacy por `siteIds` sigue disponible:
-conserva hasta 500 desgloses y todos sus embudos como antes, pero ningun flujo
-nuevo debe enumerar cientos de miles de entidades.
+`POST /api/sites/analytics/summary` usa `schemaVersion = 3` y no recibe el
+universo cargado en el navegador. `siteScope` selecciona en SQL sitios o
+formularios publicados, modo website/funnel y un ID opcional; `aggregate`,
+`series`, `rankings` e `inventory` se calculan sobre todo ese alcance, incluso si
+la entidad queda fuera de la primera pagina. `breakdownSiteIds` solo pide el
+detalle del elemento seleccionado y se intersecta con el scope. El contrato
+rechaza scopes o modos desconocidos y exige un rango completo de fechas de
+calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
+estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango
+inválido responde `400` y jamás degrada la consulta a todo el historial. El
+contrato legacy por `siteIds` sigue disponible para
+consumidores anteriores, pero ningun flujo nuevo debe enumerar el catalogo.
+
+La fuente canonica de Sites es first-party. Una vista es `native_site_view` o
+`page_view`, pero ambos deben declarar `tracking_source = native_site`; el pixel
+externo no se mezcla aunque reutilice por error el nombre del evento. Un
+visitante es el `visitor_id` first-party y una sesion es una
+ventana de actividad separada por mas de 30 minutos, calculada desde los eventos,
+no un conteo ciego de cookies `session_id`. La ingesta nueva lleva `event_id`
+unico y deduplica el retry de forma atomica; si el reloj del cliente difiere mas
+de cinco minutos, conserva el instante reportado como evidencia pero usa la hora
+de recepcion para la analitica.
+
+Los envios guardados se clasifican server-side como `completed`,
+`terminal_exit`, `checkpoint` o `legacy_unknown`. Una conversion calificada es
+solo un `completed` cuyo estado no sea `disqualified`. `convertingVisitors`
+reconcilia esas conversiones contra visitantes que realmente tuvieron una vista
+en el alcance; la tasa es `convertingVisitors / visitors`, por lo que nunca puede
+superar 100%. Envio, conversion y persona que convirtio son cifras distintas y
+la interfaz debe nombrarlas como tales. La atribucion exige el `visitor_id` del
+evento de conversion o, como fallback, su `session_id`; compartir `contact_id`
+en el CRM no prueba que dos identidades web sean la misma visita. Una conversion
+sin esas señales queda calificada pero no atribuida. La vista reconciliada debe
+haber ocurrido a más tardar en el instante del evento de conversión; una visita
+posterior nunca puede atribuir retroactivamente una conversión. El scope historico representa las
+entidades actualmente publicadas; no se debe afirmar que reconstruye una
+version/publicacion que la base no conserva.
 
 Analiticas usa `analytics_selector`, un catalogo paginado independiente de las
 bibliotecas visuales y de sus carpetas. Solo incluye entidades publicadas; los
 formularios internos de calendario quedan fuera y la opcion Videos exige un
-asset listo/no eliminado. La seleccion remota puede buscar sin disparar el
-agregado pesado en cada tecla: el summary espera a que el catalogo default, un
-deep link exacto y la primera ventana de videos queden resueltos, y entonces
-lanza un solo request. El lookup exacto de un video aplica el mismo tipo, modo e
-ID de site que el agregado.
+asset listo/no eliminado. Ese catalogo sirve para elegir, nunca para reconstruir
+totales, inventarios o rankings. Cambiar tipo, entidad, video o rango genera una
+consulta con llave propia; una respuesta anterior no puede pisar la vigente. En
+carga o error se muestra ese estado y no tarjetas con ceros fabricados.
 
-El embudo de formularios cuenta submissions y respuestas por pregunta dentro de
-SQL; no transporta cada `response_json` a Node ni hace preguntas por submission.
-Los campos se agregan en bloques acotados y JSON historico corrupto se trata
-como objeto vacio. SQLite lo protege con `json_valid`; PostgreSQL instala antes
-de los indices la funcion inmutable `ristak_safe_jsonb`, usada tambien para
-proyectar y filtrar `theme_json` legacy sin tumbar una biblioteca completa. Los
-indices de bibliotecas, scope, modo, sesiones y submissions viven en `091*` y
-`092*`.
+Formularios muestra **Cobertura de respuestas**, no un embudo de recorrido. Por
+campo reporta cuantos envios terminales guardados tienen una respuesta, el total
+terminal y su porcentaje; `0` y `false` son respuestas validas. La base actual
+no prueba que una persona haya visto cada pregunta ni en cual abandono, por lo
+que no existen "alcanzaron", drop-off, friccion o conversion entre pasos. Los
+campos se agregan en SQL por bloques acotados; JSON historico corrupto se trata
+como objeto vacio y `legacy_unknown` se presenta como advertencia de cobertura.
+SQLite lo protege con `json_valid`; PostgreSQL usa `ristak_safe_jsonb`.
 
 La videoteca de Sites usa `/api/sites/video-assets` con paginas de 50 y cursor
-`created_at + id` para los modulos `sites/forms`. Un preview de Bunny busca solo
-su `streamVideoId`, nunca descarga la videoteca para localizar un archivo. El
-dashboard agregado de reproducciones filtra en SQL todos los Sites publicados
-por tipo y modo de pagina, aunque la biblioteca visual solo tenga cargada su
-primera ventana. Elegir un origen reduce el agregado a ese site y el detalle de
-un video consulta solo su asset. El JOIN paginado adjunta a cada video el ID y
-nombre ligero de su origen; por eso los labels, el selector y el ranking siguen
-siendo correctos aunque ese Site no aparezca en la primera pagina de la
-biblioteca. El summary y las series conservan alcance
-global, pero el desglose `byAssetId` se limita a los primeros 100 videos
-cargados y `bySiteId` queda apagado salvo opt-in; nunca se serializa un mapa de
-toda la cuenta. Los indices de pagina y reproduccion por site/asset viven en
-`068*`. Sus cursores estan ligados a cuenta, tipo, modo y site seleccionado;
-cambiar cualquiera de ellos invalida la pagina anterior en vez de repetirla.
+`created_at + id` para los modulos `sites/forms`. El selector y el preview son
+paginados, pero `inventory`, `topAssetsByStarts` y `topAssetsByWatch` salen del
+alcance completo en servidor. Un video guardado sin Bunny Stream conserva
+analitica first-party; la respuesta del proveedor es un bloque opcional separado
+y nunca rellena o reemplaza la medicion propia. Los videos del formulario interno
+de calendario se excluyen del inventario y de todos los scopes analiticos. Cuando
+la interfaz selecciona un origen exacto, el detalle de ese video transmite
+`siteId` hasta el ledger: tarjetas, curva y espectadores no mezclan otras páginas
+que reutilicen el mismo asset.
+
+Video usa el ledger `video_playback_events` como fuente analitica; la tabla
+`video_playback_sessions` queda como proyeccion para Journey/contactos. En
+ingesta v2 cada evento lleva UUID, secuencia monotona y hash de payload. Primero
+se inserta/deduplica el ledger y solo despues se actualiza la proyeccion: un retry
+identico no vuelve a sumar y reutilizar ID o secuencia con otro payload es
+conflicto. El navegador acumula el tiempo visto entre heartbeats y lo vacia al
+pausar, buscar, terminar o salir; un seek cambia alcance pero no fabrica segundos
+vistos.
+
+`playerLoads` cuenta primeros `video_ready`; `playbackStarts`, primeros
+`video_play`; `uniqueViewers`, identidades de esas reproducciones;
+`watchedSeconds`, deltas aceptados dentro del rango; y
+`completedPlaybacks`, solo reproducciones con `video_ended`. Reanudar no crea un
+nuevo inicio y alcanzar 99% mediante seek no completa. La grafica derivada del
+maximo playhead se llama `timelineReachCurve` o **Curva de alcance**, nunca
+retencion. No existe heatmap de intervalos mientras esa telemetria no este
+disponible.
+
+El historico anterior a v2 puede estar inflado por retries y subcontado por
+heartbeats; no es matematicamente reparable desde la proyeccion. `quality`
+declara `verified`, `mixed_legacy`, `legacy_only` o `empty`, y la interfaz muestra
+la advertencia correspondiente en vez de presentar best-effort como exactitud.
+Las series se agrupan por `event_at` y por la zona del negocio; no trasladan una
+sesion completa al dia de su ultimo evento, no recortan silenciosamente a 5,000
+filas y agrupan espectadores antes de paginar.
 
 Los selectores de dominios y formularios usan `GET /api/sites/selectors` con
 busqueda server-side, cursor y paginas de 30 (maximo 50); no descargan

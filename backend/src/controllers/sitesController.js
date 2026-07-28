@@ -27,6 +27,7 @@ import {
   getSitesFontFile,
   getSite,
   getSitesVideoAsset,
+  getSitesVideoInventorySummary,
   getSitesDomainSettings,
   getSitePreview,
   getSitesTrackingSummary,
@@ -375,6 +376,7 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
     const body = req.body || {}
     const dateFrom = body.dateFrom || body.date_from
     const dateTo = body.dateTo || body.date_to
+    const videoScope = body.videoScope || body.video_scope || {}
     const siteTrackingInput = {
       siteIds: body.siteIds || body.site_ids || [],
       dateFrom,
@@ -389,28 +391,38 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
     if (Object.prototype.hasOwnProperty.call(body, 'formFunnelSiteId') || Object.prototype.hasOwnProperty.call(body, 'form_funnel_site_id')) {
       siteTrackingInput.formFunnelSiteId = body.formFunnelSiteId ?? body.form_funnel_site_id
     }
-    const [siteTracking, videoTracking] = await Promise.all([
+    const [siteTracking, videoTracking, videoInventory] = await Promise.all([
       getSitesTrackingSummary(siteTrackingInput),
       getVideoPlaybackAggregate({
         assetIds: body.videoAssetIds || body.video_asset_ids || [],
         breakdownAssetIds: body.videoBreakdownAssetIds || body.video_breakdown_asset_ids || [],
         siteIds: body.videoSiteIds || body.video_site_ids || body.siteIds || body.site_ids || [],
-        siteScope: body.videoScope || body.video_scope || {},
+        siteScope: videoScope,
         includeSiteBreakdown: false,
         dateFrom,
         dateTo,
         hourly: body.hourly
+      }),
+      getSitesVideoInventorySummary({
+        businessId: body.businessId || body.business_id || 'default',
+        siteType: videoScope.siteType || videoScope.site_type || 'videos',
+        landingMode: videoScope.landingMode || videoScope.landing_mode || 'all',
+        siteId: videoScope.siteId || videoScope.site_id || ''
       })
     ])
 
     res.json({
       success: true,
       data: {
+        ...siteTracking,
         dateFrom: siteTracking.dateFrom || videoTracking.dateFrom || '',
         dateTo: siteTracking.dateTo || videoTracking.dateTo || '',
-        aggregate: siteTracking.aggregate,
+        inventory: {
+          ...(siteTracking.inventory || {}),
+          videos: videoInventory
+        },
+        // Alias transitorio para consumidores anteriores al schema v3.
         sites: siteTracking.bySiteId,
-        formFunnels: siteTracking.formFunnels || {},
         videos: videoTracking
       }
     })
@@ -424,25 +436,37 @@ export async function getSitesVideoAnalyticsHandler(req, res) {
   try {
     const dateFrom = req.query.dateFrom || req.query.date_from
     const dateTo = req.query.dateTo || req.query.date_to
-    const [analytics, firstPartyTracking] = await Promise.all([
-      getMediaAssetBunnyStreamAnalytics(req.params.assetId, {
-        dateFrom,
-        dateTo,
-        hourly: req.query.hourly
-      }),
-      getVideoPlaybackViewers({
-        assetId: req.params.assetId,
-        dateFrom,
-        dateTo,
-        hourly: req.query.hourly,
-        limit: req.query.viewerLimit || req.query.viewer_limit || 50
-      })
-    ])
+    const firstPartyTracking = await getVideoPlaybackViewers({
+      assetId: req.params.assetId,
+      siteId: req.query.siteId || req.query.site_id,
+      dateFrom,
+      dateTo,
+      hourly: req.query.hourly,
+      limit: req.query.viewerLimit || req.query.viewer_limit || 50
+    })
+    let providerAnalytics = null
+    let providerAnalyticsError = ''
+    const includeProviderAnalytics = ['1', 'true', 'yes'].includes(
+      String(req.query.includeProviderAnalytics || req.query.include_provider_analytics || '').trim().toLowerCase()
+    )
+    if (includeProviderAnalytics) {
+      try {
+        providerAnalytics = await getMediaAssetBunnyStreamAnalytics(req.params.assetId, {
+          dateFrom,
+          dateTo,
+          hourly: req.query.hourly
+        })
+      } catch (error) {
+        providerAnalyticsError = error?.message || 'No fue posible consultar al proveedor de video.'
+        logger.warn(`Analítica del proveedor no disponible para ${req.params.assetId}: ${providerAnalyticsError}`)
+      }
+    }
     res.json({
       success: true,
       data: {
-        ...analytics,
-        firstPartyTracking
+        firstPartyTracking,
+        providerAnalytics,
+        providerAnalyticsError
       }
     })
   } catch (error) {

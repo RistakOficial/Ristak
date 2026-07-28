@@ -413,6 +413,7 @@ function extractNativeSiteInfo(data = {}) {
 
   return {
     tracking_source: trackingSource,
+    event_id: cleanTrackingString(data.event_id || data.eventId, 220),
     site_id: cleanTrackingString(data.site_id || data.siteId || data.public_site_id, 120),
     site_slug: cleanTrackingString(data.site_slug || data.siteSlug, 220),
     site_name: cleanTrackingString(data.site_name || data.siteName, 260),
@@ -500,6 +501,18 @@ export async function createSession(sessionData) {
   const adsParams = extractAdsParams(data)
   const sourceInfo = deriveSourceInfo(data, utms, clickIds)
   const nativeSiteInfo = extractNativeSiteInfo(data)
+  const receivedAt = new Date()
+  const parsedClientStartedAt = new Date(ts)
+  const hasValidClientTimestamp = Number.isFinite(parsedClientStartedAt.getTime())
+  const clientStartedAt = hasValidClientTimestamp
+    ? parsedClientStartedAt.toISOString()
+    : receivedAt.toISOString()
+  const shouldClampNativeTimestamp = nativeSiteInfo.tracking_source === 'native_site' &&
+    (!hasValidClientTimestamp || Math.abs(parsedClientStartedAt.getTime() - receivedAt.getTime()) > 5 * 60 * 1000)
+  const startedAt = shouldClampNativeTimestamp
+    ? receivedAt.toISOString()
+    : clientStartedAt
+
   const identity = await resolveTrackingIdentity({
     visitorId: trustedVisitorId,
     contactId: contact_id,
@@ -512,15 +525,13 @@ export async function createSession(sessionData) {
     },
     ip,
     userAgent: user_agent,
-    now: new Date(ts)
+    now: new Date(startedAt)
   })
 
   // (TRK-003) NO resolver geolocalización de forma síncrona aquí: bloqueaba /collect
   // contra un tercero (ip-api.com) en el camino caliente y degradaba el endpoint en
   // tráfico alto. Se inserta la sesión sin geo y se resuelve en segundo plano más abajo.
   const geoInfo = { geo_country: null, geo_region: null, geo_city: null }
-
-  const startedAt = new Date(ts).toISOString()
 
   // Validar si el contact_id existe en la DB antes de insertarlo
   let validContactId = null
@@ -550,13 +561,14 @@ export async function createSession(sessionData) {
   }
 
   try {
-    // (TRK-002) Dedup de sesiones: el pixel reenvía el mismo evento de sesión
+    // (TRK-002) Compatibilidad para clientes antiguos sin event_id. Los clientes
+    // nativos actuales deduplican de forma atómica con el índice único.
     // (p. ej. session_end o reintentos de envío) e infla page_views / unique_sessions.
     // Antes de insertar, se descarta un evento idéntico ya registrado usando una clave
     // estable formada por columnas existentes: session_id + event_name + started_at.
     // (Mismo session_id, mismo tipo de evento y mismo timestamp de origen = duplicado.)
     // No se cambia el schema; solo se evita el doble conteo del mismo evento de sesión.
-    if (session_id) {
+    if (session_id && !nativeSiteInfo.event_id) {
       try {
         const existing = await db.get(`
           SELECT id FROM sessions
@@ -577,7 +589,7 @@ export async function createSession(sessionData) {
     }
 
     // CADA page_view crea un registro NUEVO (el id se genera automáticamente)
-    await db.run(`
+    const insertResult = await db.run(`
       INSERT INTO sessions (
         session_id,
         visitor_id,
@@ -585,7 +597,10 @@ export async function createSession(sessionData) {
         full_name,
         email,
         event_name,
+        event_id,
         started_at,
+        client_started_at,
+        timestamp_adjusted,
         page_url,
         referrer_url,
         utm_source,
@@ -649,12 +664,14 @@ export async function createSession(sessionData) {
         identity_evidence_json
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?
       )
+      ON CONFLICT DO NOTHING
     `, [
       session_id,
       storedVisitorId,
@@ -662,7 +679,10 @@ export async function createSession(sessionData) {
       validFullName,
       validEmail,
       event_name,
+      nativeSiteInfo.event_id,
       startedAt,
+      clientStartedAt,
+      shouldClampNativeTimestamp ? 1 : 0,
       data.url || null,
       data.referrer || null,
       utms.utm_source,
@@ -725,6 +745,11 @@ export async function createSession(sessionData) {
       identity.matchConfidence,
       identity.evidenceJson
     ])
+
+    if (nativeSiteInfo.event_id && Number(insertResult?.changes || 0) === 0) {
+      logger.info(`(TRK-002) Evento nativo duplicado ignorado: event_id=${nativeSiteInfo.event_id}`)
+      return { success: true, deduped: true }
+    }
 
     await recordTrackingIdentityMatch({
       subjectKind: 'session',

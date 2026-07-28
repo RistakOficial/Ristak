@@ -97,7 +97,9 @@ test('el embudo de formularios agrega respuestas en SQL y el alcance v2 exige ra
   assert.doesNotMatch(funnelSource, /parseJson\(row\.response_json/)
   assert.doesNotMatch(funnelSource, /submissions\.reduce/)
   assert.match(source, /!legacyMode && hasV2Request && \(!requestedDateFrom \|\| !requestedDateTo\)/)
-  assert.match(source, /legacyMode \? 500 : 101/)
+  assert.match(source, /const scopedSiteIds = scopedSites\.map/)
+  assert.match(source, /getSitesTrackingBreakdownInChunks\(scopedSiteIds/)
+  assert.match(source, /buildSitesTrackingRankings\(scopedSites, internalStatsBySite\)/)
 })
 
 test('view=library conserva el arreglo legacy y vistas desconocidas no rompen consumidores históricos', async () => {
@@ -407,21 +409,29 @@ test('frontend y controller exponen analytics_selector sin reutilizar folderId',
   assert.match(controller, /landingMode: req\.query\?\.landingMode/)
 })
 
-test('Analíticas resuelve catálogos ligeros antes de lanzar un solo aggregate pesado', async () => {
+test('Analíticas delega el alcance completo al backend sin depender del catálogo paginado', async () => {
   const source = await readFile(frontendSourceUrl, 'utf8')
   const summaryEffectStart = source.indexOf("if (section !== 'analytics') {", source.indexOf('const loadSiteVideos'))
   const summaryRequestStart = source.indexOf('sitesService.getAnalyticsSummary({', summaryEffectStart)
+  const summaryRequestEnd = source.indexOf('}, { signal: controller.signal })', summaryRequestStart)
   const summaryPrelude = source.slice(summaryEffectStart, summaryRequestStart)
+  const summaryRequest = source.slice(summaryRequestStart, summaryRequestEnd)
 
   assert.match(source, /defaultItems: PublicSite\[\]/)
   assert.match(source, /defaultScopeReadyKey: string/)
   assert.match(source, /sitesAnalyticsDefaultScopeReadyRef/)
   assert.match(source, /Promise\.allSettled\(\[pageRequest, defaultPageRequest\]\)/)
   assert.match(source, /const sitesAnalyticsEffectiveSearch = useMemo/)
-  assert.match(source, /const analyticsSelectedSiteReady = !sitesAnalyticsSiteId/)
-  assert.match(summaryPrelude, /catalogReady/)
-  assert.match(summaryPrelude, /videoWindowReady/)
-  assert.match(summaryPrelude, /!analyticsSelectedSiteReady/)
+  assert.match(summaryPrelude, /setSitesAnalyticsSummaryLoading\(true\)/)
+  assert.doesNotMatch(summaryPrelude, /catalogReady|videoWindowReady|analyticsSelectedSiteReady/)
+  assert.match(summaryRequest, /siteScope:/)
+  assert.match(summaryRequest, /siteType: sitesAnalyticsSiteType/)
+  assert.match(summaryRequest, /landingMode: sitesAnalyticsLandingMode/)
+  assert.match(summaryRequest, /status: 'published' as const/)
+  assert.match(summaryRequest, /breakdownSiteIds: sitesAnalyticsSiteId \? \[sitesAnalyticsSiteId\] : \[\]/)
+  assert.match(summaryRequest, /formFunnelSiteId: sitesAnalyticsSiteId/)
+  assert.match(summaryRequest, /getSitesAnalyticsRange\(dateRange\.start, dateRange\.end\)/)
+  assert.doesNotMatch(summaryRequest, /analyticsSites\.map|analyticsCatalogSites\.map/)
   assert.doesNotMatch(source, /section !== 'analytics'[\s\S]{0,180}loadLibraryPage/)
 })
 
@@ -712,17 +722,37 @@ test('landing_library y form_library recorren entidades intercaladas sin contami
       VALUES (?, ?, '{}', '2097-11-30 23:59:30')
     `, [submissionIds[0], landingMetricId])
     await db.run(`
-      INSERT INTO public_site_submissions (id, site_id, form_site_id, response_json, created_at)
-      VALUES (?, ?, ?, '{}', '2097-11-30 23:58:30')
-    `, [submissionIds[1], formMetricId, formMetricId])
+      INSERT INTO public_site_submissions (
+        id, site_id, form_site_id, response_json, meta_json, created_at
+      )
+      VALUES (?, ?, ?, '{}', ?, '2097-11-30 23:58:30')
+    `, [submissionIds[1], formMetricId, formMetricId, JSON.stringify({ formFinalSubmit: true })])
     await db.run(`
-      INSERT INTO sessions (id, site_id, visitor_id, session_id, event_name, created_at)
-      VALUES (?, ?, ?, ?, 'native_site_view', '2097-11-30 23:59:30')
-    `, [sessionIds[0], landingMetricId, `landing-visitor-${suffix}`, `landing-session-${suffix}`])
+      INSERT INTO sessions (
+        id, site_id, visitor_id, session_id, event_id, tracking_source,
+        event_name, started_at, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, 'native_site', 'native_site_view', '2097-11-30 23:59:30', '2097-11-30 23:59:30')
+    `, [
+      sessionIds[0],
+      landingMetricId,
+      `landing-visitor-${suffix}`,
+      `landing-session-${suffix}`,
+      `landing-view-event-${suffix}`
+    ])
     await db.run(`
-      INSERT INTO sessions (id, form_site_id, visitor_id, session_id, event_name, created_at)
-      VALUES (?, ?, ?, ?, 'native_site_view', '2097-11-30 23:58:30')
-    `, [sessionIds[1], formMetricId, `form-visitor-${suffix}`, `form-session-${suffix}`])
+      INSERT INTO sessions (
+        id, form_site_id, visitor_id, session_id, event_id, tracking_source,
+        event_name, started_at, created_at
+      )
+      VALUES (?, ?, ?, ?, ?, 'native_site', 'native_site_view', '2097-11-30 23:58:30', '2097-11-30 23:58:30')
+    `, [
+      sessionIds[1],
+      formMetricId,
+      `form-visitor-${suffix}`,
+      `form-session-${suffix}`,
+      `form-view-event-${suffix}`
+    ])
 
     const [landingCollection, formCollection] = await Promise.all([
       collectView('landing_library'),
@@ -848,14 +878,33 @@ test('listSites pagina por cursor, limita el payload y conserva métricas exacta
       [`perf-submission-${suffix}`, firstId]
     )
     await db.run(
-      `INSERT INTO sessions (id, site_id, visitor_id, session_id, event_name, submission_id, created_at)
-       VALUES (?, ?, ?, ?, 'native_site_view', NULL, '2099-12-31 12:05:00')`,
-      [trackingRowIds[0], firstId, `visitor-${suffix}`, `session-${suffix}`]
+      `INSERT INTO sessions (
+         id, site_id, visitor_id, session_id, event_id, tracking_source,
+         event_name, submission_id, started_at, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, 'native_site', 'native_site_view', NULL, '2099-12-31 12:05:00', '2099-12-31 12:05:00')`,
+      [
+        trackingRowIds[0],
+        firstId,
+        `visitor-${suffix}`,
+        `session-${suffix}`,
+        `view-event-${suffix}`
+      ]
     )
     await db.run(
-      `INSERT INTO sessions (id, site_id, visitor_id, session_id, event_name, submission_id, created_at)
-       VALUES (?, ?, ?, ?, 'native_site_conversion', ?, '2099-12-31 12:06:00')`,
-      [trackingRowIds[1], firstId, `visitor-${suffix}`, `session-${suffix}`, `perf-submission-${suffix}`]
+      `INSERT INTO sessions (
+         id, site_id, visitor_id, session_id, event_id, tracking_source,
+         event_name, submission_id, started_at, created_at
+       )
+       VALUES (?, ?, ?, ?, ?, 'native_site', 'native_site_conversion', ?, '2099-12-31 12:06:00', '2099-12-31 12:06:00')`,
+      [
+        trackingRowIds[1],
+        firstId,
+        `visitor-${suffix}`,
+        `session-${suffix}`,
+        `conversion-event-${suffix}`,
+        `perf-submission-${suffix}`
+      ]
     )
 
     const firstPage = await listSites({ limit: 3, paginated: true })
@@ -882,6 +931,125 @@ test('listSites pagina por cursor, limita el payload y conserva métricas exacta
     for (const id of ids) {
       await db.run('DELETE FROM public_sites WHERE id = ?', [id]).catch(() => undefined)
     }
+  }
+})
+
+test('listSites no atribuye una conversión a varios visitantes por compartir contacto CRM', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const searchToken = `conversion-identity-${suffix}`
+  const siteId = `perf-${searchToken}`
+  const contactId = `perf-contact-${suffix}`
+  const submissionIds = [
+    `perf-conversion-attributed-${suffix}`,
+    `perf-conversion-unattributed-${suffix}`
+  ]
+  const trackingRowIds = Array.from({ length: 4 }, () => randomUUID())
+  const occurredAt = '2100-01-15 12:00:00'
+
+  try {
+    await db.run(`
+      INSERT INTO public_sites (
+        id, name, slug, site_type, status, title, description, theme_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, 'landing_page', 'published', ?, '', ?, ?, ?)
+    `, [
+      siteId,
+      searchToken,
+      searchToken,
+      searchToken,
+      JSON.stringify({ libraryFolderId: 'conversion-identity-test' }),
+      occurredAt,
+      occurredAt
+    ])
+    await db.run(
+      `INSERT INTO contacts (id, full_name, source, created_at, updated_at)
+       VALUES (?, 'Contacto compartido listSites', 'test', ?, ?)`,
+      [contactId, occurredAt, occurredAt]
+    )
+
+    for (const [index, visitorSuffix] of ['a', 'b'].entries()) {
+      await db.run(`
+        INSERT INTO sessions (
+          id, site_id, visitor_id, session_id, contact_id, event_id,
+          tracking_source, event_name, started_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'native_site', 'native_site_view', ?, ?)
+      `, [
+        trackingRowIds[index],
+        siteId,
+        `visitor-${suffix}-${visitorSuffix}`,
+        `session-${suffix}-${visitorSuffix}`,
+        contactId,
+        `view-event-${suffix}-${visitorSuffix}`,
+        occurredAt,
+        occurredAt
+      ])
+    }
+
+    for (const submissionId of submissionIds) {
+      await db.run(`
+        INSERT INTO public_site_submissions (
+          id, site_id, contact_id, response_json, status, created_at
+        ) VALUES (?, ?, ?, '{}', 'received', ?)
+      `, [submissionId, siteId, contactId, occurredAt])
+    }
+
+    await db.run(`
+      INSERT INTO sessions (
+        id, site_id, visitor_id, session_id, contact_id, event_id,
+        tracking_source, event_name, submission_id, started_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?)
+    `, [
+      trackingRowIds[2],
+      siteId,
+      `visitor-${suffix}-a`,
+      `session-${suffix}-a`,
+      contactId,
+      `conversion-event-${suffix}-attributed`,
+      submissionIds[0],
+      occurredAt,
+      occurredAt
+    ])
+    await db.run(`
+      INSERT INTO sessions (
+        id, site_id, visitor_id, session_id, contact_id, event_id,
+        tracking_source, event_name, submission_id, started_at, created_at
+      ) VALUES (?, ?, '', '', ?, ?, 'native_site', 'native_site_conversion', ?, ?, ?)
+    `, [
+      trackingRowIds[3],
+      siteId,
+      contactId,
+      `conversion-event-${suffix}-contact-only`,
+      submissionIds[1],
+      occurredAt,
+      occurredAt
+    ])
+
+    const page = await listSites({
+      limit: 10,
+      paginated: true,
+      view: 'landing_library',
+      search: searchToken
+    })
+    const site = page.items.find(item => item.id === siteId)
+
+    assert.ok(site)
+    assert.equal(site.submissionsCount, 2)
+    assert.equal(site.trackingStats.views, 2)
+    assert.equal(site.trackingStats.visitors, 2)
+    assert.equal(site.trackingStats.conversions, 2)
+    assert.equal(site.trackingStats.convertingVisitors, 1)
+    assert.equal(site.trackingStats.conversionRate, 50)
+  } finally {
+    await db.run(
+      'DELETE FROM sessions WHERE id IN (?, ?, ?, ?)',
+      trackingRowIds
+    ).catch(() => undefined)
+    await db.run(
+      'DELETE FROM public_site_submissions WHERE id IN (?, ?)',
+      submissionIds
+    ).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
   }
 })
 
