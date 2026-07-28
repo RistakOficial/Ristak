@@ -151,6 +151,10 @@ Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
 
 - Google Calendar / HighLevel Calendar: convierte rangos `YYYY-MM-DD` a inicio y
   fin de día en la zona del negocio antes de pedir slots o eventos.
+- Las colas offline de citas guardan `startTime`/`endTime` como instantes UTC y
+  conservan explícitamente `timeZone=account_timezone` para agrupar y validar al
+  reintentar. Nunca reconstruyen el instante desde la zona del dispositivo ni
+  recalculan “la misma hora” al volver internet.
 - Calendarios públicos y embebidos: si el visitante elige otra zona, amplía la
   consulta de fechas lo necesario para cubrir el borde visual, calcula los slots
   con la zona del negocio y luego agrúpalos/muéstralos en la zona del visitante.

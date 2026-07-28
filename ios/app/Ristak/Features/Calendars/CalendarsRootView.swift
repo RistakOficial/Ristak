@@ -55,7 +55,19 @@ struct CalendarsRootView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await model.reloadEvents(force: true) }
+            Task {
+                await model.syncPendingAppointments()
+                await model.reloadEvents(force: true)
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: CalendarAppointmentSyncCoordinator.didFinishSyncNotification
+            )
+        ) { _ in
+            Task {
+                await model.reconcileExternalOutboxSync()
+            }
         }
         .sheet(item: $flowContext) { context in
             AppointmentFlowSheet(
@@ -63,9 +75,12 @@ struct CalendarsRootView: View {
                 calendars: model.calendars,
                 preferredCalendarID: model.selectedCalendarID,
                 timeZone: model.timeZone
-            ) { _ in
+            ) { saved in
+                model.appointmentWasSaved(saved)
                 flowContext = nil
-                Task { await model.reloadEvents(force: true) }
+                if !saved.isOfflinePlaceholder {
+                    Task { await model.reloadEvents(force: true) }
+                }
             }
             .presentationDetents([.large])
         }
@@ -79,8 +94,11 @@ struct CalendarsRootView: View {
                     Task { await model.reloadEvents(force: true) }
                 },
                 onDeleted: {
+                    model.appointmentWasDeleted(id: appointment.id)
                     detailAppointment = nil
-                    Task { await model.reloadEvents(force: true) }
+                    if !appointment.isOfflinePlaceholder {
+                        Task { await model.reloadEvents(force: true) }
+                    }
                 }
             )
             .presentationDetents([.medium, .large])
@@ -458,7 +476,7 @@ struct CalendarsRootView: View {
 
     @ViewBuilder
     private var eventsErrorBanner: some View {
-        if let message = model.eventsError {
+        if let message = model.eventsError ?? model.offlineSyncMessage {
             HStack(spacing: RistakTheme.Spacing.xs) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(RistakTheme.warn)
@@ -467,7 +485,13 @@ struct CalendarsRootView: View {
                     .foregroundStyle(RistakTheme.textPrimary)
                 Spacer()
                 Button("Reintentar") {
-                    Task { await model.reloadEvents(force: true) }
+                    Task {
+                        if model.failedSyncCount > 0 || model.pendingSyncCount > 0 {
+                            await model.retryPendingAppointments()
+                        } else {
+                            await model.reloadEvents(force: true)
+                        }
+                    }
                 }
                 .font(.footnote.weight(.semibold))
             }

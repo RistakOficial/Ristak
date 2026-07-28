@@ -50,6 +50,10 @@ export function setCacheNamespace(rawNamespace: string): void {
   memory.clear();
 }
 
+export function resolveCacheNamespace(expectedNamespace = ''): string {
+  return expectedNamespace ? sanitize(expectedNamespace) : namespace;
+}
+
 async function ensureDir(): Promise<void> {
   if (!CACHE_ROOT) return;
   if (!dirReady) {

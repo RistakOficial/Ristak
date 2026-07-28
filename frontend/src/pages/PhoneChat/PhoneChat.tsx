@@ -182,6 +182,12 @@ import {
 import apiClient from '@/services/apiClient'
 import { createAuthScopedLocalStorageNamespace } from '@/services/authScopedLocalStorage'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import {
+  enqueueCalendarAppointment,
+  isRetryableCalendarSyncError,
+  readCachedCalendars,
+  writeCachedCalendars
+} from '@/services/calendarOfflineStore'
 import { subscribeToChatLiveEvents, reportViewing } from '@/services/chatLiveEventsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import {
@@ -8716,9 +8722,12 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (cachedStatus) setWhatsappStatus(cachedStatus.data)
+    const durableCachedCalendars = readCachedCalendars()
     const cachedAvailableCalendars = cachedCalendars
       ? applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
-      : []
+      : durableCachedCalendars.length
+        ? applyCalendars(durableCachedCalendars)
+        : []
     const cachedAvailableProducts = cachedProducts
       ? applyProducts(Array.isArray(cachedProducts.data) ? cachedProducts.data : [])
       : []
@@ -8728,7 +8737,12 @@ export const PhoneChat: React.FC = () => {
     const [status, integrationsStatus, calendarItems, productsResponse] = await Promise.all([
       whatsappApiService.getStatus().catch(() => null),
       getIntegrationsStatus().catch(() => null),
-      calendarsService.getCalendars(locationId, accessToken).catch(() => []),
+      calendarsService.getCalendars(
+        locationId,
+        accessToken,
+        undefined,
+        { throwOnError: true }
+      ).catch(() => null),
       apiClient.get<{ products?: ProductItem[] }>('/products', {
         params: {
           limit: '100',
@@ -8756,8 +8770,9 @@ export const PhoneChat: React.FC = () => {
     }
     if (Array.isArray(calendarItems)) {
       applyCalendars(calendarItems)
+      writeCachedCalendars(calendarItems)
       writePhoneDailyCache(calendarsCacheKey, calendarItems, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
-    } else if (!cachedCalendars) {
+    } else if (!cachedCalendars && !durableCachedCalendars.length) {
       setCalendars([])
     }
     if (productsResponse && Array.isArray(productsResponse.products)) {
@@ -14639,28 +14654,19 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    try {
-      const appointmentData = {
-        calendarId: calendarForAppointment.id,
-        ...(locationId ? { locationId } : {}),
-        ...payload
-      }
-      const requestIntent = resolveStableRequestIntent(
-        appointmentCreateIntentRef.current,
-        'phone-chat-appointment',
-        appointmentData
-      )
-      appointmentCreateIntentRef.current = requestIntent
-
-      const created = await calendarsService.createAppointment({
-        ...appointmentData,
-        clientRequestId: requestIntent.clientRequestId
-      }, accessToken || undefined)
+    const appointmentData = {
+      calendarId: calendarForAppointment.id,
+      ...(locationId ? { locationId } : {}),
+      ...payload
+    }
+    const requestIntent = resolveStableRequestIntent(
+      appointmentCreateIntentRef.current,
+      'phone-chat-appointment',
+      appointmentData
+    )
+    appointmentCreateIntentRef.current = requestIntent
+    const finishAppointmentFlow = (message: string) => {
       appointmentCreateIntentRef.current = null
-
-      if (created?.syncStatus === 'error') {
-        showToast('warning', 'Cita guardada en Ristak', 'HighLevel quedó pendiente y Ristak volverá a intentarlo automáticamente.')
-      }
 
       if (wideSidebarMode === 'appointment') {
         setWideSidebarMode('chats')
@@ -14679,13 +14685,34 @@ export const PhoneChat: React.FC = () => {
           ...current,
           {
             id: `appointment-${Date.now()}`,
-            text: 'Cita agendada desde este chat.',
+            text: message,
             date: new Date().toISOString(),
             direction: 'system'
           }
         ])
       }
+    }
+
+    try {
+      const created = await calendarsService.createAppointment({
+        ...appointmentData,
+        clientRequestId: requestIntent.clientRequestId
+      }, accessToken || undefined)
+
+      if (created?.syncStatus === 'error') {
+        showToast('warning', 'Cita guardada en Ristak', 'HighLevel quedó pendiente y Ristak volverá a intentarlo automáticamente.')
+      }
+      finishAppointmentFlow('Cita agendada desde este chat.')
     } catch (error) {
+      if (isRetryableCalendarSyncError(error)) {
+        enqueueCalendarAppointment({
+          ...appointmentData,
+          clientRequestId: requestIntent.clientRequestId
+        }, requestIntent.clientRequestId)
+        finishAppointmentFlow('Cita guardada en este dispositivo. Se agendará al volver internet.')
+        showToast('warning', 'Cita guardada sin conexión', 'Ristak la agendará automáticamente cuando vuelva internet.')
+        return
+      }
       showToast('error', 'No se pudo agendar', 'Intenta otra vez en unos minutos.')
       throw error
     }

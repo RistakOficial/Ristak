@@ -37,6 +37,7 @@ import * as Haptics from 'expo-haptics';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import * as Network from 'expo-network';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -154,6 +155,18 @@ import {
   registerInboxBackgroundTask,
   unregisterInboxBackgroundTask,
 } from './background';
+import {
+  CALENDAR_APPOINTMENT_OUTBOX_CACHE_KEY,
+  type CalendarAppointmentOutboxEntry,
+  enqueueCalendarAppointment,
+  getCalendarAppointmentOutbox,
+  isOfflineCalendarEvent,
+  isRetryableCalendarOutboxError,
+  mergeCalendarEventsWithOutbox,
+  removeQueuedCalendarAppointment,
+  retryFailedCalendarAppointments,
+  syncCalendarAppointmentOutbox,
+} from './calendarOutbox';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveEvent, type ChatLiveMessageEvent } from './api';
 import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess, hasWebAnalyticsAccess } from './access';
@@ -1514,6 +1527,33 @@ export default function RistakNativeApp() {
       void unregisterInboxBackgroundTask();
     }
   }, [session.token]);
+
+  useEffect(() => {
+    if (!session.token) return undefined;
+
+    let active = true;
+    const syncAppointments = async () => {
+      if (!active) return;
+      const state = await Network.getNetworkStateAsync().catch(() => null);
+      if (!active || state?.isConnected === false || state?.isInternetReachable === false) return;
+      await syncCalendarAppointmentOutbox(api).catch(() => undefined);
+    };
+    const networkSubscription = Network.addNetworkStateListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) {
+        void syncAppointments();
+      }
+    });
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncAppointments();
+    });
+    void syncAppointments();
+
+    return () => {
+      active = false;
+      networkSubscription.remove();
+      appStateSubscription.remove();
+    };
+  }, [api, session.token]);
 
   const clearVerifiedSessionIfCurrent = useCallback(async (
     baseUrl: string,
@@ -8185,6 +8225,9 @@ function getEventTitle(event: CalendarEventItem) {
 }
 
 function getEventStatus(event: CalendarEventItem) {
+  const syncStatus = String(event.syncStatus || event.sync_status || '').trim().toLowerCase();
+  if (syncStatus === 'local_pending') return 'Por sincronizar';
+  if (syncStatus === 'local_failed') return 'Requiere atención';
   const raw = String(event.appointmentStatus || event.appointment_status || event.status || 'confirmed').toLowerCase();
   const labels: Record<string, string> = {
     confirmed: 'Confirmada',
@@ -8245,6 +8288,9 @@ function getEventTimezone(event?: CalendarEventItem | null) {
 }
 
 function getEventDetail(event: CalendarEventItem) {
+  if (String(event.syncStatus || event.sync_status || '').trim().toLowerCase() === 'local_failed') {
+    return String(event.syncError || event.sync_error || 'El servidor no pudo confirmar esta cita.').trim();
+  }
   return String(event.address || event.location || event.notes || event.description || '').trim();
 }
 
@@ -8557,6 +8603,10 @@ function CalendarSection({
     CALENDAR_EVENTS_CACHE_STORAGE_KEY,
     {},
   );
+  const cachedAppointmentOutbox = peekCache<CalendarAppointmentOutboxEntry[]>(
+    CALENDAR_APPOINTMENT_OUTBOX_CACHE_KEY,
+    [],
+  );
   const hasCalendarBootstrapSnapshot = hasCachedValue(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY)
     && Boolean(cachedCalendarTimezone);
   const hasCalendarEventsSnapshot = hasCachedValue(CALENDAR_EVENTS_CACHE_STORAGE_KEY)
@@ -8570,8 +8620,20 @@ function CalendarSection({
   const [selectedCalendarId, setSelectedCalendarId] = useState(initialCalendarId);
   const [calendarReady, setCalendarReady] = useState(hasCalendarBootstrapSnapshot);
   const [events, setEvents] = useState<CalendarEventItem[]>(() => (
-    cachedCalendarEventsByRange[initialCalendarEventsKey] || []
+    mergeCalendarEventsWithOutbox(
+      cachedCalendarEventsByRange[initialCalendarEventsKey] || [],
+      cachedAppointmentOutbox,
+      initialCalendarId,
+      {
+        startDate: initialCalendarMonthRange.gridStart,
+        endDate: initialCalendarMonthRange.gridEnd,
+        timeZone: initialCalendarTimezone,
+      },
+    )
   ));
+  const [calendarOutbox, setCalendarOutbox] = useState<CalendarAppointmentOutboxEntry[]>(
+    cachedAppointmentOutbox,
+  );
   const [loading, setLoading] = useState(() => !(hasCalendarBootstrapSnapshot || hasCalendarEventsSnapshot));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -8662,6 +8724,11 @@ function CalendarSection({
     () => getBusinessRangeTimestamps(eventRange.startDate, eventRange.endDate, businessTimezone),
     [businessTimezone, eventRange.endDate, eventRange.startDate],
   );
+  const calendarOutboxRange = useMemo(() => ({
+    startDate: eventRange.startDate,
+    endDate: eventRange.endDate,
+    timeZone: businessTimezone,
+  }), [businessTimezone, eventRange.endDate, eventRange.startDate]);
   const calendarEventCacheKey = useMemo(() => [
     selectedCalendarKey || 'none',
     businessTimezone,
@@ -9064,15 +9131,28 @@ function CalendarSection({
       if (!Number.isFinite(eventRangeTimestamps.startTime) || !Number.isFinite(eventRangeTimestamps.endTime)) {
         throw new Error('Rango de calendario inválido.');
       }
+      const currentOutbox = await getCalendarAppointmentOutbox();
+      if (!isLatest()) return;
+      setCalendarOutbox(currentOutbox);
       if (!silent) {
         const cache = await readCache<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
         if (!isLatest()) return;
         if (Object.prototype.hasOwnProperty.call(cache, calendarEventCacheKey)) {
           const cachedEvents = Array.isArray(cache[calendarEventCacheKey]) ? cache[calendarEventCacheKey] : [];
-          setEvents(cachedEvents);
+          setEvents(mergeCalendarEventsWithOutbox(
+            cachedEvents,
+            currentOutbox,
+            selectedCalendarKey,
+            calendarOutboxRange,
+          ));
           setLoading(false);
         } else {
-          setEvents([]);
+          setEvents(mergeCalendarEventsWithOutbox(
+            [],
+            currentOutbox,
+            selectedCalendarKey,
+            calendarOutboxRange,
+          ));
         }
       }
       const response = await api.getCalendarEvents(
@@ -9083,7 +9163,15 @@ function CalendarSection({
       );
       if (!isLatest()) return;
       const nextEvents = unwrapCalendarEvents(response);
-      setEvents(nextEvents);
+      const latestOutbox = await getCalendarAppointmentOutbox();
+      if (!isLatest()) return;
+      setCalendarOutbox(latestOutbox);
+      setEvents(mergeCalendarEventsWithOutbox(
+        nextEvents,
+        latestOutbox,
+        selectedCalendarKey,
+        calendarOutboxRange,
+      ));
       const cache = await readCache<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
       if (!isLatest()) return;
       writeCache(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {
@@ -9103,7 +9191,61 @@ function CalendarSection({
         setRefreshing(false);
       }
     }
-  }, [api, calendarEventCacheKey, eventRangeTimestamps.endTime, eventRangeTimestamps.startTime, selectedCalendarKey]);
+  }, [api, calendarEventCacheKey, calendarOutboxRange, eventRangeTimestamps.endTime, eventRangeTimestamps.startTime, selectedCalendarKey]);
+
+  const syncPendingAppointments = useCallback(async () => {
+    const result = await syncCalendarAppointmentOutbox(api);
+    const nextOutbox = [...result.pending, ...result.failed];
+    setCalendarOutbox(nextOutbox);
+    setEvents((current) => mergeCalendarEventsWithOutbox(
+      current,
+      nextOutbox,
+      selectedCalendarKey,
+      calendarOutboxRange,
+    ));
+    if (result.synced.length > 0) {
+      setCalendarSyncNotice('');
+      await loadEvents(true);
+    }
+    if (result.failed.length > 0) {
+      setCalendarSyncNotice(
+        `${result.failed.length} cita${result.failed.length === 1 ? '' : 's'} requiere${result.failed.length === 1 ? '' : 'n'} atención porque el servidor no confirmó el horario.`,
+      );
+    } else if (result.pending.length > 0) {
+      setCalendarSyncNotice(
+        'Las citas pendientes siguen guardadas en este dispositivo. Ristak volverá a intentarlo al recuperar internet.',
+      );
+    } else {
+      setCalendarSyncNotice('');
+    }
+  }, [api, calendarOutboxRange, loadEvents, selectedCalendarKey]);
+
+  const retryPendingAppointments = useCallback(async () => {
+    if (calendarOutbox.some((entry) => entry.status === 'failed')) {
+      const retryable = await retryFailedCalendarAppointments();
+      setCalendarOutbox(retryable);
+    }
+    await syncPendingAppointments();
+  }, [calendarOutbox, syncPendingAppointments]);
+
+  useEffect(() => {
+    const networkSubscription = Network.addNetworkStateListener((state) => {
+      if (state.isConnected && state.isInternetReachable !== false) {
+        void syncPendingAppointments().catch(() => undefined);
+      }
+    });
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void syncPendingAppointments().catch(() => undefined);
+      }
+    });
+    void syncPendingAppointments().catch(() => undefined);
+
+    return () => {
+      networkSubscription.remove();
+      appStateSubscription.remove();
+    };
+  }, [syncPendingAppointments]);
 
   useEffect(() => () => {
     calendarEventsGenerationRef.current += 1;
@@ -9527,7 +9669,9 @@ function CalendarSection({
     const range = getBusinessRangeTimestamps(draft.dateOnly, draft.dateOnly, businessTimezone);
     if (!Number.isFinite(range.startTime) || !Number.isFinite(range.endTime)) return null;
 
-    const blockedSlots = await api.getBlockedSlots(calendarId, range.startTime, range.endTime);
+    const blockedSlots = await api
+      .getBlockedSlots(calendarId, range.startTime, range.endTime)
+      .catch(() => []);
     for (const slot of blockedSlots) {
       const slotDateOnly = String(slot.date || getBusinessDateOnly(String(slot.startTime || ''), businessTimezone) || '').trim();
       if (slotDateOnly && slotDateOnly !== draft.dateOnly) continue;
@@ -9595,7 +9739,11 @@ function CalendarSection({
       const resolvedTitle = draft.title.trim()
         || (draft.contact ? getContactName(draft.contact) : '')
         || 'Cita';
-      const payload: Record<string, unknown> = {
+      const payload: Record<string, unknown> & {
+        startTime: string;
+        endTime: string;
+        timeZone: string;
+      } = {
         title: resolvedTitle,
         appointmentStatus: draft.appointmentStatus,
         startTime: startIso,
@@ -9630,7 +9778,31 @@ function CalendarSection({
               clientRequestId: createNativeMutationId('native-appointment', draft.contactId || calendarId),
             };
         appointmentCreateIntentRef.current = createIntent;
-        const createdAppointment = await api.createAppointment(createPayload, createIntent.clientRequestId);
+        let createdAppointment: CalendarEventItem;
+        try {
+          createdAppointment = await api.createAppointment(createPayload, createIntent.clientRequestId);
+        } catch (error) {
+          if (!isRetryableCalendarOutboxError(error)) throw error;
+          const localEvent = await enqueueCalendarAppointment(
+            createPayload,
+            createIntent.clientRequestId,
+          );
+          const nextOutbox = await getCalendarAppointmentOutbox();
+          appointmentCreateIntentRef.current = null;
+          setCalendarOutbox(nextOutbox);
+          setEvents((current) => mergeCalendarEventsWithOutbox(
+            [...current, localEvent],
+            nextOutbox,
+            selectedCalendarKey,
+            calendarOutboxRange,
+          ));
+          setCalendarSyncNotice(
+            'La cita quedó guardada en este dispositivo y se sincronizará automáticamente cuando vuelva internet.',
+          );
+          closeSheet();
+          setSelectedEvent(null);
+          return;
+        }
         appointmentCreateIntentRef.current = null;
         if (String(createdAppointment.syncStatus || createdAppointment.sync_status || '').trim().toLowerCase() === 'error') {
           Alert.alert(
@@ -9648,32 +9820,53 @@ function CalendarSection({
       appointmentSaveLockRef.current = false;
       setAppointmentBusy(false);
     }
-  }, [api, appointmentBusy, appointmentMode, businessTimezone, calendarContextUsable, calendars, closeSheet, getDraftBlockedConflict, loadEvents, selectedCalendar, selectedCalendarKey]);
+  }, [api, appointmentBusy, appointmentMode, businessTimezone, calendarContextUsable, calendarOutboxRange, calendars, closeSheet, getDraftBlockedConflict, loadEvents, selectedCalendar, selectedCalendarKey]);
 
   const deleteAppointment = useCallback((event: CalendarEventItem) => {
     const eventId = getEventId(event);
     if (!eventId || appointmentBusy) return;
-    Alert.alert('Eliminar cita', 'Esta acción borra la cita del calendario.', [
+    const localEvent = isOfflineCalendarEvent(event);
+    Alert.alert(
+      localEvent ? 'Descartar cita pendiente' : 'Eliminar cita',
+      localEvent
+        ? 'Esta cita todavía no llegó al servidor. Se quitará de este dispositivo.'
+        : 'Esta acción borra la cita del calendario.',
+      [
       { text: 'Cancelar', style: 'cancel' },
       {
-        text: 'Eliminar',
+        text: localEvent ? 'Descartar' : 'Eliminar',
         style: 'destructive',
         onPress: async () => {
           setAppointmentBusy(true);
           try {
-            await api.deleteCalendarEvent(eventId);
+            if (localEvent) {
+              await removeQueuedCalendarAppointment(eventId);
+              const nextOutbox = await getCalendarAppointmentOutbox();
+              setCalendarOutbox(nextOutbox);
+              setEvents((current) => mergeCalendarEventsWithOutbox(
+                current.filter((candidate) => getEventId(candidate) !== eventId),
+                nextOutbox,
+                selectedCalendarKey,
+                calendarOutboxRange,
+              ));
+            } else {
+              await api.deleteCalendarEvent(eventId);
+            }
             closeSheet();
             setSelectedEvent(null);
-            await loadEvents(true);
+            if (!localEvent) await loadEvents(true);
           } catch (err) {
-            Alert.alert('No se pudo eliminar', err instanceof Error ? err.message : 'Intenta otra vez.');
+            Alert.alert(
+              localEvent ? 'No se pudo descartar' : 'No se pudo eliminar',
+              err instanceof Error ? err.message : 'Intenta otra vez.',
+            );
           } finally {
             setAppointmentBusy(false);
           }
         },
       },
     ]);
-  }, [api, appointmentBusy, closeSheet, loadEvents]);
+  }, [api, appointmentBusy, calendarOutboxRange, closeSheet, loadEvents, selectedCalendarKey]);
 
   const openEventDetails = useCallback((event: CalendarEventItem) => {
     setSelectedEvent(event);
@@ -9715,8 +9908,17 @@ function CalendarSection({
     : calendarView === 'year'
       ? nextUpcomingEvents
       : [];
+  const failedCalendarOutboxCount = calendarOutbox.filter((entry) => entry.status === 'failed').length;
+  const pendingCalendarOutboxCount = calendarOutbox.filter((entry) => entry.status === 'pending').length;
+  const calendarOutboxNotice = failedCalendarOutboxCount
+    ? `${failedCalendarOutboxCount} cita${failedCalendarOutboxCount === 1 ? '' : 's'} requiere${failedCalendarOutboxCount === 1 ? '' : 'n'} atención.`
+    : pendingCalendarOutboxCount
+      ? `${pendingCalendarOutboxCount} cita${pendingCalendarOutboxCount === 1 ? '' : 's'} guardada${pendingCalendarOutboxCount === 1 ? '' : 's'} en este dispositivo; se sincronizará${pendingCalendarOutboxCount === 1 ? '' : 'n'} al volver internet.`
+      : '';
   const blockingCalendarError = calendarReady ? '' : (calendarBootstrapError || error);
-  const calendarVisibleNotice = calendarReady ? (calendarBootstrapError || calendarSyncNotice || error) : '';
+  const calendarVisibleNotice = calendarReady
+    ? (calendarOutboxNotice || calendarBootstrapError || calendarSyncNotice || error)
+    : '';
 
   return (
     <AppFrame>
@@ -9811,7 +10013,14 @@ function CalendarSection({
         {calendarVisibleNotice ? (
           <View style={styles.calendarSyncNotice}>
             <Text style={styles.calendarSyncNoticeText}>{calendarVisibleNotice}</Text>
-            <SecondaryButton label="Reintentar" onPress={refresh} />
+            <SecondaryButton
+              label={pendingCalendarOutboxCount || failedCalendarOutboxCount
+                ? 'Sincronizar ahora'
+                : 'Reintentar'}
+              onPress={pendingCalendarOutboxCount || failedCalendarOutboxCount
+                ? () => void retryPendingAppointments().catch(() => undefined)
+                : refresh}
+            />
           </View>
         ) : null}
 
@@ -10719,6 +10928,7 @@ function CalendarEventDetailsSheet({
   const start = getEventStart(event);
   const dateOnly = getBusinessDateOnly(start, timezone);
   const detail = getEventDetail(event);
+  const isLocalEvent = isOfflineCalendarEvent(event);
 
   return (
     <BottomActionSheet
@@ -10761,17 +10971,21 @@ function CalendarEventDetailsSheet({
         <View style={styles.sheetSectionDivider}>
           <Text style={styles.sheetSectionLabel}>Acciones</Text>
         </View>
-        <SheetActionRow
-          Icon={FileText}
-          title="Editar cita"
-          subtitle="Cambiar título, estado, horario, dirección o notas."
-          disabled={busy}
-          onPress={() => onEdit(event)}
-        />
+        {!isLocalEvent ? (
+          <SheetActionRow
+            Icon={FileText}
+            title="Editar cita"
+            subtitle="Cambiar título, estado, horario, dirección o notas."
+            disabled={busy}
+            onPress={() => onEdit(event)}
+          />
+        ) : null}
         <SheetActionRow
           Icon={Trash2}
-          title="Eliminar cita"
-          subtitle="Borra esta cita del calendario."
+          title={isLocalEvent ? 'Descartar cita pendiente' : 'Eliminar cita'}
+          subtitle={isLocalEvent
+            ? 'La quita de este dispositivo antes de sincronizar.'
+            : 'Borra esta cita del calendario.'}
           danger
           busy={busy}
           onPress={() => onDelete(event)}
@@ -24582,13 +24796,26 @@ function NativeConversationScreen({
     if (!acquireConversationActionLock(appointmentActionKey)) return;
     setAppointmentBusy(true);
     try {
-      const [configResponse, calendarsResponse] = await Promise.all([
-        api.getConfig(['default_calendar_id']),
-        api.getCalendars(),
+      const [cachedBootstrap, configResult, calendarsResult] = await Promise.all([
+        readCache<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {}),
+        Promise.resolve(api.getConfig(['default_calendar_id'])).then(
+          (value) => ({ ok: true as const, value }),
+          () => ({ ok: false as const, value: null }),
+        ),
+        Promise.resolve(api.getCalendars()).then(
+          (value) => ({ ok: true as const, value }),
+          () => ({ ok: false as const, value: null }),
+        ),
       ]);
-      const configValues = unwrapConfigValues(configResponse);
-      const defaultCalendarId = String(configValues.default_calendar_id || '').trim();
-      const availableCalendars = unwrapCalendars(calendarsResponse).filter(calendarIsActive);
+      const configValues = configResult.ok ? unwrapConfigValues(configResult.value) : {};
+      const defaultCalendarId = String(
+        configValues.default_calendar_id || cachedBootstrap.defaultCalendarId || '',
+      ).trim();
+      const availableCalendars = (
+        calendarsResult.ok
+          ? unwrapCalendars(calendarsResult.value)
+          : unwrapCalendars(cachedBootstrap.calendars || [])
+      ).filter(calendarIsActive);
       const appointmentCalendar = availableCalendars.find(
         (calendar) => getCalendarKey(calendar) === defaultCalendarId,
       ) || availableCalendars[0];
@@ -24604,6 +24831,7 @@ function NativeConversationScreen({
         contactName: getContactName(contact),
         startTime,
         endTime,
+        timeZone: timezone,
         notes: appointmentDraft.notes.trim(),
         appointmentStatus: 'confirmed',
         // Este formulario siempre es captura manual; no debe fingir que el
@@ -24619,28 +24847,41 @@ function NativeConversationScreen({
         : {
             signature,
             clientRequestId: createNativeMutationId('native-appointment-chat', contact.id),
-          };
+      };
       quickAppointmentIntentRef.current = intent;
-      const createdAppointment = await api.createAppointment(payload, intent.clientRequestId);
+      let createdAppointment: CalendarEventItem | null = null;
+      let queuedOffline = false;
+      try {
+        createdAppointment = await api.createAppointment(payload, intent.clientRequestId);
+      } catch (error) {
+        if (!isRetryableCalendarOutboxError(error)) throw error;
+        await enqueueCalendarAppointment(payload, intent.clientRequestId);
+        queuedOffline = true;
+      }
       quickAppointmentIntentRef.current = null;
       const appointmentLabel = formatSchedulePreviewLabel(startTime, timezone);
       setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
         id: `local-appointment-${Date.now()}`,
         kind: 'appointment',
         date: bookedAt,
-        title: 'Cita agendada',
+        title: queuedOffline ? 'Cita por sincronizar' : 'Cita agendada',
         subtitle: joinContactInfoJourneyDetails([title, appointmentLabel]),
       }]));
       setCompletionNotice({
         kind: 'appointment',
-        title: 'Cita agendada',
-        subtitle: appointmentLabel,
+        title: queuedOffline ? 'Cita guardada en este dispositivo' : 'Cita agendada',
+        subtitle: queuedOffline
+          ? `${appointmentLabel} · se sincronizará al volver internet`
+          : appointmentLabel,
       });
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       closeSheet();
-      const highLevelPending = Boolean(integrationsStatus?.highlevel?.connected) && (
+      const highLevelPending = !queuedOffline && Boolean(integrationsStatus?.highlevel?.connected) && (
+        createdAppointment
+        && (
         String(createdAppointment.ghlAppointmentId || createdAppointment.ghl_appointment_id || '').trim() === ''
         || String(createdAppointment.syncStatus || createdAppointment.sync_status || '').trim().toLowerCase() !== 'synced'
+        )
       );
       if (highLevelPending) {
         Alert.alert(

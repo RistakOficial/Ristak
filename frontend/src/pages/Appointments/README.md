@@ -7,6 +7,7 @@ Documentación real de:
 - `frontend/src/pages/Appointments/AppointmentReminderModal.tsx`
 - `frontend/src/services/appointmentRemindersService.ts`
 - `frontend/src/services/calendarsService.ts`
+- `frontend/src/services/calendarOfflineStore.ts`
 - `frontend/src/components/common/AppointmentModal/AppointmentModal.tsx`
 - `frontend/src/components/common/BlockedSlotModal/BlockedSlotModal.tsx`
 
@@ -38,6 +39,8 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
 - Permite abrir configuración de calendarios desde el botón de Settings.
 - Descarta respuestas de rangos/calendarios anteriores cuando una carga más nueva
   o una mutación ya cambió la vista.
+- Conserva calendarios, rangos y altas pendientes por cuenta para seguir
+  consultando y creando citas sin internet.
 
 ## Estado Global Usado
 
@@ -114,6 +117,22 @@ Cuando la respuesta trae `syncStatus=error`, la cita ya quedó guardada en Rista
 pero HighLevel sigue pendiente. `/appointments`, DesktopChat, PhoneCalendar y
 PhoneChat deben mostrar esa advertencia y cerrar el formulario sin invitar al
 usuario a crear otra cita; el backend se encarga del reintento seguro.
+
+## Trabajo Sin Conexión
+
+`calendarOfflineStore.ts` guarda en `localStorage` namespaceado por cuenta una
+lista acotada de calendarios, snapshots de rangos/próximas citas/estadísticas y
+una cola de creación. Antes de persistir un borrador elimina `accessToken` y
+`access_token`.
+
+Una falla de red, timeout, `408`, `425`, `429` o `5xx` cierra el formulario,
+muestra una cita sintética `offline-appointment:<clientRequestId>` y conserva el
+POST. Al evento `online`, al volver visible la app y cada 30 segundos mientras
+está visible, la cola reintenta con el mismo `clientRequestId`. Un rechazo
+definitivo queda como `local_failed` y requiere reintento manual; no entra en un
+bucle automático. La respuesta canónica reemplaza la fila local y revalida el
+rango. Este contrato aplica a `/appointments`, `PhoneCalendar` y la creación
+desde `PhoneChat`; editar y eliminar citas canónicas todavía requieren red.
 
 ## Flujos De Horarios Bloqueados
 

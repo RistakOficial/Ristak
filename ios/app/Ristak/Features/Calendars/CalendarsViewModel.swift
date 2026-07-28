@@ -67,6 +67,8 @@ final class CalendarsViewModel {
     /// Error no bloqueante de recarga de eventos (banner).
     private(set) var eventsError: String?
     private(set) var isLoadingEvents = false
+    private(set) var pendingSyncCount = 0
+    private(set) var failedSyncCount = 0
     private(set) var timeZone: TimeZone = TimeZone(identifier: AppConfigStore.defaultTimeZoneIdentifier)!
 
     var viewMode: ViewMode = .month
@@ -157,6 +159,16 @@ final class CalendarsViewModel {
             .map { $0 }
     }
 
+    var offlineSyncMessage: String? {
+        if failedSyncCount > 0 {
+            return "\(failedSyncCount) cita\(failedSyncCount == 1 ? "" : "s") requiere\(failedSyncCount == 1 ? "" : "n") atención."
+        }
+        if pendingSyncCount > 0 {
+            return "\(pendingSyncCount) cita\(pendingSyncCount == 1 ? "" : "s") guardada\(pendingSyncCount == 1 ? "" : "s") en este dispositivo; se sincronizará\(pendingSyncCount == 1 ? "" : "n") al volver internet."
+        }
+        return nil
+    }
+
     // MARK: - Carga
 
     func bootstrap(appConfig: AppConfigStore) async {
@@ -178,6 +190,7 @@ final class CalendarsViewModel {
         }
         bootstrapped = true
         applyTimeZone(appConfig.businessTimeZone)
+        refreshOutboxState()
         // SWR (#4): pinta al instante lo último que vio el usuario (calendarios +
         // citas del mes visible) ANTES de tocar la red. Solo hay spinner de
         // pantalla completa cuando NO hay nada cacheado.
@@ -368,7 +381,12 @@ final class CalendarsViewModel {
             guard requestID == eventsRequestID,
                   selectedCalendarID == requestCalendarID,
                   timeZone.identifier == requestTimeZone.identifier else { return }
-            rawEvents = events
+            rawEvents = CalendarAppointmentOutbox.shared.merge(
+                canonical: events,
+                calendarID: requestCalendarID,
+                interval: interval
+            )
+            refreshOutboxState()
             regroupEvents()
             loadedInterval = interval
             loadedCalendarKey = calendarKey
@@ -446,9 +464,16 @@ final class CalendarsViewModel {
             month: monthKey(visibleMonth),
             calendarID: selectedCalendarID
         )
-        if let cached = RistakSnapshotCache.shared.value([CalendarAppointment].self, for: key),
-           !cached.isEmpty {
-            rawEvents = cached
+        let cached = RistakSnapshotCache.shared.value(
+            [CalendarAppointment].self,
+            for: key
+        ) ?? []
+        let merged = CalendarAppointmentOutbox.shared.merge(
+            canonical: cached,
+            calendarID: selectedCalendarID
+        )
+        if !merged.isEmpty {
+            rawEvents = merged
             regroupEvents()
         }
     }
@@ -481,6 +506,68 @@ final class CalendarsViewModel {
                 calendarID: calendarID
             )
         )
+    }
+
+    func appointmentWasSaved(_ appointment: CalendarAppointment) {
+        rawEvents.removeAll { $0.id == appointment.id }
+        rawEvents.append(appointment)
+        refreshOutboxState()
+        regroupEvents()
+        storeEventsToCache(
+            events: rawEvents,
+            visibleMonth: visibleMonth,
+            calendarID: selectedCalendarID,
+            timeZone: timeZone
+        )
+    }
+
+    func appointmentWasDeleted(id: String) {
+        rawEvents.removeAll { $0.id == id }
+        refreshOutboxState()
+        regroupEvents()
+        storeEventsToCache(
+            events: rawEvents,
+            visibleMonth: visibleMonth,
+            calendarID: selectedCalendarID,
+            timeZone: timeZone
+        )
+    }
+
+    func syncPendingAppointments() async {
+        let result = await CalendarAppointmentOutbox.shared.flush()
+        refreshOutboxState()
+        rawEvents = CalendarAppointmentOutbox.shared.merge(
+            canonical: rawEvents,
+            calendarID: selectedCalendarID,
+            interval: loadedInterval
+        )
+        regroupEvents()
+        if !result.synced.isEmpty {
+            await reloadEvents(force: true)
+        }
+    }
+
+    func retryPendingAppointments() async {
+        CalendarAppointmentOutbox.shared.retryFailed()
+        refreshOutboxState()
+        await syncPendingAppointments()
+    }
+
+    func reconcileExternalOutboxSync() async {
+        refreshOutboxState()
+        rawEvents = CalendarAppointmentOutbox.shared.merge(
+            canonical: rawEvents,
+            calendarID: selectedCalendarID,
+            interval: loadedInterval
+        )
+        regroupEvents()
+        await reloadEvents(force: true)
+    }
+
+    private func refreshOutboxState() {
+        let outbox = CalendarAppointmentOutbox.shared.entries
+        pendingSyncCount = outbox.filter { $0.status == .pending }.count
+        failedSyncCount = outbox.filter { $0.status == .failed }.count
     }
 
     // MARK: - Navegación de fecha

@@ -73,6 +73,8 @@ struct RootView: View {
                 await session.verifyOnForeground()
                 guard session.isCurrentActiveSession(expectedGeneration) else { return }
                 PushRegistrar.shared.beginSession(generation: expectedGeneration)
+                CalendarAppointmentSyncCoordinator.shared.start()
+                CalendarAppointmentSyncCoordinator.shared.syncNow()
                 if returningFromBackground {
                     await PushRegistrar.shared.reconcileOnForeground(
                         calendarIDs: appConfig.calendarPushEnabled
@@ -88,6 +90,8 @@ struct RootView: View {
             case .active:
                 let expectedGeneration = session.sessionGeneration
                 PushRegistrar.shared.beginSession(generation: expectedGeneration)
+                CalendarAppointmentSyncCoordinator.shared.start()
+                CalendarAppointmentSyncCoordinator.shared.syncNow()
                 // Pinta tema/moneda/config con el último estado conocido de la
                 // caché SWR (ya precargada en memoria durante el bootstrap)
                 // ANTES de disparar el load de red, evitando el flash inicial.
@@ -121,6 +125,7 @@ struct RootView: View {
                     }
                 }
             case .loggedOut where oldPhase == .active:
+                CalendarAppointmentSyncCoordinator.shared.stop()
                 appConfig.reset()
             default:
                 break

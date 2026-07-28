@@ -109,7 +109,26 @@ test('cada formulario móvil conserva la llave de cita durante timeout y reinten
   assert.match(appSource, /\.\.\.getAppointmentAvailabilityRequestFields\(\{\s+formMode: appointmentMode,\s+scheduleMode,\s+\}\)/);
   assert.match(apiSource, /createAppointment\(appointmentData: Record<string, unknown> & \{ calendarId: string \}, clientRequestId\?: string\)/);
   assert.match(apiSource, /\.\.\.\(clientRequestId \? \{ clientRequestId \} : \{\}\)/);
-  assert.match(appSource, /const createPayload = \{[\s\S]*?calendarId,[\s\S]*?contactId: draft\.contactId,[\s\S]*?appointmentCreateIntentRef\.current = createIntent;\s+const createdAppointment = await api\.createAppointment\(createPayload, createIntent\.clientRequestId\)/);
+  assert.match(appSource, /const createPayload = \{[\s\S]*?calendarId,[\s\S]*?contactId: draft\.contactId,[\s\S]*?appointmentCreateIntentRef\.current = createIntent;[\s\S]*?createdAppointment = await api\.createAppointment\(createPayload, createIntent\.clientRequestId\)/);
   assert.match(appSource, /const createAppointmentForContact = async \(\) => \{[\s\S]*?getAppointmentAvailabilityRequestFields\(\{\s+formMode: 'create',\s+scheduleMode: 'custom',\s+\}\)[\s\S]*?await api\.createAppointment\(payload, intent\.clientRequestId\)/);
-  assert.match(appSource, /quickAppointmentIntentRef\.current = intent;\s+const createdAppointment = await api\.createAppointment\(payload, intent\.clientRequestId\)/);
+  assert.match(appSource, /quickAppointmentIntentRef\.current = intent;[\s\S]*?createdAppointment = await api\.createAppointment\(payload, intent\.clientRequestId\)/);
+});
+
+test('el calendario offline conserva cola durable, cache y replay idempotente', () => {
+  const appSource = fs.readFileSync(require.resolve('../src/App.tsx'), 'utf8');
+  const outboxSource = fs.readFileSync(require.resolve('../src/calendarOutbox.ts'), 'utf8');
+  const backgroundSource = fs.readFileSync(require.resolve('../src/background.ts'), 'utf8');
+
+  assert.match(outboxSource, /CALENDAR_APPOINTMENT_OUTBOX_CACHE_KEY/);
+  assert.match(outboxSource, /withoutCredentials\(payload/);
+  assert.match(outboxSource, /payload:\s*\{\s*\.\.\.withoutCredentials\(payload\),\s*clientRequestId,/);
+  assert.match(outboxSource, /api\.createAppointment\(\s*entry\.payload,\s*entry\.clientRequestId/);
+  assert.match(outboxSource, /retryable \? 'pending' : 'failed'/);
+  assert.match(outboxSource, /updateCachedEventRanges\(entry, created, expectedNamespace\)/);
+  assert.doesNotMatch(outboxSource, /token:\s*entry|accessToken:\s*entry/);
+
+  assert.match(appSource, /Network\.addNetworkStateListener/);
+  assert.match(appSource, /state\.isConnected && state\.isInternetReachable !== false/);
+  assert.match(appSource, /enqueueCalendarAppointment\(\s*createPayload,\s*createIntent\.clientRequestId/);
+  assert.match(backgroundSource, /syncCalendarAppointmentOutbox\(session\.api, session\.namespace\)/);
 });

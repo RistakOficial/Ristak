@@ -57,6 +57,16 @@ struct AppointmentDetailSheet: View {
         AppointmentGuestNotesCodec.parse(notes: appointment.notes)
     }
 
+    private var isOfflineAppointment: Bool {
+        appointment.isOfflinePlaceholder
+    }
+
+    private var offlineStatusLabel: String {
+        appointment.syncStatus == "local_failed"
+            ? "Requiere atención"
+            : "Por sincronizar"
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -138,7 +148,9 @@ struct AppointmentDetailSheet: View {
                     .foregroundStyle(RistakTheme.textDim)
                     .lineLimit(1)
                 Spacer()
-                if let status = appointment.appointmentStatus {
+                if isOfflineAppointment {
+                    TagPillView(text: offlineStatusLabel, dotColor: RistakTheme.warn)
+                } else if let status = appointment.appointmentStatus {
                     TagPillView(text: status.displayLabel, dotColor: status.displayColor)
                 }
             }
@@ -164,7 +176,15 @@ struct AppointmentDetailSheet: View {
 
     @ViewBuilder
     private var statusRow: some View {
-        if canWrite {
+        if isOfflineAppointment {
+            HStack {
+                Label("Sincronización", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                Spacer()
+                TagPillView(text: offlineStatusLabel, dotColor: RistakTheme.warn)
+            }
+        } else if canWrite {
             HStack {
                 Label("Estado", systemImage: "clock")
                     .font(.subheadline.weight(.medium))
@@ -328,53 +348,61 @@ struct AppointmentDetailSheet: View {
                 .foregroundStyle(RistakTheme.textDim)
                 .textCase(.uppercase)
 
-            Button {
-                guard !appointment.id.isEmpty else {
-                    errorAlert = DetailAlert(
-                        title: "No se puede editar",
-                        message: "Esta cita no tiene un ID válido del backend."
+            if !isOfflineAppointment {
+                Button {
+                    guard !appointment.id.isEmpty else {
+                        errorAlert = DetailAlert(
+                            title: "No se puede editar",
+                            message: "Esta cita no tiene un ID válido del backend."
+                        )
+                        return
+                    }
+                    editModel = AppointmentFormViewModel(
+                        edit: appointment,
+                        calendars: calendars,
+                        timeZone: timeZone
                     )
-                    return
+                    showEdit = true
+                } label: {
+                    actionRow(
+                        icon: "pencil",
+                        title: "Editar cita",
+                        subtitle: "Cambiar título, estado, horario, dirección o notas.",
+                        tint: RistakTheme.textPrimary
+                    )
                 }
-                editModel = AppointmentFormViewModel(
-                    edit: appointment,
-                    calendars: calendars,
-                    timeZone: timeZone
-                )
-                showEdit = true
-            } label: {
-                actionRow(
-                    icon: "pencil",
-                    title: "Editar cita",
-                    subtitle: "Cambiar título, estado, horario, dirección o notas.",
-                    tint: RistakTheme.textPrimary
-                )
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             Button {
                 showDeleteConfirm = true
             } label: {
                 actionRow(
                     icon: "trash",
-                    title: "Eliminar cita",
-                    subtitle: "Borra esta cita del calendario.",
+                    title: isOfflineAppointment ? "Descartar cita" : "Eliminar cita",
+                    subtitle: isOfflineAppointment
+                        ? "Quita esta cita pendiente del dispositivo."
+                        : "Borra esta cita del calendario.",
                     tint: RistakTheme.neg
                 )
             }
             .buttonStyle(.plain)
             .disabled(deleting)
             .confirmationDialog(
-                "Eliminar cita",
+                isOfflineAppointment ? "Descartar cita" : "Eliminar cita",
                 isPresented: $showDeleteConfirm,
                 titleVisibility: .visible
             ) {
-                Button("Eliminar", role: .destructive) {
+                Button(isOfflineAppointment ? "Descartar" : "Eliminar", role: .destructive) {
                     Task { await deleteAppointment() }
                 }
                 Button("Cancelar", role: .cancel) {}
             } message: {
-                Text("Esta acción borra la cita del calendario.")
+                Text(
+                    isOfflineAppointment
+                        ? "Esta cita todavía no está en el servidor y dejará de sincronizarse."
+                        : "Esta acción borra la cita del calendario."
+                )
             }
         }
     }
@@ -412,6 +440,20 @@ struct AppointmentDetailSheet: View {
     private func deleteAppointment() async {
         guard !appointment.id.isEmpty else {
             errorAlert = DetailAlert(title: "No se pudo eliminar", message: "Intenta otra vez.")
+            return
+        }
+        if isOfflineAppointment {
+            guard CalendarAppointmentOutbox.shared.discard(localEventID: appointment.id) else {
+                errorAlert = DetailAlert(
+                    title: "No se pudo descartar",
+                    message: "La cita pendiente ya no existe en este dispositivo."
+                )
+                return
+            }
+            await RistakSnapshotCache.shared.flushPendingWrites()
+            successCount += 1
+            onDeleted()
+            dismiss()
             return
         }
         deleting = true

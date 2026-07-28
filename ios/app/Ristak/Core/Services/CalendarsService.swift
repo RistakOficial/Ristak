@@ -54,8 +54,11 @@ enum CalendarsService {
     /// `POST /api/calendars/appointments`. Por defecto responde 409
     /// `slot_unavailable` si el slot ya no tiene cupo. Personalizado manda
     /// `ignoreAppointmentConflicts: true` desde el primer intento.
-    static func createAppointment(_ draft: AppointmentDraftRequest) async throws -> CalendarAppointment {
-        try await APIClient.shared.post("/api/calendars/appointments", body: draft)
+    static func createAppointment(
+        _ draft: AppointmentDraftRequest,
+        client: APIClient = .shared
+    ) async throws -> CalendarAppointment {
+        try await client.post("/api/calendars/appointments", body: draft)
     }
 
     /// `PUT /api/calendars/appointments/:id` (parcial). El PUT legacy ordinario

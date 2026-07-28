@@ -3192,6 +3192,19 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- Las superficies autenticadas de escritorio, `/movil`, Android Expo e iOS
+  conservan por cuenta la lista de calendarios y snapshots acotados de eventos.
+  Si falla una creación por red, timeout, `408`, `425`, `429` o `5xx`, guardan
+  un borrador durable sin bearer/token y lo muestran como `Por sincronizar`.
+  Al recuperar conexión, volver a foreground o recibir una ventana de background
+  otorgada por el sistema, reproducen el POST con el mismo `clientRequestId`.
+  `appointment_creation_requests` es la defensa canónica contra duplicados
+  cuando el servidor sí alcanzó a guardar pero la respuesta se perdió.
+  Un rechazo definitivo del servidor deja la fila como `Requiere atención`; no
+  se reintenta en ciclo. La ejecución en background de Android/iOS es
+  oportunista y nunca debe prometer sincronización continua si el sistema cerró
+  la app. Edición y borrado siguen siendo operaciones online; sólo una cita local
+  pendiente puede descartarse antes de sincronizar.
 - `calendars.open_hours` (API `openHours`) es la fuente de verdad del horario
   semanal. Usa días `0..6` (`0=domingo`) y admite varios rangos no solapados por
   día. `availability_schedule_configured=1` distingue una agenda explícita vacía

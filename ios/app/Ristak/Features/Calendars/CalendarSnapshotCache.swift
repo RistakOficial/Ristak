@@ -85,6 +85,8 @@ enum CalendarSnapshotCodec {
             if let assigned = event.assignedUserId { entry["assignedUserId"] = assigned }
             if let added = event.dateAdded { entry["dateAdded"] = added }
             if let updated = event.dateUpdated { entry["dateUpdated"] = updated }
+            if let syncStatus = event.syncStatus { entry["syncStatus"] = syncStatus }
+            if let syncError = event.syncError { entry["syncError"] = syncError }
             return entry
         }
         guard JSONSerialization.isValidJSONObject(rows) else { return nil }

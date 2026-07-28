@@ -537,6 +537,7 @@ enum RistakCacheKey {
 
     // Calendario.
     static let calendarList = "calendar:list"
+    static let calendarAppointmentOutbox = "calendar:appointment-outbox"
     static func calendarEvents(month: String, calendarID: String?) -> String {
         let scope = calendarID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let scopeKey = scope?.isEmpty == false ? scope ?? "all" : "all"

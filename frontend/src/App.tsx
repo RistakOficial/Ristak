@@ -79,6 +79,8 @@ import {
 } from '@/utils/accessControl'
 import { installKeyboardFocusScroll } from '@/utils/keyboardFocusScroll'
 import { isNativeAppRuntime } from '@/services/apiBaseUrl'
+import { calendarsService } from '@/services/calendarsService'
+import { flushCalendarAppointmentOutbox } from '@/services/calendarOfflineStore'
 
 const LazyOAuthAuthorize = React.lazy(() => import('@/pages/OAuth/OAuthAuthorize'))
 
@@ -1000,6 +1002,40 @@ const AppWithNotifications: React.FC = () => {
   )
 }
 
+const CalendarOfflineSyncEffect: React.FC = () => {
+  const { isAuthenticated } = useAuth()
+
+  React.useEffect(() => {
+    if (!isAuthenticated) return
+
+    let stopped = false
+    const sync = async () => {
+      if (stopped || (typeof navigator !== 'undefined' && navigator.onLine === false)) return
+      await flushCalendarAppointmentOutbox((payload) => calendarsService.createAppointment(payload))
+        .catch(() => undefined)
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void sync()
+    }
+
+    window.addEventListener('online', sync)
+    document.addEventListener('visibilitychange', handleVisibility)
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void sync()
+    }, 30_000)
+    void sync()
+
+    return () => {
+      stopped = true
+      window.removeEventListener('online', sync)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.clearInterval(interval)
+    }
+  }, [isAuthenticated])
+
+  return null
+}
+
 export const App: React.FC = () => {
   return (
     <ThemeProvider>
@@ -1008,6 +1044,7 @@ export const App: React.FC = () => {
           <LabelsProvider>
             <AuthProvider>
               <DateRangeProvider>
+                <CalendarOfflineSyncEffect />
                 <AppWithNotifications />
               </DateRangeProvider>
             </AuthProvider>

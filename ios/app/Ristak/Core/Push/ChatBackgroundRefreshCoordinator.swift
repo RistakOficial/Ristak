@@ -241,6 +241,9 @@ final class ChatBackgroundRefreshCoordinator {
                 context: context
             )
         }()
+        async let appointmentSyncOutcome = CalendarAppointmentOutbox.shared.flush(
+            client: context.client
+        )
 
         let freshRows: [ChatContact]?
         var inboxSucceeded = false
@@ -276,6 +279,7 @@ final class ChatBackgroundRefreshCoordinator {
         if Task.isCancelled { return .failed }
 
         let preferredOutcome = await preferredThreadOutcome
+        let appointmentOutcome = await appointmentSyncOutcome
         guard await storedSessionStillMatches(context) else { return .noData }
 
         var recentCount = 0
@@ -300,10 +304,16 @@ final class ChatBackgroundRefreshCoordinator {
         await RistakSnapshotCache.shared.flushPendingWrites()
         guard await storedSessionStillMatches(context) else { return .noData }
 
-        if inboxChanged || preferredOutcome.changed || recentCount > 0 {
+        if inboxChanged
+            || preferredOutcome.changed
+            || recentCount > 0
+            || appointmentOutcome.changed {
             return .newData
         }
-        if inboxSucceeded || preferredOutcome.succeeded || fanoutWasAttempted {
+        if inboxSucceeded
+            || preferredOutcome.succeeded
+            || fanoutWasAttempted
+            || appointmentOutcome.requestSucceeded {
             return .noData
         }
         return .failed

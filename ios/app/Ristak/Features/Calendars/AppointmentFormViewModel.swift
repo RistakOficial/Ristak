@@ -96,6 +96,7 @@ final class AppointmentFormViewModel {
     private(set) var saveSuccessCount = 0
 
     private var statusTouched = false
+    private var createIntent: (signature: String, requestID: String)?
 
     /// Al editar: horario/duración originales EXACTOS (sin truncar) + la
     /// representación truncada con la que arrancan las ruedas. Si las ruedas
@@ -556,7 +557,7 @@ final class AppointmentFormViewModel {
         }
 
         let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let draft = AppointmentDraftRequest(
+        var draft = AppointmentDraftRequest(
             calendarId: selectedCalendarID.isEmpty ? nil : selectedCalendarID,
             contactId: (contactID?.isEmpty == false) ? contactID : nil,
             // Al crear, el título es el NOMBRE DEL CONTACTO (paridad RN
@@ -575,6 +576,29 @@ final class AppointmentFormViewModel {
             strictAvailabilityCheck: requiresStrictAvailabilityCheck ? true : nil,
             ignoreAppointmentConflicts: overrideAppointmentConflicts ? true : nil
         )
+        if !isEdit {
+            let signature = [
+                draft.calendarId ?? "",
+                draft.contactId ?? "",
+                draft.title ?? "",
+                draft.appointmentStatus ?? "",
+                draft.startTime ?? "",
+                draft.endTime ?? "",
+                draft.timeZone ?? "",
+                draft.notes ?? "",
+                draft.address ?? "",
+                draft.assignedUserId ?? "",
+                String(draft.strictAvailabilityCheck ?? false),
+                String(draft.ignoreAppointmentConflicts ?? false),
+            ].joined(separator: "\u{1f}")
+            if createIntent?.signature != signature {
+                createIntent = (
+                    signature,
+                    "ios-appointment:\(UUID().uuidString.lowercased())"
+                )
+            }
+            draft.clientRequestId = createIntent?.requestID
+        }
 
         do {
             let saved: CalendarAppointment
@@ -582,6 +606,7 @@ final class AppointmentFormViewModel {
                 saved = try await CalendarsService.updateAppointment(id: id, draft)
             } else {
                 saved = try await CalendarsService.createAppointment(draft)
+                createIntent = nil
             }
             saveSuccessCount += 1
             return saved
@@ -593,9 +618,34 @@ final class AppointmentFormViewModel {
             )
             return nil
         } catch let error as RistakAPIError {
+            if !isEdit,
+               CalendarAppointmentOutbox.shared.shouldQueue(error),
+               let requestID = draft.clientRequestId {
+                let saved = await CalendarAppointmentOutbox.shared.enqueue(
+                    draft: draft,
+                    clientRequestId: requestID
+                )
+                createIntent = nil
+                saveSuccessCount += 1
+                return saved
+            }
             alert = FormAlert(title: "No se pudo guardar", message: error.message)
             return nil
         } catch {
+            // Un error sin respuesta HTTP (red caída, timeout o una respuesta
+            // truncada después del commit) es ambiguo. Se conserva el mismo
+            // clientRequestId para que el replay sea idempotente.
+            if !isEdit,
+               CalendarAppointmentOutbox.shared.shouldQueue(error),
+               let requestID = draft.clientRequestId {
+                let saved = await CalendarAppointmentOutbox.shared.enqueue(
+                    draft: draft,
+                    clientRequestId: requestID
+                )
+                createIntent = nil
+                saveSuccessCount += 1
+                return saved
+            }
             alert = FormAlert(title: "No se pudo guardar", message: "Intenta otra vez.")
             return nil
         }

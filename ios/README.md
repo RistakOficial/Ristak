@@ -171,7 +171,13 @@ solo en capa flotante; copy en español.
   rango por long-press, Nueva cita (Por defecto con slots libres reales /
   Personalizado con ruedas), invitados, detalle con estados
   (pendiente/confirmada/cancelada/asistió/no asistió/reagendada), edición y
-  eliminación, 409 de choque con "crear de todos modos", round robin.
+  eliminación, 409 de choque con "crear de todos modos", round robin. La lista
+  de calendarios/eventos se hidrata desde snapshots por cuenta y las creaciones
+  sin red se guardan en una cola durable sin credenciales. Se muestran como
+  `Por sincronizar`, reproducen el mismo `clientRequestId` al reconectar,
+  foreground o BGAppRefresh, y pasan a `Requiere atención` ante un rechazo
+  definitivo. Una fila local puede descartarse, pero no editarse antes de existir
+  en servidor.
   iPad: calendario + panel lateral.
 - **Pagos**: pago único manual (con Idempotency-Key) o link de pasarela
   (Stripe/Conekta/Mercado Pago/CLIP/Rebill según integraciones activas) con

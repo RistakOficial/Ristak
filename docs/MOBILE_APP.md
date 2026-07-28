@@ -1326,6 +1326,16 @@ chat manda un `clientRequestId` estable durante timeout/reintento. El backend
 reserva esa llave en `appointment_creation_requests`, reproduce la respuesta ya
 completada y bloquea intentos simultaneos, ambiguos o reutilizados con otro
 payload para no duplicar la cita ni sus efectos externos.
+Android e iOS conservan además una cola durable por cuenta y los últimos
+calendarios/eventos útiles. Si no hay internet, una creación válida se pinta de
+inmediato como `Por sincronizar`; la cola no guarda tokens ni credenciales. La
+reproducción usa exactamente el mismo `clientRequestId` al detectar red, volver a
+foreground y durante las ventanas oportunistas de WorkManager/BGAppRefresh. Un
+`4xx` definitivo cambia a `Requiere atención` y espera una acción explícita; los
+errores transitorios permanecen pendientes. Al sincronizar, la fila local se
+reemplaza con la cita canónica y se revalida el rango visible. Android/iOS no
+pueden garantizar ejecución continua si el usuario fuerza el cierre o el sistema
+congela la app; la próxima oportunidad de red/foreground retoma la cola.
 En el sheet `Nueva cita`, la lista de contactos no debe mostrar icono de enviar
 mensaje porque la accion es agendar, no mandar chat.
 En `ios/app`, la cache de citas se separa por calendario y mes
@@ -1333,6 +1343,12 @@ En `ios/app`, la cache de citas se separa por calendario y mes
 anterior e hidrata solo el snapshot de la nueva seleccion; volver a foreground
 fuerza una revalidacion para no dejar una agenda vieja despues de varias horas
 en background.
+La cola iOS se guarda en el mismo namespace de
+`RistakSnapshotCache` (`calendar:appointment-outbox`), se fuerza a disco antes de
+confirmar el guardado local al usuario y también se vacía desde el monitor de
+conectividad, foreground y el `BGAppRefreshTask` compartido. Una cita local no se
+puede editar ni cambiar de estado hasta que exista en servidor; sí puede
+descartarse del dispositivo.
 En la vista Hoy/Semana, las tarjetas de citas del timeline usan un solo campo
 suave con borde tenue; no deben agregar una franja ni borde izquierdo intenso por
 calendario.

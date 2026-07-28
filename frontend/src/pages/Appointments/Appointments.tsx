@@ -25,6 +25,27 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useAppConfig } from '@/hooks';
 import { useAnchoredPortal } from '@/hooks/useAnchoredPortal';
 import { calendarsService, type Calendar, type CalendarEvent, type AppointmentStats, type BlockedSlot, type RawBlockedSlot } from '@/services/calendarsService';
+import {
+  calendarRangeSnapshotKey,
+  createCalendarAppointmentRequestId,
+  enqueueCalendarAppointment,
+  flushCalendarAppointmentOutbox,
+  isOfflineCalendarEvent,
+  isRetryableCalendarSyncError,
+  mergeOfflineCalendarEvents,
+  readCachedCalendars,
+  readCalendarAppointmentOutbox,
+  readCalendarRangeSnapshot,
+  readCalendarStatsSnapshot,
+  readCalendarUpcomingSnapshot,
+  readOfflineCalendarEvents,
+  retryFailedCalendarAppointments,
+  subscribeCalendarOfflineStore,
+  writeCachedCalendars,
+  writeCalendarRangeSnapshot,
+  writeCalendarStatsSnapshot,
+  writeCalendarUpcomingSnapshot
+} from '@/services/calendarOfflineStore';
 import { Badge, type BadgeVariant } from '@/components/common/Badge';
 import { getAppointmentStatusBadge } from '@/utils/statusBadges';
 import { formatTime12h, getBusinessDateRangeTimestamps } from '@/utils/format'
@@ -199,6 +220,22 @@ const formatDateKey = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
+const mergeOfflineEventCounts = (
+  counts: Record<string, number>,
+  calendarId: string,
+  timezone: string,
+  range: { startTime: number; endTime: number }
+) => {
+  const next = { ...counts };
+  readOfflineCalendarEvents(calendarId, range).forEach(event => {
+    const date = toDateInTimeZone(event.startTime, timezone);
+    if (!date) return;
+    const dateKey = formatDateKey(date);
+    next[dateKey] = (next[dateKey] || 0) + 1;
+  });
+  return next;
+};
+
 // Convierte los bloqueos crudos del backend (instantes ISO en UTC) en segmentos por día
 // para pintarlos en la rejilla, usando la zona horaria de la cuenta. Un bloqueo que abarca
 // varios días (p.ej. "esta semana" o "este mes") se divide en una banda por cada día.
@@ -371,6 +408,12 @@ export const Appointments: React.FC = () => {
     noshow: 0
   });
   const [loading, setLoading] = useState(false);
+  const [offlineOutbox, setOfflineOutbox] = useState(() => readCalendarAppointmentOutbox());
+  const lastOfflineFailureCountRef = useRef(0);
+
+  const refreshOfflineOutboxState = useCallback(() => {
+    setOfflineOutbox(readCalendarAppointmentOutbox());
+  }, []);
 
   // Mensajes automáticos de citas (recordatorios y confirmaciones)
   const [reminders, setReminders] = useState<AppointmentReminder[]>([]);
@@ -639,13 +682,13 @@ export const Appointments: React.FC = () => {
   const loadCalendars = useCallback(async () => {
     const requestId = calendarsRequestRef.current + 1;
     calendarsRequestRef.current = requestId;
-    try {
-      setLoading(true);
-      const calendarsData = await calendarsService.getCalendars(locationId, accessToken);
-      if (calendarsRequestRef.current !== requestId) return calendarsData;
+    const cachedCalendars = readCachedCalendars();
+
+    const applyCalendars = (calendarsData: Calendar[]) => {
+      if (calendarsRequestRef.current !== requestId) return;
       setCalendars(calendarsData);
 
-      // Seleccionar calendario: último usado en esta sesión > predeterminado (configuración) > primer activo
+      // Seleccionar calendario: ruta > último usado > predeterminado > primer activo.
       let calendarToSelect: Calendar | undefined;
 
       if (routeState.calendarId) {
@@ -665,16 +708,38 @@ export const Appointments: React.FC = () => {
         calendarToSelect = calendarsData.find((cal) => cal.isActive);
       }
 
-      if (calendarToSelect) {
-        selectCalendar(calendarToSelect);
-      } else {
-        selectCalendar(null);
-      }
+      selectCalendar(calendarToSelect || null);
+    };
+
+    if (cachedCalendars.length) {
+      applyCalendars(cachedCalendars);
+      setLoading(false);
+    }
+
+    try {
+      if (!cachedCalendars.length) setLoading(true);
+      const calendarsData = await calendarsService.getCalendars(
+        locationId,
+        accessToken,
+        undefined,
+        { throwOnError: true }
+      );
+      if (calendarsRequestRef.current !== requestId) return calendarsData;
+      writeCachedCalendars(calendarsData);
+      applyCalendars(calendarsData);
     } catch (error) {
       if (calendarsRequestRef.current === requestId) {
-        showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
+        if (cachedCalendars.length) {
+          showToast(
+            'warning',
+            'Calendario sin conexión',
+            'Mostramos la última copia guardada. Puedes seguir agendando y sincronizaremos al volver internet.'
+          );
+        } else {
+          showToast('error', 'Error al cargar calendarios', 'No se pudieron obtener los calendarios.');
+        }
       }
-      return [];
+      return cachedCalendars;
     } finally {
       if (calendarsRequestRef.current === requestId) setLoading(false);
     }
@@ -691,6 +756,40 @@ export const Appointments: React.FC = () => {
     eventsAbortRef.current?.abort();
     const controller = new AbortController();
     eventsAbortRef.current = controller;
+    const { startTime, endTime } = getDateRange();
+    const snapshotKey = calendarRangeSnapshotKey({
+      calendarId: selectedCalendar.id,
+      viewMode,
+      startTime,
+      endTime
+    });
+    const cachedSnapshot = append ? null : readCalendarRangeSnapshot(snapshotKey);
+    const cachedStats = append ? null : readCalendarStatsSnapshot(selectedCalendar.id);
+    const visibleRange = { startTime, endTime };
+    const offlineVisibleEvents = readOfflineCalendarEvents(selectedCalendar.id, visibleRange);
+
+    if (cachedSnapshot) {
+      setEvents(mergeOfflineCalendarEvents(cachedSnapshot.events, selectedCalendar.id, visibleRange));
+      setEventCountsByDate(mergeOfflineEventCounts(
+        cachedSnapshot.countsByDate,
+        selectedCalendar.id,
+        timezone,
+        visibleRange
+      ));
+      setVisibleEventsTotal(cachedSnapshot.total + offlineVisibleEvents.length);
+      setLoading(false);
+    } else if (offlineVisibleEvents.length) {
+      setEvents(mergeOfflineCalendarEvents([], selectedCalendar.id, visibleRange));
+      setEventCountsByDate(mergeOfflineEventCounts(
+        {},
+        selectedCalendar.id,
+        timezone,
+        visibleRange
+      ));
+      setVisibleEventsTotal(offlineVisibleEvents.length);
+      setLoading(false);
+    }
+    if (cachedStats) setStats(cachedStats);
 
     try {
       visibleEventsLoadingRef.current = true;
@@ -698,11 +797,8 @@ export const Appointments: React.FC = () => {
       if (!append) {
         visibleEventsNextCursorRef.current = null;
         setVisibleEventsHasNext(false);
-        setLoading(true);
+        if (!cachedSnapshot && !offlineVisibleEvents.length) setLoading(true);
       }
-
-      // Calcular rango de fechas según la vista
-      const { startTime, endTime } = getDateRange();
 
       // Calcular estadísticas del mes visible
       const monthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
@@ -742,9 +838,22 @@ export const Appointments: React.FC = () => {
           if (eventsRequestRef.current !== requestId) return;
           if (viewMode === 'month' && 'previewLimit' in response) {
             const nextEvents = response.days.flatMap(day => day.items);
-            setEvents(nextEvents);
-            setEventCountsByDate(Object.fromEntries(response.days.map(day => [day.date, day.total])));
-            setVisibleEventsTotal(response.total);
+            const nextCounts = Object.fromEntries(response.days.map(day => [day.date, day.total]));
+            setEvents(mergeOfflineCalendarEvents(nextEvents, selectedCalendar.id, visibleRange));
+            setEventCountsByDate(mergeOfflineEventCounts(
+              nextCounts,
+              selectedCalendar.id,
+              timezone,
+              visibleRange
+            ));
+            setVisibleEventsTotal(response.total + offlineVisibleEvents.length);
+            writeCalendarRangeSnapshot({
+              key: snapshotKey,
+              calendarId: selectedCalendar.id,
+              events: nextEvents,
+              countsByDate: nextCounts,
+              total: response.total
+            });
             visibleEventsNextCursorRef.current = null;
             setVisibleEventsHasNext(false);
             return;
@@ -752,24 +861,45 @@ export const Appointments: React.FC = () => {
 
           if (!('pagination' in response)) return;
           setEvents((current) => {
-            if (!append) return response.items;
+            if (!append) return mergeOfflineCalendarEvents(response.items, selectedCalendar.id, visibleRange);
             const merged = new Map(current.map(event => [event.id, event]));
             response.items.forEach(event => merged.set(event.id, event));
-            return Array.from(merged.values()).sort((left, right) => (
+            return mergeOfflineCalendarEvents(
+              Array.from(merged.values()).sort((left, right) => (
               parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime) ||
               left.id.localeCompare(right.id)
-            ));
+              )),
+              selectedCalendar.id,
+              visibleRange
+            );
           });
           if (!append) {
-            setEventCountsByDate(Object.fromEntries((response.days || []).map(day => [day.date, day.total])));
-            setVisibleEventsTotal(response.total || 0);
+            const nextCounts = Object.fromEntries((response.days || []).map(day => [day.date, day.total]));
+            setEventCountsByDate(mergeOfflineEventCounts(
+              nextCounts,
+              selectedCalendar.id,
+              timezone,
+              visibleRange
+            ));
+            setVisibleEventsTotal((response.total || 0) + offlineVisibleEvents.length);
+            writeCalendarRangeSnapshot({
+              key: snapshotKey,
+              calendarId: selectedCalendar.id,
+              events: response.items,
+              countsByDate: nextCounts,
+              total: response.total || 0
+            });
           }
           visibleEventsNextCursorRef.current = response.pagination.nextCursor;
           setVisibleEventsHasNext(response.pagination.hasNext);
         })
         .catch(() => {
           if (controller.signal.aborted) return;
-          if (eventsRequestRef.current === requestId) {
+          if (
+            eventsRequestRef.current === requestId
+            && !cachedSnapshot
+            && !offlineVisibleEvents.length
+          ) {
             showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
           }
         })
@@ -785,6 +915,7 @@ export const Appointments: React.FC = () => {
         .then((monthlyStats) => {
           if (eventsRequestRef.current !== requestId || !monthlyStats) return;
           setStats(monthlyStats);
+          writeCalendarStatsSnapshot(selectedCalendar.id, monthlyStats);
         })
         .catch(() => {
           if (controller.signal.aborted) return;
@@ -794,7 +925,11 @@ export const Appointments: React.FC = () => {
       await Promise.all([publishVisibleEvents, publishMonthlyStats]);
     } catch (error) {
       if (controller.signal.aborted) return;
-      if (eventsRequestRef.current === requestId) {
+      if (
+        eventsRequestRef.current === requestId
+        && !cachedSnapshot
+        && !offlineVisibleEvents.length
+      ) {
         showToast('error', 'Error al cargar citas', 'No se pudieron obtener las citas del calendario.');
       }
     } finally {
@@ -842,6 +977,16 @@ export const Appointments: React.FC = () => {
       upcomingEventsRequestRef.current === requestId &&
       upcomingEventsBoundaryRef.current === requestBoundary
     );
+    const cachedUpcoming = append
+      ? []
+      : readCalendarUpcomingSnapshot(selectedCalendar.id);
+
+    if (cachedUpcoming.length) {
+      setUpcomingEvents(
+        mergeOfflineCalendarEvents(cachedUpcoming, selectedCalendar.id)
+          .filter(event => parseSortableDateValue(event.endTime) >= Date.now())
+      );
+    }
 
     try {
       upcomingEventsLoadingRef.current = true;
@@ -855,12 +1000,19 @@ export const Appointments: React.FC = () => {
 
       if (isCurrentRequest()) {
         setUpcomingEvents((current) => {
-          if (!append) return page.items;
+          if (!append) {
+            writeCalendarUpcomingSnapshot(selectedCalendar.id, page.items);
+            return mergeOfflineCalendarEvents(page.items, selectedCalendar.id)
+              .filter(event => parseSortableDateValue(event.endTime) >= Date.now());
+          }
           const merged = new Map(current.map(event => [event.id, event]));
           page.items.forEach(event => merged.set(event.id, event));
-          return Array.from(merged.values()).sort((a, b) => (
-            parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime) || a.id.localeCompare(b.id)
-          ));
+          return mergeOfflineCalendarEvents(
+            Array.from(merged.values()).sort((a, b) => (
+              parseSortableDateValue(a.startTime) - parseSortableDateValue(b.startTime) || a.id.localeCompare(b.id)
+            )),
+            selectedCalendar.id
+          ).filter(event => parseSortableDateValue(event.endTime) >= Date.now());
         });
         upcomingEventsNextCursorRef.current = page.pagination.nextCursor;
         setUpcomingEventsHasNext(page.pagination.hasNext);
@@ -875,6 +1027,56 @@ export const Appointments: React.FC = () => {
       }
     }
   }, [selectedCalendar]);
+
+  const syncOfflineAppointments = useCallback(async (announce = true) => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      refreshOfflineOutboxState();
+      return;
+    }
+
+    const result = await flushCalendarAppointmentOutbox(
+      payload => calendarsService.createAppointment(payload)
+    );
+    const visibleRange = getDateRange();
+    refreshOfflineOutboxState();
+    setEvents(current => mergeOfflineCalendarEvents(
+      current.filter(event => !isOfflineCalendarEvent(event)),
+      selectedCalendar?.id,
+      visibleRange
+    ));
+    setUpcomingEvents(current => mergeOfflineCalendarEvents(
+      current.filter(event => !isOfflineCalendarEvent(event)),
+      selectedCalendar?.id
+    ).filter(event => parseSortableDateValue(event.endTime) >= Date.now()));
+
+    if (result.synced.length) {
+      if (announce) {
+        showToast(
+          'success',
+          'Calendario sincronizado',
+          `${result.synced.length} cita${result.synced.length === 1 ? '' : 's'} pendiente${result.synced.length === 1 ? '' : 's'} ya ${result.synced.length === 1 ? 'quedó' : 'quedaron'} en el servidor.`
+        );
+      }
+      await Promise.all([loadEvents(), loadUpcomingEvents()]);
+    }
+
+    if (result.failed.length > lastOfflineFailureCountRef.current) {
+      const latestFailure = result.failed[result.failed.length - 1];
+      showToast(
+        'warning',
+        'Una cita requiere atención',
+        latestFailure?.lastError || 'El horario ya no pudo confirmarse en el servidor.'
+      );
+    }
+    lastOfflineFailureCountRef.current = result.failed.length;
+  }, [
+    getDateRange,
+    loadEvents,
+    loadUpcomingEvents,
+    refreshOfflineOutboxState,
+    selectedCalendar?.id,
+    showToast
+  ]);
 
   // Cargar horarios bloqueados del calendario
   const loadBlockedSlots = useCallback(async () => {
@@ -924,6 +1126,31 @@ export const Appointments: React.FC = () => {
       loadUpcomingEvents();
     }
   }, [selectedCalendar, locationId, accessToken, loadUpcomingEvents]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeCalendarOfflineStore(refreshOfflineOutboxState);
+    const handleOnline = () => { void syncOfflineAppointments(true); };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void syncOfflineAppointments(false);
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void syncOfflineAppointments(false);
+      }
+    }, 30_000);
+    void syncOfflineAppointments(false);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.clearInterval(timer);
+    };
+  }, [refreshOfflineOutboxState, syncOfflineAppointments]);
 
   useEffect(() => () => {
     eventsRequestRef.current += 1;
@@ -1180,15 +1407,18 @@ export const Appointments: React.FC = () => {
     ignoreAppointmentConflicts?: true;
   }) => {
     if (!selectedCalendar) return;
+    const clientRequestId = createCalendarAppointmentRequestId('desktop');
+    const appointmentPayload = {
+      calendarId: selectedCalendar.id,
+      ...(locationId ? { locationId } : {}),
+      ...payload,
+      clientRequestId
+    };
 
     try {
       setLoading(true);
       const created = await calendarsService.createAppointment(
-        {
-          calendarId: selectedCalendar.id,
-          ...(locationId ? { locationId } : {}),
-          ...payload
-        },
+        appointmentPayload,
         accessToken || undefined
       );
       if (created) {
@@ -1206,6 +1436,40 @@ export const Appointments: React.FC = () => {
       await loadEvents();
       await loadUpcomingEvents();
     } catch (error) {
+      if (isRetryableCalendarSyncError(error)) {
+        const pendingEvent = enqueueCalendarAppointment(
+          appointmentPayload,
+          clientRequestId
+        );
+        refreshOfflineOutboxState();
+        setEvents(current => [
+          pendingEvent,
+          ...current.filter(event => event.id !== pendingEvent.id)
+        ]);
+        const pendingDate = toDateInTimeZone(pendingEvent.startTime, timezone);
+        if (pendingDate) {
+          const pendingDateKey = formatDateKey(pendingDate);
+          setEventCountsByDate(current => ({
+            ...current,
+            [pendingDateKey]: (current[pendingDateKey] || 0) + 1
+          }));
+          setVisibleEventsTotal(current => current + 1);
+        }
+        if (parseSortableDateValue(pendingEvent.endTime) >= Date.now()) {
+          setUpcomingEvents(current => [
+            pendingEvent,
+            ...current.filter(event => event.id !== pendingEvent.id)
+          ]);
+        }
+        closeCreateModal();
+        showToast(
+          'warning',
+          'Cita guardada en este dispositivo',
+          'Puedes seguir trabajando. La enviaremos automáticamente cuando vuelva internet.'
+        );
+        return;
+      }
+
       // Mostramos el motivo REAL del backend (p.ej. "Ese horario ya alcanzó el límite",
       // "Esta función no está incluida en tu plan", "Fecha de inicio inválida") en vez de
       // un genérico, para que el usuario entienda y no se quede a ciegas.
@@ -1241,6 +1505,17 @@ export const Appointments: React.FC = () => {
 
   // Manejar apertura del modal de cita
   const handleEventClick = (event: CalendarEvent) => {
+    if (isOfflineCalendarEvent(event)) {
+      const failed = event.syncStatus === 'local_failed';
+      showToast(
+        failed ? 'warning' : 'info',
+        failed ? 'Esta cita requiere atención' : 'Cita pendiente de sincronizar',
+        failed
+          ? event.syncError || 'El servidor no pudo confirmar este horario.'
+          : 'Está guardada en este dispositivo y se enviará automáticamente cuando vuelva internet.'
+      );
+      return;
+    }
     handledOpenAppointmentRef.current = event.id;
     setSelectedEvent(event);
     setIsModalOpen(true);
@@ -2040,6 +2315,29 @@ export const Appointments: React.FC = () => {
             </div>
           </div>
 
+          {offlineOutbox.length > 0 && (
+            <div className={styles.visibleRangeStatus} role="status">
+              <Badge variant={offlineOutbox.some(item => item.status === 'failed') ? 'error' : 'warning'}>
+                {offlineOutbox.some(item => item.status === 'failed')
+                  ? `${offlineOutbox.filter(item => item.status === 'failed').length} cita${offlineOutbox.filter(item => item.status === 'failed').length === 1 ? '' : 's'} por revisar`
+                  : `${offlineOutbox.length} cita${offlineOutbox.length === 1 ? '' : 's'} por sincronizar`}
+              </Badge>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  if (offlineOutbox.some(item => item.status === 'failed')) {
+                    retryFailedCalendarAppointments();
+                  }
+                  void syncOfflineAppointments(true);
+                }}
+              >
+                Sincronizar ahora
+              </Button>
+            </div>
+          )}
+
           {viewMode !== 'month' && (
             <div className={styles.visibleRangeStatus} role="status">
               <span>
@@ -2524,7 +2822,11 @@ export const Appointments: React.FC = () => {
                       const displayTitle = rawTitle || rawDescription || '(Sin título)';
                       const displayDescription =
                         rawDescription && rawDescription !== displayTitle ? rawDescription : '';
-                      const statusBadge = getAppointmentStatusBadge(event.appointmentStatus);
+                      const statusBadge = event.syncStatus === 'local_pending'
+                        ? { label: 'Por sincronizar', variant: 'warning' as const }
+                        : event.syncStatus === 'local_failed'
+                          ? { label: 'Revisar', variant: 'error' as const }
+                          : getAppointmentStatusBadge(event.appointmentStatus);
                       const tooltipText = [
                         displayTitle,
                         `${formatEventTime(event.startTime)} - ${formatEventTime(event.endTime)}`,

@@ -21,6 +21,22 @@ import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAppConfig, useBottomSheetDismiss, usePhoneElasticScroll } from '@/hooks'
 import apiClient from '@/services/apiClient'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
+import {
+  calendarRangeSnapshotKey,
+  enqueueCalendarAppointment,
+  flushCalendarAppointmentOutbox,
+  isOfflineCalendarEvent,
+  isRetryableCalendarSyncError,
+  mergeOfflineCalendarEvents,
+  readCachedCalendars,
+  readCalendarAppointmentOutbox,
+  readCalendarRangeSnapshot,
+  readOfflineCalendarEvents,
+  retryFailedCalendarAppointments,
+  subscribeCalendarOfflineStore,
+  writeCachedCalendars,
+  writeCalendarRangeSnapshot
+} from '@/services/calendarOfflineStore'
 import { contactsService } from '@/services/contactsService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import type { Contact } from '@/types'
@@ -306,6 +322,22 @@ function getStatusLabel(status: CalendarEvent['appointmentStatus']) {
   return STATUS_LABELS[status] || status
 }
 
+function mergeOfflineCounts(
+  counts: Record<string, number>,
+  calendarId: string,
+  timezone: string,
+  range: { startTime: number; endTime: number }
+) {
+  const next = { ...counts }
+  readOfflineCalendarEvents(calendarId, range).forEach((event) => {
+    const date = toDateInTimeZone(event.startTime, timezone)
+    if (!date) return
+    const key = formatDateKey(date)
+    next[key] = (next[key] || 0) + 1
+  })
+  return next
+}
+
 function capitalizeFirst(value: string) {
   return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value
 }
@@ -382,7 +414,7 @@ interface PhoneCalendarProps {
 
 export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, onCreateAppointmentRequest }) => {
   const { locationId, accessToken } = useAuth()
-  const { showToast } = useNotification()
+  const { showConfirm, showToast } = useNotification()
   const { timezone } = useTimezone()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -408,9 +440,23 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const [selectedDayLoading, setSelectedDayLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [cacheRefreshing, setCacheRefreshing] = useState(false)
+  const [offlineOutbox, setOfflineOutbox] = useState(() => readCalendarAppointmentOutbox())
   const [currentDate, setCurrentDate] = useState(() => businessToday)
   const [selectedDate, setSelectedDate] = useState(() => businessToday)
   const [calendarView, setCalendarView] = useState<CalendarView>('month')
+  const visibleOfflineRange = useMemo(
+    () => buildPhoneCalendarVisibleRange(
+      calendarView,
+      currentDate,
+      selectedDate,
+      timezone
+    ),
+    [calendarView, currentDate, selectedDate, timezone]
+  )
+  const selectedDayOfflineRange = useMemo(
+    () => buildPhoneCalendarDayRange(selectedDate, timezone),
+    [selectedDate, timezone]
+  )
   const [sheetView, setSheetView] = useState<SheetView>(null)
   const [appointmentContactQuery, setAppointmentContactQuery] = useState('')
   const [appointmentContacts, setAppointmentContacts] = useState<Contact[]>([])
@@ -641,15 +687,30 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const loadCalendars = useCallback(async () => {
     const cacheKey = getPhoneDailyCacheKey('phone-calendar', 'calendars', locationId || 'default')
     const cachedCalendars = readPhoneDailyCache<Calendar[]>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
+    const durableCalendars = readCachedCalendars()
+    const cachedCalendarList = cachedCalendars
+      ? (Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
+      : durableCalendars
 
-    if (cachedCalendars) {
-      applyCalendars(Array.isArray(cachedCalendars.data) ? cachedCalendars.data : [])
+    if (cachedCalendarList.length) {
+      applyCalendars(cachedCalendarList)
     }
 
-    const calendarsData = await calendarsService.getCalendars(locationId, accessToken)
-    applyCalendars(calendarsData)
-    writePhoneDailyCache(cacheKey, calendarsData, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
-    setCacheRefreshing(false)
+    try {
+      const calendarsData = await calendarsService.getCalendars(
+        locationId,
+        accessToken,
+        undefined,
+        { throwOnError: true }
+      )
+      applyCalendars(calendarsData)
+      writeCachedCalendars(calendarsData)
+      writePhoneDailyCache(cacheKey, calendarsData, { maxEntryChars: 180_000 }, timezone) // (MOB-007)
+    } catch (error) {
+      if (!cachedCalendarList.length) throw error
+    } finally {
+      setCacheRefreshing(false)
+    }
   }, [accessToken, applyCalendars, locationId, timezone])
 
   const loadEvents = useCallback(async ({ append = false }: { append?: boolean } = {}) => {
@@ -693,6 +754,14 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       selectedDate,
       timezone
     )
+    const offlineRange = { startTime, endTime }
+    const offlineEvents = readOfflineCalendarEvents(selectedCalendar.id, offlineRange)
+    const durableSnapshotKey = calendarRangeSnapshotKey({
+      calendarId: selectedCalendar.id,
+      viewMode: `phone-${calendarView}`,
+      startTime,
+      endTime
+    })
     const cacheKey = getPhoneDailyCacheKey(
       'phone-calendar',
       `events-${calendarView}`,
@@ -708,13 +777,31 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       hasNext: boolean
       nextCursor: string | null
     }>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
+    const durableSnapshot = append ? null : readCalendarRangeSnapshot(durableSnapshotKey)
 
-    if (cachedEvents) {
-      setEvents(Array.isArray(cachedEvents.data.events) ? cachedEvents.data.events : [])
-      setEventCountsByDate(cachedEvents.data.countsByDate || {})
-      setVisibleEventsTotal(Number(cachedEvents.data.total || 0))
-      setVisibleEventsHasNext(Boolean(cachedEvents.data.hasNext))
-      visibleEventsNextCursorRef.current = cachedEvents.data.nextCursor || null
+    if (durableSnapshot || cachedEvents) {
+      const snapshot = durableSnapshot || cachedEvents?.data
+      const cachedCanonicalEvents = Array.isArray(snapshot?.events) ? snapshot.events : []
+      setEvents(mergeOfflineCalendarEvents(cachedCanonicalEvents, selectedCalendar.id, offlineRange))
+      setEventCountsByDate(mergeOfflineCounts(
+        snapshot?.countsByDate || {},
+        selectedCalendar.id,
+        timezone,
+        offlineRange
+      ))
+      setVisibleEventsTotal(Number(snapshot?.total || 0) + offlineEvents.length)
+      setVisibleEventsHasNext(Boolean(cachedEvents?.data.hasNext))
+      visibleEventsNextCursorRef.current = cachedEvents?.data.nextCursor || null
+    } else if (offlineEvents.length) {
+      setEvents(mergeOfflineCalendarEvents([], selectedCalendar.id, offlineRange))
+      setEventCountsByDate(mergeOfflineCounts(
+        {},
+        selectedCalendar.id,
+        timezone,
+        offlineRange
+      ))
+      setVisibleEventsTotal(offlineEvents.length)
+      setVisibleEventsHasNext(false)
     }
 
     try {
@@ -731,9 +818,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
           .flatMap(day => day.items)
           .map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
         const countsByDate = Object.fromEntries(response.days.map(day => [day.date, day.total]))
-        setEvents(nextEvents)
-        setEventCountsByDate(countsByDate)
-        setVisibleEventsTotal(response.total)
+        setEvents(mergeOfflineCalendarEvents(nextEvents, selectedCalendar.id, offlineRange))
+        setEventCountsByDate(mergeOfflineCounts(countsByDate, selectedCalendar.id, timezone, offlineRange))
+        setVisibleEventsTotal(response.total + offlineEvents.length)
         setVisibleEventsHasNext(false)
         visibleEventsNextCursorRef.current = null
         writePhoneDailyCache(cacheKey, {
@@ -743,6 +830,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
           hasNext: false,
           nextCursor: null
         }, { maxEntryChars: 120_000 }, timezone)
+        writeCalendarRangeSnapshot({
+          key: durableSnapshotKey,
+          calendarId: selectedCalendar.id,
+          events: nextEvents,
+          countsByDate,
+          total: response.total
+        })
       } else if (calendarView === 'year') {
         const response = await calendarsService.getEventDayCounts({
           calendarId: selectedCalendar.id,
@@ -752,9 +846,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         })
         if (controller.signal.aborted || eventsRequestRef.current !== requestId) return
         const countsByDate = Object.fromEntries(response.days.map(day => [day.date, day.total]))
-        setEvents([])
-        setEventCountsByDate(countsByDate)
-        setVisibleEventsTotal(response.total)
+        setEvents(mergeOfflineCalendarEvents([], selectedCalendar.id, offlineRange))
+        setEventCountsByDate(mergeOfflineCounts(countsByDate, selectedCalendar.id, timezone, offlineRange))
+        setVisibleEventsTotal(response.total + offlineEvents.length)
         setVisibleEventsHasNext(false)
         visibleEventsNextCursorRef.current = null
         writePhoneDailyCache(cacheKey, {
@@ -764,6 +858,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
           hasNext: false,
           nextCursor: null
         }, { maxEntryChars: 80_000 }, timezone)
+        writeCalendarRangeSnapshot({
+          key: durableSnapshotKey,
+          calendarId: selectedCalendar.id,
+          events: [],
+          countsByDate,
+          total: response.total
+        })
       } else {
         const response = await calendarsService.getEventsPage({
           calendarId: selectedCalendar.id,
@@ -777,7 +878,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         if (controller.signal.aborted || eventsRequestRef.current !== requestId) return
         const pageEvents = response.items.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
         setEvents((current) => {
-          if (!append) return pageEvents
+          if (!append) {
+            return mergeOfflineCalendarEvents(pageEvents, selectedCalendar.id, offlineRange)
+          }
           const merged = new Map(current.map(event => [event.id, event]))
           pageEvents.forEach(event => merged.set(event.id, event))
           return Array.from(merged.values()).sort((left, right) => (
@@ -787,8 +890,8 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         })
         const countsByDate = Object.fromEntries((response.days || []).map(day => [day.date, day.total]))
         if (!append) {
-          setEventCountsByDate(countsByDate)
-          setVisibleEventsTotal(response.total || 0)
+          setEventCountsByDate(mergeOfflineCounts(countsByDate, selectedCalendar.id, timezone, offlineRange))
+          setVisibleEventsTotal((response.total || 0) + offlineEvents.length)
         }
         visibleEventsNextCursorRef.current = response.pagination.nextCursor
         setVisibleEventsHasNext(response.pagination.hasNext)
@@ -800,9 +903,19 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
             hasNext: response.pagination.hasNext,
             nextCursor: response.pagination.nextCursor
           }, { maxEntryChars: 180_000 }, timezone)
+          writeCalendarRangeSnapshot({
+            key: durableSnapshotKey,
+            calendarId: selectedCalendar.id,
+            events: pageEvents,
+            countsByDate,
+            total: response.total || 0
+          })
         }
       }
       setCacheRefreshing(false)
+    } catch (error) {
+      if (controller.signal.aborted || eventsRequestRef.current !== requestId) return
+      if (!durableSnapshot && !cachedEvents && !offlineEvents.length) throw error
     } finally {
       if (eventsRequestRef.current === requestId) {
         visibleEventsLoadingRef.current = false
@@ -827,6 +940,33 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     setSelectedDayLoading(true)
     if (!append) selectedDayNextCursorRef.current = null
     const { startTime, endTime } = buildPhoneCalendarDayRange(selectedDate, timezone)
+    const offlineRange = { startTime, endTime }
+    const offlineEvents = readOfflineCalendarEvents(selectedCalendar.id, offlineRange)
+    const durableSnapshotKey = calendarRangeSnapshotKey({
+      calendarId: selectedCalendar.id,
+      viewMode: 'phone-selected-day',
+      startTime,
+      endTime
+    })
+    const cachedSnapshot = append ? null : readCalendarRangeSnapshot(durableSnapshotKey)
+
+    if (cachedSnapshot) {
+      setSelectedDayEvents(mergeOfflineCalendarEvents(
+        cachedSnapshot.events,
+        selectedCalendar.id,
+        offlineRange
+      ))
+      setSelectedDayTotal(cachedSnapshot.total + offlineEvents.length)
+      setSelectedDayHasNext(false)
+    } else if (offlineEvents.length) {
+      setSelectedDayEvents(mergeOfflineCalendarEvents(
+        [],
+        selectedCalendar.id,
+        offlineRange
+      ))
+      setSelectedDayTotal(offlineEvents.length)
+      setSelectedDayHasNext(false)
+    }
 
     try {
       const response = await calendarsService.getEventsPage({
@@ -841,7 +981,9 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       if (controller.signal.aborted || selectedDayRequestRef.current !== requestId) return
       const pageEvents = response.items.map((event, index) => normalizeCalendarEvent(event, `day-event-${index}`))
       setSelectedDayEvents((current) => {
-        if (!append) return pageEvents
+        if (!append) {
+          return mergeOfflineCalendarEvents(pageEvents, selectedCalendar.id, offlineRange)
+        }
         const merged = new Map(current.map(event => [event.id, event]))
         pageEvents.forEach(event => merged.set(event.id, event))
         return Array.from(merged.values()).sort((left, right) => (
@@ -849,11 +991,21 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
           left.id.localeCompare(right.id)
         ))
       })
-      if (!append) setSelectedDayTotal(response.total || 0)
+      if (!append) {
+        setSelectedDayTotal((response.total || 0) + offlineEvents.length)
+        writeCalendarRangeSnapshot({
+          key: durableSnapshotKey,
+          calendarId: selectedCalendar.id,
+          events: pageEvents,
+          countsByDate: {},
+          total: response.total || 0
+        })
+      }
       selectedDayNextCursorRef.current = response.pagination.nextCursor
       setSelectedDayHasNext(response.pagination.hasNext)
     } catch (error) {
       if (controller.signal.aborted || selectedDayRequestRef.current !== requestId) return
+      if (cachedSnapshot || offlineEvents.length) return
       throw error
     } finally {
       if (selectedDayRequestRef.current === requestId) {
@@ -863,6 +1015,76 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       if (selectedDayAbortRef.current === controller) selectedDayAbortRef.current = null
     }
   }, [calendarView, selectedCalendar, selectedDate, timezone])
+
+  const syncOfflineAppointments = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return
+
+    const result = await flushCalendarAppointmentOutbox(
+      (payload) => calendarsService.createAppointment(payload, accessToken || undefined)
+    )
+    setOfflineOutbox(readCalendarAppointmentOutbox())
+
+    if (result.synced.length > 0) {
+      await Promise.all([
+        loadEvents(),
+        calendarView === 'month' ? loadSelectedDayEvents() : Promise.resolve()
+      ])
+    } else if (result.failed.length > 0) {
+      setEvents((current) => mergeOfflineCalendarEvents(
+        current,
+        selectedCalendar?.id,
+        visibleOfflineRange
+      ))
+      setSelectedDayEvents((current) => mergeOfflineCalendarEvents(
+        current,
+        selectedCalendar?.id,
+        selectedDayOfflineRange
+      ))
+    }
+  }, [
+    accessToken,
+    calendarView,
+    loadEvents,
+    loadSelectedDayEvents,
+    selectedCalendar?.id,
+    selectedDayOfflineRange,
+    visibleOfflineRange
+  ])
+
+  useEffect(() => {
+    const refreshOutboxState = () => {
+      setOfflineOutbox(readCalendarAppointmentOutbox())
+      setEvents((current) => mergeOfflineCalendarEvents(
+        current,
+        selectedCalendar?.id,
+        visibleOfflineRange
+      ))
+      setSelectedDayEvents((current) => mergeOfflineCalendarEvents(
+        current,
+        selectedCalendar?.id,
+        selectedDayOfflineRange
+      ))
+    }
+    const unsubscribe = subscribeCalendarOfflineStore(refreshOutboxState)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void syncOfflineAppointments()
+    }
+
+    window.addEventListener('online', syncOfflineAppointments)
+    document.addEventListener('visibilitychange', handleVisibility)
+    void syncOfflineAppointments()
+
+    return () => {
+      unsubscribe()
+      window.removeEventListener('online', syncOfflineAppointments)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [
+    selectedCalendar?.id,
+    selectedDayOfflineRange,
+    syncOfflineAppointments,
+    visibleOfflineRange
+  ])
 
   useEffect(() => {
     if (embedded) return
@@ -1801,20 +2023,20 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   }) => {
     if (!selectedCalendar) return
 
+    const appointmentData = {
+      calendarId: selectedCalendar.id,
+      ...(locationId ? { locationId } : {}),
+      ...payload
+    }
+    const requestIntent = resolveStableRequestIntent(
+      appointmentCreateIntentRef.current,
+      'phone-calendar-appointment',
+      appointmentData
+    )
+    appointmentCreateIntentRef.current = requestIntent
+
     setLoading(true)
     try {
-      const appointmentData = {
-        calendarId: selectedCalendar.id,
-        ...(locationId ? { locationId } : {}),
-        ...payload
-      }
-      const requestIntent = resolveStableRequestIntent(
-        appointmentCreateIntentRef.current,
-        'phone-calendar-appointment',
-        appointmentData
-      )
-      appointmentCreateIntentRef.current = requestIntent
-
       const created = await calendarsService.createAppointment({
         ...appointmentData,
         clientRequestId: requestIntent.clientRequestId
@@ -1828,7 +2050,44 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         loadEvents(),
         calendarView === 'month' ? loadSelectedDayEvents() : Promise.resolve()
       ])
-    } catch {
+    } catch (error) {
+      if (isRetryableCalendarSyncError(error)) {
+        const localEvent = enqueueCalendarAppointment({
+          ...appointmentData,
+          clientRequestId: requestIntent.clientRequestId
+        }, requestIntent.clientRequestId)
+        appointmentCreateIntentRef.current = null
+        setIsCreateModalOpen(false)
+        setEvents((current) => mergeOfflineCalendarEvents(
+          [...current.filter(event => !isOfflineCalendarEvent(event)), localEvent],
+          selectedCalendar.id,
+          visibleOfflineRange
+        ))
+        const localDay = toDateInTimeZone(localEvent.startTime, timezone)
+        if (localDay) {
+          const localDateKey = formatDateKey(localDay)
+          setEventCountsByDate((current) => ({
+            ...current,
+            [localDateKey]: (current[localDateKey] || 0) + 1
+          }))
+          setVisibleEventsTotal((current) => current + 1)
+        }
+        if (localDay && isSameDay(localDay, selectedDate)) {
+          setSelectedDayEvents((current) => mergeOfflineCalendarEvents(
+            [...current.filter(event => !isOfflineCalendarEvent(event)), localEvent],
+            selectedCalendar.id,
+            selectedDayOfflineRange
+          ))
+          setSelectedDayTotal((current) => current + 1)
+        }
+        setOfflineOutbox(readCalendarAppointmentOutbox())
+        showToast(
+          'warning',
+          'Cita guardada sin conexión',
+          'Ristak la agendará automáticamente cuando vuelva internet.'
+        )
+        return
+      }
       showToast('error', 'No se pudo agendar', 'Intenta otra vez en unos minutos.')
     } finally {
       setLoading(false)
@@ -1866,6 +2125,27 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   }
 
   const handleOpenEvent = (event: CalendarEvent) => {
+    if (isOfflineCalendarEvent(event)) {
+      if (event.syncStatus === 'local_failed') {
+        showConfirm(
+          'Esta cita requiere atención',
+          event.syncError || 'El servidor no pudo confirmar este horario.',
+          () => {
+            retryFailedCalendarAppointments()
+            void syncOfflineAppointments()
+          },
+          'Volver a intentar',
+          'Cerrar'
+        )
+        return
+      }
+      showToast(
+        'info',
+        'Cita pendiente de sincronizar',
+        'Está guardada en este dispositivo y se enviará automáticamente cuando vuelva internet.'
+      )
+      return
+    }
     setSelectedEvent(event)
     setIsEventModalOpen(true)
   }
@@ -1961,6 +2241,10 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       : 'Ir a hoy'
   const showCalendarSurface = calendarView === 'month' || calendarView === 'year' || calendarView === 'years'
   const showAgenda = calendarView === 'month'
+  const visibleOfflineOutbox = offlineOutbox.filter(
+    (entry) => !selectedCalendar || entry.payload.calendarId === selectedCalendar.id
+  )
+  const failedOfflineCount = visibleOfflineOutbox.filter(entry => entry.status === 'failed').length
   const nowInCalendar = toDateInTimeZone(new Date().toISOString(), timezone) ?? new Date()
   const handleSelectCalendarView = (view: SwitchableCalendarView) => {
     setCalendarView(view)
@@ -1971,6 +2255,11 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
     const eventColor = getEventColor(event)
     const startLabel = formatEventTime(event.startTime)
     const endLabel = formatEventTime(event.endTime)
+    const statusLabel = event.syncStatus === 'local_failed'
+      ? 'Requiere atención'
+      : event.syncStatus === 'local_pending'
+        ? 'Por sincronizar'
+        : getStatusLabel(event.appointmentStatus)
 
     return (
       <button
@@ -1983,7 +2272,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         <span className={styles.eventAccent} aria-hidden="true" />
         <span className={styles.eventMain}>
           <strong>{event.title || 'Sin título'}</strong>
-          <small>{getStatusLabel(event.appointmentStatus)}</small>
+          <small>{statusLabel}</small>
         </span>
         <span className={styles.eventTimeStack}>
           <strong>{startLabel}</strong>
@@ -2365,7 +2654,13 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 	                <p>{selectedDayLabel}</p>
 	                <h1>{selectedDayTotal ? `${selectedDayTotal} cita${selectedDayTotal === 1 ? '' : 's'}` : 'Sin citas'}</h1>
 	              </div>
-	              {cacheRefreshing ? (
+	              {visibleOfflineOutbox.length ? (
+	                <span className={styles.cacheRefreshPill} role="status">
+	                  {failedOfflineCount
+	                    ? `${failedOfflineCount} por revisar`
+	                    : `${visibleOfflineOutbox.length} por sincronizar`}
+	                </span>
+	              ) : cacheRefreshing ? (
 	                <span className={styles.cacheRefreshPill} role="status">
 	                  <Loader2 size={14} className={styles.spinIcon} />
 	                  Actualizando

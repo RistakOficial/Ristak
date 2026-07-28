@@ -246,7 +246,7 @@ export interface CalendarEvent {
   };
   masterEventId?: string;
   source?: 'ristak' | 'ghl' | 'google';
-  syncStatus?: 'pending' | 'synced' | 'error';
+  syncStatus?: 'pending' | 'synced' | 'error' | 'local_pending' | 'local_failed';
   syncError?: string | null;
   participants?: AppointmentParticipant[];
 }

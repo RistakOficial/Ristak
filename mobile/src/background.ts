@@ -6,6 +6,7 @@ import * as BackgroundTask from 'expo-background-task';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { RistakApiClient } from './api';
+import { syncCalendarAppointmentOutbox } from './calendarOutbox';
 import {
   appendBackgroundNotificationReceipt,
   BACKGROUND_CONVERSATION_CONCURRENCY,
@@ -171,10 +172,16 @@ async function refreshInboxSnapshot(session: BackgroundSession) {
 async function syncBackgroundChats() {
   const session = await readBackgroundSession();
   if (!session) return false;
-  const chats = await refreshInboxSnapshot(session);
-  if (!chats) return false;
-  await warmConversationSnapshots(session, chats);
-  return true;
+  const [calendarResult, chatsResult] = await Promise.allSettled([
+    syncCalendarAppointmentOutbox(session.api, session.namespace),
+    refreshInboxSnapshot(session),
+  ]);
+  const calendarWorked = calendarResult.status === 'fulfilled';
+  const chats = chatsResult.status === 'fulfilled' ? chatsResult.value : null;
+  if (chats) {
+    await warmConversationSnapshots(session, chats);
+  }
+  return calendarWorked || Boolean(chats);
 }
 
 // Foreground inbox reconciliation also warms missing/stale recent threads. It

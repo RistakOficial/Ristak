@@ -992,6 +992,7 @@ export type CalendarEventItem = {
   status?: string;
   appointmentStatus?: string;
   appointment_status?: string;
+  source?: string;
   syncStatus?: string;
   sync_status?: string;
   syncError?: string | null;

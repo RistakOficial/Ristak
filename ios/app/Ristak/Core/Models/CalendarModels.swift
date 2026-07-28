@@ -287,6 +287,54 @@ struct CalendarAppointment: Decodable, Identifiable, Sendable, Equatable {
         case appointmentStatusRaw = "appointmentStatus"
     }
 
+    init(
+        id: String,
+        ghlAppointmentId: String? = nil,
+        googleEventId: String? = nil,
+        calendarId: String,
+        locationId: String = "",
+        contactId: String? = nil,
+        title: String,
+        status: String,
+        appointmentStatusRaw: String,
+        assignedUserId: String? = nil,
+        notes: String = "",
+        address: String = "",
+        startTime: String,
+        endTime: String,
+        dateAdded: String? = nil,
+        dateUpdated: String? = nil,
+        source: String = "ristak",
+        syncStatus: String? = nil,
+        syncError: String? = nil,
+        contactName: String = "",
+        contactEmail: String = "",
+        contactPhone: String = ""
+    ) {
+        self.id = id
+        self.ghlAppointmentId = ghlAppointmentId
+        self.googleEventId = googleEventId
+        self.calendarId = calendarId
+        self.locationId = locationId
+        self.contactId = contactId
+        self.title = title
+        self.status = status
+        self.appointmentStatusRaw = appointmentStatusRaw
+        self.assignedUserId = assignedUserId
+        self.notes = notes
+        self.address = address
+        self.startTime = startTime
+        self.endTime = endTime
+        self.dateAdded = dateAdded
+        self.dateUpdated = dateUpdated
+        self.source = source
+        self.syncStatus = syncStatus
+        self.syncError = syncError
+        self.contactName = contactName
+        self.contactEmail = contactEmail
+        self.contactPhone = contactPhone
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = container.flexibleString(forKey: .id) ?? ""
@@ -320,12 +368,13 @@ struct CalendarAppointment: Decodable, Identifiable, Sendable, Equatable {
 
     var startDate: Date? { RistakDateParsing.date(fromISO: startTime) }
     var endDate: Date? { RistakDateParsing.date(fromISO: endTime) }
+    var isOfflinePlaceholder: Bool { id.hasPrefix("offline-appointment:") }
 }
 
 // MARK: - Body de crear/editar cita (doc 07 §2.2.1)
 
 /// Body exacto de `POST/PUT /api/calendars/appointments`. Los `nil` se omiten.
-struct AppointmentDraftRequest: Encodable, Sendable {
+struct AppointmentDraftRequest: Codable, Sendable, Equatable {
     var calendarId: String?
     var contactId: String?
     var title: String?
@@ -344,6 +393,8 @@ struct AppointmentDraftRequest: Encodable, Sendable {
     /// `true` permite empalmar otra cita desde el primer POST no estricto;
     /// no autoriza atravesar un bloqueo explícito.
     var ignoreAppointmentConflicts: Bool?
+    /// Idempotencia durable para reintentos después de timeout/offline.
+    var clientRequestId: String?
 
     init(
         calendarId: String? = nil,
@@ -357,7 +408,8 @@ struct AppointmentDraftRequest: Encodable, Sendable {
         address: String? = nil,
         assignedUserId: String? = nil,
         strictAvailabilityCheck: Bool? = nil,
-        ignoreAppointmentConflicts: Bool? = nil
+        ignoreAppointmentConflicts: Bool? = nil,
+        clientRequestId: String? = nil
     ) {
         self.calendarId = calendarId
         self.contactId = contactId
@@ -371,6 +423,7 @@ struct AppointmentDraftRequest: Encodable, Sendable {
         self.assignedUserId = assignedUserId
         self.strictAvailabilityCheck = strictAvailabilityCheck
         self.ignoreAppointmentConflicts = ignoreAppointmentConflicts
+        self.clientRequestId = clientRequestId
     }
 }
 
