@@ -996,6 +996,19 @@ unico y deduplica el retry de forma atomica; si el reloj del cliente difiere mas
 de cinco minutos, conserva el instante reportado como evidencia pero usa la hora
 de recepcion para la analitica.
 
+Las migraciones versionadas `136*` instalan en bases existentes los IDs
+idempotentes, evidencia temporal, campos del ledger v2 e índices de alcance que
+requiere este contrato. PostgreSQL aplica el DDL aditivo dentro del runner
+versionado y construye cada índice en un archivo concurrente aislado para no
+detener la ingesta durante el deploy. SQLite repara antes del marcador de
+bootstrap únicamente las columnas ausentes —porque su motor no soporta
+`ADD COLUMN IF NOT EXISTS`— y la migración `136` valida el esquema e índices
+antes de registrar el ledger. Ambos motores comprueban tabla, método B-tree,
+orden de columnas,
+unicidad y predicado de cada índice; un homónimo incorrecto no se acepta por su
+nombre. Si la preparación no queda completa, el arranque falla cerrado y no
+publica una instalación que acepte telemetría con esquema parcial.
+
 Los envios guardados se clasifican server-side como `completed`,
 `terminal_exit`, `checkpoint` o `legacy_unknown`. Una conversion calificada es
 solo un `completed` cuyo estado no sea `disqualified`. `convertingVisitors`
