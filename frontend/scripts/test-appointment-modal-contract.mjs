@@ -9,6 +9,10 @@ const appointmentsSource = await readFile(
   new URL('../src/pages/Appointments/Appointments.tsx', import.meta.url),
   'utf8'
 )
+const reminderModalSource = await readFile(
+  new URL('../src/pages/Appointments/AppointmentReminderModal.tsx', import.meta.url),
+  'utf8'
+)
 const desktopChatSource = await readFile(
   new URL('../src/pages/DesktopChat/DesktopChat.tsx', import.meta.url),
   'utf8'
@@ -60,5 +64,21 @@ for (const [surface, source] of [
   assert.match(source, /AppointmentModal/, `${surface} debe consumir el AppointmentModal compartido`)
   assert.match(source, /enableGuests/, `${surface} debe activar invitados al crear una cita`)
 }
+
+const reminderEditorStart = reminderModalSource.indexOf('<Modal\n        isOpen={isOpen}')
+const reminderEditorEnd = reminderModalSource.indexOf('>', reminderEditorStart)
+assert.ok(reminderEditorStart >= 0 && reminderEditorEnd > reminderEditorStart)
+const reminderEditorOpeningTag = reminderModalSource.slice(reminderEditorStart, reminderEditorEnd)
+
+assert.match(
+  reminderEditorOpeningTag,
+  /closeOnBackdropClick=\{false\}/,
+  'el editor de mensajes automáticos no debe cerrarse al tocar fuera'
+)
+assert.match(
+  reminderEditorOpeningTag,
+  /closeOnEscape=\{false\}/,
+  'el editor de mensajes automáticos sólo debe cerrarse con sus acciones explícitas'
+)
 
 console.log('Appointment modal shared contract OK')

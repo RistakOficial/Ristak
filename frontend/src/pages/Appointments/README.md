@@ -189,10 +189,13 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
-- Una cuenta nueva recibe únicamente `Confirmación 1 día antes`, configurado
-  como tipo Confirmación y con el mensaje automático pausado. Lleva una `system_key`
-  única para que dos arranques simultáneos no lo dupliquen y nunca envía nada
-  hasta que el usuario lo active.
+- Una cuenta nueva recibe únicamente dos mensajes automáticos, ambos pausados:
+  `Aviso al agendar`, exactamente al crear la cita, sin horario inteligente y
+  con la plantilla `cita_programada`; y `Confirmación 1 día antes`, con IA
+  apagada y la plantilla `confirmacion_cita_dia_anterior`. Cada fila lleva una
+  `system_key` única para que dos arranques simultáneos no la dupliquen. Las
+  cuentas existentes no reciben este paquete y nada se envía hasta que el
+  usuario active cada mensaje.
 - Si una cita se agenda después de la hora calculada para un recordatorio
   `before_appointment`, ese recordatorio se omite: no se aprovecha la tolerancia
   de reintento para mandarlo como si fuera la confirmación de la reserva. Un aviso
@@ -200,6 +203,9 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   donde se muestran la fecha y hora reales de la cita.
 - Un mensaje nuevo vive sólo como borrador local hasta que el usuario pulsa
   **Guardar**; abrir y cancelar el modal no crea una fila provisional de un día.
+- El editor principal no se cierra al tocar el fondo ni al pulsar Escape. Sólo
+  las acciones explícitas **Cancelar**, **Guardar** y la **X** lo cierran, para
+  evitar perder por accidente una configuración todavía no guardada.
 - Cada recordatorio o aviso guarda una `schedule_key` única construida con el
   ancla y la duración normalizada. Por eso `60 minutos antes` y `1 hora antes`
   ocupan el mismo momento aunque cambien canal, plantilla, texto o modo de

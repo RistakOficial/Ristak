@@ -57,7 +57,8 @@ export function appointmentReminderRetryCutoffExpression(dialect = databaseDiale
 }
 
 const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
-const DEFAULT_REMINDER_SYSTEM_KEY = 'default_one_day_before'
+const DEFAULT_BOOKING_NOTICE_SYSTEM_KEY = 'default_on_booking'
+const DEFAULT_CONFIRMATION_SYSTEM_KEY = 'default_one_day_before'
 const REMINDER_SCHEDULE_CONFLICT_CODE = 'appointment_reminder_schedule_conflict'
 
 // Si un envío quedó pendiente demasiado tiempo (p.ej. cita creada después de
@@ -941,10 +942,10 @@ export async function deleteAppointmentReminder(reminderId) {
 }
 
 /**
- * Crea la confirmación de asistencia inicial (1 día antes de la cita) una sola vez.
- * Nace pausada para que una cuenta nueva no envíe mensajes sin que el usuario
- * revise primero canal, plantilla y acciones de confirmación. Usa una bandera en
- * app_config para no recrearla si el usuario la borra.
+ * Crea una sola vez los dos mensajes iniciales de una cuenta nueva: el aviso
+ * inmediato al agendar y la confirmación un día antes. Ambos nacen pausados para
+ * que el usuario revise canal y plantillas antes de enviar. La bandera en
+ * app_config evita recrearlos si después los edita o elimina.
  */
 export async function ensureDefaultAppointmentReminder() {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
@@ -956,18 +957,44 @@ export async function ensureDefaultAppointmentReminder() {
 
   const existing = await db.get('SELECT id FROM appointment_reminders LIMIT 1')
   if (!existing) {
-    const { created } = await insertAppointmentReminder({
-      name: 'Confirmación 1 día antes',
-      enabled: false,
-      messageType: 'confirmation',
-      offsetValue: 1,
-      offsetUnit: 'days',
-      smartEnabled: true
-    }, {
-      systemKey: DEFAULT_REMINDER_SYSTEM_KEY,
-      ignoreConflict: true
-    })
-    if (created) logger.info('[Citas] Confirmación por defecto creada y pausada (1 día antes)')
+    const defaultReminders = [
+      {
+        systemKey: DEFAULT_BOOKING_NOTICE_SYSTEM_KEY,
+        input: {
+          name: 'Aviso al agendar',
+          enabled: false,
+          messageType: 'reminder',
+          aiEnabled: false,
+          timingAnchor: 'after_booking',
+          offsetValue: 0,
+          offsetUnit: 'minutes',
+          smartEnabled: false
+        },
+        logMessage: '[Citas] Aviso por defecto creado y pausado (al momento de agendar)'
+      },
+      {
+        systemKey: DEFAULT_CONFIRMATION_SYSTEM_KEY,
+        input: {
+          name: 'Confirmación 1 día antes',
+          enabled: false,
+          messageType: 'confirmation',
+          aiEnabled: false,
+          timingAnchor: 'before_appointment',
+          offsetValue: 1,
+          offsetUnit: 'days',
+          smartEnabled: true
+        },
+        logMessage: '[Citas] Confirmación por defecto creada y pausada (1 día antes, sin IA)'
+      }
+    ]
+
+    for (const reminder of defaultReminders) {
+      const { created } = await insertAppointmentReminder(reminder.input, {
+        systemKey: reminder.systemKey,
+        ignoreConflict: true
+      })
+      if (created) logger.info(reminder.logMessage)
+    }
   }
 
   await backfillMissingReminderTemplates()

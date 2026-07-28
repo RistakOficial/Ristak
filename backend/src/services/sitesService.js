@@ -27153,6 +27153,12 @@ function buildVideoPlayerRuntimeScript() {
 	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
 	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
 	        let fallbackActivated = false;
+	        const activateNativeHls = () => {
+	          if (!canPlayNativeHls(video)) return false;
+	          video.src = source;
+	          video.load();
+	          return true;
+	        };
 	        const activateFallback = () => {
 	          if (fallbackActivated || !fallbackSource || fallbackSource === source) return false;
 	          fallbackActivated = true;
@@ -27166,7 +27172,7 @@ function buildVideoPlayerRuntimeScript() {
 	          return true;
 	        };
 	        if (source && isHlsSource(source)) {
-	          if (canPlayNativeHls(video)) {
+	          if (adaptiveQuality && canPlayNativeHls(video)) {
 	            video.addEventListener('error', activateFallback, { once: true });
 	            video.src = source;
 	            video.load();
@@ -27175,13 +27181,17 @@ function buildVideoPlayerRuntimeScript() {
 	            video.load();
 	            loadHls().then(Hls => {
 	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
-	                if (!activateFallback()) {
+	                if (!activateNativeHls() && !activateFallback()) {
 	                  video.src = source;
 	                  video.load();
 	                }
 	                return;
 	              }
-	              const hls = new Hls({ enableWorker: true, startLevel: adaptiveQuality ? -1 : undefined });
+	              const hls = new Hls({
+	                enableWorker: true,
+	                startLevel: adaptiveQuality ? -1 : 0,
+	                autoStartLoad: adaptiveQuality
+	              });
 	              host.rstkHls = hls;
 	              if (Hls.Events && Hls.Events.ERROR) {
 	                hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -27194,12 +27204,13 @@ function buildVideoPlayerRuntimeScript() {
 	                  hls.startLevel = highestLevel;
 	                  hls.loadLevel = highestLevel;
 	                  hls.currentLevel = highestLevel;
+	                  hls.startLoad(-1);
 	                });
 	              }
 	              hls.loadSource(source);
 	              hls.attachMedia(video);
 	            }).catch(() => {
-	              if (!activateFallback()) {
+	              if (!activateNativeHls() && !activateFallback()) {
 	                video.src = source;
 	                video.load();
 	              }
@@ -27231,7 +27242,7 @@ function buildVideoPlayerRuntimeScript() {
 	        const startsWithHiddenControls = hasControlBar && host.classList.contains('rstk-video-controls-hidden');
 	        const startVisibleAfterPlay = !controlBar || controlBar.getAttribute('data-rstk-video-control-bar-start-visible') !== 'false';
 	        const controlFocusTargets = hasControlBar ? Array.from(controlBar.querySelectorAll('button, select, [tabindex]')) : [];
-	        const previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
+	        let previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let previewing = false;
 	        let hasUserPlayed = Boolean(video.autoplay);
 	        let controlsAreVisible = Boolean(hasUserPlayed && !startsWithHiddenControls);
@@ -27435,13 +27446,13 @@ function buildVideoPlayerRuntimeScript() {
 	          video.currentTime = 0;
 	          setProgressRatio(0);
 	        };
-	        const startPreviewLoop = () => {
+	        const startPreviewLoop = (restartAtRangeStart = false) => {
 	          if (!previewEnabled || hasUserPlayed) return;
 	          const range = normalizePreviewRange(video);
 	          previewing = true;
 	          video.dataset.rstkVideoPreviewing = 'true';
 	          video.muted = true;
-	          if (video.currentTime < range.start || video.currentTime >= range.end) video.currentTime = range.start;
+	          if (video.readyState >= 1 && (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end)) video.currentTime = range.start;
 	          video.play().then(sync).catch(() => {
 	            stopPreviewLoop();
 	            sync();
@@ -27516,6 +27527,29 @@ function buildVideoPlayerRuntimeScript() {
 	          }
 	          hideSoundNotice();
 	        };
+	        const handlePreviewRangeChange = event => {
+	          if (!editorPreview) return;
+	          const detail = event && event.detail && typeof event.detail === 'object' ? event.detail : {};
+	          detail.handled = true;
+	          const nextStart = Number(detail.start);
+	          const nextEnd = Number(detail.end);
+	          if (Number.isFinite(nextStart)) video.setAttribute('data-rstk-video-preview-start', String(nextStart));
+	          if (Number.isFinite(nextEnd)) video.setAttribute('data-rstk-video-preview-end', String(nextEnd));
+	          previewEnabled = detail.enabled !== false && !video.autoplay;
+	          video.setAttribute('data-rstk-video-preview', previewEnabled ? 'true' : 'false');
+	          if (!previewEnabled) {
+	            stopPreviewLoop();
+	            if (!hasUserPlayed && !video.paused) video.pause();
+	            sync();
+	            return;
+	          }
+	          hasUserPlayed = false;
+	          delete video.dataset.rstkVideoRealPlayed;
+	          setControlsVisible(false);
+	          syncControlBarAccess();
+	          startPreviewLoop(true);
+	        };
+	        host.addEventListener('ristak:video-preview-range-change', handlePreviewRangeChange);
 	        const togglePlayback = unmute => {
 	          const wasPreviewing = previewing;
 	          if (wasPreviewing) stopPreviewLoop();

@@ -498,6 +498,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         title={reminder ? 'Detalles del mensaje automático' : 'Nuevo mensaje automático'}
         size="lg"
         type="custom"
+        closeOnBackdropClick={false}
+        closeOnEscape={false}
       >
         <div className={styles.form}>
           {/* Tipo de mensaje */}

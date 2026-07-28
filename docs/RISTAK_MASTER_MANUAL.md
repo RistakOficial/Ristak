@@ -3914,13 +3914,18 @@ tres horas. La confirmacion inmediata de una reserva, cuando el usuario la
 configura, debe usar `after_booking` y la plantilla `cita_programada`, que muestra
 la fecha y hora reales de la cita.
 
-Una cuenta nueva recibe una sola fila inicial: `Confirmación 1 día antes`, con
+Una cuenta nueva recibe exactamente dos filas iniciales, ambas pausadas. `Aviso
+al agendar` usa `after_booking`, offset cero, horario inteligente apagado y la
+plantilla `cita_programada`, por lo que queda listo para salir exactamente cuando
+se crea la cita. `Confirmación 1 día antes` usa
 `message_type='confirmation'`, ancla `before_appointment`, plantilla
-`confirmacion_cita_dia_anterior` y `enabled=0`. Nace pausada para que no se envie
-nada hasta que el usuario revise y active su configuracion. Esta fila lleva
-`system_key='default_one_day_before'` y un índice único parcial. Así dos
-instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Además,
-cada confirmación nueva selecciona por defecto sus acciones combinables:
+`confirmacion_cita_dia_anterior`, `ai_enabled=0` y offset de un día. Nada se
+envía hasta que el usuario revise y active cada configuración. Las filas llevan
+`system_key='default_on_booking'` y `system_key='default_one_day_before'`, más
+un índice único parcial; así dos instancias que arrancan al mismo tiempo no
+pueden duplicarlas. Si la cuenta ya tenía cualquier mensaje automático, este
+paquete no se agrega. Además, cada confirmación nueva selecciona por defecto sus
+acciones combinables:
 tarjeta en el chat, notificación push, etiqueta temporal `Asistirá a cita` y
 marcar la cita como confirmada. Esta última es obligatoria; las otras tres se
 pueden activar o quitar desde un dropdown con checks. Las filas históricas
@@ -3945,7 +3950,10 @@ arranque antes de llegar a los índices.
 
 Al pulsar **Agregar**, el frontend abre un borrador local y no persiste nada
 hasta **Guardar**. Esto evita crear provisionalmente otro recordatorio de un día
-antes y garantiza que cerrar el modal no deje filas huérfanas activas.
+antes y garantiza que cerrar el modal no deje filas huérfanas activas. El editor
+principal ignora clics en el fondo y la tecla Escape: sólo **Cancelar**,
+**Guardar** o la **X** lo cierran, para que un toque accidental no descarte el
+trabajo en curso.
 
 En PostgreSQL, las columnas de citas y envios siguen siendo
 `timestamp without time zone` con el valor normalizado a UTC. Al leerlas, el
@@ -5305,11 +5313,15 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   móvil. Los videos verticales no cambian y un formulario expandido sobre el
   reproductor conserva el espacio necesario para su contenido.
   El panel derecho también muestra **Resolución inteligente**, activa por
-  defecto incluso en videos guardados antes de existir el ajuste. Con HLS, el
-  modo activo deja que Bunny/hls.js seleccione la variante según el ancho de
-  banda para reducir esperas y buffering; al apagarlo, el reproductor prioriza
-  la mayor resolución disponible. En un MP4 único no existen variantes entre
-  las cuales elegir, por lo que el ajuste no altera ese archivo.
+  defecto incluso en videos guardados antes de existir el ajuste. El editor la
+  explica sin mencionar al proveedor técnico: el modo activo adapta la calidad
+  del video a la conexión para reducir esperas y pausas; al apagarlo, el
+  reproductor prioriza la mayor resolución disponible. Con HLS, Ristak usa
+  selección automática en el modo activo y, al apagarlo, prefiere hls.js,
+  espera el manifiesto, fija la variante más alta y después inicia la carga.
+  Si hls.js no está disponible, HLS nativo queda como respaldo compatible. En
+  un MP4 único no existen variantes entre las cuales elegir, por lo que el
+  ajuste no altera ese archivo.
   Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado y el total
   recibido por Bunny. En estándar también exige que el espejo Storage tenga el
   mismo tamaño; en premium exige la identidad Stream y persiste su HLS sin
@@ -5425,7 +5437,10 @@ controles falsos. Sus grupos de control son:
   `videoTrickProgressEnabled`, `videoTrickProgressRampPercent` y
   `videoTrickProgressPeakPercent`. `videoAdaptiveQuality` viene activo; `false`
   prioriza la mayor variante HLS disponible. Autoplay fuerza `videoMuted=true`
-  porque los navegadores bloquean la reproducción automática con audio.
+  porque los navegadores bloquean la reproducción automática con audio. Al
+  mover el inicio, el final o el rango completo del loop, el canvas visual y el
+  preview del editor HTML saltan inmediatamente al nuevo inicio y reproducen
+  ese tramo; no esperan a que termine el loop anterior ni al guardado.
 - Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
   `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
   `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene
