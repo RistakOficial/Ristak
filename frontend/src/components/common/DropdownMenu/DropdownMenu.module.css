@@ -1,8 +1,13 @@
 /* Content */
 .content {
+  position: relative;
   z-index: var(--z-index-popover);
   min-width: 8rem;
-  overflow: hidden;
+  max-width: min(calc(100vw - 24px), var(--radix-dropdown-menu-content-available-width));
+  max-height: min(calc(100dvh - 24px), var(--radix-dropdown-menu-content-available-height));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: var(--ristak-dropdown-radius);
   border: 1px solid var(--ristak-dropdown-border);
   background: var(--ristak-dropdown-panel-bg, var(--surface-solid, var(--surface)));

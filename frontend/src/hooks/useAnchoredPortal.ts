@@ -6,9 +6,11 @@ interface AnchoredPortalOptions {
   placement?: 'auto' | 'top' | 'bottom'
   gap?: number
   minWidth?: number
+  maxWidth?: number
   maxHeight?: number
   /** Igualar el ancho del panel al del ancla (default true). */
   matchWidth?: boolean
+  viewportPadding?: number
 }
 
 /**
@@ -24,36 +26,61 @@ export function useAnchoredPortal(
   open: boolean,
   options: AnchoredPortalOptions = {}
 ) {
-  const { placement = 'auto', gap = 6, minWidth, maxHeight = 340, matchWidth = true } = options
+  const {
+    placement = 'auto',
+    gap = 6,
+    minWidth,
+    maxWidth,
+    maxHeight = 340,
+    matchWidth = true,
+    viewportPadding = 12
+  } = options
   const [style, setStyle] = useState<CSSProperties>({})
   const [resolvedPlacement, setResolvedPlacement] = useState<'top' | 'bottom'>('bottom')
+  const [availableHeight, setAvailableHeight] = useState(0)
 
   const update = useCallback(() => {
     const anchor = anchorRef.current
     if (!anchor || typeof window === 'undefined') return
     const rect = anchor.getBoundingClientRect()
-    const pad = 12
-    const width = matchWidth
-      ? (minWidth ? Math.max(rect.width, minWidth) : rect.width)
+    const viewportWidth = Math.max(0, window.innerWidth)
+    const viewportHeight = Math.max(0, window.innerHeight)
+    const viewportContentWidth = Math.max(0, viewportWidth - viewportPadding * 2)
+    const preferredWidth = matchWidth
+      ? Math.max(rect.width, minWidth || 0)
       : (minWidth || rect.width)
-    const spaceBelow = window.innerHeight - rect.bottom - pad
-    const spaceAbove = rect.top - pad
+    const width = Math.min(preferredWidth, maxWidth || preferredWidth, viewportContentWidth)
+    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - gap - viewportPadding)
+    const spaceAbove = Math.max(0, rect.top - gap - viewportPadding)
     const openAbove = placement === 'top' ||
       (placement === 'auto' && spaceBelow < maxHeight && spaceAbove > spaceBelow)
-    const available = Math.max(160, openAbove ? spaceAbove : spaceBelow)
+    const available = openAbove ? spaceAbove : spaceBelow
     const height = Math.min(maxHeight, available)
+    const maxLeft = Math.max(viewportPadding, viewportWidth - width - viewportPadding)
+    const maxTop = Math.max(viewportPadding, viewportHeight - height - viewportPadding)
+
     setResolvedPlacement(openAbove ? 'top' : 'bottom')
+    setAvailableHeight(height)
     setStyle({
       position: 'fixed',
       top: openAbove
-        ? Math.max(pad, rect.top - height - gap)
-        : Math.min(rect.bottom + gap, window.innerHeight - pad - height),
-      left: Math.min(Math.max(pad, rect.left), window.innerWidth - width - pad),
+        ? Math.max(viewportPadding, rect.top - height - gap)
+        : Math.min(rect.bottom + gap, maxTop),
+      left: Math.min(Math.max(viewportPadding, rect.left), maxLeft),
       width,
       maxHeight: height,
       zIndex: getFloatingLayerZIndex(anchor, 'popover')
     })
-  }, [anchorRef, gap, matchWidth, maxHeight, minWidth, placement])
+  }, [
+    anchorRef,
+    gap,
+    matchWidth,
+    maxHeight,
+    maxWidth,
+    minWidth,
+    placement,
+    viewportPadding
+  ])
 
   // Posición inicial antes de pintar, para evitar el "salto" del panel.
   useLayoutEffect(() => {
@@ -71,7 +98,7 @@ export function useAnchoredPortal(
     }
   }, [open, update])
 
-  return { style, placement: resolvedPlacement }
+  return { style, placement: resolvedPlacement, availableHeight, update }
 }
 
 export default useAnchoredPortal

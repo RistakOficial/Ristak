@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Check, Search } from 'lucide-react'
-import { getFloatingLayerZIndex } from '@/utils/layering'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import styles from './CustomSelect.module.css'
 
 interface Option {
@@ -160,8 +160,6 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   'aria-labelledby': ariaLabelledBy
 }) => {
   const [isOpen, setIsOpen] = useState(false)
-  const [portalStyle, setPortalStyle] = useState<React.CSSProperties>({})
-  const [portalPlacement, setPortalPlacement] = useState<'top' | 'bottom'>('bottom')
   const [searchQuery, setSearchQuery] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -220,50 +218,48 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
   const selectedValue = String(isControlled ? value : internalValue)
   const selectedOption = flatOptions.find(opt => opt.value === selectedValue) ||
     (allowCustomValue && selectedValue ? { value: selectedValue, label: selectedValue } : undefined)
+  const rowHeight = size === 'large' ? 42 : 40
+  const groupLabelHeight = size === 'large' ? 34 : 28
+  const searchHeight = searchable ? 45 : 0
+  const maxDropdownHeight = size === 'large' ? 420 : 280
+  const optionGroupCount = optionEntries.filter(isOptionGroup).length
+  const estimatedContentHeight = flatOptions.length * rowHeight + optionGroupCount * groupLabelHeight + searchHeight + 8
+  const preferredDropdownHeight = Math.min(
+    Math.max(estimatedContentHeight, dropdownMinHeight || 0),
+    maxDropdownHeight
+  )
+  const {
+    style: anchoredPortalStyle,
+    placement: portalPlacement,
+    availableHeight
+  } = useAnchoredPortal(containerRef, isOpen && shouldPortal, {
+    placement: dropdownPlacement,
+    minWidth: dropdownMinWidth,
+    maxHeight: preferredDropdownHeight
+  })
+  const optionsAvailableHeight = Math.max(0, availableHeight - searchHeight)
+  const portalStyle = useMemo(() => ({
+    ...anchoredPortalStyle,
+    '--custom-select-options-max-height': `${optionsAvailableHeight}px`,
+    ...(dropdownMinHeight
+      ? {
+          '--custom-select-options-min-height': `${Math.min(
+            Math.max(0, dropdownMinHeight - searchHeight),
+            optionsAvailableHeight
+          )}px`
+        }
+      : {})
+  } as React.CSSProperties), [
+    anchoredPortalStyle,
+    dropdownMinHeight,
+    optionsAvailableHeight,
+    searchHeight
+  ])
 
   useEffect(() => {
     if (isControlled || internalValue || defaultValue !== undefined || !firstEnabledOption) return
     setInternalValue(firstEnabledOption.value)
   }, [defaultValue, firstEnabledOption, internalValue, isControlled])
-
-  const updatePortalPosition = useCallback(() => {
-    if (!shouldPortal || !containerRef.current) return
-
-    const rect = containerRef.current.getBoundingClientRect()
-    const viewportPadding = 12
-    const dropdownGap = 6
-    const rowHeight = size === 'large' ? 42 : 40
-    const groupLabelHeight = size === 'large' ? 34 : 28
-    const searchHeight = searchable ? 45 : 0
-    const maxDropdownHeight = size === 'large' ? 420 : 280
-    const viewportMinHeight = size === 'large' ? 220 : 120
-    const dropdownWidth = dropdownMinWidth ? Math.max(rect.width, dropdownMinWidth) : rect.width
-    const optionGroupCount = optionEntries.filter(isOptionGroup).length
-    const estimatedContentHeight = flatOptions.length * rowHeight + optionGroupCount * groupLabelHeight + searchHeight + 8
-    const estimatedHeight = Math.min(
-      Math.max(estimatedContentHeight, dropdownMinHeight || 0),
-      maxDropdownHeight
-    )
-    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
-    const spaceAbove = rect.top - viewportPadding
-    const openAbove = dropdownPlacement === 'top' ||
-      (dropdownPlacement === 'auto' && spaceBelow < estimatedHeight && spaceAbove > spaceBelow)
-    const availableSpace = Math.max(viewportMinHeight, openAbove ? spaceAbove : spaceBelow)
-    const dropdownHeight = Math.min(estimatedHeight, availableSpace)
-    setPortalPlacement(openAbove ? 'top' : 'bottom')
-
-    setPortalStyle({
-      position: 'fixed',
-      top: openAbove
-        ? Math.max(viewportPadding, rect.top - dropdownHeight - dropdownGap)
-        : Math.min(rect.bottom + dropdownGap, window.innerHeight - viewportPadding - dropdownHeight),
-      left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - dropdownWidth - viewportPadding),
-      width: dropdownWidth,
-      zIndex: getFloatingLayerZIndex(containerRef.current, 'popover'),
-      '--custom-select-options-max-height': `${Math.max(80, dropdownHeight - searchHeight)}px`,
-      ...(dropdownMinHeight ? { '--custom-select-options-min-height': `${Math.max(80, dropdownHeight - searchHeight)}px` } : {})
-    } as React.CSSProperties)
-  }, [dropdownMinHeight, dropdownMinWidth, dropdownPlacement, flatOptions.length, optionEntries, searchable, shouldPortal, size])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -290,19 +286,6 @@ export const CustomSelect: React.FC<CustomSelectProps> = ({
     const frame = window.requestAnimationFrame(() => searchInputRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
   }, [isOpen, searchable])
-
-  useEffect(() => {
-    if (!isOpen || !shouldPortal) return
-
-    updatePortalPosition()
-    window.addEventListener('resize', updatePortalPosition)
-    window.addEventListener('scroll', updatePortalPosition, true)
-
-    return () => {
-      window.removeEventListener('resize', updatePortalPosition)
-      window.removeEventListener('scroll', updatePortalPosition, true)
-    }
-  }, [isOpen, shouldPortal, updatePortalPosition])
 
   const handleSelect = (option: Option) => {
     if (option.disabled) return

@@ -1,5 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { ChevronDown } from 'lucide-react'
+import React, { useState } from 'react'
+import { Check, ChevronDown } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '../DropdownMenu'
 import styles from './ViewSelector.module.css'
 
 interface ViewSelectorProps {
@@ -19,65 +25,50 @@ export const ViewSelector: React.FC<ViewSelectorProps> = ({
   variant = 'control'
 }) => {
   const [isOpen, setIsOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-
   const selectedOption = options.find(opt => opt.value === value)
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
-    }
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isOpen])
 
   const handleSelect = (optionValue: string) => {
     onChange(optionValue)
-    setIsOpen(false)
   }
 
   const isTitle = variant === 'title'
 
   return (
-    <div className={`${styles.wrapper} ${isTitle ? styles.wrapperTitle : ''} ${className || ''}`} ref={dropdownRef}>
-      <button
-        className={`${styles.trigger} ${isOpen ? styles.triggerOpen : ''} ${isTitle ? styles.triggerTitle : ''}`}
-        onClick={() => setIsOpen(!isOpen)}
-        type="button"
-        aria-expanded={isOpen}
-        data-ristak-dropdown-trigger={isTitle ? undefined : 'true'}
-      >
-        <span className={styles.value}>{selectedOption?.label}</span>
-        <ChevronDown
-          size={isTitle ? 20 : 16}
-          className={`${styles.icon} ${isOpen ? styles.iconOpen : ''}`}
-        />
-      </button>
+    <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
+      <div className={`${styles.wrapper} ${isTitle ? styles.wrapperTitle : ''} ${className || ''}`}>
+        <DropdownMenuTrigger asChild>
+          <button
+            className={`${styles.trigger} ${isOpen ? styles.triggerOpen : ''} ${isTitle ? styles.triggerTitle : ''}`}
+            type="button"
+            aria-expanded={isOpen}
+            data-ristak-dropdown-trigger={isTitle ? undefined : 'true'}
+          >
+            <span className={styles.value}>{selectedOption?.label}</span>
+            <ChevronDown
+              size={isTitle ? 20 : 16}
+              className={`${styles.icon} ${isOpen ? styles.iconOpen : ''}`}
+            />
+          </button>
+        </DropdownMenuTrigger>
 
-      {isOpen && (
-        <div className={`${styles.dropdown} ${isTitle ? styles.dropdownTitle : ''}`} data-ristak-dropdown-panel={isTitle ? undefined : 'true'}>
+        <DropdownMenuContent
+          align={isTitle ? 'start' : 'end'}
+          sideOffset={4}
+          className={`${styles.dropdown} ${isTitle ? styles.dropdownTitle : ''}`}
+        >
           {options.map(option => (
-            <button
+            <DropdownMenuItem
               key={option.value}
               className={`${styles.option} ${option.value === value ? styles.optionActive : ''}`}
-              onClick={() => handleSelect(option.value)}
-              type="button"
-              data-ristak-dropdown-item={isTitle ? undefined : 'true'}
+              onSelect={() => handleSelect(option.value)}
               data-selected={option.value === value ? 'true' : undefined}
             >
-              {option.label}
-            </button>
+              <span>{option.label}</span>
+              {option.value === value ? <Check size={15} aria-hidden="true" /> : null}
+            </DropdownMenuItem>
           ))}
-        </div>
-      )}
-    </div>
+        </DropdownMenuContent>
+      </div>
+    </DropdownMenu>
   )
 }

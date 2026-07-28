@@ -150,7 +150,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Campo numérico | `<NumberInput>`; en primitivas móviles, `type="text"` + `inputMode="numeric\|decimal"` | `<input type="number">` nativo o controles con flechas subir/bajar |
 | Texto largo enfocable | `<ExpandableTextareaField>`; comparte el mismo valor entre el campo y su editor `<Modal size="xl">` | duplicar estado, recortar silenciosamente o construir un overlay local |
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
-| Menú | `<DropdownMenu>` | — |
+| Menú | `<DropdownMenu>`; se portalea, evita colisiones y cambia arriba/abajo según el espacio real | posicionar `DropdownMenuContent` con `top`/`right`/`bottom`/`left` desde CSS local |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
 | Confirmar borrar/desconectar/revocar | `showConfirm(...)` del `NotificationContext` (o `<Modal type="confirm" typeToConfirm="…">`) — ver §4.1 | `window.confirm`, un modal de confirmación a mano, copiar el JSX de otro borrado |
 | Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |
@@ -181,6 +181,15 @@ Responsive: sí se permite ajustar ancho, densidad y orden visual para ventanas
 chicas usando `flex`, `grid`, `minmax`, `clamp`, `min-width: 0`, container/media
 queries y variables del componente. Lo que no se permite es crear otro estilo
 visual por página para "resolver" pantallas chicas.
+
+**Capas flotantes dentro del viewport.** Menús, selectores, buscadores con
+resultados y popovers anclados nunca pueden quedar recortados por el borde de la
+ventana. Usa `<DropdownMenu>` para menús y `useAnchoredPortal` para cualquier
+lista flotante especializada. Ambos deben preferir el lado solicitado, cambiar
+arriba/abajo cuando no haya espacio, respetar el margen del viewport y limitar
+la altura disponible con scroll interno si no cabe completa. El CSS consumidor
+puede definir apariencia y ancho, pero no `position`, `top`, `right`, `bottom` ni
+`left` sobre `DropdownMenuContent`: la capa global es dueña de la posición.
 
 **Selector de código telefónico.** En cualquier formulario que separa la región
 del número, el control visible usa únicamente `bandera + código internacional`
@@ -380,10 +389,13 @@ una isla.
 10. `npm run design:audit` pasa sin violaciones nuevas.
 11. El responsive para ventanas chicas sigue funcionando con reglas fluidas, no
    con estilos visuales paralelos.
-12. Toda confirmación de borrar/desconectar/revocar sigue el patrón único (§4.1):
+12. Menús, selects y listas flotantes cambian arriba/abajo al llegar al borde y,
+    si no caben completos, mantienen todas sus opciones accesibles con scroll.
+13. Toda confirmación de borrar/desconectar/revocar sigue el patrón único (§4.1):
    `showConfirm`/`<Modal type="confirm">`, palabra en MAYÚSCULAS = verbo, copia y
    botón estándar, `typeToConfirm` por riesgo. Cero `window.confirm` y cero modales
    de borrado a mano.
-13. Los campos numéricos no usan `<input type="number">` nativo ni muestran
+14. Los campos numéricos no usan `<input type="number">` nativo ni muestran
     flechas de subir/bajar.
-14. No tocaste `Phone*`, Automatizaciones, ni el layout/flujo.
+15. No tocaste `Phone*` ni el layout/flujo propio de Automatizaciones, salvo que
+    sean parte explícita del alcance.

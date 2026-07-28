@@ -6379,10 +6379,7 @@
 }
 
 .pageMenu {
-  position: absolute;
   z-index: var(--z-index-popover);
-  top: calc(100% + 4px);
-  right: 0;
   min-width: 172px;
   display: grid;
   gap: 4px;

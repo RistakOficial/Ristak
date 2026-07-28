@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-23.
+Ultima consolidacion: 2026-07-27.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -198,6 +198,16 @@ Providers globales:
 - Labels.
 - Auth.
 - Date range.
+
+Los menús y listas desplegables de escritorio comparten un contrato de
+posicionamiento dentro del viewport. `DropdownMenu` es el patrón para menús de
+acciones y `useAnchoredPortal` para selectores o resultados especializados. La
+capa intenta abrir en el lado solicitado, cambia arriba/abajo cuando falta
+espacio y limita su alto con scroll interno cuando ninguna dirección alcanza.
+Las páginas consumidoras pueden ajustar apariencia y ancho, pero no deben fijar
+coordenadas CSS que anulen el cálculo global. Esto incluye los menús de tres
+puntos de Sites, Automatizaciones y los demás módulos que usan la primitiva
+compartida.
 
 El estado remoto compartido no debe duplicarse en componentes que solo consultan
 una vez al montar. `frontend/src/services/integrationsService.ts` publica un

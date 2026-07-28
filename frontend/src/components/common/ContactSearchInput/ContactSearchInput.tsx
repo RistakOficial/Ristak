@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './ContactSearchInput.module.css';
 import { Icon } from '../Icon/Icon';
 import { SearchField } from '../SearchField';
 import { Button } from '../Button';
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal';
 import { contactsService } from '@/services/contactsService';
 import { suppressContactAutofill } from '@/utils/browserAutofill';
 
@@ -70,7 +71,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   required = false,
   error,
   disabled = false,
-  portal = false,
+  portal = true,
   allowCreate = true
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -83,11 +84,17 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   // New contact form state
   const [newContact, setNewContact] = useState(emptyNewContact);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
-  const [portalDropdownStyle, setPortalDropdownStyle] = useState<React.CSSProperties>();
 
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const {
+    style: portalDropdownStyle,
+    placement: portalPlacement
+  } = useAnchoredPortal(inputRef, isOpen && portal, {
+    gap: 4,
+    maxHeight: 280,
+    viewportPadding: 16
+  });
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -194,52 +201,6 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       return () => window.removeEventListener('keydown', handleKeyDown);
     }
   }, [allowCreate, isOpen, suggestions, selectedIndex, showNewContactForm]);
-
-  const updatePortalDropdownPosition = useCallback(() => {
-    if (!portal || !isOpen) return;
-
-    const rect = wrapperRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const viewportPadding = 16;
-    const dropdownGap = 4;
-    const maxDropdownHeight = 280;
-    const minDropdownHeight = 180;
-    const availableBelow = window.innerHeight - rect.bottom - dropdownGap - viewportPadding;
-    const availableAbove = rect.top - dropdownGap - viewportPadding;
-    const openAbove = availableBelow < minDropdownHeight && availableAbove > availableBelow;
-    const availableSpace = openAbove ? availableAbove : availableBelow;
-    const dropdownHeight = Math.min(maxDropdownHeight, Math.max(minDropdownHeight, availableSpace));
-    const dropdownWidth = Math.min(rect.width, window.innerWidth - viewportPadding * 2);
-    const left = Math.min(
-      Math.max(viewportPadding, rect.left),
-      window.innerWidth - viewportPadding - dropdownWidth
-    );
-    const top = openAbove
-      ? Math.max(viewportPadding, rect.top - dropdownGap - dropdownHeight)
-      : Math.min(rect.bottom + dropdownGap, window.innerHeight - viewportPadding - dropdownHeight);
-
-    setPortalDropdownStyle({
-      left,
-      top,
-      width: dropdownWidth,
-      maxHeight: dropdownHeight
-    });
-  }, [isOpen, portal]);
-
-  useLayoutEffect(() => {
-    if (!portal || !isOpen) return;
-
-    updatePortalDropdownPosition();
-
-    window.addEventListener('resize', updatePortalDropdownPosition);
-    window.addEventListener('scroll', updatePortalDropdownPosition, true);
-
-    return () => {
-      window.removeEventListener('resize', updatePortalDropdownPosition);
-      window.removeEventListener('scroll', updatePortalDropdownPosition, true);
-    };
-  }, [isOpen, portal, updatePortalDropdownPosition]);
 
   const handleSelectContact = (contact: ContactSearchInputContact) => {
     onChange(contact);
@@ -348,6 +309,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
       ref={dropdownRef}
       className={`${styles.dropdown} ${portal ? styles.dropdownPortal : ''}`}
       style={portal ? portalDropdownStyle : undefined}
+      data-placement={portal ? portalPlacement : undefined}
       data-ristak-dropdown-panel
     >
       {showNewContactForm ? (
@@ -499,7 +461,7 @@ export const ContactSearchInput: React.FC<ContactSearchInputProps> = ({
   ) : null;
 
   return (
-    <div ref={wrapperRef} className={styles.wrapper}>
+    <div className={styles.wrapper}>
       <label className={styles.label}>
         {label} {required && <span className={styles.required}>*</span>}
       </label>

@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Lock, Plus, Search, X } from 'lucide-react'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
-import { getFloatingLayerZIndex } from '@/utils/layering'
+import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import styles from './TagPicker.module.css'
 
 /**
@@ -34,7 +34,7 @@ interface TagPickerBaseProps {
   allowCreate?: boolean
   placeholder?: string
   disabled?: boolean
-  /** Dibuja el dropdown en un portal (paneles con scroll que recortan) */
+  /** Dibuja el dropdown en un portal (default true; evita recortes por overflow). */
   portal?: boolean
   size?: 'default' | 'large'
   triggerVariant?: 'button' | 'chip'
@@ -73,7 +73,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
     allowCreate = true,
     placeholder,
     disabled = false,
-    portal = false,
+    portal = true,
     size = 'default',
     triggerVariant = 'button',
     chipTriggerPlacement = 'chips',
@@ -91,10 +91,22 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   const [isOpen, setIsOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
-  const [portalStyle, setPortalStyle] = useState<React.CSSProperties>({})
   const containerRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const preferredDropdownHeight = size === 'large' ? 420 : 300
+  const searchRowHeight = size === 'large' ? 58 : 52
+  const {
+    style: anchoredPortalStyle,
+    placement: portalPlacement,
+    availableHeight
+  } = useAnchoredPortal(containerRef, isOpen && portal, {
+    maxHeight: preferredDropdownHeight
+  })
+  const portalStyle = useMemo(() => ({
+    ...anchoredPortalStyle,
+    '--tag-picker-options-max-height': `${Math.max(0, availableHeight - searchRowHeight)}px`
+  } as React.CSSProperties), [anchoredPortalStyle, availableHeight, searchRowHeight])
 
   const selectedIds = isMultiple ? (props as TagPickerMultiProps).selectedIds : []
   const singleValue = !isMultiple ? (props as TagPickerSingleProps).value : ''
@@ -119,29 +131,6 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
 
   const canCreate = allowCreate && search.trim().length > 0 && !exactMatch && !creating
 
-  const updatePortalPosition = useCallback(() => {
-    if (!portal || !containerRef.current) return
-    const rect = containerRef.current.getBoundingClientRect()
-    const viewportPadding = 12
-    const gap = 6
-    const estimatedHeight = size === 'large' ? 420 : 300
-    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding
-    const spaceAbove = rect.top - viewportPadding
-    const openAbove = spaceBelow < estimatedHeight && spaceAbove > spaceBelow
-    const available = Math.max(size === 'large' ? 220 : 140, openAbove ? spaceAbove : spaceBelow)
-    const height = Math.min(estimatedHeight, available)
-    setPortalStyle({
-      position: 'fixed',
-      top: openAbove
-        ? Math.max(viewportPadding, rect.top - height - gap)
-        : Math.min(rect.bottom + gap, window.innerHeight - viewportPadding - height),
-      left: Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - rect.width - viewportPadding),
-      width: rect.width,
-      zIndex: getFloatingLayerZIndex(containerRef.current, 'popover'),
-      '--tag-picker-options-max-height': `${height - (size === 'large' ? 58 : 52)}px`
-    } as React.CSSProperties)
-  }, [portal, size])
-
   useEffect(() => {
     if (!isOpen) return
     const handleClickOutside = (event: MouseEvent) => {
@@ -158,15 +147,7 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
   useEffect(() => {
     if (!isOpen) return
     searchInputRef.current?.focus()
-    if (!portal) return
-    updatePortalPosition()
-    window.addEventListener('resize', updatePortalPosition)
-    window.addEventListener('scroll', updatePortalPosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePortalPosition)
-      window.removeEventListener('scroll', updatePortalPosition, true)
-    }
-  }, [isOpen, portal, updatePortalPosition])
+  }, [isOpen])
 
   const selectTag = (tag: ContactTag) => {
     if (isMultiple) {
@@ -236,6 +217,8 @@ export const TagPicker: React.FC<TagPickerProps> = (props) => {
       ref={dropdownRef}
       className={`${styles.dropdown} ${portal ? styles.portalDropdown : ''} ${size === 'large' ? styles.dropdownLarge : ''}`}
       style={portal ? portalStyle : undefined}
+      data-placement={portal ? portalPlacement : undefined}
+      data-ristak-dropdown-panel
     >
       <div className={styles.searchWrap}>
         <Search size={14} />

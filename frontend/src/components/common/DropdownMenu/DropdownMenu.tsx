@@ -53,17 +53,36 @@ const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, style, onEscapeKeyDown, ...props }, ref) => {
+>(({
+  className,
+  sideOffset = 4,
+  collisionPadding = 12,
+  avoidCollisions = true,
+  sticky = 'always',
+  style,
+  onEscapeKeyDown,
+  ...props
+}, ref) => {
   const layerContext = React.useContext(DropdownMenuLayerContext)
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
         ref={ref}
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        avoidCollisions={avoidCollisions}
+        sticky={sticky}
         className={`${styles.content} ${className || ''}`}
         data-ristak-dropdown-panel
         style={{
           ...style,
+          // El wrapper de Radix es quien calcula la posición. Una clase legacy
+          // del consumidor nunca debe volver a forzar este panel debajo del ancla.
+          position: 'relative',
+          top: 'auto',
+          right: 'auto',
+          bottom: 'auto',
+          left: 'auto',
           zIndex: layerContext?.layerZIndex || 'var(--z-index-popover)'
         }}
         onEscapeKeyDown={(event) => {
