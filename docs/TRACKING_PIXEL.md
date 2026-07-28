@@ -657,6 +657,11 @@ Ristak guarda cada zona como bloque real del sitio importado:
   queda para editor/fallback cuando existe; el perfil premium también usa HLS en
   preview con tracking apagado y no crea una copia binaria a través de Render.
   Ningún modo sustituye el player nativo por el iframe visual de Bunny Stream.
+  `videoMobilePortraitCrop` viene activo en el editor visual y en el editor HTML:
+  para un video horizontal, únicamente cambia el frame móvil a 9:16 y aplica un
+  recorte centrado, sin transformar ni duplicar el asset. Por ello no crea otro
+  reproductor, sesión ni fuente de eventos; tracking y acciones siguen leyendo
+  el mismo elemento de video.
 
 Para bloquear contenido por reproducción sin escribir JavaScript, el slot
 `video` puede declarar:

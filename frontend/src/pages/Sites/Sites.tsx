@@ -244,6 +244,7 @@ import {
   countdownShowLabelsValue,
   extractWistiaMediaId,
   isSocialTemplate,
+  isVideoMobilePortraitCropEnabled,
   normalizeFormChoiceStyle as normalizeSharedFormChoiceStyle,
   normalizeFormInputStyle as normalizeSharedFormInputStyle,
   normalizeFormSelectStyle as normalizeSharedFormSelectStyle,
@@ -1130,6 +1131,11 @@ const videoPlayShapeOptions = [
   { value: 'rectangle', label: 'Rectangular' }
 ] as const
 type VideoPlayShape = typeof videoPlayShapeOptions[number]['value']
+const videoControlBarStyleOptions = [
+  { value: 'floating', label: 'Globo flotante' },
+  { value: 'docked', label: 'Panel inferior' }
+] as const
+type VideoControlBarStyle = typeof videoControlBarStyleOptions[number]['value']
 const videoSoundNoticeDurationOptions = [
   { value: '3', label: '3 segundos' },
   { value: '5', label: '5 segundos' },
@@ -1140,6 +1146,7 @@ const videoSoundNoticeDurationOptions = [
 const DEFAULT_VIDEO_CONTROLS_MODE: VideoControlsMode = 'clean'
 const DEFAULT_VIDEO_PLAY_ICON_STYLE: VideoPlayIconStyle = 'solid'
 const DEFAULT_VIDEO_PLAY_SHAPE: VideoPlayShape = 'rectangle'
+const DEFAULT_VIDEO_CONTROL_BAR_STYLE: VideoControlBarStyle = 'floating'
 const LEGACY_VIDEO_SOUND_NOTICE_TEXT = 'Reproduce para escuchar'
 const DEFAULT_VIDEO_SOUND_NOTICE_TEXT = 'Haz clic para activar el sonido'
 const DEFAULT_VIDEO_SOUND_NOTICE_HIDE_AFTER = 5
@@ -1193,6 +1200,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoControls: false,
   videoOverlayPlay: true,
   videoControlBar: true,
+  videoControlBarStyle: DEFAULT_VIDEO_CONTROL_BAR_STYLE,
   videoControlBarInitiallyVisible: true,
   videoControlPlay: true,
   videoControlProgress: true,
@@ -1216,6 +1224,7 @@ const DEFAULT_VIDEO_PLAYER_SETTINGS: Record<string, unknown> = {
   videoLoop: false,
   videoDefaultSpeed: 1,
   videoOrientation: DEFAULT_VIDEO_ORIENTATION,
+  videoMobilePortraitCrop: true,
   videoFit: 'cover',
   videoPlayerBackground: DEFAULT_VIDEO_PLAYER_BACKGROUND,
   videoFormGateThemeMode: DEFAULT_VIDEO_FORM_GATE_THEME_MODE,
@@ -4104,6 +4113,14 @@ const getVideoPlayRadiusValue = (settings: Record<string, unknown>, shape: Video
 
 const getVideoControlPanelRadiusValue = (settings: Record<string, unknown>) =>
   getSettingNumber(settings, 'videoControlPanelRadius', DEFAULT_VIDEO_CONTROL_PANEL_RADIUS, 0, VIDEO_CONTROL_PANEL_RADIUS_MAX)
+
+const isVideoControlBarStyle = (value: string): value is VideoControlBarStyle =>
+  videoControlBarStyleOptions.some(option => option.value === value)
+
+const getVideoControlBarStyle = (settings: Record<string, unknown>): VideoControlBarStyle => {
+  const rawStyle = getSettingString(settings, 'videoControlBarStyle')
+  return isVideoControlBarStyle(rawStyle) ? rawStyle : DEFAULT_VIDEO_CONTROL_BAR_STYLE
+}
 
 const shouldShowVideoControlBar = (settings: Record<string, unknown>) =>
   settings.videoControlBar !== false
@@ -30912,6 +30929,20 @@ const VideoPlayerSettingsControls: React.FC<{
               </CustomSelect>
             </label>
           </div>
+          <div className={styles.videoFormGateSwitchRow}>
+            <div>
+              <strong>Recortar a 9:16 en celular</strong>
+              <span>Solo para video horizontal: centra el recorte móvil sin modificar el archivo.</span>
+            </div>
+            <Switch
+              checked={isVideoMobilePortraitCropEnabled(settings)}
+              onChange={(checked) => {
+                onPatchSettings({ videoMobilePortraitCrop: checked })
+                window.setTimeout(onSave, 0)
+              }}
+              aria-label="Recortar video horizontal a 9:16 en celular"
+            />
+          </div>
           <div className={styles.twoColumn}>
             <ColorField label="Fondo del video" value={getSettingString(settings, 'videoPlayerBackground') || DEFAULT_VIDEO_PLAYER_BACKGROUND} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerBackground: value })} onCommit={onSave} />
             <ColorField
@@ -31048,6 +31079,22 @@ const VideoPlayerSettingsControls: React.FC<{
               <strong>Controles inferiores</strong>
             </div>
             <VideoSettingsElementPreview settings={settings} type="bar" />
+            <label className={styles.field}>
+              <span>Forma de la barra</span>
+              <CustomSelect
+                value={getVideoControlBarStyle(settings)}
+                disabled={!showCustomControlBar}
+                onChange={(event) => {
+                  const nextStyle = isVideoControlBarStyle(event.target.value) ? event.target.value : DEFAULT_VIDEO_CONTROL_BAR_STYLE
+                  onPatchSettings({ videoControlBarStyle: nextStyle })
+                }}
+                onBlur={onSave}
+              >
+                {videoControlBarStyleOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
             <div className={styles.twoColumn}>
               <label className={styles.checkboxLabel}>
                 <input
@@ -31286,9 +31333,28 @@ const VideoPlayerSettingsControls: React.FC<{
               </label>
             )}
             <div className={styles.twoColumn}>
-              <ColorField label="Fondo del player" value={getVideoPlayerButtonColor(settings)} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayerColor: value })} onCommit={onSave} />
-              <ColorField label="Ícono play" value={getVideoPlayIconColor(settings)} allowGradient={false} onChange={(value) => onPatchSettings({ videoPlayColor: value })} onCommit={onSave} />
+              <ColorField
+                label="Fondo · botón y barra"
+                value={getVideoPlayerButtonColor(settings)}
+                allowGradient={false}
+                onChange={(value) => onPatchSettings({
+                  videoPlayerColor: value,
+                  videoPlayColor: getVideoPlayIconColor(settings)
+                })}
+                onCommit={onSave}
+              />
+              <ColorField
+                label="Contraste · iconos y progreso"
+                value={getVideoPlayIconColor(settings)}
+                allowGradient={false}
+                onChange={(value) => onPatchSettings({
+                  videoPlayerColor: getVideoPlayerButtonColor(settings),
+                  videoPlayColor: value
+                })}
+                onCommit={onSave}
+              />
             </div>
+            <p className={styles.muted}>El fondo del reproductor y el ícono de play se configuran como una pareja visual y deben conservar contraste legible.</p>
             <div className={styles.twoColumn}>
               <VideoDimensionSliderField
                 label="Tamaño del play"
@@ -36892,6 +36958,8 @@ const VideoPlayerPreview: React.FC<{
 }> = ({ src, label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, videoFormGateEditor, forms = [], calendars = [], editable = false, selected = false }) => {
   const playerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const settingsControlRef = useRef<HTMLDivElement | null>(null)
+  const settingsToggleRef = useRef<HTMLButtonElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const previewLoopRef = useRef(false)
   const progressAnimationFrameRef = useRef<number | null>(null)
@@ -36930,6 +36998,7 @@ const VideoPlayerPreview: React.FC<{
   const loop = Boolean(settings.videoLoop) || autoplay
   const speed = getSettingNumber(settings, 'videoDefaultSpeed', 1, 0.25, 4)
   const [currentSpeed, setCurrentSpeed] = useState(speed)
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [hasStartedPlayback, setHasStartedPlayback] = useState(Boolean(autoplay))
   const fit = getSettingString(settings, 'videoFit') || 'cover'
   const resolvedOrientation = getResolvedVideoOrientation(settings, detectedOrientation)
@@ -37068,6 +37137,7 @@ const VideoPlayerPreview: React.FC<{
   const hideControlsAfter = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     clearControlsHideTimer()
     if (!showCustomControlBar) return
+    if (settingsMenuOpen) return
     if (isControlBarBlockedAtStart()) {
       setControlsVisible(false)
       return
@@ -37077,7 +37147,7 @@ const VideoPlayerPreview: React.FC<{
       setControlsVisible(false)
       controlsHideTimerRef.current = null
     }, delay)
-  }, [clearControlsHideTimer, isControlBarBlockedAtStart, isPlaying, showCustomControlBar])
+  }, [clearControlsHideTimer, isControlBarBlockedAtStart, isPlaying, settingsMenuOpen, showCustomControlBar])
   const showControlsTemporarily = useCallback((delay = VIDEO_CONTROLS_IDLE_MS) => {
     if (!showCustomControlBar) return
     if (isControlBarBlockedAtStart()) {
@@ -37092,8 +37162,9 @@ const VideoPlayerPreview: React.FC<{
     showControlsTemporarily()
   }, [showControlsTemporarily])
   const handlePlayerLeave = useCallback(() => {
+    if (settingsMenuOpen) return
     hideControlsAfter(VIDEO_CONTROLS_LEAVE_IDLE_MS)
-  }, [hideControlsAfter])
+  }, [hideControlsAfter, settingsMenuOpen])
 
   useEffect(() => {
     if (!shouldDismissControlsOnOutsidePointer) return undefined
@@ -37105,6 +37176,7 @@ const VideoPlayerPreview: React.FC<{
       const target = event.target as Node | null
       if (target && player.contains(target)) return
       clearControlsHideTimer()
+      setSettingsMenuOpen(false)
       setControlsVisible(false)
     }
     const addDocumentListener = (doc: Document | null | undefined) => {
@@ -37128,11 +37200,45 @@ const VideoPlayerPreview: React.FC<{
       })
     }
   }, [clearControlsHideTimer, shouldDismissControlsOnOutsidePointer])
+
+  useEffect(() => {
+    if (!settingsMenuOpen) return undefined
+    const control = settingsControlRef.current
+    if (!control) return undefined
+
+    const listeningDocuments = new Set<Document>()
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null
+      if (target && control.contains(target)) return
+      setSettingsMenuOpen(false)
+    }
+    const addDocumentListener = (doc: Document | null | undefined) => {
+      if (!doc || listeningDocuments.has(doc)) return
+      doc.addEventListener('pointerdown', handleOutsidePointerDown, true)
+      listeningDocuments.add(doc)
+    }
+
+    addDocumentListener(control.ownerDocument)
+    try {
+      const ownerWindow = control.ownerDocument.defaultView
+      const parentWindow = ownerWindow?.parent
+      if (parentWindow && parentWindow !== ownerWindow) addDocumentListener(parentWindow.document)
+    } catch {
+      // El preview embebido puede vivir en un parent cross-origin.
+    }
+
+    return () => {
+      listeningDocuments.forEach(doc => {
+        doc.removeEventListener('pointerdown', handleOutsidePointerDown, true)
+      })
+    }
+  }, [settingsMenuOpen])
   const className = [
     'rstk-video',
     'rstk-video-player',
     showNativeControls ? 'rstk-video-native-controls' : showOverlay ? 'rstk-video-custom-controls' : 'rstk-video-no-controls',
     showCustomControlBar ? 'rstk-video-has-control-bar' : '',
+    showCustomControlBar ? `rstk-video-control-bar-${getVideoControlBarStyle(settings)}` : '',
     showCustomControlBar ? (controlsVisible ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
     shouldHideControlBarAtStart ? 'rstk-video-controls-start-hidden' : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
@@ -37141,6 +37247,7 @@ const VideoPlayerPreview: React.FC<{
     isMuted ? 'rstk-video-is-muted' : '',
     `rstk-video-${resolvedOrientation}`,
     getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings)),
+    isVideoMobilePortraitCropEnabled(settings) ? 'rstk-video-mobile-portrait-crop' : '',
     `rstk-video-play-shape-${playShape}`,
     `rstk-video-play-${playIconStyle}`,
     showGatePreview ? 'rstk-video-form-gate-previewing' : '',
@@ -37232,11 +37339,13 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => {
     if (!showCustomControlBar) {
       clearControlsHideTimer()
+      setSettingsMenuOpen(false)
       setControlsVisible(false)
       return
     }
     if (shouldHideControlBarAtStart) {
       clearControlsHideTimer()
+      setSettingsMenuOpen(false)
       setControlsVisible(false)
       return
     }
@@ -37248,6 +37357,19 @@ const VideoPlayerPreview: React.FC<{
     setControlsVisible(true)
     hideControlsAfter()
   }, [clearControlsHideTimer, hideControlsAfter, shouldHideControlBarAtStart, showControlBarInitially, showCustomControlBar])
+
+  useEffect(() => {
+    if (!showCustomSpeed || !showCustomSettings) setSettingsMenuOpen(false)
+  }, [showCustomSettings, showCustomSpeed])
+
+  useEffect(() => {
+    if (settingsMenuOpen) {
+      clearControlsHideTimer()
+      setControlsVisible(true)
+      return
+    }
+    if (controlsVisible && isPlaying && !shouldHideControlBarAtStart) hideControlsAfter()
+  }, [clearControlsHideTimer, controlsVisible, hideControlsAfter, isPlaying, settingsMenuOpen, shouldHideControlBarAtStart])
 
   const getActivePreviewRange = useCallback(() => {
     const duration = videoRef.current?.duration
@@ -37524,8 +37646,39 @@ const VideoPlayerPreview: React.FC<{
     const nextSpeed = Number(event.target.value)
     const video = videoRef.current
     if (!Number.isFinite(nextSpeed)) return
-    if (video) video.playbackRate = nextSpeed
-    setCurrentSpeed(nextSpeed)
+    const normalizedSpeed = Math.min(4, Math.max(0.25, nextSpeed))
+    if (video) video.playbackRate = normalizedSpeed
+    setCurrentSpeed(normalizedSpeed)
+  }
+
+  const handleSettingsToggle = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (shouldLetEditorSelect) return
+    event.preventDefault()
+    event.stopPropagation()
+    clearControlsHideTimer()
+    setControlsVisible(true)
+    setSettingsMenuOpen(open => !open)
+  }
+
+  const handleSpeedOptionClick = (event: React.MouseEvent<HTMLButtonElement>, nextSpeed: number) => {
+    if (shouldLetEditorSelect) return
+    event.preventDefault()
+    event.stopPropagation()
+    const normalizedSpeed = Math.min(4, Math.max(0.25, nextSpeed))
+    const video = videoRef.current
+    if (video) video.playbackRate = normalizedSpeed
+    setCurrentSpeed(normalizedSpeed)
+    setSettingsMenuOpen(false)
+    showControlsTemporarily()
+    window.setTimeout(() => settingsToggleRef.current?.focus(), 0)
+  }
+
+  const handlePlayerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape' || !settingsMenuOpen) return
+    event.preventDefault()
+    event.stopPropagation()
+    setSettingsMenuOpen(false)
+    window.setTimeout(() => settingsToggleRef.current?.focus(), 0)
   }
 
   const seekToProgressRatio = (ratio: number) => {
@@ -37646,6 +37799,7 @@ const VideoPlayerPreview: React.FC<{
       onTouchStart={handlePlayerActivity}
       onFocusCapture={handlePlayerActivity}
       onBlurCapture={handlePlayerLeave}
+      onKeyDownCapture={handlePlayerKeyDown}
     >
       <video
         ref={videoRef}
@@ -37732,14 +37886,50 @@ const VideoPlayerPreview: React.FC<{
               {isMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
             </button>
           )}
-          {showCustomSpeed && (
-            <label className={`rstk-video-speed-control ${showCustomSettings ? 'rstk-video-speed-has-settings' : 'rstk-video-speed-no-settings'}`} aria-label="Velocidad de reproducción">
-              {showCustomSettings && (
-                <span className="rstk-video-settings-icon" data-rstk-video-settings-icon aria-hidden="true">
-                  <Settings2 size={14} />
-                </span>
-              )}
-              <select value={String(currentSpeed)} tabIndex={controlBarTabIndex} onChange={handleSpeedChange}>
+          {showCustomSpeed && showCustomSettings && (
+            <div ref={settingsControlRef} className={`rstk-video-settings-control ${settingsMenuOpen ? 'rstk-video-settings-open' : ''}`} data-rstk-video-settings-control>
+              <button
+                ref={settingsToggleRef}
+                type="button"
+                className="rstk-video-control-button rstk-video-settings-toggle"
+                data-rstk-video-settings-toggle
+                tabIndex={controlBarTabIndex}
+                aria-label={settingsMenuOpen ? 'Cerrar configuración del video' : 'Abrir configuración del video'}
+                aria-haspopup="menu"
+                aria-expanded={settingsMenuOpen}
+                onClick={handleSettingsToggle}
+              >
+                <Settings2 size={16} />
+              </button>
+              <div className="rstk-video-settings-menu" data-rstk-video-settings-menu role="menu" aria-label="Configuración del video" hidden={!settingsMenuOpen}>
+                <span className="rstk-video-settings-title">Velocidad</span>
+                <div className="rstk-video-settings-options">
+                  {videoSpeedOptions.map(option => {
+                    const optionSpeed = Number(option.value)
+                    const active = optionSpeed === currentSpeed
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`rstk-video-settings-option ${active ? 'rstk-video-settings-option-active' : ''}`}
+                        data-rstk-video-speed-option={option.value}
+                        role="menuitemradio"
+                        aria-checked={active}
+                        tabIndex={controlBarTabIndex}
+                        onClick={(event) => handleSpeedOptionClick(event, optionSpeed)}
+                      >
+                        <span>{option.label}</span>
+                        <span className="rstk-video-settings-check" aria-hidden="true"><Check size={14} /></span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+          {showCustomSpeed && !showCustomSettings && (
+            <label className="rstk-video-speed-control rstk-video-speed-direct" aria-label="Velocidad de reproducción">
+              <select data-rstk-video-speed-select value={String(currentSpeed)} tabIndex={controlBarTabIndex} onChange={handleSpeedChange}>
                 {videoSpeedOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
@@ -38458,7 +38648,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
             // Paridad content #1: mismo marco que el publicado para iframes de
             // video (clases rstk-video-embed-frame/orientación + vars --rstk-video-*).
             <div
-              className={`rstk-video rstk-video-embed-frame rstk-video-${normalizeVideoOrientation(settings)} ${getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings))}`}
+              className={`rstk-video rstk-video-embed-frame rstk-video-${normalizeVideoOrientation(settings)} ${getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings))} ${isVideoMobilePortraitCropEnabled(settings) ? 'rstk-video-mobile-portrait-crop' : ''}`}
               style={buildVideoFrameStyleVars(settings) as React.CSSProperties}
               data-rstk-selection-surface="true"
             >

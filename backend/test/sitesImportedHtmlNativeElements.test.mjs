@@ -1400,12 +1400,15 @@ test('declarative HTML video player settings reconcile without overwriting manua
     videoControlsMode: 'clean',
     videoOverlayPlay: true,
     videoControlBar: true,
+    videoControlBarStyle: 'docked',
     videoControlProgress: false,
     videoControlVolume: false,
     videoPlayerRadius: 18,
+    videoPlayerColor: 'rgba(0, 0, 0, .62)',
     videoPlayShape: 'round',
     videoPlaySize: 96,
     videoPlayColor: '#f8fafc',
+    videoMobilePortraitCrop: false,
     responsive: {
       tablet: { mediaWidth: 72, mediaAlign: 'center' },
       mobile: { mediaWidth: 100, mediaAlign: 'center' }
@@ -1437,7 +1440,9 @@ test('declarative HTML video player settings reconcile without overwriting manua
     assert.ok(videoBlock)
     assert.equal(videoBlock.settings.videoControlProgress, false)
     assert.equal(videoBlock.settings.videoControlVolume, false)
+    assert.equal(videoBlock.settings.videoControlBarStyle, 'docked')
     assert.equal(videoBlock.settings.videoPlayShape, 'round')
+    assert.equal(videoBlock.settings.videoMobilePortraitCrop, false)
     assert.equal(videoBlock.settings.responsive.tablet.mediaWidth, 72)
     assert.deepEqual(
       videoBlock.settings.importedHtmlVideoPlayerKeys,
@@ -1509,6 +1514,8 @@ test('declarative HTML video player settings reconcile without overwriting manua
     assert.doesNotMatch(html, /<button[^>]+data-rstk-video-overlay/)
     assert.match(html, /<div class="rstk-video-progress" data-rstk-video-progress-track/)
     assert.match(html, /--rstk-video-radius:30px/)
+    assert.match(html, /class="[^"]*rstk-video-control-bar-docked/)
+    assert.doesNotMatch(html, /class="[^"]*rstk-video-mobile-portrait-crop/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

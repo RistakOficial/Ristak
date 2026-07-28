@@ -77,10 +77,12 @@ const getVideoPlayerVisualSignature = (html) => {
     hasProgressControl: /<div class="rstk-video-progress" data-rstk-video-progress-track/.test(source),
     hasPlayControl: /class="rstk-video-control-button" data-rstk-video-toggle/.test(source),
     hasVolumeControl: /class="rstk-video-control-button" data-rstk-video-mute/.test(source),
-    hasSpeedControl: /<select data-rstk-video-speed-select/.test(source),
-    hasSettingsControl: /<span class="rstk-video-settings-icon" data-rstk-video-settings-icon/.test(source),
+    hasSpeedControl: /data-rstk-video-speed-(?:select|option)/.test(source),
+    hasSettingsControl: /<button[^>]*data-rstk-video-settings-toggle/.test(source),
     hasTimecodeControl: /<span class="rstk-video-timecode" data-rstk-video-timecode/.test(source),
-    selectedSpeed: source.match(/<option value="([^"]+)" selected>/)?.[1] || '',
+    selectedSpeed: source.match(/<option value="([^"]+)" selected>/)?.[1]
+      || source.match(/class="[^"]*\brstk-video-settings-option-active\b[^"]*" data-rstk-video-speed-option="([^"]+)"/)?.[1]
+      || '',
     nativeControls: hasHtmlBooleanAttribute(videoAttrs, 'controls'),
     muted: hasHtmlBooleanAttribute(videoAttrs, 'muted'),
     autoplay: hasHtmlBooleanAttribute(videoAttrs, 'autoplay'),
@@ -137,21 +139,29 @@ test('video player clean mode renders custom overlay controls', async () => {
   assert.match(html, /\.rstk-video-play-dot\{[^}]*box-shadow:none/)
   assert.match(html, /\.rstk-video-play-dot\{[^}]*border:0/)
   assert.match(html, /\.rstk-video-control-bar\{[^}]*display:flex[^}]*border-radius:var\(--rstk-video-control-radius,24px\)[^}]*background:var\(--rstk-video-player-color/)
-  assert.match(html, /\.rstk-video-control-bar\{[^}]*box-shadow:none/)
+  assert.match(html, /\.rstk-video-control-bar\{[^}]*min-height:46px[^}]*box-shadow:0 14px 36px -24px/)
   assert.match(html, /data-rstk-video-toggle/)
-  assert.match(html, /data-rstk-video-settings-icon/)
+  assert.match(html, /<button[^>]*data-rstk-video-settings-toggle[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/)
+  assert.match(html, /data-rstk-video-settings-menu role="menu"[^>]*hidden/)
+  assert.match(html, /data-rstk-video-speed-option="1"/)
   assert.match(html, /data-rstk-video-timecode/)
   assert.match(html, /data-rstk-video-time-elapsed>0:00/)
   assert.match(html, /data-rstk-video-time-remaining>-0:00/)
   assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="-1"/)
   assert.match(html, /aria-label="Progreso del video"/)
   assert.match(html, /\.rstk-video-control-button svg\{[^}]*width:15px[^}]*height:15px/)
-  assert.match(html, /\.rstk-video-progress\{[^}]*flex:1 1 44px[^}]*cursor:pointer[^}]*touch-action:none/)
-  assert.match(html, /\.rstk-video-progress::before\{[^}]*height:5px/)
+  assert.match(html, /\.rstk-video-progress\{[^}]*flex:1 1 72px[^}]*min-width:32px[^}]*cursor:pointer[^}]*touch-action:none/)
+  assert.match(html, /\.rstk-video-progress::before\{[^}]*height:4px/)
+  assert.match(html, /\.rstk-video-settings-menu\{[^}]*right:0[^}]*bottom:calc\(100% \+ 10px\)[^}]*width:152px/)
+  assert.match(html, /\.rstk-video-settings-menu\[hidden\]\{display:none!important\}/)
   assert.match(html, /requestAnimationFrame/)
   assert.match(html, /formatProgressPercent/)
   assert.match(html, /formatTimecode/)
   assert.match(html, /syncTimecode\(duration\)/)
+  assert.match(html, /const setSettingsMenuOpen = open =>/)
+  assert.match(html, /settingsMenu\.hidden = !settingsMenuOpen/)
+  assert.match(html, /event\.key !== 'Escape'/)
+  assert.match(html, /ownerDocument\.addEventListener\('pointerdown'/)
   assert.doesNotMatch(html, /progress\.style\.width = Math\.round/)
   assert.match(html, /\.rstk-video-controls-hidden \.rstk-video-control-bar\{[^}]*opacity:0/)
   assert.match(html, /\.rstk-video-timecode\{[^}]*font-variant-numeric:tabular-nums/)
@@ -208,6 +218,28 @@ test('video player default preset uses large rectangular solid play button', asy
   assert.equal(signature.soundText, 'Haz clic para activar el sonido')
   assert.match(html, /<\/button>\s*<span class="rstk-video-sound\b/)
   assert.match(signature.classes, /\brstk-video-landscape\b/)
+  assert.match(signature.classes, /\brstk-video-control-bar-floating\b/)
+  assert.match(signature.classes, /\brstk-video-mobile-portrait-crop\b/)
+  assert.match(signature.style, /--rstk-video-aspect-ratio:16 \/ 9/)
+  assert.match(
+    html,
+    /@media \(max-width:760px\)\{\.rstk-video\.rstk-video-landscape\.rstk-video-mobile-portrait-crop:not\(\.rstk-video-form-gate-fit-expanded\)\{aspect-ratio:9\/16\}\.rstk-video\.rstk-video-landscape\.rstk-video-mobile-portrait-crop:not\(\.rstk-video-form-gate-fit-expanded\) > video\{object-fit:cover!important\}\}/
+  )
+})
+
+test('video player can disable the default mobile 9:16 crop', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoOrientation: 'landscape',
+    videoMobilePortraitCrop: false
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.classes, /\brstk-video-landscape\b/)
+  assert.doesNotMatch(signature.classes, /\brstk-video-mobile-portrait-crop\b/)
   assert.match(signature.style, /--rstk-video-aspect-ratio:16 \/ 9/)
 })
 
@@ -333,8 +365,29 @@ test('video player custom bar can hide individual controls and keep editable pan
   assert.equal(signature.hasTimecodeControl, false)
   assert.equal(signature.selectedSpeed, '1.5')
   assert.match(signature.style, /--rstk-video-control-radius:6px/)
-  assert.match(html, /class="rstk-video-speed-control rstk-video-speed-no-settings"/)
+  assert.match(html, /class="rstk-video-speed-control rstk-video-speed-direct"/)
   assert.match(html, /data-rstk-video-progress-track role="slider" tabindex="-1"/)
+})
+
+test('video player can dock the custom control bar to the lower edge', async () => {
+  const html = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoControlBar: true,
+    videoControlBarStyle: 'docked',
+    videoControlPanelRadius: 18
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const signature = getVideoPlayerVisualSignature(html)
+
+  assert.match(signature.classes, /\brstk-video-control-bar-docked\b/)
+  assert.doesNotMatch(signature.classes, /\brstk-video-control-bar-floating\b/)
+  assert.match(
+    html,
+    /\.rstk-video-control-bar-docked \.rstk-video-control-bar\{[^}]*left:0[^}]*right:0[^}]*bottom:0[^}]*min-height:50px[^}]*border-right:0[^}]*border-bottom:0[^}]*border-left:0[^}]*border-radius:calc\(var\(--rstk-video-control-radius,24px\) \* \.5\) calc\(var\(--rstk-video-control-radius,24px\) \* \.5\) 0 0/
+  )
 })
 
 test('video player defaults hide the custom control bar at initial render', async () => {
@@ -1035,12 +1088,14 @@ test('video player keeps the customized Ristak player in preview and live for St
     'rstk-video-player',
     'rstk-video-custom-controls',
     'rstk-video-has-control-bar',
+    'rstk-video-control-bar-floating',
     'rstk-video-controls-hidden',
     'rstk-video-controls-start-hidden',
     'rstk-video-sound-hint',
     'rstk-video-is-muted',
     'rstk-video-landscape',
     'rstk-video-wauto',
+    'rstk-video-mobile-portrait-crop',
     'rstk-video-play-shape-rectangle',
     'rstk-video-play-spark'
   ].join(' ')
@@ -1129,10 +1184,12 @@ test('video player keeps the customized Ristak player in preview and live for St
       'rstk-video-player',
       'rstk-video-custom-controls',
       'rstk-video-has-control-bar',
+      'rstk-video-control-bar-floating',
       'rstk-video-controls-visible',
       'rstk-video-is-muted',
       'rstk-video-landscape',
       'rstk-video-wauto',
+      'rstk-video-mobile-portrait-crop',
       'rstk-video-play-shape-rectangle',
       'rstk-video-play-spark'
     ].join(' '))

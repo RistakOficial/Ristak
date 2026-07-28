@@ -36,6 +36,7 @@ test('imported HTML video player manifest validates every supported control and 
     videoControlsMode: 'clean',
     videoOverlayPlay: false,
     videoControlBar: true,
+    videoControlBarStyle: 'docked',
     videoControlPlay: false,
     videoControlProgress: false,
     videoControlVolume: false,
@@ -43,11 +44,13 @@ test('imported HTML video player manifest validates every supported control and 
     videoControlSettings: false,
     videoControlTime: false,
     videoPlayerColor: 'rgba(0, 0, 0, .6)',
+    videoPlayColor: '#ffffff',
     videoPlayShape: 'rectangle',
     videoPlaySize: 999,
     videoPlayIconStyle: 'spark',
     videoAutoplay: true,
     videoMuted: false,
+    videoMobilePortraitCrop: false,
     videoSoundNoticeText: 'Toca para escuchar',
     mediaWidth: 20,
     responsive: {
@@ -59,11 +62,15 @@ test('imported HTML video player manifest validates every supported control and 
   assert.equal(valid.valid, true)
   assert.equal(valid.settings.videoOverlayPlay, false)
   assert.equal(valid.settings.videoControlProgress, false)
+  assert.equal(valid.settings.videoControlBarStyle, 'docked')
   assert.equal(valid.settings.videoPlaySize, 160)
   assert.equal(valid.settings.mediaWidth, 30)
   assert.equal(valid.settings.videoMuted, true)
+  assert.equal(valid.settings.videoMobilePortraitCrop, false)
   assert.equal(valid.settings.responsive.tablet.mediaAlign, 'left')
   assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlProgress'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoControlBarStyle'))
+  assert.ok(IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS.includes('videoMobilePortraitCrop'))
 
   const tombstone = normalizeImportedHtmlVideoPlayerManifest('{"videoControlVolume":null}')
   assert.equal(tombstone.valid, true)
@@ -77,6 +84,56 @@ test('imported HTML video player manifest validates every supported control and 
   const invalidResponsive = normalizeImportedHtmlVideoPlayerManifest('{"responsive":{"desktop":{"mediaWidth":80}}}')
   assert.equal(invalidResponsive.valid, false)
   assert.match(invalidResponsive.error, /solo admite tablet y mobile/)
+
+  const invalidControlBarStyle = normalizeImportedHtmlVideoPlayerManifest('{"videoControlBarStyle":"sidebar"}')
+  assert.equal(invalidControlBarStyle.valid, false)
+  assert.match(invalidControlBarStyle.error, /videoControlBarStyle contiene un valor no permitido/)
+})
+
+test('imported HTML editable video expands its containing slot for the default mobile 9:16 crop', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+
+  try {
+    const html = `<!doctype html><html><body><main>
+      <div
+        class="hero-video"
+        data-rstk-editable="true"
+        data-rstk-edit-type="video"
+        data-rstk-edit-id="video-principal"
+        data-rstk-video-url="https://cdn.example.test/video-horizontal.mp4"
+        data-rstk-video-settings='{"videoOrientation":"landscape","videoMobilePortraitCrop":true}'
+      ></div>
+    </main></body></html>`
+    const created = await createImportedSiteFromHtml({
+      filename: 'video-mobile-crop.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Imported Video Mobile Crop ${Date.now()}`
+    })
+    siteId = created.site.id
+
+    const rendered = await renderPublicSiteHtml(await getSitePreview(siteId), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+
+    assert.match(rendered, /class="hero-video rstk-imported-video-slot-mobile-portrait-crop"/)
+    assert.match(rendered, /class="rstk-video[^"]*rstk-video-landscape[^"]*rstk-video-mobile-portrait-crop/)
+    assert.match(
+      rendered,
+      /@media \(max-width:760px\)\{\.rstk-imported-video-slot\.rstk-imported-video-slot-mobile-portrait-crop\{aspect-ratio:9\/16!important;min-height:0!important\}/
+    )
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
 })
 
 test('imported HTML code files are listed and saved through the code editor endpoint', async () => {
@@ -635,8 +692,15 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /videoOverlayPlay/)
   assert.match(instructions, /videoControlProgress/)
   assert.match(instructions, /videoControlVolume/)
+  assert.match(instructions, /videoControlBarStyle/)
   assert.match(instructions, /videoPlayShape/)
   assert.match(instructions, /videoPlayIconStyle/)
+  assert.match(instructions, /si la petición menciona un solo video o no pide explícitamente archivos distintos/)
+  assert.match(instructions, /El mismo archivo conserva su formato normal en computadora/)
+  assert.match(instructions, /cuando es horizontal, recibe un recorte centrado 9:16 en celular/)
+  assert.match(instructions, /ÚNICAMENTE cuando el usuario pida de forma explícita dos videos/)
+  assert.match(instructions, /horizontal en celular/)
+  assert.match(instructions, /videoMobilePortraitCrop:false/)
   assert.match(instructions, /responsive con overrides tablet\/mobile/)
   assert.match(instructions, /show, hide, open_form, open_video_form, show_popup/)
   assert.match(instructions, /activate_checkout, meta_event y reveal_form_action/)
@@ -729,6 +793,16 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoPlayerGuide, /videoOverlayPlay/)
   assert.match(videoPlayerGuide, /videoControlProgress/)
   assert.match(videoPlayerGuide, /videoControlPanelRadius/)
+  assert.match(videoPlayerGuide, /videoControlBarStyle \(floating\|docked\)/)
+  assert.match(videoPlayerGuide, /globo separado de los bordes/)
+  assert.match(videoPlayerGuide, /panel de ancho completo al borde inferior/)
+  assert.match(videoPlayerGuide, /Pareja de color obligatoria/)
+  assert.match(videoPlayerGuide, /nunca cambies uno de forma aislada/)
+  assert.match(videoPlayerGuide, /videoMobilePortraitCrop/)
+  assert.match(videoPlayerGuide, /sin modificar el archivo/)
+  assert.match(videoPlayerGuide, /si la petición habla de un solo video o no especifica variantes/)
+  assert.match(videoPlayerGuide, /Solo usa dos slots por dispositivo/)
+  assert.match(videoPlayerGuide, /que el archivo original sea horizontal no desactiva el recorte móvil/)
   assert.match(videoPlayerGuide, /"videoControlVolume":null/)
   assert.match(videoTargetGuide, /open_video_form/)
   assert.match(videoTargetGuide, /activate_checkout/)
@@ -821,6 +895,25 @@ test('video design panel exposes responsive portrait sizing without storing the 
   assert.match(source, /value=\{getVideoPortraitWidthMode\(rawSettings\)\}/)
   assert.match(source, /onPatchSettingsProp\(\{ videoPortraitWidthMode: next \}\)/)
   assert.match(source, /En automático, un video vertical usa todo el ancho en móvil/)
+  assert.match(source, /Recortar a 9:16 en celular/)
+  assert.match(source, /checked=\{isVideoMobilePortraitCropEnabled\(settings\)\}/)
+  assert.match(source, /onPatchSettings\(\{ videoMobilePortraitCrop: checked \}\)/)
+  assert.match(source, /centra el recorte móvil sin modificar el archivo/)
+  assert.match(source, /Forma de la barra/)
+  assert.match(source, /Globo flotante/)
+  assert.match(source, /Panel inferior/)
+  assert.match(source, /onPatchSettings\(\{ videoControlBarStyle: nextStyle \}\)/)
+  assert.match(source, /Fondo · botón y barra/)
+  assert.match(source, /Contraste · iconos y progreso/)
+  assert.match(source, /videoPlayerColor: value,\s+videoPlayColor: getVideoPlayIconColor\(settings\)/)
+  assert.match(source, /videoPlayerColor: getVideoPlayerButtonColor\(settings\),\s+videoPlayColor: value/)
+  assert.match(source, /se configuran como una pareja visual y deben conservar contraste legible/)
+  assert.match(source, /data-rstk-video-settings-toggle/)
+  assert.match(source, /aria-haspopup="menu"/)
+  assert.match(source, /aria-expanded=\{settingsMenuOpen\}/)
+  assert.match(source, /role="menuitemradio"/)
+  assert.match(source, /event\.key !== 'Escape' \|\| !settingsMenuOpen/)
+  assert.match(source, /video\.playbackRate = normalizedSpeed/)
 })
 
 test('HTML mobile rules are shared by every creation path and the code preview uses a real phone viewport', async () => {
@@ -849,6 +942,13 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(mobileGuide, /al menos 44px/)
   assert.match(mobileGuide, /al menos 16px/)
   assert.match(mobileGuide, /No simules móvil con zoom, transform: scale/)
+  assert.match(mobileGuide, /declara exactamente UN slot compartido/)
+  assert.match(mobileGuide, /data-rstk-video-settings='\{"videoMobilePortraitCrop":true\}'/)
+  assert.match(mobileGuide, /el silencio del usuario siempre elige esta opción/)
+  assert.match(mobileGuide, /ÚNICAMENTE cuando el usuario pida de forma explícita dos videos/)
+  assert.match(mobileGuide, /videoMobilePortraitCrop:false/)
+  assert.match(mobileGuide, /No infieras esa excepción solo porque el archivo original sea horizontal/)
+  assert.match(mobileGuide, /conserva dos variantes de video ya declaradas si la solicitud no trata sobre ellas/)
   assert.match(mobileGuide, /video-presentacion-desktop/)
   assert.match(mobileGuide, /data-rstk-device-only="desktop"/)
   assert.match(mobileGuide, /data-rstk-device-only="mobile"/)

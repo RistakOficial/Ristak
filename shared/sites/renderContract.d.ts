@@ -241,6 +241,7 @@ export declare function isTransparentCssColorValue(value?: unknown): boolean
 export declare function getVisibleVideoBorderColor(value?: unknown): string
 export declare function normalizeVideoOrientation(settings?: Record<string, unknown>, detectedOrientation?: string): 'landscape' | 'portrait'
 export declare function getVideoAspectRatio(orientation: string): string
+export declare function isVideoMobilePortraitCropEnabled(settings?: Record<string, unknown> | null): boolean
 export declare function shouldUseDefaultPortraitMediaWidth(settings?: Record<string, unknown>, orientation?: string): boolean
 export declare function buildVideoFrameStyleVars(settings?: Record<string, unknown>, detectedOrientation?: string): CssVarMap
 export declare function safeUrl(value?: unknown): string

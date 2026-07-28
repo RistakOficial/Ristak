@@ -4957,10 +4957,26 @@ por separado en computadora, tablet y móvil. El HTML importado no debe fabricar
 franjas laterales, un marco negro ni otra relación de aspecto: el slot permanece
 neutro y el reproductor nativo resuelve su geometría.
 
-Cuando una página necesita un archivo de video distinto para computadora y
-móvil, declara dos slots con la misma base semántica y sufijos de vista, por
-ejemplo `video-presentacion-escritorio` y `video-presentacion-movil`, y deja que
-sus contenedores padres usen respectivamente
+La instrucción compartida para creación y chat HTML resuelve primero cuántos
+videos necesita la página. Si la petición menciona un solo video o no especifica
+variantes, la IA debe declarar exactamente un slot nativo compartido, sin
+`data-rstk-device-only`, y configurar
+`data-rstk-video-settings='{"videoMobilePortraitCrop":true}'`. Ésta es la
+decisión implícita: el mismo archivo conserva su formato normal en computadora
+y, cuando es horizontal, Ristak recorta su frame a 9:16 centrado en celular. Que
+el archivo original sea horizontal no autoriza desactivar esa adaptación ni
+duplicar el slot.
+
+La IA solo conserva 16:9 horizontal también en celular cuando la petición dice
+de forma explícita `sin recorte 9:16`, `sin versión vertical`, `horizontal en
+celular` o una instrucción equivalente; entonces declara
+`videoMobilePortraitCrop:false`. Al editar una página no altera dos variantes ya
+existentes si la solicitud no trata sobre ellas.
+
+Únicamente cuando el usuario pide dos videos, dos archivos o material diferente
+por dispositivo, la IA declara dos slots con la misma base semántica y sufijos
+de vista, por ejemplo `video-presentacion-escritorio` y
+`video-presentacion-movil`, y deja que sus contenedores padres usen respectivamente
 `data-rstk-device-only="desktop"` y `data-rstk-device-only="mobile"`. Al cambiar la vista del
 editor, el inspector sigue automáticamente el slot visible para que una subida
 móvil no reemplace por accidente el bloque de computadora. Mientras una de las
@@ -5111,6 +5127,14 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   selecciona el bloque y, una vez seleccionado, el reproductor recibe interacción
   para reproducir, pausar y operar sus controles sin volver interactivos los
   demás embeds del editor.
+  El ajuste `videoMobilePortraitCrop` aparece en ambos editores como
+  **Recortar a 9:16 en celular** y viene activo, incluso para bloques anteriores
+  que todavía no guardan esa propiedad. Cuando la orientación resuelta es
+  horizontal y la pantalla mide hasta 760 px, el frame pasa a 9:16 y el video
+  usa un recorte centrado `cover`; el archivo, su proporción original y la vista
+  de escritorio no se modifican. Desactivarlo conserva el formato horizontal en
+  móvil. Los videos verticales no cambian y un formulario expandido sobre el
+  reproductor conserva el espacio necesario para su contenido.
   Al cerrar la sesión, backend valida la URL TUS, el tamaño reservado y el total
   recibido por Bunny. En estándar también exige que el espejo Storage tenga el
   mismo tamaño; en premium exige la identidad Stream y persiste su HLS sin
@@ -5167,6 +5191,7 @@ controles falsos. Sus grupos de control son:
 
 - Visibilidad: `videoControlsMode` (`clean`, `native` o `none`),
   `videoOverlayPlay`, `videoControlBar`,
+  `videoControlBarStyle` (`floating` o `docked`),
   `videoControlBarInitiallyVisible`, `videoControlPlay`,
   `videoControlProgress`, `videoControlTime`, `videoControlVolume`,
   `videoControlSpeed` y `videoControlSettings`.
@@ -5176,12 +5201,31 @@ controles falsos. Sus grupos de control son:
   vuelve inerte el video: tocar su superficie reproduce o pausa. La misma
   interacción de superficie mantiene reproducible cualquier combinación
   personalizada que oculte el botón central y los botones de la barra.
+  Cuando `videoControlSpeed` y `videoControlSettings` están activos, el engrane
+  es un botón real y abre un menú anclado dentro del reproductor con las
+  velocidades disponibles; la opción elegida actualiza la reproducción, marca
+  su estado y cierra el menú. El panel permanece abierto durante la interacción
+  sin que el auto-ocultado de la barra lo corte, y se cierra al elegir, tocar
+  fuera o presionar Escape. Si se desactiva `videoControlSettings` pero se
+  conserva `videoControlSpeed`, aparece el selector directo de velocidad. Los
+  elementos solicitados no se eliminan para hacer caber la barra: el layout
+  reduce espacios y tipografía de forma fluida, mantiene centros y alturas
+  comunes, y conserva botón, progreso, tiempo, volumen y configuración dentro
+  del frame tanto en `floating` como en `docked`.
 - Diseño: fondo, borde y radio del frame; color y radio del panel; color, forma,
   radio, tamaño, estilo e icono del play; y color del aviso de sonido mediante
   `videoPlayerBackground`, `videoPlayerRadius`, `videoPlayerBorderColor`,
   `videoPlayerBorderWidth`, `videoPlayerColor`, `videoControlPanelRadius`,
   `videoPlayColor`, `videoPlayShape`, `videoPlayRadius`, `videoPlaySize`,
   `videoPlayIconStyle`, `videoPlayIconSize` y `videoSoundColor`.
+  `videoControlBarStyle=floating` separa la barra de los bordes como un globo;
+  `docked` la convierte en un panel de ancho completo acoplado al borde
+  inferior. `videoPlayerColor` es el fondo compartido por la barra y el botón
+  central, mientras `videoPlayColor` gobierna iconos, texto y progreso. Las
+  reglas de creación y edición por IA deben declarar y revisar siempre ambos
+  colores juntos, como una sola pareja de diseño con contraste legible; no
+  pueden cambiar uno aisladamente. `videoSoundColor` sigue normalmente a
+  `videoPlayColor`, salvo que el usuario solicite un acento distinto.
 - Reproducción: autoplay silenciado, loop, velocidad inicial, preview, aviso de
   sonido y progreso visual mediante `videoMuted`, `videoAutoplay`, `videoLoop`,
   `videoDefaultSpeed`, `videoPreviewEnabled`, `videoPreviewStart`,
@@ -5190,10 +5234,12 @@ controles falsos. Sus grupos de control son:
   `videoTrickProgressEnabled`, `videoTrickProgressRampPercent` y
   `videoTrickProgressPeakPercent`. Autoplay fuerza `videoMuted=true` porque los
   navegadores bloquean la reproducción automática con audio.
-- Formato responsive: `videoOrientation`, `videoPortraitWidthMode`, `videoFit`,
-  `mediaWidth`, `mediaAlign` y overrides `responsive.tablet/mobile` de ancho y
-  alineación. La geometría del slot HTML sigue perteneciendo al reproductor y
-  nunca se fija con CSS en el propio slot.
+- Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
+  `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
+  `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene
+  activo y convierte únicamente el frame horizontal a 9:16 con `cover`
+  centrado, sin alterar el archivo. La geometría del slot HTML sigue
+  perteneciendo al reproductor y nunca se fija con CSS en el propio slot.
 
 Ejemplo:
 
@@ -5202,7 +5248,7 @@ Ejemplo:
   data-rstk-native-element="video"
   data-rstk-native-id="video-principal"
   data-rstk-label="Video principal"
-  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayShape":"round","videoPlaySize":96,"videoPlayColor":"#fff","videoMuted":true,"videoAutoplay":false,"videoOrientation":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarStyle":"floating","videoControlPlay":true,"videoControlProgress":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayShape":"round","videoPlaySize":96,"videoPlayColor":"#fff","videoMuted":true,"videoAutoplay":false,"videoOrientation":"auto","videoMobilePortraitCrop":true,"responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
 ></div>
 ```
 

@@ -63,7 +63,10 @@ export const IMPORTED_HTML_MOBILE_RULES = Object.freeze([
   'En móvil convierte grids y filas de varias columnas a una sola columna cuando sea necesario, conserva el orden lógico del contenido y usa padding lateral seguro.',
   'Usa anchos fluidos (width: 100% y max-width), min-width: 0 y box-sizing: border-box. Evita anchos fijos, min-width de escritorio y 100vw dentro de contenedores con padding.',
   'Imágenes, video, audio e iframes deben respetar max-width: 100%; las imágenes y videos conservan su proporción con height: auto o aspect-ratio.',
-  `Si necesitas archivos de video distintos para computadora y móvil, declara dos slots nativos con la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile. Envuelve cada slot en su contenedor ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE} correspondiente; Ristak enlaza el panel con la variante visible y usa la configurada como respaldo mientras la otra siga pendiente.`,
+  `Decisión predeterminada para video nativo: al crear un video, si la petición menciona un solo video o no pide explícitamente archivos distintos por dispositivo, declara exactamente UN slot compartido, sin ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}, y usa data-rstk-video-settings='{"videoMobilePortraitCrop":true}'. El mismo archivo conserva su formato normal en computadora y, cuando es horizontal, recibe un recorte centrado 9:16 en celular; el silencio del usuario siempre elige esta opción y nunca autoriza duplicar el slot.`,
+  `Crea dos slots de video —uno para computadora y otro para móvil— ÚNICAMENTE cuando el usuario pida de forma explícita dos videos, dos archivos, una versión diferente por dispositivo o material específico para celular. Usa la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile, y envuelve cada slot en su contenedor ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE} correspondiente; Ristak enlaza el panel con la variante visible y usa la configurada como respaldo mientras la otra siga pendiente.`,
+  'Conserva el video horizontal también en celular ÚNICAMENTE si el usuario pide explícitamente "sin recorte 9:16", "sin versión vertical", "horizontal en celular" o desactivar esa adaptación; en ese caso declara videoMobilePortraitCrop:false. No infieras esa excepción solo porque el archivo original sea horizontal.',
+  'Al editar HTML existente, conserva dos variantes de video ya declaradas si la solicitud no trata sobre ellas. Si la petición reemplaza explícitamente esas variantes por un solo video, vuelve al slot compartido con videoMobilePortraitCrop:true.',
   'Controles táctiles deben medir al menos 44px de alto. En móvil, inputs, selects y textareas usan font-size de al menos 16px para evitar zoom automático del navegador.',
   'No simules móvil con zoom, transform: scale ni una captura encogida. El CSS responsive debe reaccionar al ancho real del viewport.',
   'Cuando edites una página existente, conserva sus media queries y vuelve a revisar escritorio y móvil. Un cambio de escritorio no puede romper la versión móvil ni viceversa.'
@@ -178,11 +181,13 @@ const IMPORTED_HTML_VIDEO_PLAYER_BOOLEAN_KEYS = new Set([
   'videoSoundHint',
   'videoMuted',
   'videoAutoplay',
-  'videoLoop'
+  'videoLoop',
+  'videoMobilePortraitCrop'
 ])
 
 const IMPORTED_HTML_VIDEO_PLAYER_ENUM_KEYS = Object.freeze({
   videoControlsMode: new Set(['clean', 'native', 'none']),
+  videoControlBarStyle: new Set(['floating', 'docked']),
   videoOrientation: new Set(['auto', 'landscape', 'portrait']),
   videoPortraitWidthMode: new Set(['auto', 'fill', 'framed']),
   videoFit: new Set(['cover', 'contain', 'fill']),
@@ -376,9 +381,11 @@ export function normalizeImportedHtmlVideoPlayerManifest(value = '') {
 export const IMPORTED_HTML_VIDEO_PLAYER_RULES = Object.freeze([
   `En el mismo slot nativo de video puedes declarar ${IMPORTED_HTML_VIDEO_PLAYER_SETTINGS_ATTRIBUTE} como un objeto JSON. Ristak aplica exactamente el mismo reproductor y las mismas opciones del editor normal; no dibujes controles HTML ni escribas JavaScript propio.`,
   'Visibilidad total: videoControlsMode acepta clean, native o none. En clean controla por separado videoOverlayPlay, videoControlBar, videoControlBarInitiallyVisible, videoControlPlay, videoControlProgress, videoControlTime, videoControlVolume, videoControlSpeed y videoControlSettings.',
-  'Diseño total: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize, videoSoundColor y videoControlPanelRadius.',
+  'Diseño total: configura videoPlayerBackground, videoPlayerRadius, videoPlayerBorderColor, videoPlayerBorderWidth, videoControlBarStyle (floating|docked), videoPlayerColor, videoPlayColor, videoPlaySize, videoPlayShape (round|rectangle), videoPlayRadius, videoPlayIconStyle (solid|outline|soft|spark), videoPlayIconSize, videoSoundColor y videoControlPanelRadius. floating crea un globo separado de los bordes; docked acopla un panel de ancho completo al borde inferior.',
+  'Pareja de color obligatoria: videoPlayerColor define el fondo común del botón play y de la barra, y videoPlayColor define sus iconos, texto y progreso. Si diseñas o cambias uno, declara y revisa ambos juntos en el mismo data-rstk-video-settings; nunca cambies uno de forma aislada. Deben pertenecer a la misma paleta y mantener contraste legible sobre frames claros y oscuros. Salvo que el usuario pida otro acento, videoSoundColor debe seguir videoPlayColor.',
   'Reproducción total: configura videoMuted, videoAutoplay, videoLoop, videoDefaultSpeed, videoPreviewEnabled, videoPreviewStart, videoPreviewEnd, videoDisableEditorPlayback, videoSoundHint, videoSoundNoticeText, videoSoundNoticeHideAfter, videoTrickProgressEnabled, videoTrickProgressRampPercent y videoTrickProgressPeakPercent. Autoplay siempre se normaliza a silenciado porque así lo exigen los navegadores.',
-  'Formato y tamaño: configura videoOrientation (auto|landscape|portrait), videoPortraitWidthMode (auto|fill|framed), videoFit (cover|contain|fill), mediaWidth, mediaAlign y responsive con overrides tablet/mobile de mediaWidth y mediaAlign. El slot sigue sin llevar geometría CSS propia.',
+  'Formato y tamaño: configura videoOrientation (auto|landscape|portrait), videoPortraitWidthMode (auto|fill|framed), videoMobilePortraitCrop, videoFit (cover|contain|fill), mediaWidth, mediaAlign y responsive con overrides tablet/mobile de mediaWidth y mediaAlign. videoMobilePortraitCrop viene activo: en celular convierte únicamente el marco de un video horizontal a 9:16 y centra el recorte sin modificar el archivo. El slot sigue sin llevar geometría CSS propia.',
+  'Decisión implícita: si la petición habla de un solo video o no especifica variantes, usa un solo slot y videoMobilePortraitCrop:true. Solo usa dos slots por dispositivo o videoMobilePortraitCrop:false cuando el usuario lo pida explícitamente; que el archivo original sea horizontal no desactiva el recorte móvil.',
   'Conserva el atributo y sus claves al editar otras partes del HTML. La primera declaración completa ajustes faltantes; después Ristak solo aplica las propiedades cuyo valor declarativo cambió, de modo que no pisa personalizaciones manuales del panel.',
   'Quitar el atributo o quitar una clave del JSON no borra nada. Para dejar de declarar y restablecer una propiedad concreta, envíala una vez con null; por ejemplo {"videoControlVolume":null}. Las claves desconocidas o valores inválidos bloquean Guardar/Publicar para evitar un reproductor a medias.',
   'data-rstk-video-settings controla el reproductor; data-rstk-video-rules controla las acciones. Ambos viven en el mismo slot, usan el mismo data-rstk-native-id estable y pueden combinarse.'
@@ -388,7 +395,7 @@ export const IMPORTED_HTML_VIDEO_PLAYER_EXAMPLE = `<div
   data-rstk-native-element="video"
   data-rstk-native-id="video-principal"
   data-rstk-label="Video principal"
-  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
+  data-rstk-video-settings='{"videoControlsMode":"clean","videoOverlayPlay":true,"videoControlBar":true,"videoControlBarStyle":"floating","videoControlBarInitiallyVisible":true,"videoControlPlay":true,"videoControlProgress":true,"videoControlTime":true,"videoControlVolume":true,"videoControlSpeed":true,"videoControlSettings":true,"videoPlayerColor":"rgba(0,0,0,.62)","videoPlayColor":"#ffffff","videoPlayShape":"round","videoPlaySize":96,"videoPlayIconStyle":"solid","videoPlayIconSize":44,"videoControlPanelRadius":22,"videoMuted":true,"videoAutoplay":false,"videoLoop":false,"videoDefaultSpeed":1,"videoSoundHint":true,"videoOrientation":"auto","videoMobilePortraitCrop":true,"videoFit":"cover","videoPortraitWidthMode":"auto","responsive":{"mobile":{"mediaWidth":100,"mediaAlign":"center"}}}'
 ></div>`
 
 export function buildImportedHtmlVideoPlayerRulesText(heading = 'Reproductor de video HTML con control total:') {
