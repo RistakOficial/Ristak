@@ -2234,6 +2234,21 @@ function replaceImportedWistiaPlayers(html = '', report = []) {
   return nextHtml
 }
 
+function normalizeImportedCaptureFormTag(match = '', attrsText = '') {
+  const normalizedAttrs = String(attrsText || '')
+    .replace(
+      /\s+data-(?:rstk|ristak|ristack)-import-form(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi,
+      ''
+    )
+    .replace(
+      /\s+novalidate(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi,
+      ''
+    )
+    .replace(/\s+$/g, '')
+
+  return `<form${normalizedAttrs} data-rstk-import-form novalidate>`
+}
+
 function sanitizeImportedHtml(html = '') {
   const report = []
   let sanitized = String(html || '')
@@ -2277,7 +2292,7 @@ function sanitizeImportedHtml(html = '') {
   sanitized = sanitized.replace(/<form\b([^>]*)>/gi, (match, attrsText = '', offset = -1) => (
     isImportedCalendarBookingForm(sanitized, offset, attrsText)
       ? match
-      : `<form${attrsText} data-rstk-import-form novalidate>`
+      : normalizeImportedCaptureFormTag(match, attrsText)
   ))
 
   if (!/<html[\s>]/i.test(sanitized)) {
@@ -7454,6 +7469,8 @@ Convenciones de formularios para Ristak:
 - name, id, data-rstk-field y los atributos data-rstk-calendar-* NO sustituyen data-rstk-form-id ni data-rstk-field-id: ayudan a interpretar o ejecutar el campo, pero no conservan su asociacion cuando el codigo se reescribe.
 - Cada conjunto debe vivir en un elemento <form> real con data-rstk-form-id semantico, estable y unico en TODO el sitio, incluso entre paginas; agrega data-rstk-label para el nombre visible del grupo. Ejemplo: <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto" data-rstk-form="lead_capture" method="post">.
 - Cada campo logico debe tener data-rstk-field-id estable y unico dentro de su formulario, ademas de id, name, label visible y autocomplete cuando aplique. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas las opciones comparten data-rstk-field-id y name.
+- Para un formulario de varias pantallas usa data-multistep-form en el <form>, data-form-step="1|2|..." en cada paso, data-form-next y data-form-back en botones type="button", data-form-step-label para el texto de progreso y data-form-progress-bar para la barra. No agregues JavaScript: Ristak valida únicamente el paso visible, avanza, retrocede y enfoca el título.
+- Resetea el estilo nativo del navegador en tus grupos: fieldset { min-width:0; margin:0; padding:0; border:0 } y legend { padding:0 }. Después agrega tus propios separadores con border-bottom si el diseño los necesita; nunca dejes el borde groove predeterminado.
 - Cambiar copy, clases, estilos, orden o name/id NO cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociacion nueva; conservarlo recupera la anterior aunque el elemento haya desaparecido temporalmente.
 - Agrega data-rstk-field y data-ristak-field en campos estandar para que Ristak los entienda.
 - Campos estandar permitidos: full_name, first_name, last_name, phone, email, message.
@@ -7480,9 +7497,10 @@ ${buildImportedHtmlVideoGateRulesText()}
 - No dibujes franjas laterales ni un marco negro falso. En automatico, el video vertical queda contenido en computadora y usa todo el ancho disponible en movil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.
 ${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomVideoRulesText()}
-- Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No hagas esto en data-rstk-calendar-book-form: ese submit pertenece al elemento calendar y, solo después de reservar, Ristak emite el evento que el usuario haya elegido para ese calendario en Ajustes (Schedule es únicamente el default recomendado).
+- En formularios ordinarios de captación no fijes data-rstk-conversion-event ni data-rstk-conversion-type: Ristak los detecta como formulario y el usuario elige Lead, CompleteRegistration, Contact, FormSubmitted u otro evento desde Ajustes > Meta Pixel + CAPI. El evento configurado en el editor es la fuente de verdad y también puede apagarse.
 - Si el formulario filtra candidatos, agrega data-rstk-conversion-condition="qualified_only" al <form>. Un submit descalificado se guarda y puede mostrar mensaje/redirigir, pero no dispara la conversion Meta.
-- Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
+- Para formularios completados conserva email y/o phone con data-rstk-field para que Meta pueda hacer match; Lead o CompleteRegistration se eligen en el editor.
+- data-rstk-conversion-event y data-rstk-conversion-type quedan reservados para conversiones especializadas que el propio HTML confirma fuera de un elemento Ristak conectado, por ejemplo una cita externa ya confirmada o un pago externo ya aprobado.
 - Para citas administradas fuera del calendario conectado usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada. En un calendario custom de Ristak no declares estos atributos.
 - Para pagos confirmados usa data-rstk-conversion-event="Purchase", data-rstk-conversion-type="purchase", data-rstk-conversion-value, data-rstk-conversion-content-name y data-rstk-conversion-order-id o data-rstk-payment-id. No marques Purchase en intento de pago, precio mostrado o click de checkout; solo en confirmacion real o pagina de gracias.
 - Si el dato depende de un campo, marca ese campo con data-rstk-conversion-param="value|contentName|orderId|appointment_start_time|appointment_end_time|calendarName|paymentId|status".
@@ -27119,8 +27137,81 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
 
       initImportedContactPrefill();
 
+      const initImportedMultistepForm = (form) => {
+        const enabled = form.hasAttribute('data-multistep-form') ||
+          form.hasAttribute('data-rstk-multistep-form') ||
+          form.hasAttribute('data-ristak-multistep-form') ||
+          form.hasAttribute('data-ristack-multistep-form');
+        if (!enabled || form.dataset.rstkMultistepReady === 'true') return null;
+
+        const steps = Array.from(form.querySelectorAll('[data-form-step], [data-rstk-form-step], [data-ristak-form-step], [data-ristack-form-step]'));
+        if (steps.length < 2) return null;
+
+        form.dataset.rstkMultistepReady = 'true';
+        const label = form.querySelector('[data-form-step-label], [data-rstk-form-step-label], [data-ristak-form-step-label], [data-ristack-form-step-label]');
+        const progress = form.querySelector('[data-form-progress-bar], [data-rstk-form-progress-bar], [data-ristak-form-progress-bar], [data-ristack-form-progress-bar]');
+        const firstVisibleIndex = steps.findIndex(step => !step.hidden);
+        let currentIndex = firstVisibleIndex >= 0 ? firstVisibleIndex : 0;
+
+        const showStep = (index, focusHeading = true) => {
+          currentIndex = Math.max(0, Math.min(Number(index) || 0, steps.length - 1));
+          steps.forEach((step, stepIndex) => {
+            const active = stepIndex === currentIndex;
+            step.hidden = !active;
+            step.setAttribute('aria-hidden', active ? 'false' : 'true');
+          });
+          if (label) label.textContent = 'Paso ' + (currentIndex + 1) + ' de ' + steps.length;
+          if (progress) {
+            const percent = ((currentIndex + 1) / steps.length) * 100;
+            progress.style.width = percent + '%';
+            progress.setAttribute('aria-valuemin', '1');
+            progress.setAttribute('aria-valuemax', String(steps.length));
+            progress.setAttribute('aria-valuenow', String(currentIndex + 1));
+          }
+          if (!focusHeading) return;
+          const heading = steps[currentIndex].querySelector('[data-step-title], [data-rstk-step-title], h1, h2, h3, h4');
+          if (heading && typeof heading.focus === 'function') {
+            try { heading.focus({ preventScroll: true }); } catch (_) { heading.focus(); }
+          }
+          if (typeof form.scrollIntoView === 'function') {
+            const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            form.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+          }
+          form.dispatchEvent(new CustomEvent('ristak:form-step-change', {
+            detail: { currentStep: currentIndex + 1, totalSteps: steps.length }
+          }));
+        };
+
+        const validateCurrentStep = () => {
+          const fields = Array.from(steps[currentIndex].querySelectorAll('input, select, textarea'))
+            .filter(field => !field.disabled && String(field.type || '').toLowerCase() !== 'hidden');
+          const invalidField = fields.find(field => typeof field.checkValidity === 'function' && !field.checkValidity());
+          if (!invalidField) return true;
+          if (typeof invalidField.reportValidity === 'function') invalidField.reportValidity();
+          else if (typeof invalidField.focus === 'function') invalidField.focus();
+          return false;
+        };
+
+        form.querySelectorAll('[data-form-next], [data-rstk-form-next], [data-ristak-form-next], [data-ristack-form-next]').forEach(button => {
+          button.addEventListener('click', () => {
+            if (validateCurrentStep()) showStep(currentIndex + 1);
+          });
+        });
+        form.querySelectorAll('[data-form-back], [data-rstk-form-back], [data-ristak-form-back], [data-ristack-form-back]').forEach(button => {
+          button.addEventListener('click', () => showStep(currentIndex - 1));
+        });
+        form.addEventListener('invalid', (event) => {
+          const invalidStepIndex = steps.findIndex(step => step.contains(event.target));
+          if (invalidStepIndex >= 0 && invalidStepIndex !== currentIndex) showStep(invalidStepIndex, false);
+        }, true);
+
+        showStep(currentIndex, false);
+        return { validateCurrentStep, showStep };
+      };
+
       importedForms.forEach((form, index) => {
         form.setAttribute('data-rstk-import-form', 'true');
+        const multistep = initImportedMultistepForm(form);
         // Al elegir una opción que descalifica solo mostramos un aviso debajo del
         // campo; la descalificación real ocurre al enviar, no al elegir.
         const clearImportedNotice = () => {
@@ -27153,6 +27244,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         });
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
+          if (multistep && !multistep.validateCurrentStep()) return;
           const submitter = event.submitter || form.querySelector('[type="submit"], button');
           if (submitter) submitter.disabled = true;
           setMessage(form, 'Enviando...', 'loading');
@@ -34351,16 +34443,42 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   const embeddedSubmitMeta = !videoGateMetaConfig ? getRequestEmbeddedFormSubmitMetaConfig(requestMeta) : null
   const useImportedConversionMeta = Boolean(!videoGateMetaConfig && importedConversionMeta?.enabled && siteMetaEnabled)
   const useEmbeddedSubmitMeta = Boolean(!videoGateMetaConfig && embeddedSubmitMeta?.enabled && !siteSubmitMeta.enabled)
+  // Un formulario HTML de captación se configura desde Ajustes, igual que un
+  // formulario nativo. El atributo inline sigue aportando la condición de
+  // calificación, pero no puede pisar el evento que el usuario eligió (o apagó)
+  // en Meta Pixel + CAPI. Schedule/Purchase y otras conversiones especializadas
+  // conservan el contrato inline porque representan otra operación.
+  const siteOwnsImportedFormSubmitEvent = Boolean(
+    useImportedConversionMeta &&
+    importedConversionMeta.conversionType === 'form_submit' &&
+    siteMetaEnabled
+  )
 
   if (!siteMetaEnabled && !useEmbeddedSubmitMeta) {
     return { sent: false, reason: 'disabled' }
   }
 
-  const eventName = videoGateMetaConfig?.eventName || (useImportedConversionMeta ? importedConversionMeta.eventName : useEmbeddedSubmitMeta ? embeddedSubmitMeta.eventName : siteSubmitMeta.eventName)
-  const configuredParameters = videoGateMetaConfig?.parameters || (useImportedConversionMeta ? importedConversionMeta.parameters : useEmbeddedSubmitMeta ? embeddedSubmitMeta.parameters : siteSubmitMeta.parameters)
+  const eventName = videoGateMetaConfig?.eventName || (
+    siteOwnsImportedFormSubmitEvent
+      ? siteSubmitMeta.eventName
+      : useImportedConversionMeta
+        ? importedConversionMeta.eventName
+        : useEmbeddedSubmitMeta
+          ? embeddedSubmitMeta.eventName
+          : siteSubmitMeta.eventName
+  )
+  const configuredParameters = videoGateMetaConfig?.parameters || (
+    siteOwnsImportedFormSubmitEvent
+      ? siteSubmitMeta.parameters
+      : useImportedConversionMeta
+        ? importedConversionMeta.parameters
+        : useEmbeddedSubmitMeta
+          ? embeddedSubmitMeta.parameters
+          : siteSubmitMeta.parameters
+  )
   const eventType = videoGateMetaConfig
     ? 'site_video_form_submission'
-    : useImportedConversionMeta
+    : useImportedConversionMeta && !siteOwnsImportedFormSubmitEvent
       ? `site_imported_html_${importedConversionMeta.conversionType || 'conversion'}`
       : useEmbeddedSubmitMeta
         ? 'site_embedded_form_submission'

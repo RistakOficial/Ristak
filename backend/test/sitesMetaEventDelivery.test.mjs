@@ -278,6 +278,80 @@ test('standalone forms still send browser-matched CAPI submit events', async () 
   })
 })
 
+test('the editor Meta event overrides inline form_submit metadata on imported HTML forms', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const email = `html-editor-event-${suffix}@example.test`
+  let siteId = ''
+  let sourceFormId = ''
+
+  await withPublicDomain(async () => {
+    await withMetaGraphMock(async metaCalls => {
+      try {
+        const html = `
+          <!doctype html>
+          <html>
+            <head><title>Lead importado configurable</title></head>
+            <body>
+              <form
+                data-rstk-form-id="lead-configurable"
+                data-rstk-conversion-event="Lead"
+                data-rstk-conversion-type="form_submit"
+                data-rstk-conversion-condition="qualified_only">
+                <input name="email" type="email" data-rstk-field-id="correo" data-rstk-field="email">
+                <button type="submit">Enviar</button>
+              </form>
+            </body>
+          </html>
+        `
+        const created = await createImportedSiteFromHtml({
+          filename: 'lead-configurable.html',
+          fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+          siteType: 'landing_page',
+          name: `Lead configurable ${suffix}`
+        })
+        siteId = created.site.id
+        sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+        await db.run(
+          "UPDATE public_sites SET status = 'published', meta_capi_enabled = 1, meta_event_name = 'CompleteRegistration' WHERE id = ?",
+          [siteId]
+        )
+
+        const result = await createSubmissionFromRequest(
+          publicReq(`/${created.site.slug}`),
+          {
+            siteId,
+            importedFormId: created.import.formMappings[0].formId,
+            rawFields: { email },
+            meta: {
+              pageUrl: `https://example.test/${created.site.slug}?fbclid=editor-event`,
+              eventTime: 1700000030000,
+              visitorId: 'visitor-imported-editor-event',
+              fbp: 'fb.1.1700000030.5566778899',
+              importedConversion: {
+                eventName: 'Lead',
+                conversionType: 'form_submit',
+                submitCondition: 'qualified_only'
+              }
+            }
+          }
+        )
+
+        assert.equal(result.capi.sent, true)
+        assert.equal(result.capi.eventName, 'CompleteRegistration')
+        assert.equal(metaCalls.length, 1)
+        const payload = JSON.parse(metaCalls[0].body)
+        assert.equal(payload.data[0].event_name, 'CompleteRegistration')
+        assert.equal(payload.data[0].custom_data.conversion_type, 'form_submit')
+      } finally {
+        if (siteId) await deleteSite(siteId).catch(() => undefined)
+        if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+        await db.run('DELETE FROM sessions WHERE visitor_id = ?', ['visitor-imported-editor-event']).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+      }
+    })
+  })
+})
+
 test('imported HTML forms can declare Schedule conversion metadata for Meta CAPI', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `html-schedule-${suffix}@example.test`

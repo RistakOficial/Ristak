@@ -226,6 +226,80 @@ test('imported HTML code files are listed and saved through the code editor endp
   }
 })
 
+test('imported multistep forms stay idempotent, group choices and receive the Ristak runtime', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getSitePreview,
+    renderPublicSiteHtml,
+    updateImportedSiteCodeFiles
+  } = await import('../src/services/sitesService.js')
+
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    const html = `<!doctype html><html><head><title>Solicitud multistep</title></head><body>
+      <form data-rstk-form-id="solicitud-medicos" data-rstk-label="Solicitud médica" data-multistep-form data-rstk-import-form novalidate>
+        <section data-form-step="1">
+          <fieldset><legend>¿Puedes decidir?</legend>
+            <label><input type="radio" name="rol_decision" value="si" data-rstk-field-id="rol-si" required>Sí</label>
+            <label><input type="radio" name="rol_decision" value="no" data-rstk-field-id="rol-no" required>No</label>
+          </fieldset>
+          <button type="button" data-form-next>Continuar</button>
+        </section>
+        <section data-form-step="2" hidden>
+          <input name="email" type="email" data-rstk-field-id="correo" required>
+          <button type="button" data-form-back>Anterior</button>
+          <button type="submit">Enviar</button>
+        </section>
+      </form>
+    </body></html>`
+    const created = await createImportedSiteFromHtml({
+      filename: 'multistep.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Imported Multistep ${Date.now()}`
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    const createdHtml = created.import.codeFiles[0].content
+    assert.equal((createdHtml.match(/\bdata-rstk-import-form\b/g) || []).length, 1)
+    assert.equal((createdHtml.match(/\bnovalidate\b/g) || []).length, 1)
+    assert.equal(created.import.detectedForms.length, 1)
+    assert.equal(created.import.detectedForms[0].fields.length, 2)
+    assert.equal(created.import.detectedForms[0].fields[0].id, 'rol_decision')
+    assert.equal(created.import.detectedForms[0].fields[0].options.length, 2)
+
+    const updatedOnce = await updateImportedSiteCodeFiles(siteId, {
+      files: [{ path: '', content: createdHtml }]
+    })
+    const updatedTwice = await updateImportedSiteCodeFiles(siteId, {
+      files: [{ path: '', content: updatedOnce.import.codeFiles[0].content }]
+    })
+    const stableHtml = updatedTwice.import.codeFiles[0].content
+    assert.equal((stableHtml.match(/\bdata-rstk-import-form\b/g) || []).length, 1)
+    assert.equal((stableHtml.match(/\bnovalidate\b/g) || []).length, 1)
+
+    const rendered = await renderPublicSiteHtml(await getSitePreview(siteId), {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.match(rendered, /const initImportedMultistepForm = \(form\) =>/)
+    assert.match(rendered, /form\.dataset\.rstkMultistepReady = 'true'/)
+    assert.match(rendered, /multistep && !multistep\.validateCurrentStep\(\)/)
+    assert.match(rendered, /const getChoiceFieldKey = \(field, form, type\) =>/)
+    assert.match(rendered, /return sharedStableFieldId \|\| name/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    for (const sourceFormId of sourceFormIds) {
+      await deleteSite(sourceFormId).catch(() => undefined)
+    }
+  }
+})
+
 test('imported HTML code writes enforce revision and draft state inside the mutation lock', async () => {
   const {
     createImportedSiteFromHtml,

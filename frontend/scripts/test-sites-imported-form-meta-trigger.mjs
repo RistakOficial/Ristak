@@ -49,6 +49,21 @@ const detectedFormsSource = sitesSource.slice(detectedFormsStart, detectedFormsE
 assert.match(detectedFormsSource, /activePage\?\.importedAssetPath/)
 assert.match(detectedFormsSource, /activeHtmlFormIds/)
 assert.match(detectedFormsSource, /collectImportedPanelFormGroups/)
+assert.match(
+  detectedFormsSource,
+  /normalizeImportedDestinationKey\(group\.formId, ''\)/,
+  'los IDs del HTML deben normalizarse igual que los IDs guardados'
+)
+assert.match(
+  detectedFormsSource,
+  /normalizeImportedDestinationKey\(String\(form\?\.id \|\| form\?\.selector \|\| ''\), ''\)/,
+  'la detección Meta no debe perder formularios por diferencias entre guiones y guiones bajos'
+)
+assert.match(
+  detectedFormsSource,
+  /const activeForms = detectedForms\.length \? detectedForms : fallbackMappings/,
+  'si la detección importada queda obsoleta debe usar los mapeos activos de la página'
+)
 
 const panelFormsStart = sitesSource.indexOf('const collectImportedPanelFormGroups =')
 const panelFormsEnd = sitesSource.indexOf('const collectImportedPanelFormFields =', panelFormsStart)
@@ -57,6 +72,11 @@ assert.match(
   sitesSource.slice(panelFormsStart, panelFormsEnd),
   /filter\(form => !isImportedCalendarBookingFormElement\(form\)\)/,
   'el formulario interno del calendario no debe mostrarse ni configurarse como formulario independiente'
+)
+assert.match(
+  sitesSource.slice(panelFormsStart, panelFormsEnd),
+  /const choiceIdentity = getImportedPanelChoiceGroupIdentity\(input, element\)/,
+  'radio y checkbox deben agruparse por respuesta lógica aunque cada opción traiga un ID distinto'
 )
 
 console.log('Sites imported HTML Meta form trigger contract OK')

@@ -2724,6 +2724,8 @@ ${buildImportedHtmlFaviconRulesText()}
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
 - Formularios HTML propios: cada conjunto vive en un <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto"> real. data-rstk-form-id debe ser semántico, estable y único en TODO el sitio, incluso si hay varias páginas o varios formularios.
 - Cada campo lógico debe declarar data-rstk-field-id estable y único dentro de su formulario, además de name e id. Ejemplo: <input data-rstk-field-id="correo-contacto" id="correo" name="email" type="email">. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas sus opciones comparten data-rstk-field-id y name.
+- Para un formulario de varias pantallas usa data-multistep-form en el <form>, data-form-step="1|2|..." en cada paso, data-form-next y data-form-back en botones type="button", data-form-step-label para el texto de progreso y data-form-progress-bar para la barra. No agregues JavaScript: Ristak valida el paso visible y controla avanzar, regresar, progreso y foco.
+- Resetea el estilo nativo de los grupos con fieldset { min-width:0; margin:0; padding:0; border:0 } y legend { padding:0 }. Si el diseño necesita divisores, agrégalos de forma explícita; no dejes el borde groove predeterminado del navegador.
 - Cambiar copy, clases, estilos, orden o name/id no cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociación nueva; conservarlo recupera el mapeo anterior aunque el elemento haya desaparecido temporalmente.
 - Orden de páginas: si entregas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.
 - Elementos conectados a Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video|social-profile" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago, video o perfil social real desde el editor.
@@ -2746,8 +2748,9 @@ ${buildImportedHtmlVideoGateRulesText()}
 - Acciones declarativas: agrega data-rstk-video-rules como lista JSON en el mismo slot. Cada regla usa id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique. Ejemplo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-video-rules='[{"id":"mostrar-oferta","triggerType":"unique_watched_percent","triggerValue":50,"action":"show","targetBlockIds":["oferta-final"],"before":"hidden"}]'></div>.
 - Condiciones: timeline_reached = llegó al minuto X y adelantar sí cuenta; playback_seconds = reprodujo X segundos/minutos de forma activa y repetir sí acumula; unique_watched_seconds = vio X segundos de fragmentos distintos; unique_watched_percent = vio X% de fragmentos distintos. seek, buffering y repetir un rango ya acreditado no inflan los triggers unique_watched_*. triggerValue usa segundos en las tres primeras (13 minutos = 780) y un número de 1 a 100 en porcentaje.
 - Nunca agregues JavaScript para medir el video u ocultar/mostrar targets. Ristak ejecuta las reglas. Conserva data-rstk-video-rules al editar otra cosa; quitar el atributo o una regla de la lista no borra configuraciones. Para borrar una regla declarada usa {"id":"mostrar-oferta","deleted":true}.
-- Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content". No lo hagas en data-rstk-calendar-book-form: ese submit pertenece al elemento calendar y, solo después de reservar, Ristak emite el evento que el usuario haya elegido para ese calendario en Ajustes (Schedule es únicamente el default recomendado).
-- Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
+- Conversiones Meta/CAPI en formularios ordinarios de captación: no fijes data-rstk-conversion-event ni data-rstk-conversion-type. Ristak detecta el <form> y el usuario elige Lead, CompleteRegistration, Contact, FormSubmitted u otro evento desde Ajustes > Meta Pixel + CAPI; esa elección también puede apagarse y es la fuente de verdad.
+- Para formulario completado conserva campos identificables: email y/o phone con data-rstk-field="email|phone". El evento se elige en el editor.
+- Reserva data-rstk-conversion-event y data-rstk-conversion-type para conversiones especializadas que el HTML confirma fuera de un elemento Ristak conectado, como una cita externa ya confirmada o un pago externo ya aprobado.
 - Para una cita administrada fuera del calendario conectado usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta. En un calendario custom de Ristak no declares estos atributos.
 - Para pago confirmado usa data-rstk-conversion-event="Purchase", data-rstk-conversion-type="purchase", data-rstk-conversion-value, data-rstk-conversion-content-name y data-rstk-conversion-order-id o data-rstk-payment-id. No marques Purchase en un intento de pago: solo en confirmación real/página de gracias.
 - Si un dato de conversión sale de un campo, marca ese campo con data-rstk-conversion-param="value|contentName|orderId|appointment_start_time|appointment_end_time|calendarName|paymentId|status".
@@ -7866,18 +7869,24 @@ const getMetaDetectedFormSurfaces = (
     file.language === 'html' && String(file.path || '').trim() === activeImportedPath
   ))
   let activeHtmlFormIds: Set<string> | null = null
+  let activeHtmlFormGroups: ImportedPanelFormGroup[] = []
   if (activeCodeFile && typeof DOMParser !== 'undefined') {
     try {
       const doc = new DOMParser().parseFromString(activeCodeFile.content || '', 'text/html')
-      activeHtmlFormIds = new Set(collectImportedPanelFormGroups(doc).map(group => group.formId))
+      activeHtmlFormGroups = collectImportedPanelFormGroups(doc)
+      activeHtmlFormIds = new Set(activeHtmlFormGroups.map(group => (
+        normalizeImportedDestinationKey(group.formId, '')
+      )))
     } catch {
       activeHtmlFormIds = null
+      activeHtmlFormGroups = []
     }
   }
   const detectedForms = allDetectedForms.filter(form => {
     const pagePath = String(form?.pagePath || form?.page_path || '').trim()
     if (pagePath && pagePath !== activeImportedPath) return false
-    if (activeHtmlFormIds && !activeHtmlFormIds.has(String(form?.id || form?.selector || ''))) return false
+    const detectedFormId = normalizeImportedDestinationKey(String(form?.id || form?.selector || ''), '')
+    if (activeHtmlFormIds && !activeHtmlFormIds.has(detectedFormId)) return false
     return true
   })
   const fallbackMappings = Array.isArray(importData?.formMappings)
@@ -7885,17 +7894,30 @@ const getMetaDetectedFormSurfaces = (
       if (mapping.present === false) return false
       const pagePath = String(mapping.pagePath || '').trim()
       if (pagePath && pagePath !== activeImportedPath) return false
-      return !activeHtmlFormIds || activeHtmlFormIds.has(String(mapping.formId || ''))
+      const mappingFormId = normalizeImportedDestinationKey(String(mapping.formId || ''), '')
+      return !activeHtmlFormIds || activeHtmlFormIds.has(mappingFormId)
     })
     : []
-  const activeForms = allDetectedForms.length ? detectedForms : fallbackMappings
+  const activeForms = detectedForms.length ? detectedForms : fallbackMappings
   if (!activeForms.length) return []
 
-  return activeForms.map((form, index) => ({
-    id: `imported-form:${String('formId' in form ? form.formId : form?.id || form?.selector || index)}`,
-    label: `Formulario ${index + 1}`,
-    detail: 'Formulario detectado en el HTML importado'
-  }))
+  return activeForms.map((form, index) => {
+    const rawFormId = String('formId' in form ? form.formId : form?.id || form?.selector || index)
+    const normalizedFormId = normalizeImportedDestinationKey(rawFormId, '')
+    const htmlGroup = activeHtmlFormGroups.find(group => (
+      normalizeImportedDestinationKey(group.formId, '') === normalizedFormId
+    ))
+    const storedLabel = 'formTitle' in form
+      ? String(form.formTitle || '')
+      : 'title' in form
+        ? String(form.title || '')
+        : ''
+    return {
+      id: `imported-form:${rawFormId}`,
+      label: htmlGroup?.label || storedLabel || `Formulario ${index + 1}`,
+      detail: 'Al enviar este formulario HTML'
+    }
+  })
 }
 
 const getMetaDetectedCalendarSurfaces = (
