@@ -5054,12 +5054,13 @@ de vista, por ejemplo `video-presentacion-escritorio` y
 `video-presentacion-movil`, y deja que sus contenedores padres usen respectivamente
 `data-rstk-device-only="desktop"` y `data-rstk-device-only="mobile"`. Al cambiar la vista del
 editor, el inspector sigue automáticamente el slot visible para que una subida
-móvil no reemplace por accidente el bloque de computadora. Mientras una de las
-dos variantes todavía no tenga bloque propio, el renderer usa como respaldo el
-único video configurado de la variante hermana; al conectar un archivo en el
-slot pendiente se crea su bloque independiente y esa coincidencia exacta siempre
-tiene prioridad. El respaldo solo aplica a videos emparejados por base y vista,
-nunca a dos videos distintos de la misma página.
+móvil no reemplace por accidente el bloque de computadora. Cada slot conserva
+su propia asociación de archivo y el renderer solo acepta una coincidencia
+exacta por página, tipo e ID. Si una de las dos variantes todavía no tiene bloque
+propio, permanece vacía en lugar de reutilizar el video de la variante hermana;
+al conectar un archivo en el slot pendiente se crea su bloque independiente. Los
+cambios consecutivos de estos slots se encadenan en orden: una guardada automática
+anterior no puede pisar ni dejar sin procesar el último video elegido.
 
 El bloqueo de contenido por video en HTML importado es una capacidad nativa del
 renderer, no una composición de acciones `show`/`hide`. Cada slot fuente declara

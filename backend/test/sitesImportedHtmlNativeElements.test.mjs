@@ -1492,7 +1492,7 @@ test('native HTML gate receives the Bunny Player.js bridge even without panel ac
   }
 })
 
-test('responsive imported video slots use the configured sibling until mobile gets its own file', async () => {
+test('responsive imported video slots keep desktop and mobile file bindings independent', async () => {
   let siteId = ''
 
   try {
@@ -1534,9 +1534,18 @@ test('responsive imported video slots use the configured sibling until mobile ge
     let html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: false })
 
     assert.match(html, /data-rstk-native-slot-id="video-presentacion-escritorio"/)
-    assert.match(html, /data-rstk-native-slot-id="video-presentacion-movil"/)
-    assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 2)
+    assert.doesNotMatch(html, /data-rstk-native-slot-id="video-presentacion-movil"/)
+    assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 1)
     assert.doesNotMatch(html, /Configura el video de Ristak/)
+
+    const previewHtml = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    assert.equal((previewHtml.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 1)
+    assert.match(previewHtml, /data-rstk-native-slot-id="video-presentacion-movil"/)
+    assert.match(previewHtml, /Configura el video de Ristak/)
 
     await createBlock(site.id, {
       blockType: 'video',

@@ -66,7 +66,6 @@ import { createRistakId } from '../utils/idGenerator.js'
 import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
 import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 import {
-  areImportedNativeResponsiveVariants,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
   buildImportedHtmlFaviconRulesText,
@@ -27601,24 +27600,6 @@ function findImportedNativeElementBlock(blocks = [], slot = {}) {
   return blocks.find(block => isImportedNativeElementBlock(block, slot)) || null
 }
 
-function findImportedNativeResponsiveFallbackBlock(blocks = [], slot = {}) {
-  if (cleanString(slot.type) !== 'video') return null
-  const slotPageId = cleanString(slot.pageId || slot.page_id)
-  const candidates = blocks.filter(block => {
-    const settings = block.settings || {}
-    const blockPageId = cleanString(settings.pageId || settings.page_id)
-    return block.blockType === 'video' &&
-      normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element) &&
-      cleanString(settings.importedHtmlNativeType || settings.imported_html_native_type) === 'video' &&
-      areImportedNativeResponsiveVariants(
-        slot.id,
-        settings.importedHtmlNativeSlotId || settings.imported_html_native_slot_id
-      ) &&
-      (!slotPageId || !blockPageId || blockPageId === slotPageId)
-  })
-  return candidates.length === 1 ? candidates[0] : null
-}
-
 function renderHtmlAttributes(attrs = {}) {
   return Object.entries(attrs)
     .filter(([key, value]) => /^[a-zA-Z_:][\w:.-]*$/.test(key) && value !== undefined && value !== null && value !== false)
@@ -28150,8 +28131,10 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
       : (innerHtml || '')
   }
   runtimeState.seenSlotKeys.add(slotKey)
-  const exactBlock = findImportedNativeElementBlock(blocks, slot)
-  const block = exactBlock || findImportedNativeResponsiveFallbackBlock(blocks, slot)
+  // Cada slot declarado es dueño exclusivo de su archivo. Aunque los IDs indiquen
+  // variantes responsive de la misma pieza, un bloque de escritorio nunca puede
+  // resolver ni suplir el slot móvil (o viceversa).
+  const block = findImportedNativeElementBlock(blocks, slot)
   if (slot.type === 'calendar' && slot.renderMode === 'custom') {
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
   }

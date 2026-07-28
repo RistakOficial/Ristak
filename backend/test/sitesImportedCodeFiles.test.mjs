@@ -1022,6 +1022,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(mobileGuide, /data-rstk-video-settings='\{"videoMobilePortraitCrop":true\}'/)
   assert.match(mobileGuide, /el silencio del usuario siempre elige esta opción/)
   assert.match(mobileGuide, /ÚNICAMENTE cuando el usuario pida de forma explícita dos videos/)
+  assert.match(mobileGuide, /conserva cada asociación de archivo de forma independiente/)
+  assert.match(mobileGuide, /permanece vacía: nunca reutiliza ni copia el archivo de la otra/)
   assert.match(mobileGuide, /videoMobilePortraitCrop:false/)
   assert.match(mobileGuide, /No infieras esa excepción solo porque el archivo original sea horizontal/)
   assert.match(mobileGuide, /conserva dos variantes de video ya declaradas si la solicitud no trata sobre ellas/)
@@ -1063,6 +1065,18 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(source, /buildImportedHtmlDeviceVisibilityStyle\(device\)/)
   assert.match(source, /data-rstk-device-visibility/)
   assert.match(source, /onLoad=\{\(event\) => syncImportedNativeElementSelectionForFrame\(event\.currentTarget\)\}/)
+  assert.doesNotMatch(source, /findImportedNativeResponsiveFallbackBlock/)
+  assert.match(source, /El video que elijas quedará asociado únicamente a/)
+  assert.doesNotMatch(
+    source,
+    /if\s*\(activeQueue\)\s*return activeQueue/,
+    'a save requested while another native save is finishing must not be orphaned'
+  )
+  assert.match(
+    source,
+    /const previousQueue = importedNativeElementSaveQueuesRef\.current\[queueKey\] \|\| Promise\.resolve\(true\)[\s\S]*?previousQueue[\s\S]*?\.catch\(\(\) => false\)[\s\S]*?\.then\(runQueue\)/,
+    'native element saves must chain so the newest device-specific video is persisted'
+  )
 
   assert.match(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame[\s\S]*?width: min\(var\(--imported-html-mobile-preview-width, 390px\), 100%\)/)
   assert.doesNotMatch(styles, /\.importedCodePreviewStageMobile \.importedCodePreviewFrame\s*\{\s*width:\s*100%/)

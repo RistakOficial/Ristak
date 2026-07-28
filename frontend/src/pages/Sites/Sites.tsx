@@ -264,7 +264,6 @@ import {
   DEFAULT_IMPORTED_HTML_FAVICON_TAG,
   IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
   IMPORTED_HTML_MOBILE_RULES,
-  areImportedNativeResponsiveVariants,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
@@ -2551,21 +2550,6 @@ const isImportedNativeElementBlock = (block: SiteBlock, slot: ImportedNativeElem
 
 const findImportedNativeElementBlock = (blocks: SiteBlock[] = [], slot: ImportedNativeElementSlot) =>
   blocks.find(block => isImportedNativeElementBlock(block, slot)) || null
-
-const findImportedNativeResponsiveFallbackBlock = (blocks: SiteBlock[] = [], slot: ImportedNativeElementSlot) => {
-  if (slot.type !== 'video') return null
-  const slotPageId = String(slot.pageId || '').trim()
-  const candidates = blocks.filter(block => {
-    const settings = block.settings || {}
-    const blockPageId = getSettingString(settings, 'pageId') || getSettingString(settings, 'page_id')
-    return block.blockType === 'video' &&
-      Boolean(settings.importedHtmlNativeElement) &&
-      getSettingString(settings, 'importedHtmlNativeType') === 'video' &&
-      areImportedNativeResponsiveVariants(slot.id, getSettingString(settings, 'importedHtmlNativeSlotId')) &&
-      (!slotPageId || !blockPageId || blockPageId === slotPageId)
-  })
-  return candidates.length === 1 ? candidates[0] : null
-}
 
 const getVisibleImportedNativeElementSlotKeys = (
   frame: HTMLIFrameElement,
@@ -22195,14 +22179,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const getImportedNativeElementDraftSettings = useCallback((slot: ImportedNativeElementSlot) => {
     const currentSite = importedNativeElementSiteRef.current || site
     const block = findImportedNativeElementBlock(currentSite.blocks || [], slot)
-    const responsiveFallback = block
-      ? null
-      : findImportedNativeResponsiveFallbackBlock(currentSite.blocks || [], slot)
     const defaults = getImportedNativeElementDefaultSettingsForSlot(slot)
     const pageId = slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
     return {
       ...defaults,
-      ...(responsiveFallback?.settings || {}),
       ...(block?.settings || {}),
       ...(importedNativeElementDraftsRef.current[slot.key] || importedNativeElementDrafts[slot.key] || {}),
       ...getImportedNativeElementBlockSettings(slot, pageId)
@@ -22414,9 +22394,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     }
 
     const queueKey = slot.siteId || site.id
-    const activeQueue = importedNativeElementSaveQueuesRef.current[queueKey]
-    if (activeQueue) return activeQueue
-
     const runQueue = async () => {
       let result = true
       while (importedNativeElementMountedRef.current) {
@@ -22429,12 +22406,19 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
       return result
     }
+    // Encadena incluso cuando ya hay una cola activa. Si solo devolvemos la promesa
+    // anterior, una petición que llegue justo cuando esa cola termina puede quedarse
+    // pendiente para siempre y el autosave viejo gana sobre la selección más reciente.
+    const previousQueue = importedNativeElementSaveQueuesRef.current[queueKey] || Promise.resolve(true)
     let queue: Promise<boolean>
-    queue = runQueue().finally(() => {
-      if (importedNativeElementSaveQueuesRef.current[queueKey] === queue) {
-        delete importedNativeElementSaveQueuesRef.current[queueKey]
-      }
-    })
+    queue = previousQueue
+      .catch(() => false)
+      .then(runQueue)
+      .finally(() => {
+        if (importedNativeElementSaveQueuesRef.current[queueKey] === queue) {
+          delete importedNativeElementSaveQueuesRef.current[queueKey]
+        }
+      })
     importedNativeElementSaveQueuesRef.current[queueKey] = queue
     onNativeSaveQueue(queueKey, queue, 'native')
     return queue
@@ -25667,9 +25651,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     const nativeElementSite = importedNativeElementSiteRef.current || site
     const nativeElementBlocks = nativeElementSite.blocks || []
     const selectedBlock = selectedSlot ? findImportedNativeElementBlock(nativeElementBlocks, selectedSlot) : null
-    const selectedResponsiveFallbackBlock = selectedSlot && !selectedBlock
-      ? findImportedNativeResponsiveFallbackBlock(nativeElementBlocks, selectedSlot)
-      : null
     const draftBlock = selectedSlot ? makeImportedNativeElementDraftBlock(selectedSlot) : null
     const draftSettings = draftBlock?.settings || {}
     const selectedSlotSaving = Boolean(selectedSlot && importedNativeElementSavingKey === selectedSlot.key)
@@ -26137,9 +26118,9 @@ const ImportedHtmlEditorPanel: React.FC<{
                     icon: <Pencil size={14} />,
                     content: (
                       <>
-                        {selectedResponsiveFallbackBlock && (
+                        {!selectedBlock && (
                           <p className={styles.importedFormFieldsHint}>
-                            Esta vista usa temporalmente el video de la otra versión. Elige otro archivo aquí para guardar una versión independiente.
+                            Esta versión todavía no tiene archivo. El video que elijas quedará asociado únicamente a {selectedSlot.label}.
                           </p>
                         )}
                         {selectedSlot.renderMode === 'custom' && (
