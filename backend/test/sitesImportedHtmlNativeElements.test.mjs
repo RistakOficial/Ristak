@@ -1142,7 +1142,14 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
   try {
     const site = await createImportedNativeSite(`
       <!doctype html>
-      <html>
+      <html
+        data-rstk-auto-color-mode="time"
+        data-rstk-day-start="7"
+        data-rstk-night-start="19"
+        data-rstk-color-mode="light"
+        data-rstk-theme-color-light="#f7f9ff"
+        data-rstk-theme-color-dark="#070911"
+      >
         <body>
           <section data-rstk-device-only="desktop">
             <div
@@ -1260,6 +1267,16 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.match(html, /data-rstk-video-gate-runtime/)
     assert.match(html, /window\.ristakSyncVideoGates/)
     assert.match(html, /const GATE_SOURCE_SELECTOR =/)
+    assert.match(html, /data-rstk-time-color-mode-runtime/)
+    assert.match(html, /new Date\(\)\.getHours\(\)/)
+    assert.match(html, /data-rstk-theme-color-/)
+    assert.match(html, /meta\[name="theme-color"\]/)
+    assert.match(html, /document\.addEventListener\('visibilitychange'/)
+    assert.match(html, /window\.addEventListener\('pageshow', refresh\)/)
+    assert.doesNotMatch(html, /navigator\.geolocation/)
+    assert.match(html, /const progressVisitorId = \(\) =>/)
+    assert.match(html, /ristak:video-gate-progress:v2/)
+    assert.match(html, /legacyStorageKey/)
     assert.match(html, /gate\.progress = Math\.max\(0, \.\.\.Array\.from\(gate\.progressByVideo\.values\(\)\)\)/)
     assert.match(html, /filter:blur\(var\(--rstk-video-gate-blur,3px\)\)!important/)
     assert.match(html, /position:absolute!important;\s*inset:0!important;\s*z-index:2!important/)
@@ -1268,6 +1285,65 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.match(html, /if \(element\.textContent !== nextValue\) element\.textContent = nextValue/)
     assert.match(html, /const hasNewGateSource = Array\.from\(mutations \|\| \[\]\)\.some/)
     assert.doesNotMatch(html, /ocultar-contador-30/)
+
+    const timeModeRuntime = html.match(/<script data-rstk-time-color-mode-runtime>([\s\S]*?)<\/script>/)?.[1]
+    assert.ok(timeModeRuntime)
+    const runTimeModeAtHour = hour => {
+      const rootAttributes = new Map([
+        ['data-rstk-auto-color-mode', 'time'],
+        ['data-rstk-day-start', '7'],
+        ['data-rstk-night-start', '19'],
+        ['data-rstk-theme-color-light', '#f7f9ff'],
+        ['data-rstk-theme-color-dark', '#070911']
+      ])
+      const root = {
+        style: {},
+        getAttribute: name => rootAttributes.get(name) || '',
+        setAttribute: (name, value) => rootAttributes.set(name, String(value))
+      }
+      const themeColorMeta = {
+        content: '',
+        setAttribute: (name, value) => {
+          if (name === 'content') themeColorMeta.content = String(value)
+        }
+      }
+      const timeDocument = {
+        documentElement: root,
+        hidden: false,
+        querySelector: selector => selector === 'meta[name="theme-color"]' ? themeColorMeta : null,
+        addEventListener: () => {}
+      }
+      const timeWindow = {
+        addEventListener: () => {},
+        clearTimeout: () => {},
+        setTimeout: () => 1
+      }
+      class LocalDate extends Date {
+        constructor(...args) {
+          super(...(args.length ? args : [2026, 6, 28, hour, 0, 0, 0]))
+        }
+      }
+      vm.runInNewContext(timeModeRuntime, {
+        Date: LocalDate,
+        document: timeDocument,
+        window: timeWindow
+      })
+      return {
+        mode: rootAttributes.get('data-rstk-color-mode'),
+        colorScheme: root.style.colorScheme,
+        themeColor: themeColorMeta.content
+      }
+    }
+    assert.deepEqual(runTimeModeAtHour(15), {
+      mode: 'light',
+      colorScheme: 'light',
+      themeColor: '#f7f9ff'
+    })
+    assert.deepEqual(runTimeModeAtHour(21), {
+      mode: 'dark',
+      colorScheme: 'dark',
+      themeColor: '#070911'
+    })
 
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1])
     const gateRuntime = scripts.find(script => script.includes('ristakImportedVideoGateRuntimeLoaded'))
@@ -1427,6 +1503,7 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
       }
     }
     const localStorage = new FakeStorage()
+    localStorage.setItem('ristak', JSON.stringify({ visitor_id: 'visitor-test-123' }))
     const sessionStorage = new FakeStorage()
     const window = {
       CSS: { escape: value => String(value) },
@@ -1489,6 +1566,8 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal(remaining.textContent, '20')
     const persistedKey = [...localStorage.values.keys()].find(key => key.includes('admision-v1'))
     assert.ok(persistedKey)
+    assert.match(persistedKey, /ristak:video-gate-progress:v2/)
+    assert.match(persistedKey, /visitor-test-123/)
     const persistedProgress = JSON.parse(localStorage.getItem(persistedKey))
     assert.ok(Math.abs((persistedProgress.expiresAt - persistedProgress.savedAt) - 45 * 86400 * 1000) < 100)
     assert.equal(persistedProgress.uniqueWatchedSeconds, 10)

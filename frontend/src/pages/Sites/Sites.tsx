@@ -268,6 +268,7 @@ import {
   IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
   IMPORTED_HTML_MOBILE_RULES,
   areImportedNativeResponsiveVariants,
+  buildImportedHtmlAutomaticColorModeRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
@@ -2735,7 +2736,8 @@ ${buildImportedHtmlVideoGateRulesText()}
 - Secciones que sean targets de video deben usar id y data-rstk-video-action-target únicos.
 - Evita navegación automática, submits automáticos y window.open.
 
-${buildImportedHtmlMobileRulesText()}`.trim()
+${buildImportedHtmlMobileRulesText()}
+${buildImportedHtmlAutomaticColorModeRulesText()}`.trim()
 
 const IMPORTED_HTML_MOBILE_PREVIEW_STYLE = {
   '--imported-html-mobile-preview-width': `${IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX}px`
@@ -13195,7 +13197,8 @@ export const Sites: React.FC = () => {
         '- Marca textos e imágenes editables con los atributos internos de Ristak.',
         '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.',
         '',
-        buildImportedHtmlMobileRulesText()
+        buildImportedHtmlMobileRulesText(),
+        buildImportedHtmlAutomaticColorModeRulesText()
       ].join('\n')
     ].filter(Boolean)
     const messages: SitesAICreationMessage[] = [{ role: 'user', content: promptParts.join('\n\n') }]
@@ -20750,6 +20753,8 @@ ${buildImportedHtmlVideoGateRulesText('Contrato de bloqueo nativo por video que 
 ${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes conservar:')}
 
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
+
+${buildImportedHtmlAutomaticColorModeRulesText('Contrato de modo claro/oscuro automático que también debes conservar:')}
   `.trim()
 }
 
@@ -20787,6 +20792,8 @@ ${buildImportedHtmlVideoGateRulesText('Contrato de bloqueo nativo por video que 
 ${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes conservar:')}
 
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
+
+${buildImportedHtmlAutomaticColorModeRulesText('Contrato de modo claro/oscuro automático que también debes conservar:')}
 `.trim()
 
 const normalizeImportedAIRegionPreviewHtml = (html = '') => (
@@ -23463,6 +23470,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       selectedContext,
       contentAssetsCatalog,
       buildImportedHtmlMobileRulesText('Contrato responsive obligatorio para esta edición:'),
+      buildImportedHtmlAutomaticColorModeRulesText('Contrato de modo claro/oscuro automático para esta edición:'),
       buildCodeAssistantAttachmentNotes(codeAssistantAttachments),
       'Usa los archivos adjuntos solo como referencia para modificar el HTML activo. No insertes respuestas, resúmenes ni explicaciones del asistente dentro de la página salvo que el usuario lo pida explícitamente.',
       `Solicitud del usuario: ${prompt}`

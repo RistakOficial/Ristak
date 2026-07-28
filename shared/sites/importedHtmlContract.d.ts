@@ -4,6 +4,7 @@ export const IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE: string
 export const DEFAULT_IMPORTED_HTML_FAVICON_TAG: string
 export const IMPORTED_HTML_FAVICON_RULES: readonly string[]
 export const IMPORTED_HTML_MOBILE_RULES: readonly string[]
+export const IMPORTED_HTML_AUTOMATIC_COLOR_MODE_RULES: readonly string[]
 export const IMPORTED_HTML_CUSTOM_CALENDAR_RULES: readonly string[]
 export const IMPORTED_HTML_CUSTOM_CALENDAR_SKELETON: string
 export const IMPORTED_HTML_CUSTOM_SOCIAL_PROFILE_RULES: readonly string[]
@@ -20,6 +21,7 @@ export function buildImportedHtmlFaviconRulesText(heading?: string): string
 export function importedHtmlHasFavicon(html?: string): boolean
 export function ensureImportedHtmlFavicon(html?: string): string
 export function buildImportedHtmlMobileRulesText(heading?: string): string
+export function buildImportedHtmlAutomaticColorModeRulesText(heading?: string): string
 export function buildImportedHtmlDeviceVisibilityStyle(previewDevice?: 'desktop' | 'mobile' | ''): string
 export function buildImportedHtmlCustomCalendarRulesText(heading?: string): string
 export function buildImportedHtmlCustomSocialProfileRulesText(heading?: string): string

@@ -876,8 +876,8 @@ Una VSL puede conservar el avance real del gate sin JavaScript propio:
 ```
 
 `visitor` guarda en `localStorage` la posición normalizada, el tiempo reproducido
-y la unión de fragmentos vistos; `session` usa `sessionStorage`, y `none` no
-persiste. La vigencia se elige libremente con
+y la unión de fragmentos vistos, aislados por el `visitor_id` first-party de
+Ristak; `session` usa `sessionStorage`, y `none` no persiste. La vigencia se elige libremente con
 `data-rstk-video-gate-progress-days` entre 1 y 36500 días. Para precisión avanzada
 puede declararse `data-rstk-video-gate-progress-ttl` en segundos, que tiene
 prioridad si ambos aparecen. Treinta días es solamente el fallback cuando el
@@ -886,10 +886,15 @@ comparten avance cuando usan la misma `progress-key`, incluso si sus duraciones
 exactas difieren. Esa key debe versionarse al reemplazar el contenido para no
 heredar progreso de otra VSL.
 
-Ristak agrega automáticamente el ID estable del sitio y de la página a la clave
-de almacenamiento. Por eso una vista previa nueva conserva el mismo avance sin
-depender del token temporal de su URL, y dos páginas distintas no contaminan su
-progreso aunque reutilicen la misma `progress-key`.
+Ristak agrega automáticamente el `visitor_id`, el ID estable del sitio y el de la
+página a la llave `v2` de almacenamiento. La identidad sale del runtime nativo,
+del campo `visitor_id` dentro del objeto local `ristak` o de la cookie first-party
+`ristak_vid` de respaldo. Por eso una vista previa nueva conserva el mismo avance
+sin depender del token temporal de su URL, y visitantes o páginas distintas no
+contaminan su progreso aunque reutilicen la misma `progress-key`. Los registros
+legacy `v1` se migran una sola vez a la llave aislada. Esta continuidad pertenece
+al mismo navegador/perfil; no sincroniza otro dispositivo, una ventana incógnita
+ni datos que el visitante haya borrado.
 
 Con `resume="true"`, el primer play de una visita posterior arranca en el punto
 guardado. `seek-policy="watched_only"` permite retroceder y volver hasta el

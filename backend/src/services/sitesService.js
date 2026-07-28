@@ -71,6 +71,7 @@ import { resolveConversionAttribution, persistAppointmentConversionAttribution }
 import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 import {
   areImportedNativeResponsiveVariants,
+  buildImportedHtmlAutomaticColorModeRulesText,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
   buildImportedHtmlFaviconRulesText,
@@ -7313,6 +7314,8 @@ Reglas duras:
 ${buildImportedHtmlFaviconRulesText()}
 
 ${buildImportedHtmlMobileRulesText()}
+
+${buildImportedHtmlAutomaticColorModeRulesText()}
 
 Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
 - EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma acción. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una página de page.pages enlazada con data-rstk-button-page-id.
@@ -17873,6 +17876,40 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         return video.closest('[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]');
       };
       const safeStoragePart = value => String(value || 'scope').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 120) || 'scope';
+      const progressVisitorId = () => {
+        try {
+          if (typeof window.ristakNativeIdentity === 'function') {
+            const identity = window.ristakNativeIdentity() || {};
+            if (identity.visitorId) return String(identity.visitorId);
+          }
+        } catch (_) {}
+        let stored = {};
+        try {
+          stored = JSON.parse(window.localStorage && window.localStorage.getItem('ristak') || '{}') || {};
+          const storedVisitorId = stored.visitor_id || stored.visitorId;
+          if (storedVisitorId) return String(storedVisitorId);
+        } catch (_) {
+          stored = {};
+        }
+        try {
+          const prefix = 'ristak_vid=';
+          const cookie = String(document.cookie || '').split(';').map(item => item.trim()).find(item => item.indexOf(prefix) === 0);
+          if (cookie) return decodeURIComponent(cookie.slice(prefix.length));
+        } catch (_) {}
+        const generated = 'site_visitor_' + (
+          window.crypto && typeof window.crypto.randomUUID === 'function'
+            ? window.crypto.randomUUID()
+            : Date.now().toString(36) + Math.random().toString(36).slice(2, 14)
+        );
+        try {
+          stored.visitor_id = generated;
+          if (window.localStorage) window.localStorage.setItem('ristak', JSON.stringify(stored));
+        } catch (_) {}
+        try {
+          document.cookie = 'ristak_vid=' + encodeURIComponent(generated) + '; Max-Age=31536000; Path=/; SameSite=Lax';
+        } catch (_) {}
+        return generated;
+      };
       const persistenceConfigForVideo = video => {
         const source = gateSourceForVideo(video);
         const gateId = readFirstAttribute(source, GATE_ID_ATTRS);
@@ -17902,16 +17939,26 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         try { pathScope = String(window.location && window.location.pathname || 'page'); } catch (_) {}
         const siteId = video.getAttribute('data-rstk-video-action-site-id') || PROGRESS_SITE_SCOPE || 'site';
         const pageId = video.getAttribute('data-rstk-video-action-page-id') || PROGRESS_PAGE_SCOPE || pathScope;
+        const visitorId = mode === 'visitor' ? progressVisitorId() : mode === 'session' ? 'session' : 'anonymous';
+        const legacyStorageKey = [
+          'ristak:video-gate-progress:v1',
+          safeStoragePart(siteId),
+          safeStoragePart(pageId),
+          safeStoragePart(progressKey)
+        ].join(':');
         return {
           enabled: mode !== 'none',
           mode,
           resume,
           seekPolicy,
           ttlSeconds,
+          visitorId,
+          legacyStorageKey,
           storageKey: [
-            'ristak:video-gate-progress:v1',
+            'ristak:video-gate-progress:v2',
             safeStoragePart(siteId),
             safeStoragePart(pageId),
+            safeStoragePart(visitorId),
             safeStoragePart(progressKey)
           ].join(':')
         };
@@ -17937,16 +17984,25 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
         if (!config?.enabled || !config.storageKey) return null;
         if (progressRecordCache.has(config.storageKey)) return progressRecordCache.get(config.storageKey);
         let record = null;
+        let migratedFromLegacy = false;
         try {
           const storage = storageForMode(config.mode);
-          record = JSON.parse(storage && storage.getItem(config.storageKey) || 'null');
+          let raw = storage && storage.getItem(config.storageKey) || '';
+          if (!raw && config.legacyStorageKey) {
+            raw = storage && storage.getItem(config.legacyStorageKey) || '';
+            migratedFromLegacy = Boolean(raw);
+          }
+          record = JSON.parse(raw || 'null');
         } catch (_) {
           record = null;
         }
         if (!record || typeof record !== 'object' || Number(record.expiresAt || 0) <= Date.now()) {
           try {
             const storage = storageForMode(config.mode);
-            if (storage) storage.removeItem(config.storageKey);
+            if (storage) {
+              storage.removeItem(config.storageKey);
+              if (config.legacyStorageKey) storage.removeItem(config.legacyStorageKey);
+            }
           } catch (_) {}
           progressRecordCache.set(config.storageKey, null);
           return null;
@@ -17959,6 +18015,15 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           savedAt: Math.max(0, Number(record.savedAt || 0)),
           expiresAt: Math.max(Date.now(), Number(record.expiresAt || 0))
         };
+        if (migratedFromLegacy) {
+          try {
+            const storage = storageForMode(config.mode);
+            if (storage) {
+              storage.setItem(config.storageKey, JSON.stringify(normalized));
+              storage.removeItem(config.legacyStorageKey);
+            }
+          } catch (_) {}
+        }
         progressRecordCache.set(config.storageKey, normalized);
         return normalized;
       };
@@ -27253,6 +27318,62 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
   }
 }
 
+function buildImportedTimeColorModeRuntimeScript(html = '') {
+  if (!/\bdata-rstk-auto-color-mode\s*=\s*(?:"time"|'time'|time)(?:\s|>)/i.test(String(html || ''))) return ''
+
+  return `<script data-rstk-time-color-mode-runtime>
+    (() => {
+      const root = document.documentElement;
+      if (!root || root.getAttribute('data-rstk-auto-color-mode') !== 'time') return;
+      const normalizeHour = (value, fallback) => {
+        const hour = Number(value);
+        return Number.isFinite(hour) ? Math.max(0, Math.min(23, Math.floor(hour))) : fallback;
+      };
+      const dayStart = normalizeHour(root.getAttribute('data-rstk-day-start'), 7);
+      const nightStart = normalizeHour(root.getAttribute('data-rstk-night-start'), 19);
+      const isDayHour = hour => dayStart < nightStart
+        ? hour >= dayStart && hour < nightStart
+        : hour >= dayStart || hour < nightStart;
+      let timer = 0;
+      const applyMode = () => {
+        const mode = isDayHour(new Date().getHours()) ? 'light' : 'dark';
+        root.setAttribute('data-rstk-color-mode', mode);
+        root.style.colorScheme = mode;
+        const themeColor = root.getAttribute('data-rstk-theme-color-' + mode);
+        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+        if (themeColor && themeColorMeta) themeColorMeta.setAttribute('content', themeColor);
+      };
+      const scheduleBoundary = () => {
+        if (timer) window.clearTimeout(timer);
+        const now = new Date();
+        const boundaries = [];
+        [dayStart, nightStart].forEach(hour => {
+          [0, 1].forEach(dayOffset => {
+            const candidate = new Date(now);
+            candidate.setDate(now.getDate() + dayOffset);
+            candidate.setHours(hour, 0, 0, 0);
+            if (candidate.getTime() > now.getTime()) boundaries.push(candidate.getTime());
+          });
+        });
+        const nextBoundary = Math.min(...boundaries);
+        const delay = Number.isFinite(nextBoundary)
+          ? Math.max(1000, nextBoundary - now.getTime() + 50)
+          : 60 * 60 * 1000;
+        timer = window.setTimeout(refresh, delay);
+      };
+      const refresh = () => {
+        applyMode();
+        scheduleBoundary();
+      };
+      refresh();
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refresh();
+      });
+      window.addEventListener('pageshow', refresh);
+    })();
+  </script>`
+}
+
 function injectImportedHtmlRuntime(html = '', injection = '') {
   html = html || '<!doctype html><html><body></body></html>'
   html = injectImportedStaticFallback(html)
@@ -31021,6 +31142,7 @@ async function renderImportedPublicSiteHtml(site, {
   const importedVideoFormGateRuntime = buildVideoFormGateRuntimeScript(importedVideoLookupBlocks, {
     force: /data-rstk-video-form-gate\b/i.test(html)
   })
+  const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
@@ -31031,7 +31153,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+    `${importedTimeColorModeRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -31116,6 +31238,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     const importedVideoFormGateRuntime = buildVideoFormGateRuntimeScript(importedVideoLookupBlocks, {
       force: /data-rstk-video-form-gate\b/i.test(html)
     })
+    const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
@@ -31124,7 +31247,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
-      `${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+      `${importedTimeColorModeRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
     )
 
     return {

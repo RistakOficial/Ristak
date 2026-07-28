@@ -818,6 +818,16 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /data-rstk-conversion-condition="qualified_only"/)
   assert.match(instructions, /solo manda Pixel\/CAPI cuando el resultado sea calificado/)
   assert.match(instructions, /@media \(max-width: 640px\)/)
+  assert.match(instructions, /data-rstk-auto-color-mode="time"/)
+  assert.match(instructions, /data-rstk-day-start="7"/)
+  assert.match(instructions, /data-rstk-night-start="19"/)
+  assert.match(instructions, /data-rstk-color-mode="light"/)
+  assert.match(instructions, /data-rstk-theme-color-light/)
+  assert.match(instructions, /data-rstk-theme-color-dark/)
+  assert.match(instructions, /hora local que reporta el navegador/)
+  assert.match(instructions, /No agregues botones Día\/Noche/)
+  assert.match(instructions, /visitor_id first-party/)
+  assert.match(instructions, /no promete sincronización entre dispositivos/)
   assert.match(instructions, /viewport de 390px/)
   assert.match(instructions, /no debe existir scroll horizontal/)
   assert.match(instructions, /al menos 44px de alto/)
@@ -1031,6 +1041,7 @@ test('HTML mobile rules are shared by every creation path and the code preview u
     IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX,
     IMPORTED_HTML_MOBILE_RULES,
     areImportedNativeResponsiveVariants,
+    buildImportedHtmlAutomaticColorModeRulesText,
     buildImportedHtmlDeviceVisibilityStyle,
     resolveVisibleImportedNativeElementSelection,
     buildImportedHtmlMobileRulesText
@@ -1091,6 +1102,14 @@ test('HTML mobile rules are shared by every creation path and the code preview u
 
   const sharedPromptUses = source.match(/buildImportedHtmlMobileRulesText\(/g) || []
   assert.ok(sharedPromptUses.length >= 5, 'La guía móvil debe llegar a creación, edición y asistentes HTML')
+  const automaticColorModePromptUses = source.match(/buildImportedHtmlAutomaticColorModeRulesText\(/g) || []
+  assert.ok(
+    automaticColorModePromptUses.length >= 5,
+    'La guía de modo automático debe llegar a creación, edición y asistentes HTML'
+  )
+  const automaticColorModeGuide = buildImportedHtmlAutomaticColorModeRulesText()
+  assert.match(automaticColorModeGuide, /data-rstk-auto-color-mode="time"/)
+  assert.match(automaticColorModeGuide, /No agregues botones Día\/Noche/)
   assert.match(source, /\.\.\.IMPORTED_HTML_MOBILE_RULES\.map/)
   assert.match(source, /<details className=\{styles\.importedCodeGuide\}>/)
   assert.match(source, /title="Mostrar u ocultar las reglas completas para HTML y móvil"/)

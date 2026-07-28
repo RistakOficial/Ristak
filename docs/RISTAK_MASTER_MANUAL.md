@@ -5341,8 +5341,14 @@ prioridad si se declaran ambos. Treinta días es sólo el fallback cuando el HTM
 no elige una vigencia.
 Desktop y móvil comparten el mismo registro mediante
 `data-rstk-video-gate-progress-key`; esa clave se versiona cuando cambia el
-contenido. Ristak la aísla además por ID estable de sitio y página, de modo que
-los previews con URL temporal reanudan el mismo avance sin mezclar páginas. Con
+contenido. Ristak la aísla además por `visitor_id` first-party, ID estable de
+sitio y página, de modo que los previews con URL temporal reanudan el mismo
+avance sin mezclar visitantes ni páginas. El `visitor_id` se obtiene de la
+identidad nativa de Ristak, se conserva dentro del objeto `ristak` en
+`localStorage` y tiene la cookie first-party `ristak_vid` como respaldo. La
+persistencia es propia del navegador/perfil actual: no sincroniza entre
+dispositivos, incógnito ni después de borrar datos del sitio. El runtime migra
+una sola vez los registros legacy `v1` a la llave `v2` aislada por visitante. Con
 `unique_watched_seconds` o `unique_watched_percent`, volver a mirar un rango previo no
 descuenta el contador hasta alcanzar material nuevo. El hook
 `data-rstk-video-gate-remaining-time` muestra directamente los segundos
@@ -5361,6 +5367,28 @@ archivo completo, Ristak usa sus controles limpios en ese modo. La combinación
 recomendada para VSL es `live_frontier` + `watched_only` +
 `unique_watched_seconds`; el primero controla la representación, el segundo
 bloquea el futuro y el tercero acredita únicamente contenido nuevo.
+
+Un HTML importado puede pedir modo claro/oscuro automático por horario sin
+JavaScript propio ni controles visibles. El documento declara:
+
+```html
+<html
+  data-rstk-auto-color-mode="time"
+  data-rstk-day-start="7"
+  data-rstk-night-start="19"
+  data-rstk-color-mode="light"
+  data-rstk-theme-color-light="#f7f9ff"
+  data-rstk-theme-color-dark="#070911">
+```
+
+El CSS diseña ambos estados con
+`html[data-rstk-color-mode="light"]` y
+`html[data-rstk-color-mode="dark"]`. Ristak usa la hora local que reporta el
+navegador, aplica claro de 07:00 a 18:59 y oscuro de 19:00 a 06:59 por defecto,
+y vuelve a calcular exactamente en el siguiente cambio de franja, al regresar a
+la pestaña y al restaurar la página. Las horas pueden ajustarse entre 0 y 23.
+Los dos colores opcionales mantienen sincronizado el `meta theme-color` del
+navegador. No requiere API de reloj, geolocalización ni botones Día/Noche.
 
 La ruta **Previsualizar** conserva esta lógica completa. El atributo informativo
 `data-rstk-video-render-preview="true"` identifica el documento de preview, pero
