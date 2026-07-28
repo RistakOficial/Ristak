@@ -4700,6 +4700,18 @@ Ristak usa Meta en varias areas:
   fotos recibidas se rehospedan best-effort antes de guardarse en
   `meta_social_contacts.profile_picture_url`; si Meta no entrega foto o permisos,
   Ristak conserva el mejor nombre disponible y no inventa avatar.
+  El historial consulta el perfil directo una sola vez por PSID/IGSID cuando
+  `participants` no trae foto. Ademas, cada instalacion Meta conectada agenda al
+  arrancar el backfill versionado
+  `2026-07-28-official-profile-photos-v1`: procesa en lotes solo perfiles sin
+  avatar durable, comparte el coordinador global de backfills, toma un advisory
+  lock por plataforma y persiste su cursor/resultado en
+  `meta_social_profile_backfill_state_messenger` o
+  `meta_social_profile_backfill_state_instagram`. Al quedar `complete`, los
+  siguientes deploys no repiten llamadas. Si Meta estaba desconectado, el estado
+  no se marca y la conexion posterior importa historial antes de agendar fotos.
+  Comentarios sin consentimiento de mensajeria, usuarios bloqueados o perfiles
+  que Meta no exponga conservan iniciales; no se genera una imagen ficticia.
 - Business Messaging events.
 - Campaign Builder en modo preview/validacion segun entorno.
 - Test Events desde Configuracion > Meta.

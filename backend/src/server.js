@@ -774,6 +774,28 @@ async function startRuntimeServices() {
   }
   startupState.ready = true
 
+  // Cada versión de backfill se agenda una sola vez por instalación conectada.
+  // Recorre únicamente identidades sociales sin avatar durable, consulta
+  // PSID/IGSID con el Page token oficial y rehospeda la foto para que la URL de
+  // Meta no caduque. Se agenda después de readiness y comparte el coordinador de
+  // backfills; no deja un cron golpeando Graph para siempre.
+  runStartupDrainTask(
+    'startup:meta-social-profile-photos',
+    async () => {
+      if (!(await isMetaSocialConnected())) {
+        logger.info('Backfill de fotos Meta omitido: Meta Social no está conectado')
+        return { skipped: true, reason: 'meta-social-disconnected' }
+      }
+
+      const { scheduleMetaSocialContactProfileBackfill } = await import('./services/metaSocialMessagingService.js')
+      return scheduleMetaSocialContactProfileBackfill({
+        platforms: ['messenger', 'instagram'],
+        reason: 'startup'
+      })
+    },
+    'No se pudo agendar el backfill de fotos de Messenger/Instagram'
+  )
+
   // Primero publicamos readiness; después arrancan los backfills históricos.
   // En el primer rollout pueden recorrer millones de filas en lotes y no deben
   // competir con la llave maestra, el setup, calendarios ni crons necesarios

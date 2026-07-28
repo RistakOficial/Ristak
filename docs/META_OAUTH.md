@@ -360,9 +360,24 @@ relistar el portafolio. El contrato es:
   los demás. Un conteo ausente es desconocido (`null`), no cero.
 - El encabezado actualiza automáticamente sólo avisos locales. La revisión en
   vivo de Meta queda detrás del botón **Actualizar** de Notificaciones.
-- Los mensajes nuevos entran por webhook y el chat consulta la base local. El
-  respaldo de historial usa únicamente los endpoints de conversaciones y está
-  limitado por intervalo; nunca vuelve a listar el Business.
+- Los mensajes nuevos entran por webhook y el chat consulta la base local. Cada
+  sender de Messenger/Instagram se enriquece con su PSID/IGSID mediante el Page
+  Token y la foto temporal se rehospeda antes de persistirse.
+- El respaldo de historial enumera conversaciones sin volver a listar el
+  Business. Reutiliza la identidad incluida en `participants` y, si falta foto,
+  hace una sola consulta de perfil por PSID/IGSID dentro de esa ejecución. Un
+  cache por sender evita duplicarla cuando la misma persona aparece en varios
+  mensajes.
+- Cada despliegue agenda el backfill versionado
+  `2026-07-28-official-profile-photos-v1` solo cuando Meta Social esta conectado.
+  Recorre en lotes las filas de `meta_social_contacts` sin avatar durable, usa un
+  advisory lock por plataforma y guarda progreso en
+  `meta_social_profile_backfill_state_{messenger|instagram}`. Al completarse no
+  vuelve a consultar Graph en siguientes arranques. Reconectar Meta vuelve a
+  importar el historial y agenda la hidratacion despues de crear los contactos.
+- Meta puede negar el perfil de una persona que solo comento, bloqueo la cuenta
+  o no dio consentimiento de mensajeria. Ese caso conserva iniciales/nombre y no
+  inventa una foto; un mensaje posterior vuelve a intentar el enriquecimiento.
 
 Esta separación evita que una pantalla abierta consuma la cuota compartida de
 la app y bloquee callbacks OAuth legítimos con el código `4` de Meta.
@@ -545,6 +560,7 @@ Installer, autenticado por licencia salvo callbacks publicos:
 - [Messenger webhooks](https://developers.facebook.com/documentation/business-messaging/messenger-platform/webhooks)
 - [Pages webhooks](https://developers.facebook.com/documentation/pages-api/webhooks-for-pages)
 - [Instagram webhooks](https://developers.facebook.com/documentation/instagram-platform/webhooks)
+- [Instagram User Profile API (coleccion oficial de Meta)](https://www.postman.com/meta/instagram/folder/23987686-22b3a5b0-4a51-449a-9299-e3667d69b182)
 - [Tech Providers](https://developers.facebook.com/docs/development/release/tech-providers/)
 - [Business Verification](https://developers.facebook.com/documentation/development/release/business-verification)
 - [App Review](https://developers.facebook.com/documentation/resp-plat-initiatives/individual-processes/app-review)

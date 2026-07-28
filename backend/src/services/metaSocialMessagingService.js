@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 import fetch from 'node-fetch'
 import { fileTypeFromBuffer } from 'file-type'
-import { db, getAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { logger } from '../utils/logger.js'
@@ -19,6 +19,7 @@ import {
 import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
+import { BACKFILL_JOB_PRIORITY, scheduleBackfillJob } from '../jobs/backfillJobCoordinator.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
@@ -33,6 +34,10 @@ const META_INSTAGRAM_COMMENTS_ENABLED_KEY = 'meta_instagram_comments_enabled'
 const META_SOCIAL_HISTORY_CONVERSATION_PAGE_LIMIT = 50
 const META_SOCIAL_HISTORY_MESSAGE_PAGE_LIMIT = 50
 const META_SOCIAL_HISTORY_MESSAGE_FIELDS = 'id,message,created_time,from,to,attachments,shares'
+export const META_SOCIAL_PROFILE_BACKFILL_VERSION = '2026-07-28-official-profile-photos-v1'
+const META_SOCIAL_PROFILE_BACKFILL_STATE_PREFIX = 'meta_social_profile_backfill_state'
+const META_SOCIAL_PROFILE_BACKFILL_BATCH_SIZE = 25
+const META_SOCIAL_PROFILE_BACKFILL_REQUEST_YIELD_MS = 50
 const COMMENT_DELETED_TEXT = 'Comentario eliminado'
 const POST_DELETED_TEXT = 'Publicación eliminada'
 const metaSocialHistorySyncing = new Set()
@@ -1234,7 +1239,15 @@ async function fetchMetaConversationParticipantName({ platform, senderId, busine
   }
 }
 
-async function fetchMetaSenderProfile({ platform, senderId, pageId = '', businessId = '', accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
+async function fetchMetaSenderProfile({
+  platform,
+  senderId,
+  pageId = '',
+  businessId = '',
+  accessToken,
+  baseUrl = getMetaSocialGraphBaseUrl(platform),
+  fallbackToConversation = true
+}) {
   if (!senderId || !accessToken) return {}
 
   // OJO Instagram: un IGSID NO tiene el campo `profile_picture_url` — pedirlo
@@ -1264,7 +1277,7 @@ async function fetchMetaSenderProfile({ platform, senderId, pageId = '', busines
 
   // Fallback de NOMBRE: si el perfil directo no dio nombre (usuario no-rol), lo
   // sacamos de las conversaciones (ahí Meta sí lo entrega). La foto queda vacía.
-  if (!cleanString(result.name)) {
+  if (fallbackToConversation && !cleanString(result.name)) {
     const conversationName = await fetchMetaConversationParticipantName({
       platform,
       senderId,
@@ -1771,16 +1784,19 @@ function buildMetaSocialMessageFromGraphConversation({ platform, config, convers
   }
 }
 
-async function resolveMetaSocialHistoryProfile({ platform, senderId, participant, profileCache }) {
+async function resolveMetaSocialHistoryProfile({
+  platform,
+  senderId,
+  participant,
+  profileCache,
+  accessToken,
+  baseUrl,
+  config
+}) {
   const key = `${platform}:${senderId}`
   if (profileCache.has(key)) return profileCache.get(key)
 
-  // Conversations API ya entrega la identidad del participante junto con cada
-  // conversación. Volver a consultar /{PSID|IGSID} por cada contacto duplica el
-  // tráfico, suele ser rechazado para PSIDs antiguos y no aporta nada al
-  // historial. Los webhooks nuevos conservan su enriquecimiento normal; el
-  // backfill usa únicamente los datos que Meta ya devolvió en la conversación.
-  const profile = {
+  const participantProfile = {
     name: compactName(participant?.name),
     username: cleanString(participant?.username),
     profilePictureUrl: cleanString(
@@ -1789,6 +1805,28 @@ async function resolveMetaSocialHistoryProfile({ platform, senderId, participant
     ),
     raw: {
       participant: participant || null
+    }
+  }
+  const directProfile = participantProfile.profilePictureUrl
+    ? {}
+    : await fetchMetaSenderProfile({
+        platform,
+        senderId,
+        pageId: cleanString(config?.page_id),
+        businessId: platform === 'instagram'
+          ? cleanString(config?.instagram_account_id)
+          : cleanString(config?.page_id),
+        accessToken,
+        baseUrl,
+        fallbackToConversation: false
+      })
+  const profile = {
+    name: compactName(directProfile?.name) || participantProfile.name,
+    username: cleanString(directProfile?.username) || participantProfile.username,
+    profilePictureUrl: cleanString(directProfile?.profilePictureUrl) || participantProfile.profilePictureUrl,
+    raw: {
+      participant: participant || null,
+      directProfile: directProfile?.raw || null
     }
   }
   profileCache.set(key, profile)
@@ -1868,7 +1906,10 @@ async function syncMetaSocialConversationMessages({
         platform: firstSocialMessage.platform,
         senderId: firstSocialMessage.senderId,
         participant,
-        profileCache
+        profileCache,
+        accessToken: graphToken,
+        baseUrl,
+        config
       })
       const localContact = await upsertLocalSocialContact({ socialMessage: firstSocialMessage, profile })
 
@@ -2046,6 +2087,328 @@ export async function syncMetaSocialConversationHistory({
   return stats
 }
 
+function getMetaSocialProfileBackfillStateKey(platform) {
+  return `${META_SOCIAL_PROFILE_BACKFILL_STATE_PREFIX}_${normalizeMetaSocialHistoryPlatform(platform)}`
+}
+
+function parseMetaSocialProfileBackfillState(value) {
+  try {
+    const parsed = JSON.parse(cleanString(value) || '{}')
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function isMetaSocialAvatarMissingOrTemporary(value = '') {
+  const url = cleanString(value)
+  return !url || isMetaHostedMediaUrl(url)
+}
+
+async function findMetaSocialContactCommentId(profileId) {
+  const row = await db.get(`
+    SELECT comment_id
+    FROM meta_social_messages
+    WHERE meta_social_contact_id = ?
+      AND NULLIF(comment_id, '') IS NOT NULL
+    ORDER BY message_timestamp DESC, created_at DESC
+    LIMIT 1
+  `, [profileId]).catch(() => null)
+  return cleanString(row?.comment_id)
+}
+
+async function fetchMetaSocialBackfillProfile({ platform, row, accessToken, baseUrl }) {
+  const senderId = cleanString(row?.sender_id)
+  const metaUserId = cleanString(row?.meta_user_id) || senderId
+  const isCommentIdentity = /^(?:fb|ig)_comment:/i.test(senderId)
+
+  if (isCommentIdentity) {
+    const commentId = await findMetaSocialContactCommentId(row.id)
+    return fetchMetaCommentAuthorProfile({
+      platform,
+      commentId,
+      authorId: metaUserId,
+      accessToken,
+      baseUrl
+    })
+  }
+
+  return fetchMetaSenderProfile({
+    platform,
+    senderId: metaUserId,
+    pageId: cleanString(row?.page_id),
+    businessId: platform === 'instagram'
+      ? cleanString(row?.instagram_account_id)
+      : cleanString(row?.page_id),
+    accessToken,
+    baseUrl,
+    fallbackToConversation: false
+  })
+}
+
+async function persistMetaSocialBackfillProfile({ platform, row, profile }) {
+  const incomingPictureUrl = cleanString(profile?.profilePictureUrl)
+  const storedPictureUrl = incomingPictureUrl
+    ? await rehostMetaAvatarUrl({
+        incomingUrl: incomingPictureUrl,
+        currentUrl: row?.profile_picture_url,
+        platform,
+        senderId: row?.sender_id
+      })
+    : ''
+  const profileName = compactName(profile?.name)
+  const username = cleanString(profile?.username)
+  const metaUserId = cleanString(row?.meta_user_id)
+
+  if (!storedPictureUrl && !profileName && !username) {
+    return { updated: false, pictureUpdated: false }
+  }
+
+  const result = await db.run(`
+    UPDATE meta_social_contacts
+    SET profile_name = COALESCE(NULLIF(?, ''), profile_name),
+        username = COALESCE(NULLIF(?, ''), username),
+        profile_picture_url = COALESCE(NULLIF(?, ''), profile_picture_url),
+        raw_profile_json = COALESCE(NULLIF(?, 'null'), raw_profile_json),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+       OR (
+         ? != ''
+         AND platform = ?
+         AND meta_user_id = ?
+       )
+  `, [
+    profileName,
+    username,
+    storedPictureUrl,
+    safeJson(profile?.raw || null),
+    row.id,
+    metaUserId,
+    platform,
+    metaUserId
+  ])
+
+  return {
+    updated: Number(result?.changes || 0) > 0,
+    pictureUpdated: Boolean(storedPictureUrl)
+  }
+}
+
+async function runMetaSocialContactProfileBackfill({
+  platform,
+  reason,
+  force,
+  batchSize,
+  requestYieldMs
+}) {
+  const stateKey = getMetaSocialProfileBackfillStateKey(platform)
+  const previousState = parseMetaSocialProfileBackfillState(await getAppConfig(stateKey))
+
+  if (
+    !force &&
+    previousState.version === META_SOCIAL_PROFILE_BACKFILL_VERSION &&
+    previousState.status === 'complete'
+  ) {
+    return {
+      provider: 'meta',
+      platform,
+      version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+      skipped: true,
+      skipReason: 'already-complete',
+      ...previousState
+    }
+  }
+
+  const [messagingEnabled, commentsEnabled] = await Promise.all([
+    isMetaSocialMessagingEnabled(platform),
+    isMetaSocialCommentsEnabled(platform)
+  ])
+  if (!messagingEnabled && !commentsEnabled) {
+    return {
+      provider: 'meta',
+      platform,
+      version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+      skipped: true,
+      skipReason: 'social-channel-disabled'
+    }
+  }
+
+  const config = await getMetaSocialConfig().catch(() => null)
+  const businessId = getMetaSocialHistoryBusinessId(platform, config || {})
+  if (!businessId) {
+    return {
+      provider: 'meta',
+      platform,
+      version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+      skipped: true,
+      skipReason: platform === 'instagram' ? 'missing-instagram-account' : 'missing-page'
+    }
+  }
+
+  const credentials = await resolveMetaSocialGraphCredentials(platform, config, { safe: true })
+  if (!credentials.token) {
+    return {
+      provider: 'meta',
+      platform,
+      version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+      skipped: true,
+      skipReason: 'missing-page-token'
+    }
+  }
+
+  const resumePrevious = !force &&
+    previousState.version === META_SOCIAL_PROFILE_BACKFILL_VERSION &&
+    previousState.status !== 'complete'
+  const state = {
+    version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+    status: 'running',
+    reason: cleanString(reason) || 'manual',
+    cursor: resumePrevious ? cleanString(previousState.cursor) : '',
+    scanned: resumePrevious ? Number(previousState.scanned || 0) : 0,
+    attempted: resumePrevious ? Number(previousState.attempted || 0) : 0,
+    updated: resumePrevious ? Number(previousState.updated || 0) : 0,
+    picturesUpdated: resumePrevious ? Number(previousState.picturesUpdated || 0) : 0,
+    unavailable: resumePrevious ? Number(previousState.unavailable || 0) : 0,
+    startedAt: resumePrevious && cleanString(previousState.startedAt)
+      ? cleanString(previousState.startedAt)
+      : new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+
+  await setAppConfig(stateKey, JSON.stringify(state))
+
+  while (true) {
+    const rows = await db.all(`
+      SELECT
+        id, platform, sender_id, meta_user_id, page_id, instagram_account_id,
+        profile_name, username, profile_picture_url
+      FROM meta_social_contacts
+      WHERE platform = ?
+        AND id > ?
+        AND contact_id IS NOT NULL
+        AND (
+          NULLIF(TRIM(profile_picture_url), '') IS NULL
+          OR LOWER(profile_picture_url) LIKE '%fbcdn.net%'
+          OR LOWER(profile_picture_url) LIKE '%fbsbx.com%'
+          OR LOWER(profile_picture_url) LIKE '%cdninstagram.com%'
+          OR LOWER(profile_picture_url) LIKE '%scontent%'
+          OR LOWER(profile_picture_url) LIKE '%lookaside.%'
+        )
+      ORDER BY id ASC
+      LIMIT ?
+    `, [platform, state.cursor, batchSize])
+
+    if (!rows.length) break
+
+    for (const row of rows) {
+      state.scanned += 1
+      state.cursor = cleanString(row.id)
+
+      if (!isMetaSocialAvatarMissingOrTemporary(row.profile_picture_url)) continue
+
+      state.attempted += 1
+      try {
+        const profile = await fetchMetaSocialBackfillProfile({
+          platform,
+          row,
+          accessToken: credentials.token,
+          baseUrl: credentials.baseUrl
+        })
+        const persisted = await persistMetaSocialBackfillProfile({ platform, row, profile })
+        if (persisted.updated) state.updated += 1
+        if (persisted.pictureUpdated) state.picturesUpdated += 1
+        if (!persisted.updated) state.unavailable += 1
+      } catch (error) {
+        state.unavailable += 1
+        logger.warn(
+          `[Meta social] No se pudo completar el avatar ${platform} ${cleanString(row.sender_id)}: ${error.message}`
+        )
+      }
+
+      if (requestYieldMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, requestYieldMs))
+      }
+    }
+
+    state.updatedAt = new Date().toISOString()
+    await setAppConfig(stateKey, JSON.stringify(state))
+  }
+
+  state.status = 'complete'
+  state.completedAt = new Date().toISOString()
+  state.updatedAt = state.completedAt
+  await setAppConfig(stateKey, JSON.stringify(state))
+
+  return {
+    provider: 'meta',
+    platform,
+    skipped: false,
+    ...state
+  }
+}
+
+export async function backfillMetaSocialContactProfilePictures({
+  platform = 'messenger',
+  reason = 'manual',
+  force = false,
+  batchSize = META_SOCIAL_PROFILE_BACKFILL_BATCH_SIZE,
+  requestYieldMs = META_SOCIAL_PROFILE_BACKFILL_REQUEST_YIELD_MS
+} = {}) {
+  const cleanPlatform = normalizeMetaSocialHistoryPlatform(platform)
+  const safeBatchSize = Math.max(1, Math.min(100, Math.floor(Number(batchSize) || META_SOCIAL_PROFILE_BACKFILL_BATCH_SIZE)))
+  const safeYieldMs = Math.max(0, Math.min(5_000, Math.floor(Number(requestYieldMs) || 0)))
+
+  try {
+    return await db.withAdvisoryLock(
+      `meta-social-profile-backfill:${cleanPlatform}`,
+      () => runMetaSocialContactProfileBackfill({
+        platform: cleanPlatform,
+        reason,
+        force: Boolean(force),
+        batchSize: safeBatchSize,
+        requestYieldMs: safeYieldMs
+      })
+    )
+  } catch (error) {
+    if (error?.code === 'DATABASE_ADVISORY_LOCK_BUSY') {
+      return {
+        provider: 'meta',
+        platform: cleanPlatform,
+        version: META_SOCIAL_PROFILE_BACKFILL_VERSION,
+        skipped: true,
+        skipReason: 'already-running'
+      }
+    }
+    throw error
+  }
+}
+
+export function scheduleMetaSocialContactProfileBackfill({
+  platforms = ['messenger', 'instagram'],
+  reason = 'startup'
+} = {}) {
+  const cleanPlatforms = [...new Set(
+    (Array.isArray(platforms) ? platforms : [platforms]).map(normalizeMetaSocialHistoryPlatform)
+  )]
+
+  return cleanPlatforms.map(platform => scheduleBackfillJob({
+    key: `meta-social-profile-photos:${platform}:${META_SOCIAL_PROFILE_BACKFILL_VERSION}`,
+    priority: BACKFILL_JOB_PRIORITY.LOW,
+    run: async () => {
+      const result = await backfillMetaSocialContactProfilePictures({ platform, reason })
+      if (result.skipped) {
+        logger.info(`[Meta social] Fotos ${platform} omitidas (${result.skipReason || 'sin razon'})`)
+        return result
+      }
+      logger.info(
+        `[Meta social] Fotos ${platform}: ${result.picturesUpdated} avatar(es) guardados, ` +
+        `${result.updated} perfil(es) actualizado(s), ${result.unavailable} no disponible(s).`
+      )
+      return result
+    }
+  }))
+}
+
 export function syncMetaSocialConversationHistoryInBackground({ platforms = ['messenger', 'instagram'], reason = 'connection' } = {}) {
   const cleanPlatforms = [...new Set((Array.isArray(platforms) ? platforms : [platforms]).map(normalizeMetaSocialHistoryPlatform))]
   const started = []
@@ -2069,6 +2432,10 @@ export function syncMetaSocialConversationHistoryInBackground({ platforms = ['me
           `Meta social: historial ${platform} importado ` +
           `(${result.saved} nuevos, ${result.updated} existentes, ${result.conversations} conversaciones, ${result.messagesScanned} mensajes leidos)`
         )
+        scheduleMetaSocialContactProfileBackfill({
+          platforms: [platform],
+          reason: `${reason}:history-complete`
+        })
       })
       .catch(error => {
         logger.warn(`Meta social: no se pudo importar historial ${platform}: ${error.message}`)

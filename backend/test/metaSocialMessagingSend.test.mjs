@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import ffmpegPath from 'ffmpeg-static'
 
-import { db, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
 import {
@@ -19,6 +19,8 @@ import {
   saveMetaMessengerUserToken
 } from '../src/services/metaAdsService.js'
 import {
+  backfillMetaSocialContactProfilePictures,
+  META_SOCIAL_PROFILE_BACKFILL_VERSION,
   processMetaSocialWebhook,
   ensureMetaPageMessagingSubscription,
   reconcileMetaPageMessagingSubscription,
@@ -302,6 +304,16 @@ async function startMetaSendServer(calls, { beforeMessageResponse } = {}) {
           id: 'psid-history-test',
           name: 'Cliente Messenger Historial',
           profile_pic: 'https://cdn.example.test/messenger-history.jpg'
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/psid-profile-backfill-test')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'psid-profile-backfill-test',
+          name: 'Perfil Messenger Recuperado',
+          profile_pic: 'https://cdn.example.test/messenger-profile-backfill.jpg'
         }))
         return
       }
@@ -1079,16 +1091,123 @@ test('syncMetaSocialConversationHistory importa historial disponible de Messenge
           )
           assert.equal(profile.contact_id, contactId)
           assert.equal(profile.profile_name, 'Cliente Messenger Historial')
-          assert.equal(profile.profile_picture_url, null)
+          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/messenger-history.jpg')
 
           assert.equal(calls.some(call => call.url.startsWith('/page-history-test/conversations')), true)
-          assert.equal(calls.some(call => call.url.startsWith(`/${senderId}?`)), false)
+          assert.equal(calls.some(call => call.url.startsWith(`/${senderId}?`)), true)
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-messenger-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {
           await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+  }
+})
+
+test('backfillMetaSocialContactProfilePictures completa una sola vez los avatares históricos de Messenger', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const senderId = 'psid-profile-backfill-test'
+  const contactId = 'meta_profile_backfill_contact_test'
+  const socialProfileId = 'meta_profile_backfill_social_test'
+  const stateKey = 'meta_social_profile_backfill_state_messenger'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled', stateKey], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_contacts WHERE id = ? OR sender_id = ?', [socialProfileId, senderId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-profile-backfill-test',
+            encrypt('user-token-profile-backfill-test'),
+            null,
+            'page-history-test',
+            null,
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await setAppConfig(stateKey, '')
+          await db.run(
+            `INSERT INTO contacts (id, full_name, first_name, source, created_at, updated_at)
+             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [contactId, 'Messenger sin foto', 'Messenger sin foto', 'Messenger']
+          )
+          await db.run(`
+            INSERT INTO meta_social_contacts (
+              id, contact_id, platform, sender_id, recipient_id, page_id,
+              profile_name, profile_picture_url, meta_user_id,
+              first_seen_at, last_seen_at, message_count, created_at, updated_at
+            ) VALUES (?, ?, 'messenger', ?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          `, [
+            socialProfileId,
+            contactId,
+            senderId,
+            'page-history-test',
+            'page-history-test',
+            'Messenger sin foto',
+            senderId
+          ])
+
+          const result = await backfillMetaSocialContactProfilePictures({
+            platform: 'messenger',
+            reason: 'test',
+            force: true,
+            batchSize: 10,
+            requestYieldMs: 0
+          })
+
+          assert.equal(result.skipped, false)
+          assert.equal(result.version, META_SOCIAL_PROFILE_BACKFILL_VERSION)
+          assert.equal(result.status, 'complete')
+          assert.equal(result.picturesUpdated, 1)
+
+          const stored = await db.get(
+            'SELECT profile_name, profile_picture_url FROM meta_social_contacts WHERE id = ?',
+            [socialProfileId]
+          )
+          assert.equal(stored.profile_name, 'Perfil Messenger Recuperado')
+          assert.equal(stored.profile_picture_url, 'https://cdn.example.test/messenger-profile-backfill.jpg')
+
+          const state = JSON.parse(await getAppConfig(stateKey))
+          assert.equal(state.version, META_SOCIAL_PROFILE_BACKFILL_VERSION)
+          assert.equal(state.status, 'complete')
+
+          const profileCallsBefore = calls.filter(call => call.url.startsWith(`/${senderId}?`)).length
+          const repeated = await backfillMetaSocialContactProfilePictures({
+            platform: 'messenger',
+            reason: 'test-repeat',
+            requestYieldMs: 0
+          })
+          const profileCallsAfter = calls.filter(call => call.url.startsWith(`/${senderId}?`)).length
+          assert.equal(repeated.skipped, true)
+          assert.equal(repeated.skipReason, 'already-complete')
+          assert.equal(profileCallsAfter, profileCallsBefore)
+        } finally {
+          await db.run('DELETE FROM meta_social_contacts WHERE id = ? OR sender_id = ?', [socialProfileId, senderId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
         }
       })
@@ -1173,12 +1292,12 @@ test('syncMetaSocialConversationHistory importa historial disponible de Instagra
           assert.equal(profile.contact_id, contactId)
           assert.equal(profile.profile_name, 'Cliente Instagram Historial')
           assert.equal(profile.username, 'cliente.historial')
-          assert.equal(profile.profile_picture_url, null)
+          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/instagram-history.jpg')
 
           const conversationsCall = calls.find(call => call.url.startsWith('/ig-business-history-test/conversations'))
           assert.equal(conversationsCall?.authorization, 'Bearer page-token-history-test')
           assert.equal(calls.some(call => call.url.startsWith('/me/conversations')), false)
-          assert.equal(calls.some(call => call.url.startsWith(`/${senderId}?`)), false)
+          assert.equal(calls.some(call => call.url.startsWith(`/${senderId}?`)), true)
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-instagram-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {
