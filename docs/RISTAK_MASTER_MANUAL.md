@@ -5657,6 +5657,45 @@ no romper configuraciones existentes. En el editor de Automatizaciones se muestr
 los equivalentes bajo `{{formulario.respuestas.<clave>.value}}` y
 `{{formulario.respuestas.<clave>.text}}`.
 
+### Autoría HTML desde el MCP funcional
+
+El MCP separa de forma explícita los dos modos de edición de Sites:
+
+- **HTML personalizado:** Codex, ChatGPT, Claude u otro cliente genera el
+  documento completo con su skill/capacidad de construcción web y Ristak lo
+  valida, guarda, previsualiza y publica.
+- **Editor visual nativo:** `sites_create_draft` y las tools de bloques se usan
+  cuando la persona pide bloques, formularios o componentes nativos de Ristak.
+
+Un agente no debe intentar reproducir una landing HTML personalizada apilando
+bloques nativos ni adoptar por defecto una cuadrícula de cards/contenedores.
+Para código nuevo la ruta principal es:
+
+1. `sites_validate_html`: preflight sin escritura; revisa documento completo,
+   responsive, estructura, formularios detectados y cambios del sanitizador.
+2. `sites_create_html_draft`: crea un borrador code-first con el HTML completo.
+3. `sites_get_code`: devuelve inventario y revisión; el contenido se pide por
+   `path` para no inflar la conversación.
+4. `sites_replace_html_draft`: guarda la siguiente versión sólo si el Site sigue
+   en borrador y `expectedRevision` coincide.
+5. `sites_preview_html`: render inerte, sin tracking ni cobros reales.
+6. `sites_publish`: publicación separada con `ristak.execute` y confirmación.
+
+El contrato recomendado exige `doctype`, `html`, `head` y `body`. Los scripts,
+handlers `on*` y URLs `javascript:` se rechazan antes de crear o guardar por esta
+ruta, porque el sanitizador canónico los elimina por seguridad; las páginas deben
+resolver su presentación con HTML, CSS y elementos declarativos compatibles.
+`sites_import_html` conserva compatibilidad para documentos existentes y
+`sites_update_code` queda como operación de alto impacto para cambios multiarchivo
+o sobre código que puede estar publicado.
+
+Las respuestas de creación/edición HTML son compactas y tipadas: identidad del
+Site, modo `html`, revisión SHA-256, inventario sin duplicar source, formularios
+detectados, reporte de calidad, reporte del sanitizador y siguientes tools. La
+revisión se vuelve a comprobar dentro del lock de mutación del Site; los cambios
+de estado publicar/retirar comparten el mismo lock, de modo que un guardado seguro
+no puede ganar una carrera y modificar accidentalmente una versión publicada.
+
 ### Paridad de render editor/preview/publicado (contrato compartido)
 
 Editor (canvas React), preview autenticado, preview-session publico y sitio
@@ -7587,7 +7626,7 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 235 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 238 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
 precios, suscripciones, dashboard, reportes, analytics/tracking, campañas,
@@ -7601,6 +7640,13 @@ usuarios ni escritura directa en tablas/ledgers protegidos. Cada accion nueva
 de producto que se publique por MCP debe registrarse con schema, contrato de
 salida, feature/modulo, permiso de usuario, scope OAuth, anotaciones de riesgo y
 ejecutor auditable.
+
+Las instrucciones de `initialize` explican el flujo HTML code-first a todos los
+clientes compatibles. Cuando existe una skill web local, ésta es responsable de
+la calidad visual y del source completo; el MCP no la reemplaza con bloques
+genéricos. `sites_validate_html`, `sites_create_html_draft` y
+`sites_replace_html_draft` exponen schemas de salida cerrados para que el cliente
+pueda continuar de forma determinista con revisión, preview y publicación.
 
 El servidor remoto usa Streamable HTTP y OAuth 2.1 con PKCE. Los scopes separan
 `ristak.read`, `ristak.write`, `ristak.execute` y `ristak.destructive` para que

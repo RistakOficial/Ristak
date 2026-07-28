@@ -191,6 +191,63 @@ test('imported HTML code files are listed and saved through the code editor endp
   }
 })
 
+test('imported HTML code writes enforce revision and draft state inside the mutation lock', async () => {
+  const {
+    createImportedSiteFromHtml,
+    deleteSite,
+    getImportedSiteBySiteId,
+    updateImportedSiteCodeFiles,
+    updateSite
+  } = await import('../src/services/sitesService.js')
+  const { computeImportedSiteCodeRevision } = await import('../src/utils/importedSiteCodeRevision.js')
+
+  let siteId = ''
+
+  try {
+    const originalHtml = '<!doctype html><html><head><title>Revision</title></head><body><main><h1>Original</h1></main></body></html>'
+    const created = await createImportedSiteFromHtml({
+      filename: 'revision-segura.html',
+      fileBase64: Buffer.from(originalHtml, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Revision segura ${Date.now()}`
+    })
+    siteId = created.site.id
+    const originalRevision = computeImportedSiteCodeRevision(created.import.codeFiles)
+    const nextHtml = created.import.codeFiles[0].content.replace('>Original<', '>Actualizado<')
+
+    const updated = await updateImportedSiteCodeFiles(siteId, {
+      expectedRevision: originalRevision,
+      requireDraft: true,
+      files: [{ path: '', content: nextHtml }]
+    })
+    assert.match(updated.import.codeFiles[0].content, />Actualizado</)
+
+    await assert.rejects(
+      () => updateImportedSiteCodeFiles(siteId, {
+        expectedRevision: originalRevision,
+        requireDraft: true,
+        files: [{ path: '', content: nextHtml.replace('Actualizado', 'Obsoleto') }]
+      }),
+      error => error.code === 'site_code_revision_conflict' && error.status === 409
+    )
+    const afterConflict = await getImportedSiteBySiteId(siteId)
+    assert.match(afterConflict.codeFiles[0].content, />Actualizado</)
+    assert.doesNotMatch(afterConflict.codeFiles[0].content, />Obsoleto</)
+
+    await updateSite(siteId, { status: 'published' })
+    await assert.rejects(
+      () => updateImportedSiteCodeFiles(siteId, {
+        expectedRevision: computeImportedSiteCodeRevision(afterConflict.codeFiles),
+        requireDraft: true,
+        files: [{ path: '', content: nextHtml.replace('Actualizado', 'En vivo') }]
+      }),
+      error => error.code === 'site_must_be_draft' && error.status === 409
+    )
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('removing the last HTML form keeps its stable mapping dormant for a future reappearance', async () => {
   const {
     createImportedSiteFromHtml,

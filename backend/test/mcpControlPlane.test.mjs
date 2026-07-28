@@ -9,6 +9,7 @@ import { databaseReady, db } from '../src/config/database.js'
 import { domainToolSpecs } from '../src/mcp/domainTools.js'
 import mcpRoutes from '../src/routes/mcp.routes.js'
 import { resetCentralStorageConfigCache } from '../src/services/mediaStorageService.js'
+import { deleteSite } from '../src/services/sitesService.js'
 import {
   MCP_SCOPES,
   MCP_SCOPE_VALUES,
@@ -30,7 +31,8 @@ const fixture = {
   readToken: '',
   fullToken: '',
   contactId: '',
-  secondaryContactId: ''
+  secondaryContactId: '',
+  siteId: ''
 }
 
 function requestMcp(token, payload) {
@@ -155,6 +157,9 @@ after(async () => {
   if (fixture.secondaryContactId) {
     await db.run('DELETE FROM contacts WHERE id = ?', [fixture.secondaryContactId]).catch(() => undefined)
   }
+  if (fixture.siteId) {
+    await deleteSite(fixture.siteId).catch(() => undefined)
+  }
   if (fixture.userId) {
     await db.run('DELETE FROM mcp_audit_log WHERE actor_user_id = ?', [fixture.userId]).catch(() => undefined)
     await db.run('DELETE FROM mcp_idempotency_keys WHERE user_id = ?', [fixture.userId]).catch(() => undefined)
@@ -184,6 +189,8 @@ test('initialize anuncia instrucciones, protocolo y servidor MCP v2', async () =
   assert.equal(response.headers['mcp-protocol-version'], '2025-06-18')
   assert.equal(response.payload.result.serverInfo.version, '2.0.0')
   assert.match(response.payload.result.instructions, /confirm=true/)
+  assert.match(response.payload.result.instructions, /sites_create_html_draft/)
+  assert.match(response.payload.result.instructions, /no construyas.*bloques nativos/i)
   assert.deepEqual(response.payload.result.capabilities, { tools: { listChanged: false } })
 })
 
@@ -271,11 +278,97 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
     'payments_record',
     'automations_publish',
     'media_prepare_bunny_upload',
+    'sites_validate_html',
+    'sites_create_html_draft',
+    'sites_replace_html_draft',
     'sites_update_code',
     'sites_publish'
   ]) {
     assert.equal(names.has(required), true, `falta ${required}`)
   }
+
+  const createHtml = response.payload.result.tools.find(tool => tool.name === 'sites_create_html_draft')
+  assert.equal(createHtml.title, 'Crear borrador HTML profesional')
+  assert.equal(createHtml.outputSchema.additionalProperties, false)
+  assert.equal(createHtml.outputSchema.properties.data.additionalProperties, false)
+})
+
+test('flujo HTML MCP valida, crea, edita y previsualiza un borrador real', async () => {
+  const originalHtml = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Landing MCP original</title>
+        <style>
+          body { margin: 0; font-family: system-ui, sans-serif; }
+          main { min-height: 100vh; display: grid; place-items: center; padding: clamp(24px, 6vw, 96px); }
+          @media (max-width: 680px) { main { place-items: start; } }
+        </style>
+      </head>
+      <body><main><h1>Experiencia original</h1></main></body>
+    </html>`
+
+  const validation = await requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 45, method: 'tools/call',
+    params: {
+      name: 'sites_validate_html',
+      arguments: { html: originalHtml }
+    }
+  })
+  assert.equal(validation.payload.result.isError, undefined)
+  assert.equal(validation.payload.result.structuredContent.data.ready, true)
+
+  const created = await requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 46, method: 'tools/call',
+    params: {
+      name: 'sites_create_html_draft',
+      arguments: {
+        name: `Landing MCP ${crypto.randomUUID()}`,
+        html: originalHtml,
+        idempotencyKey: `site-html-create-${crypto.randomUUID()}`
+      }
+    }
+  })
+  assert.equal(created.payload.result.isError, undefined)
+  const createdData = created.payload.result.structuredContent.data
+  fixture.siteId = createdData.siteId
+  assert.ok(fixture.siteId)
+  assert.equal(createdData.status, 'draft')
+  assert.equal(createdData.editorMode, 'html')
+  assert.equal(createdData.files[0].content, undefined)
+  assert.match(createdData.revision, /^sha256:[a-f0-9]{64}$/)
+
+  const editedHtml = originalHtml
+    .replace('Landing MCP original', 'Landing MCP editada')
+    .replace('Experiencia original', 'Experiencia editada')
+  const edited = await requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 47, method: 'tools/call',
+    params: {
+      name: 'sites_replace_html_draft',
+      arguments: {
+        siteId: fixture.siteId,
+        expectedRevision: createdData.revision,
+        html: editedHtml,
+        idempotencyKey: `site-html-edit-${crypto.randomUUID()}`
+      }
+    }
+  })
+  assert.equal(edited.payload.result.isError, undefined)
+  const editedData = edited.payload.result.structuredContent.data
+  assert.notEqual(editedData.revision, createdData.revision)
+  assert.equal(editedData.status, 'draft')
+
+  const preview = await requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 48, method: 'tools/call',
+    params: {
+      name: 'sites_preview_html',
+      arguments: { siteId: fixture.siteId }
+    }
+  })
+  assert.equal(preview.payload.result.isError, undefined)
+  assert.match(preview.payload.result.structuredContent.data.html, /Experiencia editada/)
+  assert.doesNotMatch(preview.payload.result.structuredContent.data.html, /Experiencia original/)
 })
 
 test('el pase temporal de Bunny se entrega una vez pero nunca queda guardado en el replay MCP', async () => {

@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 235 typed
+route proxy and not unrestricted SQL. The current registry contains 238 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. The registry covers these operational domains:
@@ -132,6 +132,49 @@ The granted scope is necessary but not sufficient. On every `tools/list` and
 Business dates are interpreted with the account timezone and new monetary
 records use `account_currency` when the caller does not provide a valid explicit
 currency. An MCP client must not infer either value from its own computer.
+
+### Building HTML Sites from Codex, ChatGPT or Claude
+
+Custom HTML and the native block editor are deliberately separate authoring
+modes. An agent building a bespoke landing must not approximate that layout with
+dozens of native blocks. If the client has a website-building skill or local
+authoring workflow, it should use that capability to create the complete source
+and use the Ristak MCP only for validation, persistence, preview and controlled
+publication.
+
+The preferred code-first lifecycle is:
+
+1. `sites_validate_html` checks a complete document without writing to the
+   database. It reports document structure, responsive/accessibility warnings,
+   detected forms and the transformations the canonical Sites sanitizer would
+   apply.
+2. `sites_create_html_draft` creates a code-first draft. It requires a complete
+   HTML document and rejects scripts, inline `on*` handlers and `javascript:`
+   URLs because Ristak removes them for security. The page must solve its design
+   with HTML, CSS and supported declarative Ristak elements.
+3. `sites_get_code` returns a compact file inventory and revision. Send a
+   specific `path` to read only the file being edited.
+4. `sites_replace_html_draft` is the normal iteration path. It uses
+   `ristak.write`, does not require a high-impact confirmation, and succeeds only
+   while the Site remains a draft and `expectedRevision` still matches. The
+   revision and draft checks run inside the same imported-Site mutation lock as
+   the write, while publish/unpublish transitions share that lock.
+5. `sites_preview_html` renders the inert, no-tracking preview. Repeat validation
+   and editing as needed.
+6. `sites_publish` remains a separate `ristak.execute` action with explicit
+   confirmation.
+
+`sites_create_draft` and the block tools are for the native Ristak visual editor,
+native forms and native components. `sites_update_code` remains available for
+multi-file or already-published code changes, but it is intentionally
+high-impact and requires confirmation because a published Site can change
+immediately.
+
+HTML creation and mutation responses are compact and typed: they return the Site
+identity, editor mode, revision, file inventory without source duplication,
+detected-form summary, quality report, sanitizer report and the recommended next
+tools. The initial create response never echoes the full source back multiple
+times.
 
 ### Receiving messages
 

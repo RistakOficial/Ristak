@@ -94,6 +94,214 @@ test('crear e importar siempre fuerza un borrador y no propaga controles MCP al 
   assert.equal(importRecorder.calls[0].request.body.idempotencyKey, undefined)
 })
 
+test('el flujo HTML premium es la ruta principal y separa claramente los bloques nativos', () => {
+  const validateTool = tool('sites_validate_html')
+  const createHtmlTool = tool('sites_create_html_draft')
+  const replaceHtmlTool = tool('sites_replace_html_draft')
+  const nativeTool = tool('sites_create_draft')
+
+  assert.ok(
+    siteToolSpecs.indexOf(createHtmlTool) < siteToolSpecs.indexOf(nativeTool),
+    'el selector MCP debe ver primero la creación HTML'
+  )
+  assert.equal(validateTool.scope, 'ristak.read')
+  assert.equal(createHtmlTool.scope, 'ristak.write')
+  assert.equal(replaceHtmlTool.scope, 'ristak.write')
+  assert.equal(replaceHtmlTool.confirmRequired, false)
+  assert.equal(replaceHtmlTool.inputSchema.properties.confirm, undefined)
+  assert.match(createHtmlTool.description, /bloques genéricos/i)
+  assert.match(nativeTool.description, /sites_create_html_draft/)
+  assert.equal(createHtmlTool.outputSchema.additionalProperties, false)
+  assert.equal(validateTool.outputSchema.additionalProperties, false)
+})
+
+test('sites_validate_html detecta incompatibilidades antes de crear un borrador', async () => {
+  const invalid = await tool('sites_validate_html').execute(recorder().context, {
+    html: '<main><h1>Fragmento</h1><script>alert(1)</script></main>'
+  })
+  assert.equal(invalid.data.ready, false)
+  assert.ok(invalid.data.qualityReport.errors.some(issue => issue.code === 'missing_doctype'))
+  assert.ok(invalid.data.qualityReport.errors.some(issue => issue.code === 'unsupported_scripts'))
+  assert.equal(invalid.data.recommendedCreateTool, '')
+
+  const validHtml = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Landing premium</title>
+        <style>
+          main { display: grid; grid-template-columns: minmax(0, 1fr); }
+          @media (max-width: 700px) { main { padding: 1rem; } }
+        </style>
+      </head>
+      <body><main><h1>Una propuesta clara</h1></main></body>
+    </html>`
+  const valid = await tool('sites_validate_html').execute(recorder().context, { html: validHtml })
+  assert.equal(valid.data.ready, true)
+  assert.equal(valid.data.recommendedCreateTool, 'sites_create_html_draft')
+  assert.equal(valid.data.qualityReport.errors.length, 0)
+})
+
+test('sites_create_html_draft exige HTML completo y devuelve un contrato compacto', async () => {
+  const createTool = tool('sites_create_html_draft')
+  const blockedRecorder = recorder()
+  await assert.rejects(
+    () => createTool.execute(blockedRecorder.context, {
+      name: 'Landing rota',
+      html: '<main><h1>Sin documento</h1></main>',
+      idempotencyKey: 'html-draft-invalid-001'
+    }),
+    error => error.code === 'site_html_not_ready' && error.details?.qualityReport?.ready === false
+  )
+  assert.equal(blockedRecorder.calls.length, 0)
+
+  const html = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Landing lista</title>
+        <style>main{display:grid;grid-template-columns:minmax(0,1fr)}</style>
+      </head>
+      <body><main><h1>Landing lista</h1></main></body>
+    </html>`
+  const storedFiles = [{
+    path: '',
+    label: 'index.html',
+    pageId: 'page-1',
+    pageTitle: 'Landing lista',
+    contentType: 'text/html; charset=utf-8',
+    language: 'html',
+    content: html,
+    sizeBytes: Buffer.byteLength(html),
+    updatedAt: '2026-07-28T00:00:00.000Z',
+    role: 'main_html'
+  }]
+  const createRecorder = recorder({
+    success: true,
+    data: {
+      site: {
+        id: 'site_html_1',
+        name: 'Landing lista',
+        status: 'draft',
+        slug: 'landing-lista',
+        siteType: 'landing_page',
+        title: 'Landing lista',
+        description: ''
+      },
+      import: {
+        codeFiles: storedFiles,
+        detectedForms: [],
+        securityReport: ['Se agrego favicon de respaldo']
+      }
+    }
+  })
+
+  const result = await createTool.execute(createRecorder.context, {
+    name: 'Landing lista',
+    html,
+    idempotencyKey: 'html-draft-create-001'
+  })
+
+  assert.equal(createRecorder.calls.length, 1)
+  assert.equal(createRecorder.calls[0].handler, 'importSiteHtmlHandler')
+  assert.equal(createRecorder.calls[0].request.body.filename, 'index.html')
+  assert.equal(result.data.siteId, 'site_html_1')
+  assert.equal(result.data.editorMode, 'html')
+  assert.equal(result.data.revision, codeRevision(storedFiles))
+  assert.equal(result.data.files[0].content, undefined)
+  assert.equal(result.data.workflow.editDraft, 'sites_replace_html_draft')
+  assert.equal('htmlOriginal' in result.data, false)
+})
+
+test('sites_replace_html_draft guarda sin confirmación sólo con estado y revisión vigentes', async () => {
+  const replaceTool = tool('sites_replace_html_draft')
+  const currentHtml = '<!doctype html><html><head><title>Anterior</title></head><body><main><h1>Anterior</h1></main></body></html>'
+  const nextHtml = `<!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Nueva versión</title>
+        <style>main{display:grid;grid-template-columns:minmax(0,1fr)}</style>
+      </head>
+      <body><main><h1>Nueva versión</h1></main></body>
+    </html>`
+  const currentFiles = [{
+    path: '',
+    label: 'index.html',
+    language: 'html',
+    content: currentHtml,
+    role: 'main_html'
+  }]
+  const nextFiles = [{
+    path: '',
+    label: 'index.html',
+    language: 'html',
+    content: nextHtml,
+    role: 'main_html'
+  }]
+  const saveRecorder = recorder((_handler, _request, callNumber) => {
+    if (callNumber === 1) {
+      return { success: true, data: { id: 'site_1', status: 'draft' } }
+    }
+    if (callNumber === 2) {
+      return { success: true, data: { siteId: 'site_1', codeFiles: currentFiles } }
+    }
+    return {
+      success: true,
+      data: {
+        site: {
+          id: 'site_1',
+          name: 'Landing',
+          status: 'draft',
+          slug: 'landing',
+          siteType: 'landing_page',
+          title: 'Nueva versión',
+          description: ''
+        },
+        import: {
+          codeFiles: nextFiles,
+          detectedForms: [],
+          securityReport: []
+        }
+      }
+    }
+  })
+
+  const result = await replaceTool.execute(saveRecorder.context, {
+    siteId: 'site_1',
+    expectedRevision: codeRevision(currentFiles),
+    html: nextHtml,
+    idempotencyKey: 'html-draft-replace-001'
+  })
+
+  assert.deepEqual(saveRecorder.calls.map(entry => entry.handler), [
+    'getSiteHandler',
+    'getImportedSiteMappingHandler',
+    'updateImportedSiteCodeFilesHandler'
+  ])
+  assert.deepEqual(saveRecorder.calls[2].request.body, {
+    expectedRevision: codeRevision(currentFiles),
+    requireDraft: true,
+    files: [{ path: '', content: nextHtml }]
+  })
+  assert.equal(result.data.revision, codeRevision(nextFiles))
+
+  const publishedRecorder = recorder({ success: true, data: { id: 'site_live', status: 'published' } })
+  await assert.rejects(
+    () => replaceTool.execute(publishedRecorder.context, {
+      siteId: 'site_live',
+      expectedRevision: codeRevision(currentFiles),
+      html: nextHtml,
+      idempotencyKey: 'html-draft-replace-002'
+    }),
+    error => error.code === 'site_must_be_draft'
+  )
+  assert.equal(publishedRecorder.calls.length, 1)
+})
+
 test('sites_get_code devuelve inventario compacto y contenido sólo cuando corresponde', async () => {
   const response = {
     success: true,
@@ -210,6 +418,7 @@ test('sites_update_code hace preflight y luego usa el controller canónico', asy
     'updateImportedSiteCodeFilesHandler'
   ])
   assert.deepEqual(codeRecorder.calls[1].request.body, {
+    expectedRevision: codeRevision(currentFiles),
     files: [{ path: '', content: '<h1>Nuevo</h1>' }]
   })
   assert.equal(result.data.revision, codeRevision([{ path: '', content: '<h1>Nuevo</h1>', sizeBytes: 14 }]))

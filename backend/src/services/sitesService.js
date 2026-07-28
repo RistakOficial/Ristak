@@ -9,6 +9,7 @@ import { databaseDialect, db, getAppConfig, setAppConfig } from '../config/datab
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
+import { computeImportedSiteCodeRevision } from '../utils/importedSiteCodeRevision.js'
 import { NO_TRACK_REASON, shouldSkipTracking } from '../utils/noTracking.js'
 import { describeMetaCapiResponseError, safeMetaGraphTransportError } from '../utils/metaGraphSecurity.js'
 import { getActiveMetaTestEventCode, isMetaTestModeActive } from '../utils/metaTestCode.js'
@@ -2258,6 +2259,23 @@ function sanitizeImportedHtml(html = '') {
   return {
     html: sanitized,
     report: Array.from(new Set(report))
+  }
+}
+
+export function inspectImportedSiteHtml(html = '') {
+  const sourceHtml = String(html || '')
+  const sanitized = sanitizeImportedHtml(sourceHtml)
+  const detectedForms = namespaceImportedPageForms(
+    detectImportedForms(sanitized.html),
+    '',
+    new Set()
+  )
+
+  return {
+    sourceBytes: Buffer.byteLength(sourceHtml, 'utf8'),
+    sanitizedBytes: Buffer.byteLength(sanitized.html, 'utf8'),
+    securityReport: sanitized.report,
+    detectedForms
   }
 }
 
@@ -12840,6 +12858,25 @@ async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
     throw error
   }
 
+  if (input.requireDraft === true && currentSite.status !== 'draft') {
+    const error = new Error('Este guardado seguro sólo modifica borradores. Retira el Site de publicación antes de editar su HTML.')
+    error.status = 409
+    error.code = 'site_must_be_draft'
+    throw error
+  }
+
+  const expectedRevision = cleanString(input.expectedRevision || input.expected_revision)
+  if (expectedRevision) {
+    const currentRevision = computeImportedSiteCodeRevision(currentImport.codeFiles)
+    if (expectedRevision !== currentRevision) {
+      const error = new Error('El código cambió desde la última lectura. Vuelve a leer el HTML antes de guardar.')
+      error.status = 409
+      error.code = 'site_code_revision_conflict'
+      error.currentRevision = currentRevision
+      throw error
+    }
+  }
+
   const updates = Array.isArray(input.files) ? input.files : []
   const updateByPath = new Map()
 
@@ -13764,7 +13801,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   }
 }
 
-export async function updateSite(siteId, input = {}) {
+async function updateSiteUnlocked(siteId, input = {}) {
   const current = await getSite(siteId, { includeBlocks: false })
   if (!current) return null
 
@@ -13866,6 +13903,16 @@ export async function updateSite(siteId, input = {}) {
   ])
 
   return getSite(siteId, { includeBlocks: true, includeSubmissions: false })
+}
+
+export async function updateSite(siteId, input = {}) {
+  if (input.status !== undefined) {
+    return withImportedSiteMutationLock(
+      siteId,
+      () => updateSiteUnlocked(siteId, input)
+    )
+  }
+  return updateSiteUnlocked(siteId, input)
 }
 
 export async function deleteSite(siteId) {

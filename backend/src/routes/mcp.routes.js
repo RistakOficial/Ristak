@@ -41,6 +41,15 @@ const MCP_MAX_BODY_BYTES = 3 * 1024 * 1024
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
 const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|meta_oauth_integrations|meta_oauth_integration_sessions|meta_oauth_pending_sessions|meta_oauth_connection_backups|meta_oauth_authorized_assets|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|oauth_grants|mcp_idempotency_keys|mcp_audit_log|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+const MCP_SERVER_INSTRUCTIONS = [
+  'Ristak MCP opera el CRM por acciones de negocio autorizadas.',
+  'Lee con ristak.read; modifica borradores con ristak.write; enviar mensajes, registrar pagos, ejecutar automatizaciones o publicar requiere ristak.execute; borrados, cancelaciones y reembolsos requieren ristak.destructive.',
+  'Respeta confirm=true e idempotencyKey cuando la herramienta los solicite. Nunca pidas ni reveles tokens o secretos.',
+  'Para una landing o sitio personalizado, usa la skill o capacidad web del cliente para generar un documento completo y después usa sites_validate_html, sites_create_html_draft y sites_replace_html_draft.',
+  'No construyas un diseño HTML personalizado apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo genérico.',
+  'Ristak elimina JavaScript propio por seguridad; resuelve el sitio con HTML, CSS y elementos declarativos compatibles.',
+  'Mantén el Site en borrador, previsualiza e itera; usa sites_publish sólo cuando la persona haya pedido publicar y confirme la acción.'
+].join(' ')
 
 router.use((_req, res, next) => {
   res.set('Cache-Control', 'no-store')
@@ -1492,7 +1501,7 @@ async function handleMessage(context, message) {
         title: 'Ristak',
         version: '2.0.0'
       },
-      instructions: 'Ristak MCP opera el CRM por acciones de negocio autorizadas. Lee con ristak.read; modifica borradores con ristak.write; enviar mensajes, registrar pagos, ejecutar automatizaciones o publicar requiere ristak.execute; borrados, cancelaciones y reembolsos requieren ristak.destructive. Respeta confirm=true e idempotencyKey cuando la herramienta los solicite. Nunca pidas ni reveles tokens o secretos.'
+      instructions: MCP_SERVER_INSTRUCTIONS
     })
   }
 

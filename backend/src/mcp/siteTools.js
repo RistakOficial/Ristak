@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 import {
   createBlockHandler,
   createSiteHandler,
@@ -26,12 +24,21 @@ import {
   verifySitesPublicDomainByIdHandler
 } from '../controllers/sitesController.js'
 import { hasFeature, isLicenseEnforced } from '../services/licenseService.js'
-import { BLOCK_TYPES } from '../services/sitesService.js'
+import { BLOCK_TYPES, inspectImportedSiteHtml } from '../services/sitesService.js'
+import { computeImportedSiteCodeRevision } from '../utils/importedSiteCodeRevision.js'
 
 const MAX_IMPORTED_HTML_CHARS = 2 * 1024 * 1024
 const MAX_CODE_FILE_CHARS = 2 * 1024 * 1024
 const MAX_CODE_UPDATE_BYTES = Math.floor(2.5 * 1024 * 1024)
 const MAX_STRUCTURED_BODY_BYTES = 1024 * 1024
+
+const HTML_AUTHORING_GUIDANCE = [
+  'Genera un documento HTML completo y autocontenido con <!doctype html>, html, head y body; envía código puro, nunca fences de Markdown.',
+  'Usa la skill o capacidad de construcción web del cliente para resolver tipografía, jerarquía, aire, secciones, responsive y accesibilidad antes de guardar.',
+  'No simules una landing personalizada apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo por defecto.',
+  'Incluye el CSS dentro del documento o en una hoja ya importada. Ristak elimina scripts, handlers on* y URLs javascript: por seguridad; no diseñes interacciones que dependan de JavaScript propio.',
+  'La creación y el guardado seguro permanecen en borrador. Previsualiza e itera antes de pedir confirmación para publicar.'
+].join(' ')
 
 const SITE_ID_SCHEMA = {
   type: 'string',
@@ -89,6 +96,165 @@ const BLOCK_INPUT_PROPERTIES = {
   sortOrder: { type: 'integer', minimum: 0, maximum: 10000 }
 }
 
+const HTML_ISSUE_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    code: { type: 'string' },
+    message: { type: 'string' }
+  },
+  required: ['code', 'message'],
+  additionalProperties: false
+}
+
+const HTML_QUALITY_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    ready: { type: 'boolean' },
+    errors: { type: 'array', items: HTML_ISSUE_OUTPUT_SCHEMA },
+    warnings: { type: 'array', items: HTML_ISSUE_OUTPUT_SCHEMA },
+    metrics: {
+      type: 'object',
+      properties: {
+        sourceBytes: { type: 'integer' },
+        styleTagCount: { type: 'integer' },
+        stylesheetCount: { type: 'integer' },
+        formCount: { type: 'integer' },
+        imageCount: { type: 'integer' }
+      },
+      required: ['sourceBytes', 'styleTagCount', 'stylesheetCount', 'formCount', 'imageCount'],
+      additionalProperties: false
+    }
+  },
+  required: ['ready', 'errors', 'warnings', 'metrics'],
+  additionalProperties: false
+}
+
+const HTML_CODE_FILE_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    path: { type: 'string' },
+    label: { type: 'string' },
+    pageId: { type: 'string' },
+    pageTitle: { type: 'string' },
+    contentType: { type: 'string' },
+    language: { type: 'string' },
+    sizeBytes: { type: 'number' },
+    updatedAt: { type: 'string' },
+    role: { type: 'string' }
+  },
+  required: ['path', 'label', 'pageId', 'pageTitle', 'contentType', 'language', 'sizeBytes', 'updatedAt', 'role'],
+  additionalProperties: false
+}
+
+const HTML_DRAFT_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    success: { type: 'boolean' },
+    data: {
+      type: 'object',
+      properties: {
+        siteId: { type: 'string' },
+        name: { type: 'string' },
+        status: { type: 'string' },
+        slug: { type: 'string' },
+        siteType: { type: 'string' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        editorMode: { type: 'string', enum: ['html'] },
+        revision: { type: 'string' },
+        files: { type: 'array', items: HTML_CODE_FILE_OUTPUT_SCHEMA },
+        detectedForms: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              title: { type: 'string' },
+              fieldCount: { type: 'integer' }
+            },
+            required: ['id', 'title', 'fieldCount'],
+            additionalProperties: false
+          }
+        },
+        securityReport: { type: 'array', items: { type: 'string' } },
+        qualityReport: HTML_QUALITY_OUTPUT_SCHEMA,
+        workflow: {
+          type: 'object',
+          properties: {
+            inspect: { type: 'string' },
+            editDraft: { type: 'string' },
+            preview: { type: 'string' },
+            publish: { type: 'string' }
+          },
+          required: ['inspect', 'editDraft', 'preview', 'publish'],
+          additionalProperties: false
+        }
+      },
+      required: [
+        'siteId',
+        'name',
+        'status',
+        'slug',
+        'siteType',
+        'title',
+        'description',
+        'editorMode',
+        'revision',
+        'files',
+        'detectedForms',
+        'securityReport',
+        'qualityReport',
+        'workflow'
+      ],
+      additionalProperties: false
+    }
+  },
+  required: ['success', 'data'],
+  additionalProperties: false
+}
+
+const HTML_VALIDATION_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    success: { type: 'boolean' },
+    data: {
+      type: 'object',
+      properties: {
+        ready: { type: 'boolean' },
+        qualityReport: HTML_QUALITY_OUTPUT_SCHEMA,
+        platformReport: {
+          type: 'object',
+          properties: {
+            sourceBytes: { type: 'integer' },
+            sanitizedBytes: { type: 'integer' },
+            securityReport: { type: 'array', items: { type: 'string' } },
+            detectedForms: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  title: { type: 'string' },
+                  fieldCount: { type: 'integer' }
+                },
+                required: ['id', 'title', 'fieldCount'],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ['sourceBytes', 'sanitizedBytes', 'securityReport', 'detectedForms'],
+          additionalProperties: false
+        },
+        recommendedCreateTool: { type: 'string' }
+      },
+      required: ['ready', 'qualityReport', 'platformReport', 'recommendedCreateTool'],
+      additionalProperties: false
+    }
+  },
+  required: ['success', 'data'],
+  additionalProperties: false
+}
+
 function makeInputSchema(properties, required = []) {
   return {
     type: 'object',
@@ -138,22 +304,7 @@ function revisionString(value) {
 }
 
 function importedCodeRevision(imported = {}) {
-  const hash = createHash('sha256')
-  const files = Array.isArray(imported.codeFiles) ? [...imported.codeFiles] : []
-  files.sort((left, right) => String(left?.path || '').localeCompare(String(right?.path || '')))
-  for (const file of files) {
-    const path = String(file?.path || '')
-    const content = String(file?.content || '')
-    hash.update(String(Buffer.byteLength(path, 'utf8')))
-    hash.update(':')
-    hash.update(path)
-    hash.update(':')
-    hash.update(String(Buffer.byteLength(content, 'utf8')))
-    hash.update(':')
-    hash.update(content)
-    hash.update('\n')
-  }
-  return `sha256:${hash.digest('hex')}`
+  return computeImportedSiteCodeRevision(imported.codeFiles)
 }
 
 function assertBooleanConfirmation(args = {}) {
@@ -189,10 +340,193 @@ function assertCodeUpdateSize(files = []) {
     totalBytes += Buffer.byteLength(String(file?.content ?? ''), 'utf8')
   }
   if (totalBytes <= MAX_CODE_UPDATE_BYTES) return
-  const error = new Error('La edición conjunta de código supera el límite de 12 MB.')
+  const error = new Error('La edición conjunta de código supera el límite de 2.5 MB.')
   error.status = 413
   error.code = 'payload_too_large'
   throw error
+}
+
+function htmlIssue(code, message) {
+  return { code, message }
+}
+
+function countHtmlMatches(value, pattern) {
+  return (String(value || '').match(pattern) || []).length
+}
+
+function inspectHtmlAuthoringQuality(html = '') {
+  const source = String(html || '')
+  const errors = []
+  const warnings = []
+  const scriptCount = countHtmlMatches(source, /<script\b/gi)
+  const inlineHandlerCount = countHtmlMatches(source, /\son[a-z]+\s*=/gi)
+  const javascriptUrlCount = countHtmlMatches(
+    source,
+    /\s(?:href|src|action)\s*=\s*(?:"|')?\s*javascript:/gi
+  )
+
+  if (!/<!doctype\s+html\b/i.test(source)) {
+    errors.push(htmlIssue('missing_doctype', 'Falta <!doctype html>.'))
+  }
+  if (!/<html\b[^>]*>/i.test(source)) {
+    errors.push(htmlIssue('missing_html_element', 'Falta el elemento <html>.'))
+  }
+  if (!/<head\b[^>]*>[\s\S]*<\/head>/i.test(source)) {
+    errors.push(htmlIssue('missing_head_element', 'Falta un <head> completo.'))
+  }
+  if (!/<body\b[^>]*>[\s\S]*<\/body>/i.test(source)) {
+    errors.push(htmlIssue('missing_body_element', 'Falta un <body> completo.'))
+  }
+  if (scriptCount > 0) {
+    errors.push(htmlIssue(
+      'unsupported_scripts',
+      `El documento contiene ${scriptCount} script(s); Ristak los elimina por seguridad. Resuelve la página con HTML, CSS y elementos declarativos de Ristak.`
+    ))
+  }
+  if (inlineHandlerCount > 0) {
+    errors.push(htmlIssue(
+      'unsupported_inline_handlers',
+      `El documento contiene ${inlineHandlerCount} handler(s) on*; Ristak los elimina por seguridad.`
+    ))
+  }
+  if (javascriptUrlCount > 0) {
+    errors.push(htmlIssue(
+      'unsupported_javascript_urls',
+      `El documento contiene ${javascriptUrlCount} URL(s) javascript:; Ristak las bloquea por seguridad.`
+    ))
+  }
+
+  if (!/<title\b[^>]*>\s*[^<\s][\s\S]*?<\/title>/i.test(source)) {
+    warnings.push(htmlIssue('missing_title', 'Agrega un <title> descriptivo.'))
+  }
+  if (!/<meta\b[^>]*\bname\s*=\s*["']?viewport["']?[^>]*>/i.test(source)) {
+    warnings.push(htmlIssue('missing_viewport', 'Agrega meta viewport para móvil.'))
+  }
+  if (!/<meta\b[^>]*\bcharset\s*=/i.test(source)) {
+    warnings.push(htmlIssue('missing_charset', 'Declara UTF-8 con meta charset.'))
+  }
+  if (!/<html\b[^>]*\blang\s*=/i.test(source)) {
+    warnings.push(htmlIssue('missing_language', 'Declara el idioma en <html lang="...">.'))
+  }
+  if (!/<(?:style)\b/i.test(source) && !/<link\b[^>]*\brel\s*=\s*["'][^"']*stylesheet/i.test(source)) {
+    warnings.push(htmlIssue('missing_styles', 'No se detectó CSS; una página personalizada debe traer su diseño resuelto.'))
+  }
+  if (!/<main\b/i.test(source)) {
+    warnings.push(htmlIssue('missing_main_landmark', 'Usa <main> para la jerarquía principal.'))
+  }
+  if (!/<h1\b/i.test(source)) {
+    warnings.push(htmlIssue('missing_h1', 'Incluye un solo mensaje principal claro con <h1>.'))
+  }
+  if (!/(?:@media|@container|clamp\s*\(|minmax\s*\(|flex-wrap\s*:|grid-template-columns\s*:)/i.test(source)) {
+    warnings.push(htmlIssue(
+      'responsive_strategy_not_detected',
+      'No se detectó una estrategia responsive clara; revisa móvil y computadora antes de publicar.'
+    ))
+  }
+
+  return {
+    ready: errors.length === 0,
+    errors,
+    warnings,
+    metrics: {
+      sourceBytes: Buffer.byteLength(source, 'utf8'),
+      styleTagCount: countHtmlMatches(source, /<style\b/gi),
+      stylesheetCount: countHtmlMatches(source, /<link\b[^>]*\brel\s*=\s*["'][^"']*stylesheet/gi),
+      formCount: countHtmlMatches(source, /<form\b/gi),
+      imageCount: countHtmlMatches(source, /<img\b/gi)
+    }
+  }
+}
+
+function assertHtmlReadyForAuthoring(html = '') {
+  const qualityReport = inspectHtmlAuthoringQuality(html)
+  if (qualityReport.ready) return qualityReport
+
+  const error = new Error('El HTML no es compatible con el flujo seguro de Sites. Corrige los errores del qualityReport antes de guardarlo.')
+  error.status = 400
+  error.code = 'site_html_not_ready'
+  error.details = { qualityReport }
+  throw error
+}
+
+function compactDetectedForms(forms = []) {
+  return (Array.isArray(forms) ? forms : []).map((form) => ({
+    id: form?.id || '',
+    title: form?.title || '',
+    fieldCount: Array.isArray(form?.fields) ? form.fields.length : 0
+  }))
+}
+
+function compactSiteIdentity(site = {}, editorMode = '') {
+  return {
+    siteId: site.id || '',
+    name: site.name || '',
+    status: site.status || '',
+    slug: site.slug || '',
+    siteType: site.siteType || '',
+    title: site.title || '',
+    description: site.description || '',
+    editorMode
+  }
+}
+
+function compactHtmlDraftMutationResponse(response, qualityReport) {
+  const payload = dataFrom(response) || {}
+  const site = payload.site || {}
+  const imported = payload.import || {}
+  const files = Array.isArray(imported.codeFiles) ? imported.codeFiles : []
+
+  return {
+    success: true,
+    data: {
+      ...compactSiteIdentity(site, 'html'),
+      revision: computeImportedSiteCodeRevision(files),
+      files: files.map((file) => compactCodeFile(file)),
+      detectedForms: compactDetectedForms(imported.detectedForms),
+      securityReport: Array.isArray(imported.securityReport) ? imported.securityReport : [],
+      qualityReport,
+      workflow: {
+        inspect: 'sites_get_code',
+        editDraft: 'sites_replace_html_draft',
+        preview: 'sites_preview_html',
+        publish: 'sites_publish'
+      }
+    }
+  }
+}
+
+function compactNativeDraftMutationResponse(response) {
+  const site = dataFrom(response) || {}
+  return {
+    success: true,
+    data: {
+      ...compactSiteIdentity(site, 'native_blocks'),
+      workflow: {
+        addBlock: 'sites_create_block',
+        preview: 'sites_preview_html',
+        publish: 'sites_publish'
+      }
+    }
+  }
+}
+
+function inspectHtmlForMcp(html = '') {
+  const qualityReport = inspectHtmlAuthoringQuality(html)
+  const platformReport = inspectImportedSiteHtml(html)
+  return {
+    success: true,
+    data: {
+      ready: qualityReport.ready,
+      qualityReport,
+      platformReport: {
+        sourceBytes: platformReport.sourceBytes,
+        sanitizedBytes: platformReport.sanitizedBytes,
+        securityReport: platformReport.securityReport,
+        detectedForms: compactDetectedForms(platformReport.detectedForms)
+      },
+      recommendedCreateTool: qualityReport.ready ? 'sites_create_html_draft' : ''
+    }
+  }
 }
 
 function containsPaymentFeature(value, depth = 0) {
@@ -325,6 +659,36 @@ function blockBody(args = {}) {
   return body
 }
 
+function normalizeHtmlFilename(value = '') {
+  const filename = String(value || 'index.html').trim() || 'index.html'
+  if (/\.html?$/i.test(filename)) return filename
+  const error = new Error('filename debe terminar en .html o .htm.')
+  error.status = 400
+  error.code = 'invalid_html_filename'
+  throw error
+}
+
+async function createHtmlDraft(context, args = {}, { requireAuthoringReady = false } = {}) {
+  const qualityReport = requireAuthoringReady
+    ? assertHtmlReadyForAuthoring(args.html)
+    : inspectHtmlAuthoringQuality(args.html)
+  await assertConditionalPaymentFeature(context, args.html)
+
+  const response = await call(context, importSiteHtmlHandler, {
+    method: 'POST',
+    body: {
+      name: args.name,
+      filename: normalizeHtmlFilename(args.filename),
+      slug: args.slug,
+      title: args.title,
+      description: args.description,
+      siteType: args.siteType || 'landing_page',
+      html: args.html
+    }
+  })
+  return compactHtmlDraftMutationResponse(response, qualityReport)
+}
+
 const dangerousControlProperties = writeControls({ confirmRequired: true })
 
 export const siteToolSpecs = Object.freeze([
@@ -380,8 +744,154 @@ export const siteToolSpecs = Object.freeze([
     }
   }),
   spec({
+    name: 'sites_validate_html',
+    title: 'Validar HTML para Sites',
+    description: `Valida sin guardar un documento HTML contra el contrato real de Sites y devuelve problemas accionables de compatibilidad, responsive y estructura. ${HTML_AUTHORING_GUIDANCE}`,
+    inputSchema: makeInputSchema({
+      html: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_IMPORTED_HTML_CHARS,
+        description: 'Documento HTML completo, sin fences de Markdown.'
+      }
+    }, ['html']),
+    outputSchema: HTML_VALIDATION_OUTPUT_SCHEMA,
+    access: 'read',
+    scope: 'ristak.read',
+    risk: 'low',
+    async execute(_context, args) {
+      return inspectHtmlForMcp(args.html)
+    }
+  }),
+  spec({
+    name: 'sites_create_html_draft',
+    title: 'Crear borrador HTML profesional',
+    description: `Herramienta principal para crear una landing o sitio personalizado con código propio. Conserva el documento como HTML editable y nunca lo convierte en una pila de bloques genéricos. ${HTML_AUTHORING_GUIDANCE}`,
+    inputSchema: makeInputSchema({
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+      filename: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 180,
+        description: 'Nombre .html o .htm. Si se omite usa index.html.'
+      },
+      slug: { type: 'string', maxLength: 140 },
+      title: { type: 'string', maxLength: 160 },
+      description: { type: 'string', maxLength: 2000 },
+      siteType: { type: 'string', enum: ['standard_form', 'interactive_form', 'landing_page'] },
+      html: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_IMPORTED_HTML_CHARS,
+        description: 'Documento HTML completo, autocontenido, responsive y sin JavaScript propio ni fences de Markdown.'
+      },
+      ...writeControls()
+    }, writeRequirements(['name', 'html'])),
+    outputSchema: HTML_DRAFT_OUTPUT_SCHEMA,
+    access: 'write',
+    scope: 'ristak.write',
+    risk: 'medium',
+    idempotencyRequired: true,
+    async execute(context, args) {
+      return createHtmlDraft(context, args, { requireAuthoringReady: true })
+    }
+  }),
+  spec({
+    name: 'sites_replace_html_draft',
+    title: 'Guardar HTML de un borrador',
+    description: `Reemplaza un archivo HTML sólo cuando el Site continúa en borrador y la revisión coincide. Es la ruta normal para iterar sin confirmaciones innecesarias ni cambios en vivo. ${HTML_AUTHORING_GUIDANCE}`,
+    inputSchema: makeInputSchema({
+      siteId: SITE_ID_SCHEMA,
+      expectedRevision: {
+        type: 'string',
+        minLength: 71,
+        maxLength: 71,
+        pattern: '^sha256:[a-f0-9]{64}$'
+      },
+      path: {
+        type: 'string',
+        maxLength: 500,
+        description: 'Path exacto devuelto por sites_get_code. Puede omitirse si el Site tiene un solo HTML editable.'
+      },
+      html: {
+        type: 'string',
+        minLength: 1,
+        maxLength: MAX_CODE_FILE_CHARS,
+        description: 'Documento HTML completo actualizado, sin JavaScript propio ni fences de Markdown.'
+      },
+      ...writeControls()
+    }, writeRequirements(['siteId', 'expectedRevision', 'html'])),
+    outputSchema: HTML_DRAFT_OUTPUT_SCHEMA,
+    access: 'write',
+    scope: 'ristak.write',
+    risk: 'medium',
+    idempotencyRequired: true,
+    async execute(context, args) {
+      const qualityReport = assertHtmlReadyForAuthoring(args.html)
+      await assertConditionalPaymentFeature(context, args.html)
+      assertCodeUpdateSize([{ path: args.path || '', content: args.html }])
+
+      const siteResponse = await call(context, getSiteHandler, {
+        method: 'GET',
+        params: { siteId: args.siteId },
+        query: { includeSubmissions: '0', includeTrackingStats: '0' }
+      })
+      const site = dataFrom(siteResponse) || {}
+      if (site.status !== 'draft') {
+        const error = new Error('Este guardado seguro sólo modifica borradores. Usa sites_unpublish con confirmación antes de editar un Site publicado.')
+        error.status = 409
+        error.code = 'site_must_be_draft'
+        throw error
+      }
+
+      const currentResponse = await call(context, getImportedSiteMappingHandler, {
+        method: 'GET',
+        params: { siteId: args.siteId }
+      })
+      const currentImport = dataFrom(currentResponse) || {}
+      const currentRevision = importedCodeRevision(currentImport)
+      if (currentRevision !== String(args.expectedRevision || '')) {
+        const error = new Error('El código cambió desde la última lectura. Vuelve a ejecutar sites_get_code antes de guardar.')
+        error.status = 409
+        error.code = 'site_code_revision_conflict'
+        error.currentRevision = currentRevision
+        throw error
+      }
+
+      const htmlFiles = (Array.isArray(currentImport.codeFiles) ? currentImport.codeFiles : [])
+        .filter((file) => file?.language === 'html' && file?.role !== 'popup')
+      const hasExplicitPath = Object.prototype.hasOwnProperty.call(args, 'path')
+      if (!hasExplicitPath && htmlFiles.length !== 1) {
+        const error = new Error('Este Site tiene varios archivos HTML. Indica el path exacto devuelto por sites_get_code.')
+        error.status = 400
+        error.code = 'site_code_path_required'
+        throw error
+      }
+      const targetPath = hasExplicitPath ? String(args.path || '') : String(htmlFiles[0]?.path || '')
+      const targetFile = htmlFiles.find((file) => String(file?.path || '') === targetPath)
+      if (!targetFile) {
+        const error = new Error(`El archivo "${targetPath || 'principal'}" no existe o no es HTML editable.`)
+        error.status = 404
+        error.code = 'site_code_file_not_found'
+        throw error
+      }
+
+      const response = await call(context, updateImportedSiteCodeFilesHandler, {
+        method: 'PATCH',
+        params: { siteId: args.siteId },
+        body: {
+          expectedRevision: args.expectedRevision,
+          requireDraft: true,
+          files: [{ path: targetPath, content: args.html }]
+        }
+      })
+      return compactHtmlDraftMutationResponse(response, qualityReport)
+    }
+  }),
+  spec({
     name: 'sites_create_draft',
-    description: 'Crea un Site vacío o basado en plantilla, siempre como borrador. Nunca lo publica automáticamente.',
+    title: 'Crear borrador con editor visual nativo',
+    description: 'Crea un Site para editarlo con los bloques nativos de Ristak. Úsalo sólo cuando la persona pida explícitamente el editor visual, un formulario nativo o componentes Ristak. Para una landing personalizada o diseño premium usa sites_create_html_draft; no intentes reconstruirla con una pila de bloques.',
     inputSchema: makeInputSchema({
       name: { type: 'string', minLength: 1, maxLength: 100 },
       slug: { type: 'string', maxLength: 140 },
@@ -399,7 +909,7 @@ export const siteToolSpecs = Object.freeze([
     async execute(context, args) {
       assertStructuredBodySize(args.theme, 'El tema')
       await assertConditionalPaymentFeature(context, args.theme)
-      return call(context, createSiteHandler, {
+      const response = await call(context, createSiteHandler, {
         method: 'POST',
         body: {
           name: args.name,
@@ -412,11 +922,13 @@ export const siteToolSpecs = Object.freeze([
           status: 'draft'
         }
       })
+      return compactNativeDraftMutationResponse(response)
     }
   }),
   spec({
     name: 'sites_import_html',
-    description: 'Importa un documento HTML, lo sanitiza con el pipeline de Sites y crea un borrador. No acepta ZIP ni publica.',
+    title: 'Importar HTML existente',
+    description: 'Importa como borrador un documento HTML existente proporcionado por la persona usuaria y lo pasa por el sanitizador canónico. Para código nuevo generado por un agente usa sites_create_html_draft, que exige el contrato completo de calidad. No acepta ZIP ni publica.',
     inputSchema: makeInputSchema({
       name: { type: 'string', minLength: 1, maxLength: 100 },
       filename: { type: 'string', minLength: 1, maxLength: 180 },
@@ -427,36 +939,18 @@ export const siteToolSpecs = Object.freeze([
       html: { type: 'string', minLength: 1, maxLength: MAX_IMPORTED_HTML_CHARS },
       ...writeControls()
     }, writeRequirements(['name', 'html'])),
+    outputSchema: HTML_DRAFT_OUTPUT_SCHEMA,
     access: 'write',
     scope: 'ristak.write',
     risk: 'medium',
     idempotencyRequired: true,
     async execute(context, args) {
-      await assertConditionalPaymentFeature(context, args.html)
-      const filename = String(args.filename || 'pagina.html')
-      if (!/\.html?$/i.test(filename)) {
-        const error = new Error('filename debe terminar en .html o .htm.')
-        error.status = 400
-        error.code = 'invalid_html_filename'
-        throw error
-      }
-      return call(context, importSiteHtmlHandler, {
-        method: 'POST',
-        body: {
-          name: args.name,
-          filename,
-          slug: args.slug,
-          title: args.title,
-          description: args.description,
-          siteType: args.siteType || 'landing_page',
-          html: args.html
-        }
-      })
+      return createHtmlDraft(context, args)
     }
   }),
   spec({
     name: 'sites_get_code',
-    description: 'Lee el inventario de archivos editables de un Site HTML. Envía path para obtener el contenido de un archivo concreto.',
+    description: 'Lee el inventario, revisión y archivos editables de un Site HTML. Primero llama sin path; luego envía el path exacto para leer sólo el archivo que vas a editar y evitar respuestas enormes.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       path: { type: 'string', maxLength: 500 },
@@ -478,7 +972,8 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_update_code',
-    description: 'Reemplaza archivos editables de un Site HTML mediante el sanitizador canónico. expectedRevision evita sobreescribir una versión ya observada, pero la publicación sigue siendo una acción separada.',
+    title: 'Editar código con impacto potencial en vivo',
+    description: 'Reemplaza uno o varios archivos de código y puede cambiar inmediatamente un Site ya publicado, por eso exige ristak.execute y confirmación. Para iterar sobre un borrador HTML usa sites_replace_html_draft. expectedRevision evita sobreescribir una versión ya observada.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       expectedRevision: {
@@ -530,7 +1025,10 @@ export const siteToolSpecs = Object.freeze([
       const response = await call(context, updateImportedSiteCodeFilesHandler, {
         method: 'PATCH',
         params: { siteId: args.siteId },
-        body: { files: args.files }
+        body: {
+          expectedRevision: args.expectedRevision,
+          files: args.files
+        }
       })
       return compactImportedCodeResponse(response)
     }
@@ -782,7 +1280,7 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_create_block',
-    description: 'Agrega un bloque al Site. Si el Site está publicado, el cambio puede verse en vivo.',
+    description: 'Agrega un componente del editor visual nativo. No uses bloques para imitar una landing HTML personalizada; en ese caso usa sites_create_html_draft. Si el Site está publicado, el cambio puede verse en vivo.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       ...BLOCK_INPUT_PROPERTIES,
@@ -807,7 +1305,7 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_update_block',
-    description: 'Actualiza un bloque existente. Si el Site está publicado, el cambio puede verse en vivo.',
+    description: 'Actualiza un componente del editor visual nativo. Para editar una página de código usa sites_replace_html_draft o sites_update_code. Si el Site está publicado, el cambio puede verse en vivo.',
     inputSchema: {
       ...makeInputSchema({
         siteId: SITE_ID_SCHEMA,
@@ -857,7 +1355,7 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_restore_blocks',
-    description: 'Restaura una colección acotada de bloques con el mismo flujo de deshacer del editor.',
+    description: 'Restaura una colección acotada de bloques del editor visual nativo con el mismo flujo de deshacer. No importa ni reconstruye HTML personalizado.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       blocks: {
@@ -895,7 +1393,7 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_reorder_blocks',
-    description: 'Reordena bloques existentes dentro del Site o de una página concreta.',
+    description: 'Reordena bloques del editor visual nativo dentro del Site o de una página concreta. No aplica al código de un Site HTML.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       pageId: PAGE_ID_SCHEMA,

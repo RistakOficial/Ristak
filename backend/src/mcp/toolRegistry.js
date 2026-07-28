@@ -194,7 +194,7 @@ function toolDefinition(spec) {
     title: spec.title || spec.name.replaceAll('_', ' '),
     description: spec.description,
     inputSchema: spec.inputSchema,
-    outputSchema: {
+    outputSchema: spec.outputSchema || {
       type: 'object',
       additionalProperties: true
     },
