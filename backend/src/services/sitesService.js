@@ -27058,7 +27058,11 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-player{container-type:inline-size;isolation:isolate}
   .rstk-video-custom-controls video{cursor:pointer}
   .rstk-video-overlay{position:absolute;inset:0;z-index:2;display:grid;place-items:center;border:0;background:transparent;color:var(--rstk-video-play-color,#fff);cursor:pointer}
-  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,0);background:var(--rstk-video-player-color,#000);color:var(--rstk-video-play-color,#fff);transition:opacity .18s ease,transform .18s ease}
+  .rstk-video-play-dot{width:var(--rstk-video-play-width,var(--rstk-video-play-size,160px));height:var(--rstk-video-play-size,160px);display:grid;place-items:center;border:0;border-radius:var(--rstk-video-play-radius,0);background:var(--rstk-video-player-color,#000);color:var(--rstk-video-play-color,#fff);transition:opacity .18s ease,transform .18s ease,filter .18s ease}
+  @media (hover:hover) and (pointer:fine){.rstk-video-play-dot:hover{filter:brightness(.86);transform:translateY(-1px) scale(1.025)}}
+  .rstk-video-overlay:focus-visible{outline:none}
+  .rstk-video-overlay:focus-visible .rstk-video-play-dot{filter:brightness(.86);outline:2px solid currentColor;outline-offset:3px}
+  .rstk-video-play-dot:active{filter:brightness(.78);transform:scale(.98)}
   .rstk-video-is-playing .rstk-video-play-dot{opacity:0;transform:scale(.9)}
   .rstk-video-play-shape-round .rstk-video-play-dot{border-radius:var(--rstk-video-play-radius,999px)}
   .rstk-video-play-dot svg{width:var(--rstk-video-play-icon-size,95px);height:var(--rstk-video-play-icon-size,95px)}

@@ -5527,7 +5527,12 @@ controles falsos. Sus grupos de control son:
   reglas de creación y edición por IA deben declarar y revisar siempre ambos
   colores juntos, como una sola pareja de diseño con contraste legible; no
   pueden cambiar uno aisladamente. `videoSoundColor` sigue normalmente a
-  `videoPlayColor`, salvo que el usuario solicite un acento distinto.
+  `videoPlayColor`, salvo que el usuario solicite un acento distinto. El play
+  central que genera Ristak se oscurece sutilmente al pasar un mouse, responde
+  al foco de teclado y se comprime al presionarlo, con el mismo comportamiento
+  en canvas, preview por URL y sitio publicado. Un reproductor
+  `data-rstk-native-render="custom"` conserva sus propios estados hover/focus:
+  Ristak no impone este efecto sobre los botones declarados por el HTML.
 - Reproducción: autoplay silenciado, loop, velocidad inicial, preview, aviso de
   sonido y progreso visual mediante `videoMuted`, `videoAutoplay`, `videoLoop`,
   `videoAdaptiveQuality`, `videoDefaultSpeed`, `videoPreviewEnabled`, `videoPreviewStart`,
