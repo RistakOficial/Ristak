@@ -20,6 +20,11 @@ import { markHumanTakeoverIfActive } from '../services/conversationalAgentServic
 import { renderTemplateVariables } from '../services/templateVariablesService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js';
+import {
+  buildHiddenContactsCondition,
+  getHiddenContactFilters,
+  isHiddenContactRecord
+} from '../utils/hiddenContactsFilter.js';
 import { clearHighLevelIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import { updateSingleContactStats } from '../utils/updateContactsStats.js';
 import {
@@ -4591,12 +4596,15 @@ async function searchLocalContactsForCalendar({ query, email, phone, limit = 20 
   }
 
   if (!conditions.length) return []
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
   const rows = await db.all(`
-    SELECT id, full_name, first_name, last_name, email, phone, source
-    FROM contacts
+    SELECT c.id, c.full_name, c.first_name, c.last_name, c.email, c.phone, c.source
+    FROM contacts c
     WHERE ${conditions.join(' AND ')}
-    ORDER BY updated_at DESC, created_at DESC
+      ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+    ORDER BY c.updated_at DESC, c.created_at DESC
     LIMIT ${cappedLimit}
   `, params)
 
@@ -4628,7 +4636,8 @@ export const searchContacts = async (req, res) => {
     try {
       const ghlClient = await getGHLClient();
       const data = await ghlClient.searchContacts({ query, email, phone, limit: Number(limit) });
-      contacts = data.contacts || [];
+      const hiddenFilters = await getHiddenContactFilters();
+      contacts = (data.contacts || []).filter(contact => !isHiddenContactRecord(hiddenFilters, contact));
     } catch (error) {
       logger.warn(`Búsqueda GHL no disponible, usando contactos locales: ${error.message}`);
       contacts = await searchLocalContactsForCalendar({ query, email, phone, limit });
@@ -4664,17 +4673,22 @@ export const getContactById = async (req, res) => {
     }
 
     let contact = null;
+    const hiddenFilters = await getHiddenContactFilters();
 
     try {
       const ghlClient = await getGHLClient();
       const response = await ghlClient.request(`/contacts/${id}`);
       contact = response.contact || response;
+      if (isHiddenContactRecord(hiddenFilters, contact)) contact = null;
     } catch (error) {
       logger.warn(`Contacto GHL no disponible, usando DB local: ${error.message}`);
-      const row = await db.get(
-        'SELECT id, full_name, first_name, last_name, email, phone, source FROM contacts WHERE id = ?',
-        [id]
-      );
+      const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
+      const row = await db.get(`
+        SELECT c.id, c.full_name, c.first_name, c.last_name, c.email, c.phone, c.source
+        FROM contacts c
+        WHERE c.id = ?
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+      `, [id]);
 
       if (row) {
         contact = {

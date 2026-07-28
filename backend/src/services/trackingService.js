@@ -11,6 +11,10 @@ import {
   buildFallbackVisitorIdFromSession,
   isTrustedTrackingVisitorId
 } from '../utils/trackingVisitorIdentity.js'
+import {
+  buildHiddenTrackingSessionCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
 import { invalidateTrackingAnalyticsCache } from './trackingAnalyticsCache.js'
 import fetch from 'node-fetch'
 
@@ -909,6 +913,8 @@ export async function linkVisitorToContact(visitor_id, contact_id, full_name) {
  */
 export async function getRecentSessions(limit = 50) {
   try {
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
     const sessions = await db.all(`
       SELECT
         session_id,
@@ -973,7 +979,8 @@ export async function getRecentSessions(limit = 50) {
         public_page_title,
         conversion_type,
         submission_id
-      FROM sessions
+      FROM sessions s
+      ${hiddenCondition ? `WHERE ${hiddenCondition}` : ''}
       ORDER BY started_at DESC
       LIMIT ?
     `, [limit])
@@ -995,16 +1002,19 @@ export async function getSessionMetricsByDateRange(startDate, endDate) {
 
     const { resolveDateRangeWithGHLTimezone } = await import('../utils/dateUtils.js')
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
 
     const query = `
       WITH view_sessions AS (
         SELECT
-          ${getVisitorIdentityExpression()} AS visitor_key,
-          session_id
-        FROM sessions
-        WHERE started_at >= ?
-          AND started_at <= ?
-          AND COALESCE(event_name, 'page_view') IN ('session_start', 'page_view', 'native_site_view')
+          ${getVisitorIdentityExpression('s')} AS visitor_key,
+          s.session_id
+        FROM sessions s
+        WHERE s.started_at >= ?
+          AND s.started_at <= ?
+          AND COALESCE(s.event_name, 'page_view') IN ('session_start', 'page_view', 'native_site_view')
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       )
       SELECT
         (SELECT COUNT(*) FROM view_sessions) as page_views,
@@ -1046,6 +1056,10 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
     // Usar timezone de HighLevel para consistencia con Dashboard
     const { resolveDateRangeWithGHLTimezone } = await import('../utils/dateUtils.js')
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const hiddenFilters = await getHiddenContactFilters({
+      signal: options.signal
+    })
+    const hiddenCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
 
     logger.info(`🕐 Timezone range: ${range.startUtc} → ${range.endUtc}`)
 
@@ -1216,6 +1230,7 @@ export async function getSessionsByDateRange(startDate, endDate, options = {}) {
       FROM sessions s
       LEFT JOIN contacts c ON s.contact_id = c.id
       WHERE s.started_at >= ? AND s.started_at <= ?
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       ORDER BY s.started_at DESC, s.id DESC
       LIMIT ? OFFSET ?
     `

@@ -1,5 +1,6 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import { clearTrackingAnalyticsSummaryCache } from '../services/trackingAnalyticsService.js'
 
 /**
  * Obtiene todos los filtros de contactos ocultos
@@ -87,6 +88,7 @@ export const addHiddenFilter = async (req, res) => {
     }
 
     logger.info(`Filtro de contacto oculto agregado: "${trimmedFilter}" (${matchType})`)
+    clearTrackingAnalyticsSummaryCache()
 
     res.json({
       success: true,
@@ -126,6 +128,7 @@ export const deleteHiddenFilter = async (req, res) => {
     }
 
     logger.info(`Filtro de contacto oculto eliminado: ID ${id}`)
+    clearTrackingAnalyticsSummaryCache()
 
     res.json({
       success: true,

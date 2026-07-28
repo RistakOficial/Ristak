@@ -1,5 +1,9 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import {
+  buildHiddenContactsCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
 
 // Perfil social + contacto ENLAZADO de la misma persona.
 //
@@ -41,6 +45,19 @@ export const getContactLinkedSocial = async (req, res) => {
   try {
     const contactId = String(req.params.id || '').trim()
     if (!contactId) return res.status(400).json({ success: false, error: 'Falta el contacto' })
+    const hiddenFilters = await getHiddenContactFilters()
+    const visibleContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const visibleContact = await db.get(
+      `SELECT c.id
+         FROM contacts c
+        WHERE c.id = ?
+          ${visibleContactCondition ? `AND ${visibleContactCondition}` : ''}
+        LIMIT 1`,
+      [contactId]
+    )
+    if (!visibleContact) {
+      return res.status(404).json({ success: false, error: 'Contacto no encontrado' })
+    }
 
     // Perfiles sociales de ESTE contacto (puede tener DM y comentario a la vez).
     const ownProfiles = await db.all(
@@ -85,7 +102,8 @@ export const getContactLinkedSocial = async (req, res) => {
             AND s.meta_user_id = ?
             AND s.contact_id IS NOT NULL
             AND s.contact_id <> ?
-            AND c.deleted_at IS NULL`,
+            AND c.deleted_at IS NULL
+            ${visibleContactCondition ? `AND ${visibleContactCondition}` : ''}`,
         [key.platform, key.metaUserId, contactId]
       )
       for (const row of rows) {

@@ -87,6 +87,12 @@ import {
   ensureImportedHtmlVideoActionTargets
 } from '../../../shared/sites/importedHtmlContract.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
+import {
+  buildHiddenContactDataCondition,
+  buildHiddenContactsCondition,
+  buildHiddenTrackingSessionCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
 // Contrato de render compartido con el editor (fuente única de templates,
 // variables --rstk-*, stylesheet público y helpers de tema/color).
 import {
@@ -9479,6 +9485,10 @@ export async function listSites({
       ? !cleanString(cursor)
       : includeFacets === true || includeFacets === 'true' || includeFacets === '1'
   )
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'sub')
+  const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 'ts')
+  const hiddenConversionEventClause = getSitesHiddenSessionClause(hiddenFilters, 'event')
 
   const [rows, facets] = await Promise.all([
     db.all(`
@@ -9516,6 +9526,8 @@ export async function listSites({
         ${getSitesAnalyticsSubmissionKindExpression('sub', 'ps')} AS submission_kind
       FROM paged_sites ps
       INNER JOIN public_site_submissions sub ON sub.site_id = ps.id
+      WHERE 1=1
+        ${hiddenSubmissionClause}
       UNION ALL
       SELECT
         ps.id AS resolved_site_id,
@@ -9524,7 +9536,8 @@ export async function listSites({
         ${getSitesAnalyticsSubmissionKindExpression('sub', 'ps')} AS submission_kind
       FROM paged_sites ps
       INNER JOIN public_site_submissions sub ON sub.form_site_id = ps.id
-      WHERE sub.site_id IS NULL OR sub.site_id != sub.form_site_id
+      WHERE (sub.site_id IS NULL OR sub.site_id != sub.form_site_id)
+        ${hiddenSubmissionClause}
     ),
     submission_metrics AS (
       SELECT
@@ -9553,6 +9566,7 @@ export async function listSites({
       FROM paged_sites ps
       INNER JOIN sessions ts ON ts.site_id = ps.id
       WHERE ${getSitesAnalyticsViewEventCondition('ts')}
+        ${hiddenSessionClause}
       UNION ALL
       SELECT
         ps.id AS resolved_site_id,
@@ -9565,6 +9579,7 @@ export async function listSites({
       INNER JOIN sessions ts ON ts.form_site_id = ps.id
       WHERE (ts.site_id IS NULL OR ts.site_id != ts.form_site_id)
         AND ${getSitesAnalyticsViewEventCondition('ts')}
+        ${hiddenSessionClause}
     ),
     ordered_views AS (
       SELECT
@@ -9601,6 +9616,7 @@ export async function listSites({
         ON event.submission_id = submission.id
        AND event.event_name = 'native_site_conversion'
        AND LOWER(COALESCE(event.tracking_source, '')) = 'native_site'
+       ${hiddenConversionEventClause}
       WHERE submission.submission_kind = 'completed'
         AND LOWER(COALESCE(submission.status, 'received')) != 'disqualified'
     ),
@@ -10449,6 +10465,28 @@ function getSiteAnalyticsFieldLabel(block = {}, index = 0) {
 
 const SITE_ANALYTICS_FIELD_AGGREGATE_CHUNK_SIZE = 350
 
+function getSitesHiddenSessionClause(filters = [], alias = 'source') {
+  const condition = buildHiddenTrackingSessionCondition(filters, alias)
+  return condition ? `AND (${condition})` : ''
+}
+
+function getSitesHiddenSubmissionClause(filters = [], alias = 'submission') {
+  const condition = buildHiddenContactDataCondition(filters, {
+    tableAlias: alias,
+    tableName: 'public_site_submissions',
+    columns: [
+      'id',
+      'contact_id',
+      'response_json',
+      'raw_fields_json',
+      'mapped_fields_json',
+      'derived_fields_json',
+      'meta_json'
+    ]
+  })
+  return condition ? `AND (${condition})` : ''
+}
+
 function getSiteAnalyticsAnsweredValueCondition(alias = 'answer') {
   if (databaseDialect === 'postgres') {
     return `(
@@ -10496,7 +10534,7 @@ function getSiteAnalyticsJsonExpansion(sourceAlias = 'scoped') {
   return `CROSS JOIN json_each(${parsed}) answer`
 }
 
-async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
+async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}, hiddenFilters = []) {
   if (!siteIds.length) return new Map()
   const requestedSiteValues = siteIds.map(() => '(?)').join(',')
   const dateClause = dateFilters.dateFrom && dateFilters.dateTo
@@ -10505,6 +10543,7 @@ async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
   const dateParams = dateFilters.dateFrom && dateFilters.dateTo
     ? [dateFilters.dateFrom, dateFilters.dateTo]
     : []
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'submission')
   const rows = await db.all(`
     WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
     scoped_submissions AS (
@@ -10517,6 +10556,7 @@ async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
       INNER JOIN requested_sites requested ON requested.id = submission.site_id
       LEFT JOIN public_sites owner ON owner.id = submission.site_id
       WHERE submission.site_id IS NOT NULL
+        ${hiddenSubmissionClause}
         ${dateClause}
       UNION ALL
       SELECT
@@ -10529,6 +10569,7 @@ async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
       LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
       WHERE submission.form_site_id IS NOT NULL
         AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+        ${hiddenSubmissionClause}
         ${dateClause}
     )
     SELECT
@@ -10567,7 +10608,7 @@ async function getSitesFormSubmissionCounts(siteIds = [], dateFilters = {}) {
   ]))
 }
 
-async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
+async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}, hiddenFilters = []) {
   const answeredByField = new Map()
   if (!fieldEntries.length) return answeredByField
 
@@ -10582,6 +10623,7 @@ async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
     const dateParams = dateFilters.dateFrom && dateFilters.dateTo
       ? [dateFilters.dateFrom, dateFilters.dateTo]
       : []
+    const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'submission')
     const answerTypeExpression = databaseDialect === 'postgres'
       ? 'jsonb_typeof(answer.value)'
       : 'answer.type'
@@ -10594,6 +10636,7 @@ async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
         LEFT JOIN public_sites owner ON owner.id = submission.site_id
         WHERE submission.site_id IS NOT NULL
           AND ${getSitesAnalyticsTerminalSubmissionCondition('submission', 'owner')}
+          ${hiddenSubmissionClause}
           ${dateClause}
         UNION ALL
         SELECT submission.form_site_id AS resolved_site_id, submission.id, submission.response_json
@@ -10603,6 +10646,7 @@ async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
         WHERE submission.form_site_id IS NOT NULL
           AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
           AND ${getSitesAnalyticsTerminalSubmissionCondition('submission', 'owner')}
+          ${hiddenSubmissionClause}
           ${dateClause}
       ),
       field_scope(site_id, block_id) AS (VALUES ${fieldValues}),
@@ -10646,7 +10690,7 @@ async function getSitesFormAnsweredCounts(fieldEntries = [], dateFilters = {}) {
   return answeredByField
 }
 
-async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBySite = {}) {
+async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBySite = {}, hiddenFilters = []) {
   if (!siteIds.length) return {}
 
   const placeholders = siteIds.map(() => '?').join(',')
@@ -10669,8 +10713,8 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
     collectFieldBlocks(blocks).map(field => ({ siteId, blockId: field.id }))
   ))
   const [submissionCounts, answeredByField] = await Promise.all([
-    getSitesFormSubmissionCounts(siteIds, dateFilters),
-    getSitesFormAnsweredCounts(fieldEntries, dateFilters)
+    getSitesFormSubmissionCounts(siteIds, dateFilters, hiddenFilters),
+    getSitesFormAnsweredCounts(fieldEntries, dateFilters, hiddenFilters)
   ])
 
   const result = {}
@@ -10722,7 +10766,7 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
   return result
 }
 
-async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
+async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}, hiddenFilters = []) {
   const bySiteId = Object.fromEntries(siteIds.map(siteId => [
     siteId,
     emptySiteTrackingStats({ siteId })
@@ -10742,6 +10786,9 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
   const submissionDateParams = dateFilters.dateFrom && dateFilters.dateTo
     ? [dateFilters.dateFrom, dateFilters.dateTo]
     : []
+  const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 's')
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'submission')
+  const hiddenConversionEventClause = getSitesHiddenSessionClause(hiddenFilters, 'event')
 
   const [trackingRows, submissionCounts, converterRows] = await Promise.all([
     db.all(`
@@ -10759,6 +10806,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
         WHERE s.site_id IS NOT NULL
           AND s.site_id != ''
           AND ${getSitesAnalyticsViewEventCondition('s')}
+          ${hiddenSessionClause}
           ${eventDateClause}
         UNION ALL
         SELECT
@@ -10774,6 +10822,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
           AND s.form_site_id != ''
           AND (s.site_id IS NULL OR s.site_id != s.form_site_id)
           AND ${getSitesAnalyticsViewEventCondition('s')}
+          ${hiddenSessionClause}
           ${eventDateClause}
       ),
       ordered_views AS (
@@ -10802,7 +10851,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
       ...eventDateParams,
       ...eventDateParams
     ]),
-    getSitesFormSubmissionCounts(siteIds, dateFilters),
+    getSitesFormSubmissionCounts(siteIds, dateFilters, hiddenFilters),
     db.all(`
       WITH requested_sites(id) AS (VALUES ${requestedSiteValues}),
       scoped_views AS (
@@ -10816,6 +10865,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
         FROM sessions s
         INNER JOIN requested_sites requested ON requested.id = s.site_id
         WHERE ${getSitesAnalyticsViewEventCondition('s')}
+          ${hiddenSessionClause}
           ${eventDateClause}
         UNION ALL
         SELECT
@@ -10829,6 +10879,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
         INNER JOIN requested_sites requested ON requested.id = s.form_site_id
         WHERE (s.site_id IS NULL OR s.site_id != s.form_site_id)
           AND ${getSitesAnalyticsViewEventCondition('s')}
+          ${hiddenSessionClause}
           ${eventDateClause}
       ),
       qualified_submissions AS (
@@ -10841,6 +10892,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
         LEFT JOIN public_sites owner ON owner.id = submission.site_id
         WHERE ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} = 'completed'
           AND LOWER(COALESCE(submission.status, 'received')) != 'disqualified'
+          ${hiddenSubmissionClause}
           ${submissionDateClause}
         UNION ALL
         SELECT
@@ -10853,6 +10905,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
         WHERE (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
           AND ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} = 'completed'
           AND LOWER(COALESCE(submission.status, 'received')) != 'disqualified'
+          ${hiddenSubmissionClause}
           ${submissionDateClause}
       ),
       raw_conversion_signals AS (
@@ -10868,6 +10921,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
           ON event.submission_id = qualified.submission_id
          AND event.event_name = 'native_site_conversion'
          AND LOWER(COALESCE(event.tracking_source, '')) = 'native_site'
+         ${hiddenConversionEventClause}
       ),
       conversion_signals AS (
         SELECT *
@@ -10958,7 +11012,7 @@ async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}) {
   return bySiteId
 }
 
-async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
+async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}, hiddenFilters = []) {
   if (!scopeSelection) return emptySitesTrackingAggregate()
 
   const eventDateClause = dateFilters.dateFrom && dateFilters.dateTo
@@ -10973,6 +11027,9 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
   const submissionDateParams = dateFilters.dateFrom && dateFilters.dateTo
     ? [dateFilters.dateFrom, dateFilters.dateTo]
     : []
+  const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 'source')
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'submission')
+  const hiddenConversionEventClause = getSitesHiddenSessionClause(hiddenFilters, 'event')
 
   const row = await db.get(`
     WITH scoped_sites AS (
@@ -10991,6 +11048,7 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
       WHERE source.site_id IS NOT NULL
         AND source.site_id != ''
         AND ${getSitesAnalyticsViewEventCondition('source')}
+        ${hiddenSessionClause}
         ${eventDateClause}
       UNION ALL
       SELECT
@@ -11006,6 +11064,7 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
         AND source.form_site_id != ''
         AND (source.site_id IS NULL OR source.site_id != source.form_site_id)
         AND ${getSitesAnalyticsViewEventCondition('source')}
+        ${hiddenSessionClause}
         ${eventDateClause}
     ),
     ordered_views AS (
@@ -11028,6 +11087,7 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
       INNER JOIN scoped_sites scope ON scope.id = submission.site_id
       LEFT JOIN public_sites owner ON owner.id = submission.site_id
       WHERE submission.site_id IS NOT NULL
+        ${hiddenSubmissionClause}
         ${submissionDateClause}
       UNION ALL
       SELECT
@@ -11041,6 +11101,7 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
       LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
       WHERE submission.form_site_id IS NOT NULL
         AND (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
+        ${hiddenSubmissionClause}
         ${submissionDateClause}
     ),
     qualified_submissions AS (
@@ -11062,6 +11123,7 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
         ON event.submission_id = qualified.submission_id
        AND event.event_name = 'native_site_conversion'
        AND LOWER(COALESCE(event.tracking_source, '')) = 'native_site'
+       ${hiddenConversionEventClause}
     ),
     conversion_signals AS (
       SELECT *
@@ -11163,11 +11225,13 @@ async function getSitesTrackingAggregate(scopeSelection, dateFilters = {}) {
   }
 }
 
-async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
+async function getSitesTrackingSeries(scopeSelection, dateFilters = {}, hiddenFilters = []) {
   if (!scopeSelection || !dateFilters.dateFrom || !dateFilters.dateTo) return []
 
   const viewPeriodExpression = getSitesAnalyticsDayExpression('source.started_at', dateFilters)
   const submissionPeriodExpression = getSitesAnalyticsDayExpression('submission.created_at', dateFilters)
+  const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 'source')
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'submission')
   const [viewRows, submissionRows] = await Promise.all([
     db.all(`
       WITH scoped_sites AS (
@@ -11183,6 +11247,7 @@ async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
         FROM sessions source
         INNER JOIN scoped_sites scope ON scope.id = source.site_id
         WHERE ${getSitesAnalyticsViewEventCondition('source')}
+          ${hiddenSessionClause}
           AND source.started_at >= ? AND source.started_at <= ?
         UNION ALL
         SELECT
@@ -11195,6 +11260,7 @@ async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
         INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
         WHERE (source.site_id IS NULL OR source.site_id != source.form_site_id)
           AND ${getSitesAnalyticsViewEventCondition('source')}
+          ${hiddenSessionClause}
           AND source.started_at >= ? AND source.started_at <= ?
       ),
       ordered_views AS (
@@ -11238,6 +11304,7 @@ async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
         INNER JOIN scoped_sites scope ON scope.id = submission.site_id
         LEFT JOIN public_sites owner ON owner.id = submission.site_id
         WHERE submission.created_at >= ? AND submission.created_at <= ?
+          ${hiddenSubmissionClause}
         UNION ALL
         SELECT
           ${submissionPeriodExpression} AS period_key,
@@ -11249,6 +11316,7 @@ async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
         LEFT JOIN public_sites owner ON owner.id = submission.form_site_id
         WHERE (submission.site_id IS NULL OR submission.site_id != submission.form_site_id)
           AND submission.created_at >= ? AND submission.created_at <= ?
+          ${hiddenSubmissionClause}
       )
       SELECT
         period_key,
@@ -11324,7 +11392,7 @@ async function getSitesTrackingSeries(scopeSelection, dateFilters = {}) {
   return [...byPeriod.values()].sort((left, right) => left.periodKey.localeCompare(right.periodKey))
 }
 
-async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}) {
+async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}, hiddenFilters = []) {
   if (!scopeSelection || !dateFilters.dateFrom || !dateFilters.dateTo) {
     return {
       source: 'first_party',
@@ -11335,6 +11403,7 @@ async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}) {
     }
   }
 
+  const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 'source')
   const row = await db.get(`
     WITH scoped_sites AS (
       ${scopeSelection.sql}
@@ -11344,6 +11413,7 @@ async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}) {
       FROM sessions source
       INNER JOIN scoped_sites scope ON scope.id = source.site_id
       WHERE ${getSitesAnalyticsViewEventCondition('source')}
+        ${hiddenSessionClause}
         AND source.started_at >= ? AND source.started_at <= ?
       UNION ALL
       SELECT source.event_id, source.timestamp_adjusted
@@ -11351,6 +11421,7 @@ async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}) {
       INNER JOIN scoped_sites scope ON scope.id = source.form_site_id
       WHERE (source.site_id IS NULL OR source.site_id != source.form_site_id)
         AND ${getSitesAnalyticsViewEventCondition('source')}
+        ${hiddenSessionClause}
         AND source.started_at >= ? AND source.started_at <= ?
     )
     SELECT
@@ -11374,11 +11445,14 @@ async function getSitesTrackingCoverage(scopeSelection, dateFilters = {}) {
   }
 }
 
-async function getSitesTrackingBreakdownInChunks(siteIds = [], dateFilters = {}) {
+async function getSitesTrackingBreakdownInChunks(siteIds = [], dateFilters = {}, hiddenFilters = []) {
   const result = {}
   const chunkSize = 150
   for (let offset = 0; offset < siteIds.length; offset += chunkSize) {
-    Object.assign(result, await getSitesTrackingBreakdown(siteIds.slice(offset, offset + chunkSize), dateFilters))
+    Object.assign(
+      result,
+      await getSitesTrackingBreakdown(siteIds.slice(offset, offset + chunkSize), dateFilters, hiddenFilters)
+    )
   }
   return result
 }
@@ -11451,15 +11525,16 @@ export async function getSitesTrackingSummary(input = {}) {
     : formFunnelSiteId ? [formFunnelSiteId] : []
   const scopeSelection = buildSitesTrackingScopeSelection(siteScope, legacySiteIds)
   const dateFilters = await resolveSitesAnalyticsDateFilters(input)
+  const hiddenFilters = await getHiddenContactFilters()
   const [scopedSites, aggregate, series, coverage] = await Promise.all([
     scopeSelection ? db.all(scopeSelection.sql, scopeSelection.params) : Promise.resolve([]),
-    getSitesTrackingAggregate(scopeSelection, dateFilters),
-    getSitesTrackingSeries(scopeSelection, dateFilters),
-    getSitesTrackingCoverage(scopeSelection, dateFilters)
+    getSitesTrackingAggregate(scopeSelection, dateFilters, hiddenFilters),
+    getSitesTrackingSeries(scopeSelection, dateFilters, hiddenFilters),
+    getSitesTrackingCoverage(scopeSelection, dateFilters, hiddenFilters)
   ])
   const scopedSiteIds = scopedSites.map(site => cleanString(site.id)).filter(Boolean)
   const scopedInternalIds = new Set(scopedSiteIds)
-  const internalStatsBySite = await getSitesTrackingBreakdownInChunks(scopedSiteIds, dateFilters)
+  const internalStatsBySite = await getSitesTrackingBreakdownInChunks(scopedSiteIds, dateFilters, hiddenFilters)
   const scopedBreakdownSiteIds = breakdownSiteIds.filter(siteId => scopedInternalIds.has(siteId))
   const scopedFormFunnelSiteIds = requestedFormFunnelSiteIds.filter(siteId => scopedInternalIds.has(siteId))
   const bySiteId = Object.fromEntries(scopedBreakdownSiteIds.map(siteId => [
@@ -11467,7 +11542,7 @@ export async function getSitesTrackingSummary(input = {}) {
     internalStatsBySite[siteId] || emptySiteTrackingStats({ siteId })
   ]))
   const formFunnels = scopedFormFunnelSiteIds.length
-    ? await getSitesFormFunnelSummary(scopedFormFunnelSiteIds, dateFilters, internalStatsBySite)
+    ? await getSitesFormFunnelSummary(scopedFormFunnelSiteIds, dateFilters, internalStatsBySite, hiddenFilters)
     : {}
   const rankings = buildSitesTrackingRankings(scopedSites, internalStatsBySite)
   const activeEntityCount = scopedSiteIds.filter(siteId => {
@@ -11791,6 +11866,8 @@ async function ensureSocialProfileBlock(site, currentBlocks = null) {
 
 export async function listSiteSubmissions(siteId, { limit = 250 } = {}) {
   const boundedLimit = Math.min(250, Math.max(1, Number.parseInt(String(limit || ''), 10) || 250))
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'sub')
   const rows = await db.all(`
     SELECT
       sub.*,
@@ -11799,8 +11876,11 @@ export async function listSiteSubmissions(siteId, { limit = 250 } = {}) {
       c.phone AS contact_phone
     FROM public_site_submissions sub
     LEFT JOIN contacts c ON c.id = sub.contact_id
-    WHERE sub.site_id = ?
+    WHERE (
+      sub.site_id = ?
       OR (sub.form_site_id = ? AND (sub.site_id IS NULL OR sub.site_id != sub.form_site_id))
+    )
+      ${hiddenSubmissionClause}
     ORDER BY sub.created_at DESC
     LIMIT ?
   `, [siteId, siteId, boundedLimit])
@@ -32621,12 +32701,15 @@ export async function resolvePublicPrefillContact({ contactId, visitorId, sessio
   const visitor = cleanString(visitorId)
   const session = cleanString(sessionId)
   if (!id && !visitor && !session) return null
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenContactClause = buildHiddenContactsCondition(hiddenFilters, 'c')
 
   if (id) {
     const contact = await db.get(`
-      SELECT id, phone, email, full_name, first_name, last_name, visitor_id
-      FROM contacts
-      WHERE id = ?
+      SELECT c.id, c.phone, c.email, c.full_name, c.first_name, c.last_name, c.visitor_id
+      FROM contacts c
+      WHERE c.id = ?
+        ${hiddenContactClause}
       LIMIT 1
     `, [id]).catch(error => {
       logger.warn(`No se pudo leer contacto para prefill publico ${id}: ${error.message}`)
@@ -32662,6 +32745,7 @@ export async function resolvePublicPrefillContact({ contactId, visitorId, sessio
     WHERE s.session_id = ?
       AND s.contact_id IS NOT NULL
       AND s.contact_id != ''
+      ${hiddenContactClause}
     ORDER BY s.started_at DESC, s.created_at DESC
     LIMIT 1
   `, [session]).catch(error => {
@@ -32671,10 +32755,11 @@ export async function resolvePublicPrefillContact({ contactId, visitorId, sessio
   if (bySession) return mapPublicPrefillContact(bySession)
 
   const byVisitor = visitor ? await db.get(`
-    SELECT id, phone, email, full_name, first_name, last_name
-    FROM contacts
-    WHERE visitor_id = ?
-    ORDER BY updated_at DESC, created_at DESC
+    SELECT c.id, c.phone, c.email, c.full_name, c.first_name, c.last_name
+    FROM contacts c
+    WHERE c.visitor_id = ?
+      ${hiddenContactClause}
+    ORDER BY c.updated_at DESC, c.created_at DESC
     LIMIT 1
   `, [visitor]).catch(error => {
     logger.warn(`No se pudo leer contacto por visitante para prefill publico: ${error.message}`)
@@ -32689,6 +32774,7 @@ export async function resolvePublicPrefillContact({ contactId, visitorId, sessio
     WHERE s.visitor_id = ?
       AND s.contact_id IS NOT NULL
       AND s.contact_id != ''
+      ${hiddenContactClause}
     ORDER BY s.started_at DESC, s.created_at DESC
     LIMIT 1
   `, [visitor]).catch(error => {

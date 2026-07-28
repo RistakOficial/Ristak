@@ -23,6 +23,12 @@ import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { serializePaymentRowAmount } from '../utils/paymentAmountSerialization.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import {
+  buildHiddenContactDataCondition,
+  buildHiddenContactsCondition,
+  getHiddenContactFilters,
+  isHiddenContactRecord
+} from '../utils/hiddenContactsFilter.js'
 import { logger } from '../utils/logger.js'
 import { invokeController } from '../mcp/controllerInvoker.js'
 import {
@@ -578,6 +584,8 @@ async function searchContacts(args = {}) {
 
   const searchClause = buildContactSearchClause('c', query)
   const searchRank = buildContactSearchRank('c', query)
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const rows = await db.all(
     `SELECT
        c.id,
@@ -590,6 +598,7 @@ async function searchContacts(args = {}) {
        c.created_at
      FROM contacts c
      WHERE ${searchClause.condition}
+       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
      ORDER BY ${searchRank.expression} DESC, ${timestampSortExpression('c.created_at')} DESC, c.id DESC
      LIMIT ?`,
     [...searchClause.params, ...searchRank.params, limit]
@@ -613,10 +622,13 @@ async function getContact(args = {}) {
   const id = String(args.id || '').trim()
   if (!id) throw new Error('id requerido')
 
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const contact = await db.get(
-    `SELECT id, full_name, email, phone, source, total_paid, purchases_count, created_at
-     FROM contacts
-     WHERE id = ?`,
+    `SELECT c.id, c.full_name, c.email, c.phone, c.source, c.total_paid, c.purchases_count, c.created_at
+     FROM contacts c
+     WHERE c.id = ?
+       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}`,
     [id]
   )
 
@@ -668,6 +680,13 @@ async function listTransactions(args = {}) {
   const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50)
   const params = []
   const filters = [nonTestPaymentCondition('p')]
+  const hiddenContactFilters = await getHiddenContactFilters()
+  const visiblePaymentCondition = buildHiddenContactDataCondition(hiddenContactFilters, {
+    tableAlias: 'p',
+    tableName: 'payments',
+    columns: ['contact_id', 'metadata_json']
+  })
+  if (visiblePaymentCondition) filters.push(visiblePaymentCondition)
 
   if (args.status) {
     filters.push('LOWER(p.status) = LOWER(?)')
@@ -863,6 +882,13 @@ async function queryDataTable(args = {}) {
   const offset = Math.max(Number(args.offset) || 0, 0)
   const params = []
   const conditions = []
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactDataCondition(hiddenFilters, {
+    tableAlias: 'data_row',
+    tableName: table,
+    columns: config.queryableColumns
+  })
+  if (hiddenCondition) conditions.push(hiddenCondition)
   const filters = args.filters && typeof args.filters === 'object' && !Array.isArray(args.filters)
     ? args.filters
     : {}
@@ -898,15 +924,15 @@ async function queryDataTable(args = {}) {
   const [rows, countRow] = await Promise.all([
     db.all(
       `SELECT ${selectedColumns.map(quoteIdentifier).join(', ')}
-       FROM ${quoteIdentifier(table)}
+       FROM ${quoteIdentifier(table)} data_row
        ${whereClause}
-       ORDER BY ${quoteIdentifier(orderBy)} ${orderDirection}
+       ORDER BY data_row.${quoteIdentifier(orderBy)} ${orderDirection}
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     ),
     db.get(
       `SELECT COUNT(*) AS total
-       FROM ${quoteIdentifier(table)}
+       FROM ${quoteIdentifier(table)} data_row
        ${whereClause}`,
       params
     )
@@ -988,10 +1014,13 @@ async function resolveContact(contactId) {
   const id = String(contactId || '').trim()
   if (!id) throw new Error('contactId requerido')
 
+  const hiddenFilters = await getHiddenContactFilters()
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
   const contact = await db.get(
-    `SELECT id, full_name, first_name, last_name, email, phone
-     FROM contacts
-     WHERE id = ?`,
+    `SELECT c.id, c.full_name, c.first_name, c.last_name, c.email, c.phone
+     FROM contacts c
+     WHERE c.id = ?
+       ${hiddenCondition ? `AND ${hiddenCondition}` : ''}`,
     [id]
   )
 
@@ -1007,6 +1036,9 @@ async function resolveContact(contactId) {
   const { client } = await getGhlContext()
   const response = await client.getContact(id)
   const ghlContact = response.contact || response
+  if (isHiddenContactRecord(hiddenFilters, ghlContact)) {
+    throw new Error('Contacto no encontrado')
+  }
 
   return {
     id,
@@ -1018,6 +1050,7 @@ async function resolveContact(contactId) {
 
 async function ghlSearchContacts(args = {}) {
   const { client } = await getGhlContext()
+  const hiddenFilters = await getHiddenContactFilters()
   const result = await client.searchContacts({
     query: args.query,
     email: args.email,
@@ -1026,14 +1059,16 @@ async function ghlSearchContacts(args = {}) {
   })
 
   return {
-    contacts: (result.contacts || []).map(contact => ({
+    contacts: (result.contacts || [])
+      .filter(contact => !isHiddenContactRecord(hiddenFilters, contact))
+      .map(contact => ({
       id: contact.id,
       name: contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
       email: contact.email || '',
       phone: contact.phone || '',
       source: contact.source || '',
       dateAdded: contact.dateAdded || contact.createdAt || null
-    }))
+      }))
   }
 }
 

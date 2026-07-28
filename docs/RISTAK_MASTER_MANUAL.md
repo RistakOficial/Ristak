@@ -1022,6 +1022,11 @@ estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango
 inválido responde `400` y jamás degrada la consulta a todo el historial. El
 contrato legacy por `siteIds` sigue disponible para
 consumidores anteriores, pero ningun flujo nuevo debe enumerar el catalogo.
+Las reglas globales de contactos ocultos se aplican antes de contar vistas,
+visitantes, sesiones, envios, respuestas, conversiones y reproducciones de
+video. Tambien filtran el listado de respuestas del Site: una persona oculta no
+puede reaparecer por una fila historica sin `contact_id` si su `visitor_id`,
+`session_id`, submission o payload de identidad permiten vincularla.
 
 La fuente canonica de Sites es first-party. Una vista es `native_site_view` o
 `page_view`, pero ambos deben declarar `tracking_source = native_site`; el pixel
@@ -1649,8 +1654,20 @@ Capacidades:
 - Los administradores gestionan las reglas globales de contactos ocultos desde
   `Configuracion > Contactos > Contactos ocultos`. Las reglas pueden buscar una
   coincidencia parcial o exacta sobre nombre, correo, telefono e ID, y se aplican
-  a contactos, chat, reportes, metricas y notificaciones. Esta configuracion no
+  como politica de visibilidad a todo el CRM: contactos, chat, pagos, citas,
+  reportes, metricas, notificaciones, selectores, API externa, MCP, eventos y
+  analiticas de tracking, Sites, formularios y video. Esta configuracion no
   depende de que HighLevel este conectado o siquiera habilitado.
+- La exclusion sigue la identidad relacionada, no solo el texto de la fila que
+  se esta mostrando. Debe reconocer `contact_id`, ID de visitante, ID de sesion,
+  submission, playback y campos de identidad desnormalizados. Una fila historica
+  o anonima asociable a una persona oculta tampoco puede reaparecer en busquedas,
+  detalles, facets, cursores, conteos o tasas.
+- Ocultar no borra los registros fisicos ni detiene la ingesta, vinculacion,
+  deduplicacion o auditoria interna. Los datos se conservan para integridad y
+  soporte, pero ninguna lectura funcional del producto debe devolverlos ni
+  sumarlos. Por eso una consulta interna de soporte o SQL directo puede ver la
+  evidencia cruda aunque el usuario del CRM no la vea.
 - Detalle con historial y actividad.
 - Tags y carpetas.
 - Campos personalizados y variables. El catalogo de campos personalizados vive

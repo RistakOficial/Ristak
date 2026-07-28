@@ -14,6 +14,11 @@ import {
 } from './trackingAnalyticsProjectionQueryService.js'
 import { getTrackingAnalyticsProjectionStatus } from './trackingAnalyticsProjectionService.js'
 import {
+  buildHiddenContactsCondition,
+  buildHiddenTrackingSessionCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
+import {
   getTrackingConversionProjectionStatus,
   linkedWebSessionEvidenceCondition,
   queryTrackingConversionProjection,
@@ -509,10 +514,12 @@ const sessionAnalyticsProjection = (alias = 's') => `
   ${getVisitorIdentityExpression(alias)} AS visitor_identity
 `
 
-function buildFilteredSessionsCte(range, filters, params) {
+function buildFilteredSessionsCte(range, filters, params, hiddenFilters = []) {
   const baseConditions = [`s.started_at >= ?`, `s.started_at < ?`]
   params.push(range.startUtc, range.endExclusiveUtc)
   baseConditions.push(...buildSessionFilterConditions(withoutConversionStage(filters), 's', params))
+  const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+  if (hiddenSessionCondition) baseConditions.push(hiddenSessionCondition)
 
   const conversionStages = filters.conversion_stage || []
   if (conversionStages.length === 0) {
@@ -614,9 +621,9 @@ function emptySessionMetrics() {
   }
 }
 
-async function querySessionMetrics(range, filters, groupBy, { includeSeries, signal }) {
+async function querySessionMetrics(range, filters, groupBy, { includeSeries, hiddenFilters, signal }) {
   const params = []
-  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
+  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params, hiddenFilters)
 
   if (!includeSeries) {
     const row = await db.get(`
@@ -839,13 +846,15 @@ function emptyConversionMetrics() {
   return { registrations: 0, prospects: 0, appointments: 0, attendances: 0, customers: 0, purchases: 0 }
 }
 
-async function queryConversionMetrics(range, filters, groupBy, { includeSeries, signal }) {
+async function queryConversionMetrics(range, filters, groupBy, { includeSeries, hiddenFilters, signal }) {
   const params = [range.startUtc, range.endExclusiveUtc]
   const candidateConditions = [
     `c.created_at >= ?`,
     `c.created_at < ?`,
     contactAnalyticsSourceCondition('c')
   ]
+  const hiddenContactCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  if (hiddenContactCondition) candidateConditions.push(hiddenContactCondition)
   const activeWebFilters = hasSessionFilters(filters)
 
   if (activeWebFilters) {
@@ -858,6 +867,8 @@ async function queryConversionMetrics(range, filters, groupBy, { includeSeries, 
     ]
     params.push(range.startUtc, range.endExclusiveUtc)
     sessionConditions.push(...buildSessionFilterConditions(withoutConversionStage(filters), 'sf', params))
+    const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 'sf')
+    if (hiddenSessionCondition) sessionConditions.push(hiddenSessionCondition)
     candidateConditions.push(`EXISTS (
       SELECT 1
       FROM sessions sf
@@ -972,10 +983,16 @@ function flatFacetDefinition(alias, identityExpression, dimension) {
   return definition
 }
 
-async function queryPostgresSessionFacetsWithoutConversionFilter(range, filters, signal) {
+async function queryPostgresSessionFacetsWithoutConversionFilter(
+  range,
+  filters,
+  hiddenFilters,
+  signal
+) {
   const identityExpression = getVisitorIdentityExpression('s')
   const dimensions = facetDimensionDefinitions('s', identityExpression)
   const params = []
+  const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
 
   // GROUPING SETS parecía ahorrar recorridos, pero con 300k eventos y work_mem
   // de 4 MB mantuvo simultáneamente los estados de 16 dimensiones y derramó
@@ -986,6 +1003,7 @@ async function queryPostgresSessionFacetsWithoutConversionFilter(range, filters,
     const branchParams = [range.startUtc, range.endExclusiveUtc]
     const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
     conditions.push(...buildSessionFilterConditions(filters, 's', branchParams))
+    if (hiddenSessionCondition) conditions.push(hiddenSessionCondition)
     conditions.push(`COALESCE(CAST(${value} AS TEXT), '') != ''`)
     params.push(...branchParams)
 
@@ -1023,12 +1041,20 @@ async function queryPostgresSessionFacetsWithoutConversionFilter(range, filters,
   return facets
 }
 
-async function queryPostgresSingleSessionFacetWithoutConversionFilter(range, filters, dimension, signal) {
+async function queryPostgresSingleSessionFacetWithoutConversionFilter(
+  range,
+  filters,
+  dimension,
+  hiddenFilters,
+  signal
+) {
   const identityExpression = getVisitorIdentityExpression('s')
   const [, value, label, identity] = flatFacetDefinition('s', identityExpression, dimension)
   const params = [range.startUtc, range.endExclusiveUtc]
   const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
   conditions.push(...buildSessionFilterConditions(filters, 's', params))
+  const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+  if (hiddenSessionCondition) conditions.push(hiddenSessionCondition)
   conditions.push(`COALESCE(CAST(${value} AS TEXT), '') != ''`)
   const itemCount = dimension === 'topVisitors'
     ? 'COUNT(*)'
@@ -1139,9 +1165,9 @@ function buildAdsHierarchy(rows) {
   return platforms
 }
 
-async function queryAdsHierarchy(range, filters, signal) {
+async function queryAdsHierarchy(range, filters, hiddenFilters, signal) {
   const params = []
-  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
+  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params, hiddenFilters)
   const platformExpression = trafficSourceExpression('fs')
 
   const rows = await db.all(`
@@ -1381,13 +1407,18 @@ async function queryAdsHierarchy(range, filters, signal) {
   return buildAdsHierarchy(rows)
 }
 
-async function queryFlatSessionFacets(range, filters, signal) {
+async function queryFlatSessionFacets(range, filters, hiddenFilters, signal) {
   if (databaseDialect === 'postgres' && !filters.conversion_stage?.length) {
-    return queryPostgresSessionFacetsWithoutConversionFilter(range, filters, signal)
+    return queryPostgresSessionFacetsWithoutConversionFilter(
+      range,
+      filters,
+      hiddenFilters,
+      signal
+    )
   }
 
   const params = []
-  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
+  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params, hiddenFilters)
   const dimensions = facetDimensionDefinitions('fs', 'fs.visitor_identity')
   const dimensionSql = dimensions.map(([dimension, value, label, identity]) => `
     SELECT
@@ -1437,13 +1468,19 @@ async function queryFlatSessionFacets(range, filters, signal) {
   return facets
 }
 
-async function querySingleFlatSessionFacet(range, filters, dimension, signal) {
+async function querySingleFlatSessionFacet(range, filters, dimension, hiddenFilters, signal) {
   if (databaseDialect === 'postgres' && !filters.conversion_stage?.length) {
-    return queryPostgresSingleSessionFacetWithoutConversionFilter(range, filters, dimension, signal)
+    return queryPostgresSingleSessionFacetWithoutConversionFilter(
+      range,
+      filters,
+      dimension,
+      hiddenFilters,
+      signal
+    )
   }
 
   const params = []
-  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params)
+  const filteredSessionsCte = buildFilteredSessionsCte(range, filters, params, hiddenFilters)
   const [, value, label, identity] = flatFacetDefinition(
     'fs',
     'fs.visitor_identity',
@@ -1471,19 +1508,31 @@ async function querySingleFlatSessionFacet(range, filters, dimension, signal) {
   return rows.map(facetItem)
 }
 
-async function queryTrackingAnalyticsFacet(range, filters, dimension, signal) {
-  if (dimension === 'adsHierarchy') return queryAdsHierarchy(range, filters, signal)
-  return querySingleFlatSessionFacet(range, filters, dimension, signal)
+async function queryTrackingAnalyticsFacet(range, filters, dimension, hiddenFilters, signal) {
+  if (dimension === 'adsHierarchy') {
+    return queryAdsHierarchy(range, filters, hiddenFilters, signal)
+  }
+  return querySingleFlatSessionFacet(range, filters, dimension, hiddenFilters, signal)
 }
 
-async function querySessionFacets(range, filters, signal, runQuery) {
+async function querySessionFacets(range, filters, hiddenFilters, signal, runQuery) {
   // Facetas planas y jerarquía no dependen entre sí. Ambas comparten el
   // semáforo global de dos consultas con sesiones/conversiones; así reducen el
   // tiempo de pared sin volver al burst de seis consultas que saturó Render.
   const siblingController = new AbortController()
   const linkedScope = createLinkedSummaryAbortScope([signal, siblingController.signal])
-  const flatPromise = runQuery(() => queryFlatSessionFacets(range, filters, linkedScope.signal))
-  const hierarchyPromise = runQuery(() => queryAdsHierarchy(range, filters, linkedScope.signal))
+  const flatPromise = runQuery(() => queryFlatSessionFacets(
+    range,
+    filters,
+    hiddenFilters,
+    linkedScope.signal
+  ))
+  const hierarchyPromise = runQuery(() => queryAdsHierarchy(
+    range,
+    filters,
+    hiddenFilters,
+    linkedScope.signal
+  ))
 
   try {
     const [facets, adsHierarchy] = await Promise.all([flatPromise, hierarchyPromise])
@@ -1522,6 +1571,7 @@ async function computeLegacyTrackingAnalyticsSummary({
   range,
   appliedGroupBy,
   includeFacets,
+  hiddenFilters,
   signal
 }) {
   const previousRange = previousRangeFor(range)
@@ -1539,13 +1589,13 @@ async function computeLegacyTrackingAnalyticsSummary({
       range,
       normalizedFilters,
       appliedGroupBy,
-      { includeSeries: true, signal: linkedScope.signal }
+      { includeSeries: true, hiddenFilters, signal: linkedScope.signal }
     )),
     previous: await runQuery(() => querySessionMetrics(
       previousRange,
       normalizedFilters,
       appliedGroupBy,
-      { includeSeries: false, signal: linkedScope.signal }
+      { includeSeries: false, hiddenFilters, signal: linkedScope.signal }
     ))
   }))()
   const conversionLane = (async () => ({
@@ -1553,13 +1603,13 @@ async function computeLegacyTrackingAnalyticsSummary({
       range,
       normalizedFilters,
       appliedGroupBy,
-      { includeSeries: true, signal: linkedScope.signal }
+      { includeSeries: true, hiddenFilters, signal: linkedScope.signal }
     )),
     previous: await runQuery(() => queryConversionMetrics(
       previousRange,
       normalizedFilters,
       appliedGroupBy,
-      { includeSeries: false, signal: linkedScope.signal }
+      { includeSeries: false, hiddenFilters, signal: linkedScope.signal }
     ))
   }))()
   // El frontend puede sacar las facetas de la apertura inicial. En ese caso ni
@@ -1570,6 +1620,7 @@ async function computeLegacyTrackingAnalyticsSummary({
     lanes.push(querySessionFacets(
       range,
       normalizedFilters,
+      hiddenFilters,
       linkedScope.signal,
       runQuery
     ))
@@ -1753,7 +1804,12 @@ async function computeTrackingAnalyticsSummary(options) {
   // Compatibilidad deliberada: callers antiguos que todavía piden todas las
   // facetas conservan por ahora el camino legacy. Sólo el contrato web real
   // includeFacets:false queda cortado a proyecciones y libre de scans crudos.
-  if (options.includeFacets) return computeLegacyTrackingAnalyticsSummary(options)
+  if (options.includeFacets) {
+    return computeLegacyTrackingAnalyticsSummary(options)
+  }
+  if (options.forceLegacy) {
+    return computeLegacyTrackingAnalyticsSummary(options)
+  }
   return computeProjectedTrackingAnalyticsSummary(options)
 }
 
@@ -1761,6 +1817,15 @@ function stableFilterCacheKey(filters) {
   return Object.keys(filters)
     .sort()
     .map(field => [field, [...filters[field]].sort()])
+}
+
+function stableHiddenFilterCacheKey(filters) {
+  return (Array.isArray(filters) ? filters : [])
+    .map(filter => [
+      String(filter?.type || 'contains'),
+      String(filter?.text || '').toLocaleLowerCase('es-MX')
+    ])
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
 }
 
 function trackingSnapshotMetadata({
@@ -2115,10 +2180,15 @@ function createLinkedSummaryAbortScope(signals) {
 }
 
 function cancelUnusedTrackingSummaryBuild(record, cacheKey) {
-  if (record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) return
-  record.controller.abort()
-  if (summaryInflight.get(cacheKey) === record) summaryInflight.delete(cacheKey)
-  void record.promise.catch(() => undefined)
+  // La firma de visibilidad se carga antes de conocer la llave del inflight.
+  // Cedemos un turno para que otro request equivalente que ya viene en camino
+  // alcance a suscribirse antes de cancelar la consulta compartida.
+  setImmediate(() => {
+    if (record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) return
+    record.controller.abort()
+    if (summaryInflight.get(cacheKey) === record) summaryInflight.delete(cacheKey)
+    void record.promise.catch(() => undefined)
+  })
 }
 
 function cancelOneBackgroundTrackingSummaryBuild() {
@@ -2165,10 +2235,12 @@ function waitForTrackingSummaryBuild(record, signal, cacheKey) {
 }
 
 function cancelUnusedTrackingFacetBuild(record, cacheKey) {
-  if (record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) return
-  record.controller.abort()
-  if (facetInflight.get(cacheKey) === record) facetInflight.delete(cacheKey)
-  void record.promise.catch(() => undefined)
+  setImmediate(() => {
+    if (record.keepAlive || record.waiters > 0 || record.controller.signal.aborted) return
+    record.controller.abort()
+    if (facetInflight.get(cacheKey) === record) facetInflight.delete(cacheKey)
+    void record.promise.catch(() => undefined)
+  })
 }
 
 function waitForTrackingFacetBuild(record, signal, cacheKey) {
@@ -2215,10 +2287,16 @@ export async function getTrackingAnalyticsSummary({
   throwIfTrackingSummaryAborted(signal)
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
   const range = await resolveAnalyticsRange(start, end, signal)
+  const hiddenFilters = await getHiddenContactFilters({ signal })
   throwIfTrackingSummaryAborted(signal)
   const requestedGroupBy = ALLOWED_GROUPS.has(groupBy) ? groupBy : 'day'
   const appliedGroupBy = effectiveGroupBy(requestedGroupBy, range)
-  const projectedCore = includeFacets === false
+  // El read model agregado no conserva suficiente identidad para retirar una
+  // persona después de crear una regla. En cuentas con ocultos usamos el camino
+  // raw acotado y filtrado; vender el agregado contaminado como rápido sería una
+  // fuga silenciosa.
+  const forceLegacy = hiddenFilters.length > 0
+  const projectedCore = includeFacets === false && !forceLegacy
   let sessionProjectionStatus = null
   let conversionProjectionStatus = null
   if (projectedCore) {
@@ -2254,7 +2332,8 @@ export async function getTrackingAnalyticsSummary({
     timezone: range.timezone,
     groupBy: appliedGroupBy,
     includeFacets: includeFacets !== false,
-    filters: stableFilterCacheKey(normalizedFilters)
+    filters: stableFilterCacheKey(normalizedFilters),
+    hiddenContacts: stableHiddenFilterCacheKey(hiddenFilters)
   })
   const cached = readSummaryCache(cacheKey, revision, {
     projectionPending: Boolean(
@@ -2306,6 +2385,8 @@ export async function getTrackingAnalyticsSummary({
         range,
         appliedGroupBy,
         includeFacets: includeFacets !== false,
+        forceLegacy,
+        hiddenFilters,
         signal: linkedScope.signal
       })
     )).then(async (data) => {
@@ -2385,6 +2466,7 @@ export async function getTrackingAnalyticsFacet({
   const normalizedDimension = normalizeTrackingAnalyticsFacetDimension(dimension)
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
   const range = await resolveAnalyticsRange(start, end, signal)
+  const hiddenFilters = await getHiddenContactFilters({ signal })
   throwIfTrackingSummaryAborted(signal)
   const revision = getTrackingAnalyticsCacheRevision()
   const cacheKey = JSON.stringify({
@@ -2392,7 +2474,8 @@ export async function getTrackingAnalyticsFacet({
     end: range.endDate,
     timezone: range.timezone,
     filters: stableFilterCacheKey(normalizedFilters),
-    dimension: normalizedDimension
+    dimension: normalizedDimension,
+    hiddenContacts: stableHiddenFilterCacheKey(hiddenFilters)
   })
   const cached = readFacetCache(cacheKey, revision)
   if (cached && !cached.refreshDue) return cached.data
@@ -2430,6 +2513,7 @@ export async function getTrackingAnalyticsFacet({
         range,
         normalizedFilters,
         normalizedDimension,
+        hiddenFilters,
         linkedScope.signal
       )
       return {
@@ -2524,7 +2608,7 @@ function buildSearchCondition(q, column, alias, params) {
   return `(${conditions.join(' OR ')})`
 }
 
-function trackingSearchCursorScope({ range, filters, q, column }) {
+function trackingSearchCursorScope({ range, filters, q, column, hiddenFilters }) {
   const canonicalFilters = Object.fromEntries(Object.entries(filters || {})
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([field, values]) => [field, [...(values || [])].map(String).sort()]))
@@ -2534,6 +2618,7 @@ function trackingSearchCursorScope({ range, filters, q, column }) {
     startUtc: range.startUtc,
     endExclusiveUtc: range.endExclusiveUtc,
     filters: canonicalFilters,
+    hiddenContacts: stableHiddenFilterCacheKey(hiddenFilters),
     q: normalizeText(q, MAX_SEARCH_LENGTH).toLowerCase(),
     column
   })).digest('base64url')
@@ -2670,6 +2755,7 @@ function formatSearchItems(rows) {
 async function queryStageSearchCandidateChunk({
   range,
   filters,
+  hiddenFilters,
   q,
   column,
   cursor,
@@ -2679,6 +2765,8 @@ async function queryStageSearchCandidateChunk({
   const params = [range.startUtc, range.endExclusiveUtc]
   const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
   conditions.push(...buildSessionFilterConditions(withoutConversionStage(filters), 's', params))
+  const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+  if (hiddenSessionCondition) conditions.push(hiddenSessionCondition)
 
   const searchCondition = buildSearchCondition(q, column, 's', params)
   if (searchCondition) conditions.push(searchCondition)
@@ -2730,6 +2818,7 @@ async function queryStageContactFacts(candidateRows, conversionStages, signal) {
 async function searchTrackingSessionsByStage({
   range,
   filters,
+  hiddenFilters,
   q,
   column,
   cursor,
@@ -2750,6 +2839,7 @@ async function searchTrackingSessionsByStage({
     const candidates = await queryStageSearchCandidateChunk({
       range,
       filters,
+      hiddenFilters,
       q,
       column,
       cursor: scanCursor,
@@ -2819,6 +2909,7 @@ export async function searchTrackingSessions({
   const normalizedFilters = normalizeTrackingAnalyticsFilters(filters)
   const normalizedQuery = normalizeText(q, MAX_SEARCH_LENGTH)
   const range = await resolveAnalyticsRange(start, end, signal)
+  const hiddenFilters = await getHiddenContactFilters({ signal })
   throwIfTrackingSummaryAborted(signal)
   const normalizedColumn = normalizeSearchColumn(column)
   if (normalizedQuery && normalizedQuery.length < MIN_SEARCH_LENGTH) {
@@ -2834,7 +2925,8 @@ export async function searchTrackingSessions({
     range,
     filters: normalizedFilters,
     q: normalizedQuery,
-    column: normalizedColumn
+    column: normalizedColumn,
+    hiddenFilters
   })
   const decodedCursor = decodeCursor(cursor, cursorScope)
   const normalizedLimit = Math.min(100, Math.max(20, Math.trunc(numberValue(limit)) || 50))
@@ -2845,6 +2937,7 @@ export async function searchTrackingSessions({
     return searchTrackingSessionsByStage({
       range,
       filters: normalizedFilters,
+      hiddenFilters,
       q: normalizedQuery,
       column: normalizedColumn,
       cursor: decodedCursor,
@@ -2857,6 +2950,8 @@ export async function searchTrackingSessions({
   const params = [range.startUtc, range.endExclusiveUtc]
   const conditions = [`s.started_at >= ?`, `s.started_at < ?`]
   conditions.push(...buildSessionFilterConditions(withoutConversionStage(normalizedFilters), 's', params))
+  const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+  if (hiddenSessionCondition) conditions.push(hiddenSessionCondition)
 
   const searchCondition = buildSearchCondition(normalizedQuery, normalizedColumn, 's', params)
   if (searchCondition) conditions.push(searchCondition)

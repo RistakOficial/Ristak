@@ -51,6 +51,10 @@ import {
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
+import {
+  buildHiddenContactDataCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
 import { logger } from '../utils/logger.js'
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
@@ -981,6 +985,13 @@ async function queryDataTable(req, res) {
     const params = []
     const conditions = []
     const exposedColumns = config.queryableColumns.filter(column => !config.redactedColumns.includes(column))
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactDataCondition(hiddenFilters, {
+      tableAlias: 'data_row',
+      tableName: config.name,
+      columns: config.queryableColumns
+    })
+    if (hiddenCondition) conditions.push(hiddenCondition)
     const reserved = new Set(['limit', 'offset', 'search', 'orderBy', 'orderDirection', 'keyColumn'])
 
     for (const [key, value] of Object.entries(req.query)) {
@@ -1008,15 +1019,15 @@ async function queryDataTable(req, res) {
     const [rows, countRow] = await Promise.all([
       db.all(
         `SELECT ${config.queryableColumns.map(quoteIdentifier).join(', ')}
-         FROM ${quoteIdentifier(config.name)}
+         FROM ${quoteIdentifier(config.name)} data_row
          ${whereClause}
-         ORDER BY ${quoteIdentifier(orderBy)} ${orderDirection}
+         ORDER BY data_row.${quoteIdentifier(orderBy)} ${orderDirection}
          LIMIT ? OFFSET ?`,
         [...params, limit, offset]
       ),
       db.get(
         `SELECT COUNT(*) AS total
-         FROM ${quoteIdentifier(config.name)}
+         FROM ${quoteIdentifier(config.name)} data_row
          ${whereClause}`,
         params
       )
@@ -1049,10 +1060,17 @@ async function getDataRow(req, res) {
       return res.status(400).json({ success: false, error: 'keyColumn no permitido' })
     }
 
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactDataCondition(hiddenFilters, {
+      tableAlias: 'data_row',
+      tableName: config.name,
+      columns: config.queryableColumns
+    })
     const row = await db.get(
       `SELECT ${config.queryableColumns.map(quoteIdentifier).join(', ')}
-       FROM ${quoteIdentifier(config.name)}
-       WHERE ${quoteIdentifier(keyColumn)} = ?`,
+       FROM ${quoteIdentifier(config.name)} data_row
+       WHERE data_row.${quoteIdentifier(keyColumn)} = ?
+         ${hiddenCondition ? `AND ${hiddenCondition}` : ''}`,
       [req.params.id]
     )
 

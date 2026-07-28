@@ -505,6 +505,14 @@ cuenta, responde `503` con
 reintenta un maximo de tres intentos, respeta cancelacion y nunca reintenta por
 `busy` o `deadline`.
 
+Excepcion de privacidad: si existen reglas activas en
+`hidden_contact_filters`, la proyeccion agregada no tiene identidad suficiente
+para restar de forma retroactiva a una persona que acaba de ocultarse. En ese
+caso el summary usa la consulta acotada sobre datos fuente con la exclusion
+aplicada antes de agregar. La firma de las reglas forma parte del cache y
+agregar/eliminar una regla invalida el snapshot. Es preferible pagar ese costo
+solo en cuentas con ocultamiento a devolver una metrica contaminada.
+
 La generacion 4 de `113*` conserva por separado la categoria normalizada de
 fuente (`traffic_source`, usada por Origin) y el valor compatible con el filtro
 historico (`source_filter_value`). Asi aliases como `newsletter` o `fb` siguen
@@ -554,10 +562,16 @@ Devuelve `items`, `limit`, `hasMore` y `nextCursor`. El limite se normaliza entr
 20 y 100. El cursor es opaco y pagina por `started_at + id`; el endpoint no hace
 `COUNT(*)` ni entrega columnas pesadas que la tabla no muestra. Para editar una
 fila, la interfaz hidrata el registro completo con `GET /sessions/:id`.
+Las reglas de contactos ocultos se aplican antes de paginar y su firma forma
+parte del cursor. Se excluyen tanto filas enlazadas por `contact_id` como
+historial anonimo que comparta `visitor_id` o `session_id` con una persona
+oculta; esas filas tampoco consumen lugares de la pagina.
 
 ### `GET /api/tracking/sessions/:id`
 
 Busca por la columna primaria `sessions.id`, no por `session_id`.
+Si la fila pertenece o puede vincularse a un contacto oculto, responde `404` y
+no permite leerla ni modificarla por ID directo.
 
 ```bash
 curl 'http://localhost:3001/api/tracking/sessions/<id>'

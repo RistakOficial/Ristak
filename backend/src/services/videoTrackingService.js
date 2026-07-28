@@ -11,6 +11,10 @@ import {
   recordTrackingIdentityMatch,
   resolveTrackingIdentity
 } from './trackingIdentityService.js'
+import {
+  buildHiddenContactDataCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
 
 const isPostgresRuntime = Boolean(process.env.DATABASE_URL)
 const MAX_PLAYBACK_CHART_POINTS = 400
@@ -1353,12 +1357,19 @@ function buildVideoEventScope({
   assetIds = [],
   siteIds = [],
   siteScope = null,
-  streamVideoId = null
+  streamVideoId = null,
+  hiddenFilters = []
 } = {}, alias = 'e') {
   const conditions = [
     `(${alias}.tracking_source IS NULL OR ${alias}.tracking_source = '' OR ${alias}.tracking_source = 'native_site_video')`
   ]
   const params = []
+  const hiddenCondition = buildHiddenContactDataCondition(hiddenFilters, {
+    tableAlias: alias,
+    tableName: 'video_playback_events',
+    columns: ['contact_id', 'visitor_id', 'session_id', 'playback_id']
+  })
+  if (hiddenCondition) conditions.push(hiddenCondition)
 
   if (assetIds.length) {
     conditions.push(`${alias}.media_asset_id IN (${assetIds.map(() => '?').join(',')})`)
@@ -1660,6 +1671,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
   const siteScope = normalizePlaybackSiteScope(input.siteScope || input.scope)
   const includeSiteBreakdown = boolValue(input.includeSiteBreakdown)
   const dateFilters = await resolvePlaybackDateFilters(input)
+  const hiddenFilters = await getHiddenContactFilters({ signal: input.signal })
   const hourly = boolValue(input.hourly)
   const emptyPeriodCharts = () => buildPlaybackPeriodCharts([], {
     hourly,
@@ -1706,7 +1718,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
     }
   }
 
-  const scope = buildVideoEventScope({ assetIds, siteIds, siteScope })
+  const scope = buildVideoEventScope({ assetIds, siteIds, siteScope, hiddenFilters })
   const ledger = buildVideoLedgerCte(scope, dateFilters)
   const aggregateSelect = buildLedgerAggregateSelect()
   const startPeriodExpression = buildLedgerPeriodExpression(
@@ -1900,6 +1912,7 @@ export async function getVideoPlaybackAggregate(input = {}) {
 
 export async function getVideoPlaybackViewers(input = {}) {
   const dateFilters = await resolvePlaybackDateFilters(input)
+  const hiddenFilters = await getHiddenContactFilters({ signal: input.signal })
   const hourly = boolValue(input.hourly)
   const assetId = cleanString(input.assetId || input.mediaAssetId, 160)
   const streamVideoId = cleanString(input.streamVideoId, 160)
@@ -1909,7 +1922,8 @@ export async function getVideoPlaybackViewers(input = {}) {
   const scope = buildVideoEventScope({
     assetIds: assetId ? [assetId] : [],
     siteIds: siteId ? [siteId] : [],
-    streamVideoId
+    streamVideoId,
+    hiddenFilters
   })
   const ledger = buildVideoLedgerCte(scope, dateFilters)
   const aggregateSelect = buildLedgerAggregateSelect()

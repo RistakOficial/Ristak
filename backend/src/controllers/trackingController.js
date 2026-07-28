@@ -4,7 +4,11 @@ import { createSession, getRecentSessions, getVisitorIdentityExpression, linkVis
 import { recordVideoPlaybackEvent } from '../services/videoTrackingService.js'
 import { databaseDialect, getHighLevelConfig, getAppConfig, setAppConfig, db } from '../config/database.js'
 import { getMetaConfig } from '../services/metaAdsService.js'
-import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
+import {
+  buildHiddenContactsCondition,
+  buildHiddenTrackingSessionCondition,
+  getHiddenContactFilters
+} from '../utils/hiddenContactsFilter.js'
 import { resolveDateRangeWithGHLTimezone, sqliteTimezoneOffsetClause } from '../utils/dateUtils.js'
 import { getGroupExpression } from '../services/analyticsService.js'
 import { getMessageAnalyticsSummary, getWhatsAppApiAnalyticsSummary } from '../services/originDistributionService.js'
@@ -1566,12 +1570,15 @@ export async function getSessionsHandler(req, res) {
 
     // Sin fechas, usar paginación infinita
     logger.info(`🔍 Obteniendo sesiones con offset ${offset} y limit ${limit}`)
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
 
     // Query para obtener sesiones con paginación (PostgreSQL)
     const query = `
-      SELECT *
-      FROM sessions
-      ORDER BY created_at DESC
+      SELECT s.*
+      FROM sessions s
+      ${hiddenCondition ? `WHERE ${hiddenCondition}` : ''}
+      ORDER BY s.created_at DESC
       LIMIT $1
       OFFSET $2
     `
@@ -1579,7 +1586,11 @@ export async function getSessionsHandler(req, res) {
     const sessions = await db.all(query, [limit, offset])
 
     // Obtener total de sesiones para saber si hay más
-    const countQuery = 'SELECT COUNT(*) as total FROM sessions'
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM sessions s
+      ${hiddenCondition ? `WHERE ${hiddenCondition}` : ''}
+    `
     const countResult = await db.get(countQuery)
     const total = countResult.total || 0
     const hasMore = (offset + limit) < total
@@ -1775,7 +1786,15 @@ export async function getSessionHandler(req, res) {
   try {
     const { id } = req.params
 
-    const query = 'SELECT * FROM sessions WHERE id = $1 LIMIT 1'
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+    const query = `
+      SELECT s.*
+      FROM sessions s
+      WHERE s.id = $1
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+      LIMIT 1
+    `
     const session = await db.get(query, [id])
 
     if (!session) {
@@ -1798,8 +1817,17 @@ export async function updateSessionHandler(req, res) {
     const { id } = req.params
     const updates = req.body
 
-    // Verificar que la sesión existe
-    const existingSession = await db.get('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [id])
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+
+    // Una fila oculta se trata como inexistente también por acceso directo.
+    const existingSession = await db.get(`
+      SELECT s.*
+      FROM sessions s
+      WHERE s.id = $1
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+      LIMIT 1
+    `, [id])
 
     if (!existingSession) {
       return res.status(404).json({ error: 'Session not found' })
@@ -1851,7 +1879,13 @@ export async function updateSessionHandler(req, res) {
     invalidateTrackingAnalyticsCache()
 
     // Obtener sesión actualizada
-    const updatedSession = await db.get('SELECT * FROM sessions WHERE id = $1 LIMIT 1', [id])
+    const updatedSession = await db.get(`
+      SELECT s.*
+      FROM sessions s
+      WHERE s.id = $1
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
+      LIMIT 1
+    `, [id])
 
     logger.info(`✅ Sesión ${id} actualizada exitosamente`)
 
@@ -2235,20 +2269,23 @@ export async function getVisitorsByAd(req, res) {
 
     // Usar timezone de HighLevel para consistencia con Dashboard
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
 
     logger.info(`Obteniendo visitantes por ad - rango: ${range.startUtc} -> ${range.endUtc}`)
 
     // Query PostgreSQL
     const query = `
       SELECT
-        ad_id,
-        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as unique_visitors,
+        s.ad_id,
+        COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as unique_visitors,
         COUNT(*) as total_pageviews
-      FROM sessions
-      WHERE ad_id IS NOT NULL
-        AND started_at >= $1
-        AND started_at <= $2
-      GROUP BY ad_id
+      FROM sessions s
+      WHERE s.ad_id IS NOT NULL
+        AND s.started_at >= $1
+        AND s.started_at <= $2
+        ${hiddenSessionCondition ? `AND ${hiddenSessionCondition}` : ''}
+      GROUP BY s.ad_id
     `
 
     // (MET-CONSIST) Los badges de ADSET y CAMPAÑA NO pueden ser la suma de los
@@ -2260,24 +2297,26 @@ export async function getVisitorsByAd(req, res) {
     // basado en suma-por-ad nunca contaba.
     const adsetQuery = `
       SELECT
-        adset_id,
-        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as unique_visitors
-      FROM sessions
-      WHERE adset_id IS NOT NULL
-        AND started_at >= $1
-        AND started_at <= $2
-      GROUP BY adset_id
+        s.adset_id,
+        COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as unique_visitors
+      FROM sessions s
+      WHERE s.adset_id IS NOT NULL
+        AND s.started_at >= $1
+        AND s.started_at <= $2
+        ${hiddenSessionCondition ? `AND ${hiddenSessionCondition}` : ''}
+      GROUP BY s.adset_id
     `
 
     const campaignQuery = `
       SELECT
-        campaign_id,
-        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as unique_visitors
-      FROM sessions
-      WHERE campaign_id IS NOT NULL
-        AND started_at >= $1
-        AND started_at <= $2
-      GROUP BY campaign_id
+        s.campaign_id,
+        COUNT(DISTINCT ${getVisitorIdentityExpression('s')}) as unique_visitors
+      FROM sessions s
+      WHERE s.campaign_id IS NOT NULL
+        AND s.started_at >= $1
+        AND s.started_at <= $2
+        ${hiddenSessionCondition ? `AND ${hiddenSessionCondition}` : ''}
+      GROUP BY s.campaign_id
     `
 
     const [visitors, adsetRows, campaignRows] = await Promise.all([
@@ -2333,9 +2372,10 @@ export async function getVisitorsByPeriod(req, res) {
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
 
-    // Obtener filtro de contactos ocultos (solo necesario para vistas con atribución)
+    // La exclusión es global: aplica tanto a atribución como a tráfico general.
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
 
     if (!['day', 'week', 'month', 'year'].includes(groupBy)) {
       return res.status(400).json({ error: 'Invalid groupBy value' })
@@ -2359,6 +2399,7 @@ export async function getVisitorsByPeriod(req, res) {
       ? ['c.created_at >= ?', 'c.created_at <= ?']
       : ['s.started_at >= ?', 's.started_at <= ?']
 
+    if (hiddenSessionCondition) conditions.push(hiddenSessionCondition)
     if (useContactAttribution && hiddenCondition) {
       conditions.push(hiddenCondition)
     }
@@ -2508,6 +2549,11 @@ export async function getVisitorsList(req, res) {
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
     const hiddenFilters = await getHiddenContactFilters({ signal: requestScope.signal })
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    const hiddenSessionCondition = buildHiddenTrackingSessionCondition(hiddenFilters, 's')
+    const hiddenProjectedSessionCondition = buildHiddenTrackingSessionCondition(
+      hiddenFilters,
+      'current_session'
+    )
     const visitorAttributionMode = isAttributed
       ? 'attributed'
       : useContactAttribution
@@ -2535,7 +2581,8 @@ export async function getVisitorsList(req, res) {
       filterType: visitorScopeType,
       filterId: visitorScopeId,
       search: normalizedSearch.toLocaleLowerCase('es-MX'),
-      hiddenCondition: useContactAttribution ? String(hiddenCondition || '') : ''
+      hiddenCondition: useContactAttribution ? String(hiddenCondition || '') : '',
+      hiddenSessionCondition: String(hiddenSessionCondition || '')
     })
     const decodedCursor = decodeTrackingDrilldownCursor(cursor, 'tracking-visitors', cursorScope)
     const visitorIdentityExpression = getVisitorIdentityExpression('s')
@@ -2792,6 +2839,7 @@ export async function getVisitorsList(req, res) {
             'current.bucket_start >= ?',
             'current.bucket_start < ?'
           ]
+          if (hiddenProjectedSessionCondition) conditions.push(hiddenProjectedSessionCondition)
           const params = [
             projectionScopeType,
             projectionScopeId,
@@ -2862,6 +2910,8 @@ export async function getVisitorsList(req, res) {
             sql: `
               SELECT current.visitor_key, current.session_row_id, current.latest_at
               FROM tracking_visitor_latest current
+              INNER JOIN sessions current_session
+                ON current_session.id = current.session_row_id
               WHERE ${conditions.join(' AND ')}
               ORDER BY current.latest_at DESC, current.session_row_id DESC
               LIMIT ?
@@ -3125,6 +3175,8 @@ export async function getContactsByDate(req, res) {
     logger.info(`Obteniendo registros por fecha: ${start} a ${end}`)
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
     const contactCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone)
     const dateExpr = isPostgres
       ? `TO_CHAR(${contactCreatedDate}, 'YYYY-MM-DD')`
@@ -3141,6 +3193,7 @@ export async function getContactsByDate(req, res) {
       WHERE
         ${dateFilter}
         AND ${contactAnalyticsSourceCondition('c')}
+        ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       GROUP BY date
       ORDER BY date ASC
     `
@@ -3194,6 +3247,8 @@ export async function getContactConversionsByDate(req, res) {
     logger.info(`Obteniendo conversiones por fecha de creación: ${start} a ${end}`)
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate: start, endDate: end })
+    const hiddenFilters = await getHiddenContactFilters()
+    const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
     const contactCreatedDate = timestampDateExpression('c.created_at', range.appliedTimezone)
     const dateExpr = isPostgres
       ? `TO_CHAR(${contactCreatedDate}, 'YYYY-MM-DD')`
@@ -3218,6 +3273,7 @@ export async function getContactConversionsByDate(req, res) {
         WHERE
           ${dateFilter}
           AND ${contactAnalyticsSourceCondition('c')}
+          ${hiddenCondition ? `AND ${hiddenCondition}` : ''}
       )
       SELECT
         date,
