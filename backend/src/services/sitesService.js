@@ -24329,6 +24329,10 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
   const preloadMode = editorPlaybackDisabled ? 'none' : previewEnabled ? 'auto' : 'metadata'
   const previewRange = normalizeVideoPreviewRange(settings)
+  // El teaser tipo Wistia siempre necesita arrancar silenciado para cumplir la
+  // política de autoplay del navegador. El ajuste del usuario se recupera al
+  // tocar el overlay; no debe impedir que el loop decorativo cargue.
+  const startsMuted = muted || previewLoopEnabled || autoplay
   const showSoundNotice = showOverlay && soundHint && !autoplay
   const loop = Boolean(settings.videoLoop) || autoplay
   const rawSpeed = Number(settings.videoDefaultSpeed || 1)
@@ -24361,7 +24365,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     showCustomControlBar ? (initialControlsVisible ? 'rstk-video-controls-visible' : 'rstk-video-controls-hidden') : '',
     controlBarLockedAtStart ? 'rstk-video-controls-start-hidden' : '',
     showSoundNotice ? 'rstk-video-sound-hint' : '',
-    muted ? 'rstk-video-is-muted' : '',
+    startsMuted ? 'rstk-video-is-muted' : '',
     `rstk-video-${orientation}`,
     getVideoPortraitWidthModeClass(getVideoPortraitWidthMode(settings)),
     isVideoMobilePortraitCropEnabled(settings) ? 'rstk-video-mobile-portrait-crop' : '',
@@ -24416,7 +24420,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
 
   return `
     <div class="${classes}" style="${styleVars}">
-      <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${muted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${preloadMode}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
+      <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${startsMuted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${preloadMode}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay && showCentralPlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
           <span class="rstk-video-play-dot">${getVideoPlayIconMarkup(playIconStyle)}</span>
@@ -27276,6 +27280,10 @@ function buildVideoPlayerRuntimeScript() {
 	        let previewEnabled = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let previewing = false;
 	        let hasUserPlayed = Boolean(video.autoplay);
+	        let previewPlayRequest = 0;
+	        let previewPlayPending = false;
+	        let previewRetryTimer = 0;
+	        let previewRetryCount = 0;
 	        let controlsAreVisible = Boolean(hasUserPlayed && !startsWithHiddenControls);
 	        let settingsMenuOpen = false;
 	        let controlsHideTimer = 0;
@@ -27331,6 +27339,7 @@ function buildVideoPlayerRuntimeScript() {
 	          if (progressFrame) return;
 	          progressFrame = window.requestAnimationFrame(() => {
 	            progressFrame = 0;
+	            if (previewing && !hasUserPlayed) enforcePreviewBoundary();
 	            syncProgress();
 	            if (!video.paused) startProgressFrame();
 	          });
@@ -27466,8 +27475,16 @@ function buildVideoPlayerRuntimeScript() {
 	          return true;
 	        };
 	        const stopPreviewLoop = () => {
+	          previewPlayRequest += 1;
+	          previewPlayPending = false;
+	          previewRetryCount = 0;
+	          if (previewRetryTimer) {
+	            window.clearTimeout(previewRetryTimer);
+	            previewRetryTimer = 0;
+	          }
 	          previewing = false;
 	          delete video.dataset.rstkVideoPreviewing;
+	          delete video.dataset.rstkVideoPreviewError;
 	          host.classList.remove('rstk-video-is-previewing');
 	        };
 	        const restartFromBeginningForUserPlayback = () => {
@@ -27477,16 +27494,61 @@ function buildVideoPlayerRuntimeScript() {
 	          video.currentTime = 0;
 	          setProgressRatio(0);
 	        };
+	        const schedulePreviewRetry = (delay) => {
+	          if (previewRetryTimer || !previewEnabled || hasUserPlayed || !previewing) return;
+	          const retryDelays = [120, 400, 1200, 3000];
+	          if (previewRetryCount >= retryDelays.length) return;
+	          const retryDelay = Number.isFinite(delay) ? delay : retryDelays[previewRetryCount];
+	          previewRetryCount += 1;
+	          previewRetryTimer = window.setTimeout(() => {
+	            previewRetryTimer = 0;
+	            startPreviewLoop();
+	          }, retryDelay);
+	        };
+	        const enforcePreviewBoundary = () => {
+	          if (!previewing || hasUserPlayed) return false;
+	          const range = normalizePreviewRange(video);
+	          if (video.currentTime < range.end && video.currentTime >= Math.max(0, range.start - 0.25)) return false;
+	          video.currentTime = range.start;
+	          return true;
+	        };
 	        const startPreviewLoop = (restartAtRangeStart = false) => {
 	          if (!previewEnabled || hasUserPlayed) return;
 	          const range = normalizePreviewRange(video);
 	          previewing = true;
 	          video.dataset.rstkVideoPreviewing = 'true';
+	          video.defaultMuted = true;
 	          video.muted = true;
-	          if (video.readyState >= 1 && (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end)) video.currentTime = range.start;
-	          video.play().then(sync).catch(() => {
-	            stopPreviewLoop();
+	          video.setAttribute('muted', '');
+	          if (video.readyState < 2 || video.seeking) {
 	            sync();
+	            return;
+	          }
+	          if (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end) {
+	            video.currentTime = range.start;
+	            if (video.readyState < 2 || video.seeking) {
+	              sync();
+	              return;
+	            }
+	          }
+	          if (previewPlayPending || !video.paused) {
+	            sync();
+	            return;
+	          }
+	          previewPlayPending = true;
+	          const requestId = ++previewPlayRequest;
+	          video.play().then(() => {
+	            if (requestId !== previewPlayRequest || !previewing || hasUserPlayed) return;
+	            previewRetryCount = 0;
+	            delete video.dataset.rstkVideoPreviewError;
+	            sync();
+	          }).catch(error => {
+	            if (requestId !== previewPlayRequest || !previewing || hasUserPlayed) return;
+	            video.dataset.rstkVideoPreviewError = String(error && error.name ? error.name : 'play_rejected');
+	            schedulePreviewRetry();
+	            sync();
+	          }).finally(() => {
+	            if (requestId === previewPlayRequest) previewPlayPending = false;
 	          });
 	          sync();
 	        };
@@ -27513,12 +27575,9 @@ function buildVideoPlayerRuntimeScript() {
 	        };
 	        const sync = () => {
 	          if (previewing) {
-	            const range = normalizePreviewRange(video);
-	            if (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25)) {
-	              video.currentTime = range.start;
-	            }
-	            if (video.paused && !hasUserPlayed) {
-	              video.play().catch(() => stopPreviewLoop());
+	            enforcePreviewBoundary();
+	            if (video.paused && !hasUserPlayed && video.readyState >= 2 && !video.seeking && !previewPlayPending) {
+	              schedulePreviewRetry(0);
 	            }
 	          }
 	          host.classList.toggle('rstk-video-is-playing', !video.paused && !previewing);
@@ -27769,11 +27828,17 @@ function buildVideoPlayerRuntimeScript() {
 	          }
 	          sync();
 	        });
+	        const resumePreviewLoop = () => {
+	          previewRetryCount = 0;
+	          startPreviewLoop();
+	        };
 	        video.addEventListener('loadedmetadata', () => {
 	          syncVideoOrientation(host, video);
-	          startPreviewLoop();
+	          resumePreviewLoop();
 	        });
-	        video.addEventListener('canplay', startPreviewLoop);
+	        video.addEventListener('loadeddata', resumePreviewLoop);
+	        video.addEventListener('canplay', resumePreviewLoop);
+	        video.addEventListener('seeked', resumePreviewLoop);
 	        ['pause', 'timeupdate', 'loadedmetadata', 'volumechange', 'ended'].forEach(eventName => video.addEventListener(eventName, sync));
 	        const emitCustomVideoEvent = eventName => {
 	          try {

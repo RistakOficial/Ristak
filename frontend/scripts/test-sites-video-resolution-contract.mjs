@@ -59,4 +59,44 @@ assert.match(
   'al apagarla debe fijar la variante más alta antes de iniciar la carga'
 )
 
+const previewLoopSource = sourceBetween(
+  'const stopPreviewLoop = useCallback(() => {',
+  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n\n    stopPreviewLoop()'
+)
+assert.match(
+  previewLoopSource,
+  /video\.defaultMuted = true[\s\S]*?video\.setAttribute\('muted', ''\)/,
+  'el teaser debe declararse silenciado antes de pedir autoplay'
+)
+assert.match(
+  previewLoopSource,
+  /video\.readyState < HTMLMediaElement\.HAVE_CURRENT_DATA \|\| video\.seeking/,
+  'el teaser no debe buscar ni reproducir mientras solo exista metadata'
+)
+assert.match(
+  previewLoopSource,
+  /const enforcePreviewBoundary = useCallback[\s\S]*?video\.currentTime = range\.start/,
+  'el teaser debe regresar al inicio del tramo configurado'
+)
+assert.match(
+  previewLoopSource,
+  /const retryDelays = \[120, 400, 1200, 3000\]/,
+  'los reintentos de autoplay deben ser acotados y escalonados'
+)
+
+const previewReadyListenersSource = sourceBetween(
+  'useEffect(() => {\n    const video = videoRef.current\n    if (!video || !previewLoopEnabled)',
+  'useEffect(() => {\n    const previousKey = previousPreviewRangeSettingsKeyRef.current'
+)
+assert.match(
+  previewReadyListenersSource,
+  /const start = \(\) => \{[\s\S]*?startPreviewLoop\(\)[\s\S]*?addEventListener\('loadeddata', start\)[\s\S]*?addEventListener\('seeked', start\)/,
+  'la reproducción del teaser debe reanudarse con listeners que no pasen el evento como bandera de reinicio'
+)
+assert.match(
+  sitesSource,
+  /<video[\s\S]*?muted=\{startsMuted\}[\s\S]*?autoPlay=\{autoplay\}/,
+  'el elemento del canvas debe nacer silenciado cuando el teaser está activo'
+)
+
 console.log('Sites video resolution contract OK')

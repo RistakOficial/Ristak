@@ -5224,6 +5224,13 @@ La ruta **Previsualizar** conserva esta lógica completa. El atributo informativ
 `data-rstk-video-render-preview="true"` identifica el documento de preview, pero
 no invalida una reproducción iniciada por el visitante; únicamente
 `data-rstk-video-previewing="true"` marca el loop decorativo que no debe contar.
+Ese loop nace silenciado, espera hasta que exista un cuadro reproducible antes
+de buscar el inicio configurado y vuelve a ese inicio al tocar el final del
+tramo. Mientras corre conserva el estado público `idle`, no marca
+`data-rstk-video-real-played` y mantiene intacta la interfaz inicial,
+incluido el botón de play cuando el diseño decidió mostrarlo, y el video completo
+sólo empieza cuando el visitante ejecuta play. El mismo contrato aplica al
+canvas, al preview por URL y al sitio publicado.
 Así, el contador, el desbloqueo y las acciones por tiempo o porcentaje se pueden
 validar antes de publicar.
 
@@ -5323,6 +5330,12 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   dentro del editor carga el MP4 estable o, para Stream-only, HLS, y respeta
   preview, loop, autoplay,
   controles y animaciones para que la edición sea fiel al resultado publicado.
+  El teaser automático no intenta reproducirse mientras el navegador sólo tenga
+  metadata ni recibe el objeto del evento como orden de reiniciar: reanuda al
+  tener datos o terminar un seek, permanece dentro de
+  `videoPreviewStart`/`videoPreviewEnd` y usa reintentos acotados si la fuente
+  cambia durante la carga. Un teaser nunca se convierte por accidente en la
+  reproducción real.
   Solo usa `preload="none"` y detiene la reproducción cuando el usuario activa
   explícitamente **No reproducir mientras se edita**. El tracking permanece
   apagado en ambos casos. El runtime del candado actualiza el tiempo restante
@@ -5474,7 +5487,10 @@ controles falsos. Sus grupos de control son:
   porque los navegadores bloquean la reproducción automática con audio. Al
   mover el inicio, el final o el rango completo del loop, el canvas visual y el
   preview del editor HTML saltan inmediatamente al nuevo inicio y reproducen
-  ese tramo; no esperan a que termine el loop anterior ni al guardado.
+  ese tramo; no esperan a que termine el loop anterior ni al guardado. Con
+  `videoAutoplay=false`, esa reproducción es sólo el teaser silencioso: mantiene
+  visible el play, no avanza fuera del rango y no inicia el video completo hasta
+  un click o comando explícito del visitante.
 - Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
   `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
   `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene
@@ -5633,7 +5649,9 @@ la IA no puede sustituir el checkout seguro. Cuando no hay borradores de HTML si
 guardar, la previsualizacion usa el render del backend de la pagina activa para
 mostrar los elementos nativos ya montados tal como se veran en vivo. Los videos
 cargan el MP4 estable cuando existe o HLS en assets Stream-only, reproducen el
-loop configurado y mantienen tracking apagado;
+loop configurado y mantienen tracking apagado. El loop espera datos reproducibles,
+se mantiene silenciado y acotado al rango; no se queda como póster por un seek
+prematuro ni se escapa al video completo sin una acción explícita;
 solo se pausan si el usuario activa **No reproducir mientras se edita**. Las
 respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
 de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por

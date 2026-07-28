@@ -37092,15 +37092,25 @@ const VideoPlayerPreview: React.FC<{
   const settingsToggleRef = useRef<HTMLButtonElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const previewLoopRef = useRef(false)
+  const previewPlayRequestRef = useRef(0)
+  const previewPlayPendingRef = useRef(false)
+  const previewRetryTimerRef = useRef<number | null>(null)
+  const previewRetryCountRef = useRef(0)
+  const startPreviewLoopRef = useRef<(restartAtRangeStart?: boolean) => void>(() => undefined)
   const progressAnimationFrameRef = useRef<number | null>(null)
   const editorPlaybackDisabled = editable && settings.videoDisableEditorPlayback === true
   const autoplay = Boolean(settings.videoAutoplay) && !editorPlaybackDisabled
   const hasStartedPlaybackRef = useRef(autoplay)
   const noTrackSrc = appendEditorNoTrackParam(src)
   const isHlsSource = isHlsVideoUrl(noTrackSrc)
+  const previewEnabled = settings.videoPreviewEnabled !== false
+  const adaptiveQuality = settings.videoAdaptiveQuality !== false
+  const muted = settings.videoMuted !== false
+  const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
+  const startsMuted = muted || previewLoopEnabled || autoplay
   const [isPlaying, setIsPlaying] = useState(false)
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
-  const [isMuted, setIsMuted] = useState(settings.videoMuted !== false)
+  const [isMuted, setIsMuted] = useState(startsMuted)
   const [progress, setProgress] = useState(0)
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0)
   const [durationSeconds, setDurationSeconds] = useState(0)
@@ -37122,10 +37132,6 @@ const VideoPlayerPreview: React.FC<{
   const soundNoticeText = getVideoSoundNoticeText(settings)
   const soundNoticeHideAfter = getVideoSoundNoticeHideAfter(settings)
   const soundNoticePersistent = soundNoticeHideAfter === 0
-  const previewEnabled = settings.videoPreviewEnabled !== false
-  const adaptiveQuality = settings.videoAdaptiveQuality !== false
-  const muted = settings.videoMuted !== false
-  const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
   const previewRangeSettingsKey = `${previewEnabled}:${String(settings.videoPreviewStart ?? '')}:${String(settings.videoPreviewEnd ?? '')}`
   const previousPreviewRangeSettingsKeyRef = useRef(previewRangeSettingsKey)
   const loop = Boolean(settings.videoLoop) || autoplay
@@ -37463,6 +37469,16 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => () => clearControlsHideTimer(), [clearControlsHideTimer])
 
   useEffect(() => () => {
+    previewPlayRequestRef.current += 1
+    previewPlayPendingRef.current = false
+    previewRetryCountRef.current = 0
+    if (previewRetryTimerRef.current) {
+      window.clearTimeout(previewRetryTimerRef.current)
+      previewRetryTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => {
     if (progressAnimationFrameRef.current) {
       window.cancelAnimationFrame(progressAnimationFrameRef.current)
       progressAnimationFrameRef.current = null
@@ -37520,6 +37536,13 @@ const VideoPlayerPreview: React.FC<{
   }, [])
 
   const stopPreviewLoop = useCallback(() => {
+    previewPlayRequestRef.current += 1
+    previewPlayPendingRef.current = false
+    previewRetryCountRef.current = 0
+    if (previewRetryTimerRef.current) {
+      window.clearTimeout(previewRetryTimerRef.current)
+      previewRetryTimerRef.current = null
+    }
     previewLoopRef.current = false
     if (videoRef.current) delete videoRef.current.dataset.rstkVideoPreviewing
     setIsPreviewLooping(false)
@@ -37538,27 +37561,93 @@ const VideoPlayerPreview: React.FC<{
     setProgress(0)
   }, [])
 
+  const enforcePreviewBoundary = useCallback(() => {
+    const video = videoRef.current
+    if (!video || !previewLoopRef.current || hasStartedPlaybackRef.current) return false
+    const range = getActivePreviewRange()
+    if (video.currentTime < range.end && video.currentTime >= Math.max(0, range.start - VIDEO_PREVIEW_STEP_SECONDS)) {
+      return false
+    }
+    video.currentTime = range.start
+    return true
+  }, [getActivePreviewRange])
+
+  const schedulePreviewLoopRetry = useCallback((delay?: number) => {
+    if (
+      previewRetryTimerRef.current
+      || !previewLoopRef.current
+      || hasStartedPlaybackRef.current
+      || !previewLoopEnabled
+    ) return
+    const retryDelays = [120, 400, 1200, 3000]
+    if (previewRetryCountRef.current >= retryDelays.length) return
+    const retryDelay = Number.isFinite(delay) ? Number(delay) : retryDelays[previewRetryCountRef.current]
+    previewRetryCountRef.current += 1
+    previewRetryTimerRef.current = window.setTimeout(() => {
+      previewRetryTimerRef.current = null
+      startPreviewLoopRef.current()
+    }, retryDelay)
+  }, [previewLoopEnabled])
+
   const startPreviewLoop = useCallback((restartAtRangeStart = false) => {
     const video = videoRef.current
     if (!video || !previewLoopEnabled || hasStartedPlaybackRef.current) return
     const range = getActivePreviewRange()
     previewLoopRef.current = true
     video.dataset.rstkVideoPreviewing = 'true'
+    video.defaultMuted = true
     video.muted = true
-    if (video.readyState >= 1 && (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end)) {
+    video.setAttribute('muted', '')
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.seeking) {
+      setIsPlaying(false)
+      setIsPreviewLooping(false)
+      setIsMuted(true)
+      return
+    }
+    if (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end) {
       video.currentTime = range.start
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.seeking) {
+        setIsPlaying(false)
+        setIsPreviewLooping(false)
+        setIsMuted(true)
+        return
+      }
+    }
+    if (previewPlayPendingRef.current || !video.paused) {
+      setIsPlaying(false)
+      setIsPreviewLooping(!video.paused)
+      setIsMuted(true)
+      return
     }
     setProgress(0)
     setIsMuted(true)
-    setIsPreviewLooping(true)
+    previewPlayPendingRef.current = true
+    const requestId = ++previewPlayRequestRef.current
     void video.play().then(() => {
+      if (
+        requestId !== previewPlayRequestRef.current
+        || !previewLoopRef.current
+        || hasStartedPlaybackRef.current
+      ) return
+      previewRetryCountRef.current = 0
       setIsPlaying(false)
       setIsPreviewLooping(true)
     }).catch(() => {
-      stopPreviewLoop()
+      if (
+        requestId !== previewPlayRequestRef.current
+        || !previewLoopRef.current
+        || hasStartedPlaybackRef.current
+      ) return
       setIsPlaying(false)
+      setIsPreviewLooping(false)
+      schedulePreviewLoopRetry()
+    }).finally(() => {
+      if (requestId === previewPlayRequestRef.current) {
+        previewPlayPendingRef.current = false
+      }
     })
-  }, [getActivePreviewRange, previewLoopEnabled, stopPreviewLoop])
+  }, [getActivePreviewRange, previewLoopEnabled, schedulePreviewLoopRetry])
+  startPreviewLoopRef.current = startPreviewLoop
 
   useEffect(() => {
     const video = videoRef.current
@@ -37635,7 +37724,10 @@ const VideoPlayerPreview: React.FC<{
     if (!video) return
     stopPreviewLoop()
     video.playbackRate = speed
-    video.muted = muted
+    video.defaultMuted = startsMuted
+    video.muted = startsMuted
+    if (startsMuted) video.setAttribute('muted', '')
+    else video.removeAttribute('muted')
     if (editorPlaybackDisabled && !video.paused) video.pause()
     setCurrentSpeed(speed)
     setIsMuted(video.muted || video.volume === 0)
@@ -37643,7 +37735,7 @@ const VideoPlayerPreview: React.FC<{
     syncProgressFromVideo()
     hasStartedPlaybackRef.current = Boolean(autoplay)
     setHasStartedPlayback(Boolean(autoplay))
-  }, [speed, muted, noTrackSrc, autoplay, editorPlaybackDisabled, stopPreviewLoop, syncProgressFromVideo])
+  }, [speed, startsMuted, noTrackSrc, autoplay, editorPlaybackDisabled, stopPreviewLoop, syncProgressFromVideo])
 
   useEffect(() => {
     const video = videoRef.current
@@ -37652,14 +37744,21 @@ const VideoPlayerPreview: React.FC<{
       return
     }
 
-    const start = () => startPreviewLoop()
+    const start = () => {
+      previewRetryCountRef.current = 0
+      startPreviewLoop()
+    }
     video.addEventListener('loadedmetadata', start)
+    video.addEventListener('loadeddata', start)
     video.addEventListener('canplay', start)
+    video.addEventListener('seeked', start)
     if (video.readyState >= 1) start()
 
     return () => {
       video.removeEventListener('loadedmetadata', start)
+      video.removeEventListener('loadeddata', start)
       video.removeEventListener('canplay', start)
+      video.removeEventListener('seeked', start)
     }
   }, [noTrackSrc, previewLoopEnabled, startPreviewLoop, stopPreviewLoop])
 
@@ -37690,12 +37789,15 @@ const VideoPlayerPreview: React.FC<{
       return
     }
     if (previewLoopRef.current) {
-      const range = getActivePreviewRange()
-      if (duration > 0 && (video.currentTime >= range.end || video.currentTime < Math.max(0, range.start - 0.25))) {
-        video.currentTime = range.start
-      }
-      if (video.paused && !hasStartedPlaybackRef.current) {
-        void video.play().catch(() => stopPreviewLoop())
+      enforcePreviewBoundary()
+      if (
+        video.paused
+        && !hasStartedPlaybackRef.current
+        && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+        && !video.seeking
+        && !previewPlayPendingRef.current
+      ) {
+        schedulePreviewLoopRetry(0)
       }
     }
     if (!video.paused && !previewLoopRef.current) markUserPlaybackStarted()
@@ -37709,6 +37811,22 @@ const VideoPlayerPreview: React.FC<{
     syncDetectedOrientation()
     syncVideoState()
   }
+
+  useEffect(() => {
+    if (!isPreviewLooping) return undefined
+    let cancelled = false
+    let frame = 0
+    const tick = () => {
+      enforcePreviewBoundary()
+      syncProgressFromVideo()
+      if (!cancelled) frame = window.requestAnimationFrame(tick)
+    }
+    frame = window.requestAnimationFrame(tick)
+    return () => {
+      cancelled = true
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [enforcePreviewBoundary, isPreviewLooping, syncProgressFromVideo])
 
   const playVideo = async (unmute = false) => {
     const video = videoRef.current
@@ -37969,7 +38087,7 @@ const VideoPlayerPreview: React.FC<{
         data-rstk-video-src={noTrackSrc}
         title={label || 'Video'}
         controls={showNativeControls}
-        muted={muted}
+        muted={startsMuted}
         loop={loop}
         autoPlay={autoplay}
         playsInline

@@ -425,7 +425,16 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(html, /rstkVideoPreviewing === 'true'/)
   assert.match(html, /rstkVideoPreviewing/)
   assert.match(html, /const startPreviewLoop = \(restartAtRangeStart = false\) =>/)
-  assert.match(html, /if \(video\.readyState >= 1 && \(restartAtRangeStart \|\| video\.currentTime < range\.start \|\| video\.currentTime >= range\.end\)\) video\.currentTime = range\.start/)
+  assert.match(html, /video\.readyState < 2 \|\| video\.seeking/)
+  assert.match(html, /video\.defaultMuted = true/)
+  assert.match(html, /video\.setAttribute\('muted', ''\)/)
+  assert.match(html, /const resumePreviewLoop = \(\) => \{\s+previewRetryCount = 0;\s+startPreviewLoop\(\);\s+\};/)
+  assert.match(html, /video\.addEventListener\('loadeddata', resumePreviewLoop\)/)
+  assert.match(html, /video\.addEventListener\('seeked', resumePreviewLoop\)/)
+  assert.doesNotMatch(html, /video\.addEventListener\('(?:loadeddata|canplay|seeked)', startPreviewLoop\)/)
+  assert.match(html, /const enforcePreviewBoundary = \(\) =>/)
+  assert.match(html, /if \(previewing && !hasUserPlayed\) enforcePreviewBoundary\(\)/)
+  assert.match(html, /schedulePreviewRetry\(0\)/)
   assert.match(html, /host\.addEventListener\('ristak:video-preview-range-change', handlePreviewRangeChange\)/)
   assert.match(html, /if \(!editorPreview\) return/)
   assert.match(html, /startPreviewLoop\(true\)/)
@@ -450,6 +459,20 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(autoplayHtml, /data-rstk-video-preview="false"/)
   assert.match(autoplayHtml, /data-rstk-video-preview-start="3"/)
   assert.match(autoplayHtml, /data-rstk-video-preview-end="11"/)
+
+  const silentPreviewHtml = await renderPublicSiteHtml(baseSite({
+    videoControlsMode: 'clean',
+    videoPreviewEnabled: true,
+    videoMuted: false,
+    videoAutoplay: false
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+  const silentPreviewSignature = getVideoPlayerVisualSignature(silentPreviewHtml)
+  assert.equal(silentPreviewSignature.muted, true)
+  assert.match(silentPreviewSignature.classes, /\brstk-video-is-muted\b/)
 })
 
 test('video actions render public target state and runtime', async () => {

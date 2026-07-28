@@ -777,7 +777,16 @@ Ristak guarda cada zona como bloque real del sitio importado:
   animaciones antes de publicar. Al mover el inicio o el final del loop, el
   reproductor del canvas y el iframe del editor HTML saltan en ese mismo cambio
   al nuevo inicio para mostrar el tramo actualizado sin esperar al autosave; esta
-  reproducción sigue siendo de editor y no habilita tracking.
+  reproducción sigue siendo de editor y no habilita tracking. El teaser inicial
+  espera a que exista un cuadro reproducible, nace silenciado y regresa
+  continuamente de `videoPreviewEnd` a `videoPreviewStart` en editor, URL de
+  preview y publicado. Mientras corre conserva
+  `data-rstk-video-previewing="true"`, la interfaz inicial —incluido el botón de
+  play cuando el HTML decidió mostrarlo— y el estado público `idle`; no asigna
+  `data-rstk-video-real-played` ni continúa con el video completo. Sólo un click
+  o comando explícito cambia a reproducción real. Los reintentos por cambios de
+  fuente son acotados y los listeners de media no interpretan el objeto del
+  evento como una orden de reiniciar el rango.
   El sanitizador sigue eliminando scripts inline, handlers `on*`, `src` físicos
   del autor y cualquier llave de Bunny; esos datos nunca forman parte del HTML.
 
