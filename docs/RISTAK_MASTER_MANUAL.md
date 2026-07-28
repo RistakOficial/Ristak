@@ -5416,9 +5416,11 @@ debe crear temporizadores propios ni consultar Bunny directamente.
   dentro del editor carga el MP4 estable o, para Stream-only, HLS, y respeta
   preview, loop, autoplay,
   controles y animaciones para que la edición sea fiel al resultado publicado.
-  El teaser automático no intenta reproducirse mientras el navegador sólo tenga
-  metadata ni recibe el objeto del evento como orden de reiniciar: reanuda al
-  tener datos o terminar un seek, permanece dentro de
+  El teaser automático espera a que exista metadata, pero no se bloquea esperando
+  un primer cuadro antes de ordenar el seek y el play: con `preload="metadata"`
+  esa espera circular impediría que el navegador solicitara los datos. Tampoco
+  recibe el objeto del evento como orden de reiniciar. Reanuda al tener datos o
+  terminar un seek, permanece dentro de
   `videoPreviewStart`/`videoPreviewEnd` y usa reintentos acotados si la fuente
   cambia durante la carga. Un teaser nunca se convierte por accidente en la
   reproducción real.
@@ -5581,7 +5583,22 @@ controles falsos. Sus grupos de control son:
   ese tramo; no esperan a que termine el loop anterior ni al guardado. Con
   `videoAutoplay=false`, esa reproducción es sólo el teaser silencioso: mantiene
   visible el play, no avanza fuera del rango y no inicia el video completo hasta
-  un click o comando explícito del visitante.
+  un click o comando explícito del visitante. Al elegir un asset, el inspector
+  guarda además `videoDurationSeconds` junto con `videoDurationSource`; por eso
+  la línea completa aparece desde la primera apertura sin inventar un límite de
+  40 segundos. Una URL legacy sin metadata muestra **Leyendo video…** hasta
+  obtener la duración real, en lugar de recortar temporalmente el control. El
+  selector combina una vista general para mover el loop por todo el archivo, un
+  riel **Ajuste fino** con escala local de 0.25 segundos y campos de texto
+  numéricos para escribir inicio, duración y final exactos. El máximo del teaser
+  sigue siendo 40 segundos. La tira visual toma una sola muestra diferida: no
+  recorre doce posiciones del archivo ni compite con la reproducción.
+  Cuando la fuente es HLS, el teaser arranca deliberadamente con la variante más
+  ligera para responder rápido en editor, preview por URL y sitio publicado. El
+  primer play real restaura inmediatamente la política elegida: automática si
+  **Resolución inteligente** está activa o la variante más alta si está apagada.
+  Este cambio de calidad no convierte el teaser en reproducción real ni afecta
+  tracking, acciones o gates.
 - Formato responsive: `videoOrientation`, `videoPortraitWidthMode`,
   `videoMobilePortraitCrop`, `videoFit`, `mediaWidth`, `mediaAlign` y overrides
   `responsive.tablet/mobile` de ancho y alineación. El recorte móvil viene

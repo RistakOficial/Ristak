@@ -316,6 +316,17 @@ another account.
   fragment loading until the manifest is known and then fixes the highest available
   rendition before playback starts. If hls.js is unavailable, native HLS remains
   the final compatibility fallback and retains control over its playback pipeline.
+  Preview-loop startup is latency-first: while the silent teaser is active,
+  Ristak starts hls.js at the lowest available rendition, including when the
+  final playback preference is highest-quality mode. The first explicit user
+  play restores ABR when `videoAdaptiveQuality` is enabled or pins the highest
+  rendition when it is disabled. This applies to editor, preview URL and live
+  teaser playback; it never changes the saved quality preference. The Sites
+  inspector persists the selected asset duration with the media URL, so its
+  full timeline is available immediately. Legacy URLs are metadata-probed and
+  remain in an explicit loading state instead of using a temporary 40-second
+  fake duration. Timeline decoration captures at most one deferred frame rather
+  than seeking across the full file, keeping bandwidth available for the teaser.
   This choice does not surrender the saved button, colors, controls, video
   actions or form gate to a provider iframe. Preview playback loads the real
   media but keeps Ristak tracking disabled; published playback emits first-party

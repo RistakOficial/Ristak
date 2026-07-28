@@ -20672,6 +20672,7 @@
 }
 
 .videoPreviewTrack {
+  position: relative;
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -20679,6 +20680,7 @@
 }
 
 .videoPreviewFrameStrip {
+  position: relative;
   min-width: 0;
   height: 48px;
   display: grid;
@@ -20716,6 +20718,54 @@
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.videoPreviewOverviewSelection {
+  position: absolute;
+  inset-block: 0;
+  left: var(--video-preview-overview-start, 0%);
+  width: max(3px, calc(var(--video-preview-overview-end, 100%) - var(--video-preview-overview-start, 0%)));
+  border-inline: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 55%, transparent);
+  pointer-events: none;
+}
+
+.videoPreviewOverviewControl {
+  position: absolute;
+  inset: 0 0 auto;
+  width: 100%;
+  height: 48px;
+  border: 0;
+  border-radius: var(--radius-ctl);
+  background: transparent;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.videoPreviewOverviewControl:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.videoPreviewFineHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 3px;
+}
+
+.videoPreviewFineHeader span {
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.videoPreviewFineHeader small {
+  color: var(--text-mute);
+  font-size: 0.65rem;
+  font-weight: 500;
 }
 
 .videoPreviewControlRail {
@@ -20894,6 +20944,111 @@
   color: var(--text-mute);
   font-size: 0.71rem;
   font-weight: 500;
+}
+
+.videoPreviewExactFields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+
+.videoPreviewExactFields > label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.videoPreviewExactFields > label > span:first-child {
+  color: var(--text-mute);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.videoPreviewExactInput {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.videoPreviewExactInput:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.videoPreviewExactInput input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0 4px 0 8px;
+  color: var(--text);
+  font-size: 0.73rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  outline: 0;
+}
+
+.videoPreviewExactInput small {
+  flex: 0 0 auto;
+  padding-right: 8px;
+  color: var(--text-mute);
+  font-size: 0.67rem;
+  font-weight: 600;
+}
+
+.videoPreviewExactHint {
+  margin: -2px 0 0;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.videoPreviewDurationLoading {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  padding: 10px;
+}
+
+.videoPreviewDurationLoading > span {
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  border-radius: var(--radius-pill);
+  animation: videoPreviewDurationSpin 0.8s linear infinite;
+}
+
+.videoPreviewDurationLoading p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+@keyframes videoPreviewDurationSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .videoPreviewDurationLoading > span {
+    animation: none;
+  }
 }
 
 .videoTrickProgressBox {

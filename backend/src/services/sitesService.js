@@ -27414,6 +27414,7 @@ function buildVideoPlayerRuntimeScript() {
 	        const fallbackSource = video.getAttribute('data-rstk-video-fallback-src') || '';
 	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
 	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
+	        const fastPreviewQuality = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let fallbackActivated = false;
 	        const activateNativeHls = () => {
 	          if (!canPlayNativeHls(video)) return false;
@@ -27434,7 +27435,7 @@ function buildVideoPlayerRuntimeScript() {
 	          return true;
 	        };
 	        if (source && isHlsSource(source)) {
-	          if (adaptiveQuality && canPlayNativeHls(video)) {
+	          if (adaptiveQuality && !fastPreviewQuality && canPlayNativeHls(video)) {
 	            video.addEventListener('error', activateFallback, { once: true });
 	            video.src = source;
 	            video.load();
@@ -27451,8 +27452,8 @@ function buildVideoPlayerRuntimeScript() {
 	              }
 	              const hls = new Hls({
 	                enableWorker: true,
-	                startLevel: adaptiveQuality ? -1 : 0,
-	                autoStartLoad: adaptiveQuality
+	                startLevel: fastPreviewQuality ? 0 : adaptiveQuality ? -1 : 0,
+	                autoStartLoad: adaptiveQuality || fastPreviewQuality
 	              });
 	              host.rstkHls = hls;
 	              if (Hls.Events && Hls.Events.ERROR) {
@@ -27460,7 +27461,7 @@ function buildVideoPlayerRuntimeScript() {
 	                  if (data && data.fatal) activateFallback();
 	                });
 	              }
-	              if (!adaptiveQuality && Hls.Events && Hls.Events.MANIFEST_PARSED) {
+	              if (!adaptiveQuality && !fastPreviewQuality && Hls.Events && Hls.Events.MANIFEST_PARSED) {
 	                hls.on(Hls.Events.MANIFEST_PARSED, () => {
 	                  const highestLevel = Math.max(0, ((hls.levels && hls.levels.length) || 1) - 1);
 	                  hls.startLevel = highestLevel;
@@ -27515,6 +27516,32 @@ function buildVideoPlayerRuntimeScript() {
 	        let settingsMenuOpen = false;
 	        let controlsHideTimer = 0;
 	        let progressFrame = 0;
+	        const preferFastPreviewQuality = () => {
+	          const hls = host.rstkHls;
+	          if (!hls) return;
+	          hls.startLevel = 0;
+	          hls.loadLevel = 0;
+	          hls.currentLevel = 0;
+	          hls.nextLevel = 0;
+	          if (typeof hls.startLoad === 'function') hls.startLoad(video.currentTime || -1);
+	        };
+	        const restoreUserPlaybackQuality = () => {
+	          const hls = host.rstkHls;
+	          if (!hls) return;
+	          if (adaptiveQuality) {
+	            hls.startLevel = -1;
+	            hls.loadLevel = -1;
+	            hls.currentLevel = -1;
+	            hls.nextLevel = -1;
+	          } else {
+	            const highestLevel = Math.max(0, ((hls.levels && hls.levels.length) || 1) - 1);
+	            hls.startLevel = highestLevel;
+	            hls.loadLevel = highestLevel;
+	            hls.currentLevel = highestLevel;
+	            hls.nextLevel = highestLevel;
+	          }
+	          if (typeof hls.startLoad === 'function') hls.startLoad(video.currentTime || -1);
+	        };
 	        const slotId = String(host.getAttribute('data-rstk-native-slot-id') || video.getAttribute('data-rstk-video-slot-id') || '');
 	        const formatProgressPercent = ratio => {
 	          const safeRatio = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
@@ -27755,16 +27782,12 @@ function buildVideoPlayerRuntimeScript() {
 	          video.defaultMuted = true;
 	          video.muted = true;
 	          video.setAttribute('muted', '');
-	          if (video.readyState < 2 || video.seeking) {
+	          if (video.readyState < 1) {
 	            sync();
 	            return;
 	          }
 	          if (restartAtRangeStart || video.currentTime < range.start || video.currentTime >= range.end) {
 	            video.currentTime = range.start;
-	            if (video.readyState < 2 || video.seeking) {
-	              sync();
-	              return;
-	            }
 	          }
 	          if (previewPlayPending || !video.paused) {
 	            sync();
@@ -27877,6 +27900,7 @@ function buildVideoPlayerRuntimeScript() {
 	          delete video.dataset.rstkVideoRealPlayed;
 	          setControlsVisible(false);
 	          syncControlBarAccess();
+	          preferFastPreviewQuality();
 	          startPreviewLoop(true);
 	        };
 	        host.addEventListener('ristak:video-preview-range-change', handlePreviewRangeChange);
@@ -27884,6 +27908,7 @@ function buildVideoPlayerRuntimeScript() {
 	          const wasPreviewing = previewing;
 	          if (wasPreviewing) stopPreviewLoop();
 	          restartFromBeginningForUserPlayback();
+	          restoreUserPlaybackQuality();
 	          const wasUserPlayed = hasUserPlayed;
 	          markUserPlayback();
 	          if (startVisibleAfterPlay || wasUserPlayed) showControlsTemporarily();
@@ -27907,6 +27932,7 @@ function buildVideoPlayerRuntimeScript() {
 	        const playVideo = () => {
 	          if (previewing) stopPreviewLoop();
 	          restartFromBeginningForUserPlayback();
+	          restoreUserPlaybackQuality();
 	          markUserPlayback();
 	          return video.play().catch(() => {});
 	        };
@@ -27923,6 +27949,7 @@ function buildVideoPlayerRuntimeScript() {
 	          if (previewing) stopPreviewLoop();
 	          markUserPlayback();
 	          video.currentTime = 0;
+	          restoreUserPlaybackQuality();
 	          return video.play().catch(() => {});
 	        };
 	        const enterFullscreen = () => {

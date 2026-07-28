@@ -434,7 +434,8 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(html, /rstkVideoPreviewing === 'true'/)
   assert.match(html, /rstkVideoPreviewing/)
   assert.match(html, /const startPreviewLoop = \(restartAtRangeStart = false\) =>/)
-  assert.match(html, /video\.readyState < 2 \|\| video\.seeking/)
+  assert.match(html, /video\.readyState < 1/)
+  assert.doesNotMatch(html, /video\.readyState < 2 \|\| video\.seeking/)
   assert.match(html, /video\.defaultMuted = true/)
   assert.match(html, /video\.setAttribute\('muted', ''\)/)
   assert.match(html, /const resumePreviewLoop = \(\) => \{\s+previewRetryCount = 0;\s+startPreviewLoop\(\);\s+\};/)
@@ -446,10 +447,11 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(html, /schedulePreviewRetry\(0\)/)
   assert.match(html, /host\.addEventListener\('ristak:video-preview-range-change', handlePreviewRangeChange\)/)
   assert.match(html, /if \(!editorPreview\) return/)
+  assert.match(html, /preferFastPreviewQuality\(\);\s+startPreviewLoop\(true\)/)
   assert.match(html, /startPreviewLoop\(true\)/)
   assert.match(html, /const restartFromBeginningForUserPlayback = \(\) =>/)
   assert.match(html, /video\.currentTime = 0/)
-  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+const wasUserPlayed = hasUserPlayed;\s+markUserPlayback\(\);/)
+  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+restoreUserPlaybackQuality\(\);\s+const wasUserPlayed = hasUserPlayed;\s+markUserPlayback\(\);/)
   assert.doesNotMatch(html, /rstk-video-is-playing:hover \.rstk-video-play-dot/)
 
   const autoplayHtml = await renderPublicSiteHtml(baseSite({
@@ -1435,20 +1437,27 @@ test('video player defaults to intelligent resolution and can prioritize the hig
     preview: false
   })
   assert.match(intelligentHtml, /data-rstk-video-adaptive-quality="true"/)
+  assert.match(intelligentHtml, /const fastPreviewQuality = video\.getAttribute\('data-rstk-video-preview'\) === 'true' && !video\.autoplay/)
+  assert.match(intelligentHtml, /startLevel: fastPreviewQuality \? 0 : adaptiveQuality \? -1 : 0/)
+  assert.match(intelligentHtml, /autoStartLoad: adaptiveQuality \|\| fastPreviewQuality/)
+  assert.match(intelligentHtml, /const restoreUserPlaybackQuality = \(\) =>/)
+  assert.match(intelligentHtml, /hls\.nextLevel = -1/)
+  assert.match(intelligentHtml, /restartFromBeginningForUserPlayback\(\);\s+restoreUserPlaybackQuality\(\)/)
 
   const qualityFirstHtml = await renderPublicSiteHtml(baseSite({
     mediaUrl: playlistUrl,
     videoControlsMode: 'clean',
-    videoAdaptiveQuality: false
+    videoAdaptiveQuality: false,
+    videoPreviewEnabled: false
   }), {
     pageId: 'page-1',
     trackingEnabled: true,
     preview: false
   })
   assert.match(qualityFirstHtml, /data-rstk-video-adaptive-quality="false"/)
-  assert.match(qualityFirstHtml, /if \(adaptiveQuality && canPlayNativeHls\(video\)\)/)
-  assert.match(qualityFirstHtml, /startLevel: adaptiveQuality \? -1 : 0/)
-  assert.match(qualityFirstHtml, /autoStartLoad: adaptiveQuality/)
+  assert.match(qualityFirstHtml, /if \(adaptiveQuality && !fastPreviewQuality && canPlayNativeHls\(video\)\)/)
+  assert.match(qualityFirstHtml, /startLevel: fastPreviewQuality \? 0 : adaptiveQuality \? -1 : 0/)
+  assert.match(qualityFirstHtml, /autoStartLoad: adaptiveQuality \|\| fastPreviewQuality/)
   assert.match(qualityFirstHtml, /const highestLevel = Math\.max/)
   assert.match(qualityFirstHtml, /hls\.currentLevel = highestLevel/)
   assert.match(qualityFirstHtml, /hls\.startLoad\(-1\)/)
@@ -1510,6 +1519,7 @@ test('video player defaults to intelligent resolution and can prioritize the hig
       video,
       host,
       adaptiveQuality,
+      fastPreviewQuality,
       isHlsSource,
       canPlayNativeHls,
       loadHls,
@@ -1527,6 +1537,7 @@ test('video player defaults to intelligent resolution and can prioritize the hig
     video,
     host,
     adaptiveQuality: false,
+    fastPreviewQuality: false,
     isHlsSource: () => true,
     canPlayNativeHls: () => true,
     loadHls: async () => FakeHls,
