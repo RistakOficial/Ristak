@@ -1087,7 +1087,9 @@ vistos.
 nuevo inicio y alcanzar 99% mediante seek no completa. La grafica derivada del
 maximo playhead se llama `timelineReachCurve` o **Curva de alcance**, nunca
 retencion. No existe heatmap de intervalos mientras esa telemetria no este
-disponible.
+disponible. El detalle por video agrupa páginas y bloques desde sus columnas
+canónicas; la consulta debe funcionar igual con el `GROUP BY` estricto de
+PostgreSQL y con SQLite.
 
 El historico anterior a v2 puede estar inflado por retries y subcontado por
 heartbeats; no es matematicamente reparable desde la proyeccion. `quality`

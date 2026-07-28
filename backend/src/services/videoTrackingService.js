@@ -2025,15 +2025,17 @@ export async function getVideoPlaybackViewers(input = {}) {
     db.all(`
       ${ledger.sql}
       SELECT
-        COALESCE(NULLIF(block_id, ''), 'unknown') AS key,
-        COALESCE(NULLIF(block_id, ''), 'Bloque desconocido') AS label,
+        COALESCE(NULLIF(playbacks.block_id, ''), 'unknown') AS key,
+        COALESCE(NULLIF(playbacks.block_id, ''), 'Bloque desconocido') AS label,
         COUNT(*) AS playback_sessions,
         COALESCE(SUM(range_play_actions), 0) AS plays,
         COALESCE(SUM(range_watched_seconds), 0) AS watched_seconds,
         COALESCE(AVG(range_max_reach_percent), 0) AS avg_progress_percent
       FROM playbacks
       WHERE play_in_range = 1
-      GROUP BY COALESCE(NULLIF(block_id, ''), 'unknown')
+      GROUP BY
+        COALESCE(NULLIF(playbacks.block_id, ''), 'unknown'),
+        COALESCE(NULLIF(playbacks.block_id, ''), 'Bloque desconocido')
     `, ledger.params),
     db.all(`
       ${ledger.sql},

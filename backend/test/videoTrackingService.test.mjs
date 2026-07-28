@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { db } from '../src/config/database.js'
 import { businessTodayDateOnly, DEFAULT_TIMEZONE } from '../src/utils/dateUtils.js'
 import {
@@ -8,6 +9,67 @@ import {
   linkVideoVisitorToContact,
   recordVideoPlaybackEvent
 } from '../src/services/videoTrackingService.js'
+
+test('video detail uses normalized PostgreSQL-compatible block grouping', async () => {
+  const source = await readFile(
+    new URL('../src/services/videoTrackingService.js', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    source,
+    /GROUP BY\s+COALESCE\(NULLIF\(playbacks\.block_id, ''\), 'unknown'\),\s+COALESCE\(NULLIF\(playbacks\.block_id, ''\), 'Bloque desconocido'\)/
+  )
+})
+
+test('video detail merges null and blank block ids into one unknown breakdown', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const assetId = `asset_video_unknown_block_${suffix}`
+  const playbackIds = [
+    `playback_video_unknown_block_null_${suffix}`,
+    `playback_video_unknown_block_blank_${suffix}`
+  ]
+  const baseTs = Date.now() - 30_000
+
+  try {
+    for (const [index, playbackId] of playbackIds.entries()) {
+      const blockId = index === 0 ? undefined : `temporary_block_${suffix}`
+      await recordVideoPlaybackEvent({
+        visitor_id: `visitor_${playbackId}`,
+        session_id: `session_${playbackId}`,
+        event_name: 'video_play',
+        ts: baseTs + index * 1000,
+        data: {
+          event_id: `${playbackId}:play`,
+          event_sequence: 1,
+          ingestion_version: 2,
+          playback_id: playbackId,
+          media_asset_id: assetId,
+          stream_video_id: `stream_${assetId}`,
+          block_id: blockId,
+          position_seconds: 0,
+          duration_seconds: 60
+        }
+      })
+    }
+    await db.run(
+      "UPDATE video_playback_events SET block_id = '' WHERE playback_id = ?",
+      [playbackIds[1]]
+    )
+
+    const detail = await getVideoPlaybackViewers({ assetId, limit: 10 })
+
+    assert.equal(detail.blocks.length, 1)
+    assert.equal(detail.blocks[0].key, 'unknown')
+    assert.equal(detail.blocks[0].label, 'Bloque desconocido')
+    assert.equal(detail.blocks[0].playbackSessions, 2)
+    assert.equal(detail.blocks[0].plays, 2)
+  } finally {
+    for (const playbackId of playbackIds) {
+      await db.run('DELETE FROM video_playback_events WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+      await db.run('DELETE FROM video_playback_sessions WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+    }
+  }
+})
 
 test('video playback tracking links anonymous playback to contact after registration', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
