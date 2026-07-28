@@ -5634,6 +5634,14 @@ manda. La regresion completa esta cubierta por
 `backend/test/sitesEmbeddedStepform.test.mjs`: formulario fuente, seleccion en
 landing, render publico y submission descalificada.
 
+Las pantallas embebidas de resultado calificado o descalificado son estados
+terminales. Al mostrarlas, el renderer marca el formulario con
+`data-rstk-form-terminal-result`, oculta el area completa de acciones y bloquea
+que una regla tardia o persistida de video `reveal_form_action` vuelva a mostrar
+`Enviar`, `Anterior` o cualquier control de navegacion del formulario. El
+resultado conserva su contenido y ningun evento `pause`/`timeupdate` del video
+puede sacar al visitante de ese estado.
+
 El editor tambien debe ocultar cualquier opcion literal de `Ir a la siguiente
 pagina` cuando la pagina activa ya es la ultima del orden del sitio. Esta regla
 aplica a formularios embebidos, calendarios embebidos, pagos, botones de bloques

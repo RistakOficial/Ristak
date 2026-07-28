@@ -17132,6 +17132,11 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
             const form = state.video.closest('form[data-site-form]');
             const area = form ? form.querySelector('[data-rstk-form-action-area]') : null;
             if (!area) return;
+            const terminalResultHost = area.closest('[data-rstk-form-terminal-result]');
+            if (terminalResultHost) {
+              setTargetHidden(area, true);
+              return;
+            }
             // El botón queda visible una vez alcanzado el punto (aunque el
             // visitante rebobine) o si ya se desbloqueó en una visita previa
             // según la persistencia configurada (sesión o cookie por visitante).
@@ -30157,6 +30162,10 @@ export async function renderPublicSiteHtml(site, {
         if (!host) return false;
         const result = host.querySelector('[data-embedded-form-result="' + status + '"]');
         if (!result) return false;
+        // Un resultado calificado/descalificado es terminal. Marcamos el host antes
+        // de pausar su contenido para que eventos tardíos del video no puedan volver
+        // a revelar Enviar/Anterior mientras ya se muestra la pantalla final.
+        host.setAttribute('data-rstk-form-terminal-result', status);
         Array.from(host.children).forEach((child) => {
           setHiddenAndSyncMedia(child, child !== result);
         });

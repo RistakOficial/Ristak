@@ -53,6 +53,78 @@ const revealFormActionSite = (videoActions) => ({
 
 const REVEAL_RULES = [{ id: 'reveal-1', action: 'reveal_form_action', timeSeconds: 30 }]
 
+const embeddedRevealLandingSite = () => ({
+  id: 'landing_embedded_reveal_form_action',
+  name: 'Landing con formulario y video',
+  title: 'Landing con formulario y video',
+  description: '',
+  slug: 'landing-embedded-reveal-form-action',
+  siteType: 'landing_page',
+  status: 'published',
+  theme: {
+    template: 'ristak',
+    pages: [{ id: 'page-1', title: 'Pagina 1', sortOrder: 0 }]
+  },
+  blocks: [
+    {
+      id: 'form-embed-1',
+      siteId: 'landing_embedded_reveal_form_action',
+      blockType: 'form_embed',
+      label: 'Formulario',
+      content: '',
+      placeholder: '',
+      required: false,
+      options: [],
+      sortOrder: 0,
+      settings: {
+        pageId: 'page-1',
+        embeddedPages: [{ id: 'form-page-1', title: 'Formulario', sortOrder: 0 }],
+        embeddedBlocks: [
+          {
+            id: 'embedded-video-1',
+            blockType: 'video',
+            label: 'Video',
+            content: '',
+            required: false,
+            options: [],
+            sortOrder: 0,
+            settings: {
+              pageId: 'form-page-1',
+              mediaUrl: 'https://cdn.example.com/vsl.mp4',
+              videoActions: REVEAL_RULES
+            }
+          },
+          {
+            id: 'embedded-qualification-1',
+            blockType: 'radio',
+            label: '¿Calificas?',
+            content: '',
+            required: true,
+            options: [
+              { id: 'yes', label: 'Sí', value: 'Sí', action: 'continue' },
+              { id: 'no', label: 'No', value: 'No', action: 'disqualify_after_submit' }
+            ],
+            sortOrder: 1,
+            settings: { pageId: 'form-page-1' }
+          },
+          {
+            id: 'embedded-disqualified-title',
+            blockType: 'title',
+            label: 'Título',
+            content: 'Gracias por responder.',
+            required: false,
+            options: [],
+            sortOrder: 2,
+            settings: { pageId: 'page-3' }
+          }
+        ]
+      },
+      createdAt: '',
+      updatedAt: ''
+    }
+  ]
+})
+
 test('standard form reveal_form_action hides the submit button until the video reaches the point', async () => {
   const html = await renderPublicSiteHtml(revealFormActionSite(REVEAL_RULES), {
     pageId: 'page-1',
@@ -80,7 +152,7 @@ test('standard form without the rule keeps the submit button visible', async () 
   })
 
   assert.match(html, /data-submit/)
-  assert.doesNotMatch(html, /data-rstk-form-action-area/)
+  assert.doesNotMatch(html, /class="rstk-actions"[^>]*data-rstk-form-action-area/)
   assert.doesNotMatch(html, /class="rstk-actions"[^>]*data-rstk-video-action-hidden/)
 })
 
@@ -125,4 +197,24 @@ test('reveal_form_action defaults to restarting every visit (no persistence)', a
   })
 
   assert.match(html, /&quot;repeatMode&quot;:&quot;every_visit&quot;/)
+})
+
+test('embedded terminal results cannot be reopened by a delayed video reveal action', async () => {
+  const html = await renderPublicSiteHtml(embeddedRevealLandingSite(), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: false
+  })
+
+  assert.match(html, /class="rstk-actions rstk-embed-actions" data-rstk-form-action-area/)
+  assert.match(html, /data-embedded-form-result="disqualified" hidden/)
+  assert.match(html, /Gracias por responder\./)
+  // La pantalla final declara un estado terminal antes de pausar el video.
+  assert.match(html, /host\.setAttribute\('data-rstk-form-terminal-result', status\)/)
+  // El runtime del video respeta ese estado incluso si la regla ya estaba
+  // desbloqueada/persistida y recibe un último evento pause/timeupdate.
+  assert.match(html, /const terminalResultHost = area\.closest\('\[data-rstk-form-terminal-result\]'\)/)
+  assert.match(html, /if \(terminalResultHost\) \{\s*setTargetHidden\(area, true\);\s*return;/)
+  // La hoja pública conserva el bloqueo aunque otro callback quite `hidden`.
+  assert.match(html, /\[data-rstk-form-terminal-result\] \[data-rstk-form-action-area\]\{display:none!important\}/)
 })

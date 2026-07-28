@@ -626,6 +626,12 @@ la opcion `Sin evento (solo PageView)`. Un HTML importado no debe llamar `fbq`,
 `gtag` o `dataLayer` por su cuenta: Ristak dispara la conversion despues de
 conocer el veredicto.
 
+En formularios nativos embebidos, las pantallas de resultado calificado y
+descalificado son terminales: ocultan campos y controles de navegacion. Si un
+video habia revelado el boton de envio mediante `reveal_form_action`, su estado
+persistido o un evento tardio del reproductor no puede volver a mostrar
+`Enviar`/`Anterior` encima del resultado.
+
 ### Elementos Nativos Ristak En HTML Importado
 
 Cuando el HTML externo quiere usar la misma configuracion nativa del editor de

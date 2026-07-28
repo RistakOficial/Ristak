@@ -670,6 +670,7 @@ const RSTK_BASE_CSS = `
   *,*::before,*::after{box-sizing:border-box}
   [hidden]{display:none !important}
   [data-rstk-video-action-hidden="true"]{display:none!important}
+  [data-rstk-form-terminal-result] [data-rstk-form-action-area]{display:none!important}
   [data-rstk-user-hidden="true"],[data-rstk-countdown-hidden="true"]{display:none!important}
   html{-webkit-text-size-adjust:100%}
   body{
