@@ -153,6 +153,72 @@ for (const file of allFiles) {
   }
 }
 
+const sitesSource = await readFile(path.join(srcRoot, 'pages/Sites/Sites.tsx'), 'utf8')
+const sitesStyles = await readFile(path.join(srcRoot, 'pages/Sites/Sites.module.css'), 'utf8')
+const flatContractStart = '/* INSPECTOR FLAT-CONTENT CONTRACT — START'
+const flatContractEnd = '/* INSPECTOR FLAT-CONTENT CONTRACT — END */'
+const flatContractStartIndex = sitesStyles.indexOf(flatContractStart)
+const flatContractEndIndex = sitesStyles.indexOf(flatContractEnd)
+
+if (!sitesSource.includes('data-inspector-section-content')) {
+  violations.push({
+    file: 'src/pages/Sites/Sites.tsx',
+    line: 1,
+    check: 'Jerarquia plana del inspector de Sites',
+    value: 'AccordionSection sin marcador de contenido',
+    hint: 'Conserva data-inspector-section-content en el cuerpo expandido del acordeon.',
+  })
+}
+
+if (flatContractStartIndex === -1 || flatContractEndIndex === -1) {
+  violations.push({
+    file: 'src/pages/Sites/Sites.module.css',
+    line: 1,
+    check: 'Jerarquia plana del inspector de Sites',
+    value: 'Contrato visual ausente',
+    hint: 'Restaura el contrato que deja una sola superficie por categoria expandida.',
+  })
+} else {
+  const flatContract = sitesStyles.slice(flatContractStartIndex, flatContractEndIndex)
+  const requiredFlatSelectors = [
+    '.propertiesBody :is(',
+    '.settingsGroup,',
+    '.blockStyleControls,',
+    '.formGlobalControls,',
+    '.textFormatPanel,',
+    '.typographyInspector,',
+    '.customFieldBinding,',
+    '.optionRules',
+    '.accordionBody .accordionSection',
+    '.propertiesBody .videoSettingsSection',
+    '.propertiesBody .advancedBody',
+    '.propertiesBody .optionRuleCard',
+  ]
+
+  for (const selector of requiredFlatSelectors) {
+    if (flatContract.includes(selector)) continue
+
+    violations.push({
+      file: 'src/pages/Sites/Sites.module.css',
+      line: lineNumberForIndex(sitesStyles, flatContractStartIndex),
+      check: 'Jerarquia plana del inspector de Sites',
+      value: `Falta ${selector}`,
+      hint: 'Todos los wrappers de agrupacion deben seguir planos dentro de la categoria expandida.',
+    })
+  }
+}
+
+const directVideoNesting = '.accordionBody > .videoSettingsBox > .videoSettingsSection'
+if (sitesStyles.includes(directVideoNesting)) {
+  violations.push({
+    file: 'src/pages/Sites/Sites.module.css',
+    line: lineNumberForIndex(sitesStyles, sitesStyles.indexOf(directVideoNesting)),
+    check: 'Jerarquia plana del inspector de Sites',
+    value: directVideoNesting,
+    hint: 'No dependas de hijos directos: Video puede vivir dentro de settingsGroup u otros wrappers compartidos.',
+  })
+}
+
 if (violations.length > 0) {
   console.error('Design system audit failed. Reusable UI patterns must live in frontend/src/components/common or global recipes.\n')
 

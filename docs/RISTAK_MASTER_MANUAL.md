@@ -4830,11 +4830,13 @@ la accion posterior a la cita desde la barra superior del editor. El inspector
 derecho solo muestra el estado del calendario seleccionado y los controles de
 diseno/estilo, para no duplicar la misma decision en dos superficies.
 Las categorias colapsables del inspector derecho se expanden como una sola
-superficie: el encabezado y su contenido comparten el mismo contenedor. Cuando
-una categoria contiene subcategorias de personalizacion, como `Reproductor` en
-un video, estas se presentan dentro con separadores simples y no como tarjetas
-anidadas. Los controles internos que sí representan una pieza independiente
-conservan su borde cuando aporta jerarquia o interaccion.
+superficie: el encabezado y su contenido comparten el mismo contenedor. Es una
+regla comun a todas las pestañas y tipos de bloque, incluidos elementos
+importados o nativos. Los apartados internos —por ejemplo `Reproduccion`, `Barra`
+y `Controles` en Video; tipografia; opciones; formulario o ajustes avanzados—
+se presentan como subcategorias con separadores y espacio, no como tarjetas de
+agrupacion anidadas. Campos, selectores, previews, sliders y otros controles
+funcionales conservan su forma para seguir siendo reconocibles e interactivos.
 Cada bloque o elemento editable incluye en el inspector derecho la categoria
 `Visibilidad`, con dos controles independientes: `Computadora` y `Celular`.
 Ambos nacen activos para mantener el comportamiento historico. Apagar uno oculta

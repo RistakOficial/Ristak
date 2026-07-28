@@ -12541,7 +12541,7 @@
 }
 
 /* Sección abierta: el encabezado se "enciende" con un toque de acento. */
-.accordionSection[data-open="true"] .accordionHeader {
+.accordionSection[data-open="true"] > .accordionHeader {
   border: 0;
   border-bottom: 1px solid var(--sites-editor-section-border, var(--color-border-subtle));
   border-radius: calc(var(--design-control-radius, 10px) - 1px) calc(var(--design-control-radius, 10px) - 1px) 0 0;
@@ -12563,7 +12563,7 @@
   transition: transform 0.18s ease;
 }
 
-.accordionSection[data-open="true"] .accordionChevron {
+.accordionSection[data-open="true"] > .accordionHeader .accordionChevron {
   transform: rotate(180deg);
 }
 
@@ -20405,30 +20405,106 @@
   padding: 10px;
 }
 
-/* Cuando el reproductor vive dentro de una categoría del inspector, la
-   categoría abierta ya es el contenedor. Sus grupos son subcategorías planas:
-   comparten fondo y se separan con una sola línea, sin tarjetas anidadas. */
-.accordionBody > .videoSettingsBox {
+/* INSPECTOR FLAT-CONTENT CONTRACT — START
+   La categoría abierta es la única superficie visual. Los wrappers de layout
+   quedan planos; las subcategorías se ordenan con separadores y espacio. */
+.propertiesBody :is(
+  .settingsGroup,
+  .blockStyleControls,
+  .formGlobalControls,
+  .textFormatPanel,
+  .typographyInspector,
+  .customFieldBinding,
+  .optionRules
+) {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+/* Los acordeones secundarios conservan su interacción, pero ya no parecen
+   otra card: funcionan como subcategorías dentro de la categoría principal. */
+.accordionBody .accordionSection {
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.accordionBody .accordionSection + .accordionSection {
+  border-top: 1px solid var(--border) !important;
+}
+
+.accordionBody .accordionSection > .accordionHeader,
+.accordionBody .accordionSection[data-open="true"] > .accordionHeader {
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  padding: 12px 0;
+}
+
+.accordionBody .accordionSection > .accordionBody {
+  padding: 0 0 14px;
+}
+
+/* Video puede vivir directo en el acordeón o después de URL/subida dentro de
+   settingsGroup. En ambos casos sus apartados son secciones planas. */
+.propertiesBody .videoSettingsBox {
   gap: 0;
   border-top: 0;
   padding-top: 0;
 }
 
-.accordionBody > .videoSettingsBox > .videoSettingsSection {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0 0 14px;
-}
-
-.accordionBody > .videoSettingsBox > .videoSettingsSection + .videoSettingsSection {
+.propertiesBody > .videoSettingsBox:not(:first-child),
+.accordionBody :is(.settingsGroup, .blockStyleControls, .formGlobalControls) > .videoSettingsBox {
   border-top: 1px solid var(--border);
   padding-top: 14px;
 }
 
-.accordionBody > .videoSettingsBox > .videoSettingsSection:last-child {
+.propertiesBody .videoSettingsSection {
+  border: 0 !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 0 14px;
+}
+
+.propertiesBody .videoSettingsSection + .videoSettingsSection {
+  border-top: 1px solid var(--border) !important;
+  padding-top: 14px;
+}
+
+.propertiesBody .videoSettingsSection:last-child {
   padding-bottom: 0;
 }
+
+/* “Avanzado”, formatos secundarios y cada regla de opción son subcategorías,
+   no contenedores independientes. */
+.propertiesBody .advancedBody {
+  border: 0 !important;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 12px 0 0 !important;
+}
+
+.propertiesBody [data-inspector-section-content] > .textFormatPanel:not(:first-child) {
+  border-top: 1px solid var(--border) !important;
+  padding-top: 12px !important;
+}
+
+.propertiesBody .optionRuleCard {
+  border: 0 !important;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 14px 0 0 !important;
+}
+/* INSPECTOR FLAT-CONTENT CONTRACT — END */
 
 .videoSettingsSectionHeader {
   display: flex;

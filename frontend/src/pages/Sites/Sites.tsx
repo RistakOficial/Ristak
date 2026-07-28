@@ -8348,7 +8348,11 @@ const AccordionSection: React.FC<{
         <span className={styles.panelSubheader}>{title}</span>
         <ChevronDown size={14} className={styles.accordionChevron} aria-hidden="true" />
       </button>
-      {open && <div className={styles.accordionBody}>{children}</div>}
+      {open && (
+        <div className={styles.accordionBody} data-inspector-section-content>
+          {children}
+        </div>
+      )}
     </div>
   )
 }

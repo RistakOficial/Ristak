@@ -362,6 +362,13 @@ negativos `--neg`.
 
 - **Editor de Sitios (`.rstkCanvas`)**: densidad y controles propios; el CSS
   global ya lo excluye. No lo "arregles" para que parezca formulario normal.
+  En el inspector derecho, cada `AccordionSection` expandido es la única
+  superficie visual. Esta regla aplica a todas sus pestañas y a bloques normales,
+  importados o nativos: los wrappers de layout de grupos, estilo, tipografía,
+  formulario y opciones quedan transparentes y sin borde. Las subcategorías,
+  incluidos acordeones secundarios, se ordenan con títulos, espacio y divisores,
+  nunca con otra card. Inputs, selects, botones, previews, sliders y mensajes de
+  estado sí conservan la forma que comunica su función.
 - **Gráficas**: series desde `--accent` / `--accent-2` / `--pos` / `--neg` /
   `--design-chart-*` (mapeados). Grid `--chart-grid`.
 - **Marcas de terceros** (Meta/Google/WhatsApp/etc.): su color de marca solo en
