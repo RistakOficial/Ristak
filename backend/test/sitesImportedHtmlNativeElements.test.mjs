@@ -1526,7 +1526,8 @@ test('responsive imported video slots use a sibling fallback until the exact mob
         importedHtmlNativeSlotId: 'video-presentacion-escritorio',
         importedHtmlNativeType: 'video',
         importedHtmlNativeRenderMode: 'ristak',
-        mediaUrl: 'https://cdn.example.test/video-escritorio.mp4'
+        mediaUrl: 'https://cdn.example.test/video-escritorio.mp4',
+        videoMobilePortraitCrop: false
       }
     })
 
@@ -1536,6 +1537,7 @@ test('responsive imported video slots use a sibling fallback until the exact mob
     assert.match(html, /data-rstk-native-slot-id="video-presentacion-escritorio"/)
     assert.match(html, /data-rstk-native-slot-id="video-presentacion-movil"/)
     assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 2)
+    assert.equal((html.match(/class="[^"]*rstk-video-mobile-portrait-crop[^"]*"/g) || []).length, 1)
     assert.doesNotMatch(html, /Configura el video de Ristak/)
 
     await createBlock(site.id, {
@@ -1547,7 +1549,8 @@ test('responsive imported video slots use a sibling fallback until the exact mob
         importedHtmlNativeSlotId: 'video-presentacion-movil',
         importedHtmlNativeType: 'video',
         importedHtmlNativeRenderMode: 'ristak',
-        mediaUrl: 'https://cdn.example.test/video-movil.mp4'
+        mediaUrl: 'https://cdn.example.test/video-movil.mp4',
+        videoMobilePortraitCrop: false
       }
     })
 
@@ -1556,6 +1559,7 @@ test('responsive imported video slots use a sibling fallback until the exact mob
 
     assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-escritorio\.mp4"/g) || []).length, 1)
     assert.equal((html.match(/data-rstk-video-src="https:\/\/cdn\.example\.test\/video-movil\.mp4"/g) || []).length, 1)
+    assert.equal((html.match(/class="[^"]*rstk-video-mobile-portrait-crop[^"]*"/g) || []).length, 0)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

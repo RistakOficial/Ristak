@@ -5058,9 +5058,11 @@ móvil no reemplace por accidente el bloque de computadora. Mientras una de las
 dos variantes todavía no tenga bloque propio, el renderer usa como respaldo el
 único video configurado de la variante hermana; al conectar un archivo en el
 slot pendiente se crea su bloque independiente y esa coincidencia exacta siempre
-tiene prioridad. El respaldo solo aplica a videos emparejados por base y vista,
-nunca a dos videos distintos de la misma página. Los cambios consecutivos de
-estos slots se encadenan en orden: una guardada automática anterior no puede
+tiene prioridad. Cuando el destino pendiente es móvil, el respaldo horizontal
+fuerza el recorte centrado 9:16 aunque la configuración de escritorio conserve
+su encuadre normal. El respaldo solo aplica a videos emparejados por base y
+vista, nunca a dos videos distintos de la misma página. Los cambios consecutivos
+de estos slots se encadenan en orden: una guardada automática anterior no puede
 pisar ni dejar sin procesar el último video elegido.
 
 El bloqueo de contenido por video en HTML importado es una capacidad nativa del

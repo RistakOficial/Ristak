@@ -77,6 +77,7 @@ import {
   buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlFavicon,
+  getImportedNativeResponsiveVariant,
   importedHtmlHasFavicon,
   normalizeImportedHtmlVideoPlayerManifest,
   ensureImportedHtmlVideoActionTargets
@@ -28153,7 +28154,20 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   // La coincidencia exacta siempre gana. El hermano responsive solo funciona como
   // respaldo mientras esta variante todavía no tenga un archivo propio.
   const exactBlock = findImportedNativeElementBlock(blocks, slot)
-  const block = exactBlock || findImportedNativeResponsiveFallbackBlock(blocks, slot)
+  const responsiveFallbackBlock = exactBlock
+    ? null
+    : findImportedNativeResponsiveFallbackBlock(blocks, slot)
+  const responsiveFallbackTargetsMobile = responsiveFallbackBlock &&
+    getImportedNativeResponsiveVariant(slot.id).device === 'mobile'
+  const block = responsiveFallbackBlock && responsiveFallbackTargetsMobile
+    ? {
+        ...responsiveFallbackBlock,
+        settings: {
+          ...(responsiveFallbackBlock.settings || {}),
+          videoMobilePortraitCrop: true
+        }
+      }
+    : exactBlock || responsiveFallbackBlock
   if (slot.type === 'calendar' && slot.renderMode === 'custom') {
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
   }

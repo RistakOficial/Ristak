@@ -275,6 +275,7 @@ import {
   buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
   ensureImportedHtmlVideoActionTargets,
+  getImportedNativeResponsiveVariant,
   normalizeImportedHtmlVideoPlayerManifest,
   resolveVisibleImportedNativeElementSelection
 } from '../../../../shared/sites/importedHtmlContract.js'
@@ -22198,11 +22199,14 @@ const ImportedHtmlEditorPanel: React.FC<{
     const responsiveFallback = block
       ? null
       : findImportedNativeResponsiveFallbackBlock(currentSite.blocks || [], slot)
+    const responsiveFallbackTargetsMobile = responsiveFallback &&
+      getImportedNativeResponsiveVariant(slot.id).device === 'mobile'
     const defaults = getImportedNativeElementDefaultSettingsForSlot(slot)
     const pageId = slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
     return {
       ...defaults,
       ...(responsiveFallback?.settings || {}),
+      ...(responsiveFallbackTargetsMobile ? { videoMobilePortraitCrop: true } : {}),
       ...(block?.settings || {}),
       ...(importedNativeElementDraftsRef.current[slot.key] || importedNativeElementDrafts[slot.key] || {}),
       ...getImportedNativeElementBlockSettings(slot, pageId)
