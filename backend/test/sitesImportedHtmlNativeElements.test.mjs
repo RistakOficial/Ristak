@@ -1375,6 +1375,7 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
 
     const video = new FakeVideo(source)
     const mobileVideo = new FakeVideo(mobileSource)
+    mobileVideo.duration = 0
     const sourceSelector = '[data-rstk-video-gate-id],[data-ristak-video-gate-id],[data-ristack-video-gate-id]'
     const gateVideoSelector = '[data-rstk-video-gate-id] video,[data-ristak-video-gate-id] video,[data-ristack-video-gate-id] video'
     const document = {
@@ -1488,7 +1489,12 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     video.dispatch('play')
 
     mobileVideo.dispatch('play')
+    assert.equal(mobileVideo.getAttribute('data-rstk-video-resume-ratio'), '')
+    mobileVideo.duration = 120
+    mobileVideo.dispatch('loadedmetadata')
     assert.equal(Number(Number(mobileVideo.getAttribute('data-rstk-video-resume-ratio')).toFixed(3)), 0.083)
+    assert.equal(Number(mobileVideo.currentTime.toFixed(3)), 10)
+    assert.equal(mobileVideo.getAttribute('data-rstk-video-resume-applied'), 'true')
     nowMs += 10_000
     mobileVideo.currentTime = 10
     mobileVideo.dispatch('timeupdate')

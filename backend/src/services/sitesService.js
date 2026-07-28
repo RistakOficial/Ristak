@@ -17916,6 +17916,16 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           if (state.persistence.resume && !state.resumeRatioApplied && record.resumeRatio > 0) {
             state.video.setAttribute('data-rstk-video-resume-ratio', String(record.resumeRatio));
             state.resumeRatioApplied = true;
+            const resumeTime = record.resumeRatio * duration;
+            const resumeAlreadyApplied = state.video.getAttribute('data-rstk-video-resume-applied') === 'true';
+            if (
+              hasRealPlaybackStarted(state.video) &&
+              !resumeAlreadyApplied &&
+              resumeTime > finiteMediaTime(state.video) + 0.35
+            ) {
+              state.video.currentTime = resumeTime;
+              state.video.setAttribute('data-rstk-video-resume-applied', 'true');
+            }
           }
         }
         state.persistedProgressLoaded = Boolean(record.playbackSeconds > 0 || record.watchedRanges.length);
