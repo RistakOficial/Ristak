@@ -192,6 +192,91 @@ test('reuploading the open HTML site preserves active associations and keeps rem
   }
 })
 
+test('reuploading an HTML site with an existing source form does not nest distributed locks', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  const siteIds = []
+  const originalWithAdvisoryLock = db.withAdvisoryLock
+  let restoreWithAdvisoryLock = false
+  let pinnedLockDepth = 0
+  const acquiredLocks = []
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'formulario-existente.html',
+      name: `Reupload sin candados anidados ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: fileData(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-principal" data-rstk-label="Lead principal">
+          <input name="email" type="email" data-rstk-field-id="correo-principal">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`)
+    })
+    siteIds.push(created.site.id)
+    siteIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId))
+    const sourceFormId = activeForm(created.import, 'lead_principal')?.formSiteId
+    const sourceFormBefore = await getSite(sourceFormId, {
+      includeBlocks: false,
+      includeSubmissions: false
+    })
+
+    db.withAdvisoryLock = async (lockName, operation, options) => {
+      if (pinnedLockDepth > 0) {
+        throw Object.assign(
+          new Error('No se puede abrir un candado distribuido dentro de otra transacción.'),
+          { code: 'DATABASE_ADVISORY_LOCK_NESTED' }
+        )
+      }
+
+      const pinsConnection = options?.pinConnection !== false
+      if (pinsConnection) pinnedLockDepth += 1
+      acquiredLocks.push({ lockName, pinConnection: options?.pinConnection })
+      try {
+        return await originalWithAdvisoryLock(lockName, operation, options)
+      } finally {
+        if (pinsConnection) pinnedLockDepth -= 1
+      }
+    }
+    restoreWithAdvisoryLock = true
+
+    const updated = await replaceImportedSiteFromUpload(created.site.id, {
+      filename: 'formulario-existente.html',
+      fileBase64: fileData(`<!doctype html><html><body>
+        <h1>Código actualizado</h1>
+        <form data-rstk-form-id="lead-principal" data-rstk-label="Lead principal">
+          <input name="email" type="email" data-rstk-field-id="correo-principal">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`)
+    })
+
+    assert.match(updated.import.htmlSanitized, /Código actualizado/)
+    assert.equal(activeForm(updated.import, 'lead_principal')?.formSiteId, sourceFormId)
+    assert.equal(
+      (await getSite(sourceFormId, {
+        includeBlocks: false,
+        includeSubmissions: false
+      }))?.status,
+      sourceFormBefore?.status
+    )
+    assert.deepEqual(
+      acquiredLocks.map(lock => lock.lockName),
+      [
+        `sites:imported-html:${created.site.id}`,
+        `sites:imported-html:${sourceFormId}`
+      ]
+    )
+    assert.equal(
+      acquiredLocks.every(lock => lock.pinConnection === false),
+      true,
+      'site mutation locks must not pin their protected operations to the lock connection'
+    )
+  } finally {
+    if (restoreWithAdvisoryLock) db.withAdvisoryLock = originalWithAdvisoryLock
+    await deleteSites(siteIds)
+  }
+})
+
 test('ZIP reuploads preserve page identity across removal, restoration and a unique folder rename', async () => {
   const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
   const siteIds = []

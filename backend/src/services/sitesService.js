@@ -4669,20 +4669,27 @@ async function withImportedSiteMutationLock(siteId, operation) {
   const lockName = `sites:imported-html:${normalizedSiteId}`
   for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
-      return await db.withAdvisoryLock(lockName, async () => {
-        const scope = {
-          active: true,
-          siteIds: new Set(parentScope?.active === true ? parentScope.siteIds : [])
-        }
-        scope.siteIds.add(normalizedSiteId)
-        try {
-          return await importedSiteMutationLockContext.run(scope, operation)
-        } finally {
-          // Un trabajo desprendido puede heredar AsyncLocalStorage. Marcar el
-          // scope como cerrado evita que confunda ese contexto con un lock vivo.
-          scope.active = false
-        }
-      })
+      return await db.withAdvisoryLock(
+        lockName,
+        async () => {
+          const scope = {
+            active: true,
+            siteIds: new Set(parentScope?.active === true ? parentScope.siteIds : [])
+          }
+          scope.siteIds.add(normalizedSiteId)
+          try {
+            return await importedSiteMutationLockContext.run(scope, operation)
+          } finally {
+            // Un trabajo desprendido puede heredar AsyncLocalStorage. Marcar el
+            // scope como cerrado evita que confunda ese contexto con un lock vivo.
+            scope.active = false
+          }
+        },
+        // La sincronización puede actualizar formularios fuente, cada uno con su
+        // propio candado. El lock de sesión sigue reservado, pero las consultas no
+        // quedan fijadas a esa conexión y PostgreSQL permite adquirir esos locks.
+        { pinConnection: false }
+      )
     } catch (error) {
       if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY' || attempt === 119) throw error
       await new Promise(resolve => setTimeout(resolve, Math.min(25 + (attempt * 5), 150)))

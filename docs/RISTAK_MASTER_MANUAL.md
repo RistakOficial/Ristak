@@ -4834,6 +4834,12 @@ la ruta y cualquier carga pendiente se descarta. En una resubida, la ruta
 permanece sobre el mismo proyecto y conserva la pagina activa cuando todavía
 existe.
 
+Las mutaciones del HTML mantienen un candado distribuido por sitio durante toda
+la operación, pero no fijan las consultas de negocio a la conexión que sostiene
+ese candado. Esto permite que la sincronización actualice de forma segura los
+formularios fuente relacionados bajo sus propios candados, conserve su estado
+actual y evite abrir un candado de sesión dentro de otra transacción PostgreSQL.
+
 Dentro del editor HTML, la guía `Reglas HTML y versión móvil` inicia plegada y el
 usuario puede abrirla u ocultarla sin perder contenido. Exige una versión móvil
 real: `meta viewport`, layout fluido, un `@media (max-width: 640px)` con cambios
