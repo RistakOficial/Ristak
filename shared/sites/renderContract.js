@@ -966,6 +966,8 @@ const RSTK_BASE_CSS = `
 	  .rstk-video-progress{flex:1 1 72px;min-width:32px;position:relative;height:20px;overflow:visible;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
 	  .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:4px;border-radius:inherit;background:color-mix(in srgb,currentColor 22%,transparent);transform:translateY(-50%)}
 	  .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
+	  .rstk-video-player[data-rstk-video-timeline-mode="live_frontier"][data-rstk-video-live-edge="true"] .rstk-video-progress::before{background:currentColor}
+	  .rstk-video-player[data-rstk-video-timeline-mode="live_frontier"][data-rstk-video-live-edge="true"] .rstk-video-progress span{width:100%!important}
 	  .rstk-video-progress:focus-visible{outline:2px solid currentColor;outline-offset:3px}
 	  .rstk-video-timecode{flex:0 0 auto;min-width:82px;height:32px;display:inline-flex;align-items:center;justify-content:center;gap:4px;border-radius:0;background:transparent;color:inherit;padding:0 2px;font-size:.69rem;font-variant-numeric:tabular-nums;font-weight:650;line-height:1;white-space:nowrap}
 	  .rstk-video-timecode span + span{opacity:.68}

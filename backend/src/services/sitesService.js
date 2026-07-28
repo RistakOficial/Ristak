@@ -24774,7 +24774,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   ].filter(Boolean).join(' ')
 
   return `
-    <div class="${classes}" style="${styleVars}">
+    <div class="${classes}" style="${styleVars}" data-rstk-video-timeline-mode="${escapeHtml(timelineMode)}" data-rstk-video-live-edge="${timelineMode === 'live_frontier' ? 'true' : 'false'}">
       <video ${videoSourceAttrs} title="${escapeHtml(block.label || 'Video')}" ${showNativeControls ? 'controls' : ''} ${startsMuted ? 'muted' : ''} ${autoplay ? 'autoplay' : ''} ${loop ? 'loop' : ''} playsinline preload="${preloadMode}" data-rstk-video-speed="${escapeHtml(String(speed))}" style="object-fit:${escapeHtml(fit)}"></video>
       ${showOverlay && showCentralPlay ? `
         <button type="button" class="rstk-video-overlay" data-rstk-video-overlay aria-label="Reproducir video">
@@ -27443,6 +27443,8 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   .rstk-video-progress{flex:1 1 72px;min-width:32px;position:relative;height:20px;border-radius:999px;background:transparent;cursor:pointer;touch-action:none}
   .rstk-video-progress::before{content:"";position:absolute;inset:50% 0 auto;height:4px;border-radius:inherit;background:color-mix(in srgb,currentColor 22%,transparent);transform:translateY(-50%)}
   .rstk-video-progress span{position:absolute;left:0;top:50%;display:block;width:0;height:5px;border-radius:inherit;background:currentColor;transform:translateY(-50%)}
+  .rstk-video-player[data-rstk-video-timeline-mode="live_frontier"][data-rstk-video-live-edge="true"] .rstk-video-progress::before{background:currentColor}
+  .rstk-video-player[data-rstk-video-timeline-mode="live_frontier"][data-rstk-video-live-edge="true"] .rstk-video-progress span{width:100%!important}
   .rstk-video-timecode{flex:0 0 auto;min-width:82px;height:32px;display:inline-flex;align-items:center;justify-content:center;gap:4px;border-radius:0;background:transparent;color:inherit;padding:0 2px;font-size:.69rem;font-variant-numeric:tabular-nums;font-weight:650;line-height:1;white-space:nowrap}
   .rstk-video-timecode span + span{opacity:.68}
   .rstk-video-speed-control{position:relative;min-width:52px;height:32px;display:inline-flex;align-items:center;border-radius:999px;background:color-mix(in srgb,currentColor 12%,transparent);color:inherit;padding:0 20px 0 10px}
@@ -27707,8 +27709,12 @@ function buildVideoPlayerRuntimeScript() {
 	            : sourceDuration;
 	          const elapsed = Math.min(visibleDuration || Infinity, current);
 	          const remaining = Math.max(0, visibleDuration - elapsed);
-	          const ratio = visibleDuration > 0 ? Math.max(0, Math.min(1, elapsed / visibleDuration)) : 0;
-	          const liveEdge = mode === 'live_frontier' && visibleDuration > 0 && remaining <= 0.6;
+	          const ratio = visibleDuration > 0
+	            ? Math.max(0, Math.min(1, elapsed / visibleDuration))
+	            : mode === 'live_frontier'
+	              ? 1
+	              : 0;
+	          const liveEdge = mode === 'live_frontier' && remaining <= 0.6;
 	          return { mode, sourceDuration, visibleDuration, elapsed, remaining, ratio, liveEdge };
 	        };
 	        const enforceTimelineControls = () => {

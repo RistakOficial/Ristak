@@ -60,7 +60,7 @@ const hasHtmlBooleanAttribute = (attrs, name) =>
 
 const getVideoPlayerVisualSignature = (html) => {
   const source = String(html || '')
-  const hostMatch = source.match(/<div class="([^"]*\brstk-video-player\b[^"]*)" style="([^"]*)">/)
+  const hostMatch = source.match(/<div class="([^"]*\brstk-video-player\b[^"]*)" style="([^"]*)"[^>]*>/)
   assert.ok(hostMatch, 'expected rendered custom video player host')
 
   const videoMatch = source.match(/<video\s+([^>]*)>/)
@@ -201,10 +201,14 @@ test('live frontier timeline exposes only the watched edge and replaces native b
   assert.equal(signature.nativeControls, false)
   assert.match(signature.classes, /\brstk-video-custom-controls\b/)
   assert.match(html, /data-rstk-video-timeline-mode="live_frontier"/)
+  assert.match(html, /data-rstk-video-live-edge="true"/)
   assert.match(html, /const timelineMetrics = \(\) =>/)
   assert.match(html, /storedFrontier/)
+  assert.match(html, /mode === 'live_frontier'\s+\?\s+1\s+:\s+0/)
+  assert.match(html, /const liveEdge = mode === 'live_frontier' && remaining <= 0\.6/)
   assert.match(html, /metrics\.liveEdge \? 'EN VIVO'/)
   assert.match(html, /data-rstk-video-live-edge/)
+  assert.match(html, /\.rstk-video-progress span\{width:100%!important\}/)
   assert.match(html, /--rstk-video-source-duration-seconds/)
   assert.match(html, /const seekToAbsoluteTime = seconds =>/)
   assert.match(html, /safeRatio \* visibleDuration/)

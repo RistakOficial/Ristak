@@ -903,8 +903,9 @@ tiempo real usando la duración del video activo. Así conserva una lectura
 
 `videoTimelineMode:"duration"` conserva un reproductor normal y expone la
 duración completa. `videoTimelineMode:"live_frontier"` presenta únicamente la
-franja alcanzada: mientras la persona avanza, la barra termina en `EN VIVO`; si
-retrocede, el restante representa la distancia para volver a su frente visto.
+franja alcanzada: mientras la persona avanza, la barra se ve llena y termina en
+`EN VIVO`, sin pista gris ni números que sugieran contenido futuro; si retrocede,
+el restante representa la distancia para volver por su historial ya visto.
 En este modo los controles nativos del navegador se sustituyen por la barra
 limpia, porque el navegador siempre revelaría la duración física. El modo
 `live_frontier` es presentación; la política `watched_only` es la que hace

@@ -5353,8 +5353,10 @@ La presentación de la línea de tiempo es independiente del gate.
 `videoTimelineMode:"duration"` muestra desde el inicio la duración física
 completa, como un reproductor normal. `videoTimelineMode:"live_frontier"` hace
 que barra, duración, porcentaje y restante terminen en el máximo punto alcanzado:
-en el borde muestran `EN VIVO` y, al retroceder, enseñan cuánto falta para volver
-al frente visto. Como los controles nativos del navegador siempre revelarían el
+en el borde muestran `EN VIVO`, la barra queda llena sin una pista gris que sugiera
+contenido futuro y, al retroceder, enseñan cuánto falta para volver al frente
+visto. Esa zona atenuada al retroceder representa sólo historia ya disponible,
+nunca la duración física restante. Como los controles nativos del navegador siempre revelarían el
 archivo completo, Ristak usa sus controles limpios en ese modo. La combinación
 recomendada para VSL es `live_frontier` + `watched_only` +
 `unique_watched_seconds`; el primero controla la representación, el segundo
@@ -5656,8 +5658,9 @@ controles falsos. Sus grupos de control son:
 - Línea de tiempo: `videoTimelineMode` acepta `duration` o `live_frontier`.
   `duration` muestra el archivo completo desde el inicio. `live_frontier`
   calcula barra, duración, porcentaje y restante contra el punto máximo ya
-  alcanzado: marca `EN VIVO` en el borde y, después de retroceder, muestra la
-  distancia para volver. En este modo Ristak sustituye `native` por `clean`
+  alcanzado: marca `EN VIVO` en el borde, llena toda la barra sin mostrar futuro
+  y, después de retroceder, muestra únicamente la distancia para volver por el
+  historial ya visto. En este modo Ristak sustituye `native` por `clean`
   porque los controles del navegador revelarían la duración física. También
   desactiva el progreso truqueado, que contradice una frontera en vivo. Esta
   presentación no reemplaza `data-rstk-video-gate-seek-policy="watched_only"`;

@@ -37495,16 +37495,18 @@ const VideoPlayerPreview: React.FC<{
     return duration > 0 ? Math.min(1, Math.max(0, video.currentTime / duration)) : 0
   }, [])
   const getVisibleVideoProgressRatio = useCallback(() => {
-    if (previewLoopRef.current && !hasStartedPlaybackRef.current) return 0
+    if (previewLoopRef.current && !hasStartedPlaybackRef.current) {
+      return timelineMode === 'live_frontier' ? 1 : 0
+    }
     if (timelineMode === 'live_frontier') {
       const video = videoRef.current
-      if (!video) return 0
+      if (!video) return 1
       const currentTime = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0
       if (hasStartedPlaybackRef.current) {
         maxReachedTimeRef.current = Math.max(maxReachedTimeRef.current, currentTime)
       }
       const visibleDuration = Math.max(currentTime, maxReachedTimeRef.current)
-      return visibleDuration > 0 ? Math.min(1, currentTime / visibleDuration) : 0
+      return visibleDuration > 0 ? Math.min(1, currentTime / visibleDuration) : 1
     }
     return getVideoTrickProgressRatio(settings, getVideoProgressRatio())
   }, [getVideoProgressRatio, settings, timelineMode])
@@ -38334,7 +38336,7 @@ const VideoPlayerPreview: React.FC<{
     : currentTimeSeconds
   const remainingTimeSeconds = Math.max(0, durationSeconds - displayedTimeSeconds)
   const elapsedTimeLabel = formatSitesTimecode(displayedTimeSeconds)
-  const isLiveEdge = timelineMode === 'live_frontier' && durationSeconds > 0 && remainingTimeSeconds <= 0.6
+  const isLiveEdge = timelineMode === 'live_frontier' && remainingTimeSeconds <= 0.6
   const remainingTimeLabel = isLiveEdge ? 'EN VIVO' : `-${formatSitesTimecode(remainingTimeSeconds)}`
 
   return (
@@ -38434,7 +38436,7 @@ const VideoPlayerPreview: React.FC<{
               aria-label="Progreso del video"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={Math.round(progress * 100)}
+              aria-valuenow={isLiveEdge ? 100 : Math.round(progress * 100)}
               aria-valuetext={isLiveEdge
                 ? 'En vivo'
                 : timelineMode === 'live_frontier'
@@ -38446,7 +38448,7 @@ const VideoPlayerPreview: React.FC<{
               onPointerCancel={handleProgressPointerEnd}
               onKeyDown={handleProgressKeyDown}
             >
-              <span style={{ width: formatVideoProgressPercent(progress) }} />
+              <span style={{ width: isLiveEdge ? '100%' : formatVideoProgressPercent(progress) }} />
             </div>
           )}
           {showCustomTime && (
