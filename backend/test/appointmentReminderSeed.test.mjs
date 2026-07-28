@@ -7,30 +7,68 @@ import {
   updateAppointmentReminder
 } from '../src/services/appointmentRemindersService.js'
 
-test('el arranque concurrente crea una sola vez el recordatorio predeterminado', async () => {
+test('el arranque concurrente crea una sola vez los dos mensajes predeterminados', async () => {
   await db.run("DELETE FROM app_config WHERE config_key = 'appointment_reminders_seeded'")
   await db.run('DELETE FROM appointment_reminders')
 
   await Promise.all(Array.from({ length: 8 }, () => ensureDefaultAppointmentReminder()))
 
   const seededRows = await db.all(`
-    SELECT id, name, system_key, enabled, message_type, timing_anchor,
-      offset_value, offset_unit, template_name, confirmation_success_action
+    SELECT id, name, system_key, enabled, message_type, ai_enabled, timing_anchor,
+      offset_value, offset_unit, template_name, smart_enabled,
+      confirmation_success_action
     FROM appointment_reminders
-    WHERE system_key = 'default_one_day_before'
+    WHERE system_key IN ('default_on_booking', 'default_one_day_before')
+    ORDER BY position ASC
   `)
-  assert.equal(seededRows.length, 1)
-  assert.equal(seededRows[0].name, 'Confirmación 1 día antes')
-  assert.equal(seededRows[0].enabled, 0)
-  assert.equal(seededRows[0].message_type, 'confirmation')
-  assert.equal(seededRows[0].timing_anchor, 'before_appointment')
-  assert.equal(seededRows[0].offset_value, 1)
-  assert.equal(seededRows[0].offset_unit, 'days')
-  assert.equal(seededRows[0].template_name, 'confirmacion_cita_dia_anterior')
+  assert.equal(seededRows.length, 2)
+
+  const bookingNotice = seededRows.find(row => row.system_key === 'default_on_booking')
+  assert.equal(bookingNotice.name, 'Aviso al agendar')
+  assert.equal(bookingNotice.enabled, 0)
+  assert.equal(bookingNotice.message_type, 'reminder')
+  assert.equal(bookingNotice.ai_enabled, 0)
+  assert.equal(bookingNotice.timing_anchor, 'after_booking')
+  assert.equal(bookingNotice.offset_value, 0)
+  assert.equal(bookingNotice.offset_unit, 'minutes')
+  assert.equal(bookingNotice.template_name, 'cita_programada')
+  assert.equal(bookingNotice.smart_enabled, 0)
+
+  const confirmation = seededRows.find(row => row.system_key === 'default_one_day_before')
+  assert.equal(confirmation.name, 'Confirmación 1 día antes')
+  assert.equal(confirmation.enabled, 0)
+  assert.equal(confirmation.message_type, 'confirmation')
+  assert.equal(confirmation.ai_enabled, 0)
+  assert.equal(confirmation.timing_anchor, 'before_appointment')
+  assert.equal(confirmation.offset_value, 1)
+  assert.equal(confirmation.offset_unit, 'days')
+  assert.equal(confirmation.template_name, 'confirmacion_cita_dia_anterior')
+  assert.equal(confirmation.smart_enabled, 1)
   assert.deepEqual(
-    JSON.parse(seededRows[0].confirmation_success_action),
+    JSON.parse(confirmation.confirmation_success_action),
     ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
   )
+
+  const total = await db.get('SELECT COUNT(*) AS total FROM appointment_reminders')
+  assert.equal(Number(total.total), 2)
+})
+
+test('una cuenta con mensajes existentes no recibe el paquete de una cuenta nueva', async () => {
+  await db.run("DELETE FROM app_config WHERE config_key = 'appointment_reminders_seeded'")
+  await db.run('DELETE FROM appointment_reminders')
+
+  const existingReminder = await createAppointmentReminder({
+    name: 'Configuración existente',
+    enabled: true,
+    timingAnchor: 'before_appointment',
+    offsetValue: 2,
+    offsetUnit: 'hours'
+  })
+
+  await ensureDefaultAppointmentReminder()
+
+  const rows = await db.all('SELECT id, system_key FROM appointment_reminders')
+  assert.deepEqual(rows, [{ id: existingReminder.id, system_key: null }])
 })
 
 test('un cliente anterior no borra acciones múltiples si reenvía el valor singular sin cambiarlo', async () => {

@@ -189,10 +189,13 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   por QR, API-only sale por API y API+QR del mismo número intenta API primero y
   usa QR sólo si la API realmente pierde disponibilidad. Una plantilla sin
   aprobar o una ventana cerrada no cambian a QR.
-- Una cuenta nueva recibe únicamente `Confirmación 1 día antes`, configurado
-  como tipo Confirmación y con el mensaje automático pausado. Lleva una `system_key`
-  única para que dos arranques simultáneos no lo dupliquen y nunca envía nada
-  hasta que el usuario lo active.
+- Una cuenta nueva recibe únicamente dos mensajes automáticos, ambos pausados:
+  `Aviso al agendar`, exactamente al crear la cita, sin horario inteligente y
+  con la plantilla `cita_programada`; y `Confirmación 1 día antes`, con IA
+  apagada y la plantilla `confirmacion_cita_dia_anterior`. Cada fila lleva una
+  `system_key` única para que dos arranques simultáneos no la dupliquen. Las
+  cuentas existentes no reciben este paquete y nada se envía hasta que el
+  usuario active cada mensaje.
 - Si una cita se agenda después de la hora calculada para un recordatorio
   `before_appointment`, ese recordatorio se omite: no se aprovecha la tolerancia
   de reintento para mandarlo como si fuera la confirmación de la reserva. Un aviso

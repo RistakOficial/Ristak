@@ -3868,13 +3868,18 @@ tres horas. La confirmacion inmediata de una reserva, cuando el usuario la
 configura, debe usar `after_booking` y la plantilla `cita_programada`, que muestra
 la fecha y hora reales de la cita.
 
-Una cuenta nueva recibe una sola fila inicial: `Confirmación 1 día antes`, con
+Una cuenta nueva recibe exactamente dos filas iniciales, ambas pausadas. `Aviso
+al agendar` usa `after_booking`, offset cero, horario inteligente apagado y la
+plantilla `cita_programada`, por lo que queda listo para salir exactamente cuando
+se crea la cita. `Confirmación 1 día antes` usa
 `message_type='confirmation'`, ancla `before_appointment`, plantilla
-`confirmacion_cita_dia_anterior` y `enabled=0`. Nace pausada para que no se envie
-nada hasta que el usuario revise y active su configuracion. Esta fila lleva
-`system_key='default_one_day_before'` y un índice único parcial. Así dos
-instancias que arrancan al mismo tiempo no pueden sembrarlo dos veces. Además,
-cada confirmación nueva selecciona por defecto sus acciones combinables:
+`confirmacion_cita_dia_anterior`, `ai_enabled=0` y offset de un día. Nada se
+envía hasta que el usuario revise y active cada configuración. Las filas llevan
+`system_key='default_on_booking'` y `system_key='default_one_day_before'`, más
+un índice único parcial; así dos instancias que arrancan al mismo tiempo no
+pueden duplicarlas. Si la cuenta ya tenía cualquier mensaje automático, este
+paquete no se agrega. Además, cada confirmación nueva selecciona por defecto sus
+acciones combinables:
 tarjeta en el chat, notificación push, etiqueta temporal `Asistirá a cita` y
 marcar la cita como confirmada. Esta última es obligatoria; las otras tres se
 pueden activar o quitar desde un dropdown con checks. Las filas históricas
