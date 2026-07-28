@@ -2671,6 +2671,7 @@ ${buildImportedHtmlCustomCalendarRulesText()}
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, las tres condiciones de acciones, formulario de video y eventos Meta/CAPI configurados.
 - El slot nativo de video no controla la geometría: no le agregues width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que lo fuercen vertical u horizontal. Si necesitas una columna o ubicación específica, usa un contenedor padre. Ristak detecta la orientación real del archivo y gobierna proporción, ancho responsive y tamaño desde el editor.
 - No fabriques franjas laterales, marcos negros ni una falsa relación de aspecto alrededor del slot. En modo automático, un video vertical queda centrado y contenido en computadora, pero ocupa todo el ancho disponible en móvil conservando 9:16; el usuario también puede elegir ancho completo o manual por vista desde el panel.
+- El padre inmediato del slot solo puede limitar max-width, margen y alineación. No lo conviertas en otro reproductor con height/min-height, aspect-ratio, padding porcentual, overflow hidden, borde, fondo, sombra ni pseudo-elementos ::before/::after para reservar proporción; el único frame visible debe ser el player nativo.
 ${buildImportedHtmlVideoPlayerRulesText()}
 ${buildImportedHtmlCustomSocialProfileRulesText()}
 ${buildImportedHtmlVideoActionTargetRulesText()}
@@ -28540,6 +28541,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
       '- Ristak configurará el video real, controles, diseño, acciones y eventos desde el editor.',
       '- No pongas width/max-width, height/min-height/max-height, aspect-ratio, padding porcentual, overflow recortado ni clases que fuercen orientación en el slot. Para ubicarlo usa un contenedor padre; Ristak detecta la orientación real del archivo y controla su proporción y ancho responsive.',
       '- No dibujes franjas laterales ni un marco negro falso. En automático, el video vertical queda contenido en computadora y usa todo el ancho disponible en móvil conservando 9:16; ancho completo y ancho manual por vista se configuran en el panel.',
+      '- El padre inmediato del slot solo puede usar max-width, margen y alineación. No le pongas height/min-height, aspect-ratio, padding porcentual, overflow hidden, borde, fondo, sombra ni ::before/::after para reservar proporción: eso crea un segundo frame y deja franjas alrededor del video.',
       buildImportedHtmlVideoPlayerRulesText(),
       buildImportedHtmlVideoGateRulesText(),
       '- Si mi solicitud condiciona elementos al video, declara las reglas en data-rstk-video-rules dentro del mismo slot. Cada regla necesita id estable, triggerType, triggerValue, action, targetBlockIds y before cuando aplique.',

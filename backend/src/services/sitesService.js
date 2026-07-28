@@ -28757,7 +28757,10 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::before,
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
 .rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;flex:0 1 auto!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
-.rstk-imported-native-video[data-rstk-native-mounted="true"]{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var(--rstk-native-slot-padding,0)!important;background-color:var(--rstk-native-slot-background,transparent)!important;box-shadow:none!important}
+.rstk-imported-native-video[data-rstk-native-mounted="true"]{position:static!important;inset:auto!important;display:block!important;width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var(--rstk-native-slot-padding,0)!important;background-color:var(--rstk-native-slot-background,transparent)!important;box-shadow:none!important}
+.rstk-imported-native-video-frame[data-rstk-native-video-frame="legacy"]{height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;aspect-ratio:auto!important;overflow:visible!important;padding:0!important;border:0!important;border-radius:0!important;background:none!important;box-shadow:none!important;isolation:auto!important}
+.rstk-imported-native-video-frame[data-rstk-native-video-frame="legacy"]::before,
+.rstk-imported-native-video-frame[data-rstk-native-video-frame="legacy"]::after{content:none!important;display:none!important}
 .rstk-imported-native-social-profile.rstk-imported-native-custom[data-rstk-native-mounted="true"]{width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;block-size:auto!important;min-block-size:0!important;max-block-size:none!important;aspect-ratio:auto!important;flex-grow:0!important;flex-shrink:0!important;margin-bottom:0!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:140px;border:0;background:transparent}
@@ -28816,6 +28819,52 @@ const IMPORTED_NATIVE_VIDEO_LAYOUT_CSS = `<style data-rstk-imported-native-video
 @media (max-width:760px){.rstk-imported-native-video > .rstk-video-portrait.rstk-video-wauto:not(.rstk-video-form-gate-fit-wide){width:100%;margin-left:auto;margin-right:auto}}
 </style>`
 
+// Compatibilidad con HTML anterior que envolvía el slot nativo en un segundo
+// "reproductor": un padre de hijo único con aspect-ratio o con el clásico
+// ::before + padding porcentual. Ese marco duplica la geometría del player real
+// y deja franjas, bordes o huecos cuando el archivo no coincide exactamente con
+// la proporción inventada. Sólo marcamos ese patrón concreto; un padre neutro que
+// controla max-width, margen o alineación permanece intacto.
+const IMPORTED_NATIVE_VIDEO_FRAME_NORMALIZER_SCRIPT = `<script data-rstk-imported-native-video-frame-normalizer>
+(() => {
+  const SLOT_SELECTOR = '.rstk-imported-native-video[data-rstk-native-mounted="true"]';
+  const FRAME_ATTRIBUTE = 'data-rstk-native-video-frame';
+  const numericCss = value => {
+    const parsed = Number.parseFloat(String(value || '0'));
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const pseudoReservesSpace = (element, pseudo) => {
+    const style = window.getComputedStyle(element, pseudo);
+    const content = String(style.content || '').trim().toLowerCase();
+    if (!content || content === 'none' || content === 'normal' || style.display === 'none') return false;
+    return numericCss(style.paddingTop) > 0 ||
+      numericCss(style.paddingBottom) > 0 ||
+      numericCss(style.height) > 0 ||
+      numericCss(style.minHeight) > 0;
+  };
+  const normalize = () => {
+    document.querySelectorAll(SLOT_SELECTOR).forEach(slot => {
+      const frame = slot.parentElement;
+      if (!frame || frame === document.body || frame === document.documentElement) return;
+      if (frame.children.length !== 1 || frame.firstElementChild !== slot) return;
+      const style = window.getComputedStyle(frame);
+      const aspectRatio = String(style.aspectRatio || '').trim().toLowerCase();
+      const hasForcedAspect = Boolean(aspectRatio && aspectRatio !== 'auto');
+      const hasRatioSpacer = pseudoReservesSpace(frame, '::before') || pseudoReservesSpace(frame, '::after');
+      if (!hasForcedAspect && !hasRatioSpacer) return;
+      frame.classList.add('rstk-imported-native-video-frame');
+      frame.setAttribute(FRAME_ATTRIBUTE, 'legacy');
+    });
+  };
+  normalize();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', normalize, { once: true });
+  if (window.MutationObserver) {
+    const observer = new MutationObserver(normalize);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+})();
+</script>`
+
 // Tematiza los elementos nativos importados IGUAL que el editor de sitios: inyecta el
 // stylesheet base del sitio (RSTK_BASE_CSS + :root de tema) pero ESCOPADO a
 // .rstk-imported-native-slot con el mismo motor que usa el canvas del editor
@@ -28849,6 +28898,7 @@ function buildImportedNativeElementRuntimeInjection(runtimeState = {}, site = nu
     // especificidad gana el tema del usuario (adiós a los fallbacks CanvasText).
     site ? buildImportedNativeThemeStyle(site) : '',
     runtimeState.hasVideo ? IMPORTED_NATIVE_VIDEO_LAYOUT_CSS : '',
+    runtimeState.hasVideo ? IMPORTED_NATIVE_VIDEO_FRAME_NORMALIZER_SCRIPT : '',
     runtimeState.hasNativeElements ? `<script>
     (() => {
       window.addEventListener('message', event => {

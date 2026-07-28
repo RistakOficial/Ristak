@@ -739,7 +739,22 @@ test('imported HTML native video slots render the real Ristak player and video a
       <html>
         <head>
           <style>
+            .ai-video-frame {
+              position: relative !important;
+              overflow: hidden !important;
+              border: 1px solid #7c3aed !important;
+              border-radius: 24px !important;
+              background: #080a12 !important;
+              box-shadow: 0 12px 40px rgba(0, 0, 0, .4) !important;
+            }
+            .ai-video-frame::before {
+              display: block;
+              padding-top: 177.777% !important;
+              content: "";
+            }
             .ai-video-slot {
+              position: absolute !important;
+              inset: 0 !important;
               width: 360px !important;
               max-width: 360px !important;
               height: 640px !important;
@@ -752,7 +767,9 @@ test('imported HTML native video slots render the real Ristak player and video a
         </head>
         <body>
           <main>
-            <section class="ai-video-slot" style="height:640px;aspect-ratio:9/16" data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+            <div class="ai-video-frame">
+              <section class="ai-video-slot" style="height:640px;aspect-ratio:9/16" data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+            </div>
             <a class="button" data-rstk-button-action="next_page" data-rstk-button-actions='[{"id":"cta-final","action":"next_page"}]' href="?page=page-2">Continuar</a>
           </main>
         </body>
@@ -803,7 +820,68 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(html, /const startPreviewLoop = \(\) =>/)
     assert.match(html, /const syncVideoOrientation = \(host, video\) =>/)
     assert.equal((html.match(/const HLS_SCRIPT_URL/g) || []).length, 1)
-    assert.match(html, /\.rstk-imported-native-video\[data-rstk-native-mounted="true"\]\{width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var\(--rstk-native-slot-padding,0\)!important;background-color:var\(--rstk-native-slot-background,transparent\)!important;box-shadow:none!important\}/)
+    assert.match(html, /\.rstk-imported-native-video\[data-rstk-native-mounted="true"\]\{position:static!important;inset:auto!important;display:block!important;width:100%!important;max-width:none!important;height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important;padding:var\(--rstk-native-slot-padding,0\)!important;background-color:var\(--rstk-native-slot-background,transparent\)!important;box-shadow:none!important\}/)
+    assert.match(html, /\.rstk-imported-native-video-frame\[data-rstk-native-video-frame="legacy"\]\{height:auto!important;min-height:0!important;max-height:none!important;/)
+    assert.match(html, /script data-rstk-imported-native-video-frame-normalizer/)
+    assert.match(html, /frame\.children\.length !== 1 \|\| frame\.firstElementChild !== slot/)
+    assert.match(html, /pseudoReservesSpace\(frame, '::before'\) \|\| pseudoReservesSpace\(frame, '::after'\)/)
+    assert.match(html, /frame\.setAttribute\(FRAME_ATTRIBUTE, 'legacy'\)/)
+    const normalizerSource = html.match(/<script data-rstk-imported-native-video-frame-normalizer>([\s\S]*?)<\/script>/)?.[1] || ''
+    const makeFrame = ({ legacy = false } = {}) => {
+      const attributes = new Map()
+      const classes = new Set()
+      const frame = {
+        attributes,
+        classes,
+        children: [],
+        firstElementChild: null,
+        classList: { add: value => classes.add(value) },
+        setAttribute: (name, value) => attributes.set(name, value),
+        styleState: {
+          base: { aspectRatio: 'auto' },
+          before: legacy
+            ? { content: '""', display: 'block', paddingTop: '640px', paddingBottom: '0px', height: '0px', minHeight: '0px' }
+            : { content: 'none', display: 'none', paddingTop: '0px', paddingBottom: '0px', height: '0px', minHeight: '0px' },
+          after: { content: 'none', display: 'none', paddingTop: '0px', paddingBottom: '0px', height: '0px', minHeight: '0px' }
+        }
+      }
+      const slot = { parentElement: frame }
+      frame.children = [slot]
+      frame.firstElementChild = slot
+      return { frame, slot }
+    }
+    const legacyFixture = makeFrame({ legacy: true })
+    const neutralFixture = makeFrame()
+    const documentElement = {}
+    const documentStub = {
+      body: {},
+      documentElement,
+      readyState: 'complete',
+      querySelectorAll: () => [legacyFixture.slot, neutralFixture.slot],
+      addEventListener: () => undefined
+    }
+    class MutationObserverStub {
+      observe() {}
+    }
+    const windowStub = {
+      MutationObserver: MutationObserverStub,
+      getComputedStyle: (element, pseudo = '') => (
+        pseudo === '::before'
+          ? element.styleState.before
+          : pseudo === '::after'
+            ? element.styleState.after
+            : element.styleState.base
+      )
+    }
+    vm.runInNewContext(normalizerSource, {
+      document: documentStub,
+      window: windowStub,
+      MutationObserver: MutationObserverStub,
+      Number
+    })
+    assert.equal(legacyFixture.frame.attributes.get('data-rstk-native-video-frame'), 'legacy')
+    assert.equal(legacyFixture.frame.classes.has('rstk-imported-native-video-frame'), true)
+    assert.equal(neutralFixture.frame.attributes.has('data-rstk-native-video-frame'), false)
     assert.match(html, /\.rstk-imported-native-video > \.rstk-video\{width:var\(--rstk-media-width,100%\);margin-left:var\(--rstk-media-margin-left,auto\);margin-right:var\(--rstk-media-margin-right,auto\)\}/)
     assert.match(html, /\.rstk-imported-native-video > \.rstk-video-portrait\{width:var\(--rstk-media-width,44%\)\}/)
     assert.match(html, /@media \(max-width:760px\)\{\.rstk-imported-native-video > \.rstk-video-portrait\.rstk-video-wauto:not\(\.rstk-video-form-gate-fit-wide\)\{width:100%;margin-left:auto;margin-right:auto\}\}/)

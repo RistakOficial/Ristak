@@ -5006,6 +5006,17 @@ por separado en computadora, tablet y móvil. El HTML importado no debe fabricar
 franjas laterales, un marco negro ni otra relación de aspecto: el slot permanece
 neutro y el reproductor nativo resuelve su geometría.
 
+El padre inmediato del slot también debe ser neutro. Puede limitar `max-width`,
+aplicar `margin-inline` o participar en la alineación, pero no puede convertirse
+en un segundo reproductor con `height`/`min-height`, `aspect-ratio`, padding
+porcentual, `overflow` recortado, borde, fondo, sombra o pseudo-elementos
+`::before`/`::after` usados como espaciadores de proporción. Ese patrón produce
+franjas cuando la geometría inventada no coincide exactamente con el archivo.
+Por compatibilidad, preview y publicado detectan un padre de hijo único que
+reserve proporción mediante `aspect-ratio` o el truco de padding en un
+pseudo-elemento y neutralizan solo ese frame legacy. Los padres neutros que
+controlan ancho, margen o alineación no se alteran.
+
 La instrucción compartida para creación y chat HTML resuelve primero cuántos
 videos necesita la página. Si la petición menciona un solo video o no especifica
 variantes, la IA debe declarar exactamente un slot nativo compartido, sin
