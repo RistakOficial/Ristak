@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-27.
+Ultima actualizacion: 2026-07-29.
 
 ## Proposito
 
@@ -388,6 +388,20 @@ deferred y la condición de emparejamiento fresco del intento anterior, cancela 
 espera y abre el siguiente socket de inmediato. No debe responder con un estado
 `reconnecting` viejo que deje el modal sin código, ni cerrar/reemplazar un socket
 sano o uno que ya esté generando QR.
+
+La revisión de WhatsApp Web usa por defecto la versión compatible incluida en la
+versión fijada de Baileys. Ristak no consulta ni fuerza la revisión más nueva en
+cada socket, porque eso puede adelantar el protocolo a los protobufs instalados.
+La excepción automática es un cierre `405` durante el handshake: ese código
+indica que WhatsApp rechazó la revisión cliente. Ristak consulta entonces una
+sola revisión compartida entre los `405` concurrentes del proceso, con timeout y
+cooldown, y sólo la adopta en memoria cuando conserva la misma familia
+`major.secondary` y aumenta la revisión final. La sesión que recibió el `405`
+reintenta de inmediato con presupuesto limpio; otros sockets sanos no se
+reinician. Una respuesta inválida, una familia distinta, un downgrade o un fallo
+de red conserva la versión integrada. `WHATSAPP_WEB_VERSION` mantiene prioridad
+como override manual de emergencia y desactiva esta recuperación automática;
+no se requiere ningún secret, cron ni configuración nueva para el flujo normal.
 
 ## Reglas de Coexistence
 

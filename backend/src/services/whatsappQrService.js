@@ -25,6 +25,9 @@ const CONNECTION_REPLACED_RECONNECT_BASE_DELAY_MS = 5000
 const RECONNECT_MAX_DELAY_MS = 60000
 const MAX_RECONNECT_ATTEMPTS = 8
 const MAX_STALE_AUTH_CONNECTION_CLOSED_ATTEMPTS = 3
+const WHATSAPP_WEB_VERSION_REJECTED_STATUS = 405
+const WHATSAPP_WEB_VERSION_RECOVERY_TIMEOUT_MS = 5000
+const WHATSAPP_WEB_VERSION_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000
 const QR_REPAIR_REQUIRED_STATUS = 'qr_repair_required'
 const QR_SESSION_LEASE_TTL_MS = 90 * 1000
 const QR_SESSION_LEASE_HEARTBEAT_MS = 30 * 1000
@@ -77,6 +80,9 @@ const liveSessions = new Map()
 const qrRecentMessageAcks = new Map()
 let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
+let recoveredWhatsAppWebVersion = null
+let whatsAppWebVersionRecoveryPromise = null
+let lastWhatsAppWebVersionRecoveryAt = 0
 const connectionOpenListeners = new Set()
 
 // Cache de mensajes enviados para responder reintentos de descifrado
@@ -138,6 +144,156 @@ function normalizeWhatsAppWebVersion(value) {
   if (!Array.isArray(value) || value.length !== 3) return null
   const parts = value.map(part => Number(part))
   return parts.every(part => Number.isInteger(part) && part >= 0) ? parts : null
+}
+
+function formatWhatsAppWebVersion(value) {
+  return normalizeWhatsAppWebVersion(value)?.join('.') || 'desconocida'
+}
+
+function sameWhatsAppWebProtocolFamily(left, right) {
+  const normalizedLeft = normalizeWhatsAppWebVersion(left)
+  const normalizedRight = normalizeWhatsAppWebVersion(right)
+  return Boolean(
+    normalizedLeft &&
+    normalizedRight &&
+    normalizedLeft[0] === normalizedRight[0] &&
+    normalizedLeft[1] === normalizedRight[1]
+  )
+}
+
+function isNewerWhatsAppWebVersion(candidate, current) {
+  const normalizedCandidate = normalizeWhatsAppWebVersion(candidate)
+  const normalizedCurrent = normalizeWhatsAppWebVersion(current)
+  return Boolean(
+    normalizedCandidate &&
+    normalizedCurrent &&
+    sameWhatsAppWebProtocolFamily(normalizedCandidate, normalizedCurrent) &&
+    normalizedCandidate[2] > normalizedCurrent[2]
+  )
+}
+
+function getBundledWhatsAppWebVersion(baileys = {}) {
+  return normalizeWhatsAppWebVersion(
+    baileys.defaultConnectionVersion ||
+    baileys.DEFAULT_CONNECTION_CONFIG?.version
+  )
+}
+
+function getConfiguredWhatsAppWebVersion() {
+  return getWhatsAppWebVersionOverride() || recoveredWhatsAppWebVersion
+}
+
+async function withWhatsAppWebVersionRecoveryTimeout(promise) {
+  let timeout = null
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error('Tiempo agotado consultando la revisión compatible de WhatsApp Web'))
+    }, WHATSAPP_WEB_VERSION_RECOVERY_TIMEOUT_MS)
+  })
+
+  try {
+    return await Promise.race([promise, timeoutPromise])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function recoverWhatsAppWebVersionAfterRejection(baileys = {}, currentVersion = null) {
+  if (getWhatsAppWebVersionOverride()) {
+    return { useRecoveredVersion: false, reason: 'manual_override' }
+  }
+
+  const bundledVersion = getBundledWhatsAppWebVersion(baileys)
+  const activeVersion = normalizeWhatsAppWebVersion(currentVersion) || bundledVersion
+  if (!bundledVersion || !activeVersion) {
+    return { useRecoveredVersion: false, reason: 'missing_bundled_version' }
+  }
+
+  if (
+    recoveredWhatsAppWebVersion &&
+    isNewerWhatsAppWebVersion(recoveredWhatsAppWebVersion, activeVersion)
+  ) {
+    return {
+      useRecoveredVersion: true,
+      changed: false,
+      version: recoveredWhatsAppWebVersion,
+      reason: 'cached_recovery'
+    }
+  }
+
+  const fetchLatestVersion = baileys.fetchLatestBaileysVersion || baileys.fetchLatestWaWebVersion
+  if (typeof fetchLatestVersion !== 'function') {
+    return { useRecoveredVersion: false, reason: 'fetch_unavailable' }
+  }
+
+  if (whatsAppWebVersionRecoveryPromise) {
+    const recovery = await whatsAppWebVersionRecoveryPromise
+    if (
+      recovery?.useRecoveredVersion &&
+      !isNewerWhatsAppWebVersion(recovery.version, activeVersion)
+    ) {
+      return { useRecoveredVersion: false, reason: 'already_current' }
+    }
+    return recovery
+  }
+
+  const now = Date.now()
+  if (
+    lastWhatsAppWebVersionRecoveryAt &&
+    now - lastWhatsAppWebVersionRecoveryAt < WHATSAPP_WEB_VERSION_RECOVERY_COOLDOWN_MS
+  ) {
+    return { useRecoveredVersion: false, reason: 'cooldown' }
+  }
+  lastWhatsAppWebVersionRecoveryAt = now
+
+  whatsAppWebVersionRecoveryPromise = (async () => {
+    try {
+      const abortOptions = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? { signal: AbortSignal.timeout(WHATSAPP_WEB_VERSION_RECOVERY_TIMEOUT_MS) }
+        : undefined
+      const result = await withWhatsAppWebVersionRecoveryTimeout(
+        Promise.resolve(fetchLatestVersion(abortOptions))
+      )
+      const candidate = normalizeWhatsAppWebVersion(result?.version)
+
+      if (!candidate) {
+        logger.warn('[WhatsApp QR] WhatsApp rechazó la revisión Web con 405, pero Baileys no devolvió una revisión válida; se conserva la versión integrada')
+        return { useRecoveredVersion: false, reason: 'invalid_candidate' }
+      }
+
+      if (!sameWhatsAppWebProtocolFamily(candidate, bundledVersion)) {
+        logger.warn(
+          `[WhatsApp QR] Se rechazó la revisión Web ${formatWhatsAppWebVersion(candidate)} porque no pertenece a la familia compatible ${bundledVersion[0]}.${bundledVersion[1]}`
+        )
+        return { useRecoveredVersion: false, reason: 'incompatible_family' }
+      }
+
+      if (!isNewerWhatsAppWebVersion(candidate, activeVersion)) {
+        logger.warn(
+          `[WhatsApp QR] WhatsApp rechazó la revisión Web ${formatWhatsAppWebVersion(activeVersion)} con 405, pero no se encontró una revisión compatible más nueva`
+        )
+        return { useRecoveredVersion: false, reason: 'not_newer' }
+      }
+
+      recoveredWhatsAppWebVersion = candidate
+      logger.warn(
+        `[WhatsApp QR] WhatsApp rechazó la revisión Web ${formatWhatsAppWebVersion(activeVersion)} con 405; se adoptó temporalmente ${formatWhatsAppWebVersion(candidate)} para recuperar las sesiones`
+      )
+      return {
+        useRecoveredVersion: true,
+        changed: true,
+        version: candidate,
+        reason: 'live_recovery'
+      }
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] No se pudo recuperar una revisión Web compatible después del 405: ${error.message}`)
+      return { useRecoveredVersion: false, reason: 'fetch_failed' }
+    } finally {
+      whatsAppWebVersionRecoveryPromise = null
+    }
+  })()
+
+  return whatsAppWebVersionRecoveryPromise
 }
 
 function nowIso() {
@@ -1467,6 +1623,8 @@ async function loadBaileys() {
       Browsers: baileys.Browsers || null,
       DEFAULT_CONNECTION_CONFIG: baileys.DEFAULT_CONNECTION_CONFIG || null,
       defaultConnectionVersion: baileys.DEFAULT_CONNECTION_CONFIG?.version || null,
+      fetchLatestBaileysVersion: baileys.fetchLatestBaileysVersion,
+      fetchLatestWaWebVersion: baileys.fetchLatestWaWebVersion,
       initAuthCreds: baileys.initAuthCreds,
       makeCacheableSignalKeyStore: baileys.makeCacheableSignalKeyStore,
       downloadMediaMessage: baileys.downloadMediaMessage,
@@ -1504,6 +1662,9 @@ export function resetWhatsAppQrServiceForTest() {
   }
   baileysRuntime = null
   reconnectDelayOverrideForTest = null
+  recoveredWhatsAppWebVersion = null
+  whatsAppWebVersionRecoveryPromise = null
+  lastWhatsAppWebVersionRecoveryAt = 0
   qrRecentMessageAcks.clear()
   connectionOpenListeners.clear()
 }
@@ -2287,7 +2448,8 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     existing?.last_connected_at
   )
   const lease = await acquireQrSessionLease(phone.id, { waitForRelease: waitForLease, reason: leaseReason })
-  const webVersionOverride = getWhatsAppWebVersionOverride()
+  const configuredWebVersion = getConfiguredWhatsAppWebVersion()
+  const socketWebVersion = configuredWebVersion || getBundledWhatsAppWebVersion(baileys)
 
   closeLiveSession(phone.id, { releaseLease: false })
 
@@ -2334,7 +2496,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
       getMessage: async (key) => qrSentMessageCache.get(cleanString(key?.id)) || undefined,
-      ...(webVersionOverride ? { version: webVersionOverride } : {})
+      ...(configuredWebVersion ? { version: configuredWebVersion } : {})
     })
   } catch (error) {
     await releaseQrSessionLease(lease)
@@ -2521,6 +2683,22 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       const badSession = isBadSessionDisconnect(statusCode, DisconnectReason)
       const connectionReplaced = isConnectionReplacedDisconnect(statusCode, lastError, DisconnectReason)
       const restartRequired = isRestartRequiredDisconnect(statusCode, lastError, DisconnectReason)
+      const webVersionRecovery = Number(statusCode) === WHATSAPP_WEB_VERSION_REJECTED_STATUS
+        ? await recoverWhatsAppWebVersionAfterRejection(baileys, socketWebVersion)
+        : null
+
+      // La consulta de recuperación puede tardar unos segundos. Si mientras
+      // tanto el usuario desconectó/regeneró el QR o nació otro socket, este
+      // cierre viejo ya no tiene autoridad para programar una reconexión.
+      if (liveSessions.get(phone.id)?.sock !== sock) {
+        if (liveSessions.get(phone.id)?.openPromise === deferred.promise) return
+        rejectCurrentOpen(new Error(lastError || 'La conexión por QR se reemplazo por otra sesión'))
+        return
+      }
+
+      if (webVersionRecovery?.useRecoveredVersion) {
+        currentReconnectAttempt = 0
+      }
 
       if (loggedOut) {
         // Un 401 significa que WhatsApp ya desvinculo el dispositivo. El auth
@@ -2611,7 +2789,9 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       // a la vez reintentan sincronizadas y WhatsApp las rechaza en rafaga.
       // El 440/connectionReplaced tambien reconecta solo, pero arranca con un
       // poco mas de aire para no pelearse con un proceso viejo durante deploys.
-      const reconnectDelay = getReconnectDelayMs(statusCode, lastError, currentReconnectAttempt, DisconnectReason)
+      const reconnectDelay = webVersionRecovery?.useRecoveredVersion
+        ? 0
+        : getReconnectDelayMs(statusCode, lastError, currentReconnectAttempt, DisconnectReason)
       const reconnectReason = connectionReplaced ? 'sesión reemplazada' : (statusCode || lastError || 'cierre')
       logger.info(`[WhatsApp QR] ${nextStatus === 'restarting' ? 'Reiniciando' : 'Reconectando'} socket ${phone.id} por ${reconnectReason} (${nextReconnectAttempt}/${MAX_RECONNECT_ATTEMPTS})`)
       await upsertSession(phone, {

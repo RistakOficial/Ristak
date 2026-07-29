@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import {
   QR_CONSENT_TEXT,
+  disconnectWhatsAppQrConnection,
   resetWhatsAppQrServiceForTest,
   resumeWhatsAppQrSessions,
   setBaileysRuntimeForTest,
@@ -16,7 +17,9 @@ import { getChatContacts } from '../src/controllers/contactsController.js'
 
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
-const DEFAULT_FAKE_WA_WEB_VERSION = [2, 3000, 1035194821]
+const DEFAULT_FAKE_WA_WEB_VERSION = [2, 3000, 1043857760]
+const STALE_FAKE_WA_WEB_VERSION = [2, 3000, 1035194821]
+const RECOVERED_FAKE_WA_WEB_VERSION = [2, 3000, 1043857760]
 
 function sqlFuture(offsetMs = 60_000) {
   return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
@@ -61,6 +64,7 @@ function createFakeBaileysRuntime(sockets = [], options = {}) {
   const defaultVersion = options.defaultVersion || DEFAULT_FAKE_WA_WEB_VERSION
   const socketUser = options.user || { id: CONNECTED_JID }
   const authRegistered = options.authRegistered ?? true
+  const fetchLatestBaileysVersion = options.fetchLatestBaileysVersion
   const fetchLatestWaWebVersion = options.fetchLatestWaWebVersion ||
     (options.latestWaWebVersion ? async () => ({ version: options.latestWaWebVersion, isLatest: true }) : undefined)
 
@@ -70,6 +74,7 @@ function createFakeBaileysRuntime(sockets = [], options = {}) {
       version: defaultVersion
     },
     defaultConnectionVersion: defaultVersion,
+    fetchLatestBaileysVersion,
     fetchLatestWaWebVersion,
     BufferJSON: {
       replacer: (_key, value) => value,
@@ -260,6 +265,165 @@ test('WhatsApp QR deja la versión en manos de Baileys y usa un navegador lógic
     assert.equal(fetchCalls, 0)
     assert.equal(Object.hasOwn(sockets[0].options, 'version'), false)
     assert.deepEqual(sockets[0].options.browser, ['macOS', 'Google Chrome', 'Ristak'])
+  })
+})
+
+test('WhatsApp QR recupera una revisión Web obsoleta después de un 405 y reintenta de inmediato', async () => {
+  const sockets = []
+  let fetchCalls = 0
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      defaultVersion: STALE_FAKE_WA_WEB_VERSION,
+      fetchLatestBaileysVersion: async () => {
+        fetchCalls += 1
+        return { version: RECOVERED_FAKE_WA_WEB_VERSION, isLatest: true }
+      }
+    }))
+    setWhatsAppQrReconnectDelayForTest(60_000)
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+    assert.equal(Object.hasOwn(sockets[0].options, 'version'), false)
+
+    await sockets[0].emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Failure',
+          output: { statusCode: 405 }
+        }
+      }
+    })
+
+    while (sockets.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    assert.equal(fetchCalls, 1)
+    assert.deepEqual(sockets[1].options.version, RECOVERED_FAKE_WA_WEB_VERSION)
+
+    await sockets[1].emit('connection.update', { connection: 'open' })
+    const session = await db.get(
+      'SELECT status, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    assert.equal(session.status, 'connected')
+    assert.equal(session.last_error, null)
+  })
+})
+
+test('WhatsApp QR no adopta una revisión 405 de otra familia de protocolo', async () => {
+  const sockets = []
+  let fetchCalls = 0
+
+  await withQrFixture({ status: 'connected' }, async () => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      defaultVersion: STALE_FAKE_WA_WEB_VERSION,
+      fetchLatestBaileysVersion: async () => {
+        fetchCalls += 1
+        return { version: [3, 1000, 1], isLatest: true }
+      }
+    }))
+    setWhatsAppQrReconnectDelayForTest(0)
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+
+    await sockets[0].emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Failure',
+          output: { statusCode: 405 }
+        }
+      }
+    })
+
+    while (sockets.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    assert.equal(fetchCalls, 1)
+    assert.equal(Object.hasOwn(sockets[1].options, 'version'), false)
+  })
+})
+
+test('WhatsApp QR conserva la versión integrada si falla la consulta posterior al 405', async () => {
+  const sockets = []
+  let fetchCalls = 0
+
+  await withQrFixture({ status: 'connected' }, async () => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      defaultVersion: STALE_FAKE_WA_WEB_VERSION,
+      fetchLatestBaileysVersion: async () => {
+        fetchCalls += 1
+        throw new Error('WhatsApp Web no disponible')
+      }
+    }))
+    setWhatsAppQrReconnectDelayForTest(0)
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+
+    await sockets[0].emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Failure',
+          output: { statusCode: 405 }
+        }
+      }
+    })
+
+    while (sockets.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    assert.equal(fetchCalls, 1)
+    assert.equal(Object.hasOwn(sockets[1].options, 'version'), false)
+  })
+})
+
+test('WhatsApp QR no revive un socket 405 que el usuario desconectó durante la recuperación', async () => {
+  const sockets = []
+  let resolveLatestVersion
+  const latestVersionPromise = new Promise(resolve => {
+    resolveLatestVersion = resolve
+  })
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
+      defaultVersion: STALE_FAKE_WA_WEB_VERSION,
+      fetchLatestBaileysVersion: () => latestVersionPromise
+    }))
+    setWhatsAppQrReconnectDelayForTest(0)
+
+    const result = await resumeWhatsAppQrSessions({ source: 'test' })
+    assert.equal(result.resumed, 1)
+
+    const closePromise = sockets[0].emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Failure',
+          output: { statusCode: 405 }
+        }
+      }
+    })
+
+    await new Promise(resolve => setTimeout(resolve, 5))
+    await disconnectWhatsAppQrConnection({ phoneNumberId })
+    resolveLatestVersion({ version: RECOVERED_FAKE_WA_WEB_VERSION, isLatest: true })
+    await closePromise
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    const session = await db.get(
+      'SELECT status FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    assert.equal(sockets.length, 1)
+    assert.equal(session.status, 'disconnected')
   })
 })
 

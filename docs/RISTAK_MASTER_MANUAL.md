@@ -2928,7 +2928,15 @@ Para el enlace QR, el socket debe identificarse como un navegador real y logico
 rechazado con `428` antes de emitir un QR. Por estabilidad, Ristak deja que
 Baileys use la version compatible incluida en el paquete y solo acepta
 `WHATSAPP_WEB_VERSION` como override temporal de emergencia: no consulta ni
-fuerza la version mas nueva de WhatsApp Web en cada socket.
+fuerza la version mas nueva de WhatsApp Web en cada socket. Si WhatsApp corta el
+handshake con `405`, Ristak hace una recuperacion acotada: comparte una sola
+consulta concurrente por proceso a la revision que publica Baileys, exige que
+pertenezca a la misma familia de protocolo y que sea mas nueva, la conserva solo
+en memoria y reintenta de
+inmediato sin reiniciar sesiones sanas. La consulta tiene timeout y cooldown;
+si falla, devuelve una familia distinta o no mejora la revision activa, se
+mantiene la version integrada. El override manual tiene prioridad y evita la
+consulta automatica. Este blindaje no agrega cron, secret ni variable obligatoria.
 
 WhatsApp API/YCloud ejecuta al conectar un sync de contactos, pagina el listado
 saliente disponible en `/whatsapp/messages` y reprocesa los eventos

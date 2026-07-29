@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@openai/agents": "^0.11.6",
-    "@whiskeysockets/baileys": "^7.0.0-rc13",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "capi-param-builder-nodejs": "^1.3.1",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
