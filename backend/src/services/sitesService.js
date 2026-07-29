@@ -2564,7 +2564,11 @@ function extractImportedFields(formHtml = '', formIndex = 0) {
   for (const candidate of candidates) {
     const tag = candidate.tag
     const attrs = parseHtmlAttributes(candidate.attrsText)
-    const type = tag === 'input' ? cleanString(attrs.type || 'text').toLowerCase() : tag
+    const type = tag === 'input'
+      ? cleanString(attrs.type || 'text').toLowerCase()
+      : tag === 'select' && Object.prototype.hasOwnProperty.call(attrs, 'multiple')
+        ? 'multiselect'
+        : tag
     if (['hidden', 'submit', 'button', 'reset', 'image'].includes(type)) continue
 
     const stableFieldId = getImportedStableFieldIdFromAttrs(attrs)
@@ -4516,9 +4520,10 @@ function getImportedSourceFieldBlockType(fieldMapping = {}, detectedField = {}) 
   const tag = normalizeImportedFieldKey(detectedField.tag, '')
 
   if (tag === 'textarea' || type === 'textarea' || type === 'paragraph') return 'paragraph'
+  if (type === 'multiselect' || type === 'checkboxes') return 'checkboxes'
   if (tag === 'select' || type === 'select' || type === 'dropdown') return 'dropdown'
   if (type === 'radio') return 'radio'
-  if (type === 'checkbox' || type === 'checkboxes' || type === 'multiselect') return 'checkboxes'
+  if (type === 'checkbox') return 'checkboxes'
   if (type === 'email') return 'email'
   if (type === 'tel' || type === 'phone') return 'phone'
   if (type === 'number') return 'number'
@@ -4561,10 +4566,14 @@ function getImportedSourceFieldSettings({ site, imported, mapping, fieldMapping,
   if (destinationType === 'standard' && IMPORTED_FORM_SYSTEM_FIELDS.has(destinationKey)) {
     settings.systemFieldKey = destinationKey
   } else if (destinationType !== 'ignored') {
+    const configuredDataType = cleanString(
+      fieldMapping?.customFieldDataType || fieldMapping?.custom_field_data_type
+    )
     settings.customFieldKey = normalizeImportedFieldKey(fieldMapping?.customFieldKey || destinationKey, 'custom_field')
     settings.customFieldLabel = cleanString(fieldMapping?.customFieldLabel || fieldMapping?.label || detectedField?.label) || settings.customFieldKey
-    settings.customFieldDataType = cleanString(fieldMapping?.customFieldDataType || fieldMapping?.custom_field_data_type) ||
-      inferImportedDataType(fieldMapping, '')
+    settings.customFieldDataType = destinationType === 'custom' && configuredDataType
+      ? configuredDataType
+      : inferImportedDataType(fieldMapping, '')
     settings.customFieldSyncTarget = cleanString(fieldMapping?.customFieldSyncTarget || fieldMapping?.custom_field_sync_target || 'local')
   }
 
@@ -13830,7 +13839,7 @@ function cleanImportedFieldRoutePatch(currentField = {}, input = {}, definition 
       customFieldDefinitionId: undefined,
       customFieldKey: destinationKey,
       customFieldLabel: cleanString(currentField.label) || destinationKey,
-      customFieldDataType: cleanString(currentField.customFieldDataType || currentField.type) || 'text',
+      customFieldDataType: inferImportedDataType(currentField, ''),
       customFieldSyncTarget: 'local'
     }
   }
@@ -35288,13 +35297,21 @@ function getImportedRawFieldValue(rawFields = {}, mapping = {}) {
 }
 
 function inferImportedDataType(mapping = {}, value = '') {
-  const type = normalizeImportedFieldKey(mapping.customFieldDataType || mapping.custom_field_data_type || mapping.type || mapping.dataType, '')
+  const type = normalizeImportedFieldKey(
+    mapping.type ||
+    mapping.inputType ||
+    mapping.input_type ||
+    mapping.dataType ||
+    mapping.customFieldDataType ||
+    mapping.custom_field_data_type,
+    ''
+  )
   if (type === 'textarea') return 'textarea'
-  if (type === 'select') return Array.isArray(value) ? 'multiselect' : 'select'
-  if (['radio', 'dropdown'].includes(type)) return 'select'
-  if (['checkbox', 'checkboxes'].includes(type)) return 'multiselect'
+  if (['select', 'dropdown'].includes(type)) return Array.isArray(value) ? 'checkboxes' : 'dropdown'
+  if (type === 'radio') return 'radio'
+  if (['checkbox', 'checkboxes', 'multiselect'].includes(type)) return 'checkboxes'
   if (['number', 'currency', 'date', 'time', 'email', 'phone'].includes(type)) return type
-  if (Array.isArray(value)) return 'multiselect'
+  if (Array.isArray(value)) return 'checkboxes'
   return 'text'
 }
 
@@ -35320,7 +35337,11 @@ function addImportedCustomField(customFields, field = {}, value, context = {}) {
   )
   if (!key || isEmptyImportedValue(value)) return
   const label = cleanString(field.customFieldLabel || field.custom_field_label || field.label) || key
-  const dataType = cleanString(field.customFieldDataType || field.custom_field_data_type) || inferImportedDataType(field, value)
+  const explicitDataType = cleanString(field.customFieldDataType || field.custom_field_data_type)
+  const destinationType = cleanString(field.destinationType || field.destination_type || field.saveMode || field.save_mode)
+  const dataType = definitionId && destinationType === 'custom' && explicitDataType
+    ? explicitDataType
+    : inferImportedDataType(field, value)
 
   customFields.push({
     id: definitionId || key,

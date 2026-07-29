@@ -454,9 +454,14 @@ test('stable field ids separate repeated names and drop removed or arbitrary raw
   }
 })
 
-test('public imported submit groups per-option ids by name and keeps radio scalar plus checkbox array values', async () => {
+test('public imported submit stores radio and one-or-many checkbox answers in their typed custom fields', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const email = `typed-html-${suffix}@example.test`
+  const planKey = `plan_grupo_${suffix}`.toLowerCase()
+  const consentKey = `consentimiento_grupo_${suffix}`.toLowerCase()
   const interestsKey = `intereses_grupo_${suffix}`.toLowerCase()
+  const channelsKey = `canales_grupo_${suffix}`.toLowerCase()
+  const customFieldKeys = [planKey, consentKey, interestsKey, channelsKey]
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -478,16 +483,27 @@ test('public imported submit groups per-option ids by name and keeps radio scala
       siteType: 'landing_page',
       fileBase64: Buffer.from(`<!doctype html><html><body>
         <form data-rstk-form-id="preferencias-contacto" data-rstk-label="Preferencias">
+          <label for="email">Correo</label>
+          <input id="email" type="email" name="email" data-rstk-field-id="email">
           <fieldset>
             <legend>Plan</legend>
             <label><input type="radio" name="plan" value="starter" data-rstk-field-id="plan-starter"> Starter</label>
             <label><input type="radio" name="plan" value="pro" data-rstk-field-id="plan-pro"> Pro</label>
           </fieldset>
+          <label>
+            <input type="checkbox" name="consentimiento" value="aceptado" data-rstk-field-id="consentimiento">
+            Acepto contacto
+          </label>
           <fieldset>
             <legend>Intereses</legend>
             <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="interes-ventas"> Ventas</label>
             <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="interes-soporte"> Soporte</label>
           </fieldset>
+          <label for="canales">Canales</label>
+          <select id="canales" name="canales" data-rstk-field-id="canales" multiple>
+            <option value="email">Email</option>
+            <option value="whatsapp">WhatsApp</option>
+          </select>
           <button type="submit">Guardar preferencias</button>
         </form>
       </body></html>`, 'utf8').toString('base64')
@@ -496,30 +512,34 @@ test('public imported submit groups per-option ids by name and keeps radio scala
     sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
 
     const detectedForm = created.import.formMappings.find(mapping => mapping.formId === 'preferencias_contacto')
-    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 2)
+    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 5)
     assert.deepEqual(
       detectedForm.fields.map(field => [field.fieldId, field.type, field.options.map(option => option.value)]),
       [
+        ['email', 'email', []],
         ['plan', 'radio', ['starter', 'pro']],
-        ['intereses', 'checkbox', ['ventas', 'soporte']]
+        ['consentimiento', 'checkbox', ['aceptado']],
+        ['intereses', 'checkbox', ['ventas', 'soporte']],
+        ['canales', 'multiselect', ['email', 'whatsapp']]
       ]
     )
-    assert.ok(detectedForm.fields.every(field => field.hasStableFieldId === false))
+    assert.equal(detectedForm.fields.find(field => field.fieldId === 'plan').hasStableFieldId, false)
+    assert.equal(detectedForm.fields.find(field => field.fieldId === 'intereses').hasStableFieldId, false)
 
-    await updateImportedSiteFieldMapping(siteId, {
-      pagePath: '',
-      formId: 'preferencias_contacto',
-      fieldId: 'plan',
-      destinationType: 'standard',
-      destinationKey: 'message'
-    })
-    await updateImportedSiteFieldMapping(siteId, {
-      pagePath: '',
-      formId: 'preferencias_contacto',
-      fieldId: 'intereses',
-      destinationType: 'new_custom',
-      destinationKey: interestsKey
-    })
+    for (const [fieldId, destinationKey] of [
+      ['plan', planKey],
+      ['consentimiento', consentKey],
+      ['intereses', interestsKey],
+      ['canales', channelsKey]
+    ]) {
+      await updateImportedSiteFieldMapping(siteId, {
+        pagePath: '',
+        formId: 'preferencias_contacto',
+        fieldId,
+        destinationType: 'new_custom',
+        destinationKey
+      })
+    }
 
     await updateSite(siteId, {
       status: 'published',
@@ -539,8 +559,11 @@ test('public imported submit groups per-option ids by name and keeps radio scala
         siteId,
         importedFormId: 'preferencias-contacto',
         rawFields: {
+          email,
           plan: 'pro',
-          intereses: ['ventas', 'soporte']
+          consentimiento: ['aceptado'],
+          intereses: ['ventas', 'soporte'],
+          canales: ['email', 'whatsapp']
         }
       }
     )
@@ -551,16 +574,84 @@ test('public imported submit groups per-option ids by name and keeps radio scala
     )
     assert.ok(submission.form_site_id)
     assert.deepEqual(JSON.parse(submission.raw_fields_json), {
+      email,
       plan: 'pro',
-      intereses: ['ventas', 'soporte']
+      consentimiento: ['aceptado'],
+      intereses: ['ventas', 'soporte'],
+      canales: ['email', 'whatsapp']
     })
     const mapped = JSON.parse(submission.mapped_fields_json)
-    assert.deepEqual(mapped.standard, { message: 'pro' })
-    assert.deepEqual(mapped.custom, { [interestsKey]: ['ventas', 'soporte'] })
+    assert.deepEqual(mapped.standard, { email })
+    assert.deepEqual(mapped.custom, {
+      [planKey]: 'pro',
+      [consentKey]: ['aceptado'],
+      [interestsKey]: ['ventas', 'soporte'],
+      [channelsKey]: ['email', 'whatsapp']
+    })
     assert.deepEqual(mapped.ignored, {})
+
+    const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [result.contactId])
+    const customFields = JSON.parse(contact.custom_fields || '[]')
+    assert.deepEqual(
+      Object.fromEntries(customFields.map(field => [field.fieldKey, {
+        dataType: field.dataType,
+        value: field.value,
+        options: field.options.map(option => option.value)
+      }])),
+      {
+        [planKey]: {
+          dataType: 'radio',
+          value: 'pro',
+          options: ['starter', 'pro']
+        },
+        [consentKey]: {
+          dataType: 'checkboxes',
+          value: ['aceptado'],
+          options: ['aceptado']
+        },
+        [interestsKey]: {
+          dataType: 'checkboxes',
+          value: ['ventas', 'soporte'],
+          options: ['ventas', 'soporte']
+        },
+        [channelsKey]: {
+          dataType: 'checkboxes',
+          value: ['email', 'whatsapp'],
+          options: ['email', 'whatsapp']
+        }
+      }
+    )
+
+    const definitions = await db.all(`
+      SELECT field_key, data_type, options_json
+      FROM contact_custom_field_definitions
+      WHERE field_key IN (?, ?, ?, ?)
+      ORDER BY field_key ASC
+    `, customFieldKeys)
+    assert.deepEqual(
+      Object.fromEntries(definitions.map(definition => [definition.field_key, {
+        dataType: definition.data_type,
+        options: JSON.parse(definition.options_json || '[]').map(option => option.value)
+      }])),
+      {
+        [planKey]: { dataType: 'radio', options: ['starter', 'pro'] },
+        [consentKey]: { dataType: 'checkboxes', options: ['aceptado'] },
+        [interestsKey]: { dataType: 'checkboxes', options: ['ventas', 'soporte'] },
+        [channelsKey]: { dataType: 'checkboxes', options: ['email', 'whatsapp'] }
+      }
+    )
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await deleteSites(sourceFormIds)
+    const definitions = await db.all(
+      'SELECT id FROM contact_custom_field_definitions WHERE field_key IN (?, ?, ?, ?)',
+      customFieldKeys
+    ).catch(() => [])
+    for (const definition of definitions) {
+      await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [definition.id]).catch(() => undefined)
+      await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [definition.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain || '')
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified || '')
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt || '')

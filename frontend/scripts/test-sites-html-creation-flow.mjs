@@ -288,6 +288,16 @@ assert.match(
   'el campo personalizado existente ya asociado debe subir antes de los demás personalizados'
 )
 assert.match(
+  importedFieldPrioritySource,
+  /const getPrioritizedImportedFormFields =[\s\S]*?leftIsSystem[\s\S]*?return leftIsSystem \? -1 : 1[\s\S]*?leftPriority - rightPriority \|\| left\.index - right\.index/,
+  'las filas asociadas a campos del sistema deben mostrarse primero y conservar un orden estable'
+)
+assert.match(
+  sitesSource,
+  /fields: getPrioritizedImportedFormFields\(group\.fields\.map\(detectedField => \{/,
+  'el panel debe aplicar la prioridad operativa a las filas, no solamente a las opciones del selector'
+)
+assert.match(
   importedFieldMappingRowSource,
   /<optgroup label="Campos del sistema">[\s\S]*?<optgroup label="Campos personalizados existentes">[\s\S]*?<optgroup label="Crear campo nuevo">/,
   'los destinos existentes deben aparecer antes de la opción que crea un campo nuevo'

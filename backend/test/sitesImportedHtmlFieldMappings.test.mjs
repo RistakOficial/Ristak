@@ -356,6 +356,138 @@ test('wrapped labels and choice-group labels stay semantic while option labels r
   }
 })
 
+test('new imported choice mappings keep their canonical answer type in the source form', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  let siteId = ''
+  const sourceFormIds = []
+  const fieldKeys = {
+    plan: `plan_html_${suffix}`.toLowerCase(),
+    consent: `consentimiento_html_${suffix}`.toLowerCase(),
+    interests: `intereses_html_${suffix}`.toLowerCase(),
+    channels: `canales_html_${suffix}`.toLowerCase()
+  }
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'tipos-opciones.html',
+      name: `Tipos de opciones HTML ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="preferencias-tipadas" data-rstk-label="Preferencias tipadas">
+          <fieldset>
+            <legend>Plan</legend>
+            <label><input type="radio" name="plan" value="starter" data-rstk-field-id="plan"> Starter</label>
+            <label><input type="radio" name="plan" value="pro" data-rstk-field-id="plan"> Pro</label>
+          </fieldset>
+          <label>
+            <input type="checkbox" name="consentimiento" value="aceptado" data-rstk-field-id="consentimiento">
+            Acepto contacto
+          </label>
+          <fieldset>
+            <legend>Intereses</legend>
+            <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="intereses"> Ventas</label>
+            <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="intereses"> Soporte</label>
+          </fieldset>
+          <label for="canales">Canales</label>
+          <select id="canales" name="canales" data-rstk-field-id="canales" multiple>
+            <option value="email">Email</option>
+            <option value="whatsapp">WhatsApp</option>
+          </select>
+          <button type="submit">Guardar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    let form = activeMapping(created.import, '', 'preferencias_tipadas')
+    assert.deepEqual(
+      form.fields.map(field => [field.fieldId, field.type]),
+      [
+        ['plan', 'radio'],
+        ['consentimiento', 'checkbox'],
+        ['intereses', 'checkbox'],
+        ['canales', 'multiselect']
+      ]
+    )
+
+    const staleTypesByFieldId = {
+      plan: 'select',
+      consentimiento: 'checkbox',
+      intereses: 'multiselect',
+      canales: 'select'
+    }
+    const legacyMappings = created.import.formMappings.map(mapping => (
+      mapping.formId !== 'preferencias_tipadas'
+        ? mapping
+        : {
+            ...mapping,
+            fields: mapping.fields.map(field => ({
+              ...field,
+              customFieldDataType: staleTypesByFieldId[field.fieldId] || field.customFieldDataType
+            }))
+          }
+    ))
+    await db.run(`
+      UPDATE public_site_imports SET
+        form_mappings_json = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE site_id = ?
+    `, [JSON.stringify(legacyMappings), siteId])
+
+    for (const [sourceFieldId, destinationKey] of [
+      ['plan', fieldKeys.plan],
+      ['consentimiento', fieldKeys.consent],
+      ['intereses', fieldKeys.interests],
+      ['canales', fieldKeys.channels]
+    ]) {
+      await updateImportedSiteFieldMapping(siteId, {
+        pagePath: '',
+        formId: 'preferencias_tipadas',
+        fieldId: sourceFieldId,
+        destinationType: 'new_custom',
+        destinationKey
+      })
+    }
+
+    const imported = await getImportedSiteBySiteId(siteId)
+    form = activeMapping(imported, '', 'preferencias_tipadas')
+    assert.deepEqual(
+      form.fields.map(field => [field.fieldId, field.customFieldDataType]),
+      [
+        ['plan', 'radio'],
+        ['consentimiento', 'checkboxes'],
+        ['intereses', 'checkboxes'],
+        ['canales', 'checkboxes']
+      ]
+    )
+
+    const sourceForm = await getSite(form.formSiteId, { includeBlocks: true, includeSubmissions: false })
+    const importedBlocks = sourceForm.blocks
+      .filter(block => block.settings?.importedHtmlSource === true)
+      .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0))
+    assert.deepEqual(
+      importedBlocks.map(block => [
+        block.blockType,
+        block.settings.customFieldDataType,
+        block.options?.map(option => option.value) || []
+      ]),
+      [
+        ['radio', 'radio', ['starter', 'pro']],
+        ['checkboxes', 'checkboxes', ['aceptado']],
+        ['checkboxes', 'checkboxes', ['ventas', 'soporte']],
+        ['checkboxes', 'checkboxes', ['email', 'whatsapp']]
+      ]
+    )
+  } finally {
+    if (siteId) {
+      const imported = await getImportedSiteBySiteId(siteId).catch(() => null)
+      sourceFormIds.push(...(imported?.formMappings || []).map(mapping => mapping.formSiteId))
+    }
+    await deleteSites([siteId, ...sourceFormIds])
+  }
+})
+
 test('per-option ids collapse into four logical questions and legacy mappings normalize without losing their association', async () => {
   const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
   let siteId = ''

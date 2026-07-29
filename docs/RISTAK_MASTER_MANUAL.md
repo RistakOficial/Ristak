@@ -5986,7 +5986,11 @@ destinos del sistema por prioridad operativa: nombre completo, correo,
 telefono/WhatsApp, ciudad, direccion, empresa, nombre, apellido y mensaje. Los
 campos personalizados ya existentes aparecen despues, subiendo al inicio del
 grupo el que ya esta asociado; `Crear campo nuevo` queda al final para evitar
-duplicar un destino existente por accidente. Ciudad, direccion y empresa se
+duplicar un destino existente por accidente. Esa prioridad tambien ordena las
+filas visibles del formulario: todos los campos ya asociados al sistema aparecen
+antes que los personalizados o pendientes, en el mismo orden operativo, mientras
+los demas conservan su orden relativo del HTML. El orden visual no cambia el
+orden de controles ni el submit de la pagina importada. Ciudad, direccion y empresa se
 guardan como campos administrados por el sistema (`city`, `address_1`,
 `company`), no como personalizados paralelos. Por eso no hace falta crear
 previamente todo el catalogo ni salir del panel. En cada fila, el estado
@@ -6015,6 +6019,16 @@ automaticamente solo cuando todas las filas repetidas apuntaban al mismo destino
 Esta recuperacion es exclusiva de controles de opcion, porque en HTML el `name`
 compartido define su grupo; no debilita la identidad estable de inputs,
 textareas o selects independientes.
+
+El tipo de respuesta tambien forma parte del contrato persistente. Un grupo
+`radio` guarda exactamente un valor escalar y crea o conserva un campo
+personalizado de opcion unica. Cualquier grupo `checkbox`, aunque tenga una sola
+opcion, guarda un arreglo completo y usa el tipo canonico `checkboxes`; nunca se
+degrada a una casilla booleana ni reparte sus opciones entre campos distintos.
+Un `<select multiple>` sigue la misma semantica de lista. Las opciones detectadas
+se guardan en la definicion del campo personalizado para que el contacto, las
+automatizaciones y futuras ediciones presenten la misma lista que existe en el
+HTML.
 
 Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente interno
 tratan este contrato como una compuerta obligatoria de entrega, no como una

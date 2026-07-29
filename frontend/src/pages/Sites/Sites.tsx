@@ -20226,6 +20226,7 @@ const importedPanelFieldTypeLabels: Record<string, string> = {
   password: 'Contraseña',
   textarea: 'Texto largo',
   select: 'Desplegable',
+  multiselect: 'Lista múltiple',
   radio: 'Opción única',
   checkbox: 'Casillas'
 }
@@ -20317,7 +20318,11 @@ const collectImportedPanelFormGroups = (doc: Document): ImportedPanelFormGroup[]
 
     for (const fieldElement of elements) {
       const tagName = fieldElement.tagName.toLowerCase() as ImportedPanelFormField['tagName']
-      const inputType = tagName === 'input' ? (fieldElement.getAttribute('type') || 'text').toLowerCase() : tagName
+      const inputType = tagName === 'input'
+        ? (fieldElement.getAttribute('type') || 'text').toLowerCase()
+        : tagName === 'select' && (fieldElement as HTMLSelectElement).multiple
+          ? 'multiselect'
+          : tagName
       if (['hidden', 'submit', 'button', 'reset', 'image', 'file'].includes(inputType)) continue
       const declaredFieldId = getImportedPanelDeclaredStableFieldId(fieldElement)
       const fallbackFieldId = getImportedPanelStableFieldId(fieldElement) || `field_${result.length + 1}`
@@ -21783,7 +21788,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         formTitle: mapping?.formTitle || group.label,
         pagePath: mapping?.pagePath ?? activeCodeFile?.path ?? '',
         present: true,
-        fields: group.fields.map(detectedField => {
+        fields: getPrioritizedImportedFormFields(group.fields.map(detectedField => {
           const normalizedFieldId = normalizeImportedDestinationKey(detectedField.fieldId || detectedField.fieldName, '')
           const matchingFields = mapping?.fields?.filter(candidate => (
             normalizeImportedDestinationKey(candidate.fieldId || candidate.sourceName, '') === normalizedFieldId
@@ -21804,7 +21809,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             present: true,
             options: []
           }
-        })
+        }))
       }
     })
   ), [activeCodeFile?.path, activeImportedFormMappings, detectedImportedFormGroups])
@@ -27390,6 +27395,31 @@ const getPrioritizedImportedSystemFieldOptions = (
     ...importedSystemFieldOptions.filter(option => option.value !== selectedKey)
   ]
 }
+
+const importedSystemFieldPriority = new Map(
+  importedSystemFieldOptions.map((option, index) => [option.value, index])
+)
+
+const getPrioritizedImportedFormFields = (
+  fields: ImportedSiteFieldMapping[] = []
+) => fields
+  .map((field, index) => ({ field, index }))
+  .sort((left, right) => {
+    const leftIsSystem = left.field.destinationType === 'standard' || left.field.saveMode === 'standard'
+    const rightIsSystem = right.field.destinationType === 'standard' || right.field.saveMode === 'standard'
+    if (leftIsSystem !== rightIsSystem) return leftIsSystem ? -1 : 1
+    if (!leftIsSystem) return left.index - right.index
+
+    const leftPriority = importedSystemFieldPriority.get(
+      normalizeImportedDestinationKey(left.field.destinationKey, '')
+    ) ?? importedSystemFieldOptions.length
+    const rightPriority = importedSystemFieldPriority.get(
+      normalizeImportedDestinationKey(right.field.destinationKey, '')
+    ) ?? importedSystemFieldOptions.length
+
+    return leftPriority - rightPriority || left.index - right.index
+  })
+  .map(({ field }) => field)
 
 const getImportedActiveCustomFields = (customFields: CustomFieldDefinition[]) =>
   customFields
