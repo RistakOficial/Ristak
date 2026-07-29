@@ -211,7 +211,10 @@ const contactTools = [
     description: 'Lista contactos archivados que todavía pueden restaurarse.',
     module: 'contacts', access: 'read', scope: 'ristak.read', risk: 'low',
     handler: contactsController.getTrashedContacts,
-    inputSchema: schema({ limit: { type: 'integer', minimum: 1, maximum: 500 } }),
+    inputSchema: schema({
+      search: { type: 'string', maxLength: 200 },
+      limit: { type: 'integer', minimum: 1, maximum: 500 }
+    }),
     query: cleanRequestObject
   }),
   controllerSpec({

@@ -1829,6 +1829,15 @@ Capacidades:
   backfill con fecha anterior nunca deshace una eliminacion intencional. El
   mantenimiento versionado `contact_reengagement_repair_version` corrige el
   historico que ya hubiera quedado como `conversation=200` y `contact=404`.
+- `GET /api/contacts/trash` busca del lado servidor por nombre, correo o telefono
+  antes de aplicar el limite. La comparacion ignora mayusculas/minusculas,
+  acentos y separadores telefonicos, por lo que puede localizar cualquier fila
+  archivada aunque no estuviera en el primer lote visible. `DELETE
+  /api/contacts/trash` vacia el conjunto que ya estaba en la papelera al comenzar
+  la operacion dentro de una sola transaccion: desacopla y conserva los pagos,
+  limpia claims internos y borra permanentemente los contactos. La interfaz
+  exige la confirmacion destructiva canonica con `ELIMINAR`; si el vaciado falla,
+  la transaccion revierte y no deja una papelera parcialmente borrada.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - `contacts.attribution_ad_id` y `contacts.attribution_ad_name` representan el

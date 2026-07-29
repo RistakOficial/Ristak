@@ -18,7 +18,13 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { serializePaymentAmount, serializePaymentRowAmount } from '../utils/paymentAmountSerialization.js'
-import { buildContactSearchClause, buildContactSearchRank, isPhoneSearchText, normalizePhoneDigits } from '../utils/searchText.js'
+import {
+  buildContactSearchClause,
+  buildContactSearchRank,
+  cleanSearchText,
+  isPhoneSearchText,
+  normalizePhoneDigits
+} from '../utils/searchText.js'
 import {
   hashPaginationCursorScope,
   paginationCursorHiddenFiltersScope,
@@ -125,6 +131,7 @@ const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
 const PROVIDER_READ_RECEIPT_TIMEOUT_MS = 3500
 const CONTACT_CONVERSATION_DEFAULT_DEADLINE_MS = 8000
+const CONTACT_TRASH_DELETE_BATCH_SIZE = 200
 const CHAT_AGENT_COMPLETION_SIGNALS_SQL = CONVERSATIONAL_AGENT_COMPLETION_SIGNAL_VALUES
   .map(value => `'${value.replaceAll("'", "''")}'`)
   .join(', ')
@@ -6008,15 +6015,35 @@ export const deleteContact = async (req, res) => {
 export const getTrashedContacts = async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500)
-    const rows = await db.all(
-      `SELECT id, full_name, email, phone, source, deleted_at, total_paid, purchases_count
-       FROM contacts
-       WHERE deleted_at IS NOT NULL
-       ORDER BY deleted_at DESC
-       LIMIT ?`,
-      [limit]
-    )
-    res.json({ success: true, contacts: rows })
+    const search = cleanSearchText(req.query.search, 200)
+    const conditions = ['c.deleted_at IS NOT NULL']
+    const params = []
+
+    if (search) {
+      const searchClause = buildContactSearchClause('c', search)
+      conditions.push(searchClause.condition)
+      params.push(...searchClause.params)
+    }
+
+    const [rows, totalRow] = await Promise.all([
+      db.all(
+        `SELECT c.id, c.full_name, c.email, c.phone, c.source, c.deleted_at,
+                c.total_paid, c.purchases_count
+         FROM contacts c
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY c.deleted_at DESC, c.id ASC
+         LIMIT ?`,
+        [...params, limit]
+      ),
+      db.get('SELECT COUNT(*) AS total FROM contacts WHERE deleted_at IS NOT NULL')
+    ])
+
+    res.json({
+      success: true,
+      contacts: rows,
+      total: Number(totalRow?.total || 0),
+      returned: rows.length
+    })
   } catch (error) {
     logger.error(`Error listando papelera de contactos: ${error.message}`)
     res.status(500).json({ success: false, error: 'Error obteniendo la papelera' })
@@ -6041,25 +6068,111 @@ export const restoreContact = async (req, res) => {
   }
 }
 
+async function permanentlyDeleteTrashedContactRows(transaction, rows) {
+  let deleted = 0
+
+  for (let index = 0; index < rows.length; index += CONTACT_TRASH_DELETE_BATCH_SIZE) {
+    const ids = rows
+      .slice(index, index + CONTACT_TRASH_DELETE_BATCH_SIZE)
+      .map(row => String(row?.id || '').trim())
+      .filter(Boolean)
+    if (ids.length === 0) continue
+
+    const placeholders = ids.map(() => '?').join(', ')
+    // (DB-003) Los pagos sobreviven al contacto para conservar el historial financiero.
+    await transaction.run(
+      `UPDATE payments SET contact_id = NULL WHERE contact_id IN (${placeholders})`,
+      ids
+    )
+    await transaction.run(
+      `DELETE FROM chat_inbound_message_claims WHERE contact_id IN (${placeholders})`,
+      ids
+    )
+    const result = await transaction.run(
+      `DELETE FROM contacts
+       WHERE deleted_at IS NOT NULL
+         AND id IN (${placeholders})`,
+      ids
+    )
+    deleted += Number(result?.changes || 0)
+  }
+
+  return deleted
+}
+
 // (CNT-007 / DB-003) Borra permanentemente un contacto de la papelera, pero CONSERVA sus
 // pagos: los desacopla (contact_id = NULL) antes del borrado para no perder historial financiero.
 export const permanentDeleteContact = async (req, res) => {
   try {
     const { id } = req.params
-    const existing = await db.get('SELECT id, full_name FROM contacts WHERE id = ? AND deleted_at IS NOT NULL', [id])
-    if (!existing) {
+    const deletion = await db.transaction(async transaction => {
+      const lockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+      const existing = await transaction.get(
+        `SELECT id, full_name
+         FROM contacts
+         WHERE id = ? AND deleted_at IS NOT NULL${lockSuffix}`,
+        [id]
+      )
+      if (!existing) return null
+
+      const deleted = await permanentlyDeleteTrashedContactRows(transaction, [existing])
+      return { existing, deleted }
+    })
+
+    if (!deletion?.deleted) {
       return res.status(404).json({ success: false, error: 'Contacto no encontrado en la papelera' })
     }
-    // (DB-003) Conservar los pagos: desacoplarlos del contacto antes de borrarlo (contact_id es nullable).
-    await db.run('UPDATE payments SET contact_id = NULL WHERE contact_id = ?', [id])
-    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [id])
-    await db.run('DELETE FROM contacts WHERE id = ?', [id])
-    logger.info(`Contacto borrado permanentemente (pagos conservados): ${id} (${existing.full_name})`)
-    await recordAudit({ entityType: 'contact', entityId: id, action: 'permanent_delete', actor: req.user, details: { full_name: existing.full_name } })
+
+    logger.info(`Contacto borrado permanentemente (pagos conservados): ${id} (${deletion.existing.full_name})`)
+    await recordAudit({
+      entityType: 'contact',
+      entityId: id,
+      action: 'permanent_delete',
+      actor: req.user,
+      details: { full_name: deletion.existing.full_name }
+    })
     res.json({ success: true, message: 'Contacto borrado permanentemente. Sus pagos se conservaron en el historial.' })
   } catch (error) {
     logger.error(`Error borrando permanentemente contacto ${req.params.id}: ${error.message}`)
     res.status(500).json({ success: false, error: 'Error borrando el contacto' })
+  }
+}
+
+// (CNT-013 / DB-003) Vacía la papelera en una sola transacción. Se bloquea el
+// conjunto inicial para que una restauración concurrente no quede a medias y los
+// contactos que entren a la papelera después de comenzar no se borren por sorpresa.
+export const emptyContactTrash = async (req, res) => {
+  try {
+    const deleted = await db.transaction(async transaction => {
+      const lockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+      const rows = await transaction.all(
+        `SELECT id
+         FROM contacts
+         WHERE deleted_at IS NOT NULL
+         ORDER BY id ASC${lockSuffix}`
+      )
+      return permanentlyDeleteTrashedContactRows(transaction, rows)
+    })
+
+    if (deleted > 0) {
+      await recordAudit({
+        entityType: 'contact',
+        action: 'permanent_delete_all',
+        actor: req.user,
+        details: { count: deleted }
+      })
+    }
+    logger.info(`Papelera de contactos vaciada: ${deleted} contacto(s) borrado(s), pagos conservados`)
+    res.json({
+      success: true,
+      deleted,
+      message: deleted > 0
+        ? `${deleted} contacto(s) se borraron permanentemente. Sus pagos se conservaron en el historial.`
+        : 'La papelera ya estaba vacía.'
+    })
+  } catch (error) {
+    logger.error(`Error vaciando la papelera de contactos: ${error.message}`)
+    res.status(500).json({ success: false, error: 'No se pudo vaciar la papelera' })
   }
 }
 

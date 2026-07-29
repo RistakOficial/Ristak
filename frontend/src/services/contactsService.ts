@@ -22,6 +22,22 @@ export interface ContactStats {
   avgLtvPrev: number
 }
 
+export interface TrashedContact {
+  id: string
+  full_name?: string | null
+  email?: string | null
+  phone?: string | null
+  deleted_at?: string | null
+  total_paid?: number
+  purchases_count?: number
+}
+
+export interface TrashedContactsResult {
+  contacts: TrashedContact[]
+  total: number
+  returned: number
+}
+
 export interface JourneyEvent {
   type: 'page_visit' | 'video_playback' | 'whatsapp_message' | 'meta_message' | 'email_message' | 'contact_created' | 'appointment' | 'appointment_confirmation' | 'payment'
   date: string
@@ -589,9 +605,22 @@ export const contactsService = {
   },
 
   // (CNT-007) Papelera de contactos: listar, restaurar y borrar permanentemente.
-  async getTrashedContacts(): Promise<Array<{ id: string; full_name?: string | null; email?: string | null; phone?: string | null; deleted_at?: string | null; total_paid?: number; purchases_count?: number }>> {
-    const data = await apiClient.get<{ contacts?: any[] }>('/contacts/trash')
-    return (data?.contacts ?? []) as any
+  async getTrashedContacts(search = '', signal?: AbortSignal): Promise<TrashedContactsResult> {
+    const normalizedSearch = search.trim()
+    const data = await apiClient.get<{
+      contacts?: TrashedContact[]
+      total?: number
+      returned?: number
+    }>('/contacts/trash', {
+      params: normalizedSearch ? { search: normalizedSearch } : undefined,
+      signal
+    })
+    const contacts = Array.isArray(data?.contacts) ? data.contacts : []
+    return {
+      contacts,
+      total: Number(data?.total || 0),
+      returned: Number(data?.returned ?? contacts.length)
+    }
   },
 
   async restoreContact(id: string): Promise<void> {
@@ -600,6 +629,14 @@ export const contactsService = {
 
   async permanentlyDeleteContact(id: string): Promise<void> {
     await apiClient.delete(`/contacts/${id}/permanent`)
+  },
+
+  async emptyTrash(): Promise<{ deleted: number; message?: string }> {
+    return apiClient.delete<{ deleted?: number; message?: string }>('/contacts/trash')
+      .then((data) => ({
+        deleted: Number(data?.deleted || 0),
+        message: data?.message
+      }))
   },
 
   async getContactDetails(id: string, options: ContactDetailsOptions = {}): Promise<Contact> {

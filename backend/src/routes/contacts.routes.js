@@ -31,6 +31,7 @@ import {
   getTrashedContacts,
   restoreContact,
   permanentDeleteContact,
+  emptyContactTrash,
   getContactConversation,
   getContactJourney,
   getContactWhatsAppRoutingEvents,
@@ -68,6 +69,7 @@ router.get('/assignable-users', getAssignableUsers)
 router.get('/stats', getContactStats)
 // (CNT-007) Papelera de contactos (debe ir ANTES de '/:id' para no capturarse como un id).
 router.get('/trash', getTrashedContacts)
+router.delete('/trash', emptyContactTrash)
 router.get('/chart', getContactsChart)
 router.get('/custom-fields', getContactCustomFieldDefinitions)
 router.post('/custom-fields', createContactCustomFieldDefinition)

@@ -167,6 +167,98 @@
   gap: var(--spacing-sm);
 }
 
+.trashModalBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.trashDescription,
+.trashState {
+  margin: 0;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.trashState {
+  color: var(--text-mute);
+}
+
+.trashToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.trashSearchControl {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.trashList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  max-height: min(25rem, 48vh);
+  overflow-y: auto;
+}
+
+.trashRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+}
+
+.trashIdentity {
+  min-width: 0;
+}
+
+.trashName,
+.trashMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trashName {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.trashMeta {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+}
+
+.trashActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--spacing-sm);
+}
+
+@media (max-width: 640px) {
+  .trashToolbar,
+  .trashRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .trashSearchControl {
+    flex-basis: auto;
+  }
+
+  .trashActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .actionButton {
   background: none;
   border: none;
