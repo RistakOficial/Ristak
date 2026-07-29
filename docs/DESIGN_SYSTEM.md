@@ -368,7 +368,11 @@ negativos `--neg`.
   formulario y opciones quedan transparentes y sin borde. Las subcategorías,
   incluidos acordeones secundarios, se ordenan con títulos, espacio y divisores,
   nunca con otra card. Inputs, selects, botones, previews, sliders y mensajes de
-  estado sí conservan la forma que comunica su función.
+  estado sí conservan la forma que comunica su función. Cada panel desplazable
+  tiene un solo encabezado fijo dueño de la capa superior y de su fondo opaco.
+  Si dentro vive otro inspector, su encabezado interno debe desplazarse como
+  contenido normal y neutralizar también su `z-index`; nunca puede atravesar o
+  pintar texto encima del encabezado fijo exterior.
   El editor HTML sigue el mismo principio a nivel de workspace: Código, Vista
   previa e Inspector comparten una sola superficie continua. Sus columnas no
   llevan card, radio, sombra ni espacio exterior propio; se separan únicamente

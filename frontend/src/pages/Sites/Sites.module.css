@@ -2303,7 +2303,7 @@
 .importedContentDetailHeader {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 13;
   display: grid;
   gap: 10px;
   padding-bottom: 10px;
@@ -22202,6 +22202,7 @@
 .pageFrame .containerFocused .sitesShellFocused .importedNativeElementInspector .inspectorStickyTop,
 .containerFocused .importedNativeElementInspector .inspectorStickyTop {
   position: static;
+  z-index: auto;
   margin: 0;
   padding: 0 0 12px;
   border-bottom: 1px solid var(--sites-editor-section-border, var(--color-border-subtle));

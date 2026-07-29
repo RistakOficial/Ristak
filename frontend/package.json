@@ -14,6 +14,7 @@
     "test:sites-html-creation-flow": "node scripts/test-sites-html-creation-flow.mjs",
     "test:sites-imported-form-meta-trigger": "node scripts/test-sites-imported-form-meta-trigger.mjs",
     "test:sites-embedded-form-inspector": "node scripts/test-sites-embedded-form-inspector.mjs",
+    "test:sites-inspector-stacking": "node scripts/test-sites-inspector-stacking.mjs",
     "test:appointment-modal-contract": "node scripts/test-appointment-modal-contract.mjs",
     "test:calendar-commercial-reports": "node scripts/test-calendar-commercial-reports.mjs",
     "test:calendar-offline-contract": "node scripts/test-calendar-offline-contract.mjs",

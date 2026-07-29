@@ -4865,6 +4865,11 @@ y `Controles` en Video; tipografia; opciones; formulario o ajustes avanzados—
 se presentan como subcategorias con separadores y espacio, no como tarjetas de
 agrupacion anidadas. Campos, selectores, previews, sliders y otros controles
 funcionales conservan su forma para seguir siendo reconocibles e interactivos.
+El encabezado fijo de cada inspector derecho conserva una superficie opaca por
+encima de su contenido durante todo el desplazamiento. Cuando un detalle avanzado
+contiene otro inspector —por ejemplo un video nativo dentro de HTML importado—,
+el encabezado interior se desplaza debajo del encabezado de detalle y nunca se
+sobrepone a `Volver`, al tipo ni al nombre del elemento seleccionado.
 En el editor HTML importado, Código, Vista previa y el Inspector de elementos
 Ristak forman una sola superficie de trabajo. Las columnas quedan unidas y se
 separan con líneas simples; no tienen cards, radios, sombras ni huecos exteriores
