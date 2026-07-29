@@ -7480,6 +7480,8 @@ Convenciones de formularios para Ristak:
 - Cada conjunto debe vivir en un elemento <form> real con data-rstk-form-id semantico, estable y unico en TODO el sitio, incluso entre paginas; agrega data-rstk-label para el nombre visible del grupo. Ejemplo: <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto" data-rstk-form="lead_capture" method="post">.
 - Cada campo logico debe tener data-rstk-field-id estable y unico dentro de su formulario, ademas de id, name, label visible y autocomplete cuando aplique. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas las opciones comparten data-rstk-field-id y name.
 - Para un formulario de varias pantallas usa data-multistep-form en el <form>, data-form-step="1|2|..." en cada paso, data-form-next y data-form-back en botones type="button", data-form-step-label para el texto de progreso y data-form-progress-bar para la barra. No agregues JavaScript: Ristak valida únicamente el paso visible, avanza, retrocede y enfoca el título.
+- Para exigir una respuesta desarrollada usa minlength="160" (o la cantidad necesaria) en input/textarea. Ristak mantiene el botón data-form-next desactivado y visualmente atenuado hasta alcanzar el mínimo de caracteres sin contar espacios al inicio o al final.
+- En un paso multistep, una opción seleccionada con data-rstk-choice-actions y action="disqualify" se registra y descalifica al presionar data-form-next; no obliga al visitante a completar los pasos posteriores.
 - Resetea el estilo nativo del navegador en tus grupos: fieldset { min-width:0; margin:0; padding:0; border:0 } y legend { padding:0 }. Después agrega tus propios separadores con border-bottom si el diseño los necesita; nunca dejes el borde groove predeterminado.
 - Cambiar copy, clases, estilos, orden o name/id NO cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociacion nueva; conservarlo recupera la anterior aunque el elemento haya desaparecido temporalmente.
 - Agrega data-rstk-field y data-ristak-field en campos estandar para que Ristak los entienda.
@@ -26960,6 +26962,15 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
     : []
 
   return `
+  <style data-rstk-import-form-runtime-style>
+    [data-rstk-minimum-characters-blocked="true"] {
+      filter: grayscale(1) saturate(0) !important;
+      opacity: .56 !important;
+      cursor: not-allowed !important;
+      box-shadow: none !important;
+      transform: none !important;
+    }
+  </style>
   <script>
     (() => {
       const SITE_ID = ${scriptJson(site.id)};
@@ -27255,6 +27266,50 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         const progress = form.querySelector('[data-form-progress-bar], [data-rstk-form-progress-bar], [data-ristak-form-progress-bar], [data-ristack-form-progress-bar]');
         const firstVisibleIndex = steps.findIndex(step => !step.hidden);
         let currentIndex = firstVisibleIndex >= 0 ? firstVisibleIndex : 0;
+        const nextButtonSelector = '[data-form-next], [data-rstk-form-next], [data-ristak-form-next], [data-ristack-form-next]';
+        const minimumCharacterAttributes = [
+          'minlength',
+          'data-rstk-min-characters',
+          'data-ristak-min-characters',
+          'data-ristack-min-characters'
+        ];
+        const readMinimumCharacters = (field) => {
+          const raw = minimumCharacterAttributes
+            .map(name => field.getAttribute && field.getAttribute(name))
+            .find(value => value !== null && value !== undefined && String(value).trim());
+          const minimum = Number.parseInt(String(raw || ''), 10);
+          return Number.isFinite(minimum) && minimum > 0 ? minimum : 0;
+        };
+        const countMeaningfulCharacters = (field) => Array.from(String(field.value || '').trim()).length;
+        const meetsMinimumCharacters = (field) => {
+          const minimum = readMinimumCharacters(field);
+          return minimum <= 0 || countMeaningfulCharacters(field) >= minimum;
+        };
+        const clearOwnedMinimumError = (field) => {
+          if (field.dataset.rstkMinimumCharactersError !== 'true') return;
+          if (typeof field.setCustomValidity === 'function') field.setCustomValidity('');
+          delete field.dataset.rstkMinimumCharactersError;
+        };
+        const syncMinimumCharacterButtons = (step) => {
+          if (!step) return;
+          const fields = Array.from(step.querySelectorAll('input, textarea'))
+            .filter(field => readMinimumCharacters(field) > 0 && !field.disabled);
+          fields.forEach(field => {
+            if (meetsMinimumCharacters(field)) clearOwnedMinimumError(field);
+          });
+          const blocked = fields.some(field => !meetsMinimumCharacters(field));
+          Array.from(step.querySelectorAll(nextButtonSelector)).forEach(button => {
+            if (button.dataset.rstkMinimumCharactersReady !== 'true') {
+              button.dataset.rstkMinimumCharactersReady = 'true';
+              button.dataset.rstkMinimumCharactersInitiallyDisabled = button.disabled ? 'true' : 'false';
+            }
+            const initiallyDisabled = button.dataset.rstkMinimumCharactersInitiallyDisabled === 'true';
+            button.disabled = initiallyDisabled || blocked;
+            button.setAttribute('aria-disabled', button.disabled ? 'true' : 'false');
+            if (blocked) button.setAttribute('data-rstk-minimum-characters-blocked', 'true');
+            else button.removeAttribute('data-rstk-minimum-characters-blocked');
+          });
+        };
 
         const showStep = (index, focusHeading = true) => {
           currentIndex = Math.max(0, Math.min(Number(index) || 0, steps.length - 1));
@@ -27271,6 +27326,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             progress.setAttribute('aria-valuemax', String(steps.length));
             progress.setAttribute('aria-valuenow', String(currentIndex + 1));
           }
+          syncMinimumCharacterButtons(steps[currentIndex]);
           if (!focusHeading) return;
           const heading = steps[currentIndex].querySelector('[data-step-title], [data-rstk-step-title], h1, h2, h3, h4');
           if (heading && typeof heading.focus === 'function') {
@@ -27288,16 +27344,38 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         const validateCurrentStep = () => {
           const fields = Array.from(steps[currentIndex].querySelectorAll('input, select, textarea'))
             .filter(field => !field.disabled && String(field.type || '').toLowerCase() !== 'hidden');
-          const invalidField = fields.find(field => typeof field.checkValidity === 'function' && !field.checkValidity());
+          const invalidField = fields.find(field => {
+            clearOwnedMinimumError(field);
+            const minimum = readMinimumCharacters(field);
+            if (minimum > 0 && !meetsMinimumCharacters(field)) {
+              if (typeof field.setCustomValidity === 'function') {
+                field.setCustomValidity('Escribe al menos ' + minimum + ' caracteres para continuar.');
+                field.dataset.rstkMinimumCharactersError = 'true';
+              }
+              return true;
+            }
+            return typeof field.checkValidity === 'function' && !field.checkValidity();
+          });
           if (!invalidField) return true;
           if (typeof invalidField.reportValidity === 'function') invalidField.reportValidity();
           else if (typeof invalidField.focus === 'function') invalidField.focus();
           return false;
         };
 
-        form.querySelectorAll('[data-form-next], [data-rstk-form-next], [data-ristak-form-next], [data-ristack-form-next]').forEach(button => {
+        form.querySelectorAll(nextButtonSelector).forEach(button => {
           button.addEventListener('click', () => {
-            if (validateCurrentStep()) showStep(currentIndex + 1);
+            if (!validateCurrentStep()) return;
+            const advanceEvent = new CustomEvent('ristak:form-step-advance', {
+              cancelable: true,
+              detail: {
+                currentStep: currentIndex + 1,
+                totalSteps: steps.length,
+                step: steps[currentIndex],
+                button
+              }
+            });
+            if (!form.dispatchEvent(advanceEvent)) return;
+            showStep(currentIndex + 1);
           });
         });
         form.querySelectorAll('[data-form-back], [data-rstk-form-back], [data-ristak-form-back], [data-ristack-form-back]').forEach(button => {
@@ -27307,6 +27385,10 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           const invalidStepIndex = steps.findIndex(step => step.contains(event.target));
           if (invalidStepIndex >= 0 && invalidStepIndex !== currentIndex) showStep(invalidStepIndex, false);
         }, true);
+        form.addEventListener('input', (event) => {
+          if (!event.target || readMinimumCharacters(event.target) <= 0) return;
+          syncMinimumCharacterButtons(steps[currentIndex]);
+        });
 
         showStep(currentIndex, false);
         return { validateCurrentStep, showStep };
@@ -27334,6 +27416,20 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           if (ref && ref.parentNode) ref.parentNode.insertBefore(notice, ref.nextSibling);
           else form.appendChild(notice);
         };
+        form.addEventListener('ristak:form-step-advance', (event) => {
+          const step = event.detail && event.detail.step ? event.detail.step : null;
+          if (!step) return;
+          const immediateAction = collectSelectedChoiceActions(step)
+            .find(item => item.action === 'disqualify') || null;
+          if (!immediateAction) return;
+          event.preventDefault();
+          form.dataset.rstkImmediateDisqualify = 'true';
+          form.rstkImmediateDisqualifySubmitter = event.detail && event.detail.button
+            ? event.detail.button
+            : null;
+          if (typeof form.requestSubmit === 'function') form.requestSubmit();
+          else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        });
         form.addEventListener('change', (event) => {
           const target = event.target;
           if (!target || !target.matches) return;
@@ -27348,7 +27444,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         form.addEventListener('submit', async (event) => {
           event.preventDefault();
           if (multistep && !multistep.validateCurrentStep()) return;
-          const submitter = event.submitter || form.querySelector('[type="submit"], button');
+          const submitter = event.submitter || form.rstkImmediateDisqualifySubmitter || form.querySelector('[type="submit"], button');
           if (submitter) submitter.disabled = true;
           setMessage(form, 'Enviando...', 'loading');
           try {
@@ -27458,6 +27554,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             setMessage(form, error && error.message ? error.message : 'No se pudo enviar el formulario', 'error');
           } finally {
             delete form.dataset.rstkImmediateDisqualify;
+            delete form.rstkImmediateDisqualifySubmitter;
             if (submitter) submitter.disabled = false;
           }
         });

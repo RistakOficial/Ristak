@@ -244,11 +244,15 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
         <section data-form-step="1">
           <fieldset><legend>¿Puedes decidir?</legend>
             <label><input type="radio" name="rol_decision" value="si" data-rstk-field-id="rol-si" required>Sí</label>
-            <label><input type="radio" name="rol_decision" value="no" data-rstk-field-id="rol-no" required>No</label>
+            <label><input type="radio" name="rol_decision" value="no" data-rstk-field-id="rol-no" data-rstk-choice-actions='[{"id":"no-califica","action":"disqualify","buttonMessage":"No califica por ahora."}]' required>No</label>
           </fieldset>
           <button type="button" data-form-next>Continuar</button>
         </section>
         <section data-form-step="2" hidden>
+          <textarea name="situacion" data-rstk-field-id="situacion" minlength="160" required></textarea>
+          <button type="button" data-form-next>Continuar</button>
+        </section>
+        <section data-form-step="3" hidden>
           <input name="email" type="email" data-rstk-field-id="correo" required>
           <button type="button" data-form-back>Anterior</button>
           <button type="submit">Enviar</button>
@@ -268,7 +272,7 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
     assert.equal((createdHtml.match(/\bdata-rstk-import-form\b/g) || []).length, 1)
     assert.equal((createdHtml.match(/\bnovalidate\b/g) || []).length, 1)
     assert.equal(created.import.detectedForms.length, 1)
-    assert.equal(created.import.detectedForms[0].fields.length, 2)
+    assert.equal(created.import.detectedForms[0].fields.length, 3)
     assert.equal(created.import.detectedForms[0].fields[0].id, 'rol_decision')
     assert.equal(created.import.detectedForms[0].fields[0].options.length, 2)
 
@@ -292,6 +296,13 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
     assert.match(rendered, /multistep && !multistep\.validateCurrentStep\(\)/)
     assert.match(rendered, /const getChoiceFieldKey = \(field, form, type\) =>/)
     assert.match(rendered, /return sharedStableFieldId \|\| name/)
+    assert.match(rendered, /data-rstk-import-form-runtime-style/)
+    assert.match(rendered, /const readMinimumCharacters = \(field\) =>/)
+    assert.match(rendered, /data-rstk-minimum-characters-blocked/)
+    assert.match(rendered, /Escribe al menos ' \+ minimum \+ ' caracteres para continuar\./)
+    assert.match(rendered, /new CustomEvent\('ristak:form-step-advance'/)
+    assert.match(rendered, /collectSelectedChoiceActions\(step\)/)
+    assert.match(rendered, /form\.requestSubmit\(\)/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     for (const sourceFormId of sourceFormIds) {
