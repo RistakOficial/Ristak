@@ -44,6 +44,7 @@ import {
   setSitesDefaultRouteHandler,
   sitesFontCssHandler,
   sitesFontFileHandler,
+  sitesVideoEngineHandler,
   submitPublicSiteHandler,
   updateBlockHandler,
   updateSiteFolderHandler,
@@ -106,6 +107,7 @@ router.post('/public/checkout/prepare-installments', requireFeature('payment_che
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)
+router.get('/public/video-engine/hls-1.6.16.min.js', sitesVideoEngineHandler)
 router.get('/public/calendar-preview/:slug', requireFeature('appointments'), previewCalendarHandler)
 router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 router.get('/public/content-assets/:siteId/:assetKey', publicSiteContentAssetHandler)

@@ -24,6 +24,9 @@ const CALENDAR_DEFAULT_FORM_SITE_ID = 'system-calendar-booking-form'
 const VIDEO_EVENTS = new Set([
   'video_ready',
   'video_play',
+  'video_playing',
+  'video_buffer_start',
+  'video_buffer_end',
   'video_pause',
   'video_timeupdate',
   'video_progress',
@@ -1232,6 +1235,11 @@ function emptyPlaybackSummary(extra = {}) {
     watchedSeconds: 0,
     avgProgressPercent: 0,
     averageWatchSeconds: 0,
+    qoePlaybackSamples: 0,
+    averageStartupSeconds: 0,
+    bufferingEvents: 0,
+    playbacksWithBuffering: 0,
+    bufferingEventsPerPlayback: 0,
     playRatePercent: 0,
     completions: 0,
     completionRatePercent: 0,
@@ -1261,6 +1269,11 @@ function playbackSummaryFromRow(row = {}, extra = {}) {
     watchedSeconds,
     avgProgressPercent: roundMetric(avgProgressPercent),
     averageWatchSeconds: playedSessions > 0 ? roundMetric(watchedSeconds / playedSessions) : 0,
+    qoePlaybackSamples: 0,
+    averageStartupSeconds: 0,
+    bufferingEvents: 0,
+    playbacksWithBuffering: 0,
+    bufferingEventsPerPlayback: 0,
     playRatePercent: playbackSessions > 0 ? roundMetric((playedSessions / playbackSessions) * 100) : 0,
     completions,
     completionRatePercent: completionBase > 0 ? roundMetric((completions / completionBase) * 100) : 0,
@@ -1481,8 +1494,10 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
           MAX(CASE WHEN in_range = 1 THEN event_at ELSE NULL END) AS last_event_at,
           MIN(CASE WHEN event_name = 'video_ready' THEN event_at ELSE NULL END) AS first_ready_at,
           MIN(CASE WHEN event_name = 'video_play' THEN event_at ELSE NULL END) AS first_play_at,
+          MIN(CASE WHEN event_name = 'video_playing' THEN event_at ELSE NULL END) AS first_playing_at,
           MIN(CASE WHEN event_name = 'video_ended' AND in_range = 1 THEN event_at ELSE NULL END) AS first_ended_in_range_at,
           COALESCE(SUM(CASE WHEN in_range = 1 AND event_name = 'video_play' THEN 1 ELSE 0 END), 0) AS range_play_actions,
+          COALESCE(SUM(CASE WHEN in_range = 1 AND event_name = 'video_buffer_start' THEN 1 ELSE 0 END), 0) AS range_buffer_starts,
           COALESCE(SUM(CASE WHEN in_range = 1 THEN accepted_delta ELSE 0 END), 0) AS range_watched_seconds,
           COALESCE(MAX(CASE
             WHEN in_range = 1 AND event_name = 'video_ended' THEN 100
@@ -1537,6 +1552,9 @@ function buildVideoLedgerCte(scope, dateFilters = {}) {
 }
 
 function buildLedgerAggregateSelect() {
+  const startupSeconds = isPostgresRuntime
+    ? 'EXTRACT(EPOCH FROM ((first_playing_at)::timestamptz - (first_play_at)::timestamptz))'
+    : '(julianday(first_playing_at) - julianday(first_play_at)) * 86400.0'
   return `
     COALESCE(SUM(CASE WHEN ready_in_range = 1 THEN 1 ELSE 0 END), 0) AS player_loads,
     COALESCE(SUM(CASE WHEN play_in_range = 1 THEN 1 ELSE 0 END), 0) AS playback_starts,
@@ -1552,6 +1570,22 @@ function buildLedgerAggregateSelect() {
       ELSE NULL
     END) AS anonymous_visitors,
     COALESCE(SUM(range_watched_seconds), 0) AS watched_seconds,
+    COALESCE(AVG(CASE
+      WHEN play_in_range = 1
+       AND first_playing_at IS NOT NULL
+       AND first_playing_at >= first_play_at
+      THEN ${startupSeconds}
+      ELSE NULL
+    END), 0) AS average_startup_seconds,
+    COALESCE(SUM(CASE
+      WHEN play_in_range = 1 AND first_playing_at IS NOT NULL THEN 1
+      ELSE 0
+    END), 0) AS qoe_playback_samples,
+    COALESCE(SUM(range_buffer_starts), 0) AS buffering_events,
+    COALESCE(SUM(CASE
+      WHEN play_in_range = 1 AND first_playing_at IS NOT NULL AND range_buffer_starts > 0 THEN 1
+      ELSE 0
+    END), 0) AS playbacks_with_buffering,
     COALESCE(SUM(CASE WHEN play_in_range = 1 THEN range_watched_seconds ELSE 0 END), 0) AS cohort_watched_seconds,
     COALESCE(AVG(CASE WHEN play_in_range = 1 THEN range_max_reach_percent ELSE NULL END), 0) AS average_timeline_reach_percent,
     COALESCE(SUM(CASE
@@ -1580,6 +1614,10 @@ function playbackSummaryFromLedgerRow(row = {}, extra = {}) {
   const completedPlaybacks = Number(row.completed_playbacks || 0)
   const incompletePlaybacks = Math.max(0, playbackStarts - completedPlaybacks)
   const averageTimelineReachPercent = roundMetric(row.average_timeline_reach_percent || 0)
+  const averageStartupSeconds = roundMetric(row.average_startup_seconds || 0)
+  const qoePlaybackSamples = Number(row.qoe_playback_samples || 0)
+  const bufferingEvents = Number(row.buffering_events || 0)
+  const playbacksWithBuffering = Number(row.playbacks_with_buffering || 0)
 
   return {
     ...extra,
@@ -1603,6 +1641,13 @@ function playbackSummaryFromLedgerRow(row = {}, extra = {}) {
     avgProgressPercent: averageTimelineReachPercent,
     averageWatchSeconds: playbackStarts > 0
       ? roundMetric(cohortWatchedSeconds / playbackStarts)
+      : 0,
+    qoePlaybackSamples,
+    averageStartupSeconds,
+    bufferingEvents,
+    playbacksWithBuffering,
+    bufferingEventsPerPlayback: qoePlaybackSamples > 0
+      ? roundMetric(bufferingEvents / qoePlaybackSamples)
       : 0,
     playRatePercent: playerLoads > 0
       ? roundMetric((Number(row.started_player_loads || 0) / playerLoads) * 100)

@@ -33,13 +33,19 @@ const BUNNY_STREAM_FAILED_STATUSES = new Set([5, 6])
 const DEFAULT_BUNNY_STREAM_LIBRARY_NAME = 'Ristak Sites & Forms'
 const DEFAULT_BUNNY_STREAM_COLLECTION_NAME = 'Ristak Sites & Forms'
 const PREMIUM_BUNNY_STREAM_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000
-const PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS = Object.freeze({
+const BASE_BUNNY_STREAM_LIBRARY_SETTINGS = Object.freeze({
   PlayerVersion: 2,
+  AllowEarlyPlay: false
+})
+const PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS = Object.freeze({
+  ...BASE_BUNNY_STREAM_LIBRARY_SETTINGS,
   EncodingTier: 1,
-  JitEncodingEnabled: false,
+  JitEncodingEnabled: true,
+  // Publica primero las variantes ligeras y deja las pesadas para cuando hagan
+  // falta. Así un upload puede empezar a reproducirse sin esperar toda la
+  // escalera 4K/AV1.
   OutputCodecs: 'x264,av1',
   EnabledResolutions: '240p,360p,480p,720p,1080p,1440p,2160p',
-  AllowEarlyPlay: false,
   EnableMP4Fallback: false,
   KeepOriginalFiles: true,
   AllowDirectPlay: true,
@@ -995,13 +1001,11 @@ async function createBunnyVideoLibrary(config, {
     method: 'POST',
     body: {
       Name: name,
+      ...BASE_BUNNY_STREAM_LIBRARY_SETTINGS,
       ...(premium ? {
-        PlayerVersion: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.PlayerVersion,
         EncodingTier: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EncodingTier,
-        JitEncodingEnabled: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.JitEncodingEnabled,
         OutputCodecs: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.OutputCodecs,
         EnabledResolutions: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EnabledResolutions,
-        AllowEarlyPlay: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.AllowEarlyPlay,
         EnableMP4Fallback: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.EnableMP4Fallback,
         KeepOriginalFiles: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.KeepOriginalFiles,
         AllowDirectPlay: PREMIUM_BUNNY_STREAM_LIBRARY_SETTINGS.AllowDirectPlay,
@@ -1979,7 +1983,7 @@ async function syncVideoToBunnyStream({
     })
     const normalizedVideo = normalizeBunnyStreamVideo(video) || normalizeBunnyStreamVideo(created)
     const delivery = await getBunnyStreamVideoPlayData(config, videoId)
-      .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config))
+      .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config, normalizedVideo))
       .catch((error) => {
         logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${videoId}: ${error.message}`)
         return null
@@ -2219,8 +2223,9 @@ async function runQueuedBunnyStreamRemoteFetch(assetId, {
     logger.warn(`[MediaStorage] Bunny Stream importó ${videoId}, pero no se pudo leer metadata inicial: ${error.message}`)
     return video
   })
+  const normalizedVideo = normalizeBunnyStreamVideo(completeVideo) || normalizeBunnyStreamVideo(video)
   const delivery = await getBunnyStreamVideoPlayData(config, videoId)
-    .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config))
+    .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config, normalizedVideo))
     .catch((error) => {
       logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${videoId}: ${error.message}`)
       return null
@@ -2244,7 +2249,7 @@ async function runQueuedBunnyStreamRemoteFetch(assetId, {
     clientAccount,
     source: bunnyStreamSourceForAsset(freshAsset, usageContext, clientAccount),
     ...(delivery ? { delivery } : {}),
-    video: normalizeBunnyStreamVideo(completeVideo) || normalizeBunnyStreamVideo(video),
+    video: normalizedVideo,
     error: null,
     code: null,
     failedAt: null
@@ -2872,12 +2877,34 @@ function bunnyStreamPlaylistDeliveryUrl(playData = {}, videoId = '', config = {}
   }
 }
 
-function bunnyStreamDeliveryMetadata(playData = {}, videoId = '', config = {}) {
+function bunnyStreamPosterDeliveryUrl(playlistUrl = '', videoId = '', video = {}) {
+  if (!playlistUrl || !videoId) return ''
+  const rawFilename = cleanString(video?.thumbnailFileName) || 'thumbnail.jpg'
+  const filename = rawFilename.split(/[\\/]/).pop()
+  if (!filename || !/^[a-z0-9][a-z0-9._-]{0,180}$/i.test(filename)) return ''
+
+  try {
+    const playlist = new URL(playlistUrl)
+    const poster = new URL(filename, playlist)
+    const pathSegments = poster.pathname.split('/').filter(Boolean).map(segment => {
+      try { return decodeURIComponent(segment) } catch { return segment }
+    })
+    if (poster.origin !== playlist.origin || !pathSegments.includes(cleanString(videoId))) return ''
+    poster.hash = ''
+    return poster.toString()
+  } catch {
+    return ''
+  }
+}
+
+function bunnyStreamDeliveryMetadata(playData = {}, videoId = '', config = {}, video = null) {
   const playlistUrl = bunnyStreamPlaylistDeliveryUrl(playData, videoId, config)
   if (!playlistUrl) return null
+  const posterUrl = bunnyStreamPosterDeliveryUrl(playlistUrl, videoId, video)
   return {
     protocol: 'hls',
     playlistUrl,
+    ...(posterUrl ? { posterUrl } : {}),
     adaptive: true,
     profile: config.mediaAccountPolicy?.streamProfile || 'standard',
     resolvedAt: nowIso()
@@ -2930,7 +2957,7 @@ async function fetchBunnyStreamOriginalForStorage(config, asset, videoId) {
         stream: response.body,
         size: contentLength,
         mimeType: storageMimeType(response.headers.get('content-type') || asset.mimeType) || asset.mimeType,
-        delivery: bunnyStreamDeliveryMetadata(playData, videoId, config)
+        delivery: bunnyStreamDeliveryMetadata(playData, videoId, config, asset.metadata?.stream?.video)
       }
     }
 
@@ -3428,7 +3455,7 @@ export async function finalizeBunnyStreamResumableUpload(assetId, context = {}) 
   }
   const currentStream = asset.metadata?.stream || stream
   const delivery = currentStream.delivery || await getBunnyStreamVideoPlayData(config, videoId)
-    .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config))
+    .then(playData => bunnyStreamDeliveryMetadata(playData, videoId, config, normalizedVideo))
     .catch((error) => {
       logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${videoId}: ${error.message}`)
       return null
@@ -6766,8 +6793,9 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
         return { ...video, collectionId: collection.id, title: nextTitle }
       })
     }
+    const normalizedVideo = normalizeBunnyStreamVideo(video) || currentStream.video || null
     const delivery = await getBunnyStreamVideoPlayData(config, currentVideoId)
-      .then(playData => bunnyStreamDeliveryMetadata(playData, currentVideoId, config))
+      .then(playData => bunnyStreamDeliveryMetadata(playData, currentVideoId, config, normalizedVideo))
       .catch((error) => {
         logger.warn(`[MediaStorage] Bunny Stream todavía no publicó HLS para ${currentVideoId}: ${error.message}`)
         return currentStream.delivery || null
@@ -6790,7 +6818,7 @@ export async function syncMediaAssetBunnyStream(assetId, context = {}) {
       },
       clientAccount,
       ...(delivery ? { delivery } : {}),
-      video: normalizeBunnyStreamVideo(video) || currentStream.video || null
+      video: normalizedVideo
     }
   } else {
     const file = asset.storageProvider === 'bunny' && asset.bunnyPath

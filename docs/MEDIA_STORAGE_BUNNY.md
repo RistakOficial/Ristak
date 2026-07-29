@@ -215,7 +215,7 @@ another account.
   (`module=sites`, `module=forms`, `module=landing`) are uploaded directly and
   resumably to Bunny Stream. Standard accounts then stream Bunny Stream's
   authenticated original into Bunny Storage without buffering the full file in
-  RAM, which creates their separate editor/preview source. Premium media accounts
+  RAM, which creates their MP4 recovery source. Premium media accounts
   do not relay that large original through Render or duplicate it in Storage:
   the Stream master is retained by Bunny and its adaptive HLS feeds preview and
   published playback directly. When Sites selects an existing video from Bunny
@@ -232,15 +232,16 @@ another account.
   path after transcoding, including the legacy Stream-only mirror case; it is not
   the selection path for an existing Storage video.
 - When Bunny exposes playback data, Ristak stores the validated adaptive HLS URL
-  under `metadata_json.stream.delivery.playlistUrl`. Published Sites use that HLS
-  source inside the native Ristak player and attach the Storage MP4 as an automatic
-  recovery source: a fatal HLS error, unsupported HLS runtime or failed hls.js
-  load changes the same `<video>` to MP4 instead of leaving it unusable.
-  Editor/preview keep tracking disabled and prefer the Storage MP4 when it exists,
-  so loop, autoplay and controls remain testable while Stream is still processing
-  or the preview iframe cannot initialize HLS. Premium Stream-only assets, which
-  deliberately have no Storage duplicate, continue using their validated HLS in
-  preview and published rendering.
+  under `metadata_json.stream.delivery.playlistUrl` and its poster under
+  `metadata_json.stream.delivery.posterUrl`. Editor, preview URL and published
+  Sites all prefer that HLS source inside the native Ristak player. The poster is
+  visible before the first segment arrives, so a slow connection does not look
+  like an empty video. Standard accounts attach the Storage MP4 only as an
+  automatic recovery source: after two bounded network retries or two media-error
+  recoveries, a fatal HLS failure changes the same `<video>` to MP4 instead of
+  leaving it unusable. Editor/preview keep tracking disabled. Premium Stream-only
+  assets deliberately have no Storage duplicate and use their validated HLS in
+  every rendering mode.
 - Imported HTML Sites are code-first: pasting complete HTML or uploading an
   HTML/ZIP creates the site/pages and detects media slots before any Media asset
   is selected. `data-rstk-asset-id` and `data-rstk-background-asset-id` declare
@@ -314,10 +315,9 @@ another account.
   shadow. These values are rendered by the same contract in the editor canvas,
   authenticated preview URL and published site; Bunny supplies the media/HLS,
   not the visual chrome.
-- Published/live native video blocks use validated HLS inside the same
-  customizable Ristak player whenever Bunny has finished preparing it. Editor
-  and preview prefer the stable Storage MP4 when one exists; Stream-only premium
-  assets use HLS because they intentionally have no duplicate.
+- Native video blocks use validated HLS inside the same customizable Ristak
+  player whenever Bunny has finished preparing it, in editor, preview and live.
+  The Storage MP4 is a recovery source, not the normal preview path.
   The right-side video setting **Resolución inteligente** defaults to enabled.
   Its editor copy explains the playback behavior without exposing the storage
   provider: HLS adapts bitrate and resolution to the connection. When disabled,
@@ -325,12 +325,14 @@ another account.
   fragment loading until the manifest is known and then fixes the highest available
   rendition before playback starts. If hls.js is unavailable, native HLS remains
   the final compatibility fallback and retains control over its playback pipeline.
-  Preview-loop startup is latency-first: while the silent teaser is active,
-  Ristak starts hls.js at the lowest available rendition, including when the
-  final playback preference is highest-quality mode. The first explicit user
-  play restores ABR when `videoAdaptiveQuality` is enabled or pins the highest
-  rendition when it is disabled. This applies to editor, preview URL and live
-  teaser playback; it never changes the saved quality preference. The Sites
+  Every hls.js playback starts from the lightest rendition and caps automatic
+  selection to the rendered player size and device pixel ratio. After the first
+  frame is visible, Ristak restores ABR when `videoAdaptiveQuality` is enabled;
+  when it is disabled, it pins the highest rendition requested by the user.
+  Preview loops remain on the light rendition until real playback starts. Video
+  sources more than 600 px outside the viewport are not activated yet, while
+  autoplay videos start immediately. This applies to editor, preview URL and live
+  playback and never changes the saved quality preference. The Sites
   inspector persists the selected asset duration with the media URL, so its
   full timeline is available immediately. Legacy URLs are metadata-probed and
   remain in an explicit loading state instead of using a temporary 40-second
@@ -339,9 +341,12 @@ another account.
   This choice does not surrender the saved button, colors, controls, video
   actions or form gate to a provider iframe. Preview playback loads the real
   media but keeps Ristak tracking disabled; published playback emits first-party
-  video events while preserving the Media asset and Stream ids. A published HLS
-  failure recovers on the associated Storage MP4 without replacing the custom
-  player or creating another tracking session.
+  video events while preserving the Media asset and Stream ids. Published Sites
+  self-host the pinned `hls.js` runtime at
+  `/api/sites/public/video-engine/hls-1.6.16.min.js` with an immutable cache,
+  instead of depending on a third-party JavaScript CDN. A published HLS failure
+  recovers on the associated Storage MP4 without replacing the custom player or
+  creating another tracking session.
 - During a direct TUS upload the temporary asset has
   `storage_provider='bunny_stream'` and an iframe `public_url`. Finalization
   validates the TUS byte count and confirms the original in Stream. Standard
@@ -352,13 +357,53 @@ another account.
   `metadata_json.stream` for rendering and analytics.
 - A legacy Stream-only row must never be used as `<video src>` and must not fall
   back to its Stream iframe in editor/no-track mode. It shows a preparation state
-  while the authenticated editor or preview-session creates the missing Storage
-  mirror automatically. The same repair remains available through
+  until the authenticated editor explicitly requests the missing Storage mirror
+  when no validated HLS delivery exists. Generating an authenticated preview no
+  longer waits for a complete Stream-to-Storage transfer. The same repair remains
+  available through
   `POST /api/media/assets/:id/stream/sync`, preserves the original Stream video
   ID and is deduplicated with an advisory lock. The same rule applies to imported
   HTML previews. A public request never starts that heavy repair; the iframe is
-  only a compatibility fallback for a legacy Stream-only asset until an
-  authenticated editor/preview or sync operation creates its Storage mirror.
+  only a compatibility fallback for a legacy Stream-only asset until an explicit
+  authenticated sync operation creates its Storage mirror.
+
+## Fast-start playback and Bunny controls
+
+Ristak controls the browser side: poster-first rendering, lazy activation,
+low-rendition startup, adaptive bitrate, player-size caps, bounded recovery,
+Storage fallback and first-party QoE telemetry. It cannot make a weak connection
+download bytes that never arrive, so “never buffers” is not a valid guarantee.
+The measurable target is low startup time and fewer rebuffer events.
+
+The premium library `Ristak Sites Premium Adaptive` is created and reconciled
+with Premium Encoding and JIT encoding enabled. Bunny documents JIT as a Premium
+feature; Ristak must not send `JitEncodingEnabled` to the standard shared
+library. New standard libraries use Player v2 and keep Early Play disabled so the
+full original is not exposed as the normal playback path.
+
+The following controls remain in Bunny and are operational/cost decisions, not
+safe defaults for Ristak to change silently:
+
+- On the Storage Pull Zone that serves MP4 recovery files, enable
+  **Optimize for Video Delivery** (`EnableCacheSlice`) and verify Smart Cache
+  covers MP4. This improves byte-range caching of the fallback; it does not
+  replace HLS.
+- Choose Stream CDN pricing regions/tier for the real viewer geography. High
+  Volume is intended for large files/video, while Standard offers the broader
+  low-latency network; the correct choice depends on audience and spend.
+- Add Bunny Storage/Stream geo-replication near the audience when cold-cache
+  latency and resilience justify the additional storage charge. Replication
+  regions may be difficult or impossible to remove later, so this requires an
+  explicit account decision.
+- For an existing premium library that Ristak did not create or cannot reconcile
+  through the Core API, verify Premium Encoding and JIT manually in Bunny.
+
+Live QoE emits `video_playing`, `video_buffer_start` and `video_buffer_end`.
+Analytics derives `averageStartupSeconds`, `bufferingEvents`,
+`playbacksWithBuffering` and `bufferingEventsPerPlayback`, using
+`qoePlaybackSamples` as the denominator so historical playbacks without the new
+telemetry do not fabricate a zero; editor and preview continue to emit none of
+these events.
 
 ## App media explorer
 

@@ -1133,6 +1133,16 @@ disponible. El detalle por video agrupa páginas y bloques desde sus columnas
 canónicas; la consulta debe funcionar igual con el `GROUP BY` estricto de
 PostgreSQL y con SQLite.
 
+El motor de video también mide calidad de reproducción: el primer
+`video_playing` contra el primer `video_play` produce
+`averageStartupSeconds`; los `video_buffer_start` posteriores al primer cuadro
+alimentan `bufferingEvents`, `playbacksWithBuffering` y
+`bufferingEventsPerPlayback`, y `video_buffer_end` cierra el atasco.
+`qoePlaybackSamples` es el denominador para no confundir histórico sin telemetría
+con reproducción perfecta. Cuando el navegador lo expone, el evento incluye tipo
+de conexión, bajada estimada, RTT y modo de ahorro de datos. Preview/editor
+mantiene tracking apagado.
+
 El historico anterior a v2 puede estar inflado por retries y subcontado por
 heartbeats; no es matematicamente reparable desde la proyeccion. `quality`
 declara `verified`, `mixed_legacy`, `legacy_only` o `empty`, y la interfaz muestra
@@ -5170,6 +5180,13 @@ sin esperar otra transferencia. Si todavía no tiene identidad de Bunny Stream,
 Ristak encola una importación directa desde su URL de Storage: Bunny mueve el
 archivo por su red y Render no descarga ni retiene el video completo en memoria.
 El MP4 de Storage sigue funcionando mientras Stream lo importa y transcodifica.
+Cuando la playlist ya existe, editor, preview y publicado reproducen HLS
+adaptativo y conservan ese MP4 sólo como rescate. El poster de Stream se pinta
+antes del primer segmento; hls.js inicia en la variante ligera, limita ABR al
+tamaño visible, activa fuentes a 600 px del viewport e intenta recuperar red o
+decodificación antes del fallback. El runtime publicado está fijado y servido
+por Ristak en `/api/sites/public/video-engine/hls-1.6.16.min.js`; crear un preview
+no espera a copiar el video completo de Stream a Storage.
 
 El contrato canonico para contenido asociable es:
 

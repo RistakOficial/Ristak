@@ -9,6 +9,16 @@ const sitesSource = await readFile(
   new URL('../src/pages/Sites/Sites.tsx', import.meta.url),
   'utf8'
 )
+assert.match(
+  sitesSource,
+  /const HLS_PLAYER_SCRIPT_URL = '\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js'/,
+  'el editor debe cargar el motor HLS fijado y servido por Ristak'
+)
+assert.doesNotMatch(
+  sitesSource,
+  /cdn\.jsdelivr\.net|unpkg\.com/,
+  'el editor no debe depender de un CDN JavaScript ajeno para reproducir HLS'
+)
 
 const sourceBetween = (startMarker, endMarker) => {
   const start = sitesSource.indexOf(startMarker)
@@ -44,7 +54,7 @@ assert.match(
 )
 
 const previewPlaybackSource = sourceBetween(
-  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc',
+  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    if (!sourceNearViewport) return\n    const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc',
   'const restoreUserPlaybackQuality = useCallback'
 )
 assert.match(
@@ -54,13 +64,18 @@ assert.match(
 )
 assert.match(
   previewPlaybackSource,
-  /startLevel: previewLoopEnabled \? 0 : adaptiveQuality \? -1 : 0[\s\S]*?autoStartLoad: adaptiveQuality \|\| previewLoopEnabled/,
-  'el teaser HLS debe arrancar con la variante más ligera y sin esperar la selección de calidad final'
+  /startLevel: 0[\s\S]*?autoStartLoad: true[\s\S]*?capLevelToPlayerSize: true/,
+  'todo arranque HLS debe comenzar ligero y limitarse al tamaño real del reproductor'
 )
 assert.match(
   previewPlaybackSource,
-  /!adaptiveQuality && !previewLoopEnabled[\s\S]*?hls\.currentLevel = highestLevel[\s\S]*?hls\.startLoad\?\.\(-1\)/,
+  /!adaptiveQuality && !previewLoopEnabled[\s\S]*?hls\.currentLevel = highestLevel[\s\S]*?hls\.startLoad\(-1\)/,
   'al apagarla debe fijar la variante más alta antes de iniciar la carga'
+)
+assert.match(
+  previewPlaybackSource,
+  /networkRecoveryAttempts < 2[\s\S]*?mediaRecoveryAttempts < 2[\s\S]*?hls\.recoverMediaError\(\)/,
+  'el editor debe intentar recuperar red y decodificación antes de abandonar HLS'
 )
 assert.match(
   sitesSource,
@@ -70,7 +85,7 @@ assert.match(
 
 const previewLoopSource = sourceBetween(
   'const stopPreviewLoop = useCallback(() => {',
-  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc'
+  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    if (!sourceNearViewport) return\n    const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc'
 )
 assert.match(
   previewLoopSource,

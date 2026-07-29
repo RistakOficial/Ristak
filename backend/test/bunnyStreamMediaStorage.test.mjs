@@ -622,6 +622,10 @@ test('Bunny Stream se prepara automaticamente al arrancar con API key de cuenta'
     assert.ok(bunny.requests.some(request => request.kind === 'core-list-video-libraries'))
     assert.ok(bunny.requests.some(request => request.kind === 'core-create-video-library'))
     assert.ok(bunny.requests.some(request => request.kind === 'core-create-video-library' && request.accessKey === 'account-secret'))
+    const standardLibrary = bunny.requests.find(request => request.kind === 'core-create-video-library')
+    assert.equal(standardLibrary?.body.PlayerVersion, 2)
+    assert.equal(standardLibrary?.body.AllowEarlyPlay, false)
+    assert.equal(standardLibrary?.body.JitEncodingEnabled, undefined)
 
     const created = await mediaStorageService.uploadMediaAsset({
       buffer: Buffer.from('fake mp4 bytes for auto-created bunny stream library'),
@@ -641,6 +645,10 @@ test('Bunny Stream se prepara automaticamente al arrancar con API key de cuenta'
     assert.equal(created.metadata.stream.libraryId, '123')
     assert.equal(created.metadata.stream.collectionId, 'collection-sites-forms')
     assert.equal(created.metadata.stream.videoId, 'stream-video-1')
+    assert.equal(
+      created.metadata.stream.delivery.posterUrl,
+      `${bunny.baseUrl}/stream-delivery/stream-video-1/thumbnail.jpg`
+    )
     assert.ok(bunny.requests.some(request => request.kind === 'stream-create-video' && request.accessKey === 'stream-secret'))
     assert.ok(bunny.requests.some(request => request.kind === 'stream-upload-video' && request.accessKey === 'stream-secret'))
     assert.ok(bunny.requests.every(request => !request.accessKey || ['account-secret', 'stream-secret', 'storage-secret'].includes(request.accessKey)))
@@ -713,7 +721,7 @@ test('la cuenta premium del dueño usa cuota ilimitada y una biblioteca Stream a
     assert.equal(updatedLibrary?.body.OutputCodecs, 'x264,av1')
     assert.equal(updatedLibrary?.body.EnabledResolutions, '240p,360p,480p,720p,1080p,1440p,2160p')
     assert.equal(updatedLibrary?.body.AllowEarlyPlay, false)
-    assert.equal(updatedLibrary?.body.JitEncodingEnabled, false)
+    assert.equal(updatedLibrary?.body.JitEncodingEnabled, true)
     assert.equal(updatedLibrary?.body.Bitrate2160p, 25000)
 
     const prepared = await mediaStorageService.prepareBunnyStreamResumableUpload({
@@ -1081,31 +1089,14 @@ test('sincronizar un asset TUS antiguo repara su copia faltante de Storage sin c
     assert.deepEqual(prepared, {
       total: 1,
       pending: 1,
-      prepared: 1,
-      failed: 0
-    })
-
-    const repairedFromPreview = await mediaStorageService.getMediaAsset(assetId)
-    assert.equal(repairedFromPreview.storageProvider, 'bunny')
-    assert.match(repairedFromPreview.bunnyPath, /^accounts\/loc_repair\/sites\//)
-    assert.equal(repairedFromPreview.metadata.stream.videoId, 'stream-video-1')
-    assert.equal(repairedFromPreview.metadata.directUpload.storageMirror.source, 'bunny_stream_original')
-
-    const repeated = await sitesService.prepareSiteVideoStoragePreviews({
-      id: 'site_legacy_tus',
-      blocks: [{
-        blockType: 'video',
-        settings: {
-          mediaUrl: 'https://iframe.mediadelivery.net/embed/123/stream-video-1'
-        }
-      }]
-    }, { strict: true })
-    assert.deepEqual(repeated, {
-      total: 1,
-      pending: 0,
+      deferred: 1,
       prepared: 0,
       failed: 0
     })
+
+    const untouchedFromPreview = await mediaStorageService.getMediaAsset(assetId)
+    assert.equal(untouchedFromPreview.storageProvider, 'bunny_stream')
+    assert.equal(bunny.requests.filter(request => request.kind === 'stream-original-download').length, 0)
 
     const repaired = await mediaStorageService.syncMediaAssetBunnyStream(assetId, {
       businessId: 'default',
@@ -1119,6 +1110,23 @@ test('sincronizar un asset TUS antiguo repara su copia faltante de Storage sin c
     assert.equal(repaired.metadata.stream.syncStatus, 'synced')
     assert.equal(repaired.metadata.stream.source.storagePath, repaired.bunnyPath)
     assert.equal(repaired.metadata.directUpload.storageMirror.source, 'bunny_stream_original')
+
+    const repeated = await sitesService.prepareSiteVideoStoragePreviews({
+      id: 'site_legacy_tus',
+      blocks: [{
+        blockType: 'video',
+        settings: {
+          mediaUrl: 'https://iframe.mediadelivery.net/embed/123/stream-video-1'
+        }
+      }]
+    }, { strict: true })
+    assert.deepEqual(repeated, {
+      total: 1,
+      pending: 0,
+      deferred: 0,
+      prepared: 0,
+      failed: 0
+    })
     assert.equal(bunny.requests.filter(request => request.kind === 'stream-create-video').length, 0)
     assert.equal(bunny.requests.filter(request => request.kind === 'stream-original-download').length, 1)
     assert.equal(bunny.requests.filter(request => request.kind === 'storage-upload' && request.path.includes(assetId)).length, 1)

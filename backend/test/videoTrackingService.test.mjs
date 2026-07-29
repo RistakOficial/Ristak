@@ -200,6 +200,55 @@ test('video playback tracking links anonymous playback to contact after registra
   }
 })
 
+test('video playback aggregate measures startup and buffering quality', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const assetId = `asset_video_qoe_${suffix}`
+  const playbackId = `playback_video_qoe_${suffix}`
+  const baseTs = Date.now() - 15_000
+  const eventNames = [
+    ['video_play', 0],
+    ['video_playing', 1250],
+    ['video_buffer_start', 4000],
+    ['video_buffer_end', 5250]
+  ]
+
+  try {
+    for (const [index, [eventName, offsetMs]] of eventNames.entries()) {
+      await recordVideoPlaybackEvent({
+        visitor_id: `visitor_${suffix}`,
+        session_id: `session_${suffix}`,
+        event_name: eventName,
+        ts: baseTs + offsetMs,
+        data: {
+          event_id: `${playbackId}:${eventName}`,
+          event_sequence: index + 1,
+          ingestion_version: 2,
+          playback_id: playbackId,
+          media_asset_id: assetId,
+          stream_video_id: `stream_${suffix}`,
+          video_provider: 'bunny_stream',
+          position_seconds: index,
+          duration_seconds: 90
+        }
+      })
+    }
+
+    const aggregate = await getVideoPlaybackAggregate({ assetIds: [assetId] })
+    assert.equal(aggregate.summary.playbackStarts, 1)
+    assert.equal(aggregate.summary.qoePlaybackSamples, 1)
+    assert.ok(
+      Math.abs(aggregate.summary.averageStartupSeconds - 1.25) <= 0.051,
+      `startup=${aggregate.summary.averageStartupSeconds}`
+    )
+    assert.equal(aggregate.summary.bufferingEvents, 1)
+    assert.equal(aggregate.summary.playbacksWithBuffering, 1)
+    assert.equal(aggregate.summary.bufferingEventsPerPlayback, 1)
+  } finally {
+    await db.run('DELETE FROM video_playback_events WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+    await db.run('DELETE FROM video_playback_sessions WHERE playback_id = ?', [playbackId]).catch(() => undefined)
+  }
+})
+
 test('video playback aggregate sums selected assets from first-party tracking', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const visitorId = `visitor_video_aggregate_${suffix}`

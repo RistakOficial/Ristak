@@ -378,6 +378,11 @@ export interface SitesVideoAnalyticsSummary {
   watchedSeconds: number
   avgProgressPercent: number
   averageWatchSeconds: number
+  qoePlaybackSamples: number
+  averageStartupSeconds: number
+  bufferingEvents: number
+  playbacksWithBuffering: number
+  bufferingEventsPerPlayback: number
   playRatePercent: number
   completions: number
   completionRatePercent: number

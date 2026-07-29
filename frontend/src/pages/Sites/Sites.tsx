@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type Hls from 'hls.js'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -6962,26 +6963,8 @@ const isDirectVideoUrl = (value: string) => {
   return looksLikeDirectVideoUrl(raw)
 }
 
-type RistakHlsInstance = {
-  loadSource: (source: string) => void
-  attachMedia: (media: HTMLMediaElement) => void
-  destroy: () => void
-  startLoad?: (startPosition?: number) => void
-  on?: (eventName: string, handler: () => void) => void
-  levels?: unknown[]
-  startLevel?: number
-  loadLevel?: number
-  currentLevel?: number
-  nextLevel?: number
-}
-
-type RistakHlsConstructor = {
-  new(options?: Record<string, unknown>): RistakHlsInstance
-  isSupported?: () => boolean
-  Events?: {
-    MANIFEST_PARSED?: string
-  }
-}
+type RistakHlsInstance = Hls
+type RistakHlsConstructor = typeof Hls
 
 declare global {
   interface Window {
@@ -6989,7 +6972,7 @@ declare global {
   }
 }
 
-const HLS_PLAYER_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js'
+const HLS_PLAYER_SCRIPT_URL = '/api/sites/public/video-engine/hls-1.6.16.min.js'
 let hlsPlayerScriptPromise: Promise<RistakHlsConstructor | null> | null = null
 
 const loadHlsPlayerScript = () => {
@@ -6997,7 +6980,7 @@ const loadHlsPlayerScript = () => {
   if (window.Hls) return Promise.resolve(window.Hls)
   if (hlsPlayerScriptPromise) return hlsPlayerScriptPromise
 
-  hlsPlayerScriptPromise = new Promise((resolve) => {
+  hlsPlayerScriptPromise = new Promise(resolve => {
     const existing = document.querySelector<HTMLScriptElement>('script[data-rstk-hls-player="true"]')
     if (existing) {
       existing.addEventListener('load', () => resolve(window.Hls || null), { once: true })
@@ -7143,6 +7126,45 @@ const prepareSiteVideoAssetStoragePreview = (asset: MediaAsset) => {
   })
   siteVideoStoragePreviewSyncPromises.set(asset.id, request)
   return request
+}
+
+const getSiteVideoAssetDelivery = (asset?: MediaAsset | null) => {
+  if (!asset) return { src: '', fallbackSrc: '', posterSrc: '' }
+  const directSrc = getDirectMediaAssetVideoUrl(asset)
+  const stream = asset.metadata?.stream
+  const streamRecord = stream && typeof stream === 'object'
+    ? stream as Record<string, unknown>
+    : {}
+  const delivery = streamRecord.delivery && typeof streamRecord.delivery === 'object'
+    ? streamRecord.delivery as Record<string, unknown>
+    : {}
+  const playlistValue = typeof delivery.playlistUrl === 'string' ? delivery.playlistUrl : ''
+  const streamVideo = streamRecord.video && typeof streamRecord.video === 'object'
+    ? streamRecord.video as Record<string, unknown>
+    : {}
+  const thumbnailFilenameValue = typeof streamVideo.thumbnailFileName === 'string'
+    ? streamVideo.thumbnailFileName.split(/[\\/]/).pop() || ''
+    : ''
+  let derivedPosterValue = ''
+  if (playlistValue && (!thumbnailFilenameValue || /^[a-z0-9][a-z0-9._-]{0,180}$/i.test(thumbnailFilenameValue))) {
+    try {
+      derivedPosterValue = new URL(thumbnailFilenameValue || 'thumbnail.jpg', playlistValue).toString()
+    } catch {
+      derivedPosterValue = ''
+    }
+  }
+  const posterValue = typeof delivery.posterUrl === 'string'
+    ? delivery.posterUrl
+    : typeof asset.metadata?.thumbnailUrl === 'string'
+      ? asset.metadata.thumbnailUrl
+      : derivedPosterValue
+  const playlistSrc = safePublicMediaUrl(playlistValue, 'video')
+  const posterSrc = safePublicMediaUrl(posterValue, 'image')
+  return {
+    src: playlistSrc || directSrc,
+    fallbackSrc: playlistSrc ? directSrc : '',
+    posterSrc
+  }
 }
 
 const normalizeEmbedHeight = (value: string | null | undefined) => {
@@ -31339,17 +31361,18 @@ const VideoPlayerSettingsControls: React.FC<{
 
     const probeSource = appendEditorNoTrackParam(source)
     if (isHlsVideoUrl(probeSource) && !canPlayNativeHls(probe)) {
-      void loadHlsPlayerScript().then((Hls) => {
+      void loadHlsPlayerScript().then(HlsRuntime => {
         if (cancelled) return
-        if (!Hls?.isSupported?.()) {
+        if (!HlsRuntime?.isSupported()) {
           probe.src = probeSource
           probe.load()
           return
         }
-        hls = new Hls({
+        hls = new HlsRuntime({
           enableWorker: true,
           startLevel: 0,
-          autoStartLoad: true
+          autoStartLoad: true,
+          capLevelToPlayerSize: true
         })
         hls.loadSource(probeSource)
         hls.attachMedia(probe)
@@ -37643,6 +37666,8 @@ const VideoFormGateCanvasPreview: React.FC<{
 
 const VideoPlayerPreview: React.FC<{
   src: string
+  fallbackSrc?: string
+  posterSrc?: string
   label?: string
   site?: PublicSite
   settings: Record<string, unknown>
@@ -37653,13 +37678,14 @@ const VideoPlayerPreview: React.FC<{
   calendars?: CalendarType[]
   editable?: boolean
   selected?: boolean
-}> = ({ src, label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, videoFormGateEditor, forms = [], calendars = [], editable = false, selected = false }) => {
+}> = ({ src, fallbackSrc = '', posterSrc = '', label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, videoFormGateEditor, forms = [], calendars = [], editable = false, selected = false }) => {
   const playerRef = useRef<HTMLDivElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const settingsControlRef = useRef<HTMLDivElement | null>(null)
   const settingsToggleRef = useRef<HTMLButtonElement | null>(null)
   const hlsRef = useRef<RistakHlsInstance | null>(null)
   const loadedVideoSourceRef = useRef('')
+  const startupQualityReleasedRef = useRef(false)
   const previewLoopRef = useRef(false)
   const previewPlayRequestRef = useRef(0)
   const previewPlayPendingRef = useRef(false)
@@ -37672,6 +37698,7 @@ const VideoPlayerPreview: React.FC<{
   const autoplay = Boolean(settings.videoAutoplay) && !editorPlaybackDisabled
   const hasStartedPlaybackRef = useRef(autoplay)
   const noTrackSrc = appendEditorNoTrackParam(src)
+  const noTrackFallbackSrc = appendEditorNoTrackParam(fallbackSrc)
   const isHlsSource = isHlsVideoUrl(noTrackSrc)
   const previewEnabled = settings.videoPreviewEnabled !== false
   const adaptiveQuality = settings.videoAdaptiveQuality !== false
@@ -37679,6 +37706,7 @@ const VideoPlayerPreview: React.FC<{
   const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
   const startsMuted = muted || previewLoopEnabled || autoplay
   const [isPlaying, setIsPlaying] = useState(false)
+  const [sourceNearViewport, setSourceNearViewport] = useState(false)
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(startsMuted)
   const [progress, setProgress] = useState(0)
@@ -38265,10 +38293,27 @@ const VideoPlayerPreview: React.FC<{
   startPreviewLoopRef.current = startPreviewLoop
 
   useEffect(() => {
+    const player = playerRef.current
+    if (!player || typeof IntersectionObserver === 'undefined') {
+      setSourceNearViewport(true)
+      return undefined
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return
+      setSourceNearViewport(true)
+      observer.disconnect()
+    }, { rootMargin: '600px 0px' })
+    observer.observe(player)
+    return () => observer.disconnect()
+  }, [noTrackSrc])
+
+  useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    if (!sourceNearViewport) return
     const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc
     loadedVideoSourceRef.current = noTrackSrc
+    if (sourceChanged) startupQualityReleasedRef.current = false
 
     if (!isHlsSource) {
       if (!sourceChanged) return
@@ -38286,60 +38331,92 @@ const VideoPlayerPreview: React.FC<{
     hlsRef.current?.destroy()
     hlsRef.current = null
 
-    let cancelled = false
+    const activateNativeFallback = () => {
+      if (!noTrackFallbackSrc || noTrackFallbackSrc === noTrackSrc) return
+      video.src = noTrackFallbackSrc
+      video.load()
+    }
     if (adaptiveQuality && !previewLoopEnabled && canPlayNativeHls(video)) {
+      video.addEventListener('error', activateNativeFallback, { once: true })
       video.src = noTrackSrc
       video.load()
-      return
+      return () => video.removeEventListener('error', activateNativeFallback)
     }
 
     video.removeAttribute('src')
     video.load()
 
-    loadHlsPlayerScript().then((Hls) => {
-      if (cancelled || !videoRef.current) return
-      const currentVideo = videoRef.current
-
-      if (!Hls?.isSupported?.()) {
-        currentVideo.src = noTrackSrc
-        currentVideo.load()
+    let cancelled = false
+    let recoveryTimer: number | null = null
+    void loadHlsPlayerScript().then(HlsRuntime => {
+      if (cancelled) return
+      if (!HlsRuntime?.isSupported()) {
+        video.src = canPlayNativeHls(video) ? noTrackSrc : (noTrackFallbackSrc || noTrackSrc)
+        video.load()
         return
       }
 
-      const hls = new Hls({
+      const hls = new HlsRuntime({
         enableWorker: true,
-        startLevel: previewLoopEnabled ? 0 : adaptiveQuality ? -1 : 0,
-        autoStartLoad: adaptiveQuality || previewLoopEnabled
+        startLevel: 0,
+        autoStartLoad: true,
+        capLevelToPlayerSize: true,
+        capLevelOnFPSDrop: true,
+        maxDevicePixelRatio: 2
       })
       hlsRef.current = hls
-      if (!adaptiveQuality && !previewLoopEnabled && Hls.Events?.MANIFEST_PARSED) {
-        hls.on?.(Hls.Events.MANIFEST_PARSED, () => {
+      let networkRecoveryAttempts = 0
+      let mediaRecoveryAttempts = 0
+      const activateFallback = () => {
+        if (!noTrackFallbackSrc || noTrackFallbackSrc === noTrackSrc) return
+        hls.destroy()
+        if (hlsRef.current === hls) hlsRef.current = null
+        video.src = noTrackFallbackSrc
+        video.load()
+      }
+      hls.on(HlsRuntime.Events.ERROR, (_event, data) => {
+        if (!data.fatal) return
+        if (data.type === HlsRuntime.ErrorTypes.NETWORK_ERROR && networkRecoveryAttempts < 2) {
+          networkRecoveryAttempts += 1
+          recoveryTimer = window.setTimeout(() => hls.startLoad(video.currentTime || -1), networkRecoveryAttempts * 350)
+          return
+        }
+        if (data.type === HlsRuntime.ErrorTypes.MEDIA_ERROR && mediaRecoveryAttempts < 2) {
+          mediaRecoveryAttempts += 1
+          hls.recoverMediaError()
+          return
+        }
+        activateFallback()
+      })
+      if (!adaptiveQuality && !previewLoopEnabled) {
+        hls.on(HlsRuntime.Events.MANIFEST_PARSED, () => {
           const highestLevel = Math.max(0, (hls.levels?.length || 1) - 1)
           hls.startLevel = highestLevel
           hls.loadLevel = highestLevel
           hls.currentLevel = highestLevel
-          hls.startLoad?.(-1)
+          hls.startLoad(-1)
         })
       }
       hls.loadSource(noTrackSrc)
-      hls.attachMedia(currentVideo)
-      if (autoplay && Hls.Events?.MANIFEST_PARSED) {
-        hls.on?.(Hls.Events.MANIFEST_PARSED, () => {
-          void currentVideo.play().catch(() => undefined)
+      hls.attachMedia(video)
+      if (autoplay) {
+        hls.on(HlsRuntime.Events.MANIFEST_PARSED, () => {
+          void video.play().catch(() => undefined)
         })
       }
     }).catch(() => {
-      if (cancelled || !videoRef.current) return
-      videoRef.current.src = noTrackSrc
-      videoRef.current.load()
+      if (cancelled) return
+      video.src = canPlayNativeHls(video) ? noTrackSrc : (noTrackFallbackSrc || noTrackSrc)
+      video.load()
     })
 
     return () => {
       cancelled = true
+      if (recoveryTimer) window.clearTimeout(recoveryTimer)
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [adaptiveQuality, autoplay, isHlsSource, noTrackSrc, previewLoopEnabled, stopPreviewLoop])
+  }, [adaptiveQuality, autoplay, isHlsSource, noTrackFallbackSrc, noTrackSrc, previewLoopEnabled, sourceNearViewport, stopPreviewLoop])
 
   const restoreUserPlaybackQuality = useCallback(() => {
     const hls = hlsRef.current
@@ -38463,6 +38540,16 @@ const VideoPlayerPreview: React.FC<{
     syncVideoState()
   }
 
+  const handlePlaying = () => {
+    syncVideoState()
+    if (previewLoopRef.current || startupQualityReleasedRef.current) return
+    startupQualityReleasedRef.current = true
+    window.setTimeout(() => {
+      const video = videoRef.current
+      if (video && !video.paused && !previewLoopRef.current) restoreUserPlaybackQuality()
+    }, 650)
+  }
+
   useEffect(() => {
     if (!isPreviewLooping) return undefined
     let cancelled = false
@@ -38491,7 +38578,8 @@ const VideoPlayerPreview: React.FC<{
       return
     }
     resetInitialPlaybackToStart()
-    restoreUserPlaybackQuality()
+    if (hasStartedPlaybackRef.current) restoreUserPlaybackQuality()
+    else preferFastPreviewQuality()
     markUserPlaybackStarted()
     if (showControlBarInitially) showControlsTemporarily()
     else setControlsVisible(false)
@@ -38751,7 +38839,7 @@ const VideoPlayerPreview: React.FC<{
     >
       <video
         ref={videoRef}
-        src={isHlsSource ? undefined : noTrackSrc}
+        src={isHlsSource || !sourceNearViewport ? undefined : noTrackSrc}
         data-rstk-video-src={noTrackSrc}
         title={label || 'Video'}
         controls={showNativeControls}
@@ -38759,9 +38847,11 @@ const VideoPlayerPreview: React.FC<{
         loop={loop}
         autoPlay={autoplay}
         playsInline
-        preload={previewEnabled ? 'auto' : 'metadata'}
+        preload={editorPlaybackDisabled ? 'none' : (autoplay || previewLoopEnabled) ? 'metadata' : 'none'}
+        poster={posterSrc || undefined}
         style={{ objectFit: fit as React.CSSProperties['objectFit'] }}
         onPlay={syncVideoState}
+        onPlaying={handlePlaying}
         onPause={syncVideoState}
         onTimeUpdate={syncVideoState}
         onLoadedMetadata={handleLoadedMetadata}
@@ -38914,25 +39004,25 @@ const BunnyStreamStoragePreview: React.FC<{
   selected?: boolean
 }> = ({ embedUrl, label, site, settings, videoFormGateQuestions = [], showVideoFormGatePreview = false, videoFormGateEditor, forms = [], calendars = [], editable = false, selected = false }) => {
   const streamVideoId = useMemo(() => getBunnyStreamVideoIdFromUrl(embedUrl), [embedUrl])
-  const [storageUrl, setStorageUrl] = useState('')
+  const [delivery, setDelivery] = useState({ src: '', fallbackSrc: '', posterSrc: '' })
   const [resolved, setResolved] = useState(false)
   const [preparationFailed, setPreparationFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    setStorageUrl('')
+    setDelivery({ src: '', fallbackSrc: '', posterSrc: '' })
     setResolved(false)
     setPreparationFailed(false)
 
-    const resolveStorageUrl = async (storageAsset: MediaAsset) => {
-      // A direct Bunny Stream upload stores its embed page as publicUrl. That
-      // URL belongs in an iframe; only real files/playlists can feed <video>.
-      const directUrl = getDirectMediaAssetVideoUrl(storageAsset)
-      if (directUrl) return directUrl
-      if (storageAsset?.storageProvider !== 'bunny_stream') return ''
+    const resolveDelivery = async (storageAsset: MediaAsset) => {
+      // HLS es la primera opción también en el editor: baja una variante pequeña
+      // y no espera el MP4 completo. La copia de Storage queda como respaldo.
+      const immediate = getSiteVideoAssetDelivery(storageAsset)
+      if (immediate.src) return immediate
+      if (storageAsset?.storageProvider !== 'bunny_stream') return { src: '', fallbackSrc: '', posterSrc: '' }
 
       const repaired = await prepareSiteVideoAssetStoragePreview(storageAsset)
-      return getDirectMediaAssetVideoUrl(repaired)
+      return getSiteVideoAssetDelivery(repaired)
     }
 
     if (!streamVideoId) {
@@ -38944,16 +39034,16 @@ const BunnyStreamStoragePreview: React.FC<{
     loadSiteVideoAssetForPreview(streamVideoId)
       .then(async asset => {
         if (cancelled) return
-        let publicUrl = await resolveStorageUrl(asset)
-        if (!publicUrl) {
-          publicUrl = await resolveStorageUrl(await loadSiteVideoAssetForPreview(streamVideoId, true))
+        let nextDelivery = await resolveDelivery(asset)
+        if (!nextDelivery || !nextDelivery.src) {
+          nextDelivery = await resolveDelivery(await loadSiteVideoAssetForPreview(streamVideoId, true))
         }
         if (cancelled) return
-        setStorageUrl(publicUrl)
+        setDelivery(nextDelivery || { src: '', fallbackSrc: '', posterSrc: '' })
       })
       .catch(() => {
         if (!cancelled) {
-          setStorageUrl('')
+          setDelivery({ src: '', fallbackSrc: '', posterSrc: '' })
           setPreparationFailed(true)
         }
       })
@@ -38966,10 +39056,12 @@ const BunnyStreamStoragePreview: React.FC<{
     }
   }, [streamVideoId])
 
-  if (storageUrl) {
+  if (delivery.src) {
     return (
       <VideoPlayerPreview
-        src={storageUrl}
+        src={delivery.src}
+        fallbackSrc={delivery.fallbackSrc}
+        posterSrc={delivery.posterSrc}
         label={label}
         site={site}
         settings={settings}
@@ -38984,9 +39076,8 @@ const BunnyStreamStoragePreview: React.FC<{
     )
   }
 
-  // El editor nunca monta Stream: las reproducciones de edición no deben entrar
-  // en sus analíticas. Cuando falta el espejo, esperamos la copia de Storage en
-  // vez de saltarnos el reproductor personalizado con el iframe del proveedor.
+  // El editor no monta el iframe de Bunny (evita contaminar sus analíticas), pero
+  // sí usa la playlist HLS directa cuando ya está publicada.
   return (
     <div className="rstk-media rstk-media-empty" data-rstk-selection-surface="true" data-rstk-preview-stream-disabled="true">
       <span className="rstk-play"><Play size={22} /></span>
@@ -46539,6 +46630,23 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         ? firstPartySummary?.incompleteRatePercent ?? null
         : aggregateVideoSummary?.incompleteRatePercent ?? null)
     : null
+  const qoePlaybackSamples = selectedVideoMode
+    ? firstPartySummary?.qoePlaybackSamples ?? 0
+    : aggregateVideoSummary?.qoePlaybackSamples ?? 0
+  const averageStartupTime = qoePlaybackSamples > 0
+    ? (selectedVideoMode
+        ? firstPartySummary?.averageStartupSeconds ?? null
+        : aggregateVideoSummary?.averageStartupSeconds ?? null)
+    : null
+  const bufferingEvents = selectedVideoMode
+    ? firstPartySummary?.bufferingEvents ?? 0
+    : aggregateVideoSummary?.bufferingEvents ?? 0
+  const playbacksWithBuffering = selectedVideoMode
+    ? firstPartySummary?.playbacksWithBuffering ?? 0
+    : aggregateVideoSummary?.playbacksWithBuffering ?? 0
+  const bufferingRate = qoePlaybackSamples > 0
+    ? (playbacksWithBuffering / qoePlaybackSamples) * 100
+    : null
   const viewsChart = buildSitesChartPoints(selectedVideoMode
     ? firstPartyTracking?.series?.playbackStarts ||
       firstPartyTracking?.viewsChart ||
@@ -46956,6 +47064,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
                   : 'Sin eventos'}</strong>
           </div>
           {renderDetailRows([
+            { key: 'startup', icon: <Clock3 size={15} />, label: 'Arranque promedio', value: averageStartupTime === null ? 'Sin muestra nueva' : formatSitesSeconds(averageStartupTime) },
+            { key: 'buffering', icon: <AlertTriangle size={15} />, label: 'Reproducciones con pausas de red', value: bufferingRate === null ? 'Sin muestra nueva' : `${formatSitesPercent(bufferingRate)} · ${formatSitesCompactNumber(bufferingEvents)} pausas` },
             { key: 'average-watch', icon: <Flame size={15} />, label: 'Promedio visto por reproducción', value: formatSitesSeconds(averageWatchTime) },
             { key: 'timeline-reach', icon: <BarChart3 size={15} />, label: 'Alcance promedio de la línea de tiempo', value: formatSitesPercent(engagementScore) },
             { key: 'incomplete', icon: <ArrowDown size={15} />, label: 'Reproducciones incompletas', value: formatSitesPercent(incompleteRate) },
@@ -46998,6 +47108,8 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     }
 
     const primaryVideoMetrics = [
+      { key: 'startup', icon: <Clock3 size={15} />, label: 'Arranque promedio', value: averageStartupTime === null ? 'Sin muestra nueva' : formatSitesSeconds(averageStartupTime), hint: `${formatSitesCompactNumber(qoePlaybackSamples)} reproducciones con telemetría de calidad.` },
+      { key: 'buffering', icon: <AlertTriangle size={15} />, label: 'Pausas de red', value: bufferingRate === null ? 'Sin muestra nueva' : formatSitesPercent(bufferingRate), hint: `${formatSitesCompactNumber(bufferingEvents)} pausas en ${formatSitesCompactNumber(playbacksWithBuffering)} reproducciones.` },
       { key: 'average', icon: <Clock3 size={15} />, label: 'Promedio visto', value: formatSitesSeconds(averageWatchTime), hint: 'Tiempo promedio por reproducción.' },
       { key: 'viewers', icon: <Eye size={15} />, label: 'Visitantes únicos', value: formatSitesCompactNumber(uniqueVideoViewers), hint: 'Personas o visitantes distintos detectados.' },
       { key: 'loads', icon: <MousePointerClick size={15} />, label: 'Cargas del reproductor', value: formatSitesCompactNumber(videoLoads), hint: 'Veces que el reproductor quedó listo en la página.' },

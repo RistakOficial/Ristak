@@ -306,11 +306,24 @@ Las definiciones canónicas son:
 
 - carga: primer `video_ready` de un playback;
 - reproducción iniciada: primer `video_play`; reanudar no suma otra;
+- primer cuadro visible: primer `video_playing`; la diferencia contra el primer
+  `video_play` produce `averageStartupSeconds`;
+- rebuffer: cada `video_buffer_start` posterior al primer cuadro; `playing`
+  cierra el tramo con `video_buffer_end`. El resumen expone
+  `bufferingEvents`, `playbacksWithBuffering` y
+  `bufferingEventsPerPlayback`; su denominador es `qoePlaybackSamples`, no el
+  histórico anterior a esta telemetría;
 - tiempo visto: suma de deltas aceptados por `event_at`;
 - completada: existe `video_ended`; llegar o buscar hasta 99% no completa;
 - alcance: máximo playhead alcanzado, presentado como **Curva de alcance**, no
   retención;
 - heatmap de intervalos: no disponible mientras no exista telemetría suficiente.
+
+Los eventos de calidad adjuntan, cuando el navegador lo permite,
+`connection_type`, `downlink_mbps`, `rtt_ms` y `save_data`. Son señales
+aproximadas de diagnóstico, no una medición contractual del proveedor ni una
+promesa de velocidad. Preview/editor conserva tracking apagado y no contamina
+estas métricas.
 
 El histórico previo a v2 puede sumar retries dos veces en la proyección y, al
 mismo tiempo, perder segundos o eventos repetidos en el ledger. No se debe

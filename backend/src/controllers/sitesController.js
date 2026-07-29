@@ -1,5 +1,7 @@
 import crypto from 'crypto'
+import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
+import { fileURLToPath } from 'node:url'
 import {
   buildPreviewSiteDraft,
   buildCalendarMetaPixelSnippet,
@@ -84,6 +86,22 @@ import { attachmentDisposition } from '../utils/contentDisposition.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
 const sitePreviewSessions = new Map()
+const HLS_RUNTIME_FILE = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../node_modules/hls.js/dist/hls.min.js'
+)
+
+export function sitesVideoEngineHandler(_req, res, next) {
+  res.set({
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Cross-Origin-Resource-Policy': 'same-site',
+    'X-Content-Type-Options': 'nosniff'
+  })
+  res.type('application/javascript')
+  return res.sendFile(HLS_RUNTIME_FILE, error => {
+    if (error) next(error)
+  })
+}
 
 function calendarForPublicRender(calendar, canUseCalendarPayments) {
   if (canUseCalendarPayments) return calendar

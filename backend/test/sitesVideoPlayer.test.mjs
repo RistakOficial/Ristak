@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import http from 'node:http'
+import { access, readFile } from 'node:fs/promises'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
@@ -47,6 +48,14 @@ const DOMAIN_KEYS = {
   checkedAt: 'sites_public_domain_checked_at',
   error: 'sites_public_domain_error'
 }
+
+test('Sites self-hosts the pinned HLS runtime from the backend dependency', async () => {
+  const runtimeUrl = new URL('../node_modules/hls.js/dist/hls.min.js', import.meta.url)
+  const routesUrl = new URL('../src/routes/sites.routes.js', import.meta.url)
+  await access(runtimeUrl)
+  const routesSource = await readFile(routesUrl, 'utf8')
+  assert.match(routesSource, /router\.get\('\/public\/video-engine\/hls-1\.6\.16\.min\.js', sitesVideoEngineHandler\)/)
+})
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -532,7 +541,7 @@ test('video player renders configurable first-seconds preview loop settings', as
   assert.match(html, /startPreviewLoop\(true\)/)
   assert.match(html, /const restartFromBeginningForUserPlayback = \(\) =>/)
   assert.match(html, /video\.currentTime = 0/)
-  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+restoreUserPlaybackQuality\(\);\s+const wasUserPlayed = hasUserPlayed;\s+markUserPlayback\(\);/)
+  assert.match(html, /restartFromBeginningForUserPlayback\(\);\s+const wasUserPlayed = hasUserPlayed;\s+if \(wasUserPlayed\) restoreUserPlaybackQuality\(\);\s+else preferFastPreviewQuality\(\);\s+markUserPlayback\(\);/)
   assert.doesNotMatch(html, /rstk-video-is-playing:hover \.rstk-video-play-dot/)
 
   const autoplayHtml = await renderPublicSiteHtml(baseSite({
@@ -1504,7 +1513,8 @@ test('video player prepares HLS sources for Bunny Stream playback', async () => 
 
   assert.match(html, /data-rstk-video-src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
   assert.doesNotMatch(html, /<video src="https:\/\/vz-123\.b-cdn\.net\/stream-video\/playlist\.m3u8"/)
-  assert.match(html, /hls\.js@1\/dist\/hls\.min\.js/)
+  assert.match(html, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
+  assert.doesNotMatch(html, /cdn\.jsdelivr\.net/)
 })
 
 test('video player defaults to intelligent resolution and can prioritize the highest HLS rendition', async () => {
@@ -1519,11 +1529,17 @@ test('video player defaults to intelligent resolution and can prioritize the hig
   })
   assert.match(intelligentHtml, /data-rstk-video-adaptive-quality="true"/)
   assert.match(intelligentHtml, /const fastPreviewQuality = video\.getAttribute\('data-rstk-video-preview'\) === 'true' && !video\.autoplay/)
-  assert.match(intelligentHtml, /startLevel: fastPreviewQuality \? 0 : adaptiveQuality \? -1 : 0/)
-  assert.match(intelligentHtml, /autoStartLoad: adaptiveQuality \|\| fastPreviewQuality/)
+  assert.match(intelligentHtml, /startLevel: 0/)
+  assert.match(intelligentHtml, /autoStartLoad: true/)
+  assert.match(intelligentHtml, /capLevelToPlayerSize: true/)
+  assert.match(intelligentHtml, /networkRecoveryAttempts < 2/)
+  assert.match(intelligentHtml, /mediaRecoveryAttempts < 2/)
+  assert.match(intelligentHtml, /if \(video\.dataset\.rstkVideoPreviewing === 'true'\) return/)
+  assert.match(intelligentHtml, /const stopActivePreviewPlayback = \(\) =>/)
+  assert.match(intelligentHtml, /if \(wasPreviewing && !video\.paused\) video\.pause\(\)/)
   assert.match(intelligentHtml, /const restoreUserPlaybackQuality = \(\) =>/)
   assert.match(intelligentHtml, /hls\.nextLevel = -1/)
-  assert.match(intelligentHtml, /restartFromBeginningForUserPlayback\(\);\s+restoreUserPlaybackQuality\(\)/)
+  assert.match(intelligentHtml, /if \(wasUserPlayed\) restoreUserPlaybackQuality\(\)/)
 
   const qualityFirstHtml = await renderPublicSiteHtml(baseSite({
     mediaUrl: playlistUrl,
@@ -1537,14 +1553,14 @@ test('video player defaults to intelligent resolution and can prioritize the hig
   })
   assert.match(qualityFirstHtml, /data-rstk-video-adaptive-quality="false"/)
   assert.match(qualityFirstHtml, /if \(adaptiveQuality && !fastPreviewQuality && canPlayNativeHls\(video\)\)/)
-  assert.match(qualityFirstHtml, /startLevel: fastPreviewQuality \? 0 : adaptiveQuality \? -1 : 0/)
-  assert.match(qualityFirstHtml, /autoStartLoad: adaptiveQuality \|\| fastPreviewQuality/)
+  assert.match(qualityFirstHtml, /startLevel: 0/)
+  assert.match(qualityFirstHtml, /autoStartLoad: true/)
   assert.match(qualityFirstHtml, /const highestLevel = Math\.max/)
   assert.match(qualityFirstHtml, /hls\.currentLevel = highestLevel/)
   assert.match(qualityFirstHtml, /hls\.startLoad\(-1\)/)
   assert.match(qualityFirstHtml, /if \(!activateNativeHls\(\) && !activateFallback\(\)\)/)
 
-  const hlsBranchStart = qualityFirstHtml.indexOf('if (source && isHlsSource(source)) {')
+  const hlsBranchStart = qualityFirstHtml.indexOf('const activateHlsSource = () => {')
   const hlsBranchEnd = qualityFirstHtml.indexOf('const rawSpeed =', hlsBranchStart)
   assert.ok(hlsBranchStart >= 0 && hlsBranchEnd > hlsBranchStart, 'expected published HLS runtime branch')
   const hlsBranchSource = qualityFirstHtml.slice(hlsBranchStart, hlsBranchEnd)
@@ -1558,6 +1574,11 @@ test('video player defaults to intelligent resolution and can prioritize the hig
 
     static isSupported() {
       return true
+    }
+
+    static ErrorTypes = {
+      NETWORK_ERROR: 'networkError',
+      MEDIA_ERROR: 'mediaError'
     }
 
     constructor(options) {
@@ -1607,9 +1628,9 @@ test('video player defaults to intelligent resolution and can prioritize the hig
       activateNativeHls,
       activateFallback
     }) => {
+      let sourceLoadPromise = null
       ${hlsBranchSource}
-      await Promise.resolve()
-      await Promise.resolve()
+      await host.rstkEnsureVideoLoaded()
     }
   )`)
 
@@ -1627,7 +1648,7 @@ test('video player defaults to intelligent resolution and can prioritize the hig
   })
 
   assert.equal(instances.length, 1)
-  assert.equal(instances[0].options.autoStartLoad, false)
+  assert.equal(instances[0].options.autoStartLoad, true)
   assert.equal(instances[0].options.startLevel, 0)
   assert.equal(instances[0].source, playlistUrl)
   assert.equal(instances[0].media, video)
@@ -1715,11 +1736,13 @@ test('live render keeps a synced Storage video inside the customized Ristak play
     })
 
     const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    assert.match(previewHtml, new RegExp(`src="${escapedStorageUrl}"`))
-    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
-    assert.doesNotMatch(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    const posterUrl = `https://vz-premium.b-cdn.net/${streamVideoId}/thumbnail.jpg`
+    assert.doesNotMatch(previewHtml, new RegExp(`<video[^>]*\\ssrc="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-fallback-src="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`poster="${escapeRegExp(posterUrl)}"`))
     assert.match(previewHtml, /data-rstk-video-adaptive-quality="true"/)
-    assert.match(previewHtml, /hls\.js@1\/dist\/hls\.min\.js/)
+    assert.match(previewHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
     assert.doesNotMatch(previewHtml, /no_track=1/)
     assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
     assert.doesNotMatch(previewHtml, /ristakVideoTrackingLoaded/)
@@ -1734,9 +1757,10 @@ test('live render keeps a synced Storage video inside the customized Ristak play
     assert.doesNotMatch(liveHtml, new RegExp(`<video[^>]*\\ssrc="${escapedStorageUrl}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-video-fallback-src="${escapedStorageUrl}"`))
-    assert.match(liveHtml, /hls\.js@1\/dist\/hls\.min\.js/)
+    assert.match(liveHtml, new RegExp(`poster="${escapeRegExp(posterUrl)}"`))
+    assert.match(liveHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
     assert.match(liveHtml, /Hls\.Events\.ERROR/)
-    assert.match(liveHtml, /data && data\.fatal/)
+    assert.match(liveHtml, /if \(!data \|\| !data\.fatal\) return/)
     assert.match(liveHtml, /activateFallback/)
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
@@ -1799,7 +1823,7 @@ test('premium Stream-only video uses adaptive HLS in preview and live without re
     })
     assert.match(previewHtml, /rstk-video-player/)
     assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
-    assert.match(previewHtml, /hls\.js@1\/dist\/hls\.min\.js/)
+    assert.match(previewHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
     assert.doesNotMatch(previewHtml, /data-rstk-video-track="true"/)
     assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
 
@@ -1818,7 +1842,7 @@ test('premium Stream-only video uses adaptive HLS in preview and live without re
   }
 })
 
-test('editor-style preview uses the stable Storage copy while live keeps Bunny HLS', async () => {
+test('editor-style preview and live both use Bunny HLS with Storage as fallback', async () => {
   const assetId = `site_manual_stream_${Date.now()}`
   const storageUrl = `https://cdn.example.com/sites/${assetId}.mp4`
   const streamVideoId = `stream-${assetId}`
@@ -1867,11 +1891,11 @@ test('editor-style preview uses the stable Storage copy while live keeps Bunny H
     })
 
     const escapedStorageUrl = storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    assert.match(previewHtml, new RegExp(`src="${escapedStorageUrl}"`))
-    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapedStorageUrl}"`))
-    assert.doesNotMatch(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.doesNotMatch(previewHtml, new RegExp(`<video[^>]*\\ssrc="${escapedStorageUrl}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
+    assert.match(previewHtml, new RegExp(`data-rstk-video-fallback-src="${escapedStorageUrl}"`))
     assert.match(previewHtml, /data-rstk-video-adaptive-quality="true"/)
-    assert.match(previewHtml, /hls\.js@1\/dist\/hls\.min\.js/)
+    assert.match(previewHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
     assert.doesNotMatch(previewHtml, /no_track=1/)
     assert.doesNotMatch(previewHtml, /player\.mediadelivery\.net\/embed/)
     assert.doesNotMatch(previewHtml, /ristakVideoTrackingLoaded/)
@@ -1886,7 +1910,7 @@ test('editor-style preview uses the stable Storage copy while live keeps Bunny H
     assert.doesNotMatch(liveHtml, new RegExp(`<video[^>]*\\ssrc="${escapedStorageUrl}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-video-src="${escapeRegExp(playlistUrl)}"`))
     assert.match(liveHtml, new RegExp(`data-rstk-video-fallback-src="${escapedStorageUrl}"`))
-    assert.match(liveHtml, /hls\.js@1\/dist\/hls\.min\.js/)
+    assert.match(liveHtml, /\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js/)
     assert.match(liveHtml, /data-rstk-video-track="true"/)
     assert.match(liveHtml, /data-rstk-video-provider="bunny_stream"/)
     assert.match(liveHtml, new RegExp(`data-rstk-media-asset-id="${assetId}"`))

@@ -17426,7 +17426,32 @@ function getMediaAssetStreamMetadata(asset) {
       playlistUrl = ''
     }
   }
-  return { videoId, libraryId, playlistUrl }
+  const thumbnailFilename = cleanString(stream.video?.thumbnailFileName).split(/[\\/]/).pop()
+  let derivedPosterUrl = ''
+  if (playlistUrl && (!thumbnailFilename || /^[a-z0-9][a-z0-9._-]{0,180}$/i.test(thumbnailFilename))) {
+    try {
+      derivedPosterUrl = new URL(thumbnailFilename || 'thumbnail.jpg', playlistUrl).toString()
+    } catch {
+      derivedPosterUrl = ''
+    }
+  }
+  const rawPosterUrl = safePublicMediaUrl(
+    stream.delivery?.posterUrl || asset?.metadata?.thumbnailUrl || derivedPosterUrl,
+    'image'
+  )
+  let posterUrl = ''
+  if (rawPosterUrl) {
+    try {
+      const parsedPoster = new URL(rawPosterUrl)
+      if (parsedPoster.protocol === 'https:') {
+        parsedPoster.hash = ''
+        posterUrl = parsedPoster.toString()
+      }
+    } catch {
+      posterUrl = ''
+    }
+  }
+  return { videoId, libraryId, playlistUrl, posterUrl }
 }
 
 function getBunnyStreamVideoIdFromUrl(value = '') {
@@ -20371,7 +20396,7 @@ function collectBunnyStreamVideoIdsFromBlocks(blocks = [], ids = new Set()) {
   return ids
 }
 
-export async function prepareSiteVideoStoragePreviews(site, { strict = false } = {}) {
+export async function prepareSiteVideoStoragePreviews(site) {
   const videoIds = [...collectBunnyStreamVideoIdsFromBlocks(site?.blocks || [])]
   if (!videoIds.length) {
     return { total: 0, pending: 0, prepared: 0, failed: 0 }
@@ -20379,31 +20404,12 @@ export async function prepareSiteVideoStoragePreviews(site, { strict = false } =
 
   const assets = await findMediaAssetsByBunnyStreamVideoIds(videoIds)
   const pendingAssets = assets.filter(asset => asset.storageProvider === 'bunny_stream')
-  let prepared = 0
-  const failures = []
-
-  // Una copia por vez evita que un preview con varios videos sature la salida de
-  // red del servicio. El candado de mediaStorageService deduplica además editor,
-  // preview y reintentos concurrentes del mismo asset.
-  for (const asset of pendingAssets) {
-    try {
-      await ensureMediaAssetStoragePreview(asset.id, {
-        module: asset.module || 'sites',
-        moduleEntityId: asset.moduleEntityId || site?.id || ''
-      })
-      prepared += 1
-    } catch (error) {
-      failures.push({ asset, error })
-      logger.warn(`[Sites] No se pudo preparar Storage para video ${asset.id}: ${error.message}`)
-    }
-  }
-
-  if (strict && failures.length) throw failures[0].error
   return {
     total: assets.length,
     pending: pendingAssets.length,
-    prepared,
-    failed: failures.length
+    deferred: pendingAssets.length,
+    prepared: 0,
+    failed: 0
   }
 }
 
@@ -20466,21 +20472,16 @@ function renderStorageBackedBunnyStreamVideo(asset, block, settings = {}, contex
     || getMediaAssetStreamMetadata(asset)
     || getBunnyStreamMetadataFromUrl(asset.publicUrl)
 
-  // En editor/preview preferimos el MP4 ya preparado en Storage: no depende de
-  // cargar hls.js dentro del iframe y permite revisar loop, autoplay y controles
-  // aun cuando el manifiesto Stream siga procesándose. El sitio publicado usa
-  // HLS para calidad adaptativa y conserva el MP4 como recuperación automática.
-  const preferStablePreviewSource = Boolean(context.noTrack && directVideoUrl)
-  const playerVideoUrl = preferStablePreviewSource
-    ? directVideoUrl
-    : (resolvedStream?.playlistUrl || directVideoUrl)
-  const fallbackSrc = !preferStablePreviewSource && resolvedStream?.playlistUrl
-    ? directVideoUrl
-    : ''
+  // Preview y publicado usan la misma escalera adaptativa. El MP4 completo queda
+  // únicamente como último recurso; arrancar siempre con él castiga justo a la
+  // gente con peor señal.
+  const playerVideoUrl = resolvedStream?.playlistUrl || directVideoUrl
+  const fallbackSrc = resolvedStream?.playlistUrl ? directVideoUrl : ''
   if (playerVideoUrl) {
     return renderVideoPlayer(playerVideoUrl, block, settings, {
       noTrack: false,
       fallbackSrc,
+      posterSrc: resolvedStream?.posterUrl || asset.metadata?.thumbnailUrl || '',
       tracking: {
         enabled: !context.noTrack,
         asset,
@@ -20534,14 +20535,12 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
     const stream = getMediaAssetStreamMetadata(liveStreamAsset)
     const storageUrl = getDirectMediaAssetVideoUrl(liveStreamAsset)
     const stableSrc = storageUrl || directVideoUrl
-    const preferStablePreviewSource = Boolean(context.noTrack && stableSrc)
-    const src = preferStablePreviewSource
-      ? stableSrc
-      : (stream?.playlistUrl || stableSrc)
+    const src = stream?.playlistUrl || stableSrc
     if (!src) return null
     return {
       src,
-      fallbackSrc: !preferStablePreviewSource && stream?.playlistUrl ? stableSrc : '',
+      fallbackSrc: stream?.playlistUrl ? stableSrc : '',
+      posterSrc: stream?.posterUrl || liveStreamAsset?.metadata?.thumbnailUrl || '',
       asset: liveStreamAsset || null,
       stream,
       provider: stream?.videoId ? 'bunny_stream' : 'html5_video'
@@ -20553,14 +20552,12 @@ function resolveHtml5VideoDelivery(block = {}, context = {}) {
   const asset = getStorageAssetForStreamVideoUrl(embedVideoUrl, context)
   const stream = getMediaAssetStreamMetadata(asset) || getStreamMetadataForVideoUrl(embedVideoUrl, context)
   const storageUrl = getDirectMediaAssetVideoUrl(asset)
-  const preferStablePreviewSource = Boolean(context.noTrack && storageUrl)
-  const src = preferStablePreviewSource
-    ? storageUrl
-    : (stream?.playlistUrl || storageUrl)
+  const src = stream?.playlistUrl || storageUrl
   if (!src) return null
   return {
     src,
-    fallbackSrc: !preferStablePreviewSource && stream?.playlistUrl ? storageUrl : '',
+    fallbackSrc: stream?.playlistUrl ? storageUrl : '',
+    posterSrc: stream?.posterUrl || asset?.metadata?.thumbnailUrl || '',
     asset: asset || null,
     stream,
     provider: stream?.videoId ? 'bunny_stream' : 'html5_video'
@@ -23713,6 +23710,7 @@ function buildNativeSiteTrackingScript(context) {
       const getClientIdentitySignals = () => {
         const screenInfo = window.screen || {};
         const doc = document.documentElement || {};
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
         return {
           screen_width: screenInfo.width || null,
           screen_height: screenInfo.height || null,
@@ -23725,6 +23723,10 @@ function buildNativeSiteTrackingScript(context) {
           max_touch_points: navigator.maxTouchPoints || 0,
           platform: navigator.platform || null,
           vendor: navigator.vendor || null,
+          connection_type: connection.effectiveType || connection.type || null,
+          downlink_mbps: Number.isFinite(Number(connection.downlink)) ? Number(connection.downlink) : null,
+          rtt_ms: Number.isFinite(Number(connection.rtt)) ? Number(connection.rtt) : null,
+          save_data: connection.saveData === true,
           cookies_enabled: navigator.cookieEnabled === true,
           do_not_track: navigator.doNotTrack || window.doNotTrack || null
         };
@@ -23859,6 +23861,7 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
       const getClientIdentitySignals = () => {
         const screenInfo = window.screen || {};
         const doc = document.documentElement || {};
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
         return {
           screen_width: screenInfo.width || null,
           screen_height: screenInfo.height || null,
@@ -23871,6 +23874,10 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           max_touch_points: navigator.maxTouchPoints || 0,
           platform: navigator.platform || null,
           vendor: navigator.vendor || null,
+          connection_type: connection.effectiveType || connection.type || null,
+          downlink_mbps: Number.isFinite(Number(connection.downlink)) ? Number(connection.downlink) : null,
+          rtt_ms: Number.isFinite(Number(connection.rtt)) ? Number(connection.rtt) : null,
+          save_data: connection.saveData === true,
           cookies_enabled: navigator.cookieEnabled === true,
           do_not_track: navigator.doNotTrack || window.doNotTrack || null
         };
@@ -24111,7 +24118,9 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
         pendingWatchedSeconds: 0,
         pendingWatchFromSeconds: null,
         pendingWatchToSeconds: null,
-        isPlaying: false
+        isPlaying: false,
+        isBuffering: false,
+        hasRenderedFirstFrame: false
       });
       const shouldSendProgress = (state, percent, position) => {
         const now = Date.now();
@@ -24230,10 +24239,29 @@ function buildVideoPlaybackTrackingScript({ enabled = true } = {}) {
           if (eventName === 'video_play') state.isPlaying = true;
           if (eventName === 'video_pause' || eventName === 'video_ended' || eventName === 'video_error') {
             state.isPlaying = false;
+            state.isBuffering = false;
           }
         };
         video.addEventListener('loadedmetadata', () => emit('video_ready', true));
         video.addEventListener('play', () => emit('video_play', true));
+        video.addEventListener('playing', () => {
+          if (video.dataset.rstkVideoPreviewing === 'true') return;
+          if (!state.hasRenderedFirstFrame) {
+            state.hasRenderedFirstFrame = true;
+            emit('video_playing', true);
+          }
+          if (state.isBuffering) {
+            state.isBuffering = false;
+            emit('video_buffer_end', true, false, false);
+          }
+        });
+        const markBuffering = () => {
+          if (!state.hasRenderedFirstFrame || !state.isPlaying || state.isBuffering || video.ended) return;
+          state.isBuffering = true;
+          emit('video_buffer_start', true, false, false);
+        };
+        video.addEventListener('waiting', markBuffering);
+        video.addEventListener('stalled', markBuffering);
         video.addEventListener('pause', () => emit('video_pause', true));
         let resumeAfterSeek = false;
         video.addEventListener('seeking', () => {
@@ -24986,7 +25014,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const controlBarLockedAtStart = showCustomControlBar && !autoplay
   const initialControlsVisible = showCustomControlBar && !controlBarLockedAtStart && showControlBarInitially
   const previewLoopEnabled = previewEnabled && !autoplay && !editorPlaybackDisabled
-  const preloadMode = editorPlaybackDisabled ? 'none' : previewEnabled ? 'auto' : 'metadata'
+  const preloadMode = editorPlaybackDisabled ? 'none' : (autoplay || previewLoopEnabled) ? 'metadata' : 'none'
   const previewRange = normalizeVideoPreviewRange(settings)
   // El teaser tipo Wistia siempre necesita arrancar silenciado para cumplir la
   // política de autoplay del navegador. El ajuste del usuario se recupera al
@@ -25121,6 +25149,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const usableFallbackVideoSrc = fallbackVideoSrc && fallbackVideoSrc !== videoSrc
     ? fallbackVideoSrc
     : ''
+  const posterVideoSrc = safePublicMediaUrl(options.posterSrc, 'image')
   const hlsSource = isHlsVideoUrl(videoSrc)
   const trackingEnabled = Boolean(options.tracking?.enabled)
   const trackingAttrs = buildVideoTrackingAttributes({
@@ -25138,6 +25167,7 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
     usableFallbackVideoSrc ? `data-rstk-video-fallback-src="${escapeHtml(usableFallbackVideoSrc)}"` : '',
+    posterVideoSrc ? `poster="${escapeHtml(posterVideoSrc)}"` : '',
     `data-rstk-video-render-preview="${renderPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-editor-preview="${editorPreviewMode ? 'true' : 'false'}"`,
     `data-rstk-video-adaptive-quality="${settings.videoAdaptiveQuality !== false ? 'true' : 'false'}"`,
@@ -28016,10 +28046,12 @@ const IMPORTED_VIDEO_PLAYER_CSS = `
   @container (max-width:360px){.rstk-video-timecode{min-width:72px;font-size:.62rem}.rstk-video-settings-menu{right:-3px}}
 </style>`
 
+const RSTK_HLS_PLAYER_SCRIPT_PATH = '/api/sites/public/video-engine/hls-1.6.16.min.js'
+
 function buildVideoPlayerRuntimeScript() {
   return `<script>
 	    (() => {
-	      const HLS_SCRIPT_URL = 'https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js';
+	      const HLS_SCRIPT_URL = '${RSTK_HLS_PLAYER_SCRIPT_PATH}';
 	      let hlsLoader = null;
 	      const isHlsSource = src => {
 	        const raw = String(src || '').split('#')[0] || '';
@@ -28099,6 +28131,7 @@ function buildVideoPlayerRuntimeScript() {
 	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
 	        const fastPreviewQuality = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
 	        let fallbackActivated = false;
+	        let sourceLoadPromise = null;
 	        const activateNativeHls = () => {
 	          if (!canPlayNativeHls(video)) return false;
 	          video.src = source;
@@ -28117,15 +28150,19 @@ function buildVideoPlayerRuntimeScript() {
 	          video.load();
 	          return true;
 	        };
-	        if (source && isHlsSource(source)) {
-	          if (adaptiveQuality && !fastPreviewQuality && canPlayNativeHls(video)) {
-	            video.addEventListener('error', activateFallback, { once: true });
-	            video.src = source;
-	            video.load();
-	          } else {
+	        const activateHlsSource = () => {
+	          if (!source || !isHlsSource(source)) return Promise.resolve();
+	          if (sourceLoadPromise) return sourceLoadPromise;
+	          sourceLoadPromise = Promise.resolve().then(() => {
+	            if (adaptiveQuality && !fastPreviewQuality && canPlayNativeHls(video)) {
+	              video.addEventListener('error', activateFallback, { once: true });
+	              video.src = source;
+	              video.load();
+	              return;
+	            }
 	            video.removeAttribute('src');
 	            video.load();
-	            loadHls().then(Hls => {
+	            return loadHls().then(Hls => {
 	              if (!Hls || !Hls.isSupported || !Hls.isSupported()) {
 	                if (!activateNativeHls() && !activateFallback()) {
 	                  video.src = source;
@@ -28135,13 +28172,37 @@ function buildVideoPlayerRuntimeScript() {
 	              }
 	              const hls = new Hls({
 	                enableWorker: true,
-	                startLevel: fastPreviewQuality ? 0 : adaptiveQuality ? -1 : 0,
-	                autoStartLoad: adaptiveQuality || fastPreviewQuality
+	                startLevel: 0,
+	                autoStartLoad: true,
+	                capLevelToPlayerSize: true,
+	                capLevelOnFPSDrop: true,
+	                maxDevicePixelRatio: 2
 	              });
 	              host.rstkHls = hls;
 	              if (Hls.Events && Hls.Events.ERROR) {
+	                let networkRecoveryAttempts = 0;
+	                let mediaRecoveryAttempts = 0;
 	                hls.on(Hls.Events.ERROR, (_event, data) => {
-	                  if (data && data.fatal) activateFallback();
+	                  if (!data || !data.fatal) return;
+	                  const networkErrorType = Hls.ErrorTypes && Hls.ErrorTypes.NETWORK_ERROR
+	                    ? Hls.ErrorTypes.NETWORK_ERROR
+	                    : 'networkError';
+	                  const mediaErrorType = Hls.ErrorTypes && Hls.ErrorTypes.MEDIA_ERROR
+	                    ? Hls.ErrorTypes.MEDIA_ERROR
+	                    : 'mediaError';
+	                  if (data.type === networkErrorType && networkRecoveryAttempts < 2) {
+	                    networkRecoveryAttempts += 1;
+	                    window.setTimeout(() => {
+	                      if (host.rstkHls === hls && typeof hls.startLoad === 'function') hls.startLoad(video.currentTime || -1);
+	                    }, networkRecoveryAttempts * 350);
+	                    return;
+	                  }
+	                  if (data.type === mediaErrorType && mediaRecoveryAttempts < 2 && typeof hls.recoverMediaError === 'function') {
+	                    mediaRecoveryAttempts += 1;
+	                    hls.recoverMediaError();
+	                    return;
+	                  }
+	                  activateFallback();
 	                });
 	              }
 	              if (!adaptiveQuality && !fastPreviewQuality && Hls.Events && Hls.Events.MANIFEST_PARSED) {
@@ -28161,6 +28222,21 @@ function buildVideoPlayerRuntimeScript() {
 	                video.load();
 	              }
 	            });
+	          });
+	          return sourceLoadPromise;
+	        };
+	        host.rstkEnsureVideoLoaded = activateHlsSource;
+	        if (source && isHlsSource(source)) {
+	          const canObserve = !video.autoplay && typeof IntersectionObserver === 'function';
+	          if (canObserve) {
+	            const sourceObserver = new IntersectionObserver(entries => {
+	              if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return;
+	              sourceObserver.disconnect();
+	              activateHlsSource();
+	            }, { rootMargin: '600px 0px' });
+	            sourceObserver.observe(host);
+	          } else {
+	            activateHlsSource();
 	          }
 	        }
 	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
@@ -28199,6 +28275,7 @@ function buildVideoPlayerRuntimeScript() {
 	        let settingsMenuOpen = false;
 	        let controlsHideTimer = 0;
 	        let progressFrame = 0;
+	        let startupQualityReleased = false;
 	        const preferFastPreviewQuality = () => {
 	          const hls = host.rstkHls;
 	          if (!hls) return;
@@ -28668,12 +28745,23 @@ function buildVideoPlayerRuntimeScript() {
 	          startPreviewLoop(true);
 	        };
 	        host.addEventListener('ristak:video-preview-range-change', handlePreviewRangeChange);
-	        const togglePlayback = unmute => {
+	        const stopActivePreviewPlayback = () => {
 	          const wasPreviewing = previewing;
+	          if (wasPreviewing && !video.paused) video.pause();
 	          if (wasPreviewing) stopPreviewLoop();
+	          return wasPreviewing;
+	        };
+	        const playWhenReady = () => Promise.resolve(
+	          typeof host.rstkEnsureVideoLoaded === 'function'
+	            ? host.rstkEnsureVideoLoaded()
+	            : undefined
+	        ).then(() => video.play());
+	        const togglePlayback = unmute => {
+	          const wasPreviewing = stopActivePreviewPlayback();
 	          restartFromBeginningForUserPlayback();
-	          restoreUserPlaybackQuality();
 	          const wasUserPlayed = hasUserPlayed;
+	          if (wasUserPlayed) restoreUserPlaybackQuality();
+	          else preferFastPreviewQuality();
 	          markUserPlayback();
 	          if (startVisibleAfterPlay || wasUserPlayed) showControlsTemporarily();
 	          else setControlsVisible(false);
@@ -28682,10 +28770,10 @@ function buildVideoPlayerRuntimeScript() {
 	            if (video.volume === 0) video.volume = 1;
 	          }
 	          if (video.paused || wasPreviewing) {
-	            video.play().catch(() => {
+	            playWhenReady().catch(() => {
 	              if (!unmute) return;
 	              video.muted = true;
-	              video.play().catch(() => {});
+	              playWhenReady().catch(() => {});
 	            }).finally(() => window.setTimeout(sync, 0));
 	          } else {
 	            video.pause();
@@ -28694,11 +28782,12 @@ function buildVideoPlayerRuntimeScript() {
 	          }
 	        };
 	        const playVideo = () => {
-	          if (previewing) stopPreviewLoop();
+	          stopActivePreviewPlayback();
 	          restartFromBeginningForUserPlayback();
-	          restoreUserPlaybackQuality();
+	          if (hasUserPlayed) restoreUserPlaybackQuality();
+	          else preferFastPreviewQuality();
 	          markUserPlayback();
-	          return video.play().catch(() => {});
+	          return playWhenReady().catch(() => {});
 	        };
 	        const pauseVideo = () => {
 	          video.pause();
@@ -28710,11 +28799,11 @@ function buildVideoPlayerRuntimeScript() {
 	          sync();
 	        };
 	        const restartVideo = () => {
-	          if (previewing) stopPreviewLoop();
+	          stopActivePreviewPlayback();
 	          markUserPlayback();
 	          video.currentTime = 0;
 	          restoreUserPlaybackQuality();
-	          return video.play().catch(() => {});
+	          return playWhenReady().catch(() => {});
 	        };
 	        const enterFullscreen = () => {
 	          try {
@@ -28865,6 +28954,13 @@ function buildVideoPlayerRuntimeScript() {
 	            if (startVisibleAfterPlay && !wasUserPlayed) showControlsTemporarily();
 	          }
 	          sync();
+	        });
+	        video.addEventListener('playing', () => {
+	          if (previewing || startupQualityReleased) return;
+	          startupQualityReleased = true;
+	          window.setTimeout(() => {
+	            if (!video.paused && !previewing) restoreUserPlaybackQuality();
+	          }, 650);
 	        });
 	        const resumePreviewLoop = () => {
 	          previewRetryCount = 0;
@@ -30389,6 +30485,7 @@ function renderImportedCustomVideoMedia(innerHtml = '', block = null, context = 
     'data-rstk-video-timeline-mode': attrs['data-rstk-video-timeline-mode'] || normalizeVideoTimelineMode(settings),
     ...(delivery?.src ? { 'data-rstk-video-src': delivery.src } : {}),
     ...(delivery?.fallbackSrc ? { 'data-rstk-video-fallback-src': delivery.fallbackSrc } : {}),
+    ...(delivery?.posterSrc ? { poster: delivery.posterSrc } : {}),
     ...(delivery?.src && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
     title: attrs.title || block?.label || 'Video'
   }
@@ -31603,6 +31700,9 @@ async function renderImportedPublicSiteHtml(site, {
     force: /data-rstk-video-form-gate\b/i.test(html)
   })
   const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
+  const importedVideoEnginePreload = /\bdata-rstk-video-src\s*=\s*(?:"[^"]*\.m3u8(?:[?"][^"]*)?"|'[^']*\.m3u8(?:[?'][^']*)?')/i.test(html)
+    ? `<link rel="preload" as="script" href="${RSTK_HLS_PLAYER_SCRIPT_PATH}">`
+    : ''
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
@@ -31613,7 +31713,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${importedTimeColorModeRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -31991,6 +32091,9 @@ export async function renderPublicSiteHtml(site, {
     renderContext,
     siteIsDark: renderState.siteIsDark
   })
+  const videoEnginePreload = /\bdata-rstk-video-src\s*=\s*(?:"[^"]*\.m3u8(?:[?"][^"]*)?"|'[^']*\.m3u8(?:[?'][^']*)?')/i.test(`${bodyBlocks}${popupHtml}`)
+    ? `<link rel="preload" as="script" href="${RSTK_HLS_PLAYER_SCRIPT_PATH}">`
+    : ''
 
   // Auto navigation menu for website-mode sites with more than one page.
   const siteNavHtml = websiteMode && pages.length > 1
@@ -32005,6 +32108,7 @@ export async function renderPublicSiteHtml(site, {
   <title>${escapeHtml(site.title || site.name)}</title>
   <meta name="description" content="${escapeHtml(site.description || '')}">
   <link href="${RSTK_SITE_FONTS_CSS_PATH}" rel="stylesheet">
+  ${videoEnginePreload}
   <style>${styleSheet}</style>
   ${responsiveCss ? `<style data-rstk-responsive>${responsiveCss}</style>` : ''}
   ${siteNavHtml ? `<style>${SITE_NAV_STYLES}</style>` : ''}
