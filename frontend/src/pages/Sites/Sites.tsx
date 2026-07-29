@@ -37707,6 +37707,7 @@ const VideoPlayerPreview: React.FC<{
   const startsMuted = muted || previewLoopEnabled || autoplay
   const [isPlaying, setIsPlaying] = useState(false)
   const [sourceNearViewport, setSourceNearViewport] = useState(false)
+  const [playerRenderable, setPlayerRenderable] = useState(false)
   const [isPreviewLooping, setIsPreviewLooping] = useState(false)
   const [isMuted, setIsMuted] = useState(startsMuted)
   const [progress, setProgress] = useState(0)
@@ -38227,6 +38228,7 @@ const VideoPlayerPreview: React.FC<{
       || !previewLoopRef.current
       || hasStartedPlaybackRef.current
       || !previewLoopEnabled
+      || !playerRenderable
     ) return
     const retryDelays = [120, 400, 1200, 3000]
     if (previewRetryCountRef.current >= retryDelays.length) return
@@ -38236,11 +38238,11 @@ const VideoPlayerPreview: React.FC<{
       previewRetryTimerRef.current = null
       startPreviewLoopRef.current()
     }, retryDelay)
-  }, [previewLoopEnabled])
+  }, [playerRenderable, previewLoopEnabled])
 
   const startPreviewLoop = useCallback((restartAtRangeStart = false) => {
     const video = videoRef.current
-    if (!video || !previewLoopEnabled || hasStartedPlaybackRef.current) return
+    if (!video || !previewLoopEnabled || !playerRenderable || hasStartedPlaybackRef.current) return
     const range = getActivePreviewRange()
     previewLoopRef.current = true
     video.dataset.rstkVideoPreviewing = 'true'
@@ -38289,8 +38291,37 @@ const VideoPlayerPreview: React.FC<{
         previewPlayPendingRef.current = false
       }
     })
-  }, [getActivePreviewRange, previewLoopEnabled, schedulePreviewLoopRetry])
+  }, [getActivePreviewRange, playerRenderable, previewLoopEnabled, schedulePreviewLoopRetry])
   startPreviewLoopRef.current = startPreviewLoop
+
+  useLayoutEffect(() => {
+    const player = playerRef.current
+    if (!player) {
+      setPlayerRenderable(false)
+      return undefined
+    }
+    const syncRenderable = () => {
+      const rect = player.getBoundingClientRect()
+      const style = window.getComputedStyle(player)
+      setPlayerRenderable(
+        rect.width > 0
+        && rect.height > 0
+        && style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && style.contentVisibility !== 'hidden'
+      )
+    }
+    syncRenderable()
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(syncRenderable)
+      : null
+    observer?.observe(player)
+    window.addEventListener('resize', syncRenderable, { passive: true })
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', syncRenderable)
+    }
+  }, [noTrackSrc])
 
   useEffect(() => {
     const player = playerRef.current
@@ -38299,9 +38330,7 @@ const VideoPlayerPreview: React.FC<{
       return undefined
     }
     const observer = new IntersectionObserver(entries => {
-      if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return
-      setSourceNearViewport(true)
-      observer.disconnect()
+      setSourceNearViewport(entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0))
     }, { rootMargin: '600px 0px' })
     observer.observe(player)
     return () => observer.disconnect()
@@ -38310,7 +38339,17 @@ const VideoPlayerPreview: React.FC<{
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    if (!sourceNearViewport) return
+    const eligible = playerRenderable && (autoplay || sourceNearViewport || hasStartedPlaybackRef.current)
+    if (!eligible) {
+      if (!video.paused) video.pause()
+      stopPreviewLoop()
+      hlsRef.current?.destroy()
+      hlsRef.current = null
+      loadedVideoSourceRef.current = ''
+      video.removeAttribute('src')
+      video.load()
+      return
+    }
     const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc
     loadedVideoSourceRef.current = noTrackSrc
     if (sourceChanged) startupQualityReleasedRef.current = false
@@ -38416,7 +38455,7 @@ const VideoPlayerPreview: React.FC<{
       hlsRef.current?.destroy()
       hlsRef.current = null
     }
-  }, [adaptiveQuality, autoplay, isHlsSource, noTrackFallbackSrc, noTrackSrc, previewLoopEnabled, sourceNearViewport, stopPreviewLoop])
+  }, [adaptiveQuality, autoplay, isHlsSource, noTrackFallbackSrc, noTrackSrc, playerRenderable, previewLoopEnabled, sourceNearViewport, stopPreviewLoop])
 
   const restoreUserPlaybackQuality = useCallback(() => {
     const hls = hlsRef.current
@@ -38839,15 +38878,21 @@ const VideoPlayerPreview: React.FC<{
     >
       <video
         ref={videoRef}
-        src={isHlsSource || !sourceNearViewport ? undefined : noTrackSrc}
+        src={
+          isHlsSource
+          || !playerRenderable
+          || (!sourceNearViewport && !autoplay && !hasStartedPlayback)
+            ? undefined
+            : noTrackSrc
+        }
         data-rstk-video-src={noTrackSrc}
         title={label || 'Video'}
         controls={showNativeControls}
         muted={startsMuted}
         loop={loop}
-        autoPlay={autoplay}
+        autoPlay={autoplay && playerRenderable}
         playsInline
-        preload={editorPlaybackDisabled ? 'none' : (autoplay || previewLoopEnabled) ? 'metadata' : 'none'}
+        preload={editorPlaybackDisabled || !playerRenderable ? 'none' : (autoplay || previewLoopEnabled) ? 'metadata' : 'none'}
         poster={posterSrc || undefined}
         style={{ objectFit: fit as React.CSSProperties['objectFit'] }}
         onPlay={syncVideoState}

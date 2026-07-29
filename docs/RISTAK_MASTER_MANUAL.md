@@ -5186,7 +5186,13 @@ antes del primer segmento; hls.js inicia en la variante ligera, limita ABR al
 tamaño visible, activa fuentes a 600 px del viewport e intenta recuperar red o
 decodificación antes del fallback. El runtime publicado está fijado y servido
 por Ristak en `/api/sites/public/video-engine/hls-1.6.16.min.js`; crear un preview
-no espera a copiar el video completo de Stream a Storage.
+no espera a copiar el video completo de Stream a Storage. Si una página declara
+variantes separadas de escritorio y celular, sólo el reproductor con tamaño real
+recibe MP4/HLS, también cuando usa un reproductor HTML propio. El hermano oculto
+por el breakpoint queda pausado y libera su
+fuente; al cambiar de dispositivo se activa únicamente la variante visible. Esto
+aplica igual al canvas, preview autenticado y sitio publicado para que un video
+invisible no duplique ancho de banda.
 
 El contrato canonico para contenido asociable es:
 

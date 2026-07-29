@@ -1497,7 +1497,11 @@ test('video player treats Ristak media file routes as playable video sources', a
   })
 
   assert.match(html, /rstk-video-custom-controls/)
-  assert.match(html, /<video src="\/media\/assets\/media_video_123\/file" data-rstk-video-src="\/media\/assets\/media_video_123\/file"/)
+  assert.match(html, /<video data-rstk-video-src="\/media\/assets\/media_video_123\/file"/)
+  assert.doesNotMatch(html, /<video src="\/media\/assets\/media_video_123\/file"/)
+  assert.match(html, /const activateDirectSource = \(\) =>/)
+  assert.match(html, /const isHostRenderable = \(\) =>/)
+  assert.match(html, /new ResizeObserver\(syncSourceEligibility\)/)
   assert.doesNotMatch(html, /<iframe src="\/media\/assets\/media_video_123\/file"/)
 })
 
@@ -1623,6 +1627,7 @@ test('video player defaults to intelligent resolution and can prioritize the hig
       adaptiveQuality,
       fastPreviewQuality,
       isHlsSource,
+      isHostRenderable,
       canPlayNativeHls,
       loadHls,
       activateNativeHls,
@@ -1641,6 +1646,7 @@ test('video player defaults to intelligent resolution and can prioritize the hig
     adaptiveQuality: false,
     fastPreviewQuality: false,
     isHlsSource: () => true,
+    isHostRenderable: () => true,
     canPlayNativeHls: () => true,
     loadHls: async () => FakeHls,
     activateNativeHls: () => false,

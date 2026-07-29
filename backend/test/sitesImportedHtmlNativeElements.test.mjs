@@ -895,7 +895,8 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(previewHtml, /const PREVIEW_SAFE = true;/)
     assert.match(previewHtml, /data-rstk-video-preview="true"/)
     assert.match(previewHtml, /data-rstk-video-editor-preview="false"/)
-    assert.match(previewHtml, /preload="auto"/)
+    assert.match(previewHtml, /preload="metadata"/)
+    assert.doesNotMatch(previewHtml, /<video[^>]*\ssrc=/)
     assert.match(previewHtml, /startPreviewLoop\(\)/)
     assert.match(previewHtml, /<a[^>]*data-rstk-video-action-target="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
 
@@ -908,9 +909,10 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(editorHtml, /data-rstk-video-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
-    assert.match(editorHtml, /preload="auto"/)
+    assert.match(editorHtml, /preload="metadata"/)
+    assert.doesNotMatch(editorHtml, /<video[^>]*\ssrc=/)
     assert.match(editorHtml, /const editorPreview = video\.getAttribute\('data-rstk-video-editor-preview'\) === 'true'/)
-    assert.match(editorHtml, /if \(source && isHlsSource\(source\)\)/)
+    assert.match(editorHtml, /return isHlsSource\(source\) \? activateHlsSource\(\) : activateDirectSource\(\)/)
     assert.doesNotMatch(editorHtml, /source && isHlsSource\(source\) && !editorPreview/)
 
     const pausedEditorSite = structuredClone(currentSite)
@@ -1038,7 +1040,7 @@ test('imported HTML custom video keeps its complete design while Ristak injects 
     })
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-src="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
-    assert.match(editorHtml, /<video[^>]*\ssrc="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
+    assert.doesNotMatch(editorHtml, /<video[^>]*\ssrc="https:\/\/cdn\.example\.test\/custom-player\.mp4"/)
     assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
     assert.match(editorHtml, /class="dog-overlay"/)
   } finally {
@@ -1122,12 +1124,12 @@ test('imported HTML custom video receives Bunny HLS without mounting the Bunny o
       preview: true,
       importedNativePreviewMock: true
     })
-    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-    assert.match(editorHtml, new RegExp(`<video[^>]*\\ssrc="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
-    assert.doesNotMatch(editorHtml, /data-rstk-video-fallback-src=/)
+    assert.match(editorHtml, new RegExp(`data-rstk-video-src="${playlistUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.match(editorHtml, new RegExp(`data-rstk-video-fallback-src="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
+    assert.doesNotMatch(editorHtml, new RegExp(`<video[^>]*\\ssrc="${storageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`))
     assert.match(editorHtml, /data-rstk-video-editor-preview="true"/)
     assert.match(editorHtml, /data-rstk-video-adaptive-quality="true"/)
-    assert.match(editorHtml, /if \(source && isHlsSource\(source\)\)/)
+    assert.match(editorHtml, /return isHlsSource\(source\) \? activateHlsSource\(\) : activateDirectSource\(\)/)
     assert.doesNotMatch(editorHtml, /data-rstk-video-track="true"/)
     assert.doesNotMatch(editorHtml, /player\.mediadelivery\.net\/embed/)
   } finally {

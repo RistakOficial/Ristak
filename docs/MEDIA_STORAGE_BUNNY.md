@@ -331,8 +331,16 @@ another account.
   when it is disabled, it pins the highest rendition requested by the user.
   Preview loops remain on the light rendition until real playback starts. Video
   sources more than 600 px outside the viewport are not activated yet, while
-  autoplay videos start immediately. This applies to editor, preview URL and live
-  playback and never changes the saved quality preference. The Sites
+  autoplay videos start immediately only when their player has a real rendered
+  box. Responsive desktop/mobile sibling players, including custom HTML players,
+  do not receive an MP4 `src` or attach HLS while CSS keeps them at zero size or
+  hidden. If a breakpoint hides
+  an already active sibling, Ristak pauses it, destroys/releases its current
+  HLS/MP4 source and activates only the visible sibling; a real user playback
+  keeps its position for a later return, while an automatic teaser does not keep
+  consuming bandwidth in the background. Intersection and resize observers
+  enforce the same rule in the editor canvas, authenticated preview and live
+  site. This never changes the saved quality preference. The Sites
   inspector persists the selected asset duration with the media URL, so its
   full timeline is available immediately. Legacy URLs are metadata-probed and
   remain in an explicit loading state instead of using a temporary 40-second
@@ -388,6 +396,10 @@ safe defaults for Ristak to change silently:
   **Optimize for Video Delivery** (`EnableCacheSlice`) and verify Smart Cache
   covers MP4. This improves byte-range caching of the fallback; it does not
   replace HLS.
+- Request coalescing can be enabled on a Pull Zone dedicated to public static
+  Media so simultaneous misses for the same video share one origin request.
+  Never enable it by reflex on authenticated, personalized or dynamic responses:
+  Bunny warns that coalesced requests receive the same content.
 - Choose Stream CDN pricing regions/tier for the real viewer geography. High
   Volume is intended for large files/video, while Standard offers the broader
   low-latency network; the correct choice depends on audience and spend.

@@ -9,6 +9,10 @@ const sitesSource = await readFile(
   new URL('../src/pages/Sites/Sites.tsx', import.meta.url),
   'utf8'
 )
+const backendSitesSource = await readFile(
+  new URL('../../backend/src/services/sitesService.js', import.meta.url),
+  'utf8'
+)
 assert.match(
   sitesSource,
   /const HLS_PLAYER_SCRIPT_URL = '\/api\/sites\/public\/video-engine\/hls-1\.6\.16\.min\.js'/,
@@ -20,12 +24,12 @@ assert.doesNotMatch(
   'el editor no debe depender de un CDN JavaScript ajeno para reproducir HLS'
 )
 
-const sourceBetween = (startMarker, endMarker) => {
-  const start = sitesSource.indexOf(startMarker)
-  const end = sitesSource.indexOf(endMarker, start + startMarker.length)
+const sourceBetween = (startMarker, endMarker, source = sitesSource) => {
+  const start = source.indexOf(startMarker)
+  const end = source.indexOf(endMarker, start + startMarker.length)
   assert.ok(start >= 0, `No se encontró ${startMarker}`)
   assert.ok(end > start, `No se encontró ${endMarker} después de ${startMarker}`)
-  return sitesSource.slice(start, end)
+  return source.slice(start, end)
 }
 
 const resolutionControlSource = sourceBetween(
@@ -54,8 +58,23 @@ assert.match(
 )
 
 const previewPlaybackSource = sourceBetween(
-  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    if (!sourceNearViewport) return\n    const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc',
+  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    const eligible = playerRenderable && (autoplay || sourceNearViewport || hasStartedPlaybackRef.current)',
   'const restoreUserPlaybackQuality = useCallback'
+)
+assert.match(
+  sitesSource,
+  /const \[playerRenderable, setPlayerRenderable\] = useState\(false\)[\s\S]*?new ResizeObserver\(syncRenderable\)/,
+  'el canvas debe observar si el reproductor tiene tamaño real antes de adjuntar video'
+)
+assert.match(
+  previewPlaybackSource,
+  /if \(!eligible\) \{[\s\S]*?video\.pause\(\)[\s\S]*?video\.removeAttribute\('src'\)[\s\S]*?video\.load\(\)/,
+  'el canvas debe suspender y liberar la fuente del reproductor oculto'
+)
+assert.match(
+  sitesSource,
+  /src=\{[\s\S]*?!playerRenderable[\s\S]*?!hasStartedPlayback[\s\S]*?noTrackSrc/,
+  'el video del canvas no debe recibir MP4 mientras su variante responsive está oculta'
 )
 assert.match(
   previewPlaybackSource,
@@ -83,9 +102,55 @@ assert.match(
   'el play real debe devolver HLS al modo inteligente elegido después del teaser ligero'
 )
 
+const publicVideoMarkupSource = sourceBetween(
+  'const videoSourceAttrs = [',
+  'return `\n    <div class="${classes}"',
+  backendSitesSource
+)
+assert.doesNotMatch(
+  publicVideoMarkupSource,
+  /(?:^|\n)\s*`src="/,
+  'preview y publicado no deben adjuntar MP4 antes de confirmar que la variante responsive es visible'
+)
+const customVideoMarkupSource = sourceBetween(
+  'function renderImportedCustomVideoMedia(',
+  'function renderImportedCustomVideoSlot(',
+  backendSitesSource
+)
+assert.doesNotMatch(
+  customVideoMarkupSource,
+  /\.\.\.\(delivery\?\.src[\s\S]*?\{ src: delivery\.src \}/,
+  'el reproductor HTML personalizado tampoco debe adjuntar MP4 antes de validar su variante responsive'
+)
+const publicVideoRuntimeSource = sourceBetween(
+  'function buildVideoPlayerRuntimeScript() {',
+  'const IMPORTED_VIDEO_GATE_LOCKED_ATTR_NAMES = [',
+  backendSitesSource
+)
+assert.match(
+  publicVideoRuntimeSource,
+  /const isHostRenderable = \(\) => \{[\s\S]*?rect\.width > 0[\s\S]*?style\.display !== 'none'/,
+  'el runtime público debe exigir tamaño real y visibilidad de layout'
+)
+assert.match(
+  publicVideoRuntimeSource,
+  /const syncSourceEligibility = \(\) => \{[\s\S]*?suspendInactiveSource\(!renderable\)[\s\S]*?activateVideoSource\(\)/,
+  'el runtime público debe activar sólo la variante elegible y suspender la oculta'
+)
+assert.match(
+  publicVideoRuntimeSource,
+  /new IntersectionObserver[\s\S]*?rootMargin: '600px 0px'[\s\S]*?new ResizeObserver\(syncSourceEligibility\)/,
+  'el runtime público debe combinar cercanía al viewport con cambios responsive de tamaño'
+)
+assert.match(
+  publicVideoRuntimeSource,
+  /const releaseSource = preserveTime => \{[\s\S]*?activeHls\.destroy\(\)[\s\S]*?video\.removeAttribute\('src'\)[\s\S]*?video\.load\(\)/,
+  'el runtime público debe liberar MP4/HLS oculto en vez de dejarlo consumiendo datos'
+)
+
 const previewLoopSource = sourceBetween(
   'const stopPreviewLoop = useCallback(() => {',
-  'useEffect(() => {\n    const video = videoRef.current\n    if (!video) return\n    if (!sourceNearViewport) return\n    const sourceChanged = loadedVideoSourceRef.current !== noTrackSrc'
+  'useLayoutEffect(() => {\n    const player = playerRef.current\n    if (!player) {'
 )
 assert.match(
   previewLoopSource,
@@ -124,8 +189,8 @@ assert.match(
 )
 assert.match(
   sitesSource,
-  /<video[\s\S]*?muted=\{startsMuted\}[\s\S]*?autoPlay=\{autoplay\}/,
-  'el elemento del canvas debe nacer silenciado cuando el teaser está activo'
+  /<video[\s\S]*?muted=\{startsMuted\}[\s\S]*?autoPlay=\{autoplay && playerRenderable\}/,
+  'el elemento del canvas debe nacer silenciado y sólo usar autoplay cuando su variante es visible'
 )
 
 const previewRangeControlSource = sourceBetween(

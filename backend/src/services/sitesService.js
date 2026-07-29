@@ -25150,7 +25150,6 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
     ? fallbackVideoSrc
     : ''
   const posterVideoSrc = safePublicMediaUrl(options.posterSrc, 'image')
-  const hlsSource = isHlsVideoUrl(videoSrc)
   const trackingEnabled = Boolean(options.tracking?.enabled)
   const trackingAttrs = buildVideoTrackingAttributes({
     enabled: trackingEnabled,
@@ -25164,7 +25163,6 @@ function renderVideoPlayer(src, block, settings = {}, options = {}) {
   const controlBarTabIndex = controlBarLockedAtStart ? ' tabindex="-1"' : ''
   const progressTabIndex = controlBarLockedAtStart ? '-1' : '0'
   const videoSourceAttrs = [
-    hlsSource ? '' : `src="${escapeHtml(videoSrc)}"`,
     `data-rstk-video-src="${escapeHtml(videoSrc)}"`,
     usableFallbackVideoSrc ? `data-rstk-video-fallback-src="${escapeHtml(usableFallbackVideoSrc)}"` : '',
     posterVideoSrc ? `poster="${escapeHtml(posterVideoSrc)}"` : '',
@@ -28130,8 +28128,18 @@ function buildVideoPlayerRuntimeScript() {
 	        const editorPreview = video.getAttribute('data-rstk-video-editor-preview') === 'true';
 	        const adaptiveQuality = video.getAttribute('data-rstk-video-adaptive-quality') !== 'false';
 	        const fastPreviewQuality = video.getAttribute('data-rstk-video-preview') === 'true' && !video.autoplay;
+	        const isHostRenderable = () => {
+	          if (!host.isConnected) return false;
+	          const rect = host.getBoundingClientRect();
+	          if (!(rect.width > 0) || !(rect.height > 0)) return false;
+	          const style = window.getComputedStyle(host);
+	          return style.display !== 'none' &&
+	            style.visibility !== 'hidden' &&
+	            style.contentVisibility !== 'hidden';
+	        };
 	        let fallbackActivated = false;
 	        let sourceLoadPromise = null;
+	        let sourceNearViewport = false;
 	        const activateNativeHls = () => {
 	          if (!canPlayNativeHls(video)) return false;
 	          video.src = source;
@@ -28225,20 +28233,19 @@ function buildVideoPlayerRuntimeScript() {
 	          });
 	          return sourceLoadPromise;
 	        };
-	        host.rstkEnsureVideoLoaded = activateHlsSource;
-	        if (source && isHlsSource(source)) {
-	          const canObserve = !video.autoplay && typeof IntersectionObserver === 'function';
-	          if (canObserve) {
-	            const sourceObserver = new IntersectionObserver(entries => {
-	              if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return;
-	              sourceObserver.disconnect();
-	              activateHlsSource();
-	            }, { rootMargin: '600px 0px' });
-	            sourceObserver.observe(host);
-	          } else {
-	            activateHlsSource();
+	        const activateDirectSource = () => {
+	          if (!source || isHlsSource(source)) return Promise.resolve();
+	          if (video.getAttribute('src') !== source) {
+	            video.src = source;
+	            video.load();
 	          }
-	        }
+	          return Promise.resolve();
+	        };
+	        const activateVideoSource = () => {
+	          if (!isHostRenderable()) return Promise.resolve();
+	          return isHlsSource(source) ? activateHlsSource() : activateDirectSource();
+	        };
+	        host.rstkEnsureVideoLoaded = activateVideoSource;
 	        const rawSpeed = Number(video.getAttribute('data-rstk-video-speed') || '1');
 	        video.playbackRate = Number.isFinite(rawSpeed) ? Math.min(4, Math.max(0.25, rawSpeed)) : 1;
 	        const progress = host.querySelector('[data-rstk-video-progress]');
@@ -28589,7 +28596,7 @@ function buildVideoPlayerRuntimeScript() {
 	          setProgressRatio(0);
 	        };
 	        const schedulePreviewRetry = (delay) => {
-	          if (previewRetryTimer || !previewEnabled || hasUserPlayed || !previewing) return;
+	          if (previewRetryTimer || !previewEnabled || hasUserPlayed || !previewing || !isHostRenderable()) return;
 	          const retryDelays = [120, 400, 1200, 3000];
 	          if (previewRetryCount >= retryDelays.length) return;
 	          const retryDelay = Number.isFinite(delay) ? delay : retryDelays[previewRetryCount];
@@ -28607,7 +28614,7 @@ function buildVideoPlayerRuntimeScript() {
 	          return true;
 	        };
 	        const startPreviewLoop = (restartAtRangeStart = false) => {
-	          if (!previewEnabled || hasUserPlayed) return;
+	          if (!previewEnabled || hasUserPlayed || !isHostRenderable()) return;
 	          const range = normalizePreviewRange(video);
 	          previewing = true;
 	          video.dataset.rstkVideoPreviewing = 'true';
@@ -29003,10 +29010,73 @@ function buildVideoPlayerRuntimeScript() {
 	        ['loadedmetadata', 'play', 'pause', 'timeupdate', 'volumechange', 'ended'].forEach(eventName => {
 	          video.addEventListener(eventName, () => emitCustomVideoEvent(eventName));
 	        });
+	        const restoreSuspendedTime = () => {
+	          const suspendedTime = Number(video.getAttribute('data-rstk-video-suspended-time') || '0');
+	          if (!(suspendedTime > 0) || !Number.isFinite(video.duration) || video.duration <= 0) return;
+	          video.currentTime = Math.min(suspendedTime, Math.max(0, video.duration - 0.25));
+	          video.removeAttribute('data-rstk-video-suspended-time');
+	        };
+	        video.addEventListener('loadedmetadata', restoreSuspendedTime);
+	        const releaseSource = preserveTime => {
+	          const currentTime = Number(video.currentTime || 0);
+	          if (preserveTime && Number.isFinite(currentTime) && currentTime > 0.01) {
+	            video.setAttribute('data-rstk-video-suspended-time', String(currentTime));
+	          } else {
+	            video.removeAttribute('data-rstk-video-suspended-time');
+	          }
+	          const activeHls = host.rstkHls;
+	          if (activeHls && typeof activeHls.destroy === 'function') {
+	            try { activeHls.destroy(); } catch (_) {}
+	          }
+	          host.rstkHls = null;
+	          sourceLoadPromise = null;
+	          fallbackActivated = false;
+	          video.removeAttribute('src');
+	          video.load();
+	        };
+	        const suspendInactiveSource = hiddenByLayout => {
+	          const shouldRelease = hiddenByLayout || !hasUserPlayed;
+	          if ((hiddenByLayout || previewing || !hasUserPlayed) && !video.paused) video.pause();
+	          if (previewing) stopPreviewLoop();
+	          if (shouldRelease && (video.hasAttribute('src') || host.rstkHls)) {
+	            releaseSource(hiddenByLayout && hasUserPlayed);
+	          }
+	          sync();
+	        };
+	        const syncSourceEligibility = () => {
+	          const renderable = isHostRenderable();
+	          const eligible = renderable && (video.autoplay || sourceNearViewport || hasUserPlayed);
+	          if (!eligible) {
+	            suspendInactiveSource(!renderable);
+	            return;
+	          }
+	          activateVideoSource().then(() => {
+	            if (video.readyState >= 1) {
+	              restoreSuspendedTime();
+	              startPreviewLoop();
+	            }
+	            if (video.autoplay && video.paused) video.play().catch(() => {});
+	          }).catch(() => {});
+	        };
+	        if (typeof IntersectionObserver === 'function') {
+	          const sourceObserver = new IntersectionObserver(entries => {
+	            sourceNearViewport = entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0);
+	            syncSourceEligibility();
+	          }, { rootMargin: '600px 0px' });
+	          sourceObserver.observe(host);
+	        } else {
+	          sourceNearViewport = true;
+	        }
+	        if (typeof ResizeObserver === 'function') {
+	          const sourceSizeObserver = new ResizeObserver(syncSourceEligibility);
+	          sourceSizeObserver.observe(host);
+	        }
+	        window.addEventListener('resize', syncSourceEligibility, { passive: true });
 	        if (video.readyState >= 1) {
 	          syncVideoOrientation(host, video);
 	          startPreviewLoop();
 	        }
+	        syncSourceEligibility();
 	        sync();
 	      });
 	    })();
@@ -30486,7 +30556,6 @@ function renderImportedCustomVideoMedia(innerHtml = '', block = null, context = 
     ...(delivery?.src ? { 'data-rstk-video-src': delivery.src } : {}),
     ...(delivery?.fallbackSrc ? { 'data-rstk-video-fallback-src': delivery.fallbackSrc } : {}),
     ...(delivery?.posterSrc ? { poster: delivery.posterSrc } : {}),
-    ...(delivery?.src && !isHlsVideoUrl(delivery.src) ? { src: delivery.src } : {}),
     title: attrs.title || block?.label || 'Video'
   }
   const nextVideo = `<video${renderHtmlAttributes(nextAttrs)}>${mediaBody}</video>`
