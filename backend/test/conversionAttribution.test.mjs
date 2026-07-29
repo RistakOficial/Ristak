@@ -3,11 +3,11 @@
 //
 // | Historia                                        | Payload Meta                    | Atribución interna |
 // |-------------------------------------------------|---------------------------------|--------------------|
-// | WhatsApp orgánico → Web ad → Compra WhatsApp    | business_messaging / whatsapp   | Web ad             |
+// | WhatsApp orgánico → Web ad → Compra WhatsApp    | chat                            | Web ad             |
 // | Web ad → Messenger ad → Compra Web              | website                         | Messenger ad       |
 // | WhatsApp ad → Messenger orgánico → Compra Msngr | business_messaging / messenger  | WhatsApp ad        |
 // | Web orgánico → Compra Web                       | website                         | ninguna (orgánico) |
-// | Instagram ad → Compra WhatsApp                  | business_messaging / whatsapp   | Instagram ad       |
+// | Instagram ad → Compra WhatsApp                  | chat                            | Instagram ad       |
 //
 // La atribución la decide el último anuncio válido; el payload de Meta lo
 // decide la superficie real donde ocurrió la conversión.
@@ -298,11 +298,16 @@ test('escenario 1: WhatsApp orgánico → Web ad → compra WhatsApp = payload w
       assert.equal(metaCalls.length, 1)
 
       const payload = JSON.parse(metaCalls[0].body)
-      // Superficie real: WhatsApp (aunque no haya ctwa, no se falsifica).
-      assert.equal(payload.data[0].action_source, 'business_messaging')
-      assert.equal(payload.data[0].messaging_channel, 'whatsapp')
+      // WhatsApp orgánico: Meta exige ctwa_clid para business_messaging, así
+      // que usa el contrato chat y conserva el canal real en custom_data.
+      assert.equal(payload.data[0].action_source, 'chat')
+      assert.equal(payload.data[0].messaging_channel, undefined)
       assert.equal(payload.data[0].user_data.ctwa_clid, undefined)
+      assert.equal(payload.data[0].user_data.page_id, undefined)
+      assert.equal(payload.data[0].user_data.whatsapp_business_account_id, undefined)
       assert.ok(payload.data[0].user_data.ph)
+      assert.equal(payload.data[0].custom_data.source, 'ristak_payment')
+      assert.equal(payload.data[0].custom_data.messaging_channel, 'whatsapp')
       // Crédito interno: el anuncio web (último paid touch).
       assert.equal(payload.data[0].custom_data.ad_id, 'ad-web-111')
       assert.equal(payload.data[0].custom_data.attribution_channel, 'website')
@@ -492,11 +497,13 @@ test('escenario 5: Instagram ad → compra WhatsApp = payload whatsapp, crédito
       assert.equal(metaCalls.length, 1)
 
       const payload = JSON.parse(metaCalls[0].body)
-      // Superficie real: WhatsApp (sin ctwa: matching por teléfono, sin falsificar).
-      assert.equal(payload.data[0].action_source, 'business_messaging')
-      assert.equal(payload.data[0].messaging_channel, 'whatsapp')
+      // Superficie real: WhatsApp orgánico, usando el contrato chat de Meta.
+      assert.equal(payload.data[0].action_source, 'chat')
+      assert.equal(payload.data[0].messaging_channel, undefined)
       assert.equal(payload.data[0].user_data.ctwa_clid, undefined)
       assert.ok(payload.data[0].user_data.ph)
+      assert.equal(payload.data[0].custom_data.source, 'ristak_payment')
+      assert.equal(payload.data[0].custom_data.messaging_channel, 'whatsapp')
       // Crédito interno: el anuncio de Instagram.
       assert.equal(payload.data[0].custom_data.ad_id, 'ad-ig-555')
       assert.equal(payload.data[0].custom_data.attribution_channel, 'instagram')
@@ -544,8 +551,10 @@ test('cita smart: conversación WhatsApp + crédito de anuncio web → payload w
 
         const payload = JSON.parse(metaCalls[0].body)
         assert.equal(payload.data[0].event_name, 'LeadSubmitted')
-        assert.equal(payload.data[0].action_source, 'business_messaging')
-        assert.equal(payload.data[0].messaging_channel, 'whatsapp')
+        assert.equal(payload.data[0].action_source, 'chat')
+        assert.equal(payload.data[0].messaging_channel, undefined)
+        assert.equal(payload.data[0].custom_data.source, 'whatsapp')
+        assert.equal(payload.data[0].custom_data.messaging_channel, 'whatsapp')
         assert.equal(payload.data[0].custom_data.ad_id, 'ad-web-cita-1')
         assert.equal(payload.data[0].custom_data.attribution_channel, 'website')
 

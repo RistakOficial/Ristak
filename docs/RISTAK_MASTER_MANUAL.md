@@ -3384,8 +3384,11 @@ Reglas base:
   `docs/CONVERSION_ATTRIBUTION.md`): un booking en la pagina/widget publico es
   `website` siempre; una cita creada desde el admin/webhook/agente usa el canal
   de la conversacion mas reciente del contacto (WhatsApp/Messenger/Instagram) y
-  cae a `website` si no hay mensajeria. WhatsApp usa `ctwa_clid` cuando existe
-  (sin ctwa se manda igual con matching por telefono), Messenger usa
+  cae a `website` si no hay mensajeria. WhatsApp con `ctwa_clid` se manda como
+  `business_messaging/whatsapp`; si el chat es organico y no tiene ese click id,
+  usa `action_source=chat` y conserva
+  `custom_data.messaging_channel=whatsapp`, porque Meta rechaza
+  `business_messaging` sin `ctwa_clid`. Messenger usa
   `page_scoped_user_id` + `page_id` e Instagram usa `ig_sid` + `ig_account_id`.
   En canales de mensajeria el evento de cita se normaliza a `LeadSubmitted`; el
   evento web sigue usando `Schedule`. Un canal explicito (whatsapp/messenger/

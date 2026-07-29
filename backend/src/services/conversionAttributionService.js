@@ -9,8 +9,9 @@
 //
 // 2. SUPERFICIE REAL DE CONVERSIÓN — dónde ocurrió la conversión de verdad
 //    (website, whatsapp, messenger, instagram). Decide el action_source y el
-//    formato del payload de Meta CAPI. Nunca se falsifica: si la compra fue
-//    por WhatsApp, el evento va como business_messaging/whatsapp aunque la
+//    formato del payload de Meta CAPI. Nunca se falsifica: WhatsApp con ctwa
+//    usa business_messaging/whatsapp; un chat orgánico sin ese click id usa
+//    action_source=chat y conserva WhatsApp en custom_data, aunque la
 //    atribución interna sea de un anuncio web.
 //
 // La frase clave: la atribución la decide el último anuncio válido; el

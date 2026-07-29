@@ -1477,7 +1477,16 @@ async function sendMetaWhatsappEvent({
 
   const whatsappAttribution = isWhatsapp ? await getLatestWhatsappAttribution(contact) : null
 
-  const userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, cleanChannel, socialIdentity, attributionTouch)
+  let userData = buildBusinessMessagingUserData(contact, metaConfig, whatsappAttribution, cleanChannel, socialIdentity, attributionTouch)
+  const isOrganicWhatsapp = isWhatsapp && !cleanString(userData.ctwa_clid)
+
+  // Meta exige ctwa_clid para action_source=business_messaging en WhatsApp.
+  // Una conversación orgánica nunca trae ese click id, así que usa el contrato
+  // general de chat y conserva WhatsApp como metadata de la superficie real.
+  // No mandamos page_id/WABA en ese contrato porque pertenecen al payload CTWA.
+  if (isOrganicWhatsapp) {
+    userData = buildUserData(contact)
+  }
 
   if (!userData.external_id) {
     await logMetaEvent({ contactId, eventType, metaEventName, eventId, status: 'skipped', errorMessage: 'user_data insuficiente para Meta' })
@@ -1489,11 +1498,8 @@ async function sendMetaWhatsappEvent({
       await logMetaEvent({ contactId, eventType, metaEventName, eventId, status: 'skipped', errorMessage: 'user_data insuficiente para Meta' })
       return { sent: false, reason: 'insufficient_user_data' }
     }
-    // Sin ctwa_clid Meta no puede atribuir el evento a un anuncio CTWA, pero
-    // la superficie es la real (la conversión SÍ pasó por WhatsApp), así que
-    // enviamos igual con ph/page_id en vez de falsificar el action_source.
-    if (!userData.ctwa_clid) {
-      logger.warn(`Evento ${eventType} de WhatsApp sin ctwa_clid para contacto ${contactId}: se envía como business_messaging con matching por teléfono`)
+    if (isOrganicWhatsapp) {
+      logger.info(`Evento ${eventType} de WhatsApp orgánico para contacto ${contactId}: se envía con action_source=chat y matching estándar`)
     }
   } else {
     // Messenger/Instagram: se requiere la identidad de mensajería social
@@ -1511,18 +1517,24 @@ async function sendMetaWhatsappEvent({
   }
 
   const enrichedCustomData = buildBusinessMessagingCustomData(customData, contact, whatsappAttribution, attributionTouch)
+  if (!enrichedCustomData.source) enrichedCustomData.source = cleanChannel
+  if (!enrichedCustomData.messaging_channel) enrichedCustomData.messaging_channel = cleanChannel
+
+  const eventPayload = {
+    event_name: metaEventName,
+    event_time: Math.floor(Date.now() / 1000),
+    action_source: isOrganicWhatsapp ? 'chat' : 'business_messaging',
+    event_id: eventId,
+    user_data: userData,
+    custom_data: enrichedCustomData
+  }
+
+  if (!isOrganicWhatsapp) {
+    eventPayload.messaging_channel = cleanChannel
+  }
+
   const payload = {
-    data: [
-      {
-        event_name: metaEventName,
-        event_time: Math.floor(Date.now() / 1000),
-        action_source: 'business_messaging',
-        messaging_channel: cleanChannel,
-        event_id: eventId,
-        user_data: userData,
-        custom_data: enrichedCustomData
-      }
-    ]
+    data: [eventPayload]
   }
 
   if (metaConfig.testEventCode) {
@@ -2071,10 +2083,10 @@ export async function triggerMetaPaymentPurchaseEvent(contactId, payment = {}) {
   }
 
   // smart: el payload lo decide la SUPERFICIE REAL de la conversión, no la
-  // atribución interna. Si la compra fue por WhatsApp, va como
-  // business_messaging/whatsapp aunque el crédito sea de un anuncio web; si
-  // fue en el checkout web, va como website aunque el crédito sea de un
-  // anuncio de Messenger. Sin fallbacks que falsifiquen el action_source.
+  // atribución interna. WhatsApp CTWA va como business_messaging/whatsapp;
+  // WhatsApp orgánico usa action_source=chat porque Meta exige ctwa_clid para
+  // el contrato publicitario. El checkout web va como website aunque el
+  // crédito sea de un anuncio de Messenger.
   if (paymentMetaConfig.channel === 'smart') {
     const surface = conversionResolution?.conversionSurface || 'website'
 

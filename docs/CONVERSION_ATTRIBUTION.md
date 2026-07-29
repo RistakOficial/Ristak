@@ -17,9 +17,10 @@ Son dos conceptos SEPARADOS que nunca deben mezclarse:
 2. **Superficie real de conversion** — donde ocurrio la conversion de verdad
    (`website`, `whatsapp`, `messenger`, `instagram`). Decide el `action_source`
    y el formato del payload de Meta CAPI. **Nunca se falsifica**: si la compra
-   fue por WhatsApp, el evento dice WhatsApp aunque el credito sea de un anuncio
-   web; si fue en el checkout web, dice website aunque el ultimo anuncio haya
-   sido de Messenger.
+   fue por WhatsApp, el evento conserva WhatsApp como superficie aunque el
+   credito sea de un anuncio web; si fue en el checkout web, dice website aunque
+   el ultimo anuncio haya sido de Messenger. En WhatsApp, el contrato CAPI
+   depende de si existe un click publicitario `ctwa_clid`.
 
 ## Adquisicion del contacto vs retouches
 
@@ -147,15 +148,20 @@ ANTES de los gates de configuracion, igual que en compras):
 | Superficie | action_source | user_data clave |
 | --- | --- | --- |
 | website | `website` (+`event_source_url`) | `em`, `ph`, `fbp`, `fbc` (de la ultima sesion web si es server-side) |
-| whatsapp | `business_messaging` + `messaging_channel=whatsapp` | `ph`, `ctwa_clid` (si existe), `page_id`, `whatsapp_business_account_id` |
+| whatsapp con `ctwa_clid` | `business_messaging` + `messaging_channel=whatsapp` | `ph`, `ctwa_clid`, `page_id`, `whatsapp_business_account_id` |
+| whatsapp organico (sin `ctwa_clid`) | `chat` (WhatsApp queda en `custom_data.messaging_channel`) | `ph`, `em`, `external_id` y nombres disponibles |
 | messenger | `business_messaging` + `messaging_channel=messenger` | `page_scoped_user_id` + `page_id` |
 | instagram | `business_messaging` + `messaging_channel=instagram` | `ig_sid` + `ig_account_id` |
 
 Notas:
 
-- WhatsApp **sin** `ctwa_clid` (conversacion organica que convierte): el evento
-  se manda igual como `business_messaging` con matching por telefono, con
-  warning en logs. No se falsifica a website.
+- Meta exige `ctwa_clid` para eventos WhatsApp con
+  `action_source=business_messaging`. Una conversacion organica no recibe ese
+  identificador: se manda con `action_source=chat`, sin `messaging_channel` en
+  el nivel superior, y conserva `messaging_channel=whatsapp` dentro de
+  `custom_data` (sin pisar el origen funcional del evento, por ejemplo
+  `ristak_payment`). Asi no se pierde la conversion ni se falsifica como
+  website.
 - Messenger/Instagram sin identidad (PSID/IGSID): el evento se salta con motivo
   `missing_messaging_identity` en `meta_conversion_event_logs`. No hay fallback
   a otra superficie.
@@ -189,11 +195,11 @@ Notas:
 
 | Historia | Superficie | Ultimo anuncio valido | Payload Meta |
 | --- | --- | --- | --- |
-| WhatsApp organico → Web ad → Compra WhatsApp | whatsapp | Web ad | business_messaging/whatsapp |
+| WhatsApp organico → Web ad → Compra WhatsApp | whatsapp | Web ad | chat (`custom_data`: whatsapp) |
 | Web ad → Messenger ad → Compra Web | website | Messenger ad | website |
 | WhatsApp ad → Messenger organico → Compra Messenger | messenger | WhatsApp ad | business_messaging/messenger |
 | Web organico → Compra Web | website | ninguno (organico) | website |
-| Instagram ad → Compra WhatsApp | whatsapp | Instagram ad | business_messaging/whatsapp |
+| Instagram ad → Compra WhatsApp | whatsapp | Instagram ad | chat (`custom_data`: whatsapp) |
 
 Ademas: citas smart via webhook/agente (superficie por conversacion, snapshot en
 `appointments`), citas sin mensajeria (evento `Schedule` website server-side con
