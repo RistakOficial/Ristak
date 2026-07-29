@@ -834,6 +834,10 @@ Para bloquear contenido por reproducción sin escribir JavaScript, el slot
   <section data-rstk-video-gate-locked="agenda-admision">
     Faltan <strong data-rstk-video-gate-remaining-time="agenda-admision">13:00</strong>.
   </section>
+
+  <section data-rstk-video-gate-unlocked="agenda-admision">
+    Desliza hacia abajo para completar tu solicitud.
+  </section>
 </section>
 ```
 
@@ -844,6 +848,10 @@ calendario real pero lo vuelve `inert`, le aplica blur y posiciona la capa
 calendario real. El modo sin `locked-mode` conserva el comportamiento compatible
 que oculta el contenido. En ambos casos el restante sale del progreso real del
 reproductor y el contenido se habilita al cumplir el umbral.
+Un hermano con `data-rstk-video-gate-unlocked` permanece oculto durante el
+contador y se muestra al llegar a cero. Sirve para sustituir la tarjeta de
+espera por una instrucción breve que lleve al visitante al formulario o
+calendario ya habilitado, sin JavaScript propio.
 En calendarios compuestos, el estado bloqueado muestra simultáneamente los pasos
 `date` y `time`: Ristak toma el primer día disponible del mes y pinta sus horarios
 reales detrás del blur. Las preguntas y datos de contacto siguen ocultos. Al

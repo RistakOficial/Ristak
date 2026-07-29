@@ -1204,6 +1204,9 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
               Falta <strong data-rstk-video-gate-remaining="agenda-admision">30</strong> segundos distintos.
               Tiempo: <strong data-rstk-video-gate-remaining-time="agenda-admision">00:30</strong>.
             </section>
+            <section data-rstk-video-gate-unlocked="agenda-admision">
+              Desliza hacia abajo para completar tu solicitud.
+            </section>
           </section>
           <aside data-rstk-video-gate-content="agenda-admision">Contenido legacy oculto</aside>
         </body>
@@ -1264,7 +1267,10 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
       /data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-action-hidden/
     )
     assert.match(html, /<aside[^>]*data-rstk-video-gate-content="agenda-admision"[^>]*data-rstk-video-gate-state="locked"[^>]* hidden[^>]* inert[^>]*aria-hidden="true"/)
+    assert.match(html, /data-rstk-video-gate-unlocked="agenda-admision"[^>]*data-rstk-video-gate-state="locked"[^>]* hidden[^>]*aria-hidden="true"/)
     assert.match(html, /data-rstk-video-gate-runtime/)
+    assert.match(html, /const UNLOCKED_ATTRS =/)
+    assert.match(html, /const setUnlockedState = \(element, unlocked\) =>/)
     assert.match(html, /window\.ristakSyncVideoGates/)
     assert.match(html, /const GATE_SOURCE_SELECTOR =/)
     assert.match(html, /data-rstk-time-color-mode-runtime/)
@@ -1406,6 +1412,11 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
       'data-rstk-video-gate-progress-days': '45'
     })
     const locked = new FakeElement({ 'data-rstk-video-gate-locked': 'agenda-admision' })
+    const unlocked = new FakeElement({
+      'data-rstk-video-gate-unlocked': 'agenda-admision',
+      hidden: '',
+      'aria-hidden': 'true'
+    })
     const shell = new FakeElement({ 'data-rstk-video-gate-shell': 'agenda-admision' })
     const content = new FakeElement({
       'data-rstk-video-gate-content': 'agenda-admision',
@@ -1468,6 +1479,7 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
         if (selector === 'video[data-rstk-video-actions]') return []
         if (selector.includes('video-gate-shell')) return [shell]
         if (selector.includes('video-gate-locked')) return [locked]
+        if (selector.includes('video-gate-unlocked')) return [unlocked]
         if (selector.includes('video-gate-content')) return [content, legacyContent]
         if (selector.includes('video-gate-remaining-time')) return [remainingTime]
         if (selector.includes('video-gate-remaining')) return [remaining]
@@ -1541,6 +1553,8 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal(legacyContent.hidden, true)
     assert.equal(legacyContent.attrs.has('inert'), true)
     assert.equal(locked.hidden, false)
+    assert.equal(unlocked.hidden, true)
+    assert.equal(unlocked.attrs.has('aria-hidden'), true)
     assert.equal(remaining.textContent, '30')
     assert.equal(remainingTime.textContent, '00:30')
     assert.equal(remaining.textContentWriteCount, 1)
@@ -1612,6 +1626,8 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.equal(content.getAttribute('data-rstk-video-gate-state'), 'unlocked')
     assert.equal(shell.getAttribute('data-rstk-video-gate-state'), 'unlocked')
     assert.equal(locked.hidden, true)
+    assert.equal(unlocked.hidden, false)
+    assert.equal(unlocked.attrs.has('aria-hidden'), false)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

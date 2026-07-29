@@ -504,6 +504,7 @@ export const IMPORTED_HTML_VIDEO_GATE_RULES = Object.freeze([
   'La sesión abierta con Previsualizar sí es interactiva: después de que la persona pulsa play, Ristak debe descontar el tiempo y ejecutar las mismas reglas que en publicado. Sólo el loop automático decorativo anterior al primer play queda excluido.',
   'El reproductor nativo publica un único estado real para currentTime, duration, timelinePercent, playbackSeconds y uniqueWatchedPercent. Los gates y data-rstk-video-rules consumen ese mismo estado; el HTML no debe crear setInterval, cronómetros propios ni intentar leer directamente Bunny.',
   'Marca el diseño que debe verse mientras está bloqueado con data-rstk-video-gate-locked="id-estable", el número vivo con data-rstk-video-gate-remaining="id-estable" y envuelve TODO el contenido real con data-rstk-video-gate-content="id-estable". Por default Ristak oculta e inutiliza ese contenido desde el primer render y lo muestra únicamente al llegar al umbral.',
+  'Si el aviso debe transformarse en una instrucción después de llegar a cero, agrega un hermano con data-rstk-video-gate-unlocked="id-estable". Ristak lo mantiene oculto mientras corre el contador y lo muestra al desbloquear; úsalo para un CTA breve como "Desliza hacia abajo para completar tu solicitud". No dejes a la persona sin indicación ni dependas de JavaScript propio.',
   'Para que el calendario real permanezca visible pero desenfocado, usa un único contenedor data-rstk-video-gate-shell="id-estable". Dentro coloca como hijos directos el calendario real con data-rstk-video-gate-content y data-rstk-video-gate-locked-mode="blur", y la capa de texto con data-rstk-video-gate-locked. Ristak pone la capa encima del mismo calendario, conserva el contenido visible con blur, lo vuelve inert e imposible de tocar y quita blur y capa al desbloquear.',
   'En modo blur NO dibujes un calendario bloqueado falso y otro calendario real debajo. Existe un solo calendario real detrás de la capa; el HTML/CSS puede ajustar la intensidad con --rstk-video-gate-blur y la opacidad con --rstk-video-gate-locked-opacity.',
   'Si el contenido es un calendario compuesto, mientras siga bloqueado Ristak muestra juntos date y time usando el primer día con disponibilidad real del mes para enseñar horas reales detrás del blur. Questions, contacto, confirm y success permanecen ocultos. Al desbloquear se limpia esa preselección y el visitante empieza en date para elegir su propia fecha.',
@@ -540,6 +541,10 @@ export const IMPORTED_HTML_VIDEO_GATE_EXAMPLE = `<div
   <section data-rstk-video-gate-locked="agenda-admision" role="status" aria-live="polite">
     <p>Tu solicitud de inscripción se habilitará al avanzar en este video.</p>
     <p>Faltan <strong data-rstk-video-gate-remaining-time="agenda-admision">13:00</strong> de contenido distinto.</p>
+  </section>
+
+  <section data-rstk-video-gate-unlocked="agenda-admision" role="status" aria-live="polite">
+    <p>Desliza hacia abajo para completar tu solicitud.</p>
   </section>
 </section>`
 

@@ -1013,6 +1013,8 @@ test('external AI compatibility instructions reject forms without stable Ristak 
   assert.match(videoGateGuide, /data-rstk-video-gate-id/)
   assert.match(videoGateGuide, /data-rstk-video-gate-remaining/)
   assert.match(videoGateGuide, /data-rstk-video-gate-content/)
+  assert.match(videoGateGuide, /data-rstk-video-gate-unlocked/)
+  assert.match(videoGateGuide, /Desliza hacia abajo para completar tu solicitud/)
   assert.match(videoGateGuide, /unique_watched_seconds/)
   assert.match(videoGateGuide, /data-rstk-video-gate-progress-days/)
   assert.match(videoGateGuide, /Los 30 días son únicamente el valor predeterminado/)
