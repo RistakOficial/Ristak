@@ -103,6 +103,7 @@ const CALENDAR_FORM_FIELD_TYPES = new Set([
   'currency',
   'number',
   'dropdown',
+  'multiselect',
   'radio',
   'checkboxes',
   'phone',
@@ -2292,6 +2293,23 @@ function renderCalendarFieldInput(field = {}) {
       </select>
     `
   }
+  if (field.blockType === 'multiselect') {
+    return `
+      <details class="multiselect" data-calendar-multiselect>
+        <summary>
+          <span data-calendar-multiselect-summary data-placeholder="${placeholder || 'Selecciona opciones'}">${placeholder || 'Selecciona opciones'}</span>
+        </summary>
+        <div class="multiselectMenu">
+          ${options.map(option => `
+            <label class="option">
+              <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}"${optionRuleAttr(option)}>
+              <span>${escapeHtml(option.label)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </details>
+    `
+  }
   if (field.blockType === 'radio') {
     return `
       <div class="options">
@@ -2962,6 +2980,15 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
     textarea{resize:vertical}
     input:not([type='radio']):not([type='checkbox']):focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
     .options{display:grid;gap:8px}
+    .multiselect{position:relative;width:100%;color:var(--field-text)}
+    .multiselect>summary{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;min-height:46px;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);color:var(--field-text);font-size:.95rem;font-weight:450;padding:12px 14px;cursor:pointer;list-style:none}
+    .multiselect>summary::-webkit-details-marker{display:none}
+    .multiselect>summary::after{content:'';width:7px;height:7px;margin-left:12px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;opacity:.62;transform:translateY(-2px) rotate(45deg)}
+    .multiselect[open]>summary{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+    .multiselect[open]>summary::after{transform:translateY(2px) rotate(225deg)}
+    .multiselectMenu{position:absolute;z-index:20;top:calc(100% + 6px);left:0;right:0;display:grid;gap:4px;max-height:260px;overflow:auto;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);box-shadow:0 18px 38px -24px color-mix(in srgb,var(--field-text) 48%,transparent);padding:6px}
+    .multiselectMenu .option{min-height:40px;border:0;background:transparent;padding:9px 10px}
+    .multiselectMenu .option:hover,.multiselectMenu .option:has(input:checked){background:color-mix(in srgb,var(--accent) 8%,var(--field-bg))}
     .option{display:flex;align-items:center;gap:10px;min-height:44px;border:1px solid var(--field-border);border-radius:var(--field-radius);background:var(--field-bg);padding:9px 12px;font-size:.92rem;font-weight:450;cursor:pointer;transition:border-color .15s}
     .option:hover{border-color:var(--accent)}
     .option:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,var(--field-bg))}
@@ -3546,9 +3573,47 @@ export function renderPublicCalendarHtml(calendar, { host = '', embedded = false
         });
       };
 
+      const syncMultiselectSummary = (field) => {
+        if (!field || field.getAttribute('data-field-type') !== 'multiselect') return;
+        const summary = field.querySelector('[data-calendar-multiselect-summary]');
+        if (!summary) return;
+        const selectedLabels = Array.from(field.querySelectorAll('input[type="checkbox"]:checked'))
+          .map((input) => {
+            const option = input.closest('.option');
+            const label = option ? option.querySelector('span') : null;
+            return String(label ? label.textContent : input.value || '').trim();
+          })
+          .filter(Boolean);
+        const placeholder = summary.getAttribute('data-placeholder') || 'Selecciona opciones';
+        summary.textContent = selectedLabels.length === 0
+          ? placeholder
+          : selectedLabels.length <= 2
+            ? selectedLabels.join(', ')
+            : selectedLabels.length + ' seleccionados';
+      };
+      const initMultiselectFields = () => {
+        const fields = Array.from(form ? form.querySelectorAll('.calendarQuestion[data-field-type="multiselect"]') : []);
+        fields.forEach((field) => {
+          syncMultiselectSummary(field);
+          field.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+            input.addEventListener('change', () => syncMultiselectSummary(field));
+          });
+          const details = field.querySelector('[data-calendar-multiselect]');
+          if (!details) return;
+          details.addEventListener('toggle', () => {
+            if (!details.open) return;
+            fields.forEach((other) => {
+              const otherDetails = other.querySelector('[data-calendar-multiselect]');
+              if (otherDetails && otherDetails !== details) otherDetails.open = false;
+            });
+          });
+        });
+      };
+      initMultiselectFields();
+
       const getFieldValue = (field) => {
         const type = field.getAttribute('data-field-type') || '';
-        if (type === 'checkboxes') {
+        if (type === 'checkboxes' || type === 'multiselect') {
           return Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
         }
         if (type === 'phone') {

@@ -1682,7 +1682,12 @@ Capacidades:
   movil. Las carpetas del catalogo se respetan como secciones desplegables; los
   campos sin carpeta quedan bajo "Campos personalizados". La edicion se guarda
   como actualizacion manual del contacto y conserva el flujo normal de
-  automatizaciones.
+  automatizaciones. Los tipos de opcion tienen semantica distinta y persistente:
+  `radio` muestra varias opciones y guarda una; `dropdown` muestra una lista y
+  guarda una; `checkboxes` muestra varias casillas y guarda un arreglo; y
+  `multiselect` muestra un dropdown con casillas y guarda todas las selecciones
+  como un solo arreglo dentro del mismo campo. El panel de contacto usa el
+  control visual correspondiente y no convierte `multiselect` en checkboxes.
 - Etiquetas, campos personalizados y campos variables son parte del CRM base,
   incluido el plan Basic. El plan no debe ocultarlos ni rechazar sus endpoints;
   los permisos de usuario siguen aplicando.
@@ -6026,18 +6031,21 @@ personalizado de opcion unica. Cualquier grupo `checkbox`, aunque tenga una sola
 opcion, guarda un arreglo completo y usa el tipo canonico `checkboxes`; nunca se
 degrada a una casilla booleana ni reparte sus opciones entre campos distintos.
 Un `<select>` sencillo guarda un valor escalar en un campo `dropdown`; un
-`<select multiple>` sigue la misma semantica de lista que `checkboxes`. Las
-opciones detectadas se guardan en la definicion del campo personalizado para que
-el contacto, las automatizaciones y futuras ediciones presenten la misma lista
-que existe en el HTML. El backend normaliza incluso un checkbox individual como
-arreglo, rechaza arreglos para controles de opcion unica y no acepta valores que
+`<select multiple>` guarda un arreglo en el tipo canonico `multiselect`. En
+formularios nativos de Sites, `multiselect` se presenta como un dropdown con
+casillas y resumen de las opciones elegidas; `checkboxes` conserva sus opciones
+visibles. Las opciones detectadas se guardan en la definicion del campo
+personalizado para que el contacto, las automatizaciones y futuras ediciones
+presenten la misma lista que existe en el HTML. El backend normaliza como arreglo
+tanto un checkbox individual como cualquier control de seleccion multiple,
+rechaza arreglos para controles de opcion unica y no acepta valores que
 no existan en las opciones detectadas. Al asociar una pregunta con un campo
 personalizado ya existente, el Panel de contenido solo ofrece destinos del mismo
-tipo canonico: radio con `radio`, select sencillo con `dropdown`, y checkbox o
-select multiple con `checkboxes`. Una asociacion incompatible heredada se
-conserva visible como alerta para poder corregirla, pero queda deshabilitada; el
-backend tambien rechaza el PATCH incompatible para que otro cliente o una
-llamada directa a la API no pueda saltarse este contrato.
+tipo canonico: radio con `radio`, select sencillo con `dropdown`, checkbox con
+`checkboxes` y select multiple con `multiselect`. Una asociacion incompatible
+heredada se conserva visible como alerta para poder corregirla, pero queda
+deshabilitada; el backend tambien rechaza el PATCH incompatible para que otro
+cliente o una llamada directa a la API no pueda saltarse este contrato.
 
 Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente interno
 tratan este contrato como una compuerta obligatoria de entrega, no como una

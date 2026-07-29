@@ -60,6 +60,7 @@ export type SiteBlockType =
   | 'currency'
   | 'number'
   | 'dropdown'
+  | 'multiselect'
   | 'radio'
   | 'checkboxes'
   | 'phone'
@@ -1306,6 +1307,7 @@ export const blockLabels: Record<SiteBlockType, string> = {
   currency: 'Moneda',
   number: 'Número',
   dropdown: 'Lista desplegable',
+  multiselect: 'Dropdown múltiple',
   radio: 'Opción única',
   checkboxes: 'Varias opciones',
   phone: 'Teléfono',
@@ -1342,6 +1344,7 @@ export const formBlockTypes: SiteBlockType[] = [
   'number',
   'currency',
   'dropdown',
+  'multiselect',
   'radio',
   'checkboxes',
   'phone',
@@ -1366,6 +1369,7 @@ export const blockTypes: SiteBlockType[] = [
   'currency',
   'number',
   'dropdown',
+  'multiselect',
   'radio',
   'checkboxes',
   'phone',
@@ -1379,6 +1383,7 @@ export const fieldBlockTypes = new Set<SiteBlockType>([
   'currency',
   'number',
   'dropdown',
+  'multiselect',
   'radio',
   'checkboxes',
   'phone',

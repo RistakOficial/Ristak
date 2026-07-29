@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import { Check, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { Button } from '@/components/common/Button'
+import { CheckboxMultiSelect } from '@/components/common/CheckboxMultiSelect'
 import { CustomSelect } from '@/components/common/CustomSelect'
 import { NumberInput } from '@/components/common/NumberInput'
 import {
@@ -62,7 +63,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   dropdown: 'Dropdown',
   select: 'Dropdown',
   checkboxes: 'Checkboxes',
-  multiselect: 'Checkboxes',
+  multiselect: 'Dropdown múltiple',
   checkbox: 'Checkbox',
   boolean: 'Si/No',
   number: 'Numero',
@@ -88,7 +89,6 @@ const cleanString = (value: unknown) => String(value || '').trim()
 const normalizeType = (value?: string | null) => {
   const type = cleanString(value).toLowerCase()
   if (type === 'select') return 'dropdown'
-  if (type === 'multiselect') return 'checkboxes'
   return type || 'text'
 }
 
@@ -564,6 +564,19 @@ export function ContactCustomFieldsPanel({
 
     if (multiChoiceTypes.has(type) && options.length > 0) {
       const selectedValues = Array.isArray(draft) ? draft.map(String) : []
+      if (type === 'multiselect') {
+        return (
+          <CheckboxMultiSelect
+            className={styles.select}
+            options={options}
+            value={selectedValues}
+            onChange={(nextValues) => updateDraft(identity, nextValues)}
+            disabled={disabled || !onUpdateCustomFields}
+            placeholder="Sin dato"
+            aria-label={getContactCustomFieldDisplayLabel(field)}
+          />
+        )
+      }
       return (
         <div className={styles.choiceStack} aria-labelledby={`${identity}-label`}>
           {options.map(option => {

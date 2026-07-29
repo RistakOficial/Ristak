@@ -157,7 +157,6 @@ function normalizeDataType(value) {
     long_text: 'textarea',
     paragraph: 'textarea',
     select: 'dropdown',
-    multiselect: 'checkboxes',
     multiple: 'multiselect'
   }
   const dataType = aliases[raw] || raw

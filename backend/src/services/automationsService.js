@@ -1132,6 +1132,7 @@ const AUTOMATION_FORM_FIELD_BLOCK_TYPES = new Set([
   'currency',
   'number',
   'dropdown',
+  'multiselect',
   'radio',
   'checkboxes',
   'phone',

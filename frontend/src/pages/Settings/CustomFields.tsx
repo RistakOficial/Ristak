@@ -55,9 +55,10 @@ type FolderDraft = {
 const fieldTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
   { value: 'text', label: 'Texto corto', detail: 'Una línea de texto.' },
   { value: 'textarea', label: 'Párrafo', detail: 'Texto largo o notas.' },
-  { value: 'radio', label: 'Radio buttons', detail: 'Una opción visible.' },
-  { value: 'dropdown', label: 'Dropdown', detail: 'Una opción en lista.' },
-  { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones.' },
+  { value: 'radio', label: 'Radio buttons', detail: 'Varias opciones visibles; se elige una.' },
+  { value: 'dropdown', label: 'Dropdown', detail: 'Varias opciones en lista; se elige una.' },
+  { value: 'multiselect', label: 'Dropdown múltiple', detail: 'Varias opciones en lista; se pueden elegir varias.' },
+  { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones visibles; se pueden elegir varias.' },
   { value: 'number', label: 'Número', detail: 'Solo cantidad numérica.' },
   { value: 'currency', label: 'Moneda', detail: 'Importe de dinero.' },
   { value: 'date', label: 'Fecha', detail: 'Día o fecha.' },
@@ -116,7 +117,7 @@ const optionsToDraftOptions = (options: CustomFieldOption[] = []) => (
 
 const getTypeLabel = (type: string) => (
   fieldTypes.find(item => item.value === type)?.label ||
-  (type === 'select' ? 'Dropdown' : type === 'multiselect' ? 'Checkboxes' : type || 'Texto corto')
+  (type === 'select' ? 'Dropdown' : type || 'Texto corto')
 )
 
 const getFolderName = (folders: CustomFieldFolder[], folderId: string) => (

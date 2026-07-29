@@ -468,7 +468,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
         ['consentimiento', 'checkboxes'],
         ['intereses', 'checkboxes'],
         ['prioridad', 'dropdown'],
-        ['canales', 'checkboxes']
+        ['canales', 'multiselect']
       ]
     )
 
@@ -487,7 +487,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
         ['checkboxes', 'checkboxes', ['aceptado']],
         ['checkboxes', 'checkboxes', ['ventas', 'soporte']],
         ['dropdown', 'dropdown', ['normal', 'urgente']],
-        ['checkboxes', 'checkboxes', ['email', 'whatsapp']]
+        ['multiselect', 'multiselect', ['email', 'whatsapp']]
       ]
     )
   } finally {
@@ -522,6 +522,13 @@ test('imported choice controls only bind to existing custom fields of the same a
       label: 'Servicios',
       dataType: 'checkboxes',
       options: ['ventas', 'soporte']
+    },
+    multiselect: {
+      id: `contact_field_multiselect_${suffix}`,
+      key: `canales_multiselect_${suffix}`.toLowerCase(),
+      label: 'Canales',
+      dataType: 'multiselect',
+      options: ['email', 'whatsapp']
     }
   }
   let siteId = ''
@@ -564,6 +571,11 @@ test('imported choice controls only bind to existing custom fields of the same a
             <label><input type="checkbox" name="servicios" value="ventas" data-rstk-field-id="servicios"> Ventas</label>
             <label><input type="checkbox" name="servicios" value="soporte" data-rstk-field-id="servicios"> Soporte</label>
           </fieldset>
+          <label for="canales">Canales</label>
+          <select id="canales" name="canales" data-rstk-field-id="canales" multiple>
+            <option value="email">Email</option>
+            <option value="whatsapp">WhatsApp</option>
+          </select>
           <button type="submit">Guardar</button>
         </form>
       </body></html>`, 'utf8').toString('base64')
@@ -574,7 +586,8 @@ test('imported choice controls only bind to existing custom fields of the same a
     for (const [fieldId, definition] of [
       ['canal', definitions.radio],
       ['prioridad', definitions.dropdown],
-      ['servicios', definitions.checkboxes]
+      ['servicios', definitions.checkboxes],
+      ['canales', definitions.multiselect]
     ]) {
       await updateImportedSiteFieldMapping(siteId, {
         pagePath: '',
@@ -596,14 +609,16 @@ test('imported choice controls only bind to existing custom fields of the same a
       [
         ['canal', definitions.radio.id, 'radio'],
         ['prioridad', definitions.dropdown.id, 'dropdown'],
-        ['servicios', definitions.checkboxes.id, 'checkboxes']
+        ['servicios', definitions.checkboxes.id, 'checkboxes'],
+        ['canales', definitions.multiselect.id, 'multiselect']
       ]
     )
 
     for (const [fieldId, definition] of [
       ['canal', definitions.dropdown],
       ['prioridad', definitions.checkboxes],
-      ['servicios', definitions.radio]
+      ['servicios', definitions.radio],
+      ['canales', definitions.checkboxes]
     ]) {
       await assert.rejects(
         () => updateImportedSiteFieldMapping(siteId, {

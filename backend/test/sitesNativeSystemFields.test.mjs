@@ -175,6 +175,131 @@ test('native form system fields save to contact and locked system fields', async
   }
 })
 
+test('native multiselect saves several choices as one list-valued custom field', async () => {
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const suffix = crypto.randomUUID()
+  const email = `multiselect-${suffix}@example.test`
+  const fieldKey = `canales_${suffix.replaceAll('-', '_')}`
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario dropdown multiple',
+      slug: `form-multiselect-${suffix}`,
+      siteType: 'standard_form',
+      status: 'published',
+      blankCanvas: true
+    })
+
+    let siteWithBlocks = await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo electronico',
+      required: true,
+      settings: { systemFieldKey: 'email', internalName: 'email', validation: 'email' }
+    })
+    siteWithBlocks = await createBlock(site.id, {
+      blockType: 'multiselect',
+      label: 'Canales de contacto',
+      placeholder: 'Selecciona canales',
+      required: true,
+      settings: {
+        internalName: fieldKey,
+        customFieldKey: fieldKey,
+        customFieldLabel: 'Canales de contacto',
+        customFieldDataType: 'multiselect'
+      },
+      options: [
+        { id: 'email', label: 'Email', value: 'email', action: 'continue' },
+        { id: 'whatsapp', label: 'WhatsApp', value: 'whatsapp', action: 'continue' },
+        { id: 'phone', label: 'Llamada', value: 'phone', action: 'continue' }
+      ]
+    })
+
+    const emailBlock = siteWithBlocks.blocks.find(block => block.blockType === 'email')
+    const multiselectBlock = siteWithBlocks.blocks.find(block => block.blockType === 'multiselect')
+    assert.ok(emailBlock)
+    assert.ok(multiselectBlock)
+
+    const html = await renderPublicSiteHtml(siteWithBlocks, { preview: true, trackingEnabled: false })
+    assert.match(html, /data-field-type="multiselect"/)
+    assert.match(html, /data-rstk-multiselect/)
+    assert.match(html, /data-rstk-multiselect-summary/)
+
+    const result = await createSubmissionFromRequest(
+      {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      },
+      {
+        siteId: site.id,
+        finalSubmit: true,
+        responses: {
+          [emailBlock.id]: email,
+          [multiselectBlock.id]: ['email', 'whatsapp']
+        }
+      }
+    )
+
+    assert.deepEqual(result.mappedFields.custom[fieldKey], ['email', 'whatsapp'])
+    const contact = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [result.contactId])
+    const customField = parseContactCustomFields(contact.custom_fields).find(field => field.fieldKey === fieldKey)
+    assert.equal(customField?.dataType, 'multiselect')
+    assert.deepEqual(customField?.value, ['email', 'whatsapp'])
+    assert.deepEqual(customField?.options.map(option => option.value), ['email', 'whatsapp', 'phone'])
+
+    await assert.rejects(
+      () => createSubmissionFromRequest(
+        {
+          headers: { host: 'example.test', 'user-agent': 'node-test' },
+          hostname: 'example.test',
+          path: `/${site.slug}`,
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' }
+        },
+        {
+          siteId: site.id,
+          finalSubmit: true,
+          responses: {
+            [emailBlock.id]: email,
+            [multiselectBlock.id]: ['email', 'telegram']
+          }
+        }
+      ),
+      error => error?.status === 400 && /opción inválida/.test(error.message)
+    )
+  } finally {
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    const definition = await db.get(
+      'SELECT id FROM contact_custom_field_definitions WHERE field_key = ? LIMIT 1',
+      [fieldKey]
+    ).catch(() => null)
+    if (definition?.id) {
+      await db.run('DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?', [definition.id]).catch(() => undefined)
+      await db.run('DELETE FROM contact_custom_field_definitions WHERE id = ?', [definition.id]).catch(() => undefined)
+    }
+    if (site?.id) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
 test('imported HTML detects contact and location fields as system destinations without creating duplicate custom fields', async () => {
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),

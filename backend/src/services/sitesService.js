@@ -4520,7 +4520,8 @@ function getImportedSourceFieldBlockType(fieldMapping = {}, detectedField = {}) 
   const tag = normalizeImportedFieldKey(detectedField.tag, '')
 
   if (tag === 'textarea' || type === 'textarea' || type === 'paragraph') return 'paragraph'
-  if (type === 'multiselect' || type === 'checkboxes') return 'checkboxes'
+  if (type === 'multiselect') return 'multiselect'
+  if (type === 'checkboxes') return 'checkboxes'
   if (tag === 'select' || type === 'select' || type === 'dropdown') return 'dropdown'
   if (type === 'radio') return 'radio'
   if (type === 'checkbox') return 'checkboxes'
@@ -17050,7 +17051,7 @@ export async function resolveConnectedAppDomainForHost(hostValue, { forceRefresh
 
 function hasEmbeddedFormDisqualificationRules(blocks = []) {
   return collectFieldBlocks(blocks).some(field => (
-    ['dropdown', 'radio', 'checkboxes'].includes(field.blockType) &&
+    ['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(field.blockType) &&
     getBlockOptions(field).some(option => (
       option.action === 'disqualify' || option.action === 'disqualify_after_submit'
     ))
@@ -19139,7 +19140,7 @@ function renderVideoFormGateFieldBlock(block, context = {}) {
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
-      ${['dropdown', 'radio', 'checkboxes'].includes(block.blockType) ? '<p class="rstk-disqualify-notice" data-disqualify-notice hidden></p>' : ''}
+      ${['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(block.blockType) ? '<p class="rstk-disqualify-notice" data-disqualify-notice hidden></p>' : ''}
       <p class="rstk-error" data-field-error aria-live="polite" hidden>Esta respuesta es requerida.</p>
     </section>
   `
@@ -19333,7 +19334,7 @@ function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
       };
       const readFieldValue = field => {
         const type = field.getAttribute('data-field-type');
-        if (type === 'checkboxes') {
+        if (type === 'checkboxes' || type === 'multiselect') {
           return Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
         }
         if (type === 'phone') {
@@ -19348,6 +19349,41 @@ function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
         if (checked) return checked.value;
         const input = field.querySelector('input, textarea, select');
         return input ? input.value : '';
+      };
+      const syncMultiselectSummary = field => {
+        if (!field || field.getAttribute('data-field-type') !== 'multiselect') return;
+        const summary = field.querySelector('[data-rstk-multiselect-summary]');
+        if (!summary) return;
+        const selectedLabels = Array.from(field.querySelectorAll('input[type="checkbox"]:checked'))
+          .map(input => {
+            const option = input.closest('.rstk-option');
+            const label = option ? option.querySelector('span') : null;
+            return clean(label ? label.textContent : input.value);
+          })
+          .filter(Boolean);
+        const placeholder = summary.getAttribute('data-placeholder') || 'Selecciona opciones';
+        summary.textContent = selectedLabels.length === 0
+          ? placeholder
+          : selectedLabels.length <= 2
+            ? selectedLabels.join(', ')
+            : selectedLabels.length + ' seleccionados';
+      };
+      const initMultiselectFields = fields => {
+        fields.filter(field => field.getAttribute('data-field-type') === 'multiselect').forEach(field => {
+          syncMultiselectSummary(field);
+          field.querySelectorAll('input[type="checkbox"]').forEach(input => {
+            input.addEventListener('change', () => syncMultiselectSummary(field));
+          });
+          const details = field.querySelector('[data-rstk-multiselect]');
+          if (!details) return;
+          details.addEventListener('toggle', () => {
+            if (!details.open) return;
+            fields.forEach(other => {
+              const otherDetails = other.querySelector && other.querySelector('[data-rstk-multiselect]');
+              if (otherDetails && otherDetails !== details) otherDetails.open = false;
+            });
+          });
+        });
       };
       const readResponses = fields => {
         const responses = {};
@@ -19421,7 +19457,7 @@ function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
       const requiredMessage = field => {
         const label = fieldLabel(field);
         const type = field.getAttribute('data-field-type') || '';
-        if (type === 'dropdown' || type === 'radio' || type === 'checkboxes') {
+        if (type === 'dropdown' || type === 'multiselect' || type === 'radio' || type === 'checkboxes') {
           return 'Selecciona una opción en: ' + label + '.';
         }
         return 'Te falta completar: ' + label + '.';
@@ -19477,7 +19513,7 @@ function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
       };
       const readSelectedRules = field => {
         const type = field.getAttribute('data-field-type');
-        if (type === 'checkboxes') {
+        if (type === 'checkboxes' || type === 'multiselect') {
           return Array.from(field.querySelectorAll('input[type="checkbox"]:checked'))
             .map(input => parseRule(input.dataset.rule))
             .filter(Boolean);
@@ -19674,6 +19710,7 @@ function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
         const iframe = host.querySelector('iframe');
         const fields = Array.from(gate.querySelectorAll('[data-rstk-video-form-field]'));
         if (!fields.length) return;
+        initMultiselectFields(fields);
         const items = Array.from(gate.querySelectorAll('[data-rstk-video-form-item]'));
         const gateItems = items.length ? items : fields;
         const fieldsViewport = gate.querySelector('[data-rstk-video-gate-fields]');
@@ -26246,6 +26283,24 @@ function renderFieldInput(block, context = {}) {
     `
   }
 
+  if (block.blockType === 'multiselect') {
+    return `
+      <details class="rstk-multiselect" data-rstk-multiselect>
+        <summary aria-label="${placeholder || 'Selecciona opciones'}">
+          <span data-rstk-multiselect-summary data-placeholder="${placeholder || 'Selecciona opciones'}">${placeholder || 'Selecciona opciones'}</span>
+        </summary>
+        <div class="rstk-multiselect-menu">
+          ${options.map(option => `
+            <label class="rstk-option">
+              <input type="checkbox" name="${id}" value="${escapeHtml(option.value)}" data-checkbox-group="${id}" ${optionRuleAttributes(option)}>
+              <span>${escapeHtml(option.label)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </details>
+    `
+  }
+
   if (block.blockType === 'radio') {
     return `
       <div class="rstk-options">
@@ -26289,7 +26344,7 @@ function renderFieldBlock(block, _interactive = false, pageId = '', context = {}
       <label for="${escapeHtml(block.id)}">${label}${required}</label>
       ${block.content ? `<p class="rstk-help">${escapeHtml(block.content)}</p>` : ''}
       ${renderFieldInput(block, context)}
-      ${['dropdown', 'radio', 'checkboxes'].includes(block.blockType) ? '<p class="rstk-disqualify-notice" data-disqualify-notice hidden></p>' : ''}
+      ${['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(block.blockType) ? '<p class="rstk-disqualify-notice" data-disqualify-notice hidden></p>' : ''}
       <p class="rstk-error" data-field-error aria-live="polite" hidden>Esta respuesta es requerida.</p>
     </section>
   `
@@ -26498,7 +26553,7 @@ function getFieldOwnStyleClass(block) {
   if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
     const raw = cleanString(settings.choiceStyle)
     if (raw) variant = `rstk-choice-${normalizeFormChoiceStyle(raw)}`
-  } else if (block.blockType === 'dropdown') {
+  } else if (block.blockType === 'dropdown' || block.blockType === 'multiselect') {
     const raw = cleanString(settings.selectStyle)
     if (raw) variant = `rstk-select-${normalizeFormSelectStyle(raw)}`
   } else {
@@ -32177,9 +32232,46 @@ export async function renderPublicSiteHtml(site, {
         });
       };
 
+      const syncMultiselectSummary = (field) => {
+        if (!field || field.getAttribute('data-field-type') !== 'multiselect') return;
+        const summary = field.querySelector('[data-rstk-multiselect-summary]');
+        if (!summary) return;
+        const selectedLabels = Array.from(field.querySelectorAll('input[type="checkbox"]:checked'))
+          .map((input) => {
+            const option = input.closest('.rstk-option');
+            const label = option ? option.querySelector('span') : null;
+            return String(label ? label.textContent : input.value || '').trim();
+          })
+          .filter(Boolean);
+        const placeholder = summary.getAttribute('data-placeholder') || 'Selecciona opciones';
+        summary.textContent = selectedLabels.length === 0
+          ? placeholder
+          : selectedLabels.length <= 2
+            ? selectedLabels.join(', ')
+            : selectedLabels.length + ' seleccionados';
+      };
+
+      const initMultiselectFields = () => {
+        fields.filter((field) => field.getAttribute('data-field-type') === 'multiselect').forEach((field) => {
+          syncMultiselectSummary(field);
+          field.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+            input.addEventListener('change', () => syncMultiselectSummary(field));
+          });
+          const details = field.querySelector('[data-rstk-multiselect]');
+          if (!details) return;
+          details.addEventListener('toggle', () => {
+            if (!details.open) return;
+            fields.forEach((other) => {
+              const otherDetails = other.querySelector && other.querySelector('[data-rstk-multiselect]');
+              if (otherDetails && otherDetails !== details) otherDetails.open = false;
+            });
+          });
+        });
+      };
+
       const readFieldValue = (field) => {
         const type = field.getAttribute('data-field-type');
-        if (type === 'checkboxes') {
+        if (type === 'checkboxes' || type === 'multiselect') {
           return Array.from(field.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
         }
         if (type === 'phone') {
@@ -32199,11 +32291,12 @@ export async function renderPublicSiteHtml(site, {
       const writeFieldValue = (field, value) => {
         if (value === undefined || value === null) return;
         const type = field.getAttribute('data-field-type');
-        if (type === 'checkboxes') {
+        if (type === 'checkboxes' || type === 'multiselect') {
           const selected = new Set(Array.isArray(value) ? value.map(String) : []);
           field.querySelectorAll('input[type="checkbox"]').forEach((input) => {
             input.checked = selected.has(input.value);
           });
+          syncMultiselectSummary(field);
           return;
         }
         if (type === 'radio') {
@@ -32219,6 +32312,8 @@ export async function renderPublicSiteHtml(site, {
         const input = field.querySelector('input, textarea, select');
         if (input) input.value = String(value || '');
       };
+
+      initMultiselectFields();
 
       const getCurrentResponses = () => {
         const responses = {};
@@ -32472,7 +32567,7 @@ export async function renderPublicSiteHtml(site, {
 
       const readSelectedRules = (field) => {
         const type = field.getAttribute('data-field-type');
-        if (type === 'checkboxes') {
+        if (type === 'checkboxes' || type === 'multiselect') {
           return Array.from(field.querySelectorAll('input[type="checkbox"]:checked'))
             .map(input => parseRule(input.dataset.rule))
             .filter(Boolean);
@@ -32567,7 +32662,7 @@ export async function renderPublicSiteHtml(site, {
       const getRequiredMessage = (field) => {
         const label = getFieldLabel(field);
         const type = field.getAttribute('data-field-type') || '';
-        if (type === 'dropdown' || type === 'radio' || type === 'checkboxes') {
+        if (type === 'dropdown' || type === 'multiselect' || type === 'radio' || type === 'checkboxes') {
           return 'Selecciona una opción en: ' + label + '.';
         }
         return 'Te falta completar: ' + label + '.';
@@ -33683,7 +33778,7 @@ function getBlockCustomFieldTarget(block) {
 }
 
 function getNativeCustomFieldOptions(block) {
-  if (!['dropdown', 'radio', 'checkboxes'].includes(block?.blockType)) return []
+  if (!['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(block?.blockType)) return []
   return getBlockOptions(block).map(option => ({
     label: option.label,
     value: option.value
@@ -33869,7 +33964,7 @@ function makeEmptyAutomationResponses() {
 }
 
 function resolveBlockResponseText(block = {}, value) {
-  if (!['dropdown', 'radio', 'checkboxes'].includes(block.blockType)) return value
+  if (!['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(block.blockType)) return value
 
   const labelsByValue = new Map(
     getBlockOptions(block).map(option => [option.value, option.label || option.value])
@@ -34117,7 +34212,7 @@ function normalizeSubmissionResponses(blocks, responses = {}, options = {}) {
     const rawValue = responses?.[block.id]
     let value = rawValue
 
-    if (block.blockType === 'checkboxes') {
+    if (block.blockType === 'checkboxes' || block.blockType === 'multiselect') {
       value = Array.isArray(rawValue) ? rawValue.map(cleanString).filter(Boolean) : []
     } else if (block.blockType === 'phone') {
       value = normalizePhoneResponseValue(block, rawValue, responses)
@@ -34148,7 +34243,7 @@ function normalizeSubmissionResponses(blocks, responses = {}, options = {}) {
       }
     }
 
-    if (['dropdown', 'radio', 'checkboxes'].includes(block.blockType)) {
+    if (['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(block.blockType)) {
       const optionValues = new Set(getBlockOptions(block).map(option => option.value))
       const selectedValues = Array.isArray(value) ? value : [value].filter(Boolean)
       for (const selectedValue of selectedValues) {
@@ -34177,7 +34272,7 @@ function evaluateSubmissionRules(blocks, responses = {}) {
   let targetPageId = ''
 
   for (const block of fields) {
-    if (!['dropdown', 'radio', 'checkboxes'].includes(block.blockType)) continue
+    if (!['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(block.blockType)) continue
 
     const selectedValues = Array.isArray(responses[block.id])
       ? responses[block.id]
@@ -35312,7 +35407,7 @@ function normalizeImportedChoiceSubmissionValue(field = {}, value = '') {
   if (!dataType) return value
 
   let normalizedValue = value
-  if (dataType === 'checkboxes') {
+  if (dataType === 'checkboxes' || dataType === 'multiselect') {
     normalizedValue = [...new Set(
       (Array.isArray(value) ? value : [value]).map(cleanString).filter(Boolean)
     )]
@@ -35356,9 +35451,10 @@ function inferImportedDataType(mapping = {}, value = '') {
     ''
   )
   if (type === 'textarea') return 'textarea'
-  if (['select', 'dropdown'].includes(type)) return Array.isArray(value) ? 'checkboxes' : 'dropdown'
+  if (type === 'multiselect') return 'multiselect'
+  if (['select', 'dropdown'].includes(type)) return 'dropdown'
   if (type === 'radio') return 'radio'
-  if (['checkbox', 'checkboxes', 'multiselect'].includes(type)) return 'checkboxes'
+  if (['checkbox', 'checkboxes'].includes(type)) return 'checkboxes'
   if (['number', 'currency', 'date', 'time', 'email', 'phone'].includes(type)) return type
   if (Array.isArray(value)) return 'checkboxes'
   return 'text'
@@ -35366,13 +35462,14 @@ function inferImportedDataType(mapping = {}, value = '') {
 
 function getImportedChoiceDataType(mapping = {}) {
   const dataType = inferImportedDataType(mapping, '')
-  return ['dropdown', 'radio', 'checkboxes'].includes(dataType) ? dataType : ''
+  return ['dropdown', 'multiselect', 'radio', 'checkboxes'].includes(dataType) ? dataType : ''
 }
 
 function getImportedChoiceDataTypeLabel(value = '') {
   const type = normalizeImportedFieldKey(value, '')
   if (type === 'radio') return 'opción única con radio buttons'
   if (type === 'dropdown') return 'opción única en dropdown'
+  if (type === 'multiselect') return 'opciones múltiples en dropdown'
   if (type === 'checkboxes') return 'una lista de opciones múltiples'
   return 'otro tipo de dato'
 }

@@ -113,6 +113,7 @@ import {
   Badge,
   type BadgeVariant,
   Button,
+  CheckboxMultiSelect,
   DateRangePicker,
   Loading,
   Modal,
@@ -823,6 +824,7 @@ const embeddedFormFieldTypes: SiteBlockType[] = [
   'number',
   'currency',
   'dropdown',
+  'multiselect',
   'radio',
   'checkboxes',
   'date'
@@ -3012,6 +3014,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
   currency: <DollarSign size={15} />,
   number: <FormInput size={15} />,
   dropdown: <ListChecks size={15} />,
+  multiselect: <ListChecks size={15} />,
   radio: <ListChecks size={15} />,
   checkboxes: <ListChecks size={15} />,
   phone: <FormInput size={15} />,
@@ -3020,7 +3023,7 @@ const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
 }
 
 const isChoiceBlock = (blockType: SiteBlockType) =>
-  blockType === 'dropdown' || blockType === 'radio' || blockType === 'checkboxes'
+  blockType === 'dropdown' || blockType === 'multiselect' || blockType === 'radio' || blockType === 'checkboxes'
 
 // Campos cuyo render NO usa block.placeholder: radio/checkboxes (opciones) y
 // date (<input type=date> ignora placeholder en todos los navegadores). El
@@ -4850,7 +4853,7 @@ const getFieldOwnStyleClass = (block: SiteBlock): string => {
   if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
     const raw = getSettingString(settings, 'choiceStyle')
     if (raw) variant = `rstk-choice-${normalizeFormChoiceStyle(raw)}`
-  } else if (block.blockType === 'dropdown') {
+  } else if (block.blockType === 'dropdown' || block.blockType === 'multiselect') {
     const raw = getSettingString(settings, 'selectStyle')
     if (raw) variant = `rstk-select-${normalizeFormSelectStyle(raw)}`
   } else if (fieldBlockTypes.has(block.blockType)) {
@@ -7657,8 +7660,8 @@ const defaultBlockPayload = (blockType: SiteBlockType, siteOrId: PublicSite | st
     // etc.) nacen con placeholder VACÍO para no pisar ese hint; el resto usa
     // 'Escribe aquí' y el dropdown su opción vacía.
     placeholder: isField
-      ? (blockType === 'dropdown'
-        ? 'Selecciona una opción'
+      ? (blockType === 'dropdown' || blockType === 'multiselect'
+        ? (blockType === 'multiselect' ? 'Selecciona opciones' : 'Selecciona una opción')
         : ['currency', 'phone', 'number', 'date'].includes(blockType) ? '' : 'Escribe aquí')
       : '',
     // Los campos del formulario nacen obligatorios por defecto (el autor puede
@@ -27456,7 +27459,8 @@ const getImportedChoiceDataType = (value = '') => {
   const type = normalizeImportedDestinationKey(value, '')
   if (type === 'radio') return 'radio'
   if (type === 'select' || type === 'dropdown') return 'dropdown'
-  if (type === 'checkbox' || type === 'checkboxes' || type === 'multiselect') return 'checkboxes'
+  if (type === 'multiselect') return 'multiselect'
+  if (type === 'checkbox' || type === 'checkboxes') return 'checkboxes'
   return ''
 }
 
@@ -32317,7 +32321,7 @@ const paletteGroups: Array<{ label: string; items: PaletteItem[] }> = [
   },
   {
     label: 'Campos',
-    items: ['short_text', 'paragraph', 'number', 'currency', 'date', 'dropdown', 'radio', 'checkboxes', 'description']
+    items: ['short_text', 'paragraph', 'number', 'currency', 'date', 'dropdown', 'multiselect', 'radio', 'checkboxes', 'description']
       .map(blockType => ({ id: blockType, label: blockLabels[blockType as SiteBlockType], blockType: blockType as SiteBlockType }))
   },
   {
@@ -40080,6 +40084,29 @@ const getFieldPreviewInputType = (block: SiteBlock) => {
   return 'text'
 }
 
+const MultiselectFieldPreview: React.FC<{ block: SiteBlock }> = ({ block }) => {
+  const options = getOptions(block).map(option => ({
+    value: option.value || option.label,
+    label: option.label
+  }))
+  const [value, setValue] = useState<string[]>([])
+
+  useEffect(() => {
+    const allowedValues = new Set(options.map(option => option.value))
+    setValue(current => current.filter(item => allowedValues.has(item)))
+  }, [block.options])
+
+  return (
+    <CheckboxMultiSelect
+      options={options}
+      value={value}
+      onChange={setValue}
+      placeholder={block.placeholder || 'Selecciona opciones'}
+      aria-label={block.label || 'Pregunta'}
+    />
+  )
+}
+
 const FieldControlPreview: React.FC<{ block: SiteBlock; selected?: boolean }> = ({ block, selected = false }) => {
   if (block.blockType === 'paragraph') {
     // Paridad form-fields #8: mismas filas que el publicado (rows=5).
@@ -40097,6 +40124,10 @@ const FieldControlPreview: React.FC<{ block: SiteBlock; selected?: boolean }> = 
         ))}
       </select>
     )
+  }
+
+  if (block.blockType === 'multiselect') {
+    return <MultiselectFieldPreview block={block} />
   }
 
   if (block.blockType === 'radio' || block.blockType === 'checkboxes') {
@@ -40729,7 +40760,7 @@ const FieldOwnStyleControls: React.FC<{
     settingKey = 'choiceStyle'
     options = formChoiceStyleOptions
     globalValue = normalizeFormChoiceStyle(theme.formChoiceStyle)
-  } else if (block.blockType === 'dropdown') {
+  } else if (block.blockType === 'dropdown' || block.blockType === 'multiselect') {
     label = 'Estilo de la lista'
     settingKey = 'selectStyle'
     options = formSelectStyleOptions
@@ -42332,9 +42363,10 @@ type CustomFieldQuickDraft = {
 const customFieldEditorTypes: Array<{ value: CustomFieldDataType; label: string; detail: string }> = [
   { value: 'text', label: 'Texto corto', detail: 'Una línea de texto.' },
   { value: 'textarea', label: 'Párrafo', detail: 'Texto largo o notas.' },
-  { value: 'radio', label: 'Radio buttons', detail: 'Una opción visible.' },
-  { value: 'dropdown', label: 'Dropdown', detail: 'Una opción en lista.' },
-  { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones.' },
+  { value: 'radio', label: 'Radio buttons', detail: 'Varias opciones visibles; se elige una.' },
+  { value: 'dropdown', label: 'Dropdown', detail: 'Varias opciones en lista; se elige una.' },
+  { value: 'multiselect', label: 'Dropdown múltiple', detail: 'Varias opciones en lista; se pueden elegir varias.' },
+  { value: 'checkboxes', label: 'Checkboxes', detail: 'Varias opciones visibles; se pueden elegir varias.' },
   { value: 'number', label: 'Número', detail: 'Solo cantidad numérica.' },
   { value: 'currency', label: 'Moneda', detail: 'Importe de dinero.' },
   { value: 'date', label: 'Fecha', detail: 'Día o fecha.' },
@@ -42386,6 +42418,7 @@ const customFieldDataTypeForBlock = (blockType: SiteBlockType): CustomFieldDataT
   if (blockType === 'paragraph') return 'textarea'
   if (blockType === 'radio') return 'radio'
   if (blockType === 'dropdown') return 'dropdown'
+  if (blockType === 'multiselect') return 'multiselect'
   if (blockType === 'checkboxes') return 'checkboxes'
   if (blockType === 'number') return 'number'
   if (blockType === 'currency') return 'currency'
@@ -42517,7 +42550,6 @@ const buildCustomFieldPayload = (
 
 const normalizeCustomFieldDataType = (value = '') => {
   if (value === 'select') return 'dropdown'
-  if (value === 'multiselect') return 'checkboxes'
   return value
 }
 
@@ -42527,6 +42559,7 @@ const customFieldTypeLabel = (value = '') => {
   if (type === 'textarea') return 'Párrafo'
   if (type === 'radio') return 'Opción única'
   if (type === 'dropdown') return 'Lista desplegable'
+  if (type === 'multiselect') return 'Dropdown múltiple'
   if (type === 'checkboxes') return 'Varias opciones'
   if (type === 'number') return 'Número'
   if (type === 'currency') return 'Moneda'
@@ -45179,7 +45212,7 @@ const VideoFormGateSettingsPanel: React.FC<{
   const needsCompletionTargets = finalAction === 'show_targets' || finalAction === 'hide_targets'
   const hasDesignableFields = questions.some(question => fieldBlockTypes.has(question.blockType))
   const hasRadioOrCheckboxFields = questions.some(question => question.blockType === 'radio' || question.blockType === 'checkboxes')
-  const hasDropdownFields = questions.some(question => question.blockType === 'dropdown')
+  const hasDropdownFields = questions.some(question => question.blockType === 'dropdown' || question.blockType === 'multiselect')
   const videoFormGateMetaEnabled = settings.videoFormGateMetaEnabled === true
   const videoFormGateMetaEventName = videoFormGateMetaEnabled
     ? normalizeMetaEventName(getSettingString(settings, 'videoFormGateMetaEventName'), 'Lead')

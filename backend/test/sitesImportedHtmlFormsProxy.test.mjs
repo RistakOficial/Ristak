@@ -631,7 +631,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
           options: ['normal', 'urgente']
         },
         [channelsKey]: {
-          dataType: 'checkboxes',
+          dataType: 'multiselect',
           value: ['email', 'whatsapp'],
           options: ['email', 'whatsapp']
         }
@@ -654,7 +654,7 @@ test('public imported submit creates and stores every single-or-multiple choice 
         [consentKey]: { dataType: 'checkboxes', options: ['aceptado'] },
         [interestsKey]: { dataType: 'checkboxes', options: ['ventas', 'soporte'] },
         [priorityKey]: { dataType: 'dropdown', options: ['normal', 'urgente'] },
-        [channelsKey]: { dataType: 'checkboxes', options: ['email', 'whatsapp'] }
+        [channelsKey]: { dataType: 'multiselect', options: ['email', 'whatsapp'] }
       }
     )
 
