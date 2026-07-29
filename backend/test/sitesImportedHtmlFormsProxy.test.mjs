@@ -454,14 +454,15 @@ test('stable field ids separate repeated names and drop removed or arbitrary raw
   }
 })
 
-test('public imported submit stores radio and one-or-many checkbox answers in their typed custom fields', async () => {
+test('public imported submit creates and stores every single-or-multiple choice control in its typed custom field', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
   const email = `typed-html-${suffix}@example.test`
   const planKey = `plan_grupo_${suffix}`.toLowerCase()
   const consentKey = `consentimiento_grupo_${suffix}`.toLowerCase()
   const interestsKey = `intereses_grupo_${suffix}`.toLowerCase()
+  const priorityKey = `prioridad_grupo_${suffix}`.toLowerCase()
   const channelsKey = `canales_grupo_${suffix}`.toLowerCase()
-  const customFieldKeys = [planKey, consentKey, interestsKey, channelsKey]
+  const customFieldKeys = [planKey, consentKey, interestsKey, priorityKey, channelsKey]
   const previousConfig = {
     domain: await getAppConfig(DOMAIN_KEYS.domain),
     verified: await getAppConfig(DOMAIN_KEYS.verified),
@@ -499,6 +500,11 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
             <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="interes-ventas"> Ventas</label>
             <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="interes-soporte"> Soporte</label>
           </fieldset>
+          <label for="prioridad">Prioridad</label>
+          <select id="prioridad" name="prioridad" data-rstk-field-id="prioridad">
+            <option value="normal">Normal</option>
+            <option value="urgente">Urgente</option>
+          </select>
           <label for="canales">Canales</label>
           <select id="canales" name="canales" data-rstk-field-id="canales" multiple>
             <option value="email">Email</option>
@@ -512,7 +518,7 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
     sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
 
     const detectedForm = created.import.formMappings.find(mapping => mapping.formId === 'preferencias_contacto')
-    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 5)
+    assert.equal(detectedForm.fields.filter(field => field.present !== false).length, 6)
     assert.deepEqual(
       detectedForm.fields.map(field => [field.fieldId, field.type, field.options.map(option => option.value)]),
       [
@@ -520,6 +526,7 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
         ['plan', 'radio', ['starter', 'pro']],
         ['consentimiento', 'checkbox', ['aceptado']],
         ['intereses', 'checkbox', ['ventas', 'soporte']],
+        ['prioridad', 'select', ['normal', 'urgente']],
         ['canales', 'multiselect', ['email', 'whatsapp']]
       ]
     )
@@ -530,6 +537,7 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
       ['plan', planKey],
       ['consentimiento', consentKey],
       ['intereses', interestsKey],
+      ['prioridad', priorityKey],
       ['canales', channelsKey]
     ]) {
       await updateImportedSiteFieldMapping(siteId, {
@@ -561,8 +569,9 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
         rawFields: {
           email,
           plan: 'pro',
-          consentimiento: ['aceptado'],
+          consentimiento: 'aceptado',
           intereses: ['ventas', 'soporte'],
+          prioridad: 'urgente',
           canales: ['email', 'whatsapp']
         }
       }
@@ -578,6 +587,7 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
       plan: 'pro',
       consentimiento: ['aceptado'],
       intereses: ['ventas', 'soporte'],
+      prioridad: 'urgente',
       canales: ['email', 'whatsapp']
     })
     const mapped = JSON.parse(submission.mapped_fields_json)
@@ -586,6 +596,7 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
       [planKey]: 'pro',
       [consentKey]: ['aceptado'],
       [interestsKey]: ['ventas', 'soporte'],
+      [priorityKey]: 'urgente',
       [channelsKey]: ['email', 'whatsapp']
     })
     assert.deepEqual(mapped.ignored, {})
@@ -614,6 +625,11 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
           value: ['ventas', 'soporte'],
           options: ['ventas', 'soporte']
         },
+        [priorityKey]: {
+          dataType: 'dropdown',
+          value: 'urgente',
+          options: ['normal', 'urgente']
+        },
         [channelsKey]: {
           dataType: 'checkboxes',
           value: ['email', 'whatsapp'],
@@ -625,7 +641,7 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
     const definitions = await db.all(`
       SELECT field_key, data_type, options_json
       FROM contact_custom_field_definitions
-      WHERE field_key IN (?, ?, ?, ?)
+      WHERE field_key IN (?, ?, ?, ?, ?)
       ORDER BY field_key ASC
     `, customFieldKeys)
     assert.deepEqual(
@@ -637,14 +653,65 @@ test('public imported submit stores radio and one-or-many checkbox answers in th
         [planKey]: { dataType: 'radio', options: ['starter', 'pro'] },
         [consentKey]: { dataType: 'checkboxes', options: ['aceptado'] },
         [interestsKey]: { dataType: 'checkboxes', options: ['ventas', 'soporte'] },
+        [priorityKey]: { dataType: 'dropdown', options: ['normal', 'urgente'] },
         [channelsKey]: { dataType: 'checkboxes', options: ['email', 'whatsapp'] }
       }
+    )
+
+    await assert.rejects(
+      () => createSubmissionFromRequest(
+        {
+          headers: { host: 'example.test', 'user-agent': 'node-test' },
+          hostname: 'example.test',
+          path: `/${created.site.slug}`,
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' }
+        },
+        {
+          siteId,
+          importedFormId: 'preferencias-contacto',
+          rawFields: {
+            email: `invalid-${email}`,
+            plan: 'enterprise',
+            consentimiento: 'aceptado',
+            intereses: ['ventas'],
+            prioridad: 'urgente',
+            canales: ['email']
+          }
+        }
+      ),
+      error => error?.status === 400 && /opción inválida/.test(error.message)
+    )
+
+    await assert.rejects(
+      () => createSubmissionFromRequest(
+        {
+          headers: { host: 'example.test', 'user-agent': 'node-test' },
+          hostname: 'example.test',
+          path: `/${created.site.slug}`,
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' }
+        },
+        {
+          siteId,
+          importedFormId: 'preferencias-contacto',
+          rawFields: {
+            email: `multiple-${email}`,
+            plan: ['starter', 'pro'],
+            consentimiento: 'aceptado',
+            intereses: ['ventas'],
+            prioridad: 'normal',
+            canales: ['whatsapp']
+          }
+        }
+      ),
+      error => error?.status === 400 && /solo acepta una opción/.test(error.message)
     )
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     await deleteSites(sourceFormIds)
     const definitions = await db.all(
-      'SELECT id FROM contact_custom_field_definitions WHERE field_key IN (?, ?, ?, ?)',
+      'SELECT id FROM contact_custom_field_definitions WHERE field_key IN (?, ?, ?, ?, ?)',
       customFieldKeys
     ).catch(() => [])
     for (const definition of definitions) {

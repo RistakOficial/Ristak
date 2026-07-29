@@ -25958,10 +25958,13 @@ const ImportedHtmlEditorPanel: React.FC<{
                         const storedField = matchingStoredFields.find(candidate => candidate.present !== false) || matchingStoredFields[0]
                         const selectedCustomField = findImportedCustomFieldDefinition(activeImportedCustomFields, field)
                         const missingCustomField = Boolean((field.destinationType === 'custom' || field.saveMode === 'custom') && field.customFieldDefinitionId && !selectedCustomField)
+                        const incompatibleCustomField = Boolean(
+                          selectedCustomField && !isImportedCustomFieldCompatible(selectedCustomField, field)
+                        )
                         const currentValue = importedFieldMappingOverrides[routeKey] || getPanelFieldRouteValue(field)
                         const newCustomValue = currentValue.startsWith('new_custom:') ? currentValue : `new_custom:${field.customFieldKey || field.destinationKey || normalizeImportedDestinationKey(field.sourceName || field.fieldId, 'campo_personalizado')}`
                         const prioritizedSystemFields = getPrioritizedImportedSystemFieldOptions(field, currentValue)
-                        const prioritizedCustomFields = getPrioritizedImportedCustomFields(activeImportedCustomFields, currentValue)
+                        const prioritizedCustomFields = getPrioritizedImportedCustomFields(activeImportedCustomFields, currentValue, field)
                         const pending = importedFieldMappingPendingKeys.has(routeKey)
                         const duplicateFieldId = duplicateFieldIds.has(normalizeImportedDestinationKey(field.fieldId || field.sourceName, ''))
                         const detectedField = detectedGroup?.fields.find(candidate => (
@@ -25976,9 +25979,9 @@ const ImportedHtmlEditorPanel: React.FC<{
                             </span>
                             <Badge
                               className={styles.importedFieldMappingStatus}
-                              variant={pending ? 'info' : duplicateFormId || duplicateFieldId || missingCustomField || missingStableFieldId ? 'warning' : storedField ? 'success' : 'neutral'}
+                              variant={pending ? 'info' : duplicateFormId || duplicateFieldId || missingCustomField || incompatibleCustomField || missingStableFieldId ? 'warning' : storedField ? 'success' : 'neutral'}
                             >
-                              {pending ? 'Guardando' : duplicateFormId || duplicateFieldId ? 'Corrige el ID' : missingCustomField ? 'Reasociar' : missingStableFieldId ? 'Sin ID estable' : storedField ? 'Asociado' : 'Pendiente'}
+                              {pending ? 'Guardando' : duplicateFormId || duplicateFieldId ? 'Corrige el ID' : missingCustomField || incompatibleCustomField ? 'Reasociar' : missingStableFieldId ? 'Sin ID estable' : storedField ? 'Asociado' : 'Pendiente'}
                             </Badge>
                             <CustomSelect
                               value={currentValue}
@@ -26000,11 +26003,18 @@ const ImportedHtmlEditorPanel: React.FC<{
                               )}
                               {prioritizedCustomFields.length > 0 && (
                                 <optgroup label="Campos personalizados existentes">
-                                  {prioritizedCustomFields.map(customField => (
-                                    <option key={customField.definitionId} value={`custom:${customField.definitionId}`}>
-                                      {customField.label || customField.name || customField.fieldKey}
-                                    </option>
-                                  ))}
+                                  {prioritizedCustomFields.map(customField => {
+                                    const compatible = isImportedCustomFieldCompatible(customField, field)
+                                    return (
+                                      <option
+                                        key={customField.definitionId}
+                                        value={`custom:${customField.definitionId}`}
+                                        disabled={!compatible}
+                                      >
+                                        {customField.label || customField.name || customField.fieldKey}{compatible ? '' : ' · tipo incompatible'}
+                                      </option>
+                                    )
+                                  })}
                                 </optgroup>
                               )}
                               <optgroup label="Crear campo nuevo">
@@ -27442,17 +27452,39 @@ const findImportedCustomFieldDefinition = (
   )) || null
 }
 
+const getImportedChoiceDataType = (value = '') => {
+  const type = normalizeImportedDestinationKey(value, '')
+  if (type === 'radio') return 'radio'
+  if (type === 'select' || type === 'dropdown') return 'dropdown'
+  if (type === 'checkbox' || type === 'checkboxes' || type === 'multiselect') return 'checkboxes'
+  return ''
+}
+
+const isImportedCustomFieldCompatible = (
+  customField: CustomFieldDefinition,
+  field: ImportedSiteFieldMapping
+) => {
+  const sourceType = getImportedChoiceDataType(field.type)
+  if (!sourceType) return true
+  return getImportedChoiceDataType(customField.dataType) === sourceType
+}
+
 const getPrioritizedImportedCustomFields = (
   customFields: CustomFieldDefinition[],
-  currentValue = ''
+  currentValue: string,
+  field: ImportedSiteFieldMapping
 ) => {
   const selectedDefinitionId = currentValue.startsWith('custom:')
     ? currentValue.slice('custom:'.length)
     : ''
-  if (!selectedDefinitionId) return customFields
+  const compatibleFields = customFields.filter(customField => (
+    isImportedCustomFieldCompatible(customField, field)
+  ))
+  if (!selectedDefinitionId) return compatibleFields
+  const selectedField = customFields.find(customField => customField.definitionId === selectedDefinitionId)
   return [
-    ...customFields.filter(field => field.definitionId === selectedDefinitionId),
-    ...customFields.filter(field => field.definitionId !== selectedDefinitionId)
+    ...(selectedField ? [selectedField] : []),
+    ...compatibleFields.filter(customField => customField.definitionId !== selectedDefinitionId)
   ]
 }
 

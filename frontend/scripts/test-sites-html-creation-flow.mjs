@@ -284,8 +284,13 @@ assert.match(
 )
 assert.match(
   importedFieldPrioritySource,
-  /currentValue\.startsWith\('custom:'\)[\s\S]*?filter\(field => field\.definitionId === selectedDefinitionId\)[\s\S]*?filter\(field => field\.definitionId !== selectedDefinitionId\)/,
-  'el campo personalizado existente ya asociado debe subir antes de los demás personalizados'
+  /const isImportedCustomFieldCompatible =[\s\S]*?getImportedChoiceDataType\(field\.type\)[\s\S]*?getImportedChoiceDataType\(customField\.dataType\) === sourceType/,
+  'los campos HTML de elección solo deben ofrecer campos personalizados del mismo tipo'
+)
+assert.match(
+  importedFieldPrioritySource,
+  /currentValue\.startsWith\('custom:'\)[\s\S]*?compatibleFields = customFields\.filter[\s\S]*?selectedField[\s\S]*?compatibleFields\.filter/,
+  'el campo personalizado compatible ya asociado debe subir antes de los demás compatibles'
 )
 assert.match(
   importedFieldPrioritySource,
@@ -301,6 +306,11 @@ assert.match(
   importedFieldMappingRowSource,
   /<optgroup label="Campos del sistema">[\s\S]*?<optgroup label="Campos personalizados existentes">[\s\S]*?<optgroup label="Crear campo nuevo">/,
   'los destinos existentes deben aparecer antes de la opción que crea un campo nuevo'
+)
+assert.match(
+  importedFieldMappingRowSource,
+  /disabled=\{!compatible\}[\s\S]*?tipo incompatible/,
+  'una asociación heredada de otro tipo debe seguir visible como alerta, pero no debe poder elegirse de nuevo'
 )
 
 console.log('Sites HTML creation flow contract OK')

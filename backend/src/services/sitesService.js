@@ -13804,6 +13804,17 @@ function cleanImportedFieldRoutePatch(currentField = {}, input = {}, definition 
       error.status = 404
       throw error
     }
+    const sourceChoiceType = getImportedChoiceDataType(currentField)
+    const destinationChoiceType = getImportedChoiceDataType({ type: definition.data_type })
+    if (sourceChoiceType && sourceChoiceType !== destinationChoiceType) {
+      const sourceTypeLabel = getImportedChoiceDataTypeLabel(sourceChoiceType)
+      const destinationTypeLabel = getImportedChoiceDataTypeLabel(destinationChoiceType || definition.data_type)
+      const error = new Error(
+        `Este campo HTML usa ${sourceTypeLabel} y no se puede asociar a un campo personalizado de ${destinationTypeLabel}. Elige uno del mismo tipo o crea uno nuevo.`
+      )
+      error.status = 400
+      throw error
+    }
     return {
       ...currentField,
       destinationType: 'custom',
@@ -35296,6 +35307,44 @@ function getImportedRawFieldValue(rawFields = {}, mapping = {}) {
   return { key: '', value: null }
 }
 
+function normalizeImportedChoiceSubmissionValue(field = {}, value = '') {
+  const dataType = getImportedChoiceDataType(field)
+  if (!dataType) return value
+
+  let normalizedValue = value
+  if (dataType === 'checkboxes') {
+    normalizedValue = [...new Set(
+      (Array.isArray(value) ? value : [value]).map(cleanString).filter(Boolean)
+    )]
+  } else {
+    if (Array.isArray(value)) {
+      const error = new Error(`${cleanString(field.label || field.sourceName) || 'La pregunta'} solo acepta una opción`)
+      error.status = 400
+      throw error
+    }
+    normalizedValue = cleanString(value)
+  }
+
+  const allowedValues = new Set(
+    normalizeImportedFieldOptions(field.options || [])
+      .map(option => cleanString(option.value))
+      .filter(Boolean)
+  )
+  const selectedValues = Array.isArray(normalizedValue)
+    ? normalizedValue
+    : [normalizedValue].filter(Boolean)
+  const invalidValue = selectedValues.find(selectedValue => (
+    allowedValues.size > 0 && !allowedValues.has(selectedValue)
+  ))
+  if (invalidValue) {
+    const error = new Error(`${cleanString(field.label || field.sourceName) || 'La pregunta'} contiene una opción inválida`)
+    error.status = 400
+    throw error
+  }
+
+  return normalizedValue
+}
+
 function inferImportedDataType(mapping = {}, value = '') {
   const type = normalizeImportedFieldKey(
     mapping.type ||
@@ -35313,6 +35362,19 @@ function inferImportedDataType(mapping = {}, value = '') {
   if (['number', 'currency', 'date', 'time', 'email', 'phone'].includes(type)) return type
   if (Array.isArray(value)) return 'checkboxes'
   return 'text'
+}
+
+function getImportedChoiceDataType(mapping = {}) {
+  const dataType = inferImportedDataType(mapping, '')
+  return ['dropdown', 'radio', 'checkboxes'].includes(dataType) ? dataType : ''
+}
+
+function getImportedChoiceDataTypeLabel(value = '') {
+  const type = normalizeImportedFieldKey(value, '')
+  if (type === 'radio') return 'opción única con radio buttons'
+  if (type === 'dropdown') return 'opción única en dropdown'
+  if (type === 'checkboxes') return 'una lista de opciones múltiples'
+  return 'otro tipo de dato'
 }
 
 function addImportedCustomField(customFields, field = {}, value, context = {}) {
@@ -35402,7 +35464,8 @@ function buildImportedSubmissionLayers({ site, imported, formId, rawFields, allo
   }
 
   for (const field of allFormFields.filter(item => item?.present !== false)) {
-    const { key: rawKey, value } = getImportedRawFieldValue(rawFields, field)
+    const { key: rawKey, value: rawValue } = getImportedRawFieldValue(rawFields, field)
+    const value = normalizeImportedChoiceSubmissionValue(field, rawValue)
     if (!rawKey || isEmptyImportedValue(value)) continue
 
     consumedRawKeys.add(rawKey)

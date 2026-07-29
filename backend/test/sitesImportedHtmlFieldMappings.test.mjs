@@ -364,6 +364,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
     plan: `plan_html_${suffix}`.toLowerCase(),
     consent: `consentimiento_html_${suffix}`.toLowerCase(),
     interests: `intereses_html_${suffix}`.toLowerCase(),
+    priority: `prioridad_html_${suffix}`.toLowerCase(),
     channels: `canales_html_${suffix}`.toLowerCase()
   }
 
@@ -388,6 +389,11 @@ test('new imported choice mappings keep their canonical answer type in the sourc
             <label><input type="checkbox" name="intereses" value="ventas" data-rstk-field-id="intereses"> Ventas</label>
             <label><input type="checkbox" name="intereses" value="soporte" data-rstk-field-id="intereses"> Soporte</label>
           </fieldset>
+          <label for="prioridad">Prioridad</label>
+          <select id="prioridad" name="prioridad" data-rstk-field-id="prioridad">
+            <option value="normal">Normal</option>
+            <option value="urgente">Urgente</option>
+          </select>
           <label for="canales">Canales</label>
           <select id="canales" name="canales" data-rstk-field-id="canales" multiple>
             <option value="email">Email</option>
@@ -407,6 +413,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
         ['plan', 'radio'],
         ['consentimiento', 'checkbox'],
         ['intereses', 'checkbox'],
+        ['prioridad', 'select'],
         ['canales', 'multiselect']
       ]
     )
@@ -415,6 +422,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
       plan: 'select',
       consentimiento: 'checkbox',
       intereses: 'multiselect',
+      prioridad: 'select',
       canales: 'select'
     }
     const legacyMappings = created.import.formMappings.map(mapping => (
@@ -439,6 +447,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
       ['plan', fieldKeys.plan],
       ['consentimiento', fieldKeys.consent],
       ['intereses', fieldKeys.interests],
+      ['prioridad', fieldKeys.priority],
       ['canales', fieldKeys.channels]
     ]) {
       await updateImportedSiteFieldMapping(siteId, {
@@ -458,6 +467,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
         ['plan', 'radio'],
         ['consentimiento', 'checkboxes'],
         ['intereses', 'checkboxes'],
+        ['prioridad', 'dropdown'],
         ['canales', 'checkboxes']
       ]
     )
@@ -476,6 +486,7 @@ test('new imported choice mappings keep their canonical answer type in the sourc
         ['radio', 'radio', ['starter', 'pro']],
         ['checkboxes', 'checkboxes', ['aceptado']],
         ['checkboxes', 'checkboxes', ['ventas', 'soporte']],
+        ['dropdown', 'dropdown', ['normal', 'urgente']],
         ['checkboxes', 'checkboxes', ['email', 'whatsapp']]
       ]
     )
@@ -485,6 +496,142 @@ test('new imported choice mappings keep their canonical answer type in the sourc
       sourceFormIds.push(...(imported?.formMappings || []).map(mapping => mapping.formSiteId))
     }
     await deleteSites([siteId, ...sourceFormIds])
+  }
+})
+
+test('imported choice controls only bind to existing custom fields of the same answer type', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  const definitions = {
+    radio: {
+      id: `contact_field_radio_${suffix}`,
+      key: `canal_radio_${suffix}`.toLowerCase(),
+      label: 'Canal preferido',
+      dataType: 'radio',
+      options: ['email', 'whatsapp']
+    },
+    dropdown: {
+      id: `contact_field_dropdown_${suffix}`,
+      key: `prioridad_dropdown_${suffix}`.toLowerCase(),
+      label: 'Prioridad',
+      dataType: 'dropdown',
+      options: ['normal', 'urgente']
+    },
+    checkboxes: {
+      id: `contact_field_checkboxes_${suffix}`,
+      key: `servicios_checkboxes_${suffix}`.toLowerCase(),
+      label: 'Servicios',
+      dataType: 'checkboxes',
+      options: ['ventas', 'soporte']
+    }
+  }
+  let siteId = ''
+  const sourceFormIds = []
+
+  try {
+    for (const definition of Object.values(definitions)) {
+      await db.run(`
+        INSERT INTO contact_custom_field_definitions (
+          id, field_key, label, data_type, options_json, sync_target, source_type,
+          archived, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'local', 'manual', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        definition.id,
+        definition.key,
+        definition.label,
+        definition.dataType,
+        JSON.stringify(definition.options.map(value => ({ label: value, value })))
+      ])
+    }
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'asociaciones-tipadas.html',
+      name: `Asociaciones tipadas ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="asociaciones-tipadas" data-rstk-label="Asociaciones tipadas">
+          <fieldset>
+            <legend>Canal preferido</legend>
+            <label><input type="radio" name="canal" value="email" data-rstk-field-id="canal"> Email</label>
+            <label><input type="radio" name="canal" value="whatsapp" data-rstk-field-id="canal"> WhatsApp</label>
+          </fieldset>
+          <label for="prioridad">Prioridad</label>
+          <select id="prioridad" name="prioridad" data-rstk-field-id="prioridad">
+            <option value="normal">Normal</option>
+            <option value="urgente">Urgente</option>
+          </select>
+          <fieldset>
+            <legend>Servicios</legend>
+            <label><input type="checkbox" name="servicios" value="ventas" data-rstk-field-id="servicios"> Ventas</label>
+            <label><input type="checkbox" name="servicios" value="soporte" data-rstk-field-id="servicios"> Soporte</label>
+          </fieldset>
+          <button type="submit">Guardar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormIds.push(...created.import.formMappings.map(mapping => mapping.formSiteId).filter(Boolean))
+
+    for (const [fieldId, definition] of [
+      ['canal', definitions.radio],
+      ['prioridad', definitions.dropdown],
+      ['servicios', definitions.checkboxes]
+    ]) {
+      await updateImportedSiteFieldMapping(siteId, {
+        pagePath: '',
+        formId: 'asociaciones_tipadas',
+        fieldId,
+        destinationType: 'custom',
+        customFieldDefinitionId: definition.id
+      })
+    }
+
+    const imported = await getImportedSiteBySiteId(siteId)
+    const form = activeMapping(imported, '', 'asociaciones_tipadas')
+    assert.deepEqual(
+      form.fields.map(field => [
+        field.fieldId,
+        field.customFieldDefinitionId,
+        field.customFieldDataType
+      ]),
+      [
+        ['canal', definitions.radio.id, 'radio'],
+        ['prioridad', definitions.dropdown.id, 'dropdown'],
+        ['servicios', definitions.checkboxes.id, 'checkboxes']
+      ]
+    )
+
+    for (const [fieldId, definition] of [
+      ['canal', definitions.dropdown],
+      ['prioridad', definitions.checkboxes],
+      ['servicios', definitions.radio]
+    ]) {
+      await assert.rejects(
+        () => updateImportedSiteFieldMapping(siteId, {
+          pagePath: '',
+          formId: 'asociaciones_tipadas',
+          fieldId,
+          destinationType: 'custom',
+          customFieldDefinitionId: definition.id
+        }),
+        error => error?.status === 400 && /mismo tipo|no se puede asociar/.test(error.message)
+      )
+    }
+  } finally {
+    if (siteId) {
+      const imported = await getImportedSiteBySiteId(siteId).catch(() => null)
+      sourceFormIds.push(...(imported?.formMappings || []).map(mapping => mapping.formSiteId))
+    }
+    await deleteSites([siteId, ...sourceFormIds])
+    for (const definition of Object.values(definitions)) {
+      await db.run(
+        'DELETE FROM contact_custom_field_definition_sources WHERE definition_id = ?',
+        [definition.id]
+      ).catch(() => undefined)
+      await db.run(
+        'DELETE FROM contact_custom_field_definitions WHERE id = ?',
+        [definition.id]
+      ).catch(() => undefined)
+    }
   }
 })
 
