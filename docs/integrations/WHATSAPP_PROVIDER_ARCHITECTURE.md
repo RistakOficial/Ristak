@@ -550,6 +550,11 @@ se considera desconectado.
 
 ## Desconexión por número desde Ristak
 
+El contenedor **Pausas automáticas para QR** sólo aparece cuando al menos un
+número de la cuenta tiene una sesión con estado `connected`. Una cuenta que
+únicamente usa WhatsApp API, o cuyos QR están pendientes, apagados o
+desconectados, no muestra ese ajuste.
+
 La última columna de cada fila en `Configuración > WhatsApp > Números` es la
 autoridad para retirar una conexión individual. La acción siempre nombra el
 proveedor o transporte y exige escribir `DESCONECTAR`. En este flujo

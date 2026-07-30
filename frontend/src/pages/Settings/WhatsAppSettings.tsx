@@ -1097,6 +1097,7 @@ export const WhatsAppSettings: React.FC = () => {
         getQrStatusLabel(row.qrStatus)
       ].some((value) => String(value || '').toLowerCase().includes(query))
     })
+    const hasConnectedQr = enrichedPhones.some((row) => row.qrConnected)
     const balanceLabel = balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'
     const hasAdvancedActions = hasWhatsAppApiAccess && Boolean((metaDirectConnected && paymentConfigUrl) || ycloudConnected)
 
@@ -1155,7 +1156,7 @@ export const WhatsAppSettings: React.FC = () => {
             </div>
           </div>
 
-          {renderQrDripPanel(true)}
+          {hasConnectedQr && renderQrDripPanel(true)}
 
           {filteredPhones.length > 0 ? (
             <div className={styles.tableWrap}>
