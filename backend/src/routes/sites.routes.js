@@ -34,6 +34,7 @@ import {
   removeSitesDomainHandler,
   previewSiteSessionHandler,
   publicSiteContactPrefillHandler,
+  publicSiteFormProgressHandler,
   publicSitePaymentStatusHandler,
   sitePaymentCheckoutInitHandler,
   sitePaymentCheckoutPayHandler,
@@ -99,6 +100,7 @@ function requirePaymentsForSitePaymentFeature(req, res, next) {
 }
 
 router.post('/public/submit', submitPublicSiteHandler)
+router.post('/public/form-progress', publicSiteFormProgressHandler)
 router.get('/public/contact-prefill', publicSiteContactPrefillHandler)
 router.get('/public/payments/:publicPaymentId/status', requireFeature('payment_checkout'), publicSitePaymentStatusHandler)
 router.post('/public/checkout/init', requireFeature('payment_checkout'), sitePaymentCheckoutInitHandler)

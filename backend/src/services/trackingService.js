@@ -426,6 +426,8 @@ function extractNativeSiteInfo(data = {}) {
     form_site_name: cleanTrackingString(data.form_site_name || data.formSiteName, 260),
     public_page_id: cleanTrackingString(data.public_page_id || data.publicPageId || data.page_id || data.pageId, 160),
     public_page_title: cleanTrackingString(data.public_page_title || data.publicPageTitle || data.page_title || data.pageTitle, 260),
+    page_flow_revision: cleanTrackingString(data.page_flow_revision || data.pageFlowRevision, 80),
+    page_journey_id: cleanTrackingString(data.page_journey_id || data.pageJourneyId, 160),
     conversion_type: cleanTrackingString(data.conversion_type || data.conversionType, 120),
     submission_id: cleanTrackingString(data.submission_id || data.submissionId, 160)
   }
@@ -658,6 +660,8 @@ export async function createSession(sessionData) {
         form_site_name,
         public_page_id,
         public_page_title,
+        page_flow_revision,
+        page_journey_id,
         conversion_type,
         submission_id,
         identity_hash,
@@ -672,7 +676,7 @@ export async function createSession(sessionData) {
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT DO NOTHING
@@ -740,6 +744,8 @@ export async function createSession(sessionData) {
       nativeSiteInfo.form_site_name,
       nativeSiteInfo.public_page_id,
       nativeSiteInfo.public_page_title,
+      nativeSiteInfo.page_flow_revision,
+      nativeSiteInfo.page_journey_id,
       nativeSiteInfo.conversion_type,
       nativeSiteInfo.submission_id,
       identity.signals.identityHash,

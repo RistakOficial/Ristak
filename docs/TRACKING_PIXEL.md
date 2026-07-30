@@ -8,9 +8,14 @@ Esta documentación describe el comportamiento real del código en:
 - `backend/src/middleware/publicTrackingCors.js`
 - `backend/src/controllers/sitesController.js`
 - `backend/src/services/sitesService.js`
+- `backend/src/services/siteFlowEventsService.js`
 - `frontend/src/pages/Settings/WebTracking.tsx`
 - `frontend/src/services/trackingService.ts`
 - `backend/test/publicTrackingCors.test.mjs`
+- `backend/test/siteFlowEventsService.test.mjs`
+- `backend/test/sitesEmbeddedStepform.test.mjs`
+- `backend/test/sitesJourneyAnalytics.test.mjs`
+- `backend/test/sitesFormProgressRuntime.test.mjs`
 - `backend/test/sitesVideoPlayer.test.mjs`
 - `backend/test/sitesFormHeadersPixel.test.mjs`
 
@@ -130,6 +135,181 @@ escanear todas las sesiones.
 `/collect` lo rechaza, aun si el cliente intenta declarar
 `tracking_source = native_site`; así un tercero no puede fabricar la evidencia
 de conversión usada por Analytics.
+
+#### Analíticas de Sites `schemaVersion = 4`
+
+`POST /api/sites/analytics/summary` responde con `schemaVersion = 4`. Además del
+resumen general, puede entregar dos recorridos first-party distintos:
+
+- `formJourneys`: avance por etapas y preguntas de formularios nativos
+  standalone o bloques nativos `form_embed`;
+- `pageFunnels`: navegación página a página de una landing publicada en modo
+  embudo.
+
+Estas lecturas no sustituyen los conteos generales de vistas, envíos y
+conversiones. Son cohortes de recorrido y deben mostrarse junto con su
+`coverage`; una tasa sin esa cobertura no es una cifra autosuficiente.
+
+##### Ledger de formularios
+
+El renderer público publicado envía progreso same-origin a
+`POST /api/sites/public/form-progress`. Preview/editor no inyecta esta ingesta.
+Cada publicación incluye un `formContextToken` temporal firmado por el servidor
+que liga host, Site dueño, página pública, formulario y revisión. El endpoint
+vuelve a resolver esas entidades en DB, valida que la ruta corresponda a la
+página firmada y comprueba las etapas y los IDs de campos antes de aceptar un
+lote. Un ID enviado por el navegador nunca sustituye ese contexto. Los eventos
+admitidos son:
+
+- `attempt_start`: abre un intento medible;
+- `step_view`: confirma que el intento alcanzó una etapa;
+- `field_answered`: confirma que un campo de esa etapa fue contestado;
+- `step_complete`: registra el avance desde una etapa hacia otra;
+- `attempt_completed`: cierre server-side después de guardar el envío final;
+- `attempt_terminal`: cierre server-side que terminó el recorrido sin
+  completarlo, por ejemplo una descalificación o salida terminal por regla.
+
+`attempt_completed` y `attempt_terminal` son autoridad del servidor; el
+navegador no puede escribirlos. Los demás eventos viven en el ledger append-only
+`site_flow_events`. El ledger guarda IDs, secuencia, revisión, etapa/campo,
+destino, timestamps, identidad first-party y hashes de integridad. **Nunca
+guarda el valor ni la respuesta del campo.** Las respuestas reales permanecen
+en `public_site_submissions` bajo sus reglas de privacidad y acceso.
+
+Cada evento tiene `event_id`, cada intento una `event_sequence` monotónica y el
+payload un hash estable. Un retry idéntico se deduplica; reutilizar el ID o la
+secuencia con otro payload es conflicto. El navegador conserva una cola en
+`sessionStorage`, agrupa hasta 50 eventos compatibles y reintenta fallas de red,
+`429` y `5xx` con backoff acotado. Un `4xx` permanente retira el grupo inválido
+para que no bloquee eventos nuevos. La cola se vuelve a vaciar al recuperar
+conexión y en transiciones de visibilidad/navegación. Este mecanismo reduce
+pérdidas, pero no convierte al navegador anónimo en una fuente autenticada.
+
+La cola sólo persiste IDs opacos y metadata estructural; no guarda `contact_id`
+ni respuestas. Antes de un submit final, el runtime intenta drenar el lote del
+intento y espera su `202` durante un máximo de 1.5 segundos. Esa barrera evita
+que el cierre server-side llegue antes que `attempt_start`, pero la telemetría
+nunca se vuelve requisito para guardar el formulario: al vencer el tiempo el
+submit continúa, la cola permanece para retry y Analytics declara la cobertura
+incompleta si el inicio no pudo comprobarse.
+
+La ingesta usa JSON estricto, sin compresión, con máximo de 64 KB y 50 eventos
+por request. Un rate limit LRU acotado cuenta requests y eventos por IP + Site.
+La máquina de estados exige inicio único en secuencia 1, secuencia global
+monótona, `step_view` previo antes de responder o completar y rechaza eventos
+nuevos después del cierre. Cada intento admite como máximo 999 eventos del
+navegador más un cierre reservado del servidor y vence a las 24 horas. Esa
+vigencia se calcula contra `created_at`, asignado por la base al recibir el
+inicio; nunca contra el reloj manipulable del navegador. Los identificadores
+públicos rechazan valores con forma de email, teléfono o caracteres de control.
+
+##### Cohorte, etapas y abandono
+
+La cohorte de formulario se define por los `attempt_start` de la revisión actual
+cuyo inicio cae dentro del rango solicitado. `entrants` cuenta intentos y
+`uniqueEntrants` deduplica por la mejor identidad first-party disponible. La
+conversión del recorrido es `completedAttempts / entrants`; un cierre
+`attempt_terminal` no es completado.
+
+Por etapa se reportan intentos/visitantes que:
+
+- la alcanzaron (`step_view`);
+- contestaron al menos una pregunta y, por campo, emitieron
+  `field_answered`;
+- avanzaron (`step_complete`) o terminaron ahí;
+- siguen en curso;
+- abandonaron;
+- entraron directamente o saltaron hacia otra etapa.
+
+Un intento no terminal con actividad en los últimos 30 minutos está **en
+curso**. Al superar 30 minutos queda **abandonado** en la etapa alcanzada que
+quedó sin completar. Volver hacia atrás no debe cargar el abandono a una etapa
+que ya había avanzado: en `A → B → A`, si A avanzó y B nunca se completó, el
+abandono corresponde a B. Un intento terminal nunca reaparece como abandono.
+
+Una terminal guardada sin `attempt_start` verificable no permite fabricar el
+denominador. El envío sigue existiendo en los totales históricos, pero ese
+intento se excluye de la tasa de cohorte y se reporta mediante
+`terminalAttemptsWithoutStart`, advertencia y cobertura `partial`; si no existe
+ningún entrant verificable, la cobertura del recorrido es `unavailable`.
+
+Antes de calcular la cohorte, Analytics contrasta los envíos finales persistidos
+de la revisión vigente contra sus cierres server-side. Si el envío se guardó
+pero una caída interrumpió la escritura de `attempt_completed` o
+`attempt_terminal`, reconstruye ese cierre de forma idempotente usando únicamente
+el contexto de flow ya persistido en la submission. La respuesta expone
+`reconciledFinalSubmissions`. Si el contexto es inválido, falta o excede el lote
+acotado de reconciliación, no se inventa la conversión:
+`finalSubmissionsWithoutTerminal` conserva el faltante visible y `coverage`
+baja a `partial` o `unavailable`. Si ni siquiera fue posible comprobar el
+faltante, `terminalReconciliationUnavailable = true`.
+
+La revisión del formulario identifica la estructura medible de sus etapas y
+preguntas. Analytics no mezcla revisiones: las anteriores se excluyen y se
+declaran en cobertura. También se usa `partial` cuando el seguimiento empezó
+después del inicio del rango o existe evidencia excluida que impide sostener que
+todo el rango está medido; `unavailable` significa que hubo actividad, pero no
+hay recorrido actual verificable. `verified` sólo aplica cuando la evidencia
+seleccionada pertenece al contrato vigente y la reconciliación confirmó cero
+envíos finales sin cierre.
+
+##### Embudo página a página
+
+Una landing en modo embudo emite `page_flow_revision` y un
+`page_journey_id` first-party aislado por pestaña. La revisión representa la
+topología: IDs y orden de páginas. Cambiar copy o estilos no abre otra revisión;
+agregar, quitar, reemplazar o reordenar páginas sí. Las vistas de revisiones
+anteriores, sin revisión o sin identidad de recorrido por pestaña no se mezclan
+con la estructura actual y degradan `coverage` a `partial` o `unavailable`.
+
+El HTML sólo recibe un contexto temporal HMAC ligado a host, Site, página,
+publicación y revisión; no recibe el `page_journey_id` definitivo. Cada pestaña
+crea un nonce aleatorio en `sessionStorage` y el servidor deriva de él un ID
+opaco con su llave privada. `/collect` ignora cualquier journey, revisión,
+página, Site o `contact_id` que el navegador intente imponer. Firmas alteradas,
+vencidas o reutilizadas en otra página/Site/host se rechazan. Un runtime legacy
+sólo conserva contexto de Site cuando host + ruta demuestran exactamente la
+entidad; si no, se degrada a `external_pixel` sin IDs nativos para que no
+contamine el embudo.
+
+El cohort de páginas toma recorridos cuyo primer evento cae en el rango,
+reconstruye transiciones con una separación de 30 minutos y conserva el margen
+necesario alrededor del rango para no declarar abandono sólo porque el siguiente
+salto ocurrió inmediatamente fuera del límite. Por página expone vistas,
+intentos/visitantes alcanzados, avance, siguiente página, entradas directas,
+actividad y abandono; llegar a la última página completa el recorrido.
+
+##### Identidad y bloque histórico
+
+`visitor_id`, `session_id`, `page_journey_id` y `attempt_id` son señales
+first-party del navegador. Permiten deduplicar recorridos con reglas
+deterministas, pero **no prueban una persona humana única**: pueden cambiar al
+borrar storage, usar incógnito u otro dispositivo, y una ingesta pública puede
+recibir tráfico automatizado. La interfaz y la documentación deben hablar de
+visitantes o intentos first-party, no de “humanos verificados”.
+
+El bloque histórico **Cobertura de respuestas** permanece separado. Se calcula
+desde envíos terminales guardados y responde qué campos tienen respuesta,
+incluidos `0` y `false`; no prueba que la persona haya visto una pregunta, el
+orden recorrido ni dónde abandonó. Nunca debe usarse como fallback para rellenar
+`formJourneys`.
+
+En esta entrega no existe recorrido por pregunta para formularios genéricos de
+**HTML importado** ni para formularios mostrados dentro de
+**`videoFormGate`**. Sus envíos y conversiones siguen apareciendo en los totales
+que correspondan, pero no se deben inventar etapas. Si un Site importado contiene
+un bloque nativo `form_embed`, el recorrido disponible pertenece a ese formulario
+nativo, no al formulario HTML arbitrario.
+
+La llave HMAC vive en `app_config` bajo
+`public_context_signing_secret_v1`. El backend la genera internamente con
+entropía criptográfica si no existe; no requiere variable de entorno ni setup
+manual. `/api/config` devuelve su valor redactado y rechaza modificarla o
+borrarla. Nunca documentar, registrar ni copiar su valor real. En PostgreSQL,
+los instantes de `site_flow_events` son `TIMESTAMPTZ`; SQLite conserva
+`TIMESTAMP`. Las migraciones `139*` y `140*` instalan y validan tabla, columnas
+e índices de cohorte, intento, visitante, retención futura y page journey. Los
+contratos fallan cerrado ante un índice o tipo incompatible.
 
 El instante canónico de un evento nativo usa `started_at`. El backend conserva el
 timestamp original en `client_started_at`, pero si es inválido o difiere más de
@@ -352,13 +532,16 @@ quedan limitados a ese sitio aunque el mismo video exista en otros.
 ```bash
 cd backend
 node --test --test-concurrency=1 test/publicTrackingCors.test.mjs
+node --test --test-concurrency=1 test/siteFlowEventsService.test.mjs test/sitesFormProgressRuntime.test.mjs
+node --test --test-concurrency=1 test/sitesJourneyAnalytics.test.mjs test/sitesEmbeddedStepform.test.mjs
 node --test --test-concurrency=1 test/sitesVideoPlayer.test.mjs test/sitesFormHeadersPixel.test.mjs
 ```
 
 Las pruebas automatizadas protegen el contrato de CORS, el aislamiento de rutas
-privadas, la diferencia preview/publicado, cookies first-party y tracking Meta de
-Sites. No reemplazan la prueba end-to-end cuando cambia DNS, Cloudflare, Render,
-el dominio público o la instalación productiva.
+privadas, la diferencia preview/publicado, cookies first-party, el ledger y los
+recorridos de Sites, además del tracking Meta. No reemplazan la prueba end-to-end
+cuando cambia DNS, Cloudflare, Render, el dominio público o la instalación
+productiva.
 
 ## Datos Que Captura
 

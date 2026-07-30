@@ -34,6 +34,12 @@ const DATABASE_URL = process.env.DATABASE_URL
 const usePostgres = !!DATABASE_URL
 export const databaseDialect = usePostgres ? 'postgres' : 'sqlite'
 
+export function getSiteFlowInstantSqlType(dialect = databaseDialect) {
+  if (dialect === 'postgres') return 'TIMESTAMPTZ'
+  if (dialect === 'sqlite') return 'TIMESTAMP'
+  throw new TypeError(`Dialecto no soportado para site_flow_events: ${String(dialect || '')}`)
+}
+
 let db
 const databaseTransactionContext = new AsyncLocalStorage()
 const databaseConnectionContext = new AsyncLocalStorage()
@@ -1009,6 +1015,7 @@ const CONTACT_PHONE_REFERENCE_TABLES = [
   { table: 'scheduled_chat_messages', column: 'contact_id' },
   { table: 'payment_flows', column: 'contact_id' },
   { table: 'sessions', column: 'contact_id' },
+  { table: 'site_flow_events', column: 'contact_id' },
   { table: 'video_playback_sessions', column: 'contact_id' },
   { table: 'video_playback_events', column: 'contact_id' },
   { table: 'conversational_agent_safety_cases', column: 'contact_id', mergeStrategy: 'conversational_agent_safety' },
@@ -6491,6 +6498,8 @@ async function initTablesUnlocked() {
         form_site_name TEXT,
         public_page_id TEXT,
         public_page_title TEXT,
+        page_flow_revision TEXT,
+        page_journey_id TEXT,
         conversion_type TEXT,
         submission_id TEXT,
         identity_hash TEXT,
@@ -6517,6 +6526,8 @@ async function initTablesUnlocked() {
       ['form_site_name', 'TEXT'],
       ['public_page_id', 'TEXT'],
       ['public_page_title', 'TEXT'],
+      ['page_flow_revision', 'TEXT'],
+      ['page_journey_id', 'TEXT'],
       ['conversion_type', 'TEXT'],
       ['submission_id', 'TEXT'],
       ['identity_hash', 'TEXT'],
@@ -6548,6 +6559,7 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site ON sessions(site_id, site_type)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_site ON sessions(form_site_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site_tracking_started ON sessions(site_id, tracking_source, event_name, started_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_site_page_flow_started ON sessions(site_id, page_flow_revision, started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_form_tracking_started ON sessions(form_site_id, tracking_source, event_name, started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_submission_tracking_event ON sessions(submission_id, tracking_source, event_name, started_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_sessions_identity_hash ON sessions(identity_hash)')
@@ -6559,6 +6571,71 @@ async function initTablesUnlocked() {
     } catch (err) {
       logger.warn('Advertencia al crear índice idx_sessions_email_lower:', err.message)
     }
+
+    // Ledger separado para el recorrido verificable de formularios/Sites.
+    // No vive en sessions porque cada paso/pregunta inflaría las proyecciones
+    // globales de tracking que consumen esa tabla.
+    const siteFlowInstantSqlType = getSiteFlowInstantSqlType(databaseDialect)
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS site_flow_events (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL UNIQUE,
+        payload_hash TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        event_sequence INTEGER NOT NULL
+          CHECK (event_sequence BETWEEN 1 AND 2147483647),
+        event_name TEXT NOT NULL CHECK (event_name IN (
+          'attempt_start',
+          'step_view',
+          'field_answered',
+          'step_complete',
+          'attempt_completed',
+          'attempt_terminal'
+        )),
+        visitor_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        contact_id TEXT,
+        site_id TEXT NOT NULL,
+        form_site_id TEXT NOT NULL,
+        public_page_id TEXT,
+        flow_revision TEXT NOT NULL,
+        step_id TEXT,
+        target_step_id TEXT,
+        field_id TEXT,
+        step_index INTEGER CHECK (step_index IS NULL OR step_index > 0),
+        step_total INTEGER CHECK (step_total IS NULL OR step_total > 0),
+        step_kind TEXT,
+        outcome TEXT,
+        submission_id TEXT,
+        client_event_at ${siteFlowInstantSqlType},
+        event_at ${siteFlowInstantSqlType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        timestamp_adjusted INTEGER NOT NULL DEFAULT 0 CHECK (timestamp_adjusted IN (0, 1)),
+        created_at ${siteFlowInstantSqlType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (attempt_id, event_sequence),
+        CHECK (step_index IS NULL OR step_total IS NULL OR step_index <= step_total)
+      )
+    `)
+
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_site_flow_events_form_revision_time
+      ON site_flow_events(form_site_id, flow_revision, event_name, event_at, attempt_id)
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_site_flow_events_site_time
+      ON site_flow_events(site_id, event_at, event_name, attempt_id)
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_site_flow_events_attempt_order
+      ON site_flow_events(attempt_id, event_sequence, event_at, id)
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_site_flow_events_visitor_time
+      ON site_flow_events(visitor_id, event_at, attempt_id)
+    `)
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_site_flow_events_created_at
+      ON site_flow_events(created_at, event_at, id)
+    `)
 
     // Tracking granular de reproducciones de video.
     // video_playback_sessions es el resumen por reproducción; video_playback_events

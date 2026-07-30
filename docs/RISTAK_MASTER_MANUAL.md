@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-27.
+Ultima consolidacion: 2026-07-29.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -1010,14 +1010,17 @@ snapshot compartido de Integraciones y continua con CAPI apagado cuando el plan
 no incluye Meta o su lectura falla. Ese 403/fallo no bloquea la creacion ni
 dispara reintentos infinitos de perfiles sociales.
 
-`POST /api/sites/analytics/summary` usa `schemaVersion = 3` y no recibe el
+`POST /api/sites/analytics/summary` usa `schemaVersion = 4` y no recibe el
 universo cargado en el navegador. `siteScope` selecciona en SQL sitios o
 formularios publicados, modo website/funnel y un ID opcional; `aggregate`,
 `series`, `rankings` e `inventory` se calculan sobre todo ese alcance, incluso si
 la entidad queda fuera de la primera pagina. `breakdownSiteIds` solo pide el
-detalle del elemento seleccionado y se intersecta con el scope. El contrato
-rechaza scopes o modos desconocidos y exige un rango completo de fechas de
-calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
+detalle del elemento seleccionado y se intersecta con el scope.
+`formJourneySiteId` solicita el recorrido first-party de un formulario y
+`pageFunnelSiteId`, el recorrido página a página de un embudo; ambos devuelven su
+propio estado de cobertura y nunca se rellenan con datos de otra revisión. El
+contrato rechaza scopes o modos desconocidos y exige un rango completo de fechas
+de calendario del negocio. `dateFrom` y `dateTo` deben venir juntos, en formato
 estricto `YYYY-MM-DD`, representar días reales y no estar invertidos; un rango
 inválido responde `400` y jamás degrada la consulta a todo el historial. El
 contrato legacy por `siteIds` sigue disponible para
@@ -1052,6 +1055,13 @@ falla cerrado y no publica una instalación que acepte telemetría con esquema
 parcial.
 Las migraciones `137*` agregan el índice que permite contrastar cada envío
 histórico con `native_site_conversion` sin escanear el ledger completo.
+Las migraciones `139*` crean y validan `site_flow_events`: PostgreSQL usa
+`TIMESTAMPTZ` y construye por separado los índices concurrentes de cohorte,
+Site, intento, visitante y futura retención; SQLite mantiene `TIMESTAMP` y
+repara/valida el mismo contrato. Las `140*` agregan
+`sessions.page_flow_revision`, `sessions.page_journey_id` y su índice de
+consulta. Un tipo o índice homónimo incompatible detiene el arranque en vez de
+dejar Analytics sobre un esquema parcial.
 
 Los envios guardados se clasifican server-side como `completed`,
 `terminal_exit`, `checkpoint` o `legacy_unknown`. Una conversion calificada es
@@ -1093,14 +1103,121 @@ totales, inventarios o rankings. Cambiar tipo, entidad, video o rango genera una
 consulta con llave propia; una respuesta anterior no puede pisar la vigente. En
 carga o error se muestra ese estado y no tarjetas con ceros fabricados.
 
-Formularios muestra **Cobertura de respuestas**, no un embudo de recorrido. Por
-campo reporta cuantos envios terminales guardados tienen una respuesta, el total
-terminal y su porcentaje; `0` y `false` son respuestas validas. La base actual
-no prueba que una persona haya visto cada pregunta ni en cual abandono, por lo
-que no existen "alcanzaron", drop-off, friccion o conversion entre pasos. Los
-campos se agregan en SQL por bloques acotados; JSON historico corrupto se trata
-como objeto vacio y `legacy_unknown` se presenta como advertencia de cobertura.
-SQLite lo protege con `json_valid`; PostgreSQL usa `ristak_safe_jsonb`.
+Formularios separa dos lecturas que no deben confundirse:
+
+- **Recorrido por etapas** (`formJourneys`): telemetría first-party del intento
+  mientras la persona navega un formulario nativo standalone o un bloque
+  `form_embed`.
+- **Cobertura de respuestas** (`formFunnels`): bloque histórico calculado desde
+  envíos terminales guardados.
+
+El recorrido se ingiere same-origin por
+`POST /api/sites/public/form-progress` únicamente en páginas públicas
+publicadas; editor y preview lo mantienen apagado. Su fuente es el ledger
+append-only `site_flow_events`, separado de `sessions`. Los eventos públicos son
+`attempt_start`, `step_view`, `field_answered` y `step_complete`; los cierres
+`attempt_completed` y `attempt_terminal` sólo los escribe el servidor después
+de procesar una submission. El ledger conserva IDs, secuencia, revisión,
+etapa/campo, destino, timestamps e identidad first-party, pero nunca el valor ni
+la respuesta del campo. Las respuestas reales siguen viviendo en
+`public_site_submissions`.
+
+El renderer firma un contexto temporal que liga host, Site dueño, página,
+formulario y revisión. El endpoint vuelve a comprobar ruta y publicación contra
+DB; los IDs del navegador no son autoridad. El secret interno
+`public_context_signing_secret_v1` se genera dentro de `app_config`, no requiere
+secret externo, se redacta en lecturas de `/api/config` y no puede modificarse
+ni borrarse por ese endpoint. Su valor real nunca debe aparecer en logs,
+documentación o repositorio.
+
+Cada evento lleva `event_id`; la pareja `attempt_id + event_sequence` también es
+única y el hash de payload detecta un reuso distinto. Un retry idéntico se
+deduplica. El runtime guarda una cola en `sessionStorage`, envía lotes de hasta
+50 eventos y reintenta red, `429` y `5xx` con backoff acotado; un `4xx`
+permanente retira el grupo inválido para que no envenene lo siguiente. El estado
+terminado, el prefill programático y el reset posterior al submit no pueden
+abrir intentos fantasma.
+
+La cola usa lista blanca y no conserva `contact_id` ni respuestas. Antes del
+submit final intenta drenar el intento y espera el `202` hasta 1.5 segundos para
+evitar que el cierre llegue antes que el inicio. Si la telemetría falla, el
+submit continúa y la cola queda para retry; guardar el formulario nunca depende
+del tracking. La ingesta acepta sólo JSON sin compresión, máximo 64 KB y 50
+eventos, con rate limit acotado por IP + Site. La máquina exige inicio en
+secuencia 1, orden global, vista previa a respuesta/avance, máximo 999 eventos
+cliente + un cierre server-side, vigencia de 24 horas y ningún evento nuevo
+después de terminar. La vigencia usa el `created_at` que asignó la base al
+inicio, no la hora que declaró el navegador.
+
+La cohorte del rango nace de `attempt_start` para la revisión vigente.
+`entrants` son intentos; `uniqueEntrants`, identidades first-party; y la
+conversión del recorrido es `completedAttempts / entrants`. Por etapa se
+presentan alcanzaron, contestaron, avanzaron, siguen en curso, abandonaron,
+terminales, entradas directas y destinos de salto. Por pregunta,
+`field_answered` sólo prueba que hubo respuesta; no transporta su contenido.
+Un intento no terminal con actividad en los últimos 30 minutos sigue en curso;
+después queda abandonado en la etapa alcanzada que no completó. Si el recorrido
+fue `A → B → A`, A ya avanzó y B no, el abandono pertenece a B. Un cierre
+terminal nunca vuelve a contarse como abandono.
+
+Una terminal/submission con contexto de flow pero sin `attempt_start`
+verificable no autoriza a inventar el denominador: permanece en los totales de
+envíos, se excluye de la tasa de cohorte y se expone como
+`terminalAttemptsWithoutStart`. La cobertura queda `partial`, o `unavailable`
+cuando no existe ningún entrant verificable. Revisiones anteriores también se
+excluyen; si el tracking comenzó después del inicio del rango o hay evidencia
+que no puede asociarse al contrato actual, Analytics lo advierte y no presenta
+`verified`.
+
+Antes de entregar el recorrido, Analytics reconcilia los envíos finales
+persistidos de la revisión actual que quedaron sin cierre por una caída entre el
+commit de la submission y el ledger. El cierre se reconstruye idempotentemente
+desde el contexto de flow guardado; `reconciledFinalSubmissions` informa cuántos
+se repararon. Evidencia inválida, faltante o pendiente del lote acotado se expone
+como `finalSubmissionsWithoutTerminal` y degrada la cobertura; si la comprobación
+falló por completo, `terminalReconciliationUnavailable` lo declara. `verified`
+exige que esa comprobación esté disponible y termine sin faltantes.
+
+En landings publicadas en modo embudo, `pageFunnels` reconstruye el salto real
+página a página. Cada vista lleva una `page_flow_revision` topológica y un
+`page_journey_id` aislado por pestaña; 30 minutos sin actividad separan
+recorridos. Cambiar copy o estilo conserva la revisión, mientras agregar,
+quitar, reemplazar o reordenar páginas crea otra. El detalle muestra vistas,
+alcance, avance, siguiente página, entradas directas, actividad, abandono y
+llegada a la página final. Conserva un margen de 30 minutos alrededor del rango
+para no declarar abandono cuando el salto inmediato quedó justo fuera del
+límite. Vistas legacy, de otra revisión o sin identidad de recorrido no se
+mezclan y degradan cobertura a `partial`/`unavailable`.
+
+El navegador no elige ese journey. El HTML lleva un token HMAC temporal ligado
+a host, Site, página, publicación y revisión; cada pestaña aporta un nonce y el
+backend deriva el ID opaco. `/collect` ignora contexto nativo y `contact_id`
+impuestos por el cliente, rechaza firmas cruzadas/alteradas/vencidas y limita
+vistas nativas con un LRU acotado. Tráfico legacy sólo conserva Site/página si
+host + ruta los demuestran; de otro modo queda como `external_pixel` sin IDs
+nativos.
+
+Estas identidades son señales first-party del navegador, no humanos
+verificados. Borrar storage, usar incógnito, otro dispositivo o tráfico
+automatizado puede cambiar o fabricar una identidad; la interfaz debe decir
+visitantes e intentos, no “personas reales verificadas”.
+
+**Cobertura de respuestas** permanece como evidencia histórica independiente:
+por campo reporta cuántos envíos terminales guardados tienen respuesta, el total
+terminal y el porcentaje; `0` y `false` son respuestas válidas. No prueba que
+alguien haya visto la pregunta, el orden recorrido ni dónde abandonó, y nunca
+rellena huecos de `formJourneys`. Los campos se agregan en SQL por bloques
+acotados; JSON histórico corrupto se trata como objeto vacío y
+`legacy_unknown` se presenta como advertencia. SQLite lo protege con
+`json_valid`; PostgreSQL usa `ristak_safe_jsonb`.
+
+En esta entrega, los formularios genéricos de **HTML importado** y los
+formularios mostrados por **`videoFormGate`** conservan submissions y
+conversiones, pero no tienen recorrido por pregunta. No deben recibir etapas
+inventadas. Un bloque nativo `form_embed` dentro de una superficie importada sí
+usa el contrato del formulario nativo. El contrato operativo completo,
+incluidos límites de identidad, cobertura y pruebas, vive en
+`docs/TRACKING_PIXEL.md`.
 
 La videoteca de Sites usa `/api/sites/video-assets` con paginas de 50 y cursor
 `created_at + id` para los modulos `sites/forms`. El selector y el preview son
@@ -4877,15 +4994,26 @@ Sites es el constructor/publicador de paginas. Incluye:
 - Eventos Meta y tracking.
 - AI create/edit para contenido.
 
-En Sitios > Analíticas, al elegir un formulario específico, Ristak muestra un
-embudo de completición por pregunta calculado desde las respuestas guardadas del
-rango seleccionado: vistas, visitantes, envíos, porcentaje de finalización y
-cuántas personas respondieron o dejaron sin respuesta cada campo. Al elegir un
-sitio/landing específico, la misma vista muestra el resumen de conversión del
-sitio con vistas, visitantes, sesiones y conversiones. En la categoría Sitios,
-el filtro separa Sitios web y Embudos antes de elegir una pieza específica, y el
+En Sitios > Analíticas, un formulario específico muestra dos bloques separados.
+**Recorrido por etapas** usa eventos first-party de la publicación para indicar
+cuántos intentos alcanzaron, contestaron, avanzaron, siguen en curso, abandonaron
+o terminaron en cada pantalla/pregunta, junto con su tasa. **Cobertura de
+respuestas** conserva la lectura histórica de envíos guardados y dice qué campos
+tienen respuesta; no se usa para inventar navegación anterior a la telemetría.
+La pantalla siempre declara si la cobertura del recorrido es completa, parcial
+o no disponible. “Visitante” representa una identidad first-party del navegador,
+no una persona humana verificada.
+
+Al elegir una landing publicada en modo embudo, la vista reconstruye la
+conversión página a página para la topología vigente: alcance, avance, siguiente
+página, actividad y abandono. Revisiones anteriores o vistas sin identidad de
+recorrido se excluyen con advertencia. Una landing normal conserva el resumen
+de vistas, visitantes, sesiones y conversiones. En la categoría Sitios, el
+filtro separa Sitios web y Embudos antes de elegir una pieza específica, y el
 dashboard recalcula métricas, videos asociados y conversiones sólo para esa
-categoría.
+categoría. Los formularios genéricos de HTML importado y `videoFormGate` no
+tienen recorrido por pregunta en esta entrega, aunque sus envíos sigan en los
+totales correspondientes.
 
 En el editor visual, los bloques de calendario embebido eligen el calendario y
 la accion posterior a la cita desde la barra superior del editor. El inspector

@@ -686,7 +686,7 @@ test('la migracion 092 de Sites tracking corre completa e idempotente en SQLite 
   }
 })
 
-test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y quedan idempotentes en SQLite real', async () => {
+test('las migraciones 136/137/139/140 reparan un esquema legado de Sites Analytics y quedan idempotentes en SQLite real', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ristak-sites-analytics-schema-'))
   const database = openMemoryDatabase()
   const sqliteMigration = new URL(
@@ -707,6 +707,32 @@ test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y que
   )
   const submissionEvidenceContractMigration = new URL(
     '../migrations/versioned/137b_sites_analytics_submission_evidence_contract.postgres.sql',
+    import.meta.url
+  )
+  const siteFlowMigrationFiles = [
+    '139_sites_flow_events.sqlite.sql',
+    '139a_sites_flow_events.postgres.sql',
+    '139b_sites_flow_events_form_cohort.postgres.sql',
+    '139c_sites_flow_events_site_time.postgres.sql',
+    '139d_sites_flow_events_attempt_order.postgres.sql',
+    '139e_sites_flow_events_visitor_time.postgres.sql',
+    '139f_sites_flow_events_retention.postgres.sql',
+    '139g_sites_flow_events_contract.postgres.sql'
+  ]
+  const pageFlowRevisionSqliteMigration = new URL(
+    '../migrations/versioned/140_sites_page_flow_revision.sqlite.sql',
+    import.meta.url
+  )
+  const pageFlowRevisionPostgresMigration = new URL(
+    '../migrations/versioned/140a_sites_page_flow_revision.postgres.sql',
+    import.meta.url
+  )
+  const pageFlowRevisionIndexPostgresMigration = new URL(
+    '../migrations/versioned/140b_sites_page_flow_revision_index.postgres.sql',
+    import.meta.url
+  )
+  const pageFlowRevisionContractPostgresMigration = new URL(
+    '../migrations/versioned/140c_sites_page_flow_revision_contract.postgres.sql',
     import.meta.url
   )
 
@@ -742,6 +768,8 @@ test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y que
       'sessions.event_id',
       'sessions.client_started_at',
       'sessions.timestamp_adjusted',
+      'sessions.page_flow_revision',
+      'sessions.page_journey_id',
       'video_playback_events.event_sequence',
       'video_playback_events.ingestion_version',
       'video_playback_events.payload_hash',
@@ -753,9 +781,10 @@ test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y que
       'video_playback_events.client_event_at'
     ])
 
-    const expectedIndexes = [
+    const expectedTrackingIndexes = [
       'idx_sessions_event_id_unique',
       'idx_sessions_form_tracking_started',
+      'idx_sessions_site_page_flow_started',
       'idx_sessions_site_tracking_started',
       'idx_sessions_submission_tracking_event',
       'idx_video_events_asset_time_type',
@@ -764,7 +793,7 @@ test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y que
       'idx_video_events_site_time_type',
       'idx_video_events_visitor_time'
     ]
-    assert.deepEqual([...repair.createdIndexes].sort(), expectedIndexes)
+    assert.deepEqual([...repair.createdIndexes].sort(), expectedTrackingIndexes)
 
     await copyFile(sqliteMigration, join(directory, '136_sites_analytics_tracking_schema.sqlite.sql'))
     await copyFile(postgresMigration, join(directory, '136a_sites_analytics_tracking_schema.postgres.sql'))
@@ -780,17 +809,45 @@ test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y que
       submissionEvidenceContractMigration,
       join(directory, '137b_sites_analytics_submission_evidence_contract.postgres.sql')
     )
+    for (const file of siteFlowMigrationFiles) {
+      await copyFile(
+        new URL(`../migrations/versioned/${file}`, import.meta.url),
+        join(directory, file)
+      )
+    }
+    await copyFile(
+      pageFlowRevisionSqliteMigration,
+      join(directory, '140_sites_page_flow_revision.sqlite.sql')
+    )
+    await copyFile(
+      pageFlowRevisionPostgresMigration,
+      join(directory, '140a_sites_page_flow_revision.postgres.sql')
+    )
+    await copyFile(
+      pageFlowRevisionIndexPostgresMigration,
+      join(directory, '140b_sites_page_flow_revision_index.postgres.sql')
+    )
+    await copyFile(
+      pageFlowRevisionContractPostgresMigration,
+      join(directory, '140c_sites_page_flow_revision_contract.postgres.sql')
+    )
 
     const firstRun = await runVersionedMigrations({ database, dialect: 'sqlite', directory })
-    assert.deepEqual(firstRun, { applied: 2, skipped: 3 })
+    assert.deepEqual(firstRun, { applied: 4, skipped: 13 })
 
     const sessionColumns = await database.all('PRAGMA table_info("sessions")')
     assert.deepEqual(
       sessionColumns
         .map(row => row.name)
-        .filter(name => ['event_id', 'client_started_at', 'timestamp_adjusted'].includes(name))
+        .filter(name => [
+          'event_id',
+          'client_started_at',
+          'timestamp_adjusted',
+          'page_flow_revision',
+          'page_journey_id'
+        ].includes(name))
         .sort(),
-      ['client_started_at', 'event_id', 'timestamp_adjusted']
+      ['client_started_at', 'event_id', 'page_flow_revision', 'page_journey_id', 'timestamp_adjusted']
     )
 
     const videoColumns = await database.all('PRAGMA table_info("video_playback_events")')
@@ -829,7 +886,31 @@ test('las migraciones 136/137 reparan un esquema legado de Sites Analytics y que
         AND name LIKE 'idx_%'
       ORDER BY name
     `)
+    const expectedIndexes = [
+      ...expectedTrackingIndexes,
+      'idx_site_flow_events_attempt_order',
+      'idx_site_flow_events_created_at',
+      'idx_site_flow_events_form_revision_time',
+      'idx_site_flow_events_site_time',
+      'idx_site_flow_events_visitor_time'
+    ].sort()
     assert.deepEqual(indexes.map(row => row.name), expectedIndexes)
+
+    const cohortIndexColumns = await database.all(
+      'PRAGMA index_info("idx_site_flow_events_form_revision_time")'
+    )
+    assert.deepEqual(
+      cohortIndexColumns.map(row => row.name),
+      ['form_site_id', 'flow_revision', 'event_name', 'event_at', 'attempt_id']
+    )
+
+    const retentionIndexColumns = await database.all(
+      'PRAGMA index_info("idx_site_flow_events_created_at")'
+    )
+    assert.deepEqual(
+      retentionIndexColumns.map(row => row.name),
+      ['created_at', 'event_at', 'id']
+    )
 
     const secondRepair = await ensureSqliteSitesAnalyticsTrackingSchema({
       database,
@@ -898,7 +979,48 @@ test('la reparación SQLite falla cerrado ante un índice homónimo con definici
   }
 })
 
-test('los trenes PostgreSQL 136/137 separan columnas, índices concurrentes y validación canónica', async () => {
+test('la reparación SQLite valida y repone los índices canónicos de site_flow_events', async () => {
+  const database = openMemoryDatabase()
+  const migrationSql = await readFile(
+    new URL('../migrations/versioned/139_sites_flow_events.sqlite.sql', import.meta.url),
+    'utf8'
+  )
+
+  try {
+    await database.exec(migrationSql)
+    await database.run('DROP INDEX idx_site_flow_events_created_at')
+
+    const repair = await ensureSqliteSitesAnalyticsTrackingSchema({
+      database,
+      dialect: 'sqlite'
+    })
+    assert.deepEqual(repair, {
+      addedColumns: [],
+      createdIndexes: ['idx_site_flow_events_created_at']
+    })
+
+    await database.run('DROP INDEX idx_site_flow_events_form_revision_time')
+    await database.run(`
+      CREATE INDEX idx_site_flow_events_form_revision_time
+      ON site_flow_events(form_site_id, flow_revision, event_at, event_name, attempt_id)
+    `)
+
+    await assert.rejects(
+      ensureSqliteSitesAnalyticsTrackingSchema({
+        database,
+        dialect: 'sqlite'
+      }),
+      error => (
+        error?.code === 'SITES_ANALYTICS_INDEX_CONTRACT_MISMATCH' &&
+        error?.indexName === 'idx_site_flow_events_form_revision_time'
+      )
+    )
+  } finally {
+    await database.close()
+  }
+})
+
+test('los trenes PostgreSQL 136/137/139/140 separan columnas, índices concurrentes y validación canónica', async () => {
   const columnSql = await readFile(
     new URL('../migrations/versioned/136a_sites_analytics_tracking_schema.postgres.sql', import.meta.url),
     'utf8'
@@ -931,7 +1053,12 @@ test('los trenes PostgreSQL 136/137 separan columnas, índices concurrentes y va
     ['136g_sites_analytics_video_site_scope.postgres.sql', 'idx_video_events_site_time_type'],
     ['136h_sites_analytics_video_playback_scope.postgres.sql', 'idx_video_events_playback_type_time'],
     ['136i_sites_analytics_video_visitor_scope.postgres.sql', 'idx_video_events_visitor_time'],
-    ['137a_sites_analytics_submission_evidence.postgres.sql', 'idx_sessions_submission_tracking_event']
+    ['137a_sites_analytics_submission_evidence.postgres.sql', 'idx_sessions_submission_tracking_event'],
+    ['139b_sites_flow_events_form_cohort.postgres.sql', 'idx_site_flow_events_form_revision_time'],
+    ['139c_sites_flow_events_site_time.postgres.sql', 'idx_site_flow_events_site_time'],
+    ['139d_sites_flow_events_attempt_order.postgres.sql', 'idx_site_flow_events_attempt_order'],
+    ['139e_sites_flow_events_visitor_time.postgres.sql', 'idx_site_flow_events_visitor_time'],
+    ['139f_sites_flow_events_retention.postgres.sql', 'idx_site_flow_events_created_at']
   ]
   for (const [file, index] of concurrentMigrations) {
     const sql = await readFile(new URL(`../migrations/versioned/${file}`, import.meta.url), 'utf8')
@@ -941,6 +1068,86 @@ test('los trenes PostgreSQL 136/137 separan columnas, índices concurrentes y va
       new RegExp(`CREATE (?:UNIQUE )?INDEX CONCURRENTLY IF NOT EXISTS ${index}\\b`)
     )
   }
+
+  const siteFlowTableSql = await readFile(
+    new URL('../migrations/versioned/139a_sites_flow_events.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(siteFlowTableSql, /CREATE TABLE IF NOT EXISTS site_flow_events\b/)
+  assert.match(siteFlowTableSql, /\bclient_event_at TIMESTAMPTZ\b/)
+  assert.match(siteFlowTableSql, /\bevent_at TIMESTAMPTZ NOT NULL\b/)
+  assert.match(siteFlowTableSql, /\bcreated_at TIMESTAMPTZ NOT NULL\b/)
+  assert.doesNotMatch(
+    siteFlowTableSql,
+    /\b(?:client_event_at|event_at|created_at)\s+TIMESTAMP(?!TZ)\b/
+  )
+  assert.doesNotMatch(siteFlowTableSql, /\bCREATE\s+(?:UNIQUE\s+)?INDEX\b/i)
+
+  const siteFlowCohortIndexSql = await readFile(
+    new URL('../migrations/versioned/139b_sites_flow_events_form_cohort.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    siteFlowCohortIndexSql,
+    /site_flow_events\s*\(\s*form_site_id,\s*flow_revision,\s*event_name,\s*event_at,\s*attempt_id\s*\)/i
+  )
+
+  const siteFlowRetentionIndexSql = await readFile(
+    new URL('../migrations/versioned/139f_sites_flow_events_retention.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    siteFlowRetentionIndexSql,
+    /site_flow_events\s*\(\s*created_at,\s*event_at,\s*id\s*\)/i
+  )
+
+  const siteFlowContractSql = await readFile(
+    new URL('../migrations/versioned/139g_sites_flow_events_contract.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(siteFlowContractSql, /\bformat_type\b/)
+  assert.match(siteFlowContractSql, /timestamp with time zone/)
+  assert.match(siteFlowContractSql, /\bpg_index\b/)
+  assert.match(siteFlowContractSql, /\bindisvalid\b/)
+  assert.match(siteFlowContractSql, /\bindisready\b/)
+  assert.match(siteFlowContractSql, /'form_site_id', 'flow_revision', 'event_name', 'event_at', 'attempt_id'/)
+  assert.match(siteFlowContractSql, /'created_at', 'event_at', 'id'/)
+  assert.match(siteFlowContractSql, /\bRAISE EXCEPTION\b/)
+
+  const pageFlowColumnSql = await readFile(
+    new URL('../migrations/versioned/140a_sites_page_flow_revision.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(pageFlowColumnSql, /ADD COLUMN IF NOT EXISTS page_flow_revision\b/)
+  assert.match(pageFlowColumnSql, /ADD COLUMN IF NOT EXISTS page_journey_id\b/)
+  assert.doesNotMatch(pageFlowColumnSql, /\bCREATE\s+(?:UNIQUE\s+)?INDEX\b/i)
+
+  const pageFlowIndexFile = '140b_sites_page_flow_revision_index.postgres.sql'
+  const pageFlowIndexSql = await readFile(
+    new URL(`../migrations/versioned/${pageFlowIndexFile}`, import.meta.url),
+    'utf8'
+  )
+  assert.doesNotThrow(() => assertConcurrentPostgresMigrationIsIsolated(
+    pageFlowIndexSql,
+    pageFlowIndexFile
+  ))
+  assert.match(
+    pageFlowIndexSql,
+    /CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_site_page_flow_started\b/
+  )
+
+  const pageFlowContractSql = await readFile(
+    new URL('../migrations/versioned/140c_sites_page_flow_revision_contract.postgres.sql', import.meta.url),
+    'utf8'
+  )
+  assert.match(pageFlowContractSql, /\bformat_type\b/)
+  assert.match(pageFlowContractSql, /'page_flow_revision'/)
+  assert.match(pageFlowContractSql, /'page_journey_id'/)
+  assert.match(pageFlowContractSql, /\bpg_index\b/)
+  assert.match(pageFlowContractSql, /\bindisvalid\b/)
+  assert.match(pageFlowContractSql, /\bindisready\b/)
+  assert.match(pageFlowContractSql, /'site_id',\s*'page_flow_revision',\s*'started_at'/)
+  assert.match(pageFlowContractSql, /\bRAISE EXCEPTION\b/)
 
   const validationSql = await readFile(
     new URL('../migrations/versioned/136j_sites_analytics_index_contract.postgres.sql', import.meta.url),

@@ -13,6 +13,7 @@ import {
 } from '../utils/dateUtils.js'
 
 const SENSITIVE_CONFIG_KEY_PATTERN = /(private_key|secret|password|api_token|access_token|refresh_token|service_account|client_secret|webhook_secret)/i
+const INTERNAL_CONFIG_KEY_PATTERN = /^public_context_signing_secret_v\d+$/i
 const META_SOCIAL_MESSAGING_PLATFORM_BY_KEY = {
   meta_messenger_messaging_enabled: 'messenger',
   meta_instagram_messaging_enabled: 'instagram'
@@ -31,6 +32,21 @@ function cleanString(value) {
 
 function isSensitiveConfigKey(key = '') {
   return SENSITIVE_CONFIG_KEY_PATTERN.test(String(key || ''))
+}
+
+function isInternalConfigKey(key = '') {
+  return INTERNAL_CONFIG_KEY_PATTERN.test(String(key || '').trim())
+}
+
+function rejectInternalConfigMutation(res, keys = []) {
+  const internalKeys = keys.filter(isInternalConfigKey)
+  if (!internalKeys.length) return false
+  res.status(400).json({
+    success: false,
+    code: 'RESERVED_INTERNAL_CONFIG',
+    error: 'La configuración interna reservada no puede modificarse desde este endpoint'
+  })
+  return true
 }
 
 function isEnabledConfigValue(value) {
@@ -167,6 +183,7 @@ export async function saveConfig(req, res) {
 
     // Modo 1: Guardar una sola key
     if (key && value !== undefined) {
+      if (rejectInternalConfigMutation(res, [key])) return
       const previousConfig = META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key]
         ? { [key]: await getAppConfig(key) }
         : {}
@@ -187,6 +204,7 @@ export async function saveConfig(req, res) {
 
     // Modo 2: Guardar múltiples keys
     if (config && typeof config === 'object') {
+      if (rejectInternalConfigMutation(res, Object.keys(config))) return
       const previousConfig = {}
       for (const key of Object.keys(config)) {
         if (META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key]) {
@@ -240,6 +258,7 @@ export async function deleteConfig(req, res) {
     }
 
     const keyArray = keys.split(',').map(k => k.trim())
+    if (rejectInternalConfigMutation(res, keyArray)) return
 
     for (const key of keyArray) {
       if (key === ACCOUNT_TIMEZONE_CONFIG_KEY) {

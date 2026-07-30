@@ -117,6 +117,7 @@ import { requireFeature } from './middleware/licenseMiddleware.js'
 // (LIC-002) requireAuth se aplica ANTES de requireFeature en los mounts gateados
 // para que el tráfico no autenticado reciba 401 sin tocar el license server.
 import { requireAuth } from './middleware/authMiddleware.js'
+import { publicIngestionJsonMiddleware } from './middleware/publicIngestionJson.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
 import {
   recoverPendingConversationGoalCompletionEffects,
@@ -364,6 +365,10 @@ app.use((req, res, next) => {
     error: 'El callback debe usar JSON o application/x-www-form-urlencoded.'
   })
 })
+
+// Las ingestiones públicas de alto tráfico se parsean con límites pequeños,
+// JSON estricto y sin descompresión ANTES del parser global de 35 MB.
+app.use(publicIngestionJsonMiddleware)
 
 // Este endpoint público verifica HMAC sobre el body crudo y no debe atravesar
 // primero el parser global de 35 MB. Se monta aquí con límite propio y ruta

@@ -246,7 +246,7 @@ test('sites analytics summary uses first-party events and caps conversion rate b
       conversionRate: 100,
       entityCount: 2
     })
-    assert.equal(summary.schemaVersion, 3)
+    assert.equal(summary.schemaVersion, 4)
     assert.equal(summary.meta.source, 'first_party')
     assert.equal(summary.coverage.status, 'ready')
     assert.equal(summary.coverage.legacyViewEvents, 0)

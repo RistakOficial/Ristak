@@ -2,7 +2,9 @@ const SQLITE_COLUMN_DEFINITIONS = Object.freeze({
   sessions: Object.freeze([
     ['event_id', 'TEXT'],
     ['client_started_at', 'TIMESTAMP'],
-    ['timestamp_adjusted', 'INTEGER DEFAULT 0']
+    ['timestamp_adjusted', 'INTEGER DEFAULT 0'],
+    ['page_flow_revision', 'TEXT'],
+    ['page_journey_id', 'TEXT']
   ]),
   video_playback_events: Object.freeze([
     ['event_sequence', 'INTEGER'],
@@ -48,12 +50,66 @@ const SQLITE_INDEX_DEFINITIONS = Object.freeze([
   }),
   Object.freeze({
     table: 'sessions',
+    name: 'idx_sessions_site_page_flow_started',
+    unique: false,
+    columns: Object.freeze(['site_id', 'page_flow_revision', 'started_at']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_sessions_site_page_flow_started
+      ON sessions(site_id, page_flow_revision, started_at)`
+  }),
+  Object.freeze({
+    table: 'sessions',
     name: 'idx_sessions_submission_tracking_event',
     unique: false,
     columns: Object.freeze(['submission_id', 'tracking_source', 'event_name', 'started_at']),
     predicate: null,
     sql: `CREATE INDEX IF NOT EXISTS idx_sessions_submission_tracking_event
       ON sessions(submission_id, tracking_source, event_name, started_at)`
+  }),
+  Object.freeze({
+    table: 'site_flow_events',
+    name: 'idx_site_flow_events_form_revision_time',
+    unique: false,
+    columns: Object.freeze(['form_site_id', 'flow_revision', 'event_name', 'event_at', 'attempt_id']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_site_flow_events_form_revision_time
+      ON site_flow_events(form_site_id, flow_revision, event_name, event_at, attempt_id)`
+  }),
+  Object.freeze({
+    table: 'site_flow_events',
+    name: 'idx_site_flow_events_site_time',
+    unique: false,
+    columns: Object.freeze(['site_id', 'event_at', 'event_name', 'attempt_id']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_site_flow_events_site_time
+      ON site_flow_events(site_id, event_at, event_name, attempt_id)`
+  }),
+  Object.freeze({
+    table: 'site_flow_events',
+    name: 'idx_site_flow_events_attempt_order',
+    unique: false,
+    columns: Object.freeze(['attempt_id', 'event_sequence', 'event_at', 'id']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_site_flow_events_attempt_order
+      ON site_flow_events(attempt_id, event_sequence, event_at, id)`
+  }),
+  Object.freeze({
+    table: 'site_flow_events',
+    name: 'idx_site_flow_events_visitor_time',
+    unique: false,
+    columns: Object.freeze(['visitor_id', 'event_at', 'attempt_id']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_site_flow_events_visitor_time
+      ON site_flow_events(visitor_id, event_at, attempt_id)`
+  }),
+  Object.freeze({
+    table: 'site_flow_events',
+    name: 'idx_site_flow_events_created_at',
+    unique: false,
+    columns: Object.freeze(['created_at', 'event_at', 'id']),
+    predicate: null,
+    sql: `CREATE INDEX IF NOT EXISTS idx_site_flow_events_created_at
+      ON site_flow_events(created_at, event_at, id)`
   }),
   Object.freeze({
     table: 'video_playback_events',
@@ -112,7 +168,7 @@ async function sqliteTableNames(database) {
     SELECT name
     FROM sqlite_master
     WHERE type = 'table'
-      AND name IN ('sessions', 'video_playback_events')
+      AND name IN ('sessions', 'site_flow_events', 'video_playback_events')
   `)
   return new Set(rows.map(row => String(row.name || '')))
 }

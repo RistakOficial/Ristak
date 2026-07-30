@@ -48,6 +48,18 @@ import {
 import { getMetaConfig, hasConnectedMetaDatasetConfig, resolveMetaCapiAccessToken } from './metaAdsService.js'
 import { createSession, linkVisitorToContact, unifyVisitorIds } from './trackingService.js'
 import {
+  ingestSiteFlowEventBatch,
+  recordSiteFlowTerminalEvent,
+  SITE_FLOW_MAX_BATCH_EVENTS
+} from './siteFlowEventsService.js'
+import { createNativePageTrackingContext } from './nativePageTrackingAuthService.js'
+import { createSiteFlowRateLimiter } from './siteFlowRateLimiter.js'
+import {
+  normalizePublicContextHost,
+  signPublicContextClaims,
+  verifyPublicContextToken
+} from './publicContextTokenService.js'
+import {
   buildMetaBrowserUserData,
   buildMetaParameterUserData,
   collectMetaParameterSignals
@@ -10896,6 +10908,1373 @@ async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBy
   return result
 }
 
+function getSitesHiddenFlowAttemptClause(filters = [], alias = 'flow') {
+  const candidateAlias = '__attempt_flow'
+  const condition = buildHiddenContactDataCondition(filters, {
+    tableAlias: candidateAlias,
+    tableName: 'site_flow_events',
+    columns: ['contact_id', 'visitor_id', 'session_id']
+  })
+  if (!condition) return ''
+  return `AND NOT EXISTS (
+    SELECT 1
+    FROM site_flow_events ${candidateAlias}
+    WHERE ${candidateAlias}.attempt_id = ${alias}.attempt_id
+      AND NOT (${condition})
+  )`
+}
+
+function buildSitePageFlowDefinition(site) {
+  if (!site || cleanString(site.siteType) !== 'landing_page') return null
+
+  const stages = normalizeSitePages(site)
+    .map((page, index) => ({
+      stageId: cleanString(page.id),
+      kind: 'page',
+      label: cleanString(page.title) || `Página ${index + 1}`,
+      order: index
+    }))
+    .filter(stage => stage.stageId)
+  if (!stages.length) return null
+
+  // La revisión representa únicamente la topología medible. Cambiar copy o
+  // estilos no parte el recorrido; agregar, quitar, reordenar o reemplazar una
+  // página sí lo hace. El orden estable evita mezclar embudos incompatibles.
+  const revisionPayload = {
+    v: 1,
+    siteId: cleanString(site.id),
+    stages: stages.map(stage => ({
+      stageId: stage.stageId,
+      order: stage.order
+    }))
+  }
+  const flowRevision = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(revisionPayload))
+    .digest('base64url')
+    .slice(0, 32)
+
+  return {
+    siteId: cleanString(site.id),
+    flowRevision,
+    stages
+  }
+}
+
+function buildSiteFormFlowDefinition(site, blocks = []) {
+  if (!site || !FORM_SITE_TYPES.has(cleanString(site.siteType))) return null
+
+  const pages = site.siteType === 'standard_form'
+    ? getStandardFormContentPages({ ...site, blocks })
+    : normalizeSitePages({ ...site, blocks }).filter(page => (
+      blocks.some(block => getBlockPageId(block, normalizeSitePages({ ...site, blocks })) === page.id)
+    ))
+  const stages = pages.map((page, index) => {
+    const pageFields = blocks
+      .filter(block => FIELD_BLOCK_TYPES.has(block.blockType))
+      .filter(block => getBlockPageId(block, pages) === page.id)
+      .map((field, fieldIndex) => ({
+        fieldId: cleanString(field.id),
+        label: getSiteAnalyticsFieldLabel(field, fieldIndex),
+        required: Boolean(field.required)
+      }))
+      .filter(field => field.fieldId)
+    const singleQuestionLabel = pageFields.length === 1 ? pageFields[0].label : ''
+
+    return {
+      stageId: cleanString(page.id),
+      kind: site.siteType === 'interactive_form' ? 'slide' : 'form_page',
+      label: singleQuestionLabel || cleanString(page.title) || `Etapa ${index + 1}`,
+      order: index,
+      fields: pageFields
+    }
+  }).filter(stage => stage.stageId)
+
+  const revisionPayload = {
+    v: 1,
+    formSiteId: cleanString(site.id),
+    siteType: cleanString(site.siteType),
+    stages: stages.map(stage => ({
+      stageId: stage.stageId,
+      kind: stage.kind,
+      order: stage.order,
+      fields: stage.fields.map(field => ({
+        fieldId: field.fieldId,
+        required: field.required
+      }))
+    }))
+  }
+  const flowRevision = crypto
+    .createHash('sha256')
+    .update(JSON.stringify(revisionPayload))
+    .digest('base64url')
+    .slice(0, 32)
+
+  return {
+    formSiteId: cleanString(site.id),
+    flowRevision,
+    stages
+  }
+}
+
+function buildEmbeddedSiteFlowDefinition(ownerSite, block) {
+  const settings = block?.settings || {}
+  const formSiteId = cleanString(
+    settings.formSiteId || settings.embeddedSiteId || settings.form_site_id
+  )
+  if (!formSiteId) return null
+
+  const embeddedPages = normalizeEmbeddedFormPages(settings.embeddedPages)
+  const embeddedBlocks = (Array.isArray(settings.embeddedBlocks) ? settings.embeddedBlocks : [])
+    .filter(item => EMBEDDED_FORM_BLOCK_TYPES.has(item?.blockType))
+  const embeddedTheme = buildEmbeddedFormTheme({
+    hostTheme: ownerSite?.theme,
+    sourceFormTheme: isPlainObject(settings.embeddedTheme) ? settings.embeddedTheme : {},
+    isImportedForm: true
+  }).theme
+
+  const definition = buildSiteFormFlowDefinition({
+    id: formSiteId,
+    siteType: settings.embeddedSiteType || 'standard_form',
+    theme: { ...embeddedTheme, pages: embeddedPages },
+    blocks: embeddedBlocks
+  }, embeddedBlocks)
+  const formContextToken = cleanString(
+    settings.formContextToken || settings.form_context_token
+  )
+  return definition && formContextToken
+    ? { ...definition, formContextToken }
+    : definition
+}
+
+const SITE_FORM_PROGRESS_CONTEXT_PURPOSE = 'site_form_progress_context_v1'
+const SITE_FORM_PROGRESS_CONTEXT_TTL_SECONDS = 24 * 60 * 60
+
+async function signSiteFormProgressDefinition({
+  ownerSite,
+  publicPageId,
+  definition
+} = {}) {
+  const host = normalizePublicContextHost(ownerSite?.domain)
+  if (!ownerSite?.id || !publicPageId || !definition?.formSiteId || !definition?.flowRevision || !host) {
+    return definition || null
+  }
+  const formContextToken = await signPublicContextClaims({
+    purpose: SITE_FORM_PROGRESS_CONTEXT_PURPOSE,
+    ttlSeconds: SITE_FORM_PROGRESS_CONTEXT_TTL_SECONDS,
+    claims: {
+      ownerSiteId: cleanString(ownerSite.id),
+      publicPageId: cleanString(publicPageId),
+      formSiteId: cleanString(definition.formSiteId),
+      flowRevision: cleanString(definition.flowRevision),
+      host,
+      published: true
+    }
+  })
+  return {
+    ...definition,
+    formContextToken
+  }
+}
+
+async function attachEmbeddedFormProgressTokens({
+  ownerSite,
+  blocks = [],
+  publicPageId,
+  enabled = false
+} = {}) {
+  if (!enabled) return blocks
+  return Promise.all((Array.isArray(blocks) ? blocks : []).map(async block => {
+    if (block?.blockType !== 'form_embed') return block
+    const definition = buildEmbeddedSiteFlowDefinition(ownerSite, block)
+    const signedDefinition = await signSiteFormProgressDefinition({
+      ownerSite,
+      publicPageId,
+      definition
+    })
+    if (!signedDefinition?.formContextToken) return block
+    return {
+      ...block,
+      settings: {
+        ...(block.settings || {}),
+        formContextToken: signedDefinition.formContextToken
+      }
+    }
+  }))
+}
+
+function resolveSiteFlowDefinitionForPublicSite(site, blocks = [], formSiteId = '') {
+  const normalizedFormSiteId = cleanString(formSiteId)
+  if (!site || !normalizedFormSiteId) return null
+
+  if (normalizedFormSiteId === site.id && FORM_SITE_TYPES.has(site.siteType)) {
+    return buildSiteFormFlowDefinition({ ...site, blocks }, blocks)
+  }
+
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (block?.blockType !== 'form_embed') continue
+    const definition = buildEmbeddedSiteFlowDefinition(site, block)
+    if (definition?.formSiteId === normalizedFormSiteId) return definition
+  }
+
+  return null
+}
+
+const SITE_FLOW_TERMINAL_RECONCILIATION_BATCH_LIMIT = 500
+
+function getSitesAnalyticsJsonRawTextExpression(alias = 'source', key = '') {
+  const source = getSafeSiteJsonExpression(`${alias}.meta_json`)
+  return databaseDialect === 'postgres'
+    ? `BTRIM(COALESCE(${source} ->> '${key}', ''))`
+    : `TRIM(CAST(COALESCE(json_extract(${source}, '$.${key}'), '') AS TEXT))`
+}
+
+function getSitesAnalyticsMetaAliasExpression(alias = 'source', camelKey = '', snakeKey = '') {
+  return `COALESCE(
+    NULLIF(${getSitesAnalyticsJsonRawTextExpression(alias, camelKey)}, ''),
+    NULLIF(${getSitesAnalyticsJsonRawTextExpression(alias, snakeKey)}, ''),
+    ''
+  )`
+}
+
+function getSitesSubmissionInstantRangeClause(alias = 'submission', dateFilters = {}) {
+  if (!dateFilters.dateFrom || !dateFilters.dateTo) return ''
+  if (databaseDialect === 'postgres') {
+    return `AND ${alias}.created_at >= ? AND ${alias}.created_at <= ?`
+  }
+  return `AND julianday(${alias}.created_at) >= julianday(?)
+    AND julianday(${alias}.created_at) <= julianday(?)`
+}
+
+function normalizeSitesStoredUtcInstant(value) {
+  if (value instanceof Date) {
+    const parsed = DateTime.fromJSDate(value, { zone: 'utc' })
+    return parsed.isValid ? parsed.toUTC().toISO() : null
+  }
+  const raw = cleanString(value)
+  if (!raw) return null
+  const parsed = raw.includes('T')
+    ? DateTime.fromISO(raw, { zone: 'utc', setZone: true })
+    : DateTime.fromSQL(raw, { zone: 'utc', setZone: true })
+  return parsed.isValid ? parsed.toUTC().toISO() : null
+}
+
+async function reconcilePersistedSubmissionSiteFlowTerminals({
+  formSite,
+  definition,
+  dateFilters = {},
+  hiddenFilters = []
+} = {}) {
+  const emptyResult = {
+    reconciled: 0,
+    finalSubmissionsWithoutTerminal: 0,
+    unavailable: false
+  }
+  if (!formSite?.id || !definition?.flowRevision || !definition?.stages?.length) {
+    return emptyResult
+  }
+
+  const attemptExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'flowAttemptId',
+    'flow_attempt_id'
+  )
+  const revisionExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'flowRevision',
+    'flow_revision'
+  )
+  const formSiteExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'flowFormSiteId',
+    'flow_form_site_id'
+  )
+  const stepExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'flowStepId',
+    'flow_step_id'
+  )
+  const visitorExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'visitorId',
+    'visitor_id'
+  )
+  const sessionExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'sessionId',
+    'session_id'
+  )
+  const pageExpression = getSitesAnalyticsMetaAliasExpression(
+    'submission',
+    'pageId',
+    'page_id'
+  )
+  const dateClause = getSitesSubmissionInstantRangeClause('submission', dateFilters)
+  const dateParams = dateFilters.dateFrom && dateFilters.dateTo
+    ? [dateFilters.dateFrom, dateFilters.dateTo]
+    : []
+  const hiddenSubmissionClause = getSitesHiddenSubmissionClause(hiddenFilters, 'submission')
+  const missingTerminalWhere = `
+    submission.form_site_id = ?
+    AND ${revisionExpression} = ?
+    AND ${attemptExpression} != ''
+    AND ${getSitesAnalyticsTerminalSubmissionCondition('submission', 'owner')}
+    ${dateClause}
+    AND NOT EXISTS (
+      SELECT 1
+      FROM site_flow_events terminal
+      WHERE terminal.attempt_id = ${attemptExpression}
+        AND terminal.form_site_id = submission.form_site_id
+        AND terminal.event_name IN ('attempt_completed', 'attempt_terminal')
+    )
+  `
+  const baseParams = [
+    formSite.id,
+    definition.flowRevision,
+    ...dateParams
+  ]
+  const countMissing = async ({ visibleOnly = false } = {}) => {
+    const row = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM public_site_submissions submission
+      LEFT JOIN public_sites owner ON owner.id = submission.site_id
+      WHERE ${missingTerminalWhere}
+        ${visibleOnly ? hiddenSubmissionClause : ''}
+    `, baseParams)
+    return Number(row?.total || 0)
+  }
+
+  const initialMissing = await countMissing()
+  if (initialMissing <= 0) return emptyResult
+
+  const validStepIds = definition.stages.map(stage => cleanString(stage.stageId)).filter(Boolean)
+  const candidates = await db.all(`
+    SELECT
+      submission.id,
+      submission.site_id,
+      submission.form_site_id,
+      submission.contact_id,
+      submission.status,
+      submission.created_at,
+      ${getSitesAnalyticsSubmissionKindExpression('submission', 'owner')} AS submission_kind,
+      ${attemptExpression} AS flow_attempt_id,
+      ${revisionExpression} AS flow_revision,
+      ${formSiteExpression} AS flow_form_site_id,
+      ${stepExpression} AS flow_step_id,
+      ${visitorExpression} AS visitor_id,
+      ${sessionExpression} AS session_id,
+      ${pageExpression} AS public_page_id
+    FROM public_site_submissions submission
+    LEFT JOIN public_sites owner ON owner.id = submission.site_id
+    WHERE ${missingTerminalWhere}
+      AND ${stepExpression} IN (${validStepIds.map(() => '?').join(', ')})
+    ORDER BY submission.created_at ASC, submission.id ASC
+    LIMIT ?
+  `, [
+    ...baseParams,
+    ...validStepIds,
+    SITE_FLOW_TERMINAL_RECONCILIATION_BATCH_LIMIT
+  ])
+
+  const ownerContextCache = new Map()
+  const loadOwnerContext = async ownerSiteId => {
+    const normalizedOwnerSiteId = cleanString(ownerSiteId)
+    if (!normalizedOwnerSiteId) return null
+    if (!ownerContextCache.has(normalizedOwnerSiteId)) {
+      ownerContextCache.set(normalizedOwnerSiteId, (async () => {
+        if (normalizedOwnerSiteId === formSite.id) {
+          const blocks = Array.isArray(formSite.blocks)
+            ? formSite.blocks
+            : await listSiteBlocks(formSite.id)
+          return {
+            site: { ...formSite, blocks },
+            blocks
+          }
+        }
+        const ownerSite = await getSite(normalizedOwnerSiteId, {
+          includeBlocks: false,
+          includeSubmissions: false,
+          includeTrackingStats: false
+        })
+        if (!ownerSite) return null
+        const blocks = await hydrateEmbeddedForms(await listSiteBlocks(ownerSite.id))
+        return {
+          site: { ...ownerSite, blocks },
+          blocks
+        }
+      })())
+    }
+    return ownerContextCache.get(normalizedOwnerSiteId)
+  }
+
+  let reconciled = 0
+  let failed = 0
+  let firstFailureMessage = ''
+  for (const candidate of candidates) {
+    try {
+      const ownerContext = await loadOwnerContext(candidate.site_id)
+      if (!ownerContext) continue
+      const disqualified = cleanString(candidate.status).toLowerCase() === 'disqualified'
+      const terminal = disqualified || cleanString(candidate.submission_kind) === 'terminal_exit'
+      const occurredAt = normalizeSitesStoredUtcInstant(candidate.created_at)
+      const recorded = await recordSubmissionSiteFlowTerminal({
+        site: ownerContext.site,
+        blocks: ownerContext.blocks,
+        meta: {
+          flowAttemptId: candidate.flow_attempt_id,
+          flowRevision: candidate.flow_revision,
+          flowFormSiteId: candidate.flow_form_site_id || candidate.form_site_id,
+          flowStepId: candidate.flow_step_id,
+          visitorId: candidate.visitor_id,
+          sessionId: candidate.session_id,
+          pageId: candidate.public_page_id
+        },
+        submissionId: candidate.id,
+        contactId: candidate.contact_id,
+        outcome: disqualified ? 'disqualified' : terminal ? 'terminal_exit' : 'completed',
+        terminal,
+        occurredAt
+      })
+      if (recorded?.accepted) reconciled += 1
+    } catch (error) {
+      failed += 1
+      if (!firstFailureMessage) firstFailureMessage = cleanString(error?.message)
+    }
+  }
+  if (failed > 0) {
+    logger.warn(
+      `No se pudieron reconciliar ${failed} cierre(s) persistido(s) del formulario ${formSite.id}` +
+      (firstFailureMessage ? `: ${firstFailureMessage}` : '')
+    )
+  }
+
+  return {
+    reconciled,
+    finalSubmissionsWithoutTerminal: await countMissing({ visibleOnly: true }),
+    unavailable: false
+  }
+}
+
+async function getSitesFormJourneySummary(siteIds = [], dateFilters = {}, statsBySite = {}, hiddenFilters = []) {
+  const result = {}
+  const cutoff = DateTime.utc().minus({ minutes: 30 }).toISO()
+
+  for (const siteId of siteIds) {
+    const site = await getSite(siteId, {
+      includeBlocks: true,
+      includeSubmissions: false,
+      includeTrackingStats: false
+    })
+    const definition = buildSiteFormFlowDefinition(site, site?.blocks || [])
+    if (!definition || !definition.stages.length) continue
+    let terminalReconciliation = {
+      reconciled: 0,
+      finalSubmissionsWithoutTerminal: null,
+      unavailable: true
+    }
+    try {
+      terminalReconciliation = await reconcilePersistedSubmissionSiteFlowTerminals({
+        formSite: site,
+        definition,
+        dateFilters,
+        hiddenFilters
+      })
+    } catch (error) {
+      logger.warn(`No se pudieron reconciliar cierres persistidos del formulario ${siteId}: ${error.message}`)
+    }
+
+    const hiddenFlowAttemptClause = getSitesHiddenFlowAttemptClause(hiddenFilters, 'flow')
+    const cohortSql = `
+      WITH cohort AS (
+        SELECT
+          flow.attempt_id,
+          MIN(flow.event_at) AS started_at
+        FROM site_flow_events flow
+        WHERE flow.form_site_id = ?
+          AND flow.flow_revision = ?
+          AND flow.event_name = 'attempt_start'
+          ${hiddenFlowAttemptClause}
+          AND flow.event_at >= ?
+          AND flow.event_at <= ?
+        GROUP BY flow.attempt_id
+      ),
+      cohort_events AS (
+        SELECT flow.*
+        FROM site_flow_events flow
+        INNER JOIN cohort ON cohort.attempt_id = flow.attempt_id
+        WHERE flow.form_site_id = ?
+          AND flow.flow_revision = ?
+      ),
+      attempt_state AS (
+        SELECT
+          event.attempt_id,
+          MAX(event.created_at) AS last_activity,
+          MAX(CASE WHEN event.event_name = 'attempt_completed' THEN 1 ELSE 0 END) AS completed,
+          MAX(CASE WHEN event.event_name IN ('attempt_completed', 'attempt_terminal') THEN 1 ELSE 0 END) AS terminal
+        FROM cohort_events event
+        GROUP BY event.attempt_id
+      ),
+      attempt_stage AS (
+        SELECT
+          event.attempt_id,
+          event.step_id,
+          COALESCE(
+            NULLIF(MAX(event.visitor_id), ''),
+            NULLIF(MAX(event.session_id), ''),
+            event.attempt_id
+          ) AS visitor_key,
+          MAX(CASE WHEN event.event_name = 'step_view' THEN 1 ELSE 0 END) AS reached,
+          MAX(CASE WHEN event.event_name = 'field_answered' THEN 1 ELSE 0 END) AS answered,
+          MAX(CASE WHEN event.event_name = 'step_complete' THEN 1 ELSE 0 END) AS step_completed,
+          MAX(CASE WHEN event.event_name IN ('attempt_completed', 'attempt_terminal') THEN 1 ELSE 0 END) AS terminal_here,
+          MAX(event.step_index) AS step_index,
+          MIN(CASE WHEN event.event_name = 'step_view' THEN event.event_sequence ELSE NULL END) AS first_view_sequence
+        FROM cohort_events event
+        WHERE event.step_id IS NOT NULL AND event.step_id != ''
+        GROUP BY event.attempt_id, event.step_id
+      ),
+      unresolved_stage AS (
+        SELECT ranked.attempt_id, ranked.step_id
+        FROM (
+          SELECT
+            stage.attempt_id,
+            stage.step_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY stage.attempt_id
+              ORDER BY
+                COALESCE(stage.step_index, 0) DESC,
+                COALESCE(stage.first_view_sequence, 0) DESC,
+                stage.step_id ASC
+            ) AS unresolved_rank
+          FROM attempt_stage stage
+          WHERE stage.reached = 1
+            AND stage.step_completed = 0
+            AND stage.terminal_here = 0
+        ) ranked
+        WHERE ranked.unresolved_rank = 1
+      ),
+      first_stage AS (
+        SELECT event.attempt_id, MIN(event.event_sequence) AS first_view_sequence
+        FROM cohort_events event
+        WHERE event.event_name = 'step_view'
+        GROUP BY event.attempt_id
+      )
+    `
+    const cohortParams = [
+      siteId,
+      definition.flowRevision,
+      dateFilters.dateFrom,
+      dateFilters.dateTo,
+      siteId,
+      definition.flowRevision
+    ]
+
+    const [stageRows, transitionRows, fieldRows, totalsRow, coverageRow] = await Promise.all([
+      db.all(`${cohortSql}
+        SELECT
+          stage.step_id,
+          COUNT(DISTINCT CASE WHEN stage.reached = 1 THEN stage.attempt_id ELSE NULL END) AS reached_attempts,
+          COUNT(DISTINCT CASE WHEN stage.reached = 1 THEN stage.visitor_key ELSE NULL END) AS reached_visitors,
+          COUNT(DISTINCT CASE WHEN stage.answered = 1 THEN stage.attempt_id ELSE NULL END) AS answered_attempts,
+          COUNT(DISTINCT CASE WHEN stage.answered = 1 THEN stage.visitor_key ELSE NULL END) AS answered_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.step_completed = 1 OR stage.terminal_here = 1 THEN stage.attempt_id
+            ELSE NULL
+          END) AS advanced_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.step_completed = 1 OR stage.terminal_here = 1 THEN stage.visitor_key
+            ELSE NULL
+          END) AS advanced_visitors,
+          COUNT(DISTINCT CASE WHEN stage.terminal_here = 1 THEN stage.attempt_id ELSE NULL END) AS terminal_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.reached = 1
+              AND state.terminal = 0
+              AND unresolved.step_id = stage.step_id
+              AND stage.step_completed = 0
+              AND stage.terminal_here = 0
+              AND state.last_activity > ?
+            THEN stage.attempt_id
+            ELSE NULL
+          END) AS in_progress_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.reached = 1
+              AND state.terminal = 0
+              AND unresolved.step_id = stage.step_id
+              AND stage.step_completed = 0
+              AND stage.terminal_here = 0
+              AND state.last_activity > ?
+            THEN stage.visitor_key
+            ELSE NULL
+          END) AS in_progress_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.reached = 1
+              AND state.terminal = 0
+              AND unresolved.step_id = stage.step_id
+              AND stage.step_completed = 0
+              AND stage.terminal_here = 0
+              AND state.last_activity <= ?
+            THEN stage.attempt_id
+            ELSE NULL
+          END) AS dropped_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.reached = 1
+              AND state.terminal = 0
+              AND unresolved.step_id = stage.step_id
+              AND stage.step_completed = 0
+              AND stage.terminal_here = 0
+              AND state.last_activity <= ?
+            THEN stage.visitor_key
+            ELSE NULL
+          END) AS dropped_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.first_view_sequence = first.first_view_sequence
+              AND stage.step_id != ?
+            THEN stage.attempt_id
+            ELSE NULL
+          END) AS direct_entries
+        FROM attempt_stage stage
+        INNER JOIN attempt_state state ON state.attempt_id = stage.attempt_id
+        LEFT JOIN unresolved_stage unresolved ON unresolved.attempt_id = stage.attempt_id
+        LEFT JOIN first_stage first ON first.attempt_id = stage.attempt_id
+        GROUP BY stage.step_id
+      `, [
+        ...cohortParams,
+        cutoff,
+        cutoff,
+        cutoff,
+        cutoff,
+        definition.stages[0]?.stageId || ''
+      ]),
+      db.all(`${cohortSql}
+        SELECT
+          event.step_id AS from_step_id,
+          event.target_step_id AS to_step_id,
+          COUNT(DISTINCT event.attempt_id) AS attempts,
+          COUNT(DISTINCT COALESCE(NULLIF(event.visitor_id, ''), NULLIF(event.session_id, ''), event.attempt_id)) AS visitors
+        FROM cohort_events event
+        WHERE event.event_name = 'step_complete'
+          AND event.step_id IS NOT NULL
+          AND event.step_id != ''
+          AND event.target_step_id IS NOT NULL
+          AND event.target_step_id != ''
+        GROUP BY event.step_id, event.target_step_id
+        ORDER BY event.step_id ASC, attempts DESC, event.target_step_id ASC
+      `, cohortParams),
+      db.all(`${cohortSql}
+        SELECT
+          event.step_id,
+          event.field_id,
+          COUNT(DISTINCT event.attempt_id) AS answered_attempts,
+          COUNT(DISTINCT COALESCE(NULLIF(event.visitor_id, ''), NULLIF(event.session_id, ''), event.attempt_id)) AS answered_visitors
+        FROM cohort_events event
+        WHERE event.event_name = 'field_answered'
+          AND event.step_id IS NOT NULL
+          AND event.step_id != ''
+          AND event.field_id IS NOT NULL
+          AND event.field_id != ''
+        GROUP BY event.step_id, event.field_id
+      `, cohortParams),
+      db.get(`${cohortSql}
+        SELECT
+          COUNT(DISTINCT cohort.attempt_id) AS entrants,
+          COUNT(DISTINCT COALESCE(
+            NULLIF(event.visitor_id, ''),
+            NULLIF(event.session_id, ''),
+            cohort.attempt_id
+          )) AS unique_entrants,
+          COUNT(DISTINCT CASE WHEN state.completed = 1 THEN cohort.attempt_id ELSE NULL END) AS completed_attempts,
+          COUNT(DISTINCT CASE
+            WHEN state.completed = 1 THEN COALESCE(
+              NULLIF(event.visitor_id, ''),
+              NULLIF(event.session_id, ''),
+              cohort.attempt_id
+            )
+            ELSE NULL
+          END) AS completed_visitors
+        FROM cohort
+        INNER JOIN attempt_state state ON state.attempt_id = cohort.attempt_id
+        LEFT JOIN cohort_events event
+          ON event.attempt_id = cohort.attempt_id
+         AND event.event_name = 'attempt_start'
+      `, cohortParams),
+      db.get(`
+        SELECT
+          MIN(CASE
+            WHEN flow.event_name = 'attempt_start' AND flow.flow_revision = ?
+              THEN flow.event_at
+            ELSE NULL
+          END) AS tracked_from,
+          COUNT(DISTINCT CASE
+            WHEN flow.event_name = 'attempt_start'
+              AND flow.event_at >= ?
+              AND flow.event_at <= ?
+              AND flow.flow_revision != ?
+            THEN flow.flow_revision
+            ELSE NULL
+          END) AS excluded_revisions,
+          COUNT(DISTINCT CASE
+            WHEN flow.event_name IN ('attempt_completed', 'attempt_terminal')
+              AND flow.flow_revision = ?
+              AND flow.event_at >= ?
+              AND flow.event_at <= ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM site_flow_events flow_start
+                WHERE flow_start.attempt_id = flow.attempt_id
+                  AND flow_start.form_site_id = flow.form_site_id
+                  AND flow_start.flow_revision = ?
+                  AND flow_start.event_name = 'attempt_start'
+              )
+            THEN flow.attempt_id
+            ELSE NULL
+          END) AS terminal_attempts_without_start
+        FROM site_flow_events flow
+        WHERE flow.form_site_id = ?
+          ${getSitesHiddenFlowAttemptClause(hiddenFilters, 'flow')}
+      `, [
+        definition.flowRevision,
+        dateFilters.dateFrom,
+        dateFilters.dateTo,
+        definition.flowRevision,
+        definition.flowRevision,
+        dateFilters.dateFrom,
+        dateFilters.dateTo,
+        definition.flowRevision,
+        siteId
+      ])
+    ])
+
+    const stageRowById = new Map(stageRows.map(row => [cleanString(row.step_id), row]))
+    const fieldRowByKey = new Map(fieldRows.map(row => [
+      `${cleanString(row.step_id)}\u0000${cleanString(row.field_id)}`,
+      row
+    ]))
+    const transitionByStep = new Map()
+    for (const row of transitionRows) {
+      const fromStepId = cleanString(row.from_step_id)
+      const toStepId = cleanString(row.to_step_id)
+      if (!fromStepId || !toStepId) continue
+      const target = definition.stages.find(stage => stage.stageId === toStepId)
+      const list = transitionByStep.get(fromStepId) || []
+      list.push({
+        stageId: toStepId,
+        label: target?.label || 'Siguiente etapa',
+        attempts: Number(row.attempts || 0),
+        visitors: Number(row.visitors || 0)
+      })
+      transitionByStep.set(fromStepId, list)
+    }
+
+    const stages = definition.stages.map(stage => {
+      const row = stageRowById.get(stage.stageId) || {}
+      const reachedAttempts = Number(row.reached_attempts || 0)
+      const answeredAttempts = Number(row.answered_attempts || 0)
+      const advancedAttempts = Number(row.advanced_attempts || 0)
+      return {
+        stageId: stage.stageId,
+        kind: stage.kind,
+        label: stage.label,
+        order: stage.order,
+        reachedAttempts,
+        reachedVisitors: Number(row.reached_visitors || 0),
+        answeredAttempts,
+        answeredVisitors: Number(row.answered_visitors || 0),
+        advancedAttempts,
+        advancedVisitors: Number(row.advanced_visitors || 0),
+        terminalAttempts: Number(row.terminal_attempts || 0),
+        inProgressAttempts: Number(row.in_progress_attempts || 0),
+        inProgressVisitors: Number(row.in_progress_visitors || 0),
+        droppedAttempts: Number(row.dropped_attempts || 0),
+        droppedVisitors: Number(row.dropped_visitors || 0),
+        advanceRate: formatSiteAnalyticsRate(advancedAttempts, reachedAttempts),
+        dropOffRate: formatSiteAnalyticsRate(Number(row.dropped_attempts || 0), reachedAttempts),
+        directEntries: Number(row.direct_entries || 0),
+        nextStages: (transitionByStep.get(stage.stageId) || []).map(target => ({
+          ...target,
+          rate: formatSiteAnalyticsRate(target.attempts, reachedAttempts)
+        })),
+        fields: stage.fields.map(field => {
+          const fieldRow = fieldRowByKey.get(`${stage.stageId}\u0000${field.fieldId}`) || {}
+          const fieldAnsweredAttempts = Number(fieldRow.answered_attempts || 0)
+          return {
+            fieldId: field.fieldId,
+            label: field.label,
+            answeredAttempts: fieldAnsweredAttempts,
+            answeredVisitors: Number(fieldRow.answered_visitors || 0),
+            answerRate: formatSiteAnalyticsRate(fieldAnsweredAttempts, reachedAttempts)
+          }
+        })
+      }
+    })
+
+    const entrants = Number(totalsRow?.entrants || 0)
+    const uniqueEntrants = Number(totalsRow?.unique_entrants || 0)
+    const completedAttempts = Number(totalsRow?.completed_attempts || 0)
+    const completedVisitors = Number(totalsRow?.completed_visitors || 0)
+    const trackedFrom = coverageRow?.tracked_from || null
+    const excludedRevisions = Number(coverageRow?.excluded_revisions || 0)
+    const terminalAttemptsWithoutStart = Number(
+      coverageRow?.terminal_attempts_without_start || 0
+    )
+    const stats = statsBySite[siteId] || emptySiteTrackingStats()
+    const hadLegacyActivity = Number(stats.views || 0) > 0 || Number(stats.submissions || 0) > 0
+    const warnings = []
+    let coverageStatus = 'verified'
+
+    if (!entrants && (hadLegacyActivity || terminalAttemptsWithoutStart > 0)) {
+      coverageStatus = 'unavailable'
+      warnings.push('Este rango tiene actividad anterior, pero no eventos de recorrido verificables.')
+    } else if (excludedRevisions > 0) {
+      coverageStatus = 'partial'
+      warnings.push(`${excludedRevisions} versión(es) anterior(es) del formulario se excluyeron para no mezclar recorridos distintos.`)
+    }
+    if (terminalAttemptsWithoutStart > 0) {
+      coverageStatus = entrants > 0 ? 'partial' : 'unavailable'
+      warnings.push(
+        `${terminalAttemptsWithoutStart} cierre(s) sin inicio verificable no se incluyeron en la cohorte ni en su conversión.`
+      )
+    }
+    if (terminalReconciliation.unavailable) {
+      coverageStatus = entrants > 0 ? 'partial' : 'unavailable'
+      warnings.push(
+        'No se pudo verificar si todos los envíos finales persistidos tienen un cierre de recorrido.'
+      )
+    } else if (terminalReconciliation.finalSubmissionsWithoutTerminal > 0) {
+      coverageStatus = entrants > 0 ? 'partial' : 'unavailable'
+      warnings.push(
+        `${terminalReconciliation.finalSubmissionsWithoutTerminal} envío(s) final(es) persistidos no pudieron reconciliarse con un cierre de recorrido y no se incluyeron en la conversión.`
+      )
+    }
+    if (trackedFrom && dateFilters.dateFrom && Date.parse(trackedFrom) > Date.parse(dateFilters.dateFrom)) {
+      coverageStatus = coverageStatus === 'unavailable' ? coverageStatus : 'partial'
+      warnings.push('El seguimiento por etapa empezó después del inicio del rango seleccionado.')
+    }
+
+    result[siteId] = {
+      siteId,
+      measurement: 'first_party_form_journey_v1',
+      flowRevision: definition.flowRevision,
+      coverage: {
+        status: coverageStatus,
+        trackedFrom,
+        warnings,
+        excludedRevisions,
+        terminalAttemptsWithoutStart,
+        reconciledFinalSubmissions: terminalReconciliation.reconciled,
+        finalSubmissionsWithoutTerminal: terminalReconciliation.finalSubmissionsWithoutTerminal,
+        terminalReconciliationUnavailable: terminalReconciliation.unavailable
+      },
+      entrants,
+      uniqueEntrants,
+      completedAttempts,
+      completedVisitors,
+      conversionRate: formatSiteAnalyticsRate(completedAttempts, entrants),
+      stages
+    }
+  }
+
+  return result
+}
+
+function buildSitesPageJourneyCte({
+  siteId,
+  pages = [],
+  flowRevision = '',
+  dateFilters = {},
+  hiddenFilters = []
+} = {}) {
+  if (!siteId || !pages.length || !flowRevision || !dateFilters.dateFrom || !dateFilters.dateTo) {
+    return null
+  }
+
+  const pageValues = pages.map(() => '(?, ?)').join(', ')
+  const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 'source')
+  const visitorExpression = getSitesAnalyticsVisitorExpression('source')
+  const journeyRootExpression = `CASE
+    WHEN source.page_journey_id IS NOT NULL AND source.page_journey_id != '' THEN 'page-journey:' || source.page_journey_id
+    ELSE 'unverified-event:' || CAST(source.id AS TEXT)
+  END`
+  const cutoff = DateTime.utc().minus({ minutes: 30 }).toISO()
+  const analysisWindowFrom = DateTime
+    .fromISO(dateFilters.dateFrom, { zone: 'utc' })
+    .minus({ minutes: 30 })
+    .toISO()
+  const analysisWindowTo = DateTime
+    .fromISO(dateFilters.dateTo, { zone: 'utc' })
+    .plus({ minutes: 30 })
+    .toISO()
+  const newJourneyCondition = getSitesAnalyticsSessionStartCondition(
+    'source_ordered.started_at',
+    'source_ordered.previous_started_at'
+  )
+
+  return {
+    sql: `
+      WITH page_scope(page_id, page_order) AS (
+        VALUES ${pageValues}
+      ),
+      source_scoped AS (
+        SELECT
+          source.id AS event_row_id,
+          source.event_id,
+          source.public_page_id AS page_id,
+          page_scope.page_order,
+          ${visitorExpression} AS visitor_key,
+          ${journeyRootExpression} AS journey_root_id,
+          source.started_at
+        FROM sessions source
+        INNER JOIN page_scope ON page_scope.page_id = source.public_page_id
+        WHERE source.site_id = ?
+          AND ${getSitesAnalyticsViewEventCondition('source')}
+          ${hiddenSessionClause}
+          AND source.page_flow_revision = ?
+          AND source.page_journey_id IS NOT NULL
+          AND source.page_journey_id != ''
+          AND source.started_at >= ?
+          AND source.started_at <= ?
+      ),
+      source_ordered AS (
+        SELECT
+          source_scoped.*,
+          LAG(source_scoped.started_at) OVER (
+            PARTITION BY source_scoped.journey_root_id
+            ORDER BY source_scoped.started_at ASC, source_scoped.event_row_id ASC
+          ) AS previous_started_at
+        FROM source_scoped
+      ),
+      source_segment_flags AS (
+        SELECT
+          source_ordered.*,
+          CASE WHEN ${newJourneyCondition} THEN 1 ELSE 0 END AS starts_new_journey
+        FROM source_ordered
+      ),
+      source_segmented AS (
+        SELECT
+          source_segment_flags.*,
+          SUM(source_segment_flags.starts_new_journey) OVER (
+            PARTITION BY source_segment_flags.journey_root_id
+            ORDER BY source_segment_flags.started_at ASC, source_segment_flags.event_row_id ASC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS journey_segment
+        FROM source_segment_flags
+      ),
+      journey_entries AS (
+        SELECT
+          journey_root_id,
+          journey_segment,
+          MIN(started_at) AS first_activity
+        FROM source_segmented
+        GROUP BY journey_root_id, journey_segment
+      ),
+      cohort_journeys AS (
+        SELECT journey_root_id, journey_segment
+        FROM journey_entries
+        WHERE first_activity >= ?
+          AND first_activity <= ?
+      ),
+      scoped AS (
+        SELECT
+          source_segmented.event_row_id,
+          source_segmented.event_id,
+          source_segmented.page_id,
+          source_segmented.page_order,
+          source_segmented.visitor_key,
+          source_segmented.journey_root_id || ':visit:' || CAST(source_segmented.journey_segment AS TEXT) AS journey_id,
+          source_segmented.started_at
+        FROM source_segmented
+        INNER JOIN cohort_journeys
+          ON cohort_journeys.journey_root_id = source_segmented.journey_root_id
+         AND cohort_journeys.journey_segment = source_segmented.journey_segment
+      ),
+      ordered AS (
+        SELECT
+          scoped.*,
+          LAG(scoped.page_id) OVER (
+            PARTITION BY scoped.journey_id
+            ORDER BY scoped.started_at ASC, scoped.event_row_id ASC
+          ) AS previous_page_id
+        FROM scoped
+      ),
+      page_changes_unsequenced AS (
+        SELECT *
+        FROM ordered
+        WHERE previous_page_id IS NULL OR previous_page_id != page_id
+      ),
+      page_changes AS (
+        SELECT
+          page_changes_unsequenced.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY page_changes_unsequenced.journey_id
+            ORDER BY page_changes_unsequenced.started_at ASC, page_changes_unsequenced.event_row_id ASC
+          ) AS change_sequence
+        FROM page_changes_unsequenced
+      ),
+      journey_bounds AS (
+        SELECT
+          journey_id,
+          MAX(change_sequence) AS last_sequence,
+          MAX(started_at) AS last_activity
+        FROM page_changes
+        GROUP BY journey_id
+      ),
+      journey_progress AS (
+        SELECT
+          journey_id,
+          MAX(page_order) AS deepest_page_order,
+          MAX(CASE WHEN page_order = ${Math.max(0, pages.length - 1)} THEN 1 ELSE 0 END) AS completed
+        FROM page_changes
+        GROUP BY journey_id
+      ),
+      journey_stage AS (
+        SELECT
+          change.journey_id,
+          change.visitor_key,
+          change.page_id,
+          change.page_order,
+          MIN(change.change_sequence) AS first_sequence,
+          MAX(change.change_sequence) AS last_sequence,
+          MAX(CASE WHEN EXISTS (
+            SELECT 1
+            FROM page_changes later
+            WHERE later.journey_id = change.journey_id
+              AND later.change_sequence > change.change_sequence
+              AND later.page_order > change.page_order
+          ) THEN 1 ELSE 0 END) AS advanced
+        FROM page_changes change
+        GROUP BY change.journey_id, change.visitor_key, change.page_id, change.page_order
+      )
+    `,
+    params: [
+      ...pages.flatMap((page, index) => [page.id, index]),
+      siteId,
+      flowRevision,
+      analysisWindowFrom,
+      analysisWindowTo,
+      dateFilters.dateFrom,
+      dateFilters.dateTo
+    ],
+    cutoff
+  }
+}
+
+async function getSitesPageFunnelSummary(siteIds = [], dateFilters = {}, hiddenFilters = []) {
+  const result = {}
+
+  for (const siteId of siteIds) {
+    const site = await getSite(siteId, {
+      includeBlocks: false,
+      includeSubmissions: false,
+      includeTrackingStats: false
+    })
+    if (!site || site.siteType !== 'landing_page') continue
+
+    const definition = buildSitePageFlowDefinition(site)
+    const pages = (definition?.stages || []).map(stage => ({
+      id: stage.stageId,
+      label: stage.label,
+      order: stage.order
+    }))
+    const cte = buildSitesPageJourneyCte({
+      siteId,
+      pages,
+      flowRevision: definition?.flowRevision,
+      dateFilters,
+      hiddenFilters
+    })
+    if (!cte) continue
+
+    const lastPageOrder = Math.max(0, pages.length - 1)
+    const [stageRows, transitionRows, completionRow, coverageRow] = await Promise.all([
+      db.all(`${cte.sql}
+        SELECT
+          stage.page_id,
+          stage.page_order,
+          COALESCE(view_totals.total_views, 0) AS total_views,
+          COUNT(DISTINCT stage.journey_id) AS reached_attempts,
+          COUNT(DISTINCT stage.visitor_key) AS reached_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order < ? AND stage.advanced = 1 THEN stage.journey_id
+            ELSE NULL
+          END) AS advanced_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order < ? AND stage.advanced = 1 THEN stage.visitor_key
+            ELSE NULL
+          END) AS advanced_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order = ? THEN stage.journey_id
+            ELSE NULL
+          END) AS terminal_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order < ?
+              AND progress.completed = 0
+              AND progress.deepest_page_order = stage.page_order
+              AND bounds.last_activity > ?
+            THEN stage.journey_id
+            ELSE NULL
+          END) AS in_progress_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order < ?
+              AND progress.completed = 0
+              AND progress.deepest_page_order = stage.page_order
+              AND bounds.last_activity > ?
+            THEN stage.visitor_key
+            ELSE NULL
+          END) AS in_progress_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order < ?
+              AND progress.completed = 0
+              AND progress.deepest_page_order = stage.page_order
+              AND bounds.last_activity <= ?
+            THEN stage.journey_id
+            ELSE NULL
+          END) AS dropped_attempts,
+          COUNT(DISTINCT CASE
+            WHEN stage.page_order < ?
+              AND progress.completed = 0
+              AND progress.deepest_page_order = stage.page_order
+              AND bounds.last_activity <= ?
+            THEN stage.visitor_key
+            ELSE NULL
+          END) AS dropped_visitors,
+          COUNT(DISTINCT CASE
+            WHEN stage.first_sequence = 1 AND stage.page_order > 0 THEN stage.journey_id
+            ELSE NULL
+          END) AS direct_entries
+        FROM journey_stage stage
+        INNER JOIN journey_bounds bounds ON bounds.journey_id = stage.journey_id
+        INNER JOIN journey_progress progress ON progress.journey_id = stage.journey_id
+        LEFT JOIN (
+          SELECT page_id, COUNT(*) AS total_views
+          FROM scoped
+          GROUP BY page_id
+        ) view_totals ON view_totals.page_id = stage.page_id
+        GROUP BY stage.page_id, stage.page_order, view_totals.total_views
+        ORDER BY stage.page_order ASC
+      `, [
+        ...cte.params,
+        lastPageOrder,
+        lastPageOrder,
+        lastPageOrder,
+        lastPageOrder,
+        cte.cutoff,
+        lastPageOrder,
+        cte.cutoff,
+        lastPageOrder,
+        cte.cutoff,
+        lastPageOrder,
+        cte.cutoff
+      ]),
+      db.all(`${cte.sql}
+        SELECT
+          current.page_id AS from_page_id,
+          next.page_id AS to_page_id,
+          COUNT(DISTINCT current.journey_id) AS attempts,
+          COUNT(DISTINCT current.visitor_key) AS visitors
+        FROM page_changes current
+        INNER JOIN page_changes next
+          ON next.journey_id = current.journey_id
+         AND next.change_sequence = current.change_sequence + 1
+        WHERE next.page_order > current.page_order
+        GROUP BY current.page_id, next.page_id
+        ORDER BY current.page_id ASC, attempts DESC, next.page_id ASC
+      `, cte.params),
+      db.get(`${cte.sql}
+        SELECT
+          COUNT(DISTINCT first_stage.journey_id) AS entrants,
+          COUNT(DISTINCT first_stage.visitor_key) AS unique_entrants,
+          COUNT(DISTINCT CASE
+            WHEN final_stage.journey_id IS NOT NULL THEN first_stage.journey_id
+            ELSE NULL
+          END) AS completed_attempts,
+          COUNT(DISTINCT CASE
+            WHEN final_stage.journey_id IS NOT NULL THEN first_stage.visitor_key
+            ELSE NULL
+          END) AS completed_visitors
+        FROM journey_stage first_stage
+        LEFT JOIN journey_stage final_stage
+          ON final_stage.journey_id = first_stage.journey_id
+         AND final_stage.page_order = ?
+         AND final_stage.first_sequence >= first_stage.first_sequence
+        WHERE first_stage.page_order = 0
+      `, [...cte.params, lastPageOrder]),
+      db.get(`
+        SELECT
+          COUNT(*) AS all_revision_views,
+          SUM(CASE
+            WHEN source.page_flow_revision = ?
+              AND source.page_journey_id IS NOT NULL
+              AND source.page_journey_id != ''
+            THEN 1
+            ELSE 0
+          END) AS current_revision_views,
+          SUM(CASE
+            WHEN source.page_flow_revision = ?
+              AND (source.page_journey_id IS NULL OR source.page_journey_id = '')
+            THEN 1
+            ELSE 0
+          END) AS unverified_current_views,
+          SUM(CASE
+            WHEN source.page_flow_revision IS NULL OR source.page_flow_revision = '' THEN 1
+            ELSE 0
+          END) AS legacy_views,
+          SUM(CASE
+            WHEN source.page_flow_revision IS NOT NULL
+              AND source.page_flow_revision != ''
+              AND source.page_flow_revision != ?
+            THEN 1
+            ELSE 0
+          END) AS old_revision_views,
+          COUNT(DISTINCT CASE
+            WHEN source.page_flow_revision IS NOT NULL
+              AND source.page_flow_revision != ''
+              AND source.page_flow_revision != ?
+            THEN source.page_flow_revision
+            ELSE NULL
+          END) AS excluded_revisions,
+          SUM(CASE
+            WHEN source.page_flow_revision = ?
+              AND source.page_journey_id IS NOT NULL
+              AND source.page_journey_id != ''
+              AND (
+                source.public_page_id IS NULL OR source.public_page_id = ''
+                OR source.public_page_id NOT IN (${pages.map(() => '?').join(',')})
+              )
+            THEN 1
+            ELSE 0
+          END) AS unknown_current_page_views
+        FROM sessions source
+        WHERE source.site_id = ?
+          AND ${getSitesAnalyticsViewEventCondition('source')}
+          ${getSitesHiddenSessionClause(hiddenFilters, 'source')}
+          AND source.started_at >= ?
+          AND source.started_at <= ?
+      `, [
+        definition.flowRevision,
+        definition.flowRevision,
+        definition.flowRevision,
+        definition.flowRevision,
+        definition.flowRevision,
+        ...pages.map(page => page.id),
+        siteId,
+        dateFilters.dateFrom,
+        dateFilters.dateTo
+      ])
+    ])
+
+    const stageRowById = new Map(stageRows.map(row => [cleanString(row.page_id), row]))
+    const transitionsByPage = new Map()
+    for (const row of transitionRows) {
+      const fromPageId = cleanString(row.from_page_id)
+      const toPageId = cleanString(row.to_page_id)
+      if (!fromPageId || !toPageId) continue
+      const current = transitionsByPage.get(fromPageId) || []
+      const target = pages.find(page => page.id === toPageId)
+      current.push({
+        stageId: toPageId,
+        label: target?.label || 'Página siguiente',
+        attempts: Number(row.attempts || 0),
+        visitors: Number(row.visitors || 0)
+      })
+      transitionsByPage.set(fromPageId, current)
+    }
+
+    const stages = pages.map(page => {
+      const row = stageRowById.get(page.id) || {}
+      const reachedAttempts = Number(row.reached_attempts || 0)
+      const reachedVisitors = Number(row.reached_visitors || 0)
+      const advancedAttempts = Number(row.advanced_attempts || 0)
+      const advancedVisitors = Number(row.advanced_visitors || 0)
+      const targets = (transitionsByPage.get(page.id) || []).map(target => ({
+        ...target,
+        rate: formatSiteAnalyticsRate(target.attempts, reachedAttempts)
+      }))
+      return {
+        stageId: page.id,
+        kind: 'page',
+        label: page.label,
+        order: page.order,
+        totalViews: Number(row.total_views || 0),
+        reachedAttempts,
+        reachedVisitors,
+        answeredAttempts: 0,
+        answeredVisitors: 0,
+        advancedAttempts,
+        advancedVisitors,
+        terminalAttempts: Number(row.terminal_attempts || 0),
+        inProgressAttempts: Number(row.in_progress_attempts || 0),
+        inProgressVisitors: Number(row.in_progress_visitors || 0),
+        droppedAttempts: Number(row.dropped_attempts || 0),
+        droppedVisitors: Number(row.dropped_visitors || 0),
+        advanceRate: page.order === lastPageOrder
+          ? 0
+          : formatSiteAnalyticsRate(advancedAttempts, reachedAttempts),
+        dropOffRate: page.order === lastPageOrder
+          ? 0
+          : formatSiteAnalyticsRate(Number(row.dropped_attempts || 0), reachedAttempts),
+        directEntries: Number(row.direct_entries || 0),
+        nextStages: targets
+      }
+    })
+    const entrants = Number(completionRow?.entrants || 0)
+    const uniqueEntrants = Number(completionRow?.unique_entrants || 0)
+    const completedAttempts = Number(completionRow?.completed_attempts || 0)
+    const completedVisitors = Number(completionRow?.completed_visitors || 0)
+    const allRevisionViews = Number(coverageRow?.all_revision_views || 0)
+    const currentRevisionViews = Number(coverageRow?.current_revision_views || 0)
+    const unverifiedCurrentViews = Number(coverageRow?.unverified_current_views || 0)
+    const legacyViews = Number(coverageRow?.legacy_views || 0)
+    const oldRevisionViews = Number(coverageRow?.old_revision_views || 0)
+    const excludedRevisions = Number(coverageRow?.excluded_revisions || 0)
+    const unknownCurrentPageViews = Number(coverageRow?.unknown_current_page_views || 0)
+    const warnings = []
+    let coverageStatus = 'verified'
+
+    if (legacyViews > 0) {
+      warnings.push(`${legacyViews} vista(s) sin revisión de embudo se excluyeron porque su estructura no puede verificarse.`)
+    }
+    if (oldRevisionViews > 0) {
+      warnings.push(`${oldRevisionViews} vista(s) de ${excludedRevisions} revisión(es) anterior(es) se excluyeron para no mezclar estructuras distintas.`)
+    }
+    if (unverifiedCurrentViews > 0) {
+      warnings.push(`${unverifiedCurrentViews} vista(s) de la revisión actual no tenían identidad de recorrido por pestaña y se excluyeron.`)
+    }
+    if (unknownCurrentPageViews > 0) {
+      warnings.push(`${unknownCurrentPageViews} vista(s) de la revisión actual no se pudieron asociar a una página vigente.`)
+    }
+
+    if (currentRevisionViews === 0 && allRevisionViews > 0) {
+      coverageStatus = 'unavailable'
+      warnings.unshift('Este rango tiene actividad, pero ninguna vista pertenece a la estructura actual verificable del embudo.')
+    } else if (currentRevisionViews > 0 && (
+      legacyViews > 0 ||
+      oldRevisionViews > 0 ||
+      unverifiedCurrentViews > 0 ||
+      unknownCurrentPageViews > 0
+    )) {
+      coverageStatus = 'partial'
+    }
+
+    result[siteId] = {
+      siteId,
+      measurement: 'first_party_page_journey_v1',
+      flowRevision: definition.flowRevision,
+      coverage: {
+        status: coverageStatus,
+        warnings,
+        ...(excludedRevisions > 0 ? { excludedRevisions } : {})
+      },
+      entrants,
+      uniqueEntrants,
+      completedAttempts,
+      completedVisitors,
+      conversionRate: formatSiteAnalyticsRate(completedAttempts, entrants),
+      stages
+    }
+  }
+
+  return result
+}
+
 async function getSitesTrackingBreakdown(siteIds = [], dateFilters = {}, hiddenFilters = []) {
   const bySiteId = Object.fromEntries(siteIds.map(siteId => [
     siteId,
@@ -11633,11 +13012,23 @@ export async function getSitesTrackingSummary(input = {}) {
   const hasExplicitBreakdown = Array.isArray(input.breakdownSiteIds) || Array.isArray(input.breakdown_site_ids)
   const rawFormFunnelSiteId = input.formFunnelSiteId ?? input.form_funnel_site_id
   const hasExplicitFormFunnel = rawFormFunnelSiteId !== undefined && rawFormFunnelSiteId !== null
+  const rawPageFunnelSiteId = input.pageFunnelSiteId ?? input.page_funnel_site_id
+  const hasExplicitPageFunnel = rawPageFunnelSiteId !== undefined && rawPageFunnelSiteId !== null
+  const rawFormJourneySiteId = input.formJourneySiteId ?? input.form_journey_site_id
+  const hasExplicitFormJourney = rawFormJourneySiteId !== undefined && rawFormJourneySiteId !== null
   const legacyMode = legacySiteIds.length > 0 &&
     !hasExplicitSiteScope &&
     !hasExplicitBreakdown &&
-    !hasExplicitFormFunnel
-  const hasV2Request = hasExplicitSiteScope || hasExplicitBreakdown || hasExplicitFormFunnel
+    !hasExplicitFormFunnel &&
+    !hasExplicitPageFunnel &&
+    !hasExplicitFormJourney
+  const hasV2Request = (
+    hasExplicitSiteScope ||
+    hasExplicitBreakdown ||
+    hasExplicitFormFunnel ||
+    hasExplicitPageFunnel ||
+    hasExplicitFormJourney
+  )
   const requestedDateFrom = input.dateFrom || input.date_from
   const requestedDateTo = input.dateTo || input.date_to
   if (!legacyMode && hasV2Request && (!requestedDateFrom || !requestedDateTo)) {
@@ -11650,9 +13041,13 @@ export async function getSitesTrackingSummary(input = {}) {
     ? normalizeSitesAnalyticsIds(input.breakdownSiteIds || input.breakdown_site_ids, 100)
     : normalizeSitesAnalyticsIds(legacySiteIds, legacyMode ? 500 : 100)
   const formFunnelSiteId = cleanString(rawFormFunnelSiteId).slice(0, 180)
+  const pageFunnelSiteId = cleanString(rawPageFunnelSiteId).slice(0, 180)
+  const formJourneySiteId = cleanString(rawFormJourneySiteId).slice(0, 180)
   const requestedFormFunnelSiteIds = legacyMode
     ? legacySiteIds
     : formFunnelSiteId ? [formFunnelSiteId] : []
+  const requestedPageFunnelSiteIds = pageFunnelSiteId ? [pageFunnelSiteId] : []
+  const requestedFormJourneySiteIds = formJourneySiteId ? [formJourneySiteId] : []
   const scopeSelection = buildSitesTrackingScopeSelection(siteScope, legacySiteIds)
   const dateFilters = await resolveSitesAnalyticsDateFilters(input)
   const hiddenFilters = await getHiddenContactFilters()
@@ -11667,12 +13062,20 @@ export async function getSitesTrackingSummary(input = {}) {
   const internalStatsBySite = await getSitesTrackingBreakdownInChunks(scopedSiteIds, dateFilters, hiddenFilters)
   const scopedBreakdownSiteIds = breakdownSiteIds.filter(siteId => scopedInternalIds.has(siteId))
   const scopedFormFunnelSiteIds = requestedFormFunnelSiteIds.filter(siteId => scopedInternalIds.has(siteId))
+  const scopedPageFunnelSiteIds = requestedPageFunnelSiteIds.filter(siteId => scopedInternalIds.has(siteId))
+  const scopedFormJourneySiteIds = requestedFormJourneySiteIds.filter(siteId => scopedInternalIds.has(siteId))
   const bySiteId = Object.fromEntries(scopedBreakdownSiteIds.map(siteId => [
     siteId,
     internalStatsBySite[siteId] || emptySiteTrackingStats({ siteId })
   ]))
   const formFunnels = scopedFormFunnelSiteIds.length
     ? await getSitesFormFunnelSummary(scopedFormFunnelSiteIds, dateFilters, internalStatsBySite, hiddenFilters)
+    : {}
+  const pageFunnels = scopedPageFunnelSiteIds.length
+    ? await getSitesPageFunnelSummary(scopedPageFunnelSiteIds, dateFilters, hiddenFilters)
+    : {}
+  const formJourneys = scopedFormJourneySiteIds.length
+    ? await getSitesFormJourneySummary(scopedFormJourneySiteIds, dateFilters, internalStatsBySite, hiddenFilters)
     : {}
   const rankings = buildSitesTrackingRankings(scopedSites, internalStatsBySite)
   const activeEntityCount = scopedSiteIds.filter(siteId => {
@@ -11687,7 +13090,7 @@ export async function getSitesTrackingSummary(input = {}) {
   }
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     dateFrom: dateFilters.dateFrom || '',
     dateTo: dateFilters.dateTo || '',
     meta: {
@@ -11720,7 +13123,9 @@ export async function getSitesTrackingSummary(input = {}) {
     series,
     rankings,
     bySiteId,
-    formFunnels
+    formFunnels,
+    pageFunnels,
+    formJourneys
   }
 }
 
@@ -23076,6 +24481,7 @@ function buildNativeSiteTrackingScript(context) {
       const PARAM_BUILDER_IP_URL = '/meta-param-builder-ip';
       const VISITOR_COOKIE_NAME = 'ristak_vid';
       const SESSION_COOKIE_NAME = 'ristak_sid';
+      const PAGE_TAB_STORAGE_PREFIX = 'rstk:page-tab:';
       const VISITOR_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
       const SESSION_INACTIVITY_MS = 30 * 60 * 1000;
       let metaParamBuilderPromise = null;
@@ -23236,6 +24642,26 @@ function buildNativeSiteTrackingScript(context) {
         writeJson(sessionStorage, 'ristak', data);
         writeCookie(SESSION_COOKIE_NAME, data.session_id);
         return data.session_id;
+      };
+
+      const getPageTabNonce = () => {
+        const siteId = normalizeIdentityValue(RSTK_CONTEXT.siteId);
+        const flowRevision = normalizeIdentityValue(RSTK_CONTEXT.pageFlowRevision);
+        const contextToken = String(RSTK_CONTEXT.pageContextToken || '').trim();
+        if (!siteId || !flowRevision || !contextToken) return '';
+        const storageKey = PAGE_TAB_STORAGE_PREFIX + siteId + ':' + flowRevision;
+        const data = readJson(sessionStorage, storageKey);
+        const now = Date.now();
+        const lastActivity = Number(data.last_activity || data.tab_started_at || 0);
+        const expired = lastActivity > 0 && now - lastActivity > SESSION_INACTIVITY_MS;
+        const storedNonce = normalizeIdentityValue(data.tab_nonce);
+        if (!storedNonce || expired) {
+          data.tab_nonce = generateSessionId();
+          data.tab_started_at = now;
+        }
+        data.last_activity = now;
+        writeJson(sessionStorage, storageKey, data);
+        return data.tab_nonce;
       };
 
       const cleanContactText = (value) => {
@@ -23746,6 +25172,9 @@ function buildNativeSiteTrackingScript(context) {
           form_site_name: RSTK_CONTEXT.formSiteName,
           public_page_id: RSTK_CONTEXT.pageId,
           public_page_title: RSTK_CONTEXT.pageTitle,
+          page_flow_revision: RSTK_CONTEXT.pageFlowRevision,
+          page_context_token: RSTK_CONTEXT.pageContextToken,
+          page_tab_nonce: getPageTabNonce(),
           url: window.location.href,
           referrer: document.referrer || null,
           title: document.title || null,
@@ -23779,6 +25208,400 @@ function buildNativeSiteTrackingScript(context) {
         }).catch(() => {});
       };
 
+      const FLOW_ENDPOINT = '/api/sites/public/form-progress';
+      const FLOW_STATE_PREFIX = 'rstk:flow:';
+      const cleanFlowValue = (value, maxLength = 180) => String(value || '').trim().slice(0, maxLength);
+      const cleanFlowContextToken = (value) => String(value || '').trim().slice(0, 4096);
+      const FLOW_QUEUE_KEY = [
+        FLOW_STATE_PREFIX,
+        'queue',
+        cleanFlowValue(RSTK_CONTEXT.siteId)
+      ].join(':');
+      const FLOW_INACTIVITY_MS = 30 * 60 * 1000;
+      const FLOW_RETRY_MAX_MS = 30 * 1000;
+      const FLOW_PRE_SUBMIT_TIMEOUT_MS = 1500;
+      const FLOW_EVENT_NAMES = new Set([
+        'step_view',
+        'field_answered',
+        'step_complete'
+      ]);
+      let flowQueueRequest = null;
+      let flowQueueTimer = null;
+      let flowQueueRetryCount = 0;
+      const flowStateKey = (context = {}) => [
+        FLOW_STATE_PREFIX,
+        cleanFlowValue(RSTK_CONTEXT.siteId),
+        cleanFlowValue(context.formSiteId),
+        cleanFlowValue(context.flowRevision)
+      ].join(':');
+      const sanitizeFlowQueueEvent = (event = {}) => ({
+        eventId: event && event.eventId,
+        eventSequence: event && event.eventSequence,
+        eventName: event && event.eventName,
+        stepId: event && event.stepId,
+        targetStepId: event && event.targetStepId,
+        fieldId: event && event.fieldId,
+        stepIndex: event && event.stepIndex,
+        stepTotal: event && event.stepTotal,
+        stepKind: event && event.stepKind,
+        outcome: event && event.outcome,
+        clientEventAt: event && event.clientEventAt
+      });
+      const sanitizeFlowQueueItem = (item = {}) => ({
+        formSiteId: item && item.formSiteId,
+        publicPageId: item && item.publicPageId,
+        flowRevision: item && item.flowRevision,
+        formContextToken: item && item.formContextToken,
+        attemptId: item && item.attemptId,
+        visitorId: item && item.visitorId,
+        sessionId: item && item.sessionId,
+        event: sanitizeFlowQueueEvent(item && item.event)
+      });
+      const readFlowQueue = () => {
+        const stored = readJson(sessionStorage, FLOW_QUEUE_KEY);
+        if (!stored || !Array.isArray(stored.items)) return [];
+        const items = stored.items.map(sanitizeFlowQueueItem);
+        // Migra en lectura cualquier cola creada por runtimes antiguos que
+        // guardaban contactId. Sólo sobrevive la lista blanca no sensible.
+        writeJson(sessionStorage, FLOW_QUEUE_KEY, { version: 1, items });
+        return items;
+      };
+      const writeFlowQueue = (items = []) => {
+        writeJson(sessionStorage, FLOW_QUEUE_KEY, {
+          version: 1,
+          items: Array.isArray(items)
+            ? items.map(sanitizeFlowQueueItem)
+            : []
+        });
+      };
+      const flowQueueGroupKey = (item = {}) => [
+        cleanFlowValue(item.formSiteId),
+        cleanFlowValue(item.publicPageId),
+        cleanFlowValue(item.flowRevision, 80),
+        cleanFlowContextToken(item.formContextToken),
+        cleanFlowValue(item.attemptId),
+        cleanFlowValue(item.visitorId),
+        cleanFlowValue(item.sessionId)
+      ].join(':');
+      const scheduleFlowQueueFlush = (delay = 0) => {
+        if (flowQueueTimer !== null) return;
+        flowQueueTimer = window.setTimeout(() => {
+          flowQueueTimer = null;
+          flushFormProgressQueue();
+        }, Math.max(0, Number(delay) || 0));
+      };
+      const flushFormProgressQueue = () => {
+        if (flowQueueRequest) return flowQueueRequest;
+        const queued = readFlowQueue();
+        if (queued.length === 0) return Promise.resolve();
+        const first = queued[0];
+        const groupKey = flowQueueGroupKey(first);
+        const batch = [];
+        for (const item of queued) {
+          if (batch.length >= 50 || flowQueueGroupKey(item) !== groupKey) break;
+          batch.push(item);
+        }
+        const eventKeys = new Set(batch.map(item => [
+          cleanFlowValue(item.attemptId),
+          cleanFlowValue(item.event && item.event.eventId)
+        ].join(':')));
+        const payload = {
+          siteId: RSTK_CONTEXT.siteId,
+          formSiteId: first.formSiteId,
+          publicPageId: first.publicPageId,
+          flowRevision: first.flowRevision,
+          formContextToken: first.formContextToken,
+          attemptId: first.attemptId,
+          visitorId: first.visitorId || '',
+          sessionId: first.sessionId || '',
+          events: batch.map(item => item.event)
+        };
+        let delivered = false;
+        let retired = false;
+        const removeBatchFromQueue = ({ wholeGroup = false } = {}) => {
+          const current = readFlowQueue();
+          writeFlowQueue(current.filter((item) => {
+            if (wholeGroup) return flowQueueGroupKey(item) !== groupKey;
+            return !eventKeys.has([
+              cleanFlowValue(item.attemptId),
+              cleanFlowValue(item.event && item.event.eventId)
+            ].join(':'));
+          }));
+        };
+        flowQueueRequest = fetch(FLOW_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          keepalive: true
+        })
+          .then((response) => {
+            const status = Number(response && response.status);
+            const retryable = status === 429 || status >= 500;
+            if (!response || (!response.ok && retryable)) {
+              throw new Error('site_flow_progress_not_accepted');
+            }
+            if (!response.ok) retired = true;
+            else delivered = true;
+            removeBatchFromQueue({ wholeGroup: retired });
+            flowQueueRetryCount = 0;
+            return { delivered, retired };
+          })
+          .catch(() => {
+            flowQueueRetryCount += 1;
+            return { delivered: false, retired: false };
+          })
+          .finally(() => {
+            flowQueueRequest = null;
+            const remaining = readFlowQueue().length;
+            if (remaining === 0) return;
+            const retryDelay = delivered || retired
+              ? 0
+              : Math.min(FLOW_RETRY_MAX_MS, 500 * (2 ** Math.min(flowQueueRetryCount, 6)));
+            scheduleFlowQueueFlush(retryDelay);
+          });
+        return flowQueueRequest;
+      };
+      const enqueueFormProgress = (payload = {}) => {
+        const queue = readFlowQueue();
+        (Array.isArray(payload.events) ? payload.events : []).forEach((event) => {
+          queue.push({
+            formSiteId: payload.formSiteId,
+            publicPageId: payload.publicPageId,
+            flowRevision: payload.flowRevision,
+            formContextToken: payload.formContextToken,
+            attemptId: payload.attemptId,
+            visitorId: payload.visitorId || '',
+            sessionId: payload.sessionId || '',
+            event
+          });
+        });
+        writeFlowQueue(queue);
+        scheduleFlowQueueFlush(0);
+      };
+      const readFlowState = (context = {}, options = {}) => {
+        const key = flowStateKey(context);
+        const now = Date.now();
+        let state = readJson(sessionStorage, key);
+        const missing = !state.attemptId;
+        const completed = state.completed === true;
+        const expired = !Number.isFinite(Number(state.lastActivity)) ||
+          now - Number(state.lastActivity || 0) > FLOW_INACTIVITY_MS;
+        if (options.create === false && (missing || completed || expired)) return null;
+        if (completed && options.reopenCompleted !== true) return null;
+        if (missing || completed || expired) {
+          state = {
+            attemptId: generateSessionId(),
+            sequence: 0,
+            lastActivity: now,
+            started: false,
+            completed: false,
+            emitted: {}
+          };
+        }
+        if (!state.attemptId) return null;
+        if (options.create !== false) {
+          state.lastActivity = now;
+          writeJson(sessionStorage, key, state);
+        }
+        return { key, state };
+      };
+      const flowEventDedupeKey = (eventName, details = {}) => {
+        const stepId = cleanFlowValue(details.stepId);
+        if (eventName === 'attempt_start') return eventName;
+        if (eventName === 'field_answered') {
+          return [eventName, stepId, cleanFlowValue(details.fieldId)].join(':');
+        }
+        if (eventName === 'step_complete') {
+          return [eventName, stepId, cleanFlowValue(details.targetStepId)].join(':');
+        }
+        return [eventName, stepId].join(':');
+      };
+      const hasFlowEvent = (state, eventName, details = {}) => {
+        if (!state) return false;
+        if (eventName === 'step_view') {
+          return cleanFlowValue(state.lastViewedStepId) === cleanFlowValue(details.stepId);
+        }
+        return Boolean(
+          state.emitted &&
+          state.emitted[flowEventDedupeKey(eventName, details)] === true
+        );
+      };
+      const rememberFlowEvent = (state, eventName, details = {}) => {
+        if (eventName === 'step_view') {
+          state.lastViewedStepId = cleanFlowValue(details.stepId);
+          return;
+        }
+        state.emitted = state.emitted && typeof state.emitted === 'object'
+          ? state.emitted
+          : {};
+        state.emitted[flowEventDedupeKey(eventName, details)] = true;
+      };
+      const nextFlowEvent = (state, eventName, details = {}) => {
+        if (hasFlowEvent(state, eventName, details)) return null;
+        state.sequence = Math.max(0, Number(state.sequence || 0)) + 1;
+        const event = {
+          eventId: (window.crypto && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : [state.attemptId, state.sequence, Date.now()].join(':'),
+          eventSequence: state.sequence,
+          eventName,
+          stepId: cleanFlowValue(details.stepId),
+          targetStepId: eventName === 'step_complete'
+            ? cleanFlowValue(details.targetStepId)
+            : '',
+          fieldId: eventName === 'field_answered'
+            ? cleanFlowValue(details.fieldId)
+            : '',
+          stepIndex: Math.max(0, Number(details.stepIndex || 0)),
+          stepTotal: Math.max(0, Number(details.stepTotal || 0)),
+          stepKind: cleanFlowValue(details.stepKind, 40),
+          outcome: eventName === 'step_complete'
+            ? cleanFlowValue(details.outcome, 40)
+            : '',
+          clientEventAt: new Date().toISOString()
+        };
+        rememberFlowEvent(state, eventName, details);
+        return event;
+      };
+      const sendFormProgress = (eventName, details = {}) => {
+        if (!FLOW_EVENT_NAMES.has(eventName)) return null;
+        const context = {
+          formSiteId: cleanFlowValue(details.formSiteId),
+          publicPageId: cleanFlowValue(RSTK_CONTEXT.pageId),
+          flowRevision: cleanFlowValue(details.flowRevision, 80),
+          formContextToken: cleanFlowContextToken(details.formContextToken)
+        };
+        if (!context.formSiteId || !context.flowRevision || !cleanFlowValue(details.stepId)) return null;
+        const holder = readFlowState(context, {
+          reopenCompleted: details.allowNewAttempt === true
+        });
+        if (!holder) return null;
+        const events = [];
+        if (!holder.state.started) {
+          const startEvent = nextFlowEvent(holder.state, 'attempt_start', details);
+          if (startEvent) events.push(startEvent);
+          holder.state.started = true;
+        }
+        if (eventName !== 'step_view' && !hasFlowEvent(holder.state, 'step_view', details)) {
+          const viewEvent = nextFlowEvent(holder.state, 'step_view', details);
+          if (viewEvent) events.push(viewEvent);
+        }
+        const progressEvent = nextFlowEvent(holder.state, eventName, details);
+        if (progressEvent) events.push(progressEvent);
+        writeJson(sessionStorage, holder.key, holder.state);
+        if (events.length === 0) {
+          return {
+            attemptId: holder.state.attemptId,
+            flowRevision: context.flowRevision,
+            eventSequence: holder.state.sequence,
+            formSiteId: context.formSiteId
+          };
+        }
+        const identity = window.ristakNativeIdentity
+          ? window.ristakNativeIdentity()
+          : { visitorId: getVisitorId(), sessionId: getSessionId() };
+        const payload = {
+          siteId: RSTK_CONTEXT.siteId,
+          formSiteId: context.formSiteId,
+          publicPageId: RSTK_CONTEXT.pageId,
+          flowRevision: context.flowRevision,
+          formContextToken: context.formContextToken,
+          attemptId: holder.state.attemptId,
+          visitorId: identity.visitorId || '',
+          sessionId: identity.sessionId || '',
+          events
+        };
+        enqueueFormProgress(payload);
+        return {
+          attemptId: holder.state.attemptId,
+          flowRevision: context.flowRevision,
+          eventSequence: holder.state.sequence,
+          formSiteId: context.formSiteId
+        };
+      };
+      const getFormProgressIdentity = (context = {}) => {
+        const normalized = {
+          formSiteId: cleanFlowValue(context.formSiteId),
+          flowRevision: cleanFlowValue(context.flowRevision, 80)
+        };
+        if (!normalized.formSiteId || !normalized.flowRevision) return null;
+        const holder = readFlowState(normalized, { create: false });
+        if (!holder || !holder.state.started) return null;
+        return {
+          attemptId: holder.state.attemptId,
+          flowRevision: normalized.flowRevision,
+          eventSequence: Number(holder.state.sequence || 0),
+          formSiteId: normalized.formSiteId
+        };
+      };
+      const flushFormProgressBeforeSubmit = async (
+        context = {},
+        timeoutMs = FLOW_PRE_SUBMIT_TIMEOUT_MS
+      ) => {
+        const identity = getFormProgressIdentity(context);
+        if (!identity || !identity.attemptId) return true;
+        const boundedTimeoutMs = Math.max(
+          100,
+          Math.min(FLOW_PRE_SUBMIT_TIMEOUT_MS, Number(timeoutMs) || FLOW_PRE_SUBMIT_TIMEOUT_MS)
+        );
+        let timeoutId = null;
+        let timedOut = false;
+        const timeout = new Promise((resolve) => {
+          timeoutId = window.setTimeout(() => {
+            timedOut = true;
+            resolve({ timedOut: true });
+          }, boundedTimeoutMs);
+        });
+        const pendingForAttempt = () => readFlowQueue().filter(
+          item => cleanFlowValue(item.attemptId) === cleanFlowValue(identity.attemptId)
+        ).length;
+
+        try {
+          let previousQueueLength = readFlowQueue().length;
+          while (!timedOut && pendingForAttempt() > 0) {
+            const outcome = await Promise.race([
+              Promise.resolve(flushFormProgressQueue()),
+              timeout
+            ]);
+            if (outcome && outcome.timedOut) return false;
+
+            const nextQueueLength = readFlowQueue().length;
+            const remainingForAttempt = pendingForAttempt();
+            if (remainingForAttempt === 0) {
+              return outcome?.retired !== true;
+            }
+            // Sin reducción no hubo entrega. El submit continúa para no volver
+            // obligatoria a la telemetría ni martillar la red con reintentos.
+            if (nextQueueLength >= previousQueueLength) return false;
+            previousQueueLength = nextQueueLength;
+          }
+          return pendingForAttempt() === 0;
+        } catch (_) {
+          return false;
+        } finally {
+          if (timeoutId !== null) window.clearTimeout(timeoutId);
+        }
+      };
+      const finishFormProgress = (context = {}) => {
+        const identity = getFormProgressIdentity(context);
+        if (!identity) return null;
+        const holder = readFlowState(context, { create: false });
+        if (holder) {
+          holder.state.completed = true;
+          holder.state.lastActivity = Date.now();
+          writeJson(sessionStorage, holder.key, holder.state);
+        }
+        flushFormProgressQueue();
+        return identity;
+      };
+
+      window.addEventListener('online', () => scheduleFlowQueueFlush(0));
+      window.addEventListener('pageshow', () => scheduleFlowQueueFlush(0));
+      window.addEventListener('pagehide', () => flushFormProgressQueue());
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushFormProgressQueue();
+      });
+
       window.ristakNativeIdentity = () => ({ visitorId: getVisitorId(), sessionId: getSessionId(), contactId: getSavedContactId() });
       window.ristakNativeBuildData = buildTrackingData;
       window.ristakNativeRememberContact = rememberContact;
@@ -23789,6 +25612,12 @@ function buildNativeSiteTrackingScript(context) {
       window.ristakNativeInitContactPrefill = initContactPrefill;
       window.ristakNativeAppendContactPrefillParams = appendContactPrefillParams;
       window.ristakNativeTrack = sendEvent;
+      window.ristakFormProgressTrack = sendFormProgress;
+      window.ristakFormProgressIdentity = getFormProgressIdentity;
+      window.ristakFormProgressFlushBeforeSubmit = flushFormProgressBeforeSubmit;
+      window.ristakFormProgressFinish = finishFormProgress;
+      readFlowQueue();
+      scheduleFlowQueueFlush(0);
       installContactParamPreservation();
       try { window.dispatchEvent(new CustomEvent('ristak:native-ready')); } catch (_) {}
 
@@ -26029,6 +27858,21 @@ function renderContentBlock(block, context = {}) {
         const rawPageId = cleanString(item?.settings?.pageId)
         return EMBEDDED_FORM_BLOCK_TYPES.has(item?.blockType) && (!rawPageId || embeddedPageIds.has(rawPageId))
       })
+    const embeddedFormSiteId = cleanString(
+      settings.formSiteId || settings.embeddedSiteId || settings.form_site_id
+    )
+    const embeddedFlowDefinition = embeddedFormSiteId
+      ? buildSiteFormFlowDefinition({
+          ...embeddedSiteForCopy,
+          id: embeddedFormSiteId,
+          siteType: settings.embeddedSiteType || 'standard_form',
+          theme: {
+            ...embeddedTheme,
+            pages: embeddedPages
+          },
+          blocks: embeddedItems
+        }, embeddedItems)
+      : null
     const fields = collectFieldBlocks(embeddedItems)
     const hasEmbeddedPaymentBlock = Boolean(findEnabledPaymentBlockContext(embeddedItems, embeddedSiteForCopy))
     const hasEmbeddedPages = embeddedPages.length > 1
@@ -26125,7 +27969,13 @@ function renderContentBlock(block, context = {}) {
           </div>`
     }
     const embeddedSection = `
-      <section class="rstk-embedded-form" id="form">
+      <section
+        class="rstk-embedded-form"
+        id="form"
+        ${embeddedFlowDefinition
+          ? `data-flow-form-site-id="${escapeHtml(embeddedFlowDefinition.formSiteId)}" data-flow-revision="${escapeHtml(embeddedFlowDefinition.flowRevision)}" data-flow-definition="${escapeHtml(JSON.stringify(embeddedFlowDefinition))}"`
+          : ''}
+      >
         ${renderEmbeddedItems()}
         ${fields.length || hasEmbeddedPaymentBlock ? `
           <div class="rstk-actions rstk-embed-actions"${context.revealFormActionControlled ? ' data-rstk-form-action-area data-rstk-video-action-hidden="true" aria-hidden="true"' : ''}>
@@ -27864,7 +29714,14 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
   </script>`
 }
 
-async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '', preview = false, linkStyle = 'query' } = {}) {
+async function buildImportedHtmlRuntimeInjection(site, imported, {
+  trackingEnabled = true,
+  pageId = DEFAULT_FUNNEL_PAGE_ID,
+  pageTitle = '',
+  preview = false,
+  linkStyle = 'query',
+  pageTrackingContext = null
+} = {}) {
   const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
   const activePage = getSitePage(site, activePageId) || { id: activePageId, title: pageTitle || site.title || site.name }
   const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, {
@@ -27879,6 +29736,8 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
       siteType: site.siteType,
       pageId: activePageId,
       pageTitle: pageTitle || site.title || site.name,
+      pageFlowRevision: buildSitePageFlowDefinition(site)?.flowRevision || '',
+      pageContextToken: cleanString(pageTrackingContext?.token),
       formSiteId: site.id,
       formSiteName: site.name,
       endpoint: '/collect'
@@ -31795,7 +33654,8 @@ async function renderImportedPublicSiteHtml(site, {
   trackingEnabled = true,
   preview = false,
   importedNativePreviewMock = false,
-  draftImportedCodeFiles = []
+  draftImportedCodeFiles = [],
+  publicHost = ''
 } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
@@ -31806,6 +33666,17 @@ async function renderImportedPublicSiteHtml(site, {
   }
 
   const activePage = getImportedRenderPage(site, pageId, pagePath)
+  const importedPageFlowRevision = buildSitePageFlowDefinition(site)?.flowRevision || ''
+  const pageTrackingContext = trackingEnabled && !preview
+    ? await createNativePageTrackingContext({
+        site,
+        pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
+        pageFlowRevision: importedPageFlowRevision,
+        formSiteId: site.id,
+        formSiteName: site.name,
+        host: publicHost || site.domain
+      })
+    : null
   const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
   const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
   const pageIdByAssetPath = buildImportedPageIdByAssetPath(normalizeSitePages(site))
@@ -31847,6 +33718,12 @@ async function renderImportedPublicSiteHtml(site, {
     ...site,
     blocks: await hydrateEmbeddedForms(importedSourceBlocks)
   }
+  site.blocks = await attachEmbeddedFormProgressTokens({
+    ownerSite: site,
+    blocks: site.blocks,
+    publicPageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
+    enabled: trackingEnabled && !preview
+  })
   if (!trackingEnabled || preview) {
     html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
   }
@@ -31908,7 +33785,8 @@ async function renderImportedPublicSiteHtml(site, {
     pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
     pageTitle: activePage?.title || site.title || site.name,
     preview,
-    linkStyle
+    linkStyle,
+    pageTrackingContext
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
@@ -31917,7 +33795,10 @@ async function renderImportedPublicSiteHtml(site, {
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
 
-export async function getImportedSiteAssetResponse(siteId, assetPath, { trackingEnabled = true } = {}) {
+export async function getImportedSiteAssetResponse(siteId, assetPath, {
+  trackingEnabled = true,
+  publicHost = ''
+} = {}) {
   const site = await getImportedSiteForAsset(siteId)
   if (!site || !isImportedHtmlSite(site)) return null
 
@@ -31998,10 +33879,22 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       force: /data-rstk-video-form-gate\b/i.test(html)
     })
     const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
+    const pageFlowRevision = buildSitePageFlowDefinition(site)?.flowRevision || ''
+    const pageTrackingContext = trackingEnabled
+      ? await createNativePageTrackingContext({
+          site,
+          pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
+          pageFlowRevision,
+          formSiteId: site.id,
+          formSiteName: site.name,
+          host: publicHost || site.domain
+        })
+      : null
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
-      pageTitle: page?.title || asset.assetPath
+      pageTitle: page?.title || asset.assetPath,
+      pageTrackingContext
     })
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
@@ -32112,10 +34005,19 @@ export async function renderPublicSiteHtml(site, {
   trackingEnabled = true,
   preview = false,
   importedNativePreviewMock = false,
-  draftImportedCodeFiles = []
+  draftImportedCodeFiles = [],
+  publicHost = ''
 } = {}) {
   if (isImportedHtmlSite(site)) {
-    return renderImportedPublicSiteHtml(site, { pageId, pagePath, trackingEnabled, preview, importedNativePreviewMock, draftImportedCodeFiles })
+    return renderImportedPublicSiteHtml(site, {
+      pageId,
+      pagePath,
+      trackingEnabled,
+      preview,
+      importedNativePreviewMock,
+      draftImportedCodeFiles,
+      publicHost
+    })
   }
 
   // Estado visual compartido (contrato editor/público): una sola función calcula
@@ -32150,6 +34052,12 @@ export async function renderPublicSiteHtml(site, {
   }
   if (isLandingType) {
     blocks = await hydrateEmbeddedForms(blocks)
+    blocks = await attachEmbeddedFormProgressTokens({
+      ownerSite: site,
+      blocks,
+      publicPageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
+      enabled: trackingEnabled && !preview
+    })
   }
   const fieldBlocks = collectFieldBlocks(blocks)
   const hasPaymentBlocks = Boolean(findEnabledPaymentBlockContext(blocks, site))
@@ -32168,6 +34076,16 @@ export async function renderPublicSiteHtml(site, {
   const isStandardFormIntermediatePage = isStandardFormContentPage && standardFormPageIndex < standardFormContentPageIds.length - 1
   const standardFormNextPage = isStandardFormIntermediatePage ? standardFormContentPages[standardFormPageIndex + 1] : null
   const nativeFormContext = getNativeFormContext(site, blocks)
+  let mainFormFlowDefinition = isStandardFormType || isInteractive
+    ? buildSiteFormFlowDefinition(site, Array.isArray(site.blocks) ? site.blocks : blocks)
+    : null
+  if (mainFormFlowDefinition && trackingEnabled && !preview) {
+    mainFormFlowDefinition = await signSiteFormProgressDefinition({
+      ownerSite: site,
+      publicPageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
+      definition: mainFormFlowDefinition
+    })
+  }
   const hasForm = fieldBlocks.length > 0
   const hasFormActions = hasForm || hasPaymentBlocks || (isInteractive && interactivePageCount > 1) || isStandardFormContentPage
   const landingCompletionConfig = isLandingType ? getFormCompletionConfig(site, blocks, { site, pageId: activePage?.id, linkStyle }) : null
@@ -32258,6 +34176,17 @@ export async function renderPublicSiteHtml(site, {
   const standalonePaymentMessageArea = isLandingType && hasTopLevelPaymentBlocks
     ? '<p class="rstk-submit-message" data-message role="status"></p>'
     : ''
+  const pageFlowRevision = buildSitePageFlowDefinition(site)?.flowRevision || ''
+  const pageTrackingContext = trackingEnabled && !preview
+    ? await createNativePageTrackingContext({
+        site,
+        pageId: activePage?.id || '',
+        pageFlowRevision,
+        formSiteId: nativeFormContext.formSiteId,
+        formSiteName: nativeFormContext.formSiteName,
+        host: publicHost || site.domain
+      })
+    : null
   const nativeTrackingScript = trackingEnabled
     ? buildNativeSiteTrackingScript({
       siteId: site.id,
@@ -32267,7 +34196,9 @@ export async function renderPublicSiteHtml(site, {
       formSiteId: nativeFormContext.formSiteId,
       formSiteName: nativeFormContext.formSiteName,
       pageId: activePage?.id || '',
-      pageTitle: activePage?.title || ''
+      pageTitle: activePage?.title || '',
+      pageFlowRevision,
+      pageContextToken: cleanString(pageTrackingContext?.token)
     })
     : ''
   const videoTrackingScript = !noTrack ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
@@ -32403,8 +34334,79 @@ export async function renderPublicSiteHtml(site, {
       const submitIncompleteOnExit = ${JSON.stringify(submitIncompleteOnExit)};
       const standardFormNextPageUrl = ${JSON.stringify(standardFormNextPageUrl)};
       const disqualifiedPageUrl = ${JSON.stringify(disqualifiedPageUrl)};
+      const MAIN_FORM_FLOW = ${scriptJson(mainFormFlowDefinition)};
       let index = Math.max(0, stepPages.indexOf(pageId));
       const storageKey = 'rstk:form:' + siteId;
+      const pendingFlowEvents = [];
+      let flowReadyListenerInstalled = false;
+      const flushPendingFlowEvents = () => {
+        if (typeof window.ristakFormProgressTrack !== 'function') return;
+        while (pendingFlowEvents.length) {
+          const pending = pendingFlowEvents.shift();
+          window.ristakFormProgressTrack(pending.eventName, pending.details);
+        }
+      };
+      const emitFlowEvent = (eventName, flow, stepId, extra = {}) => {
+        if (!flow || !flow.formSiteId || !flow.flowRevision || !stepId) return null;
+        const stage = Array.isArray(flow.stages)
+          ? flow.stages.find(item => item.stageId === stepId)
+          : null;
+        const details = {
+          formSiteId: flow.formSiteId,
+          flowRevision: flow.flowRevision,
+          formContextToken: flow.formContextToken || '',
+          stepId,
+          stepIndex: Number(stage ? stage.order : 0) + 1,
+          stepTotal: Array.isArray(flow.stages) ? flow.stages.length : 0,
+          stepKind: stage ? stage.kind : 'form_page',
+          ...extra
+        };
+        if (typeof window.ristakFormProgressTrack === 'function') {
+          return window.ristakFormProgressTrack(eventName, details);
+        }
+        pendingFlowEvents.push({ eventName, details });
+        if (!flowReadyListenerInstalled) {
+          flowReadyListenerInstalled = true;
+          window.addEventListener('ristak:native-ready', flushPendingFlowEvents, { once: true });
+        }
+        return null;
+      };
+      const flowStageFields = (flow, stepId) => {
+        const stage = flow && Array.isArray(flow.stages)
+          ? flow.stages.find(item => item.stageId === stepId)
+          : null;
+        return stage && Array.isArray(stage.fields) ? stage.fields : [];
+      };
+      const emitAnsweredFields = (flow, stepId, stageFields = [], options = {}) => {
+        if (!flow || !stepId) return;
+        stageFields.forEach((field) => {
+          const fieldId = field && field.getAttribute ? field.getAttribute('data-block-id') || '' : '';
+          if (!fieldId) return;
+          const value = readFieldValue(field);
+          const answered = Array.isArray(value)
+            ? value.length > 0
+            : String(value === null || value === undefined ? '' : value).trim() !== '';
+          if (answered) {
+            emitFlowEvent('field_answered', flow, stepId, {
+              fieldId,
+              allowNewAttempt: options.allowNewAttempt === true
+            });
+          }
+        });
+      };
+      const emitStepView = (flow, stepId) => emitFlowEvent('step_view', flow, stepId);
+      const emitStepComplete = (flow, stepId, targetStepId, stageFields = [], options = {}) => {
+        emitAnsweredFields(flow, stepId, stageFields, options);
+        return emitFlowEvent('step_complete', flow, stepId, {
+          targetStepId: targetStepId || '',
+          allowNewAttempt: options.allowNewAttempt === true
+        });
+      };
+      const getFlowIdentity = (flow) => (
+        flow && typeof window.ristakFormProgressIdentity === 'function'
+          ? window.ristakFormProgressIdentity(flow)
+          : null
+      );
 
       const setButtonContent = (button, label, subtitle = '') => {
         if (!button) return;
@@ -32759,13 +34761,16 @@ export async function renderPublicSiteHtml(site, {
         ruleAction = '',
         ruleFieldId = '',
         immediateDisqualify = false,
-        finalSubmit = false
+        finalSubmit = false,
+        flowContext = null
       } = {}) => {
         const url = new URL(window.location.href);
         const storedParams = window.ristakPreservedParams ? window.ristakPreservedParams() : {};
         const params = Object.assign({}, storedParams, Object.fromEntries(url.searchParams.entries()));
         const nativeIdentity = window.ristakNativeIdentity ? window.ristakNativeIdentity() : {};
         const nativeTracking = window.ristakNativeBuildData ? window.ristakNativeBuildData({ conversion_type: 'form_submit' }) : null;
+        const resolvedFlow = flowContext || getSubmissionFlow(document.activeElement);
+        const flowIdentity = resolvedFlow && resolvedFlow.flow ? getFlowIdentity(resolvedFlow.flow) : null;
         return {
           siteId,
           pageId,
@@ -32784,6 +34789,11 @@ export async function renderPublicSiteHtml(site, {
             immediateDisqualify,
             formFinalMarkerVersion: 2,
             formFinalSubmit: Boolean(finalSubmit),
+            flowAttemptId: flowIdentity ? flowIdentity.attemptId : null,
+            flowRevision: flowIdentity ? flowIdentity.flowRevision : null,
+            flowEventSequence: flowIdentity ? flowIdentity.eventSequence : null,
+            flowFormSiteId: flowIdentity ? flowIdentity.formSiteId : null,
+            flowStepId: resolvedFlow ? resolvedFlow.stepId : null,
             tracking: nativeTracking,
             fbp: (document.cookie.match(/(?:^|; )_fbp=([^;]+)/) || [])[1] || null,
             fbc: (document.cookie.match(/(?:^|; )_fbc=([^;]+)/) || [])[1] || null
@@ -32795,7 +34805,7 @@ export async function renderPublicSiteHtml(site, {
           const body = JSON.stringify(payload || {});
           if (navigator.sendBeacon && body.length < 60000) {
             const blob = new Blob([body], { type: 'application/json' });
-            if (navigator.sendBeacon('/api/sites/public/submit', blob)) return;
+            if (navigator.sendBeacon('/api/sites/public/submit', blob)) return true;
           }
           fetch('/api/sites/public/submit', {
             method: 'POST',
@@ -32803,7 +34813,10 @@ export async function renderPublicSiteHtml(site, {
             body,
             keepalive: true
           }).catch(() => {});
-        } catch (_) {}
+          return true;
+        } catch (_) {
+          return false;
+        }
       };
       const showOnlyRuleMessage = (targetMessage, text) => {
         const scope = targetMessage && targetMessage.closest ? targetMessage.closest('.rstk-embedded-form') || form : form;
@@ -32828,22 +34841,58 @@ export async function renderPublicSiteHtml(site, {
         if (immediateDisqualify) {
           if (immediateDisqualifyHandled) return true;
           immediateDisqualifyHandled = true;
-          submitSubmissionInBackground(buildSubmissionPayload({
+          const backgroundFlow = getSubmissionFlow(document.activeElement);
+          const backgroundStepFields = backgroundFlow && backgroundFlow.host
+            ? fields.filter(field => (
+                backgroundFlow.host.contains(field) &&
+                (field.getAttribute('data-page-id') || backgroundFlow.stepId) === backgroundFlow.stepId
+              ))
+            : fields;
+          emitAnsweredFields(
+            backgroundFlow ? backgroundFlow.flow : null,
+            backgroundFlow ? backgroundFlow.stepId : '',
+            backgroundStepFields,
+            { allowNewAttempt: true }
+          );
+          const backgroundPayload = buildSubmissionPayload({
             responses: isStandardForm ? { ...readStoredResponses(), ...getCurrentResponses() } : getCurrentResponses(),
             ruleSubmit: true,
             ruleAction: rule.action || '',
             ruleFieldId: options.fieldId || '',
-            immediateDisqualify: true
-          }));
-          clearStoredResponses();
-          const targetUrl = getImmediateDisqualifyUrl(rule);
-          if (targetUrl) {
-            pauseMediaIn(document);
-            navigateTo(targetUrl);
-            return true;
-          }
-          if (showEmbeddedResult('disqualified')) return true;
-          showOnlyRuleMessage(targetMessage, rule.message || 'Gracias. Por ahora no califica.');
+            immediateDisqualify: true,
+            flowContext: backgroundFlow
+          });
+          if (targetMessage) targetMessage.textContent = 'Enviando...';
+          const dispatchBackgroundSubmission = async () => {
+            if (
+              backgroundFlow &&
+              typeof window.ristakFormProgressFlushBeforeSubmit === 'function'
+            ) {
+              await window.ristakFormProgressFlushBeforeSubmit(backgroundFlow.flow)
+                .catch(() => false);
+            }
+            const backgroundAccepted = submitSubmissionInBackground(backgroundPayload);
+            if (
+              backgroundAccepted &&
+              backgroundFlow &&
+              typeof window.ristakFormProgressFinish === 'function'
+            ) {
+              window.ristakFormProgressFinish(backgroundFlow.flow);
+            }
+            clearStoredResponses();
+            const targetUrl = getImmediateDisqualifyUrl(rule);
+            if (targetUrl) {
+              pauseMediaIn(document);
+              navigateTo(targetUrl);
+              return;
+            }
+            if (showEmbeddedResult('disqualified')) return;
+            showOnlyRuleMessage(targetMessage, rule.message || 'Gracias. Por ahora no califica.');
+          };
+          dispatchBackgroundSubmission().catch(() => {
+            clearStoredResponses();
+            showOnlyRuleMessage(targetMessage, rule.message || 'Gracias. Por ahora no califica.');
+          });
           return true;
         }
         if (!shouldSubmitRule(rule)) {
@@ -33041,7 +35090,7 @@ export async function renderPublicSiteHtml(site, {
         });
       });
 
-      const renderStep = () => {
+      const renderStep = (options = {}) => {
         if (!isInteractive || stepPages.length === 0) return;
         const currentPageId = getCurrentPageId();
         const nextCopy = getPageButtonCopy(currentPageId, nextText);
@@ -33061,6 +35110,7 @@ export async function renderPublicSiteHtml(site, {
         }
         if (progressLabel) progressLabel.textContent = 'Pantalla ' + (index + 1) + ' de ' + stepPages.length;
         if (progressFill) progressFill.style.width = (((index + 1) / stepPages.length) * 100) + '%';
+        if (options.track !== false) emitStepView(MAIN_FORM_FLOW, currentPageId);
       };
 
       const getFieldMessageTarget = (field) => {
@@ -33133,9 +35183,16 @@ export async function renderPublicSiteHtml(site, {
         const pageContents = Array.from(host.querySelectorAll('[data-embedded-page-content]'));
         const pageIds = pageContents.map(content => content.getAttribute('data-embedded-page-content') || '').filter(Boolean);
         const formHost = host.closest('.rstk-embedded-form');
+        let flow = null;
+        try {
+          flow = formHost ? JSON.parse(formHost.getAttribute('data-flow-definition') || 'null') : null;
+        } catch (_) {
+          flow = null;
+        }
         return {
           host,
           formHost,
+          flow,
           pageContents,
           pageIds,
           index: 0,
@@ -33145,6 +35202,54 @@ export async function renderPublicSiteHtml(site, {
           message: formHost ? formHost.querySelector('[data-message]') : message
         };
       });
+      const embeddedFlowHosts = Array.from(form.querySelectorAll('.rstk-embedded-form[data-flow-definition]')).map((formHost) => {
+        let flow = null;
+        try {
+          flow = JSON.parse(formHost.getAttribute('data-flow-definition') || 'null');
+        } catch (_) {
+          flow = null;
+        }
+        const state = embeddedForms.find(candidate => candidate.formHost === formHost) || null;
+        return { formHost, flow, state };
+      }).filter(item => item.flow && item.flow.formSiteId && item.flow.flowRevision);
+      const getEmbeddedFlowHost = (element) => (
+        element
+          ? embeddedFlowHosts.find(item => item.formHost && item.formHost.contains(element)) || null
+          : null
+      );
+      const getSubmissionFlow = (submitter = null) => {
+        const embedded = getEmbeddedFlowHost(submitter) ||
+          getEmbeddedFlowHost(document.activeElement) ||
+          (embeddedFlowHosts.length === 1 ? embeddedFlowHosts[0] : null);
+        if (embedded) {
+          const stepId = embedded.state
+            ? embedded.state.pageIds[embedded.state.index] || ''
+            : embedded.flow.stages && embedded.flow.stages[0]
+              ? embedded.flow.stages[0].stageId
+              : '';
+          return { flow: embedded.flow, stepId, host: embedded.formHost };
+        }
+        return {
+          flow: MAIN_FORM_FLOW,
+          stepId: isInteractive ? getCurrentPageId() : pageId,
+          host: form
+        };
+      };
+      const captureAnsweredField = (event) => {
+        const target = event && event.target;
+        const field = target && target.closest ? target.closest('.rstk-field') : null;
+        if (!field || !form.contains(field)) return;
+        const embedded = getEmbeddedFlowHost(field);
+        const flow = embedded ? embedded.flow : MAIN_FORM_FLOW;
+        const stepId = field.getAttribute('data-page-id') ||
+          (embedded && embedded.state ? embedded.state.pageIds[embedded.state.index] || '' : '') ||
+          (isInteractive ? getCurrentPageId() : pageId);
+        emitAnsweredFields(flow, stepId, [field], {
+          allowNewAttempt: event.isTrusted === true
+        });
+      };
+      form.addEventListener('change', captureAnsweredField);
+      form.addEventListener('focusout', captureAnsweredField);
 
       const resolvePendingFormStep = ({
         standardFormIntermediate,
@@ -33195,7 +35300,7 @@ export async function renderPublicSiteHtml(site, {
         return fields.filter(field => (field.getAttribute('data-page-id') || '') === currentPageId);
       };
 
-      const renderEmbeddedForm = (state) => {
+      const renderEmbeddedForm = (state, options = {}) => {
         const currentPageId = state.pageIds[state.index] || '';
         const currentContent = state.pageContents.find((content) => (content.getAttribute('data-embedded-page-content') || '') === currentPageId);
         const embeddedLabel = currentContent ? currentContent.getAttribute('data-next-label') || currentContent.getAttribute('data-submit-label') || '' : '';
@@ -33212,12 +35317,16 @@ export async function renderPublicSiteHtml(site, {
           setButtonContent(state.submitButton, embeddedLabel || submitText, embeddedSubtitle || submitSubtitle);
           state.submitButton.hidden = state.index < state.pageIds.length - 1;
         }
+        if (options.track !== false) emitStepView(state.flow, currentPageId);
       };
 
       embeddedForms.forEach((state) => {
-	        state.nextButton && state.nextButton.addEventListener('click', () => {
+	        state.nextButton && state.nextButton.addEventListener('click', (clickEvent) => {
+          const currentStepId = state.pageIds[state.index] || '';
 	          const currentFields = getEmbeddedPageFields(state);
 	          if (!validateFields(currentFields)) return;
+          const progressOptions = { allowNewAttempt: clickEvent.isTrusted === true };
+          emitAnsweredFields(state.flow, currentStepId, currentFields, progressOptions);
           const rules = getSelectedRules(currentFields).filter(item => item.action && item.action !== 'continue');
           // "Ir a página específica" hacia una página del propio formulario embebido:
           // esas páginas viven inlined dentro de este form (no son páginas reales del
@@ -33225,7 +35334,9 @@ export async function renderPublicSiteHtml(site, {
           // un salto interno entre páginas del formulario, igual que en standalone.
           const embeddedSitePageRule = rules.find(item => item.action === 'site_page' && item.targetPageId && state.pageIds.indexOf(item.targetPageId) >= 0);
           if (embeddedSitePageRule) {
-            state.index = state.pageIds.indexOf(embeddedSitePageRule.targetPageId);
+            const nextStepId = embeddedSitePageRule.targetPageId;
+            emitStepComplete(state.flow, currentStepId, nextStepId, currentFields, progressOptions);
+            state.index = state.pageIds.indexOf(nextStepId);
             renderEmbeddedForm(state);
             return;
           }
@@ -33234,7 +35345,10 @@ export async function renderPublicSiteHtml(site, {
           const jumpRule = rules.find(item => item.action === 'jump' && item.targetBlockId);
           const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
           const targetIndex = state.pageIds.indexOf(targetPageId);
-          state.index = targetIndex >= 0 ? targetIndex : Math.min(state.index + 1, state.pageIds.length - 1);
+          const nextIndex = targetIndex >= 0 ? targetIndex : Math.min(state.index + 1, state.pageIds.length - 1);
+          const nextStepId = state.pageIds[nextIndex] || '';
+          emitStepComplete(state.flow, currentStepId, nextStepId, currentFields, progressOptions);
+          state.index = nextIndex;
           renderEmbeddedForm(state);
         });
 
@@ -33244,9 +35358,12 @@ export async function renderPublicSiteHtml(site, {
         });
       });
 
-	      nextButton && nextButton.addEventListener('click', () => {
-	        const currentFields = getPageFields(getCurrentPageId());
+	      nextButton && nextButton.addEventListener('click', (clickEvent) => {
+        const currentStepId = getCurrentPageId();
+	        const currentFields = getPageFields(currentStepId);
 	        if (!validateFields(currentFields)) return;
+        const progressOptions = { allowNewAttempt: clickEvent.isTrusted === true };
+        emitAnsweredFields(MAIN_FORM_FLOW, currentStepId, currentFields, progressOptions);
         const rules = getSelectedRules(currentFields).filter(item => item.action && item.action !== 'continue');
         const blockingRule = getBlockingRule(rules);
         if (blockingRule && handleBlockingRule(blockingRule, getCurrentPageId(), message, blockingRule.action === 'disqualify' ? { immediate: true, fieldId: blockingRule.fieldId || '' } : {})) return;
@@ -33255,16 +35372,22 @@ export async function renderPublicSiteHtml(site, {
           const targetField = fields.find(field => field.getAttribute('data-block-id') === jumpRule.targetBlockId);
           const targetPageId = targetField ? targetField.getAttribute('data-page-id') || '' : '';
           const targetIndex = stepPages.indexOf(targetPageId);
-          index = targetIndex >= 0 ? targetIndex : Math.min(index + 1, stepPages.length - 1);
+          const nextIndex = targetIndex >= 0 ? targetIndex : Math.min(index + 1, stepPages.length - 1);
+          emitStepComplete(MAIN_FORM_FLOW, currentStepId, stepPages[nextIndex] || '', currentFields, progressOptions);
+          index = nextIndex;
         } else {
-          index = Math.min(index + 1, stepPages.length - 1);
+          const nextIndex = Math.min(index + 1, stepPages.length - 1);
+          emitStepComplete(MAIN_FORM_FLOW, currentStepId, stepPages[nextIndex] || '', currentFields, progressOptions);
+          index = nextIndex;
         }
         renderStep();
       });
 
-	      formNextButton && formNextButton.addEventListener('click', () => {
+	      formNextButton && formNextButton.addEventListener('click', (clickEvent) => {
 	        const currentFields = fields;
 	        if (!validateFields(currentFields)) return;
+        const progressOptions = { allowNewAttempt: clickEvent.isTrusted === true };
+        emitAnsweredFields(MAIN_FORM_FLOW, pageId, currentFields, progressOptions);
         const currentResponses = getCurrentResponses();
         const mergedResponses = { ...readStoredResponses(), ...currentResponses };
         const rules = getSelectedRules(currentFields).filter(item => item.action && item.action !== 'continue');
@@ -33279,6 +35402,9 @@ export async function renderPublicSiteHtml(site, {
         const targetPageId = jumpRule && jumpRule.targetBlockId ? targetBlockPageMap[jumpRule.targetBlockId] : '';
         const targetIndex = standardFormPageIds.indexOf(targetPageId);
         const currentIndex = standardFormPageIds.indexOf(pageId);
+        const nextStandardStepId = targetIndex >= 0 && targetIndex !== currentIndex
+          ? targetPageId
+          : standardFormPageIds[currentIndex + 1] || '';
         const targetUrl = targetIndex >= 0 && targetIndex !== currentIndex
           ? pageUrl(targetPageId)
           : standardFormNextPageUrl;
@@ -33294,6 +35420,7 @@ export async function renderPublicSiteHtml(site, {
           return;
         }
         if (targetUrl) {
+          emitStepComplete(MAIN_FORM_FLOW, pageId, nextStandardStepId, currentFields, progressOptions);
           pauseMediaIn(document);
           navigateTo(targetUrl);
         }
@@ -33458,13 +35585,28 @@ export async function renderPublicSiteHtml(site, {
         };
 
         try {
+          const submissionFlow = getSubmissionFlow(event.submitter);
+          const submissionStepFields = submissionFlow && submissionFlow.host
+            ? fields.filter(field => (
+                submissionFlow.host.contains(field) &&
+                (field.getAttribute('data-page-id') || submissionFlow.stepId) === submissionFlow.stepId
+              ))
+            : fieldsToValidate;
+          const finalSubmit = !ruleSubmit && !pendingRuntimeStep && !isStandardFormIntermediatePage;
+          emitAnsweredFields(
+            submissionFlow ? submissionFlow.flow : null,
+            submissionFlow ? submissionFlow.stepId : '',
+            submissionStepFields,
+            { allowNewAttempt: event.isTrusted === true }
+          );
           const requestBody = buildSubmissionPayload({
             responses,
             ruleSubmit,
             ruleAction,
             ruleFieldId,
             immediateDisqualify,
-            finalSubmit: !ruleSubmit && !pendingRuntimeStep && !isStandardFormIntermediatePage
+            finalSubmit,
+            flowContext: submissionFlow
           });
           const postSubmission = async (payload) => {
             const response = await fetch('/api/sites/public/submit', {
@@ -33486,6 +35628,13 @@ export async function renderPublicSiteHtml(site, {
           if (inlineCheckoutId) {
             requestBody.paymentPublicId = inlineCheckoutId;
             requestBody.meta = { ...(requestBody.meta || {}), paymentPublicId: inlineCheckoutId };
+          }
+          if (
+            submissionFlow &&
+            typeof window.ristakFormProgressFlushBeforeSubmit === 'function'
+          ) {
+            await window.ristakFormProgressFlushBeforeSubmit(submissionFlow.flow)
+              .catch(() => false);
           }
           let submission = await postSubmission(requestBody);
           if (submission.paymentRequired) {
@@ -33518,8 +35667,18 @@ export async function renderPublicSiteHtml(site, {
           if (!keepStoredResponses) clearStoredResponses();
           if (keepStoredResponses) {
             const nextAfterPayment = form.dataset.standardFormNextAfterPayment || standardFormNextPageUrl;
+            const currentIndex = standardFormPageIds.indexOf(pageId);
+            emitStepComplete(
+              submissionFlow ? submissionFlow.flow : MAIN_FORM_FLOW,
+              submissionFlow ? submissionFlow.stepId : pageId,
+              standardFormPageIds[currentIndex + 1] || '',
+              submissionStepFields
+            );
             delete form.dataset.standardFormNextAfterPayment;
             if (navigateAway(nextAfterPayment)) return;
+          }
+          if (!keepStoredResponses && submissionFlow && typeof window.ristakFormProgressFinish === 'function') {
+            window.ristakFormProgressFinish(submissionFlow.flow);
           }
           if (window.ristakNativeRememberContact && submission.contactId) {
             window.ristakNativeRememberContact(submission.contact || {
@@ -33578,10 +35737,10 @@ export async function renderPublicSiteHtml(site, {
             initPhoneCountryFields();
             initContactPrefill();
             index = 0;
-            renderStep();
+            renderStep({ track: false });
             embeddedForms.forEach((state) => {
               state.index = 0;
-              renderEmbeddedForm(state);
+              renderEmbeddedForm(state, { track: false });
             });
           }
           if (message) message.textContent = submission.message || ${JSON.stringify('Listo. Recibimos tu información.')};
@@ -33604,7 +35763,18 @@ export async function renderPublicSiteHtml(site, {
       hydrateStoredResponses();
       initContactPrefill();
       renderStep();
-      embeddedForms.forEach(renderEmbeddedForm);
+      embeddedForms.forEach(state => renderEmbeddedForm(state));
+      if (!isInteractive && MAIN_FORM_FLOW && pageId) {
+        emitStepView(MAIN_FORM_FLOW, pageId);
+      }
+      embeddedFlowHosts
+        .filter(item => !item.state)
+        .forEach((item) => {
+          const firstStageId = item.flow.stages && item.flow.stages[0]
+            ? item.flow.stages[0].stageId
+            : '';
+          emitStepView(item.flow, firstStageId);
+        });
     })();
   </script>
   ${nativeTrackingScript}
@@ -33676,6 +35846,13 @@ const PUBLIC_SUBMIT_RATE_WINDOW_MS = 60 * 1000 // ventana de 1 minuto
 const PUBLIC_SUBMIT_RATE_MAX = 10 // máx. envíos por IP+site en la ventana
 const publicSubmitRateBuckets = new Map()
 let publicSubmitRateLastSweep = 0
+const PUBLIC_FORM_PROGRESS_RATE_MAX = 180
+const publicFormProgressRateLimiter = createSiteFlowRateLimiter({
+  windowMs: PUBLIC_SUBMIT_RATE_WINDOW_MS,
+  maxRequests: PUBLIC_FORM_PROGRESS_RATE_MAX,
+  maxEvents: 1_000,
+  maxBuckets: 5_000
+})
 
 function enforcePublicSubmitRateLimit(req, siteKey) {
   const ip = cleanString(getClientIp(req)) || 'unknown'
@@ -33706,6 +35883,17 @@ function enforcePublicSubmitRateLimit(req, siteKey) {
 
   hits.push(now)
   publicSubmitRateBuckets.set(key, hits)
+}
+
+function enforcePublicFormProgressRateLimit(req, siteKey, eventCount = 1) {
+  // Express resuelve req.ip respetando trust proxy. Leer X-Forwarded-For aquí
+  // permitiría una interpretación distinta a la del resto del servidor.
+  const ip = cleanString(req.ip) || cleanString(req.socket?.remoteAddress) || 'unknown'
+  return publicFormProgressRateLimiter.consume({
+    ip,
+    siteKey,
+    eventCount
+  })
 }
 
 // (TRK-004) Honeypot: campo señuelo que un humano nunca llena. Si llega con
@@ -37080,6 +39268,373 @@ export async function prepareSiteCheckoutInstallments(req, body = {}) {
   }
 }
 
+function assertPublicFormProgressClaimMatchesBody(body, aliases, expected, label) {
+  const present = aliases
+    .filter(alias => Object.prototype.hasOwnProperty.call(body, alias))
+    .map(alias => cleanString(body[alias]))
+    .filter(Boolean)
+  if (present.some(value => value !== expected)) {
+    const error = new Error(`${label} no coincide con el contexto público firmado`)
+    error.status = 409
+    error.code = 'site_flow_context_mismatch'
+    throw error
+  }
+}
+
+const PUBLIC_FORM_PROGRESS_ATTEMPT_ID_MAX_LENGTH = 200
+const PUBLIC_FORM_PROGRESS_CONTEXT_TOKEN_MAX_LENGTH = 4096
+
+function publicFormProgressEnvelopeError(message) {
+  return Object.assign(new Error(message), {
+    status: 400,
+    code: 'site_flow_envelope_invalid'
+  })
+}
+
+function readPublicFormProgressStringAlias(body, aliases, {
+  label,
+  required = false,
+  maxLength
+} = {}) {
+  const present = aliases.filter(alias => Object.prototype.hasOwnProperty.call(body, alias))
+  if (present.length === 0) {
+    if (required) throw publicFormProgressEnvelopeError(`${label} es obligatorio`)
+    return ''
+  }
+  const values = present.map(alias => {
+    const value = body[alias]
+    if (typeof value !== 'string') {
+      throw publicFormProgressEnvelopeError(`${label} debe ser texto`)
+    }
+    const cleaned = value.trim()
+    if (!cleaned && required) {
+      throw publicFormProgressEnvelopeError(`${label} es obligatorio`)
+    }
+    if (cleaned.length > maxLength) {
+      throw publicFormProgressEnvelopeError(`${label} supera ${maxLength} caracteres`)
+    }
+    return cleaned
+  })
+  if (values.some(value => value !== values[0])) {
+    throw publicFormProgressEnvelopeError(`${label} tiene alias contradictorios`)
+  }
+  return values[0]
+}
+
+function assertPublicFormProgressEnvelope(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw publicFormProgressEnvelopeError('El avance del formulario debe ser un objeto JSON')
+  }
+  if (
+    !Array.isArray(body.events) ||
+    body.events.length < 1 ||
+    body.events.length > SITE_FLOW_MAX_BATCH_EVENTS
+  ) {
+    throw publicFormProgressEnvelopeError(
+      `events debe contener entre 1 y ${SITE_FLOW_MAX_BATCH_EVENTS} eventos`
+    )
+  }
+  if (body.events.some(event => !event || typeof event !== 'object' || Array.isArray(event))) {
+    throw publicFormProgressEnvelopeError('Cada elemento de events debe ser un objeto JSON')
+  }
+  readPublicFormProgressStringAlias(body, ['attemptId', 'attempt_id'], {
+    label: 'attemptId',
+    required: true,
+    maxLength: PUBLIC_FORM_PROGRESS_ATTEMPT_ID_MAX_LENGTH
+  })
+  readPublicFormProgressStringAlias(body, ['formContextToken', 'form_context_token'], {
+    label: 'formContextToken',
+    maxLength: PUBLIC_FORM_PROGRESS_CONTEXT_TOKEN_MAX_LENGTH
+  })
+}
+
+function publicFormProgressSourcePath(req, requestHost) {
+  const referrer = cleanString(req.get?.('referer') || req.headers?.referer)
+  if (referrer) {
+    let parsed
+    try {
+      parsed = new URL(referrer)
+    } catch {
+      const error = new Error('La ruta pública de origen no es válida')
+      error.status = 400
+      throw error
+    }
+    if (!matchesPublicDomain(parsed.hostname, requestHost)) {
+      const error = new Error('El origen del formulario no corresponde al dominio público')
+      error.status = 403
+      throw error
+    }
+    return parsed.pathname || '/'
+  }
+
+  // Los tests de servicio y callers internos pasan directamente la ruta pública.
+  // En Express real req.path ya es el endpoint y no sirve para resolver la página.
+  const directPath = cleanString(req.path)
+  if (
+    directPath &&
+    !/\/(?:api\/sites\/)?public\/form-progress\/?$/i.test(directPath)
+  ) {
+    return directPath
+  }
+  return ''
+}
+
+async function verifySignedPublicFormProgressContext(req, body = {}) {
+  const token = cleanString(body.formContextToken || body.form_context_token)
+  if (!token) return null
+
+  const verified = await verifyPublicContextToken(token, {
+    purpose: SITE_FORM_PROGRESS_CONTEXT_PURPOSE
+  })
+  const claims = verified.claims || {}
+  const context = {
+    ownerSiteId: cleanString(claims.ownerSiteId),
+    publicPageId: cleanString(claims.publicPageId),
+    formSiteId: cleanString(claims.formSiteId),
+    flowRevision: cleanString(claims.flowRevision),
+    host: normalizePublicContextHost(claims.host),
+    published: claims.published === true
+  }
+  if (
+    !context.ownerSiteId ||
+    !context.publicPageId ||
+    !context.formSiteId ||
+    !context.flowRevision ||
+    !context.host ||
+    !context.published
+  ) {
+    const error = new Error('El contexto firmado del formulario está incompleto')
+    error.status = 400
+    error.code = 'invalid_site_flow_context'
+    throw error
+  }
+
+  const requestHost = normalizePublicContextHost(getRequestHost(req))
+  if (!requestHost || !matchesPublicDomain(requestHost, context.host)) {
+    const error = new Error('El contexto firmado no pertenece a este dominio público')
+    error.status = 403
+    error.code = 'site_flow_context_host_mismatch'
+    throw error
+  }
+
+  assertPublicFormProgressClaimMatchesBody(
+    body,
+    ['siteId', 'site_id'],
+    context.ownerSiteId,
+    'El Site'
+  )
+  assertPublicFormProgressClaimMatchesBody(
+    body,
+    ['publicPageId', 'public_page_id'],
+    context.publicPageId,
+    'La página'
+  )
+  assertPublicFormProgressClaimMatchesBody(
+    body,
+    ['formSiteId', 'form_site_id'],
+    context.formSiteId,
+    'El formulario'
+  )
+  assertPublicFormProgressClaimMatchesBody(
+    body,
+    ['flowRevision', 'flow_revision'],
+    context.flowRevision,
+    'La revisión'
+  )
+  return context
+}
+
+export async function createPublicSiteFormProgressFromRequest(req, body = {}, options = {}) {
+  // Falla barato antes de resolver dominios, cargar Sites o hidratar embeds.
+  // La validación profunda y autoritativa sigue ocurriendo después con el
+  // contexto firmado y la definición publicada.
+  assertPublicFormProgressEnvelope(body)
+
+  const {
+    host,
+    submittedSiteId,
+    previewContext
+  } = await resolvePublicRequestAccess(req, body, options)
+
+  if (previewContext) {
+    const previewSite = submittedSiteId
+      ? await getSite(submittedSiteId, { includeBlocks: false, includeSubmissions: false })
+      : null
+    if (!previewSite || !canExecutePublicSiteAction(previewSite, previewContext)) {
+      const error = new Error('Site público no encontrado')
+      error.status = 404
+      throw error
+    }
+    return { accepted: false, skipped: true, reason: NO_TRACK_REASON }
+  }
+  if (shouldSkipTracking({ req, body, meta: body, previewContext })) {
+    return { accepted: false, skipped: true, reason: NO_TRACK_REASON }
+  }
+
+  const signedContext = await verifySignedPublicFormProgressContext(req, body)
+  // HTML público cacheado antes del despliegue no trae token. Se descarta sin
+  // contaminar el ledger; al vencer ese caché, el renderer nuevo ya lo incluye.
+  if (!signedContext) {
+    return {
+      accepted: false,
+      skipped: true,
+      reason: 'unsigned_form_context'
+    }
+  }
+  // El token ya vuelve confiable ownerSiteId, así que limitamos antes de cargar
+  // el Site, resolver rutas o hidratar formularios embebidos.
+  enforcePublicFormProgressRateLimit(
+    req,
+    `flow:${signedContext.ownerSiteId}`,
+    body.events.length
+  )
+
+  const site = await getSite(signedContext.ownerSiteId, {
+    includeBlocks: false,
+    includeSubmissions: false
+  })
+  if (!site || site.status !== 'published') {
+    const error = new Error('Site público no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  const ownerPage = normalizeSitePages(site).find(
+    page => cleanString(page.id) === signedContext.publicPageId
+  )
+  if (!ownerPage) {
+    const error = new Error('La página enviada no pertenece al Site publicado')
+    error.status = 409
+    error.code = 'site_flow_page_owner_mismatch'
+    throw error
+  }
+
+  const sourcePath = publicFormProgressSourcePath(req, host)
+  if (sourcePath) {
+    const source = await resolvePublicSiteForHost(host, { path: sourcePath })
+    if (!source.ok || source.site?.id !== site.id) {
+      const error = new Error('La ruta pública no corresponde al Site firmado')
+      error.status = 409
+      error.code = 'site_flow_route_mismatch'
+      throw error
+    }
+    if (source.pageId && source.pageId !== signedContext.publicPageId) {
+      const error = new Error('La ruta pública no corresponde a la página firmada')
+      error.status = 409
+      error.code = 'site_flow_route_page_mismatch'
+      throw error
+    }
+  }
+
+  const blocks = await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+  const definition = resolveSiteFlowDefinitionForPublicSite(
+    { ...site, blocks },
+    blocks,
+    signedContext.formSiteId
+  )
+  if (!definition || definition.flowRevision !== signedContext.flowRevision) {
+    const error = new Error('La versión del formulario ya no coincide con la publicada')
+    error.status = 409
+    error.code = 'site_flow_revision_mismatch'
+    throw error
+  }
+
+  const stageById = new Map(definition.stages.map(stage => [stage.stageId, stage]))
+  const events = Array.isArray(body.events)
+    ? body.events.map(rawEvent => {
+        const event = rawEvent && typeof rawEvent === 'object' ? { ...rawEvent } : rawEvent
+        if (!event || typeof event !== 'object') return event
+        const eventName = cleanString(event.eventName || event.event_name)
+        const stepId = cleanString(event.stepId || event.step_id)
+        const fieldId = cleanString(event.fieldId || event.field_id)
+        const stage = stageById.get(stepId)
+        if (!stage && eventName !== 'attempt_start') {
+          const error = new Error('La etapa enviada no existe en el formulario publicado')
+          error.status = 400
+          throw error
+        }
+        if (fieldId && !stage?.fields?.some(field => field.fieldId === fieldId)) {
+          const error = new Error('La pregunta enviada no pertenece a esa etapa')
+          error.status = 400
+          throw error
+        }
+        if (stage) {
+          if (Object.prototype.hasOwnProperty.call(event, 'stepKind')) event.stepKind = stage.kind
+          else event.step_kind = stage.kind
+        }
+        return event
+      })
+    : body.events
+
+  return ingestSiteFlowEventBatch({
+    body: {
+      attemptId: body.attemptId || body.attempt_id,
+      events
+    },
+    context: {
+      siteId: site.id,
+      formSiteId: definition.formSiteId,
+      publicPageId: signedContext.publicPageId,
+      flowRevision: definition.flowRevision,
+      validStepIds: definition.stages.map(stage => stage.stageId),
+      validFieldIds: definition.stages.flatMap(stage => stage.fields.map(field => field.fieldId)),
+      visitorId: cleanString(body.visitorId || body.visitor_id),
+      sessionId: cleanString(body.sessionId || body.session_id),
+      // El navegador nunca puede asociar contactos. Sólo el cierre confirmado
+      // por createSubmissionFromRequest guarda contact_id en el intento.
+      contactId: null,
+      receivedAt: new Date()
+    }
+  })
+}
+
+async function recordSubmissionSiteFlowTerminal({
+  site,
+  blocks = [],
+  meta = {},
+  submissionId,
+  contactId,
+  outcome = 'completed',
+  terminal = false,
+  occurredAt
+} = {}) {
+  const attemptId = cleanString(meta.flowAttemptId || meta.flow_attempt_id)
+  const formSiteId = cleanString(meta.flowFormSiteId || meta.flow_form_site_id)
+  const flowRevision = cleanString(meta.flowRevision || meta.flow_revision)
+  const stepId = cleanString(meta.flowStepId || meta.flow_step_id)
+  if (!attemptId || !formSiteId || !flowRevision || !submissionId) return null
+
+  const definition = resolveSiteFlowDefinitionForPublicSite(
+    { ...site, blocks },
+    blocks,
+    formSiteId
+  )
+  if (!definition || definition.flowRevision !== flowRevision) return null
+  const stage = definition.stages.find(item => item.stageId === stepId) || null
+  if (!stage) return null
+
+  return recordSiteFlowTerminalEvent({
+    attemptId,
+    eventName: terminal ? 'attempt_terminal' : 'attempt_completed',
+    submissionId,
+    outcome,
+    stepId,
+    stepKind: stage.kind,
+    occurredAt,
+    context: {
+      siteId: site.id,
+      formSiteId: definition.formSiteId,
+      publicPageId: cleanString(meta.pageId || meta.page_id),
+      flowRevision: definition.flowRevision,
+      validStepIds: definition.stages.map(item => item.stageId),
+      validFieldIds: definition.stages.flatMap(item => item.fields.map(field => field.fieldId)),
+      visitorId: cleanString(meta.visitorId || meta.visitor_id),
+      sessionId: cleanString(meta.sessionId || meta.session_id),
+      contactId: cleanString(contactId)
+    }
+  })
+}
+
 export async function createSubmissionFromRequest(req, body = {}, options = {}) {
   const {
     host,
@@ -37404,6 +39959,46 @@ export async function createSubmissionFromRequest(req, body = {}, options = {}) 
     jsonString(meta),
     ruleEvaluation.status
   ])
+
+  const flowRuleAction = cleanString(meta.ruleAction || meta.rule_action)
+  const flowRuleTerminalExit = (
+    isRuleSubmit &&
+    !isExplicitFinalSubmit &&
+    [
+      'redirect',
+      'site_page',
+      'show_message',
+      'disqualify',
+      'disqualify_after_submit',
+      'end_form'
+    ].includes(flowRuleAction)
+  )
+  const flowTerminalSubmission = (
+    isExplicitFinalSubmit ||
+    Boolean(videoFormGateContext) ||
+    immediateDisqualifySubmit ||
+    ruleEvaluation.status === 'disqualified' ||
+    flowRuleTerminalExit
+  )
+  if (flowTerminalSubmission) {
+    const flowEndedWithoutCompletion = (
+      ruleEvaluation.status === 'disqualified' ||
+      flowRuleTerminalExit
+    )
+    await recordSubmissionSiteFlowTerminal({
+      site: siteWithBlocks,
+      blocks,
+      meta,
+      submissionId,
+      contactId,
+      outcome: ruleEvaluation.status === 'disqualified'
+        ? 'disqualified'
+        : flowEndedWithoutCompletion ? 'terminal_exit' : 'completed',
+      terminal: flowEndedWithoutCompletion
+    }).catch(error => {
+      logger.warn(`No se pudo cerrar el recorrido del formulario ${nativeFormContext.formSiteId || site.id}: ${error.message}`)
+    })
+  }
 
   await emitSiteSubmissionAutomationEvents({
     contactResult,

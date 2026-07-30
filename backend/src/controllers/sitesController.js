@@ -11,6 +11,7 @@ import {
   createSite,
   createSiteWithAIHtml,
   createSitesPublicDomain,
+  createPublicSiteFormProgressFromRequest,
   createSubmissionFromRequest,
   deleteBlock,
   deleteSiteContentAsset,
@@ -409,6 +410,12 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
     if (Object.prototype.hasOwnProperty.call(body, 'formFunnelSiteId') || Object.prototype.hasOwnProperty.call(body, 'form_funnel_site_id')) {
       siteTrackingInput.formFunnelSiteId = body.formFunnelSiteId ?? body.form_funnel_site_id
     }
+    if (Object.prototype.hasOwnProperty.call(body, 'pageFunnelSiteId') || Object.prototype.hasOwnProperty.call(body, 'page_funnel_site_id')) {
+      siteTrackingInput.pageFunnelSiteId = body.pageFunnelSiteId ?? body.page_funnel_site_id
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'formJourneySiteId') || Object.prototype.hasOwnProperty.call(body, 'form_journey_site_id')) {
+      siteTrackingInput.formJourneySiteId = body.formJourneySiteId ?? body.form_journey_site_id
+    }
     const [siteTracking, videoTracking, videoInventory] = await Promise.all([
       getSitesTrackingSummary(siteTrackingInput),
       getVideoPlaybackAggregate({
@@ -593,7 +600,8 @@ export async function importedSiteAssetHandler(req, res) {
   try {
     const assetPath = req.params[0] || ''
     const result = await getImportedSiteAssetResponse(req.params.siteId, assetPath, {
-      trackingEnabled: !isTrackingBypassRequest(req)
+      trackingEnabled: !isTrackingBypassRequest(req),
+      publicHost: getRequestHost(req)
     })
 
     if (!result) {
@@ -1100,6 +1108,18 @@ export async function submitPublicSiteHandler(req, res) {
   }
 }
 
+export async function publicSiteFormProgressHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const previewContext = await getPreviewContextForPublicRequest(req, body)
+    const result = await createPublicSiteFormProgressFromRequest(req, body, { previewContext })
+    res.status(202).json({ success: true, data: result })
+  } catch (error) {
+    logger.warn(`Evento de recorrido de formulario rechazado: ${error.message}`)
+    sendError(res, error, 'No se pudo registrar el avance del formulario')
+  }
+}
+
 export async function publicSiteContactPrefillHandler(req, res) {
   try {
     const contact = await resolvePublicPrefillContact({
@@ -1222,6 +1242,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
     if (
       req.path === '/api/health' ||
       req.path === '/api/sites/public/submit' ||
+      req.path === '/api/sites/public/form-progress' ||
       req.path === '/api/sites/public/checkout/init' ||
       req.path === '/api/sites/public/checkout/pay' ||
       req.path === '/api/sites/public/checkout/prepare-installments' ||
@@ -1340,7 +1361,8 @@ export async function publicSiteHostMiddleware(req, res, next) {
       return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
         pageId: req.query?.page || resolution.pageId,
         pagePath,
-        trackingEnabled: !isTrackingBypassRequest(req)
+        trackingEnabled: !isTrackingBypassRequest(req),
+        publicHost: host
       }))
     }
 

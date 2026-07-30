@@ -360,6 +360,67 @@ export interface SitesFormFunnelAnalytics {
   fields: SitesFormFunnelField[]
 }
 
+export interface SitesStageFunnelNextStage {
+  stageId: string
+  label: string
+  attempts: number
+  visitors: number
+  rate: number
+}
+
+export interface SitesStageFunnelField {
+  fieldId: string
+  label: string
+  answeredAttempts: number
+  answeredVisitors: number
+  answerRate: number
+}
+
+export interface SitesStageFunnelStage {
+  stageId: string
+  kind: 'page' | 'form_page' | 'slide'
+  label: string
+  order: number
+  totalViews?: number
+  reachedAttempts: number
+  reachedVisitors: number
+  answeredAttempts?: number
+  answeredVisitors?: number
+  advancedAttempts: number
+  advancedVisitors: number
+  terminalAttempts: number
+  inProgressAttempts: number
+  inProgressVisitors: number
+  droppedAttempts: number
+  droppedVisitors: number
+  advanceRate: number
+  dropOffRate: number
+  directEntries: number
+  nextStages: SitesStageFunnelNextStage[]
+  fields?: SitesStageFunnelField[]
+}
+
+export interface SitesStageFunnelAnalytics {
+  siteId: string
+  measurement: 'first_party_page_journey_v1' | 'first_party_form_journey_v1'
+  coverage: {
+    status: 'verified' | 'partial' | 'unavailable'
+    trackedFrom?: string
+    warnings: string[]
+    excludedRevisions?: number
+    terminalAttemptsWithoutStart?: number
+    reconciledFinalSubmissions?: number
+    finalSubmissionsWithoutTerminal?: number | null
+    terminalReconciliationUnavailable?: boolean
+  }
+  entrants: number
+  uniqueEntrants: number
+  completedAttempts: number
+  completedVisitors: number
+  conversionRate: number
+  stages: SitesStageFunnelStage[]
+}
+
 export interface SitesVideoAnalyticsSummary {
   playerLoads: number
   playbackStarts: number
@@ -520,7 +581,7 @@ export interface SitesAnalyticsInventory {
 }
 
 export interface SitesAnalyticsSummary {
-  schemaVersion: 3
+  schemaVersion: 4
   dateFrom?: string
   dateTo?: string
   meta: SitesAnalyticsMeta
@@ -536,6 +597,8 @@ export interface SitesAnalyticsSummary {
   bySiteId: Record<string, SitesTrackingStats>
   sites?: Record<string, SitesTrackingStats>
   formFunnels: Record<string, SitesFormFunnelAnalytics>
+  pageFunnels: Record<string, SitesStageFunnelAnalytics>
+  formJourneys: Record<string, SitesStageFunnelAnalytics>
   videos: SitesVideoAnalyticsAggregate
 }
 
@@ -561,6 +624,8 @@ export interface SitesAnalyticsSummaryInput {
   siteScope?: SitesAnalyticsSiteScope
   breakdownSiteIds?: string[]
   formFunnelSiteId?: string
+  pageFunnelSiteId?: string
+  formJourneySiteId?: string
   videoAssetIds?: string[]
   videoBreakdownAssetIds?: string[]
   videoSiteIds?: string[]

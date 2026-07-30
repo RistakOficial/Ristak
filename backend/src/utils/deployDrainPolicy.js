@@ -67,7 +67,7 @@ export function classifyDeployDrainRequest(req = {}) {
 
   if (matchesAny(path, [
     /^\/(?:api\/tracking\/)?(?:collect|video-event|sync-visitor|link-visitor)$/,
-    /^\/api\/sites\/public\/(?:submit|meta-event)$/
+    /^\/api\/sites\/public\/(?:submit|meta-event|form-progress)$/
   ]) && isMutation) {
     return 'http:tracking'
   }

@@ -39,6 +39,11 @@ import {
   getMetaParameterBuilderClientBundle,
   setMetaParameterCookies
 } from '../services/metaParameterManagerService.js'
+import {
+  NativePageTrackingAuthError,
+  authenticateTrackingPageView,
+  consumeNativePageViewRateLimit
+} from '../services/nativePageTrackingAuthService.js'
 import fetch from 'node-fetch'
 
 const isPostgres = databaseDialect === 'postgres'
@@ -1263,7 +1268,14 @@ export async function collectEvent(req, res) {
       return res.status(413).json({ error: 'Payload too large' })
     }
 
-    const { visitor_id, session_id, contact_id, event_name, ts, data } = req.body
+    const {
+      visitor_id,
+      session_id,
+      contact_id,
+      event_name,
+      ts,
+      data: submittedData
+    } = req.body
 
     // Validaciones básicas
     if (!visitor_id || !session_id || !event_name || !ts) {
@@ -1277,7 +1289,7 @@ export async function collectEvent(req, res) {
       return res.status(400).json({ error: 'Reserved event name' })
     }
 
-    const noTrackReason = getNoTrackReason({ req, body: req.body, data })
+    const noTrackReason = getNoTrackReason({ req, body: req.body, data: submittedData })
     if (noTrackReason) {
       return res.json({ ok: true, skipped: true, reason: noTrackReason })
     }
@@ -1307,28 +1319,68 @@ export async function collectEvent(req, res) {
     }
 
     const user_agent = req.headers['user-agent'] || null
+    let acceptedData = submittedData || {}
+    let pageAuthentication = null
+    const normalizedEventName = String(event_name || '').trim().toLowerCase()
+    if (normalizedEventName === 'native_site_view' || normalizedEventName === 'page_view') {
+      const nativeViewCandidate = normalizedEventName === 'native_site_view' ||
+        String(acceptedData.tracking_source || '').trim().toLowerCase() === 'native_site' ||
+        Boolean(acceptedData.page_context_token || acceptedData.pageContextToken)
+      if (nativeViewCandidate) {
+        const rateLimit = consumeNativePageViewRateLimit({
+          ip,
+          siteId: '__native_page_views__'
+        })
+        if (!rateLimit.allowed) {
+          res.setHeader?.('Retry-After', String(rateLimit.retryAfterSeconds))
+          return res.status(429).json({
+            error: 'Too many native Site views',
+            code: 'native_site_view_rate_limited'
+          })
+        }
+      }
+
+      try {
+        pageAuthentication = await authenticateTrackingPageView({
+          eventName: event_name,
+          data: acceptedData,
+          req
+        })
+      } catch (error) {
+        if (error instanceof NativePageTrackingAuthError) {
+          return res.status(error.status || 400).json({
+            error: 'Invalid native Site context',
+            code: error.code
+          })
+        }
+        throw error
+      }
+
+      acceptedData = pageAuthentication.data
+    }
+
     const metaSignals = collectMetaParameterSignals({
       req,
       requestMeta: {
         ip,
         userAgent: user_agent,
         meta: {
-          ...(data || {}),
-          pageUrl: data?.url,
-          params: data || {},
-          fbc: data?.fbc,
-          fbp: data?.fbp
+          ...acceptedData,
+          pageUrl: acceptedData?.url,
+          params: acceptedData,
+          fbc: acceptedData?.fbc,
+          fbp: acceptedData?.fbp
         }
       },
-      sourceUrl: data?.url
+      sourceUrl: acceptedData?.url
     })
     setMetaParameterCookies(res, metaSignals.cookiesToSet, req)
 
     const enrichedData = {
-      ...(data || {}),
-      ...(metaSignals.fbc && !data?.fbc ? { fbc: metaSignals.fbc } : {}),
-      ...(metaSignals.fbp && !data?.fbp ? { fbp: metaSignals.fbp } : {}),
-      ...(metaSignals.clientIpAddress && !data?.client_ip_address ? { client_ip_address: metaSignals.clientIpAddress } : {})
+      ...acceptedData,
+      ...(metaSignals.fbc && !acceptedData?.fbc ? { fbc: metaSignals.fbc } : {}),
+      ...(metaSignals.fbp && !acceptedData?.fbp ? { fbp: metaSignals.fbp } : {}),
+      ...(metaSignals.clientIpAddress && !acceptedData?.client_ip_address ? { client_ip_address: metaSignals.clientIpAddress } : {})
     }
 
     // (TRK-001) /collect es público: el contact_id del body es atacante-controlado.
@@ -1338,18 +1390,21 @@ export async function collectEvent(req, res) {
     // linkVisitorToContact/unifyVisitorIds desde un endpoint sin auth.
     let verifiedContactId = null
     let verifiedContactName = null
-    if (contact_id) {
+    const submittedContactId = pageAuthentication?.mode && pageAuthentication.mode !== 'external'
+      ? null
+      : contact_id
+    if (submittedContactId) {
       try {
-        const contact = await db.get('SELECT id, full_name FROM contacts WHERE id = $1', [contact_id])
+        const contact = await db.get('SELECT id, full_name FROM contacts WHERE id = $1', [submittedContactId])
         if (contact?.id) {
           verifiedContactId = contact.id
           verifiedContactName = contact.full_name || null
         } else {
-          logger.warn(`/collect: contact_id inexistente ignorado: ${contact_id}`)
+          logger.warn(`/collect: contact_id inexistente ignorado: ${submittedContactId}`)
         }
       } catch (err) {
         // contact_id malformado (p.ej. no-UUID) hace fallar el query; ignorarlo
-        logger.warn(`/collect: contact_id inválido ignorado (${contact_id}): ${err.message}`)
+        logger.warn(`/collect: contact_id inválido ignorado (${submittedContactId}): ${err.message}`)
       }
     }
 

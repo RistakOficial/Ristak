@@ -31,6 +31,7 @@ test('deploy drain policy protects conversion and tracking writes', () => {
   assert.equal(classifyDeployDrainRequest(req('POST', '/collect')), 'http:tracking')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/tracking/video-event')), 'http:tracking')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/sites/public/submit')), 'http:tracking')
+  assert.equal(classifyDeployDrainRequest(req('POST', '/api/sites/public/form-progress')), 'http:tracking')
   assert.equal(classifyDeployDrainRequest(req('POST', '/api/sites/public/meta-event')), 'http:tracking')
 })
 

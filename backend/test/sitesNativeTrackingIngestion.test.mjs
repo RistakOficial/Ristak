@@ -10,6 +10,8 @@ test('native Sites tracking deduplicates event_id atomically and records timesta
   const sessionId = `native_tracking_session_${suffix}`
   const visitorId = `native_tracking_visitor_${suffix}`
   const eventId = `native_tracking_event_${suffix}`
+  const pageFlowRevision = `page_flow_revision_${suffix}`
+  const pageJourneyId = `page_journey_${suffix}`
   const staleClientTimestamp = '2020-01-01T00:00:00.000Z'
   const payload = {
     session_id: sessionId,
@@ -20,6 +22,8 @@ test('native Sites tracking deduplicates event_id atomically and records timesta
       event_id: eventId,
       tracking_source: 'native_site',
       site_id: siteId,
+      page_flow_revision: pageFlowRevision,
+      page_journey_id: pageJourneyId,
       url: `https://example.test/${suffix}`
     },
     ip: '127.0.0.1',
@@ -30,7 +34,13 @@ test('native Sites tracking deduplicates event_id atomically and records timesta
     const first = await createSession(payload)
     const duplicate = await createSession(payload)
     const rows = await db.all(`
-      SELECT event_id, started_at, client_started_at, timestamp_adjusted
+      SELECT
+        event_id,
+        started_at,
+        client_started_at,
+        timestamp_adjusted,
+        page_flow_revision,
+        page_journey_id
       FROM sessions
       WHERE event_id = ?
     `, [eventId])
@@ -40,6 +50,8 @@ test('native Sites tracking deduplicates event_id atomically and records timesta
     assert.equal(duplicate.deduped, true)
     assert.equal(rows.length, 1)
     assert.equal(rows[0].event_id, eventId)
+    assert.equal(rows[0].page_flow_revision, pageFlowRevision)
+    assert.equal(rows[0].page_journey_id, pageJourneyId)
     assert.equal(new Date(rows[0].client_started_at).toISOString(), staleClientTimestamp)
     assert.equal(Number(rows[0].timestamp_adjusted), 1)
     assert.ok(

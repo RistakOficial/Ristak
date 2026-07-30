@@ -227,6 +227,7 @@ import customFieldModalStyles from '../Settings/CustomFields.module.css'
 import './sitesCanvas.css'
 import { buildCanvasTheme } from './sitesCanvasTheme'
 import { SITE_FONT_OPTIONS, normalizeSiteFontFamily } from './siteFonts'
+import { StageConversionTable } from './analytics/StageConversionTable'
 // Contrato de bloques compartido con el renderer público (Paquete C): las
 // variables/clases por bloque y los helpers de paridad vienen de UNA copia.
 import {
@@ -9805,7 +9806,7 @@ export const Sites: React.FC = () => {
   }, [analyticsCatalogSites, analyticsSites, sites])
   const analyticsVideoOriginOptions = useMemo(() => {
     const origins = new Map<string, { id: string; name: string }>()
-    siteVideoAssets.forEach((asset) => {
+    ;(siteVideoAssets || []).forEach((asset) => {
       const id = getMediaSourceSiteId(asset)
       const name = sitesById.get(id)?.name || getMediaSourceSiteName(asset)
       if (id && name) origins.set(id, { id, name })
@@ -9819,7 +9820,7 @@ export const Sites: React.FC = () => {
     return [...options.values()]
   }, [analyticsCatalogSites, analyticsVideoOriginOptions, sitesAnalyticsSiteType])
   const filteredAnalyticsVideos = useMemo(() => (
-    siteVideoAssets.filter((asset) => {
+    (siteVideoAssets || []).filter((asset) => {
       const sourceSiteId = getMediaSourceSiteId(asset)
       if (!sourceSiteId) return false
       if (sitesAnalyticsSiteId) return sourceSiteId === sitesAnalyticsSiteId
@@ -9857,7 +9858,10 @@ export const Sites: React.FC = () => {
     })
       .then(asset => {
         if (cancelled) return
-        setSiteVideoAssets(current => current.some(item => item.id === asset.id) ? current : [asset, ...current])
+        setSiteVideoAssets(current => {
+          const safeCurrent = Array.isArray(current) ? current : []
+          return safeCurrent.some(item => item.id === asset.id) ? safeCurrent : [asset, ...safeCurrent]
+        })
       })
       .catch(() => undefined)
     return () => {
@@ -11784,8 +11788,8 @@ export const Sites: React.FC = () => {
         siteId: sitesAnalyticsSiteId
       })
       if (siteVideoRequestRef.current !== requestId) return
-      setSiteVideoAssets(page.items)
-      setSiteVideoPageInfo(page.pageInfo)
+      setSiteVideoAssets(Array.isArray(page?.items) ? page.items : [])
+      setSiteVideoPageInfo(page?.pageInfo || emptySitesVideoPageInfo)
       setSiteVideoCurrentCursor(cursor)
       setSiteVideoCursorHistory(cursorHistory)
     } catch (error) {
@@ -11834,7 +11838,15 @@ export const Sites: React.FC = () => {
         },
         breakdownSiteIds: sitesAnalyticsSiteId ? [sitesAnalyticsSiteId] : [],
         ...(sitesAnalyticsSiteType === 'forms' && sitesAnalyticsSiteId
-          ? { formFunnelSiteId: sitesAnalyticsSiteId }
+          ? {
+              formFunnelSiteId: sitesAnalyticsSiteId,
+              formJourneySiteId: sitesAnalyticsSiteId
+            }
+          : {}),
+        ...(sitesAnalyticsSiteType === 'sites' &&
+          sitesAnalyticsLandingMode === 'funnel' &&
+          sitesAnalyticsSiteId
+          ? { pageFunnelSiteId: sitesAnalyticsSiteId }
           : {})
       }),
       videoAssetIds: sitesAnalyticsVideoId ? [sitesAnalyticsVideoId] : [],
@@ -46581,6 +46593,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const selectedFormFunnel = selectedSiteId
     ? analyticsSummary?.formFunnels?.[selectedSiteId] || null
     : null
+  const selectedPageFunnel = selectedSiteId
+    ? analyticsSummary?.pageFunnels?.[selectedSiteId] || null
+    : null
+  const selectedFormJourney = selectedSiteId
+    ? analyticsSummary?.formJourneys?.[selectedSiteId] || null
+    : null
   const trackingAggregate = analyticsSummary?.aggregate || null
   const totalSiteViews = trackingAggregate?.views ?? null
   const totalVisitors = trackingAggregate?.visitors ?? null
@@ -46785,7 +46803,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   )
 
   const renderSelectedConversionPanel = () => {
-    if (!selectedSiteStats || isFormsView || isVideosView) return null
+    if (
+      !selectedSiteStats ||
+      isFormsView ||
+      isVideosView ||
+      (isSitesView && selectedLandingMode === 'funnel' && selectedSiteId)
+    ) return null
 
     const stats = selectedSiteStats
 
@@ -46813,6 +46836,32 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     )
   }
 
+  const renderSelectedStageJourneyPanel = () => {
+    if (!selectedSiteId || isVideosView) return null
+
+    if (isFormsView) {
+      return (
+        <StageConversionTable
+          analytics={selectedFormJourney}
+          mode="form"
+          timezone={analyticsSummary?.meta?.timezone}
+        />
+      )
+    }
+
+    if (isSitesView && selectedLandingMode === 'funnel') {
+      return (
+        <StageConversionTable
+          analytics={selectedPageFunnel}
+          mode="funnel"
+          timezone={analyticsSummary?.meta?.timezone}
+        />
+      )
+    }
+
+    return null
+  }
+
   const renderSelectedFormFunnelPanel = () => {
     if (!selectedSiteStats || !isFormsView || !selectedSiteId) return null
 
@@ -46827,8 +46876,13 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     return (
       <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
         <div className={styles.sitesAnalyticsChartTitle}>
-          <span>Cobertura de respuestas</span>
+          <span>Cobertura histórica de respuestas guardadas</span>
           <strong>{formatSitesCompactNumber(finalSubmissions)} envíos finales evaluados</strong>
+        </div>
+
+        <div className={styles.sitesAnalyticsScope} role="note">
+          <strong>Lectura histórica</strong>
+          <span>Este bloque sólo usa envíos finales guardados; no demuestra quién llegó o abandonó una etapa.</span>
         </div>
 
         <div className={styles.formFunnelSummary}>
@@ -46904,6 +46958,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
 
     return (
       <>
+        {renderSelectedStageJourneyPanel()}
         {renderSelectedFormFunnelPanel()}
         {renderSelectedConversionPanel()}
         <div className={styles.sitesAnalyticsGrid}>

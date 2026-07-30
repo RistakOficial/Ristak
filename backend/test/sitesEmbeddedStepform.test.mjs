@@ -6,16 +6,32 @@ import vm from 'node:vm'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createBlock,
+  createPublicSiteFormProgressFromRequest,
   createSite,
   createSubmissionFromRequest,
   deleteSite,
+  getSitesTrackingSummary,
   getSitePreview,
   renderPublicSiteHtml,
   updateBlock
 } from '../src/services/sitesService.js'
+import {
+  businessTodayDateOnly,
+  getAccountTimezone
+} from '../src/utils/dateUtils.js'
 
 function findFormEmbedBlock(site) {
   return site.blocks.find(block => block.blockType === 'form_embed')
+}
+
+function extractMainFormFlow(html) {
+  const marker = 'const MAIN_FORM_FLOW = '
+  const start = html.indexOf(marker)
+  assert.notEqual(start, -1, 'El HTML público debe declarar MAIN_FORM_FLOW.')
+  const valueStart = start + marker.length
+  const valueEnd = html.indexOf(';\n', valueStart)
+  assert.notEqual(valueEnd, -1, 'MAIN_FORM_FLOW debe terminar como una asignación JSON.')
+  return JSON.parse(html.slice(valueStart, valueEnd))
 }
 
 const DOMAIN_KEYS = {
@@ -123,7 +139,8 @@ test('linked forms keep their disqualification rules when submitted from a landi
     assert.match(rendered, /const completionUsesFormRules = true;/)
     assert.match(rendered, /formFinalMarkerVersion: 2,/)
     assert.match(rendered, /formFinalSubmit: Boolean\(finalSubmit\),/)
-    assert.match(rendered, /finalSubmit: !ruleSubmit && !pendingRuntimeStep && !isStandardFormIntermediatePage/)
+    assert.match(rendered, /const finalSubmit = !ruleSubmit && !pendingRuntimeStep && !isStandardFormIntermediatePage/)
+    assert.match(rendered, /finalSubmit,\s*flowContext: submissionFlow/)
     assert.doesNotMatch(rendered, /formFinalSubmit: isStandardForm &&/)
 
     // Compatibilidad: los embeds viejos no registraban si next_page era el
@@ -222,6 +239,399 @@ test('linked forms keep their disqualification rules when submitted from a landi
   } finally {
     if (landing?.id) await deleteSite(landing.id).catch(() => undefined)
     if (sourceForm?.id) await deleteSite(sourceForm.id).catch(() => undefined)
+    await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
+    await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
+    await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
+    await setAppConfig(DOMAIN_KEYS.error, previousConfig.error)
+  }
+})
+
+test('terminal form rules do not count as completed journeys while a real final submit does', async () => {
+  const suffix = crypto.randomUUID()
+  const previousConfig = {
+    domain: await getAppConfig(DOMAIN_KEYS.domain),
+    verified: await getAppConfig(DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(DOMAIN_KEYS.error)
+  }
+  const contactIds = []
+  const submissionIdsByCase = new Map()
+  let site
+
+  try {
+    await setAppConfig(DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(DOMAIN_KEYS.verified, '1')
+    await setAppConfig(DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(DOMAIN_KEYS.error, '')
+
+    site = await createSite({
+      name: 'Formulario con cierres terminales',
+      slug: `form-terminal-journeys-${suffix}`,
+      siteType: 'interactive_form',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pages: [{ id: `question-${suffix}`, title: 'Correo', sortOrder: 0 }]
+      }
+    })
+    site = await createBlock(site.id, {
+      blockType: 'email',
+      label: 'Correo',
+      required: true,
+      settings: {
+        pageId: `question-${suffix}`,
+        systemFieldKey: 'email',
+        internalName: 'email',
+        validation: 'email'
+      }
+    })
+
+    const emailBlock = site.blocks.find(block => block.blockType === 'email')
+    assert.ok(emailBlock)
+    const html = await renderPublicSiteHtml({ ...site, domain: 'example.test' }, {
+      pageId: `question-${suffix}`,
+      trackingEnabled: true,
+      preview: false
+    })
+    const flow = extractMainFormFlow(html)
+    assert.match(flow.formContextToken, /^pct1\./)
+    const stage = flow.stages[0]
+    assert.ok(stage)
+
+    const request = {
+      headers: { host: 'example.test', 'user-agent': 'node-test' },
+      hostname: 'example.test',
+      path: `/${site.slug}`,
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+    const unresolvedHostRequest = {
+      ...request,
+      headers: { ...request.headers, host: 'unconfigured.invalid' },
+      hostname: 'unconfigured.invalid'
+    }
+    await assert.rejects(
+      createPublicSiteFormProgressFromRequest(unresolvedHostRequest, {
+        attemptId: `attempt-oversized-batch-${suffix}`,
+        formContextToken: flow.formContextToken,
+        events: Array.from({ length: 51 }, (_, index) => ({
+          eventId: `event-oversized-${suffix}-${index}`,
+          eventSequence: index + 1,
+          eventName: index === 0 ? 'attempt_start' : 'step_view'
+        }))
+      }),
+      error => (
+        error?.status === 400 &&
+        error?.code === 'site_flow_envelope_invalid' &&
+        error?.message.includes('entre 1 y 50')
+      )
+    )
+    await assert.rejects(
+      createPublicSiteFormProgressFromRequest(unresolvedHostRequest, {
+        attemptId: `attempt-long-token-${suffix}`,
+        formContextToken: 'x'.repeat(4097),
+        events: [{
+          eventId: `event-long-token-${suffix}`,
+          eventSequence: 1,
+          eventName: 'attempt_start'
+        }]
+      }),
+      error => (
+        error?.status === 400 &&
+        error?.code === 'site_flow_envelope_invalid' &&
+        error?.message.includes('4096')
+      )
+    )
+    const unsigned = await createPublicSiteFormProgressFromRequest(request, {
+      siteId: site.id,
+      formSiteId: site.id,
+      publicPageId: stage.stageId,
+      flowRevision: flow.flowRevision,
+      attemptId: `attempt-unsigned-${suffix}`,
+      visitorId: `visitor-unsigned-${suffix}`,
+      sessionId: `session-unsigned-${suffix}`,
+      events: [{
+        eventId: `event-unsigned-${suffix}`,
+        eventSequence: 1,
+        eventName: 'attempt_start',
+        clientEventAt: new Date().toISOString()
+      }]
+    })
+    assert.deepEqual(unsigned, {
+      accepted: false,
+      skipped: true,
+      reason: 'unsigned_form_context'
+    })
+
+    await assert.rejects(
+      createPublicSiteFormProgressFromRequest(request, {
+        siteId: `other-site-${suffix}`,
+        formSiteId: site.id,
+        publicPageId: stage.stageId,
+        flowRevision: flow.flowRevision,
+        formContextToken: flow.formContextToken,
+        attemptId: `attempt-context-mismatch-${suffix}`,
+        visitorId: `visitor-context-mismatch-${suffix}`,
+        sessionId: `session-context-mismatch-${suffix}`,
+        events: [{
+          eventId: `event-context-mismatch-${suffix}`,
+          eventSequence: 1,
+          eventName: 'attempt_start',
+          clientEventAt: new Date().toISOString()
+        }]
+      }),
+      error => error?.status === 409 && error?.code === 'site_flow_context_mismatch'
+    )
+    await assert.rejects(
+      createPublicSiteFormProgressFromRequest(request, {
+        siteId: site.id,
+        formSiteId: site.id,
+        publicPageId: stage.stageId,
+        flowRevision: flow.flowRevision,
+        formContextToken: `${flow.formContextToken.slice(0, -1)}x`,
+        attemptId: `attempt-tampered-${suffix}`,
+        visitorId: `visitor-tampered-${suffix}`,
+        sessionId: `session-tampered-${suffix}`,
+        events: [{
+          eventId: `event-tampered-${suffix}`,
+          eventSequence: 1,
+          eventName: 'attempt_start',
+          clientEventAt: new Date().toISOString()
+        }]
+      }),
+      error => error?.status === 400 && error?.code === 'invalid_public_context_token'
+    )
+
+    const cases = [
+      { key: 'end-form', ruleAction: 'end_form', finalSubmit: false, trackProgress: true },
+      { key: 'show-message', ruleAction: 'show_message', finalSubmit: false, trackProgress: true },
+      { key: 'final', ruleAction: '', finalSubmit: true, trackProgress: true },
+      { key: 'final-without-start', ruleAction: '', finalSubmit: true, trackProgress: false }
+    ]
+
+    for (const item of cases) {
+      const attemptId = `attempt-${item.key}-${suffix}`
+      const visitorId = `visitor-${item.key}-${suffix}`
+      const sessionId = `session-${item.key}-${suffix}`
+      if (item.trackProgress) {
+        await createPublicSiteFormProgressFromRequest(request, {
+          siteId: site.id,
+          formSiteId: site.id,
+          publicPageId: stage.stageId,
+          flowRevision: flow.flowRevision,
+          formContextToken: flow.formContextToken,
+          attemptId,
+          visitorId,
+          sessionId,
+          contactId: `spoofed-public-contact-${suffix}`,
+          events: [
+            {
+              eventId: `event-${item.key}-start-${suffix}`,
+              eventSequence: 1,
+              eventName: 'attempt_start',
+              stepId: stage.stageId,
+              stepIndex: 1,
+              stepTotal: 1,
+              stepKind: stage.kind,
+              clientEventAt: new Date().toISOString()
+            },
+            {
+              eventId: `event-${item.key}-view-${suffix}`,
+              eventSequence: 2,
+              eventName: 'step_view',
+              stepId: stage.stageId,
+              stepIndex: 1,
+              stepTotal: 1,
+              stepKind: stage.kind,
+              clientEventAt: new Date().toISOString()
+            }
+          ]
+        })
+        const publicProgressRows = await db.all(`
+          SELECT contact_id
+          FROM site_flow_events
+          WHERE attempt_id = ?
+        `, [attemptId])
+        assert.ok(publicProgressRows.length > 0)
+        assert.ok(publicProgressRows.every(row => row.contact_id === null))
+      }
+
+      const submission = await createSubmissionFromRequest(request, {
+        siteId: site.id,
+        pageId: stage.stageId,
+        responses: {
+          [emailBlock.id]: `${item.key}-${suffix}@example.test`
+        },
+        meta: {
+          formFinalMarkerVersion: 2,
+          formFinalSubmit: item.finalSubmit,
+          ruleSubmit: !item.finalSubmit,
+          ruleAction: item.ruleAction,
+          flowAttemptId: attemptId,
+          flowRevision: flow.flowRevision,
+          flowEventSequence: 2,
+          flowFormSiteId: site.id,
+          flowStepId: stage.stageId,
+          visitorId,
+          sessionId
+        }
+      })
+      submissionIdsByCase.set(item.key, submission.submissionId)
+      if (submission.contactId) contactIds.push(submission.contactId)
+    }
+
+    const terminalRows = await db.all(`
+      SELECT attempt_id, event_name, outcome
+      FROM site_flow_events
+      WHERE attempt_id IN (?, ?, ?, ?)
+        AND event_name IN ('attempt_completed', 'attempt_terminal')
+      ORDER BY attempt_id ASC
+    `, cases.map(item => `attempt-${item.key}-${suffix}`))
+    assert.deepEqual(
+      terminalRows.map(row => ({
+        attemptId: row.attempt_id,
+        eventName: row.event_name,
+        outcome: row.outcome
+      })),
+      [
+        {
+          attemptId: `attempt-end-form-${suffix}`,
+          eventName: 'attempt_terminal',
+          outcome: 'terminal_exit'
+        },
+        {
+          attemptId: `attempt-final-${suffix}`,
+          eventName: 'attempt_completed',
+          outcome: 'completed'
+        },
+        {
+          attemptId: `attempt-final-without-start-${suffix}`,
+          eventName: 'attempt_completed',
+          outcome: 'completed'
+        },
+        {
+          attemptId: `attempt-show-message-${suffix}`,
+          eventName: 'attempt_terminal',
+          outcome: 'terminal_exit'
+        }
+      ]
+    )
+    const savedSubmissionRow = await db.get(`
+      SELECT COUNT(*) AS total
+      FROM public_site_submissions
+      WHERE site_id = ?
+    `, [site.id])
+    assert.equal(Number(savedSubmissionRow?.total || 0), 4)
+
+    const interruptedSubmissionId = submissionIdsByCase.get('final')
+    assert.ok(interruptedSubmissionId)
+    await db.run(`
+      DELETE FROM site_flow_events
+      WHERE submission_id = ?
+        AND event_name = 'attempt_completed'
+    `, [interruptedSubmissionId])
+    const interruptedTerminal = await db.get(`
+      SELECT id
+      FROM site_flow_events
+      WHERE submission_id = ?
+        AND event_name IN ('attempt_completed', 'attempt_terminal')
+      LIMIT 1
+    `, [interruptedSubmissionId])
+    assert.equal(interruptedTerminal, null)
+
+    const timezone = await getAccountTimezone({ forceRefresh: true })
+    const businessDate = businessTodayDateOnly(timezone)
+    const summary = await getSitesTrackingSummary({
+      siteIds: [site.id],
+      formJourneySiteId: site.id,
+      dateFrom: businessDate,
+      dateTo: businessDate
+    })
+    const journey = summary.formJourneys[site.id]
+    assert.equal(journey.entrants, 3)
+    assert.equal(journey.completedAttempts, 1)
+    assert.equal(journey.completedVisitors, 1)
+    assert.equal(journey.conversionRate, 33.3)
+    assert.equal(journey.stages[0].terminalAttempts, 3)
+    assert.equal(journey.coverage.status, 'partial')
+    assert.equal(journey.coverage.terminalAttemptsWithoutStart, 1)
+    assert.equal(journey.coverage.reconciledFinalSubmissions, 1)
+    assert.equal(journey.coverage.finalSubmissionsWithoutTerminal, 0)
+    assert.equal(journey.coverage.terminalReconciliationUnavailable, false)
+    const repairedTerminal = await db.get(`
+      SELECT attempt_id, event_name, outcome
+      FROM site_flow_events
+      WHERE submission_id = ?
+      LIMIT 1
+    `, [interruptedSubmissionId])
+    assert.deepEqual(
+      {
+        attemptId: repairedTerminal?.attempt_id,
+        eventName: repairedTerminal?.event_name,
+        outcome: repairedTerminal?.outcome
+      },
+      {
+        attemptId: `attempt-final-${suffix}`,
+        eventName: 'attempt_completed',
+        outcome: 'completed'
+      }
+    )
+    assert.ok(
+      journey.coverage.warnings.some(warning => (
+        warning.includes('sin inicio') &&
+        warning.includes('no se incluyeron')
+      ))
+    )
+
+    const irreconcilableSubmissionId = `submission-irreconcilable-${suffix}`
+    await db.run(`
+      INSERT INTO public_site_submissions (
+        id,
+        site_id,
+        form_site_id,
+        contact_id,
+        domain,
+        response_json,
+        meta_json,
+        status,
+        created_at
+      ) VALUES (?, ?, ?, NULL, ?, '{}', ?, 'received', CURRENT_TIMESTAMP)
+    `, [
+      irreconcilableSubmissionId,
+      site.id,
+      site.id,
+      'example.test',
+      JSON.stringify({
+        formFinalMarkerVersion: 2,
+        formFinalSubmit: true,
+        flowAttemptId: `attempt-irreconcilable-${suffix}`,
+        flowRevision: flow.flowRevision,
+        flowFormSiteId: site.id,
+        flowStepId: `missing-step-${suffix}`,
+        visitorId: `visitor-irreconcilable-${suffix}`,
+        sessionId: `session-irreconcilable-${suffix}`
+      })
+    ])
+    const summaryWithBrokenEvidence = await getSitesTrackingSummary({
+      siteIds: [site.id],
+      formJourneySiteId: site.id,
+      dateFrom: businessDate,
+      dateTo: businessDate
+    })
+    const journeyWithBrokenEvidence = summaryWithBrokenEvidence.formJourneys[site.id]
+    assert.equal(journeyWithBrokenEvidence.coverage.status, 'partial')
+    assert.equal(journeyWithBrokenEvidence.coverage.finalSubmissionsWithoutTerminal, 1)
+    assert.ok(
+      journeyWithBrokenEvidence.coverage.warnings.some(warning => (
+        warning.includes('1 envío(s) final(es)') &&
+        warning.includes('no pudieron reconciliarse')
+      ))
+    )
+  } finally {
+    if (site?.id) await deleteSite(site.id).catch(() => undefined)
+    for (const contactId of contactIds) {
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
     await setAppConfig(DOMAIN_KEYS.domain, previousConfig.domain)
     await setAppConfig(DOMAIN_KEYS.verified, previousConfig.verified)
     await setAppConfig(DOMAIN_KEYS.checkedAt, previousConfig.checkedAt)
@@ -401,7 +811,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /data-embedded-form-result="qualified" hidden>[\s\S]*Texto de página final que no debe aparecer/)
   assert.doesNotMatch(html, /<h2>Formulario<\/h2>/)
   assert.match(html, /getEmbeddedPageFields/)
-  assert.match(html, /embeddedForms\.forEach\(renderEmbeddedForm\)/)
+  assert.match(html, /embeddedForms\.forEach\(state => renderEmbeddedForm\(state\)\)/)
   assert.match(html, /state\.index = 0;/)
   assert.ok(html.includes("setHiddenAndSyncMedia(content, (content.getAttribute('data-embedded-page-content') || '') !== currentPageId);"))
 
@@ -1393,4 +1803,55 @@ test('embedded form frame carries its own rstkPageTextGradient class on the fram
     preview: true
   })
   assert.doesNotMatch(frameClass(withSolid), /\brstkPageTextGradient\b/)
+})
+
+test('form flow revision follows topology and ignores copy-only edits', async () => {
+  const buildForm = ({
+    pageTitle = 'Primera pregunta',
+    fieldLabel = 'Tu nombre',
+    fieldId = 'field-copy-stable'
+  } = {}) => ({
+    id: 'site_form_revision_copy',
+    name: 'Formulario',
+    title: 'Formulario',
+    description: '',
+    slug: 'formulario-revision-copy',
+    siteType: 'standard_form',
+    status: 'published',
+    theme: {
+      pages: [
+        { id: 'page-copy-stable', title: pageTitle, sortOrder: 0 }
+      ]
+    },
+    blocks: [{
+      id: fieldId,
+      siteId: 'site_form_revision_copy',
+      blockType: 'short_text',
+      label: fieldLabel,
+      content: '',
+      placeholder: '',
+      required: true,
+      options: [],
+      sortOrder: 0,
+      settings: { pageId: 'page-copy-stable' }
+    }]
+  })
+  const renderFlow = async form => extractMainFormFlow(await renderPublicSiteHtml(form, {
+    pageId: 'page-copy-stable',
+    trackingEnabled: false,
+    preview: true
+  }))
+
+  const original = await renderFlow(buildForm())
+  const renamed = await renderFlow(buildForm({
+    pageTitle: 'Cuéntanos quién eres',
+    fieldLabel: 'Nombre completo'
+  }))
+  const changedTopology = await renderFlow(buildForm({
+    fieldId: 'field-copy-replaced'
+  }))
+
+  assert.equal(renamed.flowRevision, original.flowRevision)
+  assert.notEqual(changedTopology.flowRevision, original.flowRevision)
+  assert.equal(renamed.stages[0].label, 'Nombre completo')
 })
