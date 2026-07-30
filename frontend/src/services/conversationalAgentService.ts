@@ -23,6 +23,8 @@ export type ConversationalCapabilityId =
   | 'handoff_human'
   | 'custom_goal'
 
+export const CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH = 4000
+
 export interface ConversationalPromptConfig {
   schemaVersion: 1 | 2
   templateVersion: string
@@ -94,6 +96,20 @@ export interface HandoffHumanCapability extends ConversationalCapabilityBase {
   userId: string
   userName: string
   pastClientsToHuman: boolean
+}
+
+export function getConversationalHandoffRulesLengthError(
+  config?: ConversationalCapabilitiesConfig | null
+) {
+  const length = (config?.items || []).reduce((maximum, item) => (
+    item.id === 'handoff_human'
+      ? Math.max(maximum, item.rules.length)
+      : maximum
+  ), 0)
+  if (length <= CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH) return ''
+  return `“Cuándo debe pasarlo” admite máximo ${CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH.toLocaleString('es-MX')} caracteres. Reduce ${(
+    length - CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH
+  ).toLocaleString('es-MX')} para poder guardar.`
 }
 
 export interface CustomGoalCapability extends ConversationalCapabilityBase {
@@ -1029,7 +1045,9 @@ function normalizeCapabilityItem(value: unknown, legacyTestMode = DEFAULT_CONVER
     return {
       id,
       enabled,
-      rules: String(raw.rules || '').slice(0, 4000),
+      // No recortar en el cliente: un borrador demasiado largo debe seguir
+      // visible para que la persona lo corrija, nunca aparentar que se guardó.
+      rules: String(raw.rules || ''),
       userId: String(raw.userId || '').trim().slice(0, 160),
       userName: String(raw.userName || '').trim().slice(0, 180),
       pastClientsToHuman: normalizeCapabilityEnabled(raw.pastClientsToHuman)

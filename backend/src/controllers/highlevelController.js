@@ -16,7 +16,6 @@ import { createInstallmentPaymentFlow } from '../services/paymentFlowService.js'
 import { registerGigstackPaymentForTransactionInBackground } from '../services/gigstackInvoiceService.js';
 import { dispatchProductPostWebhooksForPaymentInBackground } from '../services/productPostWebhookService.js';
 import { sendPaymentNotification } from '../services/pushNotificationsService.js';
-import { markHumanTakeoverIfActive } from '../services/conversationalAgentService.js';
 import { renderTemplateVariables } from '../services/templateVariablesService.js';
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js';
 import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js';
@@ -73,6 +72,7 @@ import { getCachedPaymentListSummary } from '../services/paymentListSummaryCache
 import { isHighLevelConversationContactNotFoundError } from '../utils/highLevelConversationErrors.js';
 import { getCrmLabels, setCrmLabels } from '../services/crmLabelsService.js';
 import { setHighLevelConversationalChannelPreference } from '../services/highLevelConversationalChannelRoutingService.js';
+import { runManualChatSendAfterHumanTakeover } from './manualChatTakeover.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -3027,16 +3027,41 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     ...(shouldIncludePhoneFields && cleanToNumber && { toNumber: cleanToNumber }),
     ...(cleanString(conversationProviderId) && { conversationProviderId: cleanString(conversationProviderId) })
   };
-  let response;
-  try {
-    response = await ghlClient.sendConversationMessage(requestBody);
-  } catch (error) {
-    if (!isHighLevelConversationContactNotFoundError(error)) throw error;
-    logger.warn(`[HighLevel Conversations] HighLevel rechazó el contacto ${highLevelContactId}; se reparará el vínculo y se reintentará una vez.`);
-    highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient, forceRefresh: true });
-    requestBody.contactId = highLevelContactId;
-    response = await ghlClient.sendConversationMessage(requestBody);
+  const sendThroughHighLevel = async () => {
+    try {
+      return await ghlClient.sendConversationMessage(requestBody);
+    } catch (error) {
+      if (!isHighLevelConversationContactNotFoundError(error)) throw error;
+      logger.warn(`[HighLevel Conversations] HighLevel rechazó el contacto ${highLevelContactId}; se reparará el vínculo y se reintentará una vez.`);
+      highLevelContactId = await resolveHighLevelContactIdForChat({ contact, ghlClient, forceRefresh: true });
+      requestBody.contactId = highLevelContactId;
+      return ghlClient.sendConversationMessage(requestBody);
+    }
+  };
+
+  if (markHumanTakeover) {
+    const manuallySelectedPhoneChannel = effectiveChannel.key === 'whatsapp_api'
+      ? 'whatsapp'
+      : effectiveChannel.key === 'sms_qr'
+        ? 'sms'
+        : null;
+    if (manuallySelectedPhoneChannel) {
+      await setHighLevelConversationalChannelPreference(contact.id, manuallySelectedPhoneChannel, {
+        selectedByUserId: req?.user?.userId || req?.user?.id || null,
+        source: 'manual_send'
+      }).catch(error => {
+        logger.warn(`[HighLevel Conversations] No se pudo guardar el canal manual antes del envío: ${error.message}`);
+      });
+    }
   }
+
+  const response = markHumanTakeover
+    ? await runManualChatSendAfterHumanTakeover({
+        contactId: contact.id,
+        toPhone: cleanToNumber,
+        send: sendThroughHighLevel
+      })
+    : await sendThroughHighLevel();
   let localMirror;
   if (effectiveChannel.localTable === 'meta') {
     localMirror = await saveHighLevelMetaMirror({
@@ -3073,25 +3098,6 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       agentId,
       requestBody,
       response
-    });
-  }
-
-  if (markHumanTakeover) {
-    const manuallySelectedPhoneChannel = effectiveChannel.key === 'whatsapp_api'
-      ? 'whatsapp'
-      : effectiveChannel.key === 'sms_qr'
-        ? 'sms'
-        : null;
-    if (manuallySelectedPhoneChannel) {
-      await setHighLevelConversationalChannelPreference(contact.id, manuallySelectedPhoneChannel, {
-        selectedByUserId: req?.user?.userId || req?.user?.id || null,
-        source: 'manual_send'
-      }).catch(error => {
-        logger.warn(`[HighLevel Conversations] El mensaje salió, pero no se pudo guardar el canal manual: ${error.message}`);
-      });
-    }
-    markHumanTakeoverIfActive(contact.id, { updatedBy: 'human' }).catch(error => {
-      logger.warn(`[Agente conversacional] No se pudo marcar toma humana desde HighLevel: ${error.message}`);
     });
   }
 

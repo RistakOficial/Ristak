@@ -1,9 +1,13 @@
 import crypto from 'crypto'
-import { sendChatMessageNotification } from '../services/pushNotificationsService.js'
+import {
+  sendChatMessageNotification,
+  sendConversationalAgentPriorityNotification
+} from '../services/pushNotificationsService.js'
 import { isMetaDirectWhatsAppConnected } from '../services/integrationConnectionStateService.js'
 import {
   CHAT_DELIVERY_ENRICHMENT_MAX_ATTEMPTS,
   CHAT_DELIVERY_MAX_ATTEMPTS,
+  CHAT_DELIVERY_PRIORITY_MAX_ATTEMPTS,
   CHAT_DELIVERY_JOB_KIND,
   claimNextChatDeliveryJob,
   cleanupCompletedChatDeliveryJobs,
@@ -43,7 +47,12 @@ async function cleanupChatDeliveryOutboxIfDue() {
 }
 
 async function runPushJob(job) {
-  const sender = pushSenderForTest || sendChatMessageNotification
+  const sender = pushSenderForTest || (
+    job?.provider === 'conversational_agent_priority' ||
+    job?.payload?.notificationType === 'agent_priority'
+      ? sendConversationalAgentPriorityNotification
+      : sendChatMessageNotification
+  )
   const result = await sender({ ...job.payload, durableDelivery: true })
   if (Number(result?.retryableFailures || 0) > 0) {
     const error = new Error(
@@ -165,7 +174,11 @@ export async function drainMetaDirectChatDeliveryJobs({
         maxAttempts: maxAttemptsOverride || (
           job.job_kind === CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT
             ? CHAT_DELIVERY_ENRICHMENT_MAX_ATTEMPTS
-            : CHAT_DELIVERY_MAX_ATTEMPTS
+            : (
+                job.provider === 'conversational_agent_priority'
+                  ? CHAT_DELIVERY_PRIORITY_MAX_ATTEMPTS
+                  : CHAT_DELIVERY_MAX_ATTEMPTS
+              )
         ),
         payload: error?.retryPayload || job.payload,
         retryDelayMs
@@ -234,6 +247,10 @@ export function requestMetaDirectChatDeliveryDrain(reason = 'webhook') {
   const pushRequested = requestDeliveryLaneDrain(CHAT_DELIVERY_JOB_KIND.PUSH, reason)
   const enrichmentRequested = requestDeliveryLaneDrain(CHAT_DELIVERY_JOB_KIND.META_ENRICHMENT, reason)
   return pushRequested || enrichmentRequested
+}
+
+export function requestChatPushDeliveryDrain(reason = 'push_outbox') {
+  return requestDeliveryLaneDrain(CHAT_DELIVERY_JOB_KIND.PUSH, reason)
 }
 
 function startDeliveryLaneCron(jobKind) {

@@ -1636,6 +1636,22 @@ export async function registerAgentTransferDepositPayment({
  * Ver una imagen no equivale a confirmar fondos: este registro nunca usa estado
  * paid, nunca tiene paid_at y nunca actualiza las estadísticas de venta.
  */
+export function buildAgentTransferPaymentProofBindingEventId({
+  contactId = '',
+  channel = 'whatsapp',
+  bindingKey = ''
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanChannel = String(channel || 'whatsapp').trim().toLowerCase()
+  const cleanBindingKey = String(bindingKey || '').trim()
+  if (!cleanContactId || !cleanBindingKey) return ''
+  return `cae_transfer_proof_${createHash('sha256').update([
+    cleanContactId,
+    cleanChannel,
+    cleanBindingKey
+  ].join('\u0000')).digest('hex').slice(0, 48)}`
+}
+
 export async function registerAgentTransferPaymentProofForReview({
   contactId,
   amount,
@@ -1685,12 +1701,52 @@ export async function registerAgentTransferPaymentProofForReview({
   const appointmentDepositIntentClaimToken = String(binding?.appointmentDepositIntentClaimToken || '').trim()
   const receiptIntentBindingEventId = String(binding?.receiptIntentBindingEventId || '').trim()
   const bindingEventId = binding
-    ? `cae_transfer_proof_${createHash('sha256').update([
-        cleanContactId,
-        cleanBindingChannel,
-        cleanBindingKey
-      ].join('\u0000')).digest('hex').slice(0, 48)}`
+    ? buildAgentTransferPaymentProofBindingEventId({
+        contactId: cleanContactId,
+        channel: cleanBindingChannel,
+        bindingKey: cleanBindingKey
+      })
     : ''
+  const actionScopedContactDataVersion = Number(
+    binding?.actionScopedContactDataVersion
+  )
+  const actionScopedContactData = (
+    binding?.actionScopedContactData &&
+    typeof binding.actionScopedContactData === 'object' &&
+    !Array.isArray(binding.actionScopedContactData)
+  )
+    ? binding.actionScopedContactData
+    : null
+  const actionScopedContactDataHash = String(
+    binding?.actionScopedContactDataHash || ''
+  ).trim()
+  const paymentConversationBinding = (
+    binding?.paymentConversationBinding &&
+    typeof binding.paymentConversationBinding === 'object' &&
+    !Array.isArray(binding.paymentConversationBinding)
+  )
+    ? binding.paymentConversationBinding
+    : null
+  const hasVerifiedConversationSecurity = Boolean(
+    binding && (
+      binding.actionScopedContactDataVersion !== undefined ||
+      binding.actionScopedContactData !== undefined ||
+      binding.actionScopedContactDataHash !== undefined ||
+      binding.paymentConversationBinding !== undefined
+    )
+  )
+  const verifiedConversationSecurityValid = Boolean(
+    actionScopedContactDataVersion === 1 &&
+    actionScopedContactData &&
+    /^[a-f0-9]{64}$/.test(actionScopedContactDataHash) &&
+    paymentConversationBinding?.schemaVersion === 1 &&
+    paymentConversationBinding?.status === 'bound' &&
+    String(paymentConversationBinding.contactId || '') === cleanContactId &&
+    String(paymentConversationBinding.agentId || '') === cleanAgentId &&
+    String(paymentConversationBinding.channel || '').trim().toLowerCase() ===
+      cleanBindingChannel &&
+    String(paymentConversationBinding.sourceEventId || '') === bindingEventId
+  )
 
   const purposeConsistent = paymentPurpose === 'appointment_deposit'
     ? appointmentDeposit
@@ -1718,7 +1774,8 @@ export async function registerAgentTransferPaymentProofForReview({
         !receiptIntentBindingEventId ||
         appointmentDepositIntentClaimKey !== receiptIntentBindingEventId
       )) ||
-      (manualReviewOnly && (!appointmentDeposit || paymentPurpose !== 'appointment_deposit' || autoResumeAllowed))
+      (manualReviewOnly && (!appointmentDeposit || paymentPurpose !== 'appointment_deposit' || autoResumeAllowed)) ||
+      (hasVerifiedConversationSecurity && !verifiedConversationSecurityValid)
     )
   ) {
     throw new Error('Falta la identidad durable del comprobante conversacional')
@@ -1852,7 +1909,15 @@ export async function registerAgentTransferPaymentProofForReview({
           appointmentDepositIntentClaimKey: appointmentDepositIntentClaimKey || null,
           appointmentDepositIntentClaimToken: appointmentDepositIntentClaimToken || null,
           receiptIntentBindingEventId: receiptIntentBindingEventId || null,
-          mediaMessageId: String(mediaMessageId || '').trim() || null
+          mediaMessageId: String(mediaMessageId || '').trim() || null,
+          ...(verifiedConversationSecurityValid
+            ? {
+                actionScopedContactDataVersion,
+                actionScopedContactData,
+                actionScopedContactDataHash,
+                paymentConversationBinding
+              }
+            : {})
         }
         const reserved = await db.run(
           `INSERT INTO conversational_agent_events (
@@ -1872,6 +1937,12 @@ export async function registerAgentTransferPaymentProofForReview({
           const existingPaymentId = String(existingDetail.ledgerPaymentId || '').trim()
           const expectedExecutionId = String(binding.executionId || '').trim()
           const expectedMediaMessageId = String(mediaMessageId || '').trim()
+          const existingHasVerifiedConversationSecurity = Boolean(
+            existingDetail.actionScopedContactDataVersion !== undefined ||
+            existingDetail.actionScopedContactData !== undefined ||
+            existingDetail.actionScopedContactDataHash !== undefined ||
+            existingDetail.paymentConversationBinding !== undefined
+          )
           if (
             existingBinding?.event_type !== 'deposit_transfer_pending_review' ||
             String(existingBinding?.contact_id || '') !== cleanContactId ||
@@ -1894,6 +1965,18 @@ export async function registerAgentTransferPaymentProofForReview({
             String(existingDetail.appointmentDepositIntentClaimToken || '').trim() !== appointmentDepositIntentClaimToken ||
             String(existingDetail.receiptIntentBindingEventId || '').trim() !== receiptIntentBindingEventId ||
             String(existingDetail.mediaMessageId || '').trim() !== expectedMediaMessageId ||
+            existingHasVerifiedConversationSecurity !==
+              verifiedConversationSecurityValid ||
+            (verifiedConversationSecurityValid && (
+              Number(existingDetail.actionScopedContactDataVersion) !==
+                actionScopedContactDataVersion ||
+              String(existingDetail.actionScopedContactDataHash || '') !==
+                actionScopedContactDataHash ||
+              JSON.stringify(existingDetail.actionScopedContactData || null) !==
+                JSON.stringify(actionScopedContactData) ||
+              JSON.stringify(existingDetail.paymentConversationBinding || null) !==
+                JSON.stringify(paymentConversationBinding)
+            )) ||
             Math.abs(Number(existingDetail.amount) - normalizedAmount) >= 0.005 ||
             String(existingDetail.currency || '').trim().toUpperCase() !== paymentCurrency ||
             !existingPaymentId

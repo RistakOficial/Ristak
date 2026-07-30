@@ -10,18 +10,28 @@ import {
   createConversationalTools,
   loadConversationalAppointmentOfferDecisionContext,
   loadConversationalVerifiedAppointmentContext,
+  readBoundConversationalActionScopedContactData,
   setNativeAppointmentAfterPreCommitAuthorityHookForTest,
+  setNativeAppointmentCreateControllerInvokeHookForTest,
   setNativeHandoffAfterAssignmentHookForTest,
   setNativeHumanBookingAfterCommitHookForTest,
   setNativePaymentResumeBeforeTerminalCommitHookForTest,
   setNativePaymentReceiptAnalysisHookForTest
 } from '../src/agents/conversational/tools.js'
 import {
+  deliverVerifiedHandoffRequiredDataPrompt,
+  deliverVerifiedHandoffTerminalMessage,
   ensureToolCallingV2VisibleReply,
+  loadToolCallingV2VerifiedPaymentHandoffPolicy,
   normalizeConversationalPreviewTranscript,
+  resolveToolCallingV2MandatoryHandoff,
   runConversationalAgentPreview,
   resumeToolCallingV2AfterVerifiedPayment
 } from '../src/agents/conversational/runner.js'
+import {
+  buildConversationalCapabilityManifest,
+  normalizeConversationalCapabilitiesConfig
+} from '../src/agents/conversational/nativeRuntimeConfig.js'
 import {
   findVerifiedPaymentEvidence,
   verifyNativeAppointmentSelectionEvidence
@@ -30,18 +40,34 @@ import { upsertLocalCalendar as upsertLocalCalendarService } from '../src/servic
 import { registerAgentTransferPaymentProofForReview } from '../src/services/paymentFlowService.js'
 import { setConversationalAgentLivePaymentDependenciesForTests } from '../src/services/conversationalAgentLivePaymentService.js'
 import {
+  applyToolCallingV2VerifiedTerminalHandoff,
   completeConversationalAgentSalePaymentFromInvoice,
   consumeConversationalAppointmentDepositForHumanBooking,
   consumeConversationalAppointmentDepositEvidence,
   createConversationalAgent,
+  claimConversationInboundMessage,
+  completeConversationInboundMessage,
   deleteConversationalAgent,
+  ensureConversationState,
+  getConversationalAgent,
   recordConversationalAgentEvent,
+  recoverPendingConversationalPaymentReconciliations,
+  recoverPendingToolCallingV2AppointmentBookingIntents,
+  recoverPendingToolCallingV2VerifiedTerminalHandoffs,
   reserveConversationalAppointmentDepositEvidence,
+  sealToolCallingV2VerifiedTerminalHandoffPending,
   setConversationSignal,
   setConversationalPaymentAfterStateInspectionHookForTest,
+  setConversationalRequiredDataPromptAfterDeliveryHookForTest,
+  setConversationalRequiredDataPromptHandlerForTest,
   setConversationalPriorityNotificationSenderForTest,
   setConversationalPaymentResumeHandlerForTest,
-  setConversationalPaymentTerminalReplyHandlerForTest
+  setConversationalPaymentTerminalReplyHandlerForTest,
+  setConversationalVerifiedPaymentHandoffAfterCommitHookForTest,
+  setConversationalVerifiedPaymentHandoffHandlersForTest,
+  setConversationalVerifiedTerminalHandoffAfterCommitHookForTest,
+  setConversationalTerminalMessageHandlerForTest,
+  resolveToolCallingV2VerifiedTerminalHandoffPending
 } from '../src/services/conversationalAgentService.js'
 import { getAccountCurrency } from '../src/utils/accountLocale.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
@@ -60,7 +86,14 @@ test.beforeEach(() => {
 
 test.afterEach(async () => {
   setConversationalPaymentTerminalReplyHandlerForTest(null)
+  setConversationalVerifiedPaymentHandoffHandlersForTest()
+  setConversationalVerifiedPaymentHandoffAfterCommitHookForTest(null)
+  setConversationalVerifiedTerminalHandoffAfterCommitHookForTest(null)
   setNativeAppointmentAfterPreCommitAuthorityHookForTest(null)
+  setNativeAppointmentCreateControllerInvokeHookForTest(null)
+  setConversationalRequiredDataPromptAfterDeliveryHookForTest(null)
+  setConversationalRequiredDataPromptHandlerForTest(null)
+  setConversationalTerminalMessageHandlerForTest(null)
   await db.run("DELETE FROM conversational_agents WHERE name = 'Agente fixture live'").catch(() => {})
 })
 
@@ -89,6 +122,197 @@ function mockResponse() {
   }
 }
 
+async function sealSyntheticVerifiedPaymentSecurity({
+  contactId,
+  agentId,
+  eventId = ''
+} = {}) {
+  const state = await db.get(
+    `SELECT id, channel, activation_cycle_id, activation_cycle_started_at
+     FROM conversational_agent_state
+     WHERE contact_id = ? AND agent_id = ?
+     ORDER BY updated_at DESC LIMIT 1`,
+    [contactId, agentId]
+  )
+  assert.ok(state?.id)
+  const activationCycleId = String(state.activation_cycle_id || '').trim() ||
+    `test-cycle-${state.id}`
+  await db.run(
+    `UPDATE conversational_agent_state
+     SET activation_cycle_id = ?,
+         activation_cycle_started_at = COALESCE(activation_cycle_started_at, CURRENT_TIMESTAMP)
+     WHERE id = ?`,
+    [activationCycleId, state.id]
+  )
+  const source = eventId
+    ? await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events WHERE id = ?`,
+        [eventId]
+      )
+    : await db.get(
+        `SELECT id, detail_json FROM conversational_agent_events
+         WHERE contact_id = ? AND agent_id = ?
+           AND event_type IN ('payment_link_created', 'payment_link_reused')
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [contactId, agentId]
+      )
+  assert.ok(source?.id)
+  const actionScopedContactData = {}
+  const actionScopedContactDataHash = createHash('sha256')
+    .update('conversational-action-scoped-contact-data:v1\u0000')
+    .update(JSON.stringify(actionScopedContactData))
+    .digest('hex')
+  const detail = JSON.parse(source.detail_json)
+  await db.run(
+    `UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?`,
+    [
+      JSON.stringify({
+        ...detail,
+        runtimeMode: 'tool_calling_v2',
+        actionScopedContactDataVersion: 1,
+        actionScopedContactData,
+        actionScopedContactDataHash,
+        paymentConversationBinding: {
+          schemaVersion: 1,
+          status: 'bound',
+          contactId,
+          agentId,
+          channel: state.channel || 'whatsapp',
+          stateId: String(state.id),
+          activationCycleId,
+          activationCycleStartedAt: state.activation_cycle_started_at || null,
+          conversationScopeId: `handoff_scope_${createHash('sha256')
+            .update([String(state.id), activationCycleId].join('\u0000'))
+            .digest('hex')
+            .slice(0, 40)}`,
+          sourceEventId: source.id,
+          sourceEventCreatedAt: null,
+          reason: null
+        }
+      }),
+      source.id
+    ]
+  )
+  return source.id
+}
+
+async function createVerifiedPaymentHandoffFixture({
+  suffix,
+  afterPayment = 'continue',
+  amount = 515,
+  assignedUserId = null
+} = {}) {
+  const contactId = `contact_verified_handoff_${suffix}`
+  const paymentId = `payment_verified_handoff_${suffix}`
+  const sourceEventId = `source_verified_handoff_${suffix}`
+  const executionId = `inbound_verified_handoff_${suffix}`
+  await db.run(
+    `INSERT INTO contacts (
+       id, full_name, assigned_user_id, custom_fields, created_at, updated_at
+     ) VALUES (?, 'Tania Salinas', ?, '[]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, assignedUserId]
+  )
+  await db.run(
+    `INSERT INTO whatsapp_api_messages
+      (id, contact_id, direction, message_type, message_text, message_timestamp)
+     VALUES (?, ?, 'inbound', 'text', 'Confirmo el pago', CURRENT_TIMESTAMP)`,
+    [executionId, contactId]
+  )
+  const agent = await createConversationalAgent({
+    name: `Regla post-pago ${suffix}`,
+    enabled: false,
+    runtimeMode: 'tool_calling_v2',
+    capabilitiesConfig: {
+      schemaVersion: 3,
+      items: [{
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'full_payment',
+        afterPayment
+      }]
+    }
+  })
+  await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agent.id])
+  await db.run(
+    `INSERT OR REPLACE INTO conversational_agent_state (
+       contact_id, agent_id, channel, status, signal, updated_at
+     ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+    [contactId, agent.id]
+  )
+  await recordConversationalAgentEvent({
+    eventId: sourceEventId,
+    contactId,
+    eventType: 'payment_link_created',
+    detail: {
+      agentId: agent.id,
+      channel: 'whatsapp',
+      ledgerPaymentId: paymentId,
+      invoiceId: paymentId,
+      amount,
+      currency: 'MXN',
+      paymentEnvironment: 'live',
+      paymentProvider: 'stripe',
+      paymentMode: 'full_payment',
+      paymentPurpose: 'purchase',
+      appointmentDeposit: false,
+      afterPayment,
+      runtimeMode: 'tool_calling_v2',
+      executionId
+    },
+    throwOnError: true
+  })
+  await sealSyntheticVerifiedPaymentSecurity({
+    contactId,
+    agentId: agent.id,
+    eventId: sourceEventId
+  })
+  await db.run(
+    `INSERT INTO payments (
+       id, contact_id, amount, currency, status, payment_mode, payment_provider,
+       paid_at, created_at, updated_at
+     ) VALUES (?, ?, ?, 'MXN', 'paid', 'live', 'stripe',
+       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [paymentId, contactId, amount]
+  )
+  const sourceDetail = JSON.parse((await db.get(
+    'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+    [sourceEventId]
+  )).detail_json)
+  return {
+    contactId,
+    paymentId,
+    sourceEventId,
+    executionId,
+    agent,
+    amount,
+    conversationScopeId: sourceDetail.paymentConversationBinding.conversationScopeId,
+    input: {
+      contactId,
+      paymentId,
+      amount,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+  }
+}
+
+async function cleanupVerifiedPaymentHandoffFixture(fixture = {}) {
+  if (!fixture.contactId) return
+  await db.run('DELETE FROM payments WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [fixture.contactId]).catch(() => {})
+  if (fixture.agent?.id) {
+    await db.run(
+      'DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?',
+      [fixture.agent.id]
+    ).catch(() => {})
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [fixture.agent.id]).catch(() => {})
+  }
+  await db.run('DELETE FROM contacts WHERE id = ?', [fixture.contactId]).catch(() => {})
+}
+
 function v2Context(items, overrides = {}) {
   return {
     runtimeMode: 'tool_calling_v2',
@@ -108,6 +332,104 @@ function v2Context(items, overrides = {}) {
     },
     ...overrides
   }
+}
+
+async function completePendingRequiredDataHandoffTurn({
+  contactId,
+  agentId,
+  messageId,
+  messageText,
+  extractedValues
+} = {}) {
+  await db.run(
+    `INSERT INTO whatsapp_api_messages (
+       id, contact_id, direction, message_type, message_text,
+       message_timestamp
+     ) VALUES (?, ?, 'inbound', 'text', ?, datetime(CURRENT_TIMESTAMP, '+1 second'))`,
+    [messageId, contactId, messageText]
+  )
+  const claim = await claimConversationInboundMessage(contactId, messageId, {
+    agentId,
+    channel: 'whatsapp'
+  })
+  assert.equal(claim.claimed, true, JSON.stringify(claim))
+  const config = await getConversationalAgent(agentId)
+  const ctx = {
+    config,
+    capabilitiesConfig: config.capabilitiesConfig,
+    contactId,
+    agentId,
+    executionId: messageId,
+    inboundClaim: { ...claim, messageId },
+    channel: 'whatsapp',
+    dryRun: false,
+    runtimeMode: 'tool_calling_v2',
+    followUpMode: false,
+    paymentResumeClaim: null,
+    historyContext: {
+      telemetry: {
+        historyComplete: true,
+        totalMessages: 1,
+        omittedMessages: 0
+      }
+    },
+    actions: []
+  }
+  const built = {
+    model: 'fake-model',
+    ctx,
+    capabilityManifest: buildConversationalCapabilityManifest(config),
+    tools: createConversationalTools(ctx)
+  }
+  let promptCalls = 0
+  let adjudicationCalls = 0
+  const result = await resolveToolCallingV2MandatoryHandoff({
+    built,
+    selectedMessages: [{
+      id: messageId,
+      role: 'user',
+      content: messageText
+    }],
+    latestInbound: messageText,
+    runtime: { modelProvider: { kind: 'fake' } },
+    contactId,
+    channel: 'whatsapp',
+    executionId: messageId,
+    inboundClaim: { ...claim, messageId },
+    dryRun: false,
+    phase: 'pre'
+  }, {
+    adjudicateHandoffRules: async () => {
+      adjudicationCalls += 1
+      throw new Error('un latch existente no debe volver a adjudicarse')
+    },
+    adjudicateHandoffSafety: async () => ({
+      decision: 'clear',
+      modelCallCount: 0,
+      source: 'test_required_data_recovery'
+    }),
+    extractRequiredHandoffData: async () => ({
+      values: extractedValues,
+      modelCallCount: 0
+    }),
+    deliverRequiredDataPrompt: async () => {
+      promptCalls += 1
+      throw new Error('no debe repetir la pregunta si el dato ya quedó completo')
+    },
+    findPastClientEvidence: async () => false
+  })
+  const completed = await completeConversationInboundMessage(
+    contactId,
+    messageId,
+    {
+      agentId,
+      channel: 'whatsapp',
+      claimToken: claim.claimToken,
+      answered: false
+    }
+  )
+  assert.equal(completed.completed, true)
+  return { result, promptCalls, adjudicationCalls, ctx }
 }
 
 async function persistLiveAgentConfig(ctx) {
@@ -309,7 +631,10 @@ async function createLiveDepositSelection({ calendarId, contactId, agentId, star
 
 async function createPaymentResumeTerminalRaceFixture({
   bookingOwner = 'ai',
-  suffix = randomUUID()
+  suffix = randomUUID(),
+  contactFullName = 'Cliente carrera de anticipo',
+  dataRequirements = null,
+  temporaryRequesterData = null
 } = {}) {
   const terminalToolName = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
   const calendarId = `calendar_payment_resume_race_${bookingOwner}_${suffix}`
@@ -341,6 +666,11 @@ async function createPaymentResumeTerminalRaceFixture({
       }
     }
   ]
+  const capabilitiesConfig = {
+    schemaVersion: 3,
+    ...(dataRequirements ? { dataRequirements } : {}),
+    items: capabilities
+  }
 
   await upsertLocalCalendar({
     id: calendarId,
@@ -353,13 +683,13 @@ async function createPaymentResumeTerminalRaceFixture({
   }, { source: 'ristak', syncStatus: 'synced' })
   await db.run(
     `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
-     VALUES (?, 'Cliente carrera de anticipo', '+526560001234', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    [contactId]
+     VALUES (?, ?, '+526560001234', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, contactFullName]
   )
   await db.run(
     `INSERT INTO conversational_agents (id, name, enabled, runtime_mode, capabilities_config)
      VALUES (?, 'Agente carrera de anticipo', 1, 'tool_calling_v2', ?)`,
-    [agentId, JSON.stringify({ schemaVersion: 3, items: capabilities })]
+    [agentId, JSON.stringify(capabilitiesConfig)]
   )
 
   const selectionCtx = v2Context(capabilities, {
@@ -370,6 +700,16 @@ async function createPaymentResumeTerminalRaceFixture({
     accountLocale: { currency }
   })
   selectionCtx.config.id = agentId
+  selectionCtx.config.capabilitiesConfig = capabilitiesConfig
+  if (temporaryRequesterData) {
+    const retained = await createConversationalTools(selectionCtx)
+      .find((item) => item.name === 'save_contact_data')
+      .invoke(null, JSON.stringify(temporaryRequesterData))
+    assert.equal(retained.ok, true, JSON.stringify(retained))
+    assert.equal(retained.retainedForCurrentAction, true, JSON.stringify(retained))
+    // Comprueba que el contrato no copie propiedades arbitrarias del contexto.
+    selectionCtx.actionScopedContactData.untrusted_internal_value = 'must-not-cross-payment-boundary'
+  }
   const selectionEvidence = await authorizeAppointmentOffer(selectionCtx, startTime, timezone)
   const first = await createConversationalTools(selectionCtx)
     .find((item) => item.name === terminalToolName)
@@ -467,9 +807,11 @@ async function createPaymentResumeTerminalRaceFixture({
     reconciliationId,
     reconciliationClaimToken,
     replacementClaimToken,
+    sourceEventId,
     currency,
     startTime,
     capabilities,
+    capabilitiesConfig,
     selectionDetail,
     contexts: [selectionCtx]
   }
@@ -490,6 +832,7 @@ async function invokePaymentResumeTerminalFixture(fixture, claimToken = fixture.
     }
   })
   ctx.config.id = fixture.agentId
+  ctx.config.capabilitiesConfig = fixture.capabilitiesConfig || ctx.config.capabilitiesConfig
   fixture.contexts.push(ctx)
   const result = await createConversationalTools(ctx)
     .find((item) => item.name === fixture.terminalToolName)
@@ -527,6 +870,456 @@ async function cleanupPaymentResumeTerminalRaceFixture(fixture) {
   await db.run('DELETE FROM conversational_agents WHERE id = ?', [fixture.agentId]).catch(() => {})
   await db.run('DELETE FROM contacts WHERE id = ?', [fixture.contactId]).catch(() => {})
 }
+
+function temporaryAppointmentRequesterRequirements() {
+  return {
+    fields: [
+      { field: 'full_name', label: 'Nombre completo', level: 'required', scope: 'appointment' },
+      { field: 'email', label: 'Correo', level: 'required', scope: 'appointment' },
+      { field: 'company', label: 'Empresa', level: 'required', scope: 'appointment' }
+    ],
+    updateContact: {
+      enabled: false,
+      policy: 'replace_placeholders'
+    }
+  }
+}
+
+for (const bookingOwner of ['ai', 'human']) {
+  const terminalToolName = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
+
+  test(`${terminalToolName} recupera del contrato pagado los datos obligatorios que no actualizan la ficha`, async () => {
+    let fixture = null
+    try {
+      fixture = await createPaymentResumeTerminalRaceFixture({
+        bookingOwner,
+        contactFullName: 'Usuario de WhatsApp',
+        dataRequirements: temporaryAppointmentRequesterRequirements(),
+        temporaryRequesterData: {
+          fullName: 'Laura Martínez',
+          email: 'LAURA@example.com',
+          company: 'Taller Norte'
+        }
+      })
+
+      const draft = fixture.selectionDetail.appointmentRequestDraft
+      assert.equal(draft.version, 2)
+      assert.deepEqual(
+        Object.keys(draft.requesterContactData).sort(),
+        ['custom_fields', 'email', 'full_name']
+      )
+      assert.equal(draft.requesterContactData.full_name, 'Laura Martínez')
+      assert.equal(draft.requesterContactData.email, 'laura@example.com')
+      assert.equal(
+        JSON.parse(draft.requesterContactData.custom_fields)
+          .find((field) => field.key === 'company')?.value,
+        'Taller Norte'
+      )
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(
+          draft.requesterContactData,
+          'untrusted_internal_value'
+        ),
+        false
+      )
+      assert.match(fixture.selectionDetail.appointmentRequestDraftHash, /^[a-f0-9]{64}$/)
+
+      const storedBeforeResume = await db.get(
+        'SELECT full_name, email, custom_fields FROM contacts WHERE id = ?',
+        [fixture.contactId]
+      )
+      assert.equal(storedBeforeResume.full_name, 'Usuario de WhatsApp')
+      assert.equal(storedBeforeResume.email, null)
+      assert.equal(
+        (JSON.parse(storedBeforeResume.custom_fields || '[]'))
+          .some((field) => field?.key === 'company'),
+        false
+      )
+
+      const resumed = await invokePaymentResumeTerminalFixture(fixture)
+      assert.equal(resumed.result.ok, true, JSON.stringify(resumed.result))
+      assert.equal(resumed.ctx.actionScopedContactData.full_name, 'Laura Martínez')
+      assert.equal(resumed.ctx.actionScopedContactData.email, 'laura@example.com')
+      assert.equal(
+        JSON.parse(resumed.ctx.actionScopedContactData.custom_fields)
+          .find((field) => field.key === 'company')?.value,
+        'Taller Norte'
+      )
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(
+          resumed.ctx.actionScopedContactData,
+          'untrusted_internal_value'
+        ),
+        false
+      )
+
+      if (bookingOwner === 'ai') {
+        assert.equal(resumed.result.actionCompleted, true, JSON.stringify(resumed.result))
+        assert.equal(Number((await db.get(
+          'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+          [fixture.contactId]
+        )).total), 1)
+      } else {
+        assert.equal(resumed.result.transferredToHuman, true, JSON.stringify(resumed.result))
+        assert.equal(resumed.result.appointmentCreated, false)
+        assert.equal(Number((await db.get(
+          `SELECT COUNT(*) AS total FROM conversational_agent_events
+           WHERE contact_id = ? AND event_type = 'human_booking_requested'`,
+          [fixture.contactId]
+        )).total), 1)
+      }
+
+      const storedAfterResume = await db.get(
+        'SELECT full_name, email, custom_fields FROM contacts WHERE id = ?',
+        [fixture.contactId]
+      )
+      assert.equal(storedAfterResume.full_name, 'Usuario de WhatsApp')
+      assert.equal(storedAfterResume.email, null)
+      assert.equal(
+        (JSON.parse(storedAfterResume.custom_fields || '[]'))
+          .some((field) => field?.key === 'company'),
+        false
+      )
+    } finally {
+      if (fixture) await cleanupPaymentResumeTerminalRaceFixture(fixture)
+    }
+  })
+}
+
+test('un contrato v1 sigue siendo legible pero no inventa datos temporales obligatorios ausentes', async () => {
+  let fixture = null
+  try {
+    fixture = await createPaymentResumeTerminalRaceFixture({
+      bookingOwner: 'ai',
+      contactFullName: 'Usuario de WhatsApp',
+      dataRequirements: temporaryAppointmentRequesterRequirements(),
+      temporaryRequesterData: {
+        fullName: 'Laura Martínez',
+        email: 'laura@example.com',
+        company: 'Taller Norte'
+      }
+    })
+    const currentDraft = fixture.selectionDetail.appointmentRequestDraft
+    const legacyDraft = {
+      version: 1,
+      title: currentDraft.title,
+      notes: currentDraft.notes,
+      attendeeName: currentDraft.attendeeName,
+      attendeeContext: currentDraft.attendeeContext,
+      primaryAttendee: currentDraft.primaryAttendee,
+      guests: currentDraft.guests
+    }
+    const legacyHash = createHash('sha256')
+      .update(JSON.stringify(legacyDraft))
+      .digest('hex')
+    const selectionEvent = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ?
+         AND event_type = 'appointment_slot_selection_verified'
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [fixture.contactId, fixture.agentId]
+    )
+    assert.ok(selectionEvent?.id)
+    const legacySelectionDetail = {
+      ...JSON.parse(selectionEvent.detail_json),
+      appointmentRequestDraft: legacyDraft,
+      appointmentRequestDraftHash: legacyHash
+    }
+    await db.run(
+      'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+      [JSON.stringify(legacySelectionDetail), selectionEvent.id]
+    )
+    for (const eventId of [fixture.sourceEventId, fixture.reconciliationId]) {
+      const row = await db.get(
+        'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+        [eventId]
+      )
+      const detail = JSON.parse(row.detail_json)
+      await db.run(
+        'UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?',
+        [JSON.stringify({
+          ...detail,
+          appointmentSelectionRequestDraftHash: legacyHash
+        }), eventId]
+      )
+    }
+
+    const resumed = await invokePaymentResumeTerminalFixture(fixture)
+    assert.equal(resumed.result.ok, false, JSON.stringify(resumed.result))
+    assert.equal(resumed.result.needsData, true, JSON.stringify(resumed.result))
+    assert.equal(resumed.ctx.actionScopedContactData, undefined)
+    assert.deepEqual(
+      resumed.result.requiredFields.map((field) => field.field).sort(),
+      ['company', 'email', 'full_name']
+    )
+    assert.equal(Number((await db.get(
+      'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+      [fixture.contactId]
+    )).total), 0)
+    assert.equal(await db.get(
+      'SELECT id FROM conversational_agent_events WHERE id = ?',
+      [`${fixture.reconciliationId}_consumed`]
+    ), null)
+  } finally {
+    if (fixture) await cleanupPaymentResumeTerminalRaceFixture(fixture)
+  }
+})
+
+test('pago completo sella los datos temporales y sólo reutiliza el link con la misma identidad', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_payment_requester_${suffix}`
+  const agentId = `agent_payment_requester_${suffix}`
+  const productId = `product_payment_requester_${suffix}`
+  const priceId = `price_payment_requester_${suffix}`
+  const paymentId = `payment_requester_${suffix}`
+  const publicPaymentId = `public_payment_requester_${suffix}`
+  const paymentUrl = `https://app.example/pay/${publicPaymentId}`
+  const currency = await getAccountCurrency()
+  const capabilities = [{
+    id: 'collect_payment',
+    enabled: true,
+    paymentMode: 'full_payment',
+    collectionMethod: 'payment_link',
+    gateway: 'conekta',
+    expirationMinutes: 60,
+    productId,
+    priceId,
+    afterPayment: 'handoff'
+  }]
+  const capabilitiesConfig = {
+    schemaVersion: 3,
+    dataRequirements: {
+      fields: [
+        { field: 'full_name', label: 'Nombre completo', level: 'required', scope: 'any_action' },
+        { field: 'email', label: 'Correo', level: 'required', scope: 'any_action' },
+        { field: 'company', label: 'Empresa', level: 'required', scope: 'any_action' }
+      ],
+      updateContact: {
+        enabled: false,
+        policy: 'replace_placeholders'
+      }
+    },
+    items: capabilities
+  }
+  let providerCalls = 0
+  const requestKeys = []
+
+  const buildContext = async ({ executionId, fullName, email, company }) => {
+    const ctx = v2Context(capabilities, {
+      contactId,
+      agentId,
+      dryRun: false,
+      executionId,
+      accountLocale: { currency }
+    })
+    ctx.config.id = agentId
+    ctx.config.capabilitiesConfig = capabilitiesConfig
+    await persistLiveAgentConfig(ctx)
+    const retained = await createConversationalTools(ctx)
+      .find((item) => item.name === 'save_contact_data')
+      .invoke(null, JSON.stringify({ fullName, email, company }))
+    assert.equal(retained.ok, true, JSON.stringify(retained))
+    assert.equal(retained.retainedForCurrentAction, true)
+    ctx.actionScopedContactData.internal_secret = 'must-not-be-persisted'
+    return ctx
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+       VALUES (?, 'Usuario de WhatsApp', '+525555555555', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await db.run(
+      `INSERT INTO products (id, name, currency, is_active, source)
+       VALUES (?, 'Valoración completa', ?, 1, 'ristak')`,
+      [productId, currency]
+    )
+    await db.run(
+      `INSERT INTO product_prices (id, product_id, name, currency, amount, source)
+       VALUES (?, ?, 'Precio único', ?, 850, 'ristak')`,
+      [priceId, productId, currency]
+    )
+    setConversationalAgentLivePaymentDependenciesForTests({
+      getPaymentGateCheckoutKeys: async (gateway) => ({
+        provider: gateway,
+        configured: true,
+        paymentMode: 'live'
+      }),
+      normalizePaymentGateConfig: (input) => ({
+        ...input,
+        gateway: 'conekta',
+        billingType: 'single'
+      }),
+      createPaymentGateLink: async (config, options) => {
+        providerCalls += 1
+        requestKeys.push(options.paymentLinkRequestKey)
+        await db.run(
+          `INSERT INTO payments (
+             id, contact_id, amount, currency, status, payment_mode, payment_provider,
+             public_payment_id, payment_url, payment_link_request_key, due_date, sent_at,
+             created_at, updated_at
+           ) VALUES (?, ?, ?, ?, 'sent', 'live', 'conekta', ?, ?, ?, ?,
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            paymentId,
+            contactId,
+            config.amount,
+            currency,
+            publicPaymentId,
+            paymentUrl,
+            options.paymentLinkRequestKey,
+            options.expiresAt
+          ]
+        )
+        return {
+          publicPaymentId,
+          paymentUrl,
+          payment: {
+            id: paymentId,
+            publicPaymentId,
+            amount: config.amount,
+            currency,
+            paymentMode: 'live'
+          }
+        }
+      },
+      loadExactPaymentLedger: async ({ idempotencyKey }) => db.get(
+        `SELECT id, contact_id, amount, currency, status, payment_mode, payment_provider,
+                ghl_invoice_id, public_payment_id, payment_url, payment_link_request_key,
+                due_date, sent_at
+         FROM payments
+         WHERE id = ? AND contact_id = ? AND payment_link_request_key = ?`,
+        [paymentId, contactId, idempotencyKey]
+      )
+    })
+
+    const firstCtx = await buildContext({
+      executionId: `message_payment_requester_first_${suffix}`,
+      fullName: 'Laura Martínez',
+      email: 'LAURA@example.com',
+      company: 'Taller Norte'
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal,
+         activation_cycle_id, activation_cycle_started_at, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, agentId, `payment_requester_cycle_${suffix}`]
+    )
+    const first = await createConversationalTools(firstCtx)
+      .find((item) => item.name === 'create_payment_link')
+      .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    assert.equal(first.ok, true, JSON.stringify(first))
+    assert.equal(first.paymentLink, paymentUrl)
+    assert.equal(providerCalls, 1)
+
+    const sourceEvent = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ?
+         AND event_type IN ('payment_link_created', 'payment_link_reused')
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [contactId, agentId]
+    )
+    assert.ok(sourceEvent?.id)
+    const sourceDetail = JSON.parse(sourceEvent.detail_json)
+    const boundRequester = readBoundConversationalActionScopedContactData(sourceDetail)
+    assert.deepEqual(Object.keys(boundRequester).sort(), ['custom_fields', 'email', 'full_name'])
+    assert.equal(boundRequester.full_name, 'Laura Martínez')
+    assert.equal(boundRequester.email, 'laura@example.com')
+    assert.equal(
+      JSON.parse(boundRequester.custom_fields)
+        .find((field) => field.key === 'company')?.value,
+      'Taller Norte'
+    )
+    assert.equal(Object.hasOwn(boundRequester, 'internal_secret'), false)
+    assert.match(sourceDetail.actionScopedContactDataHash, /^[a-f0-9]{64}$/)
+    assert.equal(
+      readBoundConversationalActionScopedContactData({
+        ...sourceDetail,
+        actionScopedContactData: {
+          ...sourceDetail.actionScopedContactData,
+          full_name: 'Persona adulterada'
+        }
+      }),
+      null
+    )
+
+    const matchingCtx = await buildContext({
+      executionId: `message_payment_requester_matching_${suffix}`,
+      fullName: 'Laura Martínez',
+      email: 'laura@example.com',
+      company: 'Taller Norte'
+    })
+    const matchingReuse = await createConversationalTools(matchingCtx)
+      .find((item) => item.name === 'create_payment_link')
+      .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    assert.equal(matchingReuse.ok, true, JSON.stringify(matchingReuse))
+    assert.equal(matchingReuse.paymentLink, paymentUrl)
+    assert.match(matchingReuse.note, /reutiliz/i)
+    assert.equal(providerCalls, 1)
+
+    const conflictingCtx = await buildContext({
+      executionId: `message_payment_requester_conflict_${suffix}`,
+      fullName: 'Otra Persona',
+      email: 'otra@example.com',
+      company: 'Otra Empresa'
+    })
+    const conflictingReuse = await createConversationalTools(conflictingCtx)
+      .find((item) => item.name === 'create_payment_link')
+      .invoke(null, JSON.stringify({ quantity: 1, agreedAmount: null }))
+    assert.equal(conflictingReuse.ok, false, JSON.stringify(conflictingReuse))
+    assert.equal(conflictingReuse.transferRequired, true)
+    assert.equal(providerCalls, 1)
+    const bindingFailure = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_link_failed'
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [contactId]
+    )
+    assert.equal(JSON.parse(bindingFailure.detail_json).reason, 'cross_turn_binding_mismatch')
+
+    const storedContact = await db.get(
+      'SELECT full_name, email, custom_fields FROM contacts WHERE id = ?',
+      [contactId]
+    )
+    assert.equal(storedContact.full_name, 'Usuario de WhatsApp')
+    assert.equal(storedContact.email, null)
+    assert.equal(
+      (JSON.parse(storedContact.custom_fields || '[]'))
+        .some((field) => field?.key === 'company'),
+      false
+    )
+  } finally {
+    setConversationalAgentLivePaymentDependenciesForTests(null)
+    const semanticRequestKeys = await db.all(
+      `SELECT idempotency_key FROM conversational_payment_link_requests
+       WHERE contact_id = ?`,
+      [contactId]
+    ).catch(() => [])
+    for (const row of semanticRequestKeys) requestKeys.push(row.idempotency_key)
+    if (requestKeys.length) {
+      const placeholders = [...new Set(requestKeys)].map(() => '?').join(', ')
+      await db.run(
+        `DELETE FROM conversational_payment_semantic_claims
+         WHERE owner_request_key IN (${placeholders})
+            OR canonical_request_key IN (${placeholders})`,
+        [...new Set(requestKeys), ...new Set(requestKeys)]
+      ).catch(() => {})
+    }
+    await db.run(
+      'DELETE FROM conversational_payment_link_requests WHERE contact_id = ?',
+      [contactId]
+    ).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM product_prices WHERE id = ?', [priceId]).catch(() => {})
+    await db.run('DELETE FROM products WHERE id = ?', [productId]).catch(() => {})
+  }
+})
 
 for (const bookingOwner of ['ai', 'human']) {
   const terminalToolName = bookingOwner === 'human' ? 'request_human_booking' : 'book_appointment'
@@ -2051,6 +2844,13 @@ test('replay del turno y retry concurrente/secuencial del link reutilizan provee
     const paymentCapability = ctx.config.capabilitiesConfig.items.find((item) => item.id === 'collect_payment')
     paymentCapability.gateway = 'conekta'
     paymentCapability.expirationMinutes = 60
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal,
+         activation_cycle_id, activation_cycle_started_at, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, agentId, `payment_link_retry_cycle_${suffix}`]
+    )
 
     setConversationalAgentLivePaymentDependenciesForTests({
       getPaymentGateCheckoutKeys: async (gateway) => ({ provider: gateway, configured: true, paymentMode: 'live' }),
@@ -3176,7 +3976,7 @@ test('agenda humana rechaza un slot ocupado y no usa la asignación del handoff 
   }
 })
 
-test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita real', async () => {
+test('book_appointment sin criterios de handoff no carga política ni crea ledger y conserva su replay', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_v2_replay_${suffix}`
   const contactId = `contact_v2_replay_${suffix}`
@@ -3187,8 +3987,15 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
   const slot = nextMonday.set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
   let clientRequestId = ''
   let userId = ''
+  let handoffPolicyLoads = 0
 
   try {
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => {
+        handoffPolicyLoads += 1
+        throw new Error('la agenda sin handoff no debe depender de este loader')
+      }
+    })
     await db.run(
       `INSERT INTO contacts (id, full_name, created_at, updated_at)
        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -3244,6 +4051,14 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     assert.equal(first.ok, true, JSON.stringify(first))
     assert.equal(replay.ok, true, JSON.stringify(replay))
     assert.deepEqual(replay.appointment, first.appointment)
+    assert.equal(handoffPolicyLoads, 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total
+       FROM conversational_agent_events
+       WHERE contact_id = ?
+         AND event_type = 'verified_terminal_handoff_pending'`,
+      [contactId]
+    )).total), 0)
     assert.equal('id' in first.appointment, false)
     assert.match(clientRequestId, /^conv-v2-attempt:/)
     assert.equal(ctx.actions.filter((action) => action.type === 'book_appointment').at(-1)?.clientRequestId, clientRequestId)
@@ -3283,6 +4098,7 @@ test('book_appointment v2 reintenta con la misma llave y reproduce una sola cita
     )
     assert.notEqual(JSON.parse(signalEvent.detail_json).summarySource, 'internal_summary_agent')
   } finally {
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => {})
     if (clientRequestId) {
       await db.run('DELETE FROM appointment_creation_requests WHERE client_request_id = ?', [clientRequestId]).catch(() => {})
@@ -3847,6 +4663,10 @@ test('confirmación real de pago v2 no levanta sub-IA ni aplica asignación o ex
         appointmentDeposit: false
       }
     })
+    await sealSyntheticVerifiedPaymentSecurity({
+      contactId,
+      agentId: agent.id
+    })
     await db.run(
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_mode, payment_provider,
@@ -3957,6 +4777,7 @@ test('después de pagar continuar reanuda el mismo agente y no cierra el chat', 
       },
       throwOnError: true
     })
+    await sealSyntheticVerifiedPaymentSecurity({ contactId, agentId: agent.id })
     await db.run(
       `INSERT INTO payments (
          id, contact_id, amount, currency, status, payment_mode, payment_provider,
@@ -4064,6 +4885,7 @@ test('después de pagar pasar al equipo hace handoff durable sin exponer send_to
       },
       throwOnError: true
     })
+    await sealSyntheticVerifiedPaymentSecurity({ contactId, agentId: agent.id })
     await db.run(
       `INSERT INTO payments (
          id, contact_id, amount, currency, status, payment_mode, payment_provider,
@@ -4107,7 +4929,8 @@ test('después de pagar pasar al equipo hace handoff durable sin exponer send_to
        FROM conversational_agent_events WHERE contact_id = ?`,
       [contactId]
     )
-    assert.equal(Number(events.signals), 1)
+    // Primero queda sellado purchase_completed y sólo después ready_for_human.
+    assert.equal(Number(events.signals), 2)
     assert.equal(Number(events.handoffs), 1)
     assert.equal(Number(events.completions), 1)
   } finally {
@@ -4120,6 +4943,1370 @@ test('después de pagar pasar al equipo hace handoff durable sin exponer send_to
       await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
     }
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('una regla post-pago que hace match sella purchase_completed y después entrega al usuario activo', async () => {
+  const suffix = randomUUID()
+  const username = `verified_payment_owner_${suffix}`
+  let fixture = null
+  let userId = ''
+  let adjudicationCalls = 0
+  try {
+    const insertedUser = await db.run(
+      `INSERT INTO users (
+         username, password_hash, full_name, is_active, created_at, updated_at
+       ) VALUES (?, 'hash', 'Doctora Tania', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [username]
+    )
+    userId = String(insertedUser.lastID)
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const policy = {
+      configRevision: 'payment-rule-rev-1',
+      policyFingerprint: 'payment-rule-fingerprint-1',
+      enabled: true,
+      criteriaConfigured: true,
+      pastClientsToHuman: false,
+      assignedUserId: userId,
+      assignedUserName: 'Doctora Tania',
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{ field: 'full_name', level: 'required', scope: 'any_action' }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => {
+        adjudicationCalls += 1
+        return {
+          ...policy,
+          decision: 'match',
+          source: 'model_rule_match',
+          matchedRule: 'cuando el paciente ya eligió fecha y hora',
+          conversationScopeId: fixture.conversationScopeId,
+          modelCallCount: 1
+        }
+      }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(result.handoffCompleted, true)
+    assert.equal(result.verifiedPaymentHandoffDecision, 'match')
+    assert.equal(adjudicationCalls, 1)
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual([state.status, state.signal], ['human', 'ready_for_human'])
+    assert.equal(String((await db.get(
+      'SELECT assigned_user_id FROM contacts WHERE id = ?',
+      [fixture.contactId]
+    )).assigned_user_id), userId)
+    const signalEvents = await db.all(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'signal_set' ORDER BY created_at, id`,
+      [fixture.contactId]
+    )
+    const signals = signalEvents.map((row) => JSON.parse(row.detail_json).signal)
+    assert.equal(signals.includes('purchase_completed'), true)
+    assert.equal(signals.includes('ready_for_human'), true)
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(reconciliation.verifiedPaymentHandoffDecision.decision, 'match')
+    assert.equal(reconciliation.paymentBusinessTerminal.signal, 'purchase_completed')
+    assert.equal(reconciliation.afterPaymentActionResult.assignment.assignedUserId, userId)
+  } finally {
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+  }
+})
+
+test('post-pago espera el dato obligatorio en el mismo ciclo antes de transferir', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let promptCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    await db.run(
+      `UPDATE contacts SET full_name = 'Contacto', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [fixture.contactId]
+    )
+    const policy = {
+      configRevision: 'payment-rule-rev-required-missing',
+      policyFingerprint: 'payment-rule-fingerprint-required-missing',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando el pago quede confirmado',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{ field: 'full_name', level: 'required', scope: 'handoff' }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        conversationScopeId: fixture.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+    setConversationalRequiredDataPromptHandlerForTest(async (prompt) => {
+      promptCalls += 1
+      assert.equal(prompt.handledMessageId, fixture.executionId)
+      assert.deepEqual(prompt.missingFields.map((item) => item.field), ['full_name'])
+      return {
+        settled: true,
+        sent: true,
+        ambiguous: false,
+        durableStatus: 'completed'
+      }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(result.handoffCompleted, false)
+    assert.equal(result.awaitingRequiredData, true)
+    assert.equal(result.manualReviewRequired, false)
+    assert.deepEqual(
+      result.missingRequiredFields.map((item) => item.field),
+      ['full_name']
+    )
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual([state.status, state.signal], ['active', null])
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(
+      reconciliation.afterPaymentActionResult.awaitingRequiredData,
+      true
+    )
+    assert.deepEqual(
+      reconciliation.afterPaymentActionResult.missingRequiredFields
+        .map((item) => item.field),
+      ['full_name']
+    )
+    assert.equal(promptCalls, 1)
+    const latch = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'handoff_rule_pending'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(latch.status, 'awaiting_required_data')
+    const replay = await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(promptCalls, 1)
+  } finally {
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('una caída después de entregar la pregunta obligatoria recupera la misma obligación sin duplicarla', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let promptAttempts = 0
+  let actualPromptDeliveries = 0
+  let crashInjected = false
+  const deliveredObligations = new Set()
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    await db.run(
+      `UPDATE contacts SET full_name = 'Contacto', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [fixture.contactId]
+    )
+    const policy = {
+      configRevision: 'payment-rule-rev-required-prompt-crash',
+      policyFingerprint: 'payment-rule-fingerprint-required-prompt-crash',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando el pago quede confirmado',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{ field: 'full_name', level: 'required', scope: 'handoff' }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        conversationScopeId: fixture.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+    setConversationalRequiredDataPromptHandlerForTest(async (prompt) => {
+      promptAttempts += 1
+      assert.equal(prompt.handledMessageId, fixture.executionId)
+      assert.deepEqual(prompt.missingFields.map((item) => item.field), ['full_name'])
+      if (!deliveredObligations.has(prompt.obligationId)) {
+        deliveredObligations.add(prompt.obligationId)
+        actualPromptDeliveries += 1
+      }
+      return {
+        settled: true,
+        sent: actualPromptDeliveries === promptAttempts,
+        ambiguous: false,
+        durableStatus: 'completed'
+      }
+    })
+    setConversationalRequiredDataPromptAfterDeliveryHookForTest(async () => {
+      if (crashInjected) return
+      crashInjected = true
+      throw Object.assign(
+        new Error('caída simulada después de la entrega durable'),
+        { simulateConversationalPromptProcessCrashForTest: true }
+      )
+    })
+
+    await assert.rejects(
+      completeConversationalAgentSalePaymentFromInvoice(fixture.input),
+      /caída simulada después de la entrega durable/
+    )
+    assert.equal(promptAttempts, 1)
+    assert.equal(actualPromptDeliveries, 1)
+    const latchRow = await db.get(
+      `SELECT id, detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'handoff_rule_pending'`,
+      [fixture.contactId]
+    )
+    const crashedLatch = JSON.parse(latchRow.detail_json)
+    assert.equal(crashedLatch.status, 'executing')
+    assert.ok(crashedLatch.promptDeliveryObligationId)
+    await db.run(
+      `UPDATE conversational_agent_events SET detail_json = ? WHERE id = ?`,
+      [
+        JSON.stringify({
+          ...crashedLatch,
+          executionStartedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString()
+        }),
+        latchRow.id
+      ]
+    )
+
+    setConversationalRequiredDataPromptAfterDeliveryHookForTest(null)
+    const recovered =
+      await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(recovered.handoffCompleted, false)
+    assert.equal(recovered.awaitingRequiredData, true)
+    assert.equal(promptAttempts, 2)
+    assert.equal(actualPromptDeliveries, 1)
+    const finalLatch = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [latchRow.id]
+    )).detail_json)
+    assert.equal(finalLatch.status, 'awaiting_required_data')
+    assert.equal(
+      finalLatch.promptDeliveryObligationId,
+      crashedLatch.promptDeliveryObligationId
+    )
+    const finalState = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual([finalState.status, finalState.signal], ['active', null])
+    const replay =
+      await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(promptAttempts, 2)
+    assert.equal(actualPromptDeliveries, 1)
+  } finally {
+    setConversationalRequiredDataPromptAfterDeliveryHookForTest(null)
+    setConversationalRequiredDataPromptHandlerForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('si el dato obligatorio llega entre el match y la pregunta, transfiere sin mandar una pregunta vieja', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let promptCalls = 0
+  let notificationCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    await db.run(
+      `UPDATE contacts SET full_name = 'Contacto', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [fixture.contactId]
+    )
+    const policy = {
+      configRevision: 'payment-rule-rev-required-completed-before-prompt',
+      policyFingerprint:
+        'payment-rule-fingerprint-required-completed-before-prompt',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando el pago quede confirmado',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{ field: 'full_name', level: 'required', scope: 'handoff' }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        conversationScopeId: fixture.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+    setConversationalRequiredDataPromptHandlerForTest(async () => {
+      promptCalls += 1
+      throw new Error('fallo transitorio antes de enviar la pregunta')
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+
+    await assert.rejects(
+      completeConversationalAgentSalePaymentFromInvoice(fixture.input),
+      /fallo transitorio antes de enviar la pregunta/
+    )
+    assert.equal(promptCalls, 1)
+    const waitingLatch = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'handoff_rule_pending'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(waitingLatch.status, 'awaiting_required_data')
+
+    await db.run(
+      `UPDATE contacts SET full_name = 'Tania Salinas',
+         updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [fixture.contactId]
+    )
+    const recovered =
+      await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(recovered.handoffCompleted, true)
+    assert.equal(recovered.awaitingRequiredData, false)
+    assert.deepEqual(recovered.missingRequiredFields, [])
+    assert.equal(promptCalls, 1)
+    assert.equal(notificationCalls, 1)
+    const finalState = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual(
+      [finalState.status, finalState.signal],
+      ['human', 'ready_for_human']
+    )
+    const completedLatch = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'handoff_rule_pending'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(completedLatch.status, 'completed')
+    assert.equal(
+      completedLatch.completedBy,
+      'verified_required_data_prompt_freshness'
+    )
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(
+      reconciliation.afterPaymentActionResult.handoffCompleted,
+      true
+    )
+    assert.equal(
+      reconciliation.afterPaymentActionResult.awaitingRequiredData,
+      false
+    )
+    const replay =
+      await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(notificationCalls, 1)
+    assert.equal(promptCalls, 1)
+  } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalRequiredDataPromptHandlerForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('post-pago pregunta el nombre una vez y el siguiente inbound completa el mismo latch sin repetir la terminal', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let promptCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    await db.run(
+      `UPDATE contacts SET full_name = 'Contacto', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [fixture.contactId]
+    )
+    const capabilitiesConfig = normalizeConversationalCapabilitiesConfig({
+      schemaVersion: 3,
+      dataRequirements: {
+        updateContact: {
+          enabled: true,
+          policy: 'replace_placeholders'
+        },
+        fields: [{
+          field: 'full_name',
+          label: 'nombre completo',
+          level: 'required',
+          scope: 'handoff'
+        }]
+      },
+      items: [{
+        id: 'collect_payment',
+        enabled: true,
+        paymentMode: 'full_payment',
+        afterPayment: 'continue'
+      }, {
+        id: 'handoff_human',
+        enabled: true,
+        rules: 'cuando el pago quede confirmado'
+      }]
+    })
+    await db.run(
+      `UPDATE conversational_agents
+       SET capabilities_config = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [JSON.stringify(capabilitiesConfig), fixture.agent.id]
+    )
+    const policy = await loadToolCallingV2VerifiedPaymentHandoffPolicy({
+      agentId: fixture.agent.id
+    })
+    assert.equal(policy.enabled, true)
+    assert.equal(policy.criteriaConfigured, true)
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        matchedRule: policy.rules,
+        reason: 'El pago ya quedó confirmado.',
+        summary: 'El equipo debe continuar después del pago.',
+        conversationScopeId: fixture.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+    setConversationalRequiredDataPromptHandlerForTest(async (prompt) => {
+      promptCalls += 1
+      assert.equal(prompt.handledMessageId, fixture.executionId)
+      assert.deepEqual(
+        prompt.missingFields.map((item) => item.field),
+        ['full_name']
+      )
+      return {
+        settled: true,
+        sent: true,
+        ambiguous: false,
+        durableStatus: 'completed'
+      }
+    })
+
+    const waiting =
+      await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(waiting.handoffCompleted, false)
+    assert.equal(waiting.awaitingRequiredData, true)
+    assert.equal(promptCalls, 1)
+    const originalLatchId = waiting.handoffLatchId
+    assert.ok(originalLatchId)
+    const terminalEventsBefore = Number((await db.get(
+      `SELECT COUNT(*) AS total
+       FROM conversational_agent_events
+       WHERE contact_id = ?
+         AND event_type = 'payment_after_action_awaiting_required_data'`,
+      [fixture.contactId]
+    )).total)
+    assert.equal(terminalEventsBefore, 1)
+
+    const secondTurn = await completePendingRequiredDataHandoffTurn({
+      contactId: fixture.contactId,
+      agentId: fixture.agent.id,
+      messageId: `inbound_required_name_${suffix}`,
+      messageText: 'Me llamo Tania Salinas',
+      extractedValues: { fullName: 'Tania Salinas' }
+    })
+    assert.equal(secondTurn.result.handled, true)
+    assert.equal(
+      secondTurn.result.mandatoryHandoff.status,
+      'completed'
+    )
+    assert.equal(
+      secondTurn.result.mandatoryHandoff.latchId,
+      originalLatchId
+    )
+    assert.equal(secondTurn.promptCalls, 0)
+    assert.equal(secondTurn.adjudicationCalls, 0)
+    assert.equal(promptCalls, 1)
+    const contact = await db.get(
+      'SELECT full_name FROM contacts WHERE id = ?',
+      [fixture.contactId]
+    )
+    assert.equal(contact.full_name, 'Tania Salinas')
+    const finalState = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual(
+      [finalState.status, finalState.signal],
+      ['human', 'ready_for_human']
+    )
+    const latch = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [originalLatchId]
+    )).detail_json)
+    assert.equal(latch.status, 'completed')
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total
+       FROM conversational_agent_events
+       WHERE contact_id = ?
+         AND event_type = 'payment_after_action_awaiting_required_data'`,
+      [fixture.contactId]
+    )).total), terminalEventsBefore)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total
+       FROM chat_delivery_outbox
+       WHERE contact_id = ? AND provider = 'conversational_agent_priority'`,
+      [fixture.contactId]
+    )).total), 1)
+
+    const effectsBeforeCompletedReplay = {
+      waitingEvents: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM conversational_agent_events
+         WHERE contact_id = ?
+           AND event_type = 'payment_after_action_awaiting_required_data'`,
+        [fixture.contactId]
+      )).total),
+      completedEvents: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM conversational_agent_events
+         WHERE contact_id = ?
+           AND event_type = 'payment_after_action_completed'`,
+        [fixture.contactId]
+      )).total),
+      signalEvents: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'signal_set'`,
+        [fixture.contactId]
+      )).total),
+      priorityDeliveries: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM chat_delivery_outbox
+         WHERE contact_id = ? AND provider = 'conversational_agent_priority'`,
+        [fixture.contactId]
+      )).total)
+    }
+    const completedReplay =
+      await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(completedReplay.alreadyCompleted, true)
+    assert.equal(completedReplay.handoffCompleted, true)
+    assert.equal(completedReplay.awaitingRequiredData, false)
+    assert.equal(completedReplay.handoffLatchId, originalLatchId)
+    assert.deepEqual(completedReplay.missingRequiredFields, [])
+    assert.equal(completedReplay.manualReviewRequired, false)
+    const reconciledPayment = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(
+      reconciledPayment.afterPaymentActionResult.handoffCompleted,
+      true
+    )
+    assert.equal(
+      reconciledPayment.afterPaymentActionResult.awaitingRequiredData,
+      false
+    )
+    assert.deepEqual(
+      reconciledPayment.afterPaymentActionResult.missingRequiredFields,
+      []
+    )
+    assert.equal(reconciledPayment.result.handoffCompleted, true)
+    assert.equal(reconciledPayment.result.awaitingRequiredData, false)
+    assert.deepEqual(reconciledPayment.result.missingRequiredFields, [])
+    assert.deepEqual({
+      waitingEvents: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM conversational_agent_events
+         WHERE contact_id = ?
+           AND event_type = 'payment_after_action_awaiting_required_data'`,
+        [fixture.contactId]
+      )).total),
+      completedEvents: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM conversational_agent_events
+         WHERE contact_id = ?
+           AND event_type = 'payment_after_action_completed'`,
+        [fixture.contactId]
+      )).total),
+      signalEvents: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM conversational_agent_events
+         WHERE contact_id = ? AND event_type = 'signal_set'`,
+        [fixture.contactId]
+      )).total),
+      priorityDeliveries: Number((await db.get(
+        `SELECT COUNT(*) AS total
+         FROM chat_delivery_outbox
+         WHERE contact_id = ? AND provider = 'conversational_agent_priority'`,
+        [fixture.contactId]
+      )).total)
+    }, effectsBeforeCompletedReplay)
+    assert.equal(promptCalls, 1)
+  } finally {
+    setConversationalRequiredDataPromptHandlerForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('una regla post-pago no_match conserva continuar y no transfiere el chat', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let adjudicationCalls = 0
+  let resumeCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const policy = {
+      configRevision: 'payment-rule-rev-no-match',
+      policyFingerprint: 'payment-rule-fingerprint-no-match',
+      enabled: true,
+      criteriaConfigured: true,
+      pastClientsToHuman: false,
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: { enabled: false, fields: [] }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => {
+        adjudicationCalls += 1
+        return {
+          ...policy,
+          decision: 'no_match',
+          source: 'audited_no_match',
+          reason: 'La regla no aplica',
+          conversationScopeId: fixture.conversationScopeId,
+          modelCallCount: 2,
+          noMatchAudit: {
+            decision: 'confirmed_no_match',
+            acceptedNoMatch: true,
+            source: 'independent_no_match_audit',
+            issues: [],
+            ruleAssessments: [{
+              ruleId: 'rule_1',
+              verdict: 'no_match',
+              evidenceHash: createHash('sha256').update('no-match').digest('hex')
+            }]
+          }
+        }
+      }
+    })
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      return { resumed: true, sent: true }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(result.signal, 'payment_confirmed')
+    assert.equal(result.verifiedPaymentHandoffDecision, undefined)
+    assert.equal(result.handoffCompleted, undefined)
+    assert.equal(adjudicationCalls, 1)
+    assert.equal(resumeCalls, 1)
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual([state.status, state.signal], ['active', null])
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(reconciliation.verifiedPaymentHandoffDecision.decision, 'no_match')
+    assert.equal(reconciliation.paymentBusinessTerminal, undefined)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('un no_match post-pago sin auditoría independiente falla cerrado y entrega el chat', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const policy = {
+      configRevision: 'payment-rule-rev-unconfirmed-no-match',
+      policyFingerprint: 'payment-rule-fingerprint-unconfirmed-no-match',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando el paciente ya eligió fecha y hora',
+      pastClientsToHuman: false,
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: { enabled: false, fields: [] }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'no_match',
+        source: 'single_model_no_match',
+        conversationScopeId: fixture.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(result.handoffCompleted, true)
+    assert.equal(result.verifiedPaymentHandoffDecision, 'match')
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(
+      reconciliation.verifiedPaymentHandoffDecision.source,
+      'configured_rules_fail_closed_review'
+    )
+  } finally {
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('si el adjudicador post-pago siempre falla, sella revisión humana y no deja el chat activo', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let adjudicationCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const policy = {
+      configRevision: 'payment-rule-rev-provider-down',
+      policyFingerprint: 'payment-rule-fingerprint-provider-down',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando el pago quede confirmado',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: { enabled: false, fields: [] }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => {
+        adjudicationCalls += 1
+        throw Object.assign(new Error('provider unavailable'), {
+          code: 'provider_unavailable'
+        })
+      }
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(
+      fixture.input
+    )
+    assert.equal(result.handoffCompleted, true)
+    assert.equal(result.manualReviewRequired, true)
+    assert.equal(result.verifiedPaymentHandoffDecision, 'match')
+    assert.equal(adjudicationCalls, 1)
+    const state = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.deepEqual([state.status, state.signal], ['human', 'ready_for_human'])
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(
+      reconciliation.verifiedPaymentHandoffDecision.source,
+      'configured_rules_fail_closed_review'
+    )
+    assert.equal(
+      reconciliation.afterPaymentActionResult.manualReviewRequired,
+      true
+    )
+
+    const replay = await completeConversationalAgentSalePaymentFromInvoice(
+      fixture.input
+    )
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(adjudicationCalls, 1)
+  } finally {
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('recovery reutiliza la adjudicación y terminal durable sin duplicar el handoff', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let adjudicationCalls = 0
+  let notificationCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const policy = {
+      configRevision: 'payment-rule-rev-recovery',
+      policyFingerprint: 'payment-rule-fingerprint-recovery',
+      enabled: true,
+      criteriaConfigured: true,
+      pastClientsToHuman: false,
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: { enabled: false, fields: [] }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => {
+        adjudicationCalls += 1
+        return {
+          ...policy,
+          decision: 'match',
+          source: 'model_rule_match',
+          conversationScopeId: fixture.conversationScopeId,
+          modelCallCount: 1
+        }
+      }
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      if (notificationCalls === 1) throw new Error('fallo de push después del commit')
+      return { sent: 1 }
+    })
+
+    await assert.rejects(
+      completeConversationalAgentSalePaymentFromInvoice(fixture.input),
+      /fallo de push después del commit/
+    )
+    const pending = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(pending.status, 'pending')
+    assert.equal(pending.verifiedPaymentHandoffDecision.decision, 'match')
+    assert.equal(pending.paymentBusinessTerminal.signal, 'purchase_completed')
+    assert.equal(pending.afterPaymentActionResult.handoffCompleted, true)
+
+    const recovered = await recoverPendingConversationalPaymentReconciliations({ limit: 20 })
+    assert.equal(recovered.recovered >= 1, true)
+    assert.equal(adjudicationCalls, 1)
+    assert.equal(notificationCalls, 2)
+    const counts = await db.get(
+      `SELECT
+         SUM(CASE WHEN id LIKE '%_business_terminal_signal' THEN 1 ELSE 0 END) AS business_signals,
+         SUM(CASE WHEN id LIKE '%_after_payment_handoff_signal' THEN 1 ELSE 0 END) AS handoff_signals,
+         SUM(CASE WHEN event_type = 'payment_after_action_completed' THEN 1 ELSE 0 END) AS handoff_events
+       FROM conversational_agent_events WHERE contact_id = ?`,
+      [fixture.contactId]
+    )
+    assert.equal(Number(counts.business_signals), 1)
+    assert.equal(Number(counts.handoff_signals), 1)
+    assert.equal(Number(counts.handoff_events), 1)
+  } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('usuario post-pago inactivo limpia sólo su propia asignación y cae al equipo general', async () => {
+  const suffix = randomUUID()
+  const username = `verified_payment_inactive_${suffix}`
+  let fixture = null
+  let userId = ''
+  try {
+    const insertedUser = await db.run(
+      `INSERT INTO users (
+         username, password_hash, full_name, is_active, created_at, updated_at
+       ) VALUES (?, 'hash', 'Usuario desactivado', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [username]
+    )
+    userId = String(insertedUser.lastID)
+    fixture = await createVerifiedPaymentHandoffFixture({
+      suffix,
+      assignedUserId: userId
+    })
+    const policy = {
+      configRevision: 'payment-rule-rev-inactive',
+      policyFingerprint: 'payment-rule-fingerprint-inactive',
+      enabled: true,
+      criteriaConfigured: true,
+      assignedUserId: userId,
+      assignedUserName: 'Usuario desactivado',
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: { enabled: false, fields: [] }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'match',
+        source: 'model_rule_match',
+        conversationScopeId: fixture.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+
+    const result = await completeConversationalAgentSalePaymentFromInvoice(fixture.input)
+    assert.equal(result.handoffCompleted, true)
+    const contact = await db.get(
+      'SELECT assigned_user_id FROM contacts WHERE id = ?',
+      [fixture.contactId]
+    )
+    assert.equal(contact.assigned_user_id, null)
+    const reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [fixture.contactId]
+    )).detail_json)
+    assert.equal(
+      reconciliation.afterPaymentActionResult.assignment.fallbackToGeneral,
+      true
+    )
+    assert.equal(
+      reconciliation.afterPaymentActionResult.assignment.clearedUnavailableAssignment,
+      true
+    )
+  } finally {
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+  }
+})
+
+test('una terminal síncrona conserva aviso durable si cae el proceso después del commit', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let notificationCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const state = await db.get(
+      `SELECT id, activation_cycle_id
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    const conversationScopeId = `handoff_scope_${createHash('sha256')
+      .update([state.id, state.activation_cycle_id].join('\u0000'))
+      .digest('hex')
+      .slice(0, 40)}`
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'completed', signal = 'appointment_booked',
+           updated_by = 'book_appointment', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [state.id]
+    )
+    const policy = {
+      configRevision: 'sync-terminal-rev-1',
+      policyFingerprint: 'sync-terminal-fingerprint-1',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando la cita quede agendada',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{ field: 'full_name', level: 'required', scope: 'any_action' }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+    let afterCommitCalls = 0
+    setConversationalVerifiedTerminalHandoffAfterCommitHookForTest(async () => {
+      afterCommitCalls += 1
+      if (afterCommitCalls === 1) {
+        throw new Error('crash post-commit antes del push')
+      }
+    })
+    const payload = {
+      contactId: fixture.contactId,
+      agentId: fixture.agent.id,
+      channel: 'whatsapp',
+      binding: {
+        stateId: String(state.id),
+        activationCycleId: state.activation_cycle_id,
+        conversationScopeId
+      },
+      expectedTerminal: {
+        status: 'completed',
+        signal: 'appointment_booked'
+      },
+      decision: {
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        conversationScopeId,
+        summary: 'La cita quedó agendada y el equipo debe continuar.'
+      },
+      actionScopedContactData: { full_name: 'Tania Salinas' },
+      sourceEventId: `sync_terminal_${suffix}`
+    }
+    await assert.rejects(
+      applyToolCallingV2VerifiedTerminalHandoff(payload),
+      /crash post-commit antes del push/
+    )
+    assert.equal(notificationCalls, 0)
+    const pendingBeforeReplay = await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'priority_push_notification_pending'`,
+      [fixture.contactId]
+    )
+    assert.equal(JSON.parse(pendingBeforeReplay.detail_json).status, 'pending')
+    setConversationalVerifiedTerminalHandoffAfterCommitHookForTest(null)
+    const replay = await applyToolCallingV2VerifiedTerminalHandoff(payload)
+    assert.equal(replay.handoffCompleted, true)
+    assert.equal(replay.manualReviewRequired, false)
+    assert.equal(replay.replayed, true)
+    assert.equal(notificationCalls, 1)
+    const finalState = await db.get(
+      'SELECT status, signal FROM conversational_agent_state WHERE id = ?',
+      [state.id]
+    )
+    assert.deepEqual(
+      [finalState.status, finalState.signal],
+      ['human', 'ready_for_human']
+    )
+    const events = await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'verified_terminal_handoff_completed'`,
+      [fixture.contactId]
+    )
+    assert.equal(Number(events.count), 1)
+  } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalVerifiedTerminalHandoffAfterCommitHookForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('una terminal con dato obligatorio faltante espera en el mismo ciclo y no transfiere ni avisa', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let notificationCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    await db.run(
+      `UPDATE contacts SET full_name = NULL, first_name = NULL, last_name = NULL
+       WHERE id = ?`,
+      [fixture.contactId]
+    )
+    const state = await db.get(
+      `SELECT id, activation_cycle_id
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    const binding = {
+      stateId: String(state.id),
+      activationCycleId: String(state.activation_cycle_id),
+      conversationScopeId: `handoff_scope_${createHash('sha256')
+        .update([String(state.id), String(state.activation_cycle_id)].join('\u0000'))
+        .digest('hex')
+        .slice(0, 40)}`
+    }
+    await db.run(
+      `UPDATE conversational_agent_state
+       SET status = 'completed', signal = 'appointment_booked',
+           updated_by = 'book_appointment', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [state.id]
+    )
+    const policy = {
+      configRevision: 'sync-terminal-required-rev-1',
+      policyFingerprint: 'sync-terminal-required-fingerprint-1',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: '- cuando la cita quede agendada',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{
+          field: 'full_name',
+          label: 'nombre completo',
+          level: 'required',
+          scope: 'any_action'
+        }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+    const payload = {
+      contactId: fixture.contactId,
+      agentId: fixture.agent.id,
+      channel: 'whatsapp',
+      binding,
+      expectedTerminal: {
+        status: 'completed',
+        signal: 'appointment_booked'
+      },
+      decision: {
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        matchedRule: policy.rules,
+        conversationScopeId: binding.conversationScopeId,
+        summary: 'La cita quedó agendada y el equipo debe continuar.'
+      },
+      actionScopedContactData: {},
+      sourceEventId: `sync_terminal_required_${suffix}`
+    }
+    const waiting = await applyToolCallingV2VerifiedTerminalHandoff(payload)
+    assert.equal(waiting.handoffCompleted, false)
+    assert.equal(waiting.awaitingRequiredData, true)
+    assert.equal(waiting.manualReviewRequired, false)
+    assert.deepEqual(
+      waiting.missingRequiredFields.map((item) => item.field),
+      ['full_name']
+    )
+    assert.equal(notificationCalls, 0)
+    const waitingState = await db.get(
+      `SELECT status, signal, activation_cycle_id
+       FROM conversational_agent_state WHERE id = ?`,
+      [state.id]
+    )
+    assert.deepEqual(
+      [
+        waitingState.status,
+        waitingState.signal,
+        waitingState.activation_cycle_id
+      ],
+      ['active', null, state.activation_cycle_id]
+    )
+    const latch = await db.get(
+      `SELECT detail_json
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ?
+         AND event_type = 'handoff_rule_pending'`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    assert.equal(JSON.parse(latch.detail_json).status, 'awaiting_required_data')
+    assert.deepEqual(
+      JSON.parse(latch.detail_json).requiredFields.map((item) => item.field),
+      ['full_name']
+    )
+
+    const replay = await applyToolCallingV2VerifiedTerminalHandoff(payload)
+    assert.equal(replay.replayed, true)
+    assert.equal(replay.awaitingRequiredData, true)
+    assert.equal(notificationCalls, 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'handoff_rule_pending'`,
+      [fixture.contactId]
+    )).total), 1)
+  } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
+  }
+})
+
+test('recovery reclama el ledger sellado si el proceso cae después de agendar y antes del postgate', async () => {
+  const suffix = randomUUID()
+  let fixture = null
+  let pendingEventId = ''
+  let adjudicationCalls = 0
+  let notificationCalls = 0
+  let terminalDeliveryCalls = 0
+  try {
+    fixture = await createVerifiedPaymentHandoffFixture({ suffix })
+    const state = await db.get(
+      `SELECT id, activation_cycle_id
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [fixture.contactId, fixture.agent.id]
+    )
+    const binding = {
+      stateId: String(state.id),
+      activationCycleId: String(state.activation_cycle_id),
+      conversationScopeId: `handoff_scope_${createHash('sha256')
+        .update([String(state.id), String(state.activation_cycle_id)].join('\u0000'))
+        .digest('hex')
+        .slice(0, 40)}`
+    }
+    const appointmentId = `appointment_terminal_crash_${suffix}`
+    const sourceEventId = `appointment_terminal_crash_event_${suffix}`
+    const terminalSourceMessageId = `message_terminal_crash_${suffix}`
+    const policy = {
+      configRevision: 'terminal-crash-rev-1',
+      policyFingerprint: 'terminal-crash-fingerprint-1',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: '- cuando la cita quede agendada',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: { enabled: false, fields: [] }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => {
+        adjudicationCalls += 1
+        return {
+          ...policy,
+          decision: 'match',
+          source: 'configured_rules',
+          matchedRule: policy.rules,
+          reason: 'La cita quedó agendada.',
+          summary: 'El equipo humano debe continuar.',
+          conversationScopeId: binding.conversationScopeId,
+          modelCallCount: 1
+        }
+      }
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+    setConversationalTerminalMessageHandlerForTest(async (payload) => {
+      terminalDeliveryCalls += 1
+      assert.equal(payload.obligationId, `${pendingEventId}:terminal_message`)
+      assert.equal(payload.messageKind, 'handoff')
+      return {
+        settled: true,
+        durableStatus: 'completed',
+        sourceMessageId: `handoff-terminal:${payload.obligationId}:handoff`
+      }
+    })
+
+    await db.transaction(async (tx) => {
+      await setConversationSignal(fixture.contactId, 'appointment_booked', {
+        reason: 'Cita agendada por el agente',
+        summary: 'Cita de recovery',
+        status: 'completed',
+        agentId: fixture.agent.id,
+        channel: 'whatsapp',
+        eventId: `${sourceEventId}_signal`,
+        strictEvent: true
+      })
+      await recordConversationalAgentEvent({
+        eventId: sourceEventId,
+        contactId: fixture.contactId,
+        eventType: 'appointment_booked',
+        detail: {
+          agentId: fixture.agent.id,
+          appointmentId,
+          terminalSourceMessageId,
+          terminalHandoffBinding: binding
+        },
+        throwOnError: true
+      })
+      const sealed = await sealToolCallingV2VerifiedTerminalHandoffPending({
+        contactId: fixture.contactId,
+        agentId: fixture.agent.id,
+        channel: 'whatsapp',
+        binding,
+        sourceEventId,
+        terminalSourceMessageId,
+        expectedTerminal: {
+          status: 'completed',
+          signal: 'appointment_booked'
+        },
+        terminalAction: {
+          tool: 'book_appointment',
+          appointmentId
+        },
+        actionScopedContactData: { full_name: 'Tania Salinas' },
+        database: tx
+      })
+      assert.equal(sealed.pending, true)
+      pendingEventId = sealed.pendingEventId
+    })
+
+    // Simula la caída exacta: el commit de cita/estado/ledger sí ocurrió,
+    // pero el postgate inmediato jamás alcanzó a reclamar la obligación.
+    const beforeRecovery = await db.get(
+      `SELECT status, signal FROM conversational_agent_state WHERE id = ?`,
+      [state.id]
+    )
+    assert.deepEqual(
+      [beforeRecovery.status, beforeRecovery.signal],
+      ['completed', 'appointment_booked']
+    )
+    assert.equal((await db.get(
+      'SELECT event_type FROM conversational_agent_events WHERE id = ?',
+      [pendingEventId]
+    )).event_type, 'verified_terminal_handoff_pending')
+
+    const recovered = await recoverPendingToolCallingV2VerifiedTerminalHandoffs()
+    assert.equal(recovered.scanned, 1)
+    assert.equal(recovered.recovered, 1)
+    assert.equal(recovered.failed, 0)
+    assert.equal(adjudicationCalls, 1)
+    assert.equal(notificationCalls, 1)
+    assert.equal(terminalDeliveryCalls, 1)
+    const finalState = await db.get(
+      `SELECT status, signal FROM conversational_agent_state WHERE id = ?`,
+      [state.id]
+    )
+    assert.deepEqual(
+      [finalState.status, finalState.signal],
+      ['human', 'ready_for_human']
+    )
+    assert.equal((await db.get(
+      'SELECT event_type FROM conversational_agent_events WHERE id = ?',
+      [pendingEventId]
+    )).event_type, 'verified_terminal_handoff_resolved')
+
+    const emptyReplay = await recoverPendingToolCallingV2VerifiedTerminalHandoffs()
+    assert.equal(emptyReplay.scanned, 0)
+    const directReplay =
+      await resolveToolCallingV2VerifiedTerminalHandoffPending({ pendingEventId })
+    assert.equal(directReplay.completed, true)
+    assert.equal(directReplay.replayed, true)
+    assert.equal(adjudicationCalls, 1)
+    assert.equal(notificationCalls, 1)
+    assert.equal(terminalDeliveryCalls, 1)
+  } finally {
+    setConversationalTerminalMessageHandlerForTest(null)
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
+    await cleanupVerifiedPaymentHandoffFixture(fixture || {})
   }
 })
 
@@ -4223,7 +6410,7 @@ test('un webhook de pago nunca pisa una pausa ni un takeover humano existentes',
   }
 })
 
-test('un pago completo conserva su cierre histórico sin reasignar el contacto a un agente eliminado', async () => {
+test('un pago de agente eliminado preserva el chat liberado y escala sin reasignarlo', async () => {
   const suffix = randomUUID()
   const contactId = `contact_deleted_sales_agent_${suffix}`
   const paymentId = `payment_deleted_sales_agent_${suffix}`
@@ -4274,6 +6461,10 @@ test('un pago completo conserva su cierre histórico sin reasignar el contacto a
       },
       throwOnError: true
     })
+    await sealSyntheticVerifiedPaymentSecurity({
+      contactId,
+      agentId: deletedAgentId
+    })
     await db.run(
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_mode, payment_provider,
@@ -4293,14 +6484,16 @@ test('un pago completo conserva su cierre histórico sin reasignar el contacto a
     }
     const result = await completeConversationalAgentSalePaymentFromInvoice(input)
     assert.equal(result.matched, true)
-    assert.equal(result.signal, 'purchase_completed')
+    assert.equal(result.signal, 'payment_confirmed_state_preserved')
+    assert.equal(result.statePreserved, true)
+    assert.equal(result.manualReviewRequired, true)
     const state = await db.get(
       'SELECT agent_id, status, signal FROM conversational_agent_state WHERE contact_id = ?',
       [contactId]
     )
     assert.equal(state.agent_id, null)
-    assert.equal(state.status, 'completed')
-    assert.equal(state.signal, 'purchase_completed')
+    assert.equal(state.status, 'active')
+    assert.equal(state.signal, null)
     assert.equal((await db.get('SELECT status FROM payments WHERE id = ?', [paymentId])).status, 'paid')
     const history = await db.get(
       `SELECT
@@ -4623,6 +6816,7 @@ test('si cambia la terminal con el anticipo pendiente, conserva el pago y cierra
       },
       throwOnError: true
     })
+    await sealSyntheticVerifiedPaymentSecurity({ contactId, agentId: agent.id })
     await db.run(
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_method, payment_mode,
@@ -6808,12 +9002,10 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
          ) VALUES (?, ?, 'inbound', 'image', ?, 'image/jpeg', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         [mediaMessageId, contactId, `https://example.com/valid-${variant.kind}.jpg`, new Date(Date.now() + (index + 1) * 1000).toISOString()]
       )
-      await db.run(
-        `INSERT OR REPLACE INTO conversational_agent_state (
-          contact_id, agent_id, channel, status, signal, updated_at
-         ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
-        [contactId, agentId]
-      )
+      await ensureConversationState(contactId, {
+        agentId,
+        channel: 'whatsapp'
+      })
       setNativePaymentReceiptAnalysisHookForTest(async () => ({
         ok: true,
         isPaymentReceipt: true,
@@ -6848,7 +9040,7 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
       assert.equal(payment.payment_mode, 'manual_review')
       assert.equal(payment.paid_at, null)
       const event = await db.get(
-        `SELECT detail_json FROM conversational_agent_events
+        `SELECT id, detail_json FROM conversational_agent_events
          WHERE contact_id = ? AND event_type = 'deposit_transfer_pending_review'
          ORDER BY created_at DESC LIMIT 1`,
         [contactId]
@@ -6860,6 +9052,11 @@ test('comprobantes válidos registran purchase y anticipo independiente como pen
       assert.equal(detail.manualReviewOnly, false)
       assert.equal(detail.autoResumeAllowed, true)
       assert.equal(detail.ledgerPaymentId, payment.id)
+      assert.equal(detail.actionScopedContactDataVersion, 1)
+      assert.deepEqual(detail.actionScopedContactData, {})
+      assert.match(detail.actionScopedContactDataHash, /^[a-f0-9]{64}$/)
+      assert.equal(detail.paymentConversationBinding.status, 'bound')
+      assert.equal(detail.paymentConversationBinding.sourceEventId, event.id)
       assert.equal(Number((await db.get(
         `SELECT COUNT(*) AS total FROM conversational_agent_events
          WHERE contact_id = ? AND event_type IN ('payment_reconciliation_v2', 'signal_set')`,
@@ -7841,6 +10038,523 @@ test('si el cierre de una cita v2 falla, no confirma al cliente y el siguiente i
   }
 })
 
+test('un crash después del commit de cita se recupera sin inbound, confirma una vez y cumple el handoff', async (t) => {
+  const scenarios = [
+    {
+      name: 'no_match confirma la cita y conserva el cierre de IA',
+      decision: 'no_match',
+      requireFullName: false,
+      expectedState: ['completed', 'appointment_booked'],
+      expectedReply: 'Listo, tu cita ya quedó agendada.'
+    },
+    {
+      name: 'match con nombre obligatorio pregunta y el siguiente inbound transfiere sin repetir la cita',
+      decision: 'match',
+      requireFullName: true,
+      expectedState: ['active', null],
+      expectedReply: 'Tu cita ya quedó agendada. Antes de pasarte con el equipo, ¿me compartes tu nombre completo?'
+    },
+    {
+      name: 'match completo transfiere, notifica y confirma la cita',
+      decision: 'match',
+      requireFullName: false,
+      expectedState: ['human', 'ready_for_human'],
+      expectedReply: 'Tu cita ya quedó agendada y el equipo continuará contigo.'
+    },
+    {
+      name: 'dos fallos transitorios conservan la obligación y el retry exacto sí transfiere',
+      decision: 'match',
+      requireFullName: false,
+      retryableBeforeSuccess: true,
+      expectedState: ['human', 'ready_for_human'],
+      expectedReply: 'Tu cita ya quedó agendada y el equipo continuará contigo.'
+    }
+  ]
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const suffix = randomUUID()
+      const calendarId = `calendar_atomic_handoff_${suffix}`
+      const contactId = `contact_atomic_handoff_${suffix}`
+      const agentId = `agent_atomic_handoff_${suffix}`
+      const confirmationMessageId = `confirm_atomic_handoff_${suffix}`
+      const timezone = await getAccountTimezone()
+      const baseDay = DateTime.now().setZone(timezone).plus({ days: 42 }).startOf('day')
+      const monday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+      const slot = monday.set({ hour: 11, minute: 0, second: 0, millisecond: 0 })
+      const deliveries = []
+      let notificationCalls = 0
+      let controllerCalls = 0
+
+      const deliveryDependencies = {
+        getAgent: async () => ({
+          id: agentId,
+          enabled: true,
+          replyDelivery: { splitMessagesEnabled: false }
+        }),
+        getContact: async () => ({
+          id: contactId,
+          phone: '+525500000000',
+          full_name: scenario.requireFullName ? null : 'Tania Salinas'
+        }),
+        getLatestInbound: async () => ({
+          id: confirmationMessageId,
+          phone: '+525500000000',
+          channel: 'whatsapp'
+        }),
+        deliverReply: async (payload) => {
+          deliveries.push({
+            reply: payload.reply,
+            sourceMessageId: payload.latest?.id,
+            externalIdPrefix: payload.externalIdPrefix
+          })
+          return {
+            parts: [payload.reply],
+            sentParts: 1,
+            durableStatus: 'completed'
+          }
+        },
+        recordEvent: async () => ({ recorded: true })
+      }
+
+      try {
+        await upsertLocalCalendar({
+          id: calendarId,
+          name: 'Agenda handoff atómico',
+          source: 'ristak',
+          slotDuration: 60,
+          slotInterval: 60,
+          openHours: [{
+            daysOfTheWeek: [1],
+            hours: [{ openHour: 11, openMinute: 0, closeHour: 12, closeMinute: 0 }]
+          }]
+        }, { source: 'ristak', syncStatus: 'synced' })
+        await db.run(
+          `INSERT INTO contacts (
+             id, full_name, phone, created_at, updated_at
+           ) VALUES (?, ?, '+525500000000', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [contactId, 'Tania Salinas']
+        )
+        await db.run(
+          `INSERT INTO whatsapp_api_messages (
+             id, contact_id, direction, message_type, message_text,
+             message_timestamp
+           ) VALUES (?, ?, 'inbound', 'text', 'Sí, confirma la cita',
+             CURRENT_TIMESTAMP)`,
+          [confirmationMessageId, contactId]
+        )
+        await db.run(
+          `INSERT INTO conversational_agent_state (
+             contact_id, agent_id, channel, status, signal,
+             activation_cycle_id, activation_cycle_started_at,
+             activation_cycle_started_message_id, created_at, updated_at
+           ) VALUES (?, ?, 'whatsapp', 'active', NULL, ?,
+             CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            contactId,
+            agentId,
+            `cac_atomic_handoff_${suffix}`,
+            confirmationMessageId
+          ]
+        )
+
+        const capabilities = [
+          { id: 'schedule_appointment', enabled: true, calendarId },
+          {
+            id: 'handoff_human',
+            enabled: true,
+            rules: 'cuando la cita quede agendada'
+          }
+        ]
+        const ctx = v2Context(capabilities, {
+          contactId,
+          agentId,
+          dryRun: false,
+          executionId: confirmationMessageId
+        })
+        ctx.config.id = agentId
+        ctx.config.capabilitiesConfig = normalizeConversationalCapabilitiesConfig({
+          schemaVersion: 3,
+          dataRequirements: scenario.requireFullName
+            ? {
+                updateContact: {
+                  enabled: true,
+                  policy: 'replace_placeholders'
+                },
+                fields: [{
+                  field: 'full_name',
+                  label: 'nombre completo',
+                  level: 'required',
+                  scope: 'any_action'
+                }]
+              }
+            : { fields: [] },
+          items: capabilities
+        })
+        ctx.capabilitiesConfig = ctx.config.capabilitiesConfig
+        const selectionEvidence = await authorizeAppointmentOffer(
+          ctx,
+          slot.toUTC().toISO(),
+          timezone
+        )
+        const state = await db.get(
+          `SELECT id, activation_cycle_id
+           FROM conversational_agent_state
+           WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+          [contactId, agentId]
+        )
+        const conversationScopeId = `handoff_scope_${createHash('sha256')
+          .update([String(state.id), String(state.activation_cycle_id)].join('\u0000'))
+          .digest('hex')
+          .slice(0, 40)}`
+        ctx.synchronousTerminalHandoffBinding = {
+          stateId: String(state.id),
+          activationCycleId: String(state.activation_cycle_id),
+          conversationScopeId
+        }
+
+        const policy =
+          await loadToolCallingV2VerifiedPaymentHandoffPolicy({
+            agentId
+          })
+        assert.equal(policy.enabled, true)
+        assert.equal(policy.criteriaConfigured, true)
+        setConversationalVerifiedPaymentHandoffHandlersForTest({
+          loadPolicy: async () => policy,
+          adjudicate: async () => ({
+            ...policy,
+            decision: scenario.decision,
+            source: scenario.decision === 'match'
+              ? 'model_rule_match'
+              : 'model_rule_no_match',
+            matchedRule: scenario.decision === 'match'
+              ? policy.rules
+              : null,
+            reason: scenario.decision === 'match'
+              ? 'La cita ya quedó agendada.'
+              : 'La regla no aplica a este caso.',
+            summary: 'Cita confirmada de forma durable.',
+            conversationScopeId,
+            modelCallCount: 1,
+            ...(scenario.decision === 'no_match'
+              ? {
+                  noMatchAudit: {
+                    decision: 'accept_no_match',
+                    acceptedNoMatch: true,
+                    source: 'independent_audit',
+                    issues: [],
+                    ruleAssessments: [{
+                      ruleId: 'rule-1',
+                      verdict: 'not_matched',
+                      evidenceHash: 'atomic-test'
+                    }]
+                  }
+                }
+              : {})
+          })
+        })
+        setConversationalPriorityNotificationSenderForTest(async () => {
+          notificationCalls += 1
+          return { sent: 1 }
+        })
+        setConversationalTerminalMessageHandlerForTest((payload) =>
+          deliverVerifiedHandoffTerminalMessage(payload, deliveryDependencies)
+        )
+        setConversationalRequiredDataPromptHandlerForTest((payload) =>
+          deliverVerifiedHandoffRequiredDataPrompt(payload, deliveryDependencies)
+        )
+        setNativeAppointmentCreateControllerInvokeHookForTest(async ({ invoke }) => {
+          controllerCalls += 1
+          if (scenario.retryableBeforeSuccess) {
+            if (controllerCalls === 1) {
+              const requestPayload = {
+                calendarId,
+                contactId,
+                endTime: slot.plus({ hours: 1 }).toUTC().toISO(),
+                source: 'conversational_agent_v2',
+                startTime: slot.toUTC().toISO()
+              }
+              const requestHash = createHash('sha256')
+                .update(JSON.stringify(requestPayload))
+                .digest('hex')
+              const action = ctx.actions.find((item) => item.type === 'book_appointment')
+              assert.ok(action?.clientRequestId)
+              await db.run(
+                `INSERT INTO appointment_creation_requests (
+                   client_request_id, request_hash, status, processing_token,
+                   error_status, error_retryable, error_message, created_at, updated_at
+                 ) VALUES (?, ?, 'failed', NULL, 503, 1, ?,
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                [
+                  action.clientRequestId,
+                  requestHash,
+                  'Falla transitoria simulada antes de crear la cita'
+                ]
+              )
+            }
+            return {
+              statusCode: 503,
+              payload: {
+                success: false,
+                code: 'appointment_transient_failure_injected',
+                error: 'Falla transitoria simulada antes de crear la cita'
+              }
+            }
+          }
+          const response = await invoke()
+          if (response?.statusCode < 400) {
+            throw Object.assign(
+              new Error('crash injected after appointment controller commit'),
+              { code: 'appointment_post_commit_crash_injected' }
+            )
+          }
+          return response
+        })
+
+        const first = await createConversationalTools(ctx)
+          .find((item) => item.name === 'book_appointment')
+          .invoke(null, JSON.stringify({
+            startTime: slot.toUTC().toISO(),
+            selectionEvidence,
+            title: null,
+            notes: null,
+            attendeeName: null,
+            attendeeContext: null
+          }))
+        assert.equal(first.ok, false, JSON.stringify(first))
+        assert.equal(
+          controllerCalls,
+          scenario.retryableBeforeSuccess ? 2 : 1,
+          JSON.stringify(first)
+        )
+        if (scenario.requireFullName) {
+          await db.run(
+            `UPDATE contacts
+             SET full_name = NULL, first_name = NULL, last_name = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [contactId]
+          )
+        }
+        if (scenario.retryableBeforeSuccess) {
+          assert.equal(Number((await db.get(
+            'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+            [contactId]
+          )).total), 0)
+          const retryableRequest = await db.get(
+            `SELECT status, appointment_id, error_retryable
+             FROM appointment_creation_requests
+             WHERE client_request_id = ?`,
+            [ctx.actions.find((item) => item.type === 'book_appointment').clientRequestId]
+          )
+          assert.deepEqual(
+            [
+              retryableRequest.status,
+              retryableRequest.appointment_id,
+              Number(retryableRequest.error_retryable)
+            ],
+            ['failed', null, 1]
+          )
+          assert.equal(Number((await db.get(
+            `SELECT COUNT(*) AS total
+             FROM conversational_agent_events
+             WHERE contact_id = ?
+               AND event_type = 'verified_terminal_handoff_booking_intent'`,
+            [contactId]
+          )).total), 1)
+          setNativeAppointmentCreateControllerInvokeHookForTest(null)
+          const retried = await createConversationalTools(ctx)
+            .find((item) => item.name === 'book_appointment')
+            .invoke(null, JSON.stringify({
+              startTime: slot.toUTC().toISO(),
+              selectionEvidence,
+              title: null,
+              notes: null,
+              attendeeName: null,
+              attendeeContext: null
+            }))
+          assert.equal(retried.ok, true, JSON.stringify(retried))
+          assert.equal(retried.actionCompleted, true, JSON.stringify(retried))
+        }
+        assert.equal(Number((await db.get(
+          'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+          [contactId]
+        )).total), 1)
+        assert.equal(Number((await db.get(
+          `SELECT COUNT(*) AS total FROM conversational_agent_events
+           WHERE contact_id = ?
+             AND event_type = ?`,
+          [
+            contactId,
+            scenario.retryableBeforeSuccess
+              ? 'verified_terminal_handoff_booking_materialized'
+              : 'verified_terminal_handoff_booking_committed'
+          ]
+        )).total), 1)
+
+        setNativeAppointmentCreateControllerInvokeHookForTest(null)
+        const resolved = await recoverPendingToolCallingV2VerifiedTerminalHandoffs({
+          limit: 20
+        })
+        assert.equal(resolved.failed, 0, JSON.stringify(resolved))
+        assert.equal(
+          resolved.materialized,
+          scenario.retryableBeforeSuccess ? 0 : 1,
+          JSON.stringify(resolved)
+        )
+        assert.equal(resolved.recovered, 1, JSON.stringify(resolved))
+
+        const replay = await recoverPendingToolCallingV2VerifiedTerminalHandoffs({
+          limit: 20
+        })
+        assert.equal(replay.failed, 0, JSON.stringify(replay))
+        assert.equal(deliveries.length, 1)
+        assert.equal(deliveries[0].reply, scenario.expectedReply)
+        assert.match(
+          deliveries[0].sourceMessageId,
+          /^handoff-terminal:cae_terminal_(?:pending|handoff)_[a-f0-9]+:/
+        )
+        assert.equal(
+          deliveries[0].externalIdPrefix,
+          'convagent_handoff_terminal'
+        )
+        let expectedFinalState = scenario.expectedState
+        if (scenario.requireFullName) {
+          assert.equal(notificationCalls, 0)
+          const awaitingLatch = await db.get(
+            `SELECT id, detail_json
+             FROM conversational_agent_events
+             WHERE contact_id = ? AND agent_id = ?
+               AND event_type = 'handoff_rule_pending'`,
+            [contactId, agentId]
+          )
+          assert.ok(awaitingLatch?.id)
+          assert.equal(
+            JSON.parse(awaitingLatch.detail_json).status,
+            'awaiting_required_data'
+          )
+          const bookedEventsBefore = Number((await db.get(
+            `SELECT COUNT(*) AS total
+             FROM conversational_agent_events
+             WHERE contact_id = ? AND event_type = 'appointment_booked'`,
+            [contactId]
+          )).total)
+          const appointmentsBefore = Number((await db.get(
+            'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+            [contactId]
+          )).total)
+
+          const secondTurn = await completePendingRequiredDataHandoffTurn({
+            contactId,
+            agentId,
+            messageId: `inbound_atomic_required_name_${suffix}`,
+            messageText: 'Me llamo Tania Salinas',
+            extractedValues: { fullName: 'Tania Salinas' }
+          })
+          assert.equal(secondTurn.result.handled, true)
+          assert.equal(
+            secondTurn.result.mandatoryHandoff.status,
+            'completed'
+          )
+          assert.equal(
+            secondTurn.result.mandatoryHandoff.latchId,
+            awaitingLatch.id
+          )
+          assert.equal(secondTurn.promptCalls, 0)
+          assert.equal(secondTurn.adjudicationCalls, 0)
+          assert.equal(deliveries.length, 1)
+          assert.equal(notificationCalls, 0)
+          assert.equal(Number((await db.get(
+            `SELECT COUNT(*) AS total
+             FROM chat_delivery_outbox
+             WHERE contact_id = ?
+               AND provider = 'conversational_agent_priority'`,
+            [contactId]
+          )).total), 1)
+          assert.equal(Number((await db.get(
+            'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+            [contactId]
+          )).total), appointmentsBefore)
+          assert.equal(Number((await db.get(
+            `SELECT COUNT(*) AS total
+             FROM conversational_agent_events
+             WHERE contact_id = ? AND event_type = 'appointment_booked'`,
+            [contactId]
+          )).total), bookedEventsBefore)
+          const completedLatch = JSON.parse((await db.get(
+            `SELECT detail_json
+             FROM conversational_agent_events WHERE id = ?`,
+            [awaitingLatch.id]
+          )).detail_json)
+          assert.equal(completedLatch.status, 'completed')
+          expectedFinalState = ['human', 'ready_for_human']
+        }
+
+        const finalState = await db.get(
+          `SELECT status, signal
+           FROM conversational_agent_state
+           WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+          [contactId, agentId]
+        )
+        assert.deepEqual(
+          [finalState.status, finalState.signal],
+          expectedFinalState
+        )
+        assert.equal(Number((await db.get(
+          'SELECT COUNT(*) AS total FROM appointments WHERE contact_id = ?',
+          [contactId]
+        )).total), 1)
+        const appointmentEvent = await db.get(
+          `SELECT detail_json
+           FROM conversational_agent_events
+           WHERE contact_id = ? AND event_type = 'appointment_booked'`,
+          [contactId]
+        )
+        assert.equal(
+          JSON.parse(appointmentEvent.detail_json).terminalSourceMessageId,
+          confirmationMessageId
+        )
+        assert.equal(
+          notificationCalls > 0,
+          scenario.decision === 'match' && !scenario.requireFullName
+        )
+      } finally {
+        setNativeAppointmentCreateControllerInvokeHookForTest(null)
+        setConversationalRequiredDataPromptAfterDeliveryHookForTest(null)
+        setConversationalRequiredDataPromptHandlerForTest(null)
+        setConversationalTerminalMessageHandlerForTest(null)
+        setConversationalPriorityNotificationSenderForTest(null)
+        setConversationalVerifiedPaymentHandoffHandlersForTest()
+        await db.run(
+          `DELETE FROM appointment_creation_requests
+           WHERE appointment_id IN (
+             SELECT id FROM appointments WHERE contact_id = ?
+           )`,
+          [contactId]
+        ).catch(() => {})
+        await db.run(
+          `DELETE FROM appointment_participants
+           WHERE appointment_id IN (
+             SELECT id FROM appointments WHERE contact_id = ?
+           )`,
+          [contactId]
+        ).catch(() => {})
+        await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => {})
+        await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => {})
+        await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+        await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+        await db.run(
+          'DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?',
+          [agentId]
+        ).catch(() => {})
+        await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
+        await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => {})
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+      }
+    })
+  }
+})
+
 test('get_contact_appointments limita la agenda al dueño o solicitante del hilo y nunca autoriza a un invitado', async () => {
   const suffix = randomUUID()
   const calendarId = `calendar_owned_appointments_${suffix}`
@@ -8342,7 +11056,7 @@ test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que
     }, { source: 'ristak', syncStatus: 'synced' })
     await db.run(
       `INSERT INTO contacts (id, full_name, created_at, updated_at)
-       VALUES (?, 'Cliente con reagenda humana', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+       VALUES (?, 'Usuario de WhatsApp', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [contactId]
     )
     await db.run(
@@ -8372,6 +11086,21 @@ test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que
       executionId: `offer_human_reschedule_${suffix}`
     })
     ctx.config.id = agentId
+    ctx.config.capabilitiesConfig = {
+      schemaVersion: 3,
+      dataRequirements: {
+        fields: [{
+          field: 'full_name',
+          level: 'required',
+          scope: 'appointment'
+        }],
+        updateContact: {
+          enabled: true,
+          policy: 'replace_placeholders'
+        }
+      },
+      items: capabilities
+    }
     await persistLiveAgentConfig(ctx)
     const initialTools = createConversationalTools(ctx)
     assert.ok(initialTools.some((item) => item.name === 'request_human_booking'))
@@ -8425,8 +11154,34 @@ test('agenda humana entrega un reagendamiento confirmado sin exponer la tool que
     const confirmationTools = createConversationalTools(ctx)
     assert.ok(confirmationTools.some((item) => item.name === 'resolve_active_appointment_offer'))
     assert.equal(confirmationTools.some((item) => item.name === 'reschedule_appointment'), false)
-    const resolved = await confirmationTools
+    const resolver = confirmationTools
       .find((item) => item.name === 'resolve_active_appointment_offer')
+    const acceptPayload = {
+      decision: 'accept',
+      reply: null,
+      title: null,
+      notes: null,
+      attendeeName: null,
+      attendeeContext: null,
+      primaryAttendee: null,
+      guests: [],
+      agreedAmount: null
+    }
+    const missingRequiredData = await resolver
+      .invoke(null, JSON.stringify(acceptPayload))
+    assert.equal(missingRequiredData.needsData, true, JSON.stringify(missingRequiredData))
+    assert.match(missingRequiredData.visibleReply, /nombre completo/i)
+    assert.equal((await db.get(
+      'SELECT status FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ?',
+      [contactId, agentId]
+    ))?.status === 'human', false)
+
+    const savedName = await createConversationalTools(ctx)
+      .find((item) => item.name === 'save_contact_data')
+      .invoke(null, JSON.stringify({ fullName: 'Cliente con reagenda humana' }))
+    assert.equal(savedName.ok, true, JSON.stringify(savedName))
+
+    const resolved = await resolver
       .invoke(null, JSON.stringify({
         decision: 'accept',
         reply: null,
@@ -8936,6 +11691,7 @@ test('afterPayment handoff convierte el cierre appointment_booked de la IA en en
       },
       throwOnError: true
     })
+    await sealSyntheticVerifiedPaymentSecurity({ contactId, agentId: agent.id })
     await db.run(
       `INSERT INTO payments (
          id, contact_id, amount, currency, status, payment_method, payment_mode,
@@ -8993,6 +11749,214 @@ test('afterPayment handoff convierte el cierre appointment_booked de la IA en en
     assert.equal(resumeCalls, 1)
   } finally {
     setConversationalPaymentResumeHandlerForTest(null)
+    await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    if (agent?.id) {
+      await db.run('DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?', [agent.id]).catch(() => {})
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => {})
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('recovery de anticipo completa el aviso manual si cae después del handoff y antes del push', async () => {
+  const suffix = randomUUID()
+  const contactId = `contact_deposit_manual_review_recovery_${suffix}`
+  const paymentId = `payment_deposit_manual_review_recovery_${suffix}`
+  const calendarId = `calendar_deposit_manual_review_recovery_${suffix}`
+  let agent = null
+  let notificationCalls = 0
+  let afterCommitCalls = 0
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, custom_fields, created_at, updated_at)
+       VALUES (?, 'Paciente Completo', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    agent = await createConversationalAgent({
+      name: `Anticipo con recovery de revisión ${suffix}`,
+      enabled: false,
+      runtimeMode: 'tool_calling_v2',
+      capabilitiesConfig: {
+        schemaVersion: 3,
+        items: [
+          { id: 'schedule_appointment', enabled: true, calendarId, bookingOwner: 'ai' },
+          {
+            id: 'collect_payment',
+            enabled: true,
+            chargeType: 'deposit',
+            paymentMode: 'deposit',
+            collectionMethod: 'payment_link',
+            gateway: 'stripe',
+            afterPayment: 'handoff',
+            deposit: { enabled: true, mode: 'fixed', amount: 300, currency: 'MXN' }
+          }
+        ]
+      }
+    })
+    await db.run(
+      `INSERT OR REPLACE INTO conversational_agent_state (
+         contact_id, agent_id, channel, status, signal, updated_at
+       ) VALUES (?, ?, 'whatsapp', 'active', NULL, CURRENT_TIMESTAMP)`,
+      [contactId, agent.id]
+    )
+    const sourceBinding = await createSyntheticAppointmentDepositSourceBinding({
+      contactId,
+      agentId: agent.id,
+      calendarId,
+      bookingOwner: 'ai',
+      suffix: `manual_review_recovery_${suffix}`
+    })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'payment_link_created',
+      detail: {
+        agentId: agent.id,
+        channel: 'whatsapp',
+        ledgerPaymentId: paymentId,
+        invoiceId: paymentId,
+        amount: 300,
+        currency: 'MXN',
+        paymentEnvironment: 'live',
+        paymentProvider: 'stripe',
+        paymentMode: 'deposit',
+        paymentPurpose: 'appointment_deposit',
+        appointmentDeposit: true,
+        afterPayment: 'handoff',
+        ...sourceBinding,
+        runtimeMode: 'tool_calling_v2'
+      },
+      throwOnError: true
+    })
+    const sourceEventId = await sealSyntheticVerifiedPaymentSecurity({
+      contactId,
+      agentId: agent.id
+    })
+    const sealedSource = JSON.parse((await db.get(
+      'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+      [sourceEventId]
+    )).detail_json)
+    const policy = {
+      configRevision: 'deposit-manual-review-recovery-rev',
+      policyFingerprint: 'deposit-manual-review-recovery-fingerprint',
+      enabled: true,
+      criteriaConfigured: true,
+      rules: 'cuando el anticipo quede confirmado',
+      assignedUserId: null,
+      generalFallbackPolicy: 'configured_user_or_general_team',
+      dataRequirements: {
+        enabled: true,
+        fields: [{
+          field: 'full_name',
+          label: 'Nombre completo',
+          level: 'required',
+          scope: 'handoff'
+        }]
+      }
+    }
+    setConversationalVerifiedPaymentHandoffHandlersForTest({
+      loadPolicy: async () => policy,
+      adjudicate: async () => ({
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules_fail_closed_review',
+        conversationScopeId:
+          sealedSource.paymentConversationBinding.conversationScopeId,
+        modelCallCount: 1
+      })
+    })
+    await db.run(
+      `INSERT INTO payments (
+         id, contact_id, amount, currency, status, payment_method, payment_mode,
+         payment_provider, paid_at, created_at, updated_at
+       ) VALUES (?, ?, 300, 'MXN', 'paid', 'card', 'live', 'stripe',
+         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [paymentId, contactId]
+    )
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      await setConversationSignal(contactId, 'appointment_booked', {
+        reason: 'Cita agendada por el agente',
+        summary: 'Cita real ligada al anticipo',
+        status: 'completed',
+        agentId: agent.id,
+        channel: 'whatsapp',
+        eventId: `appointment_booked_manual_review_recovery_${suffix}`,
+        strictEvent: true
+      })
+      return { resumed: true, sent: true }
+    })
+    setConversationalPriorityNotificationSenderForTest(async () => {
+      notificationCalls += 1
+      return { sent: 1 }
+    })
+    setConversationalVerifiedPaymentHandoffAfterCommitHookForTest(async () => {
+      afterCommitCalls += 1
+      if (afterCommitCalls === 1) {
+        throw new Error('caída después del handoff y antes del aviso manual')
+      }
+    })
+    const input = {
+      contactId,
+      paymentId,
+      amount: 300,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    }
+
+    await assert.rejects(
+      completeConversationalAgentSalePaymentFromInvoice(input),
+      /caída después del handoff y antes del aviso manual/
+    )
+    const stateAfterCrash = await db.get(
+      `SELECT status, signal FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'`,
+      [contactId, agent.id]
+    )
+    assert.deepEqual(
+      [stateAfterCrash.status, stateAfterCrash.signal],
+      ['human', 'ready_for_human']
+    )
+    let reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )).detail_json)
+    assert.equal(reconciliation.afterPaymentActionResult.manualReviewRequired, true)
+    assert.equal(Boolean(reconciliation.manualReviewEventAppliedAt), false)
+    assert.equal(notificationCalls, 0)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_after_action_completed'`,
+      [contactId]
+    )).total), 1)
+
+    setConversationalVerifiedPaymentHandoffAfterCommitHookForTest(null)
+    const recovered = await recoverPendingConversationalPaymentReconciliations({
+      limit: 20
+    })
+    assert.equal(recovered.recovered >= 1, true)
+    reconciliation = JSON.parse((await db.get(
+      `SELECT detail_json FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
+      [contactId]
+    )).detail_json)
+    assert.ok(reconciliation.manualReviewEventAppliedAt)
+    assert.equal(notificationCalls, 1)
+    const replay = await completeConversationalAgentSalePaymentFromInvoice(input)
+    assert.equal(replay.alreadyCompleted, true)
+    assert.equal(notificationCalls, 1)
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'payment_handoff_manual_review_required'`,
+      [contactId]
+    )).total), 1)
+  } finally {
+    setConversationalVerifiedPaymentHandoffAfterCommitHookForTest(null)
+    setConversationalPriorityNotificationSenderForTest(null)
+    setConversationalPaymentResumeHandlerForTest(null)
+    setConversationalVerifiedPaymentHandoffHandlersForTest()
     await db.run('DELETE FROM payments WHERE id = ?', [paymentId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
@@ -9097,7 +12061,8 @@ test('afterPayment handoff de un agente eliminado nunca toca al agente activo qu
     assert.equal(protectedState.status, 'active')
     assert.equal(protectedState.signal, null)
     assert.equal(protectedState.updated_by, 'current_agent')
-    assert.equal(notificationCalls, 0)
+    assert.equal(notificationCalls, 1)
+    assert.equal(result.manualReviewRequired, true)
     const reconciliation = JSON.parse((await db.get(
       `SELECT detail_json FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
@@ -9228,7 +12193,7 @@ test('afterPayment continuar de un agente eliminado tampoco cierra el chat del a
   }
 })
 
-test('afterPayment handoff conserva una pausa y no manda ni registra una entrega falsa', async () => {
+test('afterPayment handoff conserva una pausa, alerta revisión y no registra una entrega falsa', async () => {
   const suffix = randomUUID()
   const contactId = `contact_paused_handoff_${suffix}`
   const paymentId = `payment_paused_handoff_${suffix}`
@@ -9305,7 +12270,8 @@ test('afterPayment handoff conserva una pausa y no manda ni registra una entrega
     assert.equal(state.status, 'paused')
     assert.equal(state.signal, null)
     assert.equal(state.updated_by, 'staff_pause')
-    assert.equal(notificationCalls, 0)
+    assert.equal(notificationCalls, 1)
+    assert.equal(result.manualReviewRequired, true)
     const reconciliation = JSON.parse((await db.get(
       `SELECT detail_json FROM conversational_agent_events
        WHERE contact_id = ? AND event_type = 'payment_reconciliation_v2'`,
@@ -9319,7 +12285,7 @@ test('afterPayment handoff conserva una pausa y no manda ni registra una entrega
     )).total), 0)
     assert.equal(Number((await db.get(
       `SELECT COUNT(*) AS total FROM conversational_agent_events
-       WHERE contact_id = ? AND event_type = 'payment_after_action_preserved'`,
+       WHERE contact_id = ? AND event_type = 'payment_handoff_manual_review_required'`,
       [contactId]
     )).total), 1)
   } finally {

@@ -372,9 +372,14 @@ test('status central caído conserva los devices como fallo reintentable en entr
   const central = await startCentralPushServer({ pushStatusHttpStatus: 503 })
   let db = null
   let licenseService = null
+  let databaseModule = null
+  let userId = null
+  let previousPreferences = null
   const suffix = randomUUID()
-  const userId = `user_central_status_down_${suffix}`
+  const username = `user_central_status_down_${suffix}`
   const deviceId = `native_push_central_status_down_${suffix}`
+  const contactId = `contact_central_status_down_${suffix}`
+  const preferencesKey = 'notification_preferences_matrix'
 
   try {
     for (const key of ENV_KEYS) delete process.env[key]
@@ -384,13 +389,33 @@ test('status central caído conserva los devices como fallo reintentable en entr
     process.env.INSTALLATION_ID = 'inst_push_status_down'
     process.env.APP_URL = 'https://app.ristak.test'
 
-    const databaseModule = await import('../src/config/database.js')
+    databaseModule = await import('../src/config/database.js')
     const pushService = await import('../src/services/pushNotificationsService.js')
     licenseService = await import('../src/services/licenseService.js')
     db = databaseModule.db
     licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
     pushService.resetCentralMobilePushStatusCacheForTest()
 
+    previousPreferences = await databaseModule.getAppConfig(preferencesKey)
+    await db.run(
+      `INSERT INTO users (username, password_hash, full_name, is_active)
+       VALUES (?, 'hash-test', 'Responsable push', 1)`,
+      [username]
+    )
+    userId = String((await db.get(
+      'SELECT id FROM users WHERE username = ?',
+      [username]
+    )).id)
+    await databaseModule.setAppConfig(preferencesKey, {
+      rows: {
+        [`user:${userId}`]: { agent_priority: 'push' }
+      }
+    })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, phone, created_at, updated_at)
+       VALUES (?, 'Contacto prioritario', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `+521${String(Date.now()).slice(-10)}`]
+    )
     await db.run(`
       INSERT INTO mobile_push_devices (
         id, user_id, platform, token, calendar_ids_json, enabled, created_at, updated_at
@@ -415,8 +440,34 @@ test('status central caído conserva los devices como fallo reintentable en entr
       0,
       'sin status confiable no se finge una entrega ni se llama un broker no confirmado'
     )
+
+    const priority = await pushService.sendConversationalAgentPriorityNotification({
+      contactId,
+      messageId: `mandatory-handoff-${suffix}`,
+      reason: 'La regla obligatoria se cumplió',
+      durableDelivery: true
+    })
+    assert.equal(priority.skipped, false)
+    assert.equal(priority.attempted, 1)
+    assert.equal(priority.retryableFailures, 1)
+    assert.deepEqual(priority.retryTargets, {
+      webSubscriptionIds: [],
+      mobileDeviceIds: [deviceId]
+    })
   } finally {
     if (db) await db.run('DELETE FROM mobile_push_devices WHERE id = ?', [deviceId]).catch(() => {})
+    if (db) await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    if (db) await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => {})
+    if (databaseModule) {
+      if (previousPreferences === null) {
+        await db.run(
+          'DELETE FROM app_config WHERE config_key = ?',
+          [preferencesKey]
+        ).catch(() => {})
+      } else {
+        await databaseModule.setAppConfig(preferencesKey, previousPreferences).catch(() => {})
+      }
+    }
     const pushService = await import('../src/services/pushNotificationsService.js').catch(() => null)
     pushService?.resetCentralMobilePushStatusCacheForTest?.()
     if (licenseService) licenseService.setVerifiedAppBaseUrlResolverForTests()

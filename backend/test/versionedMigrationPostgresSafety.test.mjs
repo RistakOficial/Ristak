@@ -101,6 +101,168 @@ test('rechaza INDEX CONCURRENTLY mezclado con extension u otra sentencia', () =>
   `, '105c_fixture.postgres.sql'))
 })
 
+test('141a cerca inserts y reactivaciones de un writer viejo durante rolling deploy', {
+  skip: !connectionString
+}, async () => {
+  await withIsolatedPostgres('ristak_handoff_rolling_writer', async ({ client }) => {
+    await client.query(`
+      CREATE TABLE conversational_agent_state (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        last_inbound_message_id TEXT,
+        activated_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await client.query(`
+      INSERT INTO conversational_agent_state (
+        id, status, last_inbound_message_id,
+        activated_at, created_at, updated_at
+      ) VALUES (
+        'state_preexisting_active', 'active', 'legacy_m1',
+        CURRENT_TIMESTAMP - INTERVAL '1 hour',
+        CURRENT_TIMESTAMP - INTERVAL '2 hours',
+        CURRENT_TIMESTAMP
+      )
+    `)
+    const migrationSql = await readFile(
+      new URL(
+        '../migrations/versioned/141a_conversational_handoff_activation_cycle.postgres.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+    await client.query(migrationSql)
+
+    // Una fila que ya estaba activa no permite saber si last_inbound era el
+    // primero del ciclo. El marcador sobrevive a m2 y nunca finge un ancla.
+    let row = (await client.query(`
+      SELECT * FROM conversational_agent_state
+      WHERE id = 'state_preexisting_active'
+    `)).rows[0]
+    assert.match(row.activation_cycle_id, /^cac_legacy_backfill_/)
+    assert.equal(row.activation_cycle_started_message_id, null)
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = 'legacy_m2'
+      WHERE id = 'state_preexisting_active'
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state
+      WHERE id = 'state_preexisting_active'
+    `)).rows[0]
+    assert.equal(row.activation_cycle_started_message_id, null)
+
+    // El INSERT antiguo omite las tres columnas. El default identifica su
+    // origen y el trigger sella el primer claim, no el último.
+    await client.query(`
+      INSERT INTO conversational_agent_state (
+        id, status, created_at, updated_at
+      ) VALUES (
+        'state_old_insert', 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state WHERE id = 'state_old_insert'
+    `)).rows[0]
+    assert.match(row.activation_cycle_id, /^cac_legacy_insert_/)
+    assert.ok(row.activation_cycle_started_at)
+    assert.equal(row.activation_cycle_started_message_id, null)
+
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = 'first_inbound'
+      WHERE id = 'state_old_insert'
+    `)
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = 'second_inbound'
+      WHERE id = 'state_old_insert'
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state WHERE id = 'state_old_insert'
+    `)).rows[0]
+    assert.equal(row.last_inbound_message_id, 'second_inbound')
+    assert.equal(row.activation_cycle_started_message_id, 'first_inbound')
+
+    // La reactivación antigua sólo cambia status. El trigger rota el ciclo,
+    // limpia el ancla heredada y espera el primer inbound realmente nuevo.
+    const insertedCycleId = row.activation_cycle_id
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET status = 'human'
+      WHERE id = 'state_old_insert'
+    `)
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET status = 'active'
+      WHERE id = 'state_old_insert'
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state WHERE id = 'state_old_insert'
+    `)).rows[0]
+    assert.match(row.activation_cycle_id, /^cac_legacy_reactivation_/)
+    assert.notEqual(row.activation_cycle_id, insertedCycleId)
+    assert.equal(row.last_inbound_message_id, 'second_inbound')
+    assert.equal(row.activation_cycle_started_message_id, null)
+
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = 'reactivated_first_inbound'
+      WHERE id = 'state_old_insert'
+    `)
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = 'reactivated_second_inbound'
+      WHERE id = 'state_old_insert'
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state WHERE id = 'state_old_insert'
+    `)).rows[0]
+    assert.equal(
+      row.activation_cycle_started_message_id,
+      'reactivated_first_inbound'
+    )
+
+    // Un writer nuevo ya trae identidad propia: el fence no la pisa.
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET status = 'human'
+      WHERE id = 'state_old_insert'
+    `)
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET status = 'active',
+          activation_cycle_id = 'cac_writer_nuevo',
+          activation_cycle_started_at = CURRENT_TIMESTAMP,
+          activation_cycle_started_message_id = NULL
+      WHERE id = 'state_old_insert'
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state WHERE id = 'state_old_insert'
+    `)).rows[0]
+    assert.equal(row.activation_cycle_id, 'cac_writer_nuevo')
+    assert.equal(row.activation_cycle_started_message_id, null)
+
+    // Pausar y reanudar es el mismo ciclo; nunca se trata como reapertura.
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET status = 'paused'
+      WHERE id = 'state_old_insert'
+    `)
+    await client.query(`
+      UPDATE conversational_agent_state
+      SET status = 'active'
+      WHERE id = 'state_old_insert'
+    `)
+    row = (await client.query(`
+      SELECT * FROM conversational_agent_state WHERE id = 'state_old_insert'
+    `)).rows[0]
+    assert.equal(row.activation_cycle_id, 'cac_writer_nuevo')
+  })
+})
+
 test('094a/094b crean cursores inmutables sobre TIMESTAMP y TIMESTAMPTZ', {
   skip: !connectionString
 }, async () => {

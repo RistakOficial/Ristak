@@ -10,6 +10,7 @@ import {
   runVersionedMigrations
 } from '../src/startup/runMigrations.js'
 import { ensureSqliteSitesAnalyticsTrackingSchema } from '../src/startup/sitesAnalyticsSchemaCompatibility.js'
+import { ensureSqliteConversationalHandoffSchema } from '../src/startup/conversationalHandoffSchemaCompatibility.js'
 
 const sqlite3 = sqlite3Module.verbose()
 
@@ -1710,4 +1711,177 @@ test('la migracion 094 alinea expresiones keyset SQLite y retira sólo los índi
     await database.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('la migracion 141 rellena el ciclo conversacional e instala el índice de handoff en SQLite', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-conversational-handoff-schema-'))
+  const database = openMemoryDatabase()
+  const migrationFiles = [
+    '141_conversational_handoff_activation_cycle.sqlite.sql',
+    '141a_conversational_handoff_activation_cycle.postgres.sql',
+    '141b_conversational_handoff_event_scope.postgres.sql',
+    '141c_conversational_handoff_contract.postgres.sql'
+  ]
+
+  try {
+    await database.exec(`
+      CREATE TABLE conversational_agent_state (
+        id TEXT PRIMARY KEY,
+        activated_at DATETIME,
+        created_at DATETIME,
+        updated_at DATETIME
+      );
+      CREATE TABLE conversational_agent_events (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT,
+        agent_id TEXT,
+        event_type TEXT,
+        created_at DATETIME
+      );
+      INSERT INTO conversational_agent_state (
+        id, activated_at, created_at, updated_at
+      ) VALUES (
+        'state_legacy', '2026-07-30 12:00:00',
+        '2026-07-29 12:00:00', '2026-07-30 12:30:00'
+      );
+    `)
+
+    const repair = await ensureSqliteConversationalHandoffSchema({
+      database,
+      dialect: 'sqlite'
+    })
+    assert.deepEqual(repair.addedColumns, [
+      'conversational_agent_state.activation_cycle_id',
+      'conversational_agent_state.activation_cycle_started_at',
+      'conversational_agent_state.activation_cycle_started_message_id'
+    ])
+
+    for (const file of migrationFiles) {
+      await copyFile(
+        new URL(`../migrations/versioned/${file}`, import.meta.url),
+        join(directory, file)
+      )
+    }
+
+    const firstRun = await runVersionedMigrations({
+      database,
+      dialect: 'sqlite',
+      directory
+    })
+    assert.deepEqual(firstRun, { applied: 1, skipped: 3 })
+
+    const [state] = await database.all(
+      `SELECT activation_cycle_id, activation_cycle_started_at,
+              activation_cycle_started_message_id
+       FROM conversational_agent_state
+       WHERE id = 'state_legacy'`
+    )
+    assert.equal(
+      state.activation_cycle_id,
+      'cac_legacy_backfill_state_legacy'
+    )
+    assert.equal(state.activation_cycle_started_at, '2026-07-30 12:00:00')
+    assert.equal(state.activation_cycle_started_message_id, null)
+
+    const indexColumns = await database.all(
+      `PRAGMA index_info('idx_conv_agent_events_contact_agent_type_created')`
+    )
+    assert.deepEqual(
+      indexColumns.map((row) => row.name),
+      ['contact_id', 'agent_id', 'event_type', 'created_at', 'id']
+    )
+
+    const secondRun = await runVersionedMigrations({
+      database,
+      dialect: 'sqlite',
+      directory
+    })
+    assert.deepEqual(secondRun, { applied: 0, skipped: 0 })
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migracion 141 de PostgreSQL protege inserts de writers anteriores al rolling deploy', async () => {
+  const activationMigration = await readFile(
+    new URL(
+      '../migrations/versioned/141a_conversational_handoff_activation_cycle.postgres.sql',
+      import.meta.url
+    ),
+    'utf8'
+  )
+  const contractMigration = await readFile(
+    new URL(
+      '../migrations/versioned/141c_conversational_handoff_contract.postgres.sql',
+      import.meta.url
+    ),
+    'utf8'
+  )
+
+  assert.match(
+    activationMigration,
+    /ALTER COLUMN activation_cycle_id\s+SET DEFAULT \(\s*'cac_legacy_insert_' \|\|\s*md5\(/i
+  )
+  assert.match(
+    activationMigration,
+    /ALTER COLUMN activation_cycle_started_at\s+SET DEFAULT CURRENT_TIMESTAMP/i
+  )
+  assert.match(
+    activationMigration,
+    /ALTER COLUMN activation_cycle_id SET NOT NULL/i
+  )
+  assert.match(
+    activationMigration,
+    /ALTER COLUMN activation_cycle_started_at SET NOT NULL/i
+  )
+  assert.match(
+    activationMigration,
+    /CREATE OR REPLACE FUNCTION capture_conversational_legacy_cycle_anchor\(\)[\s\S]*?NEW\.activation_cycle_started_message_id := NEW\.last_inbound_message_id/i
+  )
+  assert.match(
+    activationMigration,
+    /NEW\.activation_cycle_id LIKE 'cac_legacy_insert_%'[\s\S]*?OR NEW\.activation_cycle_id LIKE 'cac_legacy_reactivation_%'/i
+  )
+  assert.match(
+    activationMigration,
+    /THEN 'cac_legacy_backfill_' \|\| id/i
+  )
+  assert.match(
+    activationMigration,
+    /OLD\.status IN \('human', 'completed', 'skipped'\)[\s\S]*?NEW\.status = 'active'/i
+  )
+  assert.match(
+    activationMigration,
+    /NEW\.activation_cycle_id IS NOT DISTINCT FROM OLD\.activation_cycle_id[\s\S]*?NEW\.activation_cycle_started_at\s+IS NOT DISTINCT FROM OLD\.activation_cycle_started_at[\s\S]*?NEW\.activation_cycle_started_message_id\s+IS NOT DISTINCT FROM OLD\.activation_cycle_started_message_id/i
+  )
+  assert.match(
+    activationMigration,
+    /NEW\.activation_cycle_id :=\s*'cac_legacy_reactivation_'[\s\S]*?NEW\.activation_cycle_started_at := CURRENT_TIMESTAMP;[\s\S]*?NEW\.activation_cycle_started_message_id := NULL;/i
+  )
+  assert.match(
+    activationMigration,
+    /NEW\.last_inbound_message_id IS DISTINCT FROM OLD\.last_inbound_message_id/i
+  )
+  assert.match(
+    activationMigration,
+    /NULLIF\(BTRIM\(COALESCE\(\s*NEW\.activation_cycle_started_message_id,[\s\S]*?\)\), ''\) IS NULL[\s\S]*?NULLIF\(BTRIM\(COALESCE\(NEW\.last_inbound_message_id, ''\)\), ''\) IS NOT NULL/i
+  )
+  assert.match(
+    activationMigration,
+    /CREATE TRIGGER trg_conv_agent_state_legacy_cycle_anchor\s+BEFORE INSERT OR UPDATE OF status, last_inbound_message_id/i
+  )
+  assert.match(contractMigration, /cycle_id_not_null IS DISTINCT FROM TRUE/i)
+  assert.match(contractMigration, /cycle_started_not_null IS DISTINCT FROM TRUE/i)
+  assert.match(contractMigration, /cycle_id_default IS NULL/i)
+  assert.match(contractMigration, /cycle_started_default IS NULL/i)
+  assert.match(contractMigration, /cac_legacy_insert_/i)
+  assert.match(
+    contractMigration,
+    /pg_get_triggerdef\(trigger_state\.oid, TRUE\)/i
+  )
+  assert.match(
+    contractMigration,
+    /trigger_state\.tgenabled IN \('O', 'A'\)/i
+  )
 })

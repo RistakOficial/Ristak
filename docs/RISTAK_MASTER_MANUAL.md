@@ -6853,7 +6853,10 @@ deja plantillas utiles por defecto y separa las piezas que el dueño sí control
   queda vacia, la voz general del negocio funciona como respaldo.
 - Capacidades: agenda, cobro, enlace, traspaso y objetivo propio, cada una con su
   configuracion operativa. Activarlas sólo pone la herramienta a disposicion del
-  modelo cuando esta completa y lista; no inicia un flujo ni ordena usarla.
+  modelo cuando esta completa y lista; no inicia un flujo ni ordena usarla. La
+  excepcion deliberada es **Pasar a humano** cuando contiene condiciones escritas
+  o la opcion de clientes previos: esas condiciones son politica obligatoria del
+  servidor y el traspaso adquiere prioridad terminal cuando alguna se cumple.
 
 La zona blindada existe solamente en servidor y no se muestra como un bloque
 editable ni como "Proteccion de Ristak". Se deriva del manifiesto validado de
@@ -6867,7 +6870,12 @@ momento; Personalidad manda en la forma de expresarlo. Si Personalidad contiene
 una instruccion operativa que contradice Estrategia, se ignora esa parte sin
 silenciar ni descartar la respuesta. Ninguna capacidad activa se interpreta como
 intencion del cliente ni como permiso para brincar los pasos definidos por el
-dueño.
+dueño. Una condicion ya adjudicada de **Pasar a humano** es la excepcion
+operativa: seguridad preventiva o una toma humana real conservan la maxima
+autoridad; después, si el formulario exige datos para cualquier accion, únicamente
+se permite completar esos datos y ejecutar el traspaso. Las demas decisiones de
+Estrategia/capacidades quedan bloqueadas. Estrategia, Personalidad, una despedida
+o un emoji no pueden cancelar esa obligacion.
 
 Los dos campos editables aceptan el texto completo sin recortes silenciosos y
 pueden abrirse en un editor enfocado grande sin crear una copia temporal del
@@ -6889,6 +6897,22 @@ incompleto; al publicar, el backend valida el manifiesto otra vez y consulta la
 realidad operativa antes de persistir el cambio: calendario y usuario activos,
 producto/precio relacionados y cobrables, moneda de la cuenta, monto de
 anticipo y destino HTTP(S) de enlaces directos o triggers.
+
+Las capacidades multiples son intencionales. Agenda puede convivir con Cobrar
+para un anticipo y Objetivo propio puede depender de Mandar enlace; por eso el
+editor y la API no limitan el agente a una sola capacidad. La ambiguedad se
+resuelve por prioridad terminal: si una condicion obligatoria de
+`handoff_human` coincide, en esa vuelta no se permite ejecutar agenda, cobro,
+enlaces ni objetivos. Unicamente `save_contact_data` puede ocurrir antes del
+traspaso cuando el formulario exige completar un dato.
+
+El campo **Cuándo debe pasarlo** admite hasta 4000 caracteres en escritorio,
+celular y API. Ambas interfaces muestran el conteo y conservan visible un
+borrador que exceda el límite para que pueda corregirse; no lo recortan ni lo
+marcan como guardado. El backend valida el payload crudo antes de normalizarlo y
+rechaza cualquier exceso con `CONVERSATIONAL_HANDOFF_RULES_TOO_LONG`, incluso si
+el agente está en pausa. Así ninguna condición desaparece silenciosamente de una
+política obligatoria.
 
 Activar Agenda y Cobrar al mismo tiempo no convierte cualquier deposito en
 anticipo de cita. Un cobro conserva `purchase` o `deposit` mientras sea
@@ -6992,9 +7016,10 @@ vacia significa que no debe pedirlos, y seleccionar cualquier campo deriva los
 flags `enabled` correspondientes tanto en frontend como en servidor.
 
 Los requisitos de datos no son un cuestionario general ni se preguntan al inicio
-por reflejo. Se aplican justo al borde de una accion terminal que el modelo ya
-decidio completar: confirmar una cita nueva, cobrar, entregar un enlace u objetivo
-o pasar el chat al equipo. No bloquean consultas, ofertas de horario, cancelaciones
+por reflejo. Se aplican justo al borde de una accion terminal que el modelo o una
+politica obligatoria de handoff ya determino completar: confirmar una cita nueva,
+cobrar, entregar un enlace u objetivo o pasar el chat al equipo. No bloquean
+consultas, ofertas de horario, cancelaciones
 ni la reagenda de una cita existente. Ademas, sólo aplican si esa capacidad esta
 lista y el `scope` del requisito coincide con la accion concreta. La configuracion de titulares distintos o invitados sólo
 entra cuando Agenda esta disponible y el cliente menciona expresamente que la
@@ -7006,8 +7031,9 @@ por nombre, telefono, correo, apellido ni otra ficha. `save_contact_data` sólo 
 expone cuando esa configuracion autoriza campos, aplica una allowlist en servidor,
 valida telefono/correo y nunca usa datos de un invitado para sobrescribir al
 solicitante. Si el dueño desactiva la actualizacion de la ficha, la misma tool
-conserva el dato confirmado únicamente durante esa vuelta para completar la
-accion y no escribe el contacto; así un dato obligatorio no entra en un ciclo
+conserva el dato confirmado únicamente dentro de la accion pendiente y no escribe
+el contacto; normalmente dura esa vuelta, y un handoff obligatorio lo conserva en
+su latch hasta completarse. Así un dato obligatorio no entra en un ciclo
 imposible. Los campos marcados `required` se vuelven una precondicion real de
 servidor antes de confirmar una cita nueva, cobrar, entregar un enlace u objetivo
 o pasar el chat cuando tienen alcance `any_action`; no
@@ -7110,15 +7136,207 @@ cada contacto.
 
 ### Runtime conversacional unico
 
-Cada inbound, preview y seguimiento entra a un solo `Agent`/`Runner`. El modelo conversa y
-decide llamadas estructuradas a las tools
+Cada inbound, preview y seguimiento conserva un solo `Agent`/`Runner` principal.
+El modelo principal conversa y decide llamadas estructuradas a las tools
 que corresponden exactamente a las capacidades activadas. No ejecuta
 `assessment`, `strategyPlanner`, `turnPolicy`, `closingPhaseGate`,
 `complianceGuard`, reglas regex que decidan intención, bloqueen acciones o
 supriman respuestas completas,
-`stay_silent`, `discard_conversation` ni `update_closing_context`. Después de la
-respuesta principal sólo existen compuertas locales que no vuelven a consultar
-al modelo principal: la postcondición factual de agenda, el recorte determinista
+`stay_silent`, `discard_conversation` ni `update_closing_context`.
+
+Cuando `handoff_human` tiene condiciones obligatorias, antes del modelo principal
+corre un adjudicador aislado con salida estructurada y `toolChoice` exacto. Recibe
+las condiciones como politica confiable y el historial acotado como datos no
+confiables; no responde al contacto, no tiene tools operativas y no usa regex ni
+listas de palabras. Evalua todo el historial recibido en esa vuelta porque una condicion puede
+completarse en mensajes distintos, como fecha primero y hora despues; mensajes
+del agente dan contexto pero no prueban una eleccion del contacto, y negaciones o
+cambios de preferencia no cuentan como cumplimiento. Las viñetas se interpretan
+como alternativas salvo que el texto una expresamente sus condiciones. Un fallo
+o timeout del adjudicador falla cerrado y reintenta el inbound: nunca se convierte
+silenciosamente en `no_match` ni deja que el modelo principal continue.
+
+La evidencia no queda limitada a la ventana corta del modelo principal. El
+servidor pagina hacia atras todo el ciclo de activacion desde su mensaje ancla
+exacto, sin cortar mensajes largos, con topes defensivos de 256 paginas, 7680
+mensajes y 384 KiB. El envelope declara si la cobertura quedó completa. Alcanzar
+un tope, perder el ancla, fallar una pagina o detectar una discontinuidad impide
+aceptar `no_match`: el turno reintenta y, si no puede recuperar evidencia integra,
+falla cerrado hacia revision humana. En terminales asincronas la lectura termina
+exactamente en el inbound que autorizó la cita, pago o meta; un mensaje posterior
+no se usa retroactivamente para justificar aquella decision.
+
+Un `no_match` inicial tampoco basta por sí solo. Una segunda auditoría aislada
+divide la política en condiciones y exige para cada una un veredicto
+`not_satisfied` con evidencia revisable. Si detecta una condición satisfecha, una
+duda, una condición omitida, evidencia ausente, una contradicción entre su
+detalle y su conclusión, un error o un timeout, el resultado deja de ser
+`no_match` y se entrega a revisión humana. Sólo una auditoría completa y
+coherente permite continuar con el modelo principal; su resultado se guarda como
+JSON íntegro e idempotente para poder auditarlo después.
+
+Un `match` crea `handoff_rule_pending`, una obligacion durable identificada por
+contacto, agente, canal, revision completa de politica, scope de conversacion y
+mensaje origen. La revision incluye hasta los 4000 caracteres visibles de reglas,
+la opcion de clientes previos, la persona asignada, los requisitos de datos y la
+disponibilidad del agente/runtime que hacen ejecutable ese contrato. Su identidad
+no usa el `updated_at` general del agente: cambiar nombre, modelo, personalidad,
+demora u otra capacidad no cancela un handoff ya debido. Cambiar las reglas,
+activar o apagar el traspaso, cambiar la persona asignada o modificar los datos
+obligatorios sí crea una politica distinta. El scope nace con cada ciclo real de activacion:
+pausar y reanudar conserva la misma obligacion, pero reabrir un chat ya entregado
+o completado, liberar al agente y volver a asignarlo genera un ciclo nuevo y
+nunca revive un `match` viejo. El inbound que activa o asigna al agente queda
+además como ancla exacta del ciclo antes de iniciar la espera de respuesta,
+aunque su timestamp sea anterior al instante en que se creó la asignacion; así
+una fecha escrita en ese primer mensaje no desaparece si la hora llega enseguida
+y ambos mensajes se procesan juntos. El
+evento conserva motivo, resumen, campos faltantes y estados `ready`,
+`awaiting_required_data`, `executing`, `failed`, `completed` o `superseded`.
+Compare-and-swap, lease y fencing permiten un solo ejecutor; reinicios, retries,
+mensajes de cortesia o emojis no borran la obligacion. Si las reglas se editan, se
+apagan o cambia una parte relevante del contrato de handoff, la revision anterior
+queda `superseded` y se vuelve a evaluar la configuracion vigente.
+
+Con datos completos, el servidor ejecuta `send_to_human` antes de levantar el
+modelo principal. Si falta un dato `required` con alcance `any_action`, no corre
+ninguna otra capacidad: un extractor aislado y forzado revisa únicamente mensajes
+del contacto dentro del historial disponible, aplica la correccion mas reciente,
+conserva sólo valores propios declarados expresamente y llama la misma allowlist
+de `save_contact_data`. Valores ausentes o dudosos quedan `null`. Despues el
+servidor reintenta el handoff en el mismo contexto. Si el formulario usa
+**No actualizar la ficha**, el dato se guarda sólo dentro de la obligacion de
+handoff y sobrevive las vueltas necesarias sin modificar el contacto. Si aun falta
+algo, la respuesta se reemplaza por la pregunta canonica de esos campos. No puede
+salir una despedida, un emoji ni otra accion mientras el pendiente siga vigente.
+Cada valor extraido debe aparecer literalmente en un mensaje del contacto dentro
+de la cobertura verificada: correo exacto normalizado, telefono por sus digitos y
+texto como tramo contiguo normalizado. Una frase del agente, una inferencia del
+modelo o un valor inventado no satisfacen el formulario. Antes de entregar
+cualquier pregunta canónica —en la vuelta normal o desde recovery— el servidor
+relee ciclo, estado, politica, latch, campos todavía faltantes y mensajes nuevos.
+La autoridad conserva bloqueadas esas filas durante el único envío al proveedor;
+si la persona ya contestó, el dueño apagó la regla o un humano tomó el chat,
+cancela la pregunta obsoleta y recalcula la realidad nueva. Si el proveedor pudo
+haber aceptado el mensaje pero falla el commit posterior, el ledger queda
+`ambiguous` y no vuelve a enviarlo a ciegas.
+
+Ni siquiera un fallo repetido del extractor autoriza brincar un dato obligatorio.
+En ese caso el servidor conserva el latch en `awaiting_required_data`, mantiene
+activo al agente únicamente para esa captura y manda la pregunta canónica sin
+depender de otra inferencia. Nunca fabrica el valor, marca el formulario como
+completo ni cambia el chat a humano mientras el requisito configurado siga
+faltando. Los fallos de infraestructura reintentan con la misma obligación
+durable.
+
+Inmediatamente antes del efecto real, una sola transaccion vuelve a bloquear y
+comprobar agente/configuracion, scope, mensaje inbound reclamado, ausencia de un
+mensaje mas nuevo, leases de ejecucion, latch, datos obligatorios y estado del
+contacto. Dentro de esa misma transaccion confirma asignacion, estado humano,
+evento terminal, `completed` y el aviso prioritario en la outbox; un cambio
+concurrente revierte todo. El worker recupera ese aviso tras reinicios y lo
+reintenta con semantica de al menos una entrega, porque el proveedor push no
+ofrece una transaccion distribuida. Los avisos
+`conversational_agent_priority` saltan delante de pushes ordinarios pendientes y
+una caida temporal del servicio central permanece como retry; nunca se marca como
+entrega ni se borra el payload por falta de una lectura fresca de transportes. Si
+la persona configurada ya no esta activa, el traspaso obligatorio conserva el
+chat en estado humano y cae al equipo general en vez de reactivar la IA.
+
+Las terminales que pueden concluir fuera de la vuelta original —cita confirmada,
+pago conciliado o meta externa verificada— sellan primero la politica, el ciclo,
+el mensaje origen y sus datos temporales. Una cita automática agrega una intención
+pre-terminal antes de llamar al controller; dentro de la misma transacción que
+inserta la cita y fija su `appointment_id`, el controller confirma esa intención.
+Si el checkpoint falla, el INSERT se revierte. Si el proceso cae después del
+commit, la cita real no se duplica ni pierde su obligación: la recuperación crea
+el pending desde aquella intención y continúa con el mismo boundary.
+
+Un worker de sistema exclusivo recorre intenciones comprometidas y handoffs
+terminales pendientes con lock distribuido, cursor estable, lotes y presupuesto
+acotados. Avanza aunque una fila falle y se despierta de nuevo mientras haya
+trabajo, sin depender del cron de avisos preventivos ni de que llegue otro
+mensaje. Antes de cerrar el ledger asegura también la salida visible con identidad
+durable: una cita recuperada manda su confirmación canónica exactamente una vez;
+si el handoff coincide pero falta un dato, confirma la cita y pregunta sólo ese
+dato; si los datos están completos, confirma y entrega al equipo. El mismo ledger
+es compartido por la vuelta directa y por recovery, por lo que un crash ambiguo
+no duplica el globo. Reprogramar o cancelar después una cita ya materializada no
+abre retroactivamente otro handoff: el estado canónico nuevo se conserva.
+Pago y objetivo verificados siguen la misma precondición de formulario: una
+coincidencia con datos faltantes deja el latch en
+`awaiting_required_data`, mantiene la conversación bajo la IA sólo para obtener
+esos campos y no asigna, avisa ni declara el handoff todavía. La siguiente vuelta
+consume ese mismo pendiente; sólo con los datos comprobados ejecuta la entrega.
+
+Cuando una regla depende del resultado mecanico de una tool —por ejemplo, que la
+consulta real no encontro horarios— se ejecuta una segunda adjudicacion aislada
+despues de las tools del modelo principal. Recibe únicamente hechos estructurados
+del servidor; si coincide y la conversación sigue ejecutable, descarta la
+respuesta libre y ejecuta el mismo handoff durable. Una terminal normal ya
+confirmada no se reescribe después. La medida preventiva nativa tiene prioridad:
+ante phishing, enlace malicioso, fraude, spam persistente, acoso, amenaza, abuso
+severo o manipulacion de instrucciones, un preflight aislado corre antes de
+cualquier tool mutable. Si ordena la medida, primero registra la cuarentena y
+después completa el traspaso obligatorio; seguridad no consume ni cancela el
+latch. Si además falta un dato requerido, la única salida permitida durante la
+cuarentena es la pregunta canónica ya sellada. Los inbounds posteriores entran
+por un carril exclusivo de recuperación de ese latch: pueden guardar el dato y
+transferir, pero nunca levantar el modelo principal ni ejecutar otra capacidad.
+Un fallo de esa compuerta queda cerrado para retry y nunca entrega el turno libre
+al modelo principal.
+
+Los envíos manuales desde el inbox confirman primero la toma humana y sólo
+después llaman al proveedor de WhatsApp, Meta o HighLevel. Esa toma y la pregunta
+canónica comparten la misma frontera de estado: si la IA ya tenía la autoridad,
+termina su único envío y después entra el humano; si la toma humana ganó primero,
+la pregunta automática queda suprimida. Si no puede persistirse la toma, el
+envío manual falla cerrado en vez de permitir que ambas voces respondan a la vez.
+
+Las reglas automáticas de salida y los cambios de alcance tampoco pueden liberar
+al agente antes de esta revisión. Cuando hay condiciones de handoff configuradas,
+la liberacion queda diferida durante la compuerta previa, la ejecución de tools de
+lectura y la compuerta posterior; las mutaciones ordinarias permanecen cercadas.
+Si aparece un `match`, gana el handoff. Sólo un `no_match` confirmado permite que
+el mismo compare-and-swap complete el inbound y libere al agente sin entregar el
+borrador de respuesta del modelo.
+
+Las migraciones versionadas `141*` instalan y validan el ciclo de activacion en
+bases existentes, rellenan estados anteriores y garantizan el indice compuesto
+usado para recuperar la obligacion durable. PostgreSQL crea ese indice de forma
+concurrente y valida columnas, filas e indice antes de considerar aplicado el
+contrato; además deja los campos del ciclo con default y `NOT NULL` para que un
+writer anterior siga siendo compatible durante un rolling deploy; un trigger
+first-write conserva como ancla el primer inbound aunque ese pod viejo procese
+varios mensajes antes de que lo lea una instancia nueva. El mismo fence rota y
+limpia el ciclo cuando ese writer anterior reactiva un estado terminal sin
+conocer las columnas nuevas, pero no toca una reactivacion que el writer nuevo ya
+rotó explicitamente. Esa reapertura nunca copia el `last_inbound_message_id` del
+ciclo anterior: deja el ancla vacia y sólo la fija cuando el inbound cambia
+dentro del ciclo nuevo. Una pausa temporal conserva su ciclo. Si una fila activa
+heredada llega con `NULL` explicito, el runtime repara su ciclo de forma atomica
+una sola vez antes de usarlo, sin rotar ciclos validos ni apropiarse de estados
+terminales.
+
+Una fila que ya estaba activa al momento del backfill es distinta: su
+`last_inbound_message_id` puede ser el último mensaje de un ciclo largo y no
+demuestra dónde empezó. `141*` y el bootstrap la marcan
+`cac_legacy_backfill_*`; el claim siguiente no sustituye falsamente el nuevo
+mensaje como ancla. La compuerta conserva la evidencia disponible desde el
+cutoff aproximado —por ejemplo, `El lunes` antes del deploy y `11:00` después—,
+pero declara `legacy_activation_boundary_inexact`. Mientras esa marca exista,
+la cobertura nunca puede autorizar `confirmed_no_match`: una decisión negativa
+falla cerrada hacia revisión humana. Los inserts de writers viejos ocurridos ya
+después de migrar y las reactivaciones terminal→active conservan sus marcadores
+separados y sí sellan el primer inbound exacto, por lo que no pagan esa
+degradación preventiva.
+
+SQLite ejecuta antes del fast-path del bootstrap una reparacion
+aditiva de las tres columnas que su motor no puede crear con `IF NOT EXISTS`; la
+migracion 141 valida despues que esa reparacion sí convergio.
+
+Las demas compuertas posteriores no vuelven a consultar al modelo principal: la
+postcondición factual de agenda, el recorte determinista
 de oraciones repetidas y la separación opcional en globos. La postcondición de
 agenda compara únicamente la respuesta propuesta contra citas futuras que el
 servidor ya verificó para ese contacto y calendario; si el modelo niega una cita
@@ -7203,8 +7421,9 @@ las instrucciones editoriales del dueño, contexto real recuperado y una zona
 blindada que sólo protege seguridad, permisos, identidad, configuracion y hechos
 operativos. La estrategia es el cerebro de la conversacion: decide semanticamente
 si primero pregunta, informa, consulta, agenda, cobra, retoma, cancela o entrega.
-Activar una capacidad no crea una etapa, prioridad ni atajo obligatorio. El texto
-editable no puede agregar tools, cambiar calendario/producto/monto/moneda ni
+Activar una capacidad no crea una etapa, prioridad ni atajo obligatorio, salvo
+las condiciones operativas configuradas expresamente dentro de
+`handoff_human`. El texto editable no puede agregar tools, cambiar calendario/producto/monto/moneda ni
 convertir un resultado pendiente o fallido en exito, pero fuera de esos limites
 el backend no reemplaza su criterio con un embudo propio.
 
@@ -8227,19 +8446,26 @@ nunca un booleano escrito por el modelo.
   link conserva `appointment_deposit`, crea ledger pendiente, bloquea autoagenda,
   deja el source original intacto y pasa el chat a revision humana antes de
   registrar ese ledger. En v2, pago y evento se guardan en una sola
-  transaccion y quedan ligados al contacto, canal y mensaje/media exactos, no al
-  agente que alcanzo a procesarlo. Repetir el mismo comprobante incluso desde otro
-  agente devuelve el mismo ledger, mientras cambiar importe, proposito o archivo
-  falla cerrado.
+  transaccion y quedan ligados al contacto, agente, ciclo de activacion, canal y
+  mensaje/media exactos. Si esa identidad cambia antes de aprobar, el pago no se
+  adjudica al ciclo actual: conserva el estado y escala a revision manual.
+  Repetir el mismo comprobante incluso desde otro agente devuelve el ledger
+  original sin reasignarlo, mientras cambiar importe, proposito o archivo falla
+  cerrado.
 - Handoff: `send_to_human` valida y asigna de forma idempotente al usuario activo
   configurado. Asignacion del contacto, estado terminal del chat y evento de
   auditoria confirman dentro de una sola transaccion o se revierten juntos; un
   retry no deja un contacto asignado mientras la tool reporta fracaso. Registra
   transferencia y no infla la meta como conversion. Un objetivo propio que
   termina en handoff usa la misma operacion atomica. La opcion de
-  enviar clientes anteriores al equipo se basa en pagos exitosos reales o citas
-  previas no canceladas recuperadas por `get_contact_profile`, nunca en una frase
-  del contacto. El resumen estructurado evita que la persona repita su historia.
+  enviar clientes anteriores al equipo se comprueba directamente en servidor con
+  pagos exitosos reales o citas previas no canceladas registradas antes de que
+  iniciara el ciclo de activacion actual, nunca en una frase del contacto ni en un
+  pago o cita de prueba generado dentro de ese ciclo. El resumen estructurado
+  evita que la persona repita su historia.
+  Si la persona configurada deja de estar activa despues de publicar, una
+  obligacion de handoff no reactiva la IA ni queda a medias: el estado pasa a
+  humano y la notificacion se dirige al equipo general con warning auditable.
 - Entrega visible: si una tool de pago o enlace tuvo exito y el texto generado
   omitio su URL, el servidor la agrega completa y una sola vez despues de
   sanitizar el mensaje. Los nombres de tools, IDs, payloads y codigos internos no

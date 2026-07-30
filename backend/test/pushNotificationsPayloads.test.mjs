@@ -12,6 +12,7 @@ import {
   saveMobilePushDevice,
   sendCalendarAppointmentNotification,
   sendChatMessageNotification,
+  sendConversationalAgentPriorityNotification,
   sendAppNotificationPayload,
   setAppNotificationPayloadSenderForTest,
   setPushContactVisibilityCheckerForTest
@@ -49,6 +50,16 @@ test('un fallo de visibilidad reintenta push durable y conserva fail-closed best
         contactId: `visibility-durable-${randomUUID()}`,
         messageId: `visibility-message-${randomUUID()}`,
         text: 'Contenido que no debe filtrarse',
+        durableDelivery: true
+      }),
+      error => error?.code === 'push_contact_visibility_unavailable' && error?.retryable === true
+    )
+
+    await assert.rejects(
+      sendConversationalAgentPriorityNotification({
+        contactId: `visibility-priority-durable-${randomUUID()}`,
+        messageId: `visibility-priority-message-${randomUUID()}`,
+        reason: 'Regla obligatoria cumplida',
         durableDelivery: true
       }),
       error => error?.code === 'push_contact_visibility_unavailable' && error?.retryable === true

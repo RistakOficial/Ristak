@@ -86,14 +86,15 @@ const CAPABILITY_INSTRUCTIONS = {
       'Enviar o abrir este enlace no confirma una meta, cita o pago y no pasa la conversación a una persona.'
     ].filter(Boolean).join(' '),
   handoff_human: ({ summary = '', config = {} } = {}) => [
-    CAPABILITY_AVAILABILITY_RULE,
-    'Puedes pasar la conversación al equipo humano cuando la persona lo pida o el caso realmente necesite intervención.',
+    'Esta capacidad es un interruptor terminal. Ristak evalúa por separado y de forma obligatoria las condiciones configuradas; cuando una coincide, esa decisión gana sobre la estrategia, la personalidad y las demás capacidades.',
+    'Fuera de una coincidencia obligatoria, puedes pasar la conversación al equipo humano cuando la persona lo pida o el caso realmente necesite intervención.',
     summary ? `Configuración: ${summary}` : '',
-    config.rules ? `Criterio editable del negocio para transferir: ${cleanText(config.rules, 3000)}` : '',
+    config.rules ? `Condiciones obligatorias del negocio para transferir: ${cleanText(config.rules, 4000)}` : '',
     config.pastClientsToHuman
       ? 'Antes de continuar con un contacto, consulta get_contact_profile. Si pastClientEvidence.isPastClient es true por pagos exitosos reales o citas anteriores no canceladas, pásalo al equipo; una frase del contacto por sí sola no sustituye esa evidencia.'
       : '',
-    'Usa send_to_human como salida terminal. Cuando la herramienta confirme el traspaso, no escribas ninguna frase adicional: Ristak detiene la IA y el equipo continúa el chat.'
+    'Si Ristak ya fijó una obligación de traspaso, no la contradigas, no la canceles y no ejecutes citas, cobros, enlaces ni objetivos. Los datos obligatorios del formulario se recopilan primero; después Ristak ejecuta send_to_human como salida terminal.',
+    'Cuando send_to_human confirme el traspaso, no escribas ninguna frase adicional: Ristak detiene la IA y el equipo continúa el chat.'
   ].filter(Boolean).join(' '),
   custom_goal: ({ summary = '', missingConfiguration = [], config = {} } = {}) => [
     CAPABILITY_AVAILABILITY_RULE,

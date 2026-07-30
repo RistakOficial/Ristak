@@ -46,6 +46,7 @@ import {
 } from '../services/appointmentCreationSafetyService.js';
 import {
   assertConversationalAppointmentDepositReservationFence,
+  checkpointToolCallingV2AppointmentBookingIntentCommit,
   claimConversationalTerminalMutationAuthority,
   consumeConversationalAppointmentDepositEvidence
 } from '../services/conversationalAgentService.js';
@@ -2653,6 +2654,8 @@ export async function createAppointment(req, res) {
       conversationTerminalAuthorityToken,
       conversationTerminalAgentId,
       conversationTerminalChannel,
+      conversationalHandoffBookingIntentEventId,
+      conversationalHandoffBookingIntentHash,
       ...appointmentData
     } = req.body;
     const carriesTestMetadata = Boolean(
@@ -2686,6 +2689,9 @@ export async function createAppointment(req, res) {
     const terminalAuthorityProvided = Boolean(
       conversationTerminalAuthorityToken || conversationTerminalAgentId || conversationTerminalChannel
     );
+    const handoffBookingIntentProvided = Boolean(
+      conversationalHandoffBookingIntentEventId || conversationalHandoffBookingIntentHash
+    );
     if (
       terminalAuthorityProvided &&
       req[INTERNAL_CONTROLLER_CONTEXT]?.conversationalAgentAppointment !== true
@@ -2703,6 +2709,29 @@ export async function createAppointment(req, res) {
         error: 'La reanudación pagada no conserva la reserva exclusiva del anticipo.'
       });
     }
+    if (
+      handoffBookingIntentProvided &&
+      req[INTERNAL_CONTROLLER_CONTEXT]?.conversationalAgentAppointment !== true
+    ) {
+      return res.status(403).json({
+        success: false,
+        code: 'conversational_handoff_booking_intent_internal_only',
+        error: 'La obligación de handoff ligada a una cita sólo puede usarse desde el agente interno.'
+      });
+    }
+    if (
+      handoffBookingIntentProvided &&
+      (
+        !cleanString(conversationalHandoffBookingIntentEventId) ||
+        !cleanString(conversationalHandoffBookingIntentHash)
+      )
+    ) {
+      return res.status(409).json({
+        success: false,
+        code: 'conversational_handoff_booking_intent_incomplete',
+        error: 'La cita no conserva completa su obligación atómica de handoff.'
+      });
+    }
     const context = await getHighLevelContext(req, { locationId, accessToken });
     const requestedCalendarId = cleanString(appointmentData.calendarId || appointmentData.calendar_id);
     if (!requestedCalendarId) {
@@ -2713,6 +2742,13 @@ export async function createAppointment(req, res) {
       });
     }
     const appointmentRequestId = clientRequestId || legacyClientRequestId || null;
+    if (handoffBookingIntentProvided && !cleanString(appointmentRequestId)) {
+      return res.status(409).json({
+        success: false,
+        code: 'conversational_handoff_booking_request_missing',
+        error: 'La obligación de handoff no está ligada a una llave idempotente de cita.'
+      });
+    }
     if (carriesTestMetadata) {
       const testEffectId = cleanString(appointmentData.testEffectId || appointmentData.test_effect_id);
       const expectedTestRequestId = testEffectId ? `conv-test:${testEffectId}` : '';
@@ -2901,6 +2937,15 @@ export async function createAppointment(req, res) {
           checkpointError.status = 503;
           checkpointError.code = 'appointment_idempotency_checkpoint_failed';
           throw checkpointError;
+        }
+        if (handoffBookingIntentProvided) {
+          await checkpointToolCallingV2AppointmentBookingIntentCommit({
+            intentEventId: conversationalHandoffBookingIntentEventId,
+            intentHash: conversationalHandoffBookingIntentHash,
+            clientRequestId: appointmentRequestId,
+            appointmentId: localAppointment.id,
+            database: db
+          });
         }
       }
       return localAppointment;
@@ -3116,6 +3161,25 @@ export async function createAppointment(req, res) {
         return appointment;
       }
     });
+
+    // En un replay exacto `runIdempotentAppointmentCreation` no vuelve a entrar
+    // al callback de creación. Cerramos también ahí el intent pre-terminal: la
+    // cita ya existe y la comprobación se puede repetir de forma idempotente.
+    if (
+      handoffBookingIntentProvided &&
+      cleanString(createdAppointment?.id) &&
+      createdAppointment?.idempotencyReplay?.canonicalChanged !== true
+    ) {
+      await db.transaction((tx) =>
+        checkpointToolCallingV2AppointmentBookingIntentCommit({
+          intentEventId: conversationalHandoffBookingIntentEventId,
+          intentHash: conversationalHandoffBookingIntentHash,
+          clientRequestId: appointmentRequestId,
+          appointmentId: createdAppointment.id,
+          database: tx
+        })
+      );
+    }
 
     res.status(201).json({
       success: true,

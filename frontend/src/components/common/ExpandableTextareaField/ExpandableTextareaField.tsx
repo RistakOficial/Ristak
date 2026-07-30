@@ -12,6 +12,8 @@ export interface ExpandableTextareaFieldProps extends Omit<React.TextareaHTMLAtt
   onChange: (value: string) => void
   expandedTitle?: string
   onExpandedClose?: () => void
+  /** Límite validado por el formulario. No recorta el borrador al pegar texto. */
+  characterLimit?: number
 }
 
 export const ExpandableTextareaField: React.FC<ExpandableTextareaFieldProps> = ({
@@ -22,6 +24,7 @@ export const ExpandableTextareaField: React.FC<ExpandableTextareaFieldProps> = (
   onChange,
   expandedTitle,
   onExpandedClose,
+  characterLimit,
   rows = 8,
   placeholder,
   onBlur,
@@ -31,6 +34,18 @@ export const ExpandableTextareaField: React.FC<ExpandableTextareaFieldProps> = (
   const expandButtonRef = useRef<HTMLButtonElement>(null)
   const descriptionId = `${id}-description`
   const characterCount = value.length.toLocaleString('es-MX')
+  const normalizedCharacterLimit = typeof characterLimit === 'number' && Number.isFinite(characterLimit) && characterLimit > 0
+    ? Math.floor(characterLimit)
+    : null
+  const overCharacterLimit = normalizedCharacterLimit !== null && value.length > normalizedCharacterLimit
+  const characterLimitLabel = normalizedCharacterLimit === null
+    ? `${characterCount} caracteres`
+    : `${characterCount} / ${normalizedCharacterLimit.toLocaleString('es-MX')} caracteres`
+  const characterStatusLabel = normalizedCharacterLimit === null
+    ? 'El texto se guarda completo'
+    : (overCharacterLimit
+        ? `Reduce ${(value.length - normalizedCharacterLimit).toLocaleString('es-MX')} para guardar`
+        : 'Dentro del límite')
 
   const closeExpanded = () => {
     setExpanded(false)
@@ -76,8 +91,8 @@ export const ExpandableTextareaField: React.FC<ExpandableTextareaFieldProps> = (
         className={styles.compactEditor}
       />
       <div className={styles.meta}>
-        <span>{characterCount} caracteres</span>
-        <span>El texto se guarda completo</span>
+        <span>{characterLimitLabel}</span>
+        <span>{characterStatusLabel}</span>
       </div>
 
       <Modal
@@ -99,8 +114,8 @@ export const ExpandableTextareaField: React.FC<ExpandableTextareaFieldProps> = (
             autoFocus
           />
           <div className={styles.meta}>
-            <span>{characterCount} caracteres</span>
-            <span>Cierra cuando termines; no se pierde lo escrito</span>
+            <span>{characterLimitLabel}</span>
+            <span>{overCharacterLimit ? characterStatusLabel : 'Cierra cuando termines; no se pierde lo escrito'}</span>
           </div>
         </div>
       </Modal>

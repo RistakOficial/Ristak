@@ -5,15 +5,31 @@ import { createHash } from 'node:crypto'
 import { db } from '../src/config/database.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
 import {
+  loadToolCallingV2VerifiedGoalHandoffPolicy,
+  resolveToolCallingV2MandatoryHandoff
+} from '../src/agents/conversational/runner.js'
+import {
+  buildConversationalCapabilityManifest
+} from '../src/agents/conversational/nativeRuntimeConfig.js'
+import {
   completeExternalConversationGoal,
   handleGoalWebhook
 } from '../src/controllers/conversationalAgentController.js'
 import {
+  assignAgentToConversation,
+  claimConversationInboundMessage,
+  completeConversationInboundMessage,
   completeConversationGoalLinkFromWebhook,
   createConversationalAgent,
   createConversationGoalLink,
+  getConversationalAgent,
+  getConversationState,
   getConversationGoalLink,
-  recoverPendingConversationGoalCompletionEffects
+  recoverPendingConversationGoalCompletionEffects,
+  setConversationalPriorityNotificationSenderForTest,
+  setConversationalRequiredDataPromptHandlerForTest,
+  setConversationalVerifiedGoalHandoffHandlersForTest,
+  setConversationStatus
 } from '../src/services/conversationalAgentService.js'
 
 const CONTACT_PREFIX = 'test_goal_security_'
@@ -49,6 +65,17 @@ function externalAuthorization(requestId = 'request-1', actorId = 'api-user-test
   return { type: 'external_api', actorId, requestId }
 }
 
+function actionScopedContactDataBinding(actionScopedContactData = {}) {
+  return {
+    actionScopedContactDataVersion: 1,
+    actionScopedContactData,
+    actionScopedContactDataHash: createHash('sha256')
+      .update('conversational-action-scoped-contact-data:v1\u0000')
+      .update(JSON.stringify(actionScopedContactData))
+      .digest('hex')
+  }
+}
+
 function createResponse() {
   return {
     statusCode: 200,
@@ -62,6 +89,104 @@ function createResponse() {
       return this
     }
   }
+}
+
+async function createBoundGoalFixture(t, suffix, {
+  channel = 'whatsapp',
+  additionalChannels = [],
+  handoffRules = '',
+  assignedUserId = '',
+  dataRequirements = { enabled: false, fields: [] },
+  actionScopedContactData = null
+} = {}) {
+  const contactId = await createContact(`bound_${suffix}`)
+  let agent = null
+  t.after(async () => {
+    await removeContact(contactId)
+    if (agent?.id) {
+      await db.run(
+        'DELETE FROM conversational_agent_policy_versions WHERE agent_id = ?',
+        [agent.id]
+      ).catch(() => undefined)
+      await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    }
+  })
+
+  agent = await createConversationalAgent({
+    name: `Meta vinculada ${suffix}`,
+    enabled: false,
+    objective: 'custom',
+    customObjective: 'Completar el objetivo externo',
+    capabilitiesConfig: {
+      schemaVersion: 1,
+      dataRequirements,
+      items: [
+        {
+          id: 'send_link',
+          enabled: true,
+          linkKind: 'verified_goal',
+          url: 'https://example.test/bound-goal'
+        },
+        ...(handoffRules
+          ? [{
+              id: 'handoff_human',
+              enabled: true,
+              rules: handoffRules,
+              userId: assignedUserId || ''
+            }]
+          : [])
+      ]
+    }
+  })
+  await db.run(
+    `UPDATE conversational_agents
+     SET enabled = 1, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [agent.id]
+  )
+
+  for (const stateChannel of [channel, ...additionalChannels]) {
+    await assignAgentToConversation(contactId, agent.id, {
+      channel: stateChannel,
+      activationSource: 'automatic',
+      assignmentSource: 'automatic',
+      updatedBy: 'agent',
+      activationMessageId: `inbound_${suffix}_${stateChannel}`
+    })
+  }
+
+  const createdLink = await createConversationGoalLink({
+    contactId,
+    agentId: agent.id,
+    objective: 'custom',
+    targetUrl: 'https://example.test/bound-goal',
+    metadata: {
+      channel,
+      executionId: `inbound_${suffix}_${channel}`,
+      resumen: 'La persona completó el objetivo externo.',
+      ...actionScopedContactDataBinding(
+        actionScopedContactData || {
+          full_name: `Goal Security bound_${suffix}`
+        }
+      )
+    }
+  })
+  const link = await getConversationGoalLink(createdLink.id)
+  assert.equal(link.metadata.conversationBinding.status, 'bound')
+  assert.equal(link.metadata.conversationBinding.channel, channel)
+
+  return { agent, contactId, link }
+}
+
+async function completeBoundGoal({ link, suffix }) {
+  return completeConversationGoalLinkFromWebhook({
+    goalId: link.id,
+    externalSource: 'custom:bound-goal-test',
+    externalObjectId: `external_${suffix}`,
+    status: 'completed'
+  }, {
+    authorization: externalAuthorization(`request_${suffix}`)
+  })
 }
 
 test('custom_goal con URL verificable se entrega sin fetch, sin token y con meta pendiente', async (t) => {
@@ -209,6 +334,646 @@ test('la confirmación externa sólo aplica hechos nativos y no revive efectos o
     [contactId]
   )
   assert.equal(Number(hiddenEffects.total), 0)
+})
+
+test('un callback asíncrono sólo completa el canal y agente vinculados al crear el enlace', async (t) => {
+  const suffix = `exact_channel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const { agent, contactId, link } = await createBoundGoalFixture(t, suffix, {
+    channel: 'instagram',
+    additionalChannels: ['whatsapp']
+  })
+  const whatsappBefore = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  const instagramBefore = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'instagram'
+  })
+  assert.equal(whatsappBefore.status, 'active')
+  assert.equal(instagramBefore.status, 'active')
+
+  const completed = await completeBoundGoal({ link, suffix })
+
+  assert.equal(completed.completionEffectsStatus, 'completed')
+  assert.equal(completed.statePreserved, false)
+  const whatsappAfter = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  const instagramAfter = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'instagram'
+  })
+  assert.equal(instagramAfter.id, instagramBefore.id)
+  assert.equal(instagramAfter.status, 'completed')
+  assert.equal(instagramAfter.signal, 'ready_for_human')
+  assert.equal(whatsappAfter.id, whatsappBefore.id)
+  assert.equal(whatsappAfter.status, 'active')
+  assert.equal(whatsappAfter.signal, null)
+})
+
+test('un callback viejo no pisa una pausa ni un takeover humano', async (t) => {
+  for (const terminalStatus of ['paused', 'human']) {
+    const suffix = `${terminalStatus}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const { agent, contactId, link } = await createBoundGoalFixture(t, suffix)
+    await setConversationStatus(contactId, terminalStatus, {
+      agentId: agent.id,
+      channel: 'whatsapp',
+      updatedBy: terminalStatus === 'human' ? 'human' : 'user'
+    })
+
+    const completed = await completeBoundGoal({ link, suffix })
+
+    assert.equal(completed.completionEffectsStatus, 'completed')
+    assert.equal(completed.statePreserved, true)
+    assert.equal(completed.preserveReason, 'conversation_no_longer_active')
+    const state = await getConversationState(contactId, {
+      agentId: agent.id,
+      channel: 'whatsapp'
+    })
+    assert.equal(state.status, terminalStatus)
+    assert.equal(state.signal, null)
+    const signalEvents = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'signal_set'`,
+      [contactId]
+    )
+    assert.equal(Number(signalEvents.count), 0)
+    const preservedEvents = await db.get(
+      `SELECT COUNT(*) AS count
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'goal_url_completion_state_preserved'`,
+      [contactId]
+    )
+    assert.equal(Number(preservedEvents.count), 1)
+  }
+})
+
+test('un callback de un ciclo anterior no termina el ciclo activo actual', async (t) => {
+  const suffix = `new_cycle_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const { agent, contactId, link } = await createBoundGoalFixture(t, suffix)
+  let notificationCalls = 0
+  setConversationalPriorityNotificationSenderForTest(async () => {
+    notificationCalls += 1
+    return { sent: 1 }
+  })
+  t.after(() => setConversationalPriorityNotificationSenderForTest(null))
+  const boundCycleId = link.metadata.conversationBinding.activationCycleId
+  await setConversationStatus(contactId, 'human', {
+    agentId: agent.id,
+    channel: 'whatsapp',
+    updatedBy: 'human'
+  })
+  await setConversationStatus(contactId, 'active', {
+    agentId: agent.id,
+    channel: 'whatsapp',
+    updatedBy: 'user',
+    clearSignal: true
+  })
+  const reopened = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(reopened.status, 'active')
+  assert.equal(reopened.signal, null)
+  assert.notEqual(reopened.activationCycleId, boundCycleId)
+
+  const completed = await completeBoundGoal({ link, suffix })
+
+  assert.equal(completed.completionEffectsStatus, 'completed')
+  assert.equal(completed.statePreserved, true)
+  assert.equal(completed.preserveReason, 'activation_cycle_changed')
+  assert.equal(completed.manualReviewRequired, true)
+  const after = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(after.activationCycleId, reopened.activationCycleId)
+  assert.equal(after.status, 'active')
+  assert.equal(after.signal, null)
+  assert.equal(notificationCalls, 1)
+
+  const replay = await completeBoundGoal({ link, suffix })
+  assert.equal(replay.alreadyCompleted, true)
+  assert.equal(replay.manualReviewRequired, true)
+  assert.equal(notificationCalls, 1)
+  const notificationEvents = await db.get(
+    `SELECT COUNT(*) AS count
+     FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'priority_push_notification'`,
+    [contactId]
+  )
+  assert.equal(Number(notificationEvents.count), 1)
+})
+
+test('un objetivo externo verificado adjudica la regla y entrega el chat sin esperar otro inbound', async (t) => {
+  const suffix = `goal_handoff_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const insertedUser = await db.run(
+    `INSERT INTO users (
+       username, password_hash, full_name, is_active, created_at, updated_at
+     ) VALUES (?, 'hash', 'Doctora Tania', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [`goal_handoff_owner_${suffix}`]
+  )
+  const userId = String(insertedUser.lastID)
+  t.after(async () => {
+    setConversationalVerifiedGoalHandoffHandlersForTest()
+    await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => undefined)
+  })
+  const dataRequirements = {
+    enabled: true,
+    fields: [{
+      field: 'full_name',
+      level: 'required',
+      scope: 'any_action'
+    }]
+  }
+  const { agent, contactId, link } = await createBoundGoalFixture(t, suffix, {
+    handoffRules: 'cuando la persona complete el formulario o enlace',
+    assignedUserId: userId,
+    dataRequirements,
+    actionScopedContactData: { full_name: 'Tania Salinas' }
+  })
+  // Simula updateContact=false: el nombre sólo vive en el overlay sellado del
+  // turno que mandó el enlace, no en la ficha persistente.
+  await db.run(
+    `UPDATE contacts SET full_name = 'Contacto', updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [contactId]
+  )
+  const policy = {
+    configRevision: 'goal-handoff-rev-1',
+    policyFingerprint: 'goal-handoff-fingerprint-1',
+    enabled: true,
+    criteriaConfigured: true,
+    rules: 'cuando la persona complete el formulario o enlace',
+    assignedUserId: userId,
+    assignedUserName: 'Doctora Tania',
+    generalFallbackPolicy: 'configured_user_or_general_team',
+    dataRequirements
+  }
+  let adjudicationCalls = 0
+  setConversationalVerifiedGoalHandoffHandlersForTest({
+    loadPolicy: async () => policy,
+    adjudicate: async ({ goal }) => {
+      adjudicationCalls += 1
+      assert.equal(goal.verified, true)
+      assert.equal(goal.status, 'completed')
+      return {
+        ...policy,
+        decision: 'match',
+        source: 'configured_rules',
+        matchedRule: policy.rules,
+        conversationScopeId: link.metadata.conversationBinding.conversationScopeId,
+        modelCallCount: 1
+      }
+    }
+  })
+
+  const completed = await completeBoundGoal({ link, suffix })
+  assert.equal(completed.completionEffectsStatus, 'completed')
+  assert.equal(adjudicationCalls, 1)
+  const state = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(state.status, 'human')
+  assert.equal(state.signal, 'ready_for_human')
+  const contact = await db.get(
+    'SELECT assigned_user_id FROM contacts WHERE id = ?',
+    [contactId]
+  )
+  assert.equal(String(contact.assigned_user_id), userId)
+  const stored = await db.get(
+    'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
+    [link.id]
+  )
+  const metadata = JSON.parse(stored.metadata_json)
+  assert.equal(metadata.verifiedGoalHandoffDecision.decision, 'match')
+  assert.equal(metadata.completionStateDisposition.handoffApplied, true)
+  assert.equal(metadata.completionStateDisposition.manualReviewRequired, false)
+  const handoffEvents = await db.get(
+    `SELECT COUNT(*) AS count FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'verified_goal_handoff_completed'`,
+    [contactId]
+  )
+  assert.equal(Number(handoffEvents.count), 1)
+})
+
+test('un objetivo confirmado espera el dato obligatorio en el mismo ciclo antes de transferir', async (t) => {
+  const suffix = `goal_required_missing_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const dataRequirements = {
+    enabled: true,
+    fields: [{
+      field: 'full_name',
+      level: 'required',
+      scope: 'handoff'
+    }]
+  }
+  const { agent, contactId, link } = await createBoundGoalFixture(t, suffix, {
+    handoffRules: 'cuando la persona complete el formulario o enlace',
+    dataRequirements,
+    actionScopedContactData: {}
+  })
+  let promptCalls = 0
+  t.after(() => {
+    setConversationalVerifiedGoalHandoffHandlersForTest()
+    setConversationalRequiredDataPromptHandlerForTest(null)
+  })
+  await db.run(
+    `UPDATE contacts SET full_name = 'Contacto', updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [contactId]
+  )
+  const policy = await loadToolCallingV2VerifiedGoalHandoffPolicy({
+    agentId: agent.id
+  })
+  assert.equal(policy.enabled, true)
+  assert.equal(policy.criteriaConfigured, true)
+  setConversationalVerifiedGoalHandoffHandlersForTest({
+    loadPolicy: async () => policy,
+    adjudicate: async () => ({
+      ...policy,
+      decision: 'match',
+      source: 'configured_rules',
+      conversationScopeId: link.metadata.conversationBinding.conversationScopeId,
+      modelCallCount: 1
+    })
+  })
+  await db.run(
+    `INSERT INTO whatsapp_api_messages
+      (id, contact_id, direction, message_type, message_text, message_timestamp)
+     VALUES (?, ?, 'inbound', 'text', 'Mándame el enlace', CURRENT_TIMESTAMP)`,
+    [link.metadata.conversationBinding.sourceExecutionId, contactId]
+  )
+  setConversationalRequiredDataPromptHandlerForTest(async (prompt) => {
+    promptCalls += 1
+    assert.equal(prompt.handledMessageId, link.metadata.conversationBinding.sourceExecutionId)
+    assert.deepEqual(prompt.missingFields.map((item) => item.field), ['full_name'])
+    return {
+      settled: true,
+      sent: true,
+      ambiguous: false,
+      durableStatus: 'completed'
+    }
+  })
+
+  const completed = await completeBoundGoal({ link, suffix })
+  assert.equal(completed.completionEffectsStatus, 'completed')
+  assert.equal(completed.awaitingRequiredData, true)
+  const state = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(state.status, 'active')
+  assert.equal(state.signal, null)
+  const event = await db.get(
+    `SELECT detail_json FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'verified_goal_handoff_awaiting_required_data'`,
+    [contactId]
+  )
+  const detail = JSON.parse(event.detail_json)
+  assert.deepEqual(
+    detail.missingRequiredFields.map((item) => item.field),
+    ['full_name']
+  )
+  const stored = JSON.parse((await db.get(
+    'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
+    [link.id]
+  )).metadata_json)
+  assert.equal(stored.completionStateDisposition.manualReviewRequired, false)
+  assert.equal(stored.completionStateDisposition.awaitingRequiredData, true)
+  assert.equal(
+    stored.completionStateDisposition.reason,
+    'verified_goal_handoff_awaiting_required_data'
+  )
+  const latchRow = await db.get(
+    `SELECT id, detail_json FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'handoff_rule_pending'`,
+    [contactId]
+  )
+  const latch = JSON.parse(latchRow.detail_json)
+  assert.equal(latch.status, 'awaiting_required_data', JSON.stringify(latch))
+  assert.equal(promptCalls, 1)
+  const replay = await completeBoundGoal({ link, suffix })
+  assert.equal(replay.alreadyCompleted, true)
+  assert.equal(promptCalls, 1)
+
+  const secondMessageId = `inbound_goal_required_name_${suffix}`
+  await db.run(
+    `INSERT INTO whatsapp_api_messages
+      (id, contact_id, direction, message_type, message_text, message_timestamp)
+     VALUES (?, ?, 'inbound', 'text', 'Me llamo Tania Salinas',
+       datetime(CURRENT_TIMESTAMP, '+1 second'))`,
+    [secondMessageId, contactId]
+  )
+  const claim = await claimConversationInboundMessage(
+    contactId,
+    secondMessageId,
+    { agentId: agent.id, channel: 'whatsapp' }
+  )
+  assert.equal(claim.claimed, true, JSON.stringify(claim))
+  const config = await getConversationalAgent(agent.id)
+  const ctx = {
+    config,
+    capabilitiesConfig: config.capabilitiesConfig,
+    contactId,
+    agentId: agent.id,
+    executionId: secondMessageId,
+    inboundClaim: { ...claim, messageId: secondMessageId },
+    channel: 'whatsapp',
+    dryRun: false,
+    runtimeMode: 'tool_calling_v2',
+    followUpMode: false,
+    paymentResumeClaim: null,
+    historyContext: {
+      telemetry: {
+        historyComplete: true,
+        totalMessages: 2,
+        omittedMessages: 0
+      }
+    },
+    actions: []
+  }
+  const built = {
+    model: 'fake-model',
+    ctx,
+    capabilityManifest: buildConversationalCapabilityManifest(config),
+    tools: createConversationalTools(ctx)
+  }
+  let repeatedPromptCalls = 0
+  let repeatedAdjudicationCalls = 0
+  const secondTurn = await resolveToolCallingV2MandatoryHandoff({
+    built,
+    selectedMessages: [{
+      id: link.metadata.conversationBinding.sourceExecutionId,
+      role: 'user',
+      content: 'Mándame el enlace'
+    }, {
+      id: secondMessageId,
+      role: 'user',
+      content: 'Me llamo Tania Salinas'
+    }],
+    latestInbound: 'Me llamo Tania Salinas',
+    runtime: { modelProvider: { kind: 'fake' } },
+    contactId,
+    channel: 'whatsapp',
+    executionId: secondMessageId,
+    inboundClaim: { ...claim, messageId: secondMessageId },
+    dryRun: false,
+    phase: 'pre'
+  }, {
+    adjudicateHandoffRules: async () => {
+      repeatedAdjudicationCalls += 1
+      throw new Error('el latch del objetivo no debe volver a adjudicarse')
+    },
+    adjudicateHandoffSafety: async () => ({
+      decision: 'clear',
+      modelCallCount: 0,
+      source: 'test_goal_required_data_recovery'
+    }),
+    extractRequiredHandoffData: async () => ({
+      values: { fullName: 'Tania Salinas' },
+      modelCallCount: 0
+    }),
+    deliverRequiredDataPrompt: async () => {
+      repeatedPromptCalls += 1
+      throw new Error('no debe repetir la pregunta del nombre ya contestado')
+    },
+    findPastClientEvidence: async () => false
+  })
+  assert.equal(secondTurn.handled, true)
+  assert.equal(secondTurn.mandatoryHandoff.status, 'completed')
+  assert.equal(secondTurn.mandatoryHandoff.latchId, latchRow.id)
+  assert.equal(repeatedPromptCalls, 0)
+  assert.equal(repeatedAdjudicationCalls, 0)
+  assert.equal(promptCalls, 1)
+  const completedInbound = await completeConversationInboundMessage(
+    contactId,
+    secondMessageId,
+    {
+      agentId: agent.id,
+      channel: 'whatsapp',
+      claimToken: claim.claimToken,
+      answered: false
+    }
+  )
+  assert.equal(completedInbound.completed, true)
+  const completedState = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(completedState.status, 'human')
+  assert.equal(completedState.signal, 'ready_for_human')
+  assert.equal((await db.get(
+    'SELECT full_name FROM contacts WHERE id = ?',
+    [contactId]
+  )).full_name, 'Tania Salinas')
+  const completedLatch = JSON.parse((await db.get(
+    'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+    [latchRow.id]
+  )).detail_json)
+  assert.equal(completedLatch.status, 'completed')
+  assert.equal(Number((await db.get(
+    `SELECT COUNT(*) AS count FROM conversational_agent_events
+     WHERE contact_id = ?
+       AND event_type = 'verified_goal_handoff_awaiting_required_data'`,
+    [contactId]
+  )).count), 1)
+  assert.equal(Number((await db.get(
+    `SELECT COUNT(*) AS count FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'signal_set'`,
+    [contactId]
+  )).count), 1)
+  assert.equal(Number((await db.get(
+    `SELECT COUNT(*) AS count FROM chat_delivery_outbox
+     WHERE contact_id = ? AND provider = 'conversational_agent_priority'`,
+    [contactId]
+  )).count), 1)
+
+  const effectsBeforeCompletedReplay = {
+    awaitingRequiredDataEvents: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ?
+         AND event_type = 'verified_goal_handoff_awaiting_required_data'`,
+      [contactId]
+    )).count),
+    goalCompletionEvents: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'goal_url_completed'`,
+      [contactId]
+    )).count),
+    signalEvents: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'signal_set'`,
+      [contactId]
+    )).count),
+    priorityDeliveries: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM chat_delivery_outbox
+       WHERE contact_id = ? AND provider = 'conversational_agent_priority'`,
+      [contactId]
+    )).count)
+  }
+  const completedReplay = await completeBoundGoal({ link, suffix })
+  assert.equal(completedReplay.alreadyCompleted, true)
+  assert.equal(completedReplay.handoffCompleted, true)
+  assert.equal(completedReplay.awaitingRequiredData, false)
+  assert.equal(completedReplay.handoffLatchId, latchRow.id)
+  assert.deepEqual(completedReplay.missingRequiredFields, [])
+  assert.equal(completedReplay.manualReviewRequired, false)
+  const reconciledGoal = JSON.parse((await db.get(
+    'SELECT metadata_json FROM conversational_agent_goal_links WHERE id = ?',
+    [link.id]
+  )).metadata_json)
+  assert.equal(
+    reconciledGoal.completionStateDisposition.handoffApplied,
+    true
+  )
+  assert.equal(
+    reconciledGoal.completionStateDisposition.awaitingRequiredData,
+    false
+  )
+  assert.deepEqual(
+    reconciledGoal.completionStateDisposition.missingRequiredFields,
+    []
+  )
+  assert.equal(
+    reconciledGoal.completionStateDisposition.status,
+    'applied'
+  )
+  assert.deepEqual({
+    awaitingRequiredDataEvents: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ?
+         AND event_type = 'verified_goal_handoff_awaiting_required_data'`,
+      [contactId]
+    )).count),
+    goalCompletionEvents: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'goal_url_completed'`,
+      [contactId]
+    )).count),
+    signalEvents: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'signal_set'`,
+      [contactId]
+    )).count),
+    priorityDeliveries: Number((await db.get(
+      `SELECT COUNT(*) AS count FROM chat_delivery_outbox
+       WHERE contact_id = ? AND provider = 'conversational_agent_priority'`,
+      [contactId]
+    )).count)
+  }, effectsBeforeCompletedReplay)
+  assert.equal(promptCalls, 1)
+})
+
+test('un no_match de objetivo sólo continúa cuando la auditoría independiente lo confirma', async (t) => {
+  const suffix = `goal_no_match_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const { agent, contactId, link } = await createBoundGoalFixture(t, suffix, {
+    handoffRules: 'cuando la persona pida atención urgente'
+  })
+  t.after(() => setConversationalVerifiedGoalHandoffHandlersForTest())
+  const policy = {
+    configRevision: 'goal-handoff-rev-no-match',
+    policyFingerprint: 'goal-handoff-fingerprint-no-match',
+    enabled: true,
+    criteriaConfigured: true,
+    rules: 'cuando la persona pida atención urgente',
+    assignedUserId: null,
+    generalFallbackPolicy: 'configured_user_or_general_team',
+    dataRequirements: { enabled: false, fields: [] }
+  }
+  setConversationalVerifiedGoalHandoffHandlersForTest({
+    loadPolicy: async () => policy,
+    adjudicate: async () => ({
+      ...policy,
+      decision: 'no_match',
+      source: 'independent_no_match_audit',
+      conversationScopeId: link.metadata.conversationBinding.conversationScopeId,
+      modelCallCount: 2,
+      noMatchAudit: {
+        decision: 'confirmed_no_match',
+        acceptedNoMatch: true,
+        source: 'independent_no_match_audit',
+        issues: [],
+        ruleAssessments: [{
+          ruleId: 'rule_1',
+          verdict: 'no_match',
+          evidenceHash: createHash('sha256').update('goal-no-match').digest('hex')
+        }]
+      }
+    })
+  })
+
+  await completeBoundGoal({ link, suffix })
+  const state = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(state.status, 'completed')
+  assert.equal(state.signal, 'ready_for_human')
+  const handoffEvents = await db.get(
+    `SELECT COUNT(*) AS count FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'verified_goal_handoff_completed'`,
+    [contactId]
+  )
+  assert.equal(Number(handoffEvents.count), 0)
+})
+
+test('un latch viejo deja de bloquear el callback cuando la capacidad de handoff ya está desactivada', async (t) => {
+  const suffix = `handoff_latch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  const { agent, contactId, link } = await createBoundGoalFixture(t, suffix)
+  const binding = link.metadata.conversationBinding
+  const latchId = `cae_goal_handoff_${createHash('sha256').update(suffix).digest('hex').slice(0, 32)}`
+  await db.run(
+    `INSERT INTO conversational_agent_events
+      (id, contact_id, agent_id, event_type, detail_json, created_at)
+     VALUES (?, ?, ?, 'handoff_rule_pending', ?, CURRENT_TIMESTAMP)`,
+    [
+      latchId,
+      contactId,
+      agent.id,
+      JSON.stringify({
+        schemaVersion: 2,
+        agentId: agent.id,
+        channel: binding.channel,
+        ruleFingerprint: 'test_rule_fingerprint',
+        conversationScopeId: binding.conversationScopeId,
+        status: 'awaiting_required_data',
+        requiredFields: [{ field: 'full_name', label: 'nombre' }],
+        actionScopedContactData: {}
+      })
+    ]
+  )
+
+  const completed = await completeBoundGoal({ link, suffix })
+  assert.equal(completed.completionEffectsStatus, 'completed')
+
+  const state = await getConversationState(contactId, {
+    agentId: agent.id,
+    channel: 'whatsapp'
+  })
+  assert.equal(state.status, 'completed')
+  assert.equal(state.signal, 'ready_for_human')
+  const storedGoal = await db.get(
+    `SELECT status, completion_effects_status, completion_signal_applied_at,
+            completion_notification_sent_at
+     FROM conversational_agent_goal_links
+     WHERE id = ?`,
+    [link.id]
+  )
+  assert.equal(storedGoal.status, 'completed')
+  assert.equal(storedGoal.completion_effects_status, 'completed')
+  assert.notEqual(storedGoal.completion_signal_applied_at, null)
+  assert.notEqual(storedGoal.completion_notification_sent_at, null)
+  const latch = await db.get(
+    'SELECT detail_json FROM conversational_agent_events WHERE id = ?',
+    [latchId]
+  )
+  const latchDetail = JSON.parse(latch.detail_json)
+  assert.equal(latchDetail.status, 'superseded')
+  assert.equal(latchDetail.supersededReason, 'handoff_policy_disabled')
 })
 
 test('una integración autenticada completa cita y exige evidencia exacta', async (t) => {

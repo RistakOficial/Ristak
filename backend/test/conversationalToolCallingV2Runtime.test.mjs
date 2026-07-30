@@ -46,6 +46,7 @@ async function runVerifiedAppointmentPaymentResumeFixture({
   terminalToolName,
   actions,
   assertReconciliationClaim = async () => ({ valid: true }),
+  adjudicateVerifiedPaymentHandoff = null,
   newerInboundAfterRun = null,
   onDelivery = null
 }) {
@@ -70,7 +71,7 @@ async function runVerifiedAppointmentPaymentResumeFixture({
     channel: 'whatsapp',
     amount: 100,
     currency: 'MXN',
-    paymentEnvironment: 'test',
+    paymentEnvironment: 'live',
     paymentPurpose: 'appointment_deposit',
     bookingOwner,
     terminalToolName
@@ -131,7 +132,10 @@ async function runVerifiedAppointmentPaymentResumeFixture({
       events.push(event)
       return event
     },
-    scheduleRerun: (input) => reruns.push(input)
+    scheduleRerun: (input) => reruns.push(input),
+    ...(adjudicateVerifiedPaymentHandoff
+      ? { adjudicateVerifiedPaymentHandoff }
+      : {})
   })
   return { result, reconciliationId, events, deliveries, reruns }
 }
@@ -154,6 +158,49 @@ test('si el claim se pierde después de la terminal, el Runner no entrega ni sel
     (error) => error?.code === 'payment_reconciliation_claim_lost'
   )
   assert.equal(deliveryCalls, 0)
+})
+
+test('la reanudación de pago expone la decisión read-only posterior a la terminal', async () => {
+  let received = null
+  const verifiedPaymentHandoff = {
+    decision: 'match',
+    source: 'configured_rules',
+    configRevision: '2026-07-30T10:15:00.000Z',
+    policyFingerprint: 'fingerprint_verified_payment',
+    assignedUserId: 'user_tania',
+    dataRequirements: { enabled: false, fields: [] }
+  }
+  const execution = await runVerifiedAppointmentPaymentResumeFixture({
+    bookingOwner: 'ai',
+    terminalToolName: 'book_appointment',
+    actions: [{
+      type: 'book_appointment',
+      outcome: { status: 'ok', ok: true, simulated: false, actionCompleted: true }
+    }],
+    adjudicateVerifiedPaymentHandoff: async (input) => {
+      received = input
+      return verifiedPaymentHandoff
+    }
+  })
+
+  assert.equal(execution.result.resumed, true)
+  assert.equal(execution.result.sent, true)
+  assert.equal(execution.result.verifiedPaymentHandoff, verifiedPaymentHandoff)
+  assert.equal(received.contactId.startsWith('contact_'), true)
+  assert.equal(received.agentId.startsWith('agent_'), true)
+  assert.equal(received.channel, 'whatsapp')
+  assert.deepEqual(received.payment, {
+    verified: true,
+    purpose: 'appointment_deposit',
+    amount: 100,
+    currency: 'MXN',
+    environment: 'live'
+  })
+  assert.deepEqual(received.appointmentTerminal, {
+    completed: true,
+    bookingOwner: 'ai',
+    terminalToolName: 'book_appointment'
+  })
 })
 
 test('Agent v2 desactiva tool calls paralelas para serializar mutaciones', () => {

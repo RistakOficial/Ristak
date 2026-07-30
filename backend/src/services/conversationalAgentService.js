@@ -5,7 +5,11 @@ import { PUBLIC_URL } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
-import { coalescedTimestampSortExpression } from '../utils/sqlTimestampSort.js'
+import {
+  coalescedTimestampSortExpression,
+  timestampSortExpression,
+  timestampSortParameterExpression
+} from '../utils/sqlTimestampSort.js'
 import { buildTagMatchKeys } from './contactTagsService.js'
 import {
   DEFAULT_CONVERSATIONAL_AI_PROVIDER,
@@ -21,7 +25,9 @@ import {
 import {
   buildConversationalCapabilityManifest,
   buildLegacyConversationalEditableText,
+  CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
   getConversationalCapabilitiesConfig,
+  getConversationalHandoffRulesInputLength,
   getEnabledConversationalCapabilities,
   getConversationalNativeRuntimeValidationErrors,
   getConversationalPromptConfig,
@@ -34,7 +40,19 @@ import { CONVERSATIONAL_APPOINTMENT_PREVIEW_OFFER_EVENT } from './conversational
 import { loadConversationalAgentMetricAggregates } from './conversationalAgentMetricsProjectionService.js'
 import { isHighLevelConnected } from './integrationConnectionStateService.js'
 import { CONVERSATIONAL_AGENT_COMPLETION_SIGNALS } from '../utils/conversationalAgentCompletion.js'
+import {
+  CONVERSATIONAL_LEGACY_BACKFILL_CYCLE_PREFIX,
+  markHandoffRuleLatchAwaitingData,
+  settleHandoffRuleLatch,
+  upsertHandoffRuleLatch
+} from './conversationalHandoffRuleService.js'
+import { findNewerSubstantiveConversationalInbound } from './conversationalInboundAuthorityService.js'
+import { acquireConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
+import {
+  mergeConversationalRequiredContactData,
+  requiredConversationalContactFieldValue
+} from '../agents/conversational/contactDataRequirements.js'
 
 /**
  * Servicio del agente conversacional: runtime interno, estado por
@@ -850,16 +868,142 @@ function compactExpectedGoalReference(input = {}) {
   }
 }
 
-async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
+const CONVERSATION_GOAL_BINDING_SCHEMA_VERSION = 1
+// Debe coincidir con CONVERSATIONAL_HANDOFF_RULE_EVENT_TYPE. Se mantiene local
+// para no introducir el ciclo AgentService -> HandoffRuleService ->
+// actionEvidence -> AgentService.
+const CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE = 'handoff_rule_pending'
+const CONVERSATION_GOAL_PENDING_HANDOFF_STATUSES = new Set([
+  'ready',
+  'awaiting_required_data',
+  'executing',
+  'failed'
+])
+const VERIFIED_GOAL_HANDOFF_DECISION_SCHEMA_VERSION = 1
+let conversationalVerifiedGoalHandoffAdjudicatorForTest = null
+let conversationalVerifiedGoalHandoffPolicyLoaderForTest = null
+let conversationalVerifiedTerminalHandoffAfterCommitHookForTest = null
+
+export function setConversationalVerifiedGoalHandoffHandlersForTest({
+  adjudicate = null,
+  loadPolicy = null
+} = {}) {
+  conversationalVerifiedGoalHandoffAdjudicatorForTest =
+    typeof adjudicate === 'function' ? adjudicate : null
+  conversationalVerifiedGoalHandoffPolicyLoaderForTest =
+    typeof loadPolicy === 'function' ? loadPolicy : null
+}
+
+export function setConversationalVerifiedTerminalHandoffAfterCommitHookForTest(handler) {
+  conversationalVerifiedTerminalHandoffAfterCommitHookForTest =
+    typeof handler === 'function' ? handler : null
+}
+
+function conversationGoalScopeId(stateId = '', activationCycleId = '') {
+  const cleanStateId = String(stateId || '').trim()
+  const cleanActivationCycleId = String(activationCycleId || '').trim()
+  if (!cleanStateId || !cleanActivationCycleId) return ''
+  return `handoff_scope_${createHash('sha256')
+    .update([cleanStateId, cleanActivationCycleId].join('\u0000'))
+    .digest('hex')
+    .slice(0, 40)}`
+}
+
+async function buildConversationGoalBinding({
+  contactId,
+  agent,
+  metadata = {}
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agent?.id || '').trim()
+  if (!cleanContactId || !cleanAgentId) return null
+
+  const source = metadata && typeof metadata === 'object' ? metadata : {}
+  const requestedChannel = String(source.channel || '').trim()
+  const requiresExactBinding = Boolean(
+    requestedChannel ||
+    String(source.executionId || '').trim()
+  )
+  const stateRows = requestedChannel
+    ? await db.all(
+        `SELECT id, contact_id, agent_id, channel, status, signal,
+                activation_cycle_id, activation_cycle_started_at
+         FROM conversational_agent_state
+         WHERE contact_id = ? AND agent_id = ?
+           AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+         LIMIT 2`,
+        [cleanContactId, cleanAgentId, normalizeConversationStateChannel(requestedChannel)]
+      )
+    : await db.all(
+        `SELECT id, contact_id, agent_id, channel, status, signal,
+                activation_cycle_id, activation_cycle_started_at
+         FROM conversational_agent_state
+         WHERE contact_id = ? AND agent_id = ?
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 2`,
+        [cleanContactId, cleanAgentId]
+      )
+  const state = stateRows.length === 1 ? stateRows[0] : null
+  const channel = state
+    ? normalizeConversationStateChannel(state.channel || requestedChannel || 'whatsapp')
+    : (requestedChannel ? normalizeConversationStateChannel(requestedChannel) : '')
+  const activationCycleId = String(state?.activation_cycle_id || '').trim()
+  const scopeId = conversationGoalScopeId(state?.id, activationCycleId)
+  const unavailableReason = !state
+    ? (stateRows.length > 1 ? 'conversation_channel_ambiguous' : 'conversation_state_missing')
+    : (!activationCycleId || !scopeId
+        ? 'activation_cycle_missing'
+        : (state.status !== 'active' || state.signal
+            ? 'conversation_not_active'
+            : (!agent?.enabled ? 'agent_not_enabled' : '')))
+
+  if (unavailableReason && requiresExactBinding) {
+    throw Object.assign(
+      new Error('No se pudo fijar la conversación exacta que recibirá la confirmación del enlace.'),
+      {
+        statusCode: 409,
+        code: 'conversation_goal_binding_unavailable',
+        bindingReason: unavailableReason
+      }
+    )
+  }
+
+  if (unavailableReason) {
+    return {
+      schemaVersion: CONVERSATION_GOAL_BINDING_SCHEMA_VERSION,
+      status: 'unavailable',
+      reason: unavailableReason,
+      agentId: cleanAgentId,
+      channel: channel || null
+    }
+  }
+
+  return {
+    schemaVersion: CONVERSATION_GOAL_BINDING_SCHEMA_VERSION,
+    status: 'bound',
+    stateId: String(state.id),
+    contactId: cleanContactId,
+    agentId: cleanAgentId,
+    channel,
+    activationCycleId,
+    activationCycleStartedAt: state.activation_cycle_started_at || null,
+    conversationScopeId: scopeId,
+    sourceExecutionId: String(source.executionId || '').trim().slice(0, 180) || null,
+    agentRevision: String(agent.updatedAt || '').trim() || null
+  }
+}
+
+async function resolveGoalLinkMetadata({ contactId, agentId, objective, metadata }) {
   const source = metadata && typeof metadata === 'object' ? metadata : {}
   const suppliedExpected = compactExpectedGoalReference(source.expected)
   let configuredExpected = {}
+  let configuredAgent = null
 
   if (agentId) {
     // Una falla de DB no puede degradar silenciosamente la validación de la
     // evidencia. Si la lectura falla, crear el enlace también falla cerrado.
-    const agent = await getConversationalAgent(String(agentId))
-    const capabilities = getConversationalCapabilitiesConfig(agent)
+    configuredAgent = await getConversationalAgent(String(agentId))
+    const capabilities = getConversationalCapabilitiesConfig(configuredAgent)
     if (objective === 'citas') {
       const schedule = capabilities.items.find((item) => item.id === 'schedule_appointment' && item.enabled)
       configuredExpected = { calendarId: schedule?.calendarId || '' }
@@ -882,10 +1026,18 @@ async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
     ...presentEntries(suppliedExpected),
     ...presentEntries(normalizedConfigured)
   }
+  const conversationBinding = configuredAgent
+    ? await buildConversationGoalBinding({
+        contactId,
+        agent: configuredAgent,
+        metadata: source
+      })
+    : null
 
   return {
     ...source,
-    expected
+    expected,
+    ...(conversationBinding ? { conversationBinding } : {})
   }
 }
 
@@ -986,6 +1138,7 @@ export async function createConversationGoalLink({
   const id = `goal_${randomUUID()}`
   const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id, cleanLinkParams)
   const cleanMetadata = await resolveGoalLinkMetadata({
+    contactId: cleanContactId,
     agentId: cleanAgentId,
     objective: cleanObjective,
     metadata
@@ -1432,6 +1585,32 @@ async function finishConversationGoalNotification(goalId, claimToken, status, er
   return finishedAt
 }
 
+async function skipPreservedConversationGoalNotification(goalId, claimToken, reason = '') {
+  const finishedAt = new Date().toISOString()
+  const result = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_notification_status = 'skipped',
+        completion_notification_claim_token = NULL,
+        completion_notification_claimed_at = COALESCE(completion_notification_claimed_at, ?),
+        completion_notification_sent_at = COALESCE(completion_notification_sent_at, ?),
+        completion_notification_last_error = ?,
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+      AND completion_notification_sent_at IS NULL
+  `, [
+    finishedAt,
+    finishedAt,
+    `state_preserved:${String(reason || 'unknown').slice(0, 180)}`,
+    finishedAt,
+    goalId,
+    claimToken
+  ])
+  if (databaseChangeCount(result) !== 1) throw lostConversationGoalEffectsClaimError()
+  return finishedAt
+}
+
 async function resetConversationGoalNotificationClaim(goalId, claimToken, errorMessage = '') {
   const updatedAt = new Date().toISOString()
   const result = await db.run(`
@@ -1479,6 +1658,2636 @@ async function finishUnknownConversationGoalNotification(goalId, claimToken, con
   return finishedAt
 }
 
+function normalizeConversationGoalBinding(metadata = {}) {
+  const source = metadata?.conversationBinding
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null
+  const schemaVersion = Number(source.schemaVersion)
+  const status = String(source.status || '').trim()
+  const stateId = String(source.stateId || '').trim()
+  const contactId = String(source.contactId || '').trim()
+  const agentId = String(source.agentId || '').trim()
+  const channel = String(source.channel || '').trim()
+  const activationCycleId = String(source.activationCycleId || '').trim()
+  const conversationScopeId = String(source.conversationScopeId || '').trim()
+  const agentRevision = String(source.agentRevision || '').trim()
+  if (
+    schemaVersion !== CONVERSATION_GOAL_BINDING_SCHEMA_VERSION ||
+    status !== 'bound' ||
+    !stateId ||
+    !contactId ||
+    !agentId ||
+    !channel ||
+    !activationCycleId ||
+    !conversationScopeId ||
+    !agentRevision
+  ) return null
+  return {
+    schemaVersion,
+    status,
+    stateId,
+    contactId,
+    agentId,
+    channel: normalizeConversationStateChannel(channel),
+    activationCycleId,
+    conversationScopeId,
+    agentRevision,
+    sourceExecutionId: String(source.sourceExecutionId || '').trim() || null
+  }
+}
+
+function conversationGoalHandoffEvidenceFingerprint(goalRow = {}) {
+  const metadata = parseJsonField(goalRow.metadata_json, {})
+  return createHash('sha256')
+    .update(JSON.stringify({
+      goalId: String(goalRow.id || '').trim(),
+      contactId: String(goalRow.contact_id || '').trim(),
+      agentId: String(goalRow.agent_id || metadata?.conversationBinding?.agentId || '').trim(),
+      objective: String(goalRow.objective || '').trim(),
+      externalSource: String(goalRow.external_source || '').trim(),
+      externalObjectId: String(goalRow.external_object_id || '').trim(),
+      externalStatus: String(goalRow.external_status || '').trim().toLowerCase(),
+      receivedReference: metadata.receivedReference || null
+    }))
+    .digest('hex')
+}
+
+function compactVerifiedGoalHandoffDecision(value = {}, goalRow = null) {
+  const base = compactVerifiedPaymentHandoffDecision(value)
+  if (!base) return null
+  const cleanGoalId = String(value?.goalId || goalRow?.id || '').trim()
+  const evidenceFingerprint = String(
+    value?.evidenceFingerprint ||
+    (goalRow ? conversationGoalHandoffEvidenceFingerprint(goalRow) : '')
+  ).trim()
+  if (!cleanGoalId || !/^[a-f0-9]{64}$/.test(evidenceFingerprint)) return null
+  return {
+    ...base,
+    schemaVersion: VERIFIED_GOAL_HANDOFF_DECISION_SCHEMA_VERSION,
+    goalId: cleanGoalId,
+    evidenceFingerprint
+  }
+}
+
+async function adjudicateConversationalVerifiedGoalHandoff(payload) {
+  if (conversationalVerifiedGoalHandoffAdjudicatorForTest) {
+    return conversationalVerifiedGoalHandoffAdjudicatorForTest(payload)
+  }
+  const { adjudicateToolCallingV2VerifiedGoalHandoff } =
+    await import('../agents/conversational/runner.js')
+  return adjudicateToolCallingV2VerifiedGoalHandoff(payload)
+}
+
+async function loadConversationalVerifiedGoalHandoffPolicy(payload) {
+  if (conversationalVerifiedGoalHandoffPolicyLoaderForTest) {
+    return conversationalVerifiedGoalHandoffPolicyLoaderForTest(payload)
+  }
+  const { loadToolCallingV2VerifiedGoalHandoffPolicy } =
+    await import('../agents/conversational/runner.js')
+  return loadToolCallingV2VerifiedGoalHandoffPolicy(payload)
+}
+
+function buildVerifiedGoalHandoffFailClosedDecision({
+  goalRow,
+  policy = {},
+  binding = null,
+  reason = 'verified_goal_handoff_adjudication_inconclusive'
+} = {}) {
+  return compactVerifiedGoalHandoffDecision({
+    goalId: goalRow?.id,
+    evidenceFingerprint: conversationGoalHandoffEvidenceFingerprint(goalRow),
+    decision: 'match',
+    source: 'configured_rules_fail_closed_review',
+    configRevision: policy?.configRevision,
+    policyFingerprint: policy?.policyFingerprint,
+    matchedRule: String(policy?.rules || '').trim() ||
+      'Revisión humana obligatoria por compuerta no concluyente',
+    reason,
+    summary: 'La confirmación externa quedó verificada, pero el descarte automático no fue concluyente; el equipo humano debe continuar.',
+    assignedUserId: policy?.assignedUserId,
+    assignedUserName: policy?.assignedUserName,
+    generalFallbackPolicy: policy?.generalFallbackPolicy,
+    policyEnabled: policy?.enabled === true,
+    criteriaConfigured: policy?.criteriaConfigured === true,
+    rulesConfigured: Boolean(String(policy?.rules || '').trim()),
+    pastClientsToHuman: policy?.pastClientsToHuman === true,
+    dataRequirements: policy?.dataRequirements,
+    conversationScopeId: binding?.conversationScopeId || null
+  }, goalRow)
+}
+
+async function verifiedGoalHandoffPolicyMatchesDecision({
+  decision,
+  goalRow,
+  agentId,
+  transaction = db,
+  lock = false
+} = {}) {
+  const normalized = compactVerifiedGoalHandoffDecision(decision, goalRow)
+  if (!normalized) return { matches: false, policy: null, decision: null }
+  const cleanAgentId = String(agentId || '').trim()
+  if (cleanAgentId) {
+    await transaction.get(
+      `SELECT id FROM conversational_agents
+       WHERE id = ?${lock && process.env.DATABASE_URL ? ' FOR SHARE' : ''}`,
+      [cleanAgentId]
+    )
+  }
+  const policy = await loadConversationalVerifiedGoalHandoffPolicy({
+    agentId: cleanAgentId
+  })
+  return {
+    matches:
+      String(policy?.configRevision || '') === String(normalized.configRevision || '') &&
+      String(policy?.policyFingerprint || '') === String(normalized.policyFingerprint || ''),
+    policy,
+    decision: normalized
+  }
+}
+
+async function checkpointConversationGoalHandoffDecision({
+  goalRow,
+  claimToken,
+  decision
+} = {}) {
+  const metadata = parseJsonField(goalRow.metadata_json, {})
+  const decidedAt = new Date().toISOString()
+  const nextMetadata = {
+    ...metadata,
+    verifiedGoalHandoffDecision: decision,
+    verifiedGoalHandoffDecisionAt: decidedAt
+  }
+  const updated = await db.run(
+    `UPDATE conversational_agent_goal_links
+     SET metadata_json = ?, completion_effects_updated_at = ?
+     WHERE id = ?
+       AND completion_effects_status = 'processing'
+       AND completion_effects_claim_token = ?
+       AND metadata_json = ?`,
+    [
+      JSON.stringify(nextMetadata),
+      decidedAt,
+      goalRow.id,
+      claimToken,
+      goalRow.metadata_json
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) throw lostConversationGoalEffectsClaimError()
+  goalRow.metadata_json = JSON.stringify(nextMetadata)
+  return { decision, metadata: nextMetadata }
+}
+
+async function resolveConversationGoalHandoffDecision({
+  goalRow,
+  claimToken
+} = {}) {
+  const metadata = parseJsonField(goalRow.metadata_json, {})
+  const binding = normalizeConversationGoalBinding(metadata)
+  const cleanAgentId = String(goalRow.agent_id || binding?.agentId || '').trim()
+  if (!cleanAgentId || !binding) return { decision: null, metadata }
+  const evidenceFingerprint = conversationGoalHandoffEvidenceFingerprint(goalRow)
+  const stored = compactVerifiedGoalHandoffDecision(
+    metadata.verifiedGoalHandoffDecision,
+    goalRow
+  )
+  if (
+    stored &&
+    stored.goalId === String(goalRow.id) &&
+    stored.evidenceFingerprint === evidenceFingerprint
+  ) {
+    const current = await verifiedGoalHandoffPolicyMatchesDecision({
+      decision: stored,
+      goalRow,
+      agentId: cleanAgentId
+    })
+    const scopeMatches = (
+      !(stored.policyEnabled && stored.criteriaConfigured) ||
+      stored.conversationScopeId === binding.conversationScopeId
+    )
+    if (current.matches && scopeMatches) {
+      return { decision: stored, metadata }
+    }
+  }
+
+  const adjudicationPayload = {
+    contactId: String(goalRow.contact_id || '').trim(),
+    agentId: cleanAgentId,
+    channel: binding.channel,
+    goal: {
+      verified: true,
+      goalId: String(goalRow.id || '').trim(),
+      objective: String(goalRow.objective || '').trim(),
+      status: 'completed',
+      externalStatus: 'completed',
+      externalSource: String(goalRow.external_source || '').trim() || null,
+      externalObjectId: String(goalRow.external_object_id || '').trim() || null,
+      sourceEventId: goalEffectEventId(goalRow.id, 'verified_terminal')
+    }
+  }
+  let policy = await loadConversationalVerifiedGoalHandoffPolicy({
+    agentId: cleanAgentId
+  })
+  let rawDecision
+  if (policy?.enabled !== true) {
+    rawDecision = {
+      decision: 'disabled',
+      source: policy?.source || 'handoff_capability_disabled',
+      reason: 'handoff_capability_disabled'
+    }
+  } else if (policy?.criteriaConfigured !== true) {
+    rawDecision = {
+      decision: 'no_match',
+      source: 'no_configured_criteria',
+      reason: 'handoff_criteria_not_configured'
+    }
+  } else {
+    try {
+      rawDecision = await adjudicateConversationalVerifiedGoalHandoff(
+        adjudicationPayload
+      )
+    } catch (error) {
+      rawDecision = buildVerifiedGoalHandoffFailClosedDecision({
+        goalRow,
+        policy,
+        binding,
+        reason: `verified_goal_handoff_adjudication_failed:${String(error?.code || error?.message || 'unknown').slice(0, 240)}`
+      })
+    }
+  }
+
+  let decision = compactVerifiedGoalHandoffDecision({
+    ...rawDecision,
+    goalId: goalRow.id,
+    evidenceFingerprint,
+    configRevision: rawDecision?.configRevision ?? policy?.configRevision,
+    policyFingerprint: rawDecision?.policyFingerprint ?? policy?.policyFingerprint,
+    assignedUserId: rawDecision?.assignedUserId ?? policy?.assignedUserId,
+    assignedUserName: rawDecision?.assignedUserName ?? policy?.assignedUserName,
+    generalFallbackPolicy: rawDecision?.generalFallbackPolicy ?? policy?.generalFallbackPolicy,
+    policyEnabled: policy?.enabled === true,
+    criteriaConfigured: policy?.criteriaConfigured === true,
+    rulesConfigured: Boolean(String(policy?.rules || '').trim()),
+    pastClientsToHuman: policy?.pastClientsToHuman === true,
+    dataRequirements: policy?.dataRequirements,
+    conversationScopeId: rawDecision?.conversationScopeId || (
+      policy?.enabled && policy?.criteriaConfigured
+        ? binding.conversationScopeId
+        : null
+    )
+  }, goalRow)
+  let current = await verifiedGoalHandoffPolicyMatchesDecision({
+    decision,
+    goalRow,
+    agentId: cleanAgentId
+  })
+  if (!current.matches && policy?.enabled === true && policy?.criteriaConfigured === true) {
+    rawDecision = await adjudicateConversationalVerifiedGoalHandoff(
+      adjudicationPayload
+    )
+    policy = await loadConversationalVerifiedGoalHandoffPolicy({
+      agentId: cleanAgentId
+    })
+    decision = compactVerifiedGoalHandoffDecision({
+      ...rawDecision,
+      goalId: goalRow.id,
+      evidenceFingerprint,
+      assignedUserId: policy?.assignedUserId,
+      assignedUserName: policy?.assignedUserName,
+      generalFallbackPolicy: policy?.generalFallbackPolicy,
+      policyEnabled: policy?.enabled === true,
+      criteriaConfigured: policy?.criteriaConfigured === true,
+      rulesConfigured: Boolean(String(policy?.rules || '').trim()),
+      pastClientsToHuman: policy?.pastClientsToHuman === true,
+      dataRequirements: policy?.dataRequirements
+    }, goalRow)
+    current = await verifiedGoalHandoffPolicyMatchesDecision({
+      decision,
+      goalRow,
+      agentId: cleanAgentId
+    })
+  }
+  if (!decision || !current.matches) {
+    throw Object.assign(
+      new Error('La configuración de handoff cambió durante la adjudicación del objetivo verificado.'),
+      { code: 'verified_goal_handoff_policy_changed', statusCode: 409 }
+    )
+  }
+  decision = compactVerifiedGoalHandoffDecision({
+    ...decision,
+    assignedUserId: current.policy?.assignedUserId,
+    assignedUserName: current.policy?.assignedUserName,
+    generalFallbackPolicy: current.policy?.generalFallbackPolicy,
+    policyEnabled: current.policy?.enabled === true,
+    criteriaConfigured: current.policy?.criteriaConfigured === true,
+    rulesConfigured: Boolean(String(current.policy?.rules || '').trim()),
+    pastClientsToHuman: current.policy?.pastClientsToHuman === true,
+    dataRequirements: current.policy?.dataRequirements
+  }, goalRow)
+  if (
+    decision.policyEnabled &&
+    decision.criteriaConfigured &&
+    decision.conversationScopeId !== binding.conversationScopeId
+  ) {
+    throw Object.assign(
+      new Error('La conversación cambió mientras se adjudicaba el handoff del objetivo.'),
+      { code: 'verified_goal_handoff_scope_changed', statusCode: 409 }
+    )
+  }
+  if (
+    decision.decision === 'no_match' &&
+    decision.rulesConfigured &&
+    decision.noMatchAudit?.acceptedNoMatch !== true
+  ) {
+    decision = buildVerifiedGoalHandoffFailClosedDecision({
+      goalRow,
+      policy: current.policy,
+      binding,
+      reason: 'verified_goal_handoff_no_match_not_independently_confirmed'
+    })
+  }
+  return checkpointConversationGoalHandoffDecision({
+    goalRow,
+    claimToken,
+    decision
+  })
+}
+
+async function findPendingConversationGoalHandoffLatch({
+  transaction,
+  contactId,
+  agentId,
+  channel,
+  conversationScopeId,
+  policyFingerprint = '',
+  policyActive = true
+} = {}) {
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const rows = await transaction.all(
+    `SELECT id, detail_json
+     FROM conversational_agent_events
+     WHERE contact_id = ? AND agent_id = ? AND event_type = ?
+     ORDER BY created_at DESC, id DESC${rowLock}`,
+    [contactId, agentId, CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE]
+  )
+  for (const row of rows) {
+    const detail = parseJsonField(row.detail_json, null)
+    if (!detail) {
+      if (!policyActive) {
+        await transaction.run(
+          `UPDATE conversational_agent_events
+           SET detail_json = ?
+           WHERE id = ? AND detail_json = ?`,
+          [
+            JSON.stringify({
+              schemaVersion: 2,
+              status: 'superseded',
+              supersededReason: 'handoff_policy_disabled',
+              supersededAt: new Date().toISOString()
+            }),
+            row.id,
+            row.detail_json
+          ]
+        )
+        continue
+      }
+      // Un latch ilegible del mismo contacto/agente no autoriza una terminal
+      // asíncrona. Es más seguro esperar revisión que saltar una obligación.
+      return { id: row.id, status: 'corrupt' }
+    }
+    const latchChannel = normalizeConversationStateChannel(detail.channel || 'whatsapp')
+    const latchScopeId = String(detail.conversationScopeId || '').trim()
+    const latchStatus = String(detail.status || '').trim()
+    if (
+      latchChannel === channel &&
+      (!latchScopeId || latchScopeId === conversationScopeId) &&
+      CONVERSATION_GOAL_PENDING_HANDOFF_STATUSES.has(latchStatus)
+    ) {
+      const latchFingerprint = String(detail.ruleFingerprint || '').trim()
+      if (
+        !policyActive ||
+        !policyFingerprint ||
+        latchFingerprint !== String(policyFingerprint || '').trim()
+      ) {
+        const nextDetail = {
+          ...detail,
+          status: 'superseded',
+          supersededReason: !policyActive
+            ? 'handoff_policy_disabled'
+            : 'handoff_policy_changed',
+          supersededAt: new Date().toISOString()
+        }
+        const superseded = await transaction.run(
+          `UPDATE conversational_agent_events
+           SET detail_json = ?
+           WHERE id = ? AND detail_json = ?`,
+          [JSON.stringify(nextDetail), row.id, row.detail_json]
+        )
+        if (databaseChangeCount(superseded) !== 1) {
+          throw Object.assign(
+            new Error('El latch obligatorio cambió durante la confirmación del objetivo.'),
+            { code: 'conversation_goal_handoff_latch_changed', statusCode: 409 }
+          )
+        }
+        continue
+      }
+      return { id: row.id, status: latchStatus }
+    }
+  }
+  return null
+}
+
+async function settleConversationGoalSignalDisposition({
+  transaction,
+  goalRow,
+  claimToken,
+  disposition
+} = {}) {
+  const settledAt = new Date().toISOString()
+  const metadata = parseJsonField(goalRow.metadata_json, {})
+  const cleanDisposition = {
+    schemaVersion: 1,
+    status: disposition.status === 'applied' ? 'applied' : 'preserved',
+    reason: String(disposition.reason || '').trim().slice(0, 180) || null,
+    stateId: String(disposition.stateId || '').trim().slice(0, 180) || null,
+    channel: String(disposition.channel || '').trim().slice(0, 40) || null,
+    signal: String(disposition.signal || '').trim().slice(0, 80) || null,
+    handoffApplied: disposition.handoffApplied === true,
+    awaitingRequiredData: disposition.awaitingRequiredData === true,
+    handoffLatchId:
+      String(disposition.handoffLatchId || '').trim().slice(0, 180) || null,
+    requiredDataPromptMessageId:
+      String(disposition.requiredDataPromptMessageId || '').trim().slice(0, 180) || null,
+    missingRequiredFields: (Array.isArray(disposition.missingRequiredFields)
+      ? disposition.missingRequiredFields
+      : [])
+      .slice(0, 20)
+      .map((item) => ({
+        field: String(item?.field || '').trim().slice(0, 80),
+        label: String(item?.label || '').trim().slice(0, 120)
+      }))
+      .filter((item) => item.field),
+    manualReviewRequired: disposition.manualReviewRequired === true,
+    handoffDecision: String(disposition.handoffDecision || '').trim().slice(0, 40) || null,
+    handoffSource: String(disposition.handoffSource || '').trim().slice(0, 180) || null,
+    settledAt
+  }
+  const nextMetadata = {
+    ...metadata,
+    completionStateDisposition: cleanDisposition
+  }
+  const updated = await transaction.run(
+    `UPDATE conversational_agent_goal_links
+     SET completion_signal_applied_at = COALESCE(completion_signal_applied_at, ?),
+         metadata_json = ?,
+         completion_effects_updated_at = ?
+     WHERE id = ?
+       AND completion_effects_status = 'processing'
+       AND completion_effects_claim_token = ?
+       AND completion_signal_applied_at IS NULL`,
+    [
+      settledAt,
+      JSON.stringify(nextMetadata),
+      settledAt,
+      goalRow.id,
+      claimToken
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) throw lostConversationGoalEffectsClaimError()
+  return {
+    ...cleanDisposition,
+    metadata: nextMetadata,
+    appliedAt: settledAt
+  }
+}
+
+async function checkpointConversationGoalRequiredDataResolution({
+  goalRow,
+  claimToken,
+  resolution
+} = {}) {
+  if (resolution?.handoffCompleted !== true) {
+    return {
+      metadata: parseJsonField(goalRow?.metadata_json, {}),
+      disposition: null
+    }
+  }
+  const completedAt = new Date().toISOString()
+  const metadata = parseJsonField(goalRow?.metadata_json, {})
+  const previous = metadata.completionStateDisposition &&
+    typeof metadata.completionStateDisposition === 'object'
+    ? metadata.completionStateDisposition
+    : {}
+  const disposition = {
+    ...previous,
+    status: 'applied',
+    reason: 'verified_goal_handoff_required_data_completed',
+    signal: 'ready_for_human',
+    handoffApplied: true,
+    awaitingRequiredData: false,
+    missingRequiredFields: [],
+    manualReviewRequired: false,
+    settledAt: completedAt
+  }
+  const nextMetadata = {
+    ...metadata,
+    completionStateDisposition: disposition
+  }
+  const expectedMetadataJson = String(goalRow?.metadata_json || '')
+  const updated = await db.run(
+    `UPDATE conversational_agent_goal_links
+     SET metadata_json = ?, completion_effects_updated_at = ?
+     WHERE id = ?
+       AND completion_effects_status = 'processing'
+       AND completion_effects_claim_token = ?
+       AND metadata_json = ?`,
+    [
+      JSON.stringify(nextMetadata),
+      completedAt,
+      goalRow.id,
+      claimToken,
+      expectedMetadataJson
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) throw lostConversationGoalEffectsClaimError()
+  goalRow.metadata_json = JSON.stringify(nextMetadata)
+  return { metadata: nextMetadata, disposition }
+}
+
+async function loadCompletedRequiredDataHandoffEvidence(transaction, {
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  latchId = '',
+  stateId = ''
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanChannel = normalizeConversationStateChannel(channel || 'whatsapp')
+  const cleanLatchId = String(latchId || '').trim()
+  const cleanStateId = String(stateId || '').trim()
+  if (!cleanContactId || !cleanAgentId || !cleanLatchId) return null
+
+  const rowLock = process.env.DATABASE_URL ? ' FOR SHARE' : ''
+  const latch = await transaction.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events
+     WHERE id = ?${rowLock}`,
+    [cleanLatchId]
+  )
+  const latchDetail = parseJsonField(latch?.detail_json, null)
+  if (
+    !latch?.id ||
+    latch.event_type !== CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE ||
+    String(latch.contact_id || '') !== cleanContactId ||
+    String(latch.agent_id || '') !== cleanAgentId ||
+    !latchDetail ||
+    String(latchDetail.status || '') !== 'completed' ||
+    normalizeConversationStateChannel(latchDetail.channel || 'whatsapp') !==
+      cleanChannel ||
+    !String(latchDetail.conversationScopeId || '').trim()
+  ) return null
+
+  const state = await transaction.get(
+    `SELECT id, status, signal, activation_cycle_id
+     FROM conversational_agent_state
+     WHERE contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+     LIMIT 1${rowLock}`,
+    [cleanContactId, cleanAgentId, cleanChannel]
+  )
+  const currentScopeId = conversationGoalScopeId(
+    state?.id,
+    state?.activation_cycle_id
+  )
+  if (
+    !state?.id ||
+    (cleanStateId && String(state.id) !== cleanStateId) ||
+    String(state.status || '') !== 'human' ||
+    String(state.signal || '') !== 'ready_for_human' ||
+    currentScopeId !== String(latchDetail.conversationScopeId || '')
+  ) return null
+
+  return {
+    latchId: cleanLatchId,
+    stateId: String(state.id),
+    conversationScopeId: currentScopeId,
+    completedAt: String(
+      latchDetail.completedAt || latchDetail.executionFinishedAt || ''
+    ).trim() || null
+  }
+}
+
+async function reconcileCompletedConversationGoalRequiredData(goalId = '') {
+  const cleanGoalId = String(goalId || '').trim()
+  if (!cleanGoalId) return null
+  return db.transaction(async (transaction) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await transaction.get(
+      `SELECT id, contact_id, agent_id, completion_effects_status, metadata_json
+       FROM conversational_agent_goal_links
+       WHERE id = ?${rowLock}`,
+      [cleanGoalId]
+    )
+    const metadata = parseJsonField(row?.metadata_json, {})
+    const disposition = metadata.completionStateDisposition &&
+      typeof metadata.completionStateDisposition === 'object'
+      ? metadata.completionStateDisposition
+      : null
+    if (
+      row?.completion_effects_status !== 'completed' ||
+      disposition?.awaitingRequiredData !== true
+    ) {
+      return { metadata, disposition, reconciled: false }
+    }
+
+    const evidence = await loadCompletedRequiredDataHandoffEvidence(
+      transaction,
+      {
+        contactId: row.contact_id,
+        agentId: row.agent_id,
+        channel: disposition.channel || 'whatsapp',
+        latchId: disposition.handoffLatchId,
+        stateId: disposition.stateId
+      }
+    )
+    if (!evidence) return { metadata, disposition, reconciled: false }
+
+    const reconciledAt = new Date().toISOString()
+    const nextDisposition = {
+      ...disposition,
+      status: 'applied',
+      reason: 'verified_goal_handoff_required_data_completed',
+      stateId: evidence.stateId,
+      signal: 'ready_for_human',
+      handoffApplied: true,
+      awaitingRequiredData: false,
+      missingRequiredFields: [],
+      manualReviewRequired: false,
+      settledAt: reconciledAt,
+      requiredDataReconciledAt: reconciledAt
+    }
+    const nextMetadata = {
+      ...metadata,
+      completionStateDisposition: nextDisposition
+    }
+    const updated = await transaction.run(
+      `UPDATE conversational_agent_goal_links
+       SET metadata_json = ?, completion_effects_updated_at = ?
+       WHERE id = ?
+         AND completion_effects_status = 'completed'
+         AND metadata_json = ?`,
+      [
+        JSON.stringify(nextMetadata),
+        reconciledAt,
+        cleanGoalId,
+        row.metadata_json
+      ]
+    )
+    if (databaseChangeCount(updated) !== 1) {
+      return { metadata, disposition, reconciled: false }
+    }
+    return {
+      metadata: nextMetadata,
+      disposition: nextDisposition,
+      evidence,
+      reconciled: true
+    }
+  })
+}
+
+async function reconcileCompletedPaymentRequiredDataHandoff({
+  eventId = '',
+  contactId = '',
+  agentId = ''
+} = {}) {
+  const cleanEventId = String(eventId || '').trim()
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  if (!cleanEventId || !cleanContactId || !cleanAgentId) return null
+
+  return db.transaction(async (transaction) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await transaction.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events
+       WHERE id = ?${rowLock}`,
+      [cleanEventId]
+    )
+    const stored = parseJsonField(row?.detail_json, {})
+    const handoff = stored.afterPaymentActionResult &&
+      typeof stored.afterPaymentActionResult === 'object'
+      ? stored.afterPaymentActionResult
+      : null
+    if (
+      row?.event_type !== CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT ||
+      String(row.contact_id || '') !== cleanContactId ||
+      String(row.agent_id || '') !== cleanAgentId ||
+      stored.status !== 'completed' ||
+      handoff?.awaitingRequiredData !== true
+    ) return stored
+
+    const evidence = await loadCompletedRequiredDataHandoffEvidence(
+      transaction,
+      {
+        contactId: cleanContactId,
+        agentId: cleanAgentId,
+        channel:
+          handoff.requiredDataPrompt?.channel ||
+          stored.channel ||
+          'whatsapp',
+        latchId: handoff.handoffLatchId
+      }
+    )
+    if (!evidence) return stored
+
+    const reconciledAt = new Date().toISOString()
+    const nextHandoff = {
+      ...handoff,
+      handoffCompleted: true,
+      awaitingRequiredData: false,
+      statePreserved: false,
+      handoffOwnedByReconciliation: false,
+      manualReviewRequired: false,
+      manualReviewReason: null,
+      missingRequiredFields: [],
+      requiredDataReconciledAt: reconciledAt
+    }
+    const previousResult = stored.result &&
+      typeof stored.result === 'object'
+      ? stored.result
+      : {}
+    const nextResult = {
+      ...previousResult,
+      signal: 'ready_for_human',
+      objectiveCompleted: true,
+      handoffCompleted: true,
+      awaitingRequiredData: false,
+      handoffLatchId: evidence.latchId,
+      missingRequiredFields: [],
+      manualReviewRequired: false,
+      statePreserved: false,
+      requiredDataReconciledAt: reconciledAt
+    }
+    const next = {
+      ...stored,
+      afterPaymentActionResult: nextHandoff,
+      result: nextResult,
+      requiredDataHandoffReconciledAt: reconciledAt
+    }
+    const updated = await transaction.run(
+      `UPDATE conversational_agent_events
+       SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        JSON.stringify(next),
+        cleanEventId,
+        CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT,
+        row.detail_json
+      ]
+    )
+    return databaseChangeCount(updated) === 1 ? next : stored
+  })
+}
+
+async function validateVerifiedGoalHandoffRequiredData({
+  contactId,
+  metadata = {},
+  decision = {},
+  scopes = ['any_action', 'handoff', 'link'],
+  transaction = db,
+  lock = false
+} = {}) {
+  const actionScoped = readVerifiedPaymentActionScopedContactData(metadata)
+  if (!actionScoped) {
+    return {
+      ok: false,
+      reason: 'goal_handoff_required_data_binding_invalid',
+      missing: []
+    }
+  }
+  const rowLock = lock && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const contact = await transaction.get(
+    `SELECT id, full_name, first_name, last_name, phone, email, custom_fields
+     FROM contacts WHERE id = ?${rowLock}`,
+    [String(contactId || '').trim()]
+  )
+  if (!contact?.id) {
+    return { ok: false, reason: 'goal_handoff_contact_missing', missing: [] }
+  }
+  const mergedContact = mergeConversationalRequiredContactData(
+    contact,
+    actionScoped
+  )
+  const requirements = decision?.dataRequirements &&
+    typeof decision.dataRequirements === 'object' &&
+    !Array.isArray(decision.dataRequirements)
+    ? decision.dataRequirements
+    : {}
+  if (requirements.enabled !== true) return { ok: true, actionScoped }
+  const active = (Array.isArray(requirements.fields) ? requirements.fields : [])
+    .filter((item) => (
+      scopes.includes(String(item?.scope || '')) &&
+      item?.level === 'required'
+    ))
+  const missing = active.filter((requirement) => (
+    !requiredConversationalContactFieldValue(mergedContact, requirement)
+  ))
+  return missing.length
+    ? {
+      ok: false,
+      reason: 'goal_handoff_required_data_missing',
+      missing: missing.map((item) => ({
+        field: String(item.field || '').trim(),
+        label: cleanVerifiedPaymentContactText(item.label || item.field, 120)
+      })),
+      actionScoped
+      }
+    : { ok: true, actionScoped }
+}
+
+async function settleConversationGoalHandoffLatch({
+  transaction,
+  latchId,
+  goalId,
+  status = 'completed'
+} = {}) {
+  const cleanLatchId = String(latchId || '').trim()
+  if (!cleanLatchId) return false
+  const row = await transaction.get(
+    `SELECT detail_json FROM conversational_agent_events WHERE id = ?`,
+    [cleanLatchId]
+  )
+  const detail = parseJsonField(row?.detail_json, null)
+  if (!detail) return false
+  if (String(detail.status || '') === status) return true
+  const next = {
+    ...detail,
+    status,
+    completedBy: 'verified_goal_terminal',
+    completedGoalId: String(goalId || '').trim(),
+    completedAt: new Date().toISOString()
+  }
+  const updated = await transaction.run(
+    `UPDATE conversational_agent_events
+     SET detail_json = ?
+     WHERE id = ? AND detail_json = ?`,
+    [JSON.stringify(next), cleanLatchId, row.detail_json]
+  )
+  if (databaseChangeCount(updated) !== 1) {
+    throw Object.assign(
+      new Error('El latch obligatorio cambió antes de cerrar el objetivo.'),
+      { code: 'conversation_goal_handoff_latch_changed', statusCode: 409 }
+    )
+  }
+  return true
+}
+
+/**
+ * Convierte una terminal síncrona ya comprobada por una tool v2 en entrega
+ * humana. La mutación normal es completed+señal exacta ->
+ * human/ready_for_human sobre el mismo ciclo. Si falta un dato obligatorio,
+ * reactiva ese MISMO ciclo sin señal y delega la obligación al latch canónico;
+ * así puede pedir el dato sin volver a ejecutar la terminal.
+ */
+export async function applyToolCallingV2VerifiedTerminalHandoff({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  binding = {},
+  expectedTerminal = {},
+  decision = {},
+  actionScopedContactData = {},
+  sourceEventId = '',
+  terminalSourceMessageId = ''
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanChannel = normalizeConversationStateChannel(channel || 'whatsapp')
+  const cleanStateId = String(binding?.stateId || '').trim()
+  const cleanCycleId = String(binding?.activationCycleId || '').trim()
+  const cleanScopeId = String(binding?.conversationScopeId || '').trim()
+  const cleanSourceEventId = String(sourceEventId || '').trim()
+  const cleanTerminalSourceMessageId =
+    String(terminalSourceMessageId || '').trim()
+  const expectedStatus = String(expectedTerminal?.status || '').trim()
+  const expectedSignal = String(expectedTerminal?.signal || '').trim()
+  const normalizedDecision = compactVerifiedPaymentHandoffDecision(decision)
+  if (
+    !cleanContactId ||
+    !cleanAgentId ||
+    !cleanStateId ||
+    !cleanCycleId ||
+    !cleanScopeId ||
+    !cleanSourceEventId ||
+    expectedStatus !== 'completed' ||
+    !expectedSignal ||
+    normalizedDecision?.decision !== 'match'
+  ) {
+    throw Object.assign(
+      new Error('La terminal síncrona no conserva un contrato completo para aplicar el handoff.'),
+      { code: 'verified_terminal_handoff_contract_invalid', statusCode: 400 }
+    )
+  }
+  const expectedScopeId = conversationGoalScopeId(cleanStateId, cleanCycleId)
+  if (
+    expectedScopeId !== cleanScopeId ||
+    (
+      normalizedDecision.conversationScopeId &&
+      normalizedDecision.conversationScopeId !== cleanScopeId
+    )
+  ) {
+    throw Object.assign(
+      new Error('El scope del handoff no coincide con la terminal síncrona.'),
+      { code: 'verified_terminal_handoff_scope_mismatch', statusCode: 409 }
+    )
+  }
+
+  const sanitizedActionScoped =
+    sanitizeVerifiedPaymentActionScopedContactData(actionScopedContactData)
+  const actionScopedIntegrityValid = Boolean(sanitizedActionScoped)
+  const sealedActionScoped = sanitizedActionScoped || {}
+  const actionScopedMetadata = {
+    actionScopedContactDataVersion: 1,
+    actionScopedContactData: sealedActionScoped,
+    actionScopedContactDataHash: createHash('sha256')
+      .update('conversational-action-scoped-contact-data:v1\u0000')
+      .update(JSON.stringify(sealedActionScoped))
+      .digest('hex')
+  }
+  const identityHash = createHash('sha256')
+    .update([
+      cleanContactId,
+      cleanAgentId,
+      cleanChannel,
+      cleanStateId,
+      cleanCycleId,
+      cleanScopeId,
+      cleanSourceEventId,
+      expectedStatus,
+      expectedSignal
+    ].join('\u0000'))
+    .digest('hex')
+  const applicationEventId = `cae_terminal_handoff_${identityHash.slice(0, 44)}`
+  const signalEventId = `${applicationEventId}_signal`
+  const notificationEventId = `${applicationEventId}_notification`
+  const notificationReason = String(normalizedDecision.source || '').includes('fail_closed')
+    ? 'Terminal completada; revisar el traspaso manualmente'
+    : 'Terminal completada; la conversación quedó en manos del equipo'
+  const notificationSummary =
+    normalizedDecision.summary || `Terminal verificada: ${expectedSignal}`
+
+  const transition = await db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const existing = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [applicationEventId]
+    )
+    if (existing) {
+      const detail = parseJsonField(existing.detail_json, {})
+      if (
+        ![
+          'verified_terminal_handoff_completed',
+          'verified_terminal_handoff_awaiting_required_data'
+        ].includes(existing.event_type) ||
+        String(existing.contact_id || '') !== cleanContactId ||
+        String(existing.agent_id || '') !== cleanAgentId ||
+        String(detail.identityHash || '') !== identityHash
+      ) {
+        throw Object.assign(
+          new Error('La identidad durable de la terminal pertenece a otro handoff.'),
+          { code: 'verified_terminal_handoff_identity_conflict', statusCode: 409 }
+        )
+      }
+      return {
+        ...(detail.result || {}),
+        replayed: true,
+        ownsTransition: detail.result?.handoffCompleted === true ||
+          detail.result?.awaitingRequiredData === true
+      }
+    }
+
+    const currentPolicy = await verifiedPaymentHandoffPolicyMatchesDecision({
+      decision: normalizedDecision,
+      agentId: cleanAgentId,
+      transaction: tx,
+      lock: true
+    })
+    if (
+      !currentPolicy.matches ||
+      currentPolicy.policy?.enabled !== true ||
+      currentPolicy.policy?.criteriaConfigured !== true
+    ) {
+      throw Object.assign(
+        new Error('La configuración de handoff cambió después de la terminal síncrona.'),
+        { code: 'verified_terminal_handoff_policy_changed', statusCode: 409 }
+      )
+    }
+    const effectiveDecision = compactVerifiedPaymentHandoffDecision({
+      ...normalizedDecision,
+      assignedUserId: currentPolicy.policy?.assignedUserId,
+      assignedUserName: currentPolicy.policy?.assignedUserName,
+      generalFallbackPolicy: currentPolicy.policy?.generalFallbackPolicy,
+      policyEnabled: true,
+      criteriaConfigured: true,
+      rulesConfigured: Boolean(String(currentPolicy.policy?.rules || '').trim()),
+      pastClientsToHuman: currentPolicy.policy?.pastClientsToHuman === true,
+      dataRequirements: currentPolicy.policy?.dataRequirements
+    })
+    const state = await tx.get(
+      `SELECT id, contact_id, agent_id, channel, status, signal,
+              activation_cycle_id, updated_by
+       FROM conversational_agent_state
+       WHERE id = ? AND contact_id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+       LIMIT 1`,
+      [cleanStateId, cleanContactId, cleanAgentId, cleanChannel]
+    )
+    if (
+      !state?.id ||
+      String(state.activation_cycle_id || '') !== cleanCycleId ||
+      conversationGoalScopeId(state?.id, state?.activation_cycle_id) !== cleanScopeId
+    ) {
+      return {
+        applied: false,
+        handoffCompleted: false,
+        manualReviewRequired: true,
+        statePreserved: true,
+        reason: 'verified_terminal_handoff_cycle_changed',
+        stateId: state?.id || null,
+        ownsTransition: false
+      }
+    }
+    if (state.status !== expectedStatus || state.signal !== expectedSignal) {
+      return {
+        applied: false,
+        handoffCompleted:
+          state.status === 'human' && state.signal === 'ready_for_human',
+        manualReviewRequired: true,
+        statePreserved: true,
+        reason: state.status === 'human'
+          ? 'verified_terminal_handoff_already_human'
+          : 'verified_terminal_handoff_state_changed',
+        stateId: state.id,
+        ownsTransition: false
+      }
+    }
+
+    const actionScope = expectedSignal === 'appointment_booked'
+      ? 'appointment'
+      : expectedSignal === 'purchase_completed'
+        ? 'payment'
+        : 'handoff'
+    let requiredData = await validateVerifiedGoalHandoffRequiredData({
+      contactId: cleanContactId,
+      metadata: actionScopedMetadata,
+      decision: effectiveDecision,
+      scopes: ['any_action', actionScope, 'handoff'],
+      transaction: tx,
+      lock: true
+    })
+    if (!actionScopedIntegrityValid && requiredData.ok) {
+      requiredData = {
+        ok: false,
+        reason: 'verified_terminal_handoff_action_scoped_data_invalid',
+        missing: []
+      }
+    }
+    if (!requiredData.ok && requiredData.missing?.length) {
+      const awaitingAuthorityToken =
+        `conv_terminal_handoff_data_${identityHash.slice(0, 36)}`
+      const reactivated = await tx.run(
+        `UPDATE conversational_agent_state
+         SET status = 'active',
+             signal = NULL,
+             signal_reason = NULL,
+             signal_summary = NULL,
+             signal_at = NULL,
+             paused_until_at = NULL,
+             updated_by = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND contact_id = ? AND agent_id = ?
+           AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+           AND activation_cycle_id = ?
+           AND status = ? AND signal = ?`,
+        [
+          awaitingAuthorityToken,
+          cleanStateId,
+          cleanContactId,
+          cleanAgentId,
+          cleanChannel,
+          cleanCycleId,
+          expectedStatus,
+          expectedSignal
+        ]
+      )
+      if (databaseChangeCount(reactivated) !== 1) {
+        throw Object.assign(
+          new Error('La terminal cambió antes de conservar la espera de datos obligatorios.'),
+          {
+            code: 'verified_terminal_handoff_required_data_authority_lost',
+            statusCode: 409
+          }
+        )
+      }
+      const handoffLatch = await upsertHandoffRuleLatch({
+        contactId: cleanContactId,
+        agentId: cleanAgentId,
+        channel: cleanChannel,
+        ruleFingerprint: effectiveDecision.policyFingerprint,
+        conversationScopeId: cleanScopeId,
+        triggerMessageId: cleanSourceEventId,
+        evidenceDigest: identityHash,
+        matchSource: effectiveDecision.source || 'configured_rules',
+        matchedRule: effectiveDecision.matchedRule || '',
+        reason: effectiveDecision.reason ||
+          'Se cumplió una regla configurada para pasar a humano',
+        summary: effectiveDecision.summary ||
+          `Terminal verificada: ${expectedSignal}`
+      })
+      const awaitingLatch = await markHandoffRuleLatchAwaitingData({
+        eventId: handoffLatch?.id,
+        ruleFingerprint: effectiveDecision.policyFingerprint,
+        requiredFields: requiredData.missing,
+        actionScopedContactData: sealedActionScoped
+      })
+      if (!awaitingLatch?.id) {
+        throw Object.assign(
+          new Error('No se pudo conservar la obligación mientras se piden los datos faltantes.'),
+          {
+            code: 'verified_terminal_handoff_required_data_latch_failed',
+            statusCode: 409
+          }
+        )
+      }
+      const result = {
+        applied: false,
+        handoffCompleted: false,
+        awaitingRequiredData: true,
+        manualReviewRequired: false,
+        statePreserved: false,
+        reason: 'verified_terminal_handoff_awaiting_required_data',
+        stateId: cleanStateId,
+        handoffLatchId: awaitingLatch.id,
+        missingRequiredFields: requiredData.missing,
+        requiredDataPrompt: {
+          obligationId: applicationEventId,
+          latchId: awaitingLatch.id,
+          contactId: cleanContactId,
+          agentId: cleanAgentId,
+          channel: cleanChannel,
+          terminalKind: 'appointment',
+          terminalSignal: expectedSignal,
+          handledMessageId: cleanTerminalSourceMessageId,
+          missingFields: requiredData.missing
+        }
+      }
+      await recordConversationalAgentEvent({
+        eventId: applicationEventId,
+        contactId: cleanContactId,
+        eventType: 'verified_terminal_handoff_awaiting_required_data',
+        detail: {
+          identityHash,
+          agentId: cleanAgentId,
+          channel: cleanChannel,
+          sourceEventId: cleanSourceEventId,
+          stateId: cleanStateId,
+          activationCycleId: cleanCycleId,
+          conversationScopeId: cleanScopeId,
+          expectedTerminal: { status: expectedStatus, signal: expectedSignal },
+          policyFingerprint: effectiveDecision.policyFingerprint,
+          decisionSource: effectiveDecision.source,
+          actionScopedContactDataHash:
+            actionScopedMetadata.actionScopedContactDataHash,
+          handoffLatchId: awaitingLatch.id,
+          result
+        },
+        throwOnError: true
+      })
+      return { ...result, ownsTransition: true, replayed: false }
+    }
+    const manualReviewRequired = Boolean(
+      !requiredData.ok ||
+      String(effectiveDecision.source || '').includes('fail_closed')
+    )
+    const assignment = await assignVerifiedPaymentHandoffUser({
+      transaction: tx,
+      reconciliationId: applicationEventId,
+      contactId: cleanContactId,
+      agentId: cleanAgentId,
+      decision: effectiveDecision,
+      manualReviewRequired,
+      source: 'verified_synchronous_terminal_handoff'
+    })
+    const authorityToken = `conv_terminal_handoff_${identityHash.slice(0, 40)}`
+    const claimed = await tx.run(
+      `UPDATE conversational_agent_state
+       SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND contact_id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+         AND activation_cycle_id = ?
+         AND status = ? AND signal = ?`,
+      [
+        authorityToken,
+        cleanStateId,
+        cleanContactId,
+        cleanAgentId,
+        cleanChannel,
+        cleanCycleId,
+        expectedStatus,
+        expectedSignal
+      ]
+    )
+    if (databaseChangeCount(claimed) !== 1) {
+      throw Object.assign(
+        new Error('La terminal síncrona cambió antes de aplicar el handoff.'),
+        { code: 'verified_terminal_handoff_authority_lost', statusCode: 409 }
+      )
+    }
+    await setConversationSignal(cleanContactId, 'ready_for_human', {
+      reason: manualReviewRequired
+        ? 'La terminal se completó, pero el equipo debe revisar los datos antes de continuar'
+        : (effectiveDecision.reason || 'Se cumplió una regla configurada para pasar a humano'),
+      summary: effectiveDecision.summary || `Terminal verificada: ${expectedSignal}`,
+      status: 'human',
+      agentId: cleanAgentId,
+      channel: cleanChannel,
+      eventId: signalEventId,
+      strictEvent: true,
+      expectedUpdatedBy: authorityToken,
+      expectedStatus,
+      expectedSignal
+    })
+    const result = {
+      applied: true,
+      handoffCompleted: true,
+      manualReviewRequired,
+      statePreserved: false,
+      reason: manualReviewRequired
+        ? (requiredData.reason || 'verified_terminal_handoff_manual_review')
+        : 'verified_terminal_handoff_applied',
+      stateId: cleanStateId,
+      assignment,
+      missingRequiredFields: requiredData.missing || []
+    }
+    await recordConversationalAgentEvent({
+      eventId: applicationEventId,
+      contactId: cleanContactId,
+      eventType: 'verified_terminal_handoff_completed',
+      detail: {
+        identityHash,
+        agentId: cleanAgentId,
+        channel: cleanChannel,
+        sourceEventId: cleanSourceEventId,
+        stateId: cleanStateId,
+        activationCycleId: cleanCycleId,
+        conversationScopeId: cleanScopeId,
+        expectedTerminal: { status: expectedStatus, signal: expectedSignal },
+        policyFingerprint: effectiveDecision.policyFingerprint,
+        decisionSource: effectiveDecision.source,
+        actionScopedContactDataHash: actionScopedMetadata.actionScopedContactDataHash,
+        result
+      },
+      throwOnError: true
+    })
+    await recordConversationalAgentEvent({
+      eventId: `${notificationEventId}_pending`,
+      contactId: cleanContactId,
+      eventType: 'priority_push_notification_pending',
+      detail: {
+        version: 1,
+        status: 'pending',
+        signal: 'ready_for_human',
+        reason: manualReviewRequired
+          ? 'Terminal completada; revisar el traspaso manualmente'
+          : 'Terminal completada; la conversación quedó en manos del equipo',
+        summary: notificationSummary,
+        attempts: 0,
+        claimToken: null,
+        leaseUntilAt: null,
+        lastError: null
+      },
+      throwOnError: true
+    })
+    const pendingNotification = await tx.get(
+      `SELECT contact_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [`${notificationEventId}_pending`]
+    )
+    const pendingNotificationDetail = parseJsonField(
+      pendingNotification?.detail_json,
+      {}
+    )
+    if (
+      !criticalNotificationIdentityMatches(pendingNotification, {
+        contactId: cleanContactId,
+        signal: 'ready_for_human',
+        reason: manualReviewRequired
+          ? 'Terminal completada; revisar el traspaso manualmente'
+          : 'Terminal completada; la conversación quedó en manos del equipo',
+        summary: notificationSummary
+      }) ||
+      String(pendingNotificationDetail.summary || '') !== notificationSummary
+    ) {
+      throw Object.assign(
+        new Error('La notificación prioritaria pertenece a otra terminal.'),
+        { code: 'verified_terminal_handoff_notification_conflict', statusCode: 409 }
+      )
+    }
+    return { ...result, ownsTransition: true, replayed: false }
+  })
+
+  if (
+    transition.handoffCompleted &&
+    transition.ownsTransition &&
+    conversationalVerifiedTerminalHandoffAfterCommitHookForTest
+  ) {
+    await conversationalVerifiedTerminalHandoffAfterCommitHookForTest({
+      applicationEventId,
+      notificationEventId,
+      transition
+    })
+  }
+  const notification = transition.handoffCompleted && transition.ownsTransition
+    ? await notifyConversationalCompletion({
+        contactId: cleanContactId,
+        reason: transition.manualReviewRequired
+          ? 'Terminal completada; revisar el traspaso manualmente'
+          : notificationReason,
+        summary: notificationSummary,
+        signal: 'ready_for_human',
+        eventId: notificationEventId,
+        throwOnFailure: true,
+        eventScopedDedupe: true
+      })
+    : null
+  return { ...transition, notification }
+}
+
+async function deliverVerifiedHandoffRequiredDataPrompt(payload = {}) {
+  if (conversationalRequiredDataPromptHandlerForTest) {
+    return conversationalRequiredDataPromptHandlerForTest(payload)
+  }
+  const { deliverVerifiedHandoffRequiredDataPrompt: deliver } =
+    await import('../agents/conversational/runner.js')
+  if (typeof deliver !== 'function') {
+    throw Object.assign(
+      new Error('El runtime no expuso la entrega durable de datos obligatorios.'),
+      { code: 'verified_handoff_required_data_delivery_unavailable' }
+    )
+  }
+  return deliver(payload)
+}
+
+async function deliverVerifiedHandoffTerminalMessage(payload = {}) {
+  if (conversationalTerminalMessageHandlerForTest) {
+    return conversationalTerminalMessageHandlerForTest(payload)
+  }
+  const { deliverVerifiedHandoffTerminalMessage: deliver } =
+    await import('../agents/conversational/runner.js')
+  if (typeof deliver !== 'function') {
+    throw Object.assign(
+      new Error('El runtime no expuso la entrega durable de la terminal recuperada.'),
+      { code: 'verified_handoff_terminal_delivery_unavailable' }
+    )
+  }
+  const delivery = await deliver(payload)
+  if (delivery?.settled !== true) {
+    throw Object.assign(
+      new Error('El mensaje terminal recuperado todavía no tiene cierre durable.'),
+      {
+        code: 'verified_handoff_terminal_delivery_unsettled',
+        retryable: true
+      }
+    )
+  }
+  return delivery
+}
+
+function settledVerifiedHandoffPromptSkip(prompt, reason, extra = {}) {
+  return {
+    settled: true,
+    sent: false,
+    ambiguous: false,
+    durableStatus: 'skipped',
+    sourceMessageId:
+      `handoff-terminal:${String(prompt?.obligationId || '').trim()}:required_data`,
+    reason: String(reason || 'required_data_prompt_stale').trim(),
+    ...extra
+  }
+}
+
+function normalizedVerifiedHandoffPromptFields(value = []) {
+  return (Array.isArray(value) ? value : [])
+    .map((item) => ({
+      field: String(item?.field || '').trim(),
+      label: String(item?.label || item?.field || '').trim().slice(0, 120)
+    }))
+    .filter((item) => item.field)
+    .sort((left, right) => (
+      left.field.localeCompare(right.field) ||
+      left.label.localeCompare(right.label)
+    ))
+}
+
+function sameVerifiedHandoffPromptFields(left = [], right = []) {
+  return JSON.stringify(normalizedVerifiedHandoffPromptFields(left)) ===
+    JSON.stringify(normalizedVerifiedHandoffPromptFields(right))
+}
+
+async function claimFreshVerifiedHandoffRequiredDataPrompt(
+  prompt = {},
+  {
+    deliver = null,
+    expectedExecutionToken = '',
+    promptFields = []
+  } = {}
+) {
+  return db.transaction(async (tx) => {
+    const cleanContactId = String(prompt.contactId || '').trim()
+    const cleanAgentId = String(prompt.agentId || '').trim()
+    const cleanChannel = normalizeConversationStateChannel(prompt.channel || 'whatsapp')
+    const cleanLatchId = String(prompt.latchId || '').trim()
+    const cleanObligationId = String(prompt.obligationId || '').trim()
+    const cleanExpectedExecutionToken =
+      String(expectedExecutionToken || '').trim()
+    const finalDeliveryRequested = typeof deliver === 'function'
+    const expectedPromptFields =
+      normalizedVerifiedHandoffPromptFields(promptFields)
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+
+    await acquireConversationalInboundCommitLock({
+      contactId: cleanContactId,
+      channel: cleanChannel,
+      database: tx
+    })
+    const row = await tx.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events
+       WHERE id = ?${rowLock}`,
+      [cleanLatchId]
+    )
+    const detail = parseJsonField(row?.detail_json, null)
+    if (
+      !row?.id ||
+      row.event_type !== CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE ||
+      String(row.contact_id || '') !== cleanContactId ||
+      String(row.agent_id || '') !== cleanAgentId ||
+      !detail ||
+      Number(detail.schemaVersion) < 2
+    ) {
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          'required_data_latch_missing_or_invalid'
+        )
+      }
+    }
+
+    const latchStatus = String(detail.status || '').trim()
+    const samePromptExecution = Boolean(
+      latchStatus === 'executing' &&
+      String(detail.promptDeliveryObligationId || '') === cleanObligationId
+    )
+    const promptExecutionStartedMs = Date.parse(
+      String(detail.executionStartedAt || '')
+    )
+    const promptExecutionLeaseActive = Boolean(
+      samePromptExecution &&
+      Number.isFinite(promptExecutionStartedMs) &&
+      Date.now() - promptExecutionStartedMs <
+        VERIFIED_HANDOFF_REQUIRED_DATA_PROMPT_LEASE_MS
+    )
+    const ownsFinalDelivery = Boolean(
+      finalDeliveryRequested &&
+      cleanExpectedExecutionToken &&
+      samePromptExecution &&
+      promptExecutionLeaseActive &&
+      String(detail.executionToken || '') === cleanExpectedExecutionToken &&
+      String(detail.promptDeliveryHandledMessageId || '') ===
+        String(prompt.handledMessageId || '').trim()
+    )
+    if (finalDeliveryRequested && !ownsFinalDelivery) {
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          'required_data_prompt_execution_changed'
+        )
+      }
+    }
+    if (latchStatus !== 'awaiting_required_data' && !(
+      ownsFinalDelivery ||
+      (samePromptExecution && !promptExecutionLeaseActive)
+    )) {
+      if (promptExecutionLeaseActive) {
+        throw Object.assign(
+          new Error('La pregunta obligatoria ya está siendo entregada.'),
+          {
+            code: 'verified_handoff_required_data_prompt_in_progress',
+            retryable: true
+          }
+        )
+      }
+      const completedByFreshness = Boolean(
+        latchStatus === 'completed' &&
+        String(detail.completedBy || '') ===
+          'verified_required_data_prompt_freshness'
+      )
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          completedByFreshness
+            ? 'required_data_handoff_completed'
+            : 'required_data_latch_no_longer_waiting',
+          {
+            latchStatus: latchStatus || null,
+            handoffCompleted: completedByFreshness
+          }
+        ),
+        notificationRequired: completedByFreshness,
+        notificationReason: detail.notificationReason || null,
+        notificationSummary: detail.notificationSummary || null
+      }
+    }
+
+    const latchChannel = normalizeConversationStateChannel(detail.channel || 'whatsapp')
+    if (
+      latchChannel !== cleanChannel ||
+      !sameVerifiedHandoffPromptFields(detail.requiredFields, prompt.missingFields)
+    ) {
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          'required_data_prompt_contract_changed'
+        )
+      }
+    }
+
+    await tx.get(
+      `SELECT id FROM conversational_agents
+       WHERE id = ?${process.env.DATABASE_URL ? ' FOR SHARE' : ''}`,
+      [cleanAgentId]
+    )
+    const policy = String(prompt.terminalKind || '').trim() === 'goal'
+      ? await loadConversationalVerifiedGoalHandoffPolicy({
+          agentId: cleanAgentId
+        })
+      : await loadConversationalVerifiedPaymentHandoffPolicy({
+          agentId: cleanAgentId
+        })
+    const policyCurrent = Boolean(
+      policy?.enabled === true &&
+      policy?.criteriaConfigured === true &&
+      String(policy?.policyFingerprint || '') ===
+        String(detail.ruleFingerprint || '')
+    )
+    if (!policyCurrent) {
+      const superseded = {
+        ...detail,
+        status: 'superseded',
+        actionScopedContactData: {},
+        executionToken: null,
+        executionStartedAt: null,
+        supersededAt: new Date().toISOString(),
+        supersededReason: policy?.enabled === true
+          ? 'handoff_rule_configuration_changed'
+          : 'handoff_policy_disabled'
+      }
+      await tx.run(
+        `UPDATE conversational_agent_events
+         SET detail_json = ?
+         WHERE id = ? AND event_type = ? AND detail_json = ?`,
+        [
+          JSON.stringify(superseded),
+          cleanLatchId,
+          CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE,
+          row.detail_json
+        ]
+      )
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          'required_data_policy_changed'
+        )
+      }
+    }
+
+    const state = await tx.get(
+      `SELECT id, status, signal, activation_cycle_id
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+       LIMIT 1${rowLock}`,
+      [cleanContactId, cleanAgentId, cleanChannel]
+    )
+    const currentScopeId = conversationGoalScopeId(
+      state?.id,
+      state?.activation_cycle_id
+    )
+    const sameScope = Boolean(
+      state?.id &&
+      currentScopeId &&
+      currentScopeId === String(detail.conversationScopeId || '')
+    )
+    if (
+      !sameScope ||
+      String(state?.status || '') !== 'active' ||
+      state?.signal
+    ) {
+      const handoffAlreadyCompleted =
+        sameScope &&
+        String(state?.status || '') === 'human' &&
+        String(state?.signal || '') === 'ready_for_human'
+      const closed = {
+        ...detail,
+        status: handoffAlreadyCompleted ? 'completed' : 'superseded',
+        actionScopedContactData: {},
+        executionToken: null,
+        executionStartedAt: null,
+        ...(handoffAlreadyCompleted
+          ? { completedAt: new Date().toISOString() }
+          : {
+              supersededAt: new Date().toISOString(),
+              supersededReason: sameScope
+                ? 'handoff_conversation_taken_over'
+                : 'handoff_rule_conversation_changed'
+            })
+      }
+      await tx.run(
+        `UPDATE conversational_agent_events
+         SET detail_json = ?
+         WHERE id = ? AND event_type = ? AND detail_json = ?`,
+        [
+          JSON.stringify(closed),
+          cleanLatchId,
+          CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE,
+          row.detail_json
+        ]
+      )
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          handoffAlreadyCompleted
+            ? 'required_data_handoff_already_completed'
+            : 'required_data_conversation_changed'
+        )
+      }
+    }
+
+    const handledMessageId = String(
+      prompt.handledMessageId || detail.triggerMessageId || ''
+    ).trim()
+    const inboundAuthority = await findNewerSubstantiveConversationalInbound({
+      contactId: cleanContactId,
+      handledMessageId,
+      channel: cleanChannel
+    })
+    if (!inboundAuthority.checked) {
+      throw Object.assign(
+        new Error('La pregunta obligatoria no conserva un inbound canónico como frontera.'),
+        {
+          code: 'verified_handoff_required_data_prompt_authority_unavailable',
+          retryable: true
+        }
+      )
+    }
+    if (inboundAuthority.newerMessage) {
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          'required_data_newer_inbound_pending',
+          {
+            newerMessageId:
+              String(inboundAuthority.newerMessage.id || '').trim() || null
+          }
+        )
+      }
+    }
+
+    const contact = await tx.get(
+      `SELECT id, full_name, first_name, last_name, phone, email, custom_fields
+       FROM contacts WHERE id = ?${rowLock}`,
+      [cleanContactId]
+    )
+    if (!contact?.id) {
+      throw Object.assign(
+        new Error('El contacto dejó de existir antes de pedir los datos obligatorios.'),
+        {
+          code: 'verified_handoff_required_data_contact_missing',
+          retryable: true
+        }
+      )
+    }
+    const actionScoped = sanitizeVerifiedPaymentActionScopedContactData(
+      detail.actionScopedContactData
+    ) || {}
+    const mergedContact = mergeConversationalRequiredContactData(
+      contact,
+      actionScoped
+    )
+    const stillMissing = normalizedVerifiedHandoffPromptFields(detail.requiredFields)
+      .filter((requirement) => (
+        !requiredConversationalContactFieldValue(mergedContact, requirement)
+      ))
+    if (!stillMissing.length) {
+      const effectiveDecision = compactVerifiedPaymentHandoffDecision({
+        decision: 'match',
+        source: detail.matchSource || 'configured_rules',
+        configRevision: policy.configRevision,
+        policyFingerprint: policy.policyFingerprint,
+        matchedRule: detail.matchedRule || '',
+        reason: detail.reason ||
+          'Se completaron los datos obligatorios del traspaso',
+        summary: detail.summary ||
+          'Los datos obligatorios quedaron completos y el equipo debe continuar.',
+        assignedUserId: policy.assignedUserId,
+        assignedUserName: policy.assignedUserName,
+        generalFallbackPolicy: policy.generalFallbackPolicy,
+        policyEnabled: true,
+        criteriaConfigured: true,
+        rulesConfigured: Boolean(String(policy.rules || '').trim()),
+        pastClientsToHuman: policy.pastClientsToHuman === true,
+        dataRequirements: policy.dataRequirements,
+        conversationScopeId: String(detail.conversationScopeId || '')
+      })
+      if (!effectiveDecision) {
+        throw Object.assign(
+          new Error('La política vigente no permitió completar el traspaso recuperado.'),
+          {
+            code: 'verified_handoff_required_data_completion_policy_invalid',
+            retryable: true
+          }
+        )
+      }
+      const assignment = await assignVerifiedPaymentHandoffUser({
+        transaction: tx,
+        reconciliationId: cleanObligationId,
+        contactId: cleanContactId,
+        agentId: cleanAgentId,
+        decision: effectiveDecision,
+        manualReviewRequired: false,
+        source: 'verified_required_data_prompt_freshness'
+      })
+      const authorityToken = `conv_handoff_data_ready_${createHash('sha256')
+        .update([cleanObligationId, cleanLatchId, state.id].join('\u0000'))
+        .digest('hex')
+        .slice(0, 44)}`
+      const claimedState = await tx.run(
+        `UPDATE conversational_agent_state
+         SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND contact_id = ? AND agent_id = ?
+           AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+           AND activation_cycle_id = ?
+           AND status = 'active' AND signal IS NULL`,
+        [
+          authorityToken,
+          state.id,
+          cleanContactId,
+          cleanAgentId,
+          cleanChannel,
+          state.activation_cycle_id
+        ]
+      )
+      if (databaseChangeCount(claimedState) !== 1) {
+        throw Object.assign(
+          new Error('La conversación cambió antes de completar el traspaso recuperado.'),
+          {
+            code: 'verified_handoff_required_data_completion_authority_lost',
+            retryable: true
+          }
+        )
+      }
+      await setConversationSignal(cleanContactId, 'ready_for_human', {
+        reason: effectiveDecision.reason ||
+          'Se completaron los datos obligatorios del traspaso',
+        summary: effectiveDecision.summary ||
+          'Los datos obligatorios quedaron completos y el equipo debe continuar.',
+        status: 'human',
+        agentId: cleanAgentId,
+        channel: cleanChannel,
+        eventId: `${cleanObligationId}_required_data_handoff_signal`,
+        strictEvent: true,
+        expectedUpdatedBy: authorityToken,
+        expectedStatus: 'active',
+        expectedSignal: null
+      })
+      const notificationReason =
+        'Datos obligatorios completos; la conversación quedó en manos del equipo'
+      const notificationSummary = effectiveDecision.summary ||
+        'Los datos obligatorios quedaron completos y el equipo debe continuar.'
+      const completedAt = new Date().toISOString()
+      const completed = {
+        ...detail,
+        status: 'completed',
+        requiredFields: [],
+        executionToken: null,
+        executionStartedAt: null,
+        actionScopedContactData: {},
+        requiredDataSatisfiedAt: completedAt,
+        completedAt,
+        completedBy: 'verified_required_data_prompt_freshness',
+        promptDeliveryObligationId: cleanObligationId,
+        notificationReason,
+        notificationSummary,
+        assignment
+      }
+      const completedLatch = await tx.run(
+        `UPDATE conversational_agent_events
+         SET detail_json = ?
+         WHERE id = ? AND event_type = ? AND detail_json = ?`,
+        [
+          JSON.stringify(completed),
+          cleanLatchId,
+          CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE,
+          row.detail_json
+        ]
+      )
+      if (databaseChangeCount(completedLatch) !== 1) {
+        throw Object.assign(
+          new Error('El latch cambió antes de completar el traspaso recuperado.'),
+          {
+            code: 'verified_handoff_required_data_completion_latch_lost',
+            retryable: true
+          }
+        )
+      }
+      await recordConversationalAgentEvent({
+        eventId: `${cleanObligationId}_required_data_handoff`,
+        contactId: cleanContactId,
+        eventType: 'verified_handoff_required_data_completed',
+        detail: {
+          agentId: cleanAgentId,
+          channel: cleanChannel,
+          latchId: cleanLatchId,
+          conversationScopeId: String(detail.conversationScopeId || ''),
+          policyFingerprint: policy.policyFingerprint,
+          assignment,
+          notificationSent: false
+        },
+        throwOnError: true
+      })
+      await recordConversationalAgentEvent({
+        eventId: `${cleanObligationId}_required_data_notification_pending`,
+        contactId: cleanContactId,
+        eventType: 'priority_push_notification_pending',
+        detail: {
+          version: 1,
+          status: 'pending',
+          signal: 'ready_for_human',
+          reason: notificationReason,
+          summary: notificationSummary,
+          attempts: 0,
+          claimToken: null,
+          leaseUntilAt: null,
+          lastError: null
+        },
+        throwOnError: true
+      })
+      return {
+        deliver: false,
+        result: settledVerifiedHandoffPromptSkip(
+          prompt,
+          'required_data_handoff_completed',
+          { handoffCompleted: true, assignment }
+        ),
+        notificationRequired: true,
+        notificationReason,
+        notificationSummary
+      }
+    }
+    if (finalDeliveryRequested && expectedPromptFields.length) {
+      const stillMissingKeys = new Set(stillMissing.map((item) => (
+        `${item.field}\u0000${item.label}`
+      )))
+      if (expectedPromptFields.some((item) => (
+        !stillMissingKeys.has(`${item.field}\u0000${item.label}`)
+      ))) {
+        return {
+          deliver: false,
+          result: settledVerifiedHandoffPromptSkip(
+            prompt,
+            'required_data_prompt_field_already_complete'
+          )
+        }
+      }
+    }
+
+    if (ownsFinalDelivery) {
+      const deliveryResult = await deliver({
+        obligationId: cleanObligationId,
+        latchId: cleanLatchId,
+        executionToken: cleanExpectedExecutionToken
+      })
+      return {
+        deliver: true,
+        delivered: true,
+        deliveryResult,
+        executionToken: cleanExpectedExecutionToken,
+        requiredFields: stillMissing,
+        handledMessageId
+      }
+    }
+
+    const executionToken = `conv_handoff_prompt_${randomUUID()}`
+    const nowIso = new Date().toISOString()
+    const claimed = {
+      ...detail,
+      status: 'executing',
+      executionToken,
+      executionStartedAt: nowIso,
+      promptDeliveryObligationId: cleanObligationId,
+      promptDeliveryHandledMessageId: handledMessageId,
+      promptDeliveryClaimedAt: nowIso
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events
+       SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        JSON.stringify(claimed),
+        cleanLatchId,
+        CONVERSATION_GOAL_HANDOFF_RULE_EVENT_TYPE,
+        row.detail_json
+      ]
+    )
+    if (databaseChangeCount(updated) !== 1) {
+      throw Object.assign(
+        new Error('La obligación cambió antes de reservar la pregunta.'),
+        {
+          code: 'verified_handoff_required_data_prompt_claim_lost',
+          retryable: true
+        }
+      )
+    }
+    return {
+      deliver: true,
+      executionToken,
+      requiredFields: stillMissing,
+      latchRequiredFields:
+        normalizedVerifiedHandoffPromptFields(detail.requiredFields),
+      actionScopedContactData: actionScoped,
+      handledMessageId,
+      ruleFingerprint: String(detail.ruleFingerprint || '').trim(),
+      conversationScope: {
+        stateId: String(state.id),
+        activationCycleId: String(state.activation_cycle_id || '').trim(),
+        conversationScopeId: currentScopeId
+      }
+    }
+  })
+}
+
+async function ensureVerifiedHandoffRequiredDataPrompt(result = {}) {
+  if (result?.awaitingRequiredData !== true) return null
+  const prompt = result.requiredDataPrompt &&
+    typeof result.requiredDataPrompt === 'object' &&
+    !Array.isArray(result.requiredDataPrompt)
+    ? result.requiredDataPrompt
+    : null
+  if (
+    !prompt?.obligationId ||
+    !prompt?.latchId ||
+    !prompt?.contactId ||
+    !prompt?.agentId ||
+    !prompt?.handledMessageId ||
+    !Array.isArray(prompt.missingFields) ||
+    !prompt.missingFields.length
+  ) {
+    throw Object.assign(
+      new Error('La obligación de pedir datos quedó sin identidad durable.'),
+      {
+        code: 'verified_handoff_required_data_prompt_invalid',
+        retryable: true
+      }
+    )
+  }
+  const freshness = await claimFreshVerifiedHandoffRequiredDataPrompt(prompt)
+  if (!freshness.deliver) {
+    if (freshness.notificationRequired) {
+      const notification = await notifyConversationalCompletion({
+        contactId: prompt.contactId,
+        reason: freshness.notificationReason ||
+          'Datos obligatorios completos; la conversación quedó en manos del equipo',
+        summary: freshness.notificationSummary ||
+          'Los datos obligatorios quedaron completos y el equipo debe continuar.',
+        signal: 'ready_for_human',
+        eventId: `${prompt.obligationId}_required_data_notification`,
+        throwOnFailure: true,
+        eventScopedDedupe: true
+      })
+      return { ...freshness.result, notification }
+    }
+    return freshness.result
+  }
+  try {
+    const delivery = await deliverVerifiedHandoffRequiredDataPrompt({
+      ...prompt,
+      handledMessageId: freshness.handledMessageId,
+      missingFields: freshness.requiredFields,
+      beforeSendFreshness: async (send) => {
+        const finalFreshness =
+          await claimFreshVerifiedHandoffRequiredDataPrompt(
+            {
+              ...prompt,
+              handledMessageId: freshness.handledMessageId,
+              missingFields: freshness.latchRequiredFields
+            },
+            {
+              deliver: send,
+              expectedExecutionToken: freshness.executionToken,
+              promptFields: freshness.requiredFields
+            }
+          )
+        let notification = null
+        if (finalFreshness.notificationRequired) {
+          notification = await notifyConversationalCompletion({
+            contactId: prompt.contactId,
+            reason: finalFreshness.notificationReason ||
+              'Datos obligatorios completos; la conversación quedó en manos del equipo',
+            summary: finalFreshness.notificationSummary ||
+              'Los datos obligatorios quedaron completos y el equipo debe continuar.',
+            signal: 'ready_for_human',
+            eventId: `${prompt.obligationId}_required_data_notification`,
+            throwOnFailure: true,
+            eventScopedDedupe: true
+          })
+        }
+        return {
+          ...finalFreshness,
+          reason:
+            String(finalFreshness.result?.reason || '').trim() ||
+            String(finalFreshness.reason || '').trim() ||
+            null,
+          ...(notification ? { notification } : {})
+        }
+      }
+    })
+    if (delivery?.settled !== true) {
+      throw Object.assign(
+        new Error('La pregunta de datos obligatorios todavía no tiene cierre durable.'),
+        {
+          code: 'verified_handoff_required_data_prompt_unsettled',
+          retryable: true
+        }
+      )
+    }
+    if (delivery?.skipped === true) {
+      const suppressionReason = String(delivery.reason || '').trim()
+      const fenceFreshness =
+        delivery?.delivery?.suppressionDetail?.freshness || null
+      if (fenceFreshness?.result?.handoffCompleted === true) {
+        return {
+          ...fenceFreshness.result,
+          ...(fenceFreshness.notification
+            ? { notification: fenceFreshness.notification }
+            : {})
+        }
+      }
+      const rearmForFreshTurn = [
+        'required_data_already_complete',
+        'required_data_prompt_field_already_complete',
+        'required_data_newer_inbound_pending'
+      ].includes(suppressionReason)
+      if (rearmForFreshTurn) {
+        const rearmed = await settleHandoffRuleLatch({
+          eventId: prompt.latchId,
+          executionToken: freshness.executionToken,
+          status: 'awaiting_required_data',
+          requiredFields: freshness.latchRequiredFields,
+          actionScopedContactData: freshness.actionScopedContactData
+        })
+        if (
+          rearmed &&
+          [
+            'required_data_already_complete',
+            'required_data_prompt_field_already_complete'
+          ].includes(suppressionReason)
+        ) {
+          return ensureVerifiedHandoffRequiredDataPrompt(result)
+        }
+      }
+      return delivery
+    }
+    if (conversationalRequiredDataPromptAfterDeliveryHookForTest) {
+      await conversationalRequiredDataPromptAfterDeliveryHookForTest({
+        prompt,
+        delivery,
+        executionToken: freshness.executionToken
+      })
+    }
+    const rearmed = await settleHandoffRuleLatch({
+      eventId: prompt.latchId,
+      executionToken: freshness.executionToken,
+      status: 'awaiting_required_data',
+      requiredFields: freshness.requiredFields,
+      actionScopedContactData: freshness.actionScopedContactData
+    })
+    if (!rearmed) {
+      throw Object.assign(
+        new Error('La obligación cambió después de entregar la pregunta.'),
+        {
+          code: 'verified_handoff_required_data_prompt_settlement_lost',
+          retryable: true
+        }
+      )
+    }
+    return delivery
+  } catch (error) {
+    if (
+      conversationalRequiredDataPromptAfterDeliveryHookForTest &&
+      error?.simulateConversationalPromptProcessCrashForTest === true
+    ) {
+      throw error
+    }
+    await settleHandoffRuleLatch({
+      eventId: prompt.latchId,
+      executionToken: freshness.executionToken,
+      status: 'awaiting_required_data',
+      error: error?.message || 'required_data_prompt_delivery_failed',
+      requiredFields: freshness.requiredFields,
+      actionScopedContactData: freshness.actionScopedContactData
+    }).catch(() => {})
+    throw error
+  }
+}
+
+function mergeVerifiedHandoffRequiredDataResolution(handoff = {}, resolution = null) {
+  if (resolution?.handoffCompleted !== true) return handoff
+  return {
+    ...handoff,
+    handoffCompleted: true,
+    awaitingRequiredData: false,
+    manualReviewRequired: false,
+    manualReviewReason: null,
+    statePreserved: false,
+    missingRequiredFields: [],
+    ...(resolution.assignment ? { assignment: resolution.assignment } : {}),
+    requiredDataResolution: resolution
+  }
+}
+
+async function applyConversationGoalCompletionSignal({
+  goalId,
+  claimToken,
+  mapped,
+  conversationSummary,
+  technicalSummary
+} = {}) {
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const goalRow = await tx.get(
+      `SELECT *
+       FROM conversational_agent_goal_links
+       WHERE id = ?
+         AND completion_effects_status = 'processing'
+         AND completion_effects_claim_token = ?${rowLock}`,
+      [goalId, claimToken]
+    )
+    if (!goalRow) throw lostConversationGoalEffectsClaimError()
+    const metadata = parseJsonField(goalRow.metadata_json, {})
+    const binding = normalizeConversationGoalBinding(metadata)
+
+    const preserve = async (reason, currentState = null) => {
+      const channel = binding?.channel ||
+        (metadata.channel ? normalizeConversationStateChannel(metadata.channel) : null)
+      await recordConversationalAgentEvent({
+        eventId: goalEffectEventId(goalId, 'signal_preserved'),
+        contactId: goalRow.contact_id,
+        eventType: 'goal_url_completion_state_preserved',
+        detail: {
+          goalId,
+          agentId: goalRow.agent_id || null,
+          objective: goalRow.objective,
+          intendedSignal: mapped.signal,
+          reason,
+          boundStateId: binding?.stateId || null,
+          currentStateId: currentState?.id || null,
+          channel,
+          currentStatus: currentState?.status || null,
+          currentSignal: currentState?.signal || null
+        },
+        throwOnError: true
+      })
+      return settleConversationGoalSignalDisposition({
+        transaction: tx,
+        goalRow,
+        claimToken,
+        disposition: {
+          status: 'preserved',
+          reason,
+          stateId: currentState?.id || binding?.stateId || null,
+          channel,
+          // No podemos transferir un ciclo distinto o ya tomado, pero una meta
+          // verificada ligada a un agente tampoco puede desaparecer en silencio.
+          // El ledger del goal conserva esta revisión y su aviso idempotente.
+          manualReviewRequired: true,
+          handoffDecision: 'match',
+          handoffSource: 'verified_goal_state_preserved_manual_review'
+        }
+      })
+    }
+
+    const agentBackedGoal = Boolean(
+      String(goalRow.agent_id || '').trim() ||
+      (metadata.conversationBinding && typeof metadata.conversationBinding === 'object')
+    )
+    // Los enlaces genéricos históricos sin agente conservan su contrato. Los
+    // creados por send_goal_url llevan binding incluso si el agente fue borrado
+    // y la FK dejó agent_id en NULL.
+    if (!agentBackedGoal) {
+      const legacyChannel = metadata.channel
+        ? normalizeConversationStateChannel(metadata.channel)
+        : null
+      const state = await setConversationSignal(goalRow.contact_id, mapped.signal, {
+        reason: mapped.reason,
+        summary: conversationSummary,
+        actionSummarySource: technicalSummary,
+        originalSummary: technicalSummary,
+        status: 'completed',
+        agentId: '',
+        channel: legacyChannel,
+        eventId: goalEffectEventId(goalId, 'signal'),
+        strictEvent: true
+      })
+      return settleConversationGoalSignalDisposition({
+        transaction: tx,
+        goalRow,
+        claimToken,
+        disposition: {
+          status: 'applied',
+          reason: 'legacy_unbound_goal',
+          stateId: state?.id || null,
+          channel: state?.channel || legacyChannel
+        }
+      })
+    }
+
+    if (
+      !binding ||
+      binding.contactId !== String(goalRow.contact_id || '') ||
+      (
+        String(goalRow.agent_id || '').trim() &&
+        binding.agentId !== String(goalRow.agent_id || '')
+      )
+    ) {
+      return preserve('conversation_binding_missing')
+    }
+
+    const currentAgent = await tx.get(
+      `SELECT id, enabled, updated_at
+       FROM conversational_agents
+       WHERE id = ?${process.env.DATABASE_URL ? ' FOR SHARE' : ''}`,
+      [binding.agentId]
+    )
+    if (!currentAgent?.id || !isStoredRecordActive(currentAgent.enabled)) {
+      return preserve('source_agent_unavailable')
+    }
+
+    const currentState = await tx.get(
+      `SELECT id, contact_id, agent_id, channel, status, signal,
+              activation_cycle_id, activation_cycle_started_at, updated_by
+       FROM conversational_agent_state
+       WHERE id = ? AND contact_id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+       LIMIT 1`,
+      [
+        binding.stateId,
+        binding.contactId,
+        binding.agentId,
+        binding.channel
+      ]
+    )
+    if (!currentState?.id) return preserve('bound_conversation_state_missing')
+    const currentScopeId = conversationGoalScopeId(
+      currentState.id,
+      currentState.activation_cycle_id
+    )
+    if (
+      String(currentState.activation_cycle_id || '') !== binding.activationCycleId ||
+      currentScopeId !== binding.conversationScopeId
+    ) {
+      return preserve('activation_cycle_changed', currentState)
+    }
+    if (currentState.status !== 'active' || currentState.signal) {
+      return preserve('conversation_no_longer_active', currentState)
+    }
+
+    let handoffDecision = compactVerifiedGoalHandoffDecision(
+      metadata.verifiedGoalHandoffDecision,
+      goalRow
+    )
+    if (!handoffDecision) {
+      return preserve('verified_goal_handoff_decision_missing', currentState)
+    }
+    const currentPolicy = await verifiedGoalHandoffPolicyMatchesDecision({
+      decision: handoffDecision,
+      goalRow,
+      agentId: binding.agentId,
+      transaction: tx,
+      lock: true
+    })
+    if (!currentPolicy.matches) {
+      throw Object.assign(
+        new Error('La configuración de handoff cambió antes de aplicar el objetivo verificado.'),
+        {
+          statusCode: 409,
+          code: 'verified_goal_handoff_policy_changed',
+          retryable: true
+        }
+      )
+    }
+    handoffDecision = compactVerifiedGoalHandoffDecision({
+      ...handoffDecision,
+      assignedUserId: currentPolicy.policy?.assignedUserId,
+      assignedUserName: currentPolicy.policy?.assignedUserName,
+      generalFallbackPolicy: currentPolicy.policy?.generalFallbackPolicy,
+      policyEnabled: currentPolicy.policy?.enabled === true,
+      criteriaConfigured: currentPolicy.policy?.criteriaConfigured === true,
+      rulesConfigured: Boolean(String(currentPolicy.policy?.rules || '').trim()),
+      pastClientsToHuman: currentPolicy.policy?.pastClientsToHuman === true,
+      dataRequirements: currentPolicy.policy?.dataRequirements
+    }, goalRow)
+    if (
+      handoffDecision.policyEnabled &&
+      handoffDecision.criteriaConfigured &&
+      handoffDecision.conversationScopeId !== binding.conversationScopeId
+    ) {
+      throw Object.assign(
+        new Error('La conversación cambió antes de aplicar el handoff del objetivo.'),
+        {
+          statusCode: 409,
+          code: 'verified_goal_handoff_scope_changed',
+          retryable: true
+        }
+      )
+    }
+
+    const policyActive = Boolean(
+      currentPolicy.policy?.enabled === true &&
+      currentPolicy.policy?.criteriaConfigured === true
+    )
+    const pendingLatch = await findPendingConversationGoalHandoffLatch({
+      transaction: tx,
+      contactId: binding.contactId,
+      agentId: binding.agentId,
+      channel: binding.channel,
+      conversationScopeId: binding.conversationScopeId,
+      policyFingerprint: currentPolicy.policy?.policyFingerprint,
+      policyActive
+    })
+    const handoffRequired = handoffDecision.decision === 'match' || Boolean(pendingLatch)
+    let requiredData = { ok: true, missing: [] }
+    let manualReviewRequired = Boolean(
+      pendingLatch?.status === 'corrupt' ||
+      String(handoffDecision.source || '').includes('fail_closed')
+    )
+    if (handoffRequired) {
+      requiredData = await validateVerifiedGoalHandoffRequiredData({
+        contactId: binding.contactId,
+        metadata,
+        decision: handoffDecision,
+        transaction: tx,
+        lock: true
+      })
+      if (!requiredData.ok && !requiredData.missing?.length) {
+        throw Object.assign(
+          new Error('No se pudo comprobar el contrato de datos obligatorios del objetivo.'),
+          {
+            code: requiredData.reason ||
+              'verified_goal_handoff_required_data_contract_invalid',
+            statusCode: 503,
+            retryable: true
+          }
+        )
+      }
+    }
+
+    if (handoffRequired && !requiredData.ok && requiredData.missing?.length) {
+      if (pendingLatch?.status === 'corrupt') {
+        throw Object.assign(
+          new Error('El latch obligatorio del objetivo está corrupto.'),
+          {
+            code: 'verified_goal_handoff_latch_corrupt',
+            statusCode: 503,
+            retryable: true
+          }
+        )
+      }
+      const actionScopedContactData = requiredData.actionScoped ||
+        readVerifiedPaymentActionScopedContactData(metadata)
+      if (!actionScopedContactData) {
+        throw Object.assign(
+          new Error('Los datos temporales del objetivo perdieron su integridad.'),
+          {
+            code: 'verified_goal_handoff_action_scoped_data_invalid',
+            statusCode: 503,
+            retryable: true
+          }
+        )
+      }
+      const goalEvidenceDigest = conversationGoalHandoffEvidenceFingerprint(goalRow)
+      const handoffLatch = pendingLatch?.id
+        ? { id: pendingLatch.id }
+        : await upsertHandoffRuleLatch({
+            contactId: binding.contactId,
+            agentId: binding.agentId,
+            channel: binding.channel,
+            ruleFingerprint: handoffDecision.policyFingerprint,
+            conversationScopeId: binding.conversationScopeId,
+            triggerMessageId:
+              binding.sourceExecutionId || goalEffectEventId(goalId, 'verified_terminal'),
+            evidenceDigest: goalEvidenceDigest,
+            matchSource: handoffDecision.source || 'verified_goal_handoff',
+            matchedRule: handoffDecision.matchedRule || '',
+            reason: handoffDecision.reason ||
+              'Se cumplió una regla configurada para pasar a humano',
+            summary: handoffDecision.summary ||
+              conversationSummary ||
+              technicalSummary
+          })
+      const awaitingLatch = await markHandoffRuleLatchAwaitingData({
+        eventId: handoffLatch?.id,
+        ruleFingerprint: handoffDecision.policyFingerprint,
+        requiredFields: requiredData.missing,
+        actionScopedContactData
+      })
+      if (!awaitingLatch?.id) {
+        throw Object.assign(
+          new Error('No se pudo conservar la espera de datos del objetivo.'),
+          {
+            code: 'verified_goal_handoff_required_data_latch_failed',
+            statusCode: 503,
+            retryable: true
+          }
+        )
+      }
+      const obligationId = goalEffectEventId(goalId, 'verified_handoff_required_data')
+      await recordConversationalAgentEvent({
+        eventId: obligationId,
+        contactId: binding.contactId,
+        eventType: 'verified_goal_handoff_awaiting_required_data',
+        detail: {
+          goalId,
+          agentId: binding.agentId,
+          channel: binding.channel,
+          policyFingerprint: handoffDecision.policyFingerprint,
+          conversationScopeId: binding.conversationScopeId,
+          handoffLatchId: awaitingLatch.id,
+          missingRequiredFields: requiredData.missing,
+          actionScopedContactDataHash: createHash('sha256')
+            .update('conversational-action-scoped-contact-data:v1\u0000')
+            .update(JSON.stringify(actionScopedContactData))
+            .digest('hex')
+        },
+        throwOnError: true
+      })
+      return settleConversationGoalSignalDisposition({
+        transaction: tx,
+        goalRow,
+        claimToken,
+        disposition: {
+          status: 'applied',
+          reason: 'verified_goal_handoff_awaiting_required_data',
+          stateId: currentState.id,
+          channel: binding.channel,
+          signal: null,
+          handoffApplied: false,
+          awaitingRequiredData: true,
+          handoffLatchId: awaitingLatch.id,
+          requiredDataPromptMessageId: binding.sourceExecutionId,
+          missingRequiredFields: requiredData.missing,
+          manualReviewRequired: false,
+          handoffDecision: handoffDecision.decision,
+          handoffSource: handoffDecision.source
+        }
+      })
+    }
+
+    const authorityToken = `conv_goal_${createHash('sha256')
+      .update([goalId, binding.stateId, binding.activationCycleId].join('\u0000'))
+      .digest('hex')
+      .slice(0, 48)}`
+    const claimed = await tx.run(
+      `UPDATE conversational_agent_state
+       SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND contact_id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+         AND activation_cycle_id = ?
+         AND status = 'active'
+         AND signal IS NULL`,
+      [
+        authorityToken,
+        binding.stateId,
+        binding.contactId,
+        binding.agentId,
+        binding.channel,
+        binding.activationCycleId
+      ]
+    )
+    if (databaseChangeCount(claimed) !== 1) {
+      throw Object.assign(
+        new Error('La conversación cambió antes de aplicar la confirmación del enlace.'),
+        {
+          statusCode: 409,
+          code: 'conversation_goal_terminal_authority_lost',
+          retryable: true
+        }
+      )
+    }
+
+    const assignment = handoffRequired
+      ? await assignVerifiedPaymentHandoffUser({
+          transaction: tx,
+          reconciliationId: goalEffectEventId(goalId, 'verified_handoff'),
+          contactId: binding.contactId,
+          agentId: binding.agentId,
+          decision: handoffDecision,
+          manualReviewRequired,
+          source: 'verified_goal_handoff'
+        })
+      : null
+    const terminalSignal = handoffRequired ? 'ready_for_human' : mapped.signal
+    const terminalStatus = handoffRequired ? 'human' : 'completed'
+    const terminalReason = handoffRequired
+      ? (
+          manualReviewRequired
+            ? 'Objetivo confirmado; el equipo debe revisar datos o evidencia antes de continuar'
+            : (handoffDecision.reason || 'Se cumplió una regla configurada para pasar a humano')
+        )
+      : mapped.reason
+    const state = await setConversationSignal(goalRow.contact_id, terminalSignal, {
+      reason: terminalReason,
+      summary: handoffRequired
+        ? (handoffDecision.summary || conversationSummary || technicalSummary)
+        : conversationSummary,
+      actionSummarySource: technicalSummary,
+      originalSummary: technicalSummary,
+      status: terminalStatus,
+      agentId: binding.agentId,
+      channel: binding.channel,
+      eventId: goalEffectEventId(goalId, 'signal'),
+      strictEvent: true,
+      expectedUpdatedBy: authorityToken,
+      expectedStatus: 'active',
+      expectedSignal: null
+    })
+    if (handoffRequired) {
+      await settleConversationGoalHandoffLatch({
+        transaction: tx,
+        latchId: pendingLatch?.id,
+        goalId
+      })
+      await recordConversationalAgentEvent({
+        eventId: goalEffectEventId(goalId, 'verified_handoff'),
+        contactId: binding.contactId,
+        eventType: 'verified_goal_handoff_completed',
+        detail: {
+          goalId,
+          agentId: binding.agentId,
+          channel: binding.channel,
+          decision: handoffDecision.decision,
+          source: handoffDecision.source,
+          policyFingerprint: handoffDecision.policyFingerprint,
+          conversationScopeId: handoffDecision.conversationScopeId,
+          manualReviewRequired,
+          manualReviewReason: manualReviewRequired
+            ? (requiredData.reason || pendingLatch?.status || handoffDecision.reason)
+            : null,
+          missingRequiredFields: requiredData.missing || [],
+          assignment
+        },
+        throwOnError: true
+      })
+    }
+    return settleConversationGoalSignalDisposition({
+      transaction: tx,
+      goalRow,
+      claimToken,
+      disposition: {
+        status: 'applied',
+        reason: handoffRequired
+          ? (manualReviewRequired
+              ? 'verified_goal_handoff_manual_review'
+              : 'verified_goal_handoff_applied')
+          : 'bound_conversation_completed',
+        stateId: state?.id || binding.stateId,
+        channel: binding.channel,
+        signal: terminalSignal,
+        handoffApplied: handoffRequired,
+        manualReviewRequired,
+        handoffDecision: handoffDecision.decision,
+        handoffSource: handoffDecision.source
+      }
+    })
+  })
+}
+
 async function finalizeConversationGoalCompletionEffects(goalId) {
   const cleanGoalId = String(goalId || '').trim()
   const claimToken = randomUUID()
@@ -1504,18 +4313,48 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
   `, [claimToken, leaseUntil, nowIso, cleanGoalId, nowIso, nowIso])
 
   if (databaseChangeCount(claim) !== 1) {
-    const current = await db.get(
-      'SELECT completion_effects_status FROM conversational_agent_goal_links WHERE id = ?',
+    let current = await db.get(
+      `SELECT completion_effects_status, metadata_json
+       FROM conversational_agent_goal_links WHERE id = ?`,
       [cleanGoalId]
     ).catch(() => null)
-    return { completed: current?.completion_effects_status === 'completed', pending: current?.completion_effects_status === 'processing' }
+    let disposition = parseJsonField(
+      current?.metadata_json,
+      {}
+    ).completionStateDisposition
+    if (
+      current?.completion_effects_status === 'completed' &&
+      disposition?.awaitingRequiredData === true
+    ) {
+      const reconciled =
+        await reconcileCompletedConversationGoalRequiredData(cleanGoalId)
+      if (reconciled?.reconciled) {
+        current = {
+          ...current,
+          metadata_json: JSON.stringify(reconciled.metadata)
+        }
+        disposition = reconciled.disposition
+      }
+    }
+    const statePreserved = disposition?.status === 'preserved'
+    return {
+      completed: current?.completion_effects_status === 'completed',
+      pending: current?.completion_effects_status === 'processing',
+      statePreserved,
+      preserveReason: statePreserved ? disposition.reason || null : null,
+      handoffCompleted: disposition?.handoffApplied === true,
+      awaitingRequiredData: disposition?.awaitingRequiredData === true,
+      handoffLatchId: disposition?.handoffLatchId || null,
+      missingRequiredFields: disposition?.missingRequiredFields || [],
+      manualReviewRequired: disposition?.manualReviewRequired === true
+    }
   }
 
   try {
     const row = await db.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId])
     if (!row) throw new Error('No se encontró la meta al finalizar sus efectos')
     const mapped = conversationSignalForGoalObjective(row.objective)
-    const storedMetadata = parseJsonField(row.metadata_json, {})
+    let storedMetadata = parseJsonField(row.metadata_json, {})
     const receivedReference = storedMetadata.receivedReference || {}
     const technicalSummary = row.external_object_id
       ? `ID de ${mapped.objectLabel}: ${row.external_object_id}`
@@ -1524,21 +4363,111 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 
     if (!row.completion_signal_applied_at) {
       await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
-      await setConversationSignal(row.contact_id, mapped.signal, {
-        reason: mapped.reason,
-        summary: conversationSummary,
-        actionSummarySource: technicalSummary,
-        originalSummary: technicalSummary,
-        status: 'completed',
-        agentId: row.agent_id || '',
-        eventId: goalEffectEventId(cleanGoalId, 'signal'),
-        strictEvent: true
+      const goalHandoff = await resolveConversationGoalHandoffDecision({
+        goalRow: row,
+        claimToken
       })
-      row.completion_signal_applied_at = await markConversationGoalEffectApplied(
-        cleanGoalId,
+      if (goalHandoff?.metadata) {
+        storedMetadata = goalHandoff.metadata
+      }
+      await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
+      const signalDisposition = await applyConversationGoalCompletionSignal({
+        goalId: cleanGoalId,
         claimToken,
-        'completion_signal_applied_at'
-      )
+        mapped,
+        conversationSummary,
+        technicalSummary
+      })
+      row.completion_signal_applied_at = signalDisposition.appliedAt
+      row.metadata_json = JSON.stringify(signalDisposition.metadata)
+      storedMetadata = signalDisposition.metadata
+    }
+    let stateDisposition = storedMetadata.completionStateDisposition &&
+      typeof storedMetadata.completionStateDisposition === 'object'
+      ? storedMetadata.completionStateDisposition
+      : { status: 'applied', reason: 'legacy_checkpoint_without_disposition' }
+    let statePreserved = stateDisposition.status === 'preserved'
+    let awaitingRequiredData =
+      stateDisposition.awaitingRequiredData === true
+    let preservedManualReview = statePreserved &&
+      stateDisposition.manualReviewRequired === true
+    let effectiveSignal = stateDisposition.handoffApplied === true ||
+      preservedManualReview
+      ? 'ready_for_human'
+      : mapped.signal
+    let effectiveReason = stateDisposition.handoffApplied === true ||
+      preservedManualReview
+      ? (
+          stateDisposition.manualReviewRequired === true
+            ? 'Objetivo confirmado; el equipo debe revisar el caso'
+            : 'Objetivo confirmado; la conversación quedó en manos del equipo'
+        )
+      : mapped.reason
+
+    if (awaitingRequiredData) {
+      const missingFields = Array.isArray(stateDisposition.missingRequiredFields)
+        ? stateDisposition.missingRequiredFields
+        : []
+      const latchId = String(stateDisposition.handoffLatchId || '').trim()
+      const promptAgentId = String(row.agent_id || '').trim()
+      if (!latchId || !promptAgentId || !missingFields.length) {
+        throw Object.assign(
+          new Error('La espera de datos del objetivo quedó sin identidad de entrega.'),
+          {
+            code: 'verified_goal_handoff_required_data_prompt_invalid',
+            retryable: true
+          }
+        )
+      }
+      const requiredDataResolution =
+        await ensureVerifiedHandoffRequiredDataPrompt({
+        awaitingRequiredData: true,
+        requiredDataPrompt: {
+          obligationId: goalEffectEventId(
+            cleanGoalId,
+            'verified_handoff_required_data'
+          ),
+          latchId,
+          contactId: row.contact_id,
+          agentId: promptAgentId,
+          channel: stateDisposition.channel || 'whatsapp',
+          terminalKind: 'goal',
+          terminalSignal: mapped.signal,
+          handledMessageId: stateDisposition.requiredDataPromptMessageId,
+          missingFields
+        }
+      })
+      if (requiredDataResolution?.handoffCompleted === true) {
+        const resolved = await checkpointConversationGoalRequiredDataResolution({
+          goalRow: row,
+          claimToken,
+          resolution: requiredDataResolution
+        })
+        storedMetadata = resolved.metadata
+        stateDisposition = resolved.disposition
+        statePreserved = false
+        awaitingRequiredData = false
+        preservedManualReview = false
+        effectiveSignal = 'ready_for_human'
+        effectiveReason =
+          'Datos obligatorios completos; la conversación quedó en manos del equipo'
+        if (
+          requiredDataResolution.notification &&
+          !row.completion_notification_sent_at &&
+          !row.completion_notification_claimed_at
+        ) {
+          row.completion_notification_claimed_at =
+            await claimConversationGoalNotification(cleanGoalId, claimToken)
+          row.completion_notification_sent_at =
+            await finishConversationGoalNotification(
+              cleanGoalId,
+              claimToken,
+              requiredDataResolution.notification?.skipped
+                ? 'skipped'
+                : 'dispatched'
+            )
+        }
+      }
     }
 
     if (!row.completion_action_applied_at) {
@@ -1561,37 +4490,51 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
 
     if (!row.completion_notification_sent_at) {
       await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
-      const notificationStatus = String(row.completion_notification_status || '').trim()
-      if (row.completion_notification_claimed_at || notificationStatus === 'claimed' || notificationStatus === 'unknown') {
-        row.completion_notification_sent_at = await finishUnknownConversationGoalNotification(
+      if (awaitingRequiredData) {
+        row.completion_notification_sent_at = await skipPreservedConversationGoalNotification(
           cleanGoalId,
           claimToken,
-          row.contact_id,
-          mapped.signal
+          'awaiting_required_data'
+        )
+      } else if (statePreserved && !preservedManualReview) {
+        row.completion_notification_sent_at = await skipPreservedConversationGoalNotification(
+          cleanGoalId,
+          claimToken,
+          stateDisposition.reason
         )
       } else {
-        row.completion_notification_claimed_at = await claimConversationGoalNotification(cleanGoalId, claimToken)
-        try {
-          const notificationResult = await notifyConversationalCompletion({
-            contactId: row.contact_id,
-            reason: mapped.reason,
-            summary: conversationSummary || technicalSummary,
-            signal: mapped.signal,
-            eventId: goalEffectEventId(cleanGoalId, 'notification'),
-            throwOnFailure: true
-          })
-          row.completion_notification_sent_at = await finishConversationGoalNotification(
+        const notificationStatus = String(row.completion_notification_status || '').trim()
+        if (row.completion_notification_claimed_at || notificationStatus === 'claimed' || notificationStatus === 'unknown') {
+          row.completion_notification_sent_at = await finishUnknownConversationGoalNotification(
             cleanGoalId,
             claimToken,
-            notificationResult?.skipped ? 'skipped' : 'dispatched'
+            row.contact_id,
+            effectiveSignal
           )
-        } catch (error) {
-          if (error?.notificationDeliveryAttempted === false) {
-            await resetConversationGoalNotificationClaim(cleanGoalId, claimToken, error.message)
-          } else {
-            await finishConversationGoalNotification(cleanGoalId, claimToken, 'unknown', error.message)
+        } else {
+          row.completion_notification_claimed_at = await claimConversationGoalNotification(cleanGoalId, claimToken)
+          try {
+            const notificationResult = await notifyConversationalCompletion({
+              contactId: row.contact_id,
+              reason: effectiveReason,
+              summary: conversationSummary || technicalSummary,
+              signal: effectiveSignal,
+              eventId: goalEffectEventId(cleanGoalId, 'notification'),
+              throwOnFailure: true
+            })
+            row.completion_notification_sent_at = await finishConversationGoalNotification(
+              cleanGoalId,
+              claimToken,
+              notificationResult?.skipped ? 'skipped' : 'dispatched'
+            )
+          } catch (error) {
+            if (error?.notificationDeliveryAttempted === false) {
+              await resetConversationGoalNotificationClaim(cleanGoalId, claimToken, error.message)
+            } else {
+              await finishConversationGoalNotification(cleanGoalId, claimToken, 'unknown', error.message)
+            }
+            throw error
           }
-          throw error
         }
       }
     }
@@ -1606,11 +4549,24 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
           goalId: cleanGoalId,
           agentId: row.agent_id || null,
           objective: row.objective,
-          signal: mapped.signal,
+          signal: effectiveSignal,
           externalSource: row.external_source || null,
           externalObjectId: row.external_object_id || null,
           externalStatus: row.external_status || null,
-          receivedReference
+          receivedReference,
+          stateDisposition: {
+            status: stateDisposition.status || null,
+            reason: stateDisposition.reason || null,
+            stateId: stateDisposition.stateId || null,
+            channel: stateDisposition.channel || null,
+            handoffApplied: stateDisposition.handoffApplied === true,
+            awaitingRequiredData,
+            handoffLatchId: stateDisposition.handoffLatchId || null,
+            missingRequiredFields: stateDisposition.missingRequiredFields || [],
+            manualReviewRequired: stateDisposition.manualReviewRequired === true,
+            handoffDecision: stateDisposition.handoffDecision || null,
+            handoffSource: stateDisposition.handoffSource || null
+          }
         },
         throwOnError: true
       })
@@ -1635,7 +4591,17 @@ async function finalizeConversationGoalCompletionEffects(goalId) {
         AND completion_effects_claim_token = ?
     `, [completedAt, cleanGoalId, claimToken])
     if (databaseChangeCount(finalized) !== 1) throw lostConversationGoalEffectsClaimError()
-    return { completed: true, pending: false }
+    return {
+      completed: true,
+      pending: false,
+      statePreserved,
+      preserveReason: statePreserved ? stateDisposition.reason || null : null,
+      handoffCompleted: stateDisposition.handoffApplied === true,
+      awaitingRequiredData,
+      handoffLatchId: stateDisposition.handoffLatchId || null,
+      missingRequiredFields: stateDisposition.missingRequiredFields || [],
+      manualReviewRequired: stateDisposition.manualReviewRequired === true
+    }
   } catch (error) {
     const failedAt = new Date().toISOString()
     const nextRetryAt = new Date(Date.now() + 30_000).toISOString()
@@ -1767,7 +4733,14 @@ export async function completeConversationGoalLink(goalId, {
       ...(await getConversationGoalLink(cleanGoalId)),
       signal: conversationSignalForGoalObjective(row.objective).signal,
       alreadyCompleted: true,
-      effectsPending: !effects.completed
+      effectsPending: !effects.completed,
+      statePreserved: effects.statePreserved === true,
+      preserveReason: effects.preserveReason || null,
+      handoffCompleted: effects.handoffCompleted === true,
+      awaitingRequiredData: effects.awaitingRequiredData === true,
+      handoffLatchId: effects.handoffLatchId || null,
+      missingRequiredFields: effects.missingRequiredFields || [],
+      manualReviewRequired: effects.manualReviewRequired === true
     }
   }
   if (row.status !== 'pending') {
@@ -1908,7 +4881,14 @@ export async function completeConversationGoalLink(goalId, {
     ...(await getConversationGoalLink(cleanGoalId)),
     signal: conversationSignalForGoalObjective(row.objective).signal,
     alreadyCompleted,
-    effectsPending: !effects.completed
+    effectsPending: !effects.completed,
+    statePreserved: effects.statePreserved === true,
+    preserveReason: effects.preserveReason || null,
+    handoffCompleted: effects.handoffCompleted === true,
+    awaitingRequiredData: effects.awaitingRequiredData === true,
+    handoffLatchId: effects.handoffLatchId || null,
+    missingRequiredFields: effects.missingRequiredFields || [],
+    manualReviewRequired: effects.manualReviewRequired === true
   }
 }
 
@@ -2100,10 +5080,38 @@ const VERIFIED_CONVERSATIONAL_PAYMENT_STATUSES = new Set([
 const CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT = 'payment_reconciliation_v2'
 const CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS = 10 * 60 * 1000
 const CONVERSATIONAL_APPOINTMENT_DEPOSIT_RESERVATION_LEASE_MS = 10 * 60 * 1000
+const VERIFIED_PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION = 1
+const VERIFIED_PAYMENT_HANDOFF_DECISION_SCHEMA_VERSION = 1
+const VERIFIED_PAYMENT_HANDOFF_DECISIONS = new Set(['match', 'no_match', 'disabled'])
+const VERIFIED_TERMINAL_HANDOFF_PENDING_SCHEMA_VERSION = 1
+const VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT = 'verified_terminal_handoff_pending'
+const VERIFIED_TERMINAL_HANDOFF_RESOLVED_EVENT = 'verified_terminal_handoff_resolved'
+const VERIFIED_TERMINAL_HANDOFF_NO_MATCH_EVENT = 'verified_terminal_handoff_no_match'
+const VERIFIED_TERMINAL_HANDOFF_SUPERSEDED_EVENT = 'verified_terminal_handoff_superseded'
+const VERIFIED_TERMINAL_HANDOFF_PENDING_LEASE_MS = 10 * 60 * 1000
+const VERIFIED_HANDOFF_REQUIRED_DATA_PROMPT_LEASE_MS = 2 * 60 * 1000
+const VERIFIED_TERMINAL_BOOKING_INTENT_SCHEMA_VERSION = 1
+const VERIFIED_TERMINAL_BOOKING_INTENT_EVENT =
+  'verified_terminal_handoff_booking_intent'
+const VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT =
+  'verified_terminal_handoff_booking_committed'
+const VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT =
+  'verified_terminal_handoff_booking_materialized'
+const VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT =
+  'verified_terminal_handoff_booking_aborted'
+const VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT =
+  'verified_terminal_handoff_booking_superseded'
 let conversationalPaymentResumeHandlerForTest = null
 let conversationalPaymentAfterStateInspectionHookForTest = null
+let conversationalStateBeforeReactivationUpdateHookForTest = null
 let conversationalPaymentTerminalReplyHandlerForTest = null
 let conversationalPriorityNotificationSenderForTest = null
+let conversationalVerifiedPaymentHandoffAdjudicatorForTest = null
+let conversationalVerifiedPaymentHandoffPolicyLoaderForTest = null
+let conversationalVerifiedPaymentHandoffAfterCommitHookForTest = null
+let conversationalRequiredDataPromptHandlerForTest = null
+let conversationalRequiredDataPromptAfterDeliveryHookForTest = null
+let conversationalTerminalMessageHandlerForTest = null
 
 export function setConversationalPaymentResumeHandlerForTest(handler) {
   conversationalPaymentResumeHandlerForTest = typeof handler === 'function' ? handler : null
@@ -2113,12 +5121,47 @@ export function setConversationalPaymentAfterStateInspectionHookForTest(handler)
   conversationalPaymentAfterStateInspectionHookForTest = typeof handler === 'function' ? handler : null
 }
 
+export function setConversationalStateBeforeReactivationUpdateHookForTest(handler) {
+  conversationalStateBeforeReactivationUpdateHookForTest =
+    typeof handler === 'function' ? handler : null
+}
+
 export function setConversationalPaymentTerminalReplyHandlerForTest(handler) {
   conversationalPaymentTerminalReplyHandlerForTest = typeof handler === 'function' ? handler : null
 }
 
+export function setConversationalRequiredDataPromptHandlerForTest(handler) {
+  conversationalRequiredDataPromptHandlerForTest =
+    typeof handler === 'function' ? handler : null
+}
+
+export function setConversationalRequiredDataPromptAfterDeliveryHookForTest(handler) {
+  conversationalRequiredDataPromptAfterDeliveryHookForTest =
+    typeof handler === 'function' ? handler : null
+}
+
+export function setConversationalTerminalMessageHandlerForTest(handler) {
+  conversationalTerminalMessageHandlerForTest =
+    typeof handler === 'function' ? handler : null
+}
+
 export function setConversationalPriorityNotificationSenderForTest(sender) {
   conversationalPriorityNotificationSenderForTest = typeof sender === 'function' ? sender : null
+}
+
+export function setConversationalVerifiedPaymentHandoffHandlersForTest({
+  adjudicate = null,
+  loadPolicy = null
+} = {}) {
+  conversationalVerifiedPaymentHandoffAdjudicatorForTest =
+    typeof adjudicate === 'function' ? adjudicate : null
+  conversationalVerifiedPaymentHandoffPolicyLoaderForTest =
+    typeof loadPolicy === 'function' ? loadPolicy : null
+}
+
+export function setConversationalVerifiedPaymentHandoffAfterCommitHookForTest(handler) {
+  conversationalVerifiedPaymentHandoffAfterCommitHookForTest =
+    typeof handler === 'function' ? handler : null
 }
 
 function normalizeVerifiedPaymentStatus(value) {
@@ -2135,6 +5178,218 @@ function normalizeVerifiedPaymentEnvironment(value) {
 function normalizeVerifiedCurrency(value) {
   const currency = String(value || '').trim().toUpperCase()
   return /^[A-Z]{3}$/.test(currency) ? currency : ''
+}
+
+function normalizeVerifiedPaymentConversationBinding(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const schemaVersion = Number(source.schemaVersion)
+  const status = String(source.status || '').trim()
+  const contactId = String(source.contactId || '').trim()
+  const agentId = String(source.agentId || '').trim()
+  const channel = String(source.channel || '').trim()
+  const stateId = String(source.stateId || '').trim()
+  const activationCycleId = String(source.activationCycleId || '').trim()
+  const conversationScopeId = String(source.conversationScopeId || '').trim()
+  const sourceEventId = String(source.sourceEventId || '').trim()
+  if (
+    schemaVersion !== VERIFIED_PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION ||
+    !['bound', 'unavailable'].includes(status) ||
+    !contactId ||
+    !agentId ||
+    !channel ||
+    !sourceEventId
+  ) return null
+  if (
+    status === 'bound' &&
+    (!stateId || !activationCycleId || !conversationScopeId)
+  ) return null
+  return {
+    schemaVersion,
+    status,
+    contactId,
+    agentId,
+    channel: normalizeConversationStateChannel(channel),
+    stateId: stateId || null,
+    activationCycleId: activationCycleId || null,
+    activationCycleStartedAt: source.activationCycleStartedAt || null,
+    conversationScopeId: conversationScopeId || null,
+    sourceEventId,
+    sourceEventCreatedAt: source.sourceEventCreatedAt || null,
+    reason: String(source.reason || '').trim().slice(0, 180) || null
+  }
+}
+
+function cleanVerifiedPaymentContactText(value, maxLength = 1000) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
+}
+
+function normalizeVerifiedPaymentActionScopedCustomField(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const identities = [
+    ['key', value.key],
+    ['fieldKey', value.fieldKey || value.field_key],
+    ['id', value.id],
+    ['definitionId', value.definitionId || value.definition_id],
+    ['label', value.label],
+    ['name', value.name]
+  ]
+    .map(([field, fieldValue]) => [field, cleanVerifiedPaymentContactText(fieldValue, 180)])
+    .filter(([, fieldValue]) => Boolean(fieldValue))
+  if (!['string', 'number'].includes(typeof value.value)) return null
+  const customValue = cleanVerifiedPaymentContactText(value.value, 1000)
+  if (!identities.length || !customValue) return null
+  const [identityField, identityValue] = identities[0]
+  const label = cleanVerifiedPaymentContactText(value.label || value.name, 180)
+  return {
+    [identityField]: identityValue,
+    ...(label && label !== identityValue ? { label } : {}),
+    value: customValue
+  }
+}
+
+function sanitizeVerifiedPaymentActionScopedContactData(value = {}) {
+  if (value === null || value === undefined) return {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const normalized = {}
+  const scalarLimits = {
+    full_name: 240,
+    first_name: 120,
+    last_name: 180,
+    phone: 80,
+    email: 240
+  }
+  for (const [field, maxLength] of Object.entries(scalarLimits)) {
+    if (
+      Object.prototype.hasOwnProperty.call(value, field) &&
+      value[field] !== null &&
+      value[field] !== undefined &&
+      !['string', 'number'].includes(typeof value[field])
+    ) return null
+    const fieldValue = cleanVerifiedPaymentContactText(value[field], maxLength)
+    if (fieldValue) normalized[field] = field === 'email' ? fieldValue.toLowerCase() : fieldValue
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'custom_fields')) {
+    let parsedCustomFields = value.custom_fields
+    if (typeof parsedCustomFields === 'string') {
+      const serialized = parsedCustomFields.trim()
+      if (!serialized) return normalized
+      try {
+        parsedCustomFields = JSON.parse(serialized)
+      } catch {
+        return null
+      }
+    }
+    if (!Array.isArray(parsedCustomFields) || parsedCustomFields.length > 40) return null
+    const customFields = parsedCustomFields
+      .map(normalizeVerifiedPaymentActionScopedCustomField)
+      .filter(Boolean)
+    if (customFields.length) normalized.custom_fields = JSON.stringify(customFields)
+  }
+  return JSON.stringify(normalized).length <= 1800 ? normalized : null
+}
+
+function readVerifiedPaymentActionScopedContactData(detail = {}) {
+  if (
+    Number(detail?.actionScopedContactDataVersion) !== 1 ||
+    !detail?.actionScopedContactData ||
+    typeof detail.actionScopedContactData !== 'object' ||
+    Array.isArray(detail.actionScopedContactData)
+  ) return null
+  const normalized = sanitizeVerifiedPaymentActionScopedContactData(detail.actionScopedContactData)
+  const expectedHash = String(detail?.actionScopedContactDataHash || '').trim()
+  const actualHash = normalized
+    ? createHash('sha256')
+        .update('conversational-action-scoped-contact-data:v1\u0000')
+        .update(JSON.stringify(normalized))
+        .digest('hex')
+    : ''
+  return normalized && /^[a-f0-9]{64}$/.test(expectedHash) && actualHash === expectedHash
+    ? normalized
+    : null
+}
+
+function buildVerifiedPaymentActionScopedContactDataBinding(value = {}) {
+  const actionScopedContactData =
+    sanitizeVerifiedPaymentActionScopedContactData(value)
+  if (!actionScopedContactData) return null
+  return {
+    actionScopedContactDataVersion: 1,
+    actionScopedContactData,
+    actionScopedContactDataHash: createHash('sha256')
+      .update('conversational-action-scoped-contact-data:v1\u0000')
+      .update(JSON.stringify(actionScopedContactData))
+      .digest('hex')
+  }
+}
+
+async function validateVerifiedPaymentHandoffRequiredData({
+  contactId,
+  sourceDetail = {},
+  decision = {},
+  paymentPurpose = '',
+  transaction = db,
+  lock = false
+} = {}) {
+  if (String(sourceDetail.runtimeMode || '') !== 'tool_calling_v2') {
+    return { ok: false, reason: 'payment_source_required_data_binding_legacy' }
+  }
+  const actionScoped = readVerifiedPaymentActionScopedContactData(sourceDetail)
+  if (!actionScoped) {
+    return { ok: false, reason: 'payment_source_required_data_binding_invalid' }
+  }
+  const rowLock = lock && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const contact = await transaction.get(
+    `SELECT id, full_name, first_name, last_name, phone, email, custom_fields
+     FROM contacts WHERE id = ?${rowLock}`,
+    [String(contactId || '').trim()]
+  )
+  if (!contact?.id) return { ok: false, reason: 'payment_handoff_contact_missing' }
+  const mergedContact = mergeConversationalRequiredContactData(
+    contact,
+    actionScoped
+  )
+  const requirements = decision?.dataRequirements &&
+    typeof decision.dataRequirements === 'object' &&
+    !Array.isArray(decision.dataRequirements)
+    ? decision.dataRequirements
+    : {}
+  if (requirements.enabled !== true) return { ok: true, actionScoped }
+  const isDeposit = ['deposit', 'appointment_deposit'].includes(
+    String(paymentPurpose || '').trim().toLowerCase()
+  )
+  const facts = {
+    'payment.is_deposit': isDeposit,
+    'payment.is_full_payment': !isDeposit
+  }
+  const active = (Array.isArray(requirements.fields) ? requirements.fields : [])
+    .filter((item) => (
+      item?.scope === 'any_action' ||
+      item?.scope === 'payment' ||
+      item?.scope === 'handoff'
+    ))
+    .filter((item) => (
+      item?.level === 'required' ||
+      (
+        item?.level === 'conditional' &&
+        item?.condition?.operator === 'is_true' &&
+        item?.condition?.value === true &&
+        facts[String(item?.condition?.fact || '')] === true
+      )
+    ))
+  const missing = active.filter((requirement) => (
+    !requiredConversationalContactFieldValue(mergedContact, requirement)
+  ))
+  return missing.length
+    ? {
+      ok: false,
+      reason: 'payment_handoff_required_data_missing',
+      missing: missing.map((item) => ({
+        field: String(item.field || '').trim(),
+        label: cleanVerifiedPaymentContactText(item.label || item.field, 120)
+      })),
+      actionScoped
+      }
+    : { ok: true, actionScoped }
 }
 
 function normalizeAppointmentTerminalBinding(value = {}) {
@@ -2172,7 +5427,7 @@ async function inspectAppointmentDepositSourceBinding({
     return { ok: false, reason: 'appointment_source_binding_missing' }
   }
   const selection = await db.get(
-    `SELECT id, contact_id, agent_id, event_type, detail_json
+    `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
      FROM conversational_agent_events WHERE id = ?`,
     [selectionEventId]
   )
@@ -2222,6 +5477,75 @@ function amountInCurrencyMinorUnits(value, currency) {
   return Number.isSafeInteger(minorUnits) ? minorUnits : null
 }
 
+async function buildVerifiedPaymentSourceConversationBinding({
+  database = db,
+  sourceEventId = '',
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  recoveredBinding = false
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanChannel = normalizeConversationStateChannel(channel || 'whatsapp')
+  const cleanSourceEventId = String(sourceEventId || '').trim()
+  const unavailable = (reason) => ({
+    schemaVersion: VERIFIED_PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION,
+    status: 'unavailable',
+    contactId: cleanContactId,
+    agentId: cleanAgentId,
+    channel: cleanChannel,
+    stateId: null,
+    activationCycleId: null,
+    activationCycleStartedAt: null,
+    conversationScopeId: null,
+    sourceEventId: cleanSourceEventId,
+    sourceEventCreatedAt: null,
+    reason
+  })
+  if (!cleanContactId || !cleanAgentId || !cleanSourceEventId) {
+    return unavailable('payment_source_identity_missing')
+  }
+  // Una reparación tardía no puede adivinar a qué ciclo pertenecía el link.
+  // Es mejor mandarlo a revisión que ligar el pago al chat que esté activo hoy.
+  if (recoveredBinding) return unavailable('payment_source_cycle_not_sealed')
+
+  const rowLock = process.env.DATABASE_URL ? ' FOR SHARE' : ''
+  const rows = await database.all(
+    `SELECT id, activation_cycle_id, activation_cycle_started_at
+     FROM conversational_agent_state
+     WHERE contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+     LIMIT 2`,
+    [cleanContactId, cleanAgentId, cleanChannel]
+  ).catch(() => [])
+  if (rows.length !== 1) {
+    return unavailable(rows.length > 1
+      ? 'payment_conversation_state_ambiguous'
+      : 'payment_conversation_state_missing')
+  }
+  const state = rows[0]
+  const activationCycleId = String(state.activation_cycle_id || '').trim()
+  const conversationScopeId = conversationGoalScopeId(state.id, activationCycleId)
+  if (!activationCycleId || !conversationScopeId) {
+    return unavailable('payment_conversation_cycle_missing')
+  }
+  return {
+    schemaVersion: VERIFIED_PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION,
+    status: 'bound',
+    contactId: cleanContactId,
+    agentId: cleanAgentId,
+    channel: cleanChannel,
+    stateId: String(state.id),
+    activationCycleId,
+    activationCycleStartedAt: state.activation_cycle_started_at || null,
+    conversationScopeId,
+    sourceEventId: cleanSourceEventId,
+    sourceEventCreatedAt: null,
+    reason: null
+  }
+}
+
 export async function bindConversationalPaymentSourceEvent({
   eventId = '',
   contactId = '',
@@ -2231,6 +5555,7 @@ export async function bindConversationalPaymentSourceEvent({
   const cleanEventId = String(eventId || '').trim()
   const cleanContactId = String(contactId || '').trim()
   const cleanAgentId = String(detail.agentId || '').trim()
+  const recoveredBinding = detail.recoveredBinding === true
   const ledgerPaymentId = String(detail.ledgerPaymentId || '').trim()
   const paymentPurpose = String(detail.paymentPurpose || '').trim().toLowerCase()
   const paymentMode = String(detail.paymentMode || '').trim().toLowerCase()
@@ -2267,7 +5592,109 @@ export async function bindConversationalPaymentSourceEvent({
     throw new Error('Falta la identidad durable del cobro conversacional')
   }
 
-  return db.transaction(async () => {
+  return db.transaction(async (tx) => {
+    const existingSource = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [cleanEventId]
+    ).catch(() => null)
+    const existingSourceDetail = parseJsonField(existingSource?.detail_json, {})
+    const existingConversationBinding = normalizeVerifiedPaymentConversationBinding(
+      existingSourceDetail.paymentConversationBinding
+    )
+    const requestedConversationBinding = normalizeVerifiedPaymentConversationBinding(
+      detail.paymentConversationBinding
+    )
+    const paymentConversationBinding = existingConversationBinding ||
+      requestedConversationBinding ||
+      await buildVerifiedPaymentSourceConversationBinding({
+        database: tx,
+        sourceEventId: cleanEventId,
+        contactId: cleanContactId,
+        agentId: cleanAgentId,
+        channel: detail.channel || 'whatsapp',
+        recoveredBinding: detail.recoveredBinding === true
+      })
+    const bindingState = paymentConversationBinding?.status === 'bound'
+      ? await tx.get(
+          `SELECT id, contact_id, agent_id, channel, activation_cycle_id,
+                  activation_cycle_started_at
+           FROM conversational_agent_state
+           WHERE id = ? AND contact_id = ? AND agent_id = ?
+             AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+           LIMIT 1`,
+          [
+            paymentConversationBinding.stateId,
+            cleanContactId,
+            cleanAgentId,
+            normalizeConversationStateChannel(detail.channel || 'whatsapp')
+          ]
+        ).catch(() => null)
+      : null
+    const requestedBindingIsExact = Boolean(
+      requestedConversationBinding?.status === 'bound' &&
+      requestedConversationBinding.contactId === cleanContactId &&
+      requestedConversationBinding.agentId === cleanAgentId &&
+      requestedConversationBinding.channel === normalizeConversationStateChannel(detail.channel || 'whatsapp') &&
+      requestedConversationBinding.sourceEventId === cleanEventId &&
+      paymentConversationBinding?.status === 'bound' &&
+      JSON.stringify(requestedConversationBinding) === JSON.stringify(paymentConversationBinding)
+    )
+    const recoveredBindingIsExactAndUnavailable = Boolean(
+      recoveredBinding &&
+      !requestedConversationBinding &&
+      paymentConversationBinding?.status === 'unavailable' &&
+      paymentConversationBinding.contactId === cleanContactId &&
+      paymentConversationBinding.agentId === cleanAgentId &&
+      paymentConversationBinding.channel ===
+        normalizeConversationStateChannel(detail.channel || 'whatsapp') &&
+      paymentConversationBinding.sourceEventId === cleanEventId &&
+      !paymentConversationBinding.stateId &&
+      !paymentConversationBinding.activationCycleId &&
+      !paymentConversationBinding.conversationScopeId &&
+      paymentConversationBinding.reason === 'payment_source_cycle_not_sealed'
+    )
+    const boundCycleStillExists = Boolean(
+      bindingState &&
+      String(bindingState.id || '') === String(paymentConversationBinding?.stateId || '') &&
+      String(bindingState.contact_id || '') === cleanContactId &&
+      String(bindingState.agent_id || '') === cleanAgentId &&
+      normalizeConversationStateChannel(bindingState.channel || 'whatsapp') ===
+        paymentConversationBinding?.channel &&
+      String(bindingState.activation_cycle_id || '') ===
+        String(paymentConversationBinding?.activationCycleId || '') &&
+      String(bindingState.activation_cycle_started_at || '') ===
+        String(paymentConversationBinding?.activationCycleStartedAt || '')
+    )
+    if (
+      !(requestedBindingIsExact && boundCycleStillExists) &&
+      !recoveredBindingIsExactAndUnavailable
+    ) {
+      throw new Error('El ciclo durable del cobro no coincide con la conversación sellada antes de llamar al proveedor')
+    }
+    const detailHasActionScopedBinding = [
+      'actionScopedContactDataVersion',
+      'actionScopedContactData',
+      'actionScopedContactDataHash'
+    ].some((key) => detail[key] !== undefined && detail[key] !== null)
+    const recoveredActionScopedBinding = (
+      recoveredBinding &&
+      !detailHasActionScopedBinding
+    )
+      ? buildVerifiedPaymentActionScopedContactDataBinding({})
+      : null
+    const requestedActionScopedContactData =
+      readVerifiedPaymentActionScopedContactData(detail) ||
+      recoveredActionScopedBinding?.actionScopedContactData ||
+      null
+    if (!requestedActionScopedContactData) {
+      throw new Error('Los datos obligatorios del cobro no conservan un vínculo íntegro')
+    }
+    const sourceDetail = {
+      ...detail,
+      ...(recoveredActionScopedBinding || {}),
+      paymentConversationBinding
+    }
     let appointmentDepositIntent = null
     let appointmentDepositIntentDetail = null
     if (detail.appointmentDeposit === true) {
@@ -2324,7 +5751,10 @@ export async function bindConversationalPaymentSourceEvent({
       throw new Error('El ledger del cobro no coincide con el vínculo conversacional')
     }
 
-    const storedDetailJson = JSON.stringify(detail).slice(0, 4000)
+    // No cortar JSON a ciegas: el overlay obligatorio y el binding de ciclo son
+    // evidencia de seguridad. Truncarlos convertiría un pago recuperable en un
+    // registro corrupto que parece válido.
+    const storedDetailJson = JSON.stringify(sourceDetail)
     await db.run(
       `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
        VALUES (?, ?, ?, ?, ?)
@@ -2364,18 +5794,30 @@ export async function bindConversationalPaymentSourceEvent({
       'appointmentSelectionTerminalToolName',
       'appointmentDepositIntentEventId',
       'appointmentDepositIntentClaimKey',
-      'appointmentDepositIntentClaimToken'
+      'appointmentDepositIntentClaimToken',
+      'actionScopedContactDataVersion',
+      'actionScopedContactDataHash',
+      'actionScopedContactData',
+      'paymentConversationBinding'
     ]
     const mismatch = comparableKeys.some((key) => {
-      if (key === 'amount') return Number(storedDetail[key]) !== Number(detail[key])
-      if (key === 'currency') return normalizeVerifiedCurrency(storedDetail[key]) !== normalizeVerifiedCurrency(detail[key])
+      if (key === 'amount') return Number(storedDetail[key]) !== Number(sourceDetail[key])
+      if (key === 'currency') return normalizeVerifiedCurrency(storedDetail[key]) !== normalizeVerifiedCurrency(sourceDetail[key])
       if (key === 'paymentEnvironment') {
-        return normalizeVerifiedPaymentEnvironment(storedDetail[key]) !== normalizeVerifiedPaymentEnvironment(detail[key])
+        return normalizeVerifiedPaymentEnvironment(storedDetail[key]) !== normalizeVerifiedPaymentEnvironment(sourceDetail[key])
       }
       if (key === 'afterPayment') {
-        return normalizeConversationalAfterPayment(storedDetail[key]) !== normalizeConversationalAfterPayment(detail[key])
+        return normalizeConversationalAfterPayment(storedDetail[key]) !== normalizeConversationalAfterPayment(sourceDetail[key])
       }
-      return String(storedDetail[key] ?? '') !== String(detail[key] ?? '')
+      if (key === 'paymentConversationBinding') {
+        return JSON.stringify(normalizeVerifiedPaymentConversationBinding(storedDetail[key])) !==
+          JSON.stringify(normalizeVerifiedPaymentConversationBinding(sourceDetail[key]))
+      }
+      if (key === 'actionScopedContactData') {
+        return JSON.stringify(readVerifiedPaymentActionScopedContactData(storedDetail)) !==
+          JSON.stringify(requestedActionScopedContactData)
+      }
+      return String(storedDetail[key] ?? '') !== String(sourceDetail[key] ?? '')
     })
     const storedPurpose = String(storedDetail.paymentPurpose || '').trim().toLowerCase()
     const storedPaymentMode = String(storedDetail.paymentMode || '').trim().toLowerCase()
@@ -2397,15 +5839,53 @@ export async function bindConversationalPaymentSourceEvent({
       throw Object.assign(new Error('El mensaje ya está ligado a otro cobro'), { statusCode: 409 })
     }
     const request = await db.get(
-      `SELECT idempotency_key, request_json, status, binding_status
+      `SELECT idempotency_key, request_hash, request_json, status, binding_status
        FROM conversational_payment_link_requests
        WHERE binding_event_id = ?`,
       [cleanEventId]
     )
     const requestDetail = parseJsonField(request?.request_json, {})
+    const requestActionScopedContactData =
+      readVerifiedPaymentActionScopedContactData(requestDetail)
+    const requestConversationBinding = normalizeVerifiedPaymentConversationBinding(
+      requestDetail.paymentConversationBinding
+    )
+    const requestHasActionScopedBinding = [
+      'actionScopedContactDataVersion',
+      'actionScopedContactData',
+      'actionScopedContactDataHash'
+    ].some((key) => requestDetail[key] !== undefined && requestDetail[key] !== null)
+    const requestHasConversationBinding =
+      requestDetail.paymentConversationBinding !== undefined &&
+      requestDetail.paymentConversationBinding !== null
+    const legacyRecoveredRequest = Boolean(
+      recoveredBindingIsExactAndUnavailable &&
+      recoveredActionScopedBinding &&
+      !requestHasActionScopedBinding &&
+      !requestHasConversationBinding
+    )
+    const requestPayloadIsIntact = Boolean(
+      request &&
+      conversationalPaymentRequestHash(requestDetail) === request.request_hash
+    )
+    const requestActionScopedBindingMatches = legacyRecoveredRequest || Boolean(
+      requestActionScopedContactData &&
+      Number(requestDetail.actionScopedContactDataVersion) ===
+        Number(sourceDetail.actionScopedContactDataVersion) &&
+      String(requestDetail.actionScopedContactDataHash || '') ===
+        String(sourceDetail.actionScopedContactDataHash || '') &&
+      JSON.stringify(requestActionScopedContactData) ===
+        JSON.stringify(requestedActionScopedContactData)
+    )
+    const requestConversationBindingMatches = legacyRecoveredRequest || Boolean(
+      requestConversationBinding &&
+      JSON.stringify(requestConversationBinding) ===
+        JSON.stringify(paymentConversationBinding)
+    )
     if (
       !request ||
       request.status !== 'completed' ||
+      !requestPayloadIsIntact ||
       String(requestDetail.agentId || '') !== cleanAgentId ||
       String(requestDetail.contactId || '') !== cleanContactId ||
       String(requestDetail.executionId || '') !== String(detail.executionId || '') ||
@@ -2422,7 +5902,9 @@ export async function bindConversationalPaymentSourceEvent({
       String(requestDetail.appointmentDepositIntentClaimKey || '') !== String(detail.appointmentDepositIntentClaimKey || '') ||
       String(requestDetail.appointmentDepositIntentClaimToken || '') !== String(detail.appointmentDepositIntentClaimToken || '') ||
       Number(requestDetail.amount) !== Number(detail.amount) ||
-      normalizeVerifiedCurrency(requestDetail.currency) !== normalizeVerifiedCurrency(detail.currency)
+      normalizeVerifiedCurrency(requestDetail.currency) !== normalizeVerifiedCurrency(detail.currency) ||
+      !requestActionScopedBindingMatches ||
+      !requestConversationBindingMatches
     ) {
       throw new Error('El ledger durable del link no coincide con su vínculo conversacional')
     }
@@ -2618,9 +6100,15 @@ export async function recoverPendingConversationalPaymentSourceBindings({
         appointmentDepositIntentEventId: request.appointmentDepositIntentEventId || null,
         appointmentDepositIntentClaimKey: request.appointmentDepositIntentClaimKey || null,
         appointmentDepositIntentClaimToken: request.appointmentDepositIntentClaimToken || null,
+        actionScopedContactDataVersion: request.actionScopedContactDataVersion,
+        actionScopedContactData: request.actionScopedContactData,
+        actionScopedContactDataHash: request.actionScopedContactDataHash,
+        paymentConversationBinding: request.paymentConversationBinding,
         executionId: String(request.executionId),
         status: response.status || null,
-        recoveredBinding: true
+        recoveredBinding: !normalizeVerifiedPaymentConversationBinding(
+          request.paymentConversationBinding
+        )
       }
       await bindConversationalPaymentSourceEvent({
         eventId,
@@ -2716,12 +6204,27 @@ async function claimConversationalPaymentReconciliation({ eventId, contactId, ag
     String(stored.appointmentSelectionVerifiedAt || '') !== String(detail.appointmentSelectionVerifiedAt || '') ||
     String(stored.appointmentSelectionRequestDraftHash || '') !== String(detail.appointmentSelectionRequestDraftHash || '') ||
     String(stored.appointmentSelectionBookingOwner || '') !== String(detail.appointmentSelectionBookingOwner || '') ||
-    String(stored.appointmentSelectionTerminalToolName || '') !== String(detail.appointmentSelectionTerminalToolName || '')
+    String(stored.appointmentSelectionTerminalToolName || '') !== String(detail.appointmentSelectionTerminalToolName || '') ||
+    (
+      stored.paymentConversationBinding !== undefined &&
+      JSON.stringify(normalizeVerifiedPaymentConversationBinding(stored.paymentConversationBinding)) !==
+        JSON.stringify(normalizeVerifiedPaymentConversationBinding(detail.paymentConversationBinding))
+    )
   ) {
     throw Object.assign(new Error('El ledger de reconciliación ya existe con otra evidencia'), { statusCode: 409 })
   }
   if (stored.status === 'completed') {
-    return { claimed: false, completed: true, result: stored.result || null }
+    const reconciled =
+      await reconcileCompletedPaymentRequiredDataHandoff({
+        eventId,
+        contactId,
+        agentId
+      })
+    return {
+      claimed: false,
+      completed: true,
+      result: reconciled?.result || stored.result || null
+    }
   }
 
   const nowMs = Date.now()
@@ -2906,8 +6409,3559 @@ function normalizeConversationalAfterPayment(value) {
   return String(value || '').trim().toLowerCase() === 'handoff' ? 'handoff' : 'continue'
 }
 
+function compactVerifiedPaymentHandoffDecision(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const decision = String(source.decision || '').trim()
+  if (!VERIFIED_PAYMENT_HANDOFF_DECISIONS.has(decision)) return null
+  const clean = (entry, maxLength = 1000) => (
+    String(entry || '').replace(/\s+/g, ' ').trim().slice(0, maxLength) || null
+  )
+  let dataRequirements = {}
+  let noMatchAudit = null
+  try {
+    const serialized = JSON.stringify(
+      source.dataRequirements && typeof source.dataRequirements === 'object' && !Array.isArray(source.dataRequirements)
+        ? source.dataRequirements
+        : {}
+    )
+    if (serialized.length > 64 * 1024) return null
+    dataRequirements = JSON.parse(serialized)
+    if (source.noMatchAudit && typeof source.noMatchAudit === 'object' && !Array.isArray(source.noMatchAudit)) {
+      noMatchAudit = {
+        decision: clean(source.noMatchAudit.decision, 80),
+        acceptedNoMatch: source.noMatchAudit.acceptedNoMatch === true,
+        source: clean(source.noMatchAudit.source, 180),
+        issues: (Array.isArray(source.noMatchAudit.issues) ? source.noMatchAudit.issues : [])
+          .map((item) => clean(item, 180))
+          .filter(Boolean)
+          .slice(0, 20),
+        ruleAssessments: (Array.isArray(source.noMatchAudit.ruleAssessments)
+          ? source.noMatchAudit.ruleAssessments
+          : [])
+          .slice(0, 20)
+          .map((item) => ({
+            ruleId: clean(item?.ruleId, 40),
+            verdict: clean(item?.verdict, 80),
+            evidenceHash: clean(item?.evidenceHash, 80)
+          }))
+      }
+    }
+  } catch {
+    return null
+  }
+  return {
+    schemaVersion: VERIFIED_PAYMENT_HANDOFF_DECISION_SCHEMA_VERSION,
+    decision,
+    source: clean(source.source, 180),
+    configRevision: clean(source.configRevision, 180),
+    policyFingerprint: clean(source.policyFingerprint, 180),
+    matchedRule: clean(source.matchedRule, 1000),
+    reason: clean(source.reason, 1000),
+    summary: clean(source.summary, 1000),
+    assignedUserId: clean(source.assignedUserId || source.assignedUser?.id, 180),
+    assignedUserName: clean(source.assignedUserName || source.assignedUser?.name, 180),
+    generalFallbackPolicy: clean(source.generalFallbackPolicy, 180),
+    policyEnabled: source.policyEnabled === true || source.enabled === true,
+    criteriaConfigured: source.criteriaConfigured === true,
+    rulesConfigured: source.rulesConfigured === true ||
+      Boolean(String(source.rules || '').trim()),
+    pastClientsToHuman: source.pastClientsToHuman === true,
+    dataRequirements,
+    noMatchAudit,
+    conversationScopeId: clean(source.conversationScopeId, 180),
+    cutoffIso: clean(source.cutoffIso, 80),
+    modelCallCount: Math.max(0, Number(source.modelCallCount) || 0)
+  }
+}
+
+async function adjudicateConversationalVerifiedPaymentHandoff(payload, dependencies = {}) {
+  if (conversationalVerifiedPaymentHandoffAdjudicatorForTest) {
+    return conversationalVerifiedPaymentHandoffAdjudicatorForTest(payload, dependencies)
+  }
+  const { adjudicateToolCallingV2VerifiedPaymentHandoff } = await import('../agents/conversational/runner.js')
+  return adjudicateToolCallingV2VerifiedPaymentHandoff(payload, dependencies)
+}
+
+async function loadConversationalVerifiedPaymentHandoffPolicy(payload) {
+  if (conversationalVerifiedPaymentHandoffPolicyLoaderForTest) {
+    return conversationalVerifiedPaymentHandoffPolicyLoaderForTest(payload)
+  }
+  const { loadToolCallingV2VerifiedPaymentHandoffPolicy } = await import('../agents/conversational/runner.js')
+  return loadToolCallingV2VerifiedPaymentHandoffPolicy(payload)
+}
+
+async function verifiedPaymentConversationBindingIsCurrent(binding, {
+  transaction = db,
+  lock = false
+} = {}) {
+  const normalized = normalizeVerifiedPaymentConversationBinding(binding)
+  if (!normalized || normalized.status !== 'bound') return false
+  const rowLock = lock && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const state = await transaction.get(
+    `SELECT id, contact_id, agent_id, channel, activation_cycle_id
+     FROM conversational_agent_state
+     WHERE id = ? AND contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+     LIMIT 1`,
+    [
+      normalized.stateId,
+      normalized.contactId,
+      normalized.agentId,
+      normalized.channel
+    ]
+  )
+  return Boolean(
+    state?.id &&
+    String(state.activation_cycle_id || '') === normalized.activationCycleId &&
+    conversationGoalScopeId(state.id, state.activation_cycle_id) === normalized.conversationScopeId
+  )
+}
+
+async function verifiedPaymentHandoffPolicyMatchesDecision({
+  decision,
+  agentId,
+  transaction = db,
+  lock = false
+} = {}) {
+  const normalized = compactVerifiedPaymentHandoffDecision(decision)
+  if (!normalized) return { matches: false, policy: null, decision: null }
+  const cleanAgentId = String(agentId || '').trim()
+  const rowLock = lock && process.env.DATABASE_URL ? ' FOR SHARE' : ''
+  if (cleanAgentId) {
+    await transaction.get(
+      `SELECT id FROM conversational_agents WHERE id = ?${rowLock}`,
+      [cleanAgentId]
+    )
+  }
+  const policy = await loadConversationalVerifiedPaymentHandoffPolicy({
+    agentId: cleanAgentId
+  })
+  return {
+    matches: String(policy?.configRevision || '') === String(normalized.configRevision || '') &&
+      String(policy?.policyFingerprint || '') === String(normalized.policyFingerprint || ''),
+    policy,
+    decision: normalized
+  }
+}
+
+function unavailableVerifiedPaymentHandoffDecision(binding, policy = {}) {
+  return compactVerifiedPaymentHandoffDecision({
+    decision: 'disabled',
+    source: 'payment_conversation_binding_unavailable',
+    reason: binding?.reason || 'payment_conversation_binding_unavailable',
+    summary: 'El pago quedó confirmado, pero ya no existe una conversación original segura para aplicar el traspaso.',
+    configRevision: policy?.configRevision,
+    policyFingerprint: policy?.policyFingerprint,
+    assignedUserId: policy?.assignedUserId,
+    assignedUserName: policy?.assignedUserName,
+    generalFallbackPolicy: policy?.generalFallbackPolicy,
+    policyEnabled: policy?.enabled === true,
+    criteriaConfigured: policy?.criteriaConfigured === true,
+    pastClientsToHuman: policy?.pastClientsToHuman === true,
+    dataRequirements: policy?.dataRequirements
+  })
+}
+
+async function failClosedVerifiedPaymentHandoffDecision({
+  agentId,
+  binding,
+  error,
+  terminalKind = 'payment'
+} = {}) {
+  const isAppointmentTerminal = terminalKind === 'appointment'
+  const policy = await loadConversationalVerifiedPaymentHandoffPolicy({ agentId })
+  if (policy?.enabled !== true) {
+    return compactVerifiedPaymentHandoffDecision({
+      decision: 'disabled',
+      source: policy?.source || 'handoff_capability_disabled',
+      reason: 'handoff_capability_disabled',
+      configRevision: policy?.configRevision,
+      policyFingerprint: policy?.policyFingerprint,
+      policyEnabled: false,
+      criteriaConfigured: false,
+      rulesConfigured: false,
+      assignedUserId: policy?.assignedUserId,
+      assignedUserName: policy?.assignedUserName,
+      generalFallbackPolicy: policy?.generalFallbackPolicy,
+      dataRequirements: policy?.dataRequirements
+    })
+  }
+  if (policy?.criteriaConfigured !== true) {
+    return compactVerifiedPaymentHandoffDecision({
+      decision: 'no_match',
+      source: 'no_configured_criteria',
+      reason: 'handoff_criteria_not_configured',
+      configRevision: policy?.configRevision,
+      policyFingerprint: policy?.policyFingerprint,
+      policyEnabled: true,
+      criteriaConfigured: false,
+      rulesConfigured: false,
+      assignedUserId: policy?.assignedUserId,
+      assignedUserName: policy?.assignedUserName,
+      generalFallbackPolicy: policy?.generalFallbackPolicy,
+      dataRequirements: policy?.dataRequirements
+    })
+  }
+  return compactVerifiedPaymentHandoffDecision({
+    decision: 'match',
+    source: 'configured_rules_fail_closed_review',
+    configRevision: policy?.configRevision,
+    policyFingerprint: policy?.policyFingerprint,
+    matchedRule: String(policy?.rules || '').trim() ||
+      'Revisión humana obligatoria por compuerta no concluyente',
+    reason: `${
+      isAppointmentTerminal
+        ? 'La adjudicación posterior a la cita'
+        : 'La adjudicación post-pago'
+    } falló y requiere revisión humana: ${String(
+      error?.code || error?.message || 'unknown'
+    ).slice(0, 240)}`,
+    summary: isAppointmentTerminal
+      ? 'La cita quedó confirmada, pero la regla no pudo descartarse con seguridad; el equipo humano debe continuar.'
+      : 'El pago quedó confirmado, pero la regla no pudo descartarse con seguridad; el equipo humano debe continuar.',
+    assignedUserId: policy?.assignedUserId,
+    assignedUserName: policy?.assignedUserName,
+    generalFallbackPolicy: policy?.generalFallbackPolicy,
+    policyEnabled: true,
+    criteriaConfigured: true,
+    rulesConfigured: Boolean(String(policy?.rules || '').trim()),
+    pastClientsToHuman: policy?.pastClientsToHuman === true,
+    dataRequirements: policy?.dataRequirements,
+    conversationScopeId: binding?.conversationScopeId || null
+  })
+}
+
+function verifiedTerminalBookingIntentId({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  clientRequestId = ''
+} = {}) {
+  const identity = [
+    String(contactId || '').trim(),
+    String(agentId || '').trim(),
+    normalizeConversationStateChannel(channel || 'whatsapp'),
+    String(clientRequestId || '').trim()
+  ]
+  if (identity.some((value) => !value)) return ''
+  return `cae_terminal_booking_intent_${createHash('sha256')
+    .update(identity.join('\u0000'))
+    .digest('hex')
+    .slice(0, 40)}`
+}
+
+function verifiedTerminalBookingIntentHash(detail = {}) {
+  const canonical = {
+    contactId: String(detail.contactId || '').trim(),
+    agentId: String(detail.agentId || '').trim(),
+    channel: normalizeConversationStateChannel(detail.channel || 'whatsapp'),
+    stateId: String(detail.stateId || '').trim(),
+    activationCycleId: String(detail.activationCycleId || '').trim(),
+    activationCycleStartedMessageId:
+      String(detail.activationCycleStartedMessageId || '').trim() || null,
+    conversationScopeId: String(detail.conversationScopeId || '').trim(),
+    cutoffIso: String(detail.cutoffIso || '').trim(),
+    clientRequestId: String(detail.clientRequestId || '').trim(),
+    selectionEventId: String(detail.selectionEventId || '').trim(),
+    terminalSourceMessageId: String(detail.terminalSourceMessageId || '').trim(),
+    calendarId: String(detail.calendarId || '').trim(),
+    startTime: String(detail.startTime || '').trim(),
+    policyConfigRevision: String(detail.policyConfigRevision || '').trim(),
+    policyFingerprint: String(detail.policyFingerprint || '').trim(),
+    actionScopedContactDataHash:
+      String(detail.actionScopedContactDataHash || '').trim()
+  }
+  if (
+    Object.entries(canonical).some(([key, value]) => (
+      key !== 'activationCycleStartedMessageId' && !value
+    )) ||
+    conversationGoalScopeId(canonical.stateId, canonical.activationCycleId) !==
+      canonical.conversationScopeId ||
+    !Number.isFinite(Date.parse(canonical.cutoffIso)) ||
+    !Number.isFinite(Date.parse(canonical.startTime)) ||
+    canonical.terminalSourceMessageId.startsWith('payment-resume:')
+  ) return ''
+  return createHash('sha256')
+    .update(JSON.stringify(canonical))
+    .digest('hex')
+}
+
+function readVerifiedTerminalBookingIntentRow(row = {}) {
+  const expectedStatusByEventType = new Map([
+    [VERIFIED_TERMINAL_BOOKING_INTENT_EVENT, 'pending_appointment'],
+    [VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT, 'appointment_committed'],
+    [VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT, 'terminal_materialized'],
+    [VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT, 'aborted'],
+    [VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT, 'superseded']
+  ])
+  const expectedStatus = expectedStatusByEventType.get(String(row?.event_type || ''))
+  const detail = parseJsonField(row?.detail_json, null)
+  if (
+    !row?.id ||
+    !expectedStatus ||
+    !detail ||
+    Number(detail.schemaVersion) !== VERIFIED_TERMINAL_BOOKING_INTENT_SCHEMA_VERSION ||
+    String(detail.status || '') !== expectedStatus ||
+    String(row.contact_id || '') !== String(detail.contactId || '') ||
+    String(row.agent_id || '') !== String(detail.agentId || '') ||
+    String(row.id) !== verifiedTerminalBookingIntentId(detail)
+  ) return null
+  const actionScopedContactData = readVerifiedPaymentActionScopedContactData(detail)
+  const intentHash = verifiedTerminalBookingIntentHash(detail)
+  const appointmentId = String(detail.appointmentId || '').trim()
+  if (
+    !actionScopedContactData ||
+    !intentHash ||
+    intentHash !== String(detail.intentHash || '') ||
+    (
+      ['pending_appointment', 'aborted'].includes(expectedStatus) &&
+      Boolean(appointmentId)
+    ) ||
+    (
+      ['appointment_committed', 'terminal_materialized'].includes(expectedStatus) &&
+      !appointmentId
+    )
+  ) return null
+  return {
+    row,
+    detail,
+    actionScopedContactData,
+    intentHash,
+    intentEventId: String(row.id),
+    appointmentId: appointmentId || null
+  }
+}
+
+async function assertVerifiedTerminalBookingSelection(
+  transaction,
+  intent
+) {
+  const rowLock = process.env.DATABASE_URL ? ' FOR SHARE' : ''
+  const selection = await transaction.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [intent.detail.selectionEventId]
+  )
+  const detail = parseJsonField(selection?.detail_json, {})
+  const canonicalInboundMessageId = String(
+    detail.selectionTerminalSourceMessageId || detail.customerMessageId || ''
+  ).trim()
+  if (
+    selection?.event_type !== 'appointment_slot_selection_verified' ||
+    String(selection.contact_id || '') !== String(intent.detail.contactId || '') ||
+    String(selection.agent_id || '') !== String(intent.detail.agentId || '') ||
+    String(detail.status || '') !== 'active' ||
+    normalizeConversationStateChannel(detail.channel || 'whatsapp') !==
+      normalizeConversationStateChannel(intent.detail.channel || 'whatsapp') ||
+    String(detail.calendarId || '') !== String(intent.detail.calendarId || '') ||
+    String(detail.startTime || '') !== String(intent.detail.startTime || '') ||
+    canonicalInboundMessageId !== String(intent.detail.terminalSourceMessageId || '') ||
+    String(intent.detail.terminalSourceMessageId || '').startsWith('payment-resume:')
+  ) {
+    throw Object.assign(
+      new Error('La intención de cita no conserva el inbound real que confirmó el horario.'),
+      {
+        code: 'verified_terminal_booking_intent_selection_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  return selection
+}
+
+/**
+ * Sella ANTES del controller la identidad que deberá convertirse en terminal
+ * si la cita llega a existir. El mensaje frontera proviene del evento durable
+ * de selección; un executionId sintético de payment-resume nunca es válido.
+ */
+export async function sealToolCallingV2AppointmentBookingIntent({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  binding = {},
+  clientRequestId = '',
+  selectionEventId = '',
+  terminalSourceMessageId = '',
+  calendarId = '',
+  startTime = '',
+  actionScopedContactData = {},
+  database = db
+} = {}) {
+  const clean = {
+    contactId: String(contactId || '').trim(),
+    agentId: String(agentId || '').trim(),
+    channel: normalizeConversationStateChannel(channel || 'whatsapp'),
+    stateId: String(binding?.stateId || '').trim(),
+    activationCycleId: String(binding?.activationCycleId || '').trim(),
+    conversationScopeId: String(binding?.conversationScopeId || '').trim(),
+    clientRequestId: String(clientRequestId || '').trim(),
+    selectionEventId: String(selectionEventId || '').trim(),
+    terminalSourceMessageId: String(terminalSourceMessageId || '').trim(),
+    calendarId: String(calendarId || '').trim(),
+    startTime: String(startTime || '').trim()
+  }
+  const intentEventId = verifiedTerminalBookingIntentId(clean)
+  if (
+    !intentEventId ||
+    !clean.stateId ||
+    !clean.activationCycleId ||
+    !clean.conversationScopeId ||
+    !clean.selectionEventId ||
+    !clean.terminalSourceMessageId ||
+    clean.terminalSourceMessageId.startsWith('payment-resume:') ||
+    !clean.calendarId ||
+    !Number.isFinite(Date.parse(clean.startTime)) ||
+    conversationGoalScopeId(clean.stateId, clean.activationCycleId) !==
+      clean.conversationScopeId
+  ) {
+    throw Object.assign(
+      new Error('No se puede preparar la cita: falta su identidad terminal original.'),
+      {
+        code: 'verified_terminal_booking_intent_contract_invalid',
+        statusCode: 409
+      }
+    )
+  }
+
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const existing = await database.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [intentEventId]
+  )
+  if (existing) {
+    const stored = readVerifiedTerminalBookingIntentRow(existing)
+    if (
+      !stored ||
+      stored.detail.stateId !== clean.stateId ||
+      stored.detail.activationCycleId !== clean.activationCycleId ||
+      stored.detail.conversationScopeId !== clean.conversationScopeId ||
+      stored.detail.selectionEventId !== clean.selectionEventId ||
+      stored.detail.terminalSourceMessageId !== clean.terminalSourceMessageId ||
+      stored.detail.calendarId !== clean.calendarId ||
+      stored.detail.startTime !== clean.startTime
+    ) {
+      throw Object.assign(
+        new Error('La llave de la cita ya pertenece a otra intención terminal.'),
+        {
+          code: 'verified_terminal_booking_intent_identity_conflict',
+          statusCode: 409
+        }
+      )
+    }
+    await assertVerifiedTerminalBookingSelection(database, stored)
+    return {
+      pending: existing.event_type === VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      committed: existing.event_type === VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+      materialized: existing.event_type ===
+        VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT,
+      aborted: existing.event_type === VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT,
+      intentEventId,
+      intentHash: stored.intentHash,
+      replayed: true,
+      appointmentId: stored.appointmentId
+    }
+  }
+
+  const sealedActionScoped = sanitizeVerifiedPaymentActionScopedContactData(
+    actionScopedContactData
+  )
+  if (!sealedActionScoped) {
+    throw Object.assign(
+      new Error('Los datos temporales de la cita no se pueden sellar con seguridad.'),
+      {
+        code: 'verified_terminal_booking_intent_contact_data_invalid',
+        statusCode: 409
+      }
+    )
+  }
+  const state = await database.get(
+    `SELECT id, contact_id, agent_id, channel, status, signal,
+            activation_cycle_id, activation_cycle_started_at,
+            activation_cycle_started_message_id
+     FROM conversational_agent_state
+     WHERE id = ? AND contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+     LIMIT 1`,
+    [
+      clean.stateId,
+      clean.contactId,
+      clean.agentId,
+      clean.channel
+    ]
+  )
+  const activationStartedMs = parseTimestampMsUtc(state?.activation_cycle_started_at)
+  if (
+    !state?.id ||
+    String(state.activation_cycle_id || '') !== clean.activationCycleId ||
+    conversationGoalScopeId(state.id, state.activation_cycle_id) !==
+      clean.conversationScopeId ||
+    String(state.status || '') !== 'active' ||
+    state.signal ||
+    !Number.isFinite(activationStartedMs)
+  ) {
+    throw Object.assign(
+      new Error('La conversación cambió antes de preparar la cita terminal.'),
+      {
+        code: 'verified_terminal_booking_intent_state_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+
+  await database.get(
+    `SELECT id FROM conversational_agents WHERE id = ?${
+      process.env.DATABASE_URL ? ' FOR SHARE' : ''
+    }`,
+    [clean.agentId]
+  )
+  const policy = await loadConversationalVerifiedPaymentHandoffPolicy({
+    agentId: clean.agentId
+  })
+  if (policy?.enabled !== true || policy?.criteriaConfigured !== true) {
+    return {
+      pending: false,
+      committed: false,
+      materialized: false,
+      intentEventId: null,
+      intentHash: null,
+      reason: policy?.enabled === true
+        ? 'verified_terminal_booking_intent_criteria_not_configured'
+        : 'verified_terminal_booking_intent_disabled'
+    }
+  }
+  if (
+    !String(policy.configRevision || '').trim() ||
+    !String(policy.policyFingerprint || '').trim()
+  ) {
+    throw Object.assign(
+      new Error('La política de handoff no devolvió una identidad sellable.'),
+      {
+        code: 'verified_terminal_booking_intent_policy_identity_missing',
+        statusCode: 409
+      }
+    )
+  }
+
+  const actionScopedContactDataHash = createHash('sha256')
+    .update('conversational-action-scoped-contact-data:v1\u0000')
+    .update(JSON.stringify(sealedActionScoped))
+    .digest('hex')
+  const detail = {
+    schemaVersion: VERIFIED_TERMINAL_BOOKING_INTENT_SCHEMA_VERSION,
+    status: 'pending_appointment',
+    contactId: clean.contactId,
+    agentId: clean.agentId,
+    channel: clean.channel,
+    stateId: clean.stateId,
+    activationCycleId: clean.activationCycleId,
+    activationCycleStartedMessageId:
+      String(state.activation_cycle_started_message_id || '').trim() || null,
+    conversationScopeId: clean.conversationScopeId,
+    cutoffIso: new Date(activationStartedMs).toISOString(),
+    clientRequestId: clean.clientRequestId,
+    selectionEventId: clean.selectionEventId,
+    terminalSourceMessageId: clean.terminalSourceMessageId,
+    calendarId: clean.calendarId,
+    startTime: clean.startTime,
+    policyConfigRevision: String(policy.configRevision),
+    policyFingerprint: String(policy.policyFingerprint),
+    actionScopedContactDataVersion: 1,
+    actionScopedContactData: sealedActionScoped,
+    actionScopedContactDataHash,
+    appointmentId: null,
+    pendingEventId: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+  detail.intentHash = verifiedTerminalBookingIntentHash(detail)
+  if (!detail.intentHash) {
+    throw Object.assign(
+      new Error('La identidad pre-terminal de la cita quedó incompleta.'),
+      {
+        code: 'verified_terminal_booking_intent_hash_invalid',
+        statusCode: 409
+      }
+    )
+  }
+  const sourceIntent = {
+    row: {
+      id: intentEventId,
+      contact_id: clean.contactId,
+      agent_id: clean.agentId,
+      event_type: VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      detail_json: JSON.stringify(detail)
+    },
+    detail
+  }
+  await assertVerifiedTerminalBookingSelection(database, sourceIntent)
+
+  const inserted = await database.run(
+    `INSERT INTO conversational_agent_events
+      (id, contact_id, agent_id, event_type, detail_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+    [
+      intentEventId,
+      clean.contactId,
+      clean.agentId,
+      VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      JSON.stringify(detail)
+    ]
+  )
+  if (databaseChangeCount(inserted) !== 1) {
+    const raced = await database.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [intentEventId]
+    )
+    const stored = readVerifiedTerminalBookingIntentRow(raced)
+    if (!stored || stored.intentHash !== detail.intentHash) {
+      throw Object.assign(
+        new Error('Otro proceso preparó una intención distinta para la misma cita.'),
+        {
+          code: 'verified_terminal_booking_intent_insert_conflict',
+          statusCode: 409
+        }
+      )
+    }
+    return {
+      pending: raced.event_type === VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      committed: raced.event_type === VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+      materialized: raced.event_type ===
+        VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT,
+      aborted: raced.event_type === VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT,
+      intentEventId,
+      intentHash: stored.intentHash,
+      replayed: true,
+      appointmentId: stored.appointmentId
+    }
+  }
+  return {
+    pending: true,
+    committed: false,
+    materialized: false,
+    aborted: false,
+    intentEventId,
+    intentHash: detail.intentHash,
+    replayed: false,
+    appointmentId: null
+  }
+}
+
+async function assertVerifiedTerminalBookingAppointment(
+  transaction,
+  intent,
+  appointmentId = ''
+) {
+  const cleanAppointmentId = String(appointmentId || intent?.appointmentId || '').trim()
+  const rowLock = process.env.DATABASE_URL ? ' FOR SHARE' : ''
+  const [request, appointment] = await Promise.all([
+    transaction.get(
+      `SELECT client_request_id, request_hash, status, appointment_id
+       FROM appointment_creation_requests
+       WHERE client_request_id = ?${rowLock}`,
+      [intent.detail.clientRequestId]
+    ),
+    transaction.get(
+      `SELECT id, contact_id, calendar_id, title, start_time, end_time,
+              appointment_status, status, deleted_at
+       FROM appointments WHERE id = ?${rowLock}`,
+      [cleanAppointmentId]
+    )
+  ])
+  const requestedStartMs = Date.parse(String(intent.detail.startTime || ''))
+  const appointmentStartMs = Date.parse(String(appointment?.start_time || ''))
+  if (
+    !cleanAppointmentId ||
+    !request ||
+    String(request.client_request_id || '') !== intent.detail.clientRequestId ||
+    String(request.appointment_id || '') !== cleanAppointmentId ||
+    !['processing', 'completed'].includes(String(request.status || '')) ||
+    !appointment?.id ||
+    String(appointment.id) !== cleanAppointmentId ||
+    String(appointment.contact_id || '') !== intent.detail.contactId ||
+    String(appointment.calendar_id || '') !== intent.detail.calendarId ||
+    !Number.isFinite(requestedStartMs) ||
+    requestedStartMs !== appointmentStartMs ||
+    appointment.deleted_at
+  ) {
+    throw Object.assign(
+      new Error('La cita guardada no coincide con la intención pre-terminal.'),
+      {
+        code: 'verified_terminal_booking_intent_appointment_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  return { request, appointment }
+}
+
+/**
+ * Debe ejecutarse con el MISMO tx que insertó la cita y guardó appointment_id.
+ * Si este checkpoint falla, el controller lanza y revierte también la cita.
+ */
+export async function checkpointToolCallingV2AppointmentBookingIntentCommit({
+  intentEventId = '',
+  intentHash = '',
+  clientRequestId = '',
+  appointmentId = '',
+  database = db
+} = {}) {
+  const cleanIntentEventId = String(intentEventId || '').trim()
+  const cleanIntentHash = String(intentHash || '').trim()
+  const cleanClientRequestId = String(clientRequestId || '').trim()
+  const cleanAppointmentId = String(appointmentId || '').trim()
+  if (
+    !cleanIntentEventId ||
+    !/^[a-f0-9]{64}$/.test(cleanIntentHash) ||
+    !cleanClientRequestId ||
+    !cleanAppointmentId
+  ) {
+    throw Object.assign(
+      new Error('Falta la identidad atómica del handoff ligado a la cita.'),
+      {
+        code: 'verified_terminal_booking_intent_commit_identity_missing',
+        statusCode: 409
+      }
+    )
+  }
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const row = await database.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [cleanIntentEventId]
+  )
+  const intent = readVerifiedTerminalBookingIntentRow(row)
+  if (
+    !intent ||
+    intent.intentHash !== cleanIntentHash ||
+    intent.detail.clientRequestId !== cleanClientRequestId
+  ) {
+    throw Object.assign(
+      new Error('La intención atómica de la cita cambió antes de su commit.'),
+      {
+        code: 'verified_terminal_booking_intent_commit_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT) {
+    if (intent.appointmentId !== cleanAppointmentId) {
+      throw Object.assign(
+        new Error('La intención ya fue materializada por otra cita.'),
+        {
+          code: 'verified_terminal_booking_intent_commit_conflict',
+          statusCode: 409
+        }
+      )
+    }
+    return {
+      committed: true,
+      materialized: true,
+      replayed: true,
+      intentEventId: cleanIntentEventId,
+      intentHash: cleanIntentHash,
+      appointmentId: cleanAppointmentId
+    }
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT) {
+    if (intent.appointmentId !== cleanAppointmentId) {
+      throw Object.assign(
+        new Error('La intención ya quedó ligada a otra cita.'),
+        {
+          code: 'verified_terminal_booking_intent_commit_conflict',
+          statusCode: 409
+        }
+      )
+    }
+    await assertVerifiedTerminalBookingAppointment(database, intent)
+    return {
+      committed: true,
+      materialized: false,
+      replayed: true,
+      intentEventId: cleanIntentEventId,
+      intentHash: cleanIntentHash,
+      appointmentId: cleanAppointmentId
+    }
+  }
+  if (row.event_type !== VERIFIED_TERMINAL_BOOKING_INTENT_EVENT) {
+    throw Object.assign(
+      new Error('La intención de cita ya no está disponible para commit.'),
+      {
+        code: 'verified_terminal_booking_intent_commit_unavailable',
+        statusCode: 409
+      }
+    )
+  }
+  const committedAt = new Date().toISOString()
+  const next = {
+    ...intent.detail,
+    status: 'appointment_committed',
+    appointmentId: cleanAppointmentId,
+    appointmentCommittedAt: committedAt,
+    updatedAt: committedAt
+  }
+  const committedIntent = {
+    ...intent,
+    detail: next,
+    appointmentId: cleanAppointmentId
+  }
+  await assertVerifiedTerminalBookingAppointment(
+    database,
+    committedIntent,
+    cleanAppointmentId
+  )
+  const updated = await database.run(
+    `UPDATE conversational_agent_events
+     SET event_type = ?, detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+      JSON.stringify(next),
+      cleanIntentEventId,
+      VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      row.detail_json
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) {
+    throw Object.assign(
+      new Error('Otro proceso cambió la intención antes del commit de la cita.'),
+      {
+        code: 'verified_terminal_booking_intent_commit_conflict',
+        statusCode: 409
+      }
+    )
+  }
+  return {
+    committed: true,
+    materialized: false,
+    replayed: false,
+    intentEventId: cleanIntentEventId,
+    intentHash: cleanIntentHash,
+    appointmentId: cleanAppointmentId
+  }
+}
+
+export async function abortToolCallingV2AppointmentBookingIntent({
+  intentEventId = '',
+  intentHash = '',
+  clientRequestId = '',
+  reason = 'appointment_creation_failed',
+  database = db
+} = {}) {
+  const cleanIntentEventId = String(intentEventId || '').trim()
+  const cleanIntentHash = String(intentHash || '').trim()
+  const cleanClientRequestId = String(clientRequestId || '').trim()
+  const cleanReason = String(reason || 'appointment_creation_failed')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240)
+  if (
+    !cleanIntentEventId ||
+    !/^[a-f0-9]{64}$/.test(cleanIntentHash) ||
+    !cleanClientRequestId
+  ) {
+    throw Object.assign(
+      new Error('Falta la identidad de la intención que se quiere abortar.'),
+      {
+        code: 'verified_terminal_booking_intent_abort_identity_missing',
+        statusCode: 409
+      }
+    )
+  }
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const row = await database.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [cleanIntentEventId]
+  )
+  const intent = readVerifiedTerminalBookingIntentRow(row)
+  if (
+    !intent ||
+    intent.intentHash !== cleanIntentHash ||
+    intent.detail.clientRequestId !== cleanClientRequestId
+  ) {
+    throw Object.assign(
+      new Error('La intención que se quiere abortar no coincide con la cita.'),
+      {
+        code: 'verified_terminal_booking_intent_abort_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT) {
+    return {
+      aborted: true,
+      replayed: true,
+      intentEventId: cleanIntentEventId,
+      reason: intent.detail.abortReason || cleanReason
+    }
+  }
+  if (row.event_type !== VERIFIED_TERMINAL_BOOKING_INTENT_EVENT) {
+    throw Object.assign(
+      new Error('Una cita ya comprometida no puede abortarse como si nunca hubiera existido.'),
+      {
+        code: 'verified_terminal_booking_intent_abort_after_commit',
+        statusCode: 409
+      }
+    )
+  }
+  const request = await database.get(
+    `SELECT client_request_id, status, appointment_id, error_retryable
+     FROM appointment_creation_requests WHERE client_request_id = ?${rowLock}`,
+    [cleanClientRequestId]
+  )
+  if (String(request?.appointment_id || '').trim()) {
+    throw Object.assign(
+      new Error('La solicitud ya conserva una cita y debe recuperarse, no abortarse.'),
+      {
+        code: 'verified_terminal_booking_intent_abort_appointment_exists',
+        statusCode: 409
+      }
+    )
+  }
+  if (
+    String(request?.status || '').trim() === 'processing' ||
+    (
+      String(request?.status || '').trim() === 'failed' &&
+      Number(request?.error_retryable || 0) === 1
+    )
+  ) {
+    // Una lease activa o una falla transitoria pueden reabrir la misma llave
+    // idempotente. La intención debe quedarse sellada para que ese retry no
+    // cree una cita huérfana del handoff.
+    return {
+      aborted: false,
+      retryable: true,
+      replayed: false,
+      intentEventId: cleanIntentEventId,
+      reason: String(request?.status || '').trim() === 'processing'
+        ? 'appointment_creation_processing'
+        : 'appointment_creation_retryable'
+    }
+  }
+  const abortedAt = new Date().toISOString()
+  const next = {
+    ...intent.detail,
+    status: 'aborted',
+    abortReason: cleanReason,
+    appointmentRequestStatus: String(request?.status || '').trim() || null,
+    abortedAt,
+    updatedAt: abortedAt
+  }
+  const updated = await database.run(
+    `UPDATE conversational_agent_events
+     SET event_type = ?, detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT,
+      JSON.stringify(next),
+      cleanIntentEventId,
+      VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      row.detail_json
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) {
+    throw Object.assign(
+      new Error('La intención cambió mientras se abortaba su cita.'),
+      {
+        code: 'verified_terminal_booking_intent_abort_conflict',
+        statusCode: 409
+      }
+    )
+  }
+  return {
+    aborted: true,
+    replayed: false,
+    intentEventId: cleanIntentEventId,
+    reason: cleanReason
+  }
+}
+
+export async function supersedeToolCallingV2AppointmentBookingIntent({
+  intentEventId = '',
+  intentHash = '',
+  clientRequestId = '',
+  appointmentId = '',
+  reason = 'appointment_canonical_identity_changed',
+  database = db
+} = {}) {
+  const cleanIntentEventId = String(intentEventId || '').trim()
+  const cleanIntentHash = String(intentHash || '').trim()
+  const cleanClientRequestId = String(clientRequestId || '').trim()
+  const cleanAppointmentId = String(appointmentId || '').trim()
+  const cleanReason = String(reason || 'appointment_canonical_identity_changed')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240)
+  if (
+    !cleanIntentEventId ||
+    !/^[a-f0-9]{64}$/.test(cleanIntentHash) ||
+    !cleanClientRequestId
+  ) {
+    throw Object.assign(
+      new Error('Falta la identidad de la intención que se quiere superseder.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_identity_missing',
+        statusCode: 409
+      }
+    )
+  }
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const row = await database.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [cleanIntentEventId]
+  )
+  const intent = readVerifiedTerminalBookingIntentRow(row)
+  if (
+    !intent ||
+    intent.intentHash !== cleanIntentHash ||
+    intent.detail.clientRequestId !== cleanClientRequestId
+  ) {
+    throw Object.assign(
+      new Error('La intención que se quiere superseder no coincide con la cita.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT) {
+    return {
+      superseded: true,
+      replayed: true,
+      intentEventId: cleanIntentEventId,
+      appointmentId: intent.appointmentId,
+      reason: intent.detail.supersededReason || cleanReason
+    }
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT) {
+    throw Object.assign(
+      new Error('Una terminal ya materializada no puede supersederse retroactivamente.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_after_materialization',
+        statusCode: 409
+      }
+    )
+  }
+  if (![
+    VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+    VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT
+  ].includes(String(row.event_type || ''))) {
+    throw Object.assign(
+      new Error('La intención ya no está disponible para supersederse.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_unavailable',
+        statusCode: 409
+      }
+    )
+  }
+  const request = await database.get(
+    `SELECT status, appointment_id
+     FROM appointment_creation_requests WHERE client_request_id = ?${rowLock}`,
+    [cleanClientRequestId]
+  )
+  const canonicalAppointmentId =
+    cleanAppointmentId ||
+    String(request?.appointment_id || '').trim() ||
+    intent.appointmentId ||
+    null
+  if (
+    cleanAppointmentId &&
+    String(request?.appointment_id || '').trim() &&
+    cleanAppointmentId !== String(request.appointment_id)
+  ) {
+    throw Object.assign(
+      new Error('La cita canónica no coincide con la solicitud idempotente.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_appointment_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  const supersededAt = new Date().toISOString()
+  const next = {
+    ...intent.detail,
+    status: 'superseded',
+    appointmentId: canonicalAppointmentId,
+    appointmentRequestStatus: String(request?.status || '').trim() || null,
+    supersededReason: cleanReason,
+    supersededAt,
+    updatedAt: supersededAt
+  }
+  const updated = await database.run(
+    `UPDATE conversational_agent_events
+     SET event_type = ?, detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT,
+      JSON.stringify(next),
+      cleanIntentEventId,
+      row.event_type,
+      row.detail_json
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) {
+    throw Object.assign(
+      new Error('La intención cambió mientras se supersedía.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_conflict',
+        statusCode: 409
+      }
+    )
+  }
+  return {
+    superseded: true,
+    replayed: false,
+    intentEventId: cleanIntentEventId,
+    appointmentId: canonicalAppointmentId,
+    reason: cleanReason
+  }
+}
+
+function verifiedTerminalHandoffIdentity({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  binding = {},
+  sourceEventId = '',
+  terminalSourceMessageId = '',
+  expectedTerminal = {}
+} = {}) {
+  const clean = {
+    contactId: String(contactId || '').trim(),
+    agentId: String(agentId || '').trim(),
+    channel: normalizeConversationStateChannel(channel || 'whatsapp'),
+    stateId: String(binding?.stateId || '').trim(),
+    activationCycleId: String(binding?.activationCycleId || '').trim(),
+    conversationScopeId: String(binding?.conversationScopeId || '').trim(),
+    sourceEventId: String(sourceEventId || '').trim(),
+    terminalSourceMessageId: String(terminalSourceMessageId || '').trim(),
+    status: String(expectedTerminal?.status || '').trim(),
+    signal: String(expectedTerminal?.signal || '').trim()
+  }
+  if (
+    !clean.contactId ||
+    !clean.agentId ||
+    !clean.stateId ||
+    !clean.activationCycleId ||
+    !clean.conversationScopeId ||
+    !clean.sourceEventId ||
+    !clean.terminalSourceMessageId ||
+    clean.status !== 'completed' ||
+    !clean.signal ||
+    conversationGoalScopeId(clean.stateId, clean.activationCycleId) !==
+      clean.conversationScopeId
+  ) return null
+  const identityHash = createHash('sha256')
+    .update([
+      clean.contactId,
+      clean.agentId,
+      clean.channel,
+      clean.stateId,
+      clean.activationCycleId,
+      clean.conversationScopeId,
+      clean.sourceEventId,
+      clean.terminalSourceMessageId,
+      clean.status,
+      clean.signal
+    ].join('\u0000'))
+    .digest('hex')
+  return {
+    ...clean,
+    identityHash,
+    pendingEventId: `cae_terminal_pending_${identityHash.slice(0, 44)}`
+  }
+}
+
+function normalizeVerifiedTerminalHandoffFacts(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {}
+  const actions = (Array.isArray(source.actions) ? source.actions : [])
+    .slice(0, 12)
+    .map((action) => ({
+      tool: String(action?.tool || '').trim().toLowerCase().slice(0, 120),
+      status: String(action?.status || '').trim().toLowerCase().slice(0, 80),
+      code: String(action?.code || '').trim().toLowerCase().slice(0, 120) || null,
+      ok: action?.ok === true,
+      actionCompleted: action?.actionCompleted === true,
+      terminal: action?.terminal === true,
+      needsData: action?.needsData === true
+    }))
+    .filter((action) => action.tool)
+  const appointmentReads = (Array.isArray(source.appointmentReads)
+    ? source.appointmentReads
+    : [])
+    .slice(0, 12)
+    .map((action) => ({
+      tool: String(action?.tool || '').trim().toLowerCase().slice(0, 120),
+      status: String(action?.status || '').trim().toLowerCase().slice(0, 80),
+      code: String(action?.code || '').trim().toLowerCase().slice(0, 120) || null,
+      found: action?.found === true,
+      total: Number.isFinite(Number(action?.total))
+        ? Math.max(0, Math.min(1_000_000, Math.trunc(Number(action.total))))
+        : null,
+      returned: Number.isFinite(Number(action?.returned))
+        ? Math.max(0, Math.min(1_000_000, Math.trunc(Number(action.returned))))
+        : null,
+      availabilityVerificationRequired:
+        action?.availabilityVerificationRequired === true
+    }))
+    .filter((action) => action.tool)
+  return {
+    phase: 'after_main_agent_tools',
+    actions,
+    appointmentReads
+  }
+}
+
+function readVerifiedTerminalHandoffPendingRow(row = {}) {
+  const allowedEventTypes = new Set([
+    VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+    VERIFIED_TERMINAL_HANDOFF_RESOLVED_EVENT,
+    VERIFIED_TERMINAL_HANDOFF_NO_MATCH_EVENT,
+    VERIFIED_TERMINAL_HANDOFF_SUPERSEDED_EVENT
+  ])
+  const detail = parseJsonField(row?.detail_json, null)
+  if (
+    !row?.id ||
+    !allowedEventTypes.has(String(row.event_type || '')) ||
+    !detail ||
+    Number(detail.schemaVersion) !== VERIFIED_TERMINAL_HANDOFF_PENDING_SCHEMA_VERSION
+  ) return null
+  const identity = verifiedTerminalHandoffIdentity({
+    contactId: row.contact_id,
+    agentId: row.agent_id,
+    channel: detail.channel,
+    binding: {
+      stateId: detail.stateId,
+      activationCycleId: detail.activationCycleId,
+      conversationScopeId: detail.conversationScopeId
+    },
+    sourceEventId: detail.sourceEventId,
+    terminalSourceMessageId: detail.terminalSourceMessageId,
+    expectedTerminal: detail.expectedTerminal
+  })
+  const actionScopedContactData = readVerifiedPaymentActionScopedContactData(detail)
+  const terminalAction = detail.terminalAction &&
+    typeof detail.terminalAction === 'object' &&
+    !Array.isArray(detail.terminalAction)
+    ? {
+        tool: String(detail.terminalAction.tool || '').trim(),
+        appointmentId: String(detail.terminalAction.appointmentId || '').trim()
+      }
+    : null
+  const trustedRuntimeFacts = normalizeVerifiedTerminalHandoffFacts(
+    detail.trustedRuntimeFacts
+  )
+  const bookingIntentEventId =
+    String(detail.bookingIntentEventId || '').trim() || null
+  const bookingIntentHash =
+    String(detail.bookingIntentHash || '').trim() || null
+  const materializationSource =
+    String(detail.materializationSource || 'same_turn').trim() === 'recovery'
+      ? 'recovery'
+      : 'same_turn'
+  const terminalSummary = detail.terminalSummary &&
+    typeof detail.terminalSummary === 'object' &&
+    !Array.isArray(detail.terminalSummary)
+    ? {
+        title: String(detail.terminalSummary.title || '').trim() || null,
+        startTime: String(detail.terminalSummary.startTime || '').trim() || null,
+        endTime: String(detail.terminalSummary.endTime || '').trim() || null,
+        calendarId: String(detail.terminalSummary.calendarId || '').trim() || null
+      }
+    : {}
+  if (
+    !identity ||
+    identity.pendingEventId !== String(row.id) ||
+    identity.identityHash !== String(detail.identityHash || '') ||
+    !actionScopedContactData ||
+    terminalAction?.tool !== 'book_appointment' ||
+    !terminalAction.appointmentId ||
+    !trustedRuntimeFacts.actions.some((action) => (
+      action.tool === terminalAction.tool &&
+      action.status === 'ok' &&
+      action.ok &&
+      action.actionCompleted &&
+      action.terminal
+    )) ||
+    !String(detail.policyConfigRevision || '').trim() ||
+    !String(detail.policyFingerprint || '').trim() ||
+    !Number.isFinite(Date.parse(String(detail.cutoffIso || ''))) ||
+    Boolean(bookingIntentEventId) !== Boolean(bookingIntentHash) ||
+    (bookingIntentHash && !/^[a-f0-9]{64}$/.test(bookingIntentHash))
+  ) return null
+  return {
+    row,
+    detail,
+    identity,
+    actionScopedContactData,
+    terminalAction,
+    trustedRuntimeFacts,
+    bookingIntentEventId,
+    bookingIntentHash,
+    materializationSource,
+    terminalSummary
+  }
+}
+
+async function assertVerifiedTerminalHandoffSourceEvent(
+  transaction,
+  pending
+) {
+  const rowLock = process.env.DATABASE_URL ? ' FOR SHARE' : ''
+  const source = await transaction.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [pending.identity.sourceEventId]
+  )
+  const detail = parseJsonField(source?.detail_json, {})
+  const binding = detail?.terminalHandoffBinding
+  if (
+    source?.event_type !== 'appointment_booked' ||
+    String(source?.contact_id || '') !== pending.identity.contactId ||
+    String(source?.agent_id || '') !== pending.identity.agentId ||
+    String(detail.appointmentId || '') !== pending.terminalAction.appointmentId ||
+    String(detail.terminalSourceMessageId || '') !==
+      pending.identity.terminalSourceMessageId ||
+    String(binding?.stateId || '') !== pending.identity.stateId ||
+    String(binding?.activationCycleId || '') !== pending.identity.activationCycleId ||
+    String(binding?.conversationScopeId || '') !== pending.identity.conversationScopeId ||
+    (
+      pending.bookingIntentEventId &&
+      (
+        String(detail.bookingIntentEventId || '') !==
+          pending.bookingIntentEventId ||
+        String(detail.bookingIntentHash || '') !== pending.bookingIntentHash
+      )
+    )
+  ) {
+    throw Object.assign(
+      new Error('El ledger de handoff ya no conserva el evento terminal que lo originó.'),
+      { code: 'verified_terminal_handoff_source_event_mismatch', statusCode: 409 }
+    )
+  }
+  return source
+}
+
+async function markVerifiedTerminalBookingIntentMaterialized({
+  transaction,
+  bookingIntent,
+  sourceEventId,
+  pendingEventId
+} = {}) {
+  if (!bookingIntent?.intentEventId) return null
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const row = await transaction.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [bookingIntent.intentEventId]
+  )
+  const current = readVerifiedTerminalBookingIntentRow(row)
+  if (
+    !current ||
+    current.intentHash !== bookingIntent.intentHash ||
+    current.appointmentId !== bookingIntent.appointmentId
+  ) {
+    throw Object.assign(
+      new Error('La intención pre-terminal cambió antes de materializar el handoff.'),
+      {
+        code: 'verified_terminal_booking_intent_materialization_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT) {
+    if (
+      String(current.detail.sourceEventId || '') !== String(sourceEventId || '') ||
+      String(current.detail.pendingEventId || '') !== String(pendingEventId || '')
+    ) {
+      throw Object.assign(
+        new Error('La intención pre-terminal ya fue materializada por otro ledger.'),
+        {
+          code: 'verified_terminal_booking_intent_materialization_conflict',
+          statusCode: 409
+        }
+      )
+    }
+    return current
+  }
+  if (row.event_type !== VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT) {
+    throw Object.assign(
+      new Error('La cita todavía no tiene un commit atómico recuperable.'),
+      {
+        code: 'verified_terminal_booking_intent_not_committed',
+        statusCode: 409
+      }
+    )
+  }
+  const materializedAt = new Date().toISOString()
+  const next = {
+    ...current.detail,
+    status: 'terminal_materialized',
+    sourceEventId: String(sourceEventId || '').trim(),
+    pendingEventId: String(pendingEventId || '').trim(),
+    terminalMaterializedAt: materializedAt,
+    updatedAt: materializedAt
+  }
+  const updated = await transaction.run(
+    `UPDATE conversational_agent_events
+     SET event_type = ?, detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT,
+      JSON.stringify(next),
+      current.intentEventId,
+      VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+      row.detail_json
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) {
+    throw Object.assign(
+      new Error('La intención pre-terminal cambió durante su materialización.'),
+      {
+        code: 'verified_terminal_booking_intent_materialization_conflict',
+        statusCode: 409
+      }
+    )
+  }
+  return readVerifiedTerminalBookingIntentRow({
+    ...row,
+    event_type: VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT,
+    detail_json: JSON.stringify(next)
+  })
+}
+
+/**
+ * Sella una obligación post-terminal dentro de la MISMA transacción que
+ * `appointment_booked` y el estado `completed`. El caller debe pasar el `tx`
+ * activo; así una caída jamás puede dejar la cita cerrada sin una obligación
+ * durable que boot pueda reclamar.
+ */
+export async function sealToolCallingV2VerifiedTerminalHandoffPending({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  binding = {},
+  sourceEventId = '',
+  terminalSourceMessageId = '',
+  bookingIntentEventId = '',
+  bookingIntentHash = '',
+  materializationSource = 'same_turn',
+  terminalSummary = {},
+  expectedTerminal = {
+    status: 'completed',
+    signal: 'appointment_booked'
+  },
+  terminalAction = {},
+  actionScopedContactData = {},
+  trustedRuntimeFacts = null,
+  database = db
+} = {}) {
+  const cleanMaterializationSource =
+    String(materializationSource || 'same_turn').trim() === 'recovery'
+      ? 'recovery'
+      : 'same_turn'
+  const cleanTerminalSummary = {
+    title: String(terminalSummary?.title || '').replace(/\s+/g, ' ').trim().slice(0, 240) || null,
+    startTime: String(terminalSummary?.startTime || terminalSummary?.start_time || '').trim() || null,
+    endTime: String(terminalSummary?.endTime || terminalSummary?.end_time || '').trim() || null,
+    calendarId: String(terminalSummary?.calendarId || terminalSummary?.calendar_id || '').trim() || null
+  }
+  const cleanBookingIntentEventId = String(bookingIntentEventId || '').trim()
+  const cleanBookingIntentHash = String(bookingIntentHash || '').trim()
+  let bookingIntent = null
+  if (cleanBookingIntentEventId || cleanBookingIntentHash) {
+    if (
+      !cleanBookingIntentEventId ||
+      !/^[a-f0-9]{64}$/.test(cleanBookingIntentHash)
+    ) {
+      throw Object.assign(
+        new Error('La intención pre-terminal de la cita está incompleta.'),
+        {
+          code: 'verified_terminal_booking_intent_identity_missing',
+          statusCode: 409
+        }
+      )
+    }
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const intentRow = await database.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [cleanBookingIntentEventId]
+    )
+    bookingIntent = readVerifiedTerminalBookingIntentRow(intentRow)
+    if (
+      !bookingIntent ||
+      ![
+        VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+        VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT
+      ].includes(String(intentRow?.event_type || '')) ||
+      bookingIntent.intentHash !== cleanBookingIntentHash
+    ) {
+      throw Object.assign(
+        new Error('La cita no conserva una intención pre-terminal comprometida.'),
+        {
+          code: 'verified_terminal_booking_intent_not_committed',
+          statusCode: 409
+        }
+      )
+    }
+  }
+  const identity = verifiedTerminalHandoffIdentity({
+    contactId,
+    agentId,
+    channel,
+    binding,
+    sourceEventId,
+    terminalSourceMessageId,
+    expectedTerminal
+  })
+  const cleanTerminalAction = {
+    tool: String(terminalAction?.tool || '').trim(),
+    appointmentId: String(terminalAction?.appointmentId || '').trim()
+  }
+  const sealedActionScoped = sanitizeVerifiedPaymentActionScopedContactData(
+    actionScopedContactData
+  )
+  if (
+    !identity ||
+    identity.signal !== 'appointment_booked' ||
+    cleanTerminalAction.tool !== 'book_appointment' ||
+    !cleanTerminalAction.appointmentId ||
+    !sealedActionScoped
+  ) {
+    throw Object.assign(
+      new Error('No se puede sellar el handoff: falta la identidad exacta de la cita terminal.'),
+      { code: 'verified_terminal_handoff_pending_contract_invalid', statusCode: 409 }
+    )
+  }
+  if (
+    bookingIntent &&
+    (
+      bookingIntent.detail.contactId !== identity.contactId ||
+      bookingIntent.detail.agentId !== identity.agentId ||
+      bookingIntent.detail.channel !== identity.channel ||
+      bookingIntent.detail.stateId !== identity.stateId ||
+      bookingIntent.detail.activationCycleId !== identity.activationCycleId ||
+      bookingIntent.detail.conversationScopeId !== identity.conversationScopeId ||
+      bookingIntent.detail.terminalSourceMessageId !==
+        identity.terminalSourceMessageId ||
+      bookingIntent.appointmentId !== cleanTerminalAction.appointmentId ||
+      JSON.stringify(bookingIntent.actionScopedContactData) !==
+        JSON.stringify(sealedActionScoped)
+    )
+  ) {
+    throw Object.assign(
+      new Error('La terminal no coincide con la intención sellada antes de crear la cita.'),
+      {
+        code: 'verified_terminal_booking_intent_terminal_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const existing = await database.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [identity.pendingEventId]
+  )
+  if (existing) {
+    const normalized = readVerifiedTerminalHandoffPendingRow(existing)
+    if (!normalized || normalized.identity.identityHash !== identity.identityHash) {
+      throw Object.assign(
+        new Error('La identidad durable del handoff terminal pertenece a otra operación.'),
+        { code: 'verified_terminal_handoff_pending_identity_conflict', statusCode: 409 }
+      )
+    }
+    if (bookingIntent) {
+      await markVerifiedTerminalBookingIntentMaterialized({
+        transaction: database,
+        bookingIntent,
+        sourceEventId: identity.sourceEventId,
+        pendingEventId: identity.pendingEventId
+      })
+    }
+    return {
+      pending: existing.event_type === VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+      pendingEventId: identity.pendingEventId,
+      replayed: true,
+      status: normalized.detail.status,
+      eventType: existing.event_type
+    }
+  }
+
+  const state = await database.get(
+    `SELECT id, contact_id, agent_id, channel, status, signal,
+            activation_cycle_id, activation_cycle_started_at,
+            activation_cycle_started_message_id
+     FROM conversational_agent_state
+     WHERE id = ? AND contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+     LIMIT 1`,
+    [
+      identity.stateId,
+      identity.contactId,
+      identity.agentId,
+      identity.channel
+    ]
+  )
+  const activationStartedMs = parseTimestampMsUtc(state?.activation_cycle_started_at)
+  if (
+    !state?.id ||
+    String(state.activation_cycle_id || '') !== identity.activationCycleId ||
+    conversationGoalScopeId(state.id, state.activation_cycle_id) !==
+      identity.conversationScopeId ||
+    String(state.status || '') !== identity.status ||
+    String(state.signal || '') !== identity.signal ||
+    !Number.isFinite(activationStartedMs)
+  ) {
+    throw Object.assign(
+      new Error('La cita terminal cambió antes de sellar su handoff obligatorio.'),
+      { code: 'verified_terminal_handoff_pending_state_mismatch', statusCode: 409 }
+    )
+  }
+  if (
+    bookingIntent &&
+    (
+      String(bookingIntent.detail.cutoffIso || '') !==
+        new Date(activationStartedMs).toISOString() ||
+      String(bookingIntent.detail.activationCycleStartedMessageId || '') !==
+        String(state.activation_cycle_started_message_id || '')
+    )
+  ) {
+    throw Object.assign(
+      new Error('El ciclo cambió desde que se preparó la cita terminal.'),
+      {
+        code: 'verified_terminal_booking_intent_cycle_changed',
+        statusCode: 409
+      }
+    )
+  }
+
+  await database.get(
+    `SELECT id FROM conversational_agents WHERE id = ?${
+      process.env.DATABASE_URL ? ' FOR SHARE' : ''
+    }`,
+    [identity.agentId]
+  )
+  const policy = bookingIntent
+    ? {
+        enabled: true,
+        criteriaConfigured: true,
+        configRevision: bookingIntent.detail.policyConfigRevision,
+        policyFingerprint: bookingIntent.detail.policyFingerprint
+      }
+    : await loadConversationalVerifiedPaymentHandoffPolicy({
+        agentId: identity.agentId
+      })
+  if (!bookingIntent) {
+    if (policy?.enabled !== true || policy?.criteriaConfigured !== true) {
+      return {
+        pending: false,
+        pendingEventId: null,
+        reason: policy?.enabled === true
+          ? 'verified_terminal_handoff_criteria_not_configured'
+          : 'verified_terminal_handoff_disabled'
+      }
+    }
+    if (
+      !String(policy.configRevision || '').trim() ||
+      !String(policy.policyFingerprint || '').trim()
+    ) {
+      throw Object.assign(
+        new Error('La política obligatoria no devolvió una revisión sellable.'),
+        { code: 'verified_terminal_handoff_policy_identity_missing', statusCode: 409 }
+      )
+    }
+  }
+
+  const sourcePending = {
+    identity,
+    terminalAction: cleanTerminalAction,
+    bookingIntentEventId: bookingIntent?.intentEventId || null,
+    bookingIntentHash: bookingIntent?.intentHash || null
+  }
+  await assertVerifiedTerminalHandoffSourceEvent(database, sourcePending)
+  if (bookingIntent) {
+    await assertVerifiedTerminalBookingSelection(database, bookingIntent)
+    await assertVerifiedTerminalBookingAppointment(database, bookingIntent)
+  }
+
+  const actionScopedContactDataHash = createHash('sha256')
+    .update('conversational-action-scoped-contact-data:v1\u0000')
+    .update(JSON.stringify(sealedActionScoped))
+    .digest('hex')
+  const facts = normalizeVerifiedTerminalHandoffFacts(
+    trustedRuntimeFacts || {
+      phase: 'after_main_agent_tools',
+      actions: [{
+        tool: cleanTerminalAction.tool,
+        status: 'ok',
+        code: null,
+        ok: true,
+        actionCompleted: true,
+        terminal: true,
+        needsData: false
+      }],
+      appointmentReads: []
+    }
+  )
+  const nowIso = new Date().toISOString()
+  const detail = {
+    schemaVersion: VERIFIED_TERMINAL_HANDOFF_PENDING_SCHEMA_VERSION,
+    status: 'pending',
+    identityHash: identity.identityHash,
+    agentId: identity.agentId,
+    channel: identity.channel,
+    stateId: identity.stateId,
+    activationCycleId: identity.activationCycleId,
+    activationCycleStartedMessageId: bookingIntent
+      ? bookingIntent.detail.activationCycleStartedMessageId
+      : String(state.activation_cycle_started_message_id || '').trim() || null,
+    conversationScopeId: identity.conversationScopeId,
+    cutoffIso: bookingIntent
+      ? bookingIntent.detail.cutoffIso
+      : new Date(activationStartedMs).toISOString(),
+    sourceEventId: identity.sourceEventId,
+    terminalSourceMessageId: identity.terminalSourceMessageId,
+    bookingIntentEventId: bookingIntent?.intentEventId || null,
+    bookingIntentHash: bookingIntent?.intentHash || null,
+    materializationSource: cleanMaterializationSource,
+    terminalSummary: cleanTerminalSummary,
+    expectedTerminal: {
+      status: identity.status,
+      signal: identity.signal
+    },
+    terminalAction: cleanTerminalAction,
+    policyConfigRevision: String(policy.configRevision),
+    policyFingerprint: String(policy.policyFingerprint),
+    actionScopedContactDataVersion: 1,
+    actionScopedContactData: sealedActionScoped,
+    actionScopedContactDataHash,
+    trustedRuntimeFacts: facts,
+    attempts: 0,
+    claimToken: null,
+    leaseUntilAt: null,
+    decision: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    lastError: null
+  }
+  const inserted = await database.run(
+    `INSERT INTO conversational_agent_events
+      (id, contact_id, agent_id, event_type, detail_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+    [
+      identity.pendingEventId,
+      identity.contactId,
+      identity.agentId,
+      VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+      JSON.stringify(detail)
+    ]
+  )
+  if (databaseChangeCount(inserted) !== 1) {
+    const raced = await database.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [identity.pendingEventId]
+    )
+    const normalized = readVerifiedTerminalHandoffPendingRow(raced)
+    if (!normalized || normalized.identity.identityHash !== identity.identityHash) {
+      throw Object.assign(
+        new Error('Otro proceso selló una obligación terminal distinta.'),
+        { code: 'verified_terminal_handoff_pending_insert_conflict', statusCode: 409 }
+      )
+    }
+    if (bookingIntent) {
+      await markVerifiedTerminalBookingIntentMaterialized({
+        transaction: database,
+        bookingIntent,
+        sourceEventId: identity.sourceEventId,
+        pendingEventId: identity.pendingEventId
+      })
+    }
+    return {
+      pending: raced.event_type === VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+      pendingEventId: identity.pendingEventId,
+      replayed: true,
+      status: normalized.detail.status,
+      eventType: raced.event_type
+    }
+  }
+  if (bookingIntent) {
+    await markVerifiedTerminalBookingIntentMaterialized({
+      transaction: database,
+      bookingIntent,
+      sourceEventId: identity.sourceEventId,
+      pendingEventId: identity.pendingEventId
+    })
+  }
+  return {
+    pending: true,
+    pendingEventId: identity.pendingEventId,
+    replayed: false,
+    status: 'pending',
+    eventType: VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT
+  }
+}
+
+async function supersedeVerifiedTerminalBookingIntent({
+  transaction,
+  intent,
+  reason
+} = {}) {
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const row = await transaction.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [intent?.intentEventId]
+  )
+  const current = readVerifiedTerminalBookingIntentRow(row)
+  if (!current || current.intentHash !== intent?.intentHash) {
+    throw Object.assign(
+      new Error('La intención comprometida cambió antes de supersederla.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_mismatch',
+        statusCode: 409
+      }
+    )
+  }
+  if (row.event_type === VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT) {
+    return { superseded: true, replayed: true, intent: current }
+  }
+  if (row.event_type !== VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT) {
+    throw Object.assign(
+      new Error('La intención ya no puede supersederse desde este estado.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_conflict',
+        statusCode: 409
+      }
+    )
+  }
+  const supersededAt = new Date().toISOString()
+  const next = {
+    ...current.detail,
+    status: 'superseded',
+    supersededReason: String(reason || 'conversation_changed')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 240),
+    supersededAt,
+    updatedAt: supersededAt
+  }
+  const updated = await transaction.run(
+    `UPDATE conversational_agent_events
+     SET event_type = ?, detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT,
+      JSON.stringify(next),
+      current.intentEventId,
+      VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+      row.detail_json
+    ]
+  )
+  if (databaseChangeCount(updated) !== 1) {
+    throw Object.assign(
+      new Error('La intención cambió mientras se supersedía.'),
+      {
+        code: 'verified_terminal_booking_intent_supersede_conflict',
+        statusCode: 409
+      }
+    )
+  }
+  return {
+    superseded: true,
+    replayed: false,
+    intent: readVerifiedTerminalBookingIntentRow({
+      ...row,
+      event_type: VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT,
+      detail_json: JSON.stringify(next)
+    })
+  }
+}
+
+/**
+ * Materializa una cita cuyo controller ya confirmó atómicamente el intent.
+ * No necesita otro inbound: reconstruye el mismo evento terminal, con el
+ * boundary original, y deja el pending ordinario listo para adjudicación.
+ */
+export async function recoverToolCallingV2AppointmentBookingIntent({
+  intentEventId = ''
+} = {}) {
+  const cleanIntentEventId = String(intentEventId || '').trim()
+  if (!cleanIntentEventId) {
+    throw Object.assign(
+      new Error('Falta la intención comprometida de la cita.'),
+      {
+        code: 'verified_terminal_booking_intent_id_missing',
+        statusCode: 400
+      }
+    )
+  }
+
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await tx.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [cleanIntentEventId]
+    )
+    if (!row) return { completed: false, missing: true, intentEventId: cleanIntentEventId }
+    const intent = readVerifiedTerminalBookingIntentRow(row)
+    if (!intent) {
+      throw Object.assign(
+        new Error('La intención comprometida de la cita está corrupta.'),
+        {
+          code: 'verified_terminal_booking_intent_corrupt',
+          statusCode: 409
+        }
+      )
+    }
+    if (row.event_type === VERIFIED_TERMINAL_BOOKING_INTENT_EVENT) {
+      return {
+        completed: false,
+        waitingForAppointment: true,
+        intentEventId: cleanIntentEventId
+      }
+    }
+    if (row.event_type === VERIFIED_TERMINAL_BOOKING_ABORTED_EVENT) {
+      return {
+        completed: true,
+        aborted: true,
+        replayed: true,
+        intentEventId: cleanIntentEventId
+      }
+    }
+    if (row.event_type === VERIFIED_TERMINAL_BOOKING_SUPERSEDED_EVENT) {
+      return {
+        completed: true,
+        superseded: true,
+        replayed: true,
+        intentEventId: cleanIntentEventId,
+        appointmentId: intent.appointmentId
+      }
+    }
+    if (row.event_type === VERIFIED_TERMINAL_BOOKING_MATERIALIZED_EVENT) {
+      return {
+        completed: true,
+        replayed: true,
+        intentEventId: cleanIntentEventId,
+        pendingEventId: String(intent.detail.pendingEventId || '').trim() || null,
+        appointmentId: intent.appointmentId
+      }
+    }
+    if (row.event_type !== VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT) {
+      throw Object.assign(
+        new Error('La intención de cita no está en un estado recuperable.'),
+        {
+          code: 'verified_terminal_booking_intent_status_invalid',
+          statusCode: 409
+        }
+      )
+    }
+
+    await assertVerifiedTerminalBookingSelection(tx, intent)
+    const { appointment } = await assertVerifiedTerminalBookingAppointment(tx, intent)
+    const state = await tx.get(
+      `SELECT id, contact_id, agent_id, channel, status, signal, updated_by,
+              activation_cycle_id, activation_cycle_started_at,
+              activation_cycle_started_message_id
+       FROM conversational_agent_state
+       WHERE id = ? AND contact_id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}
+       LIMIT 1`,
+      [
+        intent.detail.stateId,
+        intent.detail.contactId,
+        intent.detail.agentId,
+        intent.detail.channel
+      ]
+    )
+    const stateActivationStartedMs = parseTimestampMsUtc(
+      state?.activation_cycle_started_at
+    )
+    const sameCycle = Boolean(
+      state?.id &&
+      String(state.activation_cycle_id || '') ===
+        intent.detail.activationCycleId &&
+      conversationGoalScopeId(state.id, state.activation_cycle_id) ===
+        intent.detail.conversationScopeId &&
+      Number.isFinite(stateActivationStartedMs) &&
+      new Date(stateActivationStartedMs).toISOString() ===
+        intent.detail.cutoffIso
+    )
+    const alreadyTerminal = Boolean(
+      sameCycle &&
+      state.status === 'completed' &&
+      state.signal === 'appointment_booked'
+    )
+    if (
+      !sameCycle ||
+      (
+        !alreadyTerminal &&
+        (state.status !== 'active' || state.signal)
+      )
+    ) {
+      const superseded = await supersedeVerifiedTerminalBookingIntent({
+        transaction: tx,
+        intent,
+        reason: !sameCycle
+          ? 'activation_cycle_changed_after_appointment_commit'
+          : (
+              state?.status === 'human' &&
+              state?.signal === 'ready_for_human'
+                ? 'human_takeover_after_appointment_commit'
+                : 'conversation_state_changed_after_appointment_commit'
+            )
+      })
+      return {
+        completed: true,
+        superseded: true,
+        replayed: superseded.replayed === true,
+        intentEventId: intent.intentEventId,
+        appointmentId: intent.appointmentId,
+        reason: superseded.intent?.detail?.supersededReason || null
+      }
+    }
+
+    const digest = createHash('sha256')
+      .update([
+        intent.detail.contactId,
+        intent.detail.agentId,
+        intent.appointmentId
+      ].join('\u0000'))
+      .digest('hex')
+      .slice(0, 48)
+    const sourceEventId = `cae_appointment_booked_${digest}`
+    const signalEventId = `cae_appointment_signal_${digest}`
+    const technicalSummary = `${
+      String(appointment.title || '').trim() || 'Cita'
+    } · ${String(appointment.start_time || intent.detail.startTime)}`
+
+    if (!alreadyTerminal) {
+      const authorityToken = `conv_booking_recovery_${intent.intentHash.slice(0, 40)}`
+      const claimed = await tx.run(
+        `UPDATE conversational_agent_state
+         SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND contact_id = ? AND agent_id = ?
+           AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+           AND activation_cycle_id = ?
+           AND status = 'active' AND signal IS NULL`,
+        [
+          authorityToken,
+          intent.detail.stateId,
+          intent.detail.contactId,
+          intent.detail.agentId,
+          intent.detail.channel,
+          intent.detail.activationCycleId
+        ]
+      )
+      if (databaseChangeCount(claimed) !== 1) {
+        throw Object.assign(
+          new Error('Otro proceso cambió la conversación al recuperar la cita.'),
+          {
+            code: 'verified_terminal_booking_intent_authority_lost',
+            statusCode: 409
+          }
+        )
+      }
+      await setConversationSignal(
+        intent.detail.contactId,
+        'appointment_booked',
+        {
+          reason: 'Cita agendada por el agente',
+          actionSummarySource: technicalSummary,
+          originalSummary: technicalSummary,
+          status: 'completed',
+          agentId: intent.detail.agentId,
+          channel: intent.detail.channel,
+          eventId: signalEventId,
+          strictEvent: true,
+          expectedUpdatedBy: authorityToken,
+          expectedStatus: 'active',
+          expectedSignal: null
+        }
+      )
+    }
+
+    await recordConversationalAgentEvent({
+      eventId: sourceEventId,
+      contactId: intent.detail.contactId,
+      eventType: 'appointment_booked',
+      detail: {
+        agentId: intent.detail.agentId,
+        appointmentId: intent.appointmentId,
+        startTime: appointment.start_time || intent.detail.startTime,
+        calendarId: appointment.calendar_id || intent.detail.calendarId,
+        terminalSourceMessageId: intent.detail.terminalSourceMessageId,
+        bookingIntentEventId: intent.intentEventId,
+        bookingIntentHash: intent.intentHash,
+        terminalHandoffBinding: {
+          stateId: intent.detail.stateId,
+          activationCycleId: intent.detail.activationCycleId,
+          conversationScopeId: intent.detail.conversationScopeId
+        }
+      },
+      throwOnError: true
+    })
+
+    const pending = await sealToolCallingV2VerifiedTerminalHandoffPending({
+      contactId: intent.detail.contactId,
+      agentId: intent.detail.agentId,
+      channel: intent.detail.channel,
+      binding: {
+        stateId: intent.detail.stateId,
+        activationCycleId: intent.detail.activationCycleId,
+        conversationScopeId: intent.detail.conversationScopeId
+      },
+      sourceEventId,
+      terminalSourceMessageId: intent.detail.terminalSourceMessageId,
+      bookingIntentEventId: intent.intentEventId,
+      bookingIntentHash: intent.intentHash,
+      materializationSource: 'recovery',
+      terminalSummary: {
+        title: appointment.title || 'Cita',
+        startTime: appointment.start_time || intent.detail.startTime,
+        endTime: appointment.end_time || null,
+        calendarId: appointment.calendar_id || intent.detail.calendarId
+      },
+      expectedTerminal: {
+        status: 'completed',
+        signal: 'appointment_booked'
+      },
+      terminalAction: {
+        tool: 'book_appointment',
+        appointmentId: intent.appointmentId
+      },
+      actionScopedContactData: intent.actionScopedContactData,
+      database: tx
+    })
+    return {
+      completed: true,
+      replayed: alreadyTerminal,
+      intentEventId: intent.intentEventId,
+      intentHash: intent.intentHash,
+      pendingEventId: pending?.pendingEventId || null,
+      appointmentId: intent.appointmentId
+    }
+  })
+}
+
+export async function recoverPendingToolCallingV2AppointmentBookingIntents({
+  limit = 100,
+  afterCursor = null
+} = {}, dependencies = {}) {
+  const boundedLimit = Math.max(1, Math.min(10_000, Math.trunc(Number(limit) || 100)))
+  const cursorCreatedAt = String(afterCursor?.createdAt || '').trim()
+  const cursorId = String(afterCursor?.id || '').trim()
+  const hasCursor = Boolean(
+    cursorCreatedAt &&
+    cursorId &&
+    Number.isFinite(Date.parse(cursorCreatedAt))
+  )
+  const createdAtSort = timestampSortExpression('created_at')
+  const cursorSort = timestampSortParameterExpression()
+  const queueRows = await db.all(
+    `SELECT id, event_type, created_at
+     FROM conversational_agent_events
+     WHERE event_type IN (?, ?)
+       ${hasCursor
+         ? `AND (
+              ${createdAtSort} > ${cursorSort} OR
+              (${createdAtSort} = ${cursorSort} AND id > ?)
+            )`
+         : ''}
+     ORDER BY ${createdAtSort} ASC, id ASC
+     LIMIT ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT,
+      VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+      ...(hasCursor ? [cursorCreatedAt, cursorCreatedAt, cursorId] : []),
+      boundedLimit + 1
+    ]
+  )
+  const pageRows = queueRows.slice(0, boundedLimit)
+  const hasMore = queueRows.length > boundedLimit
+  const pendingIntentClientRequestId = databaseDialect === 'postgres'
+    ? "(e.detail_json::jsonb ->> 'clientRequestId')"
+    : "json_extract(e.detail_json, '$.clientRequestId')"
+  const pendingIntentCreatedAtSort = timestampSortExpression('e.created_at')
+  const cleanupCutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const pendingCandidates = await db.all(
+    `SELECT e.id, e.contact_id, e.agent_id, e.event_type,
+            e.detail_json, e.created_at
+     FROM conversational_agent_events e
+     LEFT JOIN appointment_creation_requests r
+       ON r.client_request_id = ${pendingIntentClientRequestId}
+     WHERE e.event_type = ?
+       AND (
+         (
+           r.status = 'failed' AND
+           COALESCE(r.appointment_id, '') = '' AND
+           COALESCE(r.error_retryable, 0) <> 1
+         ) OR (
+           r.client_request_id IS NULL AND
+           ${pendingIntentCreatedAtSort} <= ${timestampSortParameterExpression()}
+         )
+       )
+     ORDER BY ${pendingIntentCreatedAtSort} ASC, e.id ASC
+     LIMIT ?`,
+    [
+      VERIFIED_TERMINAL_BOOKING_INTENT_EVENT,
+      cleanupCutoffIso,
+      boundedLimit
+    ]
+  )
+  let recovered = 0
+  let materialized = 0
+  let processing = 0
+  let aborted = 0
+  let superseded = 0
+  let failed = 0
+  const errors = []
+  for (const row of pageRows) {
+    try {
+      if (row.event_type === VERIFIED_TERMINAL_BOOKING_COMMITTED_EVENT) {
+        const result = await recoverToolCallingV2AppointmentBookingIntent({
+          intentEventId: row.id
+        })
+        if (result.pendingEventId) {
+          materialized += 1
+          const resolved = await resolveToolCallingV2VerifiedTerminalHandoffPending({
+            pendingEventId: result.pendingEventId
+          }, dependencies)
+          if (resolved.completed) recovered += 1
+          else if (resolved.processing) processing += 1
+        } else if (result.superseded) superseded += 1
+        else if (result.completed) recovered += 1
+      } else {
+        const result = await resolveToolCallingV2VerifiedTerminalHandoffPending({
+          pendingEventId: row.id
+        }, dependencies)
+        if (result.completed) recovered += 1
+        else if (result.processing) processing += 1
+      }
+    } catch (error) {
+      failed += 1
+      errors.push({
+        eventId: row.id,
+        code: String(error?.code || '').trim() || null,
+        message: String(error?.message || error || 'unknown').slice(0, 500)
+      })
+    }
+  }
+  for (const row of pendingCandidates) {
+    try {
+      const parsed = readVerifiedTerminalBookingIntentRow(row)
+      if (!parsed) {
+        throw Object.assign(
+          new Error('La intención pendiente fallida está corrupta.'),
+          { code: 'verified_terminal_booking_intent_corrupt' }
+        )
+      }
+      const request = await db.get(
+        `SELECT status, appointment_id, error_retryable
+         FROM appointment_creation_requests WHERE client_request_id = ?`,
+        [parsed.detail.clientRequestId]
+      )
+      const createdAtMs = Date.parse(String(row.created_at || ''))
+      const expiredWithoutRequest = !request &&
+        Number.isFinite(createdAtMs) &&
+        createdAtMs <= Date.now() - 24 * 60 * 60 * 1000
+      const definitivelyFailed = String(request?.status || '') === 'failed' &&
+        !String(request?.appointment_id || '').trim() &&
+        Number(request?.error_retryable || 0) !== 1
+      if (!expiredWithoutRequest && !definitivelyFailed) continue
+      const result = await abortToolCallingV2AppointmentBookingIntent({
+        intentEventId: parsed.intentEventId,
+        intentHash: parsed.intentHash,
+        clientRequestId: parsed.detail.clientRequestId,
+        reason: expiredWithoutRequest
+          ? 'appointment_creation_request_missing_after_24h'
+          : 'appointment_creation_request_failed'
+      })
+      if (result.aborted) aborted += 1
+    } catch (error) {
+      failed += 1
+      errors.push({
+        intentEventId: row.id,
+        code: String(error?.code || '').trim() || null,
+        message: String(error?.message || error || 'unknown').slice(0, 500)
+      })
+    }
+  }
+  const lastRow = pageRows.at(-1) || null
+  return {
+    scanned: pageRows.length,
+    recovered,
+    materialized,
+    processing,
+    aborted,
+    superseded,
+    failed,
+    errors,
+    nextCursor: lastRow
+      ? {
+          createdAt: new Date(parseTimestampMsUtc(lastRow.created_at)).toISOString(),
+          id: String(lastRow.id)
+        }
+      : null,
+    hasMore
+  }
+}
+
+async function claimToolCallingV2VerifiedTerminalHandoffPending({
+  pendingEventId,
+  nowMs = Date.now()
+} = {}) {
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await tx.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [String(pendingEventId || '').trim()]
+    )
+    if (!row) return { claimed: false, missing: true }
+    const pending = readVerifiedTerminalHandoffPendingRow(row)
+    if (!pending) {
+      throw Object.assign(
+        new Error('El ledger pendiente de handoff está corrupto.'),
+        { code: 'verified_terminal_handoff_pending_corrupt', statusCode: 409 }
+      )
+    }
+    if (row.event_type !== VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT) {
+      return {
+        claimed: false,
+        completed: true,
+        pending,
+        result: pending.detail.result || null
+      }
+    }
+    const leaseUntilMs = Date.parse(String(pending.detail.leaseUntilAt || ''))
+    if (
+      pending.detail.status === 'processing' &&
+      Number.isFinite(leaseUntilMs) &&
+      leaseUntilMs > nowMs
+    ) {
+      return { claimed: false, processing: true, pending }
+    }
+    if (!['pending', 'processing', 'failed'].includes(String(pending.detail.status || ''))) {
+      throw Object.assign(
+        new Error('El ledger pendiente tiene un estado no reclamable.'),
+        { code: 'verified_terminal_handoff_pending_status_invalid', statusCode: 409 }
+      )
+    }
+    await assertVerifiedTerminalHandoffSourceEvent(tx, pending)
+    const claimToken = `cvth_${randomUUID()}`
+    const next = {
+      ...pending.detail,
+      status: 'processing',
+      attempts: Math.max(0, Number(pending.detail.attempts) || 0) + 1,
+      claimToken,
+      claimedAt: new Date(nowMs).toISOString(),
+      leaseUntilAt: new Date(
+        nowMs + VERIFIED_TERMINAL_HANDOFF_PENDING_LEASE_MS
+      ).toISOString(),
+      updatedAt: new Date(nowMs).toISOString(),
+      lastError: null
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events
+       SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        JSON.stringify(next),
+        row.id,
+        VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+        row.detail_json
+      ]
+    )
+    if (databaseChangeCount(updated) !== 1) {
+      return { claimed: false, processing: true, reason: 'claim_conflict' }
+    }
+    return {
+      claimed: true,
+      claimToken,
+      pending: readVerifiedTerminalHandoffPendingRow({
+        ...row,
+        detail_json: JSON.stringify(next)
+      })
+    }
+  })
+}
+
+async function checkpointToolCallingV2VerifiedTerminalHandoffDecision({
+  pendingEventId,
+  claimToken,
+  decision
+} = {}) {
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await tx.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [pendingEventId]
+    )
+    const pending = readVerifiedTerminalHandoffPendingRow(row)
+    if (
+      !pending ||
+      row.event_type !== VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT ||
+      pending.detail.status !== 'processing' ||
+      pending.detail.claimToken !== claimToken
+    ) {
+      throw Object.assign(
+        new Error('Otro worker tomó el ledger terminal antes de guardar su decisión.'),
+        { code: 'verified_terminal_handoff_pending_claim_lost', statusCode: 409 }
+      )
+    }
+    const next = {
+      ...pending.detail,
+      decision,
+      decisionAt: new Date().toISOString(),
+      leaseUntilAt: new Date(
+        Date.now() + VERIFIED_TERMINAL_HANDOFF_PENDING_LEASE_MS
+      ).toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events
+       SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        JSON.stringify(next),
+        pendingEventId,
+        VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+        row.detail_json
+      ]
+    )
+    if (databaseChangeCount(updated) !== 1) {
+      throw Object.assign(
+        new Error('La decisión terminal perdió su claim durable.'),
+        { code: 'verified_terminal_handoff_pending_claim_lost', statusCode: 409 }
+      )
+    }
+    return readVerifiedTerminalHandoffPendingRow({
+      ...row,
+      detail_json: JSON.stringify(next)
+    })
+  })
+}
+
+async function releaseToolCallingV2VerifiedTerminalHandoffPending({
+  pendingEventId,
+  claimToken,
+  error
+} = {}) {
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await tx.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [pendingEventId]
+    )
+    const pending = readVerifiedTerminalHandoffPendingRow(row)
+    if (
+      !pending ||
+      row.event_type !== VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT ||
+      pending.detail.status !== 'processing' ||
+      pending.detail.claimToken !== claimToken
+    ) return false
+    const next = {
+      ...pending.detail,
+      status: 'failed',
+      claimToken: null,
+      leaseUntilAt: null,
+      failedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastError: String(error?.code || error?.message || error || 'unknown')
+        .slice(0, 1000)
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events
+       SET detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        JSON.stringify(next),
+        pendingEventId,
+        VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+        row.detail_json
+      ]
+    )
+    return databaseChangeCount(updated) === 1
+  })
+}
+
+async function finalizeToolCallingV2VerifiedTerminalHandoffPending({
+  pendingEventId,
+  claimToken,
+  decision,
+  result,
+  finalEventType,
+  skipPolicyRevalidation = false
+} = {}) {
+  return db.transaction(async (tx) => {
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const row = await tx.get(
+      `SELECT id, contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?${rowLock}`,
+      [pendingEventId]
+    )
+    const pending = readVerifiedTerminalHandoffPendingRow(row)
+    if (
+      !pending ||
+      row.event_type !== VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT ||
+      pending.detail.status !== 'processing' ||
+      pending.detail.claimToken !== claimToken
+    ) {
+      if (
+        pending &&
+        row?.event_type === finalEventType
+      ) return { completed: true, replayed: true, result: pending.detail.result || null }
+      throw Object.assign(
+        new Error('Otro worker tomó el ledger terminal antes de cerrarlo.'),
+        { code: 'verified_terminal_handoff_pending_claim_lost', statusCode: 409 }
+      )
+    }
+    if (decision?.decision !== 'match' && !skipPolicyRevalidation) {
+      const currentPolicy = await verifiedPaymentHandoffPolicyMatchesDecision({
+        decision,
+        agentId: pending.identity.agentId,
+        transaction: tx,
+        lock: true
+      })
+      if (!currentPolicy.matches) {
+        return { completed: false, policyChanged: true }
+      }
+    }
+    const next = {
+      ...pending.detail,
+      status: 'completed',
+      decision,
+      result,
+      claimToken: null,
+      leaseUntilAt: null,
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lastError: null
+    }
+    const updated = await tx.run(
+      `UPDATE conversational_agent_events
+       SET event_type = ?, detail_json = ?
+       WHERE id = ? AND event_type = ? AND detail_json = ?`,
+      [
+        finalEventType,
+        JSON.stringify(next),
+        pendingEventId,
+        VERIFIED_TERMINAL_HANDOFF_PENDING_EVENT,
+        row.detail_json
+      ]
+    )
+    if (databaseChangeCount(updated) !== 1) {
+      throw Object.assign(
+        new Error('El ledger terminal cambió antes de su cierre.'),
+        { code: 'verified_terminal_handoff_pending_claim_lost', statusCode: 409 }
+      )
+    }
+    return { completed: true, replayed: false, result }
+  })
+}
+
+function verifiedTerminalNoMatchIsAudited(decision, policy = {}) {
+  if (decision?.decision !== 'no_match') return false
+  if (policy?.criteriaConfigured !== true) return true
+  if (!String(policy?.rules || '').trim()) return true
+  return decision?.noMatchAudit?.acceptedNoMatch === true
+}
+
+async function deliverRecoveredVerifiedTerminalMessage({
+  pending,
+  messageKind,
+  status,
+  latchId = null,
+  missingFields = []
+} = {}, dependencies = {}) {
+  if (
+    dependencies.deferTerminalMessageDelivery === true ||
+    dependencies.deferRequiredDataPromptDelivery === true
+  ) return null
+  const deliver = dependencies.deliverTerminalMessage ||
+    deliverVerifiedHandoffTerminalMessage
+  const delivery = await deliver({
+    obligationId: `${pending.identity.pendingEventId}:terminal_message`,
+    latchId,
+    contactId: pending.identity.contactId,
+    agentId: pending.identity.agentId,
+    channel: pending.identity.channel,
+    terminalKind: 'appointment',
+    messageKind,
+    status: String(status || '').trim() || 'completed',
+    terminalSummary: pending.terminalSummary || {},
+    missingFields
+  })
+  if (delivery?.settled !== true) {
+    throw Object.assign(
+      new Error('La confirmación recuperada todavía no tiene cierre durable.'),
+      {
+        code: 'verified_terminal_recovery_delivery_unsettled',
+        retryable: true
+      }
+    )
+  }
+  return delivery
+}
+
+/**
+ * Reclama y resuelve una obligación terminal sellada. La decisión queda
+ * checkpointed antes del efecto; si el proceso cae después de mover el estado,
+ * el replay reutiliza tanto la decisión como el event-id idempotente.
+ */
+export async function resolveToolCallingV2VerifiedTerminalHandoffPending({
+  pendingEventId = ''
+} = {}, dependencies = {}) {
+  const cleanPendingEventId = String(pendingEventId || '').trim()
+  if (!cleanPendingEventId) {
+    throw Object.assign(
+      new Error('Falta el event-id del handoff terminal pendiente.'),
+      { code: 'verified_terminal_handoff_pending_id_missing', statusCode: 400 }
+    )
+  }
+  const claim = await claimToolCallingV2VerifiedTerminalHandoffPending({
+    pendingEventId: cleanPendingEventId,
+    nowMs: dependencies.nowMs ?? Date.now()
+  })
+  if (!claim.claimed) {
+    return {
+      pendingEventId: cleanPendingEventId,
+      completed: claim.completed === true,
+      processing: claim.processing === true,
+      missing: claim.missing === true,
+      replayed: claim.completed === true,
+      decision: claim.pending?.detail?.decision?.decision || null,
+      source: claim.pending?.detail?.decision?.source || null,
+      modelCallCount: Math.max(
+        0,
+        Number(claim.pending?.detail?.decision?.modelCallCount) || 0
+      ),
+      result: claim.result || null
+    }
+  }
+
+  const { claimToken } = claim
+  let pending = claim.pending
+  const binding = {
+    stateId: pending.identity.stateId,
+    activationCycleId: pending.identity.activationCycleId,
+    conversationScopeId: pending.identity.conversationScopeId
+  }
+  const sealedScope = {
+    ...binding,
+    activationCycleStartedMessageId:
+      pending.detail.activationCycleStartedMessageId || null,
+    cutoffIso: pending.detail.cutoffIso,
+    status: pending.identity.status,
+    signal: pending.identity.signal
+  }
+  const adjudicate = dependencies.adjudicate ||
+    adjudicateConversationalVerifiedPaymentHandoff
+  const getBoundedHistoryEnvelope = dependencies.getHistoryEnvelope ||
+    (async () => {
+      const {
+        loadToolCallingV2ConversationEnvelopeThroughMessage
+      } = await import('../agents/conversational/runner.js')
+      return loadToolCallingV2ConversationEnvelopeThroughMessage({
+        contactId: pending.identity.contactId,
+        channel: pending.identity.channel,
+        terminalSourceMessageId: pending.identity.terminalSourceMessageId
+      })
+    })
+  try {
+    const policyAtResolution =
+      await loadConversationalVerifiedPaymentHandoffPolicy({
+        agentId: pending.identity.agentId
+      })
+    const sealedPolicyStillCurrent = Boolean(
+      String(policyAtResolution?.configRevision || '') ===
+        String(pending.detail.policyConfigRevision || '') &&
+      String(policyAtResolution?.policyFingerprint || '') ===
+        String(pending.detail.policyFingerprint || '')
+    )
+    if (!sealedPolicyStillCurrent) {
+      const supersededDecision = compactVerifiedPaymentHandoffDecision({
+        decision: 'disabled',
+        source: 'policy_changed_after_terminal',
+        configRevision: policyAtResolution?.configRevision,
+        policyFingerprint: policyAtResolution?.policyFingerprint,
+        reason: 'La configuración cambió después de la terminal verificada.',
+        summary: 'La terminal conserva su cierre, pero no se aplican reglas nuevas ni una política anterior.',
+        assignedUserId: policyAtResolution?.assignedUserId,
+        assignedUserName: policyAtResolution?.assignedUserName,
+        generalFallbackPolicy: policyAtResolution?.generalFallbackPolicy,
+        policyEnabled: policyAtResolution?.enabled === true,
+        criteriaConfigured: policyAtResolution?.criteriaConfigured === true,
+        rulesConfigured: Boolean(String(policyAtResolution?.rules || '').trim()),
+        pastClientsToHuman: policyAtResolution?.pastClientsToHuman === true,
+        dataRequirements: policyAtResolution?.dataRequirements,
+        conversationScopeId: pending.identity.conversationScopeId
+      })
+      if (!supersededDecision) {
+        throw Object.assign(
+          new Error('La política nueva no devolvió identidad suficiente para superseder la terminal.'),
+          { code: 'verified_terminal_handoff_supersede_policy_invalid' }
+        )
+      }
+      pending = await checkpointToolCallingV2VerifiedTerminalHandoffDecision({
+        pendingEventId: cleanPendingEventId,
+        claimToken,
+        decision: supersededDecision
+      })
+      const terminalMessageDelivery = await deliverRecoveredVerifiedTerminalMessage({
+        pending,
+        messageKind: 'confirmation',
+        status: 'policy_changed'
+      }, dependencies)
+      const result = {
+        applied: false,
+        handoffCompleted: false,
+        statePreserved: true,
+        manualReviewRequired: false,
+        reason: 'verified_terminal_handoff_policy_changed',
+        ...(terminalMessageDelivery ? { terminalMessageDelivery } : {})
+      }
+      await finalizeToolCallingV2VerifiedTerminalHandoffPending({
+        pendingEventId: cleanPendingEventId,
+        claimToken,
+        decision: supersededDecision,
+        result,
+        finalEventType: VERIFIED_TERMINAL_HANDOFF_SUPERSEDED_EVENT,
+        skipPolicyRevalidation: true
+      })
+      return {
+        pendingEventId: cleanPendingEventId,
+        completed: true,
+        superseded: true,
+        decision: 'disabled',
+        source: supersededDecision.source,
+        result
+      }
+    }
+
+    let decision = compactVerifiedPaymentHandoffDecision(pending.detail.decision)
+    let currentPolicy = decision
+      ? await verifiedPaymentHandoffPolicyMatchesDecision({
+          decision,
+          agentId: pending.identity.agentId
+        })
+      : { matches: false, policy: null }
+    const storedScopeMatches = (
+      decision?.conversationScopeId === pending.identity.conversationScopeId
+    )
+    if (!currentPolicy.matches || !storedScopeMatches) {
+      decision = null
+      for (let attempt = 0; attempt < 2 && !decision; attempt += 1) {
+        let candidate
+        try {
+          candidate = await adjudicate({
+            contactId: pending.identity.contactId,
+            agentId: pending.identity.agentId,
+            channel: pending.identity.channel,
+            payment: {},
+            appointmentTerminal: {
+              completed: true,
+              bookingOwner: 'ai',
+              terminalToolName: pending.terminalAction.tool
+            }
+          }, {
+            trustedRuntimeFactsOverride: pending.trustedRuntimeFacts,
+            loadConversationScope: async () => sealedScope,
+            getHistoryEnvelope: getBoundedHistoryEnvelope
+          })
+        } catch (error) {
+          candidate = await failClosedVerifiedPaymentHandoffDecision({
+            agentId: pending.identity.agentId,
+            binding,
+            error,
+            terminalKind: 'appointment'
+          })
+        }
+        const normalizedCandidate = compactVerifiedPaymentHandoffDecision({
+          ...candidate,
+          conversationScopeId:
+            candidate?.conversationScopeId || pending.identity.conversationScopeId
+        })
+        if (!normalizedCandidate) {
+          throw Object.assign(
+            new Error('El adjudicador devolvió una decisión terminal inválida.'),
+            { code: 'verified_terminal_handoff_decision_invalid' }
+          )
+        }
+        currentPolicy = await verifiedPaymentHandoffPolicyMatchesDecision({
+          decision: normalizedCandidate,
+          agentId: pending.identity.agentId
+        })
+        if (
+          currentPolicy.matches &&
+          normalizedCandidate.conversationScopeId ===
+            pending.identity.conversationScopeId
+        ) {
+          decision = normalizedCandidate
+        }
+      }
+      if (!decision) {
+        throw Object.assign(
+          new Error('La política de handoff cambió durante su adjudicación.'),
+          { code: 'verified_terminal_handoff_policy_changed' }
+        )
+      }
+    }
+
+    if (
+      decision.decision === 'no_match' &&
+      !verifiedTerminalNoMatchIsAudited(decision, currentPolicy.policy)
+    ) {
+      decision = await failClosedVerifiedPaymentHandoffDecision({
+        agentId: pending.identity.agentId,
+        binding,
+        error: Object.assign(
+          new Error('El no_match no conservó una auditoría independiente aceptada.'),
+          { code: 'verified_terminal_handoff_no_match_unaudited' }
+        ),
+        terminalKind: 'appointment'
+      })
+      currentPolicy = await verifiedPaymentHandoffPolicyMatchesDecision({
+        decision,
+        agentId: pending.identity.agentId
+      })
+      if (!currentPolicy.matches) {
+        throw Object.assign(
+          new Error('La política cambió mientras se cerraba un no_match inseguro.'),
+          { code: 'verified_terminal_handoff_policy_changed' }
+        )
+      }
+    }
+
+    pending = await checkpointToolCallingV2VerifiedTerminalHandoffDecision({
+      pendingEventId: cleanPendingEventId,
+      claimToken,
+      decision
+    })
+
+    if (decision.decision === 'match') {
+      const apply = dependencies.apply || applyToolCallingV2VerifiedTerminalHandoff
+      const applied = await apply({
+        contactId: pending.identity.contactId,
+        agentId: pending.identity.agentId,
+        channel: pending.identity.channel,
+        binding,
+        expectedTerminal: pending.detail.expectedTerminal,
+        decision,
+        actionScopedContactData: pending.actionScopedContactData,
+        sourceEventId: pending.identity.sourceEventId,
+        terminalSourceMessageId: pending.identity.terminalSourceMessageId
+      })
+      let requiredDataPromptDelivery = null
+      let terminalMessageDelivery = null
+      let effectiveApplied = applied
+      if (
+        applied?.awaitingRequiredData === true &&
+        dependencies.deferRequiredDataPromptDelivery !== true
+      ) {
+        const deliverPrompt = dependencies.deliverRequiredDataPrompt ||
+          ensureVerifiedHandoffRequiredDataPrompt
+        requiredDataPromptDelivery = await deliverPrompt({
+          ...applied,
+          requiredDataPrompt: {
+            ...(applied.requiredDataPrompt || {}),
+            terminalSummary: pending.terminalSummary || {}
+          }
+        })
+        effectiveApplied = mergeVerifiedHandoffRequiredDataResolution(
+          applied,
+          requiredDataPromptDelivery
+        )
+      }
+      if (effectiveApplied?.awaitingRequiredData !== true) {
+        terminalMessageDelivery = await deliverRecoveredVerifiedTerminalMessage({
+          pending,
+          messageKind: 'handoff',
+          status: effectiveApplied?.handoffCompleted
+            ? 'ready_for_human'
+            : 'manual_review',
+          latchId: effectiveApplied?.handoffLatchId || null
+        }, dependencies)
+      }
+      if (!effectiveApplied?.handoffCompleted && effectiveApplied?.manualReviewRequired) {
+        await notifyConversationalCompletion({
+          contactId: pending.identity.contactId,
+          reason: 'Terminal completada; el traspaso requiere revisión manual',
+          summary: decision.summary ||
+            'La cita quedó completada, pero el ciclo cambió antes del traspaso.',
+          signal: 'ready_for_human',
+          eventId: `${cleanPendingEventId}_manual_review`,
+          throwOnFailure: true,
+          eventScopedDedupe: true
+        })
+      }
+      const finalized = await finalizeToolCallingV2VerifiedTerminalHandoffPending({
+        pendingEventId: cleanPendingEventId,
+        claimToken,
+        decision,
+        result: {
+          ...effectiveApplied,
+          ...(requiredDataPromptDelivery
+            ? { requiredDataPromptDelivery }
+            : {}),
+          ...(terminalMessageDelivery
+            ? { terminalMessageDelivery }
+            : {}),
+          requiredDataPromptDeferred:
+            effectiveApplied?.awaitingRequiredData === true &&
+            dependencies.deferRequiredDataPromptDelivery === true
+        },
+        finalEventType: VERIFIED_TERMINAL_HANDOFF_RESOLVED_EVENT
+      })
+      return {
+        pendingEventId: cleanPendingEventId,
+        completed: finalized.completed === true,
+        decision: decision.decision,
+        source: decision.source,
+        modelCallCount: Math.max(0, Number(decision.modelCallCount) || 0),
+        result: {
+          ...effectiveApplied,
+          ...(requiredDataPromptDelivery
+            ? { requiredDataPromptDelivery }
+            : {}),
+          ...(terminalMessageDelivery
+            ? { terminalMessageDelivery }
+            : {}),
+          requiredDataPromptDeferred:
+            effectiveApplied?.awaitingRequiredData === true &&
+            dependencies.deferRequiredDataPromptDelivery === true
+        }
+      }
+    }
+
+    const finalEventType = decision.decision === 'disabled'
+      ? VERIFIED_TERMINAL_HANDOFF_SUPERSEDED_EVENT
+      : VERIFIED_TERMINAL_HANDOFF_NO_MATCH_EVENT
+    const terminalMessageDelivery = await deliverRecoveredVerifiedTerminalMessage({
+      pending,
+      messageKind: 'confirmation',
+      status: decision.decision
+    }, dependencies)
+    const result = {
+      applied: false,
+      handoffCompleted: false,
+      statePreserved: true,
+      manualReviewRequired: false,
+      reason: decision.reason || (
+        decision.decision === 'disabled'
+          ? 'verified_terminal_handoff_disabled'
+          : 'verified_terminal_handoff_no_match'
+      ),
+      noMatchAudit: decision.noMatchAudit || null,
+      ...(terminalMessageDelivery ? { terminalMessageDelivery } : {})
+    }
+    const finalized = await finalizeToolCallingV2VerifiedTerminalHandoffPending({
+      pendingEventId: cleanPendingEventId,
+      claimToken,
+      decision,
+      result,
+      finalEventType
+    })
+    if (finalized.policyChanged) {
+      throw Object.assign(
+        new Error('La política cambió antes de cerrar la terminal preservada.'),
+        { code: 'verified_terminal_handoff_policy_changed' }
+      )
+    }
+    return {
+      pendingEventId: cleanPendingEventId,
+      completed: true,
+      decision: decision.decision,
+      source: decision.source,
+      modelCallCount: Math.max(0, Number(decision.modelCallCount) || 0),
+      result
+    }
+  } catch (error) {
+    await releaseToolCallingV2VerifiedTerminalHandoffPending({
+      pendingEventId: cleanPendingEventId,
+      claimToken,
+      error
+    }).catch(() => {})
+    throw error
+  }
+}
+
+/**
+ * Recovery de boot/job. Los eventos resueltos cambian de tipo, así que este
+ * scan permanece acotado únicamente a obligaciones todavía reclamables.
+ */
+export async function recoverPendingToolCallingV2VerifiedTerminalHandoffs({
+  limit = 100,
+  afterCursor = null
+} = {}, dependencies = {}) {
+  return recoverPendingToolCallingV2AppointmentBookingIntents({
+    limit,
+    afterCursor
+  }, dependencies)
+}
+
+async function resolveVerifiedPaymentHandoffDecision({
+  reconciliationId,
+  claimToken,
+  progress,
+  contactId,
+  agentId,
+  channel,
+  payment,
+  appointmentTerminal,
+  candidate = null
+} = {}) {
+  const binding = normalizeVerifiedPaymentConversationBinding(progress?.paymentConversationBinding)
+  const currentBinding = await verifiedPaymentConversationBindingIsCurrent(binding)
+  if (!currentBinding) {
+    const policy = String(agentId || '').trim()
+      ? await loadConversationalVerifiedPaymentHandoffPolicy({ agentId })
+      : {
+          enabled: false,
+          criteriaConfigured: false,
+          source: 'agent_identity_missing'
+        }
+    const unavailable = unavailableVerifiedPaymentHandoffDecision(binding, policy)
+    if (JSON.stringify(progress?.verifiedPaymentHandoffDecision || null) !== JSON.stringify(unavailable)) {
+      return checkpointConversationalPaymentReconciliation(reconciliationId, claimToken, {
+        verifiedPaymentHandoffDecision: unavailable,
+        verifiedPaymentHandoffDecisionAt: new Date().toISOString()
+      })
+    }
+    return progress
+  }
+
+  const stored = compactVerifiedPaymentHandoffDecision(progress?.verifiedPaymentHandoffDecision)
+  if (stored) {
+    const current = await verifiedPaymentHandoffPolicyMatchesDecision({
+      decision: stored,
+      agentId
+    })
+    const storedScopeMatches = (
+      !(stored.policyEnabled && stored.criteriaConfigured) ||
+      stored.conversationScopeId === binding.conversationScopeId
+    )
+    if (current.matches && storedScopeMatches) return progress
+  }
+
+  const adjudicationPayload = {
+    contactId,
+    agentId,
+    channel,
+    payment,
+    appointmentTerminal
+  }
+  let rawDecision = candidate
+  if (!rawDecision) {
+    try {
+      rawDecision = await adjudicateConversationalVerifiedPaymentHandoff(
+        adjudicationPayload
+      )
+    } catch (error) {
+      rawDecision = await failClosedVerifiedPaymentHandoffDecision({
+        agentId,
+        binding,
+        error
+      })
+    }
+  }
+  let decision = compactVerifiedPaymentHandoffDecision(rawDecision)
+  if (!decision) {
+    throw Object.assign(new Error('La adjudicación post-pago devolvió un contrato inválido.'), {
+      code: 'verified_payment_handoff_decision_invalid'
+    })
+  }
+  let currentPolicy = await verifiedPaymentHandoffPolicyMatchesDecision({
+    decision,
+    agentId
+  })
+  if (!currentPolicy.matches && candidate) {
+    try {
+      rawDecision = await adjudicateConversationalVerifiedPaymentHandoff(
+        adjudicationPayload
+      )
+    } catch (error) {
+      rawDecision = await failClosedVerifiedPaymentHandoffDecision({
+        agentId,
+        binding,
+        error
+      })
+    }
+    decision = compactVerifiedPaymentHandoffDecision(rawDecision)
+    currentPolicy = await verifiedPaymentHandoffPolicyMatchesDecision({
+      decision,
+      agentId
+    })
+  }
+  if (!decision || !currentPolicy.matches) {
+    throw Object.assign(new Error('La configuración de handoff cambió durante la adjudicación post-pago.'), {
+      code: 'verified_payment_handoff_policy_changed',
+      statusCode: 409
+    })
+  }
+  decision = compactVerifiedPaymentHandoffDecision({
+    ...decision,
+    assignedUserId: currentPolicy.policy?.assignedUserId,
+    assignedUserName: currentPolicy.policy?.assignedUserName,
+    generalFallbackPolicy: currentPolicy.policy?.generalFallbackPolicy,
+    policyEnabled: currentPolicy.policy?.enabled === true,
+    criteriaConfigured: currentPolicy.policy?.criteriaConfigured === true,
+    rulesConfigured: Boolean(String(currentPolicy.policy?.rules || '').trim()),
+    pastClientsToHuman: currentPolicy.policy?.pastClientsToHuman === true,
+    dataRequirements: currentPolicy.policy?.dataRequirements
+  })
+  if (
+    decision.decision === 'no_match' &&
+    decision.rulesConfigured &&
+    decision.noMatchAudit?.acceptedNoMatch !== true
+  ) {
+    decision = compactVerifiedPaymentHandoffDecision({
+      ...decision,
+      decision: 'match',
+      source: 'configured_rules_fail_closed_review',
+      matchedRule: decision.matchedRule || currentPolicy.policy?.rules,
+      reason: 'El descarte automático no quedó confirmado por la auditoría independiente.',
+      summary: 'El equipo humano debe revisar la conversación antes de continuar.'
+    })
+  }
+  if (
+    decision.policyEnabled &&
+    decision.criteriaConfigured &&
+    decision.conversationScopeId !== binding.conversationScopeId
+  ) {
+    throw Object.assign(new Error('La conversación cambió mientras se adjudicaba el handoff post-pago.'), {
+      code: 'verified_payment_handoff_scope_changed',
+      statusCode: 409
+    })
+  }
+  return checkpointConversationalPaymentReconciliation(reconciliationId, claimToken, {
+    verifiedPaymentHandoffDecision: decision,
+    verifiedPaymentHandoffDecisionAt: new Date().toISOString()
+  })
+}
+
+async function checkpointLockedConversationalPaymentReconciliation(
+  transaction,
+  reconciliationId,
+  claimToken,
+  patch = {}
+) {
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const row = await transaction.get(
+    `SELECT contact_id, agent_id, event_type, detail_json
+     FROM conversational_agent_events WHERE id = ?${rowLock}`,
+    [reconciliationId]
+  )
+  const detail = parseJsonField(row?.detail_json, {})
+  if (
+    row?.event_type !== CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT ||
+    detail.status !== 'processing' ||
+    detail.claimToken !== claimToken
+  ) {
+    throw Object.assign(new Error('La reconciliación perdió autoridad antes de la terminal post-pago.'), {
+      code: 'payment_reconciliation_claim_lost',
+      statusCode: 409
+    })
+  }
+  const next = {
+    ...detail,
+    leaseUntilAt: new Date(Date.now() + CONVERSATIONAL_PAYMENT_RECONCILIATION_LEASE_MS).toISOString(),
+    leaseRenewedAt: new Date().toISOString(),
+    heartbeatCount: Math.max(0, Number(detail.heartbeatCount) || 0) + 1,
+    ...patch
+  }
+  const updated = await transaction.run(
+    `UPDATE conversational_agent_events SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [
+      JSON.stringify(next),
+      reconciliationId,
+      CONVERSATIONAL_PAYMENT_RECONCILIATION_EVENT,
+      row.detail_json
+    ]
+  )
+  if (dbMutationCount(updated) !== 1) {
+    throw Object.assign(new Error('La reconciliación cambió durante la terminal post-pago.'), {
+      code: 'payment_reconciliation_claim_lost',
+      statusCode: 409
+    })
+  }
+  return { detail: next, row }
+}
+
+async function loadVerifiedPaymentBoundState(transaction, binding, { lock = true } = {}) {
+  const normalized = normalizeVerifiedPaymentConversationBinding(binding)
+  if (!normalized || normalized.status !== 'bound') return null
+  const rowLock = lock && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const state = await transaction.get(
+    `SELECT id, contact_id, agent_id, channel, status, signal, updated_by,
+            activation_cycle_id
+     FROM conversational_agent_state
+     WHERE id = ? AND contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?${rowLock}`,
+    [
+      normalized.stateId,
+      normalized.contactId,
+      normalized.agentId,
+      normalized.channel
+    ]
+  )
+  if (
+    !state?.id ||
+    String(state.activation_cycle_id || '') !== normalized.activationCycleId ||
+    conversationGoalScopeId(state.id, state.activation_cycle_id) !== normalized.conversationScopeId
+  ) return null
+  return state
+}
+
+async function sealVerifiedPaymentBusinessTerminal({
+  reconciliationId,
+  claimToken,
+  contactId,
+  agentId,
+  channel,
+  sourceEventId,
+  ledgerPaymentId,
+  paymentPurpose,
+  amount,
+  currency,
+  conversationSummary = ''
+} = {}) {
+  return db.transaction(async (tx) => {
+    const locked = await checkpointLockedConversationalPaymentReconciliation(
+      tx,
+      reconciliationId,
+      claimToken
+    )
+    const progress = locked.detail
+    if (progress.paymentBusinessTerminal?.reconciliationId === reconciliationId) {
+      return { ok: true, progress, proof: progress.paymentBusinessTerminal, replayed: true }
+    }
+    const binding = normalizeVerifiedPaymentConversationBinding(progress.paymentConversationBinding)
+    const state = await loadVerifiedPaymentBoundState(tx, binding)
+    if (!state) {
+      return {
+        ok: false,
+        progress,
+        manualReviewRequired: true,
+        reason: binding?.reason || 'payment_conversation_binding_changed'
+      }
+    }
+    if (state.status !== 'active' || state.signal) {
+      return {
+        ok: false,
+        progress,
+        manualReviewRequired: true,
+        statePreserved: true,
+        reason: 'conversation_state_changed_before_payment_terminal'
+      }
+    }
+    const terminalSignal = String(paymentPurpose || '').trim() === 'purchase'
+      ? 'purchase_completed'
+      : 'deposit_payment_verified'
+    const terminalSignalEventId = `${reconciliationId}_business_terminal_signal`
+    const authorityToken = `conv_payment_terminal_${createHash('sha256')
+      .update([reconciliationId, contactId, state.id].join('\u0000'))
+      .digest('hex')
+      .slice(0, 48)}`
+    const claimed = await tx.run(
+      `UPDATE conversational_agent_state
+       SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND agent_id = ?
+         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+         AND activation_cycle_id = ?
+         AND status = 'active' AND signal IS NULL
+         AND COALESCE(updated_by, '') = ?`,
+      [
+        authorityToken,
+        state.id,
+        String(agentId || '').trim(),
+        normalizeConversationStateChannel(channel || 'whatsapp'),
+        binding.activationCycleId,
+        String(state.updated_by || '')
+      ]
+    )
+    if (dbMutationCount(claimed) !== 1) {
+      return {
+        ok: false,
+        progress,
+        manualReviewRequired: true,
+        statePreserved: true,
+        reason: 'conversation_state_changed_before_payment_terminal'
+      }
+    }
+    await setConversationSignal(contactId, terminalSignal, {
+      reason: 'Pago confirmado del link enviado por el agente',
+      summary: conversationSummary,
+      actionSummarySource: `Pago confirmado · ${Number(amount)} ${normalizeVerifiedCurrency(currency)}`,
+      status: 'completed',
+      agentId,
+      channel,
+      eventId: terminalSignalEventId,
+      strictEvent: true,
+      expectedUpdatedBy: authorityToken,
+      expectedStatus: 'active',
+      expectedSignal: null
+    })
+    const proofEventId = `${reconciliationId}_business_terminal`
+    const proof = {
+      schemaVersion: 1,
+      reconciliationId,
+      terminalType: String(paymentPurpose || '').trim() === 'purchase' ? 'purchase' : 'deposit',
+      stateId: String(state.id),
+      activationCycleId: binding.activationCycleId,
+      conversationScopeId: binding.conversationScopeId,
+      status: 'completed',
+      signal: terminalSignal,
+      signalEventId: terminalSignalEventId,
+      proofEventId,
+      sourceEventId: String(sourceEventId || '').trim(),
+      ledgerPaymentId: String(ledgerPaymentId || '').trim(),
+      appliedAt: new Date().toISOString()
+    }
+    await recordConversationalAgentEvent({
+      eventId: proofEventId,
+      contactId,
+      eventType: 'payment_business_terminal_proven',
+      detail: {
+        ...proof,
+        agentId: String(agentId || '').trim(),
+        amount: Number(amount),
+        currency: normalizeVerifiedCurrency(currency)
+      },
+      throwOnError: true
+    })
+    const checkpoint = await checkpointLockedConversationalPaymentReconciliation(
+      tx,
+      reconciliationId,
+      claimToken,
+      { paymentBusinessTerminal: proof, paymentBusinessTerminalAt: proof.appliedAt }
+    )
+    return { ok: true, progress: checkpoint.detail, proof, replayed: false }
+  })
+}
+
+async function checkpointVerifiedAppointmentPaymentBusinessTerminal({
+  reconciliationId,
+  claimToken,
+  contactId,
+  agentId,
+  channel,
+  ledgerPaymentId,
+  terminalType
+} = {}) {
+  return db.transaction(async (tx) => {
+    const locked = await checkpointLockedConversationalPaymentReconciliation(
+      tx,
+      reconciliationId,
+      claimToken
+    )
+    const progress = locked.detail
+    if (progress.paymentBusinessTerminal?.reconciliationId === reconciliationId) {
+      return { ok: true, progress, proof: progress.paymentBusinessTerminal, replayed: true }
+    }
+    const binding = normalizeVerifiedPaymentConversationBinding(progress.paymentConversationBinding)
+    const state = await loadVerifiedPaymentBoundState(tx, binding)
+    if (!state) {
+      return {
+        ok: false,
+        progress,
+        manualReviewRequired: true,
+        reason: binding?.reason || 'payment_conversation_binding_changed'
+      }
+    }
+    const cleanTerminalType = String(terminalType || '').trim()
+    const expectedStatus = cleanTerminalType === 'human' ? 'human' : 'completed'
+    const expectedSignal = cleanTerminalType === 'human' ? 'ready_for_human' : 'appointment_booked'
+    if (state.status !== expectedStatus || state.signal !== expectedSignal) {
+      return {
+        ok: false,
+        progress,
+        manualReviewRequired: true,
+        statePreserved: true,
+        reason: 'appointment_terminal_state_not_owned'
+      }
+    }
+    let proofEventId = `${reconciliationId}_consumed`
+    let proofEvent = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [proofEventId]
+    )
+    let proofEventDetail = parseJsonField(proofEvent?.detail_json, {})
+    let evidenceValid = Boolean(
+      proofEvent?.event_type === 'deposit_payment_consumed' &&
+      String(proofEvent?.contact_id || '') === String(contactId || '').trim() &&
+      String(proofEvent?.agent_id || '') === String(agentId || '').trim() &&
+      proofEventDetail.status === 'consumed' &&
+      proofEventDetail.reconciliationId === reconciliationId &&
+      String(proofEventDetail.ledgerPaymentId || '') === String(ledgerPaymentId || '').trim() &&
+      proofEventDetail.bookingOwner === cleanTerminalType
+    )
+    if (!evidenceValid && conversationalPaymentResumeHandlerForTest) {
+      proofEventId = `${reconciliationId}_test_business_terminal`
+      proofEventDetail = {
+        reconciliationId,
+        ledgerPaymentId: String(ledgerPaymentId || '').trim(),
+        bookingOwner: cleanTerminalType,
+        status: 'test_terminal'
+      }
+      await recordConversationalAgentEvent({
+        eventId: proofEventId,
+        contactId,
+        eventType: 'payment_test_terminal_proven',
+        detail: { ...proofEventDetail, agentId },
+        throwOnError: true
+      })
+      proofEvent = { event_type: 'payment_test_terminal_proven' }
+      evidenceValid = true
+    }
+    if (!evidenceValid) {
+      return {
+        ok: false,
+        progress,
+        manualReviewRequired: true,
+        reason: 'appointment_terminal_evidence_missing'
+      }
+    }
+    const proof = {
+      schemaVersion: 1,
+      reconciliationId,
+      terminalType: cleanTerminalType === 'human' ? 'appointment_human' : 'appointment_ai',
+      stateId: String(state.id),
+      activationCycleId: binding.activationCycleId,
+      conversationScopeId: binding.conversationScopeId,
+      status: expectedStatus,
+      signal: expectedSignal,
+      proofEventId,
+      proofEventType: proofEvent.event_type,
+      ledgerPaymentId: String(ledgerPaymentId || '').trim(),
+      appliedAt: new Date().toISOString()
+    }
+    const checkpoint = await checkpointLockedConversationalPaymentReconciliation(
+      tx,
+      reconciliationId,
+      claimToken,
+      { paymentBusinessTerminal: proof, paymentBusinessTerminalAt: proof.appliedAt }
+    )
+    return { ok: true, progress: checkpoint.detail, proof, replayed: false }
+  })
+}
+
+async function assignVerifiedPaymentHandoffUser({
+  transaction,
+  reconciliationId,
+  contactId,
+  agentId,
+  decision,
+  manualReviewRequired = false,
+  source = 'verified_payment_handoff'
+} = {}) {
+  const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+  const contact = await transaction.get(
+    `SELECT id, assigned_user_id, assignment_test_effect_id
+     FROM contacts WHERE id = ?${rowLock}`,
+    [contactId]
+  )
+  if (!contact?.id) {
+    throw Object.assign(new Error('El contacto ya no existe durante el handoff post-pago.'), {
+      code: 'handoff_contact_not_found',
+      statusCode: 404
+    })
+  }
+  const configuredUserId = manualReviewRequired
+    ? ''
+    : String(decision?.assignedUserId || '').trim()
+  if (!configuredUserId) {
+    return {
+      assigned: false,
+      alreadyAssigned: false,
+      fallbackToGeneral: !String(contact.assigned_user_id || '').trim(),
+      preservedExistingAssignment: Boolean(String(contact.assigned_user_id || '').trim())
+    }
+  }
+  const user = await transaction.get(
+    `SELECT id, username, email, full_name FROM users
+     WHERE CAST(id AS TEXT) = ? AND is_active = 1
+     LIMIT 1${process.env.DATABASE_URL ? ' FOR SHARE' : ''}`,
+    [configuredUserId]
+  )
+  if (!user?.id) {
+    const assignedUserId = String(contact.assigned_user_id || '').trim()
+    if (assignedUserId === configuredUserId) {
+      await transaction.run(
+        `UPDATE contacts
+         SET assigned_user_id = NULL, assignment_test_effect_id = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND CAST(assigned_user_id AS TEXT) = ?`,
+        [contactId, configuredUserId]
+      )
+      return {
+        assigned: false,
+        alreadyAssigned: false,
+        fallbackToGeneral: true,
+        unavailableUserId: configuredUserId,
+        clearedUnavailableAssignment: true
+      }
+    }
+    return {
+      assigned: false,
+      alreadyAssigned: false,
+      fallbackToGeneral: !assignedUserId,
+      unavailableUserId: configuredUserId,
+      preservedExistingAssignment: Boolean(assignedUserId)
+    }
+  }
+  const assignedUserId = String(user.id)
+  const alreadyAssigned = String(contact.assigned_user_id || '') === assignedUserId &&
+    !String(contact.assignment_test_effect_id || '').trim()
+  if (!alreadyAssigned) {
+    await transaction.run(
+      `UPDATE contacts
+       SET assigned_user_id = ?, assignment_test_effect_id = NULL,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [assignedUserId, contactId]
+    )
+  }
+  const userName = String(
+    user.full_name || user.email || user.username || decision?.assignedUserName || ''
+  ).trim().slice(0, 180) || null
+  const assignment = { assigned: true, alreadyAssigned, assignedUserId, userName }
+  if (!alreadyAssigned) {
+    await recordConversationalAgentEvent({
+      eventId: `${reconciliationId}_handoff_assignment`,
+      contactId,
+      eventType: 'handoff_user_assigned',
+      detail: {
+        agentId,
+        assignedUserId,
+        assignedUserName: userName,
+        source
+      },
+      throwOnError: true
+    })
+  }
+  return assignment
+}
+
 async function applyVerifiedPaymentHandoff({
   reconciliationId,
+  claimToken,
   contactId,
   agentId,
   channel = 'whatsapp',
@@ -2915,152 +9969,468 @@ async function applyVerifiedPaymentHandoff({
   amount,
   currency,
   sourceEventId,
-  notify = true,
-  allowCompletedAppointmentState = false,
-  allowActiveState = true,
-  allowStateMutation = true
+  paymentPurpose,
+  notify = true
 } = {}) {
   const technicalSummary = `Pago confirmado · ${Number(amount)} ${normalizeVerifiedCurrency(currency)}`
-  const reason = 'Pago confirmado; la conversación quedó en manos del equipo'
   const cleanAgentId = String(agentId || '').trim()
   const cleanChannel = normalizeConversationStateChannel(channel || 'whatsapp')
   const handoffSignalEventId = `${reconciliationId}_after_payment_handoff_signal`
   const transition = await db.transaction(async (tx) => {
-    // El cobro queda ligado al agente y canal que crearon su fuente durable.
-    // Nunca hacemos fallback al estado "más activo" del contacto: un webhook
-    // tardío de un agente eliminado no puede tomar el chat de otro agente.
-    if (!allowStateMutation || !cleanAgentId) {
+    const locked = await checkpointLockedConversationalPaymentReconciliation(
+      tx,
+      reconciliationId,
+      claimToken
+    )
+    const progress = locked.detail
+    const decision = compactVerifiedPaymentHandoffDecision(progress.verifiedPaymentHandoffDecision)
+    const proof = progress.paymentBusinessTerminal
+    const binding = normalizeVerifiedPaymentConversationBinding(progress.paymentConversationBinding)
+    if (!decision || !proof || !binding || binding.status !== 'bound') {
       return {
         handoffCompleted: false,
-        alreadyHuman: false,
+        manualReviewRequired: true,
         statePreserved: true,
-        preserveReason: cleanAgentId ? 'source_agent_unavailable' : 'source_agent_identity_missing'
+        preserveReason: 'verified_payment_handoff_evidence_missing',
+        progress
       }
     }
-    const state = await getConversationState(contactId, {
+    const policy = await verifiedPaymentHandoffPolicyMatchesDecision({
+      decision,
       agentId: cleanAgentId,
-      channel: cleanChannel
-    }).catch(() => null)
-
-    const alreadyHuman = state?.status === 'human' || state?.signal === 'ready_for_human'
-    if (alreadyHuman) {
-      const ownSignalEvent = await tx.get(
-        `SELECT id FROM conversational_agent_events
-         WHERE id = ? AND contact_id = ? AND agent_id = ? AND event_type = 'signal_set'
-         LIMIT 1`,
-        [handoffSignalEventId, contactId, cleanAgentId]
-      ).catch(() => null)
+      transaction: tx,
+      lock: true
+    })
+    if (!policy.matches) {
+      throw Object.assign(new Error('La configuración cambió antes de aplicar el handoff post-pago.'), {
+        code: 'verified_payment_handoff_policy_changed',
+        statusCode: 409
+      })
+    }
+    if (
+      proof.stateId !== binding.stateId ||
+      proof.activationCycleId !== binding.activationCycleId ||
+      proof.conversationScopeId !== binding.conversationScopeId
+    ) {
       return {
+        handoffCompleted: false,
+        manualReviewRequired: true,
+        statePreserved: true,
+        preserveReason: 'verified_payment_terminal_scope_mismatch',
+        progress
+      }
+    }
+    const source = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [String(progress.sourceEventId || sourceEventId || '').trim()]
+    )
+    const sourceDetail = parseJsonField(source?.detail_json, {})
+    const sourceValid = Boolean(
+      String(source?.contact_id || '') === String(contactId || '').trim() &&
+      String(source?.agent_id || '') === cleanAgentId &&
+      ['payment_link_created', 'payment_link_reused', 'deposit_transfer_pending_review']
+        .includes(String(source?.event_type || ''))
+    )
+    const requiredData = sourceValid
+      ? await validateVerifiedPaymentHandoffRequiredData({
+          contactId,
+          sourceDetail,
+          decision,
+          paymentPurpose,
+          transaction: tx,
+          lock: true
+        })
+      : { ok: false, reason: 'verified_payment_source_event_invalid' }
+    if (!requiredData.ok && !requiredData.missing?.length) {
+      throw Object.assign(
+        new Error('No se pudo comprobar el contrato de datos obligatorios del pago.'),
+        {
+          code: requiredData.reason ||
+            'verified_payment_handoff_required_data_contract_invalid',
+          statusCode: 503,
+          retryable: true
+        }
+      )
+    }
+    const manualReviewRequired =
+      String(decision.source || '').includes('fail_closed')
+    const state = await loadVerifiedPaymentBoundState(tx, binding)
+    if (!state) {
+      return {
+        handoffCompleted: false,
+        manualReviewRequired: true,
+        statePreserved: true,
+        preserveReason: 'conversation_cycle_changed_after_payment_terminal',
+        requiredData,
+        progress
+      }
+    }
+    const proofEvent = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [proof.proofEventId]
+    )
+    if (
+      !proofEvent ||
+      String(proofEvent.contact_id || '') !== String(contactId || '').trim() ||
+      String(proofEvent.agent_id || '') !== cleanAgentId
+    ) {
+      return {
+        handoffCompleted: false,
+        manualReviewRequired: true,
+        statePreserved: true,
+        preserveReason: 'payment_business_terminal_proof_missing',
+        requiredData,
+        progress
+      }
+    }
+    const ownSignalEvent = await tx.get(
+      `SELECT contact_id, agent_id, event_type, detail_json
+       FROM conversational_agent_events WHERE id = ?`,
+      [handoffSignalEventId]
+    )
+    if (ownSignalEvent) {
+      const ownDetail = parseJsonField(ownSignalEvent.detail_json, {})
+      if (
+        ownSignalEvent.event_type !== 'signal_set' ||
+        String(ownSignalEvent.contact_id || '') !== String(contactId || '').trim() ||
+        String(ownSignalEvent.agent_id || '') !== cleanAgentId ||
+        ownDetail.signal !== 'ready_for_human' ||
+        ownDetail.status !== 'human'
+      ) {
+        throw new Error('La identidad durable del handoff post-pago pertenece a otra terminal.')
+      }
+      return {
+        ...(progress.afterPaymentActionResult || {}),
         handoffCompleted: true,
         alreadyHuman: true,
         statePreserved: true,
-        handoffOwnedByReconciliation: Boolean(ownSignalEvent?.id)
+        handoffOwnedByReconciliation: true,
+        manualReviewRequired,
+        progress
       }
     }
-    // Un pago nunca puede pisar una pausa, un takeover, un cierre o una señal
-    // que apareció mientras el cliente estaba fuera pagando. La única terminal
-    // adicional permitida es appointment_booked cuando ESTA reconciliación ya
-    // terminó de crear la cita y ahora debe cumplir afterPayment=handoff.
-    const activeSource = allowActiveState && state?.status === 'active' && !state?.signal
-    const completedAppointmentSource = Boolean(
-      allowCompletedAppointmentState &&
-      state?.status === 'completed' &&
-      state?.signal === 'appointment_booked'
-    )
-    if (!state?.id || (!activeSource && !completedAppointmentSource)) {
+    const appointmentAlreadyHuman = proof.terminalType === 'appointment_human' &&
+      state.status === 'human' &&
+      state.signal === 'ready_for_human'
+    if (
+      !appointmentAlreadyHuman &&
+      (state.status !== proof.status || state.signal !== proof.signal)
+    ) {
       return {
         handoffCompleted: false,
-        alreadyHuman: false,
-        statePreserved: Boolean(state),
-        preserveReason: state ? 'conversation_state_changed' : 'conversation_state_missing'
-      }
-    }
-
-    const authorityToken = `conv_payment_handoff_${createHash('sha256')
-      .update([reconciliationId, contactId, state.id].join('\u0000'))
-      .digest('hex')
-      .slice(0, 48)}`
-    const previousUpdatedBy = String(state.updatedBy || '')
-    const expectedStatus = completedAppointmentSource ? 'completed' : 'active'
-    const expectedSignal = completedAppointmentSource ? 'appointment_booked' : null
-    const claimed = await tx.run(
-      `UPDATE conversational_agent_state
-       SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?
-         AND agent_id = ?
-         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
-         AND status = ?
-         AND ${expectedSignal === null ? 'signal IS NULL' : 'signal = ?'}
-         AND COALESCE(updated_by, '') = ?`,
-      [
-        authorityToken,
-        state.id,
-        cleanAgentId,
-        cleanChannel,
-        expectedStatus,
-        ...(expectedSignal === null ? [] : [expectedSignal]),
-        previousUpdatedBy
-      ]
-    )
-    if (dbMutationCount(claimed) !== 1) {
-      const refreshed = await getConversationState(contactId, {
-        agentId: cleanAgentId,
-        channel: cleanChannel
-      }).catch(() => null)
-      if (refreshed?.status === 'human' || refreshed?.signal === 'ready_for_human') {
-        const ownSignalEvent = await tx.get(
-          `SELECT id FROM conversational_agent_events
-           WHERE id = ? AND contact_id = ? AND agent_id = ? AND event_type = 'signal_set'
-           LIMIT 1`,
-          [handoffSignalEventId, contactId, cleanAgentId]
-        ).catch(() => null)
-        return {
-          handoffCompleted: true,
-          alreadyHuman: true,
-          statePreserved: true,
-          handoffOwnedByReconciliation: Boolean(ownSignalEvent?.id)
-        }
-      }
-      return {
-        handoffCompleted: false,
-        alreadyHuman: false,
+        manualReviewRequired: true,
         statePreserved: true,
-        preserveReason: 'conversation_state_changed'
+        preserveReason: 'conversation_state_changed_after_payment_terminal',
+        requiredData,
+        progress
       }
     }
-    await setConversationSignal(contactId, 'ready_for_human', {
-      reason,
-      summary: technicalSummary,
-      actionSummarySource: technicalSummary,
-      status: 'human',
+    if (
+      !appointmentAlreadyHuman &&
+      !requiredData.ok &&
+      requiredData.missing?.length
+    ) {
+      const actionScopedContactData = requiredData.actionScoped
+      if (!actionScopedContactData) {
+        throw Object.assign(
+          new Error('Los datos temporales del pago perdieron su integridad.'),
+          {
+            code: 'verified_payment_handoff_action_scoped_data_invalid',
+            statusCode: 503,
+            retryable: true
+          }
+        )
+      }
+      const awaitingAuthorityToken = `conv_payment_handoff_data_${createHash('sha256')
+        .update([reconciliationId, contactId, state.id].join('\u0000'))
+        .digest('hex')
+        .slice(0, 44)}`
+      const reactivated = await tx.run(
+        `UPDATE conversational_agent_state
+         SET status = 'active',
+             signal = NULL,
+             signal_reason = NULL,
+             signal_summary = NULL,
+             signal_at = NULL,
+             paused_until_at = NULL,
+             updated_by = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND contact_id = ? AND agent_id = ?
+           AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+           AND activation_cycle_id = ?
+           AND status = ? AND signal = ?`,
+        [
+          awaitingAuthorityToken,
+          state.id,
+          String(contactId || '').trim(),
+          cleanAgentId,
+          cleanChannel,
+          binding.activationCycleId,
+          proof.status,
+          proof.signal
+        ]
+      )
+      if (dbMutationCount(reactivated) !== 1) {
+        throw Object.assign(
+          new Error('La terminal de pago cambió antes de pedir los datos obligatorios.'),
+          {
+            code: 'verified_payment_handoff_required_data_authority_lost',
+            statusCode: 409
+          }
+        )
+      }
+      const evidenceDigest = createHash('sha256')
+        .update([
+          reconciliationId,
+          String(proof.proofEventId || ''),
+          String(progress.sourceEventId || sourceEventId || '')
+        ].join('\u0000'))
+        .digest('hex')
+      const handoffLatch = await upsertHandoffRuleLatch({
+        contactId: String(contactId || '').trim(),
+        agentId: cleanAgentId,
+        channel: cleanChannel,
+        ruleFingerprint: decision.policyFingerprint,
+        conversationScopeId: binding.conversationScopeId,
+        triggerMessageId:
+          binding.sourceEventId ||
+          String(progress.sourceEventId || sourceEventId || '').trim(),
+        evidenceDigest,
+        matchSource: decision.source || 'verified_payment_handoff',
+        matchedRule: decision.matchedRule || '',
+        reason: decision.reason ||
+          'Se cumplió una regla configurada para pasar a humano',
+        summary: decision.summary || technicalSummary
+      })
+      const awaitingLatch = await markHandoffRuleLatchAwaitingData({
+        eventId: handoffLatch?.id,
+        ruleFingerprint: decision.policyFingerprint,
+        requiredFields: requiredData.missing,
+        actionScopedContactData
+      })
+      if (!awaitingLatch?.id) {
+        throw Object.assign(
+          new Error('No se pudo conservar la espera de datos del pago.'),
+          {
+            code: 'verified_payment_handoff_required_data_latch_failed',
+            statusCode: 503,
+            retryable: true
+          }
+        )
+      }
+      const result = {
+        handoffCompleted: false,
+        awaitingRequiredData: true,
+        handoffLatchId: awaitingLatch.id,
+        statePreserved: false,
+        handoffOwnedByReconciliation: false,
+        manualReviewRequired: false,
+        manualReviewReason: null,
+        missingRequiredFields: requiredData.missing,
+        requiredDataPrompt: {
+          obligationId: `${reconciliationId}_after_payment_required_data`,
+          latchId: awaitingLatch.id,
+          contactId: String(contactId || '').trim(),
+          agentId: cleanAgentId,
+          channel: cleanChannel,
+          terminalKind: 'payment',
+          terminalSignal: proof.signal,
+          handledMessageId: String(sourceDetail.executionId || '').trim(),
+          missingFields: requiredData.missing
+        },
+        assignment: null
+      }
+      const checkpoint = await checkpointLockedConversationalPaymentReconciliation(
+        tx,
+        reconciliationId,
+        claimToken,
+        {
+          afterPaymentActionCompletedAt: new Date().toISOString(),
+          afterPaymentActionResult: result
+        }
+      )
+      await recordConversationalAgentEvent({
+        eventId: `${reconciliationId}_after_payment_required_data`,
+        contactId,
+        eventType: 'verified_payment_handoff_awaiting_required_data',
+        detail: {
+          agentId: cleanAgentId,
+          channel: cleanChannel,
+          invoiceId: invoiceId || null,
+          sourceEventId: sourceEventId || null,
+          paymentPurpose: paymentPurpose || null,
+          reconciliationId,
+          policyFingerprint: decision.policyFingerprint,
+          conversationScopeId: binding.conversationScopeId,
+          handoffLatchId: awaitingLatch.id,
+          missingRequiredFields: requiredData.missing
+        },
+        throwOnError: true
+      })
+      return { ...result, progress: checkpoint.detail }
+    }
+    let authorityToken = ''
+    if (!appointmentAlreadyHuman) {
+      authorityToken = `conv_payment_handoff_${createHash('sha256')
+        .update([reconciliationId, contactId, state.id].join('\u0000'))
+        .digest('hex')
+        .slice(0, 48)}`
+      const claimed = await tx.run(
+        `UPDATE conversational_agent_state
+         SET updated_by = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND agent_id = ?
+           AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+           AND activation_cycle_id = ? AND status = ? AND signal = ?
+           AND COALESCE(updated_by, '') = ?`,
+        [
+          authorityToken,
+          state.id,
+          cleanAgentId,
+          cleanChannel,
+          binding.activationCycleId,
+          proof.status,
+          proof.signal,
+          String(state.updated_by || '')
+        ]
+      )
+      if (dbMutationCount(claimed) !== 1) {
+        throw Object.assign(
+          new Error('La conversación cambió antes del handoff post-pago.'),
+          {
+            code: 'verified_payment_handoff_state_changed',
+            statusCode: 409
+          }
+        )
+      }
+    }
+    const assignment = await assignVerifiedPaymentHandoffUser({
+      transaction: tx,
+      reconciliationId,
+      contactId,
       agentId: cleanAgentId,
-      channel: cleanChannel,
-      eventId: handoffSignalEventId,
-      strictEvent: true,
-      expectedUpdatedBy: authorityToken,
-      expectedStatus,
-      expectedSignal
+      decision,
+      manualReviewRequired
     })
-    return {
+    if (!appointmentAlreadyHuman) {
+      await setConversationSignal(contactId, 'ready_for_human', {
+        reason: manualReviewRequired
+          ? 'Pago confirmado; los datos obligatorios requieren revisión humana'
+          : 'Pago confirmado; la conversación quedó en manos del equipo',
+        summary: technicalSummary,
+        actionSummarySource: technicalSummary,
+        status: 'human',
+        agentId: cleanAgentId,
+        channel: cleanChannel,
+        eventId: handoffSignalEventId,
+        strictEvent: true,
+        expectedUpdatedBy: authorityToken,
+        expectedStatus: proof.status,
+        expectedSignal: proof.signal
+      })
+    }
+    const result = {
       handoffCompleted: true,
-      alreadyHuman: false,
-      statePreserved: false,
-      handoffOwnedByReconciliation: true
+      alreadyHuman: appointmentAlreadyHuman,
+      statePreserved: appointmentAlreadyHuman,
+      handoffOwnedByReconciliation: !appointmentAlreadyHuman,
+      manualReviewRequired,
+      manualReviewReason: manualReviewRequired ? requiredData.reason : null,
+      missingRequiredFields: requiredData.missing || [],
+      assignment
+    }
+    const checkpoint = await checkpointLockedConversationalPaymentReconciliation(
+      tx,
+      reconciliationId,
+      claimToken,
+      {
+        afterPaymentActionCompletedAt: new Date().toISOString(),
+        afterPaymentActionResult: result
+      }
+    )
+    // El evento operativo forma parte del mismo commit que el resultado
+    // durable. Si el proceso cae al salir de la transacción, recovery no pierde
+    // la evidencia de que este handoff sí ocurrió.
+    await recordConversationalAgentEvent({
+      eventId: `${reconciliationId}_after_payment_handoff`,
+      contactId,
+      eventType: 'payment_after_action_completed',
+      detail: {
+        agentId: cleanAgentId || null,
+        invoiceId: invoiceId || null,
+        amount: Number(amount),
+        currency: normalizeVerifiedCurrency(currency),
+        sourceEventId: sourceEventId || null,
+        paymentPurpose: paymentPurpose || null,
+        decision: checkpoint.detail?.verifiedPaymentHandoffDecision?.decision || null,
+        handoffCompleted: true,
+        manualReviewRequired,
+        manualReviewReason: result.manualReviewReason,
+        assignment,
+        notificationSent: false,
+        reconciliationId
+      },
+      throwOnError: true
+    })
+    return { ...result, progress: checkpoint.detail }
+  }).catch((error) => {
+    if (error?.code !== 'verified_payment_handoff_state_changed') throw error
+    return {
+      handoffCompleted: false,
+      manualReviewRequired: true,
+      statePreserved: true,
+      preserveReason: 'conversation_state_changed_after_payment_terminal'
     }
   })
 
-  // Sólo avisamos si esta reconciliación hizo el handoff. Si el chat ya estaba
-  // en humano antes del webhook, o si una pausa/toma humana bloqueó la mutación,
-  // no mandamos el mensaje falso de que "quedó" en manos del equipo.
   const shouldNotify = Boolean(
     notify &&
     transition.handoffCompleted &&
     transition.handoffOwnedByReconciliation
   )
+  await recordConversationalAgentEvent({
+    eventId: transition.handoffCompleted
+      ? `${reconciliationId}_after_payment_handoff`
+      : (
+          transition.awaitingRequiredData
+            ? `${reconciliationId}_after_payment_handoff_awaiting`
+            : `${reconciliationId}_after_payment_handoff_preserved`
+        ),
+    contactId,
+    eventType: transition.handoffCompleted
+      ? 'payment_after_action_completed'
+      : (
+          transition.awaitingRequiredData
+            ? 'payment_after_action_awaiting_required_data'
+            : 'payment_after_action_preserved'
+        ),
+    detail: {
+      agentId: cleanAgentId || null,
+      invoiceId: invoiceId || null,
+      amount: Number(amount),
+      currency: normalizeVerifiedCurrency(currency),
+      sourceEventId: sourceEventId || null,
+      paymentPurpose: paymentPurpose || null,
+      decision: transition.progress?.verifiedPaymentHandoffDecision?.decision || null,
+      handoffCompleted: transition.handoffCompleted === true,
+      awaitingRequiredData: transition.awaitingRequiredData === true,
+      handoffLatchId: transition.handoffLatchId || null,
+      missingRequiredFields: transition.missingRequiredFields || [],
+      manualReviewRequired: transition.manualReviewRequired === true,
+      manualReviewReason: transition.manualReviewReason || transition.preserveReason || null,
+      assignment: transition.assignment || null,
+      notificationSent: false,
+      reconciliationId
+    },
+    throwOnError: true
+  })
   const notification = shouldNotify
     ? await notifyConversationalCompletion({
         contactId,
-        reason,
+        reason: transition.manualReviewRequired
+          ? 'Pago confirmado; revisar datos obligatorios'
+          : 'Pago confirmado; la conversación quedó en manos del equipo',
         summary: technicalSummary,
         signal: 'ready_for_human',
         eventId: `${reconciliationId}_after_payment_handoff_notification`,
@@ -3068,33 +10438,6 @@ async function applyVerifiedPaymentHandoff({
         eventScopedDedupe: true
       })
     : null
-
-  await recordConversationalAgentEvent({
-    eventId: transition.handoffCompleted
-      ? `${reconciliationId}_after_payment_handoff`
-      : `${reconciliationId}_after_payment_handoff_preserved`,
-    contactId,
-    eventType: transition.handoffCompleted
-      ? 'payment_after_action_completed'
-      : 'payment_after_action_preserved',
-    detail: {
-      agentId: cleanAgentId || null,
-      invoiceId: invoiceId || null,
-      amount: Number(amount),
-      currency: normalizeVerifiedCurrency(currency),
-      sourceEventId: sourceEventId || null,
-      afterPayment: 'handoff',
-      alreadyHuman: transition.alreadyHuman === true,
-      handoffCompleted: transition.handoffCompleted === true,
-      handoffOwnedByReconciliation: transition.handoffOwnedByReconciliation === true,
-      statePreserved: transition.statePreserved === true,
-      preserveReason: transition.preserveReason || null,
-      notificationSent: Boolean(notification),
-      reconciliationId
-    },
-    throwOnError: true
-  })
-
   return { ...transition, notification }
 }
 
@@ -3270,6 +10613,45 @@ async function routeVerifiedAppointmentDepositToHumanReview({
         reason: signalResult?.reason || 'conversation_state_preserved'
       }
   return { signalResult, notification, reply }
+}
+
+async function routeVerifiedPaymentHandoffToManualReview({
+  reconciliationId,
+  contactId,
+  agentId,
+  sourceEventId,
+  ledgerPaymentId,
+  amount,
+  currency,
+  reason
+} = {}) {
+  const summary = `Pago confirmado por ${Number(amount)} ${normalizeVerifiedCurrency(currency)}; el traspaso requiere revisión humana.`
+  await recordConversationalAgentEvent({
+    eventId: `${reconciliationId}_handoff_manual_review`,
+    contactId,
+    eventType: 'payment_handoff_manual_review_required',
+    detail: {
+      agentId: agentId || null,
+      sourceEventId: sourceEventId || null,
+      ledgerPaymentId: ledgerPaymentId || null,
+      amount: Number(amount),
+      currency: normalizeVerifiedCurrency(currency),
+      reason: String(reason || 'verified_payment_handoff_manual_review_required').slice(0, 500),
+      statePreserved: true,
+      reconciliationId
+    },
+    throwOnError: true
+  })
+  const notification = await notifyConversationalCompletion({
+    contactId,
+    reason: 'Pago confirmado; revisar el traspaso manualmente',
+    summary,
+    signal: 'ready_for_human',
+    eventId: `${reconciliationId}_handoff_manual_review_notification`,
+    throwOnFailure: true,
+    eventScopedDedupe: true
+  })
+  return { notification }
 }
 
 export async function notifyConversationalHumanBookingDeposit({
@@ -4447,7 +11829,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
   }
 
   let rows = await db.all(
-    `SELECT id, contact_id, agent_id, event_type, detail_json
+    `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
      FROM conversational_agent_events
      WHERE contact_id = ? AND event_type IN (
        'payment_link_created',
@@ -4481,7 +11863,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
       reconcilePaid: false
     }).catch(() => {})
     rows = await db.all(
-      `SELECT id, contact_id, agent_id, event_type, detail_json
+      `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
        FROM conversational_agent_events
        WHERE contact_id = ? AND event_type IN (
          'payment_link_created',
@@ -4657,6 +12039,32 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
     // vuelve a leer del borrador actual del agente porque pudo cambiar mientras
     // el cliente estaba pagando.
     const afterPayment = normalizeConversationalAfterPayment(matchedDetail.afterPayment)
+    const storedPaymentConversationBinding = normalizeVerifiedPaymentConversationBinding(
+      matchedDetail.paymentConversationBinding
+    )
+    const paymentConversationBinding = (
+      storedPaymentConversationBinding?.contactId === cleanContactId &&
+      storedPaymentConversationBinding?.agentId === agentId &&
+      storedPaymentConversationBinding?.channel === paymentChannel &&
+      storedPaymentConversationBinding?.sourceEventId === String(matchedSourceEvent.id)
+    )
+      ? storedPaymentConversationBinding
+      : {
+          schemaVersion: VERIFIED_PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION,
+          status: 'unavailable',
+          contactId: cleanContactId,
+          agentId: String(agentId || '').trim(),
+          channel: paymentChannel,
+          stateId: null,
+          activationCycleId: null,
+          activationCycleStartedAt: null,
+          conversationScopeId: null,
+          sourceEventId: String(matchedSourceEvent.id),
+          sourceEventCreatedAt: matchedSourceEvent.created_at || null,
+          reason: storedPaymentConversationBinding
+            ? 'payment_source_conversation_binding_mismatch'
+            : 'payment_source_conversation_binding_legacy'
+        }
     const appointmentSourceBinding = purpose.appointmentDeposit
       ? await inspectAppointmentDepositSourceBinding({
           sourceEvent: matchedSourceEvent,
@@ -4686,6 +12094,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
         paymentEnvironment: ledgerEnvironment,
         paymentPurpose: purpose.paymentPurpose,
         afterPayment,
+        paymentConversationBinding,
         appointmentDeposit: purpose.appointmentDeposit,
         autoResumeAllowed: purpose.autoResumeAllowed !== false && !appointmentSourceBindingInvalid && !agentMissing,
         manualReviewOnly: purpose.manualReviewOnly === true || appointmentSourceBindingInvalid || agentMissing,
@@ -4935,6 +12344,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
               terminalToolName: appointmentTerminalBinding.terminalToolName
             })
           )
+          const verifiedPaymentHandoffCandidate = resumed?.verifiedPaymentHandoff || null
           const durableAfterRun = await completeDurableAppointmentPaymentTerminalEffects({
             reconciliationId,
             reconciliationClaimToken: claim.claimToken,
@@ -4951,6 +12361,7 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
               recoveredFromDurableEvent: true,
               reason: durableAfterRun.reason,
               terminalType: durableAfterRun.terminalType,
+              verifiedPaymentHandoff: verifiedPaymentHandoffCandidate,
               notification: durableAfterRun.notification || null,
               replyDelivered: durableAfterRun.reply?.sent === true
             }
@@ -5001,6 +12412,10 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
               resumed: Boolean(resumed?.resumed),
               queued: Boolean(resumed?.queued),
               reason: resumed?.reason || null,
+              terminalType: resumed?.terminalType || appointmentTerminalBinding.bookingOwner,
+              verifiedPaymentHandoff: compactVerifiedPaymentHandoffDecision(
+                resumed?.verifiedPaymentHandoff
+              ),
               manualReviewRequired: resumed?.manualReviewRequired === true,
               notification: resumed?.notification || null
             }
@@ -5008,33 +12423,192 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
           resumed = progress.resumeResult
         }
         let postPaymentHandoff = progress.afterPaymentActionResult || null
-        if (
-          afterPayment === 'handoff' &&
-          !resumed?.manualReviewRequired &&
-          !progress.afterPaymentActionCompletedAt
-        ) {
-          postPaymentHandoff = await applyVerifiedPaymentHandoff({
+        if (!resumed?.manualReviewRequired) {
+          progress = await resolveVerifiedPaymentHandoffDecision({
             reconciliationId,
+            claimToken: claim.claimToken,
+            progress,
             contactId: cleanContactId,
             agentId,
             channel: paymentChannel,
-            invoiceId: cleanInvoiceId,
-            amount: Number(ledger.amount),
-            currency: ledgerCurrency,
-            sourceEventId: matchedSourceEvent.id,
-            // La terminal de agenda ya generó su notificación durable. Sólo
-            // cambiamos la propiedad del chat para no mandar dos avisos.
-            notify: false,
-            allowCompletedAppointmentState: true,
-            allowActiveState: false
+            payment: {
+              verified: true,
+              purpose: purpose.paymentPurpose,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              environment: ledgerEnvironment
+            },
+            appointmentTerminal: {
+              completed: true,
+              bookingOwner: appointmentTerminalBinding.bookingOwner,
+              terminalToolName: appointmentTerminalBinding.terminalToolName
+            },
+            candidate: progress.resumeResult?.verifiedPaymentHandoff || null
           })
-          if (postPaymentHandoff?.handoffCompleted) {
-            progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
-              afterPaymentActionCompletedAt: new Date().toISOString(),
-              afterPaymentActionResult: postPaymentHandoff
+          const decision = compactVerifiedPaymentHandoffDecision(
+            progress.verifiedPaymentHandoffDecision
+          )
+          const evaluationUnavailable = decision?.source ===
+            'payment_conversation_binding_unavailable'
+          const paymentHandoffRequired = afterPayment === 'handoff' ||
+            decision?.decision === 'match'
+          const unsafePotentialHandoff = evaluationUnavailable && (
+            afterPayment === 'handoff' ||
+            (decision?.policyEnabled && decision?.criteriaConfigured)
+          )
+          if (unsafePotentialHandoff) {
+            const review = await routeVerifiedPaymentHandoffToManualReview({
+              reconciliationId,
+              contactId: cleanContactId,
+              agentId,
+              sourceEventId: matchedSourceEvent.id,
+              ledgerPaymentId: ledger.id,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              reason: decision?.reason || 'verified_payment_handoff_scope_unavailable'
+            })
+            const result = {
+              matched: true,
+              signal: 'appointment_deposit_manual_review_required',
+              objectiveCompleted: false,
+              resumed: Boolean(resumed?.resumed),
+              queued: Boolean(resumed?.queued),
+              manualReviewRequired: true,
+              afterPayment,
+              handoffCompleted: false,
+              statePreserved: true,
+              verifiedPaymentHandoffDecision: decision?.decision || null,
+              agentId,
+              invoiceId: cleanInvoiceId
+            }
+            await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+              manualReviewOnly: true,
+              manualReviewEventAppliedAt: new Date().toISOString(),
+              manualReviewNotification: review.notification || null
+            })
+            await settleConversationalPaymentReconciliation(reconciliationId, claim.claimToken, { result })
+            return result
+          }
+          if (paymentHandoffRequired && !progress.afterPaymentActionCompletedAt) {
+            const terminalProof = await checkpointVerifiedAppointmentPaymentBusinessTerminal({
+              reconciliationId,
+              claimToken: claim.claimToken,
+              contactId: cleanContactId,
+              agentId,
+              channel: paymentChannel,
+              ledgerPaymentId: ledger.id,
+              terminalType: resumed?.terminalType || appointmentTerminalBinding.bookingOwner
+            })
+            progress = terminalProof.progress || progress
+            if (!terminalProof.ok) {
+              const review = await routeVerifiedPaymentHandoffToManualReview({
+                reconciliationId,
+                contactId: cleanContactId,
+                agentId,
+                sourceEventId: matchedSourceEvent.id,
+                ledgerPaymentId: ledger.id,
+                amount: Number(ledger.amount),
+                currency: ledgerCurrency,
+                reason: terminalProof.reason
+              })
+              const result = {
+                matched: true,
+                signal: 'appointment_deposit_manual_review_required',
+                objectiveCompleted: false,
+                resumed: Boolean(resumed?.resumed),
+                queued: Boolean(resumed?.queued),
+                manualReviewRequired: true,
+                afterPayment,
+                handoffCompleted: false,
+                statePreserved: true,
+                agentId,
+                invoiceId: cleanInvoiceId
+              }
+              await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+                manualReviewOnly: true,
+                manualReviewEventAppliedAt: new Date().toISOString(),
+                manualReviewNotification: review.notification || null
+              })
+              await settleConversationalPaymentReconciliation(
+                reconciliationId,
+                claim.claimToken,
+                { result }
+              )
+              return result
+            }
+            postPaymentHandoff = await applyVerifiedPaymentHandoff({
+              reconciliationId,
+              claimToken: claim.claimToken,
+              contactId: cleanContactId,
+              agentId,
+              channel: paymentChannel,
+              invoiceId: cleanInvoiceId,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              sourceEventId: matchedSourceEvent.id,
+              paymentPurpose: purpose.paymentPurpose,
+              // La terminal de agenda ya notificó su resultado. Sólo agregamos
+              // otra alerta cuando los datos obligatorios requieren revisión.
+              notify: false
+            })
+            progress = postPaymentHandoff.progress || progress
+            await conversationalVerifiedPaymentHandoffAfterCommitHookForTest?.({
+              stage: 'appointment_deposit_after_handoff_commit',
+              reconciliationId,
+              contactId: cleanContactId,
+              agentId,
+              progress,
+              handoff: postPaymentHandoff
             })
           }
+          postPaymentHandoff = progress.afterPaymentActionResult ||
+            postPaymentHandoff
+          if (postPaymentHandoff?.awaitingRequiredData) {
+            const requiredDataResolution =
+              await ensureVerifiedHandoffRequiredDataPrompt(postPaymentHandoff)
+            const resolvedHandoff = mergeVerifiedHandoffRequiredDataResolution(
+              postPaymentHandoff,
+              requiredDataResolution
+            )
+            if (resolvedHandoff !== postPaymentHandoff) {
+              postPaymentHandoff = resolvedHandoff
+              progress = await checkpointConversationalPaymentReconciliation(
+                reconciliationId,
+                claim.claimToken,
+                { afterPaymentActionResult: postPaymentHandoff }
+              )
+            }
+          }
+          if (
+            paymentHandoffRequired &&
+            postPaymentHandoff?.manualReviewRequired &&
+            !progress.manualReviewEventAppliedAt
+          ) {
+            const review = await routeVerifiedPaymentHandoffToManualReview({
+              reconciliationId,
+              contactId: cleanContactId,
+              agentId,
+              sourceEventId: matchedSourceEvent.id,
+              ledgerPaymentId: ledger.id,
+              amount: Number(ledger.amount),
+              currency: ledgerCurrency,
+              reason: postPaymentHandoff.manualReviewReason ||
+                postPaymentHandoff.preserveReason
+            })
+            progress = await checkpointConversationalPaymentReconciliation(
+              reconciliationId,
+              claim.claimToken,
+              {
+                manualReviewOnly: true,
+                manualReviewEventAppliedAt: new Date().toISOString(),
+                manualReviewNotification: review.notification || null
+              }
+            )
+          }
         }
+        const verifiedPaymentDecision = compactVerifiedPaymentHandoffDecision(
+          progress.verifiedPaymentHandoffDecision
+        )
         const result = {
           matched: true,
           signal: resumed?.manualReviewRequired
@@ -5043,9 +12617,16 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
           objectiveCompleted: postPaymentHandoff?.handoffCompleted === true,
           resumed: Boolean(resumed?.resumed),
           queued: Boolean(resumed?.queued),
-          manualReviewRequired: resumed?.manualReviewRequired === true,
+          manualReviewRequired: resumed?.manualReviewRequired === true ||
+            postPaymentHandoff?.manualReviewRequired === true,
           afterPayment,
           handoffCompleted: postPaymentHandoff?.handoffCompleted === true,
+          awaitingRequiredData:
+            postPaymentHandoff?.awaitingRequiredData === true,
+          handoffLatchId: postPaymentHandoff?.handoffLatchId || null,
+          missingRequiredFields:
+            postPaymentHandoff?.missingRequiredFields || [],
+          verifiedPaymentHandoffDecision: verifiedPaymentDecision?.decision || null,
           agentId,
           invoiceId: cleanInvoiceId
         }
@@ -5057,42 +12638,219 @@ export async function completeConversationalAgentSalePaymentFromInvoice({
       const conversationSummary = cleanCompletionDisplayText(matchedDetail.resumen || matchedDetail.summary || '')
       const reason = 'Pago confirmado del link enviado por el agente'
       let result = null
+      progress = await resolveVerifiedPaymentHandoffDecision({
+        reconciliationId,
+        claimToken: claim.claimToken,
+        progress,
+        contactId: cleanContactId,
+        agentId,
+        channel: paymentChannel,
+        payment: {
+          verified: true,
+          purpose: purpose.paymentPurpose,
+          amount: Number(ledger.amount),
+          currency: ledgerCurrency,
+          environment: ledgerEnvironment
+        },
+        appointmentTerminal: {
+          completed: false,
+          bookingOwner: null,
+          terminalToolName: null
+        }
+      })
+      const verifiedPaymentDecision = compactVerifiedPaymentHandoffDecision(
+        progress.verifiedPaymentHandoffDecision
+      )
+      const evaluationUnavailable = verifiedPaymentDecision?.source ===
+        'payment_conversation_binding_unavailable'
+      const paymentHandoffRequired = afterPayment === 'handoff' ||
+        verifiedPaymentDecision?.decision === 'match'
 
-      if (afterPayment === 'handoff') {
+      // Un source recuperado sin ciclo original nunca puede adjudicarse al
+      // ciclo que esté activo hoy. Esto aplica tanto al handoff como a
+      // `afterPayment=continue`: reanudar ese estado actual mezclaría un pago
+      // viejo con otra conversación.
+      if (evaluationUnavailable) {
+        const review = await routeVerifiedPaymentHandoffToManualReview({
+          reconciliationId,
+          contactId: cleanContactId,
+          agentId,
+          sourceEventId: matchedSourceEvent.id,
+          ledgerPaymentId: ledger.id,
+          amount: Number(ledger.amount),
+          currency: ledgerCurrency,
+          reason: verifiedPaymentDecision?.reason ||
+            'verified_payment_handoff_scope_unavailable'
+        })
+        result = {
+          matched: true,
+          signal: 'payment_confirmed_state_preserved',
+          objectiveCompleted: true,
+          handoffCompleted: false,
+          manualReviewRequired: true,
+          statePreserved: true,
+          resumed: false,
+          queued: false,
+          afterPayment,
+          verifiedPaymentHandoffDecision: verifiedPaymentDecision?.decision || null,
+          agentId,
+          invoiceId: cleanInvoiceId
+        }
+        await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
+          manualReviewOnly: true,
+          manualReviewEventAppliedAt: new Date().toISOString(),
+          manualReviewNotification: review.notification || null
+        })
+      } else if (paymentHandoffRequired) {
+        const terminal = await sealVerifiedPaymentBusinessTerminal({
+          reconciliationId,
+          claimToken: claim.claimToken,
+          contactId: cleanContactId,
+          agentId,
+          channel: paymentChannel,
+          sourceEventId: matchedSourceEvent.id,
+          ledgerPaymentId: ledger.id,
+          paymentPurpose: purpose.paymentPurpose,
+          amount: Number(ledger.amount),
+          currency: ledgerCurrency,
+          conversationSummary
+        })
+        progress = terminal.progress || progress
+        if (!terminal.ok) {
+          const review = await routeVerifiedPaymentHandoffToManualReview({
+            reconciliationId,
+            contactId: cleanContactId,
+            agentId,
+            sourceEventId: matchedSourceEvent.id,
+            ledgerPaymentId: ledger.id,
+            amount: Number(ledger.amount),
+            currency: ledgerCurrency,
+            reason: terminal.reason
+          })
+          result = {
+            matched: true,
+            signal: 'payment_confirmed_state_preserved',
+            objectiveCompleted: true,
+            handoffCompleted: false,
+            manualReviewRequired: true,
+            statePreserved: true,
+            afterPayment,
+            verifiedPaymentHandoffDecision: verifiedPaymentDecision?.decision || null,
+            agentId,
+            invoiceId: cleanInvoiceId
+          }
+          progress = await checkpointConversationalPaymentReconciliation(
+            reconciliationId,
+            claim.claimToken,
+            {
+              manualReviewOnly: true,
+              manualReviewEventAppliedAt: new Date().toISOString(),
+              manualReviewNotification: review.notification || null
+            }
+          )
+        } else {
         let handoff = progress.afterPaymentActionResult || null
         if (!progress.afterPaymentActionCompletedAt) {
           handoff = await applyVerifiedPaymentHandoff({
             reconciliationId,
+            claimToken: claim.claimToken,
             contactId: cleanContactId,
-            // La identidad durable de la fuente manda. Si el agente ya no existe
-            // o un evento legacy no la conserva, verificamos el pago pero jamás
-            // mutamos el estado de un agente que hoy atiende el mismo contacto.
             agentId: matchedAgentId,
             channel: paymentChannel,
             invoiceId: cleanInvoiceId,
             amount: Number(ledger.amount),
             currency: ledgerCurrency,
             sourceEventId: matchedSourceEvent.id,
-            notify: true,
-            allowStateMutation: Boolean(matchedAgentId) && !agentMissing
+            paymentPurpose: purpose.paymentPurpose,
+            notify: true
           })
-          if (handoff?.handoffCompleted) {
-            progress = await checkpointConversationalPaymentReconciliation(reconciliationId, claim.claimToken, {
-              afterPaymentActionCompletedAt: new Date().toISOString(),
-              afterPaymentActionResult: handoff,
-              notificationAppliedAt: new Date().toISOString()
-            })
+          progress = handoff.progress || progress
+        }
+        if (handoff?.awaitingRequiredData) {
+          const requiredDataResolution =
+            await ensureVerifiedHandoffRequiredDataPrompt(handoff)
+          const resolvedHandoff = mergeVerifiedHandoffRequiredDataResolution(
+            handoff,
+            requiredDataResolution
+          )
+          if (resolvedHandoff !== handoff) {
+            handoff = resolvedHandoff
+            progress = await checkpointConversationalPaymentReconciliation(
+              reconciliationId,
+              claim.claimToken,
+              {
+                afterPaymentActionResult: handoff,
+                ...(requiredDataResolution?.notification
+                  ? {
+                      notificationAppliedAt:
+                        progress.notificationAppliedAt || new Date().toISOString()
+                    }
+                  : {})
+              }
+            )
           }
+        }
+        if (handoff?.handoffCompleted && !progress.notificationAppliedAt) {
+          await notifyConversationalCompletion({
+            contactId: cleanContactId,
+            reason: handoff.manualReviewRequired
+              ? 'Pago confirmado; revisar datos obligatorios'
+              : 'Pago confirmado; la conversación quedó en manos del equipo',
+            summary: `Pago confirmado · ${Number(ledger.amount)} ${ledgerCurrency}`,
+            signal: 'ready_for_human',
+            eventId: `${reconciliationId}_after_payment_handoff_notification`,
+            throwOnFailure: true,
+            eventScopedDedupe: true
+          })
+          progress = await checkpointConversationalPaymentReconciliation(
+            reconciliationId,
+            claim.claimToken,
+            { notificationAppliedAt: new Date().toISOString() }
+          )
         }
         result = {
           matched: true,
-          signal: handoff?.handoffCompleted ? 'ready_for_human' : 'payment_confirmed_state_preserved',
+          signal: handoff?.handoffCompleted
+            ? 'ready_for_human'
+            : (
+                handoff?.awaitingRequiredData
+                  ? 'payment_handoff_awaiting_required_data'
+                  : 'payment_handoff_manual_review_required'
+              ),
           objectiveCompleted: handoff?.handoffCompleted === true,
           handoffCompleted: handoff?.handoffCompleted === true,
+          awaitingRequiredData: handoff?.awaitingRequiredData === true,
+          handoffLatchId: handoff?.handoffLatchId || null,
+          manualReviewRequired: handoff?.manualReviewRequired === true,
+          manualReviewReason: handoff?.manualReviewReason || null,
+          missingRequiredFields: handoff?.missingRequiredFields || [],
           statePreserved: handoff?.statePreserved === true,
           afterPayment,
+          verifiedPaymentHandoffDecision: verifiedPaymentDecision?.decision || null,
           agentId,
           invoiceId: cleanInvoiceId
+        }
+        if (handoff?.manualReviewRequired && !handoff?.notification) {
+          const review = await routeVerifiedPaymentHandoffToManualReview({
+            reconciliationId,
+            contactId: cleanContactId,
+            agentId,
+            sourceEventId: matchedSourceEvent.id,
+            ledgerPaymentId: ledger.id,
+            amount: Number(ledger.amount),
+            currency: ledgerCurrency,
+            reason: handoff.manualReviewReason || handoff.preserveReason
+          })
+          progress = await checkpointConversationalPaymentReconciliation(
+            reconciliationId,
+            claim.claimToken,
+            {
+              manualReviewOnly: true,
+              manualReviewEventAppliedAt: new Date().toISOString(),
+              manualReviewNotification: review.notification || null
+            }
+          )
+        }
         }
       } else {
         let currentPaymentState = agentId
@@ -6026,6 +13784,21 @@ function assertAgentTimingInput(input = {}) {
   }
 }
 
+function assertAgentHandoffRulesInput(input = {}) {
+  const capabilityRulesLength = input.capabilitiesConfig === undefined
+    ? 0
+    : getConversationalHandoffRulesInputLength(input.capabilitiesConfig)
+  const legacyRulesLength = input.handoffRules === undefined
+    ? 0
+    : String(input.handoffRules ?? '').replace(/\r/g, '').length
+  const rulesLength = Math.max(capabilityRulesLength, legacyRulesLength)
+  if (rulesLength <= CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH) return
+  throw buildAgentConfigError(
+    `“Cuándo debe pasarlo” admite máximo ${CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH.toLocaleString('es-MX')} caracteres. Reduce el texto antes de guardar.`,
+    'CONVERSATIONAL_HANDOFF_RULES_TOO_LONG'
+  )
+}
+
 function normalizeAgentReplyDeliveryForConfig(input) {
   // La configuración visible es el contrato: si el dueño decide cuántos
   // globos usar, su tamaño, aleatoriedad o pausas, el runtime debe conservarlo.
@@ -6382,6 +14155,9 @@ function normalizeAgentPromptPatch(promptInput, basePrompt) {
 
 function agentInputToRowValues(input, base) {
   assertAgentTimingInput(input)
+  // Se valida el payload crudo antes de normalizarlo. Recortar aquí haría que
+  // el panel aparentara haber guardado reglas que en realidad se perdieron.
+  assertAgentHandoffRulesInput(input)
   const identity = normalizeAgentIdentity(input, base)
   const next = {
     name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',
@@ -6975,11 +14751,14 @@ export async function resetConversationalAgentSkippedContacts(agentId, { updated
     UPDATE conversational_agent_state
     SET status = 'active',
         paused_until_at = NULL,
+        activation_cycle_id = ?,
+        activation_cycle_started_at = CURRENT_TIMESTAMP,
+        activation_cycle_started_message_id = NULL,
         updated_by = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE agent_id = ?
       AND status = 'skipped'
-  `, [cleanUpdatedBy, cleanAgentId])
+  `, [`cac_${randomUUID()}`, cleanUpdatedBy, cleanAgentId])
 
   await Promise.all(contactIds.map((contactId) => recordConversationalAgentEvent({
     contactId,
@@ -7974,6 +15753,9 @@ function mapStateRow(row) {
     followUpBaseMessageId: row.follow_up_base_message_id || null,
     followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0),
     followUpLastSentAt: row.follow_up_last_sent_at || null,
+    activationCycleId: row.activation_cycle_id || null,
+    activationCycleStartedAt: row.activation_cycle_started_at || null,
+    activationCycleStartedMessageId: row.activation_cycle_started_message_id || null,
     activatedAt: row.activated_at || null,
     activationSource: row.activation_source || null,
     activatedBy: row.activated_by || null,
@@ -8033,6 +15815,84 @@ function conversationStateSortSql() {
   `
 }
 
+async function repairActiveConversationStateActivationCycle(row, database = db) {
+  const currentCycleId = String(row?.activation_cycle_id || '').trim()
+  const missingCycleIdentity = !currentCycleId || !row?.activation_cycle_started_at
+  const missingLegacyBackfillMarker = Boolean(
+    row?.id && currentCycleId === String(row.id)
+  )
+  const missingLegacyWriterAnchor = Boolean(
+    currentCycleId.startsWith('cac_legacy_insert_') &&
+    !String(row?.activation_cycle_started_message_id || '').trim() &&
+    String(row?.last_inbound_message_id || '').trim()
+  )
+  if (
+    !row?.id ||
+    row.status !== 'active' ||
+    (
+      !missingCycleIdentity &&
+      !missingLegacyBackfillMarker &&
+      !missingLegacyWriterAnchor
+    )
+  ) return row
+
+  const repairedCycleId = `cac_${randomUUID()}`
+  const legacyBackfillCycleId =
+    `${CONVERSATIONAL_LEGACY_BACKFILL_CYCLE_PREFIX}${row.id}`
+  await database.run(`
+    UPDATE conversational_agent_state
+    SET activation_cycle_id = CASE
+          WHEN activation_cycle_id IS NULL OR TRIM(activation_cycle_id) = ''
+            THEN ?
+          WHEN activation_cycle_id = id
+            THEN ?
+          ELSE activation_cycle_id
+        END,
+        activation_cycle_started_at = COALESCE(
+          activation_cycle_started_at,
+          activated_at,
+          created_at,
+          updated_at,
+          CURRENT_TIMESTAMP
+        ),
+        activation_cycle_started_message_id = CASE
+          WHEN activation_cycle_id = id
+            OR activation_cycle_id LIKE 'cac_legacy_backfill_%'
+          THEN activation_cycle_started_message_id
+          ELSE COALESCE(
+            NULLIF(TRIM(activation_cycle_started_message_id), ''),
+            NULLIF(TRIM(last_inbound_message_id), '')
+          )
+        END
+    WHERE id = ?
+      AND status = 'active'
+      AND (
+        activation_cycle_id IS NULL
+        OR TRIM(activation_cycle_id) = ''
+        OR activation_cycle_id = id
+        OR activation_cycle_started_at IS NULL
+        OR (
+          SUBSTR(activation_cycle_id, 1, 18) = 'cac_legacy_insert_'
+          AND (
+            activation_cycle_started_message_id IS NULL
+            OR TRIM(activation_cycle_started_message_id) = ''
+          )
+          AND last_inbound_message_id IS NOT NULL
+          AND TRIM(last_inbound_message_id) <> ''
+        )
+      )
+  `, [repairedCycleId, legacyBackfillCycleId, row.id])
+
+  const canonical = await database.get(`
+    SELECT status, activation_cycle_id, activation_cycle_started_at,
+           activation_cycle_started_message_id
+    FROM conversational_agent_state
+    WHERE id = ?
+    LIMIT 1
+  `, [row.id])
+  return canonical ? { ...row, ...canonical } : null
+}
+
 async function loadConversationStateRow(contactId, { agentId = null, channel = null } = {}) {
   if (!contactId) return null
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
@@ -8041,7 +15901,7 @@ async function loadConversationStateRow(contactId, { agentId = null, channel = n
     ? " AND COALESCE(NULLIF(s.channel, ''), 'whatsapp') = ?"
     : ''
   if (cleanAgentId) {
-    return db.get(`
+    const row = await db.get(`
       SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
              a.created_at AS agent_created_at,
              a.hide_attended AS agent_hide_attended,
@@ -8051,9 +15911,10 @@ async function loadConversationStateRow(contactId, { agentId = null, channel = n
       WHERE s.contact_id = ? AND s.agent_id = ?${channelFilter}
       LIMIT 1
     `, [contactId, cleanAgentId, ...(cleanChannel ? [cleanChannel] : [])])
+    return repairActiveConversationStateActivationCycle(row)
   }
 
-  return db.get(`
+  const row = await db.get(`
     SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
            a.created_at AS agent_created_at,
            a.hide_attended AS agent_hide_attended,
@@ -8064,11 +15925,12 @@ async function loadConversationStateRow(contactId, { agentId = null, channel = n
     ORDER BY ${conversationStateSortSql()}
     LIMIT 1
   `, [contactId, ...(cleanChannel ? [cleanChannel] : [])])
+  return repairActiveConversationStateActivationCycle(row)
 }
 
 async function loadConversationStateRowById(stateId) {
   if (!stateId) return null
-  return db.get(`
+  const row = await db.get(`
     SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
            a.created_at AS agent_created_at,
            a.hide_attended AS agent_hide_attended,
@@ -8078,6 +15940,7 @@ async function loadConversationStateRowById(stateId) {
     WHERE s.id = ?
     LIMIT 1
   `, [stateId])
+  return repairActiveConversationStateActivationCycle(row)
 }
 
 function normalizeConversationActivationSource(source = '', updatedBy = 'system') {
@@ -8221,10 +16084,13 @@ export async function assignAgentToConversation(contactId, agentId, {
   activationSource = 'automatic',
   assignmentSource = activationSource,
   updatedBy = 'system',
-  channel = null
+  channel = null,
+  activationMessageId = '',
+  requireRunnableState = false
 } = {}) {
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const cleanActivationMessageId = String(activationMessageId || '').trim().slice(0, 180)
   if (cleanAgentId) {
     const state = await ensureConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
     const cleanAssignmentSource = normalizeConversationActivationSource(assignmentSource, updatedBy)
@@ -8232,12 +16098,35 @@ export async function assignAgentToConversation(contactId, agentId, {
       'agent_id = ?',
       "status = 'active'",
       'paused_until_at = NULL',
+      "signal = CASE WHEN status IN ('human', 'skipped', 'completed') THEN NULL ELSE signal END",
+      "signal_reason = CASE WHEN status IN ('human', 'skipped', 'completed') THEN NULL ELSE signal_reason END",
+      "signal_summary = CASE WHEN status IN ('human', 'skipped', 'completed') THEN NULL ELSE signal_summary END",
+      "signal_at = CASE WHEN status IN ('human', 'skipped', 'completed') THEN NULL ELSE signal_at END",
       'assignment_source = ?',
       'assigned_at = CURRENT_TIMESTAMP',
       'assigned_by = ?',
       'updated_by = ?'
     ]
     const params = [cleanAgentId, cleanAssignmentSource, String(updatedBy || 'system').trim() || 'system', updatedBy]
+    assignments.push(
+      "activation_cycle_id = CASE WHEN status IN ('human', 'skipped', 'completed') THEN ? ELSE activation_cycle_id END",
+      "activation_cycle_started_at = CASE WHEN status IN ('human', 'skipped', 'completed') THEN CURRENT_TIMESTAMP ELSE activation_cycle_started_at END",
+      `activation_cycle_started_message_id = CASE
+         WHEN status IN ('human', 'skipped', 'completed') THEN NULLIF(?, '')
+         WHEN activation_cycle_id = id
+           OR activation_cycle_id LIKE 'cac_legacy_backfill_%'
+           THEN activation_cycle_started_message_id
+         ELSE COALESCE(
+           NULLIF(activation_cycle_started_message_id, ''),
+           NULLIF(?, '')
+         )
+       END`
+    )
+    params.push(
+      `cac_${randomUUID()}`,
+      cleanActivationMessageId,
+      cleanActivationMessageId
+    )
     if (cleanChannel) {
       assignments.push('channel = ?')
       params.push(cleanChannel)
@@ -8245,16 +16134,37 @@ export async function assignAgentToConversation(contactId, agentId, {
     appendActivationAssignments(assignments, params, { activationSource, updatedBy })
     assignments.push('updated_at = CURRENT_TIMESTAMP')
     params.push(state.id)
+    if (requireRunnableState) params.push(cleanAgentId)
+    await conversationalStateBeforeReactivationUpdateHookForTest?.({
+      operation: 'assign_agent',
+      contactId,
+      agentId: cleanAgentId,
+      channel: cleanChannel || state.channel || 'whatsapp',
+      stateId: state.id
+    })
     await db.run(`
       UPDATE conversational_agent_state
       SET ${assignments.join(', ')}
       WHERE id = ?
+        ${requireRunnableState
+          ? `AND agent_id = ?
+             AND status = 'active'
+             AND (signal IS NULL OR TRIM(signal) = '')`
+          : ''}
     `, params)
     return getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   }
 
   const state = await getConversationState(contactId, { channel: cleanChannel })
   if (!state?.id) return null
+  await conversationalStateBeforeReactivationUpdateHookForTest?.({
+    operation: 'release_assignment',
+    contactId,
+    agentId: state.agentId || null,
+    channel: cleanChannel || state.channel || 'whatsapp',
+    stateId: state.id
+  })
+  const releaseCheckedAt = new Date().toISOString()
   await db.run(`
     UPDATE conversational_agent_state
     SET agent_id = NULL,
@@ -8263,17 +16173,90 @@ export async function assignAgentToConversation(contactId, agentId, {
         updated_by = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [String(updatedBy || 'system').trim() || 'system', updatedBy, state.id])
-  return getConversationState(contactId, { channel: cleanChannel })
+      AND status = 'active'
+      AND (signal IS NULL OR TRIM(signal) = '')
+      AND COALESCE(inbound_processing_message_id, '') = ?
+      AND COALESCE(inbound_processing_status, '') = ?
+      AND COALESCE(inbound_processing_claim_token, '') = ?
+      AND NOT (
+        inbound_processing_status = 'processing'
+        AND inbound_processing_lease_until_at IS NOT NULL
+        AND inbound_processing_lease_until_at > ?
+      )
+  `, [
+    String(updatedBy || 'system').trim() || 'system',
+    updatedBy,
+    state.id,
+    state.inboundProcessingMessageId || '',
+    state.inboundProcessingStatus || '',
+    state.inboundProcessingClaimToken || '',
+    releaseCheckedAt
+  ])
+  return mapStateRow(await loadConversationStateRowById(state.id))
 }
 
-export async function releaseAgentFromConversation(contactId, agentId, { updatedBy = 'agent', channel = null } = {}) {
+export async function releaseAgentFromConversation(contactId, agentId, {
+  updatedBy = 'agent',
+  channel = null,
+  inboundClaim = null
+} = {}) {
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   if (!contactId || !cleanAgentId) return null
   const state = await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   if (!state?.id) return null
+  const processingMessageId = String(inboundClaim?.messageId || '').trim()
+  const processingClaimToken = String(inboundClaim?.claimToken || '').trim()
 
+  if (processingMessageId && processingClaimToken) {
+    await conversationalStateBeforeReactivationUpdateHookForTest?.({
+      operation: 'release_agent_after_handoff_gate',
+      contactId,
+      agentId: cleanAgentId,
+      channel: cleanChannel || state.channel || 'whatsapp',
+      stateId: state.id
+    })
+    const releaseCheckedAt = new Date().toISOString()
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET agent_id = NULL,
+          assignment_source = 'released',
+          assigned_by = ?,
+          inbound_processing_status = 'completed',
+          inbound_processing_claim_token = NULL,
+          inbound_processing_lease_until_at = NULL,
+          inbound_processing_last_error = NULL,
+          updated_by = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND agent_id = ?
+        AND status = 'active'
+        AND (signal IS NULL OR TRIM(signal) = '')
+        AND inbound_processing_message_id = ?
+        AND inbound_processing_status = 'processing'
+        AND inbound_processing_claim_token = ?
+        AND inbound_processing_lease_until_at IS NOT NULL
+        AND inbound_processing_lease_until_at > ?
+    `, [
+      String(updatedBy || 'agent').trim() || 'agent',
+      updatedBy,
+      state.id,
+      cleanAgentId,
+      processingMessageId,
+      processingClaimToken,
+      releaseCheckedAt
+    ])
+    return mapStateRow(await loadConversationStateRowById(state.id))
+  }
+
+  await conversationalStateBeforeReactivationUpdateHookForTest?.({
+    operation: 'release_agent',
+    contactId,
+    agentId: cleanAgentId,
+    channel: cleanChannel || state.channel || 'whatsapp',
+    stateId: state.id
+  })
+  const releaseCheckedAt = new Date().toISOString()
   await db.run(`
     UPDATE conversational_agent_state
     SET agent_id = NULL,
@@ -8282,9 +16265,29 @@ export async function releaseAgentFromConversation(contactId, agentId, { updated
         updated_by = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [String(updatedBy || 'agent').trim() || 'agent', updatedBy, state.id])
+      AND agent_id = ?
+      AND status = 'active'
+      AND (signal IS NULL OR TRIM(signal) = '')
+      AND COALESCE(inbound_processing_message_id, '') = ?
+      AND COALESCE(inbound_processing_status, '') = ?
+      AND COALESCE(inbound_processing_claim_token, '') = ?
+      AND NOT (
+        inbound_processing_status = 'processing'
+        AND inbound_processing_lease_until_at IS NOT NULL
+        AND inbound_processing_lease_until_at > ?
+      )
+  `, [
+    String(updatedBy || 'agent').trim() || 'agent',
+    updatedBy,
+    state.id,
+    cleanAgentId,
+    state.inboundProcessingMessageId || '',
+    state.inboundProcessingStatus || '',
+    state.inboundProcessingClaimToken || '',
+    releaseCheckedAt
+  ])
 
-  return getConversationState(contactId, { channel: cleanChannel })
+  return mapStateRow(await loadConversationStateRowById(state.id))
 }
 
 export async function getConversationState(contactId, { agentId = null, channel = null } = {}) {
@@ -8314,7 +16317,12 @@ export async function listConversationStatesForContact(contactId, { channel = nu
     WHERE s.contact_id = ?${channelFilter}
     ORDER BY ${conversationStateSortSql()}
   `, [contactId, ...(cleanChannel ? [cleanChannel] : [])]).catch(() => [])
-  return rows.map(mapStateRow)
+  const repairedRows = []
+  for (const row of rows) {
+    const repaired = await repairActiveConversationStateActivationCycle(row)
+    if (repaired) repairedRows.push(repaired)
+  }
+  return repairedRows.map(mapStateRow)
 }
 
 export async function ensureConversationState(contactId, { agentId = null, channel = null } = {}) {
@@ -8344,13 +16352,16 @@ export async function ensureConversationState(contactId, { agentId = null, chann
         UPDATE conversational_agent_state
         SET agent_id = ?,
             channel = ?,
+            activation_cycle_id = ?,
+            activation_cycle_started_at = CURRENT_TIMESTAMP,
+            activation_cycle_started_message_id = NULL,
             assignment_source = COALESCE(assignment_source, 'legacy'),
             assigned_at = COALESCE(assigned_at, CURRENT_TIMESTAMP),
             assigned_by = COALESCE(assigned_by, 'system'),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND agent_id IS NULL
-      `, [cleanAgentId, adoptedChannel, claimableLegacyState.id])
+      `, [cleanAgentId, adoptedChannel, `cac_${randomUUID()}`, claimableLegacyState.id])
       return getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
     }
   }
@@ -8359,9 +16370,10 @@ export async function ensureConversationState(contactId, { agentId = null, chann
     INSERT INTO conversational_agent_state (
       id, contact_id, agent_id, channel, status,
       assignment_source, assigned_at, assigned_by,
+      activation_cycle_id, activation_cycle_started_at,
       activated_at, activation_source, activated_by
     )
-    VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
   `, [
     id,
     contactId,
@@ -8370,6 +16382,7 @@ export async function ensureConversationState(contactId, { agentId = null, chann
     cleanAgentId ? 'legacy' : null,
     null,
     cleanAgentId ? 'system' : null,
+    `cac_${randomUUID()}`,
     null,
     null,
     null
@@ -8515,6 +16528,18 @@ export async function assignAgentToContactManually(contactId, agentId, {
         signal_summary = NULL,
         signal_at = NULL,
         paused_until_at = NULL,
+        activation_cycle_id = CASE
+          WHEN status IN ('human', 'skipped', 'completed') THEN ?
+          ELSE activation_cycle_id
+        END,
+        activation_cycle_started_at = CASE
+          WHEN status IN ('human', 'skipped', 'completed') THEN CURRENT_TIMESTAMP
+          ELSE activation_cycle_started_at
+        END,
+        activation_cycle_started_message_id = CASE
+          WHEN status IN ('human', 'skipped', 'completed') THEN NULL
+          ELSE activation_cycle_started_message_id
+        END,
         assignment_source = 'manual',
         assigned_at = CURRENT_TIMESTAMP,
         assigned_by = ?,
@@ -8524,7 +16549,7 @@ export async function assignAgentToContactManually(contactId, agentId, {
         activated_by = COALESCE(activated_by, ?),
         updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ? AND agent_id = ?
-  `, [updatedBy, updatedBy, updatedBy, contactId, cleanAgentId])
+  `, [`cac_${randomUUID()}`, updatedBy, updatedBy, updatedBy, contactId, cleanAgentId])
 
   const state = await getConversationState(contactId, {
     agentId: cleanAgentId,
@@ -8569,6 +16594,21 @@ export async function setManualConversationAgentStatus(contactId, status, {
   const signalAssignments = clearSignal
     ? ', signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL'
     : ''
+  const cycleAssignments = status === 'active'
+    ? `, activation_cycle_id = CASE
+           WHEN status IN ('human', 'skipped', 'completed') THEN ?
+           ELSE activation_cycle_id
+         END,
+         activation_cycle_started_at = CASE
+           WHEN status IN ('human', 'skipped', 'completed') THEN CURRENT_TIMESTAMP
+           ELSE activation_cycle_started_at
+         END,
+         activation_cycle_started_message_id = CASE
+           WHEN status IN ('human', 'skipped', 'completed') THEN NULL
+           ELSE activation_cycle_started_message_id
+         END`
+    : ''
+  const cycleParams = status === 'active' ? [`cac_${randomUUID()}`] : []
   await db.run(`
     UPDATE conversational_agent_state
     SET status = ?,
@@ -8577,8 +16617,9 @@ export async function setManualConversationAgentStatus(contactId, status, {
         assignment_source = 'manual',
         updated_at = CURRENT_TIMESTAMP
         ${signalAssignments}
+        ${cycleAssignments}
     WHERE contact_id = ? AND agent_id = ?
-  `, [status, nextPausedUntilAt, updatedBy, contactId, cleanAgentId])
+  `, [status, nextPausedUntilAt, updatedBy, ...cycleParams, contactId, cleanAgentId])
 
   await recordConversationalAgentEvent({
     contactId,
@@ -9119,6 +17160,7 @@ export async function settleConversationalReplyDelivery(planId, claimToken, {
   status = 'completed',
   error = '',
   interruptedByMessageId = null,
+  providerAttempted = null,
   nowMs = Date.now()
 } = {}) {
   const cleanPlanId = String(planId || '').trim()
@@ -9148,7 +17190,11 @@ export async function settleConversationalReplyDelivery(planId, claimToken, {
 
   const lease = processingLeaseIso({ nowMs, leaseMs: CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS })
   const sendingParts = plan.parts.filter((part) => part?.status === 'sending')
-  const finalStatus = requestedStatus !== 'completed' && sendingParts.length
+  const finalStatus = (
+    requestedStatus !== 'completed' &&
+    sendingParts.length &&
+    providerAttempted !== false
+  )
     ? 'ambiguous'
     : requestedStatus
   const cleanError = String(error || '').trim().slice(0, 1200) || null
@@ -9159,7 +17205,14 @@ export async function settleConversationalReplyDelivery(planId, claimToken, {
       ? plan.parts.map((part) => part?.status === 'sending'
         ? { ...part, status: 'ambiguous', lastError: cleanError || 'delivery_status_unknown_after_send_started' }
         : part)
-      : plan.parts,
+      : (
+          ['interrupted', 'pending'].includes(finalStatus) &&
+            providerAttempted === false
+            ? plan.parts.map((part) => part?.status === 'sending'
+              ? { ...part, status: 'pending', lastError: null }
+              : part)
+            : plan.parts
+        ),
     claimToken: null,
     leaseUntilAt: null,
     lastError: finalStatus === 'completed' || finalStatus === 'interrupted' ? null : cleanError,
@@ -9214,6 +17267,15 @@ export async function claimConversationInboundMessage(contactId, messageId, {
   const result = await db.run(`
     UPDATE conversational_agent_state
     SET last_inbound_message_id = ?,
+        activation_cycle_started_message_id = CASE
+          WHEN activation_cycle_id = id
+            OR activation_cycle_id LIKE 'cac_legacy_backfill_%'
+            THEN activation_cycle_started_message_id
+          ELSE COALESCE(
+            NULLIF(activation_cycle_started_message_id, ''),
+            ?
+          )
+        END,
         inbound_processing_message_id = ?,
         inbound_processing_status = 'processing',
         inbound_processing_claim_token = ?,
@@ -9224,7 +17286,11 @@ export async function claimConversationInboundMessage(contactId, messageId, {
             THEN COALESCE(inbound_processing_attempt_count, 0) + 1
           ELSE 1
         END,
-        inbound_processing_last_error = NULL,
+        inbound_processing_last_error = CASE
+          WHEN COALESCE(inbound_processing_last_error, '') LIKE 'mandatory_handoff_escalation_pending:%'
+            THEN inbound_processing_last_error
+          ELSE NULL
+        END,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
       AND status = 'active'
@@ -9251,6 +17317,7 @@ export async function claimConversationInboundMessage(contactId, messageId, {
         )
       )
   `, [
+    cleanMessageId,
     cleanMessageId,
     cleanMessageId,
     cleanClaimToken,
@@ -9385,6 +17452,12 @@ export async function setConversationStatus(contactId, status, {
   const state = await ensureConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   if (!state?.id) return null
   const nextPausedUntilAt = status === 'paused' ? normalizePauseUntilAt(pausedUntilAt) : null
+  const cleanUpdatedBy = String(updatedBy || '').trim().toLowerCase()
+  const updateAgentAcrossChannels = Boolean(
+    cleanAgentId &&
+    !cleanChannel &&
+    ['user', 'human', 'manual'].includes(cleanUpdatedBy)
+  )
   const assignments = [
     'status = ?',
     'paused_until_at = ?',
@@ -9394,12 +17467,14 @@ export async function setConversationStatus(contactId, status, {
   if (shouldMarkConversationActivated({ status, updatedBy, activationSource })) {
     appendActivationAssignments(assignments, params, { activationSource, updatedBy })
   }
-  const cleanUpdatedBy = String(updatedBy || '').trim().toLowerCase()
-  const updateAgentAcrossChannels = Boolean(
-    cleanAgentId &&
-    !cleanChannel &&
-    ['user', 'human', 'manual'].includes(cleanUpdatedBy)
-  )
+  if (status === 'active') {
+    assignments.push(
+      "activation_cycle_id = CASE WHEN status IN ('human', 'skipped', 'completed') THEN ? ELSE activation_cycle_id END",
+      "activation_cycle_started_at = CASE WHEN status IN ('human', 'skipped', 'completed') THEN CURRENT_TIMESTAMP ELSE activation_cycle_started_at END",
+      "activation_cycle_started_message_id = CASE WHEN status IN ('human', 'skipped', 'completed') THEN NULL ELSE activation_cycle_started_message_id END"
+    )
+    params.push(`cac_${randomUUID()}`)
+  }
   if (state.agentId && ['user', 'human', 'manual'].includes(cleanUpdatedBy)) {
     assignments.push(
       "assignment_source = 'manual'",
@@ -9415,6 +17490,14 @@ export async function setConversationStatus(contactId, status, {
   if (updateAgentAcrossChannels) params.push(contactId, cleanAgentId)
   else params.push(state.id)
 
+  await conversationalStateBeforeReactivationUpdateHookForTest?.({
+    operation: 'set_status',
+    contactId,
+    agentId: state.agentId || cleanAgentId || null,
+    channel: updateAgentAcrossChannels ? null : cleanChannel || state.channel || 'whatsapp',
+    stateId: state.id,
+    status
+  })
   await db.run(`
     UPDATE conversational_agent_state
     SET ${assignments.join(', ')}
@@ -9555,14 +17638,39 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
   // (status !== 'active') mantenía al bot mudo para siempre aunque el staff limpiara la señal
   // (caso oQ9XMb9R: ~10 mensajes del paciente al vacío). No tocamos estados deliberados como
   // 'paused' o 'skipped'.
-  const reactivated = state.status === 'completed' || state.status === 'human'
+  const nextCycleId = `cac_${randomUUID()}`
+  await conversationalStateBeforeReactivationUpdateHookForTest?.({
+    operation: 'clear_signal',
+    contactId,
+    agentId: state.agentId || agentId || null,
+    channel: cleanChannel || state.channel || 'whatsapp',
+    stateId: state.id
+  })
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL,
         status = CASE WHEN status IN ('completed', 'human') THEN 'active' ELSE status END,
+        activation_cycle_id = CASE
+          WHEN status IN ('completed', 'human') THEN ?
+          ELSE activation_cycle_id
+        END,
+        activation_cycle_started_at = CASE
+          WHEN status IN ('completed', 'human') THEN CURRENT_TIMESTAMP
+          ELSE activation_cycle_started_at
+        END,
+        activation_cycle_started_message_id = CASE
+          WHEN status IN ('completed', 'human') THEN NULL
+          ELSE activation_cycle_started_message_id
+        END,
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [updatedBy, state.id])
+  `, [nextCycleId, updatedBy, state.id])
+
+  const nextState = await getConversationState(contactId, {
+    agentId: state.agentId || agentId || null,
+    channel: cleanChannel
+  })
+  const reactivated = nextState?.activationCycleId === nextCycleId
 
   await recordConversationalAgentEvent({
     contactId,
@@ -9570,10 +17678,7 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
     detail: { updatedBy, agentId: state.agentId || agentId || null, reactivated }
   })
 
-  return getConversationState(contactId, {
-    agentId: state.agentId || agentId || null,
-    channel: cleanChannel
-  })
+  return nextState
 }
 
 /**

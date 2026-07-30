@@ -16,8 +16,13 @@ import {
 import { normalizePaymentGateConfig } from '../src/services/publicPaymentGateService.js'
 import {
   bindConversationalPaymentSourceEvent,
+  ensureConversationState,
   recoverPendingConversationalPaymentSourceBindings
 } from '../src/services/conversationalAgentService.js'
+import {
+  buildConversationalActionScopedContactDataBinding,
+  buildConversationalPaymentConversationBinding
+} from '../src/agents/conversational/tools.js'
 
 test.afterEach(async () => {
   await db.run('DELETE FROM conversational_payment_semantic_claims').catch(() => {})
@@ -439,6 +444,16 @@ test('dos turnos equivalentes concurrentes comparten claim semántico y sólo un
      VALUES (?, 'Carrera semántica', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [contactId]
   )
+  await db.run(
+    `INSERT INTO conversational_agents
+      (id, name, enabled, runtime_mode)
+     VALUES (?, 'Agente carrera semántica', 1, 'tool_calling_v2')`,
+    [agentId]
+  )
+  await ensureConversationState(contactId, {
+    agentId,
+    channel: 'whatsapp'
+  })
   setConversationalAgentLivePaymentDependenciesForTests({
     getPaymentGateCheckoutKeys: async (gateway) => ({ provider: gateway, configured: true, paymentMode: 'live' }),
     normalizePaymentGateConfig,
@@ -463,21 +478,40 @@ test('dos turnos equivalentes concurrentes comparten claim semántico y sólo un
     }
   })
 
-  const invoke = (idempotencyKey, executionId) => createConversationalAgentLivePaymentLink({
-    contact: { id: contactId, name: 'Paty' },
-    gateway: 'stripe',
-    amount: 1200,
-    currency: 'MXN',
-    concept: 'Consulta concurrente',
-    expirationMinutes: 60,
-    idempotencyKey,
-    idempotencyPayload: {
-      ...paymentIdentity(contactId, agentId, executionId),
-      productId: `product-semantic-race-${suffix}`,
-      priceId: `price-semantic-race-${suffix}`
-    },
-    now
-  }).then(async (result) => {
+  const invoke = async (idempotencyKey, executionId) => {
+    const sourceEventId =
+      `cae_payment_${createHash('sha256')
+        .update(idempotencyKey)
+        .digest('hex')
+        .slice(0, 48)}`
+    const actionScopedBinding =
+      buildConversationalActionScopedContactDataBinding({})
+    const paymentConversationBinding =
+      await buildConversationalPaymentConversationBinding({
+        contactId,
+        agentId,
+        channel: 'whatsapp',
+        sourceEventId
+      })
+    assert.ok(actionScopedBinding)
+    assert.equal(paymentConversationBinding?.status, 'bound')
+    const result = await createConversationalAgentLivePaymentLink({
+      contact: { id: contactId, name: 'Paty' },
+      gateway: 'stripe',
+      amount: 1200,
+      currency: 'MXN',
+      concept: 'Consulta concurrente',
+      expirationMinutes: 60,
+      idempotencyKey,
+      idempotencyPayload: {
+        ...paymentIdentity(contactId, agentId, executionId),
+        productId: `product-semantic-race-${suffix}`,
+        priceId: `price-semantic-race-${suffix}`,
+        ...actionScopedBinding,
+        paymentConversationBinding
+      },
+      now
+    })
     if (result.crossTurnReuse === true) return result
     const request = await db.get(
       `SELECT binding_event_id, request_json FROM conversational_payment_link_requests
@@ -506,11 +540,16 @@ test('dos turnos equivalentes concurrentes comparten claim semántico y sólo un
         appointmentDeposit: false,
         executionId: payload.executionId,
         productId: payload.productId,
-        priceId: payload.priceId
+        priceId: payload.priceId,
+        actionScopedContactDataVersion:
+          payload.actionScopedContactDataVersion,
+        actionScopedContactData: payload.actionScopedContactData,
+        actionScopedContactDataHash: payload.actionScopedContactDataHash,
+        paymentConversationBinding: payload.paymentConversationBinding
       }
     })
     return result
-  })
+  }
 
   try {
     const [first, second] = await Promise.all([
@@ -546,6 +585,8 @@ test('dos turnos equivalentes concurrentes comparten claim semántico y sólo un
     await db.run('DELETE FROM conversational_payment_link_requests WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
   }
 })

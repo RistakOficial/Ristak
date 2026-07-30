@@ -56,25 +56,14 @@ import {
 import { onWhatsAppQrConnectionOpen } from '../services/whatsappQrService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
-import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services/conversationalAgentService.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js'
 import { getInstallerSignatureHeaders } from '../services/installerSignatureService.js'
 import { resolvePublicServiceBaseUrl } from '../utils/publicUrl.js'
+import { runManualChatSendAfterHumanTakeover } from './manualChatTakeover.js'
 
 const QR_CONNECTED_AVATAR_BACKFILL_DEBOUNCE_MS = 30 * 60 * 1000
 const qrConnectedAvatarBackfills = new Map()
-
-// Un envío manual desde la app significa intervención humana. Si la UI ya pausó
-// u omitió al agente, esta llamada no pisa ese estado porque solo toca activos.
-function notifyHumanTakeover({ contactId, toPhone } = {}) {
-  const takeover = contactId
-    ? markHumanTakeoverIfActive(contactId)
-    : markHumanTakeoverByPhone(toPhone)
-  takeover.catch(error => {
-    logger.warn(`[Agente conversacional] No se pudo marcar toma humana: ${error.message}`)
-  })
-}
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -538,15 +527,17 @@ export async function sendMetaDirectTestMessageView(req, res) {
 
 export async function sendMetaSocialTextMessageView(req, res) {
   try {
-    const data = await sendMetaSocialTextMessage({
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      platform: req.body?.platform,
-      message: req.body?.message || req.body?.text,
-      externalId: req.body?.externalId,
-      replyToMessageId: req.body?.replyToMessageId,
-      replyToProviderMessageId: req.body?.replyToProviderMessageId
+      send: () => sendMetaSocialTextMessage({
+        contactId: req.body?.contactId,
+        platform: req.body?.platform,
+        message: req.body?.message || req.body?.text,
+        externalId: req.body?.externalId,
+        replyToMessageId: req.body?.replyToMessageId,
+        replyToProviderMessageId: req.body?.replyToProviderMessageId
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando DM Meta: ${error.message}`)
@@ -564,21 +555,23 @@ export async function sendMetaSocialAudioMessageView(req, res) {
       urlField: 'audioUrl',
       expectedMediaTypes: ['audio']
     })
-    const data = await sendMetaSocialAudioMessage({
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      platform: req.body?.platform,
-      audioDataUrl: req.body?.audioDataUrl,
-      audioUrl: media?.url,
-      audioMimeType: req.body?.audioMimeType || req.body?.mimeType || media?.mimeType,
-      filename: req.body?.filename || media?.filename,
-      durationMs: req.body?.durationMs,
-      voice: req.body?.voice,
-      externalId: req.body?.externalId,
-      replyToMessageId: req.body?.replyToMessageId,
-      replyToProviderMessageId: req.body?.replyToProviderMessageId,
-      publicBaseUrl: getPublicBaseUrl(req)
+      send: () => sendMetaSocialAudioMessage({
+        contactId: req.body?.contactId,
+        platform: req.body?.platform,
+        audioDataUrl: req.body?.audioDataUrl,
+        audioUrl: media?.url,
+        audioMimeType: req.body?.audioMimeType || req.body?.mimeType || media?.mimeType,
+        filename: req.body?.filename || media?.filename,
+        durationMs: req.body?.durationMs,
+        voice: req.body?.voice,
+        externalId: req.body?.externalId,
+        replyToMessageId: req.body?.replyToMessageId,
+        replyToProviderMessageId: req.body?.replyToProviderMessageId,
+        publicBaseUrl: getPublicBaseUrl(req)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando audio Meta social: ${error.message}`)
@@ -602,20 +595,22 @@ export async function sendMetaSocialAttachmentMessageView(req, res) {
       urlField: 'attachmentUrl',
       expectedMediaTypes
     })
-    const data = await sendMetaSocialAttachmentMessage({
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      platform: req.body?.platform,
-      attachmentType,
-      attachmentDataUrl: req.body?.attachmentDataUrl,
-      attachmentUrl: media?.url,
-      mimeType: req.body?.mimeType || media?.mimeType,
-      filename: req.body?.filename || media?.filename,
-      externalId: req.body?.externalId,
-      replyToMessageId: req.body?.replyToMessageId,
-      replyToProviderMessageId: req.body?.replyToProviderMessageId,
-      publicBaseUrl: getPublicBaseUrl(req)
+      send: () => sendMetaSocialAttachmentMessage({
+        contactId: req.body?.contactId,
+        platform: req.body?.platform,
+        attachmentType,
+        attachmentDataUrl: req.body?.attachmentDataUrl,
+        attachmentUrl: media?.url,
+        mimeType: req.body?.mimeType || media?.mimeType,
+        filename: req.body?.filename || media?.filename,
+        externalId: req.body?.externalId,
+        replyToMessageId: req.body?.replyToMessageId,
+        replyToProviderMessageId: req.body?.replyToProviderMessageId,
+        publicBaseUrl: getPublicBaseUrl(req)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando adjunto Meta social: ${error.message}`)
@@ -629,15 +624,17 @@ export async function sendMetaSocialAttachmentMessageView(req, res) {
 
 export async function sendMetaSocialReactionMessageView(req, res) {
   try {
-    const data = await sendMetaSocialReactionMessage({
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      platform: req.body?.platform,
-      emoji: req.body?.emoji,
-      targetMessageId: req.body?.targetMessageId || req.body?.messageId,
-      targetProviderMessageId: req.body?.targetProviderMessageId || req.body?.providerMessageId,
-      externalId: req.body?.externalId
+      send: () => sendMetaSocialReactionMessage({
+        contactId: req.body?.contactId,
+        platform: req.body?.platform,
+        emoji: req.body?.emoji,
+        targetMessageId: req.body?.targetMessageId || req.body?.messageId,
+        targetProviderMessageId: req.body?.targetProviderMessageId || req.body?.providerMessageId,
+        externalId: req.body?.externalId
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error reaccionando DM Meta: ${error.message}`)
@@ -651,17 +648,18 @@ export async function sendMetaSocialReactionMessageView(req, res) {
 // Responder un comentario de FB/IG (público en el post o por DM privado).
 export async function sendMetaSocialCommentReplyView(req, res) {
   try {
-    const data = await sendMetaSocialCommentReply({
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      platform: req.body?.platform,
-      message: req.body?.message || req.body?.text,
-      replyType: req.body?.replyType,
-      commentId: req.body?.commentId,
-      postId: req.body?.postId,
-      externalId: req.body?.externalId
+      send: () => sendMetaSocialCommentReply({
+        contactId: req.body?.contactId,
+        platform: req.body?.platform,
+        message: req.body?.message || req.body?.text,
+        replyType: req.body?.replyType,
+        commentId: req.body?.commentId,
+        postId: req.body?.postId,
+        externalId: req.body?.externalId
+      })
     })
-    // Respuesta manual desde el inbox: el humano toma el hilo (pausa el agente).
-    notifyHumanTakeover({ contactId: req.body?.contactId })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error respondiendo comentario Meta: ${error.message}`)
@@ -809,22 +807,25 @@ export async function updateWhatsAppQrDripSettingsView(req, res) {
 
 export async function sendWhatsAppApiTextMessageView(req, res) {
   try {
-    const data = await sendWhatsAppApiTextMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      text: req.body?.text,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      userId: req.user?.userId,
-      publicBaseUrl: getPublicBaseUrl(req),
-      phoneNumberId: req.body?.phoneNumberId,
-      replyToMessageId: req.body?.replyToMessageId,
-      replyToProviderMessageId: req.body?.replyToProviderMessageId,
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiTextMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        text: req.body?.text,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        userId: req.user?.userId,
+        publicBaseUrl: getPublicBaseUrl(req),
+        phoneNumberId: req.body?.phoneNumberId,
+        replyToMessageId: req.body?.replyToMessageId,
+        replyToProviderMessageId: req.body?.replyToProviderMessageId,
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando WhatsApp_API: ${error.message}`)
@@ -837,20 +838,23 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
 
 export async function sendWhatsAppApiReactionMessageView(req, res) {
   try {
-    const data = await sendWhatsAppApiReactionMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      emoji: req.body?.emoji,
-      targetMessageId: req.body?.targetMessageId || req.body?.messageId,
-      targetProviderMessageId: req.body?.targetProviderMessageId || req.body?.providerMessageId,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      phoneNumberId: req.body?.phoneNumberId,
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiReactionMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        emoji: req.body?.emoji,
+        targetMessageId: req.body?.targetMessageId || req.body?.messageId,
+        targetProviderMessageId: req.body?.targetProviderMessageId || req.body?.providerMessageId,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        phoneNumberId: req.body?.phoneNumberId,
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error reaccionando WhatsApp_API: ${error.message}`)
@@ -863,21 +867,24 @@ export async function sendWhatsAppApiReactionMessageView(req, res) {
 
 export async function sendWhatsAppApiLocationMessageView(req, res) {
   try {
-    const data = await sendWhatsAppApiLocationMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      latitude: req.body?.latitude,
-      longitude: req.body?.longitude,
-      name: req.body?.name,
-      address: req.body?.address,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      phoneNumberId: req.body?.phoneNumberId,
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiLocationMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        latitude: req.body?.latitude,
+        longitude: req.body?.longitude,
+        name: req.body?.name,
+        address: req.body?.address,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        phoneNumberId: req.body?.phoneNumberId,
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando ubicación WhatsApp_API: ${error.message}`)
@@ -890,20 +897,23 @@ export async function sendWhatsAppApiLocationMessageView(req, res) {
 
 export async function sendWhatsAppApiInteractiveMessageView(req, res) {
   try {
-    const data = await sendWhatsAppApiInteractiveMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      body: req.body?.body || req.body?.text,
-      buttons: req.body?.buttons,
-      urlButton: req.body?.urlButton,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      userId: req.user?.userId,
-      publicBaseUrl: getPublicBaseUrl(req),
-      phoneNumberId: req.body?.phoneNumberId
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiInteractiveMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        body: req.body?.body || req.body?.text,
+        buttons: req.body?.buttons,
+        urlButton: req.body?.urlButton,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        userId: req.user?.userId,
+        publicBaseUrl: getPublicBaseUrl(req),
+        phoneNumberId: req.body?.phoneNumberId
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando WhatsApp_API interactivo: ${error.message}`)
@@ -983,22 +993,25 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       urlField: 'imageUrl',
       expectedMediaTypes: ['image']
     })
-    const data = await sendWhatsAppApiImageMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      imageDataUrl: req.body?.imageDataUrl,
-      imageUrl: media?.url,
-      caption: req.body?.caption,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      userId: req.user?.userId,
-      phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req),
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiImageMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        imageDataUrl: req.body?.imageDataUrl,
+        imageUrl: media?.url,
+        caption: req.body?.caption,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        userId: req.user?.userId,
+        phoneNumberId: req.body?.phoneNumberId,
+        publicBaseUrl: getPublicBaseUrl(req),
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando foto WhatsApp_API: ${error.message}`)
@@ -1016,24 +1029,27 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       urlField: 'documentUrl',
       expectedMediaTypes: ['document', 'audio', 'video', 'other']
     })
-    const data = await sendWhatsAppApiDocumentMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      documentDataUrl: req.body?.documentDataUrl,
-      documentUrl: media?.url,
-      filename: media?.filename || req.body?.filename,
-      mimeType: media?.mimeType || req.body?.mimeType,
-      caption: req.body?.caption,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      userId: req.user?.userId,
-      phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req),
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiDocumentMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        documentDataUrl: req.body?.documentDataUrl,
+        documentUrl: media?.url,
+        filename: media?.filename || req.body?.filename,
+        mimeType: media?.mimeType || req.body?.mimeType,
+        caption: req.body?.caption,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        userId: req.user?.userId,
+        phoneNumberId: req.body?.phoneNumberId,
+        publicBaseUrl: getPublicBaseUrl(req),
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando documento WhatsApp_API: ${error.message}`)
@@ -1051,22 +1067,25 @@ export async function sendWhatsAppApiVideoMessageView(req, res) {
       urlField: 'videoUrl',
       expectedMediaTypes: ['video']
     })
-    const data = await sendWhatsAppApiVideoMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      videoDataUrl: req.body?.videoDataUrl,
-      videoUrl: media?.url,
-      caption: req.body?.caption,
-      externalId: req.body?.externalId,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      userId: req.user?.userId,
-      phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req),
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiVideoMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        videoDataUrl: req.body?.videoDataUrl,
+        videoUrl: media?.url,
+        caption: req.body?.caption,
+        externalId: req.body?.externalId,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        userId: req.user?.userId,
+        phoneNumberId: req.body?.phoneNumberId,
+        publicBaseUrl: getPublicBaseUrl(req),
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando video WhatsApp_API: ${error.message}`)
@@ -1084,22 +1103,25 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
       urlField: 'audioUrl',
       expectedMediaTypes: ['audio']
     })
-    const data = await sendWhatsAppApiAudioMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      audioDataUrl: req.body?.audioDataUrl,
-      audioUrl: media?.url,
-      externalId: req.body?.externalId,
-      durationMs: req.body?.durationMs,
-      voice: req.body?.voice,
-      transport: req.body?.transport,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      phoneNumberId: req.body?.phoneNumberId,
-      publicBaseUrl: getPublicBaseUrl(req),
-      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
-      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiAudioMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        audioDataUrl: req.body?.audioDataUrl,
+        audioUrl: media?.url,
+        externalId: req.body?.externalId,
+        durationMs: req.body?.durationMs,
+        voice: req.body?.voice,
+        transport: req.body?.transport,
+        contactId: req.body?.contactId,
+        phoneNumberId: req.body?.phoneNumberId,
+        publicBaseUrl: getPublicBaseUrl(req),
+        preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
+        skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando audio WhatsApp_API: ${error.message}`)
@@ -1167,21 +1189,24 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
         }
       })
 
-    const data = await sendWhatsAppApiTemplateMessage({
-      to: req.body?.to,
-      from: req.body?.from,
-      templateId: req.body?.templateId,
-      templateName: req.body?.templateName,
-      language: req.body?.language,
-      components: requestComponents,
-      variables: req.body?.variables,
-      externalId: req.body?.externalId,
+    const data = await runManualChatSendAfterHumanTakeover({
       contactId: req.body?.contactId,
-      userId: req.user?.userId,
-      publicBaseUrl,
-      phoneNumberId: req.body?.phoneNumberId
+      toPhone: req.body?.to,
+      send: () => sendWhatsAppApiTemplateMessage({
+        to: req.body?.to,
+        from: req.body?.from,
+        templateId: req.body?.templateId,
+        templateName: req.body?.templateName,
+        language: req.body?.language,
+        components: requestComponents,
+        variables: req.body?.variables,
+        externalId: req.body?.externalId,
+        contactId: req.body?.contactId,
+        userId: req.user?.userId,
+        publicBaseUrl,
+        phoneNumberId: req.body?.phoneNumberId
+      })
     })
-    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando plantilla WhatsApp_API: ${error.message}`)

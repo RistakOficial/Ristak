@@ -48,6 +48,8 @@ export const CONVERSATIONAL_CAPABILITY_IDS = Object.freeze([
   'custom_goal'
 ])
 
+export const CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH = 4000
+
 const CAPABILITY_ID_SET = new Set(CONVERSATIONAL_CAPABILITY_IDS)
 const PAYMENT_MODES = new Set(['full_payment', 'deposit'])
 const PAYMENT_CHARGE_TYPES = new Set(['product', 'direct', 'deposit'])
@@ -144,6 +146,22 @@ function parseConfigValue(value) {
   } catch {
     return null
   }
+}
+
+export function getConversationalHandoffRulesInputLength(input) {
+  const raw = parseConfigValue(input)
+  const sourceItems = Array.isArray(raw)
+    ? raw
+    : (raw && typeof raw === 'object' && Array.isArray(raw.items) ? raw.items : [])
+  let maxRulesLength = 0
+  for (const item of sourceItems) {
+    if (!item || typeof item !== 'object' || String(item.id || '').trim() !== 'handoff_human') continue
+    maxRulesLength = Math.max(
+      maxRulesLength,
+      String(item.rules ?? '').replace(/\r/g, '').length
+    )
+  }
+  return maxRulesLength
 }
 
 function cleanText(value, maxLength = 8000) {
@@ -470,7 +488,7 @@ function normalizeCapabilityItem(input, legacyTestMode = DEFAULT_CONVERSATIONAL_
     return {
       id,
       enabled,
-      rules: cleanText(input.rules, 4000),
+      rules: cleanText(input.rules, CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH),
       userId: cleanId(input.userId, 160),
       userName: cleanText(input.userName, 180),
       pastClientsToHuman: toBoolean(input.pastClientsToHuman ?? input.past_clients_to_human)

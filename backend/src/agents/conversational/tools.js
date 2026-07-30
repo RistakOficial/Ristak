@@ -12,6 +12,7 @@ import {
 import { calendarDurationToMinutes, getLocalFreeSlots } from '../../services/localCalendarService.js'
 import { inspectChangedAppointmentCreationReplay } from '../../services/appointmentCreationSafetyService.js'
 import {
+  buildAgentTransferPaymentProofBindingEventId,
   buildConversationalPaymentLinkIdempotencyKey,
   registerAgentTransferPaymentProofForReview
 } from '../../services/paymentFlowService.js'
@@ -40,6 +41,7 @@ import {
   serializeContactCustomFieldsForDb
 } from '../../utils/contactCustomFields.js'
 import {
+  abortToolCallingV2AppointmentBookingIntent,
   bindConversationalPaymentSourceEvent,
   claimConversationalTerminalMutationAuthority,
   completeConversationalAgentSalePaymentFromInvoice,
@@ -55,7 +57,10 @@ import {
   DEFAULT_GOAL_TRACKING_PARAM,
   getConversationalAgent,
   getConversationalReplyDeliveryPlan,
-  CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE
+  CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE,
+  sealToolCallingV2AppointmentBookingIntent,
+  sealToolCallingV2VerifiedTerminalHandoffPending,
+  supersedeToolCallingV2AppointmentBookingIntent
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 import { logger } from '../../utils/logger.js'
@@ -69,14 +74,20 @@ import {
 } from '../../services/conversationalAgentSafetyService.js'
 import { dispatchConversationalAgentSafetyNotification } from '../../services/conversationalAgentSafetyNotificationService.js'
 import {
-  NON_LIVE_PAYMENT_MODES,
-  SUCCESS_PAYMENT_STATUSES,
   buildCanonicalAppointmentSlotOption,
   depositRequirementAmountMatches,
   findVerifiedPaymentEvidence,
   revalidateAppointmentSlot,
   verifyNativeAppointmentSelectionEvidence
 } from './actionEvidence.js'
+import {
+  NON_LIVE_PAYMENT_MODES,
+  SUCCESS_PAYMENT_STATUSES
+} from './paymentEvidenceConstants.js'
+import {
+  isPlaceholderConversationalContactName,
+  requiredConversationalContactFieldValue
+} from './contactDataRequirements.js'
 import {
   buildConversationalCapabilityManifest,
   getConversationalCapabilitiesConfig,
@@ -94,6 +105,10 @@ import {
 import { findNewerSubstantiveConversationalInbound } from '../../services/conversationalInboundAuthorityService.js'
 import { acquireConversationalInboundCommitLock } from '../../services/conversationalInboundCommitLockService.js'
 import { runBoundedAppointmentControllerRequest } from '../../services/appointmentControllerRetryService.js'
+import {
+  CHAT_DELIVERY_JOB_KIND,
+  enqueueChatDeliveryJob
+} from '../../services/chatDeliveryOutboxService.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -143,7 +158,213 @@ function cleanAppointmentText(value, maxLength) {
   return String(value || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
 }
 
-function requiredDataVisibleReply(result = {}) {
+const ACTION_SCOPED_CONTACT_DATA_VERSION = 1
+const ACTION_SCOPED_CONTACT_DATA_MAX_JSON_LENGTH = 1800
+const PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION = 1
+
+function normalizeActionScopedContactCustomField(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const identities = [
+    ['key', value.key],
+    ['fieldKey', value.fieldKey || value.field_key],
+    ['id', value.id],
+    ['definitionId', value.definitionId || value.definition_id],
+    ['label', value.label],
+    ['name', value.name]
+  ]
+    .map(([field, fieldValue]) => [field, cleanAppointmentText(fieldValue, 180)])
+    .filter(([, fieldValue]) => Boolean(fieldValue))
+  if (!['string', 'number'].includes(typeof value.value)) return null
+  const customValue = cleanAppointmentText(value.value, 1000)
+  if (!identities.length || !customValue) return null
+  const [identityField, identityValue] = identities[0]
+  const label = cleanAppointmentText(value.label || value.name, 180)
+  return {
+    [identityField]: identityValue,
+    ...(label && label !== identityValue ? { label } : {}),
+    value: customValue
+  }
+}
+
+export function sanitizeConversationalActionScopedContactData(value = {}) {
+  if (value === null || value === undefined) return {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const normalized = {}
+  const scalarLimits = {
+    full_name: 240,
+    first_name: 120,
+    last_name: 180,
+    phone: 80,
+    email: 240
+  }
+  for (const [field, maxLength] of Object.entries(scalarLimits)) {
+    if (
+      Object.prototype.hasOwnProperty.call(value, field) &&
+      value[field] !== null &&
+      value[field] !== undefined &&
+      !['string', 'number'].includes(typeof value[field])
+    ) return null
+    const fieldValue = cleanAppointmentText(value[field], maxLength)
+    if (fieldValue) normalized[field] = field === 'email' ? fieldValue.toLowerCase() : fieldValue
+  }
+  if (Object.prototype.hasOwnProperty.call(value, 'custom_fields')) {
+    let parsedCustomFields = value.custom_fields
+    if (typeof parsedCustomFields === 'string') {
+      const serialized = parsedCustomFields.trim()
+      if (!serialized) return normalized
+      try {
+        parsedCustomFields = JSON.parse(serialized)
+      } catch {
+        return null
+      }
+    }
+    if (!Array.isArray(parsedCustomFields) || parsedCustomFields.length > 40) return null
+    const customFields = parsedCustomFields
+      .map(normalizeActionScopedContactCustomField)
+      .filter(Boolean)
+    if (customFields.length) normalized.custom_fields = JSON.stringify(customFields)
+  }
+  return JSON.stringify(normalized).length <= ACTION_SCOPED_CONTACT_DATA_MAX_JSON_LENGTH
+    ? normalized
+    : null
+}
+
+function conversationalActionScopedContactDataHash(value = {}) {
+  return createHash('sha256')
+    .update(`conversational-action-scoped-contact-data:v${ACTION_SCOPED_CONTACT_DATA_VERSION}\u0000`)
+    .update(JSON.stringify(value))
+    .digest('hex')
+}
+
+export function buildConversationalActionScopedContactDataBinding(value = {}) {
+  const actionScopedContactData = sanitizeConversationalActionScopedContactData(value)
+  if (!actionScopedContactData) return null
+  return {
+    actionScopedContactDataVersion: ACTION_SCOPED_CONTACT_DATA_VERSION,
+    actionScopedContactData,
+    actionScopedContactDataHash: conversationalActionScopedContactDataHash(actionScopedContactData)
+  }
+}
+
+export function readBoundConversationalActionScopedContactData(detail = {}) {
+  if (
+    Number(detail?.actionScopedContactDataVersion) !== ACTION_SCOPED_CONTACT_DATA_VERSION ||
+    !detail?.actionScopedContactData ||
+    typeof detail.actionScopedContactData !== 'object' ||
+    Array.isArray(detail.actionScopedContactData)
+  ) return null
+  const actionScopedContactData = sanitizeConversationalActionScopedContactData(
+    detail.actionScopedContactData
+  )
+  const expectedHash = String(detail?.actionScopedContactDataHash || '').trim()
+  if (
+    !actionScopedContactData ||
+    !/^[a-f0-9]{64}$/.test(expectedHash) ||
+    conversationalActionScopedContactDataHash(actionScopedContactData) !== expectedHash
+  ) return null
+  return actionScopedContactData
+}
+
+function paymentConversationScopeId(stateId = '', activationCycleId = '') {
+  const cleanStateId = String(stateId || '').trim()
+  const cleanActivationCycleId = String(activationCycleId || '').trim()
+  if (!cleanStateId || !cleanActivationCycleId) return ''
+  return `handoff_scope_${createHash('sha256')
+    .update([cleanStateId, cleanActivationCycleId].join('\u0000'))
+    .digest('hex')
+    .slice(0, 40)}`
+}
+
+/**
+ * Sella el ciclo exacto antes de llamar al proveedor de pagos. El proveedor
+ * puede responder después de que el chat se cierre o reactive; por eso el bind
+ * posterior nunca debe reconstruir esta identidad usando el estado "actual".
+ */
+export async function buildConversationalPaymentConversationBinding({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  sourceEventId = '',
+  database = db
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const cleanAgentId = String(agentId || '').trim()
+  const cleanChannel = String(channel || 'whatsapp').trim().toLowerCase()
+  const cleanSourceEventId = String(sourceEventId || '').trim()
+  if (!cleanContactId || !cleanAgentId || !cleanSourceEventId) return null
+
+  const rows = await database.all(
+    `SELECT id, status, signal, activation_cycle_id,
+            activation_cycle_started_at
+     FROM conversational_agent_state
+     WHERE contact_id = ? AND agent_id = ?
+       AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+     LIMIT 2`,
+    [cleanContactId, cleanAgentId, cleanChannel]
+  )
+  if (rows.length !== 1) return null
+  const state = rows[0]
+  const stateId = String(state.id || '').trim()
+  const activationCycleId = String(state.activation_cycle_id || '').trim()
+  const conversationScopeId = paymentConversationScopeId(stateId, activationCycleId)
+  if (
+    state.status !== 'active' ||
+    state.signal ||
+    !stateId ||
+    !activationCycleId ||
+    !conversationScopeId
+  ) return null
+
+  return {
+    schemaVersion: PAYMENT_CONVERSATION_BINDING_SCHEMA_VERSION,
+    status: 'bound',
+    contactId: cleanContactId,
+    agentId: cleanAgentId,
+    channel: cleanChannel,
+    stateId,
+    activationCycleId,
+    activationCycleStartedAt: state.activation_cycle_started_at || null,
+    conversationScopeId,
+    sourceEventId: cleanSourceEventId,
+    sourceEventCreatedAt: null,
+    reason: null
+  }
+}
+
+function paymentConversationBindingIdentityMatches(
+  canonicalBinding = {},
+  requestedBinding = {},
+  {
+    canonicalSourceEventId = '',
+    requestedSourceEventId = ''
+  } = {}
+) {
+  const identityKeys = [
+    'schemaVersion',
+    'status',
+    'contactId',
+    'agentId',
+    'channel',
+    'stateId',
+    'activationCycleId',
+    'conversationScopeId'
+  ]
+  return Boolean(
+    canonicalBinding &&
+    requestedBinding &&
+    canonicalBinding.status === 'bound' &&
+    requestedBinding.status === 'bound' &&
+    identityKeys.every((key) => (
+      String(canonicalBinding[key] ?? '') === String(requestedBinding[key] ?? '')
+    )) &&
+    String(canonicalBinding.sourceEventId || '') ===
+      String(canonicalSourceEventId || '') &&
+    String(requestedBinding.sourceEventId || '') ===
+      String(requestedSourceEventId || '')
+  )
+}
+
+export function requiredDataVisibleReply(result = {}) {
   const labels = Array.isArray(result.requiredFields)
     ? result.requiredFields.map((item) => cleanAppointmentText(item?.label, 120)).filter(Boolean)
     : []
@@ -200,15 +421,16 @@ function applyActionScopedContactData(ctx = {}, contact = null) {
   }
 }
 
-async function getThreadContact(ctx = {}) {
+async function getThreadContact(ctx = {}, { lock = false } = {}) {
   const contactId = String(ctx.contactId || '').trim()
   if (ctx.virtualContact && typeof ctx.virtualContact === 'object') {
     return applyActionScopedContactData(ctx, getVirtualThreadContact(ctx))
   }
   if (!contactId) return ctx.dryRun ? applyActionScopedContactData(ctx, getVirtualThreadContact(ctx)) : null
+  const lockSuffix = lock && process.env.DATABASE_URL ? ' FOR UPDATE' : ''
   const stored = await db.get(`
     SELECT id, full_name, first_name, last_name, phone, email, custom_fields, total_paid, purchases_count
-    FROM contacts WHERE id = ?
+    FROM contacts WHERE id = ?${lockSuffix}
   `, [contactId])
   return applyActionScopedContactData(ctx, stored || (ctx.dryRun ? getVirtualThreadContact(ctx) : null))
 }
@@ -572,30 +794,6 @@ function buildAppointmentParticipants({
   }
 }
 
-function isPlaceholderContactName(value = '') {
-  const normalized = String(value || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-  if (!normalized) return true
-  if (/^(contacto|cliente|prospecto|lead|sin nombre|unknown|desconocid[oa]|contacto de prueba)(\s+\d+)?$/.test(normalized)) {
-    return true
-  }
-  if (/^(?:usuario(?: de)? (?:whatsapp|instagram|facebook|messenger)|(?:whatsapp|instagram|facebook|messenger) (?:user|usuario))$/.test(normalized)) {
-    return true
-  }
-  // Los perfiles de canal pueden traer sólo emojis/símbolos o un nombre
-  // decorado con ellos. Esos valores no son una identidad humana confirmada y
-  // deben poder sustituirse cuando la persona comparte su nombre real.
-  if (/\p{Extended_Pictographic}/u.test(normalized) || !/\p{L}/u.test(normalized)) {
-    return true
-  }
-  const phoneLike = normalized.replace(/(?:ext\.?|extension|x)\s*\d+$/i, '').trim()
-  return /\d/.test(phoneLike) && /^[+\d().\s-]+$/.test(phoneLike)
-}
-
 function splitConfirmedName(value = '') {
   const parts = cleanAppointmentText(value, 240).split(/\s+/).filter(Boolean)
   return {
@@ -603,53 +801,6 @@ function splitConfirmedName(value = '') {
     firstName: parts[0] || null,
     lastName: parts.slice(1).join(' ') || null
   }
-}
-
-function normalizeRequiredDataKey(value = '') {
-  return cleanAppointmentText(value, 120)
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-}
-
-function requiredContactFieldValue(contact = {}, requirement = {}) {
-  const field = String(requirement?.field || '').trim()
-  const fullName = cleanAppointmentText(contact.full_name, 240)
-  if (field === 'first_name') {
-    const firstName = cleanAppointmentText(contact.first_name || fullName.split(/\s+/)[0], 120)
-    return firstName && !isPlaceholderContactName(fullName) ? firstName : ''
-  }
-  if (field === 'full_name') {
-    return fullName && !isPlaceholderContactName(fullName) && fullName.split(/\s+/).filter(Boolean).length >= 2
-      ? fullName
-      : ''
-  }
-  if (field === 'phone') {
-    const phone = normalizePhoneForStorage(contact.phone || '')
-    const digits = phone.replace(/\D/g, '')
-    return digits.length >= 7 && digits.length <= 15 ? phone : ''
-  }
-  if (field === 'email') {
-    const email = cleanAppointmentText(contact.email, 240).toLowerCase()
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : ''
-  }
-
-  const customFields = parseContactCustomFields(contact.custom_fields)
-  const expectedKeys = field === 'address'
-    ? ['address', 'address_1']
-    : field === 'custom'
-      ? [requirement.label]
-      : [field]
-  const normalizedKeys = new Set(expectedKeys.map(normalizeRequiredDataKey).filter(Boolean))
-  const match = customFields.find((item) => {
-    const identities = [item.key, item.fieldKey, item.id, item.label, item.name]
-      .map(normalizeRequiredDataKey)
-      .filter(Boolean)
-    return identities.some((identity) => normalizedKeys.has(identity)) && cleanAppointmentText(item.value, 1000)
-  })
-  return match ? cleanAppointmentText(match.value, 1000) : ''
 }
 
 function requirementConditionMatches(requirement = {}, facts = {}) {
@@ -726,7 +877,9 @@ function assertRequiredContactData({ scope, contact, dataRequirements, facts = {
     custom: 'dato personalizado'
   }
   const missing = requirements
-    .filter((requirement) => !requiredContactFieldValue(contact, requirement))
+    .filter((requirement) => (
+      !requiredConversationalContactFieldValue(contact, requirement)
+    ))
     .map((requirement) => ({
       field: requirement.field,
       label: cleanAppointmentText(requirement.label, 120) || labels[requirement.field] || requirement.field
@@ -741,22 +894,57 @@ function assertRequiredContactData({ scope, contact, dataRequirements, facts = {
   }
 }
 
-async function enforceRequiredContactData({ ctx, scope, dataRequirements, contact = null, facts = {} } = {}) {
+async function enforceRequiredContactData({
+  ctx,
+  scope,
+  dataRequirements,
+  contact = null,
+  facts = {},
+  lockContact = false
+} = {}) {
   const hasRequiredFields = activeContactDataRequirements({ scope, dataRequirements, facts }).length > 0
   if (!hasRequiredFields) return null
   const resolvedContact = contact
     ? applyActionScopedContactData(ctx, contact)
-    : await getThreadContact(ctx)
+    : await getThreadContact(ctx, { lock: lockContact })
   if (!resolvedContact) return missingThreadContactResult(ctx)
   const validation = assertRequiredContactData({ scope, contact: resolvedContact, dataRequirements, facts })
   return validation.ok ? null : validation
 }
 
-async function guardMutationAgainstPreventiveMeasure(ctx = {}) {
+async function guardMutationAgainstPreventiveMeasure(ctx = {}, {
+  allowDeferredAutomaticRelease = false,
+  allowMandatoryHumanHandoff = false,
+  allowMandatoryRequiredDataSave = false
+} = {}) {
+  const mandatoryHumanHandoff =
+    allowMandatoryHumanHandoff &&
+    ctx.mandatoryHandoffActive === true
+  const mandatoryRequiredDataSave =
+    allowMandatoryRequiredDataSave &&
+    ctx.mandatoryHandoffActive === true &&
+    ctx.mandatoryHandoffRequiredDataSaveActive === true
   // Da oportunidad a que apply_safety_measure, aunque venga en el mismo lote
   // de tool calls de un proveedor compatible, establezca prioridad terminal.
   await new Promise((resolve) => setImmediate(resolve))
-  if (ctx.preventiveSafetyRequested === true) {
+  if (
+    ctx.deferredAutomaticRelease &&
+    ctx.mandatoryHandoffActive !== true &&
+    !allowDeferredAutomaticRelease
+  ) {
+    return {
+      ok: false,
+      actionCompleted: false,
+      terminal: false,
+      code: 'automatic_release_waits_for_handoff_gate',
+      error: 'Esta conversación tiene una salida automática pendiente. Sólo puedes consultar hechos o pasarla al equipo; no ejecutes otra acción.'
+    }
+  }
+  if (
+    ctx.preventiveSafetyRequested === true &&
+    !mandatoryHumanHandoff &&
+    !mandatoryRequiredDataSave
+  ) {
     return {
       ok: false,
       actionCompleted: false,
@@ -765,7 +953,7 @@ async function guardMutationAgainstPreventiveMeasure(ctx = {}) {
       error: 'La medida preventiva tiene prioridad. Esta acción no se ejecutó.'
     }
   }
-  if (ctx.dryRun) return null
+  if (ctx.dryRun || mandatoryHumanHandoff || mandatoryRequiredDataSave) return null
   try {
     const active = await getActiveConversationalAgentPreventiveMeasure({
       contactId: ctx.contactId,
@@ -794,6 +982,9 @@ async function guardMutationAgainstPreventiveMeasure(ctx = {}) {
 const PREVENTIVE_FENCED_MUTATION_TOOLS = new Set([
   'save_contact_data',
   'resolve_active_appointment_offer',
+  'resolve_active_appointment_selection',
+  'offer_appointment_options',
+  'offer_appointment_slot',
   'book_appointment',
   'request_human_booking',
   'reschedule_appointment',
@@ -819,6 +1010,12 @@ function wrapMutableToolWithPreventiveFence(toolDefinition, ctx = {}) {
     ...toolDefinition,
     invoke: async (...args) => {
       if (ctx.dryRun) return invoke(...args)
+      if (toolDefinition.name === 'send_to_human') {
+        // Una solicitud explícita de persona manda sobre una salida automática.
+        // Se marca antes del fence para que un fallo transitorio no libere el
+        // chat y descarte la recolección de datos obligatorios.
+        ctx.explicitHumanHandoffRequested = true
+      }
       const actionCountBeforeFence = Array.isArray(ctx.actions) ? ctx.actions.length : 0
       try {
         return await withConversationalAgentSafetyLock({
@@ -827,7 +1024,15 @@ function wrapMutableToolWithPreventiveFence(toolDefinition, ctx = {}) {
         }, async () => {
           // El chequeo y el efecto completo viven bajo el mismo candado. Así
           // ninguna otra instancia puede confirmar cuarentena entre ambos.
-          const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+          const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx, {
+            allowDeferredAutomaticRelease: [
+              'send_to_human',
+              'resolve_active_appointment_offer'
+            ].includes(toolDefinition.name),
+            allowMandatoryHumanHandoff: toolDefinition.name === 'send_to_human',
+            allowMandatoryRequiredDataSave:
+              toolDefinition.name === 'save_contact_data'
+          })
           if (safetyFence) return safetyFence
           if (preventiveMutationFenceHookForTest) {
             await preventiveMutationFenceHookForTest({
@@ -882,7 +1087,12 @@ const appointmentPersonSchema = z.object({
   relation: z.string().nullable().describe('Relación o contexto breve; null si no aplica')
 })
 
-const NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION = 1
+const LEGACY_NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION = 1
+const NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION = 2
+const SUPPORTED_NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSIONS = new Set([
+  LEGACY_NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION,
+  NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION
+])
 
 function nullableAppointmentDraftText(value, maxLength) {
   return cleanAppointmentText(value, maxLength) || null
@@ -905,12 +1115,22 @@ function normalizeNativeAppointmentPersonDraft(value) {
   }
 }
 
+function normalizeNativeAppointmentRequesterContactData(value = {}) {
+  return sanitizeConversationalActionScopedContactData(value)
+}
+
 function normalizeNativeAppointmentRequestDraft(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const version = value.version === null || value.version === undefined
+    ? LEGACY_NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION
+    : Number(value.version)
+  if (!Number.isInteger(version) || !SUPPORTED_NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSIONS.has(version)) {
+    return null
+  }
   const rawGuests = Array.isArray(value.guests) ? value.guests : []
   if (rawGuests.length > 20) return null
-  return {
-    version: NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION,
+  const normalized = {
+    version,
     title: nullableAppointmentDraftText(value.title, 240),
     notes: nullableAppointmentDraftText(value.notes, 2000),
     attendeeName: nullableAppointmentDraftText(value.attendeeName, 180),
@@ -918,6 +1138,12 @@ function normalizeNativeAppointmentRequestDraft(value = {}) {
     primaryAttendee: normalizeNativeAppointmentPersonDraft(value.primaryAttendee),
     guests: rawGuests.map(normalizeNativeAppointmentPersonDraft).filter(Boolean)
   }
+  if (version === LEGACY_NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION) return normalized
+  if (!Object.prototype.hasOwnProperty.call(value, 'requesterContactData')) return null
+  const requesterContactData = normalizeNativeAppointmentRequesterContactData(value.requesterContactData)
+  return requesterContactData
+    ? { ...normalized, requesterContactData }
+    : null
 }
 
 function buildValidatedNativeAppointmentPersonDraft(rawValue, validatedValue) {
@@ -942,7 +1168,8 @@ function buildValidatedNativeAppointmentRequestDraft({
   attendeeContext,
   primaryAttendee,
   guests,
-  participants
+  participants,
+  requesterContactData
 } = {}) {
   if (!participants?.ok) return null
   const legacyPrimary = attendeeName
@@ -962,12 +1189,14 @@ function buildValidatedNativeAppointmentRequestDraft({
   ))
   if (boundGuests.some((guest) => !guest)) return null
   return normalizeNativeAppointmentRequestDraft({
+    version: NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION,
     title,
     notes,
     attendeeName: null,
     attendeeContext: null,
     primaryAttendee: boundPrimary,
-    guests: boundGuests
+    guests: boundGuests,
+    requesterContactData
   })
 }
 
@@ -1011,6 +1240,14 @@ function buildNativeAppointmentTerminalBinding(scheduleCapability = {}, terminal
 
 function appointmentResumeUsesBoundDraft(evidence = {}) {
   return evidence?.reusedForPaymentResume === true || evidence?.reusedForTestPaymentResume === true
+}
+
+function restoreNativeAppointmentRequesterContactData(ctx = {}, draft = {}) {
+  if (draft?.version !== NATIVE_APPOINTMENT_REQUEST_DRAFT_VERSION) return true
+  const requesterContactData = normalizeNativeAppointmentRequesterContactData(draft.requesterContactData)
+  if (!requesterContactData) return false
+  ctx.actionScopedContactData = requesterContactData
+  return true
 }
 
 function getToolRuntimeConfig(ctx = {}, config = {}) {
@@ -1347,33 +1584,81 @@ async function resolveNativePaymentAuthority({ capability, quantity = 1, agreedA
   }
 }
 
-async function assignNativeHandoffUser({ contactId, capability } = {}) {
+async function assignNativeHandoffUser({
+  contactId,
+  capability,
+  allowGeneralFallback = false
+} = {}) {
   const configuredUserId = String(capability?.userId || '').trim()
   if (!configuredUserId) return { assigned: false, alreadyAssigned: false, userName: null }
 
   return db.transaction(async () => {
-    const user = await db.get(
-      `SELECT id, username, email, full_name
-       FROM users
-       WHERE CAST(id AS TEXT) = ? AND is_active = 1
-       LIMIT 1`,
-      [configuredUserId]
-    )
-    if (!user?.id) {
-      const error = new Error('La persona configurada para recibir el chat ya no está activa. No se completó la transferencia.')
-      error.status = 409
-      error.code = 'handoff_user_unavailable'
-      throw error
-    }
-
+    const rowLock = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
     const contact = await db.get(
-      'SELECT id, assigned_user_id, assignment_test_effect_id FROM contacts WHERE id = ?',
+      `SELECT id, assigned_user_id, assignment_test_effect_id
+       FROM contacts WHERE id = ?${rowLock}`,
       [contactId]
     )
     if (!contact?.id) {
       const error = new Error('El contacto ya no existe. No se completó la transferencia.')
       error.status = 404
       error.code = 'handoff_contact_not_found'
+      throw error
+    }
+
+    const user = await db.get(
+      `SELECT id, username, email, full_name
+       FROM users
+       WHERE CAST(id AS TEXT) = ? AND is_active = 1
+       LIMIT 1${process.env.DATABASE_URL ? ' FOR SHARE' : ''}`,
+      [configuredUserId]
+    )
+    if (!user?.id) {
+      if (allowGeneralFallback) {
+        logger.warn(
+          `[Agente conversacional] La persona configurada para handoff (${configuredUserId}) no está activa; ` +
+          'la obligación de traspaso continuará con el equipo general.'
+        )
+        const assignedUserId = String(contact.assigned_user_id || '').trim()
+        let clearedUnavailableAssignment = false
+        let preservedExistingAssignment = false
+        if (assignedUserId && assignedUserId !== configuredUserId) {
+          const existingAssignedUser = await db.get(
+            `SELECT id
+             FROM users
+             WHERE CAST(id AS TEXT) = ? AND is_active = 1
+             LIMIT 1${process.env.DATABASE_URL ? ' FOR SHARE' : ''}`,
+            [assignedUserId]
+          )
+          preservedExistingAssignment = Boolean(existingAssignedUser?.id)
+        }
+        if (
+          assignedUserId === configuredUserId ||
+          (assignedUserId && !preservedExistingAssignment)
+        ) {
+          const cleared = await db.run(
+            `UPDATE contacts
+             SET assigned_user_id = NULL, assignment_test_effect_id = NULL,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ? AND CAST(assigned_user_id AS TEXT) = ?`,
+            [contactId, assignedUserId]
+          )
+          clearedUnavailableAssignment =
+            Number(cleared?.changes ?? cleared?.rowCount ?? 0) === 1
+        }
+        return {
+          assigned: false,
+          alreadyAssigned: false,
+          userName: null,
+          fallbackToGeneral: !assignedUserId || clearedUnavailableAssignment,
+          unavailableUserId: configuredUserId,
+          clearedUnavailableAssignment,
+          preservedExistingAssignment
+        }
+      }
+      const error = new Error('La persona configurada para recibir el chat ya no está activa. No se completó la transferencia.')
+      error.status = 409
+      error.code = 'handoff_user_unavailable'
       throw error
     }
 
@@ -1483,6 +1768,53 @@ async function runNativeAppointmentAfterPreCommitAuthorityHook({
   })
 }
 
+async function acquireNativeHandoffInboundAuthority(ctx = {}) {
+  if (ctx?.dryRun) return { checked: false, newerMessage: null, reason: 'dry_run' }
+  const contactId = String(ctx?.contactId || '').trim()
+  const executionId = String(ctx?.executionId || '').trim()
+  const claimMessageId = String(ctx?.inboundClaim?.messageId || '').trim()
+  const claimToken = String(ctx?.inboundClaim?.claimToken || '').trim()
+  if (!claimMessageId && !claimToken) {
+    return { checked: false, newerMessage: null, reason: 'non_canonical_execution' }
+  }
+  if (
+    !contactId ||
+    !executionId ||
+    executionId.startsWith('payment-resume:') ||
+    !claimMessageId ||
+    !claimToken ||
+    claimMessageId !== executionId
+  ) {
+    throw Object.assign(
+      new Error('La autoridad exacta del mensaje no está disponible para el traspaso.'),
+      { code: 'handoff_inbound_authority_lost', statusCode: 409 }
+    )
+  }
+  await acquireConversationalInboundCommitLock({
+    contactId,
+    channel: ctx?.channel || 'whatsapp',
+    database: db
+  })
+  const authority = await findNewerSubstantiveConversationalInbound({
+    contactId,
+    handledMessageId: executionId,
+    channel: ctx?.channel || 'whatsapp'
+  })
+  if (!authority.checked) {
+    throw Object.assign(
+      new Error('La fila canónica del mensaje dejó de estar disponible antes del traspaso.'),
+      { code: 'handoff_inbound_authority_lost', statusCode: 409 }
+    )
+  }
+  if (authority.checked && authority.newerMessage) {
+    throw Object.assign(
+      new Error('Llegó un mensaje más nuevo antes de confirmar el traspaso.'),
+      { code: 'handoff_superseded_by_newer_inbound', statusCode: 409 }
+    )
+  }
+  return authority
+}
+
 /**
  * El handoff v2 cambia dos fuentes de verdad: quién atiende al contacto y el
  * estado terminal de la conversación. Deben confirmar o revertirse juntas;
@@ -1497,6 +1829,7 @@ async function commitNativeHandoff({
   ctx,
   config,
   capability,
+  allowGeneralFallback = false,
   signal = 'ready_for_human',
   signalOptions = {},
   assignmentEventSource = 'handoff_human',
@@ -1508,6 +1841,18 @@ async function commitNativeHandoff({
 } = {}) {
   return db.transaction(async () => {
     let evidenceInserted = null
+    await acquireNativeHandoffInboundAuthority(ctx)
+    const contactLockSuffix = process.env.DATABASE_URL ? ' FOR UPDATE' : ''
+    const lockedContact = await db.get(
+      `SELECT id FROM contacts WHERE id = ?${contactLockSuffix}`,
+      [ctx.contactId]
+    )
+    if (!lockedContact?.id) {
+      throw Object.assign(
+        new Error('El contacto ya no existe. No se completó la transferencia.'),
+        { code: 'handoff_contact_not_found', statusCode: 404 }
+      )
+    }
     const cleanTerminalAuthorityToken = String(terminalAuthorityToken || '').trim()
     if (cleanTerminalAuthorityToken && evidenceEvent?.eventId && typeof afterEvidence === 'function') {
       const existingEvidence = await db.get(
@@ -1546,7 +1891,8 @@ async function commitNativeHandoff({
     }
     const assignment = await assignNativeHandoffUser({
       contactId: ctx.contactId,
-      capability
+      capability,
+      allowGeneralFallback
     })
 
     if (nativeHandoffAfterAssignmentHookForTest) {
@@ -5231,6 +5577,7 @@ async function persistNativeAppointmentSelection({
     customerMessageIds,
     customerMessageIdsHash,
     latestCustomerMessageId,
+    selectionTerminalSourceMessageId: latestCustomerMessageId,
     offerMessageId,
     offerEventId,
     offerTurnId,
@@ -5345,13 +5692,21 @@ async function persistNativeAppointmentSelection({
     [eventId]
   )
   const storedDetail = parseNativeEventDetail(stored?.detail_json)
+  const storedSelectionTerminalSourceMessageId = String(
+    storedDetail.selectionTerminalSourceMessageId ||
+    storedDetail.latestCustomerMessageId ||
+    storedDetail.customerMessageId ||
+    ''
+  ).trim()
   const matches = Boolean(
     stored?.event_type === NATIVE_APPOINTMENT_SELECTION_EVENT &&
     String(stored?.contact_id || '') === contactId &&
     String(stored?.agent_id || '') === agentId &&
     String(storedDetail.status || '') === 'active' &&
     ['calendarId', 'startTime', 'channel', 'executionId', 'customerMessageId', 'customerMessageIdsHash', 'latestCustomerMessageId', 'offerMessageId', 'offerEventId', 'offerTurnId', 'offerTurnMessageIdsHash', 'offerVisibilityEvidenceSource', 'offerDeliveryPlanId', 'offerDeliveryReplyHash', 'offerDeliveryCompletedAt', 'localLabel', 'timezone', 'customerQuoteHash']
-      .every((key) => String(storedDetail[key] || '') === String(detail[key] || ''))
+      .every((key) => String(storedDetail[key] || '') === String(detail[key] || '')) &&
+    storedSelectionTerminalSourceMessageId ===
+      String(detail.selectionTerminalSourceMessageId || '')
   )
   if (!matches) {
     return appointmentSelectionError(
@@ -5363,6 +5718,7 @@ async function persistNativeAppointmentSelection({
     ...evidence,
     durable: true,
     selectionEventId: eventId,
+    terminalSourceMessageId: storedSelectionTerminalSourceMessageId,
     verifiedAt: storedDetail.verifiedAt || stored.created_at || null
   }
 }
@@ -6264,6 +6620,15 @@ async function verifyPaymentResumeAppointmentSelection({
   )
   const detail = parseNativeEventDetail(selection?.detail_json)
   const durableStartTime = String(detail.startTime || '').trim()
+  const terminalSourceMessageId = String(
+    detail.selectionTerminalSourceMessageId ||
+    detail.latestCustomerMessageId ||
+    detail.customerMessageId ||
+    ''
+  ).trim()
+  const durableCustomerMessageIds = Array.isArray(detail.customerMessageIds)
+    ? detail.customerMessageIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : []
   const terminalBinding = readBoundNativeAppointmentTerminalBinding(detail)
   const identityMatches = Boolean(
     selection?.event_type === NATIVE_APPOINTMENT_SELECTION_EVENT &&
@@ -6277,6 +6642,9 @@ async function verifyPaymentResumeAppointmentSelection({
     String(sourceDetail.appointmentSelectionStartTime || '') === durableStartTime &&
     String(sourceDetail.appointmentSelectionVerifiedAt || '') === String(detail.verifiedAt || '') &&
     String(sourceDetail.appointmentSelectionRequestDraftHash || '') === String(detail.appointmentRequestDraftHash || '') &&
+    terminalSourceMessageId &&
+    !terminalSourceMessageId.startsWith('payment-resume:') &&
+    durableCustomerMessageIds.includes(terminalSourceMessageId) &&
     terminalBinding &&
     String(sourceDetail.appointmentSelectionBookingOwner || '') === terminalBinding.bookingOwner &&
     String(sourceDetail.appointmentSelectionTerminalToolName || '') === terminalBinding.terminalToolName &&
@@ -6307,6 +6675,7 @@ async function verifyPaymentResumeAppointmentSelection({
     assistantOfferQuote: detail.localLabel || null,
     localLabel: detail.localLabel || null,
     timezone: detail.timezone || null,
+    terminalSourceMessageId,
     offerMessageId: detail.offerMessageId || null,
     offerEventId: detail.offerEventId || null,
     durable: true,
@@ -6319,6 +6688,21 @@ async function verifyPaymentResumeAppointmentSelection({
     paymentSourceEventId: source.id,
     reconciliationId: reconciliation.id
   }
+}
+
+function resolveNativeAppointmentTerminalSourceMessageId(
+  confirmationEvidence,
+  ctx
+) {
+  const candidates = [
+    confirmationEvidence?.terminalSourceMessageId,
+    confirmationEvidence?.latestCustomerMessageId,
+    confirmationEvidence?.customerMessageId,
+    ctx?.executionId
+  ]
+  return candidates
+    .map((value) => String(value || '').trim())
+    .find((value) => value && !value.startsWith('payment-resume:')) || ''
 }
 
 async function resolveNativeAppointmentSelection({
@@ -7091,6 +7475,9 @@ async function syncNativeAppointmentCompletion({
   config,
   appointment,
   calendarId,
+  terminalSourceMessageId = '',
+  bookingIntentEventId = '',
+  bookingIntentHash = '',
   terminalAuthorityToken = '',
   authorityFence = null,
   beforeDurableCommit = null
@@ -7108,53 +7495,121 @@ async function syncNativeAppointmentCompletion({
     .digest('hex')
     .slice(0, 48)
   const appointmentEventId = `cae_appointment_booked_${digest}`
+  const cleanTerminalSourceMessageId = String(
+    terminalSourceMessageId ||
+    ctx?.synchronousTerminalHandoffTerminalSourceMessageId ||
+    ctx?.executionId ||
+    ''
+  ).trim()
+  const cleanBookingIntentEventId = String(
+    bookingIntentEventId ||
+    ctx?.synchronousTerminalHandoffBookingIntentEventId ||
+    ''
+  ).trim()
+  const cleanBookingIntentHash = String(
+    bookingIntentHash ||
+    ctx?.synchronousTerminalHandoffBookingIntentHash ||
+    ''
+  ).trim()
   const cleanTerminalAuthorityToken = String(terminalAuthorityToken || '').trim()
   let eventAlreadyRecorded = false
+  let terminalHandoffPending = null
 
-  await db.transaction(async () => {
+  await db.transaction(async (tx) => {
     if (typeof authorityFence === 'function') await authorityFence()
     eventAlreadyRecorded = Boolean(await db.get(
       'SELECT id FROM conversational_agent_events WHERE id = ?',
       [appointmentEventId]
     ))
-    if (eventAlreadyRecorded) return
-    if (typeof beforeDurableCommit === 'function') await beforeDurableCommit()
-    if (cleanTerminalAuthorityToken) {
-      await claimConversationalTerminalMutationAuthority({
-        contactId: ctx.contactId,
+    if (!eventAlreadyRecorded) {
+      if (typeof beforeDurableCommit === 'function') await beforeDurableCommit()
+      if (cleanTerminalAuthorityToken) {
+        await claimConversationalTerminalMutationAuthority({
+          contactId: ctx.contactId,
+          agentId,
+          channel: ctx.channel || 'whatsapp',
+          authorityToken: cleanTerminalAuthorityToken,
+          database: db
+        })
+      }
+
+      await setConversationSignal(ctx.contactId, 'appointment_booked', {
+        reason: 'Cita agendada por el agente',
+        actionSummarySource: technicalSummary,
+        originalSummary: technicalSummary,
+        status: 'completed',
         agentId,
-        channel: ctx.channel || 'whatsapp',
-        authorityToken: cleanTerminalAuthorityToken,
-        database: db
+        channel: ctx.channel,
+        eventId: `cae_appointment_signal_${digest}`,
+        strictEvent: true,
+        expectedUpdatedBy: cleanTerminalAuthorityToken
+      })
+      await recordConversationalAgentEvent({
+        eventId: appointmentEventId,
+        contactId: ctx.contactId,
+        eventType: 'appointment_booked',
+        detail: {
+          agentId,
+          appointmentId,
+          startTime,
+          calendarId: appointment.calendar_id || appointment.calendarId || calendarId || null,
+          terminalSourceMessageId: cleanTerminalSourceMessageId || null,
+          bookingIntentEventId: cleanBookingIntentEventId || null,
+          bookingIntentHash: cleanBookingIntentHash || null,
+          terminalHandoffBinding: ctx?.synchronousTerminalHandoffBinding &&
+            typeof ctx.synchronousTerminalHandoffBinding === 'object'
+            ? {
+                stateId: String(ctx.synchronousTerminalHandoffBinding.stateId || '').trim() || null,
+                activationCycleId: String(
+                  ctx.synchronousTerminalHandoffBinding.activationCycleId || ''
+                ).trim() || null,
+                conversationScopeId: String(
+                  ctx.synchronousTerminalHandoffBinding.conversationScopeId || ''
+                ).trim() || null
+              }
+            : null
+        },
+        throwOnError: true
       })
     }
 
-    await setConversationSignal(ctx.contactId, 'appointment_booked', {
-      reason: 'Cita agendada por el agente',
-      actionSummarySource: technicalSummary,
-      originalSummary: technicalSummary,
-      status: 'completed',
-      agentId,
-      channel: ctx.channel,
-      eventId: `cae_appointment_signal_${digest}`,
-      strictEvent: true,
-      expectedUpdatedBy: cleanTerminalAuthorityToken
-    })
-    await recordConversationalAgentEvent({
-      eventId: appointmentEventId,
-      contactId: ctx.contactId,
-      eventType: 'appointment_booked',
-      detail: {
-        agentId,
-        appointmentId,
-        startTime,
-        calendarId: appointment.calendar_id || appointment.calendarId || calendarId || null
-      },
-      throwOnError: true
-    })
+    if (
+      ctx?.synchronousTerminalHandoffBinding &&
+      typeof ctx.synchronousTerminalHandoffBinding === 'object'
+    ) {
+      terminalHandoffPending =
+        await sealToolCallingV2VerifiedTerminalHandoffPending({
+          contactId: ctx.contactId,
+          agentId,
+          channel: ctx.channel || 'whatsapp',
+          binding: ctx.synchronousTerminalHandoffBinding,
+          sourceEventId: appointmentEventId,
+          terminalSourceMessageId: cleanTerminalSourceMessageId,
+          bookingIntentEventId: cleanBookingIntentEventId,
+          bookingIntentHash: cleanBookingIntentHash,
+          expectedTerminal: {
+            status: 'completed',
+            signal: 'appointment_booked'
+          },
+          terminalAction: {
+            tool: 'book_appointment',
+            appointmentId
+          },
+          actionScopedContactData: ctx.actionScopedContactData || {},
+          database: tx
+        })
+      ctx.synchronousTerminalHandoffPendingEventId =
+        terminalHandoffPending?.pendingEventId || null
+    }
   })
 
-  if (eventAlreadyRecorded) return { completed: true, replayed: true }
+  if (eventAlreadyRecorded) {
+    return {
+      completed: true,
+      replayed: true,
+      terminalHandoffPending
+    }
+  }
   const paymentReconciliationId = String(ctx.paymentResumeClaim?.reconciliationId || '').trim()
   if (paymentReconciliationId) {
     await notifyConversationalAiBookingDeposit({
@@ -7170,7 +7625,7 @@ async function syncNativeAppointmentCompletion({
       signal: 'appointment_booked'
     })
   }
-  return { completed: true }
+  return { completed: true, terminalHandoffPending }
 }
 
 async function consumeReservedDepositForExistingNativeAppointment({ ctx, config, appointment }) {
@@ -7457,6 +7912,24 @@ export function createConversationalTools(ctx) {
   })
 
   const failClosedPreventiveMeasureToHuman = async ({ action, category, reason, cause }) => {
+    if (ctx.mandatoryHandoffSafetyPreflight === true) {
+      settleAction(action, 'ok', {
+        actionCompleted: false,
+        quarantined: false,
+        fallbackToMandatoryHandoff: true,
+        suppressReply: true,
+        terminal: true,
+        warning: String(cause?.message || cause || 'preventive_measure_failed').slice(0, 800)
+      })
+      return {
+        ok: true,
+        actionCompleted: false,
+        quarantined: false,
+        fallbackToMandatoryHandoff: true,
+        suppressReply: true,
+        terminal: true
+      }
+    }
     try {
       const committed = await withConversationalAgentSafetyLock({
         contactId: ctx.contactId,
@@ -7620,7 +8093,10 @@ export function createConversationalTools(ctx) {
         }
 
         let handoffWarning = null
-        if (safetyPolicy.action === 'handoff_and_review') {
+        if (
+          safetyPolicy.action === 'handoff_and_review' &&
+          ctx.mandatoryHandoffSafetyPreflight !== true
+        ) {
           try {
             await withConversationalAgentSafetyLock({
               contactId: ctx.contactId,
@@ -7907,7 +8383,9 @@ export function createConversationalTools(ctx) {
       if (!Array.isArray(dataRequirements?.fields) || !dataRequirements.fields.length) {
         return { ok: false, actionCompleted: false, error: 'No hay datos de contacto autorizados en esta configuración.' }
       }
-      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx, {
+        allowMandatoryRequiredDataSave: true
+      })
       if (safetyFence) return safetyFence
       const configuredFields = Array.isArray(dataRequirements.fields) ? dataRequirements.fields : []
       const allowedFields = new Set(configuredFields.map((item) => String(item?.field || '').trim()))
@@ -7943,7 +8421,12 @@ export function createConversationalTools(ctx) {
       const cleanPhone = phone ? normalizePhoneForStorage(phone) : ''
       const cleanAlternatePhone = alternatePhone ? normalizePhoneForStorage(alternatePhone) : ''
       const cleanEmail = cleanAppointmentText(email, 240).toLowerCase()
-      if (cleanFullName && isPlaceholderContactName(cleanFullName)) {
+      const contact = await getThreadContact(ctx)
+      if (!contact) return missingThreadContactResult(ctx)
+      if (
+        cleanFullName &&
+        isPlaceholderConversationalContactName(cleanFullName, contact)
+      ) {
         return {
           ok: false,
           actionCompleted: false,
@@ -7959,33 +8442,65 @@ export function createConversationalTools(ctx) {
       if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
         return { ok: false, actionCompleted: false, error: 'El correo confirmado no tiene un formato válido.' }
       }
-      const contact = await getThreadContact(ctx)
-      if (!contact) return missingThreadContactResult(ctx)
-      if (dataRequirements?.updateContact?.enabled !== true) {
-        const actionScopedCustomUpdates = []
-        if (cleanAlternatePhone) actionScopedCustomUpdates.push({ key: 'alternate_phone', label: 'Teléfono alterno', value: cleanAlternatePhone })
-        if (company) actionScopedCustomUpdates.push({ key: 'company', label: 'Empresa', value: cleanAppointmentText(company, 400) })
-        if (address) actionScopedCustomUpdates.push({ key: 'address_1', label: 'Dirección', value: cleanAppointmentText(address, 800) })
-        for (const item of Array.isArray(customValues) ? customValues : []) {
-          const key = normalizeCustomKey(item?.key)
-          if (key && allowedCustomFields.has(key)) {
-            actionScopedCustomUpdates.push({ key, label: allowedCustomFields.get(key), value: cleanAppointmentText(item.value, 1000) })
-          }
+      const confirmedActionScopedCustomUpdates = []
+      if (cleanAlternatePhone) {
+        confirmedActionScopedCustomUpdates.push({
+          key: 'alternate_phone',
+          label: 'Teléfono alterno',
+          value: cleanAlternatePhone
+        })
+      }
+      if (company) {
+        confirmedActionScopedCustomUpdates.push({
+          key: 'company',
+          label: 'Empresa',
+          value: cleanAppointmentText(company, 400)
+        })
+      }
+      if (address) {
+        confirmedActionScopedCustomUpdates.push({
+          key: 'address_1',
+          label: 'Dirección',
+          value: cleanAppointmentText(address, 800)
+        })
+      }
+      for (const item of Array.isArray(customValues) ? customValues : []) {
+        const key = normalizeCustomKey(item?.key)
+        if (key && allowedCustomFields.has(key)) {
+          confirmedActionScopedCustomUpdates.push({
+            key,
+            label: allowedCustomFields.get(key),
+            value: cleanAppointmentText(item.value, 1000)
+          })
         }
+      }
+      const retainConfirmedDataForCurrentAction = () => {
+        const previous = (
+          ctx.actionScopedContactData &&
+          typeof ctx.actionScopedContactData === 'object' &&
+          !Array.isArray(ctx.actionScopedContactData)
+        )
+          ? ctx.actionScopedContactData
+          : {}
         ctx.actionScopedContactData = {
-          ...(ctx.actionScopedContactData || {}),
+          ...previous,
           ...(cleanFullName ? { full_name: cleanFullName } : {}),
           ...(cleanPhone ? { phone: cleanPhone } : {}),
           ...(cleanEmail ? { email: cleanEmail } : {}),
-          ...(actionScopedCustomUpdates.length
+          ...(confirmedActionScopedCustomUpdates.length
             ? {
-                custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(
-                  parseContactCustomFields(ctx.actionScopedContactData?.custom_fields),
-                  actionScopedCustomUpdates
-                ))
+                custom_fields: serializeContactCustomFieldsForDb(
+                  mergeContactCustomFields(
+                    parseContactCustomFields(previous.custom_fields),
+                    confirmedActionScopedCustomUpdates
+                  )
+                )
               }
             : {})
         }
+      }
+      if (dataRequirements?.updateContact?.enabled !== true) {
+        retainConfirmedDataForCurrentAction()
         return {
           ok: true,
           actionCompleted: false,
@@ -8005,6 +8520,9 @@ export function createConversationalTools(ctx) {
         ].filter(Boolean)
       })
       if (ctx.dryRun || contact.virtual) {
+        if (ctx.dryRun && !contact.virtual) {
+          retainConfirmedDataForCurrentAction()
+        }
         if (contact.virtual) {
           const virtualCustomFields = parseContactCustomFields(ctx.virtualContact?.custom_fields)
           const virtualUpdates = []
@@ -8026,6 +8544,7 @@ export function createConversationalTools(ctx) {
               ? { custom_fields: serializeContactCustomFieldsForDb(mergeContactCustomFields(virtualCustomFields, virtualUpdates)) }
               : {})
           }
+          retainConfirmedDataForCurrentAction()
         }
         settleAction(action, 'simulated', { actionCompleted: false, wouldUpdateThreadContact: true })
         return { ok: true, simulated: true, wouldUpdateThreadContact: true }
@@ -8033,6 +8552,7 @@ export function createConversationalTools(ctx) {
 
       const policy = String(dataRequirements?.updateContact?.policy || 'replace_placeholders')
       const persistAgainstCurrentIdentity = () => db.transaction(async (tx) => {
+        await acquireNativeHandoffInboundAuthority(ctx)
         // PostgreSQL bloquea la fila; SQLite entra a esta transacción con BEGIN
         // IMMEDIATE. Toda decisión se recalcula con la identidad vigente, nunca
         // con el snapshot que existía antes de esperar el candado.
@@ -8043,6 +8563,15 @@ export function createConversationalTools(ctx) {
           [ctx.contactId]
         )
         if (!current) return { missing: true, changedFields: [], preservedFields: [] }
+        if (ctx.mandatoryHandoffActive === true) {
+          if (typeof ctx.mandatoryHandoffDataAuthorityFence !== 'function') {
+            throw Object.assign(
+              new Error('Falta la autoridad durable para guardar datos del traspaso obligatorio.'),
+              { code: 'mandatory_handoff_data_authority_missing' }
+            )
+          }
+          await ctx.mandatoryHandoffDataAuthorityFence()
+        }
 
         const updates = []
         const params = []
@@ -8051,7 +8580,13 @@ export function createConversationalTools(ctx) {
         const customUpdates = []
         if (cleanFullName) {
           const mayReplace = !current.full_name ||
-            (policy === 'replace_placeholders' && isPlaceholderContactName(current.full_name)) ||
+            (
+              policy === 'replace_placeholders' &&
+              isPlaceholderConversationalContactName(
+                current.full_name,
+                current
+              )
+            ) ||
             String(current.full_name).trim().toLowerCase() === cleanFullName.toLowerCase()
           if (mayReplace) {
             const name = splitConfirmedName(cleanFullName)
@@ -8155,6 +8690,10 @@ export function createConversationalTools(ctx) {
       if (persisted?.missing) return missingThreadContactResult(ctx)
       const changedFields = persisted?.changedFields || []
       const preservedFields = persisted?.preservedFields || []
+      // La ficha puede preservar un primario humano o legacy por política. El
+      // dato que la persona acaba de confirmar sigue siendo evidencia válida
+      // para esta acción y se sella después del commit local exitoso.
+      retainConfirmedDataForCurrentAction()
 
       // La base local es la autoridad del runtime. La sincronización de los
       // campos estándar a HighLevel es best-effort y nunca revierte el guardado.
@@ -8408,12 +8947,21 @@ export function createConversationalTools(ctx) {
       const persistsExactDateState = selectingInitialExactDate ||
         replacingSelectedDate ||
         revalidatingRetainedDate
+      const deferredReleaseReadOnly = Boolean(
+        ctx.deferredAutomaticRelease &&
+        ctx.mandatoryHandoffActive !== true
+      )
       const persistDateAvailabilityState = async (
         outcome,
         failure = null,
         { persistInitialAvailableDate = false } = {}
       ) => {
         if (!persistsExactDateState) return null
+        // Durante una salida diferida, get_free_slots sólo produce hechos para
+        // la post-compuerta de handoff. Si al final resulta no_match, la
+        // conversación se libera y ningún estado de fecha que el contacto jamás
+        // vio debe quedar pegado en el ledger.
+        if (deferredReleaseReadOnly) return null
         // Una primera consulta exitosa conserva el flujo previo: la fecha se
         // vuelve durable cuando se presenta la lista/oferta. Sólo adelantamos
         // esta escritura si el lookup falló, probó que el día no tiene slots o
@@ -8686,6 +9234,8 @@ export function createConversationalTools(ctx) {
       ).describe('Fecha YYYY-MM-DD elegida en la zona del negocio para collecting_time; null en exploring')
     }),
     execute: async ({ maxDays, selectionMode, selectedLocalDate }) => {
+      const mutationFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (mutationFence) return mutationFence
       if (ctx.appointmentOfferDecision?.active === true) {
         return appointmentSelectionError(
           'Primero resuelve el horario individual pendiente antes de mostrar otras opciones.',
@@ -8854,6 +9404,8 @@ export function createConversationalTools(ctx) {
       ).describe('Contexto conversacional cerrado: selected_from_options si eligió de una lista, exact_preference si pidió directamente fecha y hora, replacement si reemplazó una opción, neutral si no está claro; null equivale a neutral')
     }),
     execute: async ({ startTime, appointmentId, selectionContext }) => {
+      const mutationFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      if (mutationFence) return mutationFence
       if (ctx.appointmentOfferDecision?.active === true) {
         return appointmentSelectionError(
           'Primero resuelve el horario individual pendiente antes de ofrecer uno nuevo.',
@@ -9128,6 +9680,12 @@ export function createConversationalTools(ctx) {
             'payment_resume_appointment_request_draft_invalid'
           )
         }
+        if (!restoreNativeAppointmentRequesterContactData(ctx, boundDraft)) {
+          return appointmentSelectionError(
+            'El pago está confirmado, pero los datos obligatorios de quien solicitó la cita quedaron dañados. No se agendó nada; pasa el caso al equipo.',
+            'payment_resume_requester_contact_data_invalid'
+          )
+        }
         title = boundDraft.title
         notes = boundDraft.notes
         attendeeName = boundDraft.attendeeName
@@ -9192,7 +9750,8 @@ export function createConversationalTools(ctx) {
             attendeeContext,
             primaryAttendee,
             guests,
-            participants
+            participants,
+            requesterContactData: ctx.actionScopedContactData
           })
         : null
       if (depositRequired && (!appointmentRequestDraft || !terminalBinding)) {
@@ -9389,6 +9948,11 @@ export function createConversationalTools(ctx) {
             config,
             appointment: existing,
             calendarId: existing.calendar_id,
+            terminalSourceMessageId:
+              resolveNativeAppointmentTerminalSourceMessageId(
+                confirmationEvidence,
+                ctx
+              ),
             terminalAuthorityToken,
             authorityFence: buildNativeAppointmentTerminalCommitFence(existingCommitAuthority.options),
             beforeDurableCommit: boundExisting.detail.depositRequired === true
@@ -9758,6 +10322,111 @@ export function createConversationalTools(ctx) {
         }
       }
 
+      let handoffBookingIntent = null
+      if (
+        ctx?.synchronousTerminalHandoffBinding &&
+        typeof ctx.synchronousTerminalHandoffBinding === 'object'
+      ) {
+        const terminalSourceMessageId =
+          resolveNativeAppointmentTerminalSourceMessageId(confirmationEvidence, ctx)
+        try {
+          handoffBookingIntent =
+            await sealToolCallingV2AppointmentBookingIntent({
+              contactId: ctx.contactId,
+              agentId: config.id || ctx.agentId || '',
+              channel: ctx.channel || 'whatsapp',
+              binding: ctx.synchronousTerminalHandoffBinding,
+              clientRequestId,
+              selectionEventId: confirmationEvidence.selectionEventId,
+              terminalSourceMessageId,
+              calendarId,
+              startTime: start.toISOString(),
+              actionScopedContactData: ctx.actionScopedContactData || {}
+            })
+        } catch (error) {
+          await releaseDepositReservationAfterDefinitiveFailure(
+            'handoff_booking_intent_failed'
+          )
+          settleAction(action, 'error', {
+            error: error.message,
+            code: error.code || 'handoff_booking_intent_failed',
+            transferRequired: true
+          })
+          return {
+            ok: false,
+            actionCompleted: false,
+            transferRequired: true,
+            code: error.code || 'handoff_booking_intent_failed',
+            error: 'No se pudo fijar de forma segura la obligación de pasar la conversación al equipo. No se agendó nada; el caso requiere atención humana.'
+          }
+        }
+        const historicalBookingIntent = Boolean(
+          handoffBookingIntent?.intentEventId &&
+          handoffBookingIntent.pending !== true &&
+          handoffBookingIntent.committed !== true
+        )
+        if (historicalBookingIntent) {
+          // Esta llave ya terminó (materializada, abortada o supersedida). Un
+          // replay moved/cancelled sólo informa el estado canónico; jamás
+          // reabre ni reescribe la obligación histórica.
+          handoffBookingIntent = null
+          ctx.synchronousTerminalHandoffBinding = null
+        } else if (handoffBookingIntent?.intentEventId) {
+          ctx.synchronousTerminalHandoffBookingIntentEventId =
+            handoffBookingIntent.intentEventId
+          ctx.synchronousTerminalHandoffBookingIntentHash =
+            handoffBookingIntent.intentHash
+          ctx.synchronousTerminalHandoffTerminalSourceMessageId =
+            terminalSourceMessageId
+        }
+      }
+      const abortHandoffBookingIntentAfterDefinitiveFailure = async (reason) => {
+        if (!handoffBookingIntent?.intentEventId) return false
+        try {
+          const aborted = await abortToolCallingV2AppointmentBookingIntent({
+            intentEventId: handoffBookingIntent.intentEventId,
+            intentHash: handoffBookingIntent.intentHash,
+            clientRequestId,
+            reason
+          })
+          return aborted?.aborted === true
+        } catch (error) {
+          // Si el controller alcanzó a guardar una cita, abortar sería peor:
+          // el recovery debe materializar esa misma identidad comprometida.
+          if (
+            [
+              'verified_terminal_booking_intent_abort_after_commit',
+              'verified_terminal_booking_intent_abort_appointment_exists'
+            ].includes(String(error?.code || ''))
+          ) return false
+          logger.warn(
+            `[Agente conversacional] No se pudo cerrar la intención fallida de cita: ${error.message}`
+          )
+          return false
+        }
+      }
+      const supersedeHandoffBookingIntent = async ({
+        reason,
+        appointmentId = ''
+      } = {}) => {
+        if (!handoffBookingIntent?.intentEventId) return false
+        const result = await supersedeToolCallingV2AppointmentBookingIntent({
+          intentEventId: handoffBookingIntent.intentEventId,
+          intentHash: handoffBookingIntent.intentHash,
+          clientRequestId,
+          appointmentId,
+          reason
+        })
+        if (result?.superseded === true) {
+          ctx.synchronousTerminalHandoffBookingIntentEventId = null
+          ctx.synchronousTerminalHandoffBookingIntentHash = null
+          ctx.synchronousTerminalHandoffTerminalSourceMessageId = null
+          ctx.synchronousTerminalHandoffBinding = null
+          return true
+        }
+        return false
+      }
+
       const appointmentControllerBody = freezeNativeAppointmentControllerValue({
         calendarId,
         contactId: ctx.contactId,
@@ -9783,6 +10452,14 @@ export function createConversationalTools(ctx) {
               conversationTerminalAuthorityToken: terminalAuthorityToken,
               conversationTerminalAgentId: config.id || ctx.agentId || '',
               conversationTerminalChannel: ctx.channel || 'whatsapp'
+            }
+          : {}),
+        ...(handoffBookingIntent?.intentEventId
+          ? {
+              conversationalHandoffBookingIntentEventId:
+                handoffBookingIntent.intentEventId,
+              conversationalHandoffBookingIntentHash:
+                handoffBookingIntent.intentHash
             }
           : {})
       })
@@ -9849,6 +10526,9 @@ export function createConversationalTools(ctx) {
         }))
         if (result.statusCode >= 400 || !toolResult.ok || !toolResult.data?.id) {
           await releaseDepositReservationAfterDefinitiveFailure(`appointment_controller_${result.statusCode || 'failed'}`)
+          await abortHandoffBookingIntentAfterDefinitiveFailure(
+            `appointment_controller_${result.statusCode || 'failed'}`
+          )
           const authorityFenceData = result.payload?.data && typeof result.payload.data === 'object'
             ? result.payload.data
             : {}
@@ -9884,6 +10564,10 @@ export function createConversationalTools(ctx) {
         }
         if (toolResult.data?.idempotencyReplay?.canonicalChanged) {
           const replayState = toolResult.data.idempotencyReplay.state
+          await supersedeHandoffBookingIntent({
+            reason: `appointment_${replayState || 'canonical_identity_changed'}`,
+            appointmentId: toolResult.data.id
+          })
           if (replayState === 'appointment_rescheduled' && toolResult.data.id) {
             let completionSyncWarning = false
             try {
@@ -9911,6 +10595,15 @@ export function createConversationalTools(ctx) {
                   status: toolResult.data.status
                 },
                 calendarId: toolResult.data.calendarId,
+                terminalSourceMessageId:
+                  resolveNativeAppointmentTerminalSourceMessageId(
+                    confirmationEvidence,
+                    ctx
+                  ),
+                bookingIntentEventId:
+                  ctx.synchronousTerminalHandoffBookingIntentEventId,
+                bookingIntentHash:
+                  ctx.synchronousTerminalHandoffBookingIntentHash,
                 terminalAuthorityToken
               })
             } catch (error) {
@@ -9918,6 +10611,7 @@ export function createConversationalTools(ctx) {
               logger.error(`[Agente conversacional] La cita reprogramada ${toolResult.data.id} existe, pero falló su cierre durable: ${error.message}`)
             }
             settleAction(action, completionSyncWarning ? 'error' : 'ok', {
+              appointmentId: toolResult.data.id,
               appointmentCreated: false,
               appointmentRescheduled: true,
               verifiedExistingAction: true,
@@ -9998,6 +10692,9 @@ export function createConversationalTools(ctx) {
         await releaseDepositReservationAfterDefinitiveFailure(
           `appointment_controller_${firstControllerFailureCode || error?.code || 'failed'}`
         )
+        await abortHandoffBookingIntentAfterDefinitiveFailure(
+          `appointment_controller_${firstControllerFailureCode || error?.code || 'failed'}`
+        )
         logger.error(`[Agente conversacional] Falló la creación real de la cita: ${error.message}`)
         const errorResult = {
           ok: false,
@@ -10040,6 +10737,15 @@ export function createConversationalTools(ctx) {
               status: toolResult.data.status || 'confirmed'
             },
             calendarId,
+            terminalSourceMessageId:
+              resolveNativeAppointmentTerminalSourceMessageId(
+                confirmationEvidence,
+                ctx
+              ),
+            bookingIntentEventId:
+              ctx.synchronousTerminalHandoffBookingIntentEventId,
+            bookingIntentHash:
+              ctx.synchronousTerminalHandoffBookingIntentHash,
             terminalAuthorityToken
           })
         } catch (error) {
@@ -10397,6 +11103,22 @@ export function createConversationalTools(ctx) {
       })
       if (!confirmationEvidence.ok) return confirmationEvidence
       if (confirmationEvidence.purpose === 'reschedule') {
+        const threadContact = await getThreadContact(ctx)
+        if (!threadContact) return missingThreadContactResult(ctx)
+        const requiredDataError = await enforceRequiredContactData({
+          ctx,
+          scope: 'appointment',
+          dataRequirements,
+          contact: threadContact,
+          facts: appointmentRequirementFacts({
+            contact: threadContact,
+            primaryAttendee,
+            attendeeName,
+            attendeeContext,
+            guests
+          })
+        })
+        if (requiredDataError) return requiredDataError
         return handOffConfirmedReschedule({
           confirmationEvidence,
           nativeCalendar,
@@ -10417,6 +11139,12 @@ export function createConversationalTools(ctx) {
           return appointmentSelectionError(
             'El pago está confirmado, pero no se pudo recuperar de forma segura para quién era la cita. No se entregó la solicitud; pasa el caso al equipo.',
             'payment_resume_appointment_request_draft_invalid'
+          )
+        }
+        if (!restoreNativeAppointmentRequesterContactData(ctx, boundDraft)) {
+          return appointmentSelectionError(
+            'El pago está confirmado, pero los datos obligatorios de quien solicitó la cita quedaron dañados. No se entregó la solicitud; pasa el caso al equipo.',
+            'payment_resume_requester_contact_data_invalid'
           )
         }
         title = boundDraft.title
@@ -10480,7 +11208,8 @@ export function createConversationalTools(ctx) {
             attendeeContext,
             primaryAttendee,
             guests,
-            participants
+            participants,
+            requesterContactData: ctx.actionScopedContactData
           })
         : null
       if (depositRequired && (!appointmentRequestDraft || !terminalBinding)) {
@@ -11506,6 +12235,7 @@ export function createConversationalTools(ctx) {
       let appointmentDepositClaim = null
       let appointmentDepositReuseOnly = false
       let appointmentDepositCanonicalSourceEventId = null
+      let appointmentDepositCanonicalClaimToken = null
       const paymentIdempotencyKey = buildConversationalPaymentLinkIdempotencyKey({
         agentId: config.id || ctx.agentId || '',
         contactId: ctx.contactId || '',
@@ -11540,6 +12270,17 @@ export function createConversationalTools(ctx) {
         facts: paymentRequirementFacts(paymentCapability)
       })
       if (requiredDataError) return requiredDataError
+      const paymentActionScopedContactDataBinding =
+        buildConversationalActionScopedContactDataBinding(ctx.actionScopedContactData)
+      if (!paymentActionScopedContactDataBinding) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          code: 'payment_requester_contact_data_invalid',
+          error: 'Los datos obligatorios de este cobro no se pudieron conservar de forma segura. No se creó ningún link; pasa la conversación a una persona.'
+        }
+      }
       if (!ctx.dryRun && nativePaymentPurpose === 'appointment_deposit') {
         const resolvedIntent = await resolveNativeAppointmentDepositIntentForLink({
           ctx,
@@ -11554,12 +12295,40 @@ export function createConversationalTools(ctx) {
         appointmentDepositCanonicalSourceEventId = appointmentDepositReuseOnly
           ? String(resolvedIntent.canonicalSourceEventId || '').trim()
           : null
+        appointmentDepositCanonicalClaimToken = appointmentDepositReuseOnly
+          ? String(resolvedIntent.canonicalClaimToken || '').trim()
+          : null
+      }
+
+      // El bind de conversación debe capturarse después de terminar todas las
+      // validaciones locales, pero antes del primer efecto durable (reservar el
+      // anticipo o llamar al proveedor). Así un error de agenda conserva su
+      // diagnóstico específico sin abrir una carrera entre el ciclo y el cobro.
+      const paymentConversationBinding = ctx.dryRun
+        ? null
+        : await buildConversationalPaymentConversationBinding({
+            contactId: ctx.contactId,
+            agentId: config.id || ctx.agentId || '',
+            channel: deliveryChannel,
+            sourceEventId: paymentSourceEventId
+          })
+      if (!ctx.dryRun && !paymentConversationBinding) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          code: 'payment_conversation_binding_unavailable',
+          error: 'No se pudo fijar el ciclo exacto de esta conversación antes del cobro. No se creó ningún link; pasa la conversación a una persona.'
+        }
+      }
+
+      if (!ctx.dryRun && nativePaymentPurpose === 'appointment_deposit') {
         if (appointmentDepositReuseOnly) {
           appointmentDepositClaim = {
             ok: true,
             reused: true,
             sourceAlreadyBound: true,
-            claimToken: resolvedIntent.canonicalClaimToken || appointmentDepositIntent?.detail?.claimToken || null,
+            claimToken: appointmentDepositCanonicalClaimToken || appointmentDepositIntent?.detail?.claimToken || null,
             intent: appointmentDepositIntent
           }
         } else {
@@ -11661,7 +12430,9 @@ export function createConversationalTools(ctx) {
             appointmentDepositIntentClaimKey: appointmentDepositReuseOnly
               ? appointmentDepositCanonicalSourceEventId
               : (paymentSourceEventId || null),
-            appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null
+            appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null,
+            ...paymentActionScopedContactDataBinding,
+            paymentConversationBinding
           }
         })
 
@@ -11703,6 +12474,9 @@ export function createConversationalTools(ctx) {
             ).catch(() => null)
           : null
         const canonicalSourceDetail = parseNativeEventDetail(canonicalSourceEvent?.detail_json)
+        const canonicalActionScopedContactData = crossTurnReuse
+          ? readBoundConversationalActionScopedContactData(canonicalSourceDetail)
+          : null
         const ledgerCurrency = String(paymentLedger?.currency || '').trim().toUpperCase()
         const ledgerAmount = Number(paymentLedger?.amount)
         const trustedAmountMinor = paymentAmountInMinorUnits(trustedPayment.amount, trustedPayment.currency)
@@ -11738,6 +12512,17 @@ export function createConversationalTools(ctx) {
           String(canonicalSourceDetail.afterPayment || 'continue').trim().toLowerCase() === String(paymentCapability?.afterPayment || 'continue').trim().toLowerCase() &&
           paymentAmountInMinorUnits(canonicalSourceDetail.amount, trustedPayment.currency) === trustedAmountMinor &&
           String(canonicalSourceDetail.currency || '').trim().toUpperCase() === trustedPayment.currency &&
+          canonicalActionScopedContactData &&
+          String(canonicalSourceDetail.actionScopedContactDataHash || '') ===
+            paymentActionScopedContactDataBinding.actionScopedContactDataHash &&
+          paymentConversationBindingIdentityMatches(
+            canonicalSourceDetail.paymentConversationBinding,
+            paymentConversationBinding,
+            {
+              canonicalSourceEventId: canonicalBindingEventId,
+              requestedSourceEventId: paymentSourceEventId
+            }
+          ) &&
           (!appointmentDepositReuseOnly || (
             canonicalBindingEventId === appointmentDepositCanonicalSourceEventId &&
             String(canonicalSourceDetail.appointmentDepositIntentEventId || '') === String(appointmentDepositIntent?.id || '') &&
@@ -11838,21 +12623,75 @@ export function createConversationalTools(ctx) {
             appointmentDepositIntentEventId: appointmentDepositIntent?.id || null,
             appointmentDepositIntentClaimKey: paymentSourceEventId || null,
             appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null,
+            ...paymentActionScopedContactDataBinding,
             executionId: String(ctx.executionId || '').trim(),
             status: result.status,
             expiresAt: result.expiresAt || null,
             expirationMinutes: result.expirationMinutes || null,
             installments: result.installments || null,
             afterPayment: result.afterPayment || paymentCapability?.afterPayment || 'continue',
+            paymentConversationBinding,
             ...(result.reused ? { reused: true } : {})
           }
           if (!crossTurnReuse) {
+            const existingSourceEvent = await db.get(
+              `SELECT contact_id, agent_id, event_type, detail_json
+               FROM conversational_agent_events
+               WHERE id = ?
+               LIMIT 1`,
+              [paymentSourceEventId]
+            )
+            if (existingSourceEvent) {
+              const existingDetail = parseNativeEventDetail(existingSourceEvent.detail_json)
+              const existingActionScopedContactData =
+                readBoundConversationalActionScopedContactData(existingDetail)
+              const existingBindingMatches = Boolean(
+                String(existingSourceEvent.contact_id || '') === String(ctx.contactId || '') &&
+                String(existingSourceEvent.agent_id || '') === String(config.id || ctx.agentId || '') &&
+                ['payment_link_created', 'payment_link_reused'].includes(
+                  String(existingSourceEvent.event_type || '')
+                ) &&
+                existingActionScopedContactData &&
+                String(existingDetail.actionScopedContactDataHash || '') ===
+                  paymentActionScopedContactDataBinding.actionScopedContactDataHash &&
+                JSON.stringify(existingDetail.paymentConversationBinding || null) ===
+                  JSON.stringify(paymentConversationBinding)
+              )
+              if (!existingBindingMatches) {
+                throw Object.assign(
+                  new Error('El mensaje ya está ligado a otros datos obligatorios del solicitante.'),
+                  { code: 'payment_action_scoped_contact_binding_conflict', statusCode: 409 }
+                )
+              }
+            }
             await bindConversationalPaymentSourceEvent({
               eventId: paymentSourceEventId,
               contactId: ctx.contactId,
               eventType: sourceEventType,
               detail: sourceDetail
             })
+            const boundSourceEvent = await db.get(
+              `SELECT contact_id, agent_id, event_type, detail_json
+               FROM conversational_agent_events
+               WHERE id = ?
+               LIMIT 1`,
+              [paymentSourceEventId]
+            )
+            const boundSourceDetail = parseNativeEventDetail(boundSourceEvent?.detail_json)
+            const boundActionScopedContactData =
+              readBoundConversationalActionScopedContactData(boundSourceDetail)
+            if (
+              !boundActionScopedContactData ||
+              String(boundSourceDetail.actionScopedContactDataHash || '') !==
+                paymentActionScopedContactDataBinding.actionScopedContactDataHash ||
+              JSON.stringify(boundSourceDetail.paymentConversationBinding || null) !==
+                JSON.stringify(paymentConversationBinding)
+            ) {
+              throw Object.assign(
+                new Error('El cobro quedó ligado a otros datos obligatorios del solicitante.'),
+                { code: 'payment_action_scoped_contact_binding_conflict', statusCode: 409 }
+              )
+            }
             if (appointmentDepositIntent) {
               const intentBound = await markNativeAppointmentDepositIntentBound({
                 intent: appointmentDepositIntent,
@@ -12056,6 +12895,17 @@ export function createConversationalTools(ctx) {
       if (safetyFence) return safetyFence
       const requiredDataError = await enforceRequiredContactData({ ctx, scope: 'link', dataRequirements })
       if (requiredDataError) return requiredDataError
+      const goalActionScopedContactDataBinding =
+        buildConversationalActionScopedContactDataBinding(ctx.actionScopedContactData)
+      if (!goalActionScopedContactDataBinding) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          code: 'goal_requester_contact_data_invalid',
+          error: 'Los datos obligatorios de este objetivo no se pudieron conservar de forma segura. No se preparó el enlace; pasa la conversación a una persona.'
+        }
+      }
       intencionDetectada = intencionDetectada || 'Solicitó el enlace'
       resumen = resumen || ''
 
@@ -12131,7 +12981,8 @@ export function createConversationalTools(ctx) {
             intencionDetectada,
             resumen,
             channel: String(ctx.channel || '').trim().toLowerCase(),
-            executionId: nativeExecutionId
+            executionId: nativeExecutionId,
+            ...goalActionScopedContactDataBinding
           }
         })
       } catch (error) {
@@ -12201,10 +13052,29 @@ export function createConversationalTools(ctx) {
       resumen: z.string().describe('Resumen breve de la situación')
     }),
     execute: async ({ motivo, resumen }) => {
-      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx)
+      const safetyFence = await guardMutationAgainstPreventiveMeasure(ctx, {
+        allowDeferredAutomaticRelease: true,
+        allowMandatoryHumanHandoff: true
+      })
       if (safetyFence) return safetyFence
       const requiredDataError = await enforceRequiredContactData({ ctx, scope: 'handoff', dataRequirements })
       if (requiredDataError) return requiredDataError
+      if (
+        !ctx.dryRun &&
+        ctx.mandatoryHandoffActive === true &&
+        (
+          typeof ctx.mandatoryHandoffAuthorityFence !== 'function' ||
+          !String(ctx.mandatoryHandoffTerminalAuthorityToken || '').trim()
+        )
+      ) {
+        return {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          code: 'mandatory_handoff_authority_missing',
+          error: 'Falta la autoridad durable para ejecutar el traspaso obligatorio.'
+        }
+      }
       const action = pushAction(ctx, 'send_to_human', {
         motivo,
         effect: { liveEffect: 'PASARÍA el chat a un humano (el bot deja de responder). NO marca el objetivo como cumplido.', marksObjectiveCompleted: false }
@@ -12233,21 +13103,101 @@ export function createConversationalTools(ctx) {
 
       let assignment = { assigned: false, alreadyAssigned: false, userName: null }
       try {
+        const mandatoryAuthorityFence = ctx.mandatoryHandoffActive === true &&
+          typeof ctx.mandatoryHandoffAuthorityFence === 'function'
+          ? ctx.mandatoryHandoffAuthorityFence
+          : null
+        const authorityFence = mandatoryAuthorityFence
+          ? async () => {
+              await mandatoryAuthorityFence()
+              const currentRequiredDataError = await enforceRequiredContactData({
+                ctx,
+                scope: 'handoff',
+                dataRequirements,
+                lockContact: true
+              })
+              if (currentRequiredDataError) {
+                throw Object.assign(
+                  new Error(currentRequiredDataError.error || 'Los datos obligatorios cambiaron antes del traspaso.'),
+                  {
+                    code: 'mandatory_handoff_required_data_changed',
+                    needsData: true,
+                    requiredFields: currentRequiredDataError.requiredFields || []
+                  }
+                )
+              }
+              const notificationMessageId = `mandatory-handoff:${String(ctx.mandatoryHandoffLatchId || '').trim()}`
+              const queuedNotification = await enqueueChatDeliveryJob({
+                jobKind: CHAT_DELIVERY_JOB_KIND.PUSH,
+                messageId: notificationMessageId,
+                contactId: ctx.contactId,
+                provider: 'conversational_agent_priority',
+                payload: {
+                  notificationType: 'agent_priority',
+                  messageId: notificationMessageId,
+                  contactId: ctx.contactId,
+                  reason: motivo,
+                  summary: resumen,
+                  signal: 'ready_for_human',
+                  handoffLatchId: String(ctx.mandatoryHandoffLatchId || '').trim()
+                },
+                database: db
+              })
+              const queuedPayload = queuedNotification?.payload || {}
+              if (
+                queuedNotification?.job_kind !== CHAT_DELIVERY_JOB_KIND.PUSH ||
+                String(queuedNotification?.message_id || '') !== notificationMessageId ||
+                String(queuedNotification?.contact_id || '') !== String(ctx.contactId || '') ||
+                String(queuedNotification?.provider || '') !== 'conversational_agent_priority' ||
+                String(queuedPayload.handoffLatchId || '') !== String(ctx.mandatoryHandoffLatchId || '')
+              ) {
+                throw Object.assign(
+                  new Error('La identidad durable del aviso humano entró en conflicto.'),
+                  { code: 'mandatory_handoff_notification_identity_conflict' }
+                )
+              }
+              ctx.mandatoryHandoffNotificationOutboxId = queuedNotification.id
+            }
+          : null
         const committedHandoff = await commitNativeHandoff({
           ctx,
           config,
           capability: handoffCapability,
+          allowGeneralFallback: ctx.mandatoryHandoffActive === true,
           signal: 'ready_for_human',
           signalOptions: {
             reason: motivo,
             summary: resumen,
-            status: 'human'
+            status: 'human',
+            ...(ctx.mandatoryHandoffLatchId
+              ? { eventId: `${String(ctx.mandatoryHandoffLatchId).slice(0, 150)}_state` }
+              : {})
           },
-          assignmentEventSource: 'handoff_human'
+          assignmentEventSource: 'handoff_human',
+          terminalAuthorityToken: ctx.mandatoryHandoffActive === true
+            ? String(ctx.mandatoryHandoffTerminalAuthorityToken || '').trim()
+            : '',
+          authorityFence
         })
         assignment = committedHandoff.assignment
       } catch (error) {
         logger.error(`[Agente conversacional] No se pudo transferir la conversación: ${error.message}`)
+        if (error?.needsData === true) {
+          const missingDataResult = {
+            ok: false,
+            actionCompleted: false,
+            needsData: true,
+            requiredFields: Array.isArray(error.requiredFields) ? error.requiredFields : [],
+            code: error.code || 'mandatory_handoff_required_data_changed',
+            error: error.message
+          }
+          settleAction(action, 'error', {
+            needsData: true,
+            requiredFields: missingDataResult.requiredFields,
+            error: missingDataResult.error
+          })
+          return missingDataResult
+        }
         const errorResult = {
           ok: false,
           actionCompleted: false,
@@ -12262,11 +13212,19 @@ export function createConversationalTools(ctx) {
       }
 
       let notificationWarning = false
-      try {
-        await notifyHumanPriority(ctx, { reason: motivo, summary: resumen, signal: 'ready_for_human' })
-      } catch (error) {
-        notificationWarning = true
-        logger.warn(`[Agente conversacional] El handoff sí quedó registrado, pero falló la notificación: ${error.message}`)
+      if (ctx.mandatoryHandoffActive === true) {
+        import('../../jobs/metaDirectChatDelivery.cron.js')
+          .then((job) => job.requestChatPushDeliveryDrain?.('mandatory_handoff'))
+          .catch((error) => {
+            logger.warn(`[Agente conversacional] El aviso durable quedó en cola, pero no se pudo despertar el worker: ${error.message}`)
+          })
+      } else {
+        try {
+          await notifyHumanPriority(ctx, { reason: motivo, summary: resumen, signal: 'ready_for_human' })
+        } catch (error) {
+          notificationWarning = true
+          logger.warn(`[Agente conversacional] El handoff sí quedó registrado, pero falló la notificación: ${error.message}`)
+        }
       }
       settleAction(action, 'ok', {
         signal: 'ready_for_human',
@@ -12278,6 +13236,18 @@ export function createConversationalTools(ctx) {
               assignmentReused: assignment.alreadyAssigned
             }
           : {}),
+        ...(assignment.fallbackToGeneral
+          ? {
+              assignmentFallback: 'general_team',
+              unavailableConfiguredUserId: assignment.unavailableUserId || null
+            }
+          : {}),
+        ...(ctx.mandatoryHandoffNotificationOutboxId
+          ? {
+              notificationQueued: true,
+              notificationOutboxId: ctx.mandatoryHandoffNotificationOutboxId
+            }
+          : {}),
         objectiveCompleted: false,
         ...(notificationWarning ? { warnings: ['priority_notification'] } : {})
       })
@@ -12286,6 +13256,12 @@ export function createConversationalTools(ctx) {
         actionCompleted: true,
         signal: 'ready_for_human',
         ...(assignment.assigned ? { assignedUserName: assignment.userName } : {}),
+        ...(assignment.fallbackToGeneral
+          ? {
+              assignmentFallback: 'general_team',
+              warning: 'La persona configurada no estaba activa; el chat quedó con el equipo general.'
+            }
+          : {}),
         note: 'Un humano seguirá la conversación. Esta acción es terminal: no generes ningún mensaje adicional.'
       }
     }
@@ -12518,6 +13494,40 @@ export function createConversationalTools(ctx) {
         return keepUncertainProofForManualReview('amount_mismatch')
       }
 
+      const proofActionScopedContactDataBinding =
+        buildConversationalActionScopedContactDataBinding(
+          ctx.actionScopedContactData
+        )
+      const proofBindingEventId =
+        buildAgentTransferPaymentProofBindingEventId({
+          contactId: ctx.contactId,
+          channel: ctx.channel,
+          bindingKey: receiptMedia.messageId
+        })
+      const proofPaymentConversationBinding =
+        await buildConversationalPaymentConversationBinding({
+          contactId: ctx.contactId,
+          agentId: config.id || ctx.agentId || '',
+          channel: ctx.channel,
+          sourceEventId: proofBindingEventId
+        })
+      if (
+        !proofActionScopedContactDataBinding ||
+        !proofBindingEventId ||
+        !proofPaymentConversationBinding
+      ) {
+        settleAction(action, 'error', {
+          error: 'payment_conversation_binding_unavailable'
+        })
+        return {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          code: 'payment_conversation_binding_unavailable',
+          error: 'No se pudo fijar el ciclo exacto de esta conversación antes de registrar el comprobante. No confirmes el pago y pasa la conversación a una persona.'
+        }
+      }
+
       let escalatedReview = null
       if (receiptNeedsHumanReview) {
         try {
@@ -12591,7 +13601,9 @@ export function createConversationalTools(ctx) {
             appointmentDepositIntentClaimToken: appointmentDepositClaim?.claimToken || null,
             receiptIntentBindingEventId,
             afterPayment: paymentCapability?.afterPayment || 'continue',
-            confidence: analysis.confidence
+            confidence: analysis.confidence,
+            ...proofActionScopedContactDataBinding,
+            paymentConversationBinding: proofPaymentConversationBinding
           }
         })
       } catch (error) {
@@ -12812,6 +13824,10 @@ export function createConversationalTools(ctx) {
       guests,
       agreedAmount
     }) => {
+      const deferredReleaseFence = await guardMutationAgainstPreventiveMeasure(ctx, {
+        allowDeferredAutomaticRelease: decision === 'handoff'
+      })
+      if (deferredReleaseFence) return deferredReleaseFence
       const expected = ctx.appointmentOfferDecision
       const previousAdjudication = ctx.appointmentOfferAdjudication
       const effectiveContact = decision === 'accept'
@@ -13003,6 +14019,11 @@ export function createConversationalTools(ctx) {
 
         let handoffResult
         try {
+          // Esta ruta invoca la definición cruda porque ya vive dentro del
+          // fence del resolver. Aun así debe marcar la intención explícita:
+          // si falta un dato obligatorio, el runner conserva el chat activo y
+          // entrega la pregunta en vez de ejecutar la salida diferida.
+          ctx.explicitHumanHandoffRequested = true
           handoffResult = await sendToHumanTool.invoke(null, JSON.stringify({
             motivo: 'La persona pidió hablar con el equipo durante la selección de horario',
             resumen: cleanAppointmentText(reply, 500) || 'Solicitud explícita de atención humana'
@@ -13555,7 +14576,7 @@ export function createConversationalTools(ctx) {
 
 export const __conversationalToolsTestHooks = Object.freeze({
   assertRequiredContactData,
-  isPlaceholderContactName,
+  isPlaceholderContactName: isPlaceholderConversationalContactName,
   buildAppointmentParticipant,
   buildAppointmentParticipants,
   resolveAppointmentParticipantEvidenceMessages,

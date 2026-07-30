@@ -2816,14 +2816,31 @@ export async function sendChatMessageNotification(message = {}) {
 }
 
 export async function sendConversationalAgentPriorityNotification(signal = {}) {
-  if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
+  const durableDelivery = signal.durableDelivery === true
+  const initialTransport = await getEffectivePushTransportStatus()
+  const canProbeUnknownCentral = durableDelivery && initialTransport?.central?.transientFailure === true
+  if (!initialTransport.webConfigured && !initialTransport.nativeConfigured && !canProbeUnknownCentral) {
+    return {
+      sent: 0,
+      skipped: true,
+      reason: 'not_configured',
+      retryTargets: { webSubscriptionIds: [], mobileDeviceIds: [] }
+    }
+  }
 
   // (MOB-006) El on/off de chat se resuelve POR usuario destinatario en el dispatcher.
   const contactId = String(signal.contactId || '').trim()
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
   // (MOB-002 / NOTI-004) No exponer nombre de contactos ocultos en el aviso de prioridad
-  const hidden = await isContactHiddenFromNotifications(contactId).catch((error) => {
+  const visibilityChecker = contactVisibilityCheckerForTest || isContactHiddenFromNotifications
+  const hidden = await visibilityChecker(contactId, { throwOnError: durableDelivery }).catch((error) => {
     logger.warn(`[Push] No se pudo verificar contacto oculto para prioridad: ${error.message}`)
+    if (durableDelivery) {
+      const retryableError = error instanceof Error ? error : new Error(String(error || 'Error de visibilidad'))
+      retryableError.code = retryableError.code || 'push_contact_visibility_unavailable'
+      retryableError.retryable = true
+      throw retryableError
+    }
     return true // fail-safe: ante error no enviamos para evitar fuga
   })
   if (hidden) {
@@ -2834,10 +2851,13 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     return { sent: 0, skipped: true, reason: 'disabled_by_preferences' }
   }
 
-  const contact = await db.get(
+  const contactQuery = db.get(
     'SELECT full_name, first_name, phone FROM contacts WHERE id = ?',
     [contactId]
-  ).catch(() => null)
+  )
+  const contact = durableDelivery
+    ? await contactQuery
+    : await contactQuery.catch(() => null)
   const senderName = getChatSenderName({
     contactName: contact?.full_name || contact?.first_name || '',
     phone: contact?.phone || ''
@@ -2851,7 +2871,8 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
     body,
     tag: `agent-priority-${contactId}`,
     threadId: `chat-${contactId}`,
-    messageId: `agent-priority-${contactId}-${Date.now()}`,
+    messageId: String(signal.messageId || '').trim() ||
+      `agent-priority-${contactId}-${Date.now()}`,
     contactName: senderName,
     contactId,
     url: `/movil?contact=${encodeURIComponent(contactId)}`,
@@ -2860,9 +2881,15 @@ export async function sendConversationalAgentPriorityNotification(signal = {}) {
   }
 
   // (MOB-006) Comparte el on/off de chat (chat_push_notifications_enabled) por usuario.
-  return sendAppNotificationPayload(payload, getPushPreferenceOptions(preferenceTarget, {
-    enabledKey: 'chat_push_notifications_enabled'
-  }))
+  return sendAppNotificationPayload(payload, {
+    ...getPushPreferenceOptions(preferenceTarget, {
+      enabledKey: 'chat_push_notifications_enabled'
+    }),
+    deliveryTargets: signal.deliveryTargets && typeof signal.deliveryTargets === 'object'
+      ? signal.deliveryTargets
+      : null,
+    durableDelivery
+  })
 }
 
 export function buildPaymentNotificationPayload(payment = {}) {

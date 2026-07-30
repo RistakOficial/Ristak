@@ -132,12 +132,14 @@ import {
 import { useAIAvailability, useAccountCurrency, useAppConfig, useUserConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // MOB-006 useUserConfig
 import {
   CONVERSATIONAL_AGENT_LIVE_CACHE_EVENT,
+  CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
   DEFAULT_AGENT_GOAL_WORKFLOW,
   DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
   DEFAULT_CONVERSATIONAL_CONTACT_SCOPE,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
   buildConversationalLegacyEditableText,
   conversationalAgentService,
+  getConversationalHandoffRulesLengthError,
   readConversationalAgentLiveCache,
   type AgentFilterOptions,
   type AgentFollowUpConfig,
@@ -7834,6 +7836,13 @@ export const PhoneChat: React.FC = () => {
           ? currentAgent
           : ({ ...currentAgent, enabled: effectiveEnabled } as ConversationalAgentDef)
         const requestRevision = agentSaveRevisionsRef.current.get(agentId) || 0
+        const handoffRulesLengthError = getConversationalHandoffRulesLengthError(requestAgent.capabilitiesConfig)
+        if (handoffRulesLengthError) {
+          if (options.notify !== false && phoneAgentMountedRef.current) {
+            showToast('warning', 'Revisa la regla de entrega', handoffRulesLengthError)
+          }
+          throw new Error(handoffRulesLengthError)
+        }
 
         agentSavePendingCountRef.current += 1
         if (phoneAgentMountedRef.current) setAgentConfigSaving(true)
@@ -20173,6 +20182,7 @@ export const PhoneChat: React.FC = () => {
       : null
     const linkCapability = getSelectedNativeCapability('send_link')
     const handoffCapability = getSelectedNativeCapability('handoff_human')
+    const handoffRulesLengthError = getConversationalHandoffRulesLengthError(nativeCapabilities)
     const customCapability = getSelectedNativeCapability('custom_goal')
     const nativePaymentProduct = agentProducts.find((item) => getProductId(item) === paymentCapability?.productId) || null
     const nativePaymentPrices = nativePaymentProduct?.prices || []
@@ -21006,9 +21016,13 @@ export const PhoneChat: React.FC = () => {
               label="Cuándo debe pasarlo"
               value={handoffCapability.rules}
               onChange={(rules) => updateNativeCapabilityDraft({ ...handoffCapability, rules })}
-              onBlur={() => saveNativeCapability(handoffCapability)}
+              onBlur={() => {
+                if (!handoffRulesLengthError) saveNativeCapability(handoffCapability)
+              }}
               placeholder="Ejemplo: facturación, quejas o cuando pida hablar con alguien."
               rows={3}
+              invalid={Boolean(handoffRulesLengthError)}
+              hint={handoffRulesLengthError || `${handoffCapability.rules.length.toLocaleString('es-MX')} / ${CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH.toLocaleString('es-MX')} caracteres`}
               disabled={agentConfigSaving}
             />
             <label className={styles.agentMenuField}>

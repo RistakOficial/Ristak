@@ -9,6 +9,7 @@ import {
   CHAT_DELIVERY_ENRICHMENT_MAX_ATTEMPTS,
   CHAT_DELIVERY_FAILED_RETENTION_MS,
   CHAT_DELIVERY_MAX_ATTEMPTS,
+  CHAT_DELIVERY_PRIORITY_MAX_ATTEMPTS,
   CHAT_DELIVERY_JOB_KIND,
   claimNextChatDeliveryJob,
   cleanupCompletedChatDeliveryJobs,
@@ -66,6 +67,7 @@ test('migraciones SQLite/PostgreSQL y bootstrap comparten el contrato del outbox
   assert.ok(bootstrapIndexes.has('idx_chat_delivery_outbox_completed'))
   assert.ok(bootstrapIndexes.has('idx_chat_delivery_outbox_failed'))
   assert.equal(CHAT_DELIVERY_MAX_ATTEMPTS, 20)
+  assert.equal(CHAT_DELIVERY_PRIORITY_MAX_ATTEMPTS, 2_016)
   assert.equal(CHAT_DELIVERY_ENRICHMENT_MAX_ATTEMPTS, 2_016)
   assert.match(serviceSource, /databaseDialect === 'postgres' \? 'FOR UPDATE SKIP LOCKED' : ''/)
 })
@@ -153,6 +155,111 @@ test('outbox deduplica por mensaje y recupera un push transitorio sin duplicar f
   } finally {
     resetMetaDirectChatDeliveryHandlersForTest()
     await db.run('DELETE FROM chat_delivery_outbox WHERE message_id = ?', [messageId]).catch(() => undefined)
+  }
+})
+
+test('un aviso prioritario conserva retries más allá del límite de un push ordinario', async () => {
+  const messageId = `outbox-priority-${randomUUID()}`
+  try {
+    await enqueueChatDeliveryJob({
+      jobKind: CHAT_DELIVERY_JOB_KIND.PUSH,
+      messageId,
+      provider: 'conversational_agent_priority',
+      payload: {
+        notificationType: 'agent_priority',
+        messageId,
+        contactId: `priority-contact-${randomUUID()}`
+      }
+    })
+    await db.run(
+      `UPDATE chat_delivery_outbox
+       SET attempt_count = ?
+       WHERE job_kind = 'push' AND message_id = ?`,
+      [CHAT_DELIVERY_MAX_ATTEMPTS, messageId]
+    )
+    setMetaDirectChatDeliveryHandlersForTest({
+      pushSender: async () => ({
+        sent: 0,
+        attempted: 1,
+        retryableFailures: 1,
+        retryTargets: {
+          webSubscriptionIds: [],
+          mobileDeviceIds: ['priority-device']
+        }
+      })
+    })
+
+    const drained = await drainMetaDirectChatDeliveryJobs({
+      requireConnected: false,
+      jobKinds: [CHAT_DELIVERY_JOB_KIND.PUSH],
+      retryDelayMs: 0,
+      maxJobs: 1
+    })
+    assert.equal(drained.failed, 1)
+    assert.equal(drained.deadLettered, 0)
+
+    const pending = await getChatDeliveryJob({
+      jobKind: CHAT_DELIVERY_JOB_KIND.PUSH,
+      messageId
+    })
+    assert.equal(pending.status, 'pending')
+    assert.equal(pending.attemptCount, CHAT_DELIVERY_MAX_ATTEMPTS + 1)
+  } finally {
+    resetMetaDirectChatDeliveryHandlersForTest()
+    await db.run(
+      'DELETE FROM chat_delivery_outbox WHERE job_kind = ? AND message_id = ?',
+      [CHAT_DELIVERY_JOB_KIND.PUSH, messageId]
+    ).catch(() => undefined)
+  }
+})
+
+test('un aviso de handoff salta delante de pushes ordinarios ya acumulados', async () => {
+  const suffix = randomUUID()
+  const ordinaryMessageId = `outbox-ordinary-first-${suffix}`
+  const priorityMessageId = `outbox-priority-next-${suffix}`
+  const ownerId = `outbox-priority-owner-${suffix}`
+  try {
+    await enqueueChatDeliveryJob({
+      jobKind: CHAT_DELIVERY_JOB_KIND.PUSH,
+      messageId: ordinaryMessageId,
+      provider: 'meta_direct',
+      payload: { messageId: ordinaryMessageId },
+      availableAt: new Date(Date.now() - 60_000).toISOString()
+    })
+    await enqueueChatDeliveryJob({
+      jobKind: CHAT_DELIVERY_JOB_KIND.PUSH,
+      messageId: priorityMessageId,
+      provider: 'conversational_agent_priority',
+      payload: {
+        notificationType: 'agent_priority',
+        messageId: priorityMessageId
+      }
+    })
+
+    const claimedPriority = await claimNextChatDeliveryJob({
+      ownerId,
+      jobKinds: [CHAT_DELIVERY_JOB_KIND.PUSH]
+    })
+    assert.equal(claimedPriority.message_id, priorityMessageId)
+    assert.equal(await completeChatDeliveryJob({
+      jobId: claimedPriority.id,
+      ownerId
+    }), true)
+
+    const claimedOrdinary = await claimNextChatDeliveryJob({
+      ownerId,
+      jobKinds: [CHAT_DELIVERY_JOB_KIND.PUSH]
+    })
+    assert.equal(claimedOrdinary.message_id, ordinaryMessageId)
+    assert.equal(await completeChatDeliveryJob({
+      jobId: claimedOrdinary.id,
+      ownerId
+    }), true)
+  } finally {
+    await db.run(
+      'DELETE FROM chat_delivery_outbox WHERE message_id IN (?, ?)',
+      [ordinaryMessageId, priorityMessageId]
+    ).catch(() => undefined)
   }
 })
 

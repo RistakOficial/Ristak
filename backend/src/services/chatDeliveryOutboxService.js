@@ -10,6 +10,7 @@ const VALID_JOB_KINDS = new Set(Object.values(CHAT_DELIVERY_JOB_KIND))
 const DEFAULT_LEASE_MS = 60_000
 const MAX_RETRY_DELAY_MS = 5 * 60_000
 export const CHAT_DELIVERY_MAX_ATTEMPTS = 20
+export const CHAT_DELIVERY_PRIORITY_MAX_ATTEMPTS = 2_016
 // Media puede depender de una caída larga de Graph o Storage. Con backoff a
 // cinco minutos, 2,016 intentos cubren aproximadamente siete días antes de
 // pasar a auditoría fallida; un replay del webhook puede revivirla después.
@@ -138,9 +139,13 @@ export async function claimNextChatDeliveryJob({
         AND (
           (status = 'pending' AND available_at <= ?)
           OR (status = 'processing' AND (lease_expires_at IS NULL OR lease_expires_at <= ?))
-        )
+      )
       ORDER BY
-        CASE job_kind WHEN 'push' THEN 0 ELSE 1 END,
+        CASE
+          WHEN job_kind = 'push' AND provider = 'conversational_agent_priority' THEN 0
+          WHEN job_kind = 'push' THEN 1
+          ELSE 2
+        END,
         available_at ASC,
         created_at ASC
       LIMIT 1

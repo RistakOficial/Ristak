@@ -35,10 +35,13 @@ export function isPhoneLikeContactName(value, phone = '') {
   return !hasLetters && digits.length >= 7 && (!phoneDigits || digits.endsWith(phoneDigits) || phoneDigits.endsWith(digits))
 }
 
-export function isGenericWhatsAppApiContactName(value, phone = '') {
+export function isGenericWhatsAppApiContactLabel(value) {
   const key = normalizeWhatsAppContactNameKey(value)
-  if (!key) return true
-  if (GENERIC_WHATSAPP_API_NAME_KEYS.has(key)) return true
+  return !key || GENERIC_WHATSAPP_API_NAME_KEYS.has(key)
+}
+
+export function isGenericWhatsAppApiContactName(value, phone = '') {
+  if (isGenericWhatsAppApiContactLabel(value)) return true
   return isPhoneLikeContactName(value, phone)
 }
 

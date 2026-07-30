@@ -11,6 +11,9 @@ import {
   setNativeHandoffAfterAssignmentHookForTest,
   setPreventiveMutationFenceHookForTest
 } from '../src/agents/conversational/tools.js'
+import {
+  requiredConversationalContactFieldValue
+} from '../src/agents/conversational/contactDataRequirements.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import {
   buildConversationalCapabilityManifest,
@@ -116,12 +119,58 @@ async function cleanupSafetyContact(contactId) {
 
 test('nombres genéricos, teléfonos, emojis y símbolos no cuentan como identidad confirmada', () => {
   const placeholders = [
+    'Contacto',
+    'Contacto sin nombre',
+    'Contacto sin nombre 42',
+    'Contacto manual',
+    'Contacto manual 42',
+    'Contacto Ristak',
+    'Contacto Ristak 42',
+    'Contacto de prueba',
+    'Cliente Ristak',
+    'Contacto WhatsApp_API',
+    'Contacto WhatsApp API',
+    'Contacto WhatsApp',
+    'WhatsApp API',
+    'Lead de site',
+    'Instagram DM',
+    'Instagram DM 123456789',
+    'Instagram DM ab12cd',
+    'Invitado de Google',
+    'Email',
+    'User',
+    'Usuario',
+    'Guest',
+    'Invitado',
+    'Anonymous',
+    'Anónimo',
+    'null',
+    'undefined',
+    'N/A',
     'Usuario de WhatsApp',
     'Usuario WhatsApp',
     'WhatsApp User',
     'Usuario de Instagram',
     'Usuario de Facebook',
     'Usuario de Messenger',
+    'Instagram 123456789',
+    'Messenger 123456789',
+    'Messenger ab12cd',
+    'waapi_contact_ab12',
+    'meta_social_contact_ab12',
+    'manual_contact_ab12',
+    'site_contact_ab12',
+    'PSID 123456',
+    '@tania_salinas',
+    'tania@example.com',
+    'https://example.com/perfil',
+    'example.com',
+    '019fb1dd-bbc5-72f1-b41a-c2340655ad0b',
+    'contact_01hxyz',
+    'rstk_contact_ab12',
+    'ghl_abc123',
+    'cus_abc123',
+    '507f1f77bcf86cd799439011',
     '6567426612',
     '+52 (656) 742-6612',
     '🔥🔥',
@@ -142,11 +191,99 @@ test('nombres genéricos, teléfonos, emojis y símbolos no cuentan como identid
     })
     assert.equal(validation.ok, false, fullName)
     assert.deepEqual(validation.requiredFields, [{ field: 'full_name', label: 'nombre completo' }])
+
+    const firstNameValidation =
+      __conversationalToolsTestHooks.assertRequiredContactData({
+        scope: 'appointment',
+        contact: {
+          id: 'contact_placeholder',
+          full_name: fullName,
+          first_name: fullName
+        },
+        dataRequirements: {
+          enabled: true,
+          fields: [{
+            field: 'first_name',
+            level: 'required',
+            scope: 'appointment'
+          }]
+        }
+      })
+    assert.equal(firstNameValidation.ok, false, `first_name: ${fullName}`)
+    assert.deepEqual(
+      firstNameValidation.requiredFields,
+      [{ field: 'first_name', label: 'nombre' }],
+      `first_name: ${fullName}`
+    )
   }
 
   for (const fullName of ['Paty Jiménez', "María-José O'Connor", 'Studio 54']) {
     assert.equal(__conversationalToolsTestHooks.isPlaceholderContactName(fullName), false, fullName)
   }
+  assert.equal(
+    requiredConversationalContactFieldValue({
+      full_name: 'Ana Maria Ristak',
+      first_name: null,
+      last_name: null,
+      email: 'ana.maria25@example.com'
+    }, {
+      field: 'full_name',
+      level: 'required',
+      scope: 'handoff'
+    }),
+    '',
+    'un nombre que Rebill derivó del local-part del correo sigue siendo sintético'
+  )
+  const rebillPlaceholderValidation =
+    __conversationalToolsTestHooks.assertRequiredContactData({
+      scope: 'handoff',
+      contact: {
+        id: 'contact_rebill_placeholder',
+        full_name: 'Ana Maria Ristak',
+        first_name: null,
+        last_name: null,
+        email: 'ana.maria25@example.com'
+      },
+      dataRequirements: {
+        enabled: true,
+        fields: [{
+          field: 'full_name',
+          level: 'required',
+          scope: 'handoff'
+        }]
+      }
+    })
+  assert.equal(rebillPlaceholderValidation.ok, false)
+  assert.deepEqual(
+    rebillPlaceholderValidation.requiredFields,
+    [{ field: 'full_name', label: 'nombre completo' }]
+  )
+  assert.equal(
+    requiredConversationalContactFieldValue({
+      full_name: 'John Doe Ristak',
+      first_name: 'John',
+      last_name: 'Doe Ristak',
+      email: 'john.doe@example.com'
+    }, {
+      field: 'full_name',
+      level: 'required',
+      scope: 'handoff'
+    }),
+    'John Doe Ristak',
+    'los nombres estructurados prueban que no es el fallback de paymentContactLink'
+  )
+  assert.equal(
+    requiredConversationalContactFieldValue({
+      full_name: 'Ana Ristak',
+      email: 'ana.perez@example.com'
+    }, {
+      field: 'full_name',
+      level: 'required',
+      scope: 'handoff'
+    }),
+    'Ana Ristak',
+    'Ristak puede ser un apellido humano cuando no replica el local-part del correo'
+  )
   const participant = __conversationalToolsTestHooks.buildAppointmentParticipant({
     contact: { full_name: 'Raúl Gómez' },
     title: null,
@@ -159,6 +296,41 @@ test('nombres genéricos, teléfonos, emojis y símbolos no cuentan como identid
   assert.match(participant.notes, /Raúl Gómez/)
   assert.match(participant.notes, /mamá/)
   assert.equal(participant.attendeeName, 'Paty Jiménez')
+
+  for (const legacyFirstName of [
+    'Contacto',
+    'tania@example.com',
+    '@tania',
+    '019fb1dd-bbc5-72f1-b41a-c2340655ad0b',
+    'contact_01hxyz'
+  ]) {
+    assert.equal(
+      requiredConversationalContactFieldValue({
+        full_name: 'Juan Pérez',
+        first_name: legacyFirstName
+      }, {
+        field: 'first_name',
+        level: 'required',
+        scope: 'appointment'
+      }),
+      'Juan',
+      legacyFirstName
+    )
+  }
+  for (const fullName of ['', 'Contacto WhatsApp_API']) {
+    assert.equal(
+      requiredConversationalContactFieldValue({
+        full_name: fullName,
+        first_name: 'Tania'
+      }, {
+        field: 'first_name',
+        level: 'required',
+        scope: 'appointment'
+      }),
+      'Tania',
+      `first_name humano con full_name=${fullName || 'vacío'}`
+    )
+  }
 })
 
 test('una condición sólo bloquea cuando el hecho estructurado ocurre de verdad', () => {
@@ -1303,4 +1475,28 @@ test('una medida preventiva solicitada gana sobre cualquier mutación del mismo 
   assert.equal(result.code, 'preventive_measure_wins')
   assert.equal(result.terminal, true)
   assert.equal(ctx.actions.length, 0)
+})
+
+test('el handoff obligatorio sí puede cerrar el turno después de aplicar la medida preventiva', async () => {
+  const contactId = `contact_mandatory_safety_handoff_${randomUUID()}`
+  const items = [{
+    id: 'handoff_human',
+    enabled: true,
+    rules: 'Cuando sea necesario',
+    userId: '',
+    userName: '',
+    pastClientsToHuman: false
+  }]
+  const ctx = buildContext(contactId, [], { items, dryRun: true })
+  ctx.preventiveSafetyRequested = true
+  ctx.mandatoryHandoffActive = true
+  const handoff = createConversationalTools(ctx).find((item) => item.name === 'send_to_human')
+  const result = await handoff.invoke(null, JSON.stringify({
+    motivo: 'Condición obligatoria cumplida',
+    resumen: 'La medida preventiva ya se aplicó y el equipo debe continuar.'
+  }))
+
+  assert.equal(result.ok, true)
+  assert.equal(result.simulated, true)
+  assert.equal(ctx.actions.at(-1)?.type, 'send_to_human')
 })

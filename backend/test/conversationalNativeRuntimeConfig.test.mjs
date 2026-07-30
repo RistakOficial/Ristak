@@ -19,9 +19,11 @@ const {
   DEFAULT_CONVERSATIONAL_PERSONALITY_INSTRUCTIONS,
   DEFAULT_CONVERSATIONAL_STRATEGY_INSTRUCTIONS,
   DEFAULT_CONVERSATIONAL_USER_INSTRUCTIONS,
+  CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
   buildConversationalCapabilityManifest,
   getConversationalCapability,
   getConversationalCapabilitiesConfig,
+  getConversationalHandoffRulesInputLength,
   normalizeConversationalCapabilitiesConfig,
   normalizeConversationalPromptConfig
 } = nativeRuntimeConfig
@@ -101,6 +103,69 @@ test('normalizadores nativos conservan texto vacío explícito y descartan capac
       pastClientsToHuman: false
     }
   ])
+})
+
+test('las reglas de entrega nunca se recortan en silencio al guardar', async () => {
+  const exactRules = 'x'.repeat(CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH)
+  const oversizedRules = `${exactRules}y`
+  const exactConfig = {
+    schemaVersion: 3,
+    items: [{ id: 'handoff_human', enabled: true, rules: exactRules }]
+  }
+  const oversizedConfig = {
+    schemaVersion: 3,
+    items: [{ id: 'handoff_human', enabled: true, rules: oversizedRules }]
+  }
+
+  assert.equal(getConversationalHandoffRulesInputLength(exactConfig), CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH)
+  assert.equal(
+    getConversationalHandoffRulesInputLength(JSON.stringify(oversizedConfig)),
+    CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH + 1
+  )
+  assert.equal(
+    getConversationalHandoffRulesInputLength({
+      schemaVersion: 3,
+      items: [
+        { id: 'handoff_human', enabled: true, rules: oversizedRules },
+        { id: 'handoff_human', enabled: false, rules: 'corta' }
+      ]
+    }),
+    CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH + 1,
+    'un duplicado posterior no puede esconder una regla cruda demasiado larga'
+  )
+  assert.equal(
+    normalizeConversationalCapabilitiesConfig(exactConfig).items[0].rules,
+    exactRules
+  )
+  await assert.rejects(
+    createConversationalAgent({
+      name: 'Regla demasiado larga',
+      enabled: false,
+      capabilitiesConfig: oversizedConfig
+    }),
+    (error) => error?.code === 'CONVERSATIONAL_HANDOFF_RULES_TOO_LONG'
+  )
+
+  let agent = null
+  try {
+    agent = await createConversationalAgent({
+      name: 'Límite visible de entrega',
+      enabled: false,
+      capabilitiesConfig: exactConfig
+    })
+    assert.equal(agent.capabilitiesConfig.items[0].rules, exactRules)
+
+    await assert.rejects(
+      updateConversationalAgent(agent.id, { capabilitiesConfig: oversizedConfig }),
+      (error) => error?.code === 'CONVERSATIONAL_HANDOFF_RULES_TOO_LONG' && /máximo 4,000 caracteres/i.test(error.message)
+    )
+    assert.equal(
+      (await getConversationalAgent(agent.id)).capabilitiesConfig.items[0].rules,
+      exactRules
+    )
+  } finally {
+    await removeAgent(agent?.id)
+  }
 })
 
 test('la personalidad default nace completa desde el Markdown compartido', () => {

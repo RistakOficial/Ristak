@@ -32,11 +32,13 @@ import { hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
   conversationalAgentService,
   buildConversationalLegacyEditableText,
+  CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH,
   isConversationalAgentEntryConflictError,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_CONVERSATIONAL_CAPABILITIES_CONFIG,
   DEFAULT_CONVERSATIONAL_CONTACT_SCOPE,
   DEFAULT_CONVERSATIONAL_PROMPT_CONFIG,
+  getConversationalHandoffRulesLengthError,
   type AgentFilterOptions,
   type AgentFollowUpConfig,
   type AgentFollowUpStepConfig,
@@ -958,7 +960,8 @@ function getNativeCapabilityError(agent: ConversationalAgentDef, accountCurrency
 }
 
 function getAgentValidationError(agent: ConversationalAgentDef, accountCurrency = '') {
-  return (agent.enabled ? getNativeCapabilityError(agent, accountCurrency) : '') ||
+  return getConversationalHandoffRulesLengthError(agent.capabilitiesConfig) ||
+    (agent.enabled ? getNativeCapabilityError(agent, accountCurrency) : '') ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
@@ -1352,6 +1355,7 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
     : storedPaymentCapability
   const linkCapability = getNativeCapability(capabilities, 'send_link')
   const handoffCapability = getNativeCapability(capabilities, 'handoff_human')
+  const handoffRulesLengthError = getConversationalHandoffRulesLengthError(capabilities)
   const customCapability = getNativeCapability(capabilities, 'custom_goal')
   const depositCurrency = normalizeCurrencyCode(paymentCapability?.deposit?.currency || accountCurrency)
   const currencySymbol = getCurrencyInputSymbol(depositCurrency)
@@ -1938,14 +1942,23 @@ const NativeConversationBuilder: React.FC<NativeConversationBuilderProps> = ({
       item: handoffCapability,
       settings: handoffCapability?.enabled ? (
         <div className={styles.nativeCapabilitySettings}>
-          <label className={styles.label}>Cuándo debe pasarlo</label>
-          <textarea
-            className={styles.textarea}
+          <ExpandableTextareaField
+            id="conversational-handoff-rules"
+            label="Cuándo debe pasarlo"
+            description="Estas condiciones son obligatorias. Si se cumplen, el agente reúne primero los datos requeridos y entrega el chat."
             value={handoffCapability.rules}
             rows={3}
             placeholder="Ejemplo: facturación, quejas, excepciones o cuando pida hablar con alguien"
-            onChange={(event) => updateCapability({ ...handoffCapability, rules: event.target.value })}
+            characterLimit={CONVERSATIONAL_HANDOFF_RULES_MAX_LENGTH}
+            aria-invalid={Boolean(handoffRulesLengthError) || undefined}
+            onChange={(rules) => updateCapability({ ...handoffCapability, rules })}
           />
+          {handoffRulesLengthError && (
+            <p className={styles.nativeCapabilityError}>
+              <AlertTriangle size={15} />
+              {handoffRulesLengthError}
+            </p>
+          )}
           <label className={styles.label}>Persona asignada (opcional)</label>
           <CustomSelect
             value={handoffCapability.userId}

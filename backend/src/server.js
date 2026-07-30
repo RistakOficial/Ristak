@@ -21,6 +21,9 @@ import { startContactBulkActionsCron } from './jobs/contactBulkActions.cron.js'
 import { startAppointmentRemindersCron } from './jobs/appointmentReminders.cron.js'
 import { startPaymentAutomationsCron } from './jobs/paymentAutomations.cron.js'
 import { startConversationalAgentSafetyNotificationsCron } from './jobs/conversationalAgentSafetyNotifications.cron.js'
+import {
+  startConversationalVerifiedTerminalHandoffRecovery
+} from './jobs/conversationalVerifiedTerminalHandoffs.cron.js'
 import { startConversationalAgentTestPaymentsCleanup } from './jobs/conversationalAgentTestPaymentsCleanup.js'
 import { startConversationalAppointmentTestCleanupCron } from './jobs/conversationalAppointmentTestCleanup.cron.js'
 import { startConversationalAgentTestAssignmentsCleanup } from './jobs/conversationalAgentTestAssignmentsCleanup.js'
@@ -769,6 +772,7 @@ async function startRuntimeServices() {
     startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
     startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
     startConversationalAgentSafetyNotificationsCron() // Reintenta avisos preventivos auditables
+    startConversationalVerifiedTerminalHandoffRecovery() // Recupera obligaciones terminales sin bloquear avisos preventivos
     startConversationalAgentTestPaymentsCleanup() // Invalida y limpia links sandbox vencidos del tester
     startConversationalAppointmentTestCleanupCron() // Elimina citas reales de prueba tras cinco minutos
     startConversationalAgentTestAssignmentsCleanup() // Restaura asignaciones temporales y respeta cambios humanos posteriores

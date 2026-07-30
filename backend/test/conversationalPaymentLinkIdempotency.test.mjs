@@ -8,7 +8,13 @@ import {
   buildConversationalPaymentLinkIdempotencyKey,
   runIdempotentConversationalPaymentLinkCreation
 } from '../src/services/paymentFlowService.js'
-import { recoverPendingConversationalPaymentSourceBindings } from '../src/services/conversationalAgentService.js'
+import {
+  completeConversationalAgentSalePaymentFromInvoice,
+  ensureConversationState,
+  recoverPendingConversationalPaymentSourceBindings,
+  setConversationalPaymentResumeHandlerForTest,
+  setConversationalPriorityNotificationSenderForTest
+} from '../src/services/conversationalAgentService.js'
 
 test('v2 nunca reutiliza un invoice genérico por contacto+monto+concepto; sólo su ledger fuerte', () => {
   assert.equal(__paymentFlowServiceTestHooks.shouldUseRecentEquivalentPaymentLink({
@@ -283,6 +289,29 @@ test('un processing tras crash se reconstruye sólo desde su invoice exacto y no
       reconcilePaid: false
     })
     assert.equal(startupRecovery.bound, 1, JSON.stringify(startupRecovery))
+    const recoveredBinding = await db.get(
+      `SELECT binding_event_id, binding_status
+       FROM conversational_payment_link_requests
+       WHERE idempotency_key = ?`,
+      [idempotencyKey]
+    )
+    assert.equal(recoveredBinding.binding_status, 'bound')
+    const recoveredSource = await db.get(
+      `SELECT event_type, detail_json
+       FROM conversational_agent_events
+       WHERE id = ?`,
+      [recoveredBinding.binding_event_id]
+    )
+    const recoveredSourceDetail = JSON.parse(recoveredSource.detail_json)
+    assert.equal(recoveredSource.event_type, 'payment_link_created')
+    assert.equal(recoveredSourceDetail.recoveredBinding, true)
+    assert.equal(recoveredSourceDetail.paymentConversationBinding.status, 'unavailable')
+    assert.equal(
+      recoveredSourceDetail.paymentConversationBinding.reason,
+      'payment_source_cycle_not_sealed'
+    )
+    assert.equal(recoveredSourceDetail.paymentConversationBinding.conversationScopeId, null)
+    assert.deepEqual(recoveredSourceDetail.actionScopedContactData, {})
 
     const recovered = await runIdempotentConversationalPaymentLinkCreation({
       idempotencyKey,
@@ -333,10 +362,12 @@ test('un crash después de crear el link conserva payload suficiente y recovery 
     currency: 'MXN',
     channel: 'whatsapp',
     paymentPurpose: 'purchase',
+    afterPayment: 'handoff',
     executionId: `message_${suffix}`
   }
 
   try {
+    setConversationalPriorityNotificationSenderForTest(async () => ({ sent: true }))
     await db.run(
       `INSERT INTO contacts (id, full_name, created_at, updated_at)
        VALUES (?, 'Cliente binding recovery', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -358,7 +389,7 @@ test('un crash después de crear el link conserva payload suficiente y recovery 
       `INSERT INTO payments (
         id, contact_id, amount, currency, status, payment_mode, payment_provider,
         ghl_invoice_id, created_at, updated_at
-      ) VALUES (?, ?, 430, 'MXN', 'sent', 'live', 'highlevel', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      ) VALUES (?, ?, 430, 'MXN', 'paid', 'live', 'highlevel', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [`ledger_${suffix}`, contactId, invoiceId]
     )
     const pending = await db.get(
@@ -392,6 +423,38 @@ test('un crash después de crear el link conserva payload suficiente y recovery 
     assert.equal(detail.ledgerPaymentId, `ledger_${suffix}`)
     assert.equal(detail.paymentPurpose, 'purchase')
     assert.equal(detail.appointmentDeposit, false)
+    assert.equal(detail.recoveredBinding, true)
+    assert.equal(detail.afterPayment, 'handoff')
+    assert.equal(detail.paymentConversationBinding.status, 'unavailable')
+    assert.equal(
+      detail.paymentConversationBinding.reason,
+      'payment_source_cycle_not_sealed'
+    )
+    assert.equal(detail.paymentConversationBinding.stateId, null)
+    assert.equal(detail.paymentConversationBinding.activationCycleId, null)
+    assert.equal(detail.paymentConversationBinding.conversationScopeId, null)
+    assert.deepEqual(detail.actionScopedContactData, {})
+    assert.match(detail.actionScopedContactDataHash, /^[a-f0-9]{64}$/)
+
+    const completion = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      invoiceId,
+      paymentId: `ledger_${suffix}`,
+      amount: 430,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(completion.matched, true)
+    assert.equal(completion.handoffCompleted, false)
+    assert.equal(completion.manualReviewRequired, true)
+    assert.equal(completion.statePreserved, true)
+    assert.equal(completion.signal, 'payment_confirmed_state_preserved')
+    assert.equal(await db.get(
+      `SELECT id FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agentId]
+    ), null)
 
     await assert.rejects(
       runIdempotentConversationalPaymentLinkCreation({
@@ -402,6 +465,7 @@ test('un crash después de crear el link conserva payload suficiente y recovery 
       (error) => error?.code === 'payment_link_idempotency_mismatch'
     )
   } finally {
+    setConversationalPriorityNotificationSenderForTest(null)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
@@ -476,6 +540,120 @@ test('recovery bloquea request_json mutado y nunca reclasifica una compra como a
     )).total), 0)
   } finally {
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    await cleanup(idempotencyKey)
+  }
+})
+
+test('un pago legacy recuperado no reanuda el ciclo actual aunque afterPayment sea continue', async () => {
+  const suffix = randomUUID()
+  const idempotencyKey = uniquePaymentKey()
+  const contactId = `contact_recovered_continue_${suffix}`
+  const agentId = `agent_recovered_continue_${suffix}`
+  const invoiceId = `invoice_recovered_continue_${suffix}`
+  const ledgerPaymentId = `ledger_recovered_continue_${suffix}`
+  const payload = {
+    agentId,
+    contactId,
+    productId: `product_${suffix}`,
+    priceId: `price_${suffix}`,
+    amount: 275,
+    currency: 'MXN',
+    channel: 'whatsapp',
+    paymentPurpose: 'purchase',
+    afterPayment: 'continue',
+    executionId: `message_old_cycle_${suffix}`
+  }
+  let resumeCalls = 0
+
+  try {
+    setConversationalPriorityNotificationSenderForTest(async () => ({ sent: true }))
+    setConversationalPaymentResumeHandlerForTest(async () => {
+      resumeCalls += 1
+      return { resumed: true, queued: false }
+    })
+    await db.run(
+      `INSERT INTO contacts (id, full_name, created_at, updated_at)
+       VALUES (?, 'Cliente ciclo nuevo', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId]
+    )
+    await runIdempotentConversationalPaymentLinkCreation({
+      idempotencyKey,
+      payload,
+      create: async () => ({
+        invoiceId,
+        paymentLink: `https://pay.example.com/${invoiceId}`,
+        sendMethod: 'whatsapp',
+        amount: 275,
+        currency: 'MXN',
+        status: 'sent'
+      })
+    })
+    await db.run(
+      `INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_mode, payment_provider,
+        ghl_invoice_id, created_at, updated_at
+      ) VALUES (?, ?, 275, 'MXN', 'paid', 'live', 'highlevel', ?,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [ledgerPaymentId, contactId, invoiceId]
+    )
+    const recovered = await recoverPendingConversationalPaymentSourceBindings({
+      contactId,
+      reconcilePaid: false
+    })
+    assert.equal(recovered.bound, 1, JSON.stringify(recovered))
+
+    // Este estado representa una conversación distinta que nació después del
+    // cobro legacy. El recovery no conoce el ciclo original y no puede
+    // apropiarse de éste sólo porque contacto y agente coincidan.
+    await db.run(
+      `INSERT INTO conversational_agents
+        (id, name, enabled, runtime_mode)
+       VALUES (?, 'Agente ciclo nuevo', 1, 'tool_calling_v2')`,
+      [agentId]
+    )
+    const stateBefore = await ensureConversationState(contactId, {
+      agentId,
+      channel: 'whatsapp'
+    })
+    assert.equal(stateBefore.status, 'active')
+    assert.equal(stateBefore.signal, null)
+    assert.ok(stateBefore.activationCycleId)
+
+    const completion = await completeConversationalAgentSalePaymentFromInvoice({
+      contactId,
+      invoiceId,
+      paymentId: ledgerPaymentId,
+      amount: 275,
+      currency: 'MXN',
+      status: 'paid',
+      paymentMode: 'live'
+    })
+    assert.equal(resumeCalls, 0)
+    assert.equal(completion.matched, true)
+    assert.equal(completion.handoffCompleted, false)
+    assert.equal(completion.manualReviewRequired, true)
+    assert.equal(completion.statePreserved, true)
+    assert.equal(completion.resumed, false)
+    assert.equal(completion.queued, false)
+    assert.equal(completion.signal, 'payment_confirmed_state_preserved')
+
+    const stateAfter = await db.get(
+      `SELECT status, signal, activation_cycle_id
+       FROM conversational_agent_state
+       WHERE contact_id = ? AND agent_id = ?`,
+      [contactId, agentId]
+    )
+    assert.equal(stateAfter.status, 'active')
+    assert.equal(stateAfter.signal, null)
+    assert.equal(stateAfter.activation_cycle_id, stateBefore.activationCycleId)
+  } finally {
+    setConversationalPaymentResumeHandlerForTest(null)
+    setConversationalPriorityNotificationSenderForTest(null)
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => {})
+    await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => {})
     await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
     await cleanup(idempotencyKey)

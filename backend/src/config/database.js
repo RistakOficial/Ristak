@@ -26,6 +26,7 @@ import {
   waitForDatabaseRetry
 } from '../utils/postgresCancelableQuery.js'
 import { ensureSqliteSitesAnalyticsTrackingSchema } from '../startup/sitesAnalyticsSchemaCompatibility.js'
+import { ensureSqliteConversationalHandoffSchema } from '../startup/conversationalHandoffSchemaCompatibility.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2353,6 +2354,9 @@ const CONVERSATIONAL_AGENT_STATE_COLUMNS = [
   'follow_up_sent_count',
   'follow_up_last_sent_at',
   'paused_until_at',
+  'activation_cycle_id',
+  'activation_cycle_started_at',
+  'activation_cycle_started_message_id',
   'activated_at',
   'activation_source',
   'activated_by',
@@ -2447,6 +2451,9 @@ async function ensureConversationalAgentStateIdentity() {
             follow_up_sent_count INTEGER DEFAULT 0,
             follow_up_last_sent_at DATETIME,
             paused_until_at DATETIME,
+            activation_cycle_id TEXT,
+            activation_cycle_started_at DATETIME,
+            activation_cycle_started_message_id TEXT,
             activated_at DATETIME,
             activation_source TEXT,
             activated_by TEXT,
@@ -2552,6 +2559,17 @@ async function initTablesUnlocked() {
         '[Esquema] Compatibilidad de Sites Analytics reparada: ' +
         `${sitesAnalyticsSchemaRepair.addedColumns.length} columna(s), ` +
         `${sitesAnalyticsSchemaRepair.createdIndexes.length} índice(s).`
+      )
+    }
+
+    const conversationalHandoffSchemaRepair = await ensureSqliteConversationalHandoffSchema({
+      database: db,
+      dialect: databaseDialect
+    })
+    if (conversationalHandoffSchemaRepair.addedColumns.length > 0) {
+      logger.info(
+        '[Esquema] Compatibilidad del handoff conversacional reparada: ' +
+        `${conversationalHandoffSchemaRepair.addedColumns.length} columna(s).`
       )
     }
 
@@ -7027,6 +7045,13 @@ async function initTablesUnlocked() {
         follow_up_sent_count INTEGER DEFAULT 0,
         follow_up_last_sent_at DATETIME,
         paused_until_at DATETIME,
+        activation_cycle_id TEXT${usePostgres
+          ? " NOT NULL DEFAULT ('cac_legacy_insert_' || md5(random()::text || clock_timestamp()::text))"
+          : ''},
+        activation_cycle_started_at DATETIME${usePostgres
+          ? ' NOT NULL DEFAULT CURRENT_TIMESTAMP'
+          : ''},
+        activation_cycle_started_message_id TEXT,
         activated_at DATETIME,
         activation_source TEXT,
         activated_by TEXT,
@@ -7084,6 +7109,9 @@ async function initTablesUnlocked() {
       ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
       ['follow_up_last_sent_at', 'DATETIME'],
       ['paused_until_at', 'DATETIME'],
+      ['activation_cycle_id', 'TEXT'],
+      ['activation_cycle_started_at', 'DATETIME'],
+      ['activation_cycle_started_message_id', 'TEXT'],
       ['activated_at', 'DATETIME'],
       ['activation_source', 'TEXT'],
       ['activated_by', 'TEXT'],
@@ -7102,6 +7130,27 @@ async function initTablesUnlocked() {
 	      }
 	    }
 	    await ensureConversationalAgentStateIdentity()
+	    await db.run(`
+	      UPDATE conversational_agent_state
+	      SET activation_cycle_id = CASE
+	            WHEN activation_cycle_id IS NULL
+	              OR TRIM(activation_cycle_id) = ''
+	              OR activation_cycle_id = id
+	            THEN 'cac_legacy_backfill_' || id
+	            ELSE activation_cycle_id
+	          END,
+	          activation_cycle_started_at = COALESCE(
+	            activation_cycle_started_at,
+	            activated_at,
+	            created_at,
+	            updated_at,
+	            CURRENT_TIMESTAMP
+	          )
+	      WHERE activation_cycle_id IS NULL
+	         OR TRIM(activation_cycle_id) = ''
+	         OR activation_cycle_id = id
+	         OR activation_cycle_started_at IS NULL
+	    `).catch(() => undefined)
 	    await db.run(`
 	      UPDATE conversational_agent_state
 	      SET assignment_source = CASE
@@ -7151,6 +7200,12 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_contact ON conversational_agent_events(contact_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_type ON conversational_agent_events(event_type, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_agent ON conversational_agent_events(agent_id, created_at)')
+    if (!usePostgres) {
+      await db.run(`
+        CREATE INDEX IF NOT EXISTS idx_conv_agent_events_contact_agent_type_created
+        ON conversational_agent_events(contact_id, agent_id, event_type, created_at, id)
+      `)
+    }
 
     // El tester puede ejecutar efectos aislados sin contaminar citas, pagos,
     // métricas ni automatizaciones reales. La corrida queda ligada al usuario

@@ -2362,6 +2362,186 @@ test('live: una hora inexistente conserva la fecha y permite mostrar alternativa
   }
 })
 
+test('live: get_free_slots es sólo lectura mientras una salida automática espera la compuerta de handoff', async () => {
+  const fixture = await createFixture('deferred_release_read_only_availability')
+  try {
+    const ctx = liveContext({
+      fixture,
+      executionId: `deferred-read-only-${fixture.suffix}`
+    })
+    ctx.appointmentOfferDecision = null
+    ctx.appointmentSelectionProgress = null
+    ctx.deferredAutomaticRelease = {
+      reason: 'exit_rules',
+      agentId: fixture.agentId
+    }
+
+    const availability = await toolNamed(ctx, 'get_free_slots').invoke(null, JSON.stringify(
+      freeSlotsInput(fixture.localDate, {
+        earliestLocalTime: '23:00',
+        latestLocalTime: '23:00'
+      })
+    ))
+    assert.equal(availability.ok, true, JSON.stringify(availability))
+    assert.equal(availability.total, 0, JSON.stringify(availability))
+    assert.equal(Number((await db.get(
+      `SELECT COUNT(*) AS total
+       FROM conversational_agent_events
+       WHERE contact_id = ? AND agent_id = ? AND event_type = 'appointment_selection_progress'`,
+      [fixture.contactId, fixture.agentId]
+    )).total), 0)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: una salida automática pendiente no puede cerrar una selección parcial de agenda', async () => {
+  const fixture = await createFixture('deferred_release_blocks_selection_mutation')
+  try {
+    await selectDate(fixture)
+    const ctx = liveContext({
+      fixture,
+      executionId: `deferred-selection-${fixture.suffix}`
+    })
+    ctx.appointmentOfferDecision = null
+    ctx.appointmentSelectionProgress = await loadConversationalAppointmentSelectionProgressContext({
+      ctx,
+      config: fixture.config
+    })
+    ctx.deferredAutomaticRelease = {
+      reason: 'exit_rules',
+      agentId: fixture.agentId
+    }
+
+    const blocked = await toolNamed(ctx, 'resolve_active_appointment_selection')
+      .invoke(null, JSON.stringify({ decision: 'restart' }))
+    assert.equal(blocked.code, 'automatic_release_waits_for_handoff_gate')
+
+    const persisted = await loadConversationalAppointmentSelectionProgressContext({
+      ctx: liveContext({
+        fixture,
+        executionId: `after-deferred-selection-${fixture.suffix}`
+      }),
+      config: fixture.config
+    })
+    assert.equal(persisted?.active, true)
+    assert.equal(persisted?.selectedDate, fixture.localDate)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: una salida automática pendiente no puede preservar ni resolver una oferta de agenda', async () => {
+  const fixture = await createFixture('deferred_release_blocks_offer_mutation')
+  try {
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '16:00')
+    const ctx = await confirmationContext(
+      fixture,
+      exact.offered,
+      `deferred-offer-${fixture.suffix}`
+    )
+    ctx.deferredAutomaticRelease = {
+      reason: 'exit_rules',
+      agentId: fixture.agentId
+    }
+
+    const blocked = await toolNamed(ctx, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'preserve',
+        nextPreferenceScope: null,
+        reply: null,
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(blocked.code, 'automatic_release_waits_for_handoff_gate')
+
+    const stillActive = await loadConversationalAppointmentOfferDecisionContext({
+      ctx,
+      config: fixture.config
+    })
+    assert.equal(stillActive?.active, true)
+    assert.equal(stillActive?.offerEventId, ctx.appointmentOfferDecision.offerEventId)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
+test('live: pedir humano desde una oferta conserva la pregunta de datos antes de una salida automática', async () => {
+  const fixture = await createFixture('deferred_offer_handoff_required_data')
+  try {
+    fixture.config.capabilitiesConfig = {
+      ...fixture.config.capabilitiesConfig,
+      dataRequirements: {
+        fields: [{
+          field: 'email',
+          label: 'correo',
+          level: 'required',
+          scope: 'any_action'
+        }],
+        updateContact: {
+          enabled: true,
+          policy: 'replace_placeholders'
+        }
+      },
+      items: [
+        ...fixture.config.capabilitiesConfig.items,
+        {
+          id: 'handoff_human',
+          enabled: true,
+          rules: '- cuando la persona pida hablar con el equipo'
+        }
+      ]
+    }
+    await db.run(
+      'UPDATE conversational_agents SET capabilities_config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [JSON.stringify(fixture.config.capabilitiesConfig), fixture.agentId]
+    )
+
+    await selectDate(fixture)
+    const exact = await offerExactTime(fixture, '16:00')
+    const ctx = await confirmationContext(
+      fixture,
+      exact.offered,
+      `deferred-offer-handoff-${fixture.suffix}`
+    )
+    ctx.deferredAutomaticRelease = {
+      reason: 'exit_rules',
+      agentId: fixture.agentId
+    }
+
+    const handoff = await toolNamed(ctx, 'resolve_active_appointment_offer')
+      .invoke(null, JSON.stringify({
+        decision: 'handoff',
+        nextPreferenceScope: null,
+        reply: 'Quiero hablar con una persona',
+        title: null,
+        notes: null,
+        attendeeName: null,
+        attendeeContext: null,
+        primaryAttendee: null,
+        guests: [],
+        agreedAmount: null
+      }))
+    assert.equal(handoff.needsData, true, JSON.stringify(handoff))
+    assert.equal(ctx.explicitHumanHandoffRequested, true)
+    assert.match(handoff.visibleReply, /correo/i)
+
+    const stillActive = await loadConversationalAppointmentOfferDecisionContext({
+      ctx,
+      config: fixture.config
+    })
+    assert.equal(stillActive?.active, true)
+  } finally {
+    await cleanupFixture(fixture)
+  }
+})
+
 test('live: una oferta que no alcanzó a salir se cierra por ejecución, conserva el día y no rechaza el horario', async () => {
   const fixture = await createFixture('undelivered_offer')
   try {
