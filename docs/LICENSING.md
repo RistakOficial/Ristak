@@ -185,8 +185,11 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
   plantillas requieren `whatsapp_templates`.
 - Configuración > Pagos muestra checkout, pasarelas y automatizaciones solo con
   `payment_checkout`, `payment_gateways` y `payment_automations`,
-  respectivamente. El job de automatizaciones de pago valida
-  `payment_automations`, no el módulo genérico `payments`.
+  respectivamente. El encabezado de Transacciones muestra **Configurar
+  pasarelas** únicamente cuando `payment_gateways` está disponible bajo un plan
+  Profesional; Basic y Medium conservan sus operaciones de pago offline sin esa
+  entrada. El job de automatizaciones de pago valida `payment_automations`, no
+  el módulo genérico `payments`.
 - Crear o enviar links exige `payment_links` en las rutas de Stripe, Conekta,
   Mercado Pago, CLIP, Rebill y HighLevel. La misma compuerta aplica al agente
   conversacional, asistente de app y MCP; ocultar el botón no sustituye el

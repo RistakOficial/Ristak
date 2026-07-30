@@ -75,3 +75,10 @@ test('registro de pago y chatbot ocultan links aunque una licencia vieja los mar
   assert.match(gatewayHookSource, /canUsePaymentPlans: canUsePaymentPlans &&/)
   assert.match(gatewayHookSource, /canUseSubscriptions: canUseSubscriptions &&/)
 })
+
+test('transacciones oculta la configuración de pasarelas fuera del plan Profesional', () => {
+  const transactionsSource = fs.readFileSync(path.join(__dirname, '../src/pages/Transactions/Transactions.tsx'), 'utf8')
+
+  assert.match(transactionsSource, /const canConfigurePaymentGateways = hasPaymentGatewaysAccess\(user\)/)
+  assert.match(transactionsSource, /actions=\{canConfigurePaymentGateways \? \(/)
+})
