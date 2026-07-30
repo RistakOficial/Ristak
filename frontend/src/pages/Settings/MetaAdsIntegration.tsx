@@ -2401,7 +2401,6 @@ export const MetaAdsIntegration: React.FC = () => {
   // manuales heredadas pueden permanecer cifradas durante la migración, pero no
   // habilitan pestañas, estados ni formularios en Configuración.
   const isMetaConfigured = isOAuthConnection
-  const isConnectingAdsOAuth = connectingMetaOAuthKind === 'ads'
   const isConnectingSocialOAuth = connectingMetaOAuthKind === 'social'
   const isConnectingLegacyOAuth = connectingMetaOAuthKind === 'legacy'
   const socialOAuthStatus = splitMetaOAuthStatuses.social
@@ -3108,19 +3107,6 @@ export const MetaAdsIntegration: React.FC = () => {
                     {hasAdAccount && <Button type="button" variant="secondary" onClick={handleSyncMetaAds} disabled={isSyncingMetaAds}>
                       <RefreshCw size={16} className={isSyncingMetaAds ? styles.spinning : ''} />
                       {isSyncingMetaAds ? 'Sincronizando' : 'Sincronizar'}
-                    </Button>}
-                    {isAdsOAuthConnection && <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => void startMetaAuthorization(isUnifiedOAuthConnected ? 'legacy' : 'ads')}
-                      disabled={isConnectingAdsOAuth || isConnectingLegacyOAuth || (
-                        isUnifiedOAuthConnected
-                          ? metaOAuthStatus?.available === false
-                          : splitMetaOAuthStatuses.ads?.available === false
-                      )}
-                    >
-                      {isConnectingAdsOAuth || isConnectingLegacyOAuth ? <RefreshCw size={16} className={styles.spinning} /> : <MetaBrandMark size={17} />}
-                      {isConnectingAdsOAuth || isConnectingLegacyOAuth ? 'Abriendo Meta' : 'Autorizar nuevos activos'}
                     </Button>}
                     <Button type="button" variant="danger" onClick={() => setIsDisconnectModalOpen(true)}>
                       <Power size={16} />

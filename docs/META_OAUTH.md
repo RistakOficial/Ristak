@@ -240,8 +240,10 @@ https://www.facebook.com/v25.0/dialog/oauth
    frontend obtiene una sesión corta con `POST /api/meta/oauth/reconfigure` y
    después llama a `POST /api/meta/oauth/finalize`; Ads inicia su sync y Social
    registra relay/backfill.
-10. **Autorizar nuevos activos** repite el OAuth oficial completo. Los endpoints
-    segmentados `ads|social` siguen disponibles sólo para conexiones anteriores.
+10. La pantalla configurada sólo expone **Sincronizar** —cuando existe una cuenta
+    publicitaria— y **Desconectar Meta**. No ofrece una segunda autorización de
+    activos. Los endpoints segmentados `ads|social` siguen disponibles sólo como
+    compatibilidad para conexiones anteriores.
 
 El callback devuelve `meta_oauth_kind` y
 `meta_oauth_integration_kind=ads|social|legacy`. Ristak limpia esos parámetros
@@ -267,8 +269,10 @@ Reglas no negociables:
   con `POST /api/meta/oauth/reconfigure` y ejecuta un solo `finalize`. Las
   conexiones separadas anteriores usan el equivalente segmentado. Cambiar un
   dropdown nunca llama a la API.
-- Los activos creados después del consentimiento no se agregan solos: requieren
-  **Autorizar nuevos activos**.
+- Los activos creados después del consentimiento no se agregan solos ni se
+  incorporan desde la pantalla configurada. Si se necesita reemplazar el
+  inventario autorizado, se inicia una conexión completa nueva después de
+  desconectar Meta.
 
 ### Descubrimiento y validacion del Dataset
 
@@ -343,9 +347,9 @@ relistar el portafolio. El contrato es:
   expiración sin repetir `debug_token`. Si Meta limita esa validación, el
   callback termina con un error reintentable; no cae a `/me`, no reintenta a
   escondidas y no guarda una conexión parcialmente validada.
-- `/{BUSINESS_ID}`, `owned_*` y `client_*` se consultan durante el callback OAuth
-  o cuando la persona pulsa **Autorizar nuevos activos**. Abrir Configuración,
-  Chat o Notificaciones no enumera negocios ni activos.
+- `/{BUSINESS_ID}`, `owned_*` y `client_*` se consultan durante el callback de una
+  conexión OAuth completa. Abrir Configuración, Chat o Notificaciones no enumera
+  negocios ni activos.
 - El estado social se sirve con permisos ya validados y la suscripción guardada
   localmente. Al elegir una Page se hace el POST de suscripción y una sola
   lectura de confirmación; después el polling no toca esos endpoints.
@@ -535,8 +539,10 @@ Installer, autenticado por licencia salvo callbacks publicos:
     endpoints manuales responden `410 META_OAUTH_REQUIRED`.
 13. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
     mezclan con el login ni los controles sociales.
-14. **Autorizar nuevos activos** abre el Config ID oficial completo; una conexión
-    segmentada anterior conserva el Config ID de su propio tipo.
+14. Una conexión configurada no muestra una acción para autorizar activos
+    adicionales; conserva únicamente **Sincronizar** y **Desconectar Meta**. La
+    entrada OAuth visible sigue siendo **Conectar Meta Business** cuando no hay
+    conexión.
 15. Después de guardar o recargar, Cuenta publicitaria y Dataset siguen siendo
     dropdowns, muestran sus nombres y permiten cambiar entre activos ya
     autorizados. Una conexión segmentada o unificada anterior recupera ese

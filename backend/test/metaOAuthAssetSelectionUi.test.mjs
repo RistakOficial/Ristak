@@ -93,6 +93,7 @@ test('Meta Business es la entrada oficial unificada y conserva compatibilidad co
   assert.doesNotMatch(screen, /Credencial de Messenger/)
   assert.doesNotMatch(screen, /Incluida en OAuth/)
   assert.doesNotMatch(screen, /Desconectar Meta OAuth|Desconectar OAuth/)
+  assert.doesNotMatch(screen, /Autorizar nuevos activos/)
   assert.match(styles, /\.metaHeader\[data-ristak-page-header\][\s\S]*?border-bottom: 0/)
   assert.match(screen, /const isMetaConfigured = isOAuthConnection/)
   assert.match(screen, /aplicación oficial de Ristak aprobada por Meta/)
