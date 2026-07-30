@@ -313,8 +313,8 @@ composer y el teclado que ningun padding, color ni safe-area puede corregir.
 prop `keyboardAvoiding` (via `enabled`, sin desmontar el subarbol): la pantalla
 host debe pasar `keyboardAvoiding={false}` mientras su overlay este abierto
 (ChatScreen lo hace con `keyboardAvoiding={!selected}`), de modo que el frame de
-la ruta overlay — con el fondo del composer — sea el unico dueño del teclado,
-igual que el Asistente Personal AI, que reemplaza el arbol completo. Al abrir
+la ruta overlay — con el fondo del composer — sea el unico dueño del teclado.
+Al abrir
 una conversacion tambien se cierra el teclado pendiente (`Keyboard.dismiss()`)
 antes de traspasar la propiedad.
 
@@ -366,9 +366,8 @@ El cliente nativo consolidado en `mobile/` ya agrupa los pases hechos en los
 worktrees de Chat, Conversacion, Citas, Pagos, Analiticas, Ajustes, dock inferior,
 login y notificaciones. Antes de crear otro worktree movil, parte de esta carpeta
 unificada y revisa el checklist de paridad. Ajustes nativo ya incluye numeros de
-WhatsApp, selector de numero para la bandeja, dictado de la descripcion del
-agente con `expo-audio` y `/api/ai-agent/transcribe`, activacion de push nativo
-con `expo-notifications`, y Ajustes reales de apariencia/chat. La preferencia
+WhatsApp, selector de numero para la bandeja, activacion de push nativo con
+`expo-notifications`, y Ajustes reales de apariencia/chat. La preferencia
 `mobile_chat_theme_preference` soporta sistema, claro, noche y horario; el shell
 nativo debe aplicarla como paleta global, no solo como fondo de `StatusBar`.
 La preferencia tambien se persiste localmente en el dispositivo para que
@@ -384,30 +383,18 @@ categoria; todos usan el mismo tono neutral de la paleta activa y solo `Cerrar
 sesion` puede usar rojo destructivo. Los iconos de cards y opciones de
 apariencia siguen usando colores semanticos de la paleta activa con contraste
 real en claro y noche.
-Las preferencias de chat guardadas en `app_config` (`mobile_chat_ai_agent_enabled`,
-`mobile_chat_show_archived`, `mobile_chat_sort_mode`,
+Las preferencias de chat guardadas en `app_config` (`mobile_chat_show_archived`, `mobile_chat_sort_mode`,
 `mobile_chat_show_last_preview`, `mobile_chat_show_unread_indicators` y
 `mobile_chat_selected_whatsapp_phone_id`) deben afectar la bandeja viva sin
 reiniciar la app. Si una funcion se cambia en `/movil`, valida si tambien debe
 cambiar en `mobile/` en la misma rama.
-Cuando `mobile_chat_ai_agent_enabled` esta activo, la fila fija `Asistente
-Personal AI` abre un chat nativo real conectado a `/api/ai-agent/chat` con el
-mismo proveedor/configuracion del asistente de escritorio. Ese chat usa el layout
-de conversacion nativa, pero no muestra acciones de contacto: no agenda citas,
-no registra pagos y no permite acciones de WhatsApp; solo conversa con el
-asistente personal. En `mobile/`, el composer del asistente mantiene `+` para
-enviar fotos y documentos como attachments al agente; los videos se bloquean en
-movil hasta que la app genere miniatura/contenido visual legible para el backend.
-En `ios/app`, la fila ya no abre un placeholder: conserva hasta 24 mensajes de
-contexto por request, mantiene la categoria en las continuaciones, presenta
-fuentes y opciones aclaratorias accionables, y explica dentro del chat si OpenAI
-falta o requiere reconexion. En ambos clientes el microfono graba nota de voz, la
-transcribe con `/api/ai-agent/transcribe` y manda el texto resultante al mismo
-chat. Las burbujas del asistente nativo deben renderizar el formato basico que ya
-usa el asistente de escritorio: negritas, italicas,
-tachado, codigo inline, links y listas no deben mostrar delimitadores crudos como
-`**`, `_`, `~` o marcadores Markdown; la UI interpreta el formato y conserva una
-burbuja legible.
+
+El asistente personal fue retirado de `mobile/` e `ios/app`: la bandeja no
+muestra fila fija, Ajustes no ofrece su configuración, el composer no pide
+sugerencias y ningún cliente llama `/api/ai-agent`. El Hub de agentes y sus
+controles siguen siendo del Chatbot conversacional. Si OpenAI no está conectado,
+la conexión se realiza dentro del Hub/Chatbot y no mediante una pantalla de
+asistente personal.
 
 En la conversacion nativa, el composer inferior debe replicar la referencia
 visual de la app original: panel azul muy claro, campo de texto blanco,
@@ -1081,8 +1068,7 @@ accion, antes de agendar, registrar pagos o cualquier otra herramienta. Al tocar
 leidos, archivar/restaurar, seleccionar visibles o seleccionar todas las
 conversaciones reales de la bandeja, aunque todavia no esten cargadas en
 pantalla. `Seleccionar todos` no respeta el filtro visual actual: su contrato es
-literalmente todo el inbox seleccionable; el asistente AI y filas no-chat quedan
-fuera.
+literalmente todo el inbox seleccionable; las filas no-chat quedan fuera.
 
 Las fechas de la lista de chats se formatean con la zona horaria del negocio:
 los mensajes del dia actual muestran la hora exacta (`7:47 p.m.`), los del dia
@@ -1445,15 +1431,15 @@ mensajes entrantes pendientes; si el ultimo mensaje es saliente, aunque el
 backend mande `unreadCount`, la UI nativa no debe mostrarlo como notificacion.
 El avatar nativo debe mantener iniciales/foto en relleno
 Ristak y reservar el color de red social para aro/badge, igual que
-`PhoneChat.module.css`. El asistente personal AI se abre desde su fila fija en
-la bandeja; el header de chats no debe mostrar un icono/boton de robot duplicado.
+`PhoneChat.module.css`. El acceso de robot en la bandeja abre exclusivamente el
+Hub del agente conversacional; no existe una fila fija de asistente personal.
 
 La lista de chats nativa usa una interaccion simplificada respecto a `PhoneChat`:
 mantener presionada una fila abre `Mas acciones` con feedback haptico. La primera
 accion del sheet es `Seleccionar`, que activa seleccion multiple y debe quedarse
 activa al soltar/cerrar el sheet. Durante seleccion se ocultan los chips de filtro
-y el control compacto de seleccion reemplaza la fila de `Archivados`, debajo del
-asistente personal AI, con conteo, cancelar, `Seleccionar visibles` y `Mas
+y el control compacto de seleccion reemplaza la fila de `Archivados`, con
+conteo, cancelar, `Seleccionar visibles` y `Mas
 acciones`. Tambien muestra `Seleccionar todos`, que obtiene del backend el
 universo completo de ids de conversaciones mediante
 `GET /contacts/chats?idsOnly=true`, sin quedar limitado por la paginacion, la

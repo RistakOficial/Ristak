@@ -31,7 +31,7 @@ import {
   resolveDateRangeWithGHLTimezone,
   sqliteTimezoneModifierExpression
 } from '../utils/dateUtils.js'
-import { getAIAgentConfig, requireOpenAIApiKey } from './aiAgentService.js'
+import { getAIRuntimeConfig, requireOpenAIApiKey } from './aiRuntimeService.js'
 import { prepareContactCustomFieldsForStorage } from './contactCustomFieldDefinitionsService.js'
 import {
   finalizePreparedPhoneUpsert,
@@ -7277,7 +7277,7 @@ function sanitizeOpenAIErrorMessage(message = '') {
   const text = cleanString(message)
   if (!text) return ''
   if (/incorrect api key|invalid_api_key/i.test(text)) {
-    return 'La API key de OpenAI no es válida o fue revocada. Revisa Configuración > Agente AI y vuelve a conectar OpenAI.'
+    return 'La API key de OpenAI no es válida o fue revocada. Revisa Chatbot y vuelve a conectar OpenAI.'
   }
   return text.replace(/sk-(?:proj-)?[a-zA-Z0-9_-]{8,}/g, '[API key oculta]')
 }
@@ -7405,7 +7405,7 @@ ${businessContext || 'Sin contexto adicional configurado.'}`
     : `
 Alcance privado del editor HTML:
 - Solo puedes usar el HTML/CSS/JS activo que viene en currentHtml, activePage, importedPages, visualContext y la solicitud escrita por el usuario.
-- No tienes acceso al contexto del negocio, CRM, contactos, conversaciones, campañas, pagos, automatizaciones, configuraciones del chatbot ni memoria del Agente AI.
+- No tienes acceso al contexto del negocio, CRM, contactos, conversaciones, campañas, pagos, automatizaciones ni configuraciones internas del chatbot.
 - No inventes datos del negocio ni uses información guardada fuera de este archivo. Si el usuario pide algo que requiere ese contexto, pídele que lo pegue en la instrucción.
 - Trata visualContext como una captura interna derivada del mismo HTML activo; úsala solo para ubicar elementos visibles.`
 
@@ -14679,7 +14679,7 @@ export async function createSiteWithAIHtml(input = {}) {
 
   const apiKey = await requireOpenAIApiKey()
 
-  const agentConfig = await getAIAgentConfig({ userId: input.userId })
+  const agentConfig = await getAIRuntimeConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
   const aiPayload = await callSitesAIHtmlGenerator({
     apiKey,
@@ -14946,7 +14946,7 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
     }
   }
 
-  const agentConfig = await getAIAgentConfig({ userId: input.userId })
+  const agentConfig = await getAIRuntimeConfig({ userId: input.userId })
   const model = normalizeSitesAIModel(input.model || input.chatgptModel || input.chatgpt_model, agentConfig?.model)
   const visualContext = normalizeSitesAIVisualContext(input.visualContext || input.visual_context)
   const referenceAttachments = normalizeSitesAIReferenceAttachments(input.attachments || input.referenceAttachments || input.reference_attachments)

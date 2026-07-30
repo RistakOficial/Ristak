@@ -190,7 +190,6 @@ final class ConversationViewModel {
     /// Envío detenido esperando la decisión de agente (doc 05 §6.3).
     var agentConfirmationPending = false
 
-    private(set) var aiSuggestInFlight = false
 
     // Sheets / alertas
     var alert: ConversationAlert?
@@ -2919,53 +2918,6 @@ final class ConversationViewModel {
                 alert = ConversationAlert(
                     title: "Agente",
                     message: (error as? RistakAPIError)?.message ?? "No se pudo actualizar el agente."
-                )
-            }
-        }
-    }
-
-    // MARK: - Sugerencia IA (doc 05 §7.1)
-
-    var aiSuggestionsEnabled: Bool {
-        guard let appConfig else { return false }
-        return appConfig.aiAgentChatEnabled && appConfig.aiReplySuggestionsEnabled
-    }
-
-    func suggestReply() {
-        guard !aiSuggestInFlight else { return }
-        aiSuggestInFlight = true
-        Task {
-            defer { aiSuggestInFlight = false }
-            let history = combinedMessages.filter { !$0.isScheduled }.suffix(10).map { message -> String in
-                let role: String
-                switch message.direction {
-                case .outbound: role = "Negocio"
-                case .inbound: role = "Cliente"
-                case .system: role = "Sistema"
-                }
-                return "\(role): \(MessagePreviewText.preview(for: message))"
-            }
-            let prompt = """
-            Sugiere la siguiente respuesta breve del negocio para este chat. \
-            Responde SOLO con el texto sugerido, sin comillas ni explicación.
-
-            \(history.joined(separator: "\n"))
-            """
-            do {
-                let result = try await AIAgentService.chat(
-                    AIAgentChatRequest(messages: [AIAgentChatMessagePayload(role: "user", content: prompt)])
-                )
-                if let reply = result.reply?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
-                    draftText = reply
-                } else {
-                    alert = ConversationAlert(title: "No se pudo sugerir", message: "El agente no devolvió una sugerencia.")
-                }
-            } catch let error as RistakAPIError where error.isOpenAIConfigurationIssue {
-                alert = ConversationAlert(title: "OpenAI no está listo", message: error.message)
-            } catch {
-                alert = ConversationAlert(
-                    title: "No se pudo sugerir",
-                    message: (error as? RistakAPIError)?.message ?? "Intenta de nuevo."
                 )
             }
         }

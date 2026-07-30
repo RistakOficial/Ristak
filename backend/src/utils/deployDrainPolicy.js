@@ -125,7 +125,7 @@ export function classifyDeployDrainRequest(req = {}) {
       '/api/chat-events',
       '/api/payment-events',
       '/api/conversational-agent',
-      '/api/ai-agent',
+      '/api/ai-runtime',
       '/api/whatsapp-api',
       '/api/email',
       '/api/push'

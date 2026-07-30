@@ -8,7 +8,7 @@ import {
   normalizeConversationalAIProvider
 } from '../src/services/conversationalAIProviderService.js'
 import { db } from '../src/config/database.js'
-import { getAIAgentStatus } from '../src/services/aiAgentService.js'
+import { getAIRuntimeStatus } from '../src/services/aiRuntimeService.js'
 import { initializeMasterKey } from '../src/utils/encryption.js'
 
 async function getStoredAIAgentConfigRow() {
@@ -43,7 +43,7 @@ test('registro de proveedores conversacionales incluye Claude con compatibilidad
   assert.equal(getDefaultConversationalModelForProvider('claude'), claude.defaultModel)
 })
 
-test('conectar OpenAI desde proveedores conversacionales guarda la credencial general de Ristak AI', async () => {
+test('conectar OpenAI desde proveedores conversacionales guarda la credencial compartida del chatbot', async () => {
   const previousConfig = await getStoredAIAgentConfigRow()
   const originalFetch = globalThis.fetch
   const apiKey = 'sk-test-token-abcdefghijklmnopqrstuvwxyz'
@@ -73,7 +73,7 @@ test('conectar OpenAI desde proveedores conversacionales guarda la credencial ge
 
     const providers = await connectConversationalAIProvider('openai', apiKey)
     const openAIProvider = providers.find((provider) => provider.id === 'openai')
-    const status = await getAIAgentStatus({})
+    const status = await getAIRuntimeStatus({})
     const row = await db.get('SELECT model, business_context, response_style, recommendation_mode, web_search_enabled FROM ai_agent_config WHERE id = 1')
 
     assert.equal(openAIProvider?.connected, true)

@@ -5,7 +5,7 @@ import { db } from '../src/config/database.js'
 import {
   buildBusinessProfileExtractionContext,
   syncBusinessProfileFromContext
-} from '../src/services/aiAgentService.js'
+} from '../src/services/aiRuntimeService.js'
 
 async function getStoredBusinessProfileRow() {
   return db.get('SELECT * FROM ai_business_profile WHERE id = 1').catch(() => null)

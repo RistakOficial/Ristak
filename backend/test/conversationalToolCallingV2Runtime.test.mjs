@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
-import { buildInputItems } from '../src/agents/runner.js'
+import { buildConversationalInputItems } from '../src/agents/conversational/inputItems.js'
 import { buildNativeConversationalInstructions } from '../src/agents/conversational/nativePrompt.js'
 import {
   buildNativeFreeSlotDays,
@@ -1644,10 +1644,10 @@ test('seguimiento v2 conserva sólo herramientas de lectura', () => {
   assert.doesNotMatch(contactProfile.description, /consulta obligatoria|usa send_to_human/i)
 })
 
-test('buildInputItems conserva el límite base y acepta completo el sobre nativo ya acotado por bytes', () => {
+test('buildConversationalInputItems conserva el límite base y acepta completo el sobre nativo ya acotado por bytes', () => {
   const messages = conversationMessages(200)
-  const base = buildInputItems(messages)
-  const native = buildInputItems(messages, { preserveAll: true })
+  const base = buildConversationalInputItems(messages)
+  const native = buildConversationalInputItems(messages, { preserveAll: true })
 
   assert.equal(base.length, 12)
   assert.equal(native.length, 200)

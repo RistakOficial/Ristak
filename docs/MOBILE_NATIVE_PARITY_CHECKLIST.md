@@ -203,15 +203,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     bandeja normal, muestra fila `Archivados`, permite entrar/salir de la vista
     y restaurar desde acciones del chat. Falta sincronizar con cualquier
     almacenamiento backend si se decide que archivados sea multi-dispositivo.
-- [x] Replicar chat fijo de `Asistente Personal AI`.
-  - Android e `ios/app` muestran la fila antes de `Archivados` y abren una
-    conversación nativa real conectada a `/api/ai-agent/chat`, usando la misma
-    configuración y contexto del asistente de escritorio. La fila conserva la
-    estructura original: avatar de 48px dentro de slot de 52px, texto centrado,
-    meta `Fijo` independiente y separador inferior de ancho completo.
-  - En iOS el chat conserva contexto y categoría, interpreta Markdown, muestra
-    fuentes y opciones aclaratorias, permite dictar por voz y guía la
-    conexión/reconexión de OpenAI sin mezclar acciones de contacto.
+- [x] Retirar el chat fijo del asistente personal.
+  - Android e `ios/app` ya no muestran la fila ni llaman `/api/ai-agent`.
+  - El Hub y los estados del agente conversacional permanecen disponibles.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
   - Avance: Android ya selecciona el estado primario con prioridad similar a
@@ -442,25 +436,18 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - [x] Separar `Ajustes` del header generico nativo para que no muestre el
   correo/usuario debajo del titulo.
-- [x] Replicar la lista principal de `/movil`: Plantillas, Asistente Personal
-  AI, Lista de chat, Campos personalizados, Apariencia, Notificaciones y
+- [x] Replicar la lista principal de `/movil`: Plantillas, Lista de chat,
+  Campos personalizados, Apariencia, Notificaciones y
   `Cerrar sesion`, con iconos, metas y navegacion interna.
 - [x] Conectar lectura/escritura de preferencias reales:
-  - Globales via `/api/config`: agente en chat, sugerencias IA, archivados,
-    orden, preview, no leidos y tema.
+  - Globales via `/api/config`: archivados, orden, preview, no leidos y tema.
   - Por usuario via `/api/user-config`: push de chat/citas/confirmaciones/pagos,
     sonido, vibracion y calendarios con alerta.
 - [x] Conectar subpantallas de lectura real:
   - Plantillas desde `/api/whatsapp-api/templates`.
   - Campos personalizados desde `/api/contacts/custom-fields`.
   - Calendarios desde `/api/calendars`.
-  - Estado/contexto del agente desde `/api/ai-agent/config`.
-- [x] Agregar edicion de la descripcion del negocio del Asistente Personal AI
-  usando `/api/ai-agent/business-context-answer` cuando OpenAI esta conectado.
-- [x] Replicar dictado de voz nativo de la descripcion del negocio.
-  - Avance: el boton `Dictar` usa `expo-audio`, pide microfono, graba en el
-    celular, manda el audio a `/api/ai-agent/transcribe` y guarda la respuesta
-    pulida con `/api/ai-agent/business-context-answer`.
+  - Configuración y proveedores del Chatbot desde `/api/conversational-agent`.
 - [x] Replicar activacion real de permisos push del celular.
   - Avance: Ajustes consulta el permiso nativo, pide permiso con
     `expo-notifications`, registra el token FCM en

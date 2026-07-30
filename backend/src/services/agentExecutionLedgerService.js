@@ -240,8 +240,7 @@ export function buildAgentTracePayload(agentRun, status = 'running') {
 
   return {
     traceId: agentRun.traceId,
-    status,
-    detailUrl: `/api/ai-agent/runs/${agentRun.traceId}`
+    status
   }
 }
 

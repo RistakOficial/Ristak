@@ -63,7 +63,7 @@ function startMockServer() {
                 features: serverMode === 'allow_basic_web_analytics'
                 ? { analytics: true, web_analytics: true }
                 : serverMode === 'allow_split_ai'
-                ? { app_assistant_ai: true, conversational_ai: false }
+                ? { app_assistant_ai: true, conversational_ai: true }
                 : serverMode === 'allow_split_sites'
                   ? { sites: false, settings_media: true, settings_tracking: false, settings_domains: true }
                   : serverMode === 'allow_split_calendar'
@@ -312,7 +312,7 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(state.plan, 'pro')
   assert.equal(state.features.whatsapp, true)
   assert.equal(state.features.ai, false)
-  assert.equal(state.features.app_assistant_ai, false)
+  assert.equal(Object.hasOwn(state.features, 'app_assistant_ai'), false)
   assert.equal(state.features.conversational_ai, false)
   assert.equal(state.externalModules.mdp_program.enabled, true)
   assert.equal(state.externalModules.mdp_program.sidebarPosition, 35)
@@ -635,21 +635,21 @@ test('features premium omitidos por el portal central quedan apagados', async ()
   assert.equal(state.features.payments, false)
   assert.equal(state.features.sites, false)
   assert.equal(state.features.ai, false)
-  assert.equal(state.features.app_assistant_ai, false)
+  assert.equal(Object.hasOwn(state.features, 'app_assistant_ai'), false)
   assert.equal(state.features.conversational_ai, false)
 })
 
-test('features de IA separados reconstruyen el alias legacy ai', async () => {
+test('el chatbot reconstruye el alias legacy ai e ignora el asistente retirado', async () => {
   serverMode = 'allow_split_ai'
 
   const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
 
-  assert.equal(state.features.app_assistant_ai, true)
-  assert.equal(state.features.conversational_ai, false)
-  assert.equal(state.features.ai, false)
-  assert.equal(await licenseService.hasFeature('app_assistant_ai'), true)
-  assert.equal(await licenseService.hasFeature('conversational_ai'), false)
-  assert.equal(await licenseService.hasFeature('ai'), false)
+  assert.equal(Object.hasOwn(state.features, 'app_assistant_ai'), false)
+  assert.equal(state.features.conversational_ai, true)
+  assert.equal(state.features.ai, true)
+  assert.equal(await licenseService.hasFeature('app_assistant_ai'), false)
+  assert.equal(await licenseService.hasFeature('conversational_ai'), true)
+  assert.equal(await licenseService.hasFeature('ai'), true)
 })
 
 test('subfeatures explícitos no quedan apagados por el módulo padre', async () => {

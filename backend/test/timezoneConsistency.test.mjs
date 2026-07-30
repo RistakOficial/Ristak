@@ -60,7 +60,7 @@ test('timezone-sensitive backend services do not hardcode UTC-6 SQLite buckets',
   const files = [
     'backend/src/services/originDistributionService.js',
     'backend/src/services/videoTrackingService.js',
-    'backend/src/services/aiAgentService.js',
+    'backend/src/services/aiRuntimeService.js',
     'backend/src/controllers/trackingController.js'
   ]
 

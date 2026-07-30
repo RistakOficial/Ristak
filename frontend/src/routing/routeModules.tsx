@@ -110,7 +110,7 @@ const appointments = createLazyRoute(() => import('@/pages/Appointments/Appointm
 const sites = createLazyRoute(() => import('@/pages/Sites/SitesRoute'), 'SitesRoute')
 const automations = createLazyRoute(() => import('@/pages/Automations/Automations'), 'Automations')
 const analytics = createLazyRoute(() => import('@/pages/Analytics/Analytics'), 'default')
-const aiAgent = createLazyRoute(() => import('@/pages/AIAgent/AIAgent'), 'AIAgent')
+const chatbot = createLazyRoute(() => import('@/pages/Chatbot/Chatbot'), 'Chatbot')
 const mdpProgram = createLazyRoute(() => import('@/pages/MDPProgram/MDPProgram'), 'MDPProgram')
 const settings = createLazyRoute(() => import('@/pages/Settings/Settings'), 'Settings')
 
@@ -150,7 +150,7 @@ export const LazyAppointments = appointments.Component
 export const LazySites = sites.Component
 export const LazyAutomations = automations.Component
 export const LazyAnalytics = analytics.Component
-export const LazyAIAgent = aiAgent.Component
+export const LazyChatbot = chatbot.Component
 export const LazyMDPProgram = mdpProgram.Component
 export const LazySettings = settings.Component
 
@@ -190,7 +190,7 @@ const routeModuleRegistry: RouteModuleRegistration[] = [
   { path: '/sites', preload: sites.preload },
   { path: '/automations', preload: automations.preload },
   { path: '/analytics', preload: analytics.preload },
-  { path: '/ai-agent', preload: aiAgent.preload },
+  { path: '/ai-agent', preload: chatbot.preload },
   { path: '/mdp-program', preload: mdpProgram.preload },
   { path: '/settings', preload: preloadSettingsRoute }
 ]

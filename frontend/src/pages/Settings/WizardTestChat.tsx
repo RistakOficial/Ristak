@@ -458,7 +458,7 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
 
   return (
     <PhoneChatPreview
-      title={agentName.trim() || 'Tu asistente'}
+      title={agentName.trim() || 'Tu agente'}
       subtitle="Modo prueba"
       messages={previewMessages}
       typing={sending}

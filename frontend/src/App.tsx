@@ -10,7 +10,7 @@ import { usePhoneTheme, usePhoneWakeLock } from '@/hooks'
 import { AppShell } from '@/components/layout/AppShell'
 import { useInitialization } from '@/contexts/InitializationContext'
 import {
-  LazyAIAgent,
+  LazyChatbot,
   LazyAPIDocumentation,
   LazyAnalytics,
   LazyAppointments,
@@ -972,7 +972,7 @@ const AppWithNotifications: React.FC = () => {
             <Route path="sites/*" element={<AccessRoute moduleKey="sites"><LazySites /></AccessRoute>} />
             <Route path="automations/*" element={<AccessRoute moduleKey="automations"><LazyAutomations /></AccessRoute>} />
             <Route path="analytics/*" element={<AccessRoute moduleKey="analytics"><LazyAnalytics /></AccessRoute>} />
-            <Route path="ai-agent/*" element={<AccessRoute moduleKey="ai_agent"><LazyAIAgent /></AccessRoute>} />
+            <Route path="ai-agent/*" element={<AccessRoute moduleKey="ai_agent"><LazyChatbot /></AccessRoute>} />
             <Route path="mdp-program/*" element={<MdpProgramRoute><LazyMDPProgram /></MdpProgramRoute>} />
             <Route path="settings/*" element={<LazySettings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

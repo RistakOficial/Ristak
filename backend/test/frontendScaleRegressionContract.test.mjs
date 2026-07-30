@@ -77,12 +77,10 @@ test('Chat Desktop y Phone cargan páginas profundas con keyset exacto, no con o
   }
 })
 
-test('el asistente pesado no forma parte estática del AppShell', async () => {
+test('el asistente personal ya no forma parte del AppShell', async () => {
   const source = await repoFile('frontend/src/components/layout/AppShell/AppShell.tsx')
 
-  assert.doesNotMatch(source, /import \{ AIAgentPanel \} from '@\/components\/ai'/)
-  assert.match(source, /React\.lazy\(\(\) => import\('@\/components\/ai\/AIAgentPanel\/AIAgentPanel'\)/)
-  assert.match(source, /<React\.Suspense fallback=\{null\}>[\s\S]*<AIAgentPanel/)
+  assert.doesNotMatch(source, /AIAgentPanel|RistakRobot|ai-assistant-dock/)
 })
 
 test('Dashboard no arrastra modales y servicios de drill-down en su primer chunk', async () => {

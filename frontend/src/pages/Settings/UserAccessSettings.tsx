@@ -109,7 +109,7 @@ const permissionCategories: PermissionCategory[] = [
   {
     group: 'Operación',
     title: 'Operación y crecimiento',
-    description: 'Reportes, marketing, sitios, automatizaciones y Ristak AI.',
+    description: 'Reportes, marketing, sitios, automatizaciones y chatbot.',
     sections: [
       {
         title: 'Reportes y análisis',

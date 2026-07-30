@@ -87,7 +87,7 @@ export const ACCESS_MODULES = [
   {
     key: 'ai_agent',
     label: 'Chatbot',
-    description: 'Configuración de Ristak AI y chatbots conversacionales.',
+    description: 'Configuración de chatbots conversacionales.',
     group: 'Operación',
     path: '/ai-agent'
   },
@@ -207,22 +207,6 @@ export interface AccessControlledUser {
 const MODULE_KEYS = new Set<PermissionKey>(ACCESS_MODULES.map((module) => module.key))
 const hasOwn = Object.prototype.hasOwnProperty
 
-export const AI_AGENT_NAV_ITEMS = [
-  {
-    to: '/ai-agent/conversational',
-    label: 'Chatbot',
-    exact: false,
-    featureKeys: ['conversational_ai', 'ai']
-  },
-  {
-    to: '/ai-agent/general',
-    label: 'Configuracion',
-    exact: true,
-    featureKeys: ['app_assistant_ai', 'ai']
-  }
-] as const
-export type AIAgentNavItem = typeof AI_AGENT_NAV_ITEMS[number]
-
 type LicenseFeatureRule = {
   primary: string
   legacy?: readonly string[]
@@ -239,7 +223,7 @@ const LICENSE_FEATURES_BY_MODULE: Partial<Record<PermissionKey, LicenseFeatureRu
   campaigns: { primary: 'campaigns', legacy: ['meta_ads'] },
   automations: { primary: 'automations' },
   sites: { primary: 'sites' },
-  ai_agent: { primary: 'ai_agent', legacy: ['app_assistant_ai', 'conversational_ai', 'ai'] },
+  ai_agent: { primary: 'ai_agent', legacy: ['conversational_ai', 'ai'] },
   settings_account: { primary: 'dashboard' },
   settings_mobile: { primary: 'mobile_app', legacy: ['settings_mobile'] },
   settings_calendars: { primary: 'appointments', legacy: ['google_calendar', 'settings_calendars'] },
@@ -290,7 +274,6 @@ const LICENSE_FEATURE_LABELS: Record<string, string> = {
   site_builder: 'editor de sitios',
   site_publishing: 'publicación de sitios',
   site_forms: 'formularios de sitios',
-  app_assistant_ai: 'Ristak AI',
   conversational_ai: 'Chatbot',
   automation_builder: 'constructor de automatizaciones',
   automation_runs: 'ejecuciones de automatizaciones',
@@ -517,9 +500,4 @@ export function getRouteAccess(pathname: string): PermissionKey | null {
 export function getFirstAllowedAppPath(user?: AccessControlledUser | null) {
   const firstModule = ACCESS_MODULES.find((module) => hasModuleAccess(user, module.key, 'read'))
   return firstModule?.path || '/settings/account'
-}
-
-export function getFirstAllowedAIAgentPath(user?: AccessControlledUser | null) {
-  const firstSection = AI_AGENT_NAV_ITEMS.find((item) => hasLicenseFeature(user, item.featureKeys))
-  return firstSection?.to || getFirstAllowedAppPath(user)
 }

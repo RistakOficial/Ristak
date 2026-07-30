@@ -32,7 +32,6 @@ enum SettingsLoadState<Value: Sendable>: Sendable {
 enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
     case numbers
     case templates
-    case agent
     case chats
     case customFields = "custom-fields"
     case tags
@@ -46,7 +45,6 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .numbers: return "Números de WhatsApp"
         case .templates: return "Plantillas"
-        case .agent: return "Asistente Personal AI"
         case .chats: return "Lista de chat"
         case .customFields: return "Campos personalizados"
         case .tags: return "Etiquetas"
@@ -60,7 +58,6 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .numbers: return "Remitentes y número principal."
         case .templates: return "Crear y revisar estados de Meta."
-        case .agent: return "Chat fijo y sugerencias."
         case .chats: return "Orden, archivados y vista previa."
         case .customFields: return "Datos visibles en cada contacto."
         case .tags: return "Crea y elimina etiquetas del CRM."
@@ -74,7 +71,6 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .numbers: return "iphone"
         case .templates: return "doc.text"
-        case .agent: return "sparkles"
         case .chats: return "bubble.left"
         case .customFields: return "checklist"
         case .tags: return "tag"
@@ -88,7 +84,7 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
 // MARK: - Modelo compartido del módulo
 
 /// Modelo del módulo Ajustes: carga en paralelo el estado de WhatsApp,
-/// plantillas, agente AI, calendarios y campos personalizados (paridad con la
+/// plantillas, calendarios y campos personalizados (paridad con la
 /// carga inicial de la pestaña Ajustes RN, doc 10 §5.1). Las preferencias
 /// (`app_config` / `user_config`) viven en `AppConfigStore` (Environment).
 @MainActor
@@ -98,7 +94,6 @@ final class SettingsModel {
 
     private(set) var whatsapp: SettingsLoadState<WhatsAppAPIStatus> = .idle
     private(set) var templates: SettingsLoadState<WhatsAppTemplatesSummary> = .idle
-    private(set) var agent: SettingsLoadState<AIAgentConfigStatus> = .idle
     private(set) var calendars: SettingsLoadState<[RistakCalendar]> = .idle
     private(set) var customFields: SettingsLoadState<[ContactCustomFieldDefinition]> = .idle
     private(set) var tags: SettingsLoadState<[ContactTag]> = .idle
@@ -134,10 +129,6 @@ final class SettingsModel {
            let cached = cache.value(WhatsAppTemplatesSummary.self, for: SettingsCacheKey.templates) {
             templates = .loaded(cached)
         }
-        if case .idle = agent,
-           let cached = cache.value(AIAgentConfigStatus.self, for: SettingsCacheKey.aiAgent) {
-            agent = .loaded(cached)
-        }
         if case .idle = calendars,
            let cached = cache.value([RistakCalendar].self, for: SettingsCacheKey.calendars) {
             calendars = .loaded(cached)
@@ -161,11 +152,10 @@ final class SettingsModel {
     func reloadAll() async {
         async let whatsappTask: Void = loadWhatsApp()
         async let templatesTask: Void = loadTemplates()
-        async let agentTask: Void = loadAgent()
         async let calendarsTask: Void = loadCalendars()
         async let fieldsTask: Void = loadCustomFields()
         async let tagsTask: Void = loadTags()
-        _ = await (whatsappTask, templatesTask, agentTask, calendarsTask, fieldsTask, tagsTask)
+        _ = await (whatsappTask, templatesTask, calendarsTask, fieldsTask, tagsTask)
     }
 
     func loadWhatsApp() async {
@@ -185,15 +175,6 @@ final class SettingsModel {
             persistTemplates(try await templatesService.fetchTemplates())
         } catch {
             templates = Self.failureState(from: error, keeping: templates)
-        }
-    }
-
-    func loadAgent() async {
-        if agent.value == nil { agent = .loading }
-        do {
-            persistAgent(try await AIAgentService.config())
-        } catch {
-            agent = Self.failureState(from: error, keeping: agent)
         }
     }
 
@@ -269,13 +250,6 @@ final class SettingsModel {
         )
     }
 
-    private func persistAgent(_ status: AIAgentConfigStatus) {
-        agent = .loaded(status)
-        RistakSnapshotCache.shared.store(
-            SettingsAgentSnapshot(status), for: SettingsCacheKey.aiAgent
-        )
-    }
-
     private func persistCalendars(_ list: [RistakCalendar]) {
         calendars = .loaded(list)
         RistakSnapshotCache.shared.store(
@@ -325,14 +299,6 @@ final class SettingsModel {
         }
     }
 
-    // MARK: - Agente AI
-
-    /// Reemplaza el estado del agente (tras conectar OpenAI o guardar contexto)
-    /// y refresca el snapshot en caché.
-    func applyAgentStatus(_ status: AIAgentConfigStatus) {
-        persistAgent(status)
-    }
-
     // MARK: - Metas de la lista principal (doc 10 §5.1)
 
     var numbersMeta: String {
@@ -344,13 +310,6 @@ final class SettingsModel {
     var templatesMeta: String {
         guard let summary = templates.value, summary.total > 0 else { return "Revisar" }
         return "\(summary.total) guardadas"
-    }
-
-    /// Meta del agente: «Activo» / «Apagado» / «Sin OpenAI».
-    func agentMeta(chatEnabled: Bool) -> String {
-        guard let status = agent.value else { return "Sin OpenAI" }
-        guard status.isReady else { return "Sin OpenAI" }
-        return chatEnabled ? "Activo" : "Apagado"
     }
 
     var customFieldsMeta: String {

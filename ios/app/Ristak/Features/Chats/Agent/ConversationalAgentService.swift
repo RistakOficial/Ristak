@@ -3,14 +3,23 @@ import Foundation
 /// Endpoints de gestión del agente conversacional (runtime interno + definiciones).
 /// Complementa `AgentStateService` (estado por conversación). Todo el router
 /// `/api/conversational-agent` exige feature `conversational_ai` + módulo
-/// `ai_agent` + OpenAI conectado (409 `needsOpenAIConfig` si falta) — por eso el
-/// Hub verifica primero la disponibilidad de OpenAI vía `AIAgentService.config()`.
+/// `ai_agent` + un proveedor de IA conectado.
 enum ConversationalAgentService {
     private static let base = "/conversational-agent"
 
     /// `GET /config` → runtime interno + estado del prompt del negocio.
     static func config() async throws -> ConversationalAgentConfig {
         try await APIClient.shared.get("\(base)/config")
+    }
+
+    /// Conecta o reemplaza la llave de un proveedor desde el propio Hub.
+    static func connectProvider(id: String, apiKey: String) async throws -> [ConversationalAIProviderStatus] {
+        struct Body: Encodable { let apiKey: String }
+        return try await APIClient.shared.post(
+            "\(base)/ai-providers/\(id)",
+            body: Body(apiKey: apiKey),
+            timeout: APIClient.dashboardTimeout
+        )
     }
 
     /// `POST /config` — guarda config parcial (el Hub manda solo `{ enabled }`).

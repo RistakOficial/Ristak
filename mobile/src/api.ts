@@ -11,13 +11,9 @@ import type {
   ContactAutomationsOverview,
   ContactCustomFieldDefinition,
   CustomLabels,
-  AIAgentTranscriptionResult,
-  AIAgentBusinessContextAnswerResult,
-  AIAgentChatResult,
-  AIAgentConfigStatus,
-  AIAgentMessage,
-  AIAgentViewContext,
   ConversationAgentState,
+  ConversationalAgentConfig,
+  ConversationalAIProviderStatus,
   ConversationalAgentDefinition,
   ConversationHistoryCursor,
   CreateTransactionInput,
@@ -835,6 +831,17 @@ export class RistakApiClient {
     return this.request<ConversationalAgentDefinition[]>('/conversational-agent/agents');
   }
 
+  getConversationalAgentConfig() {
+    return this.request<ConversationalAgentConfig>('/conversational-agent/config');
+  }
+
+  connectConversationalAIProvider(providerId: string, apiKey: string) {
+    return this.request<ConversationalAIProviderStatus[]>(`/conversational-agent/ai-providers/${encodeURIComponent(providerId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ apiKey }),
+    });
+  }
+
   updateConversationalAgent(agentId: string, patch: Partial<ConversationalAgentDefinition>) {
     return this.request<ConversationalAgentDefinition>(`/conversational-agent/agents/${encodeURIComponent(agentId)}`, {
       method: 'PUT',
@@ -1643,78 +1650,6 @@ export class RistakApiClient {
       method: 'POST',
       body: JSON.stringify({ contactId, mode: 'now' }),
     });
-  }
-
-  getAIAgentConfig() {
-    return this.request<AIAgentConfigStatus>('/ai-agent/config');
-  }
-
-  saveAIAgentConfig(config: { apiKey?: string; model?: string }) {
-    return this.request<AIAgentConfigStatus>('/ai-agent/config', {
-      method: 'POST',
-      body: JSON.stringify(config),
-    });
-  }
-
-  saveAIAgentBusinessContext(answer: string) {
-    return this.request<AIAgentBusinessContextAnswerResult>('/ai-agent/business-context-answer', {
-      method: 'POST',
-      body: JSON.stringify({
-        field: 'businessContext',
-        answer,
-      }),
-    });
-  }
-
-  sendAIAgentMessage(messages: AIAgentMessage[], viewContext: AIAgentViewContext, category = 'auto') {
-    return this.request<AIAgentChatResult>('/ai-agent/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        messages,
-        viewContext,
-        category,
-      }),
-    });
-  }
-
-  async transcribeAIAgentAudio(audioUri: string, mimeType = 'audio/m4a') {
-    const headers: Record<string, string> = {
-      'Content-Type': mimeType,
-    };
-
-    if (this.token) {
-      headers.Authorization = `Bearer ${this.token}`;
-    }
-
-    const uploadResult = await FileSystem.uploadAsync(this.buildUrl('/ai-agent/transcribe'), audioUri, {
-      httpMethod: 'POST',
-      headers,
-      mimeType,
-      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-    });
-
-    let payload: unknown = null;
-    try {
-      payload = uploadResult.body ? JSON.parse(uploadResult.body) : null;
-    } catch {
-      payload = null;
-    }
-
-    if (uploadResult.status < 200 || uploadResult.status >= 300) {
-      const message = payload && typeof payload === 'object'
-        ? String((payload as { error?: unknown; message?: unknown }).error || (payload as { message?: unknown }).message || `HTTP ${uploadResult.status}`)
-        : `HTTP ${uploadResult.status}`;
-      const error = new Error(message || `HTTP ${uploadResult.status}`) as ApiError;
-      error.status = uploadResult.status;
-      error.body = payload;
-      throw error;
-    }
-
-    if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
-      return (payload as { data: AIAgentTranscriptionResult }).data;
-    }
-
-    return payload as AIAgentTranscriptionResult;
   }
 
   getWhatsAppStatus() {

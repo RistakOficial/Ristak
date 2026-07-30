@@ -504,11 +504,11 @@ function assertAiAgentSendablePaymentChannel(payload = {}, contact = {}, actionL
   if (payload.source !== 'ai_agent') return
 
   if (!hasExplicitChannelSelection(payload.channels)) {
-    throw new Error(`Antes de crear ${actionLabel}, el Agente AI debe pedir y recibir un canal de envío real: correo, WhatsApp, SMS o todos.`)
+    throw new Error(`Antes de crear ${actionLabel}, el agente conversacional debe pedir y recibir un canal de envío real: correo, WhatsApp, SMS o todos.`)
   }
 
   if (pickSendMethod(contact, payload.channels) === 'none') {
-    throw new Error(`No se puede crear ${actionLabel} desde el Agente AI sin un correo o teléfono válido para enviar el enlace.`)
+    throw new Error(`No se puede crear ${actionLabel} desde el agente conversacional sin un correo o teléfono válido para enviar el enlace.`)
   }
 }
 
@@ -3555,10 +3555,10 @@ export async function updateScheduledInstallmentPayment(payload = {}) {
         updatedInstallment.frequency || recurrenceToFrequency(recurrence) || 'custom',
         [
           updatedInstallment.notes || '',
-          newDueDate ? `Reprogramado por Agente AI de ${installment.due_date || 'fecha previa'} a ${newDueDate}` : '',
-          textUpdates.description ? `Descripción actualizada por Agente AI: ${textUpdates.description}` : '',
-          textUpdates.termsNotes ? 'Términos/notas actualizados por Agente AI' : '',
-          recurrence ? `Recurrencia actualizada por Agente AI: ${recurrence.intervalType} cada ${recurrence.interval || 1}` : ''
+          newDueDate ? `Reprogramado por agente conversacional de ${installment.due_date || 'fecha previa'} a ${newDueDate}` : '',
+          textUpdates.description ? `Descripción actualizada por agente conversacional: ${textUpdates.description}` : '',
+          textUpdates.termsNotes ? 'Términos/notas actualizados por agente conversacional' : '',
+          recurrence ? `Recurrencia actualizada por agente conversacional: ${recurrence.intervalType} cada ${recurrence.interval || 1}` : ''
         ].filter(Boolean).join('\n').slice(0, 1000),
         updatedInstallment.id
       ]
@@ -3678,7 +3678,7 @@ export async function cancelScheduledInstallmentPayment(payload = {}) {
       deleteSchedule ? 'deleted' : 'cancelled',
       [
         installment.notes || '',
-        `${deleteSchedule ? 'Eliminado' : 'Cancelado'} por Agente AI el ${new Date().toISOString()}`
+        `${deleteSchedule ? 'Eliminado' : 'Cancelado'} por agente conversacional el ${new Date().toISOString()}`
       ].filter(Boolean).join('\n').slice(0, 1000),
       effectiveScheduleId
     ]

@@ -27,7 +27,7 @@
 14. [WhatsApp / chat](#14-whatsapp--chat)
 15. [Automatizaciones](#15-automatizaciones)
 16. [Agente conversacional de IA](#16-agente-conversacional-de-ia)
-17. [Asistente de IA de la app](#17-asistente-de-ia-de-la-app)
+17. [Asistente de IA de la app (retirado)](#17-asistente-de-ia-de-la-app-retirado)
 18. [Pagos y cobros (links, parcialidades, suscripciones)](#18-pagos-y-cobros-links-parcialidades-suscripciones)
 19. [Pago público (/pay/:id)](#19-pago-público-payid)
 20. [Reportes, dashboard y costos](#20-reportes-dashboard-y-costos)
@@ -98,11 +98,13 @@
 ### Paso a paso
 1. Al iniciar sesión, si la instalación es "gestionada", el backend valida la licencia contra el portal y devuelve el usuario con sus `licenseFeatures`.
 2. El frontend usa esas features (capturadas al login/SSO/me) para ocultar o mostrar módulos.
-3. Solo 8 routers premium tienen `requireFeature` en el backend: automations, advanced_reports, meta_ads, google_calendar, app_assistant_ai, conversational_ai, whatsapp, email.
+3. El backend combina gates específicos con `requireModuleAccess`, que también
+   valida la feature comercial del módulo. El router del asistente personal ya
+   no existe; Chatbot usa `conversational_ai`.
 
 ### Qué funciona
 - El login **bloquea correctamente** si el portal responde no-allowed; el frontend redirige a `/license-blocked` en login, SSO, setup y a mitad de sesión.
-- Para los 8 módulos gateados, el backend sí bloquea por feature aunque se oculte la UI.
+- Para los módulos gateados, el backend sí bloquea por feature aunque se oculte la UI.
 
 ### Qué está incompleto
 - Las features se capturan **solo al login/me**: no hay refresco en vivo. Si el cliente hace upgrade/downgrade a media sesión, la UI no cambia hasta re-login (**LIC-008**, `confirmado`). El endpoint `GET /api/license/status` existe pero **ningún componente del frontend lo consume** (endpoint muerto).
@@ -435,28 +437,16 @@
 ### Qué puede romperse
 - **AI-001 / CRON-007 (`confirmado`, alto): doble respuesta y doble acción en multi-instancia.** La protección contra ejecuciones concurrentes es un Set en memoria + un claim no atómico (read-then-write, no compare-and-set; `runner.js:1432-1486`). Con dos instancias o un webhook reenviado, ambas pueden responder y **ejecutar acciones reales dos veces**.
 - **AI-004 (`confirmado`, alto): `create_payment_link` no es idempotente.** A diferencia de agendar cita (que sí valida una existente), crear link de pago no tiene guard (`tools.js:645-704`). Combinado con AI-001 o un reintento del modelo, se generan **dos links/cobros** por el mismo concepto; si el cliente paga ambos, doble cobro.
+- **AI-008 (`probable`, bajo):** los traces de runs conversacionales se guardan con `user_id NULL` y son visibles para cualquier usuario con módulo `ai_agent` que conozca el traceId; posible exposición de contenido de conversaciones entre empleados del mismo tenant.
 
 ---
 
-## 17. Asistente de IA de la app
+## 17. Asistente de IA de la app (retirado)
 
-### Paso a paso
-1. El usuario abre el AI Agent, configura su API key de OpenAI y el contexto del negocio.
-2. Escribe una pregunta; el triage la clasifica por categoría (citas, pagos, contactos, anuncios…).
-3. El especialista usa herramientas que reutilizan los controllers reales (lectura DB + acciones). Las acciones destructivas piden confirmación textual.
-
-### Qué funciona
-- Routing por triage + handoffs entre especialistas; las tools reutilizan los controllers reales (mismas validaciones/sync); ledger de pasos; soporte de adjuntos imagen/PDF/texto.
-
-### Qué está incompleto
-- El ledger es **solo auditoría**: no hay idempotencia por mensaje del usuario.
-
-### Qué puede confundir al usuario
-- La inferencia local de categoría y el triage del modelo pueden discrepar, sin que el usuario vea por qué cae en una u otra especialidad.
-
-### Qué puede romperse
-- **AI-005 (`probable`, medio):** si OpenAI falla **después** de que una tool ya impactó la DB (crear contacto, registrar pago), el chat devuelve "error" pero la acción ya ocurrió (`runSpecializedAgentReply:461-510`). El usuario reintenta y **duplica** la acción, sin saber que la primera vez sí se ejecutó.
-- **AI-008 (`probable`, bajo):** los traces de runs conversacionales se guardan con `user_id NULL` y son visibles para cualquier usuario con módulo `ai_agent` que conozca el traceId; posible exposición de contenido de conversaciones entre empleados del mismo tenant.
+La superficie personal fue eliminada de web, Android e iOS, junto con su API,
+routing por especialistas y herramientas operativas. Los riesgos específicos de
+ese chat ya no aplican. El hallazgo AI-008 pertenece al ledger del Chatbot
+conversacional y se conserva en la sección 16.
 
 ---
 

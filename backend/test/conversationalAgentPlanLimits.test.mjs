@@ -40,7 +40,6 @@ function startLicenseServer() {
           plan: 'basic',
           features: {
             ai_agent: true,
-            app_assistant_ai: false,
             conversational_ai: true
           },
           limits: {

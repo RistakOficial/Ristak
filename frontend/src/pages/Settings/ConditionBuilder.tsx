@@ -16,7 +16,7 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useAnchoredPortal } from '@/hooks/useAnchoredPortal'
 import { contactTagsService } from '@/services/contactTagsService'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
-import styles from './AIAgentSettings.module.css'
+import styles from './ConversationalAgentSettings.module.css'
 
 /**
  * Constructor de condiciones jerárquico (estilo disparadores de workflow):

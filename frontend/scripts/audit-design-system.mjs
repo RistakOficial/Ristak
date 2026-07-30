@@ -35,7 +35,6 @@ const legacyReusablePatternFiles = new Set([
 ])
 
 const legacySemanticColorFiles = new Set([
-  'src/components/ai/AIAgentPanel/AIAgentPanel.module.css',
   'src/components/layout/Header/Header.tsx',
   'src/pages/Analytics/Analytics.tsx',
   'src/pages/Appointments/Appointments.module.css',

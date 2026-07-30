@@ -7,7 +7,6 @@ import UIKit
 struct RistakUITestConfiguration: Sendable {
     let chatCount: Int
     let showsRealInboxPresentation: Bool
-    let showsPersonalAssistantChat: Bool
     let showsActivityMarkers: Bool
     let showsConversationScroll: Bool
     let showsChatAppearance: Bool
@@ -19,7 +18,7 @@ struct RistakUITestConfiguration: Sendable {
         }
         let mode = process.environment["RISTAK_UI_TEST_MODE"]
         guard [
-            "synthetic", "inbox-presentation", "personal-assistant-chat", "activity-markers",
+            "synthetic", "inbox-presentation", "activity-markers",
             "conversation-scroll", "chat-appearance",
         ].contains(mode) else {
             return nil
@@ -31,7 +30,6 @@ struct RistakUITestConfiguration: Sendable {
         return RistakUITestConfiguration(
             chatCount: min(max(requestedCount, 100), 50_000),
             showsRealInboxPresentation: mode == "inbox-presentation",
-            showsPersonalAssistantChat: mode == "personal-assistant-chat",
             showsActivityMarkers: mode == "activity-markers",
             showsConversationScroll: mode == "conversation-scroll",
             showsChatAppearance: mode == "chat-appearance"
@@ -273,20 +271,6 @@ struct RistakChatAppearanceUITestHarnessView: View {
     }
 }
 
-/// Monta el chat real del asistente con un cliente determinista y sin red. Así
-/// XCUITest valida el flujo completo de escribir, enviar y continuar opciones.
-@MainActor
-struct RistakPersonalAssistantChatUITestHarnessView: View {
-    @State private var viewModel = PersonalAssistantChatViewModel(client: .uiTest)
-
-    var body: some View {
-        NavigationStack {
-            PersonalAssistantChatScreen(viewModel: viewModel)
-        }
-        .accessibilityIdentifier("personal-assistant-harness-root")
-    }
-}
-
 /// Monta el `InboxScreen` real sin sesión ni red para verificar su presentación
 /// inicial (título grande, buscador y tope de la List) de forma determinista.
 struct RistakInboxPresentationUITestHarnessView: View {
@@ -297,8 +281,7 @@ struct RistakInboxPresentationUITestHarnessView: View {
             InboxScreen(
                 viewModel: viewModel,
                 selectedContactID: nil,
-                onOpenChat: { _ in },
-                onOpenAssistant: {}
+                onOpenChat: { _ in }
             )
         }
         .accessibilityIdentifier("inbox-presentation-root")

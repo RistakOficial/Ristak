@@ -23,7 +23,7 @@ import {
   getConversationalPaymentProviderRawStatus,
   paymentAmountInMinorUnits
 } from '../../services/conversationalAgentLivePaymentService.js'
-import { getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiAgentService.js'
+import { getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiRuntimeService.js'
 import { analyzePaymentReceiptImage } from './mediaContext.js'
 import { getTriggerLink } from '../../services/triggerLinksService.js'
 import {

@@ -3,7 +3,6 @@ import { Link, Navigate, useParams } from 'react-router-dom'
 import {
   Activity,
   BarChart3,
-  Bot,
   CalendarDays,
   ChevronRight,
   Cog,
@@ -24,7 +23,6 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext' // (MOB-007) zona del negocio para el bucket de caché diaria
 import { useHighLevelConnected, usePhoneElasticScroll } from '@/hooks'
 import { AccountSettings } from '@/pages/Settings/AccountSettings'
-import { AIAgentSettings } from '@/pages/Settings/AIAgentSettings'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { calendarsService, type AppointmentStats, type Calendar, type CalendarEvent } from '@/services/calendarsService'
 import { campaignsService, type Campaign } from '@/services/campaignsService'
@@ -936,9 +934,6 @@ export const PhoneApp: React.FC = () => {
             >
               <RefreshCw size={18} className={loading || cacheRefreshing ? styles.spinIcon : undefined} />
             </button>
-            <Link className={styles.iconButton} to={`${PHONE_APP_PREFIX}/agent-ai`} aria-label="Open AI agent" title="Open AI agent">
-              <Bot size={18} />
-            </Link>
           </div>
         </header>
 
@@ -1388,38 +1383,11 @@ function AnalyticsSection({ visitorsTrend, leadsTrend, salesTrend, conversion, s
   )
 }
 
-type SettingsPanelId = 'account' | 'agent'
-
 function SettingsSection() {
-  const [activePanel, setActivePanel] = useState<SettingsPanelId>('account')
-
   return (
     <div className={styles.settingsShell}>
-      <div className={styles.settingsSwitcher} role="tablist" aria-label="Mobile settings">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activePanel === 'account'}
-          className={`${styles.settingsSwitchButton} ${activePanel === 'account' ? styles.settingsSwitchButtonActive : ''}`}
-          onClick={() => setActivePanel('account')}
-        >
-          <Users size={16} />
-          Account
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activePanel === 'agent'}
-          className={`${styles.settingsSwitchButton} ${activePanel === 'agent' ? styles.settingsSwitchButtonActive : ''}`}
-          onClick={() => setActivePanel('agent')}
-        >
-          <Bot size={16} />
-          AI Agent
-        </button>
-      </div>
-
       <div className={styles.embeddedSettings}>
-        {activePanel === 'account' ? <AccountSettings /> : <AIAgentSettings />}
+        <AccountSettings />
       </div>
     </div>
   )

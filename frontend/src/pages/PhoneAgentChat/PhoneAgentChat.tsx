@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
-import { Bot, MessageCircle, MonitorX } from 'lucide-react'
-import { AIAgentPanel } from '@/components/ai'
+import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { MonitorX } from 'lucide-react'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { ConversationalAgentSettings } from '@/pages/Settings/ConversationalAgentSettings'
@@ -11,7 +10,7 @@ import styles from './PhoneAgentChat.module.css'
 const PORTABLE_WIDTH_QUERY = '(max-width: 1366px)'
 const COARSE_POINTER_QUERY = '(pointer: coarse)'
 const MOBILE_OR_TABLET_USER_AGENT_PATTERN = /Android|iPad|iPhone|iPod|IEMobile|Opera Mini|Mobile|Tablet/i
-const SCROLLABLE_CHAT_SELECTOR = '[data-ai-agent-scrollable="true"], [data-phone-agent-scrollable="true"], textarea'
+const SCROLLABLE_CHAT_SELECTOR = '[data-phone-agent-scrollable="true"], textarea'
 
 function getPhoneAgentBasePath(pathname: string) {
   const canonicalPathname = toCanonicalPhoneAppPath(pathname)
@@ -45,10 +44,9 @@ export const PhoneAgentChat: React.FC = () => {
   const location = useLocation()
   const basePath = getPhoneAgentBasePath(location.pathname)
   const conversationalPath = `${basePath}/conversational`
-  const generalPath = `${basePath}/general`
 
   useEffect(() => {
-    document.title = 'Agente AI móvil y tablet | Ristak'
+    document.title = 'Chatbot móvil y tablet | Ristak'
 
     const updateAccess = () => setAccessState(getAccessState())
     const portableMedia = window.matchMedia(PORTABLE_WIDTH_QUERY)
@@ -131,11 +129,7 @@ export const PhoneAgentChat: React.FC = () => {
     return () => {
       window.removeEventListener('touchstart', handleTouchStart)
       window.removeEventListener('touchmove', handleTouchMove)
-
-      if (viewportMeta) {
-        viewportMeta.setAttribute('content', previousViewportContent)
-      }
-
+      if (viewportMeta) viewportMeta.setAttribute('content', previousViewportContent)
       html.style.overflow = previousHtmlOverflow
       html.style.height = previousHtmlHeight
       html.style.overscrollBehavior = previousHtmlOverscroll
@@ -145,9 +139,7 @@ export const PhoneAgentChat: React.FC = () => {
     }
   }, [accessState])
 
-  if (accessState === 'checking') {
-    return <PhoneStartupLoader />
-  }
+  if (accessState === 'checking') return <PhoneStartupLoader />
 
   if (accessState === 'blocked') {
     return (
@@ -159,74 +151,25 @@ export const PhoneAgentChat: React.FC = () => {
           <div className={styles.blockedCopy}>
             <p className={styles.eyebrow}>Ruta bloqueada</p>
             <h1 id="phone-agent-blocked-title">Solo en móvil o tablet</h1>
-            <p>
-              Esta pantalla de Ristak AI está cerrada para computadora. Ábrela desde un teléfono o una tablet para usar el chat en modo portátil.
-            </p>
+            <p>La configuración portátil del chatbot está disponible desde un teléfono o una tablet.</p>
           </div>
-          <Link className={styles.dashboardLink} to="/dashboard">
-            Volver al dashboard
-          </Link>
+          <Link className={styles.dashboardLink} to="/dashboard">Volver al dashboard</Link>
         </section>
       </main>
     )
   }
 
   return (
-    <main className={styles.mobilePage} aria-label="Chat móvil y tablet de Ristak AI">
-      <div className={styles.agentWorkspace}>
-        <nav className={styles.agentModeTabs} aria-label="Modo de Ristak AI">
-          <NavLink
-            to={generalPath}
-            className={({ isActive }) => `${styles.agentModeTab} ${isActive || location.pathname === basePath ? styles.agentModeTabActive : ''}`}
-          >
-            <MessageCircle size={17} />
-            Ristak AI
-          </NavLink>
-          <NavLink
-            to={conversationalPath}
-            className={({ isActive }) => `${styles.agentModeTab} ${isActive ? styles.agentModeTabActive : ''}`}
-          >
-            <Bot size={17} />
-            Agentes
-          </NavLink>
-        </nav>
+    <main className={styles.mobilePage} aria-label="Configuración móvil del chatbot">
+      <section className={styles.agentSettingsHost} data-phone-agent-scrollable="true">
         <Routes>
-          <Route index element={<Navigate to="general" replace />} />
-          <Route
-            path="general"
-            element={(
-              <section className={styles.agentPanelHost}>
-                <AIAgentPanel variant="embedded" />
-              </section>
-            )}
-          />
-          <Route
-            path="conversational"
-            element={(
-              <section className={styles.agentSettingsHost} data-phone-agent-scrollable="true">
-                <ConversationalAgentSettings
-                  routeBase={conversationalPath}
-                  generalConfigPath={generalPath}
-                  className={styles.phoneConversationalSettings}
-                />
-              </section>
-            )}
-          />
-          <Route
-            path="conversational/:agentId"
-            element={(
-              <section className={styles.agentSettingsHost} data-phone-agent-scrollable="true">
-                <ConversationalAgentSettings
-                  routeBase={conversationalPath}
-                  generalConfigPath={generalPath}
-                  className={styles.phoneConversationalSettings}
-                />
-              </section>
-            )}
-          />
-          <Route path="*" element={<Navigate to="general" replace />} />
+          <Route index element={<Navigate to="conversational" replace />} />
+          <Route path="general" element={<Navigate to="../conversational" replace />} />
+          <Route path="conversational" element={<ConversationalAgentSettings routeBase={conversationalPath} className={styles.phoneConversationalSettings} />} />
+          <Route path="conversational/:agentId" element={<ConversationalAgentSettings routeBase={conversationalPath} className={styles.phoneConversationalSettings} />} />
+          <Route path="*" element={<Navigate to="../conversational" replace />} />
         </Routes>
-      </div>
+      </section>
       <PhoneEcosystemNav active="chat" />
     </main>
   )

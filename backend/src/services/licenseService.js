@@ -45,7 +45,6 @@ const DEFAULT_FEATURES = {
   meta_ads: true,
   google_calendar: true,
   ai: true,
-  app_assistant_ai: true,
   conversational_ai: true,
   advanced_reports: true
 }
@@ -97,7 +96,7 @@ const PREMIUM_GATED_FEATURES = [
   'payments', 'reports', 'campaigns', 'sites', 'forms', 'whatsapp',
   'email', 'integrations', 'team_access', 'mobile_app', 'developers',
   'meta_ads', 'google_calendar', 'automations', 'advanced_reports',
-  'app_assistant_ai', 'conversational_ai', 'ai', 'ai_agent',
+  'conversational_ai', 'ai', 'ai_agent',
   'premium_modules', 'payment_checkout', 'payment_automations',
   'payment_gateways', 'highlevel_payments', 'conekta', 'mercadopago',
   'rebill', 'payment_links', 'saved_payment_methods', 'payment_plans',
@@ -117,7 +116,7 @@ const FEATURE_DEPENDENCIES = {
   campaigns: ['meta_ads'],
   sites: ['settings_domains', 'settings_tracking', 'settings_media'],
   forms: [],
-  ai_agent: ['app_assistant_ai', 'conversational_ai'],
+  ai_agent: ['conversational_ai'],
   whatsapp: ['settings_whatsapp'],
   email: ['settings_email'],
   integrations: ['settings_integrations'],
@@ -137,7 +136,7 @@ const LICENSE_FEATURES_BY_MODULE = {
   campaigns: { primary: 'campaigns', legacy: ['meta_ads'] },
   automations: { primary: 'automations' },
   sites: { primary: 'sites' },
-  ai_agent: { primary: 'ai_agent', legacy: ['app_assistant_ai', 'conversational_ai', 'ai'] },
+  ai_agent: { primary: 'ai_agent', legacy: ['conversational_ai', 'ai'] },
   settings_account: { primary: 'dashboard' },
   settings_mobile: { primary: 'mobile_app', legacy: ['settings_mobile'] },
   settings_calendars: { primary: 'appointments', legacy: ['google_calendar', 'settings_calendars'] },
@@ -729,7 +728,11 @@ function normalizeLicenseFeatures(features = {}) {
     }
   }
 
-  normalized.ai = normalized.app_assistant_ai === true && normalized.conversational_ai === true
+  // `ai` se conserva únicamente como alias de licencias antiguas para el chatbot.
+  // El feature retirado `app_assistant_ai` se ignora aunque un portal viejo todavía
+  // lo mande: ya no debe reactivar ninguna superficie del producto.
+  normalized.ai = normalized.conversational_ai === true
+  delete normalized.app_assistant_ai
 
   return normalized
 }

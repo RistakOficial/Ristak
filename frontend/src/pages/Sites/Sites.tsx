@@ -143,7 +143,7 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useIntegrationsStatus, useUrlDateRangeSync } from '@/hooks'
+import { useAIAvailability, useAccountCurrency, useAppConfig, useIntegrationsStatus, useUrlDateRangeSync } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -192,7 +192,7 @@ import {
   type SiteTheme,
   type SiteType
 } from '@/services/sitesService'
-import { aiAgentService } from '@/services/aiAgentService'
+import { aiRuntimeService } from '@/services/aiRuntimeService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, {
@@ -9183,7 +9183,7 @@ export const Sites: React.FC = () => {
   const routeAnalyticsSiteId = searchParams.get('siteId') || ''
   const routeAnalyticsVideoId = searchParams.get('videoId') || ''
   const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
-  const { configured: aiAgentConfigured } = useAIAgentAvailability()
+  const { configured: aiAgentConfigured } = useAIAvailability()
   const {
     status: integrationsStatus,
     refresh: refreshIntegrationsStatus
@@ -17048,7 +17048,7 @@ function useAIVoiceDictation({
           return
         }
         setVoiceState('transcribing')
-        void aiAgentService.transcribeVoice(audioBlob)
+        void aiRuntimeService.transcribeVoice(audioBlob)
           .then(result => {
             onTranscriptionRef.current(result.text)
             resetVoiceUi()

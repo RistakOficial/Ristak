@@ -29,16 +29,13 @@ test('integraciones publican un snapshot compartido y descartan respuestas vieja
 })
 
 test('mutaciones de proveedores revalidan el estado global', async () => {
-  const [ai, whatsapp, meta, calendars, highLevel] = await Promise.all([
-    readSource('frontend/src/services/aiAgentService.ts'),
+  const [whatsapp, meta, calendars, highLevel] = await Promise.all([
     readSource('frontend/src/services/whatsappApiService.ts'),
     readSource('frontend/src/services/metaOAuthService.ts'),
     readSource('frontend/src/services/calendarsService.ts'),
     readSource('frontend/src/services/highLevelService.ts')
   ])
 
-  assert.match(ai, /saveConfig[\s\S]*?refreshIntegrationsStatusAfter/)
-  assert.match(ai, /deleteToken[\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(whatsapp, /connect: [\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(whatsapp, /disconnectPhoneNumber:[\s\S]*?refreshIntegrationsStatusAfter/)
   assert.match(meta, /finalize:[\s\S]*?refreshIntegrationsStatusAfter/)
@@ -67,11 +64,11 @@ test('la cabecera de calendarios comunica claramente el estado de Google Calenda
   assert.match(styles, /:global\(body\.light\) \.googleHeaderButtonConnected \{[\s\S]*?color: var\(--text\);/)
 })
 
-test('la disponibilidad del agente AI no reutiliza snapshots de otra cuenta', async () => {
-  const source = await readSource('frontend/src/hooks/useAIAgentAvailability.ts')
+test('la disponibilidad compartida de IA no reutiliza snapshots de otra cuenta', async () => {
+  const source = await readSource('frontend/src/hooks/useAIAvailability.ts')
 
   assert.match(source, /getAuthScopedCachePrincipalFingerprint/)
-  assert.match(source, /principalFingerprint !== getAuthScopedCachePrincipalFingerprint\(\)/)
+  assert.match(source, /parsed\.principalFingerprint !== getAuthScopedCachePrincipalFingerprint\(\)/)
   assert.match(source, /AUTH_PRINCIPAL_CHANGED_EVENT/)
   assert.match(source, /currentRequestVersion === requestVersion/)
   assert.match(source, /requestVersion \+= 1/)

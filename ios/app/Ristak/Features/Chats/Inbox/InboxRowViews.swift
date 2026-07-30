@@ -140,46 +140,6 @@ struct ChatRowView: View {
     }
 }
 
-// MARK: - Fila fija «Asistente Personal AI» (doc 03 §4.2.3)
-
-struct AssistantChatRow: View {
-    var body: some View {
-        HStack(alignment: .center, spacing: RistakTheme.Spacing.sm) {
-            Image(systemName: "sparkles")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(RistakTheme.accent)
-                .frame(width: 48, height: 48)
-                .background(Circle().fill(RistakTheme.accentSoft))
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Asistente Personal AI")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(RistakTheme.textPrimary)
-                    .lineLimit(1)
-
-                Text("Pregúntame lo que necesites de Ristak.")
-                    .font(.subheadline)
-                    .foregroundStyle(RistakTheme.textDim)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 0)
-
-            Text("Fijo")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(RistakTheme.textDim)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(RistakTheme.controlRest))
-        }
-        .padding(.vertical, RistakTheme.Spacing.xxs)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Asistente Personal AI, fijo")
-    }
-}
-
 // MARK: - Fila «Archivados» (doc 03 §4.2.5)
 
 struct ArchivedAccessRow: View {

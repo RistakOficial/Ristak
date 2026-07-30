@@ -8,7 +8,7 @@ import {
 import {
   getOpenAIApiKey,
   transcribeVoiceAudio
-} from '../../services/aiAgentService.js'
+} from '../../services/aiRuntimeService.js'
 import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
 
 const MAX_MEDIA_ITEMS_TO_HYDRATE = 6

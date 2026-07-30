@@ -6,6 +6,8 @@ import SwiftUI
 struct AgentHubSheet: View {
     @State private var viewModel = AgentHubViewModel()
     @State private var editingAgent: ConversationalAgentDef?
+    @State private var openAIKey = ""
+    @State private var connectingOpenAI = false
 
     var body: some View {
         SheetScaffold(title: "Agente conversacional") {
@@ -44,13 +46,34 @@ struct AgentHubSheet: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(RistakTheme.bg)
         case .needsOpenAI(let reconnect):
-            RistakEmptyState(
-                icon: "key.horizontal",
-                title: reconnect ? "Reconecta OpenAI" : "Conecta OpenAI",
-                message: reconnect
-                    ? "Tu conexión con OpenAI dejó de funcionar. Vuelve a conectarla en Ajustes → Asistente Personal AI para usar el agente."
-                    : "Conecta tu API key de OpenAI en Ajustes → Asistente Personal AI para activar el agente conversacional."
-            )
+            SettingsPanelScroll {
+                SectionCard(title: reconnect ? "Reconecta OpenAI" : "Conecta OpenAI") {
+                    Text("La llave se usa únicamente para que tus agentes conversacionales atiendan chats.")
+                        .font(.footnote)
+                        .foregroundStyle(RistakTheme.textDim)
+                    SecureField("API key de OpenAI (sk-...)", text: $openAIKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        connectingOpenAI = true
+                        Task {
+                            await viewModel.connectOpenAI(apiKey: openAIKey)
+                            if viewModel.phase == .ready { openAIKey = "" }
+                            connectingOpenAI = false
+                        }
+                    } label: {
+                        if connectingOpenAI {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text(reconnect ? "Reconectar OpenAI" : "Conectar OpenAI")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(connectingOpenAI || openAIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         case .accessDenied:
             SettingsAccessDeniedView(message: "No tienes acceso al agente conversacional.")
         case .failed(let message):
@@ -74,7 +97,7 @@ struct AgentHubSheet: View {
             HStack(spacing: RistakTheme.Spacing.sm) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(RistakTheme.warn)
-                Text("Completa la descripción de tu negocio en Ajustes → Asistente Personal AI para poder encender el agente.")
+                Text("Completa la información del negocio desde la configuración del chatbot en Ristak para escritorio para poder encender el agente.")
                     .font(.footnote)
                     .foregroundStyle(RistakTheme.textDim)
                     .fixedSize(horizontal: false, vertical: true)

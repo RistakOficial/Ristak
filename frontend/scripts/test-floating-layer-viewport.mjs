@@ -60,7 +60,7 @@ const [
   readSource('../src/pages/DesktopChat/DesktopChat.tsx'),
   readSource('../src/pages/DesktopChat/DesktopChat.module.css'),
   readSource('../src/pages/Settings/ConversationalAgentSettings.tsx'),
-  readSource('../src/pages/Settings/AIAgentSettings.module.css'),
+  readSource('../src/pages/Settings/ConversationalAgentSettings.module.css'),
   readSource('../src/pages/Automations/editor/composer/MessageComposer.tsx'),
   readSource('../src/pages/Automations/editor/config/DrillSelect.tsx'),
   readSource('../src/pages/Automations/editor/StepPickerBubble.tsx'),

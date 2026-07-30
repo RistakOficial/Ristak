@@ -189,7 +189,7 @@ struct SettingsRootView: View {
         case .numbers, .chats: return RistakTheme.pos
         case .customFields, .tags: return RistakTheme.warn
         case .notifications: return RistakTheme.neg
-        case .templates, .agent, .appearance, .privacy: return RistakTheme.textDim
+        case .templates, .appearance, .privacy: return RistakTheme.textDim
         }
     }
 
@@ -199,8 +199,6 @@ struct SettingsRootView: View {
             return model.numbersMeta
         case .templates:
             return model.templatesMeta
-        case .agent:
-            return model.agentMeta(chatEnabled: appConfig.aiAgentChatEnabled)
         case .chats:
             return appConfig.chatSortMode == .recent ? "Recientes" : "No leídas"
         case .customFields:
@@ -238,8 +236,6 @@ struct SettingsRootView: View {
             SettingsWhatsAppNumbersPanel()
         case .templates:
             SettingsTemplatesPanel()
-        case .agent:
-            SettingsAgentPanel()
         case .chats:
             SettingsChatListPanel()
         case .customFields:

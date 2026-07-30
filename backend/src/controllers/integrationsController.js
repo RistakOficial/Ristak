@@ -2,7 +2,7 @@ import { db } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
-import { getAIAgentStatus } from '../services/aiAgentService.js';
+import { getAIRuntimeStatus } from '../services/aiRuntimeService.js';
 import { getGoogleCalendarConfig } from '../services/googleCalendarService.js';
 import { getStripePaymentConfig } from '../services/stripePaymentService.js';
 import { getMercadoPagoPaymentConfig } from '../services/mercadoPagoPaymentService.js';
@@ -156,7 +156,7 @@ export const getStatus = async (req, res) => {
         return { configured: connected || hasApiKey, connected };
       }),
       resolveLocalIntegrationStatus('OpenAI', { configured: false, connected: false }, async () => {
-        const aiStatus = await getAIAgentStatus({});
+        const aiStatus = await getAIRuntimeStatus({});
         return {
           configured: Boolean(aiStatus?.configured),
           connected: Boolean(aiStatus?.configured),

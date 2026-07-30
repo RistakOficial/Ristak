@@ -43,7 +43,7 @@ enum RistakAccessRules {
         .analytics: LicenseFeatureRule(primary: "analytics", legacy: []),
         .contacts: LicenseFeatureRule(primary: "contacts", legacy: []),
         .automations: LicenseFeatureRule(primary: "automations", legacy: []),
-        .aiAgent: LicenseFeatureRule(primary: "ai_agent", legacy: ["app_assistant_ai", "conversational_ai", "ai"]),
+        .aiAgent: LicenseFeatureRule(primary: "ai_agent", legacy: ["conversational_ai", "ai"]),
         .settingsMobile: LicenseFeatureRule(primary: "mobile_app", legacy: ["settings_mobile"]),
         .dashboard: LicenseFeatureRule(primary: "dashboard", legacy: []),
     ]
