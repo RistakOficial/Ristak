@@ -249,7 +249,7 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
           <button type="button" data-form-next>Continuar</button>
         </section>
         <section data-form-step="2" hidden>
-          <textarea name="situacion" data-rstk-field-id="situacion" minlength="160" required></textarea>
+          <textarea name="situacion" data-rstk-field-id="situacion" minlength="20" data-rstk-min-words="10" required></textarea>
           <button type="button" data-form-next>Continuar</button>
         </section>
         <section data-form-step="3" hidden>
@@ -298,8 +298,11 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
     assert.match(rendered, /return sharedStableFieldId \|\| name/)
     assert.match(rendered, /data-rstk-import-form-runtime-style/)
     assert.match(rendered, /const readMinimumCharacters = \(field\) =>/)
+    assert.match(rendered, /const readMinimumWords = \(field\) =>/)
+    assert.match(rendered, /const countMeaningfulWords = \(field\) =>/)
+    assert.match(rendered, /Escribe al menos ' \+ minimumWords \+ ' palabras para continuar\./)
     assert.match(rendered, /data-rstk-minimum-characters-blocked/)
-    assert.match(rendered, /Escribe al menos ' \+ minimum \+ ' caracteres para continuar\./)
+    assert.match(rendered, /Escribe al menos ' \+ minimumCharacters \+ ' caracteres para continuar\./)
     assert.match(rendered, /new CustomEvent\('ristak:form-step-advance'/)
     assert.match(rendered, /collectSelectedChoiceActions\(step\)/)
     assert.match(rendered, /form\.requestSubmit\(\)/)

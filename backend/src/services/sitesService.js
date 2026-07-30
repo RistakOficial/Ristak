@@ -7480,7 +7480,7 @@ Convenciones de formularios para Ristak:
 - Cada conjunto debe vivir en un elemento <form> real con data-rstk-form-id semantico, estable y unico en TODO el sitio, incluso entre paginas; agrega data-rstk-label para el nombre visible del grupo. Ejemplo: <form data-rstk-form-id="contacto-lead" data-rstk-label="Formulario de contacto" data-rstk-form="lead_capture" method="post">.
 - Cada campo logico debe tener data-rstk-field-id estable y unico dentro de su formulario, ademas de id, name, label visible y autocomplete cuando aplique. En radio/checkbox, envuelve el grupo en <fieldset><legend>Pregunta</legend>...</fieldset>; todas las opciones comparten data-rstk-field-id y name.
 - Para un formulario de varias pantallas usa data-multistep-form en el <form>, data-form-step="1|2|..." en cada paso, data-form-next y data-form-back en botones type="button", data-form-step-label para el texto de progreso y data-form-progress-bar para la barra. No agregues JavaScript: Ristak valida únicamente el paso visible, avanza, retrocede y enfoca el título.
-- Para exigir una respuesta desarrollada usa minlength="160" (o la cantidad necesaria) en input/textarea. Ristak mantiene el botón data-form-next desactivado y visualmente atenuado hasta alcanzar el mínimo de caracteres sin contar espacios al inicio o al final.
+- Para exigir una respuesta desarrollada por caracteres usa minlength="160" (o la cantidad necesaria) en input/textarea. Si conviene medir palabras, usa data-rstk-min-words="10". Ristak mantiene el botón data-form-next desactivado y visualmente atenuado hasta alcanzar todos los mínimos declarados.
 - En un paso multistep, una opción seleccionada con data-rstk-choice-actions y action="disqualify" se registra y descalifica al presionar data-form-next; no obliga al visitante a completar los pasos posteriores.
 - Resetea el estilo nativo del navegador en tus grupos: fieldset { min-width:0; margin:0; padding:0; border:0 } y legend { padding:0 }. Después agrega tus propios separadores con border-bottom si el diseño los necesita; nunca dejes el borde groove predeterminado.
 - Cambiar copy, clases, estilos, orden o name/id NO cambia data-rstk-form-id ni data-rstk-field-id. Cambiar uno de esos IDs crea una asociacion nueva; conservarlo recupera la anterior aunque el elemento haya desaparecido temporalmente.
@@ -27273,18 +27273,43 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           'data-ristak-min-characters',
           'data-ristack-min-characters'
         ];
-        const readMinimumCharacters = (field) => {
-          const raw = minimumCharacterAttributes
+        const minimumWordAttributes = [
+          'data-rstk-min-words',
+          'data-ristak-min-words',
+          'data-ristack-min-words'
+        ];
+        const readPositiveIntegerAttribute = (field, attributes) => {
+          const raw = attributes
             .map(name => field.getAttribute && field.getAttribute(name))
             .find(value => value !== null && value !== undefined && String(value).trim());
           const minimum = Number.parseInt(String(raw || ''), 10);
           return Number.isFinite(minimum) && minimum > 0 ? minimum : 0;
         };
+        const readMinimumCharacters = (field) => {
+          return readPositiveIntegerAttribute(field, minimumCharacterAttributes);
+        };
+        const readMinimumWords = (field) => {
+          return readPositiveIntegerAttribute(field, minimumWordAttributes);
+        };
         const countMeaningfulCharacters = (field) => Array.from(String(field.value || '').trim()).length;
+        const countMeaningfulWords = (field) => {
+          const value = String(field.value || '').trim();
+          return value ? value.split(/\\s+/).filter(Boolean).length : 0;
+        };
         const meetsMinimumCharacters = (field) => {
           const minimum = readMinimumCharacters(field);
           return minimum <= 0 || countMeaningfulCharacters(field) >= minimum;
         };
+        const meetsMinimumWords = (field) => {
+          const minimum = readMinimumWords(field);
+          return minimum <= 0 || countMeaningfulWords(field) >= minimum;
+        };
+        const meetsDeclaredMinimums = (field) => (
+          meetsMinimumCharacters(field) && meetsMinimumWords(field)
+        );
+        const hasDeclaredMinimum = (field) => (
+          readMinimumCharacters(field) > 0 || readMinimumWords(field) > 0
+        );
         const clearOwnedMinimumError = (field) => {
           if (field.dataset.rstkMinimumCharactersError !== 'true') return;
           if (typeof field.setCustomValidity === 'function') field.setCustomValidity('');
@@ -27293,11 +27318,11 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         const syncMinimumCharacterButtons = (step) => {
           if (!step) return;
           const fields = Array.from(step.querySelectorAll('input, textarea'))
-            .filter(field => readMinimumCharacters(field) > 0 && !field.disabled);
+            .filter(field => hasDeclaredMinimum(field) && !field.disabled);
           fields.forEach(field => {
-            if (meetsMinimumCharacters(field)) clearOwnedMinimumError(field);
+            if (meetsDeclaredMinimums(field)) clearOwnedMinimumError(field);
           });
-          const blocked = fields.some(field => !meetsMinimumCharacters(field));
+          const blocked = fields.some(field => !meetsDeclaredMinimums(field));
           Array.from(step.querySelectorAll(nextButtonSelector)).forEach(button => {
             if (button.dataset.rstkMinimumCharactersReady !== 'true') {
               button.dataset.rstkMinimumCharactersReady = 'true';
@@ -27346,10 +27371,18 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
             .filter(field => !field.disabled && String(field.type || '').toLowerCase() !== 'hidden');
           const invalidField = fields.find(field => {
             clearOwnedMinimumError(field);
-            const minimum = readMinimumCharacters(field);
-            if (minimum > 0 && !meetsMinimumCharacters(field)) {
+            const minimumWords = readMinimumWords(field);
+            if (minimumWords > 0 && !meetsMinimumWords(field)) {
               if (typeof field.setCustomValidity === 'function') {
-                field.setCustomValidity('Escribe al menos ' + minimum + ' caracteres para continuar.');
+                field.setCustomValidity('Escribe al menos ' + minimumWords + ' palabras para continuar.');
+                field.dataset.rstkMinimumCharactersError = 'true';
+              }
+              return true;
+            }
+            const minimumCharacters = readMinimumCharacters(field);
+            if (minimumCharacters > 0 && !meetsMinimumCharacters(field)) {
+              if (typeof field.setCustomValidity === 'function') {
+                field.setCustomValidity('Escribe al menos ' + minimumCharacters + ' caracteres para continuar.');
                 field.dataset.rstkMinimumCharactersError = 'true';
               }
               return true;
@@ -27386,7 +27419,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           if (invalidStepIndex >= 0 && invalidStepIndex !== currentIndex) showStep(invalidStepIndex, false);
         }, true);
         form.addEventListener('input', (event) => {
-          if (!event.target || readMinimumCharacters(event.target) <= 0) return;
+          if (!event.target || !hasDeclaredMinimum(event.target)) return;
           syncMinimumCharacterButtons(steps[currentIndex]);
         });
 
