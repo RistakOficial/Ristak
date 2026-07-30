@@ -11,12 +11,33 @@ export interface ChatMessageChannelSignals {
   hasEmail?: boolean
 }
 
+export type ChatCommentPlatform = 'instagram' | 'messenger'
+
+const COMMENT_MESSAGE_TYPES = new Set([
+  'comment',
+  'comment_reply_public',
+  'comment_reply_private'
+])
+
 function normalizeSignal(value: unknown) {
   return String(value || '').trim().toLowerCase()
 }
 
 function containsAny(value: string, needles: string[]) {
   return needles.some((needle) => value.includes(needle))
+}
+
+/**
+ * `commentPlatform` sólo existe para comentarios y sus respuestas. Antes se
+ * rellenaba como Messenger en cualquier mensaje que no dijera Instagram, lo
+ * que convertía mensajes normales de WhatsApp en globos azules al hidratar.
+ */
+export function resolveChatCommentPlatform(
+  messageType: unknown,
+  platform: unknown
+): ChatCommentPlatform | undefined {
+  if (!COMMENT_MESSAGE_TYPES.has(normalizeSignal(messageType))) return undefined
+  return normalizeSignal(platform).includes('instagram') ? 'instagram' : 'messenger'
 }
 
 /**
@@ -30,8 +51,8 @@ export function resolveChatMessageChannel(signals: ChatMessageChannelSignals): C
   const transport = normalizeSignal(signals.transport)
   const provider = normalizeSignal(signals.provider)
   const platform = normalizeSignal(signals.platform)
-  const commentPlatform = normalizeSignal(signals.commentPlatform)
   const messageType = normalizeSignal(signals.messageType)
+  const commentPlatform = resolveChatCommentPlatform(messageType, signals.commentPlatform) || ''
   const explicitProbe = [commentPlatform, platform, channel, provider, transport].filter(Boolean).join(' ')
 
   if (

@@ -6,7 +6,11 @@ const sourceUrl = new URL('../src/utils/chatMessageChannel.ts', import.meta.url)
 const source = await readFile(sourceUrl, 'utf8')
 const compiled = await transform(source, { loader: 'ts', format: 'esm', target: 'es2020' })
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled.code).toString('base64')}`
-const { getChatBubbleColorChannel, resolveChatMessageChannel } = await import(moduleUrl)
+const {
+  getChatBubbleColorChannel,
+  resolveChatCommentPlatform,
+  resolveChatMessageChannel
+} = await import(moduleUrl)
 
 assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'api' }), 'whatsapp_api')
 assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'qr' }), 'whatsapp_qr')
@@ -18,6 +22,30 @@ assert.equal(resolveChatMessageChannel({ channel: 'facebook_comment' }), 'messen
 assert.equal(resolveChatMessageChannel({ eventType: 'email_message', transport: 'smtp' }), 'email')
 assert.equal(resolveChatMessageChannel({ channel: 'sms_qr', transport: 'qr' }), 'sms')
 assert.equal(resolveChatMessageChannel({ eventType: 'sms_message' }), 'sms')
+assert.equal(
+  resolveChatMessageChannel({
+    eventType: 'whatsapp_message',
+    channel: 'whatsapp_api',
+    transport: 'api',
+    provider: 'meta_direct',
+    commentPlatform: 'messenger',
+    messageType: 'text'
+  }),
+  'whatsapp_api',
+  'un valor legacy de commentPlatform no debe convertir WhatsApp en Messenger'
+)
+assert.equal(resolveChatCommentPlatform('text', 'messenger'), undefined)
+assert.equal(resolveChatCommentPlatform('comment', 'instagram'), 'instagram')
+assert.equal(resolveChatCommentPlatform('comment_reply_public', 'facebook'), 'messenger')
+assert.equal(
+  resolveChatMessageChannel({
+    channel: 'whatsapp_api',
+    commentPlatform: 'instagram',
+    messageType: 'comment'
+  }),
+  'instagram',
+  'un comentario real sí debe respetar su plataforma social'
+)
 assert.equal(getChatBubbleColorChannel('email', 'outbound'), undefined)
 assert.equal(getChatBubbleColorChannel('sms', 'outbound'), undefined)
 assert.equal(getChatBubbleColorChannel('whatsapp_api', 'inbound'), undefined)

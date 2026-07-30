@@ -95,7 +95,11 @@ import {
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
-import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
+import {
+  getChatBubbleColorChannel,
+  resolveChatCommentPlatform,
+  resolveChatMessageChannel
+} from '@/utils/chatMessageChannel'
 import {
   getHighLevelChatSendOutcome,
   getHighLevelRouteChangeMessage,
@@ -1436,9 +1440,18 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.businessPhoneNumberId,
     message.transport,
     message.provider,
+    message.channel,
     message.routingReason,
     message.sentByAgent,
     message.agentId,
+    message.isComment,
+    message.commentReplyMode,
+    message.commentId,
+    message.commentPlatform,
+    message.commentPost?.message,
+    message.commentPost?.imageUrl,
+    message.commentPost?.permalink,
+    message.commentPost?.deleted,
     message.adPreview?.platform,
     message.adPreview?.title,
     message.adPreview?.body,
@@ -2651,6 +2664,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
   const transport = String(data.transport || data.channel || '').trim() || provider
   const platform = String(data.social_platform || data.platform || '').trim()
+  const commentPlatform = resolveChatCommentPlatform(messageType, platform)
+  const isComment = Boolean(commentPlatform)
   const channel = resolveChatMessageChannel({
     eventType: event.type,
     channel: data.channel,
@@ -2716,11 +2731,11 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     reactionEmoji: reactionEmoji || undefined,
     reactionTargetMessageId: reactionTargetMessageId || undefined,
     reactionTargetProviderMessageId: reactionTargetProviderMessageId || undefined,
-    isComment: isCommentMessageType(messageType),
+    isComment,
     commentReplyMode: normalizedMessageType === 'comment_reply_public' ? 'public' : normalizedMessageType === 'comment_reply_private' ? 'private' : undefined,
     commentId: String(data.comment_id || data.commentId || '').trim() || undefined,
-    commentPlatform: platform.toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
-    commentPost: (isCommentMessageType(messageType) && (data.post_message || data.post_image_url || data.post_permalink || postDeleted))
+    commentPlatform,
+    commentPost: (isComment && (data.post_message || data.post_image_url || data.post_permalink || postDeleted))
       ? {
           message: String(data.post_message || (postDeleted ? 'Publicación eliminada' : '')).trim(),
           imageUrl: String(data.post_image_url || '').trim(),

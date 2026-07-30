@@ -2201,7 +2201,11 @@ estados pasan a una paleta clara de contraste y nunca se fuerza internamente
 `colorScheme` claro. Correo, SMS y canal desconocido se mantienen neutrales.
 `api`, `qr` o `smtp` no se interpretan como plataforma por si solos: primero se
 considera el canal social real y despues, solo para WhatsApp, el transporte
-API/QR. Mensajes programados mantienen ademas su borde punteado y los fallidos
+API/QR. `commentPlatform` sólo se conserva para `comment`,
+`comment_reply_public` y `comment_reply_private`; un mensaje normal nunca
+recibe Messenger como valor por defecto ni puede cambiar de color al reemplazar
+su globo optimista con la fila autoritativa. Mensajes programados mantienen
+ademas su borde punteado y los fallidos
 conservan prioridad visual de error.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
