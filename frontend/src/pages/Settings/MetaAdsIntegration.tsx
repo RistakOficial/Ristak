@@ -4,7 +4,7 @@ import { Button, Icon, MetaBrandMark, Modal, CustomSelect, PageHeader, SegmentTa
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { Activity, CheckCircle, Copy, ExternalLink, FlaskConical, Megaphone, MessageCircle, Plus, Power, RefreshCw, Save, Send, Settings2, Trash2 } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAccountCurrency, useAppConfig } from '@/hooks'
+import { publishPersistedAppConfigValue, useAccountCurrency, useAppConfig } from '@/hooks'
 import {
   campaignsService,
   type ConnectedSocialProfile,
@@ -19,6 +19,7 @@ import {
   type MetaOAuthFinalizeSelection,
   type MetaOAuthIntegrationKind,
   type MetaOAuthSession,
+  type MetaOAuthSocialChannels,
   type MetaOAuthStatus
 } from '@/services/metaOAuthService'
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
@@ -94,6 +95,13 @@ type MetaTestIdentityParameterKey =
   | 'igSid'
   | 'instagramAccountId'
 type MetaTestStringParameterKey = Exclude<keyof MetaTestEventParameters, 'custom'>
+
+const createEmptyMetaSocialChannels = (): MetaOAuthSocialChannels => ({
+  messengerMessaging: false,
+  instagramMessaging: false,
+  facebookComments: false,
+  instagramComments: false
+})
 
 interface MetaDeveloperSetup {
   appId: string
@@ -494,6 +502,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const [metaOAuthSessionKind, setMetaOAuthSessionKind] = useState<MetaOAuthSessionKind | null>(null)
   const [metaOAuthSelection, setMetaOAuthSelection] = useState<MetaOAuthFinalizeSelection>({ sessionId: '' })
   const [savedMetaOAuthSelection, setSavedMetaOAuthSelection] = useState<MetaOAuthFinalizeSelection>({ sessionId: '' })
+  const [metaOnboardingChannels, setMetaOnboardingChannels] = useState<MetaOAuthSocialChannels>(createEmptyMetaSocialChannels)
+  const [isSavingMetaOnboarding, setIsSavingMetaOnboarding] = useState(false)
   const [savingMetaAssetSection, setSavingMetaAssetSection] = useState<MetaAssetSection | null>(null)
   const [connectingMetaOAuthKind, setConnectingMetaOAuthKind] = useState<MetaOAuthSessionKind | null>(null)
   const [showManualConnection, setShowManualConnection] = useState(false)
@@ -812,6 +822,9 @@ export const MetaAdsIntegration: React.FC = () => {
     setMetaOAuthSessionKind(sessionKind)
     setMetaOAuthSelection(selection)
     setSavedMetaOAuthSelection(markSelectionAsSaved ? selection : { sessionId: session.sessionId })
+    if (sessionKind === 'legacy' && !markSelectionAsSaved) {
+      setMetaOnboardingChannels(createEmptyMetaSocialChannels())
+    }
     setShowManualConnection(false)
     return selection
   }
@@ -844,6 +857,118 @@ export const MetaAdsIntegration: React.FC = () => {
     if (!session || savingMetaAssetSection) return
 
     setMetaOAuthSelection(current => buildMetaOAuthSelection(session, current, patch))
+  }
+
+  const updateMetaOAuthOnboardingAssetDraft = (patch: Partial<MetaOAuthFinalizeSelection>) => {
+    updateMetaOAuthAssetDraft(patch)
+    if (patch.pageId !== undefined && patch.pageId !== metaOAuthSelection.pageId) {
+      setMetaOnboardingChannels(current => patch.pageId
+        ? {
+            ...current,
+            instagramMessaging: false,
+            instagramComments: false
+          }
+        : createEmptyMetaSocialChannels())
+    } else if (
+      patch.instagramAccountId !== undefined &&
+      patch.instagramAccountId !== metaOAuthSelection.instagramAccountId
+    ) {
+      setMetaOnboardingChannels(current => ({
+        ...current,
+        instagramMessaging: false,
+        instagramComments: false
+      }))
+    }
+  }
+
+  const publishMetaSocialChannels = (channels: MetaOAuthSocialChannels) => {
+    publishPersistedAppConfigValue('meta_messenger_messaging_enabled', channels.messengerMessaging)
+    publishPersistedAppConfigValue('meta_instagram_messaging_enabled', channels.instagramMessaging)
+    publishPersistedAppConfigValue('meta_facebook_comments_enabled', channels.facebookComments)
+    publishPersistedAppConfigValue('meta_instagram_comments_enabled', channels.instagramComments)
+  }
+
+  const finishMetaOnboarding = async (
+    channels: MetaOAuthSocialChannels,
+    result?: Awaited<ReturnType<typeof metaOAuthService.finalize>>,
+    knownStatus?: MetaOAuthStatus | null
+  ) => {
+    const nextPageId = result?.selected.pageId || metaOAuthSelection.pageId || ''
+    const nextInstagramAccountId = result?.selected.instagramAccountId || metaOAuthSelection.instagramAccountId || ''
+    setSavedPageId(nextPageId)
+    setSavedInstagramAccountId(nextInstagramAccountId)
+    publishMetaSocialChannels(result?.socialChannels || channels)
+
+    const [status] = await Promise.all([
+      knownStatus ? Promise.resolve(knownStatus) : loadMetaOAuthStatus(),
+      loadCredentials()
+    ])
+    if (result?.connectionMode) setMetaConnectionMode(result.connectionMode)
+    if (result?.session) {
+      applyMetaOAuthSession(result.session, 'legacy')
+    } else if (!status?.assetSnapshot) {
+      applyMetaOAuthSession(await metaOAuthService.reconfigure(), 'legacy')
+    }
+    setActiveMetaTab('cuenta')
+    navigate(buildMetaAdsConnectedTabPath('cuenta'), { replace: true })
+  }
+
+  const saveMetaOnboarding = async () => {
+    const session = metaOAuthSession
+    if (!session || metaOAuthSessionKind !== 'legacy' || isSavingMetaOnboarding) return
+    if (!metaOAuthSelection.adAccountId) {
+      showToast('warning', 'Cuenta publicitaria requerida', 'Elige la cuenta publicitaria que usará Ristak.')
+      return
+    }
+    if (session.permissions.missing.length) {
+      showToast('warning', 'Faltan permisos de Meta', 'Vuelve a autorizar Meta y concede todos los permisos solicitados.')
+      return
+    }
+
+    const channels: MetaOAuthSocialChannels = {
+      messengerMessaging: Boolean(metaOAuthSelection.pageId && metaOnboardingChannels.messengerMessaging),
+      facebookComments: Boolean(metaOAuthSelection.pageId && metaOnboardingChannels.facebookComments),
+      instagramMessaging: Boolean(
+        metaOAuthSelection.pageId &&
+        metaOAuthSelection.instagramAccountId &&
+        metaOnboardingChannels.instagramMessaging
+      ),
+      instagramComments: Boolean(
+        metaOAuthSelection.pageId &&
+        metaOAuthSelection.instagramAccountId &&
+        metaOnboardingChannels.instagramComments
+      )
+    }
+
+    setIsSavingMetaOnboarding(true)
+    try {
+      const result = await metaOAuthService.finalize({
+        ...buildMetaOAuthSelection(session, metaOAuthSelection, {}),
+        socialChannels: channels
+      })
+      await finishMetaOnboarding(channels, result)
+      showToast(
+        'success',
+        'Meta quedó configurado',
+        'La cuenta, los activos y los canales elegidos ya están listos.'
+      )
+    } catch (error) {
+      // Si el servidor alcanzó a guardar pero la respuesta se perdió, el estado
+      // local conectado evita pedir otro OAuth o consumir dos veces el handoff.
+      const status = await loadMetaOAuthStatus().catch(() => null)
+      if (status?.oauth.connected) {
+        await finishMetaOnboarding(channels, undefined, status)
+        showToast('success', 'Meta quedó configurado', 'La conexión terminó correctamente.')
+      } else {
+        showToast(
+          'error',
+          'No se pudo guardar Meta',
+          error instanceof Error ? error.message : 'Revisa tus selecciones e inténtalo de nuevo.'
+        )
+      }
+    } finally {
+      setIsSavingMetaOnboarding(false)
+    }
   }
 
   const saveMetaOAuthAssetSection = async (section: MetaAssetSection) => {
@@ -1072,30 +1197,11 @@ export const MetaAdsIntegration: React.FC = () => {
         return
       }
 
-      const result = await metaOAuthService.complete({ handoffToken })
-      const nextPageId = result.selected.pageId || ''
-      const nextInstagramAccountId = result.selected.instagramAccountId || ''
-      setSavedPageId(nextPageId)
-      setSavedInstagramAccountId(nextInstagramAccountId)
-      setCredentials(current => ({
-        ...current,
-        adAccountId: result.selected.adAccountId || '',
-        pixelId: result.selected.pixelId || '',
-        pageId: nextPageId,
-        instagramAccountId: nextInstagramAccountId,
-        adsConnectionMode: result.connectionMode,
-        socialConnectionMode: result.connectionMode
-      }))
-      setMetaConnectionMode(result.connectionMode)
-      await loadMetaOAuthStatus()
-      if (result.session) {
-        applyMetaOAuthSession(result.session, 'legacy')
-      } else {
-        applyMetaOAuthSession(await metaOAuthService.reconfigure(), 'legacy')
-      }
+      const session = await metaOAuthService.complete({ handoffToken })
+      applyMetaOAuthSession(session, 'legacy', false)
       setActiveMetaTab('cuenta')
       navigate(buildMetaAdsConnectedTabPath('cuenta'), { replace: true })
-      showToast('success', 'Meta autorizado', 'Elige los activos que quieras usar y guarda cada sección cuando esté lista.')
+      showToast('success', 'Permisos de Meta listos', 'Termina la configuración en esta misma pantalla.')
     } catch (error) {
       if (integrationKind === 'ads' || integrationKind === 'social') {
         const statuses = await loadSplitMetaOAuthStatuses().catch(() => null)
@@ -1521,6 +1627,8 @@ export const MetaAdsIntegration: React.FC = () => {
     setMetaOAuthSessionKind(null)
     setMetaOAuthSelection({ sessionId: '' })
     setSavedMetaOAuthSelection({ sessionId: '' })
+    setMetaOnboardingChannels(createEmptyMetaSocialChannels())
+    setIsSavingMetaOnboarding(false)
     setSavingMetaAssetSection(null)
     setMetaAssetSnapshot(null)
     setShowManualConnection(false)
@@ -2401,6 +2509,11 @@ export const MetaAdsIntegration: React.FC = () => {
   // manuales heredadas pueden permanecer cifradas durante la migración, pero no
   // habilitan pestañas, estados ni formularios en Configuración.
   const isMetaConfigured = isOAuthConnection
+  const isMetaOnboarding = Boolean(
+    !isMetaConfigured &&
+    metaOAuthSessionKind === 'legacy' &&
+    metaOAuthSession?.sessionId
+  )
   const isConnectingSocialOAuth = connectingMetaOAuthKind === 'social'
   const isConnectingLegacyOAuth = connectingMetaOAuthKind === 'legacy'
   const socialOAuthStatus = splitMetaOAuthStatuses.social
@@ -2565,6 +2678,8 @@ export const MetaAdsIntegration: React.FC = () => {
   const selectedOAuthInstagram = availableOAuthInstagramAccounts.find(account => (
     account.id === metaOAuthSelection.instagramAccountId
   )) || null
+  const onboardingHasPage = Boolean(metaOAuthSelection.pageId)
+  const onboardingHasInstagram = onboardingHasPage && Boolean(metaOAuthSelection.instagramAccountId)
   const isMetaAdsSelectionDirty = Boolean(adsOAuthSession) && (
     String(metaOAuthSelection.adAccountId || '').replace(/^act_/, '') !== String(savedMetaOAuthSelection.adAccountId || '').replace(/^act_/, '')
     || (metaOAuthSelection.pixelId || '') !== (savedMetaOAuthSelection.pixelId || '')
@@ -3070,7 +3185,7 @@ export const MetaAdsIntegration: React.FC = () => {
               onChange={(id) => handleSelectMetaTab(id as MetaConnectedTab)}
             />}
 
-            {!isLoading && !isMetaConfigured && (
+            {!isLoading && !isMetaConfigured && !isMetaOnboarding && (
               <section className={styles.metaConnectEmptyState} aria-labelledby="meta-connect-title">
                 <span className={styles.metaConnectBrand} aria-hidden="true">
                   <MetaBrandMark size={42} />
@@ -3091,6 +3206,269 @@ export const MetaAdsIntegration: React.FC = () => {
                   {isConnectingLegacyOAuth ? 'Abriendo Meta' : 'Conectar Meta Business'}
                 </Button>
                 {metaOAuthStatus?.error ? <p className={styles.oauthWarning}>{metaOAuthStatus.error}</p> : null}
+              </section>
+            )}
+
+            {isMetaOnboarding && metaOAuthSession && (
+              <section className={`${styles.tabPanel} ${styles.metaOnboarding}`} aria-labelledby="meta-onboarding-title">
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <h3 id="meta-onboarding-title" className={styles.sectionTitle}>Termina de configurar Meta</h3>
+                    <p className={styles.sectionDescription}>
+                      Los permisos ya están listos. Elige qué usará Ristak y guarda todo una sola vez.
+                    </p>
+                  </div>
+                  <Badge variant="success">
+                    <CheckCircle size={16} />
+                    OAuth autorizado
+                  </Badge>
+                </div>
+
+                {metaOAuthSession.permissions.missing.length ? (
+                  <p className={styles.oauthWarning} role="status">
+                    Faltan permisos de Meta: {metaOAuthSession.permissions.missing.join(', ')}. Vuelve a conectar Meta para continuar.
+                  </p>
+                ) : null}
+
+                <div className={styles.metaOnboardingGroup}>
+                  <div className={styles.connectedPagesHeader}>
+                    <h4 className={styles.connectedPagesTitle}>Publicidad y medición</h4>
+                    <p className={styles.connectedPagesDescription}>
+                      La cuenta publicitaria es necesaria. El Dataset o pixel sólo se usa si quieres medición y conversiones.
+                    </p>
+                  </div>
+
+                  <div className={styles.connectedList}>
+                    <div className={styles.connectedListRow}>
+                      <span className={styles.connectedListLabel}>Cuenta publicitaria</span>
+                      <CustomSelect
+                        className={styles.connectedAssetSelect}
+                        value={metaOAuthSelection.adAccountId || ''}
+                        searchable
+                        searchPlaceholder="Buscar cuenta publicitaria…"
+                        selectedContent={renderOAuthSelectValue(
+                          selectedOAuthAdAccount ? {
+                            id: selectedOAuthAdAccount.id.replace(/^act_/, ''),
+                            name: selectedOAuthAdAccount.name
+                          } : null,
+                          'Selecciona tu cuenta publicitaria',
+                          'Cuenta publicitaria seleccionada'
+                        )}
+                        onChange={(event) => updateMetaOAuthOnboardingAssetDraft({ adAccountId: event.target.value })}
+                        disabled={isSavingMetaOnboarding || Boolean(metaOAuthSession.permissions.missing.length)}
+                        aria-label="Cuenta publicitaria"
+                      >
+                        <option value="">Selecciona tu cuenta publicitaria</option>
+                        {metaOAuthSession.adAccounts.map(account => (
+                          <option key={account.id} value={account.id.replace(/^act_/, '')}>
+                            {getMetaAssetDisplayName(account.name, account.id, 'Cuenta publicitaria')}
+                          </option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+
+                    <div className={styles.connectedListRow}>
+                      <span className={styles.connectedListLabel}>Dataset o pixel (Opcional)</span>
+                      <CustomSelect
+                        className={styles.connectedAssetSelect}
+                        value={metaOAuthSelection.pixelId || ''}
+                        searchable
+                        searchPlaceholder="Buscar Dataset o pixel…"
+                        selectedContent={renderOAuthSelectValue(
+                          selectedOAuthDataset ? { id: selectedOAuthDataset.id, name: selectedOAuthDataset.name } : null,
+                          'Sin Dataset o pixel',
+                          'Dataset o pixel seleccionado'
+                        )}
+                        onChange={(event) => updateMetaOAuthOnboardingAssetDraft({ pixelId: event.target.value })}
+                        disabled={!selectedOAuthAdAccount || isSavingMetaOnboarding || Boolean(metaOAuthSession.permissions.missing.length)}
+                        aria-label="Dataset o pixel"
+                      >
+                        <option value="">Sin Dataset o pixel</option>
+                        {availableOAuthDatasets.map(dataset => (
+                          <option key={dataset.id} value={dataset.id}>
+                            {getMetaAssetDisplayName(dataset.name, dataset.id, 'Dataset o pixel')}
+                          </option>
+                        ))}
+                      </CustomSelect>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.metaOnboardingGroup}>
+                  <div className={styles.connectedPagesHeader}>
+                    <h4 className={styles.connectedPagesTitle}>Facebook e Instagram (Opcional)</h4>
+                    <p className={styles.connectedPagesDescription}>
+                      Puedes omitir esta parte. Si eliges perfiles, decide qué mensajes y comentarios atenderá Ristak.
+                    </p>
+                  </div>
+
+                  <div className={styles.socialChannelGrid}>
+                    <div className={styles.socialChannelPanel}>
+                      <div className={styles.socialChannelHeader}>
+                        <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconFacebook}`} aria-hidden="true">
+                          <Icon name="facebook" size={19} />
+                        </span>
+                        <div className={styles.socialChannelTitleBlock}>
+                          <h4 className={styles.connectedPagesTitle}>Facebook y Messenger</h4>
+                          <p className={styles.connectedPagesDescription}>Página, mensajes y comentarios.</p>
+                        </div>
+                      </div>
+
+                      <label className={styles.socialAssetField}>
+                        <span className={styles.formLabel}>Página (Opcional)</span>
+                        <CustomSelect
+                          className={styles.socialAssetSelect}
+                          value={metaOAuthSelection.pageId || ''}
+                          searchable
+                          searchPlaceholder="Buscar página…"
+                          selectedContent={renderOAuthSelectValue(
+                            selectedOAuthPage ? { id: selectedOAuthPage.id, name: selectedOAuthPage.name } : null,
+                            'Sin página por ahora',
+                            'Página seleccionada'
+                          )}
+                          onChange={(event) => updateMetaOAuthOnboardingAssetDraft({ pageId: event.target.value })}
+                          disabled={isSavingMetaOnboarding || Boolean(metaOAuthSession.permissions.missing.length)}
+                          aria-label="Página de Facebook"
+                        >
+                          <option value="">Sin página por ahora</option>
+                          {metaOAuthSession.pages.map(page => (
+                            <option key={page.id} value={page.id}>
+                              {getMetaAssetDisplayName(page.name, page.id, 'Página de Facebook')}
+                            </option>
+                          ))}
+                        </CustomSelect>
+                      </label>
+
+                      <div className={styles.socialSettingRows}>
+                        <div className={styles.socialSettingRow}>
+                          <div className={styles.socialSettingCopy}>
+                            <strong>Mensajes de Messenger</strong>
+                          </div>
+                          <div className={styles.socialSettingControl}>
+                            <Badge variant={getMetaMessagingStatusVariant(metaOnboardingChannels.messengerMessaging, onboardingHasPage)}>
+                              {getMetaMessagingStatus(metaOnboardingChannels.messengerMessaging, onboardingHasPage)}
+                            </Badge>
+                            <Switch
+                              aria-label="Activar mensajes de Messenger durante la configuración"
+                              checked={metaOnboardingChannels.messengerMessaging}
+                              onChange={(next) => setMetaOnboardingChannels(current => ({ ...current, messengerMessaging: next }))}
+                              disabled={!onboardingHasPage || isSavingMetaOnboarding}
+                            />
+                          </div>
+                        </div>
+
+                        <div className={styles.socialSettingRow}>
+                          <div className={styles.socialSettingCopy}>
+                            <strong>Comentarios de Facebook</strong>
+                          </div>
+                          <div className={styles.socialSettingControl}>
+                            <Badge variant={getMetaMessagingStatusVariant(metaOnboardingChannels.facebookComments, onboardingHasPage)}>
+                              {getMetaMessagingStatus(metaOnboardingChannels.facebookComments, onboardingHasPage)}
+                            </Badge>
+                            <Switch
+                              aria-label="Activar comentarios de Facebook durante la configuración"
+                              checked={metaOnboardingChannels.facebookComments}
+                              onChange={(next) => setMetaOnboardingChannels(current => ({ ...current, facebookComments: next }))}
+                              disabled={!onboardingHasPage || isSavingMetaOnboarding}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={styles.socialChannelPanel}>
+                      <div className={styles.socialChannelHeader}>
+                        <span className={`${styles.connectedPageIcon} ${styles.connectedPageIconInstagram}`} aria-hidden="true">
+                          <Icon name="instagram" size={19} />
+                        </span>
+                        <div className={styles.socialChannelTitleBlock}>
+                          <h4 className={styles.connectedPagesTitle}>Instagram</h4>
+                          <p className={styles.connectedPagesDescription}>Cuenta profesional, DMs y comentarios.</p>
+                        </div>
+                      </div>
+
+                      <label className={styles.socialAssetField}>
+                        <span className={styles.formLabel}>Cuenta de Instagram (Opcional)</span>
+                        <CustomSelect
+                          className={styles.socialAssetSelect}
+                          value={metaOAuthSelection.instagramAccountId || ''}
+                          searchable
+                          searchPlaceholder="Buscar cuenta de Instagram…"
+                          selectedContent={renderOAuthSelectValue(
+                            selectedOAuthInstagram ? {
+                              id: selectedOAuthInstagram.id,
+                              name: selectedOAuthInstagram.username ? `@${selectedOAuthInstagram.username}` : selectedOAuthInstagram.name
+                            } : null,
+                            onboardingHasPage ? 'Sin Instagram por ahora' : 'Selecciona primero una página',
+                            'Cuenta de Instagram seleccionada'
+                          )}
+                          onChange={(event) => updateMetaOAuthOnboardingAssetDraft({ instagramAccountId: event.target.value })}
+                          disabled={!onboardingHasPage || isSavingMetaOnboarding || Boolean(metaOAuthSession.permissions.missing.length)}
+                          aria-label="Cuenta de Instagram"
+                        >
+                          <option value="">Sin Instagram por ahora</option>
+                          {availableOAuthInstagramAccounts.map(account => (
+                            <option key={account.id} value={account.id}>
+                              {getMetaAssetDisplayName(
+                                account.username ? `@${account.username}` : account.name,
+                                account.id,
+                                'Cuenta de Instagram'
+                              )}
+                            </option>
+                          ))}
+                        </CustomSelect>
+                      </label>
+
+                      <div className={styles.socialSettingRows}>
+                        <div className={styles.socialSettingRow}>
+                          <div className={styles.socialSettingCopy}>
+                            <strong>Instagram DM</strong>
+                          </div>
+                          <div className={styles.socialSettingControl}>
+                            <Badge variant={getMetaMessagingStatusVariant(metaOnboardingChannels.instagramMessaging, onboardingHasInstagram)}>
+                              {getMetaMessagingStatus(metaOnboardingChannels.instagramMessaging, onboardingHasInstagram)}
+                            </Badge>
+                            <Switch
+                              aria-label="Activar mensajes de Instagram durante la configuración"
+                              checked={metaOnboardingChannels.instagramMessaging}
+                              onChange={(next) => setMetaOnboardingChannels(current => ({ ...current, instagramMessaging: next }))}
+                              disabled={!onboardingHasInstagram || isSavingMetaOnboarding}
+                            />
+                          </div>
+                        </div>
+
+                        <div className={styles.socialSettingRow}>
+                          <div className={styles.socialSettingCopy}>
+                            <strong>Comentarios de Instagram</strong>
+                          </div>
+                          <div className={styles.socialSettingControl}>
+                            <Badge variant={getMetaMessagingStatusVariant(metaOnboardingChannels.instagramComments, onboardingHasInstagram)}>
+                              {getMetaMessagingStatus(metaOnboardingChannels.instagramComments, onboardingHasInstagram)}
+                            </Badge>
+                            <Switch
+                              aria-label="Activar comentarios de Instagram durante la configuración"
+                              checked={metaOnboardingChannels.instagramComments}
+                              onChange={(next) => setMetaOnboardingChannels(current => ({ ...current, instagramComments: next }))}
+                              disabled={!onboardingHasInstagram || isSavingMetaOnboarding}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.sectionSaveActions}>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => void saveMetaOnboarding()}
+                    disabled={isSavingMetaOnboarding || Boolean(metaOAuthSession.permissions.missing.length)}
+                  >
+                    {isSavingMetaOnboarding ? <RefreshCw size={16} className={styles.spinning} /> : <Save size={16} />}
+                    {isSavingMetaOnboarding ? 'Guardando configuración' : 'Guardar configuración'}
+                  </Button>
+                </div>
               </section>
             )}
 
@@ -3273,7 +3651,7 @@ export const MetaAdsIntegration: React.FC = () => {
 
                     {canEditSocialOAuthAssets && socialOAuthSession ? (
                       <label className={styles.socialAssetField}>
-                        <span className={styles.formLabel}>Página</span>
+                        <span className={styles.formLabel}>Página (Opcional)</span>
                         <CustomSelect
                           className={styles.socialAssetSelect}
                           value={metaOAuthSelection.pageId || ''}
@@ -3281,14 +3659,14 @@ export const MetaAdsIntegration: React.FC = () => {
                           searchPlaceholder="Buscar página…"
                           selectedContent={renderOAuthSelectValue(
                             selectedOAuthPage ? { id: selectedOAuthPage.id, name: selectedOAuthPage.name } : null,
-                            'Selecciona tu página',
+                            'Sin página por ahora',
                             'Página seleccionada'
                           )}
                           onChange={(event) => updateMetaOAuthAssetDraft({ pageId: event.target.value })}
                           disabled={Boolean(savingMetaAssetSection) || Boolean(socialOAuthSession.permissions.missing.length)}
                           aria-label="Página"
                         >
-                          <option value="">Selecciona tu página</option>
+                          <option value="">Sin página por ahora</option>
                           {socialOAuthSession.pages.map(page => (
                             <option key={page.id} value={page.id}>
                               {getMetaAssetDisplayName(page.name, page.id, 'Página de Facebook')}

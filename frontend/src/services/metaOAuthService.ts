@@ -109,6 +109,13 @@ export interface MetaOAuthSession {
   }
 }
 
+export interface MetaOAuthSocialChannels {
+  messengerMessaging: boolean
+  instagramMessaging: boolean
+  facebookComments: boolean
+  instagramComments: boolean
+}
+
 export interface MetaOAuthFinalizeSelection {
   sessionId: string
   businessId?: string
@@ -116,6 +123,7 @@ export interface MetaOAuthFinalizeSelection {
   pixelId?: string
   pageId?: string
   instagramAccountId?: string
+  socialChannels?: MetaOAuthSocialChannels
 }
 
 export interface MetaOAuthFinalizeResult {
@@ -140,6 +148,7 @@ export interface MetaOAuthFinalizeResult {
   socialHistoryBackfill?: unknown
   adsSync?: { syncStarted?: boolean }
   conversionEvents?: { enabled?: boolean; reason?: string }
+  socialChannels?: MetaOAuthSocialChannels
   session?: MetaOAuthSession
 }
 
@@ -186,14 +195,14 @@ export const metaOAuthService = {
   ),
 
   complete: (input: { handoffToken?: string; code?: string; configId?: string }) => (
-    refreshIntegrationsStatusAfter(requestMetaOAuth<MetaOAuthFinalizeResult>('/api/meta/oauth/complete', {
+    requestMetaOAuth<MetaOAuthSession>('/api/meta/oauth/complete', {
       method: 'POST',
       body: JSON.stringify({
         handoffToken: input.handoffToken || undefined,
         code: input.code || undefined,
         configId: input.configId || undefined
       })
-    }))
+    })
   ),
 
   reconfigure: () => (
