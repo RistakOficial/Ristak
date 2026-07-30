@@ -55,12 +55,9 @@ type BusinessProfile = {
 }
 
 type ConnectedSection = 'numbers' | 'templates' | 'alerts'
-type PhoneFilter = 'all' | 'main' | 'qr' | 'attention'
 type AlertFilter = 'all' | 'critical' | 'warning' | 'info'
 type ConnectionChoice = 'api' | 'qr'
-const phoneFilters: PhoneFilter[] = ['all', 'main', 'qr', 'attention']
 const alertFilters: AlertFilter[] = ['all', 'critical', 'warning', 'info']
-const isPhoneFilter = (value?: string | null): value is PhoneFilter => phoneFilters.includes(value as PhoneFilter)
 const isAlertFilter = (value?: string | null): value is AlertFilter => alertFilters.includes(value as AlertFilter)
 const isQueryText = (value?: string | null): value is string => typeof value === 'string'
 
@@ -268,7 +265,6 @@ export const WhatsAppSettings: React.FC = () => {
   const location = useLocation()
   const routeSection = useMemo(() => parseWhatsAppSection(location.pathname), [location.pathname])
   const [activeSection, setActiveSection] = useState<ConnectedSection>(routeSection)
-  const [phoneFilter, setPhoneFilter] = useUrlStringState<PhoneFilter>('phoneFilter', 'all', isPhoneFilter)
   const [alertFilter, setAlertFilter] = useUrlStringState<AlertFilter>('alertFilter', 'all', isAlertFilter)
   const [phoneSearch, setPhoneSearch] = useUrlStringState<string>('phoneSearch', '', isQueryText)
   const [alertSearch, setAlertSearch] = useUrlStringState<string>('alertSearch', '', isQueryText)
@@ -1082,17 +1078,11 @@ export const WhatsAppSettings: React.FC = () => {
       const officialAttached = !isStandaloneQrPhone(phone) && Number(phone.api_send_enabled ?? 1) !== 0
       const apiEnabled = officialAttached && officialProviderConnected
       const displayName = phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'
-      const needsAttention = Boolean(qrError) || ['RED', 'FLAGGED', 'RESTRICTED'].includes(String(phone.quality_rating || '').toUpperCase())
 
-      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, officialAttached, apiEnabled, needsAttention }
+      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, officialAttached, apiEnabled }
     })
     const query = phoneSearch.trim().toLowerCase()
-    const qrConnectedCount = enrichedPhones.filter((row) => row.qrConnected).length
-    const needsAttentionCount = enrichedPhones.filter((row) => row.needsAttention).length
     const filteredPhones = enrichedPhones.filter((row) => {
-      if (phoneFilter === 'main' && !row.isSender) return false
-      if (phoneFilter === 'qr' && !row.qrConnected) return false
-      if (phoneFilter === 'attention' && !row.needsAttention) return false
       if (!query) return true
 
       return [
@@ -1111,34 +1101,7 @@ export const WhatsAppSettings: React.FC = () => {
     const hasAdvancedActions = hasWhatsAppApiAccess && Boolean((metaDirectConnected && paymentConfigUrl) || ycloudConnected)
 
     return (
-      <div className={styles.layout}>
-        <aside className={styles.sideNav} aria-label="Filtros de números de WhatsApp">
-          <div className={styles.sideHeader}>
-            <strong>Números</strong>
-            <span>{formatMetric(phoneRows.length)} activos</span>
-          </div>
-          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'all' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('all')}>
-            <HashIcon size={16} />
-            <span>Todos los números</span>
-            <b>{phoneRows.length}</b>
-          </button>
-          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'main' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('main')}>
-            <Star size={16} />
-            <span>Principal</span>
-            <b>{enrichedPhones.filter((row) => row.isSender).length}</b>
-          </button>
-          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'qr' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('qr')}>
-            <QrCode size={16} />
-            <span>QR conectado</span>
-            <b>{qrConnectedCount}</b>
-          </button>
-          <button type="button" className={`${styles.sideItem} ${phoneFilter === 'attention' ? styles.sideItemActive : ''}`} onClick={() => setPhoneFilter('attention')}>
-            <AlertTriangle size={16} />
-            <span>Revisar</span>
-            <b>{needsAttentionCount}</b>
-          </button>
-        </aside>
-
+      <>
         <main className={styles.tablePanel}>
           <div className={styles.toolbar}>
             <SearchField
@@ -1324,14 +1287,14 @@ export const WhatsAppSettings: React.FC = () => {
           ) : (
             <div className={styles.emptyState}>
               <HashIcon size={26} />
-              <strong>No hay números en esta vista</strong>
-              <span>Cambia el filtro o sincroniza WhatsApp API.</span>
+              <strong>{query ? 'No encontramos números' : 'No hay números conectados'}</strong>
+              <span>{query ? 'Prueba otra búsqueda.' : 'Agrega un número o sincroniza WhatsApp.'}</span>
             </div>
           )}
 
           {apiStatus.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
         </main>
-      </div>
+      </>
     )
   }
 

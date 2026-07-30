@@ -2148,6 +2148,11 @@ conexión. Los mensajes, contactos y plantillas históricas permanecen; los nuev
 eventos API de una fila retirada se ignoran localmente hasta que el usuario la
 conecte otra vez de forma explícita.
 
+La sección **Números** muestra la búsqueda, el resumen y la tabla operativa a todo
+el ancho. No agrega un panel lateral de filtros que repita estados ya visibles en
+cada fila; buscar por número, nombre o estado es la única reducción local de esa
+lista.
+
 Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
 propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
