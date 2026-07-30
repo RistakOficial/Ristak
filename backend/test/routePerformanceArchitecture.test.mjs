@@ -22,14 +22,22 @@ test('las rutas principales se descargan por modulo y no inflan el bundle inicia
 
   assert.match(routeModules, /const LazyComponent = lazy\(preload\)/)
   assert.match(routeModules, /module\[exportName\] \?\? module\.default/)
-  assert.match(routeModules, /<LazyLoadErrorBoundary>/)
+  assert.match(routeModules, /<LazyLoadErrorBoundary recoveryKey=\{recoveryKey\}>/)
   const errorBoundary = await repoFile('frontend/src/components/common/LazyLoadErrorBoundary/LazyLoadErrorBoundary.tsx')
+  assert.match(errorBoundary, /isDynamicImportFailure\(error\)/)
+  assert.match(errorBoundary, /claimRouteLoadRecovery\(\{/)
+  assert.match(errorBoundary, /navigator\.onLine === false/)
+  assert.match(errorBoundary, /window\.addEventListener\('online'/)
+  assert.match(errorBoundary, /recoveryStatus === 'waiting-online'/)
   assert.match(errorBoundary, /window\.location\.reload\(\)/)
   assert.match(routeModules, /export const prefetchRouteModule/)
   assert.match(routeModules, /import\('@\/pages\/Dashboard\/Dashboard'\)/)
   assert.match(routeModules, /import\('@\/pages\/DesktopChat\/DesktopChat'\)/)
   assert.match(routeModules, /import\('@\/pages\/Analytics\/Analytics'\)/)
-  assert.match(routeModules, /createLazyRoute\(\(\) => import\('@\/pages\/Analytics\/Analytics'\), 'default'\)/)
+  assert.match(
+    routeModules,
+    /createLazyRoute\(\s*\(\) => import\('@\/pages\/Analytics\/Analytics'\),\s*'default',\s*'route:analytics'\s*\)/
+  )
   assert.match(routeModules, /import\('@\/pages\/Sites\/SitesRoute'\)/)
   const sitesLoader = routeModules.slice(
     routeModules.indexOf('const sites = createLazyRoute'),

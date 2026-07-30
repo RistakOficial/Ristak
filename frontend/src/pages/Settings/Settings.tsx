@@ -253,7 +253,10 @@ export const Settings: React.FC = () => {
 
         <section className={styles.settingsPanel}>
           <div className={styles.mainContent}>
-            <LazyLoadErrorBoundary resetKey={location.pathname}>
+            <LazyLoadErrorBoundary
+              resetKey={location.pathname}
+              recoveryKey={`settings:${location.pathname}`}
+            >
               <React.Suspense fallback={<Loading message="Abriendo configuración..." size="md" />}>
                 <Routes>
                 <Route index element={<Navigate to={firstAllowedSettingsPath} replace />} />

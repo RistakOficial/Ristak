@@ -241,6 +241,20 @@ un loader global mientras existan requests de una ruta. Las esperas inevitables
 deben aparecer dentro de la zona que aun no tiene datos, conservando navegacion,
 header y contenido anterior utilizable.
 
+Si un chunk JS/CSS falla durante una navegacion real,
+`LazyLoadErrorBoundary` mantiene el shell y muestra el cargador solamente dentro
+del contenido. Cuando el navegador esta offline espera el evento `online`; con
+conexion hace una unica recarga automatica por modulo y build para obtener el
+`index.html` vigente. La marca se guarda en `sessionStorage` antes de recargar y
+evita ciclos durante una ventana de cinco minutos; si el mismo build vuelve a
+fallar en esa ventana, conserva los menus utilizables y muestra el estado de
+error reintentable. El editor pesado de Automatizaciones usa el mismo mecanismo
+al entrar a una automatizacion. Esta recuperacion no vive en el prefetch:
+un hover, foco o pointer-down fallido nunca recarga Ristak por si solo. Tampoco se
+activa para errores normales de render. En Configuracion el boundary de cada
+panel queda dentro de `mainContent`, por lo que su navegacion lateral permanece
+montada durante la espera.
+
 `frontend/src/services/authFetch.ts` se limita a autenticacion, telemetria de
 actividad, bloqueo de licencia y notificacion de invalidaciones. No cachea,
 materializa, clona ni deduplica `Response` de forma global: hacerlo para todas las
@@ -317,7 +331,11 @@ bufferizar SSE ni recomprimir binarios. Los assets Vite con hash se entregan con
 cache inmutable de un ano; `index.html`, manifests y `sw.js` siempre revalidan.
 El service worker usa cache-first solamente para assets versionados y
 network-first para navegacion y archivos sin hash. Un cache lleno nunca debe
-convertir una respuesta de red valida en error.
+convertir una respuesta de red valida en error. Si una pestaña de un build
+anterior pide por primera vez un chunk que el deploy ya retiro, repetir ese
+`import()` dentro del mismo documento no es una recuperacion valida: el navegador
+conserva el rechazo. En ese caso la recarga automatica acotada obtiene el mapa
+nuevo de assets; no se simula un reintento local.
 
 Reglas de datos para cualquier modulo nuevo o refactorizado:
 
@@ -979,9 +997,11 @@ versión anterior antes de montar la interfaz real. El menú precarga solamente 
 compuerta con intención real y nunca dispara biblioteca, carpetas, dominio ni
 documento de edición antes de montar Sites. El workspace es el único owner de
 esas lecturas, todas con deadline y cancelación; así no se duplican datos ni una
-API lenta impide abrir o abandonar la ruta. Un fallo transitorio del chunk limpia
-su promesa y permite reintentar. El editor pesado nunca forma parte del shell
-global ni bloquea una transición hacia otro módulo.
+API lenta impide abrir o abandonar la ruta. Limpiar la promesa permite que una
+precarga fallida no envenene la intencion posterior, pero un `import()` que ya
+fallo al renderizar se recupera mediante el boundary y su unica recarga
+protegida, no repitiendo el mismo URL. El editor pesado nunca forma parte del
+shell global ni bloquea una transición hacia otro módulo.
 El documento de edicion se solicita con `includeTrackingStats=0`: abrir,
 previsualizar, guardar o recibir respuestas no ejecuta conteos historicos de
 sesiones. El API directo conserva `includeTrackingStats=1` por compatibilidad,

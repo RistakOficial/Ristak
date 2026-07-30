@@ -24,7 +24,8 @@ interface RouteModuleRegistration {
  */
 const createLazyRoute = (
   loader: () => Promise<RouteModule>,
-  exportName: string
+  exportName: string,
+  recoveryKey = `route:${exportName}`
 ): LazyRouteModule => {
   let pendingLoad: Promise<LoadedRoute> | undefined
 
@@ -51,7 +52,7 @@ const createLazyRoute = (
 
   const LazyComponent = lazy(preload)
   const GuardedRouteComponent: RouteComponent = (props) => (
-    <LazyLoadErrorBoundary>
+    <LazyLoadErrorBoundary recoveryKey={recoveryKey}>
       <LazyComponent {...props} />
     </LazyLoadErrorBoundary>
   )
@@ -63,7 +64,11 @@ const setup = createLazyRoute(() => import('@/pages/Login/Setup'), 'Setup')
 const licenseBlocked = createLazyRoute(() => import('@/pages/Login/LicenseBlocked'), 'LicenseBlocked')
 const sso = createLazyRoute(() => import('@/pages/Login/Sso'), 'Sso')
 const login = createLazyRoute(() => import('@/pages/Login/Login'), 'Login')
-const resetPassword = createLazyRoute(() => import('@/pages/Login/ResetPassword'), 'default')
+const resetPassword = createLazyRoute(
+  () => import('@/pages/Login/ResetPassword'),
+  'default',
+  'route:reset-password'
+)
 const publicPayment = createLazyRoute(() => import('@/pages/PublicPayment/PublicPayment'), 'PublicPayment')
 const publicPaymentGatewayReturn = createLazyRoute(
   () => import('@/pages/PublicPayment/PublicPayment'),
@@ -109,7 +114,11 @@ const appointments = createLazyRoute(() => import('@/pages/Appointments/Appointm
 // se solicita desde SitesRoute al entrar realmente a la sección.
 const sites = createLazyRoute(() => import('@/pages/Sites/SitesRoute'), 'SitesRoute')
 const automations = createLazyRoute(() => import('@/pages/Automations/Automations'), 'Automations')
-const analytics = createLazyRoute(() => import('@/pages/Analytics/Analytics'), 'default')
+const analytics = createLazyRoute(
+  () => import('@/pages/Analytics/Analytics'),
+  'default',
+  'route:analytics'
+)
 const chatbot = createLazyRoute(() => import('@/pages/Chatbot/Chatbot'), 'Chatbot')
 const mdpProgram = createLazyRoute(() => import('@/pages/MDPProgram/MDPProgram'), 'MDPProgram')
 const settings = createLazyRoute(() => import('@/pages/Settings/Settings'), 'Settings')
