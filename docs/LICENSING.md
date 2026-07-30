@@ -148,10 +148,11 @@ suscripciones y analíticas web quedan apagados.
 
 El frontend puede leer `GET /api/license/status` para conocer plan, features y límites.
 
-El plan `basic` puede tener `conversational_ai=true` y `app_assistant_ai=false`. En ese caso
-la app permite entrar al Agente conversacional, oculta Ristak AI general y aplica
-`limits.conversational_agents.max_agents=1` al crear agentes. El límite se valida en backend
-en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el bloqueo.
+El plan `basic` puede tener `conversational_ai=true` y aplica
+`limits.conversational_agents.max_agents=1` al crear agentes. La antigua feature
+`app_assistant_ai` se ignora aunque un portal viejo todavía la envíe; no habilita
+ninguna superficie. El límite se valida en backend en
+`backend/src/services/conversationalAgentService.js`; la UI solo anticipa el bloqueo.
 
 ### Gates por superficie
 
@@ -185,11 +186,14 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
   plantillas requieren `whatsapp_templates`.
 - Configuración > Pagos muestra checkout, pasarelas y automatizaciones solo con
   `payment_checkout`, `payment_gateways` y `payment_automations`,
-  respectivamente. El job de automatizaciones de pago valida
-  `payment_automations`, no el módulo genérico `payments`.
+  respectivamente. El encabezado de Transacciones muestra **Configurar
+  pasarelas** únicamente cuando `payment_gateways` está disponible bajo un plan
+  Profesional; Basic y Medium conservan sus operaciones de pago offline sin esa
+  entrada. El job de automatizaciones de pago valida `payment_automations`, no
+  el módulo genérico `payments`.
 - Crear o enviar links exige `payment_links` en las rutas de Stripe, Conekta,
   Mercado Pago, CLIP, Rebill y HighLevel. La misma compuerta aplica al agente
-  conversacional, asistente de app y MCP; ocultar el botón no sustituye el
+  conversacional y MCP; ocultar el botón no sustituye el
   bloqueo del servidor. Las URL públicas de links ya creados siguen resolviendo
   para no dejar al cliente final con un cobro roto después de un downgrade.
 - Automatizaciones validan features al guardar, publicar, probar y ejecutar:

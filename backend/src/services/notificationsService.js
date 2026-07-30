@@ -1166,13 +1166,13 @@ async function getAiNotifications() {
   if (row && !row.openai_api_key_encrypted) {
     return [createNotification({
       id: 'ai:openai-key-missing',
-      source: 'Agente AI',
+      source: 'Chatbot',
       severity: 'info',
-      title: 'Agente AI sin llave activa',
-      message: 'No hay llave de OpenAI guardada para el agente. Si lo usas, revisa la configuración.',
+      title: 'Chatbot sin llave de OpenAI',
+      message: 'No hay una llave de OpenAI activa. Conéctala si quieres usar agentes conversacionales.',
       updatedAt: row.updated_at,
-      actionUrl: '/settings/ai-agent',
-      actionLabel: 'Ver agente'
+      actionUrl: '/ai-agent/conversational',
+      actionLabel: 'Configurar chatbot'
     })]
   }
 

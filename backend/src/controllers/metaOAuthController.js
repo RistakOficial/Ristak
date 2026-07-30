@@ -154,6 +154,7 @@ export async function finalizeMetaOAuth(req, res) {
       datasetId: req.body?.datasetId ?? req.body?.dataset_id,
       pageId: req.body?.pageId ?? req.body?.page_id,
       instagramAccountId: req.body?.instagramAccountId ?? req.body?.instagram_account_id,
+      socialChannels: req.body?.socialChannels ?? req.body?.social_channels,
       publicBaseUrl: publicBaseUrl(req),
       includeNextSession: true
     }

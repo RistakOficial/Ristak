@@ -112,8 +112,8 @@ solo en capa flotante; copy en español.
   WhatsApp, presets condicionales, y el chip automático **Meta completada** con
   robot cuando existe al menos un agente activo. Ese chip muestra objetivos
   cumplidos pendientes de revisión y retira una conversación cuando cualquier
-  usuario humano la abre. Incluye archivados y silenciados (locales), fila
-  fija del Asistente AI, selección múltiple con alcance visible o todo el inbox
+  usuario humano la abre. Incluye archivados y silenciados (locales), selección
+  múltiple con alcance visible o todo el inbox
   (incluidas conversaciones no cargadas) y acciones masivas, long-press
   → Más acciones (agente, cita, pago, programar, etiqueta, leído, archivar),
   swipe nativo por fila: izquierda **Más → Archivar/Restaurar** y derecha
@@ -122,13 +122,8 @@ solo en capa flotante; copy en español.
   primera conexión sin snapshot; si los contactos ya están listos pero la
   bandeja sufre timeout, abre en modo degradado y la reintenta silenciosamente
   en vez de bloquear toda la app en 78 %. SSE + polling 20s, badge de no leídos.
-  La fila fija **Asistente Personal AI** abre una conversación nativa real —no
-  un placeholder— sobre `/api/ai-agent/chat`, usando la misma configuración de
-  OpenAI y contexto de negocio que escritorio. Permite texto y notas de voz
-  transcritas, conserva las últimas 24 intervenciones y la categoría entre
-  continuaciones, interpreta Markdown, muestra fuentes y opciones aclaratorias,
-  permite iniciar una conversación limpia y guía al usuario si OpenAI falta o
-  requiere reconexión. No expone acciones de contacto, WhatsApp, cita o cobro.
+  El asistente personal y su fila fija fueron retirados; el Hub de agentes
+  conversacionales permanece disponible y gestiona ahí la conexión de OpenAI.
   Conversación: todos los tipos de mensaje (texto, foto, video, nota de voz,
   documento, ubicación, email desplegable, comentarios FB/IG, sistema), texto
   con formato WhatsApp en globos y previews (`*negrita*`, `_italica_`,
@@ -193,8 +188,7 @@ solo en capa flotante; copy en español.
   en su borde exacto; Swift Charts reserva 20 % de techo y agrega rellenos
   degradados bajo las líneas. iPad en grid.
 - **Ajustes**: números de WhatsApp (principal, bandeja junta/separada),
-  plantillas, Asistente AI (contexto de negocio + dictado por voz →
-  transcripción), lista de chat, campos personalizados y etiquetas con alta y
+  plantillas, lista de chat, campos personalizados y etiquetas con alta y
   eliminación, apariencia
   (sistema/claro/oscuro/auto), privacidad (confirmaciones de lectura),
   notificaciones (activación de push, toggles por tipo, calendarios con

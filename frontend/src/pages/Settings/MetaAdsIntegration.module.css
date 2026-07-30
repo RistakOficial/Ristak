@@ -191,6 +191,23 @@
   min-width: 0;
 }
 
+.metaOnboarding {
+  padding-top: 4px;
+}
+
+.metaOnboardingGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.metaOnboardingGroup .connectedPagesHeader {
+  margin-top: 0;
+}
+
 /* El `gap` del panel manda: neutraliza los `margin-top` intrínsecos de bloques
    que fueron pensados para apilarse sueltos, y el `margin-bottom` de un
    `sectionHeader` que sea hijo directo del panel. */

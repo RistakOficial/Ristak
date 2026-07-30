@@ -7,10 +7,10 @@ import { logger } from '../../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso } from '../../utils/dateUtils.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
-  getAIAgentConfig,
+  getAIRuntimeConfig,
   getOpenAIApiKey,
   getBusinessProfileSnapshot
-} from '../../services/aiAgentService.js'
+} from '../../services/aiRuntimeService.js'
 import {
   startAgentRun,
   updateAgentRun,
@@ -71,7 +71,7 @@ import {
   loadConversationalVerifiedAppointmentContext,
   supersedeUndeliveredConversationalAppointmentOffer
 } from './tools.js'
-import { buildInputItems } from '../runner.js'
+import { buildConversationalInputItems } from './inputItems.js'
 import {
   splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
@@ -2692,7 +2692,7 @@ export async function validateToolCallingV2PreservedOfferReplySemantics({
   const runner = new Runner({ modelProvider, tracingDisabled: true })
   const result = await runner.run(
     classifierAgent,
-    buildInputItems([{
+    buildConversationalInputItems([{
       role: 'user',
       content: JSON.stringify({
         candidateReply,
@@ -2981,7 +2981,7 @@ async function buildToolCallingV2AgentForRun({
   runtimeEventContext = ''
 }) {
   const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
-    getAIAgentConfig({}),
+    getAIRuntimeConfig({}),
     getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
     getBusinessProfileSnapshot().catch(() => null),
     getAccountLocaleSettings().catch(() => ({}))
@@ -3450,7 +3450,7 @@ async function executeAgent({
     })
     const result = await runner.run(
       agent,
-      buildInputItems(messages, { preserveAll: true }),
+      buildConversationalInputItems(messages, { preserveAll: true }),
       {
         maxTurns: MAX_TURNS,
         context: { category: 'conversacional', contactId, runtimeMode }

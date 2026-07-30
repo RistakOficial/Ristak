@@ -24,7 +24,7 @@ const LICENSE_FEATURES_BY_MODULE: Record<NativeModuleKey, LicenseFeatureRule> = 
   payments: { primary: 'payments' },
   analytics: { primary: 'analytics' },
   contacts: { primary: 'contacts' },
-  ai_agent: { primary: 'ai_agent', legacy: ['app_assistant_ai', 'conversational_ai', 'ai'] },
+  ai_agent: { primary: 'ai_agent', legacy: ['conversational_ai', 'ai'] },
   settings_mobile: { primary: 'mobile_app', legacy: ['settings_mobile'] },
   dashboard: { primary: 'dashboard' },
 };

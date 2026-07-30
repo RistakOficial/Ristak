@@ -58,8 +58,6 @@ struct RistakConfigBatchWriteBody: Encodable, Sendable {
 
 /// Claves de `app_config` (globales del tenant) que usa la app móvil.
 enum RistakAppConfigKey {
-    static let aiAgentEnabled = "mobile_chat_ai_agent_enabled"
-    static let aiReplySuggestionsEnabled = "mobile_chat_ai_reply_suggestions_enabled"
     static let showArchived = "mobile_chat_show_archived"
     static let sortMode = "mobile_chat_sort_mode"
     static let showLastPreview = "mobile_chat_show_last_preview"
@@ -83,8 +81,6 @@ enum RistakAppConfigKey {
     /// Batch que carga `AppConfigStore` al iniciar sesión.
     static let batchKeys: [String] = [
         accountCurrency,
-        aiAgentEnabled,
-        aiReplySuggestionsEnabled,
         showArchived,
         sortMode,
         showLastPreview,
@@ -97,12 +93,6 @@ enum RistakAppConfigKey {
         filterChipIDs,
         customFilterPresets,
     ]
-}
-
-/// Defaults de producto para preferencias opcionales. Mantenerlos explícitos
-/// evita que una clave ausente termine habilitando funciones por accidente.
-enum RistakAppConfigDefaults {
-    static let aiReplySuggestionsEnabled = false
 }
 
 /// Claves whitelisteadas de `user_app_config` (por usuario).

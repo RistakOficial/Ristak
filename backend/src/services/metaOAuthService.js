@@ -57,6 +57,12 @@ const META_STATE_CONFIG_KEYS = [
   'meta_instagram_comments_enabled',
   'meta_oauth_relay_last_received_at'
 ]
+const META_SOCIAL_CHANNEL_CONFIG_KEYS = Object.freeze({
+  messengerMessaging: 'meta_messenger_messaging_enabled',
+  instagramMessaging: 'meta_instagram_messaging_enabled',
+  facebookComments: 'meta_facebook_comments_enabled',
+  instagramComments: 'meta_instagram_comments_enabled'
+})
 const META_REQUIRED_PAGE_TASKS = ['ANALYZE', 'MESSAGING', 'MODERATE']
 
 // Los permisos finales los controla la configuración de Facebook Login for
@@ -141,6 +147,26 @@ export function setMetaOAuthMarkLocalRelayForTest(override = null) {
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function normalizeMetaOAuthSocialChannels(value, selected = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const hasPage = Boolean(cleanString(selected.pageId))
+  const hasInstagram = hasPage && Boolean(cleanString(selected.instagramAccountId))
+  return {
+    messengerMessaging: hasPage && value.messengerMessaging === true,
+    facebookComments: hasPage && value.facebookComments === true,
+    instagramMessaging: hasInstagram && value.instagramMessaging === true,
+    instagramComments: hasInstagram && value.instagramComments === true
+  }
+}
+
+async function saveMetaOAuthSocialChannels(channels) {
+  if (!channels) return
+  await Promise.all(Object.entries(META_SOCIAL_CHANNEL_CONFIG_KEYS).map(([field, configKey]) => (
+    setAppConfig(configKey, channels[field] ? '1' : '0')
+  )))
 }
 
 function optionalCount(value) {
@@ -1809,13 +1835,6 @@ export async function prepareMetaOAuthConnection({
       'META_OAUTH_REQUIRED_SCOPES_MISSING'
     )
   }
-  if (!discovered.pages.length) {
-    throw metaOAuthError(
-      'La autorización no entregó una Página administrable para Messenger e Instagram.',
-      409,
-      'META_OAUTH_REQUIRED_ASSETS_MISSING'
-    )
-  }
   const pageSecrets = extractPageSecrets(handoffMeta.assets)
   const previousConfig = await getMetaConfig().catch(() => null)
   const pendingPayload = {
@@ -1844,17 +1863,12 @@ export async function prepareMetaOAuthConnection({
 }
 
 /**
- * Flujo público de conexión: reclamar handoff, elegir defaults seguros y
- * persistir todo en una sola petición. La sesión temporal existe únicamente
- * para rollback/idempotencia interna; nunca es un paso para el usuario.
+ * Reclama el handoff y devuelve el inventario autorizado sin promover todavía
+ * la conexión. El frontend completa el onboarding y hace un único finalize con
+ * activos y canales sociales elegidos explícitamente por el usuario.
  */
 export async function completeMetaOAuthConnection(options = {}) {
-  const session = await prepareMetaOAuthConnection(options)
-  return finalizeMetaOAuthConnection({
-    sessionId: session.sessionId,
-    publicBaseUrl: options.publicBaseUrl,
-    includeNextSession: options.includeNextSession === true
-  })
+  return prepareMetaOAuthConnection(options)
 }
 
 export async function prepareMetaOAuthReconfiguration() {
@@ -2148,6 +2162,7 @@ async function runMetaOAuthConnectedRuntimeEffects({
   selected,
   previousConfig = null,
   reason = 'meta-oauth-connected',
+  socialChannelSelection = null,
   awaitAds = false,
   syncCrons = true,
   syncSocial = true,
@@ -2177,8 +2192,8 @@ async function runMetaOAuthConnectedRuntimeEffects({
       }
     }
   }
-  let socialChannels = {}
-  if (syncSocial) {
+  let socialChannels = socialChannelSelection || {}
+  if (syncSocial && !socialChannelSelection) {
     const config = await getMetaConfig().catch(error => {
       runtimeWarnings.push(`config: ${error.message}`)
       return null
@@ -2192,8 +2207,12 @@ async function runMetaOAuthConnectedRuntimeEffects({
   }
 
   const platforms = [
-    ...(selected?.pageId ? ['messenger'] : []),
-    ...(selected?.instagramAccountId ? ['instagram'] : [])
+    ...(selected?.pageId && (!socialChannelSelection || socialChannelSelection.messengerMessaging)
+      ? ['messenger']
+      : []),
+    ...(selected?.instagramAccountId && (!socialChannelSelection || socialChannelSelection.instagramMessaging)
+      ? ['instagram']
+      : [])
   ]
   let socialHistoryBackfill = { syncStarted: false, started: [], skipped: [] }
   if (syncHistory && platforms.length) {
@@ -2335,7 +2354,13 @@ function selectedMetaOAuthSaveOptions(payload = {}, selected = {}, previousConfi
   }
 }
 
-async function saveSelectedMetaOAuthConfig(payload, selected, previousConfig, relay = {}) {
+async function saveSelectedMetaOAuthConfig(
+  payload,
+  selected,
+  previousConfig,
+  relay = {},
+  socialChannels = null
+) {
   await saveMetaConfig(
     selected.adAccountId || null,
     payload.accessToken,
@@ -2345,6 +2370,7 @@ async function saveSelectedMetaOAuthConfig(payload, selected, previousConfig, re
     selectedMetaOAuthSaveOptions(payload, selected, previousConfig, relay)
   )
   await setAppConfig('meta_config_disconnected', '0')
+  await saveMetaOAuthSocialChannels(socialChannels)
   await saveAuthorizedAssets(payload)
 }
 
@@ -2421,6 +2447,7 @@ async function saveMetaOAuthSelectionWithoutPage({
   sessionId,
   payload,
   selected,
+  socialChannels = null,
   publicBaseUrl = ''
 }) {
   const previousState = await captureLocalMetaState()
@@ -2452,7 +2479,7 @@ async function saveMetaOAuthSelectionWithoutPage({
     await saveSelectedMetaOAuthConfig(payload, selected, previousConfig, {
       relayStatus: 'inactive',
       relayRegisteredAt: null
-    })
+    }, socialChannels)
     await finishMetaOAuthSelectionSession(sessionId)
   } catch (error) {
     await restoreLocalMetaState(previousState).catch(restoreError => {
@@ -2475,6 +2502,7 @@ async function saveMetaOAuthSelectionWithoutPage({
     selected,
     previousConfig,
     reason: 'meta-oauth-assets-changed',
+    socialChannelSelection: socialChannels,
     syncCrons: !previousWasSameConnection || Boolean(previousPageId) || adChanged,
     syncSocial: !previousWasSameConnection || Boolean(previousPageId),
     syncHistory: false,
@@ -2488,6 +2516,7 @@ async function updateExistingMetaOAuthSelection({
   payload,
   selected,
   previousConfig,
+  socialChannels = null,
   publicBaseUrl = ''
 }) {
   const previousState = await captureLocalMetaState()
@@ -2540,7 +2569,7 @@ async function updateExistingMetaOAuthSelection({
       relayRegisteredAt: socialChanged
         ? new Date().toISOString()
         : previousConfig?.oauth_relay_registered_at || null
-    })
+    }, socialChannels)
     await finishMetaOAuthSelectionSession(sessionId)
   } catch (error) {
     await restoreLocalMetaState(previousState).catch(restoreError => {
@@ -2567,6 +2596,7 @@ async function updateExistingMetaOAuthSelection({
     selected,
     previousConfig,
     reason: 'meta-oauth-assets-changed',
+    socialChannelSelection: socialChannels,
     syncCrons: socialChanged,
     syncSocial: socialChanged,
     syncHistory: socialChanged,
@@ -2582,6 +2612,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
   pixelId,
   pageId,
   instagramAccountId,
+  socialChannels,
   publicBaseUrl = ''
 } = {}) {
   const { payload } = await readPendingSession(sessionId)
@@ -2594,6 +2625,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
       ? payload.defaults?.instagramAccountId
       : instagramAccountId
   })
+  const selectedSocialChannels = normalizeMetaOAuthSocialChannels(socialChannels, selected)
   if (payload.permissions?.missing?.length) {
     throw metaOAuthError(
       `Meta no concedió todos los permisos requeridos: ${payload.permissions.missing.join(', ')}`,
@@ -2634,6 +2666,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
       sessionId,
       payload,
       selected,
+      socialChannels: selectedSocialChannels,
       publicBaseUrl
     })
   }
@@ -2643,6 +2676,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
       payload,
       selected,
       previousConfig: currentConfig,
+      socialChannels: selectedSocialChannels,
       publicBaseUrl
     })
   }
@@ -2737,6 +2771,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
     // Conserva cifrada la allowlist completa, incluyendo los Page tokens que
     // Meta entregó para cada Página. Así cambiar entre activos ya autorizados
     // no obliga a repetir OAuth ni expone secretos al navegador.
+    await saveMetaOAuthSocialChannels(selectedSocialChannels)
     await saveAuthorizedAssets(payload)
     payload.saga.stage = 'local_saved'
     await persistPendingPayload(sessionId, payload, 'consuming')
@@ -2828,7 +2863,7 @@ async function finalizeMetaOAuthConnectionUnlocked({
         result: relayResult
       },
       subscription: { subscribed: true, pageId: selected.pageId },
-      socialChannels: {},
+      socialChannels: selectedSocialChannels || {},
       socialHistoryBackfill: { syncStarted: false, started: [], skipped: [] },
       adsSync: { syncStarted: false },
       runtimeWarnings: ['relay-local-repair: pendiente', ...migrationWarnings]
@@ -2846,7 +2881,8 @@ async function finalizeMetaOAuthConnectionUnlocked({
     payload,
     selected,
     previousConfig,
-    reason: 'meta-oauth-connected'
+    reason: 'meta-oauth-connected',
+    socialChannelSelection: selectedSocialChannels
   })
   runtimeEffects.runtimeWarnings = [
     ...migrationWarnings,

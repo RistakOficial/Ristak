@@ -1,7 +1,7 @@
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
-import { getOpenAIApiKey } from '../services/aiAgentService.js'
+import { getOpenAIApiKey } from '../services/aiRuntimeService.js'
 
 export const APPOINTMENT_CONFIRMATION_MODEL = CHEAPEST_OPENAI_MODEL
 

@@ -191,7 +191,7 @@ actor APIClient {
         _ = try await perform(method: "DELETE", path: path, query: query, bodyData: try encodeBody(body), contentType: body == nil ? nil : "application/json", timeout: timeout)
     }
 
-    /// Upload binario crudo (p. ej. `POST /api/ai-agent/transcribe` con `audio/m4a`).
+    /// Upload binario crudo para endpoints de medios que no usan multipart.
     func upload<T: Decodable>(
         _ path: String,
         rawBody: Data,

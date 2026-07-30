@@ -17,7 +17,6 @@ import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTheme } from '@/contexts/ThemeContext'
-import { requestAIAgentClose } from '@/utils/aiAgentEvents'
 import styles from './HighLevelIntegration.module.css'
 
 interface IntegrationStatus {
@@ -126,7 +125,6 @@ export const HighLevelIntegration: React.FC = () => {
   }
 
   const handleRefreshStatus = async () => {
-    requestAIAgentClose()
     setCheckingStatus(true)
     try {
       // Ejecutar sincronización completa (igual que cuando conectas por primera vez)

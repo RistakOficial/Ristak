@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 /// Barra del composer (doc research/05 §7): selector de canal/número, botón `+`,
 /// campo multilinea, reloj para programar, cámara directa, mic/enviar, tray de
-/// adjuntos, barra de respuesta, banner del agente y sugerencia IA.
+/// adjuntos, barra de respuesta y banner del agente conversacional.
 ///
 /// Va montada con `safeAreaInset(edge: .bottom)` — un solo dueño del teclado
 /// (memoria del proyecto): sin avoidance anidado.
@@ -44,7 +44,6 @@ struct ComposerView: View {
         VStack(spacing: 0) {
             agentSignalBanner
             agentBanner
-            aiSuggestBar
             replyBar
             attachmentsTray
             // Grabando o con nota lista, la barra deja de ser el composer normal
@@ -233,37 +232,6 @@ struct ComposerView: View {
             Button("Reactivar \(name)") {
                 viewModel.performAgentAction(.activate, state: state)
             }
-        }
-    }
-
-    // MARK: - Sugerencia IA (doc 05 §7.1)
-
-    @ViewBuilder
-    private var aiSuggestBar: some View {
-        if viewModel.aiSuggestionsEnabled {
-            HStack(spacing: RistakTheme.Spacing.xs) {
-                Text("✨ El agente puede ayudarte a contestar")
-                    .font(.caption)
-                    .foregroundStyle(RistakTheme.textDim)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Button {
-                    viewModel.suggestReply()
-                } label: {
-                    if viewModel.aiSuggestInFlight {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Text("Sugerir")
-                            .font(.caption.weight(.semibold))
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(viewModel.aiSuggestInFlight)
-            }
-            .padding(.horizontal, RistakTheme.Spacing.md)
-            .padding(.vertical, 4)
         }
     }
 

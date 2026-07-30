@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Cada subpanel de Ajustes abre AL INSTANTE con lo último que el usuario vio y
 /// luego revalida contra la red. Como los modelos de Core (`WhatsAppAPIStatus`,
-/// `WhatsAppTemplatesSummary`, `AIAgentConfigStatus`, `RistakCalendar`,
+/// `WhatsAppTemplatesSummary`, `RistakCalendar`,
 /// `ContactCustomFieldDefinition`) son `Decodable` con `init(from:)` TOLERANTE
 /// pero NO `Encodable` (y no debemos tocar Core), guardamos un DTO local
 /// `Encodable` cuyo JSON de salida reproduce EXACTAMENTE el contrato del backend
@@ -22,7 +22,6 @@ import Foundation
 enum SettingsCacheKey {
     static let whatsappStatus = "settings:whatsapp:status"
     static let templates = "settings:whatsapp:templates"
-    static let aiAgent = "settings:ai-agent:config"
     static let customFields = "settings:contacts:custom-fields"
     static let calendars = "settings:calendars:active"
 
@@ -257,41 +256,6 @@ struct SettingsTemplatesSnapshot: Encodable {
         items = summary.items
             .prefix(SettingsCacheKey.maxTemplates)
             .map(Template.init)
-    }
-}
-
-// MARK: - Agente AI
-
-/// Snapshot de la config del agente. Reproduce el contrato de
-/// `GET /ai-agent/config` que lee `AIAgentConfigStatus.init(from:)`
-/// (todas las claves camelCase). Omite `businessProfile`: la UI no lo pinta.
-struct SettingsAgentSnapshot: Encodable {
-    let configured: Bool
-    let credentialStatus: String?
-    let needsReconnect: Bool
-    let connectionIssue: String?
-    let connectionIssueCode: String?
-    let model: String?
-    let tokenPreview: String?
-    let businessContext: String
-    let responseStyle: String?
-    let recommendationMode: String?
-    let webSearchEnabled: Bool
-    let updatedAt: String?
-
-    init(_ status: AIAgentConfigStatus) {
-        configured = status.configured
-        credentialStatus = status.credentialStatus
-        needsReconnect = status.needsReconnect
-        connectionIssue = status.connectionIssue
-        connectionIssueCode = status.connectionIssueCode
-        model = status.model
-        tokenPreview = status.tokenPreview
-        businessContext = status.businessContext
-        responseStyle = status.responseStyle
-        recommendationMode = status.recommendationMode
-        webSearchEnabled = status.webSearchEnabled
-        updatedAt = status.updatedAt
     }
 }
 

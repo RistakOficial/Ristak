@@ -51,7 +51,6 @@ test('pagos, analiticas y ajustes hidratan su ultimo estado y revalidan sin ocul
     'analyticsAccountContext',
     'settingsAppConfig',
     'settingsWhatsAppStatus',
-    'settingsAIAgent',
   ]) {
     assert.match(cacheKeysSource, new RegExp(key));
   }

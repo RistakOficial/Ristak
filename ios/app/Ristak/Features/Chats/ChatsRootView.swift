@@ -23,7 +23,6 @@ struct ChatsRootView: View {
 
     enum ChatsRoute: Hashable {
         case conversation(contactID: String)
-        case assistant
     }
 
     var body: some View {
@@ -167,14 +166,6 @@ struct ChatsRootView: View {
         }
     }
 
-    private func openAssistant() {
-        if horizontalSizeClass == .regular {
-            detailRoute = .assistant
-        } else if path.last != .assistant {
-            path.append(.assistant)
-        }
-    }
-
     private var detailContactID: String? {
         if case .conversation(let contactID)? = detailRoute { return contactID }
         return nil
@@ -205,10 +196,6 @@ struct ChatsRootView: View {
                 }
                 // Reconstruir el detalle al cambiar de contacto.
                 .id(contactID)
-            case .assistant:
-                NavigationStack {
-                    PersonalAssistantChatScreen()
-                }
             case nil:
                 RistakEmptyState(
                     icon: "bubble.left.and.bubble.right",
@@ -227,9 +214,6 @@ struct ChatsRootView: View {
             selectedContactID: horizontalSizeClass == .regular ? detailContactID : nil,
             onOpenChat: { contact in
                 openConversation(contactID: contact.id)
-            },
-            onOpenAssistant: {
-                openAssistant()
             }
         )
     }
@@ -245,8 +229,6 @@ struct ChatsRootView: View {
                     viewModel.applyActivity(activity)
                 }
             )
-        case .assistant:
-            PersonalAssistantChatScreen()
         }
     }
 }

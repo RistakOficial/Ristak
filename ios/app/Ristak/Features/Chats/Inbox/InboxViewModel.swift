@@ -1563,15 +1563,6 @@ final class InboxViewModel {
 
     // MARK: - Filas especiales
 
-    /// Fila fija «Asistente Personal AI» (doc 03 §4.2.3).
-    var showsAssistantRow: Bool {
-        guard openAIConfigured, appConfig?.aiAgentChatEnabled ?? true else { return false }
-        guard !isSelecting, !archivedViewActive, activeFilter == .quick(.all) else { return false }
-        let query = ristakFoldedText(searchText)
-        guard query.isEmpty || "asistente personal ai".contains(query) else { return false }
-        return true
-    }
-
     /// Fila «Archivados» (doc 03 §4.2.5).
     var showsArchivedRow: Bool {
         guard appConfig?.showArchivedChats ?? true else { return false }

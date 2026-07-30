@@ -61,10 +61,11 @@ Service extensions, or Apple native code in this folder. Apple work belongs in
   Native `Linking`. Payment creation reads account currency/timezone from the
   backend config and blocks instead of creating money records when the account
   currency cannot be resolved.
-- Native settings pass with WhatsApp number management, AI-agent business
-  context dictation through `expo-audio` + `/api/ai-agent/transcribe`, native
-  push permission/token registration through `expo-notifications`, user/app
+- Native settings pass with WhatsApp number management, native push
+  permission/token registration through `expo-notifications`, user/app
   preference persistence, and theme background updates for the installed app.
+- The personal AI assistant, its fixed inbox row, settings and suggestions were
+  removed. The conversational Chatbot Hub remains available.
 - Native Android push registration is wired through `/api/push/mobile-devices`.
 
 ## Commands

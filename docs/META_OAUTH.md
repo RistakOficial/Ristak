@@ -54,11 +54,13 @@ permisos de Instagram Login que el producto no usa.
 1. Una cuenta sin OAuth ve **Conectar Meta Business** y usa
    `/api/meta/oauth/*` con `meta_business_login_config_id`.
 2. El callback vuelve a una sola sesión de selección que contiene cuentas
-   publicitarias, Datasets, Pages e Instagram.
-3. La cuenta publicitaria y la Page son obligatorias para sus respectivas
-   capacidades; Dataset e Instagram son opcionales.
-4. Cada sección guarda su selección de forma explícita. Cambiar un dropdown no
-   hace llamadas ni reemplaza la conexión activa.
+   publicitarias, Datasets, Pages e Instagram. Todavía no aparecen pestañas ni
+   se promueve la conexión.
+3. En la misma pantalla se muestra el onboarding unificado: cuenta publicitaria,
+   Dataset, Page, Instagram y switches de mensajes/comentarios. La cuenta
+   publicitaria es obligatoria; Dataset, Page e Instagram son opcionales.
+4. **Guardar configuración** ejecuta un solo `finalize` con activos y canales.
+   Cambiar un dropdown o switch sólo modifica el borrador local.
 5. Las conexiones `ads|social` anteriores permanecen como compatibilidad. Una
    autorización unificada nueva sólo sustituye la conexión activa cuando
    `finalize` termina.
@@ -71,23 +73,32 @@ cifrados existentes.
 
 ## Experiencia en Configuracion
 
-`Configuracion > Meta` se divide por función y por capacidad realmente disponible:
+`Configuracion > Meta` tiene tres estados visibles:
 
-1. **Meta Ads**: cuenta publicitaria obligatoria y Dataset de conversiones opcional, con
+1. **Sin autorización**: no hay pestañas ni formularios; sólo aparece
+   **Conectar Meta Business**.
+2. **OAuth autorizado, onboarding pendiente**: sigue sin haber pestañas. La
+   misma página presenta un formulario único para elegir cuenta publicitaria,
+   Dataset, Page e Instagram y decidir si Ristak atenderá mensajes o comentarios.
+   Page, Instagram y Dataset se pueden dejar vacíos. Nada se guarda hasta pulsar
+   **Guardar configuración**.
+3. **Configurado**: aparecen las cuatro pestañas actuales:
+
+   - **Meta Ads**: cuenta publicitaria obligatoria y Dataset de conversiones opcional, con
    dropdowns buscables y un solo boton **Guardar** para esa seccion. No existe
    wizard de System User ni ruta visible para pegar tokens. Después de guardar,
    ambos dropdowns permanecen visibles con el nombre legible del activo y pueden
    cambiarse sin desconectar Meta.
-2. **Redes sociales**: usa la misma autorización Meta Business para seleccionar
-   **Página** e Instagram y activar mensajes y comentarios. La UI nunca pide una
+   - **Redes sociales**: usa la misma autorización Meta Business para seleccionar
+   **Página** e Instagram —ambos opcionales— y activar mensajes y comentarios. La UI nunca pide una
    credencial de Messenger ni muestra una guía de Meta Developers.
    Cuando todavía no hay una selección, cada dropdown OAuth guía con
    **Selecciona tu cuenta publicitaria**, **Selecciona tu Dataset o pixel**,
-   **Selecciona tu página** o **Selecciona tu cuenta de Instagram** en lugar de
+   **Sin página por ahora** o **Sin Instagram por ahora** en lugar de
    describir el activo como ausente.
-3. **Rastreo web**: parametros UTM e inclusion del Dataset en el snippet de
+   - **Rastreo web**: parametros UTM e inclusion del Dataset en el snippet de
    tracking.
-4. **Dataset Test**: codigo temporal de Test Events y envio controlado de
+   - **Dataset Test**: codigo temporal de Test Events y envio controlado de
    eventos de navegador/servidor.
 
 `/ads` es alias de `/settings/meta-ads/cuenta`; `/social` y `/mensajes` son
@@ -230,18 +241,22 @@ https://www.facebook.com/v25.0/dialog/oauth
    técnico de Meta Business.
 6. Ristak reclama el handoff en backend y crea una sesión local cifrada. La
    conexión anterior sigue activa hasta completar el commit.
-7. La selección exige cuenta publicitaria y Page. Dataset e Instagram son
-   opcionales.
+7. Sin mostrar pestañas, Ristak presenta el onboarding unificado. La selección
+   exige cuenta publicitaria; Dataset, Page e Instagram son opcionales. Los
+   switches sociales sólo se habilitan cuando existe el perfil que necesitan.
 8. Al finalizar, Ristak conserva localmente el inventario cifrado y el estado
    devuelve `assetSnapshot` más `selectedAssets`; por eso el nombre y el dropdown
    no desaparecen al guardar o recargar. Si una conexión unificada anterior no
    tiene inventario `unified`, la pantalla ejecuta un backfill una sola vez.
-9. Cambiar un dropdown sólo cambia el borrador local. Al pulsar **Guardar**, el
-   frontend obtiene una sesión corta con `POST /api/meta/oauth/reconfigure` y
-   después llama a `POST /api/meta/oauth/finalize`; Ads inicia su sync y Social
-   registra relay/backfill.
-10. **Autorizar nuevos activos** repite el OAuth oficial completo. Los endpoints
-    segmentados `ads|social` siguen disponibles sólo para conexiones anteriores.
+9. Cambiar un dropdown o switch sólo cambia el borrador local. El primer
+   **Guardar configuración** llama una sola vez a `POST /api/meta/oauth/finalize`
+   con activos y canales; sólo después aparecen las pestañas. En una conexión
+   ya configurada, **Guardar** obtiene una sesión corta con
+   `POST /api/meta/oauth/reconfigure` y después ejecuta el mismo `finalize`.
+10. La pantalla configurada sólo expone **Sincronizar** —cuando existe una cuenta
+    publicitaria— y **Desconectar Meta**. No ofrece una segunda autorización de
+    activos. Los endpoints segmentados `ads|social` siguen disponibles sólo como
+    compatibilidad para conexiones anteriores.
 
 El callback devuelve `meta_oauth_kind` y
 `meta_oauth_integration_kind=ads|social|legacy`. Ristak limpia esos parámetros
@@ -251,24 +266,27 @@ del navegador inmediatamente y completa exactamente el flujo declarado.
 
 Reglas no negociables:
 
-- El commit oficial exige una Ad Account y una Page autorizadas. Dataset e
+- El onboarding oficial exige una Ad Account autorizada. Dataset, Page e
   Instagram son opcionales; cada módulo sólo funciona si además se eligió el
-  activo opcional que necesita.
-- La Page debe pertenecer al mismo portafolio que la cuenta publicitaria cuando
-  Meta entrega esa relacion.
+  activo que necesita.
+- Page, cuenta publicitaria y Dataset pueden pertenecer a portafolios distintos
+  siempre que cada activo esté en la allowlist firmada del handoff.
 - Instagram debe estar enlazado a la Page elegida.
 - Si Meta devuelve tareas de Page, deben incluir `MESSAGING` y `MODERATE`.
 - `granular_scopes.target_ids` debe incluir cada activo elegido; si Meta no
   devuelve `target_ids`, Ristak no inventa una allowlist vacia.
 - El Page Token y su proof deben corresponder a la Page seleccionada.
-- En la conexión oficial, `complete` crea la sesión cifrada inicial. Después de
+- En la conexión oficial, `complete` crea la sesión cifrada inicial pero no
+  persiste una conexión ni habilita las pestañas. Después de
   guardar, los selectores se reconstruyen desde el inventario local sin exponer
   credenciales; si cambia la selección, **Guardar** obtiene una sesión one-time
   con `POST /api/meta/oauth/reconfigure` y ejecuta un solo `finalize`. Las
   conexiones separadas anteriores usan el equivalente segmentado. Cambiar un
   dropdown nunca llama a la API.
-- Los activos creados después del consentimiento no se agregan solos: requieren
-  **Autorizar nuevos activos**.
+- Los activos creados después del consentimiento no se agregan solos ni se
+  incorporan desde la pantalla configurada. Si se necesita reemplazar el
+  inventario autorizado, se inicia una conexión completa nueva después de
+  desconectar Meta.
 
 ### Descubrimiento y validacion del Dataset
 
@@ -343,9 +361,9 @@ relistar el portafolio. El contrato es:
   expiración sin repetir `debug_token`. Si Meta limita esa validación, el
   callback termina con un error reintentable; no cae a `/me`, no reintenta a
   escondidas y no guarda una conexión parcialmente validada.
-- `/{BUSINESS_ID}`, `owned_*` y `client_*` se consultan durante el callback OAuth
-  o cuando la persona pulsa **Autorizar nuevos activos**. Abrir Configuración,
-  Chat o Notificaciones no enumera negocios ni activos.
+- `/{BUSINESS_ID}`, `owned_*` y `client_*` se consultan durante el callback de una
+  conexión OAuth completa. Abrir Configuración, Chat o Notificaciones no enumera
+  negocios ni activos.
 - El estado social se sirve con permisos ya validados y la suscripción guardada
   localmente. Al elegir una Page se hace el POST de suscripción y una sola
   lectura de confirmación; después el polling no toca esos endpoints.
@@ -495,9 +513,10 @@ Installer, autenticado por licencia salvo callbacks publicos:
   de poner Facebook Login for Business en vivo.
 - Advanced Access de `ads_read` y Marketing API Full Access para cuentas de
   clientes; confirmar los requisitos vigentes en App Dashboard antes de enviar.
-- Video de revision: un login que vuelve directamente a la tabla conectada;
-  despues se eligen ahi los activos necesarios y se demuestra lectura de
-  reporte, Test Event, mensaje y comentarios.
+- Video de revision: un login que vuelve al onboarding sin pestañas, completa
+  los activos y canales en una sola pantalla, guarda y entonces muestra la
+  configuración conectada; después se demuestra lectura de reporte, Test Event,
+  mensaje y comentarios.
 - Instagram profesional enlazado a la Page y **Connected Tools -> Allow Access
   to Messages** habilitado; OAuth no puede cambiar ese ajuste por API.
 
@@ -509,9 +528,9 @@ Installer, autenticado por licencia salvo callbacks publicos:
    `meta_scopes_missing` y no crea una conexión parcial.
 3. El handoff contiene Ad Accounts, Datasets, Pages e Instagram, conserva
    `integration_kind=legacy` como alias técnico y se consume una sola vez.
-4. La cuenta publicitaria y la Page son obligatorias; Dataset e Instagram son
-   opcionales. Ningún `onChange` persiste datos y **Guardar** ejecuta un único
-   finalize oficial.
+4. La cuenta publicitaria es obligatoria; Dataset, Page e Instagram son
+   opcionales. Ningún `onChange` persiste datos y **Guardar configuración**
+   ejecuta un único finalize oficial con activos y switches sociales.
 5. Las conexiones segmentadas anteriores siguen funcionando sin mezclarse ni
    revocarse automáticamente.
 6. El dropdown de Dataset contiene sólo relaciones confirmadas por
@@ -535,13 +554,18 @@ Installer, autenticado por licencia salvo callbacks publicos:
     endpoints manuales responden `410 META_OAUTH_REQUIRED`.
 13. **Rastreo web** y **Dataset Test** permanecen en pestañas propias; no se
     mezclan con el login ni los controles sociales.
-14. **Autorizar nuevos activos** abre el Config ID oficial completo; una conexión
-    segmentada anterior conserva el Config ID de su propio tipo.
-15. Después de guardar o recargar, Cuenta publicitaria y Dataset siguen siendo
+14. Una conexión configurada no muestra una acción para autorizar activos
+    adicionales; conserva únicamente **Sincronizar** y **Desconectar Meta**. La
+    entrada OAuth visible sigue siendo **Conectar Meta Business** cuando no hay
+    conexión.
+15. Al regresar del OAuth inicial todavía no aparecen pestañas: se muestra el
+    onboarding unificado. Las pestañas Meta Ads, Redes sociales, Rastreo web y
+    Dataset Test aparecen únicamente después de guardar correctamente.
+16. Después de guardar o recargar, Cuenta publicitaria y Dataset siguen siendo
     dropdowns, muestran sus nombres y permiten cambiar entre activos ya
     autorizados. Una conexión segmentada o unificada anterior recupera ese
     inventario durante el primer refresh necesario sin desconectarse.
-16. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
+17. El perfil social de Sites muestra avatar y seguidores reales con OAuth USER,
     conserva el último snapshot si Graph falla y nunca presenta `0` cuando Meta
     no devolvió el conteo. Una conexión Ads anterior con permisos de lectura de
     Pages puede conservar el fallback de sólo lectura, sin convertirse en token

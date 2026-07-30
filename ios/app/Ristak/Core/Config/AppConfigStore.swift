@@ -249,19 +249,6 @@ final class AppConfigStore {
 
     // MARK: - Accessors tipados: app_config (globales)
 
-    /// Toggle "Mostrar como primer chat" (agente fijo arriba de la bandeja).
-    var aiAgentChatEnabled: Bool {
-        boolValue(appConfig[RistakAppConfigKey.aiAgentEnabled], default: true)
-    }
-
-    /// Toggle "Sugerir respuestas".
-    var aiReplySuggestionsEnabled: Bool {
-        boolValue(
-            appConfig[RistakAppConfigKey.aiReplySuggestionsEnabled],
-            default: RistakAppConfigDefaults.aiReplySuggestionsEnabled
-        )
-    }
-
     /// Toggle "Mostrar archivados".
     var showArchivedChats: Bool {
         boolValue(appConfig[RistakAppConfigKey.showArchived], default: true)

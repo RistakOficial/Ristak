@@ -252,13 +252,17 @@ No hay propietario/asignación por contacto. `getContacts` (`contactsController.
 
 **Tipo:** bug-seguridad · **verifyStatus:** confirmado
 
-`server.js` aplica `requireFeature` a solo 8 routers (automations, advanced_reports, meta_ads, google_calendar, app_assistant_ai, conversational_ai, whatsapp, email). Otros módulos que el frontend trata como features de licencia — **payments, sites, analytics, contacts, dashboard, attribution, integrations** — se montan sin `requireFeature`; su única protección es `requireModuleAccess`, que valida ROL, **no licencia**.
+Estado actual: este hallazgo fue corregido. `requireModuleAccess` valida tanto
+el permiso del usuario como la feature comercial del módulo. El router del
+asistente personal fue retirado; el Chatbot conserva su gate
+`conversational_ai`.
 
-Verificado: los routers de pagos gatean solo con `requireModuleAccess('payments')` (`transactions.routes.js:22`, `subscriptions.routes.js:16`, `conekta.routes.js:22-28`, `stripe.routes.js:29-35`); ninguno importa `requireFeature`. Un tenant cuyo plan no incluya payments tiene la UI oculta pero `/api/transactions`, `/api/stripe`, `/api/subscriptions`, `/api/conekta` responden normal. Contradice el comentario del propio middleware (`licenseMiddleware.js:38`): "ocultar botones en frontend no es suficiente".
+Verificación actual: `backend/src/middleware/userAccessMiddleware.js` consulta
+`hasModuleFeature(moduleKey)` antes de autorizar el nivel `read`/`write`. Los
+routers pueden usar ese gate central sin importar `requireFeature` de forma
+individual.
 
-**Severidad:** alto como **bypass de monetización**, no fuga de datos entre tenants. El negocio cobra por features que se sirven igual sin pagarlas.
-
-**Fix:** mapa central módulo→feature aplicado de forma consistente, o `requireFeature` por router.
+**Severidad actual:** resuelto.
 
 ---
 

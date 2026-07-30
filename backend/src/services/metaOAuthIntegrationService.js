@@ -1179,7 +1179,7 @@ export async function prepareMetaOAuthIntegrationReconfiguration(integrationKind
   }
   if (!authorized) {
     throw oauthError(
-      'No se encontró el inventario autorizado. Usa “Autorizar nuevos activos” una vez para recuperarlo.',
+      'No se encontró el inventario autorizado. Desconecta y vuelve a conectar Meta para recuperarlo.',
       409,
       'META_OAUTH_AUTHORIZED_ASSETS_UNAVAILABLE'
     )

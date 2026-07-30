@@ -1,5 +1,2 @@
-export { AIAgentPanel } from './AIAgentPanel'
 export { AgentRobot } from './AgentRobot'
 export type { AgentRobotProps } from './AgentRobot'
-export { RistakRobot } from './RistakRobot'
-export type { RistakRobotProps } from './RistakRobot'

@@ -1,15 +1,15 @@
 import {
-  isAIAgentCredentialError,
-  isAIAgentOpenAIRequiredError,
+  isAIRuntimeCredentialError,
+  isAIRuntimeOpenAIRequiredError,
   requireOpenAIApiKey
-} from '../services/aiAgentService.js'
+} from '../services/aiRuntimeService.js'
 
 export async function requireOpenAIConfigured(req, res, next) {
   try {
     req.openAIApiKey = await requireOpenAIApiKey()
     next()
   } catch (error) {
-    if (isAIAgentOpenAIRequiredError(error)) {
+    if (isAIRuntimeOpenAIRequiredError(error)) {
       return res.status(error.statusCode || 409).json({
         success: false,
         error: error.message,
@@ -18,7 +18,7 @@ export async function requireOpenAIConfigured(req, res, next) {
       })
     }
 
-    if (isAIAgentCredentialError(error)) {
+    if (isAIRuntimeCredentialError(error)) {
       return res.status(error.statusCode || 409).json({
         success: false,
         error: error.message,

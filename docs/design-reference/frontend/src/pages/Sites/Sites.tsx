@@ -134,7 +134,7 @@ import {
   type SiteTheme,
   type SiteType
 } from '@/services/sitesService'
-import { aiAgentService } from '@/services/aiAgentService'
+import { aiRuntimeService } from '@/services/aiRuntimeService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, { type MediaAsset } from '@/services/mediaService'
@@ -8748,7 +8748,7 @@ function useAIVoiceDictation({
           return
         }
         setVoiceState('transcribing')
-        void aiAgentService.transcribeVoice(audioBlob)
+        void aiRuntimeService.transcribeVoice(audioBlob)
           .then(result => {
             onTranscriptionRef.current(result.text)
             resetVoiceUi()

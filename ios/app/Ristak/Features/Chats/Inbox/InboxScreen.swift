@@ -8,7 +8,6 @@ struct InboxScreen: View {
     /// Conversación abierta en el detalle (iPad) para resaltar la fila.
     var selectedContactID: String?
     let onOpenChat: (ChatContact) -> Void
-    let onOpenAssistant: () -> Void
 
     @Environment(ShellState.self) private var shell
     @Environment(AccessStore.self) private var access
@@ -168,12 +167,6 @@ struct InboxScreen: View {
                 chipsRow
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-            }
-
-            if viewModel.showsAssistantRow {
-                AssistantChatRow()
-                    .onTapGesture { onOpenAssistant() }
-                    .ristakRowSeparator()
             }
 
             if viewModel.archivedViewActive {

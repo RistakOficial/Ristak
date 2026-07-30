@@ -21,7 +21,6 @@ export const MOBILE_CACHE_KEYS = {
   settingsCustomFields: 'settings:custom-fields',
   settingsTags: 'settings:tags',
   settingsCalendars: 'settings:calendars',
-  settingsAIAgent: 'settings:ai-agent',
   chatFilterCatalog: 'chat:filter-catalog',
   firstSyncCompleted: 'mobile:first-sync:completed',
 } as const;

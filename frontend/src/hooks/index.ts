@@ -1,5 +1,5 @@
 // Hooks personalizados de la app
-export { useAppConfig, useTableConfig } from './useAppConfig'
+export { publishPersistedAppConfigValue, useAppConfig, useTableConfig } from './useAppConfig'
 export { useUserConfig } from './useUserConfig' // (MOB-006)
 export { usePhoneTheme, isPhoneThemePreference, type PhoneThemePreference, type PhoneThemeTone } from './usePhoneTheme'
 export { usePhoneElasticScroll } from './usePhoneElasticScroll'
@@ -13,7 +13,7 @@ export { useHighLevelConnected } from './useHighLevelConnected'
 export { useIntegrationsStatus } from './useIntegrationsStatus'
 export { usePaymentGatewayCapabilities, type PaymentGatewayProvider } from './usePaymentGatewayCapabilities'
 export { useAccountCurrency } from './useAccountCurrency'
-export { useAIAgentAvailability } from './useAIAgentAvailability'
+export { useAIAvailability } from './useAIAvailability'
 export { useBottomSheetDismiss } from './useBottomSheetDismiss'
 export { useAppVersion } from './useAppVersion'
 export { useUrlDateRangeSync, useUrlFilterState, useUrlStringState } from './useUrlState'

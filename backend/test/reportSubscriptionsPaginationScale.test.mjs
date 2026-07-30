@@ -321,10 +321,6 @@ test('Contrato de escala evita descargas completas y refrescos externos por even
     path.join(projectRoot, '../frontend/src/pages/Transactions/PaymentSubscriptions.tsx'),
     'utf8'
   )
-  const subscriptionAgentTool = fs.readFileSync(
-    path.join(projectRoot, 'src/agents/tools/paymentFlowTools.js'),
-    'utf8'
-  )
 
   assert.match(reportBackend, /LIMIT \?/)
   assert.match(reportBackend, /TOTAL_COUNT_CAP = 10_000/)
@@ -341,6 +337,4 @@ test('Contrato de escala evita descargas completas y refrescos externos por even
   assert.match(subscriptionFrontend, /subscriptionCursorStackRef/)
   assert.match(subscriptionFrontend, /serverSideSearch/)
   assert.match(subscriptionFrontend, /loadSubscriptionsRef\.current\(\{ refresh: false \}\)/)
-  assert.match(subscriptionAgentTool, /name: 'list_subscriptions'[\s\S]*search: z\.string\(\)[\s\S]*page: z\.number\(\)[\s\S]*cursor: z\.string\(\)[\s\S]*limit: z\.number\(\)/)
-  assert.match(subscriptionAgentTool, /listSubscriptions\(\{[\s\S]*search: search \|\| ''[\s\S]*page: page \|\| 1[\s\S]*cursor: cursor \|\| undefined/)
 })

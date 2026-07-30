@@ -68,16 +68,10 @@ test('gateway configuration and payment-link creation require Professional featu
   assert.match(mcpRoutes, /ghl_create_payment_link: \['integrations', 'payments', 'payment_links'\]/)
 })
 
-test('AI payment entry points fail closed when online-payment features are unavailable', async () => {
-  const appAssistantTools = await readFile(join(backendRoot, 'src/agents/tools/paymentFlowTools.js'), 'utf8')
+test('conversational payment entry points fail closed when online-payment features are unavailable', async () => {
   const conversationalTools = await readFile(join(backendRoot, 'src/agents/conversational/tools.js'), 'utf8')
-  const aiAgentService = await readFile(join(backendRoot, 'src/services/aiAgentService.js'), 'utf8')
   const testPaymentService = await readFile(join(backendRoot, 'src/services/conversationalAgentTestPaymentService.js'), 'utf8')
 
-  assert.match(appAssistantTools, /unavailablePaymentFeature\('payment_links'\)/)
-  assert.match(appAssistantTools, /unavailablePaymentFeature\('payment_gateways'\)/)
-  assert.match(appAssistantTools, /unavailablePaymentFeature\('saved_payment_methods'\)/)
   assert.match(conversationalTools, /hasFeature\('payment_links'\)/)
-  assert.match(aiAgentService, /hasFeature\('payment_links'\)/)
   assert.match(testPaymentService, /hasFeature\('payment_links'\)/)
 })

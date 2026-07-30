@@ -168,7 +168,8 @@ Rutas protegidas por auth y/o feature flags:
 - `/api/tracking`: sesiones, visitantes, conversiones y config.
 - `/api/reports`: reportes operativos/financieros.
 - `/api/media`: uploads, library, Bunny Storage/Stream y cuotas.
-- `/api/ai-agent`: asistente interno.
+- `/api/ai-runtime`: estado compartido de OpenAI y transcripción para Chatbot/Sites;
+  exige acceso a por lo menos uno de esos módulos.
 - `/api/conversational-agent`: agentes conversacionales.
 - `/api/external`, `/api/mcp`: API externa y MCP.
 - `/api/license`: estado de licencia local/central.
@@ -234,12 +235,25 @@ cancela al salir, mientras foco, touch y pointer-down son inmediatos. En Sites e
 precarga trae solamente la compuerta liviana de ruta; el workspace/editor pesado
 se importa al entrar realmente a Sites y nunca durante el idle global. Configuracion hace lo
 mismo con cada panel interno y navega directamente al primero permitido. Los
-redirects de login/inicio precargan su destino, y el panel del asistente AI queda
-en un chunk separado del shell. No se permite volver a importar todas las
+redirects de login/inicio precargan su destino. No se permite volver a importar todas las
 paginas de forma estatica desde `App.tsx` ni bloquear el contenido completo con
 un loader global mientras existan requests de una ruta. Las esperas inevitables
 deben aparecer dentro de la zona que aun no tiene datos, conservando navegacion,
 header y contenido anterior utilizable.
+
+Si un chunk JS/CSS falla durante una navegacion real,
+`LazyLoadErrorBoundary` mantiene el shell y muestra el cargador solamente dentro
+del contenido. Cuando el navegador esta offline espera el evento `online`; con
+conexion hace una unica recarga automatica por modulo y build para obtener el
+`index.html` vigente. La marca se guarda en `sessionStorage` antes de recargar y
+evita ciclos durante una ventana de cinco minutos; si el mismo build vuelve a
+fallar en esa ventana, conserva los menus utilizables y muestra el estado de
+error reintentable. El editor pesado de Automatizaciones usa el mismo mecanismo
+al entrar a una automatizacion. Esta recuperacion no vive en el prefetch:
+un hover, foco o pointer-down fallido nunca recarga Ristak por si solo. Tampoco se
+activa para errores normales de render. En Configuracion el boundary de cada
+panel queda dentro de `mainContent`, por lo que su navegacion lateral permanece
+montada durante la espera.
 
 `frontend/src/services/authFetch.ts` se limita a autenticacion, telemetria de
 actividad, bloqueo de licencia y notificacion de invalidaciones. No cachea,
@@ -270,12 +284,12 @@ un deadline de 20 segundos: un servidor o transporte colgado aborta el fetch
 real, libera el single-flight y permite reintentar en vez de dejar consumidores
 esperando indefinidamente.
 
-La configuracion del asistente AI sigue el mismo principio especializado:
-`aiAgentService` comparte un unico `GET /api/ai-agent/config` entre disponibilidad
-y panel, con snapshot de 60 segundos por cuenta y deadline de 20 segundos. El
-ultimo consumidor que abandona aborta el transporte. Un POST o DELETE fallido
-conserva el ultimo estado confirmado; una mutacion exitosa publica su respuesta y
-solo un DELETE confirmado vacia el snapshot. Timeouts y errores nunca se cachean.
+La disponibilidad compartida de OpenAI sigue el mismo principio especializado:
+`aiRuntimeService` comparte un unico `GET /api/ai-runtime/config` entre Chatbot y
+Sites, con snapshot de 60 segundos por cuenta y deadline de 20 segundos. El
+ultimo consumidor que abandona aborta el transporte. Las mutaciones de
+proveedores hechas desde Chatbot invalidan el snapshot después de confirmarse;
+timeouts y errores nunca se cachean.
 
 Una mutacion exitosa notifica solamente los prefijos afectados; los POST que son
 consultas declaradas, como los resumenes de Analytics, no cuentan como mutacion.
@@ -286,7 +300,7 @@ Dashboard, Tracking y Reportes. Un evento vivo no debe enfriar Sites,
 Configuracion ni otro modulo independiente. Los caches especializados declaran
 sus prefijos y descartan respuestas de una revision anterior. Cambiar de cuenta
 invalida todos y cancela las promesas de la cuenta anterior. Tema y disponibilidad
-del agente AI esperan una sesion autenticada y el snapshot persistido de
+del Chatbot esperan una sesion autenticada y el snapshot persistido de
 integraciones nunca guarda el access token de HighLevel.
 
 La invalidacion viva es suave: no aborta ni desacopla un agregado pesado que ya
@@ -317,7 +331,11 @@ bufferizar SSE ni recomprimir binarios. Los assets Vite con hash se entregan con
 cache inmutable de un ano; `index.html`, manifests y `sw.js` siempre revalidan.
 El service worker usa cache-first solamente para assets versionados y
 network-first para navegacion y archivos sin hash. Un cache lleno nunca debe
-convertir una respuesta de red valida en error.
+convertir una respuesta de red valida en error. Si una pestaña de un build
+anterior pide por primera vez un chunk que el deploy ya retiro, repetir ese
+`import()` dentro del mismo documento no es una recuperacion valida: el navegador
+conserva el rechazo. En ese caso la recarga automatica acotada obtiene el mapa
+nuevo de assets; no se simula un reintento local.
 
 Reglas de datos para cualquier modulo nuevo o refactorizado:
 
@@ -979,9 +997,11 @@ versión anterior antes de montar la interfaz real. El menú precarga solamente 
 compuerta con intención real y nunca dispara biblioteca, carpetas, dominio ni
 documento de edición antes de montar Sites. El workspace es el único owner de
 esas lecturas, todas con deadline y cancelación; así no se duplican datos ni una
-API lenta impide abrir o abandonar la ruta. Un fallo transitorio del chunk limpia
-su promesa y permite reintentar. El editor pesado nunca forma parte del shell
-global ni bloquea una transición hacia otro módulo.
+API lenta impide abrir o abandonar la ruta. Limpiar la promesa permite que una
+precarga fallida no envenene la intencion posterior, pero un `import()` que ya
+fallo al renderizar se recupera mediante el boundary y su unica recarga
+protegida, no repitiendo el mismo URL. El editor pesado nunca forma parte del
+shell global ni bloquea una transición hacia otro módulo.
 El documento de edicion se solicita con `includeTrackingStats=0`: abrir,
 previsualizar, guardar o recibir respuestas no ejecuta conteos historicos de
 sesiones. El API directo conserva `includeTrackingStats=1` por compatibilidad,
@@ -1579,8 +1599,8 @@ Shell desktop protegido:
 - `/analytics`
 - `/sites`
 - `/automations`
-- `/ai-agent`: pestaña principal `Chatbot`, con secciones internas `Chatbot` y
-  `Configuracion`.
+- `/ai-agent`: pestaña principal `Chatbot`, dedicada únicamente a los agentes
+  conversacionales.
 - `/mdp-program`
 - `/settings`
 
@@ -1679,10 +1699,9 @@ el plan de la cuenta no los incluye. Las pantallas y botones solo anticipan la
 restriccion; el backend es la barrera real.
 
 El modulo `ai_agent` aparece como la pestaña principal `Chatbot` en el menu
-lateral. Puede dividirse por feature de licencia: `conversational_ai` habilita
-la seccion Chatbot y `app_assistant_ai` habilita la configuracion general de
-Ristak AI.
-El plan basico puede abrir solo `conversational_ai` y limitar la creacion a
+lateral. `conversational_ai` habilita esta superficie; la antigua feature
+`app_assistant_ai` se ignora y no vuelve a habilitar el asistente personal.
+El plan basico puede abrir `conversational_ai` y limitar la creacion a
 `limits.conversational_agents.max_agents=1`.
 
 No basta con esconder botones en frontend. Cualquier endpoint que escriba o lea
@@ -2265,6 +2284,11 @@ conexión. Los mensajes, contactos y plantillas históricas permanecen; los nuev
 eventos API de una fila retirada se ignoran localmente hasta que el usuario la
 conecte otra vez de forma explícita.
 
+La sección **Números** muestra la búsqueda, el resumen y la tabla operativa a todo
+el ancho. No agrega un panel lateral de filtros que repita estados ya visibles en
+cada fila; buscar por número, nombre o estado es la única reducción local de esa
+lista.
+
 Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
 propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
@@ -2285,10 +2309,9 @@ del mensaje segun su direccion. La meta interna del globo conserva `API`, `QR`,
 hora y vistos; el robot no debe volver a mezclarse dentro de esa fila.
 
 La bandeja desktop de Chat (`/chat` y subrutas) es una superficie de trabajo
-propia y no debe montar el globo global del Asistente Personal AI, para no tapar
-el historial, composer ni acciones rapidas del chat. El asistente interno sigue
-disponible desde la pestaña principal `Chatbot`, seccion `Configuracion`, y
-desde `Configuración > Inteligencia Artificial`.
+propia y no monta ningún asistente personal global. La pestaña principal
+`Chatbot` administra exclusivamente agentes conversacionales; la ruta legacy
+`/ai-agent` aterriza en esa misma configuración.
 
 El historial de `/chat` conserva una textura punteada ligera, con los puntos
 espaciados para que el fondo se sienta limpio y no compita con los mensajes.
@@ -3638,7 +3661,7 @@ existía antes de un downgrade.
 
 El modal de registrar pago y la capacidad `Cobrar` del chatbot ofrecen sólo
 registro manual/transferencia fuera de Profesional. Las rutas autenticadas, el
-asistente de app y MCP vuelven a validar `payment_links`; una licencia stale no
+chatbot y MCP vuelven a validar `payment_links`; una licencia stale no
 puede crear ni enviar un enlace. Los links públicos creados antes del downgrade
 siguen disponibles para que el pagador no reciba una URL rota.
 
@@ -6227,7 +6250,7 @@ heredada se conserva visible como alerta para poder corregirla, pero queda
 deshabilitada; el backend tambien rechaza el PATCH incompatible para que otro
 cliente o una llamada directa a la API no pueda saltarse este contrato.
 
-Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente interno
+Las instrucciones copiables para ChatGPT, Claude o Codex y el asistente de código de Sites
 tratan este contrato como una compuerta obligatoria de entrega, no como una
 recomendacion. Si el HTML contiene un formulario propio de captacion, la IA no
 debe entregarlo ni marcarlo listo hasta comprobar que cada `<form>` tenga
@@ -6783,24 +6806,23 @@ Documento operativo: `docs/MEDIA_STORAGE_BUNNY.md`.
 
 ## IA
 
-Ristak expone una superficie principal de IA en el menu lateral: `Chatbot`
-(`/ai-agent`). Dentro de esa pagina viven dos secciones segun licencia:
+Ristak expone una sola superficie principal de IA en el menu lateral: `Chatbot`
+(`/ai-agent` y `/ai-agent/conversational`). Administra agentes que interactuan
+con contactos y objetivos. El asistente personal interno de operación fue
+retirado de web, la app React Native y la app iOS; ya no existe su panel flotante,
+chat fijo, configuración, sugerencias ni API pública.
 
-- `Chatbot` (`/ai-agent/conversational`): agentes que interactuan con contactos
-  y objetivos.
-- `Configuracion` (`/ai-agent/general`): configuracion del asistente interno de
-  operacion, busqueda, analisis y acciones con ledger de ejecucion.
-
-La misma pantalla de configuracion general tambien esta disponible como proxy en
-`Configuración > Inteligencia Artificial` (`/settings/artificial-intelligence`),
-para que el usuario pueda ajustar token, modelo y contexto desde Configuracion o
-desde Chatbot sin duplicar estado ni rutas de backend.
+Las rutas antiguas de configuración redirigen a Chatbot para no romper
+marcadores. La conexión de proveedores IA se gestiona dentro de Chatbot. El
+backend conserva únicamente `aiRuntimeService` para credenciales cifradas,
+perfil del negocio y transcripción compartidos por Chatbot, Sites y funciones
+automáticas vigentes; no expone un chat de asistente personal.
 
 ### Catalogo y default de OpenAI
 
 Cuando el proveedor es OpenAI, el catalogo actual ofrece GPT-5.6 Sol para
 trabajo complejo, GPT-5.6 Terra para balance de capacidad y costo, y GPT-5.6
-Luna para alto volumen sensible a costo. El default nuevo de Ristak AI y de los
+Luna para alto volumen sensible a costo. El default nuevo del Chatbot y de los
 agentes conversacionales es `gpt-5.6-luna`; los flujos automaticos de menor
 costo aprobados por backend usan ese mismo modelo. La seleccion explicita de un
 usuario nunca se reemplaza. Al conectar o reconectar OpenAI, una configuracion
@@ -6811,10 +6833,10 @@ En Sites, crear una pagina con IA usa GPT-5.6 Sol por defecto y los cambios
 pequenos usan GPT-5.6 Luna. Web, Android e iOS exponen el mismo catalogo de
 OpenAI para que el usuario no pierda opciones al cambiar de superficie.
 
-La API conserva endpoints separados:
+La API conserva:
 
-- `/api/ai-agent`: asistente interno.
-- `/api/conversational-agent`: agentes conversacionales.
+- `/api/conversational-agent`: agentes conversacionales, configuración y proveedores.
+- `/api/ai-runtime`: estado compartido de OpenAI y transcripción; no recibe mensajes de chat.
 
 ### Configuracion y experiencia del usuario
 
@@ -7103,7 +7125,7 @@ servidor ya verificó para ese contacto y calendario; si el modelo niega una cit
 canónica vigente, reemplaza esa contradicción por el hecho real. No interpreta
 el mensaje del cliente, no decide si quiere reagendar o cancelar y no bloquea una
 mutación real confirmada. El recorte compara exclusivamente el copy propuesto
-contra los últimos mensajes visibles del asistente, elimina oraciones ya dichas
+contra los últimos mensajes visibles del agente, elimina oraciones ya dichas
 y conserva intacto cualquier contenido nuevo. No interpreta la intención para
 ejecutar acciones, no inventa reemplazos, nunca cambia números y permite la
 repetición cuando la persona pide otra vez una dirección, precio u horario. Si

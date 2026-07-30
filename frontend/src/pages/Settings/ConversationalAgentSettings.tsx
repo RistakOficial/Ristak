@@ -26,7 +26,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability, useAnchoredPortal, useAppConfig } from '@/hooks'
+import { useAIAvailability, useAnchoredPortal, useAppConfig } from '@/hooks'
+import { aiRuntimeService } from '@/services/aiRuntimeService'
 import { hasPaymentLinksAccess } from '@/utils/accessControl'
 import {
   conversationalAgentService,
@@ -73,7 +74,7 @@ import apiClient from '@/services/apiClient'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelSentence } from '@/utils/crmLabels'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
-import styles from './AIAgentSettings.module.css'
+import styles from './ConversationalAgentSettings.module.css'
 import { describeConversationalPreviewAction } from './conversationalPreviewAction'
 import { MSI_INSTALLMENT_CHOICES, msiEligibility } from '../../../../shared/sites/paymentGateContract.js'
 
@@ -4158,7 +4159,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
   const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
-  const openAIAvailability = useAIAgentAvailability()
+  const openAIAvailability = useAIAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
   const [aiProviders, setAIProviders] = useState<ConversationalAIProviderStatus[]>([])
@@ -4584,6 +4585,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       setAIProviders(providers)
       const provider = getConversationalAIProviderOption(providerModalId)
       if (providerModalId === 'openai') {
+        aiRuntimeService.invalidateConfig()
         const nextConfig = await conversationalAgentService.getConfig()
         setConfig(nextConfig)
         setAIProviders(nextConfig.aiProviders || providers)
@@ -4595,7 +4597,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         'success',
         `${provider.label} conectado`,
         providerModalId === 'openai'
-          ? 'También quedó guardado en la configuración general de Ristak AI.'
+          ? 'También quedó guardado como proveedor del chatbot.'
           : 'Ya puedes elegirlo en tus chatbots.'
       )
     } catch (error: any) {
@@ -4785,7 +4787,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         <div className={styles.aiProviderModalBody}>
           <p className={styles.helper}>
             {providerModalOption.id === 'openai'
-              ? 'Pega la API key de OpenAI. Se guarda cifrada en la configuración general de Ristak AI y queda disponible para Chatbot.'
+              ? 'Pega la API key de OpenAI. Se guarda cifrada y queda disponible para tus chatbots.'
               : `Pega la API key de ${providerModalOption.label}. Se guarda cifrada y sólo se usa para Chatbot.`}
           </p>
           <div className={styles.field}>

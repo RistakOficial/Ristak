@@ -454,7 +454,7 @@
       <a data-nav data-active="{{ active.aiagent }}" onClick="{{ go.aiagent }}" style="position:relative; display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:var(--radius-ctl); font-size:14px; font-weight:600; color:var(--text-dim); cursor:pointer; transition:background .15s, color .15s;">
         <span class="nav-rail" style="position:absolute; left:-12px; top:50%; transform:translateY(-50%); width:3px; height:18px; border-radius:0 3px 3px 0; background:var(--accent); opacity:0; transition:opacity .15s;"></span>
         <svg class="nav-ic" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M12 8V4M9 14h.01M15 14h.01M2 12v3M22 12v3"/></svg>
-        <span>Agente AI</span>
+        <span>Chatbot</span>
       </a>
       <a data-nav data-active="{{ active.settings }}" onClick="{{ go.settings }}" style="position:relative; display:flex; align-items:center; gap:11px; padding:9px 11px; border-radius:var(--radius-ctl); font-size:14px; font-weight:600; color:var(--text-dim); cursor:pointer; transition:background .15s, color .15s;">
         <span class="nav-rail" style="position:absolute; left:-12px; top:50%; transform:translateY(-50%); width:3px; height:18px; border-radius:0 3px 3px 0; background:var(--accent); opacity:0; transition:opacity .15s;"></span>
@@ -2071,68 +2071,14 @@
         </section>
         </sc-if>
 
-        <!-- ========== AGENTE AI ========== -->
+        <!-- ========== CHATBOT ========== -->
         <sc-if value="{{ is.aiagent }}" hint-placeholder-val="{{ true }}">
-        <section data-screen data-screen-label="Agente AI">
+        <section data-screen data-screen-label="Chatbot">
           <div style="margin-bottom:18px;">
-            <h1 style="margin:0 0 5px; font-family:var(--font-display); font-size:25px; font-weight:700; letter-spacing:-0.02em;">Agente AI</h1>
+            <h1 style="margin:0 0 5px; font-family:var(--font-display); font-size:25px; font-weight:700; letter-spacing:-0.02em;">Chatbot</h1>
             <p style="margin:0; font-size:14px; color:var(--text-dim);">Configura el agente que responde, agenda y da seguimiento por ti en cada conversación.</p>
           </div>
-          <div style="display:flex; gap:3px; padding:3px; border-radius:var(--radius-ctl); background:var(--surface-2); border:1px solid var(--border); width:fit-content; margin-bottom:18px;">
-            <sc-for list="{{ aiTabs }}" as="t" hint-placeholder-count="2">
-              <span data-tabx data-on="{{ t.on }}" onClick="{{ t.go }}" style="font-size:12.5px; font-weight:600; padding:8px 16px; border-radius:7px; color:var(--text-dim);">{{ t.label }}</span>
-            </sc-for>
-          </div>
-
-          <sc-if value="{{ aiGeneral }}" hint-placeholder-val="{{ true }}">
-          <div style="display:grid; grid-template-columns:1fr; gap:16px; max-width:760px;">
-            <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:22px;">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:16px; border-bottom:1px solid var(--border); margin-bottom:18px;">
-                <div style="display:flex; align-items:center; gap:11px;">
-                  <span style="width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; background:var(--accent-soft); color:var(--accent);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M12 8V4M9 14h.01M15 14h.01M2 12v3M22 12v3"/></svg></span>
-                  <div><div style="font-size:15px; font-weight:700;">Conexión OpenAI</div><div style="font-size:12px; color:var(--text-mute);">Token, modelo y contexto. Todo se guarda solo.</div></div>
-                </div>
-                <div style="display:flex; align-items:center; gap:10px;">
-                  <span data-badge data-tone="success" style="display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:5px 11px; border-radius:var(--radius-pill);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Conectado</span>
-                  <span data-btn data-v="danger" data-size="sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>Desconectar</span>
-                </div>
-              </div>
-              <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-mute); margin-bottom:18px;"><span style="width:7px; height:7px; border-radius:50%; background:var(--pos);"></span>Guardado automático</div>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
-                <div style="grid-column:1 / -1;">
-                  <label style="display:block; font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:6px;">API Token</label>
-                  <div style="display:flex; gap:8px;">
-                    <div data-fld style="flex:1; font-family:var(--font-mono); color:var(--text-dim);">sk-•••••••••••••••••••• 4c7d</div>
-                    <span data-btn data-v="secondary" data-size="sm">Cambiar</span>
-                  </div>
-                  <div style="font-size:11.5px; color:var(--text-mute); margin-top:5px;">Actual: sk-...4c7d</div>
-                </div>
-                <div>
-                  <label style="display:block; font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:6px;">Modelo</label>
-                  <div data-sel data-fld style="justify-content:space-between; cursor:pointer;">GPT-5.5 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mute)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></div>
-                </div>
-                <div>
-                  <label style="display:block; font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:6px;">Respuesta</label>
-                  <div data-sel data-fld style="justify-content:space-between; cursor:pointer;">Asesor <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mute)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></div>
-                </div>
-                <div>
-                  <label style="display:block; font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:6px;">Recomendaciones</label>
-                  <div data-sel data-fld style="justify-content:space-between; cursor:pointer;">Si hay algo importante <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mute)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></div>
-                </div>
-              </div>
-              <div style="margin-bottom:16px;">
-                <label style="display:block; font-size:12px; font-weight:600; color:var(--text-dim); margin-bottom:6px;">Contexto del negocio</label>
-                <div style="min-height:120px; padding:12px 13px; border:1px solid var(--border); border-radius:var(--radius-ctl); background:var(--bg-soft); font-size:13px; line-height:1.55; color:var(--text-dim);">Vendemos un programa premium de marketing 1 a 1 para dueños de negocio en México. Cliente ideal: emprendedores con ventas de $100k–$1M al mes. Tono cálido y profesional. Reglas: nunca prometer resultados garantizados, siempre invitar a una llamada de diagnóstico.</div>
-              </div>
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 0; border-top:1px solid var(--border);">
-                <div style="display:flex; align-items:center; gap:9px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg><div><div style="font-size:13.5px; font-weight:600;">Investigación online</div><div style="font-size:12px; color:var(--text-mute);">Permite búsqueda web cuando aporte contexto.</div></div></div>
-                <span data-sw data-on="true"><span class="knob"></span></span>
-              </div>
-            </div>
-          </div>
-          </sc-if>
-
-          <sc-if value="{{ aiConv }}" hint-placeholder-val="{{ false }}">
+          <sc-if value="{{ aiConv }}" hint-placeholder-val="{{ true }}">
           <div style="display:grid; grid-template-columns:1fr 320px; gap:16px; align-items:start;">
             <div style="display:flex; flex-direction:column; gap:16px;">
               <div style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-card); box-shadow:var(--shadow-card); padding:22px;">
@@ -2659,7 +2605,7 @@ class Component extends DCLogic {
     screen: 'dashboard', dir: 'eb', mode: 'dark', dateOpen: true,
     adsTab: 'classic', adsExpanded: { c0: true, 'c0-a0': true }, adsFilters: false,
     sitesTab: 'landings', reportsTab: 'historico', autoView: 'home',
-    selContacts: {}, cfgKey: 'profile', aiTab: 'general', siteEditor: false, analyticsTab: 'overview', dashVisitors: true,
+    selContacts: {}, cfgKey: 'profile', aiTab: 'conversational', siteEditor: false, analyticsTab: 'overview', dashVisitors: true,
     repSeg: 'all', repColsOpen: false, repCpa: false, repTicket: false, repView: 'month', modal: null, anFilter: false,
     remType: 'reminder', remSender: 'contact', remNoConfirm: 'no_action', remOverflow: 'before'
   };
@@ -3157,7 +3103,7 @@ class Component extends DCLogic {
     const designed = ['dashboard','contacts','reports','ads','payments','sites','chat','appointments','analytics','automations','aiagent','settings'];
     const otherNames = {
       chat: 'Chat', appointments: 'Citas', analytics: 'Analíticas',
-      automations: 'Automatizaciones', aiagent: 'Agente AI', settings: 'Configuración'
+      automations: 'Automatizaciones', aiagent: 'Chatbot', settings: 'Configuración'
     };
     const ids = ['dashboard','chat','appointments','payments','contacts','reports','analytics','ads','automations','sites','aiagent','settings'];
     const go = {}; const active = {};
@@ -3504,12 +3450,9 @@ class Component extends DCLogic {
     const cfgDesc = cfgSection.desc;
     const cfgStatus = cfgSection.status || null;
 
-    // ---- Agente AI ----
+    // ---- Chatbot ----
     const aiTab = this.state.aiTab;
-    const aiGeneral = aiTab === 'general', aiConv = aiTab === 'conversational';
-    const aiTabs = [
-      { id: 'general', label: 'General' }, { id: 'conversational', label: 'Agente conversacional' }
-    ].map((t) => ({ ...t, on: aiTab === t.id ? 'true' : undefined, go: () => this.setState({ aiTab: t.id }) }));
+    const aiConv = aiTab === 'conversational';
     const aiChannels = [
       { label: 'WhatsApp', desc: '+52 55 8000 1122', on: 'true', ic: 'M7.9 20A9 9 0 1 0 4 16.1L2 22Z' },
       { label: 'Instagram', desc: '@auroramkt', on: 'true', ic: 'M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z' },
@@ -3740,7 +3683,7 @@ class Component extends DCLogic {
       repSegs, repColsOpen, toggleRepCols, repCpa, repTicket, repCpaOn, repTicketOn, toggleRepCpa, toggleRepTicket, metricBars, repViewTabs,
       autoView, openAutoEditor, closeAutoEditor, flowNodes, autoHome, autoEditor,
       cfgGroups, cfgCards, cfgTitle, cfgDesc, cfgStatus,
-      aiTab, aiTabs, aiGeneral, aiConv, aiChannels, aiTools, aiKnowledge,
+      aiTab, aiConv, aiChannels, aiTools, aiKnowledge,
       modal, modalOpen, isModalContact, isModalPayment, isModalAppt, isModalReminder, openNewContact, openNewPayment, openNewAppt, openReminder, closeModal, stopProp,
       isModalInsight, chartInsight,
       remType, remIsConfirm, remIsReminder, setRemReminder, setRemConfirm, remSenderLabel, remNoConfirmOpts, remOverflowOpts, remVariables,

@@ -58,3 +58,47 @@ export function requireModuleAccess(moduleKey) {
     })
   }
 }
+
+export function requireAnyModuleAccess(moduleKeys = []) {
+  const normalizedModuleKeys = [...new Set(moduleKeys.map((key) => String(key || '').trim()).filter(Boolean))]
+
+  return async (req, res, next) => {
+    const requiredLevel = req.method === 'GET' || req.method === 'HEAD' ? 'read' : 'write'
+    let hasLicensedModule = !isLicenseEnforced()
+
+    for (const moduleKey of normalizedModuleKeys) {
+      try {
+        const licensed = !isLicenseEnforced() || await hasModuleFeature(moduleKey, {
+          state: req.license || null,
+          email: req.user?.email || req.user?.username || null
+        })
+        if (!licensed) continue
+        hasLicensedModule = true
+
+        if (hasUserAccess(req.user, moduleKey, requiredLevel)) {
+          return next()
+        }
+      } catch (error) {
+        logger.error(`Error validando feature del módulo ${moduleKey}:`, error.message)
+      }
+    }
+
+    if (!hasLicensedModule) {
+      return res.status(403).json({
+        success: false,
+        code: 'feature_not_available',
+        modules: normalizedModuleKeys,
+        message: 'Esta función no está incluida en tu plan actual.'
+      })
+    }
+
+    return res.status(403).json({
+      success: false,
+      code: requiredLevel === 'write' ? 'write_access_required' : 'read_access_required',
+      modules: normalizedModuleKeys,
+      error: requiredLevel === 'write'
+        ? 'No tienes permiso para usar esta función.'
+        : 'No tienes acceso a esta función.'
+    })
+  }
+}

@@ -42,9 +42,6 @@ struct RistakApp: App {
                     } else if testConfiguration.showsActivityMarkers {
                         RistakActivityMarkersUITestHarnessView()
                             .reportsRistakUIReady()
-                    } else if testConfiguration.showsPersonalAssistantChat {
-                        RistakPersonalAssistantChatUITestHarnessView()
-                            .reportsRistakUIReady()
                     } else if testConfiguration.showsRealInboxPresentation {
                         RistakInboxPresentationUITestHarnessView()
                             .reportsRistakUIReady()

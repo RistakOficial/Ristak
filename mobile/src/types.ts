@@ -206,6 +206,25 @@ export type ConversationalCapabilityManifestItem = {
   missingConfiguration: string[];
 };
 
+export type ConversationalAIProviderStatus = {
+  id: string;
+  label: string;
+  connected: boolean;
+  default: boolean;
+  tokenPreview: string | null;
+  needsReconnect: boolean;
+  connectionIssue: string | null;
+  canDelete: boolean;
+  defaultModel: string;
+};
+
+export type ConversationalAgentConfig = {
+  aiProvider: string;
+  model: string;
+  updatedAt: string | null;
+  aiProviders?: ConversationalAIProviderStatus[];
+};
+
 export type ConversationalAgentDefinition = {
   id: string;
   name?: string;
@@ -1041,90 +1060,6 @@ export type ContactCustomFieldDefinition = {
   editable?: boolean;
   deletable?: boolean;
   archived?: boolean;
-};
-
-export type AIAgentConfigStatus = {
-  configured?: boolean;
-  credentialStatus?: 'missing' | 'ready' | 'reconnect_required' | string;
-  needsReconnect?: boolean;
-  businessContext?: string;
-};
-
-export type AIAgentBusinessContextAnswerResult = {
-  text?: string;
-  status?: AIAgentConfigStatus;
-};
-
-export type AIAgentTranscriptionResult = {
-  text?: string;
-  model?: string;
-};
-
-export type AIAgentRole = 'user' | 'assistant';
-
-export type AIAgentSource = {
-  title: string;
-  url: string;
-};
-
-export type AIAgentAttachmentKind = 'image' | 'video' | 'pdf' | 'text' | 'file';
-
-export type AIAgentAttachment = {
-  id: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  kind: AIAgentAttachmentKind;
-  dataUrl?: string;
-  text?: string;
-  thumbnailDataUrl?: string;
-};
-
-export type AIAgentTraceSummary = {
-  traceId?: string;
-  status?: string;
-  detailUrl?: string;
-};
-
-export type AIAgentClarificationOption = {
-  label: string;
-  value: string;
-  description?: string;
-};
-
-export type AIAgentSelectedClarificationOption = {
-  label: string;
-  value: string;
-  description?: string;
-  assistantMessageId?: string;
-};
-
-export type AIAgentMessage = {
-  id?: string;
-  role: AIAgentRole;
-  content: string;
-  attachments?: AIAgentAttachment[];
-  sources?: AIAgentSource[];
-  clarificationOptions?: AIAgentClarificationOption[];
-  selectedClarificationOption?: AIAgentSelectedClarificationOption;
-  trace?: AIAgentTraceSummary | null;
-  createdAt?: string;
-};
-
-export type AIAgentViewContext = {
-  path: string;
-  title: string;
-  routeLabel: string;
-  visibleText: string;
-};
-
-export type AIAgentChatResult = {
-  reply?: string;
-  model?: string;
-  category?: string;
-  sources?: AIAgentSource[];
-  clarificationOptions?: AIAgentClarificationOption[];
-  trace?: AIAgentTraceSummary | null;
 };
 
 export type WebPushPublicConfig = {

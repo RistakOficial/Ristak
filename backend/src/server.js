@@ -86,7 +86,7 @@ import authRoutes from './routes/auth.routes.js'
 import apiAccessRoutes from './routes/apiAccess.routes.js'
 import oauthRoutes from './routes/oauth.routes.js'
 import hiddenContactsRoutes from './routes/hiddenContacts.routes.js'
-import aiAgentRoutes from './routes/aiAgent.routes.js'
+import aiRuntimeRoutes from './routes/aiRuntime.routes.js'
 import conversationalAgentRoutes from './routes/conversationalAgent.routes.js'
 import searchRoutes from './routes/search.routes.js'
 import externalRoutes from './routes/external.routes.js'
@@ -534,7 +534,7 @@ app.use('/api/whatsapp-api', requireWhatsAppFeatureForWhatsAppApiRoute, whatsapp
 app.use('/api/mcp', mcpRoutes)
 app.use('/api', costsRoutes)
 app.use('/api/hidden-contacts', hiddenContactsRoutes)
-app.use('/api/ai-agent', requireAuth, requireFeature('app_assistant_ai'), aiAgentRoutes) // (LIC-002) auth antes de feature
+app.use('/api/ai-runtime', aiRuntimeRoutes)
 app.use('/api/conversational-agent', requireAuth, requireFeature('conversational_ai'), conversationalAgentRoutes) // (LIC-002) auth antes de feature
 app.use('/api/search', searchRoutes)
 app.use('/api/external', externalRoutes)

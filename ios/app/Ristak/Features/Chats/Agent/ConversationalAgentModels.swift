@@ -2,9 +2,7 @@ import Foundation
 
 // MARK: - Agente conversacional: runtime interno + definiciones (doc 05 §6)
 //
-// El agente conversacional (auto-respuesta por contacto) es un sistema DISTINTO
-// del "Asistente Personal AI" (`AIAgentService`, /api/ai-agent). Aquí modelamos
-// el runtime interno (`ConversationalAgentConfig`) y las DEFINICIONES de agente
+// Aquí modelamos el runtime interno (`ConversationalAgentConfig`) y las DEFINICIONES de agente
 // (`ConversationalAgentDef`) que el Hub del chat enciende/pausa/edita. El estado
 // POR CONVERSACIÓN (`ConversationAgentState`) y sus acciones viven en
 // `Core/Models/MessageSendModels.swift` + `AgentStateService`.
@@ -63,12 +61,13 @@ struct ConversationalAgentConfig: Codable, Sendable, Equatable {
     let languageLevel: String
     let updatedAt: String?
     let businessPromptStatus: ConversationalBusinessPromptStatus?
+    let aiProviders: [ConversationalAIProviderStatus]
 
     enum CodingKeys: String, CodingKey {
         case enabled, aiProvider, model, objective, customObjective, successAction
         case requiredData, handoffRules, extraInstructions
         case allowEmojis, hideAttended, hideAttendedNotifications, defaultCalendarId
-        case persuasionLevel, languageLevel, updatedAt, businessPromptStatus
+        case persuasionLevel, languageLevel, updatedAt, businessPromptStatus, aiProviders
     }
 
     init(from decoder: Decoder) throws {
@@ -90,11 +89,31 @@ struct ConversationalAgentConfig: Codable, Sendable, Equatable {
         languageLevel = c.flexibleString(forKey: .languageLevel) ?? AgentLanguageOption.intermediate.rawValue
         updatedAt = c.flexibleString(forKey: .updatedAt)
         businessPromptStatus = try? c.decodeIfPresent(ConversationalBusinessPromptStatus.self, forKey: .businessPromptStatus)
+        aiProviders = (try? c.decodeIfPresent([ConversationalAIProviderStatus].self, forKey: .aiProviders)) ?? []
     }
 
     /// ¿Se puede encender el agente? Requiere el prompt del negocio listo
     /// (si el backend no lo manda, asumimos listo y dejamos que 409 corrija).
     var canEnable: Bool { businessPromptStatus?.ready ?? true }
+}
+
+struct ConversationalAIProviderStatus: Codable, Sendable, Equatable {
+    let id: String
+    let label: String
+    let connected: Bool
+    let isDefault: Bool
+    let tokenPreview: String?
+    let needsReconnect: Bool
+    let connectionIssue: String?
+    let canDelete: Bool
+    let defaultModel: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, connected, tokenPreview, needsReconnect, connectionIssue, canDelete, defaultModel
+        case isDefault = "default"
+    }
+
+    var isReady: Bool { connected && !needsReconnect }
 }
 
 /// Body parcial de POST /conversational-agent/config.
@@ -120,8 +139,8 @@ struct ConversationalAgentConfigInput: Encodable, Sendable {
 
 /// Snapshot Codable de la disponibilidad de OpenAI para el Hub del agente.
 ///
-/// `AIAgentConfigStatus` vive en `Core` y es Decodable-only; aquí guardamos solo
-/// la última disponibilidad conocida (`configured` + `needsReconnect`) para que
+/// Guardamos solo la última disponibilidad conocida (`configured` +
+/// `needsReconnect`) para que
 /// el gate del Hub NO bloquee el primer pintado: si la última vez OpenAI estaba
 /// listo, mostramos los agentes cacheados al instante y revalidamos por detrás.
 struct AgentOpenAIAvailabilitySnapshot: Codable, Sendable, Equatable {
@@ -133,12 +152,11 @@ struct AgentOpenAIAvailabilitySnapshot: Codable, Sendable, Equatable {
         self.needsReconnect = needsReconnect
     }
 
-    init(_ status: AIAgentConfigStatus) {
-        configured = status.configured
-        needsReconnect = status.needsReconnect
+    init(_ status: ConversationalAIProviderStatus?) {
+        configured = status?.connected ?? false
+        needsReconnect = status?.needsReconnect ?? false
     }
 
-    /// Mismo criterio que `AIAgentConfigStatus.isReady`.
     var isReady: Bool { configured && !needsReconnect }
 }
 

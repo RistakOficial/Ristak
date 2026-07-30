@@ -10,7 +10,7 @@ import {
 test('getAgentRunTrace reads traces created without userId', async () => {
   const run = await startAgentRun({
     latestUserMessage: 'consulta db',
-    viewContext: { path: '/ai-agent/general' }
+    viewContext: { path: '/ai-agent/conversational' }
   })
 
   await recordAgentStep(run, {

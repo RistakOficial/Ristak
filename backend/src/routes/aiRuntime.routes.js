@@ -1,9 +1,9 @@
 import express from 'express'
 import multer from 'multer'
-import { chat, deleteConfig, deleteToken, getConfig, getRunTrace, listAgents, saveBusinessContextAnswer, saveConfig, transcribeVoice } from '../controllers/aiAgentController.js'
+import { getConfig, transcribeVoice } from '../controllers/aiRuntimeController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
 import { requireOpenAIConfigured } from '../middleware/openAIConfigMiddleware.js'
-import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { requireAnyModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 const audioUpload = multer({
@@ -36,16 +36,8 @@ function transcribeAudioBody(req, res, next) {
 }
 
 router.use(requireAuth)
-router.use(requireModuleAccess('ai_agent'))
-
+router.use(requireAnyModuleAccess(['ai_agent', 'sites']))
 router.get('/config', getConfig)
-router.post('/config', saveConfig)
-router.delete('/config/token', deleteToken)
-router.delete('/config', deleteConfig)
-router.post('/business-context-answer', requireOpenAIConfigured, saveBusinessContextAnswer)
-router.get('/agents', requireOpenAIConfigured, listAgents)
-router.get('/runs/:traceId', requireOpenAIConfigured, getRunTrace)
 router.post('/transcribe', requireOpenAIConfigured, transcribeAudioBody, transcribeVoice)
-router.post('/chat', requireOpenAIConfigured, chat)
 
 export default router

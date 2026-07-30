@@ -188,7 +188,7 @@ struct AgentEditorSheet: View {
                 ) { language = $0 }
 
                 editorField(
-                    "Personalización y capacitación del asistente",
+                    "Personalización y capacitación del agente",
                     text: $extraInstructions,
                     minHeight: 120,
                     placeholder: "Reglas del negocio, límites, información clave y casos especiales."

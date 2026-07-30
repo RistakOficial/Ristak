@@ -74,7 +74,7 @@ test('los drilldowns de Publicidad no mezclan hijos de otro rango o página', as
   assert.match(source, /loadAdSetAdsPage\(cleanAdSetId, String\(campaignId\), 1\)\.catch\(\(\) => undefined\)/)
 })
 
-test('el cache persistente del chat está aislado por principal y purga llaves legacy', async () => {
+test('el cache persistente de los chats vigentes está aislado por principal y purga llaves legacy', async () => {
   const [desktop, phone, dailyCache, scopedStorage] = await Promise.all([
     repoFile('frontend/src/pages/DesktopChat/DesktopChat.tsx'),
     repoFile('frontend/src/pages/PhoneChat/PhoneChat.tsx'),
@@ -95,8 +95,8 @@ test('el cache persistente del chat está aislado por principal y purga llaves l
   assert.doesNotMatch(desktop, /localStorage\.setItem\(CHAT_CACHE_KEY/)
   assert.match(phone, /createAuthScopedLocalStorageNamespace\(PHONE_CHAT_PERSISTENT_CACHE_PREFIXES\)/)
   assert.match(phone, /getScopedPhoneChatStorageKey\(CHAT_FAST_START_INBOX_KEY\)/)
-  assert.match(phone, /getScopedPhoneChatStorageKey\(AI_AGENT_MESSAGES_KEY\)/)
-  assert.doesNotMatch(phone, /localStorage\.getItem\((?:CHAT_[A-Z_]+|AI_AGENT_MESSAGES_KEY)/)
+  assert.doesNotMatch(phone, /AI_AGENT_MESSAGES_KEY/)
+  assert.doesNotMatch(phone, /localStorage\.getItem\(CHAT_[A-Z_]+/)
   assert.match(dailyCache, /createAuthScopedLocalStorageNamespace\(\[CACHE_STORAGE_PREFIX\]\)/)
   assert.match(dailyCache, /phoneDailyStorage\.getKey\(CACHE_STORAGE_PREFIX\)/)
 })

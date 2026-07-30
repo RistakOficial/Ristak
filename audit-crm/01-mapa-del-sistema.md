@@ -26,7 +26,7 @@ Inventario de los módulos auditados, qué intenta hacer cada uno y sus archivos
 | 10 | **Pagos Stripe** | Config (key cifrada / Connect-OAuth), links de pago públicos, planes de parcialidades, suscripciones, conciliación por webhook firmado, crons de cobro. | `backend/src/services/stripePaymentService.js`, `subscriptionsService.js`, `paymentFlowService.js`, `frontend/src/pages/PublicPayment/PublicPayment.tsx` |
 | 11 | **MercadoPago, Conekta, pago público, facturación, automatizaciones de pago** | Cobros MP/Conekta, links, parcialidades, suscripciones (MP), página `/pay/:id`, facturación Gigstack, automatizaciones por WhatsApp (recordatorio/comprobante/fallido). | `backend/src/services/mercadoPagoPaymentService.js`, `conektaPaymentService.js`, `paymentAutomationsService.js`, `gigstackInvoiceService.js` |
 | 12 | **Automatizaciones (motor, editor, triggers, enrollment)** | Motor de flujos (nodos+aristas) que inscribe contactos por evento; esperas, condiciones, variables, acciones; editor React con validación; scheduler 20s. | `backend/src/services/automationEngine.js`, `automationsService.js`, `automationFlowValidation.js`, `frontend/src/pages/Automations/editor/nodeRegistry.tsx`, `AutomationEditor.tsx` |
-| 13 | **Agentes IA (asistente app + agente conversacional)** | Asistente interno por categorías (SDK `@openai/agents`) y agente conversacional que auto-responde mensajes entrantes multicanal; multi-proveedor con API key por cuenta. | `backend/src/agents/conversational/runner.js`, `tools.js`, `backend/src/agents/runner.js`, `aiAgentService.js`, `conversationalAgentService.js` |
+| 13 | **Chatbot conversacional** | Agentes que auto-responden mensajes entrantes multicanal; multi-proveedor con API key cifrada por cuenta. El asistente personal de la app fue retirado. | `backend/src/agents/conversational/runner.js`, `tools.js`, `backend/src/services/aiRuntimeService.js`, `conversationalAgentService.js` |
 | 14 | **Pixel de tracking, Sites, atribución** | Pixel JS público (`/snip.js` + `/collect`), sesiones con UTMs/click IDs/geo, vinculación visitor→contacto, Sites públicos por host, trigger links, atribución fallback. | `backend/src/controllers/trackingController.js`, `trackingService.js`, `sitesController.js`, `sitesService.js`, `triggerLinksService.js`, `attributionFallbackService.js` |
 | 15 | **Notificaciones push, recordatorios de cita, mensajes programados** | Push web (VAPID) y nativo (FCM/APNs); recordatorios/confirmaciones de cita por WhatsApp (con clasificación IA); mensajes de chat programados por cron. | `backend/src/services/pushNotificationsService.js`, `appointmentRemindersService.js`, `appointmentConfirmationService.js`, `scheduledChatMessagesService.js` |
 | 16 | **Dashboard, Reportes, Analítica, Costos** | KPIs (ingresos, gasto Meta, ROAS, ganancia neta, LTV), gráficas, funnel, dona de origen, reportes, gastos manuales prorrateados, costos fijos/porcentuales. | `backend/src/controllers/dashboardController.js`, `reportsController.js`, `costsController.js`, `analyticsService.js`, `frontend/src/pages/Dashboard/Dashboard.tsx` |
@@ -115,9 +115,9 @@ Inventario de los módulos auditados, qué intenta hacer cada uno y sus archivos
 - CRUD, `PUT /:id` (guarda+publica), duplicate, enrollments, stats, enroll-contact, contacts/:contactId/activity
 - catalogs (campaigns/adsets/ads/forms/form-fields/whatsapp-templates), assets, **`GET /assets/:assetId` (PÚBLICO, sin auth)**
 
-**Agentes IA** (`/api/ai-agent`, `/api/conversational-agent`)
-- ai-agent: config (GET/POST/DELETE), config/token DELETE, chat, transcribe, agents, runs/:traceId, business-context-answer
+**Chatbot conversacional** (`/api/conversational-agent`, `/api/ai-runtime`)
 - conversational-agent: config, agents (CRUD), metrics, states, test, events, ai-providers (CRUD)
+- ai-runtime: estado compartido de OpenAI y transcripción; no ofrece chat personal
 
 **Tracking / Sites / Atribución**
 - **Públicos:** `GET /snip.js`, `POST /collect`, `POST /video-event`, `POST /sync-visitor`, `POST /link-visitor`, `GET /trigger-links/:publicId` (302)
@@ -443,7 +443,7 @@ Sin jti ni lista de revocación para tokens admin; la única revocación es rota
 11. **Cobrar:** crear/enviar link de pago (Stripe/MP/Conekta), plan de parcialidades, suscripción; cliente paga en `/pay/:id`.
 12. **Registrar pago manual** (RecordPaymentModal).
 13. **Construir y publicar una automatización** (editor de flujos) → disparo por evento → esperas/reanudación.
-14. **Asistente IA de la app** (chat por categorías) / **Agente conversacional** auto-responde mensajes entrantes.
+14. **Chatbot conversacional** auto-responde mensajes entrantes; el asistente personal fue retirado.
 15. **Visitante anónimo → sesión trackeada → contacto** (pixel + vinculación) / **Sitio público por host** / **Trigger link redirect** / **Fallback attribution**.
 16. **Recordatorio/confirmación de cita por WhatsApp** / **Mensaje de chat programado** / **Push al staff** (chat/cita/pago).
 17. **Ver KPIs del dashboard** / **Configurar Costos** / **Funnel de conversión** / **Gráfica financiera por atribución**.

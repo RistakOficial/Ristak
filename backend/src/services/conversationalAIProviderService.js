@@ -16,7 +16,7 @@ export const CONVERSATIONAL_AI_PROVIDER_DEFINITIONS = [
     defaultModel: process.env.OPENAI_CONVERSATIONAL_AGENT_MODEL || DEFAULT_OPENAI_MODEL,
     supportsMultimodalInputs: true,
     canDelete: false,
-    managedBy: 'ai_agent_config'
+    managedBy: 'ai_runtime_config'
   },
   {
     id: 'gemini',
@@ -95,7 +95,7 @@ async function getEncryptedProviderKey(provider) {
 
 async function getStoredProviderApiKey(provider) {
   if (provider.id === 'openai') {
-    const { getOpenAIApiKey } = await import('./aiAgentService.js')
+    const { getOpenAIApiKey } = await import('./aiRuntimeService.js')
     return getOpenAIApiKey()
   }
 
@@ -115,8 +115,8 @@ async function getStoredProviderApiKey(provider) {
 
 async function getProviderStatus(provider) {
   if (provider.id === 'openai') {
-    const { getAIAgentStatus } = await import('./aiAgentService.js')
-    const status = await getAIAgentStatus({})
+    const { getAIRuntimeStatus } = await import('./aiRuntimeService.js')
+    const status = await getAIRuntimeStatus({})
     return buildProviderStatus(provider, {
       connected: Boolean(status.configured && !status.needsReconnect),
       tokenPreview: status.tokenPreview || null,
@@ -209,9 +209,9 @@ export async function connectConversationalAIProvider(providerId, apiKey) {
     }
 
     const {
-      saveAIAgentOpenAICredentials,
+      saveAIRuntimeOpenAICredentials,
       verifyOpenAIApiKey
-    } = await import('./aiAgentService.js')
+    } = await import('./aiRuntimeService.js')
     const validation = await verifyOpenAIApiKey(cleanKey)
     if (!validation.valid) {
       const error = new Error(validation.error || 'API Token de OpenAI inválido')
@@ -219,7 +219,7 @@ export async function connectConversationalAIProvider(providerId, apiKey) {
       throw error
     }
 
-    await saveAIAgentOpenAICredentials({
+    await saveAIRuntimeOpenAICredentials({
       apiKey: cleanKey,
       model: provider.defaultModel
     })
@@ -242,7 +242,7 @@ export async function connectConversationalAIProvider(providerId, apiKey) {
 export async function deleteConversationalAIProvider(providerId) {
   const provider = getConversationalAIProviderDefinition(providerId)
   if (provider.id === 'openai') {
-    const error = new Error('OpenAI se administra desde la sección General del Agente AI.')
+    const error = new Error('OpenAI es el proveedor base del chatbot y no se puede borrar; puedes reemplazar su API key desde esta misma pantalla.')
     error.statusCode = 400
     throw error
   }

@@ -6846,19 +6846,6 @@ async function initTablesUnlocked() {
     await backfillUserEmailsFromLegacyUsernames({ source: 'initTables' })
 
     await db.run(`
-      CREATE TABLE IF NOT EXISTS ai_agent_user_preferences (
-        id ${usePostgres ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
-        user_id INTEGER NOT NULL UNIQUE,
-        action_customizations TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `)
-
-    await db.run('CREATE INDEX IF NOT EXISTS idx_ai_agent_user_preferences_user_id ON ai_agent_user_preferences(user_id)')
-
-    await db.run(`
       CREATE TABLE IF NOT EXISTS agent_runs (
         id TEXT PRIMARY KEY,
         trace_id TEXT NOT NULL UNIQUE,
@@ -6934,18 +6921,6 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_agent_steps_type ON agent_steps(step_type, tool_name)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_agent_pending_actions_run ON agent_pending_actions(run_id, status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_agent_tool_idempotency_run ON agent_tool_idempotency(run_id, tool_name)')
-
-    // Memoria persistente de los agentes IA por especialidad (citas, pagos, etc.)
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS ai_agent_memories (
-        id TEXT PRIMARY KEY,
-        category TEXT NOT NULL,
-        content TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `)
-    await db.run('CREATE INDEX IF NOT EXISTS idx_ai_agent_memories_category ON ai_agent_memories(category, updated_at)')
 
     // Agentes conversacionales nativos: cada agente guarda su prompt editable,
     // capacidades blindadas y filtros factuales de entrada.

@@ -498,23 +498,40 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
       publicBaseUrl: 'https://tenant.test',
       includeNextSession: true
     })
-    assert.equal(automatic.connected, true)
-    assert.equal(automatic.selected.pageId, '')
-    assert.equal(automatic.selected.adAccountId, '')
-    assert.equal(automatic.selected.pixelId, '')
-    assert.ok(automatic.session?.sessionId)
-    assert.equal(automatic.session.defaults.pageId, '')
-    assert.equal(automatic.session.defaults.adAccountId, '')
+    assert.ok(automatic.sessionId)
+    assert.equal(automatic.defaults.pageId, '')
+    assert.equal(automatic.defaults.adAccountId, '')
     const automaticStatus = await getMetaOAuthConnectionStatus()
-    assert.equal(automaticStatus.selectedAssets.page, null)
-    assert.equal(automaticStatus.selectedAssets.adAccount, null)
+    assert.equal(automaticStatus.oauth.connected, false)
+    assert.equal((await getMetaConfig()).connection_mode, 'manual_system_user')
+
+    const authorizedPages = handoffMeta.assets.pages
+    const authorizedInstagramAccounts = handoffMeta.assets.instagram_accounts
+    handoffMeta.assets.pages = []
+    handoffMeta.assets.instagram_accounts = []
+    handoffMeta.connection_id = 'connection-ads-only'
+    const adsOnlyOnboarding = await completeMetaOAuthConnection({
+      handoffToken: 'handoff-ads-only'
+    })
+    assert.deepEqual(adsOnlyOnboarding.pages, [])
+    assert.equal((await getMetaOAuthConnectionStatus()).oauth.connected, false)
+    await db.run('DELETE FROM meta_oauth_pending_sessions WHERE id = ?', [adsOnlyOnboarding.sessionId])
+    handoffMeta.assets.pages = authorizedPages
+    handoffMeta.assets.instagram_accounts = authorizedInstagramAccounts
+    handoffMeta.connection_id = 'connection-auto'
 
     const graphCallsBeforeLocalSelection = graphCalls.length
     const explicitlySelected = await finalizeMetaOAuthConnection({
-      sessionId: automatic.session.sessionId,
+      sessionId: automatic.sessionId,
       adAccountId: '123',
       pageId: 'page-1',
       instagramAccountId: 'ig-1',
+      socialChannels: {
+        messengerMessaging: true,
+        facebookComments: false,
+        instagramMessaging: false,
+        instagramComments: true
+      },
       publicBaseUrl: 'https://tenant.test',
       includeNextSession: true
     })
@@ -526,6 +543,16 @@ test('Meta OAuth usa handoff cifrado, preflights atómicos, aislamiento HighLeve
       'elegir activos ya autorizados no debe volver a consultar Graph'
     )
     assert.ok(explicitlySelected.session?.sessionId)
+    assert.deepEqual(explicitlySelected.socialChannels, {
+      messengerMessaging: true,
+      facebookComments: false,
+      instagramMessaging: false,
+      instagramComments: true
+    })
+    assert.equal(await getAppConfig('meta_messenger_messaging_enabled'), '1')
+    assert.equal(await getAppConfig('meta_facebook_comments_enabled'), '0')
+    assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '0')
+    assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '1')
 
     const subscriptionsBeforeAdsOnlyChanges = subscriptionCalls.length
     const pagePreflightsBeforeAdsOnlyChanges = runtimeInputs.length

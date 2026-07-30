@@ -3,7 +3,7 @@ import SwiftUI
 
 /// ViewModel del Hub del agente conversacional (activar/pausar cada agente,
 /// reiniciar omisiones, entrar a editar). Gatea por
-/// disponibilidad de OpenAI igual que el web (`useAIAgentAvailability`).
+/// disponibilidad del proveedor de OpenAI reportada por el propio chatbot.
 @MainActor
 @Observable
 final class AgentHubViewModel {
@@ -92,33 +92,22 @@ final class AgentHubViewModel {
         let cache = RistakSnapshotCache.shared
         let hadCachedList = (phase == .ready)
 
-        // Gate OpenAI (misma conexión que el Asistente Personal).
         do {
-            let ai = try await AIAgentService.config()
-            cache.store(
-                AgentOpenAIAvailabilitySnapshot(ai),
-                for: RistakCacheKey.conversationalAgentAvailability
-            )
-            guard ai.isReady else {
-                phase = .needsOpenAI(reconnect: ai.needsReconnect)
-                return
-            }
-            // Gate OK pero aún sin lista pintada → spinner mientras carga.
-            if phase != .ready { phase = .loading }
-        } catch let error as RistakAPIError where error.isAccessDenied {
-            phase = .accessDenied
-            return
-        } catch {
-            // Falla de red en el gate: seguimos e intentamos /config, que
-            // devolverá el error real (o 409 needsOpenAIConfig).
-        }
-
-        do {
-            async let cfg = ConversationalAgentService.config()
-            async let list = ConversationalAgentService.agents()
-            let (loadedConfig, loadedAgents) = try await (cfg, list)
+            let loadedConfig = try await ConversationalAgentService.config()
             config = loadedConfig
             cache.store(loadedConfig, for: RistakCacheKey.conversationalAgentConfig)
+            let openAI = loadedConfig.aiProviders.first { $0.id == "openai" }
+            cache.store(
+                AgentOpenAIAvailabilitySnapshot(openAI),
+                for: RistakCacheKey.conversationalAgentAvailability
+            )
+            guard openAI?.isReady == true else {
+                phase = .needsOpenAI(reconnect: openAI?.needsReconnect ?? false)
+                return
+            }
+            if phase != .ready { phase = .loading }
+
+            let loadedAgents = try await ConversationalAgentService.agents()
             // No pises una edición local en vuelo: un GET de la lista disparado
             // ANTES del PUT del toggle podría traer el estado ANTERIOR y revertir
             // el cambio que el usuario acaba de hacer. Si hay guardado en vuelo,
@@ -152,6 +141,17 @@ final class AgentHubViewModel {
 
     func retry() {
         Task { await load() }
+    }
+
+    func connectOpenAI(apiKey: String) async {
+        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanKey.isEmpty else { return }
+        do {
+            _ = try await ConversationalAgentService.connectProvider(id: "openai", apiKey: cleanKey)
+            await load()
+        } catch {
+            present(error, whenEnabling: nil)
+        }
     }
 
     // MARK: - Por agente
@@ -222,7 +222,7 @@ final class AgentHubViewModel {
         if apiError?.code == ConversationalAgentErrorCode.businessPromptNotReady {
             alert = HubAlert(
                 title: "Falta el contexto del negocio",
-                message: "Completa la descripción de tu negocio en Ajustes → Asistente Personal AI antes de encender el agente."
+                message: "Completa la información del negocio desde la configuración del chatbot en Ristak para escritorio antes de encender el agente."
             )
             return
         }

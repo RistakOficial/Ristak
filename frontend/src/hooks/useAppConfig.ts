@@ -15,6 +15,20 @@ import {
 const CONFIG_PREFIX = 'rstk_config_'
 const SYNC_EVENT = 'config-sync'
 
+export function publishPersistedAppConfigValue<T>(key: string, value: T, cache = true) {
+  clearAppConfigReadCache()
+  if (cache) {
+    try {
+      localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(value))
+    } catch {
+      // La base ya es la fuente de verdad; el cache del navegador es opcional.
+    }
+  }
+  window.dispatchEvent(new CustomEvent(SYNC_EVENT, {
+    detail: { key, value }
+  }))
+}
+
 const serializeConfigValue = (value: unknown) => (
   value === null || value === undefined
     ? null
@@ -227,26 +241,9 @@ export function useAppConfig<T = string>(
 
       // El POST usa fetch directo; invalida explícitamente el snapshot JSON
       // para que un consumidor que monte después no reciba el valor anterior.
-      clearAppConfigReadCache()
-
-      // 2. Actualizar cache local si esta config lo permite
-      if (cacheFirst) {
-        try {
-          localStorage.setItem(`${CONFIG_PREFIX}${key}`, JSON.stringify(newValue))
-        } catch {
-          // La DB ya fue actualizada; el cache local es opcional.
-        }
-      }
-
-      // 3. Actualizar estado local
-      if (mountedRef.current) {
-        setValue(newValue)
-      }
-
-      // 4. Notificar a otros componentes
-      window.dispatchEvent(new CustomEvent(SYNC_EVENT, {
-        detail: { key, value: newValue }
-      }))
+      // 2. Publicar el valor que el backend ya confirmó. El mismo helper sirve
+      // para operaciones compuestas que persisten configuración fuera del hook.
+      publishPersistedAppConfigValue(key, newValue, cacheFirst)
     } catch (error) {
       throw error
     } finally {

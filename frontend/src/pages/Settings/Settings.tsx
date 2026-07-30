@@ -3,7 +3,6 @@ import { Link, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import {
   BellRing,
   BadgeDollarSign,
-  Bot,
   Building2,
   CalendarDays,
   CheckCheck,
@@ -87,7 +86,6 @@ const customFieldsPage = createLazySettingsPage(() => import('./CustomFields'), 
 const variableFieldsPage = createLazySettingsPage(() => import('./VariableFields'), 'VariableFields')
 const triggerLinksPage = createLazySettingsPage(() => import('./TriggerLinks'), 'TriggerLinks')
 const tagsSettingsPage = createLazySettingsPage(() => import('./TagsSettings'), 'TagsSettings')
-const aiAgentSettingsPage = createLazySettingsPage(() => import('./AIAgentSettings'), 'AIAgentSettings')
 
 const HighLevelIntegration = highLevelIntegrationPage.Component
 const Costs = costsPage.Component
@@ -111,7 +109,6 @@ const CustomFields = customFieldsPage.Component
 const VariableFields = variableFieldsPage.Component
 const TriggerLinks = triggerLinksPage.Component
 const TagsSettings = tagsSettingsPage.Component
-const AIAgentSettings = aiAgentSettingsPage.Component
 
 const settingsPageRegistry = [
   { path: '/settings/highlevel', preload: highLevelIntegrationPage.preload },
@@ -135,8 +132,7 @@ const settingsPageRegistry = [
   { path: '/settings/custom-fields', preload: customFieldsPage.preload },
   { path: '/settings/variable-fields', preload: variableFieldsPage.preload },
   { path: '/settings/trigger-links', preload: triggerLinksPage.preload },
-  { path: '/settings/tags', preload: tagsSettingsPage.preload },
-  { path: '/settings/artificial-intelligence', preload: aiAgentSettingsPage.preload }
+  { path: '/settings/tags', preload: tagsSettingsPage.preload }
 ]
 
 export const prefetchSettingsPage = (destination: string): Promise<void> => {
@@ -184,7 +180,6 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/meta-ads': MetaIcon,
   '/settings/whatsapp': WhatsAppIcon,
   '/settings/email': Mail,
-  '/settings/artificial-intelligence': Bot,
   '/settings/tracking': FileCode2,
   '/settings/domains': Globe2,
   '/settings/costs': BadgeDollarSign,
@@ -258,7 +253,10 @@ export const Settings: React.FC = () => {
 
         <section className={styles.settingsPanel}>
           <div className={styles.mainContent}>
-            <LazyLoadErrorBoundary resetKey={location.pathname}>
+            <LazyLoadErrorBoundary
+              resetKey={location.pathname}
+              recoveryKey={`settings:${location.pathname}`}
+            >
               <React.Suspense fallback={<Loading message="Abriendo configuración..." size="md" />}>
                 <Routes>
                 <Route index element={<Navigate to={firstAllowedSettingsPath} replace />} />
@@ -276,10 +274,10 @@ export const Settings: React.FC = () => {
                 <Route path="variable-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><VariableFields /></SettingsAccessGate>} />
                 <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields" featureKeys={['trigger_links']}><TriggerLinks /></SettingsAccessGate>} />
                 <Route path="tags" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TagsSettings /></SettingsAccessGate>} />
-                <Route path="artificial-intelligence" element={<SettingsAccessGate moduleKey="ai_agent"><AIAgentSettings /></SettingsAccessGate>} />
-                <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/settings/artificial-intelligence" replace /></SettingsAccessGate>} />
+                <Route path="artificial-intelligence" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
+                <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
                 <Route path="ai-agent/conversational" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
-                <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/settings/artificial-intelligence" replace /></SettingsAccessGate>} />
+                <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
                 <Route path="developers" element={<SettingsAccessGate moduleKey="settings_api_access"><APIAccessSettings /></SettingsAccessGate>} />
                 <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
                 <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />

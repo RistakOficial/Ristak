@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import type { Column, PaymentPlatformLogoId } from '@/components/common'
+import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { Contact } from '@/types'
@@ -44,6 +45,7 @@ import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, pars
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { hasPaymentGatewaysAccess } from '@/utils/accessControl'
 import {
   DEFAULT_TIMEZONE,
   getDateOnlyDayOfMonth,
@@ -768,7 +770,9 @@ export const Transactions: React.FC = () => {
   const { formatLocalDateShort, timezone } = useTimezone()
   const { showConfirm, showToast } = useNotification()
   const { labels } = useLabels()
+  const { user } = useAuth()
   const [accountCurrency] = useAccountCurrency()
+  const canConfigurePaymentGateways = hasPaymentGatewaysAccess(user)
   const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
   const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -3694,7 +3698,7 @@ export const Transactions: React.FC = () => {
         <PageHeader
           title={pageTitle}
           subtitle={pageSubtitle}
-          actions={(
+          actions={canConfigurePaymentGateways ? (
             <Button
               type="button"
               variant="secondary"
@@ -3703,7 +3707,7 @@ export const Transactions: React.FC = () => {
             >
               Configurar pasarelas
             </Button>
-          )}
+          ) : undefined}
         />
 
         <div className={styles.controlsRow}>

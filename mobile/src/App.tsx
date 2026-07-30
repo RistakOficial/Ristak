@@ -308,12 +308,8 @@ import type {
   ConversationHistoryCursor,
   ConversationAgentState,
   ConversationalCapabilityManifestItem,
+  ConversationalAIProviderStatus,
   ConversationalAgentDefinition,
-  AIAgentClarificationOption,
-  AIAgentAttachment,
-  AIAgentAttachmentKind,
-  AIAgentConfigStatus,
-  AIAgentMessage,
   MessageTemplate,
   NativeMessageChannel,
   DashboardFunnelRow,
@@ -675,8 +671,7 @@ type PhoneChatConditionEvalContext = {
 type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products';
 type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d' | 'custom';
 type ProductFormMode = 'create' | 'edit' | null;
-type SettingsPanel = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'tags' | 'appearance' | 'privacy' | 'notifications' | null;
-type BusinessVoiceState = 'idle' | 'recording' | 'processing';
+type SettingsPanel = 'numbers' | 'templates' | 'chats' | 'custom-fields' | 'tags' | 'appearance' | 'privacy' | 'notifications' | null;
 type ConversationDraftAttachment = {
   id: string;
   uri: string;
@@ -706,28 +701,6 @@ type ConversationListItem =
   | { type: 'completionNotice'; id: string; notice: NativeConversationSuccessNotice }
   | { type: 'activity'; id: string; marker: ConversationActivityMarker }
   | { type: 'message'; id: string; message: ChatMessage };
-type AssistantConversationMessage = AIAgentMessage & {
-  id: string;
-  failed?: boolean;
-};
-type AssistantAttachmentDraft = AIAgentAttachment & {
-  uri: string;
-};
-type AssistantVoiceState = 'idle' | 'recording' | 'paused' | 'processing';
-type AssistantMessageInlineSegment = {
-  text: string;
-  bold?: boolean;
-  italic?: boolean;
-  strike?: boolean;
-  mono?: boolean;
-  url?: string;
-};
-type AssistantMessageBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'heading'; text: string }
-  | { type: 'bulletList'; items: string[] }
-  | { type: 'orderedList'; items: string[] }
-  | { type: 'code'; text: string };
 type WhatsAppTextSegment = {
   text: string;
   bold?: boolean;
@@ -959,11 +932,6 @@ const CONVERSATION_ROUTE_OPEN_DURATION_MS = 140;
 const CONVERSATION_ROUTE_CLOSE_DURATION_MS = 90;
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏'];
 const CONVERSATION_ATTACHMENT_LIMIT = 4;
-const AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
-const AI_AGENT_DIRECT_ATTACHMENTS_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
-const AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES = 1.5 * 1024 * 1024;
-const AI_AGENT_TEXT_ATTACHMENT_CHAR_LIMIT = 18000;
-const AI_AGENT_PICKER_PRESENTATION_DELAY_MS = 280;
 const CONVERSATION_COMPOSER_LIGHT_BACKGROUND = '#f5f5f7';
 const CONVERSATION_COMPOSER_SAFE_BOTTOM = 22;
 const CONVERSATION_COMPOSER_KEYBOARD_BOTTOM = 3;
@@ -1075,11 +1043,6 @@ const APPOINTMENT_DURATION_MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index
 const APPOINTMENT_WHEEL_OPTION_HEIGHT = 64;
 const APPOINTMENT_WHEEL_LABEL_HEIGHT = 42;
 const FREE_SLOT_DATE_CHIP_SPAN = 140;
-const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
-const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
-const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
-const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia';
-let assistantConversationMessageCounter = 0;
 const ACCOUNT_CURRENCY_CONFIG_KEY = 'account_currency';
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled';
 const DEFAULT_ACCOUNT_CURRENCY = 'MXN';
@@ -1095,8 +1058,6 @@ const RECENT_PAYMENT_PERIODS: Array<{ id: RecentPaymentsPeriod; label: string; d
 const SETTINGS_APP_CONFIG_KEYS = [
   'account_currency',
   'account_timezone',
-  'mobile_chat_ai_agent_enabled',
-  'mobile_chat_ai_reply_suggestions_enabled',
   'mobile_chat_show_archived',
   'mobile_chat_sort_mode',
   'mobile_chat_show_last_preview',
@@ -1129,8 +1090,6 @@ const PHONE_CHAT_THEME_OPTIONS: Array<{
 ];
 
 type MobileChatSettings = {
-  aiAgentEnabled: boolean;
-  aiReplySuggestionsEnabled: boolean;
   showArchived: boolean;
   sortMode: 'recent' | 'unread';
   showLastPreview: boolean;
@@ -1148,8 +1107,6 @@ type NativeChatFilterCatalogSnapshot = {
 };
 
 const DEFAULT_MOBILE_CHAT_SETTINGS: MobileChatSettings = {
-  aiAgentEnabled: true,
-  aiReplySuggestionsEnabled: false,
   showArchived: true,
   sortMode: 'recent',
   showLastPreview: true,
@@ -2987,7 +2944,6 @@ function ChatScreen({
   const [selected, setSelected] = useState<ChatContact | null>(null);
   const [conversationClosing, setConversationClosing] = useState(false);
   const [pendingConversationDraft, setPendingConversationDraft] = useState<PendingChatDraft | null>(null);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cameraSendLockedRef = useRef(false);
@@ -3106,9 +3062,9 @@ function ChatScreen({
   }, [api]);
 
   useEffect(() => {
-    onDockHiddenChange?.(assistantOpen || Boolean(selected));
+    onDockHiddenChange?.(Boolean(selected));
     return () => onDockHiddenChange?.(false);
-  }, [assistantOpen, onDockHiddenChange, selected]);
+  }, [onDockHiddenChange, selected]);
 
   const openChatConversation = useCallback((contact: ChatContact) => {
     // Cierra el teclado del buscador antes de traspasar la propiedad del
@@ -3878,7 +3834,6 @@ function ChatScreen({
     let cancelled = false;
 
     const openNotificationContact = async () => {
-      setAssistantOpen(false);
       setSelectedChatIds([]);
       setSelectionActionsOpen(false);
       setArchivedViewOpen(false);
@@ -3920,7 +3875,6 @@ function ChatScreen({
     if (!pendingDraft?.contact?.id || (!pendingDraft.text.trim() && !pendingDraft.paymentPreview && !pendingDraft.activityMarker && !pendingDraft.successNotice)) return;
 
     onPendingDraftHandled?.(pendingDraft.id);
-    setAssistantOpen(false);
     setSelectedChatIds([]);
     setSelectionActionsOpen(false);
     setArchivedViewOpen(false);
@@ -3943,11 +3897,8 @@ function ChatScreen({
     openChatConversation(targetContact);
   }, [chats, onPendingDraftHandled, openChatConversation, pendingDraft]);
 
-  const showAssistantRow = settings.aiAgentEnabled && !archivedViewOpen && effectiveActiveFilter === 'all' && (
-    !query.trim() || AI_AGENT_CHAT_SEARCH_TEXT.includes(query.trim().toLowerCase())
-  );
   const showArchiveRow = settings.showArchived && !selectionActive && !query.trim() && (archivedViewOpen || effectiveActiveFilter === 'all');
-  const chatListHasRows = selectionActive || showAssistantRow || showArchiveRow || filteredChats.length > 0;
+  const chatListHasRows = selectionActive || showArchiveRow || filteredChats.length > 0;
   const showMainEmptyState = !archivedViewOpen && !selectionActive && filteredChats.length === 0;
   const hasChatFilterContext = Boolean(query.trim() || effectiveActiveFilter !== 'all');
   const emptyChatsMinHeight = Math.max(
@@ -4713,10 +4664,6 @@ function ChatScreen({
     if (!selectionActive) setSelectionActionsOpen(false);
   }, [selectionActive]);
 
-  if (assistantOpen) {
-    return <AssistantConversationScreen api={api} onBack={() => setAssistantOpen(false)} />;
-  }
-
   const chatMoreSheetOpen = activeSheet === 'chatMore' || closingSheet === 'chatMore';
   const chatMoreSheetClosing = activeSheet !== 'chatMore' && closingSheet === 'chatMore';
   const contactPickerSheet = activeSheet === 'cameraShare' || closingSheet === 'cameraShare'
@@ -4755,11 +4702,6 @@ function ChatScreen({
             onChange={applyFilter}
           />
         </View>
-      ) : null}
-      {showAssistantRow ? (
-        <AssistantChatRow
-          onPress={() => setAssistantOpen(true)}
-        />
       ) : null}
       {selectionActive ? (
         <ChatSelectionPanel
@@ -8257,14 +8199,6 @@ function normalizeAppointmentStatus(value?: string) {
   if (raw === 'canceled') return 'cancelled';
   if (raw === 'no_show' || raw === 'no-show') return 'noshow';
   return raw || 'confirmed';
-}
-
-// The backend returns this sentinel when no business context is stored; /movil
-// maps it to '' on load so it is not treated as user-entered content.
-const EMPTY_BUSINESS_CONTEXT_TEXT = 'No se proporcionaron detalles del negocio.';
-function normalizeBusinessContextDraft(value?: string | null) {
-  const text = String(value || '').trim();
-  return text === EMPTY_BUSINESS_CONTEXT_TEXT ? '' : text;
 }
 
 function getEventStart(event: CalendarEventItem) {
@@ -13596,8 +13530,6 @@ function coerceChatSortMode(value: unknown): MobileChatSettings['sortMode'] {
 
 function normalizeMobileChatSettings(config: Record<string, ConfigValue>): MobileChatSettings {
   return {
-    aiAgentEnabled: coerceConfigBoolean(config.mobile_chat_ai_agent_enabled, DEFAULT_MOBILE_CHAT_SETTINGS.aiAgentEnabled),
-    aiReplySuggestionsEnabled: coerceConfigBoolean(config.mobile_chat_ai_reply_suggestions_enabled, DEFAULT_MOBILE_CHAT_SETTINGS.aiReplySuggestionsEnabled),
     showArchived: coerceConfigBoolean(config.mobile_chat_show_archived, DEFAULT_MOBILE_CHAT_SETTINGS.showArchived),
     sortMode: coerceChatSortMode(config.mobile_chat_sort_mode),
     showLastPreview: coerceConfigBoolean(config.mobile_chat_show_last_preview, DEFAULT_MOBILE_CHAT_SETTINGS.showLastPreview),
@@ -13722,7 +13654,6 @@ function getTemplatePreview(template: WhatsAppApiTemplate) {
 
 function getSettingsPanelTitle(panel: SettingsPanel) {
   if (panel === 'templates') return 'Plantillas';
-  if (panel === 'agent') return AI_AGENT_CHAT_DISPLAY_NAME;
   if (panel === 'chats') return 'Lista de chats';
   if (panel === 'custom-fields') return 'Campos personalizados';
   if (panel === 'tags') return 'Etiquetas';
@@ -13778,8 +13709,6 @@ function SettingsScreen({
     ...peekCache<Record<string, ConfigValue>>(MOBILE_CACHE_KEYS.settingsAppConfig, {}),
   };
   const initialSettingsUserConfig = peekCache<Record<string, ConfigValue>>(MOBILE_CACHE_KEYS.settingsUserConfig, {});
-  const initialAIAgentConfig = peekCache<AIAgentConfigStatus | null>(MOBILE_CACHE_KEYS.settingsAIAgent, null);
-  const initialAIBusinessContext = normalizeBusinessContextDraft(initialAIAgentConfig?.businessContext);
   const [activePanel, setActivePanel] = useState<SettingsPanel>(null);
   const [loading, setLoading] = useState(() => !(
     hasCachedValue(MOBILE_CACHE_KEYS.settingsAppConfig)
@@ -13810,12 +13739,6 @@ function SettingsScreen({
     peekCache<CalendarItem[]>(MOBILE_CACHE_KEYS.settingsCalendars, [])
   ));
   const [calendarsLoading, setCalendarsLoading] = useState(false);
-  const [aiAgentConfig, setAiAgentConfig] = useState<AIAgentConfigStatus | null>(initialAIAgentConfig);
-  const [aiAgentLoading, setAiAgentLoading] = useState(false);
-  const [businessContextDraft, setBusinessContextDraft] = useState(initialAIBusinessContext);
-  const [savedBusinessContext, setSavedBusinessContext] = useState(initialAIBusinessContext);
-  const [businessContextSaving, setBusinessContextSaving] = useState(false);
-  const [businessContextMessage, setBusinessContextMessage] = useState('');
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(() => (
     peekCache<WhatsAppApiStatus | null>(MOBILE_CACHE_KEYS.settingsWhatsAppStatus, null)
   ));
@@ -13862,44 +13785,6 @@ function SettingsScreen({
   useEffect(() => {
     void load();
   }, [load]);
-
-  const loadAIAgentStatus = useCallback(async () => {
-    if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsAIAgent)) setAiAgentLoading(true);
-    try {
-      const status = await api.getAIAgentConfig();
-      if (!settingsMountedRef.current) return;
-      // Map the backend's empty-context sentinel to '' so it never leaks into
-      // the editable draft as if the user had typed it (matches /movil).
-      const context = normalizeBusinessContextDraft(status.businessContext);
-      setAiAgentConfig(status);
-      setBusinessContextDraft(context);
-      setSavedBusinessContext(context);
-      writeCache(MOBILE_CACHE_KEYS.settingsAIAgent, status);
-    } catch {
-      if (!settingsMountedRef.current) return;
-      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsAIAgent)) {
-        setAiAgentConfig(null);
-        setBusinessContextDraft('');
-        setSavedBusinessContext('');
-      }
-    } finally {
-      if (settingsMountedRef.current) setAiAgentLoading(false);
-    }
-  }, [api]);
-
-  const connectAIToken = useCallback(async (apiKey: string) => {
-    const status = await api.saveAIAgentConfig({ apiKey });
-    if (!settingsMountedRef.current) return;
-    if (status) {
-      const context = normalizeBusinessContextDraft(status.businessContext);
-      setAiAgentConfig(status);
-      setBusinessContextDraft(context);
-      setSavedBusinessContext(context);
-      writeCache(MOBILE_CACHE_KEYS.settingsAIAgent, status);
-    } else {
-      await loadAIAgentStatus();
-    }
-  }, [api, loadAIAgentStatus]);
 
   const loadTemplates = useCallback(async () => {
     if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsTemplates)) setTemplatesLoading(true);
@@ -14020,20 +13905,18 @@ function SettingsScreen({
   }, [api]);
 
   useEffect(() => {
-    void loadAIAgentStatus();
     void loadCalendars();
     void loadWhatsAppStatus();
     void loadPushPermissionStatus();
-  }, [loadAIAgentStatus, loadCalendars, loadPushPermissionStatus, loadWhatsAppStatus]);
+  }, [loadCalendars, loadPushPermissionStatus, loadWhatsAppStatus]);
 
   useEffect(() => {
     if (activePanel === 'numbers') void loadWhatsAppStatus();
     if (activePanel === 'templates') void loadTemplates();
     if (activePanel === 'custom-fields') void loadCustomFields();
     if (activePanel === 'tags') void loadSettingsTags();
-    if (activePanel === 'agent') void loadAIAgentStatus();
     if (activePanel === 'notifications') void loadPushPermissionStatus();
-  }, [activePanel, loadAIAgentStatus, loadCustomFields, loadPushPermissionStatus, loadSettingsTags, loadTemplates, loadWhatsAppStatus]);
+  }, [activePanel, loadCustomFields, loadPushPermissionStatus, loadSettingsTags, loadTemplates, loadWhatsAppStatus]);
 
   const getAppBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(appConfig[key], fallback);
   const getUserBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(userConfig[key], fallback);
@@ -14087,9 +13970,6 @@ function SettingsScreen({
     }
   };
 
-  const aiReady = Boolean(aiAgentConfig?.configured && !aiAgentConfig?.needsReconnect);
-  const aiAgentChatEnabled = getAppBoolean('mobile_chat_ai_agent_enabled', true);
-  const aiReplySuggestionsEnabled = getAppBoolean('mobile_chat_ai_reply_suggestions_enabled', false);
   const showArchivedChats = getAppBoolean('mobile_chat_show_archived', true);
   const showLastMessagePreview = getAppBoolean('mobile_chat_show_last_preview', true);
   const showUnreadIndicators = getAppBoolean('mobile_chat_show_unread_indicators', true);
@@ -14145,40 +14025,6 @@ function SettingsScreen({
         { text: 'Cerrar sesión', style: 'destructive', onPress: () => void onLogout() },
       ],
     );
-  };
-
-  const saveRefinedBusinessContext = async (answer: string) => {
-    const draft = answer.trim();
-    if (!draft || businessContextSaving || !aiReady) {
-      Alert.alert(
-        'Asistente Personal AI',
-        aiReady ? 'Escribe la descripción del negocio primero.' : 'Conecta OpenAI para pulir y guardar la descripción.',
-      );
-      return false;
-    }
-    setBusinessContextSaving(true);
-    setBusinessContextMessage('Puliendo y guardando...');
-    try {
-      const result = await api.saveAIAgentBusinessContext(draft);
-      if (!settingsMountedRef.current) return false;
-      const next = String(result.text || result.status?.businessContext || draft).trim();
-      setBusinessContextDraft(next);
-      setSavedBusinessContext(next);
-      setBusinessContextMessage('Guardado.');
-      if (result.status) {
-        setAiAgentConfig(result.status);
-        writeCache(MOBILE_CACHE_KEYS.settingsAIAgent, result.status);
-      }
-      return true;
-    } catch (err) {
-      if (!settingsMountedRef.current) return false;
-      const message = err instanceof Error ? err.message : 'No se pudo guardar la descripción.';
-      setBusinessContextMessage(message);
-      Alert.alert('No se guardó la descripción', message);
-      return false;
-    } finally {
-      if (settingsMountedRef.current) setBusinessContextSaving(false);
-    }
   };
 
   const togglePushCalendar = (calendarId: string) => {
@@ -14276,7 +14122,6 @@ function SettingsScreen({
     }> = [
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Principal y bandejas por remitente.', meta: whatsAppPhones.length ? `${whatsAppPhones.length}` : 'Revisar', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
-      { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: aiReady ? (aiAgentChatEnabled ? 'Activo' : 'Apagado') : 'Sin OpenAI', Icon: Bot, tone: 'neutral' },
       { id: 'chats', title: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: customFields.length ? `${customFields.length}` : 'Todos', Icon: ListChecks, tone: 'gold' },
       { id: 'tags', title: 'Etiquetas', description: 'Crea y elimina etiquetas del CRM.', meta: settingsTags.length ? `${settingsTags.length}` : 'Crear', Icon: Tag, tone: 'gold' },
@@ -14449,31 +14294,6 @@ function SettingsScreen({
       ) : null}
       {!templatesLoading && !templates.length && !templatesError ? <SettingsEmptyState label="Todavía no hay plantillas guardadas." /> : null}
     </>
-  );
-
-  const renderAgent = () => (
-    <SettingsAgentPanel
-      api={api}
-      aiReady={aiReady}
-      aiAgentConfig={aiAgentConfig}
-      aiAgentLoading={aiAgentLoading}
-      aiAgentChatEnabled={aiAgentChatEnabled}
-      aiReplySuggestionsEnabled={aiReplySuggestionsEnabled}
-      businessContextDraft={businessContextDraft}
-      savedBusinessContext={savedBusinessContext}
-      businessContextSaving={businessContextSaving}
-      businessContextMessage={businessContextMessage}
-      savingKey={savingKey}
-      onBusinessContextDraftChange={(text) => {
-        setBusinessContextDraft(text);
-        setBusinessContextMessage('');
-      }}
-      onBusinessContextMessageChange={setBusinessContextMessage}
-      onSaveBusinessContext={saveRefinedBusinessContext}
-      onSaveAppPreference={(key, value) => void saveAppPreference(key, value)}
-      onConnectToken={connectAIToken}
-      customersLowerLabel={customersLowerLabel}
-    />
   );
 
   const renderChats = () => (
@@ -14733,7 +14553,6 @@ function SettingsScreen({
   const renderPanel = () => {
     if (activePanel === 'numbers') return renderNumbers();
     if (activePanel === 'templates') return renderTemplates();
-    if (activePanel === 'agent') return renderAgent();
     if (activePanel === 'chats') return renderChats();
     if (activePanel === 'custom-fields') return renderCustomFields();
     if (activePanel === 'tags') return renderTags();
@@ -14764,280 +14583,6 @@ function SettingsScreen({
       </ScrollView>
       {footer}
     </AppFrame>
-  );
-}
-
-function SettingsAgentPanel({
-  api,
-  aiReady,
-  aiAgentConfig,
-  aiAgentLoading,
-  aiAgentChatEnabled,
-  aiReplySuggestionsEnabled,
-  businessContextDraft,
-  savedBusinessContext,
-  businessContextSaving,
-  businessContextMessage,
-  savingKey,
-  onBusinessContextDraftChange,
-  onBusinessContextMessageChange,
-  onSaveBusinessContext,
-  onSaveAppPreference,
-  onConnectToken,
-  customersLowerLabel,
-}: {
-  api: RistakApiClient;
-  aiReady: boolean;
-  aiAgentConfig: AIAgentConfigStatus | null;
-  aiAgentLoading: boolean;
-  aiAgentChatEnabled: boolean;
-  aiReplySuggestionsEnabled: boolean;
-  businessContextDraft: string;
-  savedBusinessContext: string;
-  businessContextSaving: boolean;
-  businessContextMessage: string;
-  savingKey: string | null;
-  onBusinessContextDraftChange: (text: string) => void;
-  onBusinessContextMessageChange: (message: string) => void;
-  onSaveBusinessContext: (answer: string) => Promise<boolean>;
-  onSaveAppPreference: (key: string, value: ConfigValue) => void;
-  onConnectToken: (apiKey: string) => Promise<void>;
-  customersLowerLabel: string;
-}) {
-  const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle');
-  const [tokenDraft, setTokenDraft] = useState('');
-  const [tokenSaving, setTokenSaving] = useState(false);
-  const connectToken = async () => {
-    const apiKey = tokenDraft.trim();
-    if (!apiKey || tokenSaving) return;
-    setTokenSaving(true);
-    try {
-      await onConnectToken(apiKey);
-      setTokenDraft('');
-    } catch (err) {
-      Alert.alert('OpenAI', err instanceof Error ? err.message : 'No se pudo conectar el token de OpenAI.');
-    } finally {
-      setTokenSaving(false);
-    }
-  };
-  const businessVoiceRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const businessVoiceActiveRef = useRef(false);
-  const panelMountedRef = useRef(true);
-
-  useEffect(() => () => {
-    panelMountedRef.current = false;
-    let recording = businessVoiceActiveRef.current;
-    try {
-      recording = recording || businessVoiceRecorder.isRecording;
-    } catch {
-      recording = businessVoiceActiveRef.current;
-    }
-    businessVoiceActiveRef.current = false;
-    if (recording) void businessVoiceRecorder.stop().catch(() => undefined);
-    void setAudioModeAsync({
-      allowsRecording: false,
-      playsInSilentMode: true,
-    }).catch(() => undefined);
-  }, [businessVoiceRecorder]);
-
-  const saveCurrentBusinessContext = () => {
-    void onSaveBusinessContext(businessContextDraft);
-  };
-
-  const startBusinessVoiceDictation = async () => {
-    if (businessVoiceState !== 'idle' || businessContextSaving || aiAgentLoading) return;
-
-    if (!aiReady) {
-      const message = aiAgentConfig?.needsReconnect
-        ? 'Reconecta OpenAI para dictar la descripción.'
-        : 'Conecta OpenAI para dictar y pulir la descripción.';
-      onBusinessContextMessageChange(message);
-      Alert.alert('OpenAI no está listo', message);
-      return;
-    }
-
-    try {
-      const permission = await requestRecordingPermissionsAsync();
-      if (!permission.granted) {
-        const message = 'Este celular no permitió usar el micrófono.';
-        onBusinessContextMessageChange(message);
-        Alert.alert('Micrófono bloqueado', message);
-        return;
-      }
-
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-      });
-
-      await businessVoiceRecorder.prepareToRecordAsync();
-      if (!panelMountedRef.current) {
-        void setAudioModeAsync({
-          allowsRecording: false,
-          playsInSilentMode: true,
-        }).catch(() => undefined);
-        return;
-      }
-      businessVoiceRecorder.record();
-      businessVoiceActiveRef.current = true;
-      setBusinessVoiceState('recording');
-      onBusinessContextMessageChange('Grabando... toca detener cuando termines.');
-    } catch (err) {
-      businessVoiceActiveRef.current = false;
-      void setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      if (!panelMountedRef.current) return;
-      setBusinessVoiceState('idle');
-      const message = err instanceof Error ? err.message : 'No pude activar el micrófono.';
-      onBusinessContextMessageChange(message);
-      Alert.alert('Micrófono bloqueado', message);
-    }
-  };
-
-  const stopBusinessVoiceDictation = async () => {
-    if (businessVoiceState !== 'recording') return;
-
-    setBusinessVoiceState('processing');
-    onBusinessContextMessageChange('Transcribiendo audio...');
-
-    try {
-      let isRecording = businessVoiceActiveRef.current;
-      try {
-        isRecording = isRecording || businessVoiceRecorder.isRecording;
-      } catch {
-        isRecording = businessVoiceActiveRef.current;
-      }
-      if (!isRecording) throw new Error('No encontré la grabación activa.');
-      await businessVoiceRecorder.stop();
-      businessVoiceActiveRef.current = false;
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-
-      const audioUri = businessVoiceRecorder.uri;
-      if (!audioUri) throw new Error('No se grabó audio. Intenta otra vez.');
-
-      const transcription = await api.transcribeAIAgentAudio(audioUri, 'audio/m4a');
-      if (!panelMountedRef.current) return;
-      const transcript = String(transcription.text || '').trim();
-      if (!transcript) throw new Error('No se detectó texto en el audio.');
-
-      await onSaveBusinessContext(transcript);
-    } catch (err) {
-      if (!panelMountedRef.current) return;
-      const message = err instanceof Error ? err.message : 'No pude transcribir el audio.';
-      onBusinessContextMessageChange(message);
-      Alert.alert('No se pudo usar el dictado', message);
-    } finally {
-      businessVoiceActiveRef.current = false;
-      void setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      if (panelMountedRef.current) setBusinessVoiceState('idle');
-    }
-  };
-
-  const handleBusinessVoiceButton = () => {
-    if (businessVoiceState === 'recording') {
-      void stopBusinessVoiceDictation();
-      return;
-    }
-    void startBusinessVoiceDictation();
-  };
-
-  const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim();
-  const recording = businessVoiceState === 'recording';
-  const busyDescription = aiAgentLoading || businessContextSaving || businessVoiceState === 'processing';
-  const micLabel = recording ? 'Detener' : businessVoiceState === 'processing' ? 'Procesando' : 'Dictar';
-
-  return (
-    <>
-      <View style={styles.businessDescriptionPanel}>
-        {!aiReady ? (
-          <View style={styles.businessDescriptionField}>
-            <SettingsEmptyState label={aiAgentConfig?.needsReconnect ? 'Reconecta OpenAI para activar el agente en este celular.' : 'Conecta OpenAI para activar el agente en este celular.'} />
-            <TextInput
-              value={tokenDraft}
-              onChangeText={setTokenDraft}
-              editable={!tokenSaving}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-              placeholder="Pega tu API key de OpenAI (sk-...)"
-              placeholderTextColor={COLORS.muted}
-              keyboardAppearance={getNativeKeyboardAppearance()}
-              style={styles.businessDescriptionInput}
-            />
-            <SecondaryButton label={tokenSaving ? 'Conectando…' : 'Conectar OpenAI'} onPress={connectToken} />
-          </View>
-        ) : null}
-        <View style={styles.businessDescriptionHeader}>
-          <View style={styles.businessDescriptionIcon}><Sparkles size={19} color={COLORS.white} strokeWidth={2.25} /></View>
-          <View style={styles.businessDescriptionCopy}>
-            <Text style={styles.businessDescriptionTitle}>Descripción del negocio</Text>
-            <Text style={styles.businessDescriptionSubtitle}>Dicta tu giro, servicios y {customersLowerLabel}; la IA lo pule y lo guarda aquí.</Text>
-          </View>
-        </View>
-        <View style={styles.businessDescriptionField}>
-          <TextInput
-            value={businessContextDraft}
-            onChangeText={onBusinessContextDraftChange}
-            editable={!busyDescription && !recording}
-            multiline
-            placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias..."
-            placeholderTextColor={COLORS.muted}
-            textAlignVertical="top"
-            style={styles.businessDescriptionInput}
-          />
-          <Pressable
-            accessibilityRole="button"
-            disabled={!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing'}
-            onPress={handleBusinessVoiceButton}
-            style={({ pressed }) => [
-              styles.businessVoiceButton,
-              recording && styles.businessVoiceButtonRecording,
-              (!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing') && styles.disabledButton,
-              pressed && styles.pressed,
-            ]}
-          >
-            {businessVoiceState === 'processing' ? <ActivityIndicator color={COLORS.white} /> : recording ? <Square size={15} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} /> : <Mic size={17} color={COLORS.white} strokeWidth={2.4} />}
-            <Text style={[styles.businessVoiceButtonText, recording && styles.businessVoiceButtonTextRecording]}>{micLabel}</Text>
-          </Pressable>
-        </View>
-        <View style={styles.businessDescriptionActions}>
-          <Text numberOfLines={2} style={styles.businessDescriptionMessage}>
-            {aiAgentLoading ? '' : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            disabled={!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
-            onPress={saveCurrentBusinessContext}
-            style={({ pressed }) => [styles.settingsSmallPrimaryButton, (!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()) && styles.disabledButton, pressed && styles.pressed]}
-          >
-            {businessContextSaving ? <ActivityIndicator color={COLORS.white} /> : <Save size={16} color={COLORS.white} strokeWidth={2.4} />}
-            <Text style={styles.settingsSmallPrimaryText}>Guardar</Text>
-          </Pressable>
-        </View>
-      </View>
-      <SettingsToggleRow
-        title="Mostrar como primer chat"
-        description="El agente aparece fijo arriba de tus conversaciones."
-        checked={aiReady && aiAgentChatEnabled}
-        disabled={!aiReady || savingKey === 'mobile_chat_ai_agent_enabled'}
-        onChange={(checked) => onSaveAppPreference('mobile_chat_ai_agent_enabled', checked)}
-      />
-      <SettingsToggleRow
-        title="Sugerir respuestas"
-        description="El agente puede preparar un texto para responder en chats reales."
-        checked={aiReady && aiReplySuggestionsEnabled}
-        disabled={!aiReady || !aiAgentChatEnabled || savingKey === 'mobile_chat_ai_reply_suggestions_enabled'}
-        onChange={(checked) => onSaveAppPreference('mobile_chat_ai_reply_suggestions_enabled', checked)}
-      />
-    </>
   );
 }
 
@@ -16529,7 +16074,9 @@ function NativeAgentHubSheet({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [aiStatus, setAiStatus] = useState<AIAgentConfigStatus | null>(null);
+  const [openAIProvider, setOpenAIProvider] = useState<ConversationalAIProviderStatus | null>(null);
+  const [openAIKeyDraft, setOpenAIKeyDraft] = useState('');
+  const [connectingOpenAI, setConnectingOpenAI] = useState(false);
   const [agents, setAgents] = useState<ConversationalAgentDefinition[]>([]);
   const [busyAgentIds, setBusyAgentIds] = useState<string[]>([]);
   const [editingAgent, setEditingAgent] = useState<ConversationalAgentDefinition | null>(null);
@@ -16540,9 +16087,10 @@ function NativeAgentHubSheet({
     if (!silent) setLoading(true);
     setError('');
     try {
-      const nextAiStatus = await api.getAIAgentConfig();
-      setAiStatus(nextAiStatus);
-      if (!nextAiStatus?.configured || nextAiStatus?.needsReconnect) {
+      const config = await api.getConversationalAgentConfig();
+      const nextOpenAIProvider = (config.aiProviders || []).find((provider) => provider.id === 'openai') || null;
+      setOpenAIProvider(nextOpenAIProvider);
+      if (!nextOpenAIProvider?.connected || nextOpenAIProvider.needsReconnect) {
         setAgents([]);
         return;
       }
@@ -16648,7 +16196,26 @@ function NativeAgentHubSheet({
     onClose();
   };
 
-  const aiReady = Boolean(aiStatus?.configured && !aiStatus?.needsReconnect);
+  const connectOpenAI = async () => {
+    const apiKey = openAIKeyDraft.trim();
+    if (!apiKey || connectingOpenAI) return;
+    setConnectingOpenAI(true);
+    setError('');
+    try {
+      const providers = await api.connectConversationalAIProvider('openai', apiKey);
+      const nextOpenAIProvider = providers.find((provider) => provider.id === 'openai') || null;
+      setOpenAIProvider(nextOpenAIProvider);
+      setOpenAIKeyDraft('');
+      await load();
+      setNotice('OpenAI quedó conectado al chatbot.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo conectar OpenAI.');
+    } finally {
+      setConnectingOpenAI(false);
+    }
+  };
+
+  const aiReady = Boolean(openAIProvider?.connected && !openAIProvider.needsReconnect);
   const enabledCapabilities = editingAgent ? getEnabledAgentCapabilities(editingAgent) : [];
 
   return (
@@ -16739,8 +16306,26 @@ function NativeAgentHubSheet({
       ) : !aiReady ? (
         <View style={styles.agentHubState}>
           <View style={styles.agentHubStateIcon}><Bot size={24} color={COLORS.muted} strokeWidth={2.2} /></View>
-          <Text style={styles.agentHubStateTitle}>{aiStatus?.needsReconnect ? 'Reconecta OpenAI' : 'Conecta OpenAI'}</Text>
-          <Text style={styles.agentHubStateText}>Hazlo en Ajustes → Asistente Personal AI para usar el agente conversacional.</Text>
+          <Text style={styles.agentHubStateTitle}>{openAIProvider?.needsReconnect ? 'Reconecta OpenAI' : 'Conecta OpenAI'}</Text>
+          <Text style={styles.agentHubStateText}>La llave se usa únicamente para que tus agentes conversacionales atiendan chats.</Text>
+          <TextInput
+            value={openAIKeyDraft}
+            onChangeText={setOpenAIKeyDraft}
+            editable={!connectingOpenAI}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+            placeholder="API key de OpenAI (sk-...)"
+            placeholderTextColor={COLORS.muted}
+            style={styles.agentEditorInput}
+          />
+          <PrimaryButton
+            label={openAIProvider?.needsReconnect ? 'Reconectar OpenAI' : 'Conectar OpenAI'}
+            busy={connectingOpenAI}
+            busyLabel="Conectando..."
+            onPress={() => void connectOpenAI()}
+          />
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
       ) : error ? (
         <View style={styles.agentHubState}>
@@ -18070,1145 +17655,6 @@ function ArchiveRow({
       <Text style={[styles.archiveRowTitle, active && styles.archiveRowTitleActive]}>Archivados</Text>
       <Text style={[styles.archiveRowCount, active && styles.archiveRowTitleActive]}>{count}</Text>
     </Pressable>
-  );
-}
-
-function AssistantChatRow({ onPress }: { onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.aiChatRow, pressed && styles.pressed]}>
-      <View pointerEvents="none" style={styles.aiChatDivider} />
-      <View style={styles.avatar}>
-        <View style={[styles.avatarCircle, styles.aiChatAvatarCircle]}>
-          <Bot size={23} color={COLORS.text} strokeWidth={2.4} />
-        </View>
-      </View>
-      <View style={styles.aiChatBody}>
-        <Text numberOfLines={1} style={styles.aiChatName}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
-        <Text numberOfLines={1} style={styles.aiChatSubtitle}>{AI_AGENT_CHAT_SUBTITLE}</Text>
-      </View>
-      <View style={styles.aiChatMeta}>
-        <Text style={styles.aiChatPinned}>Fijo</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function createAssistantConversationMessage(
-  role: AIAgentMessage['role'],
-  content: string,
-  patch: Partial<AssistantConversationMessage> = {},
-): AssistantConversationMessage {
-  assistantConversationMessageCounter += 1;
-  return {
-    id: `${AI_AGENT_CHAT_ID}-${role}-${assistantConversationMessageCounter}`,
-    role,
-    content,
-    ...patch,
-  };
-}
-
-function getNativeAIAgentViewContext() {
-  return {
-    path: '/mobile/chat/ai-agent',
-    title: AI_AGENT_CHAT_DISPLAY_NAME,
-    routeLabel: 'App móvil · Chats · Asistente Personal AI',
-    visibleText: [
-      'Usuario usando la app móvil nativa de Ristak.',
-      'Está dentro de la bandeja de chats y abrió el Asistente Personal AI.',
-      'Esta conversación no corresponde a un contacto externo y no debe agendar citas ni registrar pagos por sí sola.',
-    ].join(' '),
-  };
-}
-
-function getAssistantAttachmentKind(mimeType: string, fallbackName = ''): AIAgentAttachmentKind {
-  const mime = mimeType.toLowerCase();
-  const name = fallbackName.toLowerCase();
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
-  if (mime.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.csv')) return 'text';
-  return 'file';
-}
-
-function getAssistantAttachmentName(uri: string, fallback = 'archivo') {
-  const cleanUri = uri.split('?')[0] || uri;
-  const filename = decodeURIComponent(cleanUri.split('/').filter(Boolean).pop() || '').trim();
-  return filename || fallback;
-}
-
-function getAssistantAttachmentPromptText(attachments: AIAgentAttachment[]) {
-  if (!attachments.length) return '';
-  if (attachments.length === 1) {
-    const attachment = attachments[0];
-    if (attachment.kind === 'image') return 'Analiza esta imagen y dime qué ves.';
-    if (attachment.kind === 'video') return 'Analiza este video adjunto y dime qué puedes inferir.';
-    return `Analiza este archivo adjunto: ${attachment.name}.`;
-  }
-  return `Analiza estos ${attachments.length} archivos adjuntos y dime qué encuentras.`;
-}
-
-function normalizeAssistantLinkUrl(value: string) {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return '';
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-
-function splitAssistantUrlPunctuation(value: string) {
-  const match = String(value || '').match(/^(.+?)([),.;:!?]+)?$/);
-  return {
-    urlText: match?.[1] || value,
-    trailing: match?.[2] || '',
-  };
-}
-
-function pushAssistantInlineSegment(segments: AssistantMessageInlineSegment[], segment: AssistantMessageInlineSegment) {
-  if (!segment.text) return;
-  const previous = segments[segments.length - 1];
-  if (
-    previous
-    && previous.bold === segment.bold
-    && previous.italic === segment.italic
-    && previous.strike === segment.strike
-    && previous.mono === segment.mono
-    && previous.url === segment.url
-  ) {
-    previous.text += segment.text;
-    return;
-  }
-  segments.push(segment);
-}
-
-function parseAssistantInlineMarkdown(text: string, active: Omit<AssistantMessageInlineSegment, 'text' | 'url'> = {}): AssistantMessageInlineSegment[] {
-  const pattern = /(!?\[[^\]]+]\([^)]+\)|https?:\/\/[^\s<>()]+|www\.[^\s<>()]+|```[\s\S]+?```|`[^`]+`|\*\*[\s\S]+?\*\*|\*[^\s*][\s\S]*?[^\s*]\*|_[^_\s][\s\S]*?[^_\s]_|~[^~\s][\s\S]*?[^~\s]~)/g;
-  const segments: AssistantMessageInlineSegment[] = [];
-  let index = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > index) {
-      pushAssistantInlineSegment(segments, { text: text.slice(index, match.index), ...active });
-    }
-
-    const token = match[0];
-    const markdownLink = token.match(/^!?\[([^\]]+)]\(([^)]+)\)$/);
-    if (markdownLink) {
-      const url = normalizeAssistantLinkUrl(markdownLink[2]);
-      pushAssistantInlineSegment(segments, { text: markdownLink[1], url, ...active });
-      index = pattern.lastIndex;
-      continue;
-    }
-
-    if (/^(https?:\/\/|www\.)/i.test(token)) {
-      const { urlText, trailing } = splitAssistantUrlPunctuation(token);
-      pushAssistantInlineSegment(segments, {
-        text: urlText,
-        url: normalizeAssistantLinkUrl(urlText),
-        ...active,
-      });
-      if (trailing) pushAssistantInlineSegment(segments, { text: trailing, ...active });
-      index = pattern.lastIndex;
-      continue;
-    }
-
-    if (token.startsWith('```') && token.endsWith('```')) {
-      pushAssistantInlineSegment(segments, { text: token.slice(3, -3).trim(), mono: true, ...active });
-      index = pattern.lastIndex;
-      continue;
-    }
-
-    if (token.startsWith('`') && token.endsWith('`')) {
-      pushAssistantInlineSegment(segments, { text: token.slice(1, -1), mono: true, ...active });
-      index = pattern.lastIndex;
-      continue;
-    }
-
-    const marker = token.startsWith('**') ? '**' : token[0];
-    const inner = token.slice(marker.length, -marker.length).trim();
-    const nextActive = {
-      ...active,
-      ...(marker === '**' || marker === '*' ? { bold: true } : {}),
-      ...(marker === '_' ? { italic: true } : {}),
-      ...(marker === '~' ? { strike: true } : {}),
-    };
-    parseAssistantInlineMarkdown(inner, nextActive).forEach((segment) => pushAssistantInlineSegment(segments, segment));
-    index = pattern.lastIndex;
-  }
-
-  if (index < text.length) {
-    pushAssistantInlineSegment(segments, { text: text.slice(index), ...active });
-  }
-
-  return segments.length ? segments : [{ text, ...active }];
-}
-
-function countAssistantMarker(value: string, marker: string) {
-  return (value.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
-}
-
-function hasUnclosedAssistantMarkdown(value: string) {
-  return countAssistantMarker(value, '**') % 2 === 1
-    || countAssistantMarker(value, '`') % 2 === 1
-    || countAssistantMarker(value, '~') % 2 === 1;
-}
-
-function shouldContinueAssistantListItem(item: string, nextLine: string) {
-  const trimmed = nextLine.trim();
-  if (!trimmed) return false;
-  if (/^\s+/.test(nextLine)) return true;
-  if (hasUnclosedAssistantMarkdown(item)) return true;
-  if (/^([*_~`]{1,3})/.test(trimmed)) return true;
-  return !/[.!?。)]["')\]]?$/.test(item.trim());
-}
-
-function parseAssistantMessageBlocks(content: string): AssistantMessageBlock[] {
-  const lines = String(content || '').replace(/\r\n/g, '\n').split('\n');
-  const blocks: AssistantMessageBlock[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index];
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      index += 1;
-      continue;
-    }
-
-    if (/^```/.test(trimmed)) {
-      const codeLines: string[] = [];
-      index += 1;
-      while (index < lines.length && !/^```/.test(lines[index].trim())) {
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-      if (index < lines.length) index += 1;
-      blocks.push({ type: 'code', text: codeLines.join('\n').trim() });
-      continue;
-    }
-
-    const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
-    if (headingMatch) {
-      blocks.push({ type: 'heading', text: headingMatch[1].replace(/^\*\*/, '').replace(/\*\*$/, '').trim() });
-      index += 1;
-      continue;
-    }
-
-    const bulletMatch = trimmed.match(/^[-*•]\s+(.+)$/);
-    const orderedMatch = trimmed.match(/^\d+[\.)]\s+(.+)$/);
-    if (bulletMatch || orderedMatch) {
-      const ordered = Boolean(orderedMatch);
-      const items: string[] = [];
-
-      while (index < lines.length) {
-        const current = lines[index];
-        const currentTrimmed = current.trim();
-        const currentMatch = ordered
-          ? currentTrimmed.match(/^\d+[\.)]\s+(.+)$/)
-          : currentTrimmed.match(/^[-*•]\s+(.+)$/);
-
-        if (!currentTrimmed) {
-          index += 1;
-          break;
-        }
-
-        if (!currentMatch) break;
-
-        let item = currentMatch[1].trim();
-        index += 1;
-        while (
-          index < lines.length
-          && lines[index].trim()
-          && !/^[-*•]\s+/.test(lines[index].trim())
-          && !/^\d+[\.)]\s+/.test(lines[index].trim())
-          && shouldContinueAssistantListItem(item, lines[index])
-        ) {
-          item = `${item}\n${lines[index].trim()}`;
-          index += 1;
-        }
-        items.push(item);
-      }
-
-      blocks.push({ type: ordered ? 'orderedList' : 'bulletList', items });
-      continue;
-    }
-
-    const paragraphLines: string[] = [];
-    while (
-      index < lines.length
-      && lines[index].trim()
-      && !/^```/.test(lines[index].trim())
-      && !/^#{1,6}\s+/.test(lines[index].trim())
-      && !/^[-*•]\s+/.test(lines[index].trim())
-      && !/^\d+[\.)]\s+/.test(lines[index].trim())
-    ) {
-      paragraphLines.push(lines[index].trim());
-      index += 1;
-    }
-
-    blocks.push({ type: 'paragraph', text: paragraphLines.join('\n') });
-  }
-
-  return blocks;
-}
-
-function formatMegabytes(bytes: number) {
-  const value = bytes / 1024 / 1024;
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function getAssistantAttachmentPayloadBytes(attachment: Pick<AIAgentAttachment, 'dataUrl' | 'text' | 'thumbnailDataUrl' | 'size'>) {
-  if (!attachment.dataUrl && !attachment.text && !attachment.thumbnailDataUrl) return 0;
-  return Math.max(0, Number(attachment.size || 0));
-}
-
-function waitForAssistantPickerPresentation() {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, AI_AGENT_PICKER_PRESENTATION_DELAY_MS);
-  });
-}
-
-async function createAssistantAttachmentDraft({
-  uri,
-  name,
-  mimeType,
-  size,
-}: {
-  uri: string;
-  name?: string | null;
-  mimeType?: string | null;
-  size?: number | null;
-}): Promise<AssistantAttachmentDraft> {
-  const resolvedMimeType = String(mimeType || 'application/octet-stream');
-  const resolvedName = String(name || getAssistantAttachmentName(uri)).trim() || 'archivo';
-  let resolvedSize = Math.max(0, Number(size || 0));
-  let sizeKnown = size !== null && size !== undefined && Number.isFinite(Number(size));
-  if (!sizeKnown) {
-    try {
-      const info = await FileSystem.getInfoAsync(uri);
-      if (info.exists && !info.isDirectory && typeof info.size === 'number') {
-        resolvedSize = Math.max(0, info.size);
-        sizeKnown = true;
-      }
-    } catch {
-      sizeKnown = false;
-    }
-  }
-  const kind = getAssistantAttachmentKind(resolvedMimeType, resolvedName);
-
-  if (!sizeKnown) {
-    throw new Error(`No pude validar el tamaño de ${resolvedName}. Intenta con otro archivo.`);
-  }
-
-  if (kind === 'video') {
-    throw new Error('El asistente móvil todavía no analiza videos. Sube una imagen o documento.');
-  }
-
-  if (kind === 'text' && resolvedSize > AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES) {
-    throw new Error(`${resolvedName} pesa ${formatMegabytes(resolvedSize)} MB. El asistente móvil acepta textos de hasta ${formatMegabytes(AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES)} MB.`);
-  }
-
-  if (kind !== 'text' && resolvedSize > AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES) {
-    throw new Error(`${resolvedName} pesa ${formatMegabytes(resolvedSize)} MB. El asistente móvil acepta archivos de hasta ${formatMegabytes(AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES)} MB.`);
-  }
-
-  const attachment: AssistantAttachmentDraft = {
-    id: `assistant-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    uri,
-    name: resolvedName,
-    mimeType: resolvedMimeType,
-    size: resolvedSize,
-    kind,
-  };
-
-  if (kind === 'text' && resolvedSize <= AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES) {
-    const text = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
-    attachment.text = text.length > AI_AGENT_TEXT_ATTACHMENT_CHAR_LIMIT
-      ? `${text.slice(0, AI_AGENT_TEXT_ATTACHMENT_CHAR_LIMIT)}\n\n[Archivo truncado para el agente: ${resolvedSize} bytes]`
-      : text;
-    return attachment;
-  }
-
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-  attachment.dataUrl = `data:${resolvedMimeType};base64,${base64}`;
-
-  return attachment;
-}
-
-// --- Assistant reply cleanup (ported from /movil AIAgentPanel) --------------
-// Strips OpenAI citation artifacts and the clarification-option list that the
-// backend sometimes embeds in the reply text, so options don't render twice
-// (once as text, once as tappable buttons) and citation glyphs don't leak.
-function stripCitationArtifacts(value: string) {
-  return String(value || '')
-    .replace(/\s*cite[^]*/g, '')
-    .replace(/\s*【[^】]*†[^】]*】/g, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\s+([.,;:!?])/g, '$1');
-}
-
-function normalizeClarificationText(value: string) {
-  return stripCitationArtifacts(value)
-    .replace(/\[[^\]]+\]\([^)]+\)/g, '$1')
-    .replace(/[`*_~]/g, '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-function isMarkdownListLine(line: string) {
-  return /^\s*(?:[-*•]\s+|\d+[.)]\s+)/.test(line);
-}
-
-function stripMarkdownListMarker(line: string) {
-  return line.trim().replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, '');
-}
-
-function optionAppearsInLine(line: string, options: AIAgentClarificationOption[]) {
-  const normalizedLine = normalizeClarificationText(stripMarkdownListMarker(line));
-  if (!normalizedLine) return false;
-  return options.some((option) => {
-    const normalizedLabel = normalizeClarificationText(option.label || '');
-    if (normalizedLabel.length < 2) return false;
-    if (normalizedLine.includes(normalizedLabel)) return true;
-    const words = normalizedLabel.split(' ').filter((word) => word.length > 2);
-    if (words.length < 2) return false;
-    const matches = words.filter((word) => normalizedLine.includes(word)).length;
-    return matches >= 2 && matches / words.length >= 0.6;
-  });
-}
-
-function removeDanglingOptionsHeading(lines: string[]) {
-  let lastContentIndex = -1;
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index].trim()) {
-      lastContentIndex = index;
-      break;
-    }
-  }
-  if (lastContentIndex < 0) return;
-  const normalized = normalizeClarificationText(lines[lastContentIndex].replace(/:$/, ''));
-  const genericOptionHeadings = new Set([
-    'opciones', 'opciones disponibles', 'estas opciones',
-    'elige una opcion', 'elige una', 'selecciona una opcion', 'selecciona una',
-  ]);
-  if (genericOptionHeadings.has(normalized)) {
-    lines.splice(lastContentIndex, lines.length - lastContentIndex);
-  }
-}
-
-function stripClarificationOptionLists(content: string, options?: AIAgentClarificationOption[]) {
-  if (!options?.length) return stripCitationArtifacts(content);
-  const lines = stripCitationArtifacts(content).replace(/\r\n/g, '\n').split('\n');
-  const output: string[] = [];
-  for (let index = 0; index < lines.length;) {
-    if (!isMarkdownListLine(lines[index])) {
-      output.push(lines[index]);
-      index += 1;
-      continue;
-    }
-    const block: string[] = [];
-    let blockMentionsOptions = false;
-    while (index < lines.length) {
-      const line = lines[index];
-      if (isMarkdownListLine(line)) {
-        block.push(line);
-        blockMentionsOptions = blockMentionsOptions || optionAppearsInLine(line, options);
-        index += 1;
-        continue;
-      }
-      if (block.length && line.trim() && /^\s{2,}\S/.test(line)) {
-        block.push(line);
-        index += 1;
-        continue;
-      }
-      break;
-    }
-    if (blockMentionsOptions) {
-      removeDanglingOptionsHeading(output);
-      continue;
-    }
-    output.push(...block);
-  }
-  const cleaned = output.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  if (cleaned) return cleaned;
-  return options.length === 1 ? 'Selecciona esta opción:' : 'Selecciona una opción:';
-}
-
-function prepareAssistantMessagesForApi(messages: AssistantConversationMessage[]) {
-  const windowed = messages
-    .filter((message) => message.role === 'user' || message.role === 'assistant')
-    .filter((message) => message.content.trim())
-    .slice(-24);
-  // Mirror /movil: keep the full attachment payload only on the latest user
-  // message; older messages carry metadata only, so we don't re-upload every
-  // base64 dataUrl/text/thumbnail on every turn (avoids payload-size/timeouts).
-  let lastUserIndex = -1;
-  windowed.forEach((message, index) => {
-    if (message.role === 'user') lastUserIndex = index;
-  });
-  return windowed.map((message, index) => {
-    const keepHeavy = index === lastUserIndex;
-    return {
-      role: message.role,
-      content: message.content,
-      ...(message.attachments?.length ? {
-        attachments: message.attachments.map((attachment) => ({
-          id: attachment.id,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          size: attachment.size,
-          kind: attachment.kind,
-          ...(keepHeavy && attachment.dataUrl ? { dataUrl: attachment.dataUrl } : {}),
-          ...(keepHeavy && attachment.text ? { text: attachment.text } : {}),
-          ...(keepHeavy && attachment.thumbnailDataUrl ? { thumbnailDataUrl: attachment.thumbnailDataUrl } : {}),
-        })),
-      } : {}),
-      ...(message.selectedClarificationOption ? { selectedClarificationOption: message.selectedClarificationOption } : {}),
-    };
-  });
-}
-
-type AssistantConversationScreenProps = {
-  api: RistakApiClient;
-  onBack: () => void;
-};
-
-function AssistantConversationScreen({ api, onBack }: AssistantConversationScreenProps) {
-  const listRef = useRef<FlatList<AssistantConversationMessage>>(null);
-  const inputRef = useRef<TextInput>(null);
-  const messagesRef = useRef<AssistantConversationMessage[]>([]);
-  const mountedRef = useRef(true);
-  // Routing continuity: send the agent category that took the thread and adopt
-  // the one the backend routed to, instead of re-routing with 'auto' each turn.
-  const agentCategoryRef = useRef('auto');
-  const [messages, setMessages] = useState<AssistantConversationMessage[]>(() => [
-    createAssistantConversationMessage('assistant', 'Listo. Soy tu Asistente Personal AI en Ristak. Pregúntame lo que necesites revisar, decidir o preparar dentro del negocio.'),
-  ]);
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
-  const [status, setStatus] = useState<AIAgentConfigStatus | null>(null);
-  const [statusLoading, setStatusLoading] = useState(true);
-  const [composerFocused, setComposerFocused] = useState(false);
-  const [attachments, setAttachments] = useState<AssistantAttachmentDraft[]>([]);
-  const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
-  const [voiceState, setVoiceState] = useState<AssistantVoiceState>('idle');
-  const audioRecorder = useAudioRecorder({ ...RecordingPresets.LOW_QUALITY, isMeteringEnabled: true });
-  const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
-  const hasDraft = Boolean(draft.trim());
-  const hasAssistantContent = hasDraft || attachments.length > 0;
-  const voiceRecordingVisible = voiceState === 'recording' || voiceState === 'paused' || voiceState === 'processing';
-  const conversationFrameBackground = getNativeConversationComposerBackground();
-
-  useEffect(() => {
-    messagesRef.current = messages;
-    requestAnimationFrame(() => {
-      listRef.current?.scrollToEnd({ animated: true });
-    });
-  }, [messages]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    api.getAIAgentConfig()
-      .then((nextStatus) => {
-        if (mountedRef.current) setStatus(nextStatus);
-      })
-      .catch(() => {
-        if (mountedRef.current) setStatus(null);
-      })
-      .finally(() => {
-        if (mountedRef.current) setStatusLoading(false);
-      });
-
-    return () => {
-      mountedRef.current = false;
-    };
-  }, [api]);
-
-  const sendAssistantMessage = useCallback(async (
-    overrideText?: string,
-    selectedClarificationOption?: AIAgentMessage['selectedClarificationOption'],
-  ) => {
-    const messageAttachments = overrideText === undefined ? [...attachments] : [];
-    const text = (overrideText ?? draft).trim();
-    const messageText = text || getAssistantAttachmentPromptText(messageAttachments);
-    if ((!messageText && !messageAttachments.length) || sending) return;
-
-    const userMessage = createAssistantConversationMessage('user', messageText, {
-      attachments: messageAttachments.map((attachment) => ({
-        id: attachment.id,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        kind: attachment.kind,
-        dataUrl: attachment.dataUrl,
-        text: attachment.text,
-        thumbnailDataUrl: attachment.thumbnailDataUrl,
-      })),
-      selectedClarificationOption,
-    });
-    const nextMessages = [...messagesRef.current, userMessage];
-    setDraft('');
-    if (overrideText === undefined) setAttachments([]);
-    setMessages(nextMessages);
-    inputRef.current?.focus();
-
-    if (status && !status.configured) {
-      setMessages((current) => [
-        ...current,
-        createAssistantConversationMessage(
-          'assistant',
-          status.needsReconnect
-            ? 'OpenAI necesita reconectarse en Configuración para que pueda responder desde este chat.'
-            : 'Primero conecta OpenAI en Configuración > Asistente Personal AI. Después este chat responde igual que el asistente de escritorio.',
-          { failed: true },
-        ),
-      ]);
-      return;
-    }
-
-    setSending(true);
-    try {
-      const result = await api.sendAIAgentMessage(
-        prepareAssistantMessagesForApi(nextMessages),
-        getNativeAIAgentViewContext(),
-        agentCategoryRef.current,
-      );
-      if (!mountedRef.current) return;
-      const routedCategory = (result as { category?: string }).category;
-      if (routedCategory && routedCategory !== agentCategoryRef.current) {
-        agentCategoryRef.current = routedCategory;
-      }
-      const cleanedReply = stripClarificationOptionLists(result.reply || '', result.clarificationOptions)
-        || 'Listo. ¿Qué más revisamos?';
-      setMessages((current) => [
-        ...current,
-        createAssistantConversationMessage('assistant', cleanedReply, {
-          sources: result.sources,
-          clarificationOptions: result.clarificationOptions,
-          trace: result.trace,
-        }),
-      ]);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      const message = err instanceof Error ? err.message : 'Revisa la configuración del asistente e inténtalo otra vez.';
-      setMessages((current) => [
-        ...current,
-        createAssistantConversationMessage('assistant', `No pude responder ahorita. ${message}`, { failed: true }),
-      ]);
-    } finally {
-      if (mountedRef.current) {
-        setSending(false);
-        inputRef.current?.focus();
-      }
-    }
-  }, [api, attachments, draft, sending, status]);
-
-  const addAssistantAttachments = useCallback(async (nextAttachments: AssistantAttachmentDraft[]) => {
-    if (!nextAttachments.length) return;
-    const available = Math.max(0, CONVERSATION_ATTACHMENT_LIMIT - attachments.length);
-    if (available <= 0) {
-      Alert.alert('Archivos', `Puedes adjuntar hasta ${CONVERSATION_ATTACHMENT_LIMIT} archivos por mensaje.`);
-      return;
-    }
-
-    const currentPayloadBytes = attachments.reduce((total, attachment) => total + getAssistantAttachmentPayloadBytes(attachment), 0);
-    const accepted: AssistantAttachmentDraft[] = [];
-    let totalPayloadBytes = currentPayloadBytes;
-    let rejectedByTotal = false;
-
-    for (const attachment of nextAttachments.slice(0, available)) {
-      const payloadBytes = getAssistantAttachmentPayloadBytes(attachment);
-      if (totalPayloadBytes + payloadBytes > AI_AGENT_DIRECT_ATTACHMENTS_MAX_TOTAL_BYTES) {
-        rejectedByTotal = true;
-        continue;
-      }
-      accepted.push(attachment);
-      totalPayloadBytes += payloadBytes;
-    }
-
-    if (accepted.length) {
-      setAttachments([...attachments, ...accepted]);
-    }
-
-    if (rejectedByTotal) {
-      Alert.alert('Archivos', `El asistente móvil acepta hasta ${formatMegabytes(AI_AGENT_DIRECT_ATTACHMENTS_MAX_TOTAL_BYTES)} MB por mensaje. Quita un archivo o sube uno más ligero.`);
-    }
-  }, [attachments]);
-
-  const pickAssistantMedia = useCallback(async () => {
-    setAttachmentSheetOpen(false);
-    await waitForAssistantPickerPresentation();
-    try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      const accessPrivileges = (permission as { accessPrivileges?: string }).accessPrivileges;
-      if (!permission.granted && accessPrivileges !== 'limited') {
-        throw new Error('Activa el acceso a tus fotos para adjuntarlas al asistente.');
-      }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsMultipleSelection: true,
-        quality: 0.88,
-      });
-      if (result.canceled) return;
-      const drafts = await Promise.all((result.assets || []).slice(0, CONVERSATION_ATTACHMENT_LIMIT).map((asset) => (
-        createAssistantAttachmentDraft({
-          uri: asset.uri,
-          name: asset.fileName || getAssistantAttachmentName(asset.uri, 'foto.jpg'),
-          mimeType: asset.mimeType || 'image/jpeg',
-          size: asset.fileSize,
-        })
-      )));
-      await addAssistantAttachments(drafts);
-    } catch (err) {
-      Alert.alert('Archivos', err instanceof Error ? err.message : 'No pude abrir tus fotos.');
-    }
-  }, [addAssistantAttachments]);
-
-  const pickAssistantDocument = useCallback(async () => {
-    setAttachmentSheetOpen(false);
-    await waitForAssistantPickerPresentation();
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: true,
-        multiple: true,
-        type: '*/*',
-      });
-      if (result.canceled) return;
-      const drafts = await Promise.all((result.assets || []).slice(0, CONVERSATION_ATTACHMENT_LIMIT).map((asset) => (
-        createAssistantAttachmentDraft({
-          uri: asset.uri,
-          name: asset.name,
-          mimeType: asset.mimeType,
-          size: asset.size,
-        })
-      )));
-      await addAssistantAttachments(drafts);
-    } catch (err) {
-      Alert.alert('Documentos', err instanceof Error ? err.message : 'No pude abrir tus documentos.');
-    }
-  }, [addAssistantAttachments]);
-
-  const removeAssistantAttachment = useCallback((id: string) => {
-    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
-  }, []);
-
-  const startAssistantVoiceRecording = useCallback(async () => {
-    if (sending || voiceState !== 'idle') return;
-    try {
-      const permission = await requestRecordingPermissionsAsync();
-      if (!permission.granted) throw new Error('Activa el micrófono para mandar notas de voz al asistente.');
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-      });
-      await audioRecorder.prepareToRecordAsync();
-      audioRecorder.record();
-      setVoiceState('recording');
-    } catch (err) {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      Alert.alert('Micrófono', err instanceof Error ? err.message : 'No pude iniciar la grabación.');
-      setVoiceState('idle');
-    }
-  }, [audioRecorder, sending, voiceState]);
-
-  const cancelAssistantVoiceRecording = useCallback(async () => {
-    try {
-      if (voiceState === 'recording' || voiceState === 'paused') {
-        await audioRecorder.stop();
-      }
-    } catch {
-      // La grabación puede estar demasiado corta; cancelarla no debe romper el chat.
-    } finally {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      setVoiceState('idle');
-    }
-  }, [audioRecorder, voiceState]);
-
-  const finishAssistantVoiceRecording = useCallback(async () => {
-    if (voiceState !== 'recording' && voiceState !== 'paused') return;
-    setVoiceState('processing');
-    try {
-      await audioRecorder.stop();
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      const audioUri = audioRecorder.uri;
-      if (!audioUri) throw new Error('No se grabó audio. Intenta otra vez.');
-      const transcription = await api.transcribeAIAgentAudio(audioUri, 'audio/m4a');
-      const transcript = String(transcription.text || '').trim();
-      if (!transcript) throw new Error('No detecté texto en la nota de voz.');
-      setVoiceState('idle');
-      await sendAssistantMessage(transcript);
-    } catch (err) {
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      setVoiceState('idle');
-      Alert.alert('Nota de voz', err instanceof Error ? err.message : 'No pude interpretar el audio.');
-    }
-  }, [api, audioRecorder, sendAssistantMessage, voiceState]);
-
-  const toggleAssistantVoicePause = useCallback(() => {
-    if (voiceState === 'recording') {
-      audioRecorder.pause();
-      setVoiceState('paused');
-      return;
-    }
-    if (voiceState === 'paused') {
-      audioRecorder.record();
-      setVoiceState('recording');
-    }
-  }, [audioRecorder, voiceState]);
-
-  const renderAssistantMessage = useCallback(({ item }: { item: AssistantConversationMessage }) => (
-    <AssistantMessageBubble message={item} onOptionPress={(option) => {
-      void sendAssistantMessage(option.label, {
-        label: option.label,
-        value: option.value,
-        ...(option.description ? { description: option.description } : {}),
-        assistantMessageId: item.id,
-      });
-    }} />
-  ), [sendAssistantMessage]);
-
-  return (
-    <AppFrame backgroundColor={conversationFrameBackground}>
-      <View style={styles.conversationHeader}>
-        <Pressable onPress={onBack} style={styles.backButton}>
-          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2} />
-        </Pressable>
-        <View style={styles.aiConversationHeaderAvatar}>
-          <Bot size={20} color={COLORS.accent} strokeWidth={2.45} />
-        </View>
-        <View style={styles.conversationTitleWrap}>
-          <Text numberOfLines={1} style={styles.headerTitle}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
-          <Text numberOfLines={1} style={styles.caption}>
-            {statusLoading ? 'Conectando...' : status?.configured === false ? 'Configura OpenAI para activarlo' : AI_AGENT_CHAT_SUBTITLE}
-          </Text>
-        </View>
-      </View>
-      <View style={styles.conversationBody}>
-        <View pointerEvents="none" style={styles.conversationWallpaper}>
-          {CONVERSATION_WALLPAPER_DOTS.map((dot, index) => (
-            <View
-              key={`ai-chat-wallpaper-dot-${index}`}
-              style={[
-                styles.conversationWallpaperDot,
-                {
-                  left: dot.left,
-                  top: dot.top,
-                  width: dot.size,
-                  height: dot.size,
-                  borderRadius: dot.size / 2,
-                  opacity: dot.opacity,
-                },
-              ]}
-            />
-          ))}
-        </View>
-        <FlatList
-          ref={listRef}
-          data={messages}
-          keyExtractor={(item) => item.id}
-          renderItem={renderAssistantMessage}
-          style={styles.aiAssistantMessageList}
-          contentContainerStyle={styles.messageList}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          ListFooterComponent={sending ? (
-            <View style={[styles.messageRow, styles.messageRowInbound]}>
-              <View style={styles.aiTypingBubble}>
-                <ActivityIndicator color={COLORS.accent} size="small" />
-                <Text style={styles.aiTypingText}>Pensando...</Text>
-              </View>
-            </View>
-          ) : null}
-        />
-        <View
-          style={[
-            styles.conversationComposerDock,
-          ]}
-        >
-          {attachments.length && !voiceRecordingVisible ? (
-            <AssistantAttachmentTray attachments={attachments} onRemove={removeAssistantAttachment} />
-          ) : null}
-          {voiceRecordingVisible ? (
-            voiceState === 'processing' ? (
-              <View style={styles.aiVoiceProcessingPanel}>
-                <ActivityIndicator color={COLORS.accent} />
-                <Text style={styles.aiTypingText}>Interpretando audio...</Text>
-              </View>
-            ) : (
-              <NativeVoiceRecordingPanel
-                durationMs={Math.max(0, Number(audioRecorderState.durationMillis || 0))}
-                metering={audioRecorderState.metering}
-                paused={voiceState === 'paused' || !audioRecorderState.isRecording}
-                onCancel={() => void cancelAssistantVoiceRecording()}
-                onSend={() => void finishAssistantVoiceRecording()}
-                onTogglePause={toggleAssistantVoicePause}
-              />
-            )
-          ) : (
-          <View style={[styles.composer, hasAssistantContent && styles.composerHasContent, styles.aiAssistantComposer, composerFocused && styles.composerKeyboardActive]}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Agregar archivo" onPress={() => setAttachmentSheetOpen(true)} style={styles.composerPlus}>
-              <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
-            </Pressable>
-            <View style={styles.messageInputWrap}>
-              <TextInput
-                ref={inputRef}
-                value={draft}
-                onChangeText={setDraft}
-                multiline
-                editable={!sending}
-                autoCapitalize="sentences"
-                autoCorrect
-                onBlur={() => setComposerFocused(false)}
-                onFocus={() => setComposerFocused(true)}
-                placeholder="Pregúntale a tu asistente"
-                placeholderTextColor={COLORS.muted}
-                keyboardAppearance={getNativeKeyboardAppearance()}
-                textAlignVertical="center"
-                style={styles.composerInput}
-              />
-            </View>
-            <View style={[styles.composerTrailingActions, styles.composerTrailingActionsCompact]}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={hasAssistantContent ? 'Enviar mensaje al asistente' : 'Grabar nota de voz para el asistente'}
-                disabled={sending}
-                onPress={() => {
-                  if (hasAssistantContent) {
-                    void sendAssistantMessage();
-                    return;
-                  }
-                  void startAssistantVoiceRecording();
-                }}
-                style={[styles.composerSendButton, hasAssistantContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
-              >
-                {sending ? <ActivityIndicator color={COLORS.white} /> : hasAssistantContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
-              </Pressable>
-            </View>
-          </View>
-          )}
-        </View>
-      </View>
-      <AssistantAttachmentSheet
-        open={attachmentSheetOpen}
-        onClose={() => setAttachmentSheetOpen(false)}
-        onDocument={() => void pickAssistantDocument()}
-        onMedia={() => void pickAssistantMedia()}
-      />
-    </AppFrame>
-  );
-}
-
-function AssistantMessageBubble({
-  message,
-  onOptionPress,
-}: {
-  message: AssistantConversationMessage;
-  onOptionPress: (option: AIAgentClarificationOption) => void;
-}) {
-  const outbound = message.role === 'user';
-  return (
-    <View style={[styles.messageRow, outbound ? styles.messageRowOutbound : styles.messageRowInbound]}>
-      <View style={[styles.messageBubble, styles.aiMessageBubble, outbound ? styles.outboundBubble : styles.inboundBubble, message.failed && styles.failedBubble]}>
-        {message.attachments?.length ? (
-          <View style={styles.aiMessageAttachmentGrid}>
-            {message.attachments.slice(0, 4).map((attachment) => (
-              <View key={attachment.id} style={styles.aiMessageAttachmentPreview}>
-                <AssistantAttachmentPreview attachment={{
-                  dataUrl: attachment.dataUrl,
-                  kind: attachment.kind,
-                  name: attachment.name,
-                }} />
-              </View>
-            ))}
-          </View>
-        ) : null}
-        <AssistantFormattedMessageContent failed={Boolean(message.failed)} text={message.content} />
-        {message.sources?.length ? (
-          <View style={styles.aiMessageSources}>
-            <Link2 size={12} color={COLORS.meta} strokeWidth={2.4} />
-            <Text numberOfLines={1} style={styles.aiMessageSourcesText}>{message.sources.length} fuente{message.sources.length === 1 ? '' : 's'}</Text>
-          </View>
-        ) : null}
-        {message.clarificationOptions?.length ? (
-          <View style={styles.aiMessageOptions}>
-            {message.clarificationOptions.slice(0, 4).map((option) => (
-              <Pressable
-                key={`${message.id}-${option.value}-${option.label}`}
-                accessibilityRole="button"
-                onPress={() => onOptionPress(option)}
-                style={({ pressed }) => [styles.aiMessageOption, pressed && styles.pressed]}
-              >
-                <Text numberOfLines={2} style={styles.aiMessageOptionText}>{option.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
-function AssistantFormattedMessageContent({ failed, text }: { failed?: boolean; text: string }) {
-  const blocks = useMemo(() => parseAssistantMessageBlocks(text), [text]);
-  if (!blocks.length) return null;
-
-  return (
-    <View style={styles.aiRichMessage}>
-      {blocks.map((block, index) => {
-        if (block.type === 'heading') {
-          return <AssistantFormattedInlineText key={`heading-${index}`} failed={failed} text={block.text} variant="heading" />;
-        }
-
-        if (block.type === 'code') {
-          return (
-            <Text key={`code-${index}`} style={[styles.aiMessageText, styles.aiMessageCodeBlock, failed && styles.failedMessageText]}>
-              {block.text}
-            </Text>
-          );
-        }
-
-        if (block.type === 'bulletList' || block.type === 'orderedList') {
-          return (
-            <View key={`${block.type}-${index}`} style={styles.aiMessageList}>
-              {block.items.map((item, itemIndex) => (
-                <View key={`${block.type}-${index}-${itemIndex}`} style={styles.aiMessageListItem}>
-                  <Text style={[styles.aiMessageListMarker, failed && styles.failedMessageText]}>
-                    {block.type === 'orderedList' ? `${itemIndex + 1}.` : '•'}
-                  </Text>
-                  <AssistantFormattedInlineText failed={failed} text={item} variant="list" />
-                </View>
-              ))}
-            </View>
-          );
-        }
-
-        return <AssistantFormattedInlineText key={`paragraph-${index}`} failed={failed} text={block.text} />;
-      })}
-    </View>
-  );
-}
-
-function AssistantFormattedInlineText({
-  failed,
-  text,
-  variant = 'paragraph',
-}: {
-  failed?: boolean;
-  text: string;
-  variant?: 'paragraph' | 'heading' | 'list';
-}) {
-  const segments = useMemo(() => parseAssistantInlineMarkdown(text), [text]);
-  return (
-    <Text
-      style={[
-        styles.aiMessageText,
-        variant === 'heading' && styles.aiMessageHeadingText,
-        variant === 'list' && styles.aiMessageListText,
-        failed && styles.failedMessageText,
-      ]}
-    >
-      {segments.map((segment, index) => (
-        <Text
-          key={`${segment.text}-${index}`}
-          onPress={segment.url ? () => void Linking.openURL(segment.url || '').catch(() => undefined) : undefined}
-          style={[
-            segment.bold && styles.aiMessageTextBold,
-            segment.italic && styles.aiMessageTextItalic,
-            segment.strike && styles.aiMessageTextStrike,
-            segment.mono && styles.aiMessageTextMono,
-            segment.url && styles.aiMessageTextLink,
-            failed && styles.failedMessageText,
-          ]}
-        >
-          {segment.text}
-        </Text>
-      ))}
-    </Text>
-  );
-}
-
-function AssistantAttachmentTray({
-  attachments,
-  onRemove,
-}: {
-  attachments: AssistantAttachmentDraft[];
-  onRemove: (id: string) => void;
-}) {
-  return (
-    <View style={styles.aiAttachmentTray}>
-      <ScrollView
-        horizontal
-        keyboardShouldPersistTaps="handled"
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.aiAttachmentStrip}
-      >
-        {attachments.map((attachment) => (
-          <View key={attachment.id} style={styles.aiAttachmentCard}>
-            <AssistantAttachmentPreview attachment={attachment} />
-            <Pressable accessibilityRole="button" accessibilityLabel={`Quitar ${attachment.name}`} onPress={() => onRemove(attachment.id)} style={styles.draftAttachmentRemove}>
-              <X size={14} color={COLORS.white} strokeWidth={2.6} />
-            </Pressable>
-          </View>
-        ))}
-      </ScrollView>
-      <Text numberOfLines={1} style={styles.aiAttachmentHint}>
-        {attachments.length === 1 ? '1 archivo listo para el asistente' : `${attachments.length} archivos listos para el asistente`}
-      </Text>
-    </View>
-  );
-}
-
-function AssistantAttachmentPreview({ attachment }: { attachment: Pick<AssistantAttachmentDraft, 'dataUrl' | 'kind' | 'name'> }) {
-  if (attachment.kind === 'image' && attachment.dataUrl) {
-    return <Image source={{ uri: attachment.dataUrl }} resizeMode="cover" style={styles.aiAttachmentImage as ImageStyle} />;
-  }
-  const Icon = attachment.kind === 'video' ? Video : attachment.kind === 'pdf' || attachment.kind === 'text' ? FileText : FilePlus;
-  return (
-    <View style={styles.aiAttachmentFile}>
-      <Icon size={22} color={COLORS.accent} strokeWidth={2.4} />
-      <Text numberOfLines={2} style={styles.aiAttachmentName}>{attachment.name}</Text>
-    </View>
-  );
-}
-
-function AssistantAttachmentSheet({
-  open,
-  onClose,
-  onDocument,
-  onMedia,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onDocument: () => void;
-  onMedia: () => void;
-}) {
-  return (
-    <BottomActionSheet
-      closing={false}
-      open={open}
-      title="Enviar al asistente"
-      subtitle="Puede interpretar fotos y documentos."
-      onClose={onClose}
-    >
-      <View style={styles.sheetActionList}>
-        <SheetActionRow Icon={ImageIcon} title="Fotos" subtitle="El asistente las analiza como contexto del mensaje." onPress={onMedia} />
-        <SheetActionRow Icon={FileText} title="Documento" subtitle="PDF, texto, CSV u otros archivos compatibles." onPress={onDocument} />
-      </View>
-    </BottomActionSheet>
   );
 }
 
@@ -25546,7 +23992,7 @@ function NativeConversationScreen({
           ) : null}
 
           {!voiceRecordingVisible && !voiceDraftAttachment ? (
-            <View style={[styles.composer, hasComposerContent && styles.composerHasContent, styles.aiAssistantComposer, composerFocused && styles.composerKeyboardActive]}>
+            <View style={[styles.composer, hasComposerContent && styles.composerHasContent, styles.conversationComposerLayer, composerFocused && styles.composerKeyboardActive]}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Canal de envío: ${selectedChannelLabel}`}
@@ -33896,285 +32342,9 @@ function createAppStyles() {
     fontSize: 17,
     fontWeight: '600',
   },
-  aiChatRow: {
-    position: 'relative',
-    minHeight: CHAT_ROW_MIN_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: COLORS.bg,
-  },
-  aiChatDivider: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    left: 0,
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: COLORS.border,
-  },
-  aiChatAvatarCircle: {
-    backgroundColor: avatarFallbackBackground,
-  },
-  aiChatBody: {
-    flex: 1,
-    minWidth: 0,
-    justifyContent: 'center',
-    gap: 3,
-  },
-  aiChatName: {
-    color: COLORS.text,
-    fontSize: 17,
-    lineHeight: 20,
-    fontWeight: '600',
-  },
-  aiChatSubtitle: {
-    color: COLORS.muted,
-    fontSize: 15,
-    lineHeight: 19,
-    fontWeight: '400',
-  },
-  aiChatMeta: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-end',
-    paddingTop: 8,
-    minWidth: 38,
-  },
-  aiChatPinned: {
-    color: COLORS.accent,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  aiConversationHeaderAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: neutralSelectedBorder,
-    backgroundColor: neutralSelectedSurface,
-  },
-  aiConversationBody: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  aiWelcomeBubble: {
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panel,
-    padding: 20,
-    gap: 10,
-    alignItems: 'flex-start',
-  },
-  aiWelcomeTitle: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  aiWelcomeCopy: {
-    color: COLORS.muted,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  aiAssistantMessageList: {
-    flex: 1,
-    zIndex: 1,
-  },
-  aiAssistantComposer: {
+  conversationComposerLayer: {
     zIndex: 4,
     elevation: 4,
-  },
-  aiMessageBubble: {
-    maxWidth: '84%',
-  },
-  aiMessageText: {
-    color: COLORS.text,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  aiRichMessage: {
-    gap: 7,
-    minWidth: 0,
-  },
-  aiMessageHeadingText: {
-    color: COLORS.text,
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: '900',
-  },
-  aiMessageTextBold: {
-    fontWeight: '900',
-  },
-  aiMessageTextItalic: {
-    fontStyle: 'italic',
-  },
-  aiMessageTextStrike: {
-    textDecorationLine: 'line-through',
-  },
-  aiMessageTextMono: {
-    fontFamily: 'monospace',
-    fontWeight: '700',
-  },
-  aiMessageTextLink: {
-    color: COLORS.accent,
-    textDecorationLine: 'underline',
-    fontWeight: '700',
-  },
-  aiMessageList: {
-    gap: 5,
-  },
-  aiMessageListItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 7,
-    minWidth: 0,
-  },
-  aiMessageListMarker: {
-    minWidth: 16,
-    color: COLORS.meta,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '900',
-    textAlign: 'right',
-  },
-  aiMessageListText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  aiMessageCodeBlock: {
-    borderRadius: 10,
-    backgroundColor: COLORS.panelSoft,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-    fontFamily: 'monospace',
-    fontWeight: '700',
-  },
-  aiMessageAttachmentGrid: {
-    gap: 6,
-  },
-  aiMessageAttachmentPreview: {
-    overflow: 'hidden',
-    borderRadius: 12,
-    backgroundColor: COLORS.panelSoft,
-  },
-  aiMessageSources: {
-    minHeight: 22,
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
-    borderRadius: 11,
-    backgroundColor: COLORS.panelSoft,
-  },
-  aiMessageSourcesText: {
-    color: COLORS.meta,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  aiMessageOptions: {
-    gap: 6,
-    paddingTop: 2,
-  },
-  aiMessageOption: {
-    minHeight: 38,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  aiMessageOptionText: {
-    color: COLORS.text,
-    fontSize: 13,
-    lineHeight: 17,
-    fontWeight: '800',
-  },
-  aiTypingBubble: {
-    maxWidth: '58%',
-    minHeight: 36,
-    borderRadius: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    backgroundColor: inboundBubbleBackground,
-    shadowColor: messageBubbleShadowColor,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: isLight ? 0.12 : 0.24,
-    shadowRadius: 1,
-    elevation: 1,
-  },
-  aiTypingText: {
-    color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  aiAttachmentTray: {
-    zIndex: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: COLORS.border,
-    backgroundColor: composerShellBackground,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 6,
-    gap: 6,
-  },
-  aiAttachmentStrip: {
-    gap: 8,
-    paddingRight: 10,
-  },
-  aiAttachmentCard: {
-    width: 78,
-    height: 78,
-    overflow: 'hidden',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
-  },
-  aiAttachmentImage: {
-    width: '100%',
-    height: '100%',
-  },
-  aiAttachmentFile: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    padding: 7,
-  },
-  aiAttachmentName: {
-    color: COLORS.text,
-    fontSize: 10,
-    lineHeight: 12,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  aiAttachmentHint: {
-    color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  aiVoiceProcessingPanel: {
-    minHeight: 58,
-    zIndex: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: COLORS.border,
-    backgroundColor: composerShellBackground,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 9,
-    paddingHorizontal: 12,
-    paddingBottom: CONVERSATION_COMPOSER_SAFE_BOTTOM,
   },
   chatRow: {
     width: '100%',
