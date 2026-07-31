@@ -547,6 +547,16 @@ seguir presentando el número como conectado ni exponer el error crudo de Graph 
 usuario. La reconexión explícita vuelve a validar el activo y reactiva la misma
 fila; no borra historial, plantillas ni contactos.
 
+En `Configuración > WhatsApp > Números`, las columnas **Envío oficial** y
+**Respaldo QR** siempre representan estados independientes. La columna oficial
+nunca muestra `WhatsApp Web`: una fila Meta sana dice `API de Meta conectada`,
+una autorización perdida dice `Reconectar Meta` y una fila únicamente QR dice
+`Sin API oficial`. Cuando `meta_direct.status=reconnect_required`, la pantalla
+muestra además el error normalizado y una acción directa para iniciar de nuevo
+Embedded Signup. `connected_at` es histórico y no puede ocultar el estado
+operativo actual. El QR conserva su propio badge y puede seguir conectado como
+respaldo sin hacer pasar a la API por sana.
+
 El token termina cifrado sólo en la base del tenant. Installer conserva metadata
 de sesión y ruteo; un payload de entrega pendiente queda cifrado temporalmente y
 se destruye al recibir el ACK. Si el tenant estuvo caído, el siguiente state

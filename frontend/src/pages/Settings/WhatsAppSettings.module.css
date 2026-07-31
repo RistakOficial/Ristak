@@ -960,10 +960,38 @@
   justify-items: start;
 }
 
-.apiCell span {
-  color: var(--text-mute);
+.connectionNotice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-ctl);
+  background: var(--warn-soft);
+}
+
+.connectionNotice > svg {
+  color: var(--warn);
+}
+
+.connectionNoticeCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.connectionNoticeCopy strong {
+  color: var(--text);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.connectionNoticeCopy span {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .qrDripPanel {
@@ -1288,6 +1316,15 @@
 }
 
 @media (max-width: 760px) {
+  .connectionNotice {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .connectionNotice [data-btn] {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .qrDripPanel,
   .qrDripSwitchRow,
   .qrDripTimeline li {

@@ -43,6 +43,7 @@ import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQr
 import { invalidateIntegrationsStatus } from '@/services/integrationsService'
 import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { getWhatsAppOfficialConnectionStatus } from '@/utils/whatsappConnectionStatus'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -120,11 +121,6 @@ function getPhoneDisplayValue(phone?: WhatsAppApiPhoneNumber | null) {
 function getPhoneLabel(phone: WhatsAppApiPhoneNumber) {
   const number = getPhoneDisplayValue(phone)
   return phone.verified_name && phone.verified_name !== number ? `${number} · ${phone.verified_name}` : number
-}
-
-function getWhatsAppSendLabel(phone: WhatsAppApiPhoneNumber, apiEnabled: boolean, qrConnected: boolean) {
-  if (isStandaloneQrPhone(phone) || (!apiEnabled && qrConnected)) return 'WhatsApp Web'
-  return String(phone.provider || '').toLowerCase() === 'meta_direct' ? 'WhatsApp API con Meta' : 'WhatsApp API'
 }
 
 function getDisconnectApiLabel(phone: WhatsAppApiPhoneNumber) {
@@ -309,9 +305,12 @@ export const WhatsAppSettings: React.FC = () => {
   )
   const ycloudConnected = hasWhatsAppApiAccess && Boolean(apiStatus?.connected)
   const metaDirectConnected = hasWhatsAppApiAccess && Boolean(apiStatus?.metaDirect?.connected)
+  const metaDirectReconnectRequired = hasWhatsAppApiAccess &&
+    !metaDirectConnected &&
+    String(apiStatus?.metaDirect?.status || '').trim().toLowerCase() === 'reconnect_required'
   const apiConnected = ycloudConnected || metaDirectConnected
   const hasWhatsAppNumbers = visiblePhoneNumbers.length > 0
-  const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers
+  const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers || metaDirectReconnectRequired
   const qrDripSettings = useMemo(() => normalizeQrDripSettings(apiStatus?.qr?.drip), [apiStatus?.qr?.drip])
   const qrDripExample = useMemo(() => buildQrDripExample(qrDripDelayDraft), [qrDripDelayDraft])
   const qrDripDelayBounds = useMemo(() => getQrDripDelayBounds(qrDripSettings, qrDripDelayUnitDraft), [qrDripDelayUnitDraft, qrDripSettings])
@@ -1062,6 +1061,13 @@ export const WhatsAppSettings: React.FC = () => {
     const selectedApiPhone = selectedPhone || (hasWhatsAppApiAccess ? apiStatus.selectedPhone : null) || visiblePhoneNumbers[0] || null
     const balance = hasWhatsAppApiAccess ? apiStatus.balance : null
     const phoneRows = visiblePhoneNumbers.length ? visiblePhoneNumbers : selectedApiPhone ? [selectedApiPhone] : []
+    const metaReconnectRequired = metaDirectReconnectRequired || (
+      hasWhatsAppApiAccess && !metaDirectConnected &&
+      phoneRows.some(phone => String(phone.status || '').trim().toUpperCase() === 'AUTHORIZATION_REQUIRED')
+    )
+    const configuredMetaPhoneNumberId = String(apiStatus.metaDirect?.phoneNumberId || '').trim()
+    const metaReconnectMessage = String(apiStatus.metaDirect?.lastError || '').trim() ||
+      'La conexión oficial perdió autorización. Reconecta Meta para volver a enviar por WhatsApp API.'
     const enrichedPhones = phoneRows.map((phone) => {
       const phoneProfile = getPhoneProfile(phone)
       const qrSession = qrSessionsByPhoneId.get(phone.id)
@@ -1077,9 +1083,19 @@ export const WhatsAppSettings: React.FC = () => {
       const officialProviderConnected = provider === 'meta_direct' ? metaDirectConnected : ycloudConnected
       const officialAttached = !isStandaloneQrPhone(phone) && Number(phone.api_send_enabled ?? 1) !== 0
       const apiEnabled = officialAttached && officialProviderConnected
+      const needsMetaReconnect = provider === 'meta_direct' && metaReconnectRequired && (
+        !configuredMetaPhoneNumberId || configuredMetaPhoneNumberId === phone.id
+      )
+      const officialStatus = getWhatsAppOfficialConnectionStatus({
+        provider,
+        phoneStatus: phone.status,
+        apiEnabled,
+        standaloneQr: isStandaloneQrPhone(phone),
+        needsMetaReconnect
+      })
       const displayName = phone.verified_name || phoneProfile?.verifiedName || phoneProfile?.businessName || phoneProfile?.name || 'Sin nombre'
 
-      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, officialAttached, apiEnabled }
+      return { phone, displayName, isSender, qrSession, qrStatus, qrError, qrPending, qrConnected, officialAttached, apiEnabled, officialStatus }
     })
     const query = phoneSearch.trim().toLowerCase()
     const filteredPhones = enrichedPhones.filter((row) => {
@@ -1094,6 +1110,7 @@ export const WhatsAppSettings: React.FC = () => {
         row.displayName,
         row.phone.quality_rating,
         row.phone.messaging_limit,
+        row.officialStatus.label,
         getQrStatusLabel(row.qrStatus)
       ].some((value) => String(value || '').toLowerCase().includes(query))
     })
@@ -1156,6 +1173,26 @@ export const WhatsAppSettings: React.FC = () => {
             </div>
           </div>
 
+          {metaReconnectRequired && (
+            <div className={styles.connectionNotice} role="alert">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <div className={styles.connectionNoticeCopy}>
+                <strong>WhatsApp API con Meta necesita reconectarse</strong>
+                <span>{metaReconnectMessage}</span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="small"
+                loading={metaConnecting}
+                onClick={() => void connectMetaDirect()}
+              >
+                <Link2 size={15} />
+                Reconectar Meta
+              </Button>
+            </div>
+          )}
+
           {hasConnectedQr && renderQrDripPanel(true)}
 
           {filteredPhones.length > 0 ? (
@@ -1174,7 +1211,7 @@ export const WhatsAppSettings: React.FC = () => {
                 </thead>
                 <tbody>
                   {filteredPhones.map((row) => {
-                    const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, officialAttached, apiEnabled } = row
+                    const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, officialAttached, apiEnabled, officialStatus } = row
                     const standaloneQr = isStandaloneQrPhone(phone)
                     const canDisconnectQr = standaloneQr || qrConnected || qrPending || Number(phone.qr_send_enabled || 0) === 1
                     const apiDisconnectKey = `${phone.id}:api`
@@ -1191,8 +1228,8 @@ export const WhatsAppSettings: React.FC = () => {
                           <td>{displayName}</td>
                           <td>
                             <div className={styles.apiCell}>
-                              <Badge variant={apiEnabled ? 'success' : 'neutral'}>
-                                {getWhatsAppSendLabel(phone, apiEnabled, qrConnected)}
+                              <Badge variant={officialStatus.variant}>
+                                {officialStatus.label}
                               </Badge>
                             </div>
                           </td>
