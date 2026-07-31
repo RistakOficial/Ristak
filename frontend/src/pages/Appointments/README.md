@@ -167,6 +167,10 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - El switch **Usar como confirmación de cita** no cambia el ancla del envío.
   Sólo cambia `messageType` a `confirmation` para activar IA, acciones de
   confirmación y ventanas de seguimiento.
+- `appointmentStatus: 'confirmed'` no omite este mensaje ni bloquea su respuesta:
+  el calendario puede usar ese estado para aceptar automáticamente la reserva,
+  mientras la reconfirmación de asistencia se procesa de forma independiente.
+  Sólo se excluyen citas cerradas, eliminadas o que ya comenzaron.
 - Con IA activa, cada respuesta reinicia una espera de dos minutos. Los mensajes
   se acumulan de forma atómica, se ordenan por el instante del proveedor y se
   clasifican juntos; si entra otro mientras el modelo está clasificando, la
@@ -178,7 +182,8 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - El plazo empieza cuando el transporte acepta el envío y cada mensaje congela
   su propio deadline. Para `before_appointment` debe terminar antes del inicio;
   para `after_booking`, si la cita empieza primero, no se ejecuta la cancelación
-  por timeout.
+  por timeout. Si vence sin respuesta explícita, una cita abierta puede
+  cancelarse aunque el calendario ya la hubiera marcado `confirmed`.
 - Una respuesta recibida antes del límite difiere el timeout hasta terminar de
   clasificarla. Una respuesta ambigua no cancela inmediatamente, pero el
   ultimátum sí puede hacerlo al vencer si nunca hubo confirmación clara.
@@ -190,10 +195,11 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   lleguen al agente conversacional o a automatizaciones. No se reproducen al
   terminar; si el negocio necesita contestar preguntas logísticas debe dejarlo
   apagado.
-- Cuando la IA confirma, siempre cambia el estado real de la cita. El editor usa
-  `CheckboxMultiSelect` para combinar tarjeta en el chat, push y etiqueta
-  temporal `Asistirá a cita`; **Marcar la cita como confirmada** permanece
-  seleccionado porque es el resultado obligatorio de este modo.
+- Cuando la IA confirma, deja el estado real de la cita en `confirmed` y resuelve
+  explícitamente el envío, incluso si el calendario ya tenía ese estado. El
+  editor usa `CheckboxMultiSelect` para combinar tarjeta en el chat, push y
+  etiqueta temporal `Asistirá a cita`; **Marcar la cita como confirmada**
+  permanece seleccionado porque es el resultado obligatorio de este modo.
 - Al activar **Usar como confirmación de cita**, las cuatro acciones visibles
   nacen seleccionadas. Las filas históricas que guardaban una sola acción
   conservan sólo ese aviso adicional al normalizarse, para no activar pushes o
@@ -202,8 +208,9 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   configuraciones nuevas guardan un arreglo JSON ordenado. El backend sigue
   aceptando valores escalares anteriores y la consulta del journey reconoce
   ambos formatos.
-- Con IA apagada, una respuesta afirmativa simple sigue confirmando la cita sin
-  abrir una ventana; las acciones para interpretar negativas quedan ocultas.
+- Con IA apagada, una respuesta afirmativa simple resuelve la confirmación y deja
+  la cita en `confirmed` sin abrir una ventana, aunque el calendario ya la
+  mostrara confirmada; las acciones para interpretar negativas quedan ocultas.
 - Si el switch está apagado, el mensaje se guarda como `messageType: 'reminder'`
   aunque sea un aviso posterior al agendado.
 - El momento manda sobre el modo de confirmación al elegir plantilla: todo aviso

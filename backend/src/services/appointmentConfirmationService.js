@@ -128,13 +128,12 @@ function confirmationMessagesAppendExpression() {
 
 function resultForTerminalAppointment(status) {
   const normalized = String(status || '').trim().toLowerCase()
-  if (normalized === 'confirmed') return 'confirmed'
   if (['cancelled', 'canceled'].includes(normalized)) return 'cancel'
   return 'already_resolved'
 }
 
-function isTerminalAppointmentStatus(status) {
-  return ['confirmed', 'cancelled', 'canceled', 'showed', 'noshow', 'invalid']
+function isClosedAppointmentStatus(status) {
+  return ['cancelled', 'canceled', 'showed', 'noshow', 'invalid']
     .includes(String(status || '').trim().toLowerCase())
 }
 
@@ -165,6 +164,19 @@ async function finishClaimedWindow({
     expectedStatus,
     revision
   ])
+}
+
+async function markConfirmationSendConfirmed(sendId) {
+  const id = String(sendId || '').trim()
+  if (!id) return
+  const timestamp = nowIso()
+  await db.run(`
+    UPDATE appointment_reminder_sends
+    SET confirmation_timeout_status = 'confirmed',
+        confirmation_timeout_processed_at = ?
+    WHERE id = ?
+      AND confirmation_timeout_status = 'pending'
+  `, [timestamp, id])
 }
 
 /**
@@ -227,7 +239,9 @@ export async function handleInboundForConfirmation({
         AND s.ai_enabled = 1
         AND a.deleted_at IS NULL
         AND a.start_time > ?
-        AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('confirmed', 'cancelled', 'canceled')
+        AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (
+          'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
+        )
       ORDER BY s.sent_at DESC
       LIMIT 1
       ${databaseDialect === 'postgres' ? 'FOR UPDATE OF s' : ''}
@@ -381,16 +395,27 @@ async function processConfirmationTimeout(sendId, currentTime) {
 
     const appointmentStatus = String(send.appointment_status || send.legacy_status || '').toLowerCase()
     const appointmentStarted = new Date(send.start_time).getTime() <= new Date(currentTime).getTime()
+    const repliedConfirmed = confirmationWindow?.status === 'done' &&
+      confirmationWindow?.result === 'confirmed'
+
+    if (repliedConfirmed) {
+      await transaction.run(`
+        UPDATE appointment_reminder_sends
+        SET confirmation_timeout_status = 'confirmed',
+            confirmation_timeout_processed_at = ?
+        WHERE id = ? AND confirmation_timeout_status = 'pending'
+      `, [currentTime, sendId])
+      return { processed: true, status: 'confirmed' }
+    }
+
     const terminal = send.deleted_at ||
-      isTerminalAppointmentStatus(appointmentStatus) ||
+      isClosedAppointmentStatus(appointmentStatus) ||
       appointmentStarted
 
     if (terminal) {
-      const terminalTimeoutStatus = appointmentStatus === 'confirmed'
-        ? 'confirmed'
-        : appointmentStarted
-          ? 'expired'
-          : 'already_resolved'
+      const terminalTimeoutStatus = appointmentStarted
+        ? 'expired'
+        : 'already_resolved'
       await transaction.run(`
         UPDATE appointment_reminder_sends
         SET confirmation_timeout_status = ?,
@@ -427,7 +452,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         AND deleted_at IS NULL
         AND start_time > ?
         AND LOWER(COALESCE(appointment_status, status, '')) NOT IN (
-          'confirmed', 'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
+          'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
         )
     `, [send.appointment_id, currentTime])
 
@@ -542,7 +567,7 @@ async function processConfirmationWindow(candidate, cutoff) {
   const appointmentStart = appointmentState?.start_time ? new Date(appointmentState.start_time) : null
   const appointmentExpired = appointmentStart && !Number.isNaN(appointmentStart.getTime()) && appointmentStart <= new Date()
 
-  if (!appointmentState || isTerminalAppointmentStatus(currentAppointmentStatus) || appointmentExpired) {
+  if (!appointmentState || isClosedAppointmentStatus(currentAppointmentStatus) || appointmentExpired) {
     const priorResult = String(win.result || '').trim()
     const terminalResult = priorResult || (
       appointmentExpired
@@ -665,9 +690,13 @@ async function processConfirmationWindow(candidate, cutoff) {
     resultDetail,
     expectedStatus: 'deciding'
   })
+  const processed = Number(finished?.changes || 0) > 0
+  if (processed && result === 'confirmed') {
+    await markConfirmationSendConfirmed(win.reminder_send_id)
+  }
   return {
-    processed: Number(finished?.changes || 0) > 0,
-    deferred: Number(finished?.changes || 0) === 0
+    processed,
+    deferred: !processed
   }
 }
 
@@ -783,7 +812,9 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
       AND s.ai_enabled = 0
       AND a.deleted_at IS NULL
       AND a.start_time > ?
-      AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('confirmed', 'cancelled', 'canceled')
+      AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN (
+        'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
+      )
     ORDER BY s.sent_at DESC
     LIMIT 1
   `, [id, new Date().toISOString()])
@@ -795,6 +826,7 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
     SET appointment_status = 'confirmed', status = 'confirmed', date_updated = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [pending.appointment_id])
+  await markConfirmationSendConfirmed(pending.send_id)
   publishAppointmentChanged(id, pending.appointment_id)
   await resyncAppointmentToGoogle(pending.appointment_id)
 

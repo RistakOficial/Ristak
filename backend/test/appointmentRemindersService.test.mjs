@@ -465,6 +465,37 @@ test('el envío de confirmación guarda un ultimátum inmutable desde el envío 
   })
 })
 
+test('la confirmación se envía aunque el calendario ya marque la cita como confirmada', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
+      await db.run(`
+        UPDATE appointments
+        SET status = 'confirmed',
+            appointment_status = 'confirmed'
+        WHERE id = ?
+      `, [appointmentId])
+      await db.run(`
+        UPDATE appointment_reminders
+        SET message_type = 'confirmation',
+            ai_enabled = 1
+        WHERE id = ?
+      `, [reminder.id])
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.deepEqual(result, { sent: 1, errors: 0, skipped: 0 })
+      assert.equal(captures.length, 1)
+      const send = await db.get(`
+        SELECT status, message_type
+        FROM appointment_reminder_sends
+        WHERE reminder_id = ? AND appointment_id = ?
+      `, [reminder.id, appointmentId])
+      assert.equal(send.status, 'sent')
+      assert.equal(send.message_type, 'confirmation')
+    })
+  })
+})
+
 test('el envío corrige una plantilla default cruzada y usa cita_programada al agendar', async () => {
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {

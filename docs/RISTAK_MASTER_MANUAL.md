@@ -4144,6 +4144,14 @@ abran una ventana en `appointment_confirmation_windows`. Si el switch esta
 apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
 `after_booking`.
 
+El estado operativo `appointments.appointment_status='confirmed'` no suprime
+estos mensajes ni cierra sus respuestas. Ese valor puede venir de la
+confirmacion automatica del calendario y significa que la reserva fue aceptada,
+no que el contacto ya reconfirmo su asistencia. Una confirmacion automatica de
+Citas se envia, recibe respuesta y resuelve su plazo de forma independiente; sólo
+se excluyen citas canceladas, atendidas, no-show, invalidas, eliminadas o que ya
+comenzaron.
+
 Con IA activa, la primera respuesta abre la ventana y cada mensaje posterior
 reinicia una espera de dos minutos desde el ultimo inbound. El cron revisa esas
 ventanas cada 30 segundos, por lo que la clasificacion comienza normalmente
@@ -4163,12 +4171,15 @@ espera y clasifica nuevamente el conjunto completo cuando vuelvan a transcurrir
 dos minutos.
 
 El clasificador distingue `confirmed`, `reschedule`, `cancel`, `ambiguous` y
-`human_needed`. `confirmed` siempre cambia la cita local a `confirmed` y luego
-ejecuta solamente la accion visual elegida: tarjeta en el chat, etiqueta hasta
-la cita, push o ningun aviso extra. El push de confirmacion no se manda por
-reflejo cuando se eligio tarjeta, etiqueta o "solo marcar". Una respuesta de
-reagendamiento no busca ni reserva por si sola otro horario; usa la accion de
-"Si no confirma" configurada para conservar, avisar o cancelar la cita actual.
+`human_needed`. `confirmed` deja la cita local en `confirmed`, resuelve
+explicitamente el envío de confirmacion y luego ejecuta solamente la accion
+visual elegida: tarjeta en el chat, etiqueta hasta la cita, push o ningun aviso
+extra. Si el calendario ya la habia marcado `confirmed`, la escritura es
+idempotente pero la respuesta y sus acciones sí se procesan. El push de
+confirmacion no se manda por reflejo cuando se eligio tarjeta, etiqueta o "solo
+marcar". Una respuesta de reagendamiento no busca ni reserva por si sola otro
+horario; usa la accion de "Si no confirma" configurada para conservar, avisar o
+cancelar la cita actual.
 
 Al elegir `cancel_appointment`, el editor exige un plazo explicito de minutos,
 horas o dias. No se aplica ningun default silencioso a filas historicas. El reloj
@@ -4180,7 +4191,9 @@ el tiempo configurado antes de la cita. En avisos `after_booking`, si la cita
 empieza antes de que pueda terminar el plazo, el envio queda sin cancelacion por
 timeout.
 
-Si vence el plazo y la cita sigue pendiente, Ristak la cancela y avisa al equipo.
+Si vence el plazo sin una confirmacion explicita y la cita sigue abierta, Ristak
+la cancela y avisa al equipo incluso cuando el calendario la habia aceptado con
+estado `confirmed`; ese estado no sustituye la respuesta del contacto.
 Una respuesta recibida antes del limite bloquea la cancelacion mientras la
 ventana este `waiting`, `processing` o `deciding`; primero termina la
 clasificacion. Una respuesta ambigua no cancela inmediatamente, pero si tampoco
@@ -4194,7 +4207,8 @@ realizados se conservan como auditoría, pero esa regla retirada no puede cancel
 una cita después.
 
 Si la IA esta apagada, se conserva el modo compatible: una respuesta afirmativa
-simple marca la cita confirmada sin abrir ventana ni intentar interpretar
+simple resuelve el envío como confirmado y deja la cita en `confirmed`, aunque
+el calendario ya tuviera ese estado, sin abrir ventana ni intentar interpretar
 negativas.
 
 La opcion `bypass_automations` se presenta como "Reservar estas respuestas para

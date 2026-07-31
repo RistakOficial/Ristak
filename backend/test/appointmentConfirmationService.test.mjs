@@ -66,7 +66,8 @@ async function withConfirmationFixture({
   confirmationTimeoutValue = 6,
   confirmationTimeoutUnit = 'hours',
   aiEnabled = true,
-  bypassAutomations = true
+  bypassAutomations = true,
+  appointmentStatus = 'pending'
 } = {}, callback) {
   const suffix = randomUUID()
   const contactId = `contact_conf_${suffix}`
@@ -86,8 +87,17 @@ async function withConfirmationFixture({
       INSERT INTO appointments (
         id, calendar_id, contact_id, title, status, appointment_status,
         start_time, end_time, date_added, date_updated
-      ) VALUES (?, 'calendar_confirmation_test', ?, 'Consulta dental', 'pending', 'pending', ?, ?, ?, ?)
-    `, [appointmentId, contactId, startTime, endTime, isoAgo(5 * 60 * 1000), isoAgo(5 * 60 * 1000)])
+      ) VALUES (?, 'calendar_confirmation_test', ?, 'Consulta dental', ?, ?, ?, ?, ?, ?)
+    `, [
+      appointmentId,
+      contactId,
+      appointmentStatus,
+      appointmentStatus,
+      startTime,
+      endTime,
+      isoAgo(5 * 60 * 1000),
+      isoAgo(5 * 60 * 1000)
+    ])
 
     const reminder = await createAppointmentReminder({
       name: `Confirmacion IA ${suffix}`,
@@ -183,6 +193,48 @@ test('confirmacion IA espera el ultimo mensaje del contacto y clasifica tras 2 m
       [appointmentId]
     )
     assert.equal(appointment.status, 'confirmed')
+    assert.equal(appointment.appointment_status, 'confirmed')
+    assert.equal(appointment.confirmation_badge_until, startTime)
+  })
+})
+
+test('confirmacion IA procesa la respuesta aunque el calendario ya marque la cita como confirmada', async () => {
+  await withConfirmationFixture({
+    appointmentStatus: 'confirmed',
+    confirmationSuccessAction: 'chat_badge'
+  }, async ({ contactId, appointmentId, startTime }) => {
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó su asistencia'
+    }))
+
+    const inbound = await handleInboundForConfirmation({
+      contactId,
+      text: 'Sí, ahí estaré'
+    })
+    assert.equal(inbound.windowActive, true)
+
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE contact_id = ? AND appointment_id = ?',
+      [contactId, appointmentId]
+    )
+    assert.ok(window?.id)
+
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    const done = await db.get(
+      'SELECT status, result FROM appointment_confirmation_windows WHERE id = ?',
+      [window.id]
+    )
+    assert.equal(done.status, 'done')
+    assert.equal(done.result, 'confirmed')
+
+    const appointment = await db.get(
+      'SELECT appointment_status, confirmation_badge_until FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
     assert.equal(appointment.appointment_status, 'confirmed')
     assert.equal(appointment.confirmation_badge_until, startTime)
   })
@@ -421,7 +473,20 @@ test('acciones múltiples ejecutan tarjeta, push y etiqueta en una sola confirma
 })
 
 test('modo sin IA confirma sólo respuestas afirmativas sin abrir ventana', async () => {
-  await withConfirmationFixture({ aiEnabled: false }, async ({ contactId, appointmentId }) => {
+  await withConfirmationFixture({
+    aiEnabled: false,
+    appointmentStatus: 'confirmed',
+    noConfirmAction: 'cancel_appointment',
+    confirmationTimeoutValue: 30,
+    confirmationTimeoutUnit: 'minutes'
+  }, async ({ contactId, appointmentId, sendId }) => {
+    await db.run(`
+      UPDATE appointment_reminder_sends
+      SET confirmation_deadline_at = ?,
+          confirmation_timeout_status = 'pending'
+      WHERE id = ?
+    `, [isoFromNow(30 * 60 * 1000), sendId])
+
     const windowResult = await handleInboundForConfirmation({ contactId, text: 'Sí, ahí estaré' })
     assert.equal(windowResult.windowActive, false)
 
@@ -442,6 +507,14 @@ test('modo sin IA confirma sólo respuestas afirmativas sin abrir ventana', asyn
       [appointmentId]
     )
     assert.equal(appointment.appointment_status, 'confirmed')
+
+    const send = await db.get(`
+      SELECT confirmation_timeout_status, confirmation_timeout_processed_at
+      FROM appointment_reminder_sends
+      WHERE id = ?
+    `, [sendId])
+    assert.equal(send.confirmation_timeout_status, 'confirmed')
+    assert.ok(send.confirmation_timeout_processed_at)
   })
 })
 
@@ -480,6 +553,7 @@ test('respuesta ambigua nunca cancela aunque la acción configurada sea cancelar
 
 test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin respuesta', async () => {
   await withConfirmationFixture({
+    appointmentStatus: 'confirmed',
     noConfirmAction: 'cancel_appointment',
     confirmationTimeoutValue: 30,
     confirmationTimeoutUnit: 'minutes'
@@ -555,7 +629,7 @@ test('una respuesta recibida antes del límite difiere el ultimátum hasta termi
     await processExpiredConfirmationWindows()
 
     const afterClassification = await processExpiredConfirmationTimeouts()
-    assert.equal(afterClassification.processed, 1)
+    assert.equal(afterClassification.processed, 0)
     assert.equal(afterClassification.cancelled, 0)
 
     const appointment = await db.get(

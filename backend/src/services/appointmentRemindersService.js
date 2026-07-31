@@ -1725,17 +1725,6 @@ export async function executeSafeTestAppointmentReminders(appointment = {}) {
       }
     }
 
-    const status = cleanString(storedAppointment.appointment_status || storedAppointment.status).toLowerCase()
-    if (reminder.messageType === 'confirmation' && status === 'confirmed') {
-      const receipt = await recordSimulatedAppointmentTestAction(auditContext, {
-        ...baseAction,
-        actionType: 'reminder-not-applicable',
-        detail: 'Confirmación simulada como omitida: la cita de prueba ya está confirmada.'
-      })
-      results.push({ reminderId: reminder.id, status: 'simulated', detail: receipt?.detail || '' })
-      continue
-    }
-
     let renderedText = ''
     let validationError = getMissingReminderTarget(reminder, storedAppointment)
     if (!validationError) {
@@ -1931,10 +1920,6 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
     for (const reminder of reminders) {
       if (sent + errors >= batchSize) break
       if (alreadyHandled.has(`${reminder.id}|${appointment.id}`)) continue
-
-      // Una confirmación ya no aplica si la cita está confirmada.
-      const status = cleanString(appointment.appointment_status || appointment.status).toLowerCase()
-      if (reminder.messageType === 'confirmation' && status === 'confirmed') continue
 
       // Los avisos "después de agendar" solo aplican a reservas hechas EN Ristak.
       // (La cita pudo entrar a la ventana por OTRO recordatorio anclado al inicio, así que
