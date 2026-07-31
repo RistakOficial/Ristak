@@ -846,6 +846,18 @@ export function eventContextsForTriggerTypes(types: string[]): string[] {
 }
 
 /**
+ * Confirma que todas las entradas posibles de un punto del flujo entregan una
+ * entidad concreta. Se usa cuando el editor puede omitir selectores redundantes
+ * y confiar sin ambigüedad en el objeto que inició la ejecución.
+ */
+export function allTriggersProvideEventContext(types: string[], context: string): boolean {
+  const triggerTypes = types.filter(Boolean)
+  return triggerTypes.length > 0 && triggerTypes.every(
+    (type) => (CONDITION_TRIGGER_CONTEXTS[type] || []).includes(context)
+  )
+}
+
+/**
  * Campos CRM congruentes para el nodo Condición: los universales (estado del
  * contacto, sin `appliesTo`) más los de evento cuyo contexto produce alguno de
  * los disparadores del flujo. Evita ofrecer condiciones que el backend no puede

@@ -2169,7 +2169,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
       deliverToBell: true,
       deliverToPush: true,
       deliverToEmail: false,
-      contactId: '',
       pushTitle: '',
       pushBody: '',
       clickAction: 'phone_chat',
@@ -2237,14 +2236,6 @@ const OTHER_ACTIONS: NodeDefinition[] = [
           { value: 'desktop_chat', label: 'Abrir chat en escritorio' },
           { value: 'custom_url', label: 'Abrir ruta interna personalizada' }
         ]
-      },
-      {
-        key: 'contactId',
-        label: 'Contacto de referencia (opcional)',
-        type: 'text',
-        placeholder: '{{contact.id}}',
-        showVariables: true,
-        advanced: true
       },
       {
         key: 'customUrl',

@@ -1378,6 +1378,7 @@ export const CalendarsConfiguration: React.FC = () => {
   const calendarTemplateVariableCatalog = useMemo(() => ({
     categories: CALENDAR_TEMPLATE_EXTRA_CATEGORIES,
     variables: CALENDAR_TEMPLATE_EXTRA_VARIABLES,
+    triggerTypes: [],
     eventContexts: []
   }), [])
 

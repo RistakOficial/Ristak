@@ -11,8 +11,12 @@ import {
 } from 'lucide-react'
 import { CustomSelect } from './configPrimitives'
 import { CHANNEL_OPTIONS_WITH_ANY } from '../nodeRegistry'
-import type { AdvancedConditionConfig } from '../crmFields'
+import {
+  allTriggersProvideEventContext,
+  type AdvancedConditionConfig
+} from '../crmFields'
 import type { WaitMessageSourceOption } from '../flowUtils'
+import { FlowVariablesContext } from '../variablesCatalog'
 import {
   CatalogSelect,
   ConfigSection,
@@ -71,8 +75,13 @@ const EXPECTED_ACTIONS = [
 
 export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onChange, messageSources = [] }) => {
   const { user } = useAuth()
+  const flowVariables = React.useContext(FlowVariablesContext)
   const hasAppointmentsAccess = hasLicenseFeature(user, ['appointments'])
   const hasFormsAccess = hasLicenseFeature(user, ['forms'])
+  const usesTriggerAppointment = allTriggersProvideEventContext(
+    flowVariables.triggerTypes,
+    'appointment'
+  )
   const set = (patch: Config) => onChange({ ...config, ...patch })
   const mode = str(config.mode)
   const firstMessageSource = messageSources[0]
@@ -184,30 +193,38 @@ export const WaitConfigEditor: React.FC<WaitConfigEditorProps> = ({ config, onCh
 
       {mode === 'appointment' && (
         <>
-          <Field label="Calendario (opcional)">
-            <CatalogSelect
-              catalog="calendars"
-              value={str(config.calendar)}
-              onChange={(value, label) => set({ calendar: value, calendarName: label })}
-              placeholder="Cualquier calendario"
-              aria-label="Calendario"
-            />
-          </Field>
-          <Field label="Tipo de cita (opcional)">
-            <TextInput value={str(config.appointmentType)} placeholder="Ej. demo, consulta…" onChange={(event) => set({ appointmentType: event.target.value })} />
-          </Field>
-          <Field label="Estado de la cita (opcional)">
-            <CustomSelect
-              options={[
-                { value: '', label: 'Cualquier estado' },
-                { value: 'booked', label: 'Agendada' },
-                { value: 'confirmed', label: 'Confirmada' }
-              ]}
-              value={str(config.appointmentStatus)}
-              onValueChange={(next) => set({ appointmentStatus: next })}
-              aria-label="Estado de la cita"
-            />
-          </Field>
+          {usesTriggerAppointment ? (
+            <p className={styles.configHelp} style={{ marginTop: 0, marginBottom: 12 }}>
+              Se usará automáticamente la cita que activó esta ejecución. No tienes que elegirla otra vez.
+            </p>
+          ) : (
+            <>
+              <Field label="Calendario (opcional)">
+                <CatalogSelect
+                  catalog="calendars"
+                  value={str(config.calendar)}
+                  onChange={(value, label) => set({ calendar: value, calendarName: label })}
+                  placeholder="Cualquier calendario"
+                  aria-label="Calendario"
+                />
+              </Field>
+              <Field label="Tipo de cita (opcional)">
+                <TextInput value={str(config.appointmentType)} placeholder="Ej. demo, consulta…" onChange={(event) => set({ appointmentType: event.target.value })} />
+              </Field>
+              <Field label="Estado de la cita (opcional)">
+                <CustomSelect
+                  options={[
+                    { value: '', label: 'Cualquier estado' },
+                    { value: 'booked', label: 'Agendada' },
+                    { value: 'confirmed', label: 'Confirmada' }
+                  ]}
+                  value={str(config.appointmentStatus)}
+                  onValueChange={(next) => set({ appointmentStatus: next })}
+                  aria-label="Estado de la cita"
+                />
+              </Field>
+            </>
+          )}
           <Field label="Momento de continuar">
             <CustomSelect
               options={[

@@ -2400,6 +2400,7 @@ test('notificación interna desde automatización crea aviso y push para usuario
         label: 'Notificaciones',
         config: {
           recipientMode: 'assigned_user',
+          contactId: `legacy-wrong-contact-${suffix}`,
           pushTitle: 'Nuevo lead: {{contact.first_name}}',
           pushBody: 'Revisa a {{contact.full_name}} en Ristak',
           clickAction: 'phone_chat'
@@ -2472,6 +2473,277 @@ test('notificación interna desde automatización crea aviso y push para usuario
     await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => {})
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
     if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId]).catch(() => {})
+  }
+})
+
+test('esperar una cita conserva la identidad de la cita que disparó la ejecución', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_trigger_appointment_context_${suffix}`
+  const contactId = `contact_trigger_appointment_context_${suffix}`
+  const triggerAppointmentId = `appointment_trigger_context_${suffix}`
+  const otherAppointmentId = `appointment_other_context_${suffix}`
+  const initialStart = new Date(Date.now() + (4 * 60 * 60 * 1000)).toISOString()
+  const otherStart = new Date(Date.now() + (8 * 60 * 60 * 1000)).toISOString()
+  const rescheduledStart = new Date(Date.now() + (6 * 60 * 60 * 1000)).toISOString()
+  const oneHour = 60 * 60 * 1000
+  const waitTarget = (start) => new Date(new Date(start).getTime() - oneHour).toISOString()
+
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-appointment-booked',
+              type: 'trigger-appointment-booked',
+              config: {}
+            }
+          ]
+        }
+      },
+      {
+        id: 'wait-trigger-appointment',
+        type: 'logic-wait',
+        label: 'Esperar',
+        config: {
+          mode: 'appointment',
+          calendar: 'legacy-calendar-that-must-not-override-trigger',
+          appointmentType: 'legacy-type-that-must-not-override-trigger',
+          appointmentStatus: 'booked',
+          appointmentOffset: 'before',
+          offsetAmount: 1,
+          offsetUnit: 'hours'
+        }
+      }
+    ],
+    edges: [
+      {
+        id: 'edge-start-wait',
+        sourceNodeId: 'start',
+        targetNodeId: 'wait-trigger-appointment'
+      }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `appointment-context-${suffix}@example.com`,
+        'Contacto Cita Contextual',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test contexto de cita', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('appointment-booked', {
+      contactId,
+      appointmentId: triggerAppointmentId,
+      calendarId: 'calendar-trigger',
+      status: 'booked',
+      startTime: initialStart
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.resume_at, waitTarget(initialStart))
+    let storedContext = JSON.parse(enrollment.context)
+    assert.equal(storedContext.appointmentId, triggerAppointmentId)
+    assert.equal(storedContext.startTime, initialStart)
+    assert.equal(storedContext.waitAppointmentId, triggerAppointmentId)
+
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId: otherAppointmentId,
+      calendarId: 'calendar-other',
+      status: 'confirmed',
+      startTime: otherStart
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.resume_at, waitTarget(initialStart))
+    storedContext = JSON.parse(enrollment.context)
+    assert.equal(storedContext.waitAppointmentId, triggerAppointmentId)
+
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId: triggerAppointmentId,
+      calendarId: 'calendar-trigger',
+      status: 'confirmed',
+      startTime: rescheduledStart
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.resume_at, waitTarget(rescheduledStart))
+    storedContext = JSON.parse(enrollment.context)
+    assert.equal(storedContext.waitAppointmentId, triggerAppointmentId)
+    assert.equal(storedContext.startTime, rescheduledStart)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
+test('el contexto de pago sobrevive una espera y alimenta acciones posteriores', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_payment_context_resume_${suffix}`
+  const contactId = `contact_payment_context_resume_${suffix}`
+  const paymentId = `payment_context_resume_${suffix}`
+  const username = `payment-context-${suffix}@example.com`
+  let userId = ''
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-payment-received',
+              type: 'trigger-payment-received',
+              config: { paymentAction: 'successful' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'wait-payment-context',
+        type: 'logic-wait',
+        label: 'Esperar',
+        config: {
+          mode: 'duration',
+          amount: -1,
+          unit: 'seconds'
+        }
+      },
+      {
+        id: 'notify-payment-context',
+        type: 'action-system-notification',
+        label: 'Notificaciones',
+        config: {
+          recipientMode: 'specific_user',
+          user: '',
+          deliverToBell: true,
+          deliverToPush: false,
+          deliverToEmail: false,
+          pushTitle: 'Pago {{payment.id}}',
+          pushBody: '{{payment.amount}} {{payment.currency}}',
+          clickAction: 'desktop_contacts'
+        }
+      }
+    ],
+    edges: [
+      {
+        id: 'edge-start-wait',
+        sourceNodeId: 'start',
+        targetNodeId: 'wait-payment-context',
+        sourceHandle: 'out',
+        targetHandle: 'in'
+      },
+      {
+        id: 'edge-wait-notify',
+        sourceNodeId: 'wait-payment-context',
+        targetNodeId: 'notify-payment-context',
+        sourceHandle: 'out',
+        targetHandle: 'in'
+      }
+    ],
+    settings: {}
+  }
+
+  try {
+    const userResult = await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, ?, ?, 'admin', 1)`,
+      [username, username, 'test-hash', 'Usuario Contexto Pago']
+    )
+    userId = String(userResult.lastID || '')
+    if (!userId) {
+      const user = await db.get('SELECT id FROM users WHERE username = ?', [username])
+      userId = String(user.id)
+    }
+    flow.nodes[2].config.user = userId
+
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `payment-context-${suffix}@example.com`,
+        'Contacto Pago Contextual',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test contexto de pago', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await handleAutomationEvent('payment-received', {
+      contactId,
+      paymentId,
+      amount: 725.5,
+      currency: 'EUR',
+      paymentStatus: 'paid',
+      product: 'Servicio contextual'
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.equal(enrollment.status, 'waiting')
+    const storedContext = JSON.parse(enrollment.context)
+    assert.equal(storedContext.payment.id, paymentId)
+    assert.equal(storedContext.payment.amount, '725.5')
+    assert.equal(storedContext.payment.currency, 'EUR')
+
+    await processDueResumes()
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'completed')
+    const notification = await db.get(
+      `SELECT * FROM internal_notifications
+       WHERE automation_id = ? AND automation_node_id = ?
+       ORDER BY id ASC
+       LIMIT 1`,
+      [automationId, 'notify-payment-context']
+    )
+    assert.ok(notification)
+    assert.equal(notification.title, `Pago ${paymentId}`)
+    assert.equal(notification.message, '725.5 EUR')
+    assert.equal(
+      notification.action_url,
+      `/contacts?open=contact&id=${encodeURIComponent(contactId)}`
+    )
+  } finally {
+    await db.run('DELETE FROM internal_notifications WHERE automation_id = ?', [automationId]).catch(() => {})
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    if (userId) await db.run('DELETE FROM users WHERE id = ?', [userId])
   }
 })
 

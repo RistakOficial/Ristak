@@ -1370,6 +1370,31 @@ timeouts conservan sus salidas `timeout`/`notmet`, y las fechas limite se
 interpretan en la zona horaria del flujo o, si no esta configurada, en la zona
 horaria efectiva de la cuenta.
 
+Cada ejecución carga automáticamente la identidad del contacto que entró y el
+contexto de la entidad que produjo el disparador. Las acciones normales sobre el
+contacto —incluida **Notificaciones**— usan `enrollment.contact_id`/`ctx.contact`
+y no piden otro ID manual. Una configuración legacy con `contactId` sólo puede
+servir como fallback si no existe contacto en runtime; nunca puede sustituir al
+contacto real de una ejecución. **Encontrar contacto** y **Crear contacto** son
+excepciones intencionales porque su función sí es resolver o cambiar el contacto
+de trabajo.
+
+El contexto del disparador se conserva dentro de `automation_enrollments.context`
+al esperar, pausar, reintentar o reanudar. Esto incluye la identidad y datos
+canónicos de cita, pago, mensaje/comentario y formulario que ya forman parte del
+evento; un paso posterior no debe pedir que el usuario vuelva a capturar esos
+IDs. La moneda de un pago existente se conserva desde su evento/registro y no se
+reemplaza por una moneda inferida.
+
+En **Esperar > Una cita o reserva próxima**, si todas las entradas que alcanzan
+el paso son disparadores de cita, el editor omite calendario, tipo y estado y
+explica que usará la cita que activó esa ejecución. El runtime liga la espera al
+`appointmentId` exacto: otra cita del mismo contacto no puede mover, completar
+ni reprogramar esa espera. Un cambio de hora de la misma cita sí recalcula el
+momento de continuación. Si el paso también puede alcanzarse desde disparadores
+sin cita, los filtros permanecen visibles porque entonces sirven para elegir la
+próxima cita aplicable, no para repetir una identidad ya conocida.
+
 Las alertas de referencias rotas del Header también son un read-model local.
 `listAutomationReviewProblems` ejecuta un único `SELECT ... LIMIT` sobre el
 snapshot publicado: no consulta el estado, no agenda trabajo y jamás carga o

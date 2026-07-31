@@ -49,6 +49,8 @@ export interface FlowVariableCategory {
 export interface FlowVariableCatalog {
   categories: FlowVariableCategory[]
   variables: FlowVariable[]
+  /** Tipos de disparador que realmente alcanzan este punto del flujo. */
+  triggerTypes: string[]
   /**
    * Contextos de evento disponibles en este punto del flujo (unión de los
    * disparadores que alcanzan el nodo). Alimenta la congruencia del nodo
@@ -72,6 +74,7 @@ export interface FlowVariableCatalogOptions {
 export const FlowVariablesContext = React.createContext<FlowVariableCatalog>({
   categories: [],
   variables: [],
+  triggerTypes: [],
   eventContexts: []
 })
 
@@ -470,6 +473,7 @@ export function buildFlowVariableCatalog(
   return {
     categories,
     variables,
+    triggerTypes: reachingTriggers.map((trigger) => trigger.type),
     eventContexts: eventContextsForTriggerTypes(reachingTriggers.map((trigger) => trigger.type))
   }
 }

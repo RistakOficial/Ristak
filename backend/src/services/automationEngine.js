@@ -1260,7 +1260,7 @@ function appointmentDataFromContext(ctx = {}) {
   return {
     id_cita: ctx.appointmentId || ctx.appointment_id || ctx.eventId || ctx.event_id || ctx.id || '',
     nombre_contacto: ctx.contact?.fullName || ctx.contactName || '',
-    fecha: ctx.appointmentDate || ctx.date || ctx.startDate || ctx.start_at || ctx.startAt || '',
+    fecha: ctx.startTime || ctx.start_time || ctx.appointmentDate || ctx.date || ctx.startDate || ctx.start_at || ctx.startAt || '',
     hora: ctx.appointmentTime || ctx.time || '',
     servicio: ctx.appointmentType || ctx.service || ctx.title || '',
     estado: ctx.appointmentStatus || ctx.status || '',
@@ -2039,8 +2039,12 @@ function selectedResourceMatches(candidates = [], configuredValue = '') {
     .some((candidate) => candidate === wanted)
 }
 
-function appointmentEventMatches(config = {}, eventType, ctx = {}) {
+function appointmentEventMatches(config = {}, eventType, ctx = {}, expectedAppointmentId = '') {
   if (eventType !== 'appointment-booked' && eventType !== 'appointment-status') return false
+
+  expectedAppointmentId = cleanString(expectedAppointmentId)
+  const eventAppointmentId = cleanString(ctx.appointmentId || ctx.appointment_id)
+  if (expectedAppointmentId) return eventAppointmentId === expectedAppointmentId
 
   const configuredCalendar = str(config.calendar || config.actionResource)
   if (
@@ -2772,17 +2776,134 @@ function resolveRetryErrors(enrollment, nodeId) {
   })
 }
 
+function persistentContextValue(value, fallback = null) {
+  return value !== undefined && value !== null && value !== ''
+    ? value
+    : fallback ?? null
+}
+
 function getPersistentRuntimeContext(ctx = {}, current = {}) {
+  const eventType = str(ctx.lastAutomationEventType || current.lastAutomationEventType)
+  const isAppointmentEvent =
+    eventType === 'appointment-booked' ||
+    eventType === 'appointment-status' ||
+    Boolean(cleanString(ctx.appointmentId || ctx.appointment_id))
+  const isPaymentEvent =
+    eventType === 'payment-received' ||
+    eventType === 'refund' ||
+    Boolean(cleanString(ctx.paymentId || ctx.payment_id)) ||
+    Boolean(ctx.payment && typeof ctx.payment === 'object' && !Array.isArray(ctx.payment))
+  const paymentData = isPaymentEvent ? paymentDataFromContext(ctx) : null
+  const payment = paymentData
+    ? {
+        id: paymentData.id_pago,
+        publicPaymentId: paymentData.id_publico,
+        amount: paymentData.monto,
+        currency: paymentData.moneda,
+        status: paymentData.estado,
+        paymentStatus: paymentData.estado,
+        mode: paymentData.modo_pago,
+        paymentMode: paymentData.modo_pago,
+        eventId: paymentData.id_evento,
+        product: paymentData.producto,
+        provider: paymentData.proveedor,
+        paymentMethod: paymentData.metodo_pago,
+        reference: paymentData.referencia,
+        title: paymentData.titulo,
+        description: paymentData.descripcion,
+        receipt: paymentData.recibo,
+        invoiceId: paymentData.id_factura,
+        invoiceNumber: paymentData.numero_factura,
+        stripePaymentIntentId: paymentData.id_stripe_payment_intent,
+        stripeChargeId: paymentData.id_stripe_charge,
+        mercadoPagoPaymentId: paymentData.id_mercadopago_pago,
+        mercadoPagoPreferenceId: paymentData.id_mercadopago_preferencia,
+        conektaOrderId: paymentData.id_conekta_order,
+        conektaChargeId: paymentData.id_conekta_charge,
+        conektaPaymentSourceId: paymentData.id_conekta_fuente_pago,
+        clipPaymentId: paymentData.id_clip_pago,
+        clipReceiptNo: paymentData.id_clip_recibo,
+        rebillPaymentId: paymentData.id_rebill_pago,
+        rebillSubscriptionId: paymentData.id_rebill_suscripcion,
+        rebillCustomerId: paymentData.id_rebill_cliente,
+        rebillCardId: paymentData.id_rebill_tarjeta,
+        date: paymentData.fecha,
+        paidAt: paymentData.fecha_pago,
+        dueDate: paymentData.fecha_vencimiento,
+        sentAt: paymentData.fecha_envio,
+        createdAt: paymentData.fecha_creacion,
+        updatedAt: paymentData.fecha_actualizacion,
+        paymentUrl: paymentData.url_pago,
+        receiptUrl: paymentData.url_comprobante,
+        lineItems: Array.isArray(ctx.lineItems)
+          ? ctx.lineItems
+          : Array.isArray(ctx.line_items)
+            ? ctx.line_items
+            : Array.isArray(ctx.payment?.lineItems)
+              ? ctx.payment.lineItems
+              : Array.isArray(ctx.payment?.line_items)
+                ? ctx.payment.line_items
+                : []
+      }
+    : current.payment || null
+
   return {
     messageText: ctx.messageText || current.messageText || '',
     channel: ctx.channel || current.channel || '',
     businessPhoneNumberId: ctx.businessPhoneNumberId || current.businessPhoneNumberId || null,
+    messageId: ctx.messageId || ctx.message_id || current.messageId || null,
+    messageAt: ctx.messageAt || ctx.receivedAt || ctx.timestamp || current.messageAt || null,
+    attachment: ctx.attachment || ctx.media || current.attachment || null,
     platform: ctx.platform || current.platform || '',
     commentId: ctx.commentId || current.commentId || null,
     postId: ctx.postId || current.postId || null,
     mediaId: ctx.mediaId || current.mediaId || null,
     parentCommentId: ctx.parentCommentId || current.parentCommentId || null,
-    permalink: ctx.permalink || current.permalink || null
+    permalink: ctx.permalink || current.permalink || null,
+    lastAutomationEventType: eventType || current.lastAutomationEventType || '',
+    changedFields: Array.isArray(ctx.changedFields) ? ctx.changedFields : current.changedFields || [],
+    contactChangeEventType: ctx.contactChangeEventType || current.contactChangeEventType || '',
+    contactChangeSource: ctx.contactChangeSource || current.contactChangeSource || '',
+    appointmentId: isAppointmentEvent
+      ? persistentContextValue(ctx.appointmentId || ctx.appointment_id, current.appointmentId)
+      : current.appointmentId || null,
+    calendarId: isAppointmentEvent
+      ? persistentContextValue(ctx.calendarId || ctx.calendar_id, current.calendarId)
+      : current.calendarId || null,
+    calendarName: isAppointmentEvent
+      ? persistentContextValue(ctx.calendarName || ctx.calendar_name, current.calendarName)
+      : current.calendarName || null,
+    appointmentStatus: isAppointmentEvent
+      ? persistentContextValue(
+          ctx.appointmentStatus || ctx.appointment_status || ctx.status,
+          current.appointmentStatus
+        )
+      : current.appointmentStatus || null,
+    appointmentType: isAppointmentEvent
+      ? persistentContextValue(
+          ctx.appointmentType || ctx.appointment_type || ctx.service || ctx.title,
+          current.appointmentType
+        )
+      : current.appointmentType || null,
+    appointmentDate: isAppointmentEvent
+      ? persistentContextValue(
+          ctx.appointmentDate || ctx.startTime || ctx.start_time || ctx.startAt || ctx.start_at || ctx.date,
+          current.appointmentDate
+        )
+      : current.appointmentDate || null,
+    startTime: isAppointmentEvent
+      ? persistentContextValue(
+          ctx.startTime || ctx.start_time || ctx.appointmentDate || ctx.startAt || ctx.start_at,
+          current.startTime
+        )
+      : current.startTime || null,
+    endTime: isAppointmentEvent
+      ? persistentContextValue(ctx.endTime || ctx.end_time || ctx.endAt || ctx.end_at, current.endTime)
+      : current.endTime || null,
+    notes: isAppointmentEvent
+      ? persistentContextValue(ctx.notes || ctx.note || ctx.description, current.notes)
+      : current.notes || null,
+    payment
   }
 }
 
@@ -3747,7 +3868,7 @@ async function applyContactUserAction(node, ctx) {
 
 function notificationClickUrl(config = {}, ctx = {}) {
   const action = str(config.clickAction) || 'phone_chat'
-  const contactId = cleanString(renderedConfigValue(config.contactId, ctx) || ctx.contact?.id || '')
+  const contactId = cleanString(ctx.contact?.id || renderedConfigValue(config.contactId, ctx) || '')
   const contactQuery = contactId ? `?contact=${encodeURIComponent(contactId)}` : ''
   const contactOpenQuery = contactId ? `?open=contact&id=${encodeURIComponent(contactId)}` : ''
 
@@ -3789,7 +3910,7 @@ function resolveNotificationDelivery(config = {}) {
 }
 
 async function resolveNotificationContact(config = {}, ctx = {}) {
-  const contactId = cleanString(renderedConfigValue(config.contactId, ctx) || ctx.contact?.id || '')
+  const contactId = cleanString(ctx.contact?.id || renderedConfigValue(config.contactId, ctx) || '')
   if (!contactId) return { contactId: '', contact: ctx.contact || null }
   if (ctx.contact?.id === contactId) return { contactId, contact: ctx.contact }
   return {
@@ -4780,10 +4901,15 @@ function isNoReplyGoal(config = {}) {
 
 function appointmentWaitTarget(config = {}, ctx = {}) {
   const contact = ctx.contact || {}
+  const eventAppointmentId = cleanString(ctx.appointmentId || ctx.appointment_id)
+  const appointmentId = eventAppointmentId || cleanString(contact.activeAppointmentId)
+  const usesEventAppointment = Boolean(eventAppointmentId)
   const calendar = str(config.calendar)
   const eventCalendar = str(ctx.calendarId || ctx.calendar_id)
   const activeCalendar = str(contact.activeAppointmentCalendarId)
-  if (calendar && calendar !== eventCalendar && calendar !== activeCalendar) return null
+  if (!usesEventAppointment && calendar && calendar !== eventCalendar && calendar !== activeCalendar) {
+    return { appointmentId: '', resumeAt: null }
+  }
 
   const appointmentType = str(config.appointmentType)
   const currentType = str(
@@ -4793,7 +4919,13 @@ function appointmentWaitTarget(config = {}, ctx = {}) {
     ctx.title ||
     contact.activeAppointmentTitle
   )
-  if (appointmentType && normalizeText(appointmentType) !== normalizeText(currentType)) return null
+  if (
+    !usesEventAppointment &&
+    appointmentType &&
+    normalizeText(appointmentType) !== normalizeText(currentType)
+  ) {
+    return { appointmentId: '', resumeAt: null }
+  }
 
   const wantedStatus = normalizedAppointmentStatus(config.appointmentStatus)
   const currentStatus = normalizedAppointmentStatus(
@@ -4802,20 +4934,27 @@ function appointmentWaitTarget(config = {}, ctx = {}) {
     ctx.status ||
     contact.activeAppointmentStatus
   )
-  if (wantedStatus && wantedStatus !== 'booked' && wantedStatus !== currentStatus) return null
+  if (
+    !usesEventAppointment &&
+    wantedStatus &&
+    wantedStatus !== 'booked' &&
+    wantedStatus !== currentStatus
+  ) {
+    return { appointmentId: '', resumeAt: null }
+  }
 
   const rawStart = str(
-    ctx.appointmentDate ||
     ctx.startTime ||
     ctx.start_time ||
+    ctx.appointmentDate ||
     ctx.startAt ||
     ctx.start_at ||
     ctx.date ||
     contact.activeAppointmentDate
   )
-  if (!rawStart) return null
+  if (!rawStart) return { appointmentId, resumeAt: null }
   const startMs = new Date(rawStart).getTime()
-  if (!Number.isFinite(startMs)) return null
+  if (!Number.isFinite(startMs)) return { appointmentId, resumeAt: null }
 
   const offset = str(config.appointmentOffset) || 'before'
   const amount = offset === 'at' ? 0 : Math.max(0, Number(config.offsetAmount) || 0)
@@ -4826,7 +4965,10 @@ function appointmentWaitTarget(config = {}, ctx = {}) {
     : offset === 'after'
       ? startMs + delta
       : startMs
-  return new Date(targetMs).toISOString()
+  return {
+    appointmentId,
+    resumeAt: new Date(targetMs).toISOString()
+  }
 }
 
 // Nodo de acción: responder un comentario a mitad de un flujo. Usa el
@@ -5104,7 +5246,8 @@ async function executeNode(node, ctx, enrollment) {
         }
       }
       if (mode === 'appointment') {
-        const resumeAt = appointmentWaitTarget(config, ctx)
+        const appointmentTarget = appointmentWaitTarget(config, ctx)
+        const resumeAt = appointmentTarget.resumeAt
         if (!resumeAt) {
           return {
             wait: {
@@ -5112,6 +5255,7 @@ async function executeNode(node, ctx, enrollment) {
               resumeAt: null,
               context: {
                 waitExpectedAction: 'appointment_available',
+                waitAppointmentId: appointmentTarget.appointmentId,
                 waitActionResource: str(config.calendar),
                 waitActionResourceName: str(config.calendarName)
               }
@@ -5128,6 +5272,7 @@ async function executeNode(node, ctx, enrollment) {
             resumeAt,
             context: {
               waitExpectedAction: 'appointment_time',
+              waitAppointmentId: appointmentTarget.appointmentId,
               waitActionResource: str(config.calendar),
               waitActionResourceName: str(config.calendarName)
             }
@@ -5770,6 +5915,7 @@ function clearManualControlContext(context = {}) {
     __pausedWaitKind,
     __pendingWaitCompletion,
     waitExpectedAction,
+    waitAppointmentId,
     waitActionResource,
     waitActionResourceName,
     waitActionChannel,
@@ -6271,7 +6417,12 @@ function waitingNodeEventMatch(node, enrollment, eventType, ctx = {}) {
       : null
   }
   if (mode === 'appointment') {
-    return appointmentEventMatches(config, eventType, ctx)
+    return appointmentEventMatches(
+      config,
+      eventType,
+      ctx,
+      cleanString(enrollment.context?.waitAppointmentId)
+    )
       ? { appointmentRecheck: true }
       : null
   }
@@ -6588,7 +6739,11 @@ async function enrollMatching(
       if (any) continue
     }
 
-    const ctx = { ...baseCtx, automationName: automation.name }
+    const ctx = {
+      ...baseCtx,
+      automationName: automation.name,
+      lastAutomationEventType: eventType
+    }
     const enrollment = await createEnrollment(automation, contact, ctx)
     if (enrollment.reusedActiveEnrollment) continue
     const describe = EVENT_DESCRIPTIONS[eventType]
