@@ -27,6 +27,9 @@ import {
 } from '../utils/postgresCancelableQuery.js'
 import { ensureSqliteSitesAnalyticsTrackingSchema } from '../startup/sitesAnalyticsSchemaCompatibility.js'
 import { ensureSqliteConversationalHandoffSchema } from '../startup/conversationalHandoffSchemaCompatibility.js'
+import {
+  ensureSqliteAppointmentConfirmationTimeoutSchema
+} from '../startup/appointmentConfirmationTimeoutSchemaCompatibility.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2570,6 +2573,17 @@ async function initTablesUnlocked() {
       logger.info(
         '[Esquema] Compatibilidad del handoff conversacional reparada: ' +
         `${conversationalHandoffSchemaRepair.addedColumns.length} columna(s).`
+      )
+    }
+
+    const appointmentConfirmationTimeoutSchemaRepair = await ensureSqliteAppointmentConfirmationTimeoutSchema({
+      database: db,
+      dialect: databaseDialect
+    })
+    if (appointmentConfirmationTimeoutSchemaRepair.addedColumns.length > 0) {
+      logger.info(
+        '[Esquema] Compatibilidad de plazos de confirmación reparada: ' +
+        `${appointmentConfirmationTimeoutSchemaRepair.addedColumns.length} columna(s).`
       )
     }
 
@@ -8154,6 +8168,8 @@ async function initTablesUnlocked() {
         smart_end TEXT DEFAULT '21:00',
         smart_overflow TEXT DEFAULT 'before',
         no_confirm_action TEXT DEFAULT 'no_action',
+        confirmation_timeout_value INTEGER,
+        confirmation_timeout_unit TEXT,
         confirmation_success_action TEXT DEFAULT 'chat_card',
         bypass_automations INTEGER DEFAULT 0,
         position INTEGER DEFAULT 0,
@@ -8177,6 +8193,9 @@ async function initTablesUnlocked() {
         error_message TEXT,
         send_at DATETIME,
         sent_at DATETIME,
+        confirmation_deadline_at DATETIME,
+        confirmation_timeout_status TEXT,
+        confirmation_timeout_processed_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(reminder_id, appointment_id)
       )
@@ -8187,6 +8206,14 @@ async function initTablesUnlocked() {
 
     try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN no_confirm_action TEXT DEFAULT 'no_action'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN confirmation_timeout_value INTEGER')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminders ADD COLUMN confirmation_timeout_unit TEXT')
     } catch (_) { /* columna ya existe */ }
 
     try {
@@ -8234,6 +8261,23 @@ async function initTablesUnlocked() {
     try {
       await db.run('ALTER TABLE appointment_reminders ADD COLUMN schedule_key TEXT')
     } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_deadline_at DATETIME')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_timeout_status TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run('ALTER TABLE appointment_reminder_sends ADD COLUMN confirmation_timeout_processed_at DATETIME')
+    } catch (_) { /* columna ya existe */ }
+
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_appointment_reminder_sends_confirmation_deadline
+      ON appointment_reminder_sends(confirmation_timeout_status, confirmation_deadline_at)
+    `)
 
     // Conserva configuraciones históricas sin borrar nada: cuando ya había
     // duplicados, sólo la primera fila ocupa el horario canónico. Las demás

@@ -4168,15 +4168,32 @@ ejecuta solamente la accion visual elegida: tarjeta en el chat, etiqueta hasta
 la cita, push o ningun aviso extra. El push de confirmacion no se manda por
 reflejo cuando se eligio tarjeta, etiqueta o "solo marcar". Una respuesta de
 reagendamiento no busca ni reserva por si sola otro horario; usa la accion de
-"respondio pero no confirmo" configurada para conservar, avisar o cancelar la
-cita actual.
+"Si no confirma" configurada para conservar, avisar o cancelar la cita actual.
 
-La accion de no confirmacion aplica solo cuando existe una respuesta recibida.
-Si el contacto guarda silencio, Ristak conserva la cita; no hay un plazo
-implicito que la cancele. Respuestas ambiguas, preguntas logisticas, necesidad
-humana o una falla tecnica del clasificador nunca ejecutan una cancelacion
-destructiva: si estaba configurada, se degrada a notificacion para revision. Si
-la IA esta apagada, se conserva el modo compatible: una respuesta afirmativa
+Al elegir `cancel_appointment`, el editor exige un plazo explicito de minutos,
+horas o dias. No se aplica ningun default silencioso a filas historicas. El reloj
+empieza en `appointment_reminder_sends.sent_at`, despues de que el transporte
+acepto el envio, y cada envio congela su propio
+`confirmation_deadline_at`; editar el recordatorio despues no mueve ultimátums
+ya enviados. En recordatorios `before_appointment`, el plazo debe ser menor que
+el tiempo configurado antes de la cita. En avisos `after_booking`, si la cita
+empieza antes de que pueda terminar el plazo, el envio queda sin cancelacion por
+timeout.
+
+Si vence el plazo y la cita sigue pendiente, Ristak la cancela y avisa al equipo.
+Una respuesta recibida antes del limite bloquea la cancelacion mientras la
+ventana este `waiting`, `processing` o `deciding`; primero termina la
+clasificacion. Una respuesta ambigua no cancela inmediatamente, pero si tampoco
+produce una confirmacion clara antes del deadline, el ultimátum configurado si
+puede cancelar. `human_needed`, un error de ventana o una falla tecnica del
+clasificador terminan en `review_required`: conservan la cita y mandan aviso, sin
+accion destructiva. Sin un plazo guardado, incluido cualquier recordatorio
+historico, el silencio conserva la cita.
+Eliminar un recordatorio desactiva sus ultimátums pendientes; los envios ya
+realizados se conservan como auditoría, pero esa regla retirada no puede cancelar
+una cita después.
+
+Si la IA esta apagada, se conserva el modo compatible: una respuesta afirmativa
 simple marca la cita confirmada sin abrir ventana ni intentar interpretar
 negativas.
 
@@ -4217,6 +4234,13 @@ envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
 marca como omitido en vez de mandar un WhatsApp tarde. El enfriamiento se compara
 en UTC con SQL nativo del motor activo; PostgreSQL no ejecuta funciones exclusivas
 de SQLite durante este reclamo.
+
+Los ultimátums usan las columnas `confirmation_deadline_at`,
+`confirmation_timeout_status` y `confirmation_timeout_processed_at` del mismo
+envio. El cron de confirmaciones reclama el envio y la recepción inbound bloquea
+esa misma fila dentro de una transaccion, por lo que una respuesta y una
+cancelacion por timeout no pueden ganar simultaneamente en SQLite ni PostgreSQL.
+Los estados terminales del timeout impiden repetir la cancelacion o el aviso.
 
 La tolerancia de reintento no convierte un recordatorio vencido en confirmacion
 de reserva. Si una cita se crea despues del instante calculado para un mensaje

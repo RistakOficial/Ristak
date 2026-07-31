@@ -84,6 +84,8 @@ const AUTOMATIC_REMINDER_CHANNELS = new Set(['booking_channel', 'available_chann
 const REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel', 'whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
 const REAL_REMINDER_CHANNELS = ['whatsapp', 'whatsapp_qr', 'instagram', 'messenger', 'email']
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
+const CONFIRMATION_TIMEOUT_UNITS = new Set(['minutes', 'hours', 'days'])
+const MAX_CONFIRMATION_TIMEOUT_MS = 30 * OFFSET_UNIT_MS.days
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
   notice: 'cita_programada',
@@ -163,6 +165,34 @@ function shouldHoldErroredSend(row, now) {
   const lastAttempt = parseStoredUtcDateTime(row.sent_at || row.created_at)
   if (!lastAttempt) return true
   return now.toMillis() - lastAttempt.toMillis() < ERROR_RETRY_MS
+}
+
+function normalizeConfirmationTimeout(action, rawValue, rawUnit, { strict = false } = {}) {
+  if (action !== 'cancel_appointment') {
+    return { confirmationTimeoutValue: null, confirmationTimeoutUnit: null }
+  }
+
+  const parsedValue = Number(rawValue)
+  const unit = cleanString(rawUnit)
+  const valid = Number.isFinite(parsedValue) &&
+    Number.isInteger(parsedValue) &&
+    parsedValue > 0 &&
+    CONFIRMATION_TIMEOUT_UNITS.has(unit) &&
+    parsedValue * OFFSET_UNIT_MS[unit] <= MAX_CONFIRMATION_TIMEOUT_MS
+
+  if (!valid) {
+    if (strict) {
+      throw createServiceError(
+        'Define cuánto tiempo puede esperar Ristak la confirmación antes de cancelar la cita (máximo 30 días).'
+      )
+    }
+    return { confirmationTimeoutValue: null, confirmationTimeoutUnit: null }
+  }
+
+  return {
+    confirmationTimeoutValue: parsedValue,
+    confirmationTimeoutUnit: unit
+  }
 }
 
 // Normaliza unidad/valor del offset según el ancla. Antes de la cita: minutos/horas/días,
@@ -275,6 +305,14 @@ function normalizeReminderRow(row = {}) {
     row.confirmation_success_action,
     LEGACY_CONFIRMATION_SUCCESS_ACTIONS
   )
+  const noConfirmAction = NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action))
+    ? cleanString(row.no_confirm_action)
+    : 'no_action'
+  const confirmationTimeout = normalizeConfirmationTimeout(
+    noConfirmAction,
+    row.confirmation_timeout_value,
+    row.confirmation_timeout_unit
+  )
   return {
     id: cleanString(row.id),
     name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
@@ -296,7 +334,8 @@ function normalizeReminderRow(row = {}) {
     smartStart: cleanString(row.smart_start) || '09:00',
     smartEnd: cleanString(row.smart_end) || '21:00',
     smartOverflow: SMART_OVERFLOWS.has(cleanString(row.smart_overflow)) ? cleanString(row.smart_overflow) : 'before',
-    noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
+    noConfirmAction,
+    ...confirmationTimeout,
     confirmationSuccessActions,
     // Compatibilidad temporal para clientes anteriores que todavía esperan un
     // único valor. El backend nuevo usa siempre confirmationSuccessActions.
@@ -808,6 +847,36 @@ function sanitizeReminderInput(input = {}, base = {}) {
     confirmationSuccessActionsSource,
     DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
   )
+  const noConfirmAction = NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction))
+    ? cleanString(merged.noConfirmAction)
+    : 'no_action'
+  const timeoutConfigurationWasSubmitted = [
+    'noConfirmAction',
+    'confirmationTimeoutValue',
+    'confirmationTimeoutUnit'
+  ].some((field) => Object.hasOwn(input, field))
+  const confirmationTimeout = normalizeConfirmationTimeout(
+    noConfirmAction,
+    merged.confirmationTimeoutValue,
+    merged.confirmationTimeoutUnit,
+    // Las filas históricas con cancelación no recibieron un default retroactivo.
+    // Siguen pudiéndose pausar/activar sin inventar un plazo; una creación nueva
+    // o una edición explícita de esta política sí debe quedar completa.
+    { strict: Object.keys(base).length === 0 || timeoutConfigurationWasSubmitted }
+  )
+  if (
+    timingAnchor === 'before_appointment' &&
+    confirmationTimeout.confirmationTimeoutValue !== null
+  ) {
+    const timeoutMs = confirmationTimeout.confirmationTimeoutValue *
+      OFFSET_UNIT_MS[confirmationTimeout.confirmationTimeoutUnit]
+    const reminderLeadMs = offsetValue * OFFSET_UNIT_MS[offsetUnit]
+    if (timeoutMs >= reminderLeadMs) {
+      throw createServiceError(
+        'El plazo para confirmar debe terminar antes de que comience la cita.'
+      )
+    }
+  }
 
   return {
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
@@ -829,7 +898,8 @@ function sanitizeReminderInput(input = {}, base = {}) {
     smartStart,
     smartEnd,
     smartOverflow: SMART_OVERFLOWS.has(cleanString(merged.smartOverflow)) ? cleanString(merged.smartOverflow) : 'before',
-    noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
+    noConfirmAction,
+    ...confirmationTimeout,
     confirmationSuccessActions,
     confirmationSuccessAction: serializeConfirmationSuccessActions(
       confirmationSuccessActions,
@@ -855,15 +925,17 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
       sender_phone_number_id, template_id, template_name, template_language,
       content_mode, qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
+      confirmation_timeout_value, confirmation_timeout_unit,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ${ignoreConflict ? 'ON CONFLICT DO NOTHING' : ''}
   `, [
     id, cleanString(systemKey) || null, scheduleKey, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
     data.templateLanguage, data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
-    data.smartOverflow, data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations,
+    data.smartOverflow, data.noConfirmAction, data.confirmationTimeoutValue, data.confirmationTimeoutUnit,
+    data.confirmationSuccessAction, data.bypassAutomations,
     Number(positionRow?.next || 0)
   ])
 
@@ -913,14 +985,16 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
         sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
         content_mode = ?, qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
         smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
-        no_confirm_action = ?, confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
+        no_confirm_action = ?, confirmation_timeout_value = ?, confirmation_timeout_unit = ?,
+        confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
       scheduleKey, name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
       data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
       data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
       data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
-      data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations, id
+      data.noConfirmAction, data.confirmationTimeoutValue, data.confirmationTimeoutUnit,
+      data.confirmationSuccessAction, data.bypassAutomations, id
     ])
   } catch (error) {
     await rethrowReminderScheduleConflict(error, scheduleKey, id)
@@ -933,11 +1007,31 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
 
 export async function deleteAppointmentReminder(reminderId) {
   const id = cleanString(reminderId)
-  const existing = await db.get('SELECT id FROM appointment_reminders WHERE id = ?', [id])
-  if (!existing) throw createServiceError('Mensaje automático no encontrado.', 404)
+  await db.transaction(async (transaction) => {
+    const existing = await transaction.get(`
+      SELECT id
+      FROM appointment_reminders
+      WHERE id = ?
+      ${databaseDialect === 'postgres' ? 'FOR UPDATE' : ''}
+    `, [id])
+    if (!existing) throw createServiceError('Mensaje automático no encontrado.', 404)
 
-  await db.run('DELETE FROM appointment_reminders WHERE id = ?', [id])
-  await db.run("DELETE FROM appointment_reminder_sends WHERE reminder_id = ? AND status != 'sent'", [id])
+    // Borrar la regla desactiva cualquier ultimátum todavía pendiente en el
+    // mismo commit que retira la configuración. Conservamos el envío realizado
+    // como auditoría, pero una regla retirada jamás cancela después.
+    await transaction.run(`
+      UPDATE appointment_reminder_sends
+      SET confirmation_timeout_status = 'disabled',
+          confirmation_timeout_processed_at = ?
+      WHERE reminder_id = ?
+        AND confirmation_timeout_status = 'pending'
+    `, [nowIso(), id])
+    await transaction.run('DELETE FROM appointment_reminders WHERE id = ?', [id])
+    await transaction.run(
+      "DELETE FROM appointment_reminder_sends WHERE reminder_id = ? AND status != 'sent'",
+      [id]
+    )
+  })
   return { id }
 }
 
@@ -1472,7 +1566,10 @@ async function claimSend({ reminder, appointment, sendAt }) {
         sent_message_id = NULL,
         error_message = NULL,
         send_at = ?,
-        sent_at = NULL
+        sent_at = NULL,
+        confirmation_deadline_at = NULL,
+        confirmation_timeout_status = NULL,
+        confirmation_timeout_processed_at = NULL
     WHERE reminder_id = ?
       AND appointment_id = ?
       AND status = 'error'
@@ -1489,19 +1586,81 @@ async function claimSend({ reminder, appointment, sendAt }) {
   return Number(retry?.changes || 0) > 0
 }
 
+function buildConfirmationTimeoutDeliveryState({ reminder, appointment, status, finishedAt }) {
+  if (
+    status !== 'sent' ||
+    reminder.messageType !== 'confirmation' ||
+    reminder.noConfirmAction !== 'cancel_appointment'
+  ) {
+    return {
+      confirmationDeadlineAt: null,
+      confirmationTimeoutStatus: null,
+      confirmationTimeoutProcessedAt: null
+    }
+  }
+
+  const timeout = normalizeConfirmationTimeout(
+    reminder.noConfirmAction,
+    reminder.confirmationTimeoutValue,
+    reminder.confirmationTimeoutUnit
+  )
+  if (timeout.confirmationTimeoutValue === null) {
+    return {
+      confirmationDeadlineAt: null,
+      confirmationTimeoutStatus: null,
+      confirmationTimeoutProcessedAt: null
+    }
+  }
+
+  const sentAt = DateTime.fromISO(finishedAt, { zone: 'utc' })
+  const appointmentStart = parseStoredUtcDateTime(appointment.start_time)
+  const deadline = sentAt.plus({
+    milliseconds: timeout.confirmationTimeoutValue *
+      OFFSET_UNIT_MS[timeout.confirmationTimeoutUnit]
+  })
+
+  if (!appointmentStart || deadline >= appointmentStart) {
+    return {
+      confirmationDeadlineAt: null,
+      confirmationTimeoutStatus: 'skipped',
+      confirmationTimeoutProcessedAt: finishedAt
+    }
+  }
+
+  return {
+    confirmationDeadlineAt: deadline.toISO(),
+    confirmationTimeoutStatus: 'pending',
+    confirmationTimeoutProcessedAt: null
+  }
+}
+
 // (NOTI-002/CRON-003) Marca el resultado final del envío sobre la fila ya reclamada.
 async function finalizeSend({ reminder, appointment, status, sentMessageId = '', errorMessage = '' }) {
   const finishedAt = nowIso()
+  const confirmationTimeout = buildConfirmationTimeoutDeliveryState({
+    reminder,
+    appointment,
+    status,
+    finishedAt
+  })
   await db.run(`
     UPDATE appointment_reminder_sends
     SET status = ?,
         sent_message_id = ?,
         error_message = ?,
-        sent_at = CASE WHEN ? IN ('sent', 'error', 'skipped') THEN ? ELSE sent_at END
+        sent_at = CASE WHEN ? IN ('sent', 'error', 'skipped') THEN ? ELSE sent_at END,
+        confirmation_deadline_at = ?,
+        confirmation_timeout_status = ?,
+        confirmation_timeout_processed_at = ?
     WHERE reminder_id = ? AND appointment_id = ?
   `, [
     status, cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
-    status, finishedAt, reminder.id, appointment.id
+    status, finishedAt,
+    confirmationTimeout.confirmationDeadlineAt,
+    confirmationTimeout.confirmationTimeoutStatus,
+    confirmationTimeout.confirmationTimeoutProcessedAt,
+    reminder.id,
+    appointment.id
   ])
 }
 

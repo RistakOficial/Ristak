@@ -199,33 +199,6 @@ export async function handleInboundForConfirmation({
   const id = String(contactId || '').trim()
   if (!id) return { windowActive: false }
 
-  // Buscar si hay un envío de confirmación con IA para este contacto
-  // (cualquier cita futura no confirmada aún).
-  const pending = await db.get(`
-    SELECT
-      s.id AS send_id,
-      s.appointment_id,
-      s.reminder_id,
-      r.bypass_automations,
-      r.confirmation_success_action,
-      a.title
-    FROM appointment_reminder_sends s
-    JOIN appointments a ON a.id = s.appointment_id
-    JOIN appointment_reminders r ON r.id = s.reminder_id
-    WHERE s.contact_id = ?
-      AND s.status = 'sent'
-      AND s.message_type = 'confirmation'
-      AND s.ai_enabled = 1
-      AND a.deleted_at IS NULL
-      AND a.start_time > ?
-      AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('confirmed', 'cancelled', 'canceled')
-    ORDER BY s.sent_at DESC
-    LIMIT 1
-  `, [id, new Date().toISOString()])
-
-  if (!pending) return { windowActive: false }
-
-  const bypassAutomations = Number(pending.bypass_automations || 0) === 1
   const now = nowIso()
   const storedMessage = buildStoredMessage({
     text,
@@ -234,37 +207,74 @@ export async function handleInboundForConfirmation({
     fallbackReceivedAt: now
   })
 
-  // Una sola escritura atómica crea o agrega el mensaje. Antes se hacía
-  // SELECT + UPDATE/UPSERT y dos mensajes entregados en el mismo lote podían
-  // leer el mismo arreglo y sobrescribirse entre sí.
-  await db.run(`
-    INSERT INTO appointment_confirmation_windows
-      (id, contact_id, appointment_id, reminder_send_id, status,
-       accumulated_messages, message_revision, bypass_automations,
-       confirmation_success_action, last_message_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'waiting', ?, 1, ?, ?, ?, ?, ?)
-    ON CONFLICT(contact_id, appointment_id) DO UPDATE SET
-      reminder_send_id = excluded.reminder_send_id,
-      status = 'waiting',
-      accumulated_messages = ${confirmationMessagesAppendExpression()},
-      message_revision = COALESCE(appointment_confirmation_windows.message_revision, 0) + 1,
-      bypass_automations = excluded.bypass_automations,
-      confirmation_success_action = excluded.confirmation_success_action,
-      last_message_at = excluded.last_message_at,
-      updated_at = excluded.updated_at
-  `, [
-    makeWindowId(), id, pending.appointment_id, pending.send_id,
-    JSON.stringify(storedMessage ? [storedMessage] : []),
-    bypassAutomations ? 1 : 0,
-    serializeConfirmationSuccessActions(
-      pending.confirmation_success_action,
-      LEGACY_CONFIRMATION_SUCCESS_ACTIONS
-    ),
-    now, now, now
-  ])
-  logger.info(`[Confirmación IA] Respuesta acumulada para contacto ${id}, cita ${pending.appointment_id}`)
+  const activeWindow = await db.transaction(async (transaction) => {
+    // El mismo envío se bloquea al recibir y al vencer el ultimátum. Así una
+    // respuesta y una cancelación no pueden ganar simultáneamente.
+    const pending = await transaction.get(`
+      SELECT
+        s.id AS send_id,
+        s.appointment_id,
+        s.reminder_id,
+        r.bypass_automations,
+        r.confirmation_success_action,
+        a.title
+      FROM appointment_reminder_sends s
+      JOIN appointments a ON a.id = s.appointment_id
+      JOIN appointment_reminders r ON r.id = s.reminder_id
+      WHERE s.contact_id = ?
+        AND s.status = 'sent'
+        AND s.message_type = 'confirmation'
+        AND s.ai_enabled = 1
+        AND a.deleted_at IS NULL
+        AND a.start_time > ?
+        AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('confirmed', 'cancelled', 'canceled')
+      ORDER BY s.sent_at DESC
+      LIMIT 1
+      ${databaseDialect === 'postgres' ? 'FOR UPDATE OF s' : ''}
+    `, [id, now])
 
-  return { windowActive: true, bypassAutomations }
+    if (!pending) return null
+
+    const bypassAutomations = Number(pending.bypass_automations || 0) === 1
+
+    // Una sola escritura atómica crea o agrega el mensaje. Antes se hacía
+    // SELECT + UPDATE/UPSERT y dos mensajes entregados en el mismo lote podían
+    // leer el mismo arreglo y sobrescribirse entre sí.
+    await transaction.run(`
+      INSERT INTO appointment_confirmation_windows
+        (id, contact_id, appointment_id, reminder_send_id, status,
+         accumulated_messages, message_revision, bypass_automations,
+         confirmation_success_action, last_message_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'waiting', ?, 1, ?, ?, ?, ?, ?)
+      ON CONFLICT(contact_id, appointment_id) DO UPDATE SET
+        reminder_send_id = excluded.reminder_send_id,
+        status = 'waiting',
+        accumulated_messages = ${confirmationMessagesAppendExpression()},
+        message_revision = COALESCE(appointment_confirmation_windows.message_revision, 0) + 1,
+        bypass_automations = excluded.bypass_automations,
+        confirmation_success_action = excluded.confirmation_success_action,
+        last_message_at = excluded.last_message_at,
+        updated_at = excluded.updated_at
+    `, [
+      makeWindowId(), id, pending.appointment_id, pending.send_id,
+      JSON.stringify(storedMessage ? [storedMessage] : []),
+      bypassAutomations ? 1 : 0,
+      serializeConfirmationSuccessActions(
+        pending.confirmation_success_action,
+        LEGACY_CONFIRMATION_SUCCESS_ACTIONS
+      ),
+      now, now, now
+    ])
+    return {
+      appointmentId: pending.appointment_id,
+      bypassAutomations
+    }
+  })
+
+  if (!activeWindow) return { windowActive: false }
+  logger.info(`[Confirmación IA] Respuesta acumulada para contacto ${id}, cita ${activeWindow.appointmentId}`)
+
+  return { windowActive: true, bypassAutomations: activeWindow.bypassAutomations }
 }
 
 /**
@@ -297,6 +307,192 @@ export async function processExpiredConfirmationWindows() {
   }
 
   return { processed }
+}
+
+async function notifyConfirmationTimeoutReview(outcome) {
+  const contactName = String(outcome.contactName || 'Contacto').trim()
+  const appointmentTitle = String(outcome.appointmentTitle || 'cita').trim()
+  await sendAppNotificationPayload({
+    title: `Confirmación pendiente de revisión: ${contactName}`,
+    body: `No se canceló "${appointmentTitle}" porque Ristak no pudo resolver la respuesta con seguridad.`.slice(0, 160),
+    tag: `confirmation-timeout-review-${outcome.appointmentId}`,
+    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(outcome.appointmentId)}`
+  }).catch(error => {
+    logger.warn(`[Confirmación IA] No se pudo avisar la revisión del plazo: ${error.message}`)
+  })
+}
+
+async function notifyConfirmationTimeoutCancellation(outcome) {
+  const contactName = String(outcome.contactName || 'Contacto').trim()
+  const appointmentTitle = String(outcome.appointmentTitle || 'cita').trim()
+  await sendAppNotificationPayload({
+    title: `Cita cancelada por falta de confirmación: ${contactName}`,
+    body: `"${appointmentTitle}" se canceló al vencer el plazo configurado sin una confirmación clara.`.slice(0, 160),
+    tag: `confirmation-timeout-cancelled-${outcome.appointmentId}`,
+    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(outcome.appointmentId)}`
+  }).catch(error => {
+    logger.warn(`[Confirmación IA] No se pudo avisar la cancelación por plazo: ${error.message}`)
+  })
+}
+
+async function processConfirmationTimeout(sendId, currentTime) {
+  return db.transaction(async (transaction) => {
+    const send = await transaction.get(`
+      SELECT
+        s.id,
+        s.appointment_id,
+        s.contact_id,
+        s.confirmation_deadline_at,
+        s.confirmation_timeout_status,
+        a.title,
+        a.start_time,
+        a.appointment_status,
+        a.status AS legacy_status,
+        a.deleted_at,
+        c.first_name,
+        c.full_name
+      FROM appointment_reminder_sends s
+      JOIN appointments a ON a.id = s.appointment_id
+      LEFT JOIN contacts c ON c.id = s.contact_id
+      WHERE s.id = ?
+      ${databaseDialect === 'postgres' ? 'FOR UPDATE OF s' : ''}
+    `, [sendId])
+
+    if (
+      !send ||
+      send.confirmation_timeout_status !== 'pending' ||
+      !send.confirmation_deadline_at ||
+      new Date(send.confirmation_deadline_at).getTime() > new Date(currentTime).getTime()
+    ) {
+      return { processed: false }
+    }
+
+    const confirmationWindow = await transaction.get(`
+      SELECT status, result, result_detail
+      FROM appointment_confirmation_windows
+      WHERE reminder_send_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [sendId])
+
+    if (['waiting', 'processing', 'deciding'].includes(String(confirmationWindow?.status || ''))) {
+      return { processed: false, deferred: true }
+    }
+
+    const appointmentStatus = String(send.appointment_status || send.legacy_status || '').toLowerCase()
+    const appointmentStarted = new Date(send.start_time).getTime() <= new Date(currentTime).getTime()
+    const terminal = send.deleted_at ||
+      isTerminalAppointmentStatus(appointmentStatus) ||
+      appointmentStarted
+
+    if (terminal) {
+      const terminalTimeoutStatus = appointmentStatus === 'confirmed'
+        ? 'confirmed'
+        : appointmentStarted
+          ? 'expired'
+          : 'already_resolved'
+      await transaction.run(`
+        UPDATE appointment_reminder_sends
+        SET confirmation_timeout_status = ?,
+            confirmation_timeout_processed_at = ?
+        WHERE id = ? AND confirmation_timeout_status = 'pending'
+      `, [terminalTimeoutStatus, currentTime, sendId])
+      return { processed: true, status: terminalTimeoutStatus }
+    }
+
+    const needsSafeReview = confirmationWindow?.status === 'error' ||
+      confirmationWindow?.result === 'human_needed'
+    if (needsSafeReview) {
+      await transaction.run(`
+        UPDATE appointment_reminder_sends
+        SET confirmation_timeout_status = 'review_required',
+            confirmation_timeout_processed_at = ?
+        WHERE id = ? AND confirmation_timeout_status = 'pending'
+      `, [currentTime, sendId])
+      return {
+        processed: true,
+        status: 'review_required',
+        appointmentId: send.appointment_id,
+        appointmentTitle: send.title,
+        contactName: send.first_name || send.full_name
+      }
+    }
+
+    const cancelled = await transaction.run(`
+      UPDATE appointments
+      SET appointment_status = 'cancelled',
+          status = 'cancelled',
+          date_updated = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND deleted_at IS NULL
+        AND start_time > ?
+        AND LOWER(COALESCE(appointment_status, status, '')) NOT IN (
+          'confirmed', 'cancelled', 'canceled', 'showed', 'noshow', 'invalid'
+        )
+    `, [send.appointment_id, currentTime])
+
+    const didCancel = Number(cancelled?.changes || 0) > 0
+    await transaction.run(`
+      UPDATE appointment_reminder_sends
+      SET confirmation_timeout_status = ?,
+          confirmation_timeout_processed_at = ?
+      WHERE id = ? AND confirmation_timeout_status = 'pending'
+    `, [didCancel ? 'cancelled' : 'already_resolved', currentTime, sendId])
+
+    return {
+      processed: true,
+      status: didCancel ? 'cancelled' : 'already_resolved',
+      appointmentId: send.appointment_id,
+      contactId: send.contact_id,
+      appointmentTitle: send.title,
+      contactName: send.first_name || send.full_name
+    }
+  })
+}
+
+/**
+ * Cancela citas pendientes cuando vence el plazo que empezó al completar el
+ * mensaje de confirmación. Cada envío guarda su deadline inmutable para que
+ * editar el recordatorio después no cambie ultimátums ya enviados.
+ */
+export async function processExpiredConfirmationTimeouts({ batchSize = 50 } = {}) {
+  const currentTime = nowIso()
+  const sends = await db.all(`
+    SELECT id
+    FROM appointment_reminder_sends
+    WHERE status = 'sent'
+      AND confirmation_timeout_status = 'pending'
+      AND confirmation_deadline_at <= ?
+    ORDER BY confirmation_deadline_at ASC, id ASC
+    LIMIT ?
+  `, [currentTime, batchSize])
+
+  let processed = 0
+  let cancelled = 0
+  let reviewRequired = 0
+
+  for (const send of sends) {
+    try {
+      const outcome = await processConfirmationTimeout(send.id, currentTime)
+      if (!outcome?.processed) continue
+      processed += 1
+      if (outcome.status === 'cancelled') {
+        cancelled += 1
+        publishAppointmentChanged(outcome.contactId, outcome.appointmentId)
+        await resyncAppointmentToGoogle(outcome.appointmentId)
+        await notifyConfirmationTimeoutCancellation(outcome)
+        logger.info(`[Confirmación IA] Cita ${outcome.appointmentId} cancelada al vencer el plazo sin confirmación`)
+      } else if (outcome.status === 'review_required') {
+        reviewRequired += 1
+        await notifyConfirmationTimeoutReview(outcome)
+        logger.warn(`[Confirmación IA] El plazo de la cita ${outcome.appointmentId} terminó en revisión segura; no se canceló`)
+      }
+    } catch (error) {
+      logger.error(`[Confirmación IA] Error procesando plazo del envío ${send.id}: ${error.message}`)
+    }
+  }
+
+  return { processed, cancelled, reviewRequired }
 }
 
 async function processConfirmationWindow(candidate, cutoff) {

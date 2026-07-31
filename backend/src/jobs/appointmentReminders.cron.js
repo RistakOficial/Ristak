@@ -2,7 +2,10 @@ import {
   ensureDefaultAppointmentReminder,
   processDueAppointmentReminders
 } from '../services/appointmentRemindersService.js'
-import { processExpiredConfirmationWindows } from '../services/appointmentConfirmationService.js'
+import {
+  processExpiredConfirmationTimeouts,
+  processExpiredConfirmationWindows
+} from '../services/appointmentConfirmationService.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
@@ -53,9 +56,14 @@ async function runConfirmationWindowsDispatch() {
     await trackDeployDrainWork('cron:appointment-confirmations', async () => {
       // (APT-009) Lock distribuido también para las ventanas de confirmación IA.
       await withCronLock('appointment-confirmations', CONFIRMATION_WINDOWS_INTERVAL_MS, async () => {
-        const { processed } = await processExpiredConfirmationWindows()
-        if (processed) {
-          logger.info(`[Citas] Ventanas de confirmación IA procesadas: ${processed}`)
+        const windowResult = await processExpiredConfirmationWindows()
+        const timeoutResult = await processExpiredConfirmationTimeouts()
+        if (windowResult.processed || timeoutResult.processed) {
+          logger.info(
+            `[Citas] Confirmaciones procesadas: ${windowResult.processed} respuesta(s), ` +
+            `${timeoutResult.cancelled} cancelación(es) por plazo, ` +
+            `${timeoutResult.reviewRequired} revisión(es) segura(s)`
+          )
         }
       })
     })

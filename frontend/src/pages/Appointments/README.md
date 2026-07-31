@@ -172,9 +172,20 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   clasifican juntos; si entra otro mientras el modelo está clasificando, la
   acción se difiere y se vuelve a evaluar el lote completo después de otros dos
   minutos de silencio.
-- **Si responde pero no confirma** sólo aplica a respuestas recibidas. Si la
-  persona no responde, la cita se conserva. Una respuesta ambigua o una falla
-  del clasificador nunca cancela la cita; se degrada a revisión humana.
+- **Si no confirma** permite conservar, avisar o cancelar. Al elegir **Cancelar
+  la cita**, el editor exige un plazo en minutos, horas o días; no hay default
+  retroactivo para configuraciones antiguas.
+- El plazo empieza cuando el transporte acepta el envío y cada mensaje congela
+  su propio deadline. Para `before_appointment` debe terminar antes del inicio;
+  para `after_booking`, si la cita empieza primero, no se ejecuta la cancelación
+  por timeout.
+- Una respuesta recibida antes del límite difiere el timeout hasta terminar de
+  clasificarla. Una respuesta ambigua no cancela inmediatamente, pero el
+  ultimátum sí puede hacerlo al vencer si nunca hubo confirmación clara.
+  `human_needed`, una ventana en error o una falla técnica conservan la cita,
+  dejan el envío en `review_required` y avisan para revisión humana.
+- Eliminar el mensaje automático desactiva sus ultimátums pendientes. El envío
+  permanece como auditoría, pero ya no puede cancelar una cita.
 - **Reservar estas respuestas para la confirmación** impide que esos mensajes
   lleguen al agente conversacional o a automatizaciones. No se reproducen al
   terminar; si el negocio necesita contestar preguntas logísticas debe dejarlo

@@ -11,6 +11,9 @@ import {
 } from '../src/startup/runMigrations.js'
 import { ensureSqliteSitesAnalyticsTrackingSchema } from '../src/startup/sitesAnalyticsSchemaCompatibility.js'
 import { ensureSqliteConversationalHandoffSchema } from '../src/startup/conversationalHandoffSchemaCompatibility.js'
+import {
+  ensureSqliteAppointmentConfirmationTimeoutSchema
+} from '../src/startup/appointmentConfirmationTimeoutSchemaCompatibility.js'
 
 const sqlite3 = sqlite3Module.verbose()
 
@@ -1801,6 +1804,110 @@ test('la migracion 141 rellena el ciclo conversacional e instala el índice de h
     await database.close()
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('la migracion 142 agrega el ultimátum de confirmación a instalaciones SQLite existentes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'ristak-appointment-confirmation-timeout-'))
+  const database = openMemoryDatabase()
+  const migrationFiles = [
+    '142_appointment_confirmation_timeout.sqlite.sql',
+    '142a_appointment_confirmation_timeout.postgres.sql'
+  ]
+
+  try {
+    await database.exec(`
+      CREATE TABLE appointment_reminders (
+        id TEXT PRIMARY KEY,
+        no_confirm_action TEXT
+      );
+      CREATE TABLE appointment_reminder_sends (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        sent_at DATETIME
+      );
+    `)
+
+    const repair = await ensureSqliteAppointmentConfirmationTimeoutSchema({
+      database,
+      dialect: 'sqlite'
+    })
+    assert.deepEqual(repair.addedColumns, [
+      'appointment_reminders.confirmation_timeout_value',
+      'appointment_reminders.confirmation_timeout_unit',
+      'appointment_reminder_sends.confirmation_deadline_at',
+      'appointment_reminder_sends.confirmation_timeout_status',
+      'appointment_reminder_sends.confirmation_timeout_processed_at'
+    ])
+
+    for (const file of migrationFiles) {
+      await copyFile(
+        new URL(`../migrations/versioned/${file}`, import.meta.url),
+        join(directory, file)
+      )
+    }
+
+    const firstRun = await runVersionedMigrations({
+      database,
+      dialect: 'sqlite',
+      directory
+    })
+    assert.deepEqual(firstRun, { applied: 1, skipped: 1 })
+
+    const reminderColumns = await database.all('PRAGMA table_info("appointment_reminders")')
+    assert.deepEqual(
+      reminderColumns
+        .map((row) => row.name)
+        .filter((name) => name.startsWith('confirmation_timeout_')),
+      ['confirmation_timeout_value', 'confirmation_timeout_unit']
+    )
+
+    const sendColumns = await database.all('PRAGMA table_info("appointment_reminder_sends")')
+    assert.deepEqual(
+      sendColumns
+        .map((row) => row.name)
+        .filter((name) => name.startsWith('confirmation_')),
+      [
+        'confirmation_deadline_at',
+        'confirmation_timeout_status',
+        'confirmation_timeout_processed_at'
+      ]
+    )
+
+    const indexColumns = await database.all(
+      `PRAGMA index_info('idx_appointment_reminder_sends_confirmation_deadline')`
+    )
+    assert.deepEqual(
+      indexColumns.map((row) => row.name),
+      ['confirmation_timeout_status', 'confirmation_deadline_at']
+    )
+
+    const secondRun = await runVersionedMigrations({
+      database,
+      dialect: 'sqlite',
+      directory
+    })
+    assert.deepEqual(secondRun, { applied: 0, skipped: 0 })
+  } finally {
+    await database.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('la migracion 142 de PostgreSQL usa timestamps absolutos e idempotencia de rolling deploy', async () => {
+  const migration = await readFile(
+    new URL(
+      '../migrations/versioned/142a_appointment_confirmation_timeout.postgres.sql',
+      import.meta.url
+    ),
+    'utf8'
+  )
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_timeout_value INTEGER/i)
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_timeout_unit TEXT/i)
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_deadline_at TIMESTAMPTZ/i)
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_timeout_processed_at TIMESTAMPTZ/i)
+  assert.match(migration, /CREATE INDEX IF NOT EXISTS idx_appointment_reminder_sends_confirmation_deadline/i)
+  assert.doesNotMatch(migration, /\bDATETIME\b/i)
 })
 
 test('la migracion 141 de PostgreSQL protege inserts de writers anteriores al rolling deploy', async () => {

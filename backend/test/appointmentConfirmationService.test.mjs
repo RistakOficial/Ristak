@@ -6,6 +6,7 @@ import { setAppointmentConfirmationClassifierForTest } from '../src/agents/appoi
 import {
   handleInboundForConfirmation,
   maybeConfirmAppointmentFromReply,
+  processExpiredConfirmationTimeouts,
   processExpiredConfirmationWindows
 } from '../src/services/appointmentConfirmationService.js'
 import { createAppointmentReminder } from '../src/services/appointmentRemindersService.js'
@@ -42,6 +43,16 @@ async function expireWindow(windowId) {
   )
 }
 
+async function expireConfirmationTimeout(sendId) {
+  await db.run(`
+    UPDATE appointment_reminder_sends
+    SET confirmation_deadline_at = ?,
+        confirmation_timeout_status = 'pending',
+        confirmation_timeout_processed_at = NULL
+    WHERE id = ?
+  `, [isoAgo(60 * 1000), sendId])
+}
+
 function storedMessageTexts(raw) {
   return JSON.parse(raw || '[]').map(entry => (
     typeof entry === 'string' ? entry : entry?.text
@@ -52,6 +63,8 @@ async function withConfirmationFixture({
   confirmationSuccessAction = 'chat_card',
   confirmationSuccessActions,
   noConfirmAction = 'no_action',
+  confirmationTimeoutValue = 6,
+  confirmationTimeoutUnit = 'hours',
   aiEnabled = true,
   bypassAutomations = true
 } = {}, callback) {
@@ -84,6 +97,9 @@ async function withConfirmationFixture({
         ? { confirmationSuccessActions }
         : { confirmationSuccessAction }),
       noConfirmAction,
+      ...(noConfirmAction === 'cancel_appointment'
+        ? { confirmationTimeoutValue, confirmationTimeoutUnit }
+        : {}),
       bypassAutomations,
       offsetValue: 1,
       offsetUnit: 'days',
@@ -459,6 +475,141 @@ test('respuesta ambigua nunca cancela aunque la acción configurada sea cancelar
     assert.equal(appointment.appointment_status, 'pending')
     assert.equal(payloads.length, 1)
     assert.match(payloads[0].payload.title, /respuesta ambigua/)
+  })
+})
+
+test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin respuesta', async () => {
+  await withConfirmationFixture({
+    noConfirmAction: 'cancel_appointment',
+    confirmationTimeoutValue: 30,
+    confirmationTimeoutUnit: 'minutes'
+  }, async ({ appointmentId, sendId }) => {
+    const payloads = []
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    await db.run(`
+      UPDATE appointment_reminder_sends
+      SET confirmation_deadline_at = ?,
+          confirmation_timeout_status = 'pending'
+      WHERE id = ?
+    `, [isoFromNow(30 * 60 * 1000), sendId])
+
+    const early = await processExpiredConfirmationTimeouts()
+    assert.equal(early.processed, 0)
+
+    await expireConfirmationTimeout(sendId)
+    const expired = await processExpiredConfirmationTimeouts()
+    assert.equal(expired.processed, 1)
+    assert.equal(expired.cancelled, 1)
+
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.appointment_status, 'cancelled')
+
+    const send = await db.get(`
+      SELECT confirmation_timeout_status, confirmation_timeout_processed_at
+      FROM appointment_reminder_sends
+      WHERE id = ?
+    `, [sendId])
+    assert.equal(send.confirmation_timeout_status, 'cancelled')
+    assert.ok(send.confirmation_timeout_processed_at)
+    assert.equal(payloads.length, 1)
+    assert.match(payloads[0].payload.title, /cancelada por falta de confirmación/i)
+  })
+})
+
+test('una respuesta recibida antes del límite difiere el ultimátum hasta terminar de analizarla', async () => {
+  await withConfirmationFixture({
+    noConfirmAction: 'cancel_appointment',
+    confirmationTimeoutValue: 30,
+    confirmationTimeoutUnit: 'minutes'
+  }, async ({ contactId, appointmentId, sendId }) => {
+    setAppointmentConfirmationClassifierForTest(async () => ({
+      result: 'confirmed',
+      confidence: 'high',
+      reason: 'Confirmó antes del límite'
+    }))
+
+    await handleInboundForConfirmation({ contactId, text: 'Sí, confirmo' })
+    await expireConfirmationTimeout(sendId)
+
+    const whileWaiting = await processExpiredConfirmationTimeouts()
+    assert.equal(whileWaiting.processed, 0)
+
+    const pendingAppointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(pendingAppointment.appointment_status, 'pending')
+
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE reminder_send_id = ?',
+      [sendId]
+    )
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+
+    const afterClassification = await processExpiredConfirmationTimeouts()
+    assert.equal(afterClassification.processed, 1)
+    assert.equal(afterClassification.cancelled, 0)
+
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.appointment_status, 'confirmed')
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'confirmed')
+  })
+})
+
+test('una falla técnica del clasificador conserva la cita al vencer el ultimátum y pide revisión', async () => {
+  await withConfirmationFixture({
+    noConfirmAction: 'cancel_appointment',
+    confirmationTimeoutValue: 30,
+    confirmationTimeoutUnit: 'minutes'
+  }, async ({ contactId, appointmentId, sendId }) => {
+    const payloads = []
+    setAppointmentConfirmationClassifierForTest(async () => null)
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    await handleInboundForConfirmation({ contactId, text: 'Sí, ahí estaré' })
+    const window = await db.get(
+      'SELECT id FROM appointment_confirmation_windows WHERE reminder_send_id = ?',
+      [sendId]
+    )
+    await expireWindow(window.id)
+    await processExpiredConfirmationWindows()
+    await expireConfirmationTimeout(sendId)
+
+    const result = await processExpiredConfirmationTimeouts()
+    assert.equal(result.reviewRequired, 1)
+    assert.equal(result.cancelled, 0)
+
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.appointment_status, 'pending')
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'review_required')
+    assert.ok(payloads.some(({ payload }) => /pendiente de revisión/i.test(payload.title)))
   })
 })
 

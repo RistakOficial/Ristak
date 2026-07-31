@@ -7,8 +7,10 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   appointmentReminderRetryCutoffExpression,
   createAppointmentReminder,
+  deleteAppointmentReminder,
   getAppointmentRemindersOverview,
-  processDueAppointmentReminders
+  processDueAppointmentReminders,
+  updateAppointmentReminder
 } from '../src/services/appointmentRemindersService.js'
 import { createMessageTemplate } from '../src/services/messageTemplatesService.js'
 import {
@@ -412,6 +414,53 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
       assert.equal(captures[0].template.name, template.name)
       assert.equal(captures[0].template.components[0].type, 'body')
       assert.equal(captures[0].template.components[0].parameters[0].text, 'Ana')
+    })
+  })
+})
+
+test('el envío de confirmación guarda un ultimátum inmutable desde el envío real', async () => {
+  await withYCloudMessageCapture(async () => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
+      await db.run(`
+        UPDATE appointment_reminders
+        SET message_type = 'confirmation',
+            ai_enabled = 1,
+            no_confirm_action = 'cancel_appointment',
+            confirmation_timeout_value = 30,
+            confirmation_timeout_unit = 'minutes'
+        WHERE id = ?
+      `, [reminder.id])
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+      assert.equal(result.sent, 1)
+
+      const send = await db.get(`
+        SELECT
+          sent_at,
+          confirmation_deadline_at,
+          confirmation_timeout_status,
+          confirmation_timeout_processed_at
+        FROM appointment_reminder_sends
+        WHERE reminder_id = ? AND appointment_id = ?
+      `, [reminder.id, appointmentId])
+      assert.equal(send.confirmation_timeout_status, 'pending')
+      assert.equal(send.confirmation_timeout_processed_at, null)
+
+      const sentAt = DateTime.fromISO(send.sent_at, { zone: 'utc' })
+      const deadline = DateTime.fromISO(send.confirmation_deadline_at, { zone: 'utc' })
+      assert.ok(sentAt.isValid)
+      assert.ok(deadline.isValid)
+      assert.ok(Math.abs(deadline.diff(sentAt, 'minutes').minutes - 30) < 0.01)
+
+      await deleteAppointmentReminder(reminder.id)
+      const disabledSend = await db.get(`
+        SELECT status, confirmation_timeout_status, confirmation_timeout_processed_at
+        FROM appointment_reminder_sends
+        WHERE reminder_id = ? AND appointment_id = ?
+      `, [reminder.id, appointmentId])
+      assert.equal(disabledSend.status, 'sent')
+      assert.equal(disabledSend.confirmation_timeout_status, 'disabled')
+      assert.ok(disabledSend.confirmation_timeout_processed_at)
     })
   })
 })
@@ -851,6 +900,49 @@ test('overview marca recordatorios bloqueados si no hay remitente de WhatsApp', 
     assert.equal(overviewReminder?.deliveryHealth?.status, 'error')
     assert.match(overviewReminder?.deliveryHealth?.message || '', /WhatsApp API|remitente/)
   })
+})
+
+test('una regla histórica sin plazo todavía puede pausarse sin inventar un ultimátum', async () => {
+  await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder }) => {
+    await db.run(`
+      UPDATE appointment_reminders
+      SET no_confirm_action = 'cancel_appointment',
+          confirmation_timeout_value = NULL,
+          confirmation_timeout_unit = NULL
+      WHERE id = ?
+    `, [reminder.id])
+
+    const updated = await updateAppointmentReminder(reminder.id, { enabled: false })
+    assert.equal(updated.enabled, false)
+    assert.equal(updated.noConfirmAction, 'cancel_appointment')
+    assert.equal(updated.confirmationTimeoutValue, null)
+    assert.equal(updated.confirmationTimeoutUnit, null)
+  })
+})
+
+test('cancelar por silencio exige un plazo válido que termine antes de la cita', async () => {
+  const baseInput = {
+    name: `Confirmación con plazo ${randomUUID()}`,
+    messageType: 'confirmation',
+    aiEnabled: true,
+    timingAnchor: 'before_appointment',
+    offsetValue: 1,
+    offsetUnit: 'days',
+    noConfirmAction: 'cancel_appointment'
+  }
+
+  await assert.rejects(
+    () => createAppointmentReminder(baseInput),
+    /Define cuánto tiempo puede esperar Ristak/
+  )
+  await assert.rejects(
+    () => createAppointmentReminder({
+      ...baseInput,
+      confirmationTimeoutValue: 1,
+      confirmationTimeoutUnit: 'days'
+    }),
+    /debe terminar antes/
+  )
 })
 
 test('avisos de cita después de agendar usan plantilla de cita programada sin activar confirmación', async () => {
