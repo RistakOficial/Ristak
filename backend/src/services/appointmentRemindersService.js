@@ -13,6 +13,7 @@ import {
   sendMetaSocialTextMessage
 } from './metaSocialMessagingService.js'
 import {
+  buildDefaultMessageTemplateSendComponents,
   ensureDefaultAppointmentMessageTemplates,
   getMessageTemplateProviderState
 } from './messageTemplatesService.js'
@@ -1383,6 +1384,36 @@ function buildReminderTemplateComponents(template, context) {
   return components
 }
 
+function buildReminderTemplateVariableOptions(appointment, timezone) {
+  const context = { contact: appointment, appointment, timezone }
+  const appointmentVariableKeys = [
+    'cita.titulo',
+    'cita.fecha',
+    'cita.hora',
+    'cita.fecha_hora'
+  ]
+  const extraVariables = Object.fromEntries(
+    appointmentVariableKeys.map(key => [
+      key,
+      renderMessageText(`{{${key}}}`, context)
+    ])
+  )
+
+  return {
+    contactId: cleanString(appointment.contact_id),
+    phone: cleanString(appointment.phone),
+    contact: {
+      id: cleanString(appointment.contact_id),
+      first_name: cleanString(appointment.first_name),
+      last_name: cleanString(appointment.last_name),
+      full_name: cleanString(appointment.full_name),
+      phone: cleanString(appointment.phone),
+      email: cleanString(appointment.email)
+    },
+    extraVariables
+  }
+}
+
 function parseExpectedTemplateBodyParameterCount(errorMessage = '') {
   const text = cleanString(errorMessage)
   if (!/\b(?:BODY|CUERPO|LOCALIZABLE_PARAMS?)\b/i.test(text)) return null
@@ -1827,7 +1858,19 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     )
   }
   const deliveryContext = { appointment, timezone }
-  const components = buildReminderTemplateComponents(deliveryContract.template, deliveryContext)
+  // Las plantillas modernas pueden exigir parámetros no sólo en header/body,
+  // sino también en botones URL. Reutilizar el constructor compartido evita
+  // mandar a Meta una plantilla incompleta (error 131008). La adaptación legacy
+  // conserva su objeto temporal de dos parámetros y por eso sigue usando el
+  // constructor local.
+  const components = deliveryContract.adapted
+    ? buildReminderTemplateComponents(deliveryContract.template, deliveryContext)
+    : await buildDefaultMessageTemplateSendComponents({
+        templateId: template.id,
+        templateName: providerState.name,
+        language: template.language,
+        variableOptions: buildReminderTemplateVariableOptions(appointment, timezone)
+      })
   const renderedTextOverride = deliveryContract.adapted
     ? renderReminderTemplateText(deliveryContract.template, deliveryContext)
     : ''

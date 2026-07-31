@@ -422,6 +422,91 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
   })
 })
 
+test('recordatorios de citas incluyen parámetros de botones URL dinámicos', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture(
+      { ycloudStatus: 'APPROVED' },
+      async ({ template, contactId }) => {
+        const buttons = [{
+          type: 'website',
+          label: 'Google Meet',
+          value: 'https://example.com/meet?contactId={{1}}'
+        }]
+        const variableBindings = {
+          headerText: {},
+          bodyText: {
+            1: {
+              variableKey: 'contact.first_name',
+              mergeField: '{{contact.first_name}}',
+              label: 'Primer nombre',
+              example: 'Ana'
+            },
+            2: {
+              variableKey: 'cita.hora',
+              mergeField: '{{cita.hora}}',
+              label: 'Hora de cita',
+              example: '12:00'
+            }
+          },
+          'buttons.0.value': {
+            1: {
+              variableKey: 'contact.id',
+              mergeField: '{{contact.id}}',
+              label: 'ID del contacto',
+              example: 'contact_example'
+            }
+          }
+        }
+
+        await db.run(`
+          UPDATE whatsapp_message_templates
+          SET buttons_json = ?,
+              variable_bindings_json = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [
+          JSON.stringify(buttons),
+          JSON.stringify(variableBindings),
+          template.id
+        ])
+        await db.run(`
+          UPDATE whatsapp_api_templates
+          SET components_json = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE name = ? AND language = 'es_MX'
+        `, [
+          JSON.stringify([
+            { type: 'BODY', text: 'Hola {{1}}, tu cita es {{2}}.' },
+            {
+              type: 'BUTTONS',
+              buttons: [{
+                type: 'URL',
+                text: 'Google Meet',
+                url: 'https://example.com/meet?contactId={{1}}'
+              }]
+            }
+          ]),
+          template.name
+        ])
+
+        const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+        assert.deepEqual(result, { sent: 1, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 1)
+        const buttonComponent = captures[0].template.components.find(
+          component => component.type === 'button'
+        )
+        assert.deepEqual(buttonComponent, {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [{ type: 'text', text: contactId }]
+        })
+      }
+    )
+  })
+})
+
 test('confirmaciones adaptan el contrato legacy aprendido del rechazo 132000', async (t) => {
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture(

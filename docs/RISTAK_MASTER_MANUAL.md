@@ -4272,6 +4272,15 @@ y el envio vuelve a validar el contrato para fallar cerrado ante una corrupcion
 posterior. Las plantillas default muestran la fecha y hora canonicas y no dependen
 de texto relativo como "mañana" o "dentro de 1 dia".
 
+El envío de una plantilla de cita reutiliza el constructor canónico de
+componentes de WhatsApp. Esto incluye variables de encabezado y cuerpo, además
+de los parámetros obligatorios de botones URL dinámicos. Un botón que use, por
+ejemplo, `{{contact.id}}` recibe el ID real del contacto ligado a la cita; el
+request no puede omitir el componente `button` y dejar que Meta lo rechace con
+`131008 Required parameter is missing`. Si un binding obligatorio no se puede
+resolver, Ristak falla antes del proveedor con un motivo accionable y conserva
+el envío para el reintento controlado.
+
 Existe una compatibilidad acotada para copias antiguas ya aprobadas de
 `confirmacion_cita_dia_anterior`. Si Meta acepta el request y después devuelve
 un rechazo estructural indicando que recibió tres variables pero la plantilla
