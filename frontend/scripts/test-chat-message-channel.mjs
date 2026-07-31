@@ -8,6 +8,7 @@ const compiled = await transform(source, { loader: 'ts', format: 'esm', target: 
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled.code).toString('base64')}`
 const {
   getChatBubbleColorChannel,
+  getChatMessageSourceLabel,
   resolveChatCommentPlatform,
   resolveChatMessageChannel
 } = await import(moduleUrl)
@@ -22,6 +23,7 @@ assert.equal(resolveChatMessageChannel({ channel: 'facebook_comment' }), 'messen
 assert.equal(resolveChatMessageChannel({ eventType: 'email_message', transport: 'smtp' }), 'email')
 assert.equal(resolveChatMessageChannel({ channel: 'sms_qr', transport: 'qr' }), 'sms')
 assert.equal(resolveChatMessageChannel({ eventType: 'sms_message' }), 'sms')
+assert.equal(resolveChatMessageChannel({ eventType: 'whatsapp_message', transport: 'ghl_webchat' }), 'webchat')
 assert.equal(
   resolveChatMessageChannel({
     eventType: 'whatsapp_message',
@@ -53,6 +55,17 @@ assert.equal(getChatBubbleColorChannel('messenger', 'inbound'), undefined)
 assert.equal(getChatBubbleColorChannel('whatsapp_api', 'outbound'), 'whatsapp_api')
 assert.equal(getChatBubbleColorChannel('whatsapp_qr', 'outbound'), 'whatsapp_qr')
 
+assert.equal(getChatMessageSourceLabel({ channel: 'whatsapp_api', transport: 'api', provider: 'ycloud' }), 'WhatsApp API')
+assert.equal(getChatMessageSourceLabel({ channel: 'whatsapp', transport: 'qr', provider: 'qr' }), 'WhatsApp QR')
+assert.equal(getChatMessageSourceLabel({ channel: 'whatsapp_api', transport: 'ghl_whatsapp', provider: 'highlevel' }), 'GHL · WhatsApp')
+assert.equal(getChatMessageSourceLabel({ channel: 'sms_qr', transport: 'ghl_sms', provider: 'highlevel' }), 'GHL · SMS')
+assert.equal(getChatMessageSourceLabel({ channel: 'instagram', transport: 'ghl_instagram', provider: 'highlevel' }), 'GHL · Instagram')
+assert.equal(getChatMessageSourceLabel({ channel: 'messenger', transport: 'ghl_messenger', provider: 'highlevel' }), 'GHL · Messenger')
+assert.equal(getChatMessageSourceLabel({ channel: 'email', transport: 'ghl_email', provider: 'highlevel', hasEmail: true }), 'GHL · Email')
+assert.equal(getChatMessageSourceLabel({ eventType: 'whatsapp_message', transport: 'ghl_webchat', provider: 'highlevel' }), 'GHL · Webchat')
+assert.equal(getChatMessageSourceLabel({ channel: 'messenger', messageType: 'comment', commentPlatform: 'facebook' }), 'Facebook')
+assert.equal(getChatMessageSourceLabel({}), 'Sin canal')
+
 const globalStyles = await readFile(new URL('../src/styles/index.css', import.meta.url), 'utf8')
 assert.match(globalStyles, /--chat-bubble-inbound:\s*#ffffff;/)
 assert.match(globalStyles, /--chat-bubble-outbound-whatsapp-api:\s*#d9fdd3;/)
@@ -66,4 +79,10 @@ assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-outbound-messenger
 assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-text:\s*#f5f5f7;/s)
 assert.match(globalStyles, /body\.dark\s*\{[^}]*--chat-bubble-meta:\s*#b7b7bd;/s)
 
-console.log('chat message channel colors OK')
+const desktopChatSource = await readFile(new URL('../src/pages/DesktopChat/DesktopChat.tsx', import.meta.url), 'utf8')
+const phoneChatSource = await readFile(new URL('../src/pages/PhoneChat/PhoneChat.tsx', import.meta.url), 'utf8')
+assert.match(desktopChatSource, /getChatMessageSourceLabel\(\{[\s\S]*?transport:\s*message\.transport,[\s\S]*?provider:\s*message\.provider,/)
+assert.match(desktopChatSource, /if \(message\.direction !== 'outbound'\) return \{ label, reason: '' \}/)
+assert.match(phoneChatSource, /getChatMessageSourceLabel\(\{[\s\S]*?transport:\s*message\.transport,[\s\S]*?provider:\s*message\.provider,/)
+
+console.log('chat message channel colors and source labels OK')

@@ -2344,8 +2344,12 @@ Cuando el agente conversacional envia una respuesta, los servicios de salida
 deben persistir la marca `sentByAgent`/`agentId` en el payload local y el journey
 debe exponerla como `sent_by_agent`/`agent_id`. `/chat`, `/movil`, `mobile/` e
 iOS usan esa marca para pintar un icono de robot fuera del globo, en el lateral
-del mensaje segun su direccion. La meta interna del globo conserva `API`, `QR`,
-hora y vistos; el robot no debe volver a mezclarse dentro de esa fila.
+del mensaje segun su direccion. La metadata del mensaje conserva siempre un
+origen legible junto a la hora y los vistos, tanto en entrantes como salientes:
+`WhatsApp API`, `WhatsApp QR`, `GHL · WhatsApp`, `GHL · SMS`, los canales
+sociales directos o por GHL, email y webchat. Si la fila no trae señales
+suficientes muestra `Sin canal` en lugar de ocultar el problema. El robot no debe
+volver a mezclarse dentro de esa fila.
 
 La bandeja desktop de Chat (`/chat` y subrutas) es una superficie de trabajo
 propia y no monta ningún asistente personal global. La pestaña principal

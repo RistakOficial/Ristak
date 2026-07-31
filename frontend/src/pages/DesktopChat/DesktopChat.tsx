@@ -96,6 +96,7 @@ import {
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
 import {
+  getChatMessageSourceLabel,
   getChatBubbleColorChannel,
   resolveChatCommentPlatform,
   resolveChatMessageChannel
@@ -3234,25 +3235,25 @@ function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppA
   )) || null
 }
 
-function getMessageTransportLabel(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
-  if (String(message.transport || '').trim().toLowerCase() === 'email' || message.subject) return 'Email'
-  const phone = getMessageBusinessPhone(message, status)
-  const dualConnection = Boolean(phone && isPhoneApiEnabled(phone, status) && isPhoneQrConnected(phone))
-  if (!dualConnection) return ''
-
-  const transport = String(message.transport || '').trim().toLowerCase()
-  if (transport === 'qr') return 'QR'
-  if (transport === 'api' || transport === 'whatsapp_api') return 'API'
-  return ''
+function getMessageSourceLabel(message: DesktopChatMessage) {
+  if (message.direction === 'system') return ''
+  return getChatMessageSourceLabel({
+    channel: message.channel,
+    transport: message.transport,
+    provider: message.provider,
+    commentPlatform: message.commentPlatform,
+    messageType: message.messageType,
+    hasEmail: Boolean(message.email || message.subject)
+  })
 }
 
 function isQrTransport(value?: string | null) {
   return String(value || '').trim().toLowerCase() === 'qr'
 }
 
-function getMessageRoutingDetails(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
-  if (message.direction !== 'outbound') return { label: '', reason: '' }
-  const label = getMessageTransportLabel(message, status)
+function getMessageRoutingDetails(message: DesktopChatMessage) {
+  const label = getMessageSourceLabel(message)
+  if (message.direction !== 'outbound') return { label, reason: '' }
   if (isQrTransport(message.transport)) return { label, reason: '' }
 
   const reason = String(message.routingReason || '').trim()
@@ -9692,7 +9693,7 @@ export const DesktopChat: React.FC = () => {
                           )
                         }
                         const message = item.message
-                        const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
+                        const routingDetails = getMessageRoutingDetails(message)
                         const messageChannel = resolveChatMessageChannel({
                           channel: message.channel,
                           transport: message.transport,

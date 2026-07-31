@@ -102,7 +102,7 @@ import {
   reconcileServerMessageIntoOptimistic
 } from '@/utils/chatMessageReconciliation'
 import { isChatMessageSendInFlight } from '@/utils/chatMessageDeliveryState'
-import { getChatBubbleColorChannel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
+import { getChatBubbleColorChannel, getChatMessageSourceLabel, resolveChatMessageChannel } from '@/utils/chatMessageChannel'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -4006,15 +4006,15 @@ function getAvatarChannelBadgeClass(kind: ContactChannelBadgeKind) {
 }
 
 function getMessageTransportBadge(message: ChatMessage) {
-  const raw = String(message.transport || '').trim().toLowerCase()
-  if (message.emailDetails || raw === 'email') return 'Mail'
-  if (raw === 'ghl_email') return 'GHL'
-  const normalized = normalizeGhlChatChannelValue(raw)
-  if (normalized === 'instagram') return 'IG'
-  if (normalized === 'messenger') return 'FB'
-  if (normalized === 'sms_qr') return 'QR'
-  if (normalized === 'whatsapp_api') return 'API'
-  return ''
+  if (message.direction === 'system') return ''
+  return getChatMessageSourceLabel({
+    channel: message.channel,
+    transport: message.transport,
+    provider: message.provider,
+    commentPlatform: message.commentPlatform,
+    messageType: message.messageType,
+    hasEmail: Boolean(message.emailDetails)
+  })
 }
 
 function isQrTransport(value?: string | null) {

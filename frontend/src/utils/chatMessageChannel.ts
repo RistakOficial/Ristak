@@ -1,4 +1,4 @@
-export type ChatMessageChannelKind = 'whatsapp_api' | 'whatsapp_qr' | 'instagram' | 'messenger' | 'sms' | 'email' | 'unknown'
+export type ChatMessageChannelKind = 'whatsapp_api' | 'whatsapp_qr' | 'instagram' | 'messenger' | 'sms' | 'email' | 'webchat' | 'unknown'
 
 export interface ChatMessageChannelSignals {
   eventType?: unknown
@@ -25,6 +25,20 @@ function normalizeSignal(value: unknown) {
 
 function containsAny(value: string, needles: string[]) {
   return needles.some((needle) => value.includes(needle))
+}
+
+function isHighLevelMessage(signals: ChatMessageChannelSignals) {
+  const values = [signals.channel, signals.transport, signals.provider, signals.platform]
+    .map(normalizeSignal)
+    .filter(Boolean)
+
+  return values.some((value) => (
+    value === 'ghl' ||
+    value.includes('highlevel') ||
+    value.includes('go_high_level') ||
+    value.includes('gohighlevel') ||
+    value.startsWith('ghl_')
+  ))
 }
 
 /**
@@ -70,6 +84,10 @@ export function resolveChatMessageChannel(signals: ChatMessageChannelSignals): C
     return 'messenger'
   }
 
+  if (containsAny(explicitProbe, ['webchat', 'web_chat', 'live_chat', 'website_chat', 'site_chat'])) {
+    return 'webchat'
+  }
+
   if (eventType === 'sms_message' || messageType === 'sms' || containsAny(explicitProbe, ['sms', 'text_message', 'lc_phone'])) {
     return 'sms'
   }
@@ -89,6 +107,36 @@ export function resolveChatMessageChannel(signals: ChatMessageChannelSignals): C
   }
 
   return 'unknown'
+}
+
+/**
+ * Nombre corto y legible del origen real que se muestra junto a la hora de cada
+ * mensaje. El canal visible no basta para HighLevel: WhatsApp y SMS comparten
+ * tablas locales, pero el usuario necesita distinguirlos dentro del historial.
+ */
+export function getChatMessageSourceLabel(signals: ChatMessageChannelSignals) {
+  const channel = resolveChatMessageChannel(signals)
+  const highLevel = isHighLevelMessage(signals)
+  const commentPlatform = resolveChatCommentPlatform(signals.messageType, signals.commentPlatform || signals.platform)
+
+  if (highLevel) {
+    if (channel === 'whatsapp_api') return 'GHL · WhatsApp'
+    if (channel === 'whatsapp_qr') return 'GHL · WhatsApp QR'
+    if (channel === 'instagram') return 'GHL · Instagram'
+    if (channel === 'messenger') return commentPlatform === 'messenger' ? 'GHL · Facebook' : 'GHL · Messenger'
+    if (channel === 'sms') return 'GHL · SMS'
+    if (channel === 'email') return 'GHL · Email'
+    if (channel === 'webchat') return 'GHL · Webchat'
+  }
+
+  if (channel === 'whatsapp_api') return 'WhatsApp API'
+  if (channel === 'whatsapp_qr') return 'WhatsApp QR'
+  if (channel === 'instagram') return 'Instagram'
+  if (channel === 'messenger') return commentPlatform === 'messenger' ? 'Facebook' : 'Messenger'
+  if (channel === 'sms') return 'SMS'
+  if (channel === 'email') return 'Email'
+  if (channel === 'webchat') return 'Webchat'
+  return 'Sin canal'
 }
 
 export function getChatBubbleColorChannel(channel: ChatMessageChannelKind, direction: unknown) {
