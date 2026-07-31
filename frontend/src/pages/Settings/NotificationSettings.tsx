@@ -63,8 +63,8 @@ const NOTIFICATION_EVENTS: Array<{
   },
   {
     key: 'appointment_confirmed',
-    label: 'Cita confirmada',
-    description: 'Contactos que confirman asistencia.',
+    label: 'Confirmaciones de cita',
+    description: 'Confirmaciones, cambios y plazos vencidos sin respuesta.',
     icon: CalendarCheck2
   },
   {
@@ -223,7 +223,10 @@ export const NotificationSettings: React.FC = () => {
   const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const notificationEvents = useMemo(() => NOTIFICATION_EVENTS.map((event) => (
     event.key === 'appointment_confirmed'
-      ? { ...event, description: `${customersLowerLabel} que confirman asistencia.` }
+      ? {
+          ...event,
+          description: `Confirmaciones, cambios y plazos sin respuesta de ${customersLowerLabel}.`
+        }
       : event
   )), [customersLowerLabel])
   const [storedPreferences, setStoredPreferences, syncingPreferences] = useAppConfig<NotificationPreferencesConfig>(

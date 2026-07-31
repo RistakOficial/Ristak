@@ -176,9 +176,12 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   clasifican juntos; si entra otro mientras el modelo está clasificando, la
   acción se difiere y se vuelve a evaluar el lote completo después de otros dos
   minutos de silencio.
-- **Si no confirma** permite conservar, avisar o cancelar. Al elegir **Cancelar
-  la cita**, el editor exige un plazo en minutos, horas o días; no hay default
-  retroactivo para configuraciones antiguas.
+- **Al vencer el plazo sin confirmación** sólo decide el efecto sobre la cita:
+  conservarla o cancelarla. El push ya no es una acción de este dropdown.
+- Toda confirmación con IA configura su ventana de espera, sin importar cuál de
+  esas dos acciones se elija. Una confirmación nueva parte de un plazo seguro
+  calculado según su anticipación —normalmente 6 horas disponibles— y del horario
+  de respuesta `09:00–21:00`.
 - **Cómo contar este plazo** permite usar tiempo corrido o contar sólo minutos y
   horas dentro de un horario diario de respuesta independiente del horario de
   envío. El segundo modo pausa el contador fuera de la ventana, usa la zona del
@@ -188,17 +191,18 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - El plazo empieza cuando el transporte acepta el envío y cada mensaje congela
   su propio deadline UTC. El modo corrido de `before_appointment` debe terminar
   antes del inicio; en el horario de respuesta y en `after_booking`, si no cabe
-  todo el plazo antes de la cita, no se ejecuta la cancelación por timeout. Si
-  vence sin respuesta explícita, una cita abierta puede cancelarse aunque el
-  calendario ya la hubiera marcado `confirmed`.
+  todo el plazo antes de la cita, no se ejecuta la acción por timeout. Si vence
+  sin respuesta explícita, se conserva o cancela según el dropdown incluso si
+  el calendario ya la hubiera marcado `confirmed`.
 - Las reglas históricas permanecen en tiempo corrido. Cambiar después la zona
   horaria, la ventana o el recordatorio no mueve deadlines que ya fueron
-  congelados.
+  congelados. Una regla histórica de cancelación sin plazo sigue sin adquirir
+  una cancelación destructiva por sorpresa; al abrirla, el editor propone el
+  default y sólo se activa al guardarla.
 - Una respuesta recibida antes del límite difiere el timeout hasta terminar de
-  clasificarla. Una respuesta ambigua no cancela inmediatamente, pero el
-  ultimátum sí puede hacerlo al vencer si nunca hubo confirmación clara.
-  `human_needed`, una ventana en error o una falla técnica conservan la cita,
-  dejan el envío en `review_required` y avisan para revisión humana.
+  clasificarla. Una respuesta ambigua, `human_needed`, una ventana en error o
+  una falla técnica conservan la cita, dejan el envío en `review_required` al
+  vencer y avisan para revisión humana.
 - Eliminar el mensaje automático desactiva sus ultimátums pendientes. El envío
   permanece como auditoría, pero ya no puede cancelar una cita.
 - **Reservar estas respuestas para la confirmación** impide que esos mensajes
@@ -207,20 +211,26 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   apagado.
 - Cuando la IA confirma, deja el estado real de la cita en `confirmed` y resuelve
   explícitamente el envío, incluso si el calendario ya tenía ese estado. El
-  editor usa `CheckboxMultiSelect` para combinar tarjeta en el chat, push y
+  editor usa `CheckboxMultiSelect` sólo para combinar tarjeta en el chat y
   etiqueta temporal `Asistirá a cita`; **Marcar la cita como confirmada**
   permanece seleccionado porque es el resultado obligatorio de este modo.
-- Al activar **Usar como confirmación de cita**, las cuatro acciones visibles
-  nacen seleccionadas. Las filas históricas que guardaban una sola acción
-  conservan sólo ese aviso adicional al normalizarse, para no activar pushes o
-  etiquetas silenciosamente.
+- El push de confirmaciones se procesa por defecto al confirmar, detectar una
+  respuesta no afirmativa, vencer el plazo o requerir revisión. Su única
+  compuerta de producto está en **Configuración → Notificaciones →
+  Confirmaciones de cita**, incluida la selección de destinatarios. Apagarlo
+  allí evita la entrega; quitar una acción visual de un recordatorio no lo hace.
+- Las filas históricas pueden conservar `notify_push` dentro del JSON legado,
+  pero ese valor ya no gobierna la entrega ni aparece en el editor. En
+  `no_confirm_action`, el valor legado `notify_push` equivale a conservar la
+  cita.
 - `confirmation_success_action` conserva su nombre histórico, pero las
   configuraciones nuevas guardan un arreglo JSON ordenado. El backend sigue
   aceptando valores escalares anteriores y la consulta del journey reconoce
   ambos formatos.
-- Con IA apagada, una respuesta afirmativa simple resuelve la confirmación y deja
-  la cita en `confirmed` sin abrir una ventana, aunque el calendario ya la
-  mostrara confirmada; las acciones para interpretar negativas quedan ocultas.
+- Con IA apagada, una respuesta afirmativa simple resuelve la confirmación, deja
+  la cita en `confirmed` y procesa el mismo push global sin abrir una ventana,
+  aunque el calendario ya la mostrara confirmada; las acciones para interpretar
+  negativas quedan ocultas.
 - Si el switch está apagado, el mensaje se guarda como `messageType: 'reminder'`
   aunque sea un aviso posterior al agendado.
 - El momento manda sobre el modo de confirmación al elegir plantilla: todo aviso

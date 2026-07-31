@@ -84,7 +84,8 @@ const CONTENT_MODES = new Set(['template', 'direct'])
 const AUTOMATIC_REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel'])
 const REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel', 'whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
 const REAL_REMINDER_CHANNELS = ['whatsapp', 'whatsapp_qr', 'instagram', 'messenger', 'email']
-const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
+const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment'])
+const LEGACY_NOTIFY_NO_CONFIRM_ACTION = 'notify_push'
 const CONFIRMATION_TIMEOUT_UNITS = new Set(['minutes', 'hours', 'days'])
 const CONFIRMATION_RESPONSE_WINDOW_UNITS = new Set(['minutes', 'hours'])
 const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window'])
@@ -184,8 +185,37 @@ function normalizeResponseWindowTime(value, fallback) {
   return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`
 }
 
+function normalizeNoConfirmAction(value) {
+  const action = cleanString(value)
+  if (action === LEGACY_NOTIFY_NO_CONFIRM_ACTION) return 'no_action'
+  return NO_CONFIRM_ACTIONS.has(action) ? action : 'no_action'
+}
+
+function emptyConfirmationTimeout(
+  rawMode,
+  rawResponseStart,
+  rawResponseEnd
+) {
+  const normalizedMode = cleanString(rawMode)
+  const mode = CONFIRMATION_TIMEOUT_MODES.has(normalizedMode)
+    ? normalizedMode
+    : 'elapsed'
+  return {
+    confirmationTimeoutValue: null,
+    confirmationTimeoutUnit: null,
+    confirmationTimeoutMode: mode,
+    confirmationResponseStart: normalizeResponseWindowTime(
+      rawResponseStart,
+      DEFAULT_CONFIRMATION_RESPONSE_START
+    ),
+    confirmationResponseEnd: normalizeResponseWindowTime(
+      rawResponseEnd,
+      DEFAULT_CONFIRMATION_RESPONSE_END
+    )
+  }
+}
+
 function normalizeConfirmationTimeout(
-  action,
   rawValue,
   rawUnit,
   rawMode,
@@ -196,7 +226,7 @@ function normalizeConfirmationTimeout(
   const normalizedMode = cleanString(rawMode)
   const mode = CONFIRMATION_TIMEOUT_MODES.has(normalizedMode)
     ? normalizedMode
-    : 'elapsed'
+    : 'response_window'
   if (strict && rawMode !== undefined && rawMode !== null && !CONFIRMATION_TIMEOUT_MODES.has(normalizedMode)) {
     throw createServiceError('Elige una forma válida de contar el plazo de confirmación.')
   }
@@ -221,16 +251,6 @@ function normalizeConfirmationTimeout(
     DEFAULT_CONFIRMATION_RESPONSE_END
   )
 
-  if (action !== 'cancel_appointment') {
-    return {
-      confirmationTimeoutValue: null,
-      confirmationTimeoutUnit: null,
-      confirmationTimeoutMode: mode,
-      confirmationResponseStart: responseStart,
-      confirmationResponseEnd: responseEnd
-    }
-  }
-
   const parsedValue = Number(rawValue)
   const unit = cleanString(rawUnit)
   const unitAllowed = CONFIRMATION_TIMEOUT_UNITS.has(unit) &&
@@ -245,8 +265,8 @@ function normalizeConfirmationTimeout(
     if (strict) {
       throw createServiceError(
         mode === 'response_window'
-          ? 'Define cuántos minutos u horas disponibles puede esperar Ristak la confirmación antes de cancelar la cita (máximo 30 días de tiempo disponible).'
-          : 'Define cuánto tiempo puede esperar Ristak la confirmación antes de cancelar la cita (máximo 30 días).'
+          ? 'Define cuántos minutos u horas disponibles puede esperar Ristak la confirmación antes de aplicar la acción configurada (máximo 30 días de tiempo disponible).'
+          : 'Define cuánto tiempo puede esperar Ristak la confirmación antes de aplicar la acción configurada (máximo 30 días).'
       )
     }
     return {
@@ -300,6 +320,48 @@ function normalizeOffsetForAnchor(timingAnchor, rawUnit, rawValue, { clampMax = 
     ? Math.max(1, Math.min(60, Math.round(Number(rawValue) || 1)))
     : Math.max(1, Math.round(Number(rawValue) || 1))
   return { timingAnchor: 'before_appointment', offsetUnit, offsetValue }
+}
+
+function getDefaultConfirmationTimeout(timingAnchor, offsetValue, offsetUnit) {
+  const protectedWindowDefaults = {
+    confirmationTimeoutMode: 'response_window',
+    confirmationResponseStart: DEFAULT_CONFIRMATION_RESPONSE_START,
+    confirmationResponseEnd: DEFAULT_CONFIRMATION_RESPONSE_END
+  }
+  if (timingAnchor === 'after_booking') {
+    return {
+      ...protectedWindowDefaults,
+      confirmationTimeoutValue: 6,
+      confirmationTimeoutUnit: 'hours'
+    }
+  }
+
+  const leadMs = offsetValue * (OFFSET_UNIT_MS[offsetUnit] || OFFSET_UNIT_MS.days)
+  if (leadMs > 12 * OFFSET_UNIT_MS.hours) {
+    return {
+      ...protectedWindowDefaults,
+      confirmationTimeoutValue: 6,
+      confirmationTimeoutUnit: 'hours'
+    }
+  }
+  if (leadMs > 2 * OFFSET_UNIT_MS.hours) {
+    return {
+      ...protectedWindowDefaults,
+      confirmationTimeoutValue: 1,
+      confirmationTimeoutUnit: 'hours'
+    }
+  }
+
+  const safeMinutes = leadMs > 30 * OFFSET_UNIT_MS.minutes
+    ? 15
+    : leadMs > 5 * OFFSET_UNIT_MS.minutes
+      ? 5
+      : 1
+  return {
+    ...protectedWindowDefaults,
+    confirmationTimeoutValue: safeMinutes,
+    confirmationTimeoutUnit: 'minutes'
+  }
 }
 
 export function buildAppointmentReminderScheduleKey(reminder = {}) {
@@ -392,23 +454,44 @@ function normalizeReminderRow(row = {}) {
     row.confirmation_success_action,
     LEGACY_CONFIRMATION_SUCCESS_ACTIONS
   )
-  const noConfirmAction = NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action))
-    ? cleanString(row.no_confirm_action)
-    : 'no_action'
-  const confirmationTimeout = normalizeConfirmationTimeout(
-    noConfirmAction,
-    row.confirmation_timeout_value,
-    row.confirmation_timeout_unit,
-    row.confirmation_timeout_mode,
-    row.confirmation_response_start,
-    row.confirmation_response_end
+  const messageType = MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder'
+  const aiEnabled = Number(row.ai_enabled || 0) === 1
+  const rawNoConfirmAction = cleanString(row.no_confirm_action)
+  const noConfirmAction = normalizeNoConfirmAction(rawNoConfirmAction)
+  const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
+    timingAnchor,
+    offsetValue,
+    offsetUnit
   )
+  const preserveLegacyCancellationWithoutTimeout = (
+    rawNoConfirmAction === 'cancel_appointment' &&
+    (
+      row.confirmation_timeout_value === null ||
+      row.confirmation_timeout_value === undefined ||
+      !cleanString(row.confirmation_timeout_unit)
+    )
+  )
+  const confirmationTimeout = messageType === 'confirmation' &&
+    aiEnabled &&
+    !preserveLegacyCancellationWithoutTimeout
+    ? normalizeConfirmationTimeout(
+        row.confirmation_timeout_value ?? defaultConfirmationTimeout.confirmationTimeoutValue,
+        row.confirmation_timeout_unit ?? defaultConfirmationTimeout.confirmationTimeoutUnit,
+        row.confirmation_timeout_mode ?? defaultConfirmationTimeout.confirmationTimeoutMode,
+        row.confirmation_response_start ?? defaultConfirmationTimeout.confirmationResponseStart,
+        row.confirmation_response_end ?? defaultConfirmationTimeout.confirmationResponseEnd
+      )
+    : emptyConfirmationTimeout(
+        row.confirmation_timeout_mode,
+        row.confirmation_response_start,
+        row.confirmation_response_end
+      )
   return {
     id: cleanString(row.id),
     name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: Number(row.enabled || 0) === 1,
-    messageType: MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder',
-    aiEnabled: Number(row.ai_enabled || 0) === 1,
+    messageType,
+    aiEnabled,
     channel,
     senderMode: SENDER_MODES.has(cleanString(row.sender_mode)) ? cleanString(row.sender_mode) : 'contact',
     senderPhoneNumberId: cleanString(row.sender_phone_number_id) || null,
@@ -937,9 +1020,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
     confirmationSuccessActionsSource,
     DEFAULT_CONFIRMATION_SUCCESS_ACTIONS
   )
-  const noConfirmAction = NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction))
-    ? cleanString(merged.noConfirmAction)
-    : 'no_action'
+  const noConfirmAction = normalizeNoConfirmAction(merged.noConfirmAction)
   const timeoutConfigurationWasSubmitted = [
     'noConfirmAction',
     'confirmationTimeoutValue',
@@ -948,18 +1029,34 @@ function sanitizeReminderInput(input = {}, base = {}) {
     'confirmationResponseStart',
     'confirmationResponseEnd'
   ].some((field) => Object.hasOwn(input, field))
-  const confirmationTimeout = normalizeConfirmationTimeout(
-    noConfirmAction,
-    merged.confirmationTimeoutValue,
-    merged.confirmationTimeoutUnit,
-    merged.confirmationTimeoutMode,
-    merged.confirmationResponseStart,
-    merged.confirmationResponseEnd,
-    // Las filas históricas con cancelación no recibieron un default retroactivo.
-    // Siguen pudiéndose pausar/activar sin inventar un plazo; una creación nueva
-    // o una edición explícita de esta política sí debe quedar completa.
-    { strict: Object.keys(base).length === 0 || timeoutConfigurationWasSubmitted }
+  const confirmationEnabled = messageType === 'confirmation' && merged.aiEnabled !== false
+  const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
+    timingAnchor,
+    offsetValue,
+    offsetUnit
   )
+  const preserveLegacyCancellationWithoutTimeout = (
+    Object.keys(base).length > 0 &&
+    base.messageType === 'confirmation' &&
+    base.aiEnabled === true &&
+    base.noConfirmAction === 'cancel_appointment' &&
+    base.confirmationTimeoutValue === null &&
+    !timeoutConfigurationWasSubmitted
+  )
+  const confirmationTimeout = confirmationEnabled && !preserveLegacyCancellationWithoutTimeout
+    ? normalizeConfirmationTimeout(
+        merged.confirmationTimeoutValue ?? defaultConfirmationTimeout.confirmationTimeoutValue,
+        merged.confirmationTimeoutUnit ?? defaultConfirmationTimeout.confirmationTimeoutUnit,
+        merged.confirmationTimeoutMode ?? defaultConfirmationTimeout.confirmationTimeoutMode,
+        merged.confirmationResponseStart ?? defaultConfirmationTimeout.confirmationResponseStart,
+        merged.confirmationResponseEnd ?? defaultConfirmationTimeout.confirmationResponseEnd,
+        { strict: Object.keys(base).length === 0 || timeoutConfigurationWasSubmitted }
+      )
+    : emptyConfirmationTimeout(
+        merged.confirmationTimeoutMode,
+        merged.confirmationResponseStart,
+        merged.confirmationResponseEnd
+      )
   if (
     timingAnchor === 'before_appointment' &&
     confirmationTimeout.confirmationTimeoutValue !== null &&
@@ -1866,7 +1963,7 @@ function buildConfirmationTimeoutDeliveryState({
   if (
     status !== 'sent' ||
     reminder.messageType !== 'confirmation' ||
-    reminder.noConfirmAction !== 'cancel_appointment'
+    reminder.aiEnabled === false
   ) {
     return {
       confirmationDeadlineAt: null,
@@ -1876,7 +1973,6 @@ function buildConfirmationTimeoutDeliveryState({
   }
 
   const timeout = normalizeConfirmationTimeout(
-    reminder.noConfirmAction,
     reminder.confirmationTimeoutValue,
     reminder.confirmationTimeoutUnit,
     reminder.confirmationTimeoutMode,

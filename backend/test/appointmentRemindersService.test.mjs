@@ -604,16 +604,17 @@ test('rechazos asíncronos definitivos reabren el recordatorio y respetan su enf
   })
 })
 
-test('el envío de confirmación guarda un ultimátum inmutable desde el envío real', async () => {
+test('el envío de confirmación guarda un plazo inmutable aunque la acción sea conservar', async () => {
   await withYCloudMessageCapture(async () => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
       await db.run(`
         UPDATE appointment_reminders
         SET message_type = 'confirmation',
             ai_enabled = 1,
-            no_confirm_action = 'cancel_appointment',
+            no_confirm_action = 'no_action',
             confirmation_timeout_value = 30,
-            confirmation_timeout_unit = 'minutes'
+            confirmation_timeout_unit = 'minutes',
+            confirmation_timeout_mode = 'elapsed'
         WHERE id = ?
       `, [reminder.id])
 
@@ -1181,7 +1182,7 @@ test('una regla histórica sin plazo todavía puede pausarse sin inventar un ult
   })
 })
 
-test('cancelar por silencio exige un plazo válido que termine antes de la cita', async () => {
+test('toda confirmación recibe un plazo protegido por defecto y valida límites explícitos', async () => {
   const baseInput = {
     name: `Confirmación con plazo ${randomUUID()}`,
     messageType: 'confirmation',
@@ -1189,21 +1190,28 @@ test('cancelar por silencio exige un plazo válido que termine antes de la cita'
     timingAnchor: 'before_appointment',
     offsetValue: 1,
     offsetUnit: 'days',
-    noConfirmAction: 'cancel_appointment'
+    noConfirmAction: 'no_action'
   }
 
-  await assert.rejects(
-    () => createAppointmentReminder(baseInput),
-    /Define cuánto tiempo puede esperar Ristak/
-  )
-  await assert.rejects(
-    () => createAppointmentReminder({
-      ...baseInput,
-      confirmationTimeoutValue: 1,
-      confirmationTimeoutUnit: 'days'
-    }),
-    /debe terminar antes/
-  )
+  let reminderId = ''
+  try {
+    const reminder = await createAppointmentReminder(baseInput)
+    reminderId = reminder.id
+    assert.equal(reminder.confirmationTimeoutValue, 6)
+    assert.equal(reminder.confirmationTimeoutUnit, 'hours')
+    assert.equal(reminder.confirmationTimeoutMode, 'response_window')
+    assert.equal(reminder.confirmationResponseStart, '09:00')
+    assert.equal(reminder.confirmationResponseEnd, '21:00')
+  } finally {
+    if (reminderId) await deleteAppointmentReminder(reminderId)
+  }
+
+  await assert.rejects(() => createAppointmentReminder({
+    ...baseInput,
+    confirmationTimeoutValue: 1,
+    confirmationTimeoutUnit: 'days',
+    confirmationTimeoutMode: 'elapsed'
+  }), /debe terminar antes/)
 })
 
 test('el horario de respuesta se guarda separado del horario de envío y conserva compatibilidad al editar', async () => {

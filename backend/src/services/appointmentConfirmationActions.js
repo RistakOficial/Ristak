@@ -6,7 +6,9 @@ export const CONFIRMATION_SUCCESS_ACTIONS = Object.freeze([
 ])
 
 export const DEFAULT_CONFIRMATION_SUCCESS_ACTIONS = Object.freeze([
-  ...CONFIRMATION_SUCCESS_ACTIONS
+  'chat_card',
+  'chat_badge',
+  'mark_confirmed'
 ])
 
 export const LEGACY_CONFIRMATION_SUCCESS_ACTIONS = Object.freeze([

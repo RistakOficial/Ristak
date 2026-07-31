@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { db } from '../src/config/database.js'
+import { db, setAppConfig } from '../src/config/database.js'
 import { setAppointmentConfirmationClassifierForTest } from '../src/agents/appointmentConfirmationAgent.js'
 import {
   handleInboundForConfirmation,
@@ -51,6 +51,25 @@ async function expireConfirmationTimeout(sendId) {
         confirmation_timeout_processed_at = NULL
     WHERE id = ?
   `, [isoAgo(60 * 1000), sendId])
+}
+
+async function withAppConfigValue(key, value, callback) {
+  const previous = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [key]
+  )
+  try {
+    await setAppConfig(key, value)
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [key])
+    if (previous) {
+      await db.run(`
+        INSERT INTO app_config (config_key, config_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+      `, [key, previous.config_value])
+    }
+  }
 }
 
 function storedMessageTexts(raw) {
@@ -343,7 +362,7 @@ test('confirmacion IA difiere la acción si entra otro mensaje mientras clasific
   })
 })
 
-test('accion chat_card crea evento de confirmacion en el journey del contacto', async () => {
+test('accion chat_card crea evento y el push global se procesa por defecto', async () => {
   await withConfirmationFixture({ confirmationSuccessAction: 'chat_card' }, async ({ contactId, appointmentId }) => {
     const payloads = []
     setAppointmentConfirmationClassifierForTest(async () => ({
@@ -376,7 +395,41 @@ test('accion chat_card crea evento de confirmacion en el journey del contacto', 
     assert.ok(card)
     assert.equal(card.data.status, 'confirmed')
     assert.equal(card.data.result_detail, 'Confirmo por WhatsApp')
-    assert.equal(payloads.length, 0, 'chat_card no debe mandar push adicional')
+    assert.equal(payloads.length, 1)
+    assert.equal(payloads[0].payload.category, 'appointment_confirmed')
+  })
+})
+
+test('la preferencia global puede apagar el push automático de confirmaciones', async () => {
+  await withAppConfigValue('notification_preferences_matrix', {
+    version: 1,
+    rows: {
+      all: { appointment_confirmed: 'off' },
+      admins: { appointment_confirmed: 'off' }
+    }
+  }, async () => {
+    await withConfirmationFixture({ confirmationSuccessAction: 'chat_card' }, async ({ contactId, appointmentId }) => {
+      const payloads = []
+      setAppointmentConfirmationClassifierForTest(async () => ({
+        result: 'confirmed',
+        confidence: 'high',
+        reason: 'Confirmó asistencia'
+      }))
+      setAppNotificationPayloadSenderForTest(async (payload, options) => {
+        payloads.push({ payload, options })
+        return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+      })
+
+      await handleInboundForConfirmation({ contactId, text: 'Sí confirmo' })
+      const window = await db.get(
+        'SELECT id FROM appointment_confirmation_windows WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      await expireWindow(window.id)
+      await processExpiredConfirmationWindows()
+
+      assert.equal(payloads.length, 0)
+    })
   })
 })
 
@@ -597,6 +650,39 @@ test('el ultimátum empieza al enviarse y cancela sólo después de vencer sin r
   })
 })
 
+test('el plazo también aplica al conservar la cita y avisa sin cancelarla', async () => {
+  await withConfirmationFixture({
+    noConfirmAction: 'no_action'
+  }, async ({ appointmentId, sendId }) => {
+    const payloads = []
+    setAppNotificationPayloadSenderForTest(async (payload, options) => {
+      payloads.push({ payload, options })
+      return { sent: 1, webSent: 1, nativeSent: 0, skipped: false }
+    })
+
+    await expireConfirmationTimeout(sendId)
+    const result = await processExpiredConfirmationTimeouts()
+
+    assert.equal(result.processed, 1)
+    assert.equal(result.cancelled, 0)
+    assert.equal(result.preserved, 1)
+
+    const appointment = await db.get(
+      'SELECT appointment_status FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(appointment.appointment_status, 'pending')
+
+    const send = await db.get(
+      'SELECT confirmation_timeout_status FROM appointment_reminder_sends WHERE id = ?',
+      [sendId]
+    )
+    assert.equal(send.confirmation_timeout_status, 'preserved')
+    assert.equal(payloads.length, 1)
+    assert.match(payloads[0].payload.title, /confirmación no recibida/i)
+  })
+})
+
 test('una respuesta recibida antes del límite difiere el ultimátum hasta terminar de analizarla', async () => {
   await withConfirmationFixture({
     noConfirmAction: 'cancel_appointment',
@@ -687,7 +773,7 @@ test('una falla técnica del clasificador conserva la cita al vencer el ultimát
   })
 })
 
-test('accion de no confirmacion en dropdown ejecuta push sin confirmar la cita', async () => {
+test('la acción legacy notify_push se trata como conservar y el push sigue siendo global', async () => {
   await withConfirmationFixture({
     confirmationSuccessAction: 'chat_badge',
     noConfirmAction: 'notify_push'
@@ -713,7 +799,7 @@ test('accion de no confirmacion en dropdown ejecuta push sin confirmar la cita',
 
     assert.equal(payloads.length, 1)
     assert.match(payloads[0].payload.title, /quiere reagendar/)
-    assert.equal(payloads[0].payload.tag, `conf-${appointmentId}`)
+    assert.equal(payloads[0].payload.tag, `confirmation-response-${appointmentId}`)
 
     const appointment = await db.get(
       'SELECT status, appointment_status, confirmation_badge_until FROM appointments WHERE id = ?',

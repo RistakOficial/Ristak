@@ -46,7 +46,7 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
   assert.equal(confirmation.smart_enabled, 1)
   assert.deepEqual(
     JSON.parse(confirmation.confirmation_success_action),
-    ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+    ['chat_card', 'chat_badge', 'mark_confirmed']
   )
 
   const total = await db.get('SELECT COUNT(*) AS total FROM appointment_reminders')
@@ -79,7 +79,7 @@ test('un cliente anterior no borra acciones múltiples si reenvía el valor sing
     timingAnchor: 'after_booking',
     offsetValue: 17,
     offsetUnit: 'minutes',
-    confirmationSuccessActions: ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+    confirmationSuccessActions: ['chat_card', 'chat_badge', 'mark_confirmed']
   })
 
   const unchangedLegacySave = await updateAppointmentReminder(reminder.id, {
@@ -88,7 +88,7 @@ test('un cliente anterior no borra acciones múltiples si reenvía el valor sing
   })
   assert.deepEqual(
     unchangedLegacySave.confirmationSuccessActions,
-    ['chat_card', 'notify_push', 'chat_badge', 'mark_confirmed']
+    ['chat_card', 'chat_badge', 'mark_confirmed']
   )
 
   const intentionalLegacyChange = await updateAppointmentReminder(reminder.id, {

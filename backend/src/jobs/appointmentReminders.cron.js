@@ -62,6 +62,7 @@ async function runConfirmationWindowsDispatch() {
           logger.info(
             `[Citas] Confirmaciones procesadas: ${windowResult.processed} respuesta(s), ` +
             `${timeoutResult.cancelled} cancelación(es) por plazo, ` +
+            `${timeoutResult.preserved} cita(s) conservada(s), ` +
             `${timeoutResult.reviewRequired} revisión(es) segura(s)`
           )
         }

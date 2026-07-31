@@ -4186,19 +4186,21 @@ dos minutos.
 
 El clasificador distingue `confirmed`, `reschedule`, `cancel`, `ambiguous` y
 `human_needed`. `confirmed` deja la cita local en `confirmed`, resuelve
-explicitamente el envío de confirmacion y luego ejecuta solamente la accion
-visual elegida: tarjeta en el chat, etiqueta hasta la cita, push o ningun aviso
-extra. Si el calendario ya la habia marcado `confirmed`, la escritura es
-idempotente pero la respuesta y sus acciones sí se procesan. El push de
-confirmacion no se manda por reflejo cuando se eligio tarjeta, etiqueta o "solo
-marcar". Una respuesta de reagendamiento no busca ni reserva por si sola otro
-horario; usa la accion de "Si no confirma" configurada para conservar, avisar o
+explicitamente el envío de confirmacion y luego ejecuta las acciones visuales
+elegidas: tarjeta en el chat y etiqueta hasta la cita. Si el calendario ya la
+habia marcado `confirmed`, la escritura es idempotente pero la respuesta y sus
+acciones sí se procesan. Una respuesta de reagendamiento no busca ni reserva por
+si sola otro horario; la politica de vencimiento sólo decide si conservar o
 cancelar la cita actual.
 
-Al elegir `cancel_appointment`, el editor exige un plazo explicito de minutos,
-horas o dias. No se aplica ningun default silencioso a filas historicas. El reloj
-empieza en `appointment_reminder_sends.sent_at`, despues de que el transporte
-acepto el envio, y cada envio congela su propio
+Toda confirmacion con IA configura un plazo, no sólo las que cancelan. El editor
+muestra `no_action` como **Conservar la cita** y `cancel_appointment` como
+**Cancelar la cita**; `notify_push` deja de ser una opcion porque el aviso no es
+una accion de esta regla. Una configuracion nueva recibe un plazo protegido
+segun su anticipacion —normalmente 6 horas disponibles dentro de `09:00–21:00`,
+y uno menor cuando el mensaje sale muy cerca de la cita—. El reloj empieza en
+`appointment_reminder_sends.sent_at`, despues de que el transporte acepto el
+envio, y cada envio congela su propio
 `confirmation_deadline_at`; editar el recordatorio despues no mueve ultimátums
 ya enviados.
 
@@ -4210,35 +4212,46 @@ fuera de ese horario el contador se pausa. El horario de respuesta es
 independiente del horario inteligente de envio, admite jornadas que cruzan
 medianoche y no usa la zona del navegador. El contacto puede responder a
 cualquier hora; la ventana sólo controla cuándo avanza el ultimátum. Las filas
-históricas conservan
-`elapsed` para no cambiar silenciosamente deadlines anteriores.
+históricas conservan `elapsed` para no cambiar silenciosamente deadlines
+anteriores. Una fila histórica con `cancel_appointment` y sin plazo tampoco
+recibe una cancelacion destructiva retroactiva: el editor propone el default al
+abrirla y sólo lo persiste cuando el usuario guarda esa politica.
 
 En recordatorios `before_appointment`, un plazo corrido debe ser menor que el
 tiempo configurado antes de la cita. Para `response_window` y para avisos
 `after_booking`, el instante final depende del día y la hora reales del envío:
 si no alcanza a completarse antes de que empiece la cita, el envío queda sin
-cancelación por timeout. El cálculo se hace al aceptar el mensaje y se congela
+accion por timeout. El cálculo se hace al aceptar el mensaje y se congela
 en UTC; cambios posteriores de zona, modo u horario no desplazan el deadline.
 
 Si vence el plazo sin una confirmacion explicita y la cita sigue abierta, Ristak
-la cancela y avisa al equipo incluso cuando el calendario la habia aceptado con
-estado `confirmed`; ese estado no sustituye la respuesta del contacto.
-Una respuesta recibida antes del limite bloquea la cancelacion mientras la
+aplica la politica elegida: la conserva con estado `preserved` o la cancela con
+estado `cancelled`, incluso cuando el calendario la habia aceptado con estado
+`confirmed`; ese estado no sustituye la respuesta del contacto.
+Una respuesta recibida antes del limite bloquea la decision mientras la
 ventana este `waiting`, `processing` o `deciding`; primero termina la
-clasificacion. Una respuesta ambigua no cancela inmediatamente, pero si tampoco
-produce una confirmacion clara antes del deadline, el ultimátum configurado si
-puede cancelar. `human_needed`, un error de ventana o una falla tecnica del
-clasificador terminan en `review_required`: conservan la cita y mandan aviso, sin
-accion destructiva. Sin un plazo guardado, incluido cualquier recordatorio
-historico, el silencio conserva la cita.
+clasificacion. Una respuesta `ambiguous` o `human_needed`, un error de ventana o
+una falla tecnica del clasificador terminan en `review_required`: conservan la
+cita y mandan aviso, sin accion destructiva. Sin un plazo guardado en una regla
+histórica de cancelacion, el silencio conserva la cita.
 Eliminar un recordatorio desactiva sus ultimátums pendientes; los envios ya
 realizados se conservan como auditoría, pero esa regla retirada no puede cancelar
 una cita después.
 
+El push de confirmaciones se procesa por default al confirmar, recibir una
+respuesta no afirmativa, vencer el plazo o requerir revision. Todos esos caminos
+usan `sendAppointmentConfirmationNotification`, por lo que respetan
+`appointment_confirmation_push_notifications_enabled` y la matriz por
+destinatario del evento `appointment_confirmed`. La UI presenta ese evento como
+**Confirmaciones de cita** en Configuracion → Notificaciones; esa pagina es la
+compuerta canonica para desactivar el canal push por destinatario. Los valores legacy
+`notify_push` siguen siendo legibles: en `no_confirm_action` equivalen a
+`no_action`, y dentro de `confirmation_success_action` ya no gobiernan el aviso.
+
 Si la IA esta apagada, se conserva el modo compatible: una respuesta afirmativa
-simple resuelve el envío como confirmado y deja la cita en `confirmed`, aunque
-el calendario ya tuviera ese estado, sin abrir ventana ni intentar interpretar
-negativas.
+simple resuelve el envío como confirmado, deja la cita en `confirmed` y procesa
+el mismo push global, aunque el calendario ya tuviera ese estado, sin abrir
+ventana ni intentar interpretar negativas.
 
 La opcion `bypass_automations` se presenta como "Reservar estas respuestas para
 la confirmacion". Mientras la ventana esta activa, esos mensajes no se entregan
@@ -4325,11 +4338,11 @@ envía hasta que el usuario revise y active cada configuración. Las filas lleva
 un índice único parcial; así dos instancias que arrancan al mismo tiempo no
 pueden duplicarlas. Si la cuenta ya tenía cualquier mensaje automático, este
 paquete no se agrega. Además, cada confirmación nueva selecciona por defecto sus
-acciones combinables:
-tarjeta en el chat, notificación push, etiqueta temporal `Asistirá a cita` y
-marcar la cita como confirmada. Esta última es obligatoria; las otras tres se
-pueden activar o quitar desde un dropdown con checks. Las filas históricas
-conservan su único aviso anterior para evitar efectos nuevos silenciosos. La
+acciones combinables: tarjeta en el chat, etiqueta temporal `Asistirá a cita` y
+marcar la cita como confirmada. Esta última es obligatoria; las otras dos se
+pueden activar o quitar desde un dropdown con checks. El push queda fuera de
+esta lista y se controla exclusivamente desde Notificaciones. Las filas
+históricas conservan su único aviso anterior para compatibilidad. La
 columna `confirmation_success_action` acepta ese valor escalar legado o el
 arreglo JSON nuevo, y las ventanas de confirmación guardan una copia de la
 selección vigente al recibir la respuesta.

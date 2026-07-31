@@ -2665,14 +2665,20 @@ export async function sendAppointmentConfirmationNotification(appointment = {}, 
 
   const contactName = await getAppointmentContactName(appointment, options)
   const timezone = await resolveAppointmentNotificationTimezone(appointment, options)
+  const notificationTitle = cleanNotificationText(options.notificationTitle)
+  const notificationBody = cleanNotificationText(options.notificationBody)
+  const notificationTag = cleanNotificationText(options.notificationTag)
   const payload = {
-    title: getAppointmentNotificationTitle('confirmed'),
-    body: getAppointmentNotificationBody(appointment, options, {
-      contactName,
-      detail: options.resultDetail || '',
-      timezone
-    }),
-    tag: `appointment-confirmed-${appointmentId}`,
+    title: notificationTitle || getAppointmentNotificationTitle('confirmed'),
+    body: (
+      notificationBody ||
+      getAppointmentNotificationBody(appointment, options, {
+        contactName,
+        detail: options.resultDetail || '',
+        timezone
+      })
+    ).slice(0, 220),
+    tag: notificationTag || `appointment-confirmed-${appointmentId}`,
     threadId: calendarId ? `calendar-${calendarId}` : `appointment-${appointmentId}`,
     url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`,
     category: 'appointment_confirmed',

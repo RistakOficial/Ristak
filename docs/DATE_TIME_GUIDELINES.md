@@ -99,8 +99,8 @@ Usa estos formatos de forma intencional:
   zona del negocio, puede cruzar medianoche y se recorre por calendario local
   antes de convertir el resultado a UTC. El deadline se calcula y congela cuando
   el proveedor acepta el mensaje; cambiar despues la zona o el horario no mueve
-  envios ya realizados. Si no cabe el plazo completo antes de iniciar la cita, la
-  cancelacion automatica se omite.
+  envios ya realizados. Si no cabe el plazo completo antes de iniciar la cita,
+  se omite la accion automatica configurada para el vencimiento.
 
 ## Mutaciones y Refresco Canónico
 

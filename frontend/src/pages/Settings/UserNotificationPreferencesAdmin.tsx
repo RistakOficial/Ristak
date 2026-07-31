@@ -21,7 +21,7 @@ import styles from './UserNotificationPreferencesAdmin.module.css'
 const TOGGLE_PREFERENCES: Array<{ key: string; label: string }> = [
   { key: 'chat_push_notifications_enabled', label: 'Chats' },
   { key: 'payment_push_notifications_enabled', label: 'Pagos' },
-  { key: 'appointment_confirmation_push_notifications_enabled', label: 'Citas confirmadas' },
+  { key: 'appointment_confirmation_push_notifications_enabled', label: 'Confirmaciones de cita' },
   { key: 'calendar_push_notifications_enabled', label: 'Calendario' },
   { key: 'push_notification_sound_enabled', label: 'Sonido' },
   { key: 'push_notification_vibration_enabled', label: 'Vibración' }

@@ -2,7 +2,7 @@ import { db, databaseDialect } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { isAffirmativeReply } from './appointmentReminderLogic.js'
 import { classifyConfirmationResponse } from '../agents/appointmentConfirmationAgent.js'
-import { sendAppNotificationPayload, sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
+import { sendAppointmentConfirmationNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { publishChatDataChangedEvent } from './chatLiveEventsService.js'
 import {
@@ -194,6 +194,19 @@ async function markConfirmationSendConfirmed(sendId) {
   `, [timestamp, id])
 }
 
+async function markConfirmationSendResponded(sendId) {
+  const id = String(sendId || '').trim()
+  if (!id) return
+  const timestamp = nowIso()
+  await db.run(`
+    UPDATE appointment_reminder_sends
+    SET confirmation_timeout_status = 'responded',
+        confirmation_timeout_processed_at = ?
+    WHERE id = ?
+      AND confirmation_timeout_status = 'pending'
+  `, [timestamp, id])
+}
+
 /**
  * Verifica si un contacto tiene una ventana de confirmación activa (status='waiting').
  * Se usa para decidir si otros agentes/automatizaciones deben pausarse.
@@ -341,11 +354,18 @@ export async function processExpiredConfirmationWindows() {
 async function notifyConfirmationTimeoutReview(outcome) {
   const contactName = String(outcome.contactName || 'Contacto').trim()
   const appointmentTitle = String(outcome.appointmentTitle || 'cita').trim()
-  await sendAppNotificationPayload({
-    title: `Confirmación pendiente de revisión: ${contactName}`,
-    body: `No se canceló "${appointmentTitle}" porque Ristak no pudo resolver la respuesta con seguridad.`.slice(0, 160),
-    tag: `confirmation-timeout-review-${outcome.appointmentId}`,
-    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(outcome.appointmentId)}`
+  await sendAppointmentConfirmationNotification({
+    id: outcome.appointmentId,
+    calendar_id: outcome.calendarId,
+    contact_id: outcome.contactId
+  }, {
+    appointmentId: outcome.appointmentId,
+    calendarId: outcome.calendarId,
+    contactId: outcome.contactId,
+    contactName,
+    notificationTitle: `Confirmación pendiente de revisión: ${contactName}`,
+    notificationBody: `Se conservó "${appointmentTitle}" porque Ristak no pudo resolver la respuesta con seguridad.`,
+    notificationTag: `confirmation-timeout-review-${outcome.appointmentId}`
   }).catch(error => {
     logger.warn(`[Confirmación IA] No se pudo avisar la revisión del plazo: ${error.message}`)
   })
@@ -354,13 +374,40 @@ async function notifyConfirmationTimeoutReview(outcome) {
 async function notifyConfirmationTimeoutCancellation(outcome) {
   const contactName = String(outcome.contactName || 'Contacto').trim()
   const appointmentTitle = String(outcome.appointmentTitle || 'cita').trim()
-  await sendAppNotificationPayload({
-    title: `Cita cancelada por falta de confirmación: ${contactName}`,
-    body: `"${appointmentTitle}" se canceló al vencer el plazo configurado sin una confirmación clara.`.slice(0, 160),
-    tag: `confirmation-timeout-cancelled-${outcome.appointmentId}`,
-    url: `/movil/calendar?open=appointment&id=${encodeURIComponent(outcome.appointmentId)}`
+  await sendAppointmentConfirmationNotification({
+    id: outcome.appointmentId,
+    calendar_id: outcome.calendarId,
+    contact_id: outcome.contactId
+  }, {
+    appointmentId: outcome.appointmentId,
+    calendarId: outcome.calendarId,
+    contactId: outcome.contactId,
+    contactName,
+    notificationTitle: `Cita cancelada por falta de confirmación: ${contactName}`,
+    notificationBody: `"${appointmentTitle}" se canceló al vencer el plazo configurado sin una confirmación clara.`,
+    notificationTag: `confirmation-timeout-cancelled-${outcome.appointmentId}`
   }).catch(error => {
     logger.warn(`[Confirmación IA] No se pudo avisar la cancelación por plazo: ${error.message}`)
+  })
+}
+
+async function notifyConfirmationTimeoutPreserved(outcome) {
+  const contactName = String(outcome.contactName || 'Contacto').trim()
+  const appointmentTitle = String(outcome.appointmentTitle || 'cita').trim()
+  await sendAppointmentConfirmationNotification({
+    id: outcome.appointmentId,
+    calendar_id: outcome.calendarId,
+    contact_id: outcome.contactId
+  }, {
+    appointmentId: outcome.appointmentId,
+    calendarId: outcome.calendarId,
+    contactId: outcome.contactId,
+    contactName,
+    notificationTitle: `Confirmación no recibida: ${contactName}`,
+    notificationBody: `Venció el plazo de "${appointmentTitle}" sin confirmación; la cita se conservó.`,
+    notificationTag: `confirmation-timeout-preserved-${outcome.appointmentId}`
+  }).catch(error => {
+    logger.warn(`[Confirmación IA] No se pudo avisar el plazo vencido: ${error.message}`)
   })
 }
 
@@ -373,7 +420,9 @@ async function processConfirmationTimeout(sendId, currentTime) {
         s.contact_id,
         s.confirmation_deadline_at,
         s.confirmation_timeout_status,
+        r.no_confirm_action,
         a.title,
+        a.calendar_id,
         a.start_time,
         a.appointment_status,
         a.status AS legacy_status,
@@ -381,6 +430,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
         c.first_name,
         c.full_name
       FROM appointment_reminder_sends s
+      JOIN appointment_reminders r ON r.id = s.reminder_id
       JOIN appointments a ON a.id = s.appointment_id
       LEFT JOIN contacts c ON c.id = s.contact_id
       WHERE s.id = ?
@@ -441,7 +491,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
     }
 
     const needsSafeReview = confirmationWindow?.status === 'error' ||
-      confirmationWindow?.result === 'human_needed'
+      ['ambiguous', 'human_needed'].includes(String(confirmationWindow?.result || ''))
     if (needsSafeReview) {
       await transaction.run(`
         UPDATE appointment_reminder_sends
@@ -453,6 +503,28 @@ async function processConfirmationTimeout(sendId, currentTime) {
         processed: true,
         status: 'review_required',
         appointmentId: send.appointment_id,
+        contactId: send.contact_id,
+        calendarId: send.calendar_id,
+        appointmentTitle: send.title,
+        contactName: send.first_name || send.full_name
+      }
+    }
+
+    const configuredAction = String(send.no_confirm_action || '').trim()
+    const shouldCancel = configuredAction === 'cancel_appointment'
+    if (!shouldCancel) {
+      await transaction.run(`
+        UPDATE appointment_reminder_sends
+        SET confirmation_timeout_status = 'preserved',
+            confirmation_timeout_processed_at = ?
+        WHERE id = ? AND confirmation_timeout_status = 'pending'
+      `, [currentTime, sendId])
+      return {
+        processed: true,
+        status: 'preserved',
+        appointmentId: send.appointment_id,
+        contactId: send.contact_id,
+        calendarId: send.calendar_id,
         appointmentTitle: send.title,
         contactName: send.first_name || send.full_name
       }
@@ -484,6 +556,7 @@ async function processConfirmationTimeout(sendId, currentTime) {
       status: didCancel ? 'cancelled' : 'already_resolved',
       appointmentId: send.appointment_id,
       contactId: send.contact_id,
+      calendarId: send.calendar_id,
       appointmentTitle: send.title,
       contactName: send.first_name || send.full_name,
       previousStatus: appointmentStatus || null
@@ -492,9 +565,9 @@ async function processConfirmationTimeout(sendId, currentTime) {
 }
 
 /**
- * Cancela citas pendientes cuando vence el plazo que empezó al completar el
- * mensaje de confirmación. Cada envío guarda su deadline inmutable para que
- * editar el recordatorio después no cambie ultimátums ya enviados.
+ * Aplica la acción configurada cuando vence el plazo que empezó al completar
+ * el mensaje de confirmación. Cada envío guarda su deadline inmutable para que
+ * editar el recordatorio después no cambie plazos ya enviados.
  */
 export async function processExpiredConfirmationTimeouts({ batchSize = 50 } = {}) {
   const currentTime = nowIso()
@@ -510,6 +583,7 @@ export async function processExpiredConfirmationTimeouts({ batchSize = 50 } = {}
 
   let processed = 0
   let cancelled = 0
+  let preserved = 0
   let reviewRequired = 0
 
   for (const send of sends) {
@@ -532,13 +606,17 @@ export async function processExpiredConfirmationTimeouts({ batchSize = 50 } = {}
         reviewRequired += 1
         await notifyConfirmationTimeoutReview(outcome)
         logger.warn(`[Confirmación IA] El plazo de la cita ${outcome.appointmentId} terminó en revisión segura; no se canceló`)
+      } else if (outcome.status === 'preserved') {
+        preserved += 1
+        await notifyConfirmationTimeoutPreserved(outcome)
+        logger.info(`[Confirmación IA] La cita ${outcome.appointmentId} se conservó al vencer el plazo sin confirmación`)
       }
     } catch (error) {
       logger.error(`[Confirmación IA] Error procesando plazo del envío ${send.id}: ${error.message}`)
     }
   }
 
-  return { processed, cancelled, reviewRequired }
+  return { processed, cancelled, preserved, reviewRequired }
 }
 
 async function processConfirmationWindow(candidate, cutoff) {
@@ -678,19 +756,20 @@ async function processConfirmationWindow(candidate, cutoff) {
   } else {
     // Para reschedule, cancel, ambiguous, human_needed → ejecutar la acción del recordatorio.
     // EXCEPCIÓN de seguridad (NOTI-001): si el clasificador falló técnicamente, nunca
-    // ejecutamos una acción destructiva; degradamos 'cancel_appointment' a 'notify_push'
-    // para que un humano revise sin que se cancele la cita.
+    // ejecutamos una acción destructiva; conservamos la cita y avisamos para revisión.
     // Seguridad (NOTI-001, extendido): NUNCA cancelamos destructivamente ante
     // INCERTIDUMBRE. 'cancel_appointment' sólo procede con una señal de que la persona
     // no asistirá (reschedule/cancel explícitos). Si el clasificador falló técnicamente,
     // o el resultado fue 'ambiguous' o 'human_needed' (p. ej. la persona sólo preguntó
-    // algo logístico como "¿dónde es?"), degradamos a 'notify_push' para que un humano
-    // revise SIN borrar la cita de alguien que sí piensa asistir.
+    // algo logístico como "¿dónde es?"), conservamos la cita y dejamos que el push
+    // global de confirmaciones avise para revisión humana.
     const configuredAction = String(reminderData?.no_confirm_action || 'no_action')
     const uncertainResult = classifierFailed || result === 'ambiguous' || result === 'human_needed'
     const noConfirmAction = uncertainResult && configuredAction === 'cancel_appointment'
-      ? 'notify_push'
-      : configuredAction
+      ? 'no_action'
+      : configuredAction === 'notify_push'
+        ? 'no_action'
+        : configuredAction
     if (uncertainResult && configuredAction === 'cancel_appointment') {
       logger.warn(`[Confirmación IA] Resultado incierto (${result}) para cita ${appointmentId}: se OMITE la cancelación automática y se avisa para revisión humana.`)
     }
@@ -714,6 +793,8 @@ async function processConfirmationWindow(candidate, cutoff) {
   const processed = Number(finished?.changes || 0) > 0
   if (processed && result === 'confirmed') {
     await markConfirmationSendConfirmed(win.reminder_send_id)
+  } else if (processed && ['cancel', 'reschedule'].includes(result)) {
+    await markConfirmationSendResponded(win.reminder_send_id)
   }
   return {
     processed,
@@ -746,20 +827,18 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
     logger.info(`[Confirmación IA] Etiqueta visual temporal activada para cita ${appointmentId}`)
   }
 
-  if (normalizedActions.includes('notify_push')) {
-    await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
-      appointmentId,
-      contactId,
-      contactName,
-      appointmentTitle,
-      calendarId: appointment?.calendar_id,
-      startTime: appointment?.start_time,
-      resultDetail
-    }).catch(error => {
-      logger.warn(`[Confirmación IA] No se pudo enviar push de cita confirmada: ${error.message}`)
-    })
-    logger.info(`[Confirmación IA] Notificación de confirmación enviada para cita ${appointmentId}`)
-  }
+  await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
+    appointmentId,
+    contactId,
+    contactName,
+    appointmentTitle,
+    calendarId: appointment?.calendar_id,
+    startTime: appointment?.start_time,
+    resultDetail
+  }).catch(error => {
+    logger.warn(`[Confirmación IA] No se pudo enviar push de cita confirmada: ${error.message}`)
+  })
+  logger.info(`[Confirmación IA] Notificación de confirmación procesada para cita ${appointmentId}`)
 
   if (normalizedActions.includes('chat_card')) {
     logger.info(`[Confirmación IA] Tarjeta de confirmación disponible en journey para cita ${appointmentId}`)
@@ -768,7 +847,7 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
 
 async function executeNoConfirmAction({ contactId, appointmentId, action, result, resultDetail, reminderData }) {
   const appointment = await db.get(`
-    SELECT a.id, a.title, a.start_time, a.appointment_status, a.status, c.first_name, c.full_name
+    SELECT a.id, a.title, a.start_time, a.calendar_id, a.appointment_status, a.status, c.first_name, c.full_name
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE a.id = ?
@@ -794,29 +873,28 @@ async function executeNoConfirmAction({ contactId, appointmentId, action, result
     }
   }
 
-  if (action === 'notify_push') {
-    const resultLabels = {
-      reschedule: 'quiere reagendar',
-      cancel: 'cancela',
-      ambiguous: 'respuesta ambigua',
-      human_needed: 'requiere atención humana'
-    }
-    const label = resultLabels[result] || result
-    const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
-    const appointmentTitle = String(appointment?.title || 'cita').trim()
-
-    const payload = {
-      title: `Confirmación de cita: ${contactName} ${label}`,
-      body: `${contactName} respondió sobre "${appointmentTitle}". ${resultDetail || ''}`.trim().slice(0, 160),
-      tag: `conf-${appointmentId}`,
-      url: `/movil/calendar?open=appointment&id=${encodeURIComponent(appointmentId)}`
-    }
-
-    await sendAppNotificationPayload(payload).catch(error => {
-      logger.warn(`[Confirmación IA] No se pudo enviar notificación push: ${error.message}`)
-    })
-    logger.info(`[Confirmación IA] Notificación enviada para cita ${appointmentId} (resultado: ${result})`)
+  const resultLabels = {
+    reschedule: 'quiere reagendar',
+    cancel: 'canceló',
+    ambiguous: 'dio una respuesta ambigua',
+    human_needed: 'requiere atención humana'
   }
+  const label = resultLabels[result] || 'no confirmó'
+  const contactName = String(appointment?.first_name || appointment?.full_name || reminderData?.first_name || 'Contacto').trim()
+  const appointmentTitle = String(appointment?.title || 'cita').trim()
+  await sendAppointmentConfirmationNotification(appointment || { id: appointmentId, contactId }, {
+    appointmentId,
+    contactId,
+    contactName,
+    calendarId: appointment?.calendar_id,
+    startTime: appointment?.start_time,
+    notificationTitle: `Confirmación de cita: ${contactName} ${label}`,
+    notificationBody: `${contactName} respondió sobre "${appointmentTitle}". ${resultDetail || ''}`.trim(),
+    notificationTag: `confirmation-response-${appointmentId}`
+  }).catch(error => {
+    logger.warn(`[Confirmación IA] No se pudo enviar notificación push: ${error.message}`)
+  })
+  logger.info(`[Confirmación IA] Notificación de respuesta procesada para cita ${appointmentId} (resultado: ${result})`)
 }
 
 /**
@@ -833,9 +911,17 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
   if (win) return null
 
   const pending = await db.get(`
-    SELECT s.id AS send_id, s.appointment_id, a.title
+    SELECT
+      s.id AS send_id,
+      s.appointment_id,
+      a.title,
+      a.start_time,
+      a.calendar_id,
+      c.first_name,
+      c.full_name
     FROM appointment_reminder_sends s
     JOIN appointments a ON a.id = s.appointment_id
+    LEFT JOIN contacts c ON c.id = s.contact_id
     WHERE s.contact_id = ?
       AND s.status = 'sent'
       AND s.message_type = 'confirmation'
@@ -859,7 +945,24 @@ export async function maybeConfirmAppointmentFromReply({ contactId, text } = {})
   await markConfirmationSendConfirmed(pending.send_id)
   publishAppointmentChanged(id, pending.appointment_id)
   await resyncAppointmentToGoogle(pending.appointment_id)
+  await sendAppointmentConfirmationNotification({
+    id: pending.appointment_id,
+    title: pending.title,
+    start_time: pending.start_time,
+    calendar_id: pending.calendar_id,
+    contact_id: id,
+    first_name: pending.first_name,
+    full_name: pending.full_name
+  }, {
+    appointmentId: pending.appointment_id,
+    contactId: id,
+    contactName: pending.first_name || pending.full_name,
+    calendarId: pending.calendar_id,
+    startTime: pending.start_time
+  }).catch(error => {
+    logger.warn(`[Citas] No se pudo enviar push de confirmación sin IA: ${error.message}`)
+  })
 
-  logger.info(`[Citas] IA confirmó la cita ${pending.appointment_id} por respuesta del contacto ${id}`)
+  logger.info(`[Citas] Respuesta afirmativa confirmó la cita ${pending.appointment_id} para el contacto ${id}`)
   return { appointmentId: pending.appointment_id }
 }

@@ -92,10 +92,6 @@ const CONFIRMATION_SUCCESS_ACTION_OPTIONS: {
     label: 'Agregar tarjeta de confirmación en el chat'
   },
   {
-    value: 'notify_push',
-    label: 'Mandarme notificación push'
-  },
-  {
     value: 'chat_badge',
     label: 'Mostrar etiqueta "Asistirá a cita"'
   },
@@ -122,18 +118,13 @@ const normalizeConfirmationSuccessActions = (
 const NO_CONFIRM_ACTION_OPTIONS: { value: ReminderNoConfirmAction; label: string; description: string }[] = [
   {
     value: 'no_action',
-    label: 'No hacer nada',
-    description: 'Ristak deja la cita como está y no avisa al equipo.'
+    label: 'Conservar la cita',
+    description: 'Ristak conserva la cita cuando vence el plazo sin una confirmación clara.'
   },
   {
     value: 'cancel_appointment',
     label: 'Cancelar la cita',
     description: 'Cancela si vence el plazo sin una confirmación clara. Una cancelación o reagendamiento explícitos se atienden de inmediato.'
-  },
-  {
-    value: 'notify_push',
-    label: 'Enviarme una notificación',
-    description: 'Te avisa si la IA detecta que no confirmó, quiere moverla o hace falta revisar.'
   }
 ]
 
@@ -165,6 +156,62 @@ const MAX_CONFIRMATION_TIMEOUT_MS = 30 * CONFIRMATION_TIMEOUT_UNIT_MS.days
 const maxConfirmationTimeoutValue = (unit: ReminderConfirmationTimeoutUnit) => (
   Math.floor(MAX_CONFIRMATION_TIMEOUT_MS / CONFIRMATION_TIMEOUT_UNIT_MS[unit])
 )
+
+const getDefaultConfirmationTimeout = (
+  timingAnchor: ReminderTimingAnchor,
+  offsetValue: number,
+  offsetUnit: ReminderOffsetUnit
+): Pick<
+  AppointmentReminderInput,
+  'confirmationTimeoutValue' |
+  'confirmationTimeoutUnit' |
+  'confirmationTimeoutMode' |
+  'confirmationResponseStart' |
+  'confirmationResponseEnd'
+> => {
+  const protectedWindowDefaults = {
+    confirmationTimeoutMode: 'response_window' as ReminderConfirmationTimeoutMode,
+    confirmationResponseStart: '09:00',
+    confirmationResponseEnd: '21:00'
+  }
+  if (timingAnchor === 'after_booking') {
+    return {
+      ...protectedWindowDefaults,
+      confirmationTimeoutValue: 6,
+      confirmationTimeoutUnit: 'hours'
+    }
+  }
+
+  const leadMs = Math.max(1, offsetValue) * (
+    offsetUnit === 'seconds'
+      ? AFTER_OFFSET_UNIT_MS.seconds
+      : CONFIRMATION_TIMEOUT_UNIT_MS[offsetUnit]
+  )
+  if (leadMs > 12 * CONFIRMATION_TIMEOUT_UNIT_MS.hours) {
+    return {
+      ...protectedWindowDefaults,
+      confirmationTimeoutValue: 6,
+      confirmationTimeoutUnit: 'hours'
+    }
+  }
+  if (leadMs > 2 * CONFIRMATION_TIMEOUT_UNIT_MS.hours) {
+    return {
+      ...protectedWindowDefaults,
+      confirmationTimeoutValue: 1,
+      confirmationTimeoutUnit: 'hours'
+    }
+  }
+
+  return {
+    ...protectedWindowDefaults,
+    confirmationTimeoutValue: leadMs > 30 * CONFIRMATION_TIMEOUT_UNIT_MS.minutes
+      ? 15
+      : leadMs > 5 * CONFIRMATION_TIMEOUT_UNIT_MS.minutes
+        ? 5
+        : 1,
+    confirmationTimeoutUnit: 'minutes'
+  }
+}
 
 const getTemplateReviewStatus = (template?: MessageTemplate | null) => getMessageTemplateProviderStatus(template)
 
@@ -228,11 +275,7 @@ const createNewReminderDraft = (): AppointmentReminderInput => ({
   smartEnd: '21:00',
   smartOverflow: 'before',
   noConfirmAction: 'no_action',
-  confirmationTimeoutValue: null,
-  confirmationTimeoutUnit: null,
-  confirmationTimeoutMode: 'response_window',
-  confirmationResponseStart: '09:00',
-  confirmationResponseEnd: '21:00',
+  ...getDefaultConfirmationTimeout('before_appointment', 1, 'days'),
   confirmationSuccessActions: [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
 })
 
@@ -255,8 +298,13 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   useEffect(() => {
     if (!isOpen) return
-    setDraft(reminder
-      ? {
+    if (reminder) {
+      const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
+        reminder.timingAnchor || 'before_appointment',
+        reminder.offsetValue,
+        reminder.offsetUnit
+      )
+      setDraft({
           messageType: reminder.messageType,
           aiEnabled: reminder.aiEnabled,
           bypassAutomations: reminder.bypassAutomations,
@@ -276,18 +324,27 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
           smartStart: reminder.smartStart,
           smartEnd: reminder.smartEnd,
           smartOverflow: reminder.smartOverflow,
-          noConfirmAction: reminder.noConfirmAction,
-          confirmationTimeoutValue: reminder.confirmationTimeoutValue,
-          confirmationTimeoutUnit: reminder.confirmationTimeoutUnit,
-          confirmationTimeoutMode: reminder.confirmationTimeoutMode,
-          confirmationResponseStart: reminder.confirmationResponseStart,
-          confirmationResponseEnd: reminder.confirmationResponseEnd,
+          noConfirmAction: reminder.noConfirmAction === 'cancel_appointment'
+            ? 'cancel_appointment'
+            : 'no_action',
+          confirmationTimeoutValue: reminder.confirmationTimeoutValue ??
+            defaultConfirmationTimeout.confirmationTimeoutValue,
+          confirmationTimeoutUnit: reminder.confirmationTimeoutUnit ??
+            defaultConfirmationTimeout.confirmationTimeoutUnit,
+          confirmationTimeoutMode: reminder.confirmationTimeoutMode ||
+            defaultConfirmationTimeout.confirmationTimeoutMode,
+          confirmationResponseStart: reminder.confirmationResponseStart ||
+            defaultConfirmationTimeout.confirmationResponseStart,
+          confirmationResponseEnd: reminder.confirmationResponseEnd ||
+            defaultConfirmationTimeout.confirmationResponseEnd,
           confirmationSuccessActions: normalizeConfirmationSuccessActions(
             reminder.confirmationSuccessActions,
             reminder.confirmationSuccessAction
           )
-        }
-      : createNewReminderDraft())
+        })
+    } else {
+      setDraft(createNewReminderDraft())
+    }
     setSaving(false)
     setDeleting(false)
     setConfirmDeleteOpen(false)
@@ -382,11 +439,12 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     : CONFIRMATION_TIMEOUT_UNIT_OPTIONS
   const confirmationTimeoutValue = Number(draft.confirmationTimeoutValue) || 0
   const confirmationTimeoutMs = confirmationTimeoutValue * CONFIRMATION_TIMEOUT_UNIT_MS[confirmationTimeoutUnit]
-  const confirmationTimeoutMissing = selectedNoConfirmAction.value === 'cancel_appointment' &&
+  const confirmationWindowEnabled = isConfirmation && draft.aiEnabled !== false
+  const confirmationTimeoutMissing = confirmationWindowEnabled &&
     (!confirmationTimeoutValue || !draft.confirmationTimeoutUnit)
-  const confirmationTimeoutTooLong = selectedNoConfirmAction.value === 'cancel_appointment' &&
+  const confirmationTimeoutTooLong = confirmationWindowEnabled &&
     confirmationTimeoutMs > MAX_CONFIRMATION_TIMEOUT_MS
-  const confirmationTimeoutExceedsReminderWindow = selectedNoConfirmAction.value === 'cancel_appointment' &&
+  const confirmationTimeoutExceedsReminderWindow = confirmationWindowEnabled &&
     confirmationTimeoutMode === 'elapsed' &&
     !isAfterBooking &&
     confirmationTimeoutMs >= (
@@ -395,7 +453,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
         ((draft.offsetUnit as ReminderConfirmationTimeoutUnit) || 'days')
       ]
     )
-  const confirmationResponseWindowInvalid = selectedNoConfirmAction.value === 'cancel_appointment' &&
+  const confirmationResponseWindowInvalid = confirmationWindowEnabled &&
     confirmationTimeoutMode === 'response_window' &&
     (
       !draft.confirmationResponseStart ||
@@ -508,83 +566,39 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
     const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
 
-    setDraft(prev => ({
-      ...prev,
-      messageType,
-      aiEnabled: enabled ? true : false,
-      bypassAutomations: enabled ? prev.bypassAutomations : false,
-      confirmationSuccessActions: enabled
-        ? [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
-        : prev.confirmationSuccessActions,
-      ...(shouldSwitchTemplate && nextTemplate
-        ? {
-            templateId: nextTemplate.id,
-            templateName: nextTemplate.name,
-            templateLanguage: nextTemplate.language
-          }
-        : {})
-    }))
+    setDraft(prev => {
+      const defaultConfirmationTimeout = getDefaultConfirmationTimeout(
+        (prev.timingAnchor as ReminderTimingAnchor) || 'before_appointment',
+        Number(prev.offsetValue) || 1,
+        (prev.offsetUnit as ReminderOffsetUnit) || 'days'
+      )
+      return {
+        ...prev,
+        messageType,
+        aiEnabled: enabled ? true : false,
+        bypassAutomations: enabled ? prev.bypassAutomations : false,
+        confirmationSuccessActions: enabled
+          ? [...DEFAULT_CONFIRMATION_SUCCESS_ACTIONS]
+          : prev.confirmationSuccessActions,
+        ...(enabled && (
+          !Number(prev.confirmationTimeoutValue) ||
+          !prev.confirmationTimeoutUnit
+        )
+          ? defaultConfirmationTimeout
+          : {}),
+        ...(shouldSwitchTemplate && nextTemplate
+          ? {
+              templateId: nextTemplate.id,
+              templateName: nextTemplate.name,
+              templateLanguage: nextTemplate.language
+            }
+          : {})
+      }
+    })
   }
 
   const changeNoConfirmAction = (value: ReminderNoConfirmAction) => {
-    setDraft(prev => {
-      if (value !== 'cancel_appointment' || (
-        Number(prev.confirmationTimeoutValue) > 0 &&
-        prev.confirmationTimeoutUnit
-      )) {
-        return { ...prev, noConfirmAction: value }
-      }
-
-      const protectedWindowDefaults = {
-        confirmationTimeoutMode: 'response_window' as ReminderConfirmationTimeoutMode,
-        confirmationResponseStart: prev.confirmationResponseStart || '09:00',
-        confirmationResponseEnd: prev.confirmationResponseEnd || '21:00'
-      }
-      const prevAnchor = (prev.timingAnchor as ReminderTimingAnchor) || 'before_appointment'
-      if (prevAnchor === 'after_booking') {
-        return {
-          ...prev,
-          ...protectedWindowDefaults,
-          noConfirmAction: value,
-          confirmationTimeoutValue: 6,
-          confirmationTimeoutUnit: 'hours'
-        }
-      }
-
-      const offsetUnit = (prev.offsetUnit as ReminderConfirmationTimeoutUnit) || 'days'
-      const leadMs = (Number(prev.offsetValue) || 1) * CONFIRMATION_TIMEOUT_UNIT_MS[offsetUnit]
-      if (leadMs > 12 * CONFIRMATION_TIMEOUT_UNIT_MS.hours) {
-        return {
-          ...prev,
-          ...protectedWindowDefaults,
-          noConfirmAction: value,
-          confirmationTimeoutValue: 6,
-          confirmationTimeoutUnit: 'hours'
-        }
-      }
-      if (leadMs > 2 * CONFIRMATION_TIMEOUT_UNIT_MS.hours) {
-        return {
-          ...prev,
-          ...protectedWindowDefaults,
-          noConfirmAction: value,
-          confirmationTimeoutValue: 1,
-          confirmationTimeoutUnit: 'hours'
-        }
-      }
-
-      const safeMinutes = leadMs > 30 * CONFIRMATION_TIMEOUT_UNIT_MS.minutes
-        ? 15
-        : leadMs > 5 * CONFIRMATION_TIMEOUT_UNIT_MS.minutes
-          ? 5
-          : 1
-      return {
-        ...prev,
-        ...protectedWindowDefaults,
-        noConfirmAction: value,
-        confirmationTimeoutValue: safeMinutes,
-        confirmationTimeoutUnit: 'minutes'
-      }
-    })
+    set('noConfirmAction', value)
   }
 
   const changeConfirmationTimeoutUnit = (unit: ReminderConfirmationTimeoutUnit) => {
@@ -780,7 +794,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                           aria-label="Acciones cuando el contacto confirma la cita"
                         />
                         <span className={styles.helpText}>
-                          La cita siempre se marca como confirmada. Ristak también ejecuta todas las acciones que dejes marcadas.
+                          La cita siempre se marca como confirmada. Aquí sólo eliges las señales
+                          visuales que aparecerán dentro del chat.
                         </span>
                       </div>
                     </div>
@@ -792,7 +807,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
             {isConfirmation && draft.aiEnabled !== false && (
               <div className={styles.noConfirmBox}>
                 <div className={styles.field}>
-                  <label className={styles.fieldLabel}>Si no confirma</label>
+                  <label className={styles.fieldLabel}>Al vencer el plazo sin confirmación</label>
                   <CustomSelect
                     value={draft.noConfirmAction || 'no_action'}
                     options={NO_CONFIRM_ACTION_OPTIONS.map(option => ({
@@ -800,13 +815,16 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       label: option.label
                     }))}
                     onValueChange={(value) => changeNoConfirmAction(value as ReminderNoConfirmAction)}
-                    aria-label="Acción si el contacto no confirma"
+                    aria-label="Acción al vencer el plazo sin confirmación"
                     portal
                   />
                   <span className={styles.helpText}>{selectedNoConfirmAction.description}</span>
+                  <span className={styles.helpText}>
+                    Por defecto, Ristak envía el push de confirmación. Puedes apagarlo por
+                    destinatario en Configuración → Notificaciones → Confirmaciones de cita.
+                  </span>
                 </div>
-                {selectedNoConfirmAction.value === 'cancel_appointment' && (
-                  <div className={styles.field}>
+                <div className={styles.field}>
                     <label className={styles.fieldLabel}>Esperar la confirmación durante</label>
                     <div className={styles.offsetRow}>
                       <NumberInput
@@ -829,7 +847,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                       </div>
                     </div>
                     {confirmationTimeoutMissing && (
-                      <span className={styles.helpText}>Escribe un plazo para poder guardar la cancelación automática.</span>
+                      <span className={styles.helpText}>Escribe un plazo para poder guardar esta confirmación.</span>
                     )}
                     {confirmationTimeoutTooLong && (
                       <span className={styles.helpText}>
@@ -918,13 +936,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                         </>
                       )}
                     </div>
-                  </div>
-                )}
-                {selectedNoConfirmAction.value !== 'cancel_appointment' && (
-                  <span className={styles.helpText}>
-                    Si no responde, Ristak conserva la cita.
-                  </span>
-                )}
+                </div>
               </div>
             )}
           </section>
