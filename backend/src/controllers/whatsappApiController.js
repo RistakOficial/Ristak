@@ -14,6 +14,7 @@ import {
   getWhatsAppApiStatus,
   getWhatsAppApiTemplates,
   getWhatsAppApiWebhookPath,
+  getYCloudWebhookIngressDecision,
   getMetaDirectSetupPrefill,
   getWhatsAppQrForPhone,
   previewWhatsAppApiPhoneNumbers,
@@ -309,9 +310,10 @@ export async function disconnectWhatsAppApiView(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error desconectando WhatsApp_API: ${error.message}`)
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'No se pudo desconectar WhatsApp_API'
+      error: error.message || 'No se pudo desconectar WhatsApp_API',
+      code: error.code || undefined
     })
   }
 }
@@ -342,9 +344,10 @@ export async function resetWhatsAppApiCredentialsView(req, res) {
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error limpiando credenciales WhatsApp_API: ${error.message}`)
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      error: 'No se pudieron limpiar las credenciales de WhatsApp_API'
+      error: error.message || 'No se pudieron limpiar las credenciales de WhatsApp_API',
+      code: error.code || undefined
     })
   }
 }
@@ -1219,11 +1222,18 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
 
 export async function handleYCloudWhatsAppApiWebhook(req, res) {
   try {
+    const endpointId = req.get('X-Webhook-Endpoint-ID') || ''
+    const ingress = await getYCloudWebhookIngressDecision({ endpointId })
+    if (!ingress.allowed) {
+      logger.warn(`[WhatsApp API] Webhook YCloud ignorado: ${ingress.reason}`)
+      return res.status(200).json({ success: true })
+    }
+
     await processYCloudWhatsAppWebhook({
       payload: req.body || {},
       rawBody: req.rawBody || JSON.stringify(req.body || {}),
       signatureHeader: req.get('YCloud-Signature') || '',
-      endpointId: req.get('X-Webhook-Endpoint-ID') || ''
+      endpointId
     })
 
     res.status(200).json({ success: true })

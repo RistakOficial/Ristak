@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-29.
+Ultima consolidacion: 2026-07-31.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -2233,7 +2233,11 @@ Las firmas operativas que HighLevel agrega al espejo `TYPE_CUSTOM_SMS`, como
 `[Received on ...]` o `Sent from another device (...)`, se eliminan antes de
 comparar el contenido. La fila firmada no despierta otra ejecución del agente y
 se colapsa en la conversación visible, aunque permanece guardada como evidencia
-cruda del proveedor. Dos envíos reales idénticos conservan sus dos burbujas.
+cruda del proveedor. La misma regla colapsa el espejo firmado contra un mensaje
+canónico recibido directamente por YCloud sólo si también coinciden dirección,
+contacto, contenido, 90 segundos y el número del negocio escrito en la firma.
+Dos envíos reales idénticos o mensajes de números distintos conservan sus dos
+burbujas.
 
 Los estados del runtime siguen separados por canal para conservar claims y
 entregas aisladas, pero `GET
@@ -2322,6 +2326,19 @@ conservar su respaldo QR, o viceversa, sin mezclar credenciales ni apagar la otr
 conexión. Los mensajes, contactos y plantillas históricas permanecen; los nuevos
 eventos API de una fila retirada se ignoran localmente hasta que el usuario la
 conecte otra vez de forma explícita.
+
+Cuando se retira el último número YCloud, Ristak apaga primero la entrada local y
+marca todas las filas YCloud como inactivas. Luego pide a YCloud deshabilitar el
+endpoint remoto y sólo borra API key, secreto e IDs después de recibir una
+confirmación compatible. Si el proveedor falla, el webhook queda
+`disconnect_pending`, las credenciales se conservan para reintentar y la API
+responde que la limpieza remota sigue pendiente; aun así, ningún webhook nuevo
+entra al CRM. El receptor público exige integración habilitada, API key,
+endpoint configurado y al menos un número YCloud activo; si la entrega incluye
+un ID de endpoint, además debe coincidir. La identidad criptográfica se comprueba
+con `YCloud-Signature` cuando existe el secreto del endpoint. Si falla la barrera
+local responde `200` sin guardar evento, mensaje ni contacto, para que un webhook
+remoto huérfano no reviva una integración desconectada ni genere duplicados.
 
 La sección **Números** muestra la búsqueda, el resumen y la tabla operativa a todo
 el ancho. No agrega un panel lateral de filtros que repita estados ya visibles en

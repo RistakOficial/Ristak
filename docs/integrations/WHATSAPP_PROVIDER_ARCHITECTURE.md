@@ -1,6 +1,6 @@
 # Arquitectura de proveedores WhatsApp
 
-Ultima actualizacion: 2026-07-29.
+Ultima actualizacion: 2026-07-31.
 
 ## Proposito
 
@@ -88,6 +88,14 @@ ventana. Fuera de 24 horas se rechaza el texto libre con
 `HIGHLEVEL_WHATSAPP_REPLY_WINDOW_CLOSED`; si no se puede verificar, se usa
 `HIGHLEVEL_WHATSAPP_REPLY_WINDOW_UNKNOWN`. Ninguno de los dos casos autoriza
 convertir el envio a SMS.
+
+HighLevel también puede copiar a `TYPE_CUSTOM_SMS` un mensaje que Ristak ya
+recibió directamente por YCloud. En la conversación visible, esa copia se
+colapsa sólo cuando trae una firma explícita `[Received on ...]` o
+`Sent from another device (...)` y coinciden dirección, contacto, contenido,
+ventana de 90 segundos y número del negocio. La fila cruda permanece para
+soporte. Sin esa evidencia completa, dos textos iguales siguen siendo dos
+mensajes reales y nunca se deduplican por parecido.
 
 El sync HighLevel persiste la identidad real del payload (`from_phone`,
 `to_phone`, `business_phone`) y el motivo limpio de `message.error`. Una
@@ -579,7 +587,12 @@ proveedor o transporte y exige escribir `DESCONECTAR`. En este flujo
 - YCloud: se marca sólo esa fila con `api_send_enabled=0`, deja de ofrecerse
   para enviar y sus nuevos eventos de mensajes se ignoran localmente. Ristak no
   llama una operación remota de borrado. Si era el último número YCloud activo,
-  también deshabilita el webhook global y limpia las credenciales locales.
+  primero bloquea globalmente la entrada YCloud y deshabilita todas sus filas;
+  después exige que el endpoint remoto confirme `disabled`/`inactive` antes de
+  limpiar la API key, secreto e identificadores locales. Si YCloud falla, la
+  entrada permanece bloqueada, el estado queda `disconnect_pending` y se
+  conservan llave e ID para reintentar; Ristak no reporta una limpieza remota
+  que no pudo comprobar.
 - Meta directo: se desactiva el ruteo central de Installer, se elimina el token
   local cifrado y la fila queda inactiva. El número sigue registrado en Meta y
   Coexistence no se cancela ni se desregistra remotamente.
@@ -592,6 +605,17 @@ Mensajes, contactos, plantillas, eventos e IDs históricos permanecen para
 auditoría. Las filas oficiales desactivadas se conservan como tombstone local
 para impedir que una sincronización normal de YCloud las reactive; una conexión
 explícita posterior sí puede reactivarlas.
+
+El receptor público YCloud responde de forma inerte y no persiste evento,
+mensaje ni contacto cuando falta cualquiera de estas condiciones locales:
+integración habilitada, API key guardada, endpoint configurado y al menos una
+fila YCloud con `api_send_enabled=1`. YCloud no garantiza un header con el ID del
+endpoint; si una entrega o relay sí lo incluye, Ristak exige que coincida, y la
+firma `YCloud-Signature` sigue siendo la identidad criptográfica cuando existe
+el secreto. Esto corta los webhooks huérfanos que un proveedor remoto todavía
+intente entregar después de una desconexión. La respuesta HTTP sigue siendo
+`200` para evitar reintentos infinitos del proveedor, pero el payload no entra
+al CRM.
 
 ## Credenciales y configuración
 

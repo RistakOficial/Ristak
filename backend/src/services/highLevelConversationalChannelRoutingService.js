@@ -1,5 +1,5 @@
 import { db } from '../config/database.js'
-import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import {
   parseSortableTimestamp,
   timestampSortExpression,
@@ -95,6 +95,25 @@ function rowsShareCustomerPhone(left = {}, right = {}) {
   return Boolean(leftPhone && rightPhone && leftPhone === rightPhone)
 }
 
+function getHighLevelMirrorBusinessPhone(row = {}) {
+  if (!hasHighLevelPhoneMirrorAnnotation(row?.message_text)) return ''
+  const annotation = cleanString(row.message_text).slice(stripHighLevelPhoneMirrorAnnotation(row.message_text).length)
+  const match = annotation.match(/\(([+\d][+\d\s.()-]{6,})\)/u)
+  return normalizePhoneForStorage(match?.[1]) || cleanString(match?.[1])
+}
+
+function rowBusinessPhone(row = {}) {
+  const direction = cleanString(row.direction).toLowerCase()
+  const directionalPhone = direction === 'outbound' ? row.from_phone : row.to_phone
+  return normalizePhoneForStorage(row.business_phone || directionalPhone || '') ||
+    cleanString(row.business_phone || directionalPhone)
+}
+
+function phonesMatch(left = '', right = '') {
+  const leftCandidates = new Set(buildPhoneMatchCandidates(left))
+  return buildPhoneMatchCandidates(right).some(candidate => leftCandidates.has(candidate))
+}
+
 export function areHighLevelPhoneRowsCrossChannelDuplicates(source, candidate) {
   const sourceChannel = channelFromTransport(source?.transport)
   const candidateChannel = channelFromTransport(candidate?.transport)
@@ -111,6 +130,35 @@ export function areHighLevelPhoneRowsCrossChannelDuplicates(source, candidate) {
   if (Math.abs(sourceAt - candidateAt) > HIGHLEVEL_CONVERSATIONAL_DUPLICATE_WINDOW_MS) return false
 
   return rowsShareSubstantiveContent(source, candidate)
+}
+
+export function areExplicitHighLevelPhoneMirrorDuplicates(mirror, candidate) {
+  if (areHighLevelPhoneRowsCrossChannelDuplicates(mirror, candidate)) return true
+  if (!channelFromTransport(mirror?.transport) || !hasHighLevelPhoneMirrorAnnotation(mirror?.message_text)) {
+    return false
+  }
+
+  const candidateTransport = cleanString(candidate?.transport).toLowerCase()
+  if (!candidateTransport || channelFromTransport(candidateTransport)) return false
+
+  const mirrorDirection = cleanString(mirror?.direction).toLowerCase()
+  const candidateDirection = cleanString(candidate?.direction).toLowerCase()
+  if (mirrorDirection && candidateDirection && mirrorDirection !== candidateDirection) return false
+  if (!rowsShareCustomerPhone(mirror, candidate)) return false
+
+  const mirrorAt = rowTimestampMs(mirror)
+  const candidateAt = rowTimestampMs(candidate)
+  if (!mirrorAt || !candidateAt) return false
+  if (Math.abs(mirrorAt - candidateAt) > HIGHLEVEL_CONVERSATIONAL_DUPLICATE_WINDOW_MS) return false
+  if (!rowsShareSubstantiveContent(mirror, candidate)) return false
+
+  const annotatedBusinessPhone = getHighLevelMirrorBusinessPhone(mirror)
+  const candidateBusinessPhone = rowBusinessPhone(candidate)
+  return Boolean(
+    annotatedBusinessPhone &&
+    candidateBusinessPhone &&
+    phonesMatch(annotatedBusinessPhone, candidateBusinessPhone)
+  )
 }
 
 function rowIdentity(row = {}) {
@@ -157,7 +205,7 @@ export function collapseHighLevelPhoneMirrorRowsForDisplay(rows = []) {
         entry.id &&
         !entry.annotated &&
         !usedCanonicalIds.has(entry.id) &&
-        areHighLevelPhoneRowsCrossChannelDuplicates(mirror.row, entry.row)
+        areExplicitHighLevelPhoneMirrorDuplicates(mirror.row, entry.row)
       ))
       .sort((left, right) => {
         const leftDistance = Math.abs(rowTimestampMs(left.row) - rowTimestampMs(mirror.row))

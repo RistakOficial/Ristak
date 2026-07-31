@@ -240,6 +240,70 @@ test('el historial no mezcla direcciones ni limpia anotaciones fuera de HighLeve
   assert.equal(visible[2].message_text, 'Texto legítimo 📱 [Received on demostración] ')
 })
 
+test('el historial oculta el espejo SMS de HighLevel cuando el mensaje canonico llego directo por YCloud', () => {
+  const customerPhone = '+525531259458'
+  const visible = collapseHighLevelPhoneMirrorRowsForDisplay([
+    {
+      id: 'ycloud_inbound_real',
+      provider: 'ycloud',
+      transport: 'api',
+      direction: 'inbound',
+      phone: customerPhone,
+      from_phone: customerPhone,
+      to_phone: '+526567825555',
+      business_phone: '+526567825555',
+      message_text: 'Ah! Buenos días, Raúl!',
+      message_timestamp: '2030-06-01T20:03:00.000Z'
+    },
+    {
+      id: 'highlevel_sms_mirror',
+      transport: 'ghl_sms',
+      direction: 'inbound',
+      phone: customerPhone,
+      from_phone: customerPhone,
+      business_phone: '+528110638341',
+      message_text: 'Ah! Buenos días, Raúl!\n\n📱 [Received on Raúl Gómez (5216567825555)]',
+      message_timestamp: '2030-06-01T20:03:01.000Z'
+    }
+  ])
+
+  assert.deepEqual(visible.map(row => row.id), ['ycloud_inbound_real'])
+  assert.equal(visible[0].message_text, 'Ah! Buenos días, Raúl!')
+})
+
+test('el historial conserva ambos mensajes si la firma de HighLevel nombra otro numero del negocio', () => {
+  const customerPhone = '+525531259458'
+  const visible = collapseHighLevelPhoneMirrorRowsForDisplay([
+    {
+      id: 'ycloud_inbound_other_business',
+      provider: 'ycloud',
+      transport: 'api',
+      direction: 'inbound',
+      phone: customerPhone,
+      from_phone: customerPhone,
+      to_phone: '+526567825555',
+      business_phone: '+526567825555',
+      message_text: 'Mismo texto real',
+      message_timestamp: '2030-06-01T20:04:00.000Z'
+    },
+    {
+      id: 'highlevel_sms_different_business',
+      transport: 'ghl_sms',
+      direction: 'inbound',
+      phone: customerPhone,
+      from_phone: customerPhone,
+      business_phone: '+528110638341',
+      message_text: 'Mismo texto real\n\n📱 [Received on Otra cuenta (5218111111111)]',
+      message_timestamp: '2030-06-01T20:04:01.000Z'
+    }
+  ])
+
+  assert.deepEqual(visible.map(row => row.id), [
+    'ycloud_inbound_other_business',
+    'highlevel_sms_different_business'
+  ])
+})
+
 test('GHL elige SMS después de 24 horas y no deja que el espejo WhatsApp reabra la ventana', async () => {
   const marker = randomUUID().replace(/-/g, '')
   const { contactId, phone } = await createContact(marker)

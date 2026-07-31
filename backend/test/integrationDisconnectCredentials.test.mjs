@@ -7,11 +7,13 @@ import {
   disconnectMetaDirectConnection,
   disconnectWhatsAppPhoneNumber,
   disconnectWhatsAppApi,
+  getYCloudWebhookIngressDecision,
   getWhatsAppApiConfigKeys,
   getWhatsAppApiStatus,
   previewWhatsAppApiPhoneNumbers,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
+import { handleYCloudWhatsAppApiWebhook } from '../src/controllers/whatsappApiController.js'
 import {
   connectEmail,
   disconnectEmail,
@@ -131,7 +133,7 @@ test('desconectar WhatsApp API borra credenciales locales y evita reconectar sin
     await setAppConfig(keys.phoneNumberId, 'phone_number_123')
     await setAppConfig(keys.wabaId, 'waba_123')
     await setAppConfig(keys.webhookEndpointId, '')
-    await setAppConfig(keys.webhookUrl, 'https://example.test/webhook/whatsapp-api/ycloud')
+    await setAppConfig(keys.webhookUrl, '')
     await setAppConfig(keys.webhookStatus, 'active')
     await setAppConfig(keys.connectedAt, '2026-06-15T20:00:00.000Z')
     await setAppConfig(keys.lastSyncedAt, '2026-06-15T20:00:00.000Z')
@@ -149,6 +151,208 @@ test('desconectar WhatsApp API borra credenciales locales y evita reconectar sin
       /Pega la llave de WhatsApp API/
     )
   })
+})
+
+test('desconectar YCloud confirma el webhook remoto antes de borrar sus credenciales', async () => {
+  await initializeMasterKey()
+  const { keys, all, deletedOnDisconnect } = whatsappConnectionKeys()
+  const phoneId = 'test_ycloud_verified_disconnect'
+  const requests = []
+
+  setYCloudFetchForTest(async (url, options = {}) => {
+    const parsed = new URL(String(url))
+    const path = parsed.pathname.replace(/^\/v2/, '')
+    const method = String(options.method || 'GET').toUpperCase()
+    requests.push({ path, method, body: JSON.parse(options.body || '{}') })
+    assert.equal(path, '/webhookEndpoints/webhook_verified_disconnect')
+    assert.equal(method, 'PATCH')
+    return ycloudJsonResponse({ id: 'webhook_verified_disconnect', status: 'disabled' })
+  })
+
+  try {
+    await snapshotAppConfig(all, async () => {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_verified_disconnect_secret'))
+      await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig(keys.webhookEndpointId, 'webhook_verified_disconnect')
+      await setAppConfig(keys.webhookUrl, 'https://example.test/webhook/whatsapp-api/ycloud')
+      await setAppConfig(keys.webhookStatus, 'active')
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, phone_number, display_phone_number, verified_name,
+          status, api_send_enabled, is_default_sender
+        ) VALUES (?, 'ycloud', '+526561234568', '+52 656 123 4568', 'YCloud desconexion', 'CONNECTED', 1, 1)
+      `, [phoneId])
+
+      const disconnected = await disconnectWhatsAppApi()
+      const localPhone = await db.get(
+        'SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneId]
+      )
+
+      assert.equal(requests.length, 1)
+      assert.deepEqual(requests[0].body, { status: 'disabled' })
+      assert.equal(Number(localPhone.api_send_enabled), 0)
+      assert.equal(Number(localPhone.is_default_sender), 0)
+      assert.equal(disconnected.connected, false)
+      assert.equal(await countExistingAppConfig(deletedOnDisconnect), 0)
+      assert.equal((await getYCloudWebhookIngressDecision({ endpointId: 'webhook_verified_disconnect' })).allowed, false)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneId])
+  }
+})
+
+test('si YCloud falla al apagar el webhook, Ristak bloquea la entrada y conserva datos para reintentar', async () => {
+  await initializeMasterKey()
+  const { keys, all } = whatsappConnectionKeys()
+  const phoneId = 'test_ycloud_pending_disconnect'
+
+  setYCloudFetchForTest(async () => ycloudJsonResponse(
+    { message: 'provider unavailable' },
+    { status: 503, statusText: 'Unavailable' }
+  ))
+
+  try {
+    await snapshotAppConfig(all, async () => {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_pending_disconnect_secret'))
+      await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig(keys.webhookEndpointId, 'webhook_pending_disconnect')
+      await setAppConfig(keys.webhookUrl, 'https://example.test/webhook/whatsapp-api/ycloud')
+      await setAppConfig(keys.webhookStatus, 'active')
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, phone_number, display_phone_number, verified_name,
+          status, api_send_enabled, is_default_sender
+        ) VALUES (?, 'ycloud', '+526561234569', '+52 656 123 4569', 'YCloud pendiente', 'CONNECTED', 1, 1)
+      `, [phoneId])
+
+      await assert.rejects(
+        () => disconnectWhatsAppApi(),
+        error => error?.code === 'YCLOUD_WEBHOOK_DISCONNECT_PENDING' && error?.statusCode === 502
+      )
+
+      const localPhone = await db.get(
+        'SELECT api_send_enabled, is_default_sender FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneId]
+      )
+      assert.equal(await getAppConfig(keys.enabled), '0')
+      assert.equal(Number(localPhone.api_send_enabled), 0)
+      assert.equal(Number(localPhone.is_default_sender), 0)
+      assert.ok(await getAppConfig(keys.apiKey))
+      assert.equal(await getAppConfig(keys.webhookEndpointId), 'webhook_pending_disconnect')
+      assert.equal(await getAppConfig(keys.webhookStatus), 'disconnect_pending')
+      assert.match(await getAppConfig(keys.lastError), /bloqueado localmente/)
+      assert.deepEqual(
+        await getYCloudWebhookIngressDecision({ endpointId: 'webhook_pending_disconnect' }),
+        { allowed: false, reason: 'integration_disabled' }
+      )
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneId])
+  }
+})
+
+test('un webhook YCloud ya eliminado permite completar la limpieza local', async () => {
+  await initializeMasterKey()
+  const { keys, all, deletedOnDisconnect } = whatsappConnectionKeys()
+
+  setYCloudFetchForTest(async () => ycloudJsonResponse(
+    { message: 'webhook not found' },
+    { status: 404, statusText: 'Not Found' }
+  ))
+
+  try {
+    await snapshotAppConfig(all, async () => {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_deleted_webhook_secret'))
+      await setAppConfig(keys.webhookEndpointId, 'webhook_already_deleted')
+      await setAppConfig(keys.webhookUrl, 'https://example.test/webhook/whatsapp-api/ycloud')
+
+      const disconnected = await disconnectWhatsAppApi()
+
+      assert.equal(disconnected.connected, false)
+      assert.equal(disconnected.configured, false)
+      assert.equal(await countExistingAppConfig(deletedOnDisconnect), 0)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+  }
+})
+
+test('el receptor YCloud exige conexion local, endpoint configurado y al menos un numero activo', async () => {
+  await initializeMasterKey()
+  const { keys, all } = whatsappConnectionKeys()
+  const phoneId = 'test_ycloud_ingress_guard'
+  const eventId = 'event_ycloud_ingress_guard'
+
+  try {
+    await snapshotAppConfig(all, async () => {
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_ingress_guard_secret'))
+      await setAppConfig(keys.webhookEndpointId, 'webhook_ingress_guard')
+
+      assert.deepEqual(
+        await getYCloudWebhookIngressDecision({ endpointId: 'otro_endpoint' }),
+        { allowed: false, reason: 'endpoint_mismatch' }
+      )
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, phone_number, display_phone_number, verified_name,
+          status, api_send_enabled, is_default_sender
+        ) VALUES (?, 'ycloud', '+526561234570', '+52 656 123 4570', 'YCloud ingreso', 'CONNECTED', 0, 0)
+      `, [phoneId])
+
+      assert.deepEqual(
+        await getYCloudWebhookIngressDecision({ endpointId: 'webhook_ingress_guard' }),
+        { allowed: false, reason: 'no_active_ycloud_phone' }
+      )
+
+      await db.run('UPDATE whatsapp_api_phone_numbers SET api_send_enabled = 1 WHERE id = ?', [phoneId])
+      assert.deepEqual(
+        await getYCloudWebhookIngressDecision(),
+        { allowed: true, reason: 'active_connection' }
+      )
+      assert.deepEqual(
+        await getYCloudWebhookIngressDecision({ endpointId: 'webhook_ingress_guard' }),
+        { allowed: true, reason: 'active_connection' }
+      )
+
+      await setAppConfig(keys.enabled, '0')
+      let responseStatus = 0
+      let responsePayload = null
+      const req = {
+        body: { id: eventId, type: 'whatsapp.inbound_message.received' },
+        rawBody: JSON.stringify({ id: eventId, type: 'whatsapp.inbound_message.received' }),
+        get: header => header === 'X-Webhook-Endpoint-ID' ? 'webhook_ingress_guard' : ''
+      }
+      const res = {
+        status(value) {
+          responseStatus = value
+          return this
+        },
+        json(value) {
+          responsePayload = value
+          return this
+        }
+      }
+
+      await handleYCloudWhatsAppApiWebhook(req, res)
+      assert.equal(responseStatus, 200)
+      assert.deepEqual(responsePayload, { success: true })
+      assert.equal(
+        Number((await db.get('SELECT COUNT(*) AS total FROM whatsapp_api_webhook_events WHERE event_id = ?', [eventId]))?.total || 0),
+        0
+      )
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_webhook_events WHERE event_id = ?', [eventId])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneId])
+  }
 })
 
 test('WhatsApp API limpia llaves viejas sólo en comandos y mantiene GET status read-only', async () => {

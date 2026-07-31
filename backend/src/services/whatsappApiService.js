@@ -5646,28 +5646,133 @@ export async function previewWhatsAppApiPhoneNumbers({ apiKey } = {}) {
 export async function disconnectWhatsAppApi() {
   const config = await loadConfig({ includeSecrets: true })
 
-  if (config.apiKey && config.webhookEndpointId) {
+  const selectFallbackProvider = async () => {
+    const nextDefault = await selectNextDefaultWhatsAppPhone()
+    const nextProvider = cleanString(nextDefault?.provider).toLowerCase()
+    if (nextProvider === META_DIRECT_PROVIDER_NAME) {
+      await setAppConfig(CONFIG_KEYS.provider, META_DIRECT_PROVIDER_NAME)
+    }
+    return nextDefault
+  }
+
+  // La barrera local va primero. Si YCloud tarda o falla, el endpoint publico
+  // deja de aceptar eventos desde este instante y ningun numero YCloud queda
+  // disponible para nuevos envios.
+  await setAppConfig(CONFIG_KEYS.enabled, '0')
+  await setAppConfig(CONFIG_KEYS.disconnectedAt, nowIso())
+  await db.run(`
+    UPDATE whatsapp_api_phone_numbers
+    SET api_send_enabled = 0,
+        is_default_sender = 0,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE LOWER(COALESCE(provider, ?)) = ?
+  `, [PROVIDER_NAME, PROVIDER_NAME])
+
+  if (config.webhookEndpointId && !config.apiKey) {
+    const message = 'YCloud ya quedo bloqueado localmente, pero falta la llave para desactivar su webhook remoto. Conservamos el endpoint para completar la limpieza cuando haya una credencial valida.'
+    await setAppConfig(CONFIG_KEYS.webhookStatus, 'disconnect_pending')
+    await setAppConfig(CONFIG_KEYS.lastError, message)
+    await selectFallbackProvider()
+
+    const pendingError = new Error(message)
+    pendingError.code = 'YCLOUD_WEBHOOK_DISCONNECT_PENDING'
+    pendingError.statusCode = 409
+    throw pendingError
+  }
+
+  if (config.apiKey && (config.webhookEndpointId || config.webhookUrl)) {
     try {
-      const endpoint = await ycloudRequest(`/webhookEndpoints/${encodeURIComponent(config.webhookEndpointId)}`, {
-        apiKey: config.apiKey,
-        method: 'PATCH',
-        body: { status: 'disabled' }
-      })
-      await setAppConfig(CONFIG_KEYS.webhookStatus, endpoint.status || 'disabled')
+      let remoteEndpointId = cleanString(config.webhookEndpointId)
+      if (!remoteEndpointId) {
+        const configuredWebhookUrl = cleanString(config.webhookUrl)
+        const endpoints = await listYCloudWebhookEndpoints(config.apiKey)
+        const matchingEndpoint = endpoints.find(endpoint => (
+          cleanString(endpoint?.url) === configuredWebhookUrl ||
+          cleanString(endpoint?.description) === WEBHOOK_DESCRIPTION
+        ))
+        remoteEndpointId = cleanString(matchingEndpoint?.id)
+        if (remoteEndpointId) {
+          await setAppConfig(CONFIG_KEYS.webhookEndpointId, remoteEndpointId)
+        }
+      }
+
+      if (remoteEndpointId) {
+        const endpoint = await ycloudRequest(`/webhookEndpoints/${encodeURIComponent(remoteEndpointId)}`, {
+          apiKey: config.apiKey,
+          method: 'PATCH',
+          body: { status: 'disabled' }
+        })
+        const remoteStatus = cleanString(endpoint?.status).toLowerCase()
+        if (remoteStatus && !['disabled', 'inactive'].includes(remoteStatus)) {
+          throw new Error(`YCloud devolvio el webhook con estado ${remoteStatus}`)
+        }
+        await setAppConfig(CONFIG_KEYS.webhookStatus, remoteStatus || 'disabled')
+      }
     } catch (error) {
-      logger.warn(`No se pudo deshabilitar webhook de WhatsApp API: ${error.message}`)
+      if (Number(error?.statusCode || 0) === 404) {
+        // Un endpoint que ya no existe tambien prueba que no puede seguir
+        // entregando eventos. La limpieza local puede terminar con seguridad.
+        await setAppConfig(CONFIG_KEYS.webhookStatus, 'deleted')
+      } else {
+        const message = 'YCloud ya quedo bloqueado localmente, pero no pudimos confirmar que su webhook remoto se desactivara. Conservamos la llave y el endpoint para volver a intentarlo.'
+        await setAppConfig(CONFIG_KEYS.webhookStatus, 'disconnect_pending')
+        await setAppConfig(CONFIG_KEYS.lastError, `${message} Detalle: ${error.message}`)
+        await selectFallbackProvider()
+
+        const pendingError = new Error(message)
+        pendingError.code = 'YCLOUD_WEBHOOK_DISCONNECT_PENDING'
+        pendingError.statusCode = 502
+        pendingError.cause = error
+        throw pendingError
+      }
     }
   }
 
-  await setAppConfig(CONFIG_KEYS.enabled, '0')
-  await setAppConfig(CONFIG_KEYS.disconnectedAt, nowIso())
-  await setAppConfig(CONFIG_KEYS.lastError, '')
   await clearYCloudConnectionConfig()
+  const nextDefault = await selectFallbackProvider()
+  if (!nextDefault) {
+    // selectNextDefaultWhatsAppPhone mantiene compatibilidad escribiendo
+    // selectores vacios; en una desconexion total no deben sobrevivir como
+    // configuracion fantasma.
+    await clearYCloudConnectionConfig()
+  }
+  await setAppConfig(CONFIG_KEYS.lastError, '')
   return getWhatsAppApiStatus()
 }
 
 export async function resetWhatsAppApiCredentials() {
   return disconnectWhatsAppApi()
+}
+
+export async function getYCloudWebhookIngressDecision({ endpointId } = {}) {
+  const config = await loadConfig()
+  if (!config.enabled) return { allowed: false, reason: 'integration_disabled' }
+  if (!config.hasApiKey) return { allowed: false, reason: 'missing_credentials' }
+
+  const configuredEndpointId = cleanString(config.webhookEndpointId)
+  const receivedEndpointId = cleanString(endpointId)
+  if (!configuredEndpointId) {
+    return { allowed: false, reason: 'missing_endpoint_configuration' }
+  }
+  // YCloud documenta la firma, pero no garantiza un header con el ID del
+  // endpoint. Si alguna entrega o relay sí lo incluye, lo usamos como defensa
+  // adicional; su ausencia no puede bloquear una conexión legítima.
+  if (receivedEndpointId && receivedEndpointId !== configuredEndpointId) {
+    return { allowed: false, reason: 'endpoint_mismatch' }
+  }
+
+  const activePhone = await db.get(`
+    SELECT id
+    FROM whatsapp_api_phone_numbers
+    WHERE LOWER(COALESCE(provider, ?)) = ?
+      AND COALESCE(api_send_enabled, 1) = 1
+    LIMIT 1
+  `, [PROVIDER_NAME, PROVIDER_NAME])
+  if (!activePhone?.id) {
+    return { allowed: false, reason: 'no_active_ycloud_phone' }
+  }
+
+  return { allowed: true, reason: 'active_connection' }
 }
 
 function normalizeDisplayText(value) {
