@@ -106,6 +106,7 @@ async function seedDualModeContact(label = 'live_parity') {
 function createStripeModeMock() {
   const calls = {
     paymentIntentsCreate: [],
+    paymentMethodsRetrieve: [],
     paymentMethodsList: [],
     customersRetrieve: [],
     customersCreate: [],
@@ -174,7 +175,10 @@ function createStripeModeMock() {
         }
       },
       paymentMethods: {
-        retrieve: async (paymentMethodId) => paymentMethod(paymentMethodId),
+        retrieve: async (paymentMethodId, params, options) => {
+          calls.paymentMethodsRetrieve.push({ mode, paymentMethodId, params, options })
+          return paymentMethod(paymentMethodId)
+        },
         list: async (params, options) => {
           calls.paymentMethodsList.push({ mode, params, options })
           if (mode === 'live' && params.customer === 'cus_test_cached') {
@@ -349,6 +353,10 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
         stripeMock.calls.paymentIntentsCreate.at(-1).options.idempotencyKey,
         'ristak:saved-card:stripe:test-provider-key'
       )
+      assert.ok(stripeMock.calls.paymentMethodsRetrieve.length >= 1)
+      assert.ok(stripeMock.calls.paymentMethodsRetrieve.every((call) => Object.keys(call.params).length === 0))
+      assert.ok(stripeMock.calls.paymentMethodsRetrieve.every((call) => call.options.timeout === 8000))
+      assert.ok(stripeMock.calls.paymentMethodsRetrieve.every((call) => call.options.maxNetworkRetries === 1))
 
       const plan = await createStripePaymentPlan({
         contact,

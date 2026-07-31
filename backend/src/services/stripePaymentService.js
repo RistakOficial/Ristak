@@ -209,6 +209,12 @@ function stripeRequestOptionsWithIdempotency(requestOptions, idempotencyKey) {
   }
 }
 
+function retrieveStripeResource(resource, id, requestOptions, params = {}) {
+  // stripe-node reserva el segundo argumento de retrieve para parámetros de API.
+  // Las opciones de transporte deben viajar siempre en el tercer argumento.
+  return resource.retrieve(id, params, requestOptions)
+}
+
 function normalizeCurrency(value) {
   const currency = cleanString(value || DEFAULT_CURRENCY).toUpperCase()
   return /^[A-Z]{3}$/.test(currency) ? currency : DEFAULT_CURRENCY
@@ -1417,7 +1423,7 @@ async function ensureStripeCustomerForContact(stripe, contactId, fallback = {}, 
   const existingCustomerId = modeCustomerId || cleanString(contact.stripe_customer_id)
   if (existingCustomerId) {
     try {
-      await stripe.customers.retrieve(existingCustomerId, requestOptions)
+      await retrieveStripeResource(stripe.customers, existingCustomerId, requestOptions)
       return existingCustomerId
     } catch (error) {
       if (error?.statusCode !== 404) throw error
@@ -1552,7 +1558,7 @@ async function upsertStripePaymentMethod({ stripe, contactId, customerId, paymen
   const cleanCustomerId = extractStripeObjectId(customerId)
   if (!stripe || !cleanPaymentMethodId || !cleanCustomerId) return null
 
-  const paymentMethod = await stripe.paymentMethods.retrieve(cleanPaymentMethodId, requestOptions)
+  const paymentMethod = await retrieveStripeResource(stripe.paymentMethods, cleanPaymentMethodId, requestOptions)
   return persistStripePaymentMethodSnapshot({
     paymentMethod,
     contactId,
@@ -1698,7 +1704,11 @@ export async function getPublicStripePayment(publicPaymentId, { baseUrl, sync = 
   if (sync && cleanCheckoutSessionId && !['paid', 'refunded', 'void', 'deleted'].includes(cleanString(row.status).toLowerCase())) {
     const context = await getStripeClient(row.payment_mode || '')
     if (context.stripe?.checkout?.sessions?.retrieve) {
-      const session = await context.stripe.checkout.sessions.retrieve(cleanCheckoutSessionId, {}, context.requestOptions)
+      const session = await retrieveStripeResource(
+        context.stripe.checkout.sessions,
+        cleanCheckoutSessionId,
+        context.requestOptions
+      )
       await updateSubscriptionFromStripeCheckoutSession(session, context)
       row = await findPaymentByPublicId(publicPaymentId)
     }
@@ -1741,7 +1751,7 @@ export async function createStripePaymentIntent(publicPaymentId, options = {}) {
 
   let replacePaymentIntentId = ''
   if (row.stripe_payment_intent_id) {
-    const existing = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, requestOptions)
+    const existing = await retrieveStripeResource(stripe.paymentIntents, row.stripe_payment_intent_id, requestOptions)
     const existingStatus = cleanString(existing.status).toLowerCase()
     if (['requires_payment_method', 'requires_confirmation', 'requires_action', 'processing'].includes(existingStatus)) {
       if (savePaymentMethod && stripeCustomerId && existing.status === 'requires_payment_method') {
@@ -1969,7 +1979,7 @@ export async function preparePublicStripeInstallmentPlans(publicPaymentId, optio
   const createIntentDayBucket = businessTodayDateOnly(createIntentTimezone)
   let replacePaymentIntentId = ''
   if (row.stripe_payment_intent_id) {
-    const existing = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, requestOptions)
+    const existing = await retrieveStripeResource(stripe.paymentIntents, row.stripe_payment_intent_id, requestOptions)
     const existingStatus = cleanString(existing.status).toLowerCase()
     if (['canceled', 'cancelled'].includes(existingStatus)) {
       replacePaymentIntentId = cleanString(existing.id || row.stripe_payment_intent_id)
@@ -2051,7 +2061,7 @@ export async function confirmPublicStripeInstallmentPayment(publicPaymentId, opt
     throw error
   }
 
-  const intent = await stripe.paymentIntents.retrieve(paymentIntentId, requestOptions)
+  const intent = await retrieveStripeResource(stripe.paymentIntents, paymentIntentId, requestOptions)
   const availablePlans = getStripeIntentAvailablePlans(intent, stripeInstallments)
   if (selectedCount && !availablePlans.some((plan) => plan.count === selectedCount)) {
     const error = new Error(`Este link permite máximo ${stripeInstallments.maxInstallments} meses y la tarjeta no ofrece el plazo seleccionado.`)
@@ -3267,12 +3277,13 @@ export async function updateStripeRecurringSubscription(input = {}) {
     throw error
   }
 
-  const subscription = await stripe.subscriptions.retrieve(
+  const subscription = await retrieveStripeResource(
+    stripe.subscriptions,
     stripeSubscriptionId,
+    requestOptions,
     {
       expand: ['items.data.price.product']
-    },
-    requestOptions
+    }
   )
   const item = subscription.items?.data?.[0]
   if (!item?.id) {
@@ -5826,7 +5837,7 @@ export async function processDueStripePaymentPlanCharges({ limit = 25, isLeaseVa
 export async function refreshStripePaymentFromIntent(paymentIntentId, mode = '') {
   const context = await getStripeClient(mode)
   const { stripe, requestOptions } = context
-  const intent = await stripe.paymentIntents.retrieve(paymentIntentId, requestOptions)
+  const intent = await retrieveStripeResource(stripe.paymentIntents, paymentIntentId, requestOptions)
   return updatePaymentFromIntent(intent, context)
 }
 

@@ -97,6 +97,91 @@ function buildPublicSiteReq(host, slug) {
   }
 }
 
+test('Stripe monta el checkout público al reutilizar un Customer existente sin mezclar opciones de red', async () => {
+  await snapshotPaymentConfig(async () => {
+    await configureStripeInstallmentTest()
+
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const contactId = `contact_stripe_existing_${suffix}`
+    const customerRetrieveCalls = []
+    const intentCreateCalls = []
+    const createdPublicIds = []
+
+    setStripeFactoryForTest(() => ({
+      customers: {
+        retrieve: async (customerId, params, requestOptions) => {
+          customerRetrieveCalls.push({ customerId, params, requestOptions })
+          return { id: customerId }
+        }
+      },
+      paymentIntents: {
+        create: async (params, requestOptions) => {
+          intentCreateCalls.push({ params, requestOptions })
+          return {
+            id: 'pi_existing_customer_checkout',
+            client_secret: 'pi_existing_customer_checkout_secret_test',
+            status: 'requires_payment_method',
+            amount: params.amount,
+            currency: params.currency,
+            customer: params.customer,
+            metadata: params.metadata
+          }
+        }
+      }
+    }))
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (
+          id, full_name, email, phone, source, stripe_customer_id, created_at, updated_at
+        ) VALUES (?, 'Cliente Stripe existente', ?, '+5215555551212', 'test', 'cus_existing_checkout', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [contactId, `${contactId}@example.test`]
+      )
+
+      const paymentLink = await createStripePaymentLink({
+        amount: 31250,
+        currency: 'MXN',
+        applyTax: false,
+        title: 'Checkout con Customer existente'
+      }, { baseUrl: 'https://app.example.test' })
+      createdPublicIds.push(paymentLink.publicPaymentId)
+      await db.run(
+        'UPDATE payments SET contact_id = ?, updated_at = CURRENT_TIMESTAMP WHERE public_payment_id = ?',
+        [contactId, paymentLink.publicPaymentId]
+      )
+
+      const checkout = await createStripePaymentIntent(paymentLink.publicPaymentId, {
+        savePaymentMethod: true
+      })
+
+      assert.equal(checkout.paymentIntentId, 'pi_existing_customer_checkout')
+      assert.equal(customerRetrieveCalls.length, 1)
+      assert.equal(customerRetrieveCalls[0].customerId, 'cus_existing_checkout')
+      assert.deepEqual(customerRetrieveCalls[0].params, {})
+      assert.deepEqual(customerRetrieveCalls[0].requestOptions, {
+        timeout: 8000,
+        maxNetworkRetries: 1
+      })
+      assert.equal(intentCreateCalls.length, 1)
+      assert.equal(intentCreateCalls[0].params.customer, 'cus_existing_checkout')
+      assert.equal(intentCreateCalls[0].requestOptions.timeout, 8000)
+      assert.equal(intentCreateCalls[0].requestOptions.maxNetworkRetries, 1)
+      assert.match(intentCreateCalls[0].requestOptions.idempotencyKey, /^ristak:/)
+
+      const stored = await db.get(
+        'SELECT status, stripe_payment_intent_id FROM payments WHERE public_payment_id = ?',
+        [paymentLink.publicPaymentId]
+      )
+      assert.equal(stored.status, 'pending')
+      assert.equal(stored.stripe_payment_intent_id, 'pi_existing_customer_checkout')
+    } finally {
+      await cleanupPublicPayments(createdPublicIds)
+      await db.run('DELETE FROM stripe_payment_methods WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  })
+})
+
 test('Stripe mantiene pendiente un link abandonado si el PaymentIntent no tiene fallo real', async () => {
   await snapshotPaymentConfig(async () => {
     await configureStripeInstallmentTest()
@@ -157,6 +242,7 @@ test('Stripe permite reintentar un link cuyo PaymentIntent fue cancelado sin fal
     await configureStripeInstallmentTest()
 
     const createCalls = []
+    const retrieveCalls = []
     const intentMetadata = new Map()
     setStripeFactoryForTest(() => ({
       paymentIntents: {
@@ -170,14 +256,17 @@ test('Stripe permite reintentar un link cuyo PaymentIntent fue cancelado sin fal
             status: 'requires_payment_method'
           }
         },
-        retrieve: async (paymentIntentId) => ({
-          id: paymentIntentId,
-          status: paymentIntentId === 'pi_canceled_old' ? 'canceled' : 'requires_payment_method',
-          amount: 60000,
-          amount_received: 0,
-          currency: 'mxn',
-          metadata: intentMetadata.get(paymentIntentId) || createCalls[0]?.params?.metadata || {}
-        })
+        retrieve: async (paymentIntentId, params, requestOptions) => {
+          retrieveCalls.push({ paymentIntentId, params, requestOptions })
+          return {
+            id: paymentIntentId,
+            status: paymentIntentId === 'pi_canceled_old' ? 'canceled' : 'requires_payment_method',
+            amount: 60000,
+            amount_received: 0,
+            currency: 'mxn',
+            metadata: intentMetadata.get(paymentIntentId) || createCalls[0]?.params?.metadata || {}
+          }
+        }
       }
     }))
 
@@ -214,6 +303,10 @@ test('Stripe permite reintentar un link cuyo PaymentIntent fue cancelado sin fal
       assert.equal(createCalls.length, 2)
       assert.doesNotMatch(createCalls[0].requestOptions.idempotencyKey, /:replace:/)
       assert.match(createCalls[1].requestOptions.idempotencyKey, /:replace:pi_canceled_old$/)
+      assert.ok(retrieveCalls.length >= 2)
+      assert.ok(retrieveCalls.every((call) => Object.keys(call.params).length === 0))
+      assert.ok(retrieveCalls.every((call) => call.requestOptions.timeout === 8000))
+      assert.ok(retrieveCalls.every((call) => call.requestOptions.maxNetworkRetries === 1))
 
       const row = await db.get(
         'SELECT status, stripe_payment_intent_id, metadata_json FROM payments WHERE public_payment_id = ?',

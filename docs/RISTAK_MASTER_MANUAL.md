@@ -3855,6 +3855,20 @@ La lectura de Configuración > Pagos sigue siendo local y no sincroniza Stripe.
 La reparación ocurre al conectar/guardar o en la tarea de arranque, no desde un
 GET de pantalla.
 
+### Contrato de opciones del SDK de Stripe
+
+Los límites de transporte (`timeout`, `maxNetworkRetries`) son opciones del SDK,
+no parámetros de negocio de la API de Stripe. En operaciones `retrieve` de
+recursos con ID, Ristak debe conservar siempre los tres argumentos del SDK:
+`retrieve(id, params, requestOptions)`, usando `{}` cuando no existen parámetros
+de consulta. Esto evita que Stripe interprete los límites de red como campos del
+Customer, PaymentMethod, PaymentIntent, Checkout Session o Subscription.
+
+Los checkouts públicos deben cubrir con pruebas el caso de un contacto que ya
+tiene `stripe_customer_id`, además del contacto nuevo. Que la prueba de conexión
+lea correctamente el balance no demuestra por sí sola que un cobro pueda
+reutilizar clientes o intents existentes.
+
 Cuando un webhook, retorno de pasarela o accion interna cambia un pago o una
 suscripcion, el backend emite un evento por `/api/payment-events/stream`. Las
 pantallas de Transacciones, Planes de pago y Suscripciones escuchan ese stream y
