@@ -4283,12 +4283,14 @@ envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
 marca como omitido en vez de mandar un WhatsApp tarde. El enfriamiento se compara
 en UTC con SQL nativo del motor activo; PostgreSQL no ejecuta funciones exclusivas
 de SQLite durante este reclamo.
-Un `sent` provisional no es terminal cuando el proveedor reporta después un
-rechazo estructural de parámetros. Antes de deduplicar el siguiente tick, Citas
-reconcilia el ID guardado con el estado final de `whatsapp_api_messages`, cambia
-la fila a `error`, limpia cualquier ultimátum que nunca debió empezar y aplica el
-mismo enfriamiento de 15 minutos. El claim atómico existente decide qué instancia
-puede reintentar, por lo que dos workers no mandan dos copias.
+Un `sent` provisional no es terminal cuando el proveedor reporta después
+cualquier rechazo final. Antes de deduplicar el siguiente tick, Citas reconcilia
+el ID guardado con el estado final de `whatsapp_api_messages`, cambia la fila a
+`error`, conserva el motivo real, limpia cualquier ultimátum que nunca debió
+empezar y aplica el mismo enfriamiento de 15 minutos. Esto cubre tanto errores
+estructurales de plantilla como saldo insuficiente u otros rechazos terminales
+del proveedor. El claim atómico existente decide qué instancia puede reintentar,
+por lo que dos workers no mandan dos copias.
 
 Los ultimátums usan las columnas `confirmation_deadline_at`,
 `confirmation_timeout_status` y `confirmation_timeout_processed_at` del mismo

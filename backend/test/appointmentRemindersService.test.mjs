@@ -550,6 +550,60 @@ test('confirmaciones adaptan el contrato legacy aprendido del rechazo 132000', a
   })
 })
 
+test('rechazos asíncronos definitivos reabren el recordatorio y respetan su enfriamiento', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture(
+      { ycloudStatus: 'APPROVED' },
+      async ({ appointmentId }) => {
+        const firstResult = await processDueAppointmentReminders({ batchSize: 1 })
+        assert.deepEqual(firstResult, { sent: 1, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 1)
+
+        const failedAt = DateTime.utc().minus({ minutes: 5 }).toISO()
+        await db.run(`
+          UPDATE whatsapp_api_messages
+          SET status = 'failed',
+              error_code = 'BALANCE_INSUFFICIENT',
+              error_message = 'Your account balance is insufficient, please top up.',
+              updated_at = ?
+          WHERE ycloud_message_id = 'ycloud_appointment_msg_1'
+        `, [failedAt])
+
+        const heldResult = await processDueAppointmentReminders({ batchSize: 1 })
+        assert.deepEqual(heldResult, { sent: 0, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 1)
+
+        const reconciledSend = await db.get(`
+          SELECT status, error_message
+          FROM appointment_reminder_sends
+          WHERE appointment_id = ?
+        `, [appointmentId])
+        assert.equal(reconciledSend.status, 'error')
+        assert.match(reconciledSend.error_message || '', /balance is insufficient/i)
+
+        await db.run(`
+          UPDATE appointment_reminder_sends
+          SET sent_at = ?
+          WHERE appointment_id = ?
+        `, [DateTime.utc().minus({ minutes: 16 }).toISO(), appointmentId])
+
+        const retryResult = await processDueAppointmentReminders({ batchSize: 1 })
+        assert.deepEqual(retryResult, { sent: 1, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 2)
+
+        const retriedSend = await db.get(`
+          SELECT status, sent_message_id, error_message
+          FROM appointment_reminder_sends
+          WHERE appointment_id = ?
+        `, [appointmentId])
+        assert.equal(retriedSend.status, 'sent')
+        assert.equal(retriedSend.sent_message_id, 'ycloud_appointment_msg_2')
+        assert.equal(retriedSend.error_message, null)
+      }
+    )
+  })
+})
+
 test('el envío de confirmación guarda un ultimátum inmutable desde el envío real', async () => {
   await withYCloudMessageCapture(async () => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {

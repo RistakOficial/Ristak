@@ -164,12 +164,14 @@ certeza que WhatsApp Web no lo aceptó.
 
 Los recordatorios de Citas agregan una reconciliación específica sobre ese
 estado asíncrono. Si el request de plantilla fue aceptado pero el mensaje final
-queda `failed` porque la cantidad de parámetros no coincide, el ID de
-`appointment_reminder_sends.sent_message_id` permite regresar el recordatorio de
-`sent` a `error`, limpiar su deadline de confirmación y reintentarlo después del
-enfriamiento normal. La combinación
-`whatsapp_api_template_sends + whatsapp_api_messages` conserva además el número
-de parámetros que Meta declaró como esperado. Para la plantilla histórica
+queda `failed`, el ID de `appointment_reminder_sends.sent_message_id` permite
+regresar el recordatorio de `sent` a `error`, conservar el rechazo real, limpiar
+su deadline de confirmación y reintentarlo después del enfriamiento normal.
+Esto también cubre rechazos terminales como saldo insuficiente sin dejar una
+entrega fantasma marcada como exitosa. Cuando el rechazo es por cantidad de
+variables, la combinación `whatsapp_api_template_sends +
+whatsapp_api_messages` conserva además el número de parámetros que Meta declaró
+como esperado. Para la plantilla histórica
 `confirmacion_cita_dia_anterior`, un contrato remoto de dos variables se
 renderiza como nombre + hora; el contrato actual de tres usa nombre + fecha +
 hora. El texto persistido y cualquier fallback QR usan el mismo contrato

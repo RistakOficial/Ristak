@@ -1407,7 +1407,6 @@ async function reconcileFailedTemplateReminderSends(appointmentIds = []) {
     const key = `${row.reminder_id}|${row.appointment_id}`
     if (handled.has(key)) continue
 
-    if (parseExpectedTemplateBodyParameterCount(row.error_message) === null) continue
     handled.add(key)
     const failedAt = parseStoredUtcDateTime(row.updated_at)?.toISO() || nowIso()
     const result = await db.run(`
@@ -2192,8 +2191,8 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   const reconciledTemplateFailures = await reconcileFailedTemplateReminderSends(appointmentIds)
   if (reconciledTemplateFailures > 0) {
     logger.warn(
-      `[Citas] ${reconciledTemplateFailures} envío(s) aceptado(s) por el proveedor pero rechazado(s) ` +
-      'por la estructura de la plantilla regresaron a la cola de reintento.'
+      `[Citas] ${reconciledTemplateFailures} envío(s) aceptado(s) inicialmente por el proveedor ` +
+      'terminaron rechazados y regresaron a la cola de reintento.'
     )
   }
   const sendPlaceholders = appointmentIds.map(() => '?').join(', ')
