@@ -1208,6 +1208,10 @@ llegada a la página final. Conserva un margen de 30 minutos alrededor del rango
 para no declarar abandono cuando el salto inmediato quedó justo fuera del
 límite. Vistas legacy, de otra revisión o sin identidad de recorrido no se
 mezclan y degradan cobertura a `partial`/`unavailable`.
+La consulta tipa explícitamente el catálogo temporal de páginas como
+`page_id = texto` y `page_order = entero`; así el detalle individual conserva el
+mismo resultado en SQLite y PostgreSQL y no depende de la inferencia de tipos de
+los parámetros de `VALUES`.
 
 El navegador no elige ese journey. El HTML lleva un token HMAC temporal ligado
 a host, Site, página, publicación y revisión; cada pestaña aporta un nonce y el

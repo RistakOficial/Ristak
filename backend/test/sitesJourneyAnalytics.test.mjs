@@ -24,6 +24,7 @@ assert.equal(
 )
 
 const {
+  buildSitesPageJourneyCte,
   getSite,
   getSitesTrackingSummary,
   renderPublicSiteHtml
@@ -297,6 +298,28 @@ function extractTrackingContext(html) {
   assert.notEqual(valueEnd, -1, 'RSTK_CONTEXT debe terminar como una asignación JSON.')
   return JSON.parse(html.slice(valueStart, valueEnd))
 }
+
+test('page funnel analytics pins temporary page catalog types for PostgreSQL', () => {
+  const cte = buildSitesPageJourneyCte({
+    siteId: 'site_pg_type_contract',
+    pages: [
+      { id: 'page-a', label: 'A', order: 0 },
+      { id: 'page-b', label: 'B', order: 1 }
+    ],
+    flowRevision: 'revision_pg_type_contract',
+    dateFilters: {
+      dateFrom: '2026-07-01T06:00:00.000Z',
+      dateTo: '2026-08-01T05:59:59.999Z'
+    }
+  })
+
+  assert.ok(cte)
+  assert.match(
+    cte.sql,
+    /VALUES \(CAST\(\? AS TEXT\), CAST\(\? AS INTEGER\)\), \(CAST\(\? AS TEXT\), CAST\(\? AS INTEGER\)\)/
+  )
+  assert.deepEqual(cte.params.slice(0, 4), ['page-a', 0, 'page-b', 1])
+})
 
 async function insertHiddenFilter(filterText) {
   await db.run(`

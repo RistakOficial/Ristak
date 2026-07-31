@@ -11776,7 +11776,7 @@ async function getSitesFormJourneySummary(siteIds = [], dateFilters = {}, statsB
   return result
 }
 
-function buildSitesPageJourneyCte({
+export function buildSitesPageJourneyCte({
   siteId,
   pages = [],
   flowRevision = '',
@@ -11787,7 +11787,12 @@ function buildSitesPageJourneyCte({
     return null
   }
 
-  const pageValues = pages.map(() => '(?, ?)').join(', ')
+  // PostgreSQL resuelve una columna VALUES formada sólo por parámetros sin tipo
+  // como TEXT. Fijar ambos tipos evita que page_order termine comparándose como
+  // texto contra los literales enteros usados por el embudo individual.
+  const pageValues = pages
+    .map(() => '(CAST(? AS TEXT), CAST(? AS INTEGER))')
+    .join(', ')
   const hiddenSessionClause = getSitesHiddenSessionClause(hiddenFilters, 'source')
   const visitorExpression = getSitesAnalyticsVisitorExpression('source')
   const journeyRootExpression = `CASE

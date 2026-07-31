@@ -278,6 +278,11 @@ necesario alrededor del rango para no declarar abandono sólo porque el siguient
 salto ocurrió inmediatamente fuera del límite. Por página expone vistas,
 intentos/visitantes alcanzados, avance, siguiente página, entradas directas,
 actividad y abandono; llegar a la última página completa el recorrido.
+El catálogo temporal que relaciona cada `public_page_id` con su posición fija
+explícitamente el ID como texto y el orden como entero. Este contrato es
+obligatorio en PostgreSQL: los parámetros sin tipo dentro de `VALUES` se
+resolverían como texto y romperían el detalle individual al comparar el orden
+contra etapas numéricas.
 
 ##### Identidad y bloque histórico
 
