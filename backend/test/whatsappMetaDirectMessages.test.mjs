@@ -110,7 +110,8 @@ async function withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, ca
     keys.metaSystemUserToken,
     keys.metaLastWebhookReceivedAt,
     keys.metaLastRelayReceivedAt,
-    keys.metaLastSubscriptionRefreshAt
+    keys.metaLastSubscriptionRefreshAt,
+    keys.metaLastError
   ]
   const placeholders = touchedKeys.map(() => '?').join(', ')
   const previous = await db.all(
@@ -544,6 +545,82 @@ test('Meta direct persists one text bubble, reconciles status ACKs, and saves CT
     await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
     await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId || '']).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId || '', customerPhone]).catch(() => undefined)
+  }
+})
+
+test('un rechazo ambiguo al marcar leído no desconecta Meta, pero un token inválido sí', async () => {
+  const suffix = randomUUID()
+  const phoneNumberId = `meta_phone_read_guard_${suffix}`
+  const wabaId = `meta_waba_read_guard_${suffix}`
+  const businessPhone = `+1555${Date.now().toString().slice(-7)}`
+  const customerPhone = `+5255${Date.now().toString().slice(-8)}`
+  const inboundWamid = `wamid.meta.read.guard.${suffix}`
+  let contactId = ''
+
+  try {
+    await withMetaDirectConfig({ phoneNumberId, wabaId, businessPhone }, async () => {
+      const [inbound] = await processMetaDirectWebhookPayload({
+        payload: webhookEnvelope({
+          wabaId,
+          phoneNumberId,
+          businessPhone,
+          contacts: [{ wa_id: customerPhone, profile: { name: 'Cliente Read Guard' } }],
+          messages: [{
+            id: inboundWamid,
+            from: customerPhone,
+            timestamp: String(Math.floor(Date.now() / 1000)),
+            type: 'text',
+            text: { body: 'Mensaje para probar el acuse' }
+          }]
+        }),
+        eventRowId: `evt-read-guard-${suffix}`
+      })
+      contactId = inbound.contactId
+
+      setMetaDirectFetchForTest(async () => graphResponse({
+        error: {
+          code: 100,
+          error_subcode: 33,
+          message: 'Unsupported request for this message receipt.'
+        }
+      }, 400))
+
+      await assert.rejects(
+        () => markLatestInboundWhatsAppApiMessageReadForContact({ contactId }),
+        /Unsupported request/
+      )
+      assert.equal(await db.get(
+        'SELECT config_value FROM app_config WHERE config_key = ?',
+        [getWhatsAppApiConfigKeys().metaStatus]
+      ).then(row => row?.config_value), 'connected')
+      assert.deepEqual(await db.get(
+        'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneNumberId]
+      ), { status: 'CONNECTED', api_send_enabled: 1 })
+
+      setMetaDirectFetchForTest(async () => graphResponse({
+        error: {
+          code: 190,
+          message: 'Invalid OAuth access token.'
+        }
+      }, 401))
+
+      await assert.rejects(
+        () => markLatestInboundWhatsAppApiMessageReadForContact({ contactId }),
+        /perdió permisos en Meta/
+      )
+      assert.equal(await db.get(
+        'SELECT config_value FROM app_config WHERE config_key = ?',
+        [getWhatsAppApiConfigKeys().metaStatus]
+      ).then(row => row?.config_value), 'reconnect_required')
+      assert.deepEqual(await db.get(
+        'SELECT status, api_send_enabled FROM whatsapp_api_phone_numbers WHERE id = ?',
+        [phoneNumberId]
+      ), { status: 'AUTHORIZATION_REQUIRED', api_send_enabled: 0 })
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
 

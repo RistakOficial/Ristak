@@ -6095,6 +6095,10 @@ export async function markLatestInboundWhatsAppApiMessageReadForContact({ contac
       method: 'PUT',
       token: config.systemUserToken,
       operational: true,
+      // Un acuse de lectura puede fallar porque el WAMID ya no es operable o
+      // pertenece a otro contexto de Coexistence. Ese 100/33 no demuestra que
+      // el token haya muerto y jamás debe apagar el remitente completo.
+      authorizationPolicy: 'token_only',
       phoneNumberId,
       body: {
         messaging_product: 'whatsapp',
@@ -10619,15 +10623,21 @@ export async function setWhatsAppActiveProvider({ provider } = {}) {
 
 const META_DIRECT_RECONNECT_MESSAGE = 'La conexión de WhatsApp API perdió permisos en Meta. Vuelve a conectarla desde Configuración > WhatsApp.'
 
-function isMetaDirectAuthorizationError(error) {
+function isMetaDirectAuthorizationError(error, { authorizationPolicy = 'full' } = {}) {
   const graphCode = Number(error?.graphCode || error?.code || 0)
   const graphSubcode = Number(error?.graphSubcode || error?.errorSubcode || 0)
-  return graphCode === 190 || graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
+  if (graphCode === 190) return true
+  if (authorizationPolicy === 'token_only') return false
+  return graphCode === 200 || (graphCode === 100 && graphSubcode === 33) ||
     cleanString(error?.code) === 'META_PHONE_NOT_AUTHORIZED'
 }
 
-async function markMetaDirectAuthorizationRequired({ error, phoneNumberId = '' } = {}) {
-  if (!isMetaDirectAuthorizationError(error)) return false
+async function markMetaDirectAuthorizationRequired({
+  error,
+  phoneNumberId = '',
+  authorizationPolicy = 'full'
+} = {}) {
+  if (!isMetaDirectAuthorizationError(error, { authorizationPolicy })) return false
   const configuredPhoneNumberId = cleanString(phoneNumberId) || cleanString(await getAppConfig(CONFIG_KEYS.metaPhoneNumberId))
   await Promise.all([
     setAppConfig(CONFIG_KEYS.metaStatus, 'reconnect_required'),
@@ -10661,6 +10671,7 @@ async function metaDirectGraphRequest(path, {
   query,
   body,
   operational = false,
+  authorizationPolicy = 'full',
   phoneNumberId = '',
   timeoutMs = META_DIRECT_GRAPH_TIMEOUT_MS
 } = {}) {
@@ -10720,8 +10731,12 @@ async function metaDirectGraphRequest(path, {
     error.graphCode = Number(graphError.code || 0) || null
     error.graphSubcode = Number(graphError.error_subcode || 0) || null
     error.graphMessage = cleanString(graphError.message)
-    if (isMetaDirectAuthorizationError(error)) error.message = META_DIRECT_RECONNECT_MESSAGE
-    if (operational) await markMetaDirectAuthorizationRequired({ error, phoneNumberId })
+    if (isMetaDirectAuthorizationError(error, { authorizationPolicy })) {
+      error.message = META_DIRECT_RECONNECT_MESSAGE
+    }
+    if (operational) {
+      await markMetaDirectAuthorizationRequired({ error, phoneNumberId, authorizationPolicy })
+    }
     throw error
   }
   return data

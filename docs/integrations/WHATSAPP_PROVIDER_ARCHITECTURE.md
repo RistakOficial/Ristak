@@ -541,11 +541,15 @@ de Meta Ads, Facebook o Instagram nunca puede sustituir el token cifrado de
 
 Meta puede retirar permisos o acceso al activo después del onboarding. Si Graph
 responde `code=100/subcode=33`, `code=190` o un error de permisos equivalente al
-operar el WABA/número, Ristak cambia la conexión a `reconnect_required`, desactiva
-el envío API de esa fila y muestra una instrucción corta para reconectar. No debe
-seguir presentando el número como conectado ni exponer el error crudo de Graph al
-usuario. La reconexión explícita vuelve a validar el activo y reactiva la misma
-fila; no borra historial, plantillas ni contactos.
+operar el WABA/número o hacer un envío real, Ristak cambia la conexión a
+`reconnect_required`, desactiva el envío API de esa fila y muestra una instrucción
+corta para reconectar. Las operaciones auxiliares no tienen esa autoridad: un
+`100/33` aislado al marcar un mensaje como leído puede referirse sólo a ese WAMID
+o a su contexto de Coexistence y no debe apagar el remitente. En esa ruta sólo un
+`code=190`, que confirma que el token dejó de ser válido, cambia el estado global.
+No debe seguir presentando un token realmente revocado como conectado ni exponer
+el error crudo de Graph al usuario. La reconexión explícita vuelve a validar el
+activo y reactiva la misma fila; no borra historial, plantillas ni contactos.
 
 En `Configuración > WhatsApp > Números`, las columnas **Envío oficial** y
 **Respaldo QR** siempre representan estados independientes. La columna oficial
@@ -686,7 +690,8 @@ Antes de declarar lista la conexión directa:
 6. Probar texto, plantilla, botones, reacción, imagen, video, documento, audio y
    nota de voz con estados `sent`, `delivered`, `read` y `failed`.
    Probar además respuesta a un `wamid`, reacción entrante/saliente y visto
-   saliente por `PUT /{PHONE_NUMBER_ID}/messages`.
+   saliente por `PUT /{PHONE_NUMBER_ID}/messages`. Probar además que un `100/33`
+   de ese acuse no desactiva el envío y que un `190` sí exige reconexión.
 7. Probar un lote `history` real y demostrar que no dispara efectos vivos.
 8. Probar mensaje manual desde WhatsApp Business y demostrar un solo
    `business_echo` en Ristak.
