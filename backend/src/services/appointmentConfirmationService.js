@@ -46,6 +46,21 @@ async function resyncAppointmentToGoogle(appointmentId) {
   }
 }
 
+async function dispatchAppointmentStatusAutomation(appointmentId, extra = {}) {
+  if (!appointmentId) return
+  try {
+    const appointment = await db.get(
+      'SELECT * FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    if (!appointment) return
+    const { dispatchAppointmentAutomationEvent } = await import('./appointmentAutomationService.js')
+    await dispatchAppointmentAutomationEvent('appointment-status', appointment, extra)
+  } catch (error) {
+    logger.warn(`[Confirmación IA] No se pudo avisar a las automatizaciones del cambio en la cita ${appointmentId}: ${error.message}`)
+  }
+}
+
 function parseMessages(raw) {
   try {
     const parsed = JSON.parse(raw || '[]')
@@ -470,7 +485,8 @@ async function processConfirmationTimeout(sendId, currentTime) {
       appointmentId: send.appointment_id,
       contactId: send.contact_id,
       appointmentTitle: send.title,
-      contactName: send.first_name || send.full_name
+      contactName: send.first_name || send.full_name,
+      previousStatus: appointmentStatus || null
     }
   })
 }
@@ -505,6 +521,11 @@ export async function processExpiredConfirmationTimeouts({ batchSize = 50 } = {}
         cancelled += 1
         publishAppointmentChanged(outcome.contactId, outcome.appointmentId)
         await resyncAppointmentToGoogle(outcome.appointmentId)
+        await dispatchAppointmentStatusAutomation(outcome.appointmentId, {
+          previousStatus: outcome.previousStatus,
+          previousAppointmentId: outcome.appointmentId,
+          appointmentChange: 'cancelled'
+        })
         await notifyConfirmationTimeoutCancellation(outcome)
         logger.info(`[Confirmación IA] Cita ${outcome.appointmentId} cancelada al vencer el plazo sin confirmación`)
       } else if (outcome.status === 'review_required') {
@@ -747,21 +768,30 @@ async function executeConfirmationSuccessActions({ contactId, appointmentId, act
 
 async function executeNoConfirmAction({ contactId, appointmentId, action, result, resultDetail, reminderData }) {
   const appointment = await db.get(`
-    SELECT a.id, a.title, a.start_time, c.first_name, c.full_name
+    SELECT a.id, a.title, a.start_time, a.appointment_status, a.status, c.first_name, c.full_name
     FROM appointments a
     LEFT JOIN contacts c ON c.id = a.contact_id
     WHERE a.id = ?
   `, [appointmentId])
 
   if (action === 'cancel_appointment') {
-    await db.run(`
+    const previousStatus = String(appointment?.appointment_status || appointment?.status || '').trim().toLowerCase()
+    const cancelled = await db.run(`
       UPDATE appointments
       SET appointment_status = 'cancelled', status = 'cancelled', date_updated = CURRENT_TIMESTAMP
       WHERE id = ?
+        AND LOWER(COALESCE(appointment_status, status, '')) NOT IN ('cancelled', 'canceled')
     `, [appointmentId])
-    publishAppointmentChanged(contactId, appointmentId)
-    await resyncAppointmentToGoogle(appointmentId)
-    logger.info(`[Confirmación IA] Cita ${appointmentId} cancelada por acción automática (resultado: ${result})`)
+    if (Number(cancelled?.changes || 0) > 0) {
+      publishAppointmentChanged(contactId, appointmentId)
+      await resyncAppointmentToGoogle(appointmentId)
+      await dispatchAppointmentStatusAutomation(appointmentId, {
+        previousStatus: previousStatus || null,
+        previousAppointmentId: appointmentId,
+        appointmentChange: 'cancelled'
+      })
+      logger.info(`[Confirmación IA] Cita ${appointmentId} cancelada por acción automática (resultado: ${result})`)
+    }
   }
 
   if (action === 'notify_push') {

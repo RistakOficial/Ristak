@@ -24,6 +24,7 @@ import {
   reconcileInboundHighLevelAppointment,
   upsertLocalCalendar
 } from '../src/services/localCalendarService.js'
+import { handleAutomationEvent } from '../src/services/automationEngine.js'
 
 const LOCAL_CALENDAR_SERVICE_SOURCE = new URL('../src/services/localCalendarService.js', import.meta.url)
 
@@ -237,9 +238,10 @@ test('pull GHL reconoce el eco por ghl_appointment_id, conserva la cita Ristak y
   }
 })
 
-test('un evento nacido en GHL sí se importa como ocupación source=ghl sin duplicarse al repetirlo', async () => {
+test('un evento nacido en GHL se importa sin duplicarse y el pull propaga sus cambios a la espera ligada', async () => {
   const fixture = await createFixture('ghl_native')
   const nativeRemoteId = `ghl_native_${fixture.suffix}`
+  const automationId = `automation_ghl_pull_${fixture.suffix}`
   try {
     const rawEvent = divergentRemoteEvent(fixture, {
       id: nativeRemoteId,
@@ -250,16 +252,18 @@ test('un evento nacido en GHL sí se importa como ocupación source=ghl sin dupl
       endTime: '2032-08-14T17:00:00.000Z'
     })
 
-    const first = await reconcileInboundHighLevelAppointment(rawEvent, {
-      ghlAppointmentId: nativeRemoteId,
-      calendarId: fixture.calendarId,
-      contactId: fixture.contactId,
+    const first = await persistHighLevelAppointmentFromPull({
+      rawEvent,
+      normalized: rawEvent,
+      localContactId: fixture.contactId,
+      localCalendarId: fixture.calendarId,
       locationId: fixture.locationId
     })
-    const second = await reconcileInboundHighLevelAppointment(rawEvent, {
-      ghlAppointmentId: nativeRemoteId,
-      calendarId: fixture.calendarId,
-      contactId: fixture.contactId,
+    const second = await persistHighLevelAppointmentFromPull({
+      rawEvent,
+      normalized: rawEvent,
+      localContactId: fixture.contactId,
+      localCalendarId: fixture.calendarId,
       locationId: fixture.locationId
     })
 
@@ -269,7 +273,90 @@ test('un evento nacido en GHL sí se importa como ocupación source=ghl sin dupl
     assert.equal(second.appointment.id, nativeRemoteId)
     const rows = await db.all('SELECT id, source, ghl_appointment_id FROM appointments WHERE ghl_appointment_id = ?', [nativeRemoteId])
     assert.deepEqual(rows, [{ id: nativeRemoteId, source: 'ghl', ghl_appointment_id: nativeRemoteId }])
+
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          config: {
+            triggers: [{ id: 'appointment-booked', type: 'trigger-appointment-booked', config: {} }]
+          }
+        },
+        {
+          id: 'wait',
+          type: 'logic-wait',
+          config: {
+            mode: 'appointment',
+            appointmentOffset: 'before',
+            offsetAmount: 1,
+            offsetUnit: 'hours'
+          }
+        }
+      ],
+      edges: [{ id: 'start-wait', sourceNodeId: 'start', targetNodeId: 'wait' }],
+      settings: {}
+    }
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Cambio GHL por pull', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+    await handleAutomationEvent('appointment-booked', {
+      contactId: fixture.contactId,
+      appointmentId: nativeRemoteId,
+      calendarId: fixture.calendarId,
+      status: 'confirmed',
+      startTime: rawEvent.startTime
+    })
+
+    let enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, fixture.contactId]
+    )
+    assert.equal(enrollment.status, 'waiting')
+
+    const rescheduledStart = '2032-08-15T19:00:00.000Z'
+    const rescheduled = {
+      ...rawEvent,
+      startTime: rescheduledStart,
+      endTime: '2032-08-15T20:00:00.000Z',
+      dateUpdated: '2032-08-14T00:00:00.000Z'
+    }
+    await persistHighLevelAppointmentFromPull({
+      rawEvent: rescheduled,
+      normalized: rescheduled,
+      localContactId: fixture.contactId,
+      localCalendarId: fixture.calendarId,
+      locationId: fixture.locationId
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(
+      enrollment.resume_at,
+      new Date(Date.parse(rescheduledStart) - (60 * 60 * 1000)).toISOString()
+    )
+
+    const cancelled = {
+      ...rescheduled,
+      status: 'cancelled',
+      appointmentStatus: 'cancelled',
+      dateUpdated: '2032-08-15T00:00:00.000Z'
+    }
+    await persistHighLevelAppointmentFromPull({
+      rawEvent: cancelled,
+      normalized: cancelled,
+      localContactId: fixture.contactId,
+      localCalendarId: fixture.calendarId,
+      locationId: fixture.locationId
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'completed')
   } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId]).catch(() => undefined)
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)
     await db.run('DELETE FROM appointment_participants WHERE appointment_id = ?', [nativeRemoteId]).catch(() => undefined)
     await db.run('DELETE FROM appointments WHERE id = ?', [nativeRemoteId]).catch(() => undefined)
     await cleanupFixture(fixture)

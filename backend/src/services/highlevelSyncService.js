@@ -36,6 +36,7 @@ import {
 import { syncProductsWithHighLevel } from './localProductService.js'
 import { iterateHighLevelContactPages } from './highlevelContactSearchService.js'
 import { createSingleFlightRunner } from '../utils/singleFlight.js'
+import { dispatchAppointmentAutomationEvent } from './appointmentAutomationService.js'
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com'
 const HIGHLEVEL_API_VERSION = '2021-07-28'
@@ -700,6 +701,46 @@ async function fetchCalendarEventsByCalendar({
   return { events, total }
 }
 
+async function dispatchHighLevelPullAppointmentChange(reconciliation = {}) {
+  const persistedAppointment = reconciliation.appointment
+  const previousAppointment = reconciliation.previous
+  if (
+    reconciliation.ownership !== 'ghl' ||
+    !previousAppointment?.id ||
+    !persistedAppointment?.contactId
+  ) {
+    return
+  }
+
+  const previousStatus = cleanString(
+    previousAppointment.appointmentStatus || previousAppointment.status
+  ).toLowerCase()
+  const nextStatus = cleanString(
+    persistedAppointment.appointmentStatus || persistedAppointment.status
+  ).toLowerCase()
+  const previousStartMs = Date.parse(cleanString(previousAppointment.startTime))
+  const nextStartMs = Date.parse(cleanString(persistedAppointment.startTime))
+  const startChanged = Number.isFinite(previousStartMs) &&
+    Number.isFinite(nextStartMs) &&
+    previousStartMs !== nextStartMs
+  const becameCancelled = ['cancelled', 'canceled'].includes(nextStatus) &&
+    !['cancelled', 'canceled'].includes(previousStatus)
+
+  if (previousStatus === nextStatus && !startChanged) return
+
+  await dispatchAppointmentAutomationEvent('appointment-status', persistedAppointment, {
+    previousStatus: previousStatus || null,
+    appointmentChange: becameCancelled
+      ? 'cancelled'
+      : startChanged
+        ? 'rescheduled'
+        : 'status_changed',
+    previousAppointmentId: previousAppointment.id,
+    previousStartTime: previousAppointment.startTime || null,
+    previousEndTime: previousAppointment.endTime || null
+  })
+}
+
 export async function persistHighLevelAppointmentFromPull({
   rawEvent = {},
   normalized = null,
@@ -708,7 +749,7 @@ export async function persistHighLevelAppointmentFromPull({
   locationId = null
 } = {}) {
   const record = normalized || normalizeAppointmentRecord(rawEvent, locationId)
-  return reconcileInboundHighLevelAppointment({
+  const reconciliation = await reconcileInboundHighLevelAppointment({
     ...record,
     contactId: localContactId || record.contactId || null,
     calendarId: localCalendarId || record.calendarId || null,
@@ -721,6 +762,8 @@ export async function persistHighLevelAppointmentFromPull({
     locationId: locationId || record.locationId || null,
     lastWriteWins: true
   })
+  await dispatchHighLevelPullAppointmentChange(reconciliation)
+  return reconciliation
 }
 
 export async function resolveHighLevelPullAppointmentContact({

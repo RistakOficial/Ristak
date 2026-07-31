@@ -1896,10 +1896,12 @@ export function filtersMatch(filters, ctx) {
 }
 
 const APPOINTMENT_STATUS_ALIASES = {
+  canceled: 'cancelled',
   showed: 'completed',
   noshow: 'no_show',
   'no-show': 'no_show'
 }
+const CANCELLED_APPOINTMENT_WAIT_STATUSES = new Set(['cancelled', 'deleted', 'invalid'])
 
 function triggerMatches(trigger, eventType, ctx) {
   const config = trigger.config || {}
@@ -2030,6 +2032,14 @@ function normalizedAppointmentStatus(value) {
   return APPOINTMENT_STATUS_ALIASES[normalized] || normalized
 }
 
+function appointmentStatusFromContext(ctx = {}) {
+  const eventType = str(ctx.lastAutomationEventType)
+  if (eventType === 'appointment-status' && cleanString(ctx.status)) {
+    return ctx.status
+  }
+  return ctx.appointmentStatus || ctx.appointment_status || ctx.status
+}
+
 function selectedResourceMatches(candidates = [], configuredValue = '') {
   const wanted = normalizeText(configuredValue)
   if (!wanted) return true
@@ -2072,9 +2082,67 @@ function appointmentEventMatches(config = {}, eventType, ctx = {}, expectedAppoi
   if (!wantedStatus) return true
   if (wantedStatus === 'booked') return eventType === 'appointment-booked'
   const actualStatus = normalizedAppointmentStatus(
-    ctx.appointmentStatus || ctx.appointment_status || ctx.status
+    appointmentStatusFromContext({ ...ctx, lastAutomationEventType: eventType })
   )
   return eventType === 'appointment-status' && actualStatus === wantedStatus
+}
+
+function appointmentReplacementOriginIds(ctx = {}) {
+  return [
+    ctx.replacesAppointmentId,
+    ctx.replaces_appointment_id,
+    ctx.previousAppointmentId,
+    ctx.previous_appointment_id,
+    ctx.rescheduledFromAppointmentId,
+    ctx.rescheduled_from_appointment_id,
+    ctx.originalAppointmentId,
+    ctx.original_appointment_id
+  ].map(cleanString).filter(Boolean)
+}
+
+function appointmentChangeFromContext(ctx = {}) {
+  return normalizeText(ctx.appointmentChange || ctx.appointment_change)
+}
+
+function appointmentWaitWasCancelled(ctx = {}) {
+  if (appointmentChangeFromContext(ctx) === 'rescheduled') return false
+  return CANCELLED_APPOINTMENT_WAIT_STATUSES.has(normalizedAppointmentStatus(
+    appointmentStatusFromContext(ctx)
+  ))
+}
+
+function appointmentWaitEventMatch(config = {}, eventType, ctx = {}, expectedAppointmentId = '') {
+  if (eventType !== 'appointment-booked' && eventType !== 'appointment-status') return null
+
+  const expectedId = cleanString(expectedAppointmentId)
+  if (!expectedId) {
+    return appointmentEventMatches(config, eventType, ctx)
+      ? { appointmentRecheck: true }
+      : null
+  }
+
+  const eventAppointmentId = cleanString(ctx.appointmentId || ctx.appointment_id)
+  const exactAppointment = eventAppointmentId === expectedId
+  const explicitReplacement = Boolean(
+    eventAppointmentId &&
+    eventAppointmentId !== expectedId &&
+    appointmentReplacementOriginIds(ctx).includes(expectedId)
+  )
+  if (!exactAppointment && !explicitReplacement) return null
+
+  if (exactAppointment && appointmentWaitWasCancelled(ctx)) {
+    return {
+      handle: 'cancelled',
+      detail: 'La cita asociada a esta ejecución fue cancelada'
+    }
+  }
+
+  return {
+    appointmentRecheck: true,
+    detail: explicitReplacement
+      ? 'La cita fue reemplazada; la espera se movió a la nueva cita'
+      : 'La cita cambió; se recalculó el momento de espera'
+  }
 }
 
 function paymentEventMatches(config = {}, eventType, ctx = {}) {
@@ -2875,7 +2943,7 @@ function getPersistentRuntimeContext(ctx = {}, current = {}) {
       : current.calendarName || null,
     appointmentStatus: isAppointmentEvent
       ? persistentContextValue(
-          ctx.appointmentStatus || ctx.appointment_status || ctx.status,
+          appointmentStatusFromContext(ctx),
           current.appointmentStatus
         )
       : current.appointmentStatus || null,
@@ -4929,9 +4997,7 @@ function appointmentWaitTarget(config = {}, ctx = {}) {
 
   const wantedStatus = normalizedAppointmentStatus(config.appointmentStatus)
   const currentStatus = normalizedAppointmentStatus(
-    ctx.appointmentStatus ||
-    ctx.appointment_status ||
-    ctx.status ||
+    appointmentStatusFromContext(ctx) ||
     contact.activeAppointmentStatus
   )
   if (
@@ -5246,6 +5312,12 @@ async function executeNode(node, ctx, enrollment) {
         }
       }
       if (mode === 'appointment') {
+        if (appointmentWaitWasCancelled(ctx)) {
+          return {
+            handle: 'cancelled',
+            detail: 'La cita asociada a esta ejecución fue cancelada'
+          }
+        }
         const appointmentTarget = appointmentWaitTarget(config, ctx)
         const resumeAt = appointmentTarget.resumeAt
         if (!resumeAt) {
@@ -6218,13 +6290,20 @@ function eventContextForEnrollment(eventType, ctx = {}) {
     contact,
     automationName,
     manualControl,
-    ...eventContext
+    ...rawEventContext
   } = ctx
-  return {
-    ...eventContext,
+  const persistentEventContext = {
+    ...rawEventContext,
     lastAutomationEventType: eventType,
     lastAutomationEventAt: nowIso()
   }
+  if (eventType === 'appointment-booked' || eventType === 'appointment-status') {
+    persistentEventContext.appointmentStatus = appointmentStatusFromContext({
+      ...ctx,
+      lastAutomationEventType: eventType
+    })
+  }
+  return persistentEventContext
 }
 
 function persistentGoalNodes(flow = {}) {
@@ -6417,14 +6496,12 @@ function waitingNodeEventMatch(node, enrollment, eventType, ctx = {}) {
       : null
   }
   if (mode === 'appointment') {
-    return appointmentEventMatches(
+    return appointmentWaitEventMatch(
       config,
       eventType,
       ctx,
       cleanString(enrollment.context?.waitAppointmentId)
     )
-      ? { appointmentRecheck: true }
-      : null
   }
   return null
 }

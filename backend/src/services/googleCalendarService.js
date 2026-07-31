@@ -9,6 +9,7 @@ import {
   claimCentralOAuthHandoff,
   refreshCentralGoogleCalendarToken
 } from './licenseService.js'
+import { dispatchAppointmentAutomationEvent } from './appointmentAutomationService.js'
 
 const CONFIG_KEY = 'google_calendar_service_account_config'
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
@@ -669,7 +670,17 @@ async function deleteLocalAppointmentForCancelledGoogleEvent(event = {}, {
       // Un evento nacido fuera de Ristak sí es sólo ocupación importada y puede
       // retirarse localmente cuando Google lo cancela.
       await localCalendarService.cancelLocalAppointment(existing.id)
-      return { handled: true, deleted: true, preservedLocal: false }
+      return {
+        handled: true,
+        deleted: true,
+        preservedLocal: false,
+        appointment: {
+          ...existing,
+          status: 'cancelled',
+          appointmentStatus: 'cancelled'
+        },
+        previousStatus: cleanString(existing.appointmentStatus || existing.status).toLowerCase()
+      }
     }
   }
 
@@ -808,6 +819,20 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
         })
         if (cancellation.deleted) {
           deleted += 1
+          if (
+            cancellation.appointment?.contactId &&
+            cleanString(cancellation.appointment?.source).toLowerCase() !== 'google_shadow'
+          ) {
+            await dispatchAppointmentAutomationEvent(
+              'appointment-status',
+              cancellation.appointment,
+              {
+                previousStatus: cancellation.previousStatus || null,
+                previousAppointmentId: cancellation.appointment.id,
+                appointmentChange: 'cancelled'
+              }
+            )
+          }
         }
         continue
       }
@@ -910,7 +935,7 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
       }
 
       const ownershipShadow = appointment.source === 'google_shadow'
-      await localCalendarService.upsertLocalAppointment(appointment, {
+      const savedAppointment = await localCalendarService.upsertLocalAppointment(appointment, {
         id: appointment.id,
         source: appointment.source,
         googleEventId: ownershipShadow ? null : event.id,
@@ -923,6 +948,28 @@ export async function syncGoogleEventsToLocal({ startTime, endTime, calendarId =
         // una edición local fresca con el evento viejo de Google cuando el push falló o no corrió.
         lastWriteWins: true
       })
+      if (savedAppointment?.contactId && !ownershipShadow && existingAppointment?.id) {
+        const previousStatus = cleanString(
+          existingAppointment.appointmentStatus || existingAppointment.status
+        ).toLowerCase()
+        const nextStatus = cleanString(
+          savedAppointment.appointmentStatus || savedAppointment.status
+        ).toLowerCase()
+        const previousStartMs = Date.parse(cleanString(existingAppointment.startTime))
+        const nextStartMs = Date.parse(cleanString(savedAppointment.startTime))
+        const startChanged = Number.isFinite(previousStartMs) &&
+          Number.isFinite(nextStartMs) &&
+          previousStartMs !== nextStartMs
+        if (previousStatus !== nextStatus || startChanged) {
+          await dispatchAppointmentAutomationEvent('appointment-status', savedAppointment, {
+            previousStatus: previousStatus || null,
+            appointmentChange: startChanged ? 'rescheduled' : 'status_changed',
+            previousAppointmentId: existingAppointment.id,
+            previousStartTime: existingAppointment.startTime || null,
+            previousEndTime: existingAppointment.endTime || null
+          })
+        }
+      }
       saved += 1
     }
   }

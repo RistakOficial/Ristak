@@ -51,6 +51,10 @@ import {
 } from '../services/installerSignatureService.js';
 import { markMetaOAuthRelayReceived } from '../services/metaOAuthService.js';
 import { getMetaSocialConfig } from '../services/metaAdsService.js';
+import {
+  dispatchAppointmentAutomationEvent,
+  dispatchAppointmentCreatedAutomations
+} from '../services/appointmentAutomationService.js';
 
 function firstValue(...values) {
   return values.find(value => value !== undefined && value !== null && value !== '');
@@ -1790,18 +1794,27 @@ export const handleAppointmentWebhook = async (req, res) => {
     }
 
     if (!isRistakMirrorEcho && persistedContactId) {
-      import('../services/automationEngine.js')
-        .then(engine => {
-          const statusEvent = appointmentStatusNormalized.includes('cancel') ? 'cancelled'
-            : appointmentStatusNormalized.includes('no')
-              ? 'no_show'
-              : appointmentStatusNormalized || 'booked';
-          if (!isCancelledAppointment) {
-            engine.handleAutomationEvent('appointment-booked', { contactId: persistedContactId, calendarId: persistedCalendarId }).catch(() => {});
-          }
-          engine.handleAutomationEvent('appointment-status', { contactId: persistedContactId, calendarId: persistedCalendarId, status: statusEvent }).catch(() => {});
-        })
-        .catch(() => {});
+      const appointmentWasCreated = !existingAppointment?.id;
+      const appointmentStatusChanged = appointmentStatusNormalized !== previousStatusNormalized;
+      if (appointmentWasCreated && !isCancelledAppointment) {
+        dispatchAppointmentCreatedAutomations(persistedAppointment).catch(error => {
+          logger.warn(`[Webhook] No se pudieron disparar automatizaciones para la cita ${persistedAppointmentId}: ${error.message}`);
+        });
+      } else if (appointmentWasCreated || appointmentStatusChanged || appointmentStartChanged) {
+        dispatchAppointmentAutomationEvent('appointment-status', persistedAppointment, {
+          previousStatus: previousStatusNormalized || null,
+          appointmentChange: isCancelledAppointment && !wasCancelledAppointment
+            ? 'cancelled'
+            : appointmentStartChanged
+              ? 'rescheduled'
+              : 'status_changed',
+          previousAppointmentId: existingAppointment?.id || null,
+          previousStartTime: existingAppointment?.startTime || null,
+          previousEndTime: existingAppointment?.endTime || null
+        }).catch(error => {
+          logger.warn(`[Webhook] No se pudo avisar a las automatizaciones del cambio en la cita ${persistedAppointmentId}: ${error.message}`);
+        });
+      }
     }
 
     if (!isRistakMirrorEcho && existingAppointment?.id && persistedContactId && persistedCalendarId) {
@@ -2001,18 +2014,26 @@ export const handleAppointmentShowedWebhook = async (req, res) => {
     logger.info(isRistakMirrorEcho
       ? `✅ Eco showed de HighLevel reconciliado sin alterar la cita Ristak ${updatedAppointmentId}`
       : `✅ Cita HighLevel marcada como asistida: ${updatedAppointmentId || 'sin ID'}${contactId ? ` para contacto ${contactId}` : ''}`);
+    if (!isRistakMirrorEcho && contactId && updatedAppointmentId) {
+      const updatedAppointment = await db.get(
+        'SELECT * FROM appointments WHERE id = ?',
+        [updatedAppointmentId]
+      );
+      if (updatedAppointment) {
+        dispatchAppointmentAutomationEvent('appointment-status', updatedAppointment, {
+          appointmentChange: 'status_changed'
+        }).catch(error => {
+          logger.warn(`[Webhook] No se pudo avisar a las automatizaciones de la asistencia ${updatedAppointmentId}: ${error.message}`);
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: isRistakMirrorEcho ? 'Eco de cita asistida reconciliado' : 'Cita marcada como asistida',
       appointment_id: updatedAppointmentId,
       contact_id: contactId
     });
-
-    if (!isRistakMirrorEcho && contactId) {
-      import('../services/automationEngine.js')
-        .then(engine => engine.handleAutomationEvent('appointment-status', { contactId, status: 'completed' }))
-        .catch(() => {});
-    }
 
   } catch (error) {
     logger.error(`Error en handleAppointmentShowedWebhook: ${error.message}`);

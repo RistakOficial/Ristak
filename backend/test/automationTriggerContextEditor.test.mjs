@@ -39,6 +39,7 @@ test('el editor no vuelve a pedir IDs que ya pertenecen a la ejecución', () => 
 })
 
 test('Esperar usa la cita del disparador solo cuando todas las entradas entregan cita', () => {
+  const registry = readRepoFile('frontend/src/pages/Automations/editor/nodeRegistry.tsx')
   const waitEditor = readRepoFile(
     'frontend/src/pages/Automations/editor/config/WaitConfigEditor.tsx'
   )
@@ -49,4 +50,6 @@ test('Esperar usa la cita del disparador solo cuando todas las entradas entregan
   assert.match(waitEditor, /Se usará automáticamente la cita que activó esta ejecución/)
   assert.match(fields, /triggerTypes\.every\(/)
   assert.match(catalog, /triggerTypes: reachingTriggers\.map\(\(trigger\) => trigger\.type\)/)
+  assert.match(registry, /\{ id: 'out', label: 'Llegó el momento' \}/)
+  assert.match(registry, /\{ id: 'cancelled', label: 'Cita cancelada' \}/)
 })

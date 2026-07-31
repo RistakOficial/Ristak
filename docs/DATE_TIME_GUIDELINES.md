@@ -107,6 +107,12 @@ Usa estos formatos de forma intencional:
   cobros vencidos "hoy", espera la recarga canónica antes de cerrar el flujo o
   enseñar la tabla. El usuario debe ver la fecha final del negocio, no el estado
   parcial previo al refresh.
+- Una espera de automatización ligada a una cita conserva su ID canónico. Al
+  reprogramar esa misma cita debe recalcular el instante de continuación y los
+  recordatorios; al cancelarla debe tomar una salida de cancelación y no revivir
+  la hora anterior. Si una integración sustituye el ID, exige una relación
+  explícita con la cita reemplazada y nunca la infieras sólo por contacto,
+  calendario o cercanía de horarios.
 
 ## Frontend: Prohibido
 

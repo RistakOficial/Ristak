@@ -3534,8 +3534,18 @@ export async function updateAppointment(req, res) {
       logger.warn(`[Calendars Controller] Update local guardado, sync Google pendiente/error: ${error.message}`);
     }
 
-    if (nextStatus && nextStatus !== previousStatus) {
-      await dispatchAppointmentAutomationEvent('appointment-status', appointment, { previousStatus });
+    if ((nextStatus && nextStatus !== previousStatus) || appointmentStartChanged) {
+      await dispatchAppointmentAutomationEvent('appointment-status', appointment, {
+        previousStatus,
+        appointmentChange: nextCancelled && !previousCancelled
+          ? 'cancelled'
+          : appointmentStartChanged
+            ? 'rescheduled'
+            : 'status_changed',
+        previousAppointmentId: existing?.id || id,
+        previousStartTime: existing?.startTime || existing?.start_time || null,
+        previousEndTime: existing?.endTime || existing?.end_time || null
+      });
     }
 
     res.json({
@@ -3727,6 +3737,18 @@ export async function deleteEvent(req, res) {
       await localCalendarService.deleteLocalAppointment(existing.id, { markPendingDelete: true });
     } else {
       await localCalendarService.deleteLocalAppointment(id);
+    }
+
+    if (existing?.id) {
+      await dispatchAppointmentAutomationEvent('appointment-status', {
+        ...existing,
+        status: 'cancelled',
+        appointmentStatus: 'cancelled'
+      }, {
+        previousStatus: existing.appointmentStatus || existing.status || null,
+        previousAppointmentId: existing.id,
+        appointmentChange: 'cancelled'
+      });
     }
 
     res.json({

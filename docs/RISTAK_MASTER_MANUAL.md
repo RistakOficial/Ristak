@@ -1391,9 +1391,19 @@ el paso son disparadores de cita, el editor omite calendario, tipo y estado y
 explica que usará la cita que activó esa ejecución. El runtime liga la espera al
 `appointmentId` exacto: otra cita del mismo contacto no puede mover, completar
 ni reprogramar esa espera. Un cambio de hora de la misma cita sí recalcula el
-momento de continuación. Si el paso también puede alcanzarse desde disparadores
-sin cita, los filtros permanecen visibles porque entonces sirven para elegir la
-próxima cita aplicable, no para repetir una identidad ya conocida.
+momento de continuación y limpia los recordatorios calculados con la hora
+anterior. Si el proveedor reemplaza la cita con otro ID, el nuevo evento debe
+declarar explícitamente `replacesAppointmentId`/`previousAppointmentId`; el
+motor religa la espera al ID nuevo, pero nunca lo adivina por contacto o
+calendario. Una cancelación de la cita ligada toma la salida semántica **Cita
+cancelada** y jamás la salida normal **Llegó el momento**. Si esa salida no está
+conectada —como ocurrirá en flujos publicados antes de existir— la rama termina
+de forma segura. Los cambios locales, HighLevel, Google Calendar y las
+cancelaciones automáticas por falta de confirmación deben despachar el contexto
+completo de la cita para conservar este contrato. Si el paso también puede
+alcanzarse desde disparadores sin cita, los filtros permanecen visibles porque
+entonces sirven para elegir la próxima cita aplicable, no para repetir una
+identidad ya conocida.
 
 Las alertas de referencias rotas del Header también son un read-model local.
 `listAutomationReviewProblems` ejecuta un único `SELECT ... LIMIT` sobre el

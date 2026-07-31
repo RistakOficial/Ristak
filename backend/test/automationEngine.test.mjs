@@ -2517,6 +2517,12 @@ test('esperar una cita conserva la identidad de la cita que disparÃ³ la ejecuciÃ
           offsetAmount: 1,
           offsetUnit: 'hours'
         }
+      },
+      {
+        id: 'appointment-time-reached',
+        type: 'logic-condition',
+        label: 'Momento de la cita',
+        config: { conditions: [] }
       }
     ],
     edges: [
@@ -2524,6 +2530,12 @@ test('esperar una cita conserva la identidad de la cita que disparÃ³ la ejecuciÃ
         id: 'edge-start-wait',
         sourceNodeId: 'start',
         targetNodeId: 'wait-trigger-appointment'
+      },
+      {
+        id: 'edge-wait-time',
+        sourceNodeId: 'wait-trigger-appointment',
+        sourceHandle: 'out',
+        targetNodeId: 'appointment-time-reached'
       }
     ],
     settings: {}
@@ -2595,6 +2607,44 @@ test('esperar una cita conserva la identidad de la cita que disparÃ³ la ejecuciÃ
     storedContext = JSON.parse(enrollment.context)
     assert.equal(storedContext.waitAppointmentId, triggerAppointmentId)
     assert.equal(storedContext.startTime, rescheduledStart)
+
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId: otherAppointmentId,
+      replacesAppointmentId: triggerAppointmentId,
+      calendarId: 'calendar-trigger',
+      status: 'confirmed',
+      appointmentChange: 'rescheduled',
+      startTime: otherStart
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.resume_at, waitTarget(otherStart))
+    storedContext = JSON.parse(enrollment.context)
+    assert.equal(storedContext.waitAppointmentId, otherAppointmentId)
+    assert.equal(storedContext.appointmentId, otherAppointmentId)
+
+    await handleAutomationEvent('appointment-status', {
+      contactId,
+      appointmentId: otherAppointmentId,
+      calendarId: 'calendar-trigger',
+      status: 'cancelled',
+      appointmentChange: 'cancelled',
+      startTime: otherStart
+    })
+
+    enrollment = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollment.id])
+    assert.equal(enrollment.status, 'completed', JSON.stringify({
+      context: JSON.parse(enrollment.context),
+      log: JSON.parse(enrollment.log)
+    }, null, 2))
+    const log = JSON.parse(enrollment.log)
+    assert.equal(log.some(entry => entry.nodeId === 'appointment-time-reached'), false)
+    assert.ok(log.some(entry => (
+      entry.nodeId === 'wait-trigger-appointment' &&
+      entry.detail === 'Fin del flujo'
+    )))
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automations WHERE id = ?', [automationId])
