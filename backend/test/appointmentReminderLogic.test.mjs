@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { DateTime } from 'luxon'
 import {
+  computeConfirmationDeadline,
   computeReminderSendAt,
   renderMessageText,
   parseStoredUtcDateTime,
@@ -9,6 +11,7 @@ import {
 } from '../src/services/appointmentReminderLogic.js'
 
 const TZ = 'America/Mexico_City' // UTC-6 en junio (sin DST)
+const DST_TZ = 'America/Ciudad_Juarez'
 
 const baseReminder = {
   offsetValue: 1,
@@ -74,6 +77,106 @@ test('el ajuste nunca empuja el envío después de la cita', () => {
   assert.equal(sendAt.toISO(), '2026-06-16T03:30:00.000Z')
 })
 
+test('el plazo corrido conserva la suma absoluta anterior', () => {
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-15T20:00:00.000Z',
+    timeoutValue: 12,
+    timeoutUnit: 'hours',
+    timeoutMode: 'elapsed',
+    timezone: TZ
+  })
+
+  assert.equal(deadline?.toISO(), '2026-06-16T08:00:00.000Z')
+})
+
+test('el horario de respuesta pausa el plazo durante la noche', () => {
+  // 20:00 local: queda 1 hora disponible hoy. Las otras 11 se cuentan mañana
+  // desde las 09:00, por lo que el límite cae a las 20:00 local.
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-16T02:00:00.000Z',
+    timeoutValue: 12,
+    timeoutUnit: 'hours',
+    timeoutMode: 'response_window',
+    responseStart: '09:00',
+    responseEnd: '21:00',
+    timezone: TZ
+  })
+
+  assert.equal(
+    deadline?.setZone(TZ).toFormat('yyyy-MM-dd HH:mm'),
+    '2026-06-16 20:00'
+  )
+})
+
+test('el horario de respuesta conserva horas de pared al cruzar el cambio de verano', () => {
+  // El sábado todavía usa UTC-7 y el domingo ya usa UTC-6. El resultado debe
+  // seguir siendo 20:00 local, no desplazarse una hora por sumar milisegundos.
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-03-08T03:00:00.000Z', // sábado 20:00 local
+    timeoutValue: 12,
+    timeoutUnit: 'hours',
+    timeoutMode: 'response_window',
+    responseStart: '09:00',
+    responseEnd: '21:00',
+    timezone: DST_TZ
+  })
+
+  assert.equal(
+    deadline?.setZone(DST_TZ).toFormat('yyyy-MM-dd HH:mm'),
+    '2026-03-08 20:00'
+  )
+  assert.equal(deadline?.toISO(), '2026-03-09T02:00:00.000Z')
+})
+
+test('un mensaje enviado en la madrugada empieza a contar cuando abre el horario de respuesta', () => {
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-15T09:00:00.000Z', // 03:00 local
+    timeoutValue: 12,
+    timeoutUnit: 'hours',
+    timeoutMode: 'response_window',
+    responseStart: '09:00',
+    responseEnd: '21:00',
+    timezone: TZ
+  })
+
+  assert.equal(
+    deadline?.setZone(TZ).toFormat('yyyy-MM-dd HH:mm'),
+    '2026-06-15 21:00'
+  )
+})
+
+test('el horario de respuesta también admite jornadas que cruzan medianoche', () => {
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-15T08:00:00.000Z', // 02:00 local, dentro de 21:00–09:00
+    timeoutValue: 12,
+    timeoutUnit: 'hours',
+    timeoutMode: 'response_window',
+    responseStart: '21:00',
+    responseEnd: '09:00',
+    timezone: TZ
+  })
+
+  assert.equal(
+    deadline?.setZone(TZ).toFormat('yyyy-MM-dd HH:mm'),
+    '2026-06-16 02:00'
+  )
+})
+
+test('el plazo protegido falla cerrado si la cita empieza antes de completarlo', () => {
+  const deadline = computeConfirmationDeadline({
+    sentAt: '2026-06-16T02:00:00.000Z', // 20:00 local
+    timeoutValue: 12,
+    timeoutUnit: 'hours',
+    timeoutMode: 'response_window',
+    responseStart: '09:00',
+    responseEnd: '21:00',
+    timezone: TZ,
+    latestAt: '2026-06-16T18:00:00.000Z' // 12:00 local del día siguiente
+  })
+
+  assert.equal(deadline, null)
+})
+
 test('renderMessageText sustituye variables de contacto y cita en la zona horaria', () => {
   const text = renderMessageText(
     'Hola {{contact.first_name}}, tu cita "{{cita.titulo}}" es el {{cita.fecha}} a las {{cita.hora}} ({{cita.fecha_hora}}).',
@@ -94,6 +197,10 @@ test('timestamps Date de PostgreSQL conservan el instante UTC en recordatorios',
   const postgresTimestamp = new Date('2026-06-15T18:00:00.000Z')
   const parsed = parseStoredUtcDateTime(postgresTimestamp)
   assert.equal(parsed?.toISO(), '2026-06-15T18:00:00.000Z')
+  assert.equal(
+    parseStoredUtcDateTime(DateTime.fromISO('2026-06-15T18:00:00.000Z'))?.toISO(),
+    '2026-06-15T18:00:00.000Z'
+  )
 
   const reminder = { ...baseReminder, offsetValue: 30, offsetUnit: 'minutes' }
   const sendAt = computeReminderSendAt(postgresTimestamp, reminder, TZ)

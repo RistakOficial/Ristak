@@ -94,6 +94,13 @@ Usa estos formatos de forma intencional:
 - Si falta tarjeta guardada/autorizada, el plan debe esperar autorización de
   tarjeta por la pasarela elegida; no inventes cobro automático.
 - Usa locks/idempotencia al agregar nuevos crones o procesos programados.
+- Los plazos de confirmacion de citas pueden contar tiempo corrido o solo tiempo
+  dentro de un horario diario de respuesta. Ese horario son horas de pared en la
+  zona del negocio, puede cruzar medianoche y se recorre por calendario local
+  antes de convertir el resultado a UTC. El deadline se calcula y congela cuando
+  el proveedor acepta el mensaje; cambiar despues la zona o el horario no mueve
+  envios ya realizados. Si no cabe el plazo completo antes de iniciar la cita, la
+  cancelacion automatica se omite.
 
 ## Mutaciones y Refresco Canónico
 

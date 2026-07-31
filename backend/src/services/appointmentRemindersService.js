@@ -31,6 +31,7 @@ import {
   parseHHMM,
   formatOffsetLabel,
   offsetToMs,
+  computeConfirmationDeadline,
   computeReminderSendAt,
   renderMessageText,
   parseStoredUtcDateTime
@@ -85,7 +86,11 @@ const REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel', 'what
 const REAL_REMINDER_CHANNELS = ['whatsapp', 'whatsapp_qr', 'instagram', 'messenger', 'email']
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
 const CONFIRMATION_TIMEOUT_UNITS = new Set(['minutes', 'hours', 'days'])
+const CONFIRMATION_RESPONSE_WINDOW_UNITS = new Set(['minutes', 'hours'])
+const CONFIRMATION_TIMEOUT_MODES = new Set(['elapsed', 'response_window'])
 const MAX_CONFIRMATION_TIMEOUT_MS = 30 * OFFSET_UNIT_MS.days
+const DEFAULT_CONFIRMATION_RESPONSE_START = '09:00'
+const DEFAULT_CONFIRMATION_RESPONSE_END = '21:00'
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
   notice: 'cita_programada',
@@ -167,31 +172,107 @@ function shouldHoldErroredSend(row, now) {
   return now.toMillis() - lastAttempt.toMillis() < ERROR_RETRY_MS
 }
 
-function normalizeConfirmationTimeout(action, rawValue, rawUnit, { strict = false } = {}) {
+function normalizeResponseWindowTime(value, fallback) {
+  const parts = parseHHMM(value, null)
+  if (!parts) return fallback
+  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`
+}
+
+function normalizeConfirmationTimeout(
+  action,
+  rawValue,
+  rawUnit,
+  rawMode,
+  rawResponseStart,
+  rawResponseEnd,
+  { strict = false } = {}
+) {
+  const normalizedMode = cleanString(rawMode)
+  const mode = CONFIRMATION_TIMEOUT_MODES.has(normalizedMode)
+    ? normalizedMode
+    : 'elapsed'
+  if (strict && rawMode !== undefined && rawMode !== null && !CONFIRMATION_TIMEOUT_MODES.has(normalizedMode)) {
+    throw createServiceError('Elige una forma válida de contar el plazo de confirmación.')
+  }
+
+  if (
+    strict &&
+    mode === 'response_window' &&
+    (
+      (rawResponseStart !== undefined && rawResponseStart !== null && !parseHHMM(rawResponseStart, null)) ||
+      (rawResponseEnd !== undefined && rawResponseEnd !== null && !parseHHMM(rawResponseEnd, null))
+    )
+  ) {
+    throw createServiceError('Define horas válidas para el horario de respuesta.')
+  }
+
+  const responseStart = normalizeResponseWindowTime(
+    rawResponseStart,
+    DEFAULT_CONFIRMATION_RESPONSE_START
+  )
+  const responseEnd = normalizeResponseWindowTime(
+    rawResponseEnd,
+    DEFAULT_CONFIRMATION_RESPONSE_END
+  )
+
   if (action !== 'cancel_appointment') {
-    return { confirmationTimeoutValue: null, confirmationTimeoutUnit: null }
+    return {
+      confirmationTimeoutValue: null,
+      confirmationTimeoutUnit: null,
+      confirmationTimeoutMode: mode,
+      confirmationResponseStart: responseStart,
+      confirmationResponseEnd: responseEnd
+    }
   }
 
   const parsedValue = Number(rawValue)
   const unit = cleanString(rawUnit)
+  const unitAllowed = CONFIRMATION_TIMEOUT_UNITS.has(unit) &&
+    (mode !== 'response_window' || CONFIRMATION_RESPONSE_WINDOW_UNITS.has(unit))
   const valid = Number.isFinite(parsedValue) &&
     Number.isInteger(parsedValue) &&
     parsedValue > 0 &&
-    CONFIRMATION_TIMEOUT_UNITS.has(unit) &&
+    unitAllowed &&
     parsedValue * OFFSET_UNIT_MS[unit] <= MAX_CONFIRMATION_TIMEOUT_MS
 
   if (!valid) {
     if (strict) {
       throw createServiceError(
-        'Define cuánto tiempo puede esperar Ristak la confirmación antes de cancelar la cita (máximo 30 días).'
+        mode === 'response_window'
+          ? 'Define cuántos minutos u horas disponibles puede esperar Ristak la confirmación antes de cancelar la cita (máximo 30 días de tiempo disponible).'
+          : 'Define cuánto tiempo puede esperar Ristak la confirmación antes de cancelar la cita (máximo 30 días).'
       )
     }
-    return { confirmationTimeoutValue: null, confirmationTimeoutUnit: null }
+    return {
+      confirmationTimeoutValue: null,
+      confirmationTimeoutUnit: null,
+      confirmationTimeoutMode: mode,
+      confirmationResponseStart: responseStart,
+      confirmationResponseEnd: responseEnd
+    }
+  }
+
+  if (mode === 'response_window' && responseStart === responseEnd) {
+    if (strict) {
+      throw createServiceError(
+        'Define un horario de respuesta válido: la hora de inicio y la hora de fin deben ser distintas.'
+      )
+    }
+    return {
+      confirmationTimeoutValue: null,
+      confirmationTimeoutUnit: null,
+      confirmationTimeoutMode: mode,
+      confirmationResponseStart: responseStart,
+      confirmationResponseEnd: responseEnd
+    }
   }
 
   return {
     confirmationTimeoutValue: parsedValue,
-    confirmationTimeoutUnit: unit
+    confirmationTimeoutUnit: unit,
+    confirmationTimeoutMode: mode,
+    confirmationResponseStart: responseStart,
+    confirmationResponseEnd: responseEnd
   }
 }
 
@@ -311,7 +392,10 @@ function normalizeReminderRow(row = {}) {
   const confirmationTimeout = normalizeConfirmationTimeout(
     noConfirmAction,
     row.confirmation_timeout_value,
-    row.confirmation_timeout_unit
+    row.confirmation_timeout_unit,
+    row.confirmation_timeout_mode,
+    row.confirmation_response_start,
+    row.confirmation_response_end
   )
   return {
     id: cleanString(row.id),
@@ -853,12 +937,18 @@ function sanitizeReminderInput(input = {}, base = {}) {
   const timeoutConfigurationWasSubmitted = [
     'noConfirmAction',
     'confirmationTimeoutValue',
-    'confirmationTimeoutUnit'
+    'confirmationTimeoutUnit',
+    'confirmationTimeoutMode',
+    'confirmationResponseStart',
+    'confirmationResponseEnd'
   ].some((field) => Object.hasOwn(input, field))
   const confirmationTimeout = normalizeConfirmationTimeout(
     noConfirmAction,
     merged.confirmationTimeoutValue,
     merged.confirmationTimeoutUnit,
+    merged.confirmationTimeoutMode,
+    merged.confirmationResponseStart,
+    merged.confirmationResponseEnd,
     // Las filas históricas con cancelación no recibieron un default retroactivo.
     // Siguen pudiéndose pausar/activar sin inventar un plazo; una creación nueva
     // o una edición explícita de esta política sí debe quedar completa.
@@ -866,7 +956,8 @@ function sanitizeReminderInput(input = {}, base = {}) {
   )
   if (
     timingAnchor === 'before_appointment' &&
-    confirmationTimeout.confirmationTimeoutValue !== null
+    confirmationTimeout.confirmationTimeoutValue !== null &&
+    confirmationTimeout.confirmationTimeoutMode === 'elapsed'
   ) {
     const timeoutMs = confirmationTimeout.confirmationTimeoutValue *
       OFFSET_UNIT_MS[confirmationTimeout.confirmationTimeoutUnit]
@@ -926,8 +1017,9 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
       content_mode, qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_timeout_value, confirmation_timeout_unit,
+      confirmation_timeout_mode, confirmation_response_start, confirmation_response_end,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ${ignoreConflict ? 'ON CONFLICT DO NOTHING' : ''}
   `, [
     id, cleanString(systemKey) || null, scheduleKey, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
@@ -935,6 +1027,7 @@ async function insertAppointmentReminder(input = {}, { systemKey = null, ignoreC
     data.templateLanguage, data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
     data.smartOverflow, data.noConfirmAction, data.confirmationTimeoutValue, data.confirmationTimeoutUnit,
+    data.confirmationTimeoutMode, data.confirmationResponseStart, data.confirmationResponseEnd,
     data.confirmationSuccessAction, data.bypassAutomations,
     Number(positionRow?.next || 0)
   ])
@@ -986,6 +1079,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
         content_mode = ?, qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
         smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
         no_confirm_action = ?, confirmation_timeout_value = ?, confirmation_timeout_unit = ?,
+        confirmation_timeout_mode = ?, confirmation_response_start = ?, confirmation_response_end = ?,
         confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
@@ -994,6 +1088,7 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
       data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
       data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
       data.noConfirmAction, data.confirmationTimeoutValue, data.confirmationTimeoutUnit,
+      data.confirmationTimeoutMode, data.confirmationResponseStart, data.confirmationResponseEnd,
       data.confirmationSuccessAction, data.bypassAutomations, id
     ])
   } catch (error) {
@@ -1586,7 +1681,13 @@ async function claimSend({ reminder, appointment, sendAt }) {
   return Number(retry?.changes || 0) > 0
 }
 
-function buildConfirmationTimeoutDeliveryState({ reminder, appointment, status, finishedAt }) {
+function buildConfirmationTimeoutDeliveryState({
+  reminder,
+  appointment,
+  status,
+  finishedAt,
+  timezone
+}) {
   if (
     status !== 'sent' ||
     reminder.messageType !== 'confirmation' ||
@@ -1602,7 +1703,10 @@ function buildConfirmationTimeoutDeliveryState({ reminder, appointment, status, 
   const timeout = normalizeConfirmationTimeout(
     reminder.noConfirmAction,
     reminder.confirmationTimeoutValue,
-    reminder.confirmationTimeoutUnit
+    reminder.confirmationTimeoutUnit,
+    reminder.confirmationTimeoutMode,
+    reminder.confirmationResponseStart,
+    reminder.confirmationResponseEnd
   )
   if (timeout.confirmationTimeoutValue === null) {
     return {
@@ -1614,12 +1718,18 @@ function buildConfirmationTimeoutDeliveryState({ reminder, appointment, status, 
 
   const sentAt = DateTime.fromISO(finishedAt, { zone: 'utc' })
   const appointmentStart = parseStoredUtcDateTime(appointment.start_time)
-  const deadline = sentAt.plus({
-    milliseconds: timeout.confirmationTimeoutValue *
-      OFFSET_UNIT_MS[timeout.confirmationTimeoutUnit]
+  const deadline = computeConfirmationDeadline({
+    sentAt,
+    timeoutValue: timeout.confirmationTimeoutValue,
+    timeoutUnit: timeout.confirmationTimeoutUnit,
+    timeoutMode: timeout.confirmationTimeoutMode,
+    responseStart: timeout.confirmationResponseStart,
+    responseEnd: timeout.confirmationResponseEnd,
+    timezone,
+    latestAt: appointmentStart
   })
 
-  if (!appointmentStart || deadline >= appointmentStart) {
+  if (!appointmentStart || !deadline || deadline >= appointmentStart) {
     return {
       confirmationDeadlineAt: null,
       confirmationTimeoutStatus: 'skipped',
@@ -1635,13 +1745,21 @@ function buildConfirmationTimeoutDeliveryState({ reminder, appointment, status, 
 }
 
 // (NOTI-002/CRON-003) Marca el resultado final del envío sobre la fila ya reclamada.
-async function finalizeSend({ reminder, appointment, status, sentMessageId = '', errorMessage = '' }) {
+async function finalizeSend({
+  reminder,
+  appointment,
+  status,
+  sentMessageId = '',
+  errorMessage = '',
+  timezone
+}) {
   const finishedAt = nowIso()
   const confirmationTimeout = buildConfirmationTimeoutDeliveryState({
     reminder,
     appointment,
     status,
-    finishedAt
+    finishedAt,
+    timezone
   })
   await db.run(`
     UPDATE appointment_reminder_sends
@@ -1956,14 +2074,21 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
           reminder,
           appointment,
           status: 'skipped',
-          errorMessage: 'La cita se agendó después del momento programado para este recordatorio.'
+          errorMessage: 'La cita se agendó después del momento programado para este recordatorio.',
+          timezone
         })
         skipped += 1
         continue
       }
 
       if (now.toMillis() - sendAt.toMillis() > SEND_GRACE_MS) {
-        await finalizeSend({ reminder, appointment, status: 'skipped', errorMessage: 'Fuera de la ventana de envío' })
+        await finalizeSend({
+          reminder,
+          appointment,
+          status: 'skipped',
+          errorMessage: 'Fuera de la ventana de envío',
+          timezone
+        })
         skipped += 1
         continue
       }
@@ -1971,14 +2096,26 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       try {
         const missingTarget = getMissingReminderTarget(reminder, appointment)
         if (missingTarget) {
-          await finalizeSend({ reminder, appointment, status: 'skipped', errorMessage: missingTarget })
+          await finalizeSend({
+            reminder,
+            appointment,
+            status: 'skipped',
+            errorMessage: missingTarget,
+            timezone
+          })
           skipped += 1
           continue
         }
 
         const response = await sendAppointmentReminderByChannel({ reminder, appointment, timezone })
 
-        await finalizeSend({ reminder, appointment, status: 'sent', sentMessageId: getSentMessageId(response) })
+        await finalizeSend({
+          reminder,
+          appointment,
+          status: 'sent',
+          sentMessageId: getSentMessageId(response),
+          timezone
+        })
         sent += 1
         const transport = response?.transport === 'qr'
           ? 'WhatsApp QR'
@@ -1988,7 +2125,13 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
         const target = appointment.phone || appointment.email || appointment.contact_id
         logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado por ${transport} a ${target} (cita ${appointment.id})`)
       } catch (error) {
-        await finalizeSend({ reminder, appointment, status: 'error', errorMessage: error.message })
+        await finalizeSend({
+          reminder,
+          appointment,
+          status: 'error',
+          errorMessage: error.message,
+          timezone
+        })
         errors += 1
         logger.warn(`[Citas] Falló mensaje automático "${reminder.name}" para la cita ${appointment.id}: ${error.message}`)
       }

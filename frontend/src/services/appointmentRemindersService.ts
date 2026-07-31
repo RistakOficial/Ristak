@@ -14,6 +14,7 @@ export type ReminderSmartOverflow = 'before' | 'next_day'
 export type ReminderContentMode = 'template' | 'direct'
 export type ReminderNoConfirmAction = 'no_action' | 'cancel_appointment' | 'notify_push'
 export type ReminderConfirmationTimeoutUnit = 'minutes' | 'hours' | 'days'
+export type ReminderConfirmationTimeoutMode = 'elapsed' | 'response_window'
 export type ReminderConfirmationSuccessAction = 'mark_confirmed' | 'chat_card' | 'notify_push' | 'chat_badge'
 export type ReminderDeliveryHealthStatus = 'ready' | 'warning' | 'error' | 'paused'
 
@@ -53,6 +54,9 @@ export interface AppointmentReminder {
   noConfirmAction: ReminderNoConfirmAction
   confirmationTimeoutValue: number | null
   confirmationTimeoutUnit: ReminderConfirmationTimeoutUnit | null
+  confirmationTimeoutMode: ReminderConfirmationTimeoutMode
+  confirmationResponseStart: string
+  confirmationResponseEnd: string
   confirmationSuccessActions: ReminderConfirmationSuccessAction[]
   /** Compatibilidad con servidores/clientes anteriores al multiselect. */
   confirmationSuccessAction?: ReminderConfirmationSuccessAction

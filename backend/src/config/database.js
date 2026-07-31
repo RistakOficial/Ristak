@@ -8170,6 +8170,9 @@ async function initTablesUnlocked() {
         no_confirm_action TEXT DEFAULT 'no_action',
         confirmation_timeout_value INTEGER,
         confirmation_timeout_unit TEXT,
+        confirmation_timeout_mode TEXT DEFAULT 'elapsed',
+        confirmation_response_start TEXT DEFAULT '09:00',
+        confirmation_response_end TEXT DEFAULT '21:00',
         confirmation_success_action TEXT DEFAULT 'chat_card',
         bypass_automations INTEGER DEFAULT 0,
         position INTEGER DEFAULT 0,
@@ -8214,6 +8217,18 @@ async function initTablesUnlocked() {
 
     try {
       await db.run('ALTER TABLE appointment_reminders ADD COLUMN confirmation_timeout_unit TEXT')
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN confirmation_timeout_mode TEXT DEFAULT 'elapsed'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN confirmation_response_start TEXT DEFAULT '09:00'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN confirmation_response_end TEXT DEFAULT '21:00'")
     } catch (_) { /* columna ya existe */ }
 
     try {

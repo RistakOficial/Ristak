@@ -4196,10 +4196,25 @@ horas o dias. No se aplica ningun default silencioso a filas historicas. El relo
 empieza en `appointment_reminder_sends.sent_at`, despues de que el transporte
 acepto el envio, y cada envio congela su propio
 `confirmation_deadline_at`; editar el recordatorio despues no mueve ultimátums
-ya enviados. En recordatorios `before_appointment`, el plazo debe ser menor que
-el tiempo configurado antes de la cita. En avisos `after_booking`, si la cita
-empieza antes de que pueda terminar el plazo, el envio queda sin cancelacion por
-timeout.
+ya enviados.
+
+El usuario puede contar ese plazo como `elapsed` (tiempo corrido, incluyendo la
+noche) o como `response_window`. En el segundo modo sólo se consumen minutos u
+horas dentro de `confirmation_response_start` y
+`confirmation_response_end`, todos los días y en la zona horaria del negocio;
+fuera de ese horario el contador se pausa. El horario de respuesta es
+independiente del horario inteligente de envio, admite jornadas que cruzan
+medianoche y no usa la zona del navegador. El contacto puede responder a
+cualquier hora; la ventana sólo controla cuándo avanza el ultimátum. Las filas
+históricas conservan
+`elapsed` para no cambiar silenciosamente deadlines anteriores.
+
+En recordatorios `before_appointment`, un plazo corrido debe ser menor que el
+tiempo configurado antes de la cita. Para `response_window` y para avisos
+`after_booking`, el instante final depende del día y la hora reales del envío:
+si no alcanza a completarse antes de que empiece la cita, el envío queda sin
+cancelación por timeout. El cálculo se hace al aceptar el mensaje y se congela
+en UTC; cambios posteriores de zona, modo u horario no desplazan el deadline.
 
 Si vence el plazo sin una confirmacion explicita y la cita sigue abierta, Ristak
 la cancela y avisa al equipo incluso cuando el calendario la habia aceptado con
@@ -4265,6 +4280,10 @@ envio. El cron de confirmaciones reclama el envio y la recepción inbound bloque
 esa misma fila dentro de una transaccion, por lo que una respuesta y una
 cancelacion por timeout no pueden ganar simultaneamente en SQLite ni PostgreSQL.
 Los estados terminales del timeout impiden repetir la cancelacion o el aviso.
+La regla fuente guarda además `confirmation_timeout_mode`,
+`confirmation_response_start` y `confirmation_response_end`; esas horas son
+configuración local de pared y el envío sólo persiste el deadline UTC ya
+resuelto.
 
 La tolerancia de reintento no convierte un recordatorio vencido en confirmacion
 de reserva. Si una cita se crea despues del instante calculado para un mensaje

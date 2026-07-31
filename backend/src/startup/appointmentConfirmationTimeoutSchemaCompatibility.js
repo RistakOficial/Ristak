@@ -1,7 +1,10 @@
 const SQLITE_APPOINTMENT_CONFIRMATION_TIMEOUT_COLUMNS = Object.freeze({
   appointment_reminders: Object.freeze([
     Object.freeze(['confirmation_timeout_value', 'INTEGER']),
-    Object.freeze(['confirmation_timeout_unit', 'TEXT'])
+    Object.freeze(['confirmation_timeout_unit', 'TEXT']),
+    Object.freeze(['confirmation_timeout_mode', "TEXT DEFAULT 'elapsed'"]),
+    Object.freeze(['confirmation_response_start', "TEXT DEFAULT '09:00'"]),
+    Object.freeze(['confirmation_response_end', "TEXT DEFAULT '21:00'"])
   ]),
   appointment_reminder_sends: Object.freeze([
     Object.freeze(['confirmation_deadline_at', 'DATETIME']),

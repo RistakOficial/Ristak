@@ -1806,12 +1806,14 @@ test('la migracion 141 rellena el ciclo conversacional e instala el índice de h
   }
 })
 
-test('la migracion 142 agrega el ultimátum de confirmación a instalaciones SQLite existentes', async () => {
+test('las migraciones 142 y 143 agregan el ultimátum y su horario de respuesta en SQLite', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ristak-appointment-confirmation-timeout-'))
   const database = openMemoryDatabase()
   const migrationFiles = [
     '142_appointment_confirmation_timeout.sqlite.sql',
-    '142a_appointment_confirmation_timeout.postgres.sql'
+    '142a_appointment_confirmation_timeout.postgres.sql',
+    '143_appointment_confirmation_response_window.sqlite.sql',
+    '143a_appointment_confirmation_response_window.postgres.sql'
   ]
 
   try {
@@ -1834,6 +1836,9 @@ test('la migracion 142 agrega el ultimátum de confirmación a instalaciones SQL
     assert.deepEqual(repair.addedColumns, [
       'appointment_reminders.confirmation_timeout_value',
       'appointment_reminders.confirmation_timeout_unit',
+      'appointment_reminders.confirmation_timeout_mode',
+      'appointment_reminders.confirmation_response_start',
+      'appointment_reminders.confirmation_response_end',
       'appointment_reminder_sends.confirmation_deadline_at',
       'appointment_reminder_sends.confirmation_timeout_status',
       'appointment_reminder_sends.confirmation_timeout_processed_at'
@@ -1851,14 +1856,24 @@ test('la migracion 142 agrega el ultimátum de confirmación a instalaciones SQL
       dialect: 'sqlite',
       directory
     })
-    assert.deepEqual(firstRun, { applied: 1, skipped: 1 })
+    assert.deepEqual(firstRun, { applied: 2, skipped: 2 })
 
     const reminderColumns = await database.all('PRAGMA table_info("appointment_reminders")')
     assert.deepEqual(
       reminderColumns
         .map((row) => row.name)
         .filter((name) => name.startsWith('confirmation_timeout_')),
-      ['confirmation_timeout_value', 'confirmation_timeout_unit']
+      [
+        'confirmation_timeout_value',
+        'confirmation_timeout_unit',
+        'confirmation_timeout_mode'
+      ]
+    )
+    assert.deepEqual(
+      reminderColumns
+        .map((row) => row.name)
+        .filter((name) => name.startsWith('confirmation_response_')),
+      ['confirmation_response_start', 'confirmation_response_end']
     )
 
     const sendColumns = await database.all('PRAGMA table_info("appointment_reminder_sends")')
@@ -1907,6 +1922,22 @@ test('la migracion 142 de PostgreSQL usa timestamps absolutos e idempotencia de 
   assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_deadline_at TIMESTAMPTZ/i)
   assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_timeout_processed_at TIMESTAMPTZ/i)
   assert.match(migration, /CREATE INDEX IF NOT EXISTS idx_appointment_reminder_sends_confirmation_deadline/i)
+  assert.doesNotMatch(migration, /\bDATETIME\b/i)
+})
+
+test('la migracion 143 de PostgreSQL conserva horas de pared y defaults compatibles', async () => {
+  const migration = await readFile(
+    new URL(
+      '../migrations/versioned/143a_appointment_confirmation_response_window.postgres.sql',
+      import.meta.url
+    ),
+    'utf8'
+  )
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_timeout_mode TEXT DEFAULT 'elapsed'/i)
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_response_start TEXT DEFAULT '09:00'/i)
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS confirmation_response_end TEXT DEFAULT '21:00'/i)
+  assert.match(migration, /SET confirmation_timeout_mode = COALESCE/i)
   assert.doesNotMatch(migration, /\bDATETIME\b/i)
 })
 

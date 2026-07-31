@@ -32,6 +32,10 @@ function cleanString(value) {
  * un instante absoluto. SQLite entrega strings y se leen explícitamente en UTC.
  */
 export function parseStoredUtcDateTime(value) {
+  if (DateTime.isDateTime(value)) {
+    return value.isValid ? value.toUTC() : null
+  }
+
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null
     return DateTime.fromJSDate(value, { zone: 'utc' })
@@ -51,6 +55,123 @@ export function parseHHMM(value, fallback) {
   const minute = Number(match[2])
   if (hour > 23 || minute > 59) return fallback
   return { hour, minute }
+}
+
+function responseWindowForStartDay(startDay, startParts, endParts) {
+  const startMinutes = startParts.hour * 60 + startParts.minute
+  const endMinutes = endParts.hour * 60 + endParts.minute
+  if (startMinutes === endMinutes) return null
+
+  const start = startDay.set({
+    hour: startParts.hour,
+    minute: startParts.minute,
+    second: 0,
+    millisecond: 0
+  })
+  const endDay = endMinutes < startMinutes ? startDay.plus({ days: 1 }) : startDay
+  const end = endDay.set({
+    hour: endParts.hour,
+    minute: endParts.minute,
+    second: 0,
+    millisecond: 0
+  })
+  if (!start.isValid || !end.isValid || end.toMillis() <= start.toMillis()) return null
+
+  return {
+    start: start.toUTC(),
+    end: end.toUTC()
+  }
+}
+
+function nextResponseWindow(cursor, timezone, startParts, endParts) {
+  const localCursor = cursor.setZone(timezone)
+  if (!localCursor.isValid) return null
+
+  const day = localCursor.startOf('day')
+  const candidates = [-1, 0, 1]
+    .map(dayOffset => responseWindowForStartDay(
+      day.plus({ days: dayOffset }),
+      startParts,
+      endParts
+    ))
+    .filter(window => window && window.end.toMillis() > cursor.toMillis())
+    .sort((left, right) => left.start.toMillis() - right.start.toMillis())
+
+  return candidates[0] || null
+}
+
+/**
+ * Congela el instante UTC en que termina el plazo de confirmación.
+ *
+ * `elapsed` cuenta tiempo corrido. `response_window` sólo consume tiempo dentro
+ * del horario diario configurado en la zona del negocio; fuera de ese horario
+ * el contador se pausa. El horario puede cruzar medianoche (por ejemplo 21:00–
+ * 09:00). `latestAt` permite fallar cerrado cuando la cita empieza antes de que
+ * se alcance el plazo completo.
+ */
+export function computeConfirmationDeadline({
+  sentAt,
+  timeoutValue,
+  timeoutUnit,
+  timeoutMode = 'elapsed',
+  responseStart = '09:00',
+  responseEnd = '21:00',
+  timezone = 'UTC',
+  latestAt = null
+} = {}) {
+  const sent = parseStoredUtcDateTime(sentAt)
+  const value = Number(timeoutValue)
+  const unitMs = OFFSET_UNIT_MS[cleanString(timeoutUnit)]
+  if (!sent || !Number.isInteger(value) || value <= 0 || !unitMs) return null
+
+  const cutoff = latestAt ? parseStoredUtcDateTime(latestAt) : null
+  if (latestAt && !cutoff) return null
+
+  if (cleanString(timeoutMode) !== 'response_window') {
+    const deadline = sent.plus({ milliseconds: value * unitMs })
+    return cutoff && deadline.toMillis() >= cutoff.toMillis() ? null : deadline
+  }
+
+  const startParts = parseHHMM(responseStart, null)
+  const endParts = parseHHMM(responseEnd, null)
+  if (!startParts || !endParts) return null
+  if (
+    startParts.hour === endParts.hour &&
+    startParts.minute === endParts.minute
+  ) return null
+
+  let remainingMs = value * unitMs
+  let cursor = sent
+
+  // El máximo configurable es 30 días de tiempo disponible. Incluso con una
+  // ventana extrema de un minuto diario, 50 mil iteraciones cubren el contrato.
+  // En producción `latestAt` corta mucho antes al llegar el inicio de la cita.
+  for (let iteration = 0; iteration < 50_000; iteration += 1) {
+    const window = nextResponseWindow(cursor, timezone, startParts, endParts)
+    if (!window) return null
+
+    const availableStartMs = Math.max(cursor.toMillis(), window.start.toMillis())
+    if (cutoff && availableStartMs >= cutoff.toMillis()) return null
+
+    const availableEndMs = cutoff
+      ? Math.min(window.end.toMillis(), cutoff.toMillis())
+      : window.end.toMillis()
+    const availableMs = Math.max(0, availableEndMs - availableStartMs)
+
+    if (remainingMs <= availableMs) {
+      const deadline = DateTime.fromMillis(
+        availableStartMs + remainingMs,
+        { zone: 'utc' }
+      )
+      return cutoff && deadline.toMillis() >= cutoff.toMillis() ? null : deadline
+    }
+
+    remainingMs -= availableMs
+    if (cutoff && window.end.toMillis() >= cutoff.toMillis()) return null
+    cursor = window.end
+  }
+
+  return null
 }
 
 export function formatOffsetLabel(offsetValue, offsetUnit, timingAnchor = 'before_appointment') {

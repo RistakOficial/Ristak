@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { DateTime } from 'luxon'
 import { db, setAppConfig } from '../src/config/database.js'
+import { invalidateTimezoneCache } from '../src/utils/dateUtils.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   appointmentReminderRetryCutoffExpression,
@@ -496,6 +497,50 @@ test('la confirmación se envía aunque el calendario ya marque la cita como con
   })
 })
 
+test('el envío congela un deadline que sólo cuenta dentro del horario de respuesta', async () => {
+  await snapshotAppConfig(['account_timezone'], async () => {
+    await setAppConfig('account_timezone', 'UTC')
+    invalidateTimezoneCache()
+    try {
+      await withYCloudMessageCapture(async () => {
+        await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
+          const now = DateTime.utc()
+          const responseStart = now.minus({ hours: 1 }).toFormat('HH:mm')
+          const responseEnd = now.plus({ hours: 2 }).toFormat('HH:mm')
+          await db.run(`
+            UPDATE appointment_reminders
+            SET message_type = 'confirmation',
+                ai_enabled = 1,
+                no_confirm_action = 'cancel_appointment',
+                confirmation_timeout_value = 30,
+                confirmation_timeout_unit = 'minutes',
+                confirmation_timeout_mode = 'response_window',
+                confirmation_response_start = ?,
+                confirmation_response_end = ?
+            WHERE id = ?
+          `, [responseStart, responseEnd, reminder.id])
+
+          const result = await processDueAppointmentReminders({ batchSize: 1 })
+          assert.equal(result.sent, 1)
+
+          const send = await db.get(`
+            SELECT sent_at, confirmation_deadline_at, confirmation_timeout_status
+            FROM appointment_reminder_sends
+            WHERE reminder_id = ? AND appointment_id = ?
+          `, [reminder.id, appointmentId])
+          const sentAt = DateTime.fromISO(send.sent_at, { zone: 'utc' })
+          const deadline = DateTime.fromISO(send.confirmation_deadline_at, { zone: 'utc' })
+
+          assert.equal(send.confirmation_timeout_status, 'pending')
+          assert.ok(Math.abs(deadline.diff(sentAt, 'minutes').minutes - 30) < 0.01)
+        })
+      })
+    } finally {
+      invalidateTimezoneCache()
+    }
+  })
+})
+
 test('el envío corrige una plantilla default cruzada y usa cita_programada al agendar', async () => {
   await withYCloudMessageCapture(async (captures) => {
     await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ reminder, appointmentId }) => {
@@ -974,6 +1019,54 @@ test('cancelar por silencio exige un plazo válido que termine antes de la cita'
     }),
     /debe terminar antes/
   )
+})
+
+test('el horario de respuesta se guarda separado del horario de envío y conserva compatibilidad al editar', async () => {
+  let reminderId = ''
+  try {
+    const reminder = await createAppointmentReminder({
+      name: `Confirmación con horario protegido ${randomUUID()}`,
+      messageType: 'confirmation',
+      aiEnabled: true,
+      timingAnchor: 'before_appointment',
+      offsetValue: 17,
+      offsetUnit: 'hours',
+      noConfirmAction: 'cancel_appointment',
+      confirmationTimeoutValue: 12,
+      confirmationTimeoutUnit: 'hours',
+      confirmationTimeoutMode: 'response_window',
+      confirmationResponseStart: '09:00',
+      confirmationResponseEnd: '21:00'
+    })
+    reminderId = reminder.id
+
+    assert.equal(reminder.confirmationTimeoutMode, 'response_window')
+    assert.equal(reminder.confirmationResponseStart, '09:00')
+    assert.equal(reminder.confirmationResponseEnd, '21:00')
+
+    const paused = await updateAppointmentReminder(reminder.id, { enabled: false })
+    assert.equal(paused.confirmationTimeoutMode, 'response_window')
+    assert.equal(paused.confirmationResponseStart, '09:00')
+    assert.equal(paused.confirmationResponseEnd, '21:00')
+
+    await assert.rejects(
+      () => updateAppointmentReminder(reminder.id, {
+        confirmationResponseEnd: '09:00'
+      }),
+      /hora de inicio y la hora de fin deben ser distintas/
+    )
+    await assert.rejects(
+      () => updateAppointmentReminder(reminder.id, {
+        confirmationResponseStart: 'mañana'
+      }),
+      /horas válidas/
+    )
+  } finally {
+    if (reminderId) {
+      await db.run('DELETE FROM appointment_reminder_sends WHERE reminder_id = ?', [reminderId])
+      await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
+    }
+  }
 })
 
 test('avisos de cita después de agendar usan plantilla de cita programada sin activar confirmación', async () => {

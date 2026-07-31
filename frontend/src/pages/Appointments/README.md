@@ -179,11 +179,21 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 - **Si no confirma** permite conservar, avisar o cancelar. Al elegir **Cancelar
   la cita**, el editor exige un plazo en minutos, horas o días; no hay default
   retroactivo para configuraciones antiguas.
+- **Cómo contar este plazo** permite usar tiempo corrido o contar sólo minutos y
+  horas dentro de un horario diario de respuesta independiente del horario de
+  envío. El segundo modo pausa el contador fuera de la ventana, usa la zona del
+  negocio, funciona todos los días y admite rangos que cruzan medianoche. Una
+  respuesta recibida fuera de ese horario sigue siendo válida; la ventana sólo
+  controla cuándo avanza el ultimátum.
 - El plazo empieza cuando el transporte acepta el envío y cada mensaje congela
-  su propio deadline. Para `before_appointment` debe terminar antes del inicio;
-  para `after_booking`, si la cita empieza primero, no se ejecuta la cancelación
-  por timeout. Si vence sin respuesta explícita, una cita abierta puede
-  cancelarse aunque el calendario ya la hubiera marcado `confirmed`.
+  su propio deadline UTC. El modo corrido de `before_appointment` debe terminar
+  antes del inicio; en el horario de respuesta y en `after_booking`, si no cabe
+  todo el plazo antes de la cita, no se ejecuta la cancelación por timeout. Si
+  vence sin respuesta explícita, una cita abierta puede cancelarse aunque el
+  calendario ya la hubiera marcado `confirmed`.
+- Las reglas históricas permanecen en tiempo corrido. Cambiar después la zona
+  horaria, la ventana o el recordatorio no mueve deadlines que ya fueron
+  congelados.
 - Una respuesta recibida antes del límite difiere el timeout hasta terminar de
   clasificarla. Una respuesta ambigua no cancela inmediatamente, pero el
   ultimátum sí puede hacerlo al vencer si nunca hubo confirmación clara.
