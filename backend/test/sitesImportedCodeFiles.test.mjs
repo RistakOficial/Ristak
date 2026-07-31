@@ -955,6 +955,10 @@ test('AI HTML editor instructions stay scoped to active code only', async () => 
   assert.match(instructions, /data-rstk-theme-color-dark/)
   assert.match(instructions, /hora local que reporta el navegador/)
   assert.match(instructions, /No agregues botones Día\/Noche/)
+  assert.match(instructions, /data-rstk-auto-traffic-platform="true"/)
+  assert.match(instructions, /utm_source=\{\{site_source_name\}\}/)
+  assert.match(instructions, /document\.referrer/)
+  assert.match(instructions, /fbclid solo confirma tráfico del ecosistema Meta/)
   assert.match(instructions, /visitor_id first-party/)
   assert.match(instructions, /no promete sincronización entre dispositivos/)
   assert.match(instructions, /viewport de 390px/)
@@ -1179,6 +1183,7 @@ test('HTML mobile rules are shared by every creation path and the code preview u
     IMPORTED_HTML_MOBILE_RULES,
     areImportedNativeResponsiveVariants,
     buildImportedHtmlAutomaticColorModeRulesText,
+    buildImportedHtmlTrafficPlatformRulesText,
     buildImportedHtmlDeviceVisibilityStyle,
     resolveVisibleImportedNativeElementSelection,
     buildImportedHtmlMobileRulesText
@@ -1247,6 +1252,17 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   const automaticColorModeGuide = buildImportedHtmlAutomaticColorModeRulesText()
   assert.match(automaticColorModeGuide, /data-rstk-auto-color-mode="time"/)
   assert.match(automaticColorModeGuide, /No agregues botones Día\/Noche/)
+  const trafficPlatformPromptUses = source.match(/buildImportedHtmlTrafficPlatformRulesText\(/g) || []
+  assert.ok(
+    trafficPlatformPromptUses.length >= 5,
+    'La guía de plataforma de tráfico debe llegar a creación, edición y asistentes HTML'
+  )
+  const trafficPlatformGuide = buildImportedHtmlTrafficPlatformRulesText()
+  assert.match(trafficPlatformGuide, /data-rstk-auto-traffic-platform="true"/)
+  assert.match(trafficPlatformGuide, /data-rstk-traffic-platform="meta"/)
+  assert.match(trafficPlatformGuide, /utm_source=\{\{site_source_name\}\}/)
+  assert.match(trafficPlatformGuide, /html\[data-rstk-traffic-platform="instagram"\]/)
+  assert.match(trafficPlatformGuide, /fbclid solo confirma tráfico del ecosistema Meta/)
   assert.match(source, /\.\.\.IMPORTED_HTML_MOBILE_RULES\.map/)
   assert.match(source, /<details className=\{styles\.importedCodeGuide\}>/)
   assert.match(source, /title="Mostrar u ocultar las reglas completas para HTML y móvil"/)

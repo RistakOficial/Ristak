@@ -84,6 +84,7 @@ import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
 import {
   areImportedNativeResponsiveVariants,
   buildImportedHtmlAutomaticColorModeRulesText,
+  buildImportedHtmlTrafficPlatformRulesText,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
   buildImportedHtmlFaviconRulesText,
@@ -7450,6 +7451,8 @@ ${buildImportedHtmlFaviconRulesText()}
 ${buildImportedHtmlMobileRulesText()}
 
 ${buildImportedHtmlAutomaticColorModeRulesText()}
+
+${buildImportedHtmlTrafficPlatformRulesText()}
 
 Estructuras de landing (el mensaje del usuario te dice cual eligio; respetala):
 - EMBUDO: una sola mision de conversion. SIN menu de navegacion ni enlaces que saquen del flujo. CTA repetido hacia la misma acción. Si el flujo tiene pasos (ej. registro → gracias), cada paso es una página de page.pages enlazada con data-rstk-button-page-id.
@@ -29926,6 +29929,64 @@ function buildImportedTimeColorModeRuntimeScript(html = '') {
   </script>`
 }
 
+function buildImportedTrafficPlatformRuntimeScript(html = '') {
+  if (!/\bdata-rstk-auto-traffic-platform\s*=\s*(?:"true"|'true'|true)(?:\s|>)/i.test(String(html || ''))) return ''
+
+  return `<script data-rstk-traffic-platform-runtime>
+    (() => {
+      const root = document.documentElement;
+      if (!root || root.getAttribute('data-rstk-auto-traffic-platform') !== 'true') return;
+      const normalizePlatform = value => {
+        const normalized = String(value || '').trim().toLowerCase().replace(/[\\s_-]+/g, '');
+        if (!normalized) return '';
+        if (normalized === 'ig' || normalized.includes('instagram') || normalized.includes('threads')) return 'instagram';
+        if (normalized === 'fb' || normalized.includes('facebook') || normalized.includes('messenger') || normalized.includes('audiencenetwork')) return 'facebook';
+        if (normalized.includes('meta')) return 'meta';
+        return '';
+      };
+      const params = new URLSearchParams(window.location.search || '');
+      const explicitKeys = ['utm_platform', 'utm_source', 'site_source_name', 'source'];
+      let platform = '';
+      let detectionSource = 'default';
+      for (const key of explicitKeys) {
+        platform = normalizePlatform(params.get(key));
+        if (platform) {
+          detectionSource = 'query';
+          break;
+        }
+      }
+      if (!platform && document.referrer) {
+        try {
+          const referrerHost = new URL(document.referrer).hostname.toLowerCase();
+          platform = normalizePlatform(referrerHost);
+          if (platform) detectionSource = 'referrer';
+        } catch {}
+      }
+      if (!platform && params.has('igshid')) {
+        platform = 'instagram';
+        detectionSource = 'signal';
+      }
+      if (!platform && params.has('fbclid')) {
+        platform = 'meta';
+        detectionSource = 'signal';
+      }
+      const storageKey = 'ristak:traffic-platform:v1';
+      if (!platform) {
+        try {
+          platform = normalizePlatform(window.sessionStorage.getItem(storageKey));
+          if (platform) detectionSource = 'session';
+        } catch {}
+      }
+      if (!platform) platform = normalizePlatform(root.getAttribute('data-rstk-traffic-platform')) || 'meta';
+      try {
+        window.sessionStorage.setItem(storageKey, platform);
+      } catch {}
+      root.setAttribute('data-rstk-traffic-platform', platform);
+      root.setAttribute('data-rstk-traffic-platform-source', detectionSource);
+    })();
+  </script>`
+}
+
 function injectImportedHtmlRuntime(html = '', injection = '') {
   html = html || '<!doctype html><html><body></body></html>'
   html = injectImportedStaticFallback(html)
@@ -33888,6 +33949,7 @@ async function renderImportedPublicSiteHtml(site, {
     force: /data-rstk-video-form-gate\b/i.test(html)
   })
   const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
+  const importedTrafficPlatformRuntime = buildImportedTrafficPlatformRuntimeScript(html)
   const importedVideoEnginePreload = /\bdata-rstk-video-src\s*=\s*(?:"[^"]*\.m3u8(?:[?"][^"]*)?"|'[^']*\.m3u8(?:[?'][^']*)?')/i.test(html)
     ? `<link rel="preload" as="script" href="${RSTK_HLS_PLAYER_SCRIPT_PATH}">`
     : ''
@@ -33902,7 +33964,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -33991,6 +34053,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
       force: /data-rstk-video-form-gate\b/i.test(html)
     })
     const importedTimeColorModeRuntime = buildImportedTimeColorModeRuntimeScript(html)
+    const importedTrafficPlatformRuntime = buildImportedTrafficPlatformRuntimeScript(html)
     const pageFlowRevision = buildSitePageFlowDefinition(site)?.flowRevision || ''
     const pageTrackingContext = trackingEnabled
       ? await createNativePageTrackingContext({
@@ -34011,7 +34074,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
-      `${importedTimeColorModeRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+      `${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
     )
 
     return {

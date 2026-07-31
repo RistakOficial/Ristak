@@ -272,6 +272,7 @@ import {
   IMPORTED_HTML_MOBILE_RULES,
   areImportedNativeResponsiveVariants,
   buildImportedHtmlAutomaticColorModeRulesText,
+  buildImportedHtmlTrafficPlatformRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
   buildImportedHtmlCustomCalendarRulesText,
   buildImportedHtmlCustomVideoRulesText,
@@ -2772,7 +2773,8 @@ ${buildImportedHtmlVideoGateRulesText()}
 - Evita navegación automática, submits automáticos y window.open.
 
 ${buildImportedHtmlMobileRulesText()}
-${buildImportedHtmlAutomaticColorModeRulesText()}`.trim()
+${buildImportedHtmlAutomaticColorModeRulesText()}
+${buildImportedHtmlTrafficPlatformRulesText()}`.trim()
 
 const IMPORTED_HTML_MOBILE_PREVIEW_STYLE = {
   '--imported-html-mobile-preview-width': `${IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX}px`
@@ -13291,7 +13293,8 @@ export const Sites: React.FC = () => {
         '- Prepara formularios con campos claros para que Ristak detecte y mapee datos automaticamente.',
         '',
         buildImportedHtmlMobileRulesText(),
-        buildImportedHtmlAutomaticColorModeRulesText()
+        buildImportedHtmlAutomaticColorModeRulesText(),
+        buildImportedHtmlTrafficPlatformRulesText()
       ].join('\n')
     ].filter(Boolean)
     const messages: SitesAICreationMessage[] = [{ role: 'user', content: promptParts.join('\n\n') }]
@@ -20885,6 +20888,8 @@ ${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes cons
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
 
 ${buildImportedHtmlAutomaticColorModeRulesText('Contrato de modo claro/oscuro automático que también debes conservar:')}
+
+${buildImportedHtmlTrafficPlatformRulesText('Contrato de tema automático por plataforma que también debes conservar:')}
   `.trim()
 }
 
@@ -20924,6 +20929,8 @@ ${buildImportedHtmlFaviconRulesText('Contrato de favicon que también debes cons
 ${buildImportedHtmlMobileRulesText('Contrato responsive que también debes conservar:')}
 
 ${buildImportedHtmlAutomaticColorModeRulesText('Contrato de modo claro/oscuro automático que también debes conservar:')}
+
+${buildImportedHtmlTrafficPlatformRulesText('Contrato de tema automático por plataforma que también debes conservar:')}
 `.trim()
 
 const normalizeImportedAIRegionPreviewHtml = (html = '') => (
@@ -23601,6 +23608,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       contentAssetsCatalog,
       buildImportedHtmlMobileRulesText('Contrato responsive obligatorio para esta edición:'),
       buildImportedHtmlAutomaticColorModeRulesText('Contrato de modo claro/oscuro automático para esta edición:'),
+      buildImportedHtmlTrafficPlatformRulesText('Contrato de tema automático por plataforma para esta edición:'),
       buildCodeAssistantAttachmentNotes(codeAssistantAttachments),
       'Usa los archivos adjuntos solo como referencia para modificar el HTML activo. No insertes respuestas, resúmenes ni explicaciones del asistente dentro de la página salvo que el usuario lo pida explícitamente.',
       `Solicitud del usuario: ${prompt}`

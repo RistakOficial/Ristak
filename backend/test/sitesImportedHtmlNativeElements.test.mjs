@@ -1146,6 +1146,8 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
       <!doctype html>
       <html
         data-rstk-auto-color-mode="time"
+        data-rstk-auto-traffic-platform="true"
+        data-rstk-traffic-platform="meta"
         data-rstk-day-start="7"
         data-rstk-night-start="19"
         data-rstk-color-mode="light"
@@ -1282,6 +1284,12 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
     assert.match(html, /document\.addEventListener\('visibilitychange'/)
     assert.match(html, /window\.addEventListener\('pageshow', refresh\)/)
     assert.doesNotMatch(html, /navigator\.geolocation/)
+    assert.match(html, /data-rstk-traffic-platform-runtime/)
+    assert.match(html, /const explicitKeys = \['utm_platform', 'utm_source', 'site_source_name', 'source'\]/)
+    assert.match(html, /document\.referrer/)
+    assert.match(html, /params\.has\('igshid'\)/)
+    assert.match(html, /params\.has\('fbclid'\)/)
+    assert.match(html, /ristak:traffic-platform:v1/)
     assert.match(html, /const progressVisitorId = \(\) =>/)
     assert.match(html, /ristak:video-gate-progress:v2/)
     assert.match(html, /legacyStorageKey/)
@@ -1351,6 +1359,66 @@ test('native video gate persists unique progress, resumes, blocks forward seeks,
       mode: 'dark',
       colorScheme: 'dark',
       themeColor: '#070911'
+    })
+
+    const trafficPlatformRuntime = html.match(/<script data-rstk-traffic-platform-runtime>([\s\S]*?)<\/script>/)?.[1]
+    assert.ok(trafficPlatformRuntime)
+    const runTrafficPlatform = ({ search = '', referrer = '', stored = '' } = {}) => {
+      const rootAttributes = new Map([
+        ['data-rstk-auto-traffic-platform', 'true'],
+        ['data-rstk-traffic-platform', 'meta']
+      ])
+      const sessionValues = new Map(stored ? [['ristak:traffic-platform:v1', stored]] : [])
+      const trafficDocument = {
+        documentElement: {
+          getAttribute: name => rootAttributes.get(name) || '',
+          setAttribute: (name, value) => rootAttributes.set(name, String(value))
+        },
+        referrer
+      }
+      const trafficWindow = {
+        location: { search },
+        sessionStorage: {
+          getItem: key => sessionValues.get(key) || null,
+          setItem: (key, value) => sessionValues.set(key, String(value))
+        }
+      }
+      vm.runInNewContext(trafficPlatformRuntime, {
+        document: trafficDocument,
+        window: trafficWindow,
+        URL,
+        URLSearchParams
+      })
+      return {
+        platform: rootAttributes.get('data-rstk-traffic-platform'),
+        source: rootAttributes.get('data-rstk-traffic-platform-source'),
+        stored: sessionValues.get('ristak:traffic-platform:v1')
+      }
+    }
+    assert.deepEqual(runTrafficPlatform({ search: '?utm_source=instagram' }), {
+      platform: 'instagram',
+      source: 'query',
+      stored: 'instagram'
+    })
+    assert.deepEqual(runTrafficPlatform({ search: '?utm_source=facebook' }), {
+      platform: 'facebook',
+      source: 'query',
+      stored: 'facebook'
+    })
+    assert.deepEqual(runTrafficPlatform({ referrer: 'https://l.instagram.com/referral' }), {
+      platform: 'instagram',
+      source: 'referrer',
+      stored: 'instagram'
+    })
+    assert.deepEqual(runTrafficPlatform({ search: '?fbclid=meta-click-id' }), {
+      platform: 'meta',
+      source: 'signal',
+      stored: 'meta'
+    })
+    assert.deepEqual(runTrafficPlatform({ stored: 'instagram' }), {
+      platform: 'instagram',
+      source: 'session',
+      stored: 'instagram'
     })
 
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1])

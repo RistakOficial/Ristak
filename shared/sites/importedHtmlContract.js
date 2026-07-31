@@ -149,6 +149,18 @@ export function buildImportedHtmlAutomaticColorModeRulesText(heading = 'Modo cla
   return [heading, ...IMPORTED_HTML_AUTOMATIC_COLOR_MODE_RULES.map(rule => `- ${rule}`)].join('\n')
 }
 
+export const IMPORTED_HTML_TRAFFIC_PLATFORM_RULES = Object.freeze([
+  'Cuando el diseño deba cambiar según la plataforma del anuncio, declara en <html> data-rstk-auto-traffic-platform="true" y data-rstk-traffic-platform="meta". El valor meta es el fallback seguro cuando la plataforma exacta no se puede demostrar.',
+  'Diseña las variantes exclusivamente con CSS usando html[data-rstk-traffic-platform="instagram"], html[data-rstk-traffic-platform="facebook"] y html[data-rstk-traffic-platform="meta"]. Mantén la misma estructura, copy, accesibilidad y jerarquía; cambia únicamente el tema visual solicitado.',
+  'Ristak prioriza parámetros explícitos en este orden: utm_platform, utm_source, site_source_name y source. En anuncios de Meta configura un parámetro dinámico como utm_source={{site_source_name}} para distinguir Facebook de Instagram cuando el placement lo permita.',
+  'Como respaldo Ristak revisa el hostname de document.referrer, igshid y fbclid. No dependas únicamente del referrer porque navegadores y apps pueden ocultarlo, y no uses fbclid para afirmar que el origen fue Facebook: fbclid solo confirma tráfico del ecosistema Meta.',
+  'Ristak conserva únicamente el nombre normalizado de la plataforma durante la sesión. No agregues JavaScript propio, fingerprinting, detección por IP ni una segunda copia del origen en localStorage o cookies.'
+])
+
+export function buildImportedHtmlTrafficPlatformRulesText(heading = 'Tema automático según la plataforma de tráfico:') {
+  return [heading, ...IMPORTED_HTML_TRAFFIC_PLATFORM_RULES.map(rule => `- ${rule}`)].join('\n')
+}
+
 export function buildImportedHtmlCustomCalendarRulesText(heading = 'Calendario HTML avanzado conectado a Ristak:') {
   return [
     heading,
