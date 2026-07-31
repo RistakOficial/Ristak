@@ -5188,6 +5188,16 @@ reemplaza la eleccion `SUBMITTED`/`QUALIFIED` por el texto fijo
 el HTML puede declarar `data-rstk-conversion-condition="qualified_only"` y Ristak
 omite Pixel/CAPI cuando el mismo formulario descalifica al contacto.
 
+Cuando el autor necesita permitir correcciones por una seleccion accidental,
+el formulario importado puede declarar
+`data-rstk-disqualify-retry="true"`, junto con
+`data-rstk-disqualify-title` y `data-rstk-disqualify-retry-label`. El runtime
+muestra un resultado semantico personalizable, conserva las respuestas
+anteriores, limpia exclusivamente la opcion descalificante y devuelve al
+visitante al paso exacto que la produjo. El envio original no se reescribe: permanece
+`disqualified`, y cualquier reintento posterior crea una evaluacion nueva bajo
+la misma condicion `qualified_only`.
+
 Cada submit HTML independiente persistido dispara `form-submitted` despues de
 guardar contacto, respuestas y submission. Automatizaciones puede seleccionar
 tanto el formulario fuente que aparece en la biblioteca de Formularios como la

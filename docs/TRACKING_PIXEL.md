@@ -934,6 +934,18 @@ video habia revelado el boton de envio mediante `reveal_form_action`, su estado
 persistido o un evento tardio del reproductor no puede volver a mostrar
 `Enviar`/`Anterior` encima del resultado.
 
+Un formulario HTML importado puede permitir corregir una respuesta que produjo
+una descalificacion inmediata sin borrar las respuestas anteriores. Para
+activarlo declara `data-rstk-disqualify-retry="true"` en el `<form>`. El runtime
+presenta un resultado semantico con `data-rstk-disqualify-result`, ofrece el
+boton `data-rstk-disqualify-retry-button`, limpia solamente la opcion
+descalificante y regresa al paso exacto donde se eligio. El titulo y la etiqueta
+se personalizan con `data-rstk-disqualify-title` y
+`data-rstk-disqualify-retry-label`. El primer intento permanece guardado como
+`disqualified`; si la persona corrige y termina el recorrido, el segundo envio
+se evalua de forma independiente y solo un resultado calificado puede disparar
+la conversion protegida por `qualified_only`.
+
 ### Elementos Nativos Ristak En HTML Importado
 
 Cuando el HTML externo quiere usar la misma configuracion nativa del editor de

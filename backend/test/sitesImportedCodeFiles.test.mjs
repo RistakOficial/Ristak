@@ -240,7 +240,15 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
 
   try {
     const html = `<!doctype html><html><head><title>Solicitud multistep</title></head><body>
-      <form data-rstk-form-id="solicitud-medicos" data-rstk-label="Solicitud médica" data-multistep-form data-rstk-import-form novalidate>
+      <form
+        data-rstk-form-id="solicitud-medicos"
+        data-rstk-label="Solicitud médica"
+        data-rstk-disqualify-retry="true"
+        data-rstk-disqualify-title="Por ahora no eres candidato"
+        data-rstk-disqualify-retry-label="Corregir esta respuesta"
+        data-multistep-form
+        data-rstk-import-form
+        novalidate>
         <section data-form-step="1">
           <fieldset><legend>¿Puedes decidir?</legend>
             <label><input type="radio" name="rol_decision" value="si" data-rstk-field-id="rol-si" required>Sí</label>
@@ -271,6 +279,9 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
     const createdHtml = created.import.codeFiles[0].content
     assert.equal((createdHtml.match(/\bdata-rstk-import-form\b/g) || []).length, 1)
     assert.equal((createdHtml.match(/\bnovalidate\b/g) || []).length, 1)
+    assert.match(createdHtml, /data-rstk-disqualify-retry="true"/)
+    assert.match(createdHtml, /data-rstk-disqualify-title="Por ahora no eres candidato"/)
+    assert.match(createdHtml, /data-rstk-disqualify-retry-label="Corregir esta respuesta"/)
     assert.equal(created.import.detectedForms.length, 1)
     assert.equal(created.import.detectedForms[0].fields.length, 3)
     assert.equal(created.import.detectedForms[0].fields[0].id, 'rol_decision')
@@ -306,6 +317,11 @@ test('imported multistep forms stay idempotent, group choices and receive the Ri
     assert.match(rendered, /new CustomEvent\('ristak:form-step-advance'/)
     assert.match(rendered, /collectSelectedChoiceActions\(step\)/)
     assert.match(rendered, /form\.requestSubmit\(\)/)
+    assert.match(rendered, /const clearSelectedDisqualifyingChoices = \(form\) =>/)
+    assert.match(rendered, /result\.setAttribute\('data-rstk-disqualify-result', 'true'\)/)
+    assert.match(rendered, /retryButton\.setAttribute\('data-rstk-disqualify-retry-button', 'true'\)/)
+    assert.match(rendered, /form\.rstkImmediateDisqualifyStepIndex =/)
+    assert.match(rendered, /multistep\.showStep\(immediateStepIndex\)/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
     for (const sourceFormId of sourceFormIds) {

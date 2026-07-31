@@ -29053,14 +29053,105 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         message.textContent = text;
         message.style.color = state === 'error' ? '#b91c1c' : '#166534';
       };
-      const showImportedMessageOnly = (form, text) => {
+      const readBooleanAttribute = (element, names) => {
+        const value = firstAttr(element, names).toLowerCase();
+        return ['1', 'true', 'yes', 'si', 'sí', 'on'].includes(value);
+      };
+      const clearSelectedDisqualifyingChoices = (form) => {
+        Array.from(form.querySelectorAll('input[type="radio"]:checked, input[type="checkbox"]:checked')).forEach((field) => {
+          if (!parseChoiceActions(field).some(action => action.action === 'disqualify')) return;
+          field.checked = false;
+          field.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        Array.from(form.querySelectorAll('select')).forEach((select) => {
+          const selectedOptions = Array.from(select.selectedOptions || []);
+          if (!selectedOptions.some(option => parseChoiceActions(option).some(action => action.action === 'disqualify'))) return;
+          select.selectedIndex = 0;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      };
+      const showImportedMessageOnly = (form, text, options = {}) => {
+        const hiddenElements = [];
+        const hiddenSet = new Set();
         Array.from(form.querySelectorAll('input, select, textarea, button')).forEach((element) => {
           const type = String(element.type || '').toLowerCase();
           if (type === 'hidden') return;
           const wrapper = element.closest('label, .field, .form-field, .form-group, .rstk-field') || element;
+          if (hiddenSet.has(wrapper)) return;
+          hiddenSet.add(wrapper);
+          hiddenElements.push({
+            element: wrapper,
+            hidden: wrapper.hidden,
+            ariaHidden: wrapper.getAttribute('aria-hidden')
+          });
           wrapper.hidden = true;
         });
-        setMessage(form, text || 'Gracias. Por ahora no califica.', 'success');
+
+        const allowRetry = readBooleanAttribute(form, [
+          'data-rstk-disqualify-retry',
+          'data-ristak-disqualify-retry',
+          'data-ristack-disqualify-retry'
+        ]);
+        const title = firstAttr(form, [
+          'data-rstk-disqualify-title',
+          'data-ristak-disqualify-title',
+          'data-ristack-disqualify-title'
+        ]);
+        if (!allowRetry && !title) {
+          setMessage(form, text || 'Gracias. Por ahora no califica.', 'success');
+          return;
+        }
+
+        Array.from(form.querySelectorAll('[data-rstk-import-message], [data-rstk-disqualify-result]'))
+          .forEach(element => element.remove());
+        const result = document.createElement('section');
+        result.setAttribute('data-rstk-disqualify-result', 'true');
+        result.setAttribute('role', 'status');
+        result.setAttribute('aria-live', 'polite');
+        result.setAttribute('tabindex', '-1');
+
+        const heading = document.createElement('h2');
+        heading.setAttribute('data-rstk-disqualify-title', 'true');
+        heading.textContent = title || 'Por ahora no puedes continuar';
+        result.appendChild(heading);
+
+        const body = document.createElement('p');
+        body.setAttribute('data-rstk-disqualify-message', 'true');
+        body.textContent = text || 'Gracias. Por ahora esta solicitud no califica.';
+        result.appendChild(body);
+
+        if (allowRetry) {
+          const retryButton = document.createElement('button');
+          retryButton.type = 'button';
+          retryButton.setAttribute('data-rstk-disqualify-retry-button', 'true');
+          retryButton.textContent = firstAttr(form, [
+            'data-rstk-disqualify-retry-label',
+            'data-ristak-disqualify-retry-label',
+            'data-ristack-disqualify-retry-label'
+          ]) || 'Corregir mi respuesta';
+          retryButton.addEventListener('click', () => {
+            result.remove();
+            hiddenElements.forEach(entry => {
+              entry.element.hidden = entry.hidden;
+              if (entry.ariaHidden === null) entry.element.removeAttribute('aria-hidden');
+              else entry.element.setAttribute('aria-hidden', entry.ariaHidden);
+            });
+            form.removeAttribute('data-rstk-disqualified');
+            clearSelectedDisqualifyingChoices(form);
+            if (typeof options.onRetry === 'function') options.onRetry();
+          });
+          result.appendChild(retryButton);
+        }
+
+        form.setAttribute('data-rstk-disqualified', 'true');
+        form.appendChild(result);
+        if (typeof result.focus === 'function') {
+          try { result.focus({ preventScroll: true }); } catch (_) { result.focus(); }
+        }
+        if (typeof result.scrollIntoView === 'function') {
+          const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+          result.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+        }
       };
 
       const calendarBookingFormAttrs = [
@@ -29310,6 +29401,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           form.rstkImmediateDisqualifySubmitter = event.detail && event.detail.button
             ? event.detail.button
             : null;
+          form.rstkImmediateDisqualifyStepIndex = Math.max(0, Number(event.detail.currentStep || 1) - 1);
           if (typeof form.requestSubmit === 'function') form.requestSubmit();
           else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         });
@@ -29393,7 +29485,21 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               });
             }
             if (immediateDisqualifyChoice) {
-              showImportedMessageOnly(form, (disqualifyingAction && disqualifyingAction.buttonMessage) || submission.message || 'Gracias. Por ahora no califica.');
+              const immediateStepIndex = Number.isFinite(Number(form.rstkImmediateDisqualifyStepIndex))
+                ? Number(form.rstkImmediateDisqualifyStepIndex)
+                : 0;
+              showImportedMessageOnly(
+                form,
+                (disqualifyingAction && disqualifyingAction.buttonMessage) || submission.message || 'Gracias. Por ahora no califica.',
+                {
+                  onRetry: () => {
+                    clearImportedNotice();
+                    if (multistep && typeof multistep.showStep === 'function') {
+                      multistep.showStep(immediateStepIndex);
+                    }
+                  }
+                }
+              );
               window.dispatchEvent(new CustomEvent('ristak:submitted', { detail: submission }));
               if (
                 disqualifyingAction &&
@@ -29438,6 +29544,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           } finally {
             delete form.dataset.rstkImmediateDisqualify;
             delete form.rstkImmediateDisqualifySubmitter;
+            delete form.rstkImmediateDisqualifyStepIndex;
             if (submitter) submitter.disabled = false;
           }
         });
