@@ -162,6 +162,20 @@ concurrentes no pueden mandar una segunda copia. Un intento QR que falla despué
 del claim no se reintenta automáticamente porque ya no se puede probar con
 certeza que WhatsApp Web no lo aceptó.
 
+Los recordatorios de Citas agregan una reconciliación específica sobre ese
+estado asíncrono. Si el request de plantilla fue aceptado pero el mensaje final
+queda `failed` porque la cantidad de parámetros no coincide, el ID de
+`appointment_reminder_sends.sent_message_id` permite regresar el recordatorio de
+`sent` a `error`, limpiar su deadline de confirmación y reintentarlo después del
+enfriamiento normal. La combinación
+`whatsapp_api_template_sends + whatsapp_api_messages` conserva además el número
+de parámetros que Meta declaró como esperado. Para la plantilla histórica
+`confirmacion_cita_dia_anterior`, un contrato remoto de dos variables se
+renderiza como nombre + hora; el contrato actual de tres usa nombre + fecha +
+hora. El texto persistido y cualquier fallback QR usan el mismo contrato
+aprendido, de modo que el chat no muestra una versión distinta a la entregada.
+No se crea una variable de entorno ni se modifica a ciegas la plantilla aprobada.
+
 ## Matriz de implementaciones
 
 | Implementación | API oficial | Intermediario | Coexistence | Entrada principal | Autenticación |

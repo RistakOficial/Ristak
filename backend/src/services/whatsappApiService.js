@@ -12389,6 +12389,7 @@ export async function sendWhatsAppApiTemplateMessage({
   publicBaseUrl,
   extraVariables,
   phoneNumberId,
+  renderedTextOverride,
   allowQrFallback = true
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
@@ -12438,7 +12439,7 @@ export async function sendWhatsAppApiTemplateMessage({
     buildTemplateComponents({ components, variables: renderedVariables })
   )
   const normalizedVariables = normalizeTemplateVariables(renderedVariables)
-  const renderedTemplateText = buildRenderedTemplateText({
+  const renderedTemplateText = cleanString(renderedTextOverride) || buildRenderedTemplateText({
     template: finalTemplate,
     components: templateComponents,
     variables: normalizedVariables
@@ -12469,11 +12470,7 @@ export async function sendWhatsAppApiTemplateMessage({
   }
 
   const sendTemplateViaQr = async ({ fallbackReason, originalError, fallbackPhoneNumberId } = {}) => {
-    const text = buildRenderedTemplateText({
-      template: finalTemplate,
-      components: templateComponents,
-      variables: normalizedVariables
-    })
+    const text = renderedTemplateText
     if (!text) {
       if (originalError) throw originalError
       throw new Error('La plantilla no tiene texto guardado para mandarla por QR')

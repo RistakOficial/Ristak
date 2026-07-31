@@ -396,7 +396,10 @@ async function withReminderFixture({
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ?', [phone, phone])
     await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone])
-    await db.run('DELETE FROM whatsapp_api_template_sends WHERE template_name = ?', [template.name])
+    await db.run(
+      'DELETE FROM whatsapp_api_template_sends WHERE template_name = ? OR to_phone = ?',
+      [template.name, phone]
+    )
     await db.run('DELETE FROM whatsapp_api_templates WHERE name = ?', [template.name])
     await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [template.id])
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
@@ -416,6 +419,134 @@ test('recordatorios de citas envían plantilla aprobada por WhatsApp API', async
       assert.equal(captures[0].template.components[0].type, 'body')
       assert.equal(captures[0].template.components[0].parameters[0].text, 'Ana')
     })
+  })
+})
+
+test('confirmaciones adaptan el contrato legacy aprendido del rechazo 132000', async (t) => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture(
+      { ycloudStatus: 'APPROVED' },
+      async ({ reminder, template, appointmentId }) => {
+        const currentBody = 'Hola {{1}}, queremos confirmar tu asistencia a la cita del {{2}} a las {{3}}. ¿Nos confirmas, por favor?'
+        const currentBindings = {
+          headerText: {},
+          bodyText: {
+            1: {
+              variableKey: 'contact.first_name',
+              mergeField: '{{contact.first_name}}',
+              label: 'Primer nombre',
+              example: 'Ana'
+            },
+            2: {
+              variableKey: 'cita.fecha',
+              mergeField: '{{cita.fecha}}',
+              label: 'Fecha de cita',
+              example: 'viernes 31 de julio'
+            },
+            3: {
+              variableKey: 'cita.hora',
+              mergeField: '{{cita.hora}}',
+              label: 'Hora de cita',
+              example: '10:00 p. m.'
+            }
+          }
+        }
+        const previousApiTemplates = await db.all(`
+          SELECT id, status, components_json
+          FROM whatsapp_api_templates
+          WHERE name = 'confirmacion_cita_dia_anterior' AND language = 'es_MX'
+        `)
+        t.after(async () => {
+          for (const row of previousApiTemplates) {
+            await db.run(`
+              UPDATE whatsapp_api_templates
+              SET status = ?, components_json = ?
+              WHERE id = ?
+            `, [row.status, row.components_json, row.id])
+          }
+        })
+
+        await db.run(`
+          UPDATE whatsapp_message_templates
+          SET body_text = ?,
+              variables_json = ?,
+              variable_bindings_json = ?,
+              provider_template_name = 'confirmacion_cita_dia_anterior',
+              ycloud_template_name = 'confirmacion_cita_dia_anterior'
+          WHERE id = ?
+        `, [
+          currentBody,
+          JSON.stringify(['{{1}}', '{{2}}', '{{3}}']),
+          JSON.stringify(currentBindings),
+          template.id
+        ])
+        await db.run(`
+          UPDATE whatsapp_api_templates
+          SET status = 'APPROVED',
+              components_json = ?
+          WHERE name = 'confirmacion_cita_dia_anterior' AND language = 'es_MX'
+        `, [JSON.stringify([{ type: 'BODY', text: currentBody }])])
+        await db.run(`
+          UPDATE whatsapp_api_templates
+          SET components_json = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE name = ? AND language = 'es_MX'
+        `, [
+          JSON.stringify([{ type: 'BODY', text: currentBody }]),
+          template.name
+        ])
+        await db.run(`
+          UPDATE appointment_reminders
+          SET message_type = 'confirmation'
+          WHERE id = ?
+        `, [reminder.id])
+
+        const firstResult = await processDueAppointmentReminders({ batchSize: 1 })
+        assert.deepEqual(firstResult, { sent: 1, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 1)
+        assert.equal(captures[0].template.components[0].parameters.length, 3)
+
+        const failedAt = DateTime.utc().minus({ minutes: 16 }).toISO()
+        await db.run(`
+          UPDATE whatsapp_api_messages
+          SET status = 'failed',
+              error_code = '132000',
+              error_message = 'body: number of localizable_params (3) does not match the expected number of params (2)',
+              updated_at = ?
+          WHERE ycloud_message_id = 'ycloud_appointment_msg_1'
+        `, [failedAt])
+        await db.run(`
+          UPDATE appointment_reminder_sends
+          SET sent_at = ?
+          WHERE appointment_id = ?
+        `, [failedAt, appointmentId])
+
+        const retryResult = await processDueAppointmentReminders({ batchSize: 1 })
+
+        assert.deepEqual(retryResult, { sent: 1, errors: 0, skipped: 0 })
+        assert.equal(captures.length, 2)
+        const bodyParameters = captures[1].template.components[0].parameters
+        assert.equal(bodyParameters.length, 2)
+        assert.equal(bodyParameters[0].text, 'Ana')
+        assert.doesNotMatch(bodyParameters[1].text, /viernes|sábado|domingo|lunes|martes|miércoles|jueves/i)
+
+        const sentMessage = await db.get(`
+          SELECT message_text
+          FROM whatsapp_api_messages
+          WHERE ycloud_message_id = 'ycloud_appointment_msg_2'
+        `)
+        assert.match(sentMessage?.message_text || '', /^Hola Ana, solo para confirmar tu cita mañana a las /)
+        assert.doesNotMatch(sentMessage?.message_text || '', /\{\{\d+\}\}/)
+
+        const send = await db.get(`
+          SELECT status, sent_message_id, error_message
+          FROM appointment_reminder_sends
+          WHERE appointment_id = ?
+        `, [appointmentId])
+        assert.equal(send.status, 'sent')
+        assert.equal(send.sent_message_id, 'ycloud_appointment_msg_2')
+        assert.equal(send.error_message, null)
+      }
+    )
   })
 })
 

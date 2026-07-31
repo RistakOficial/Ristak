@@ -98,6 +98,12 @@ const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
 }
 const DEFAULT_APPOINTMENT_TEMPLATE_NAMES = new Set(Object.values(DEFAULT_TEMPLATE_NAME_BY_PURPOSE))
 const APPROVED_TEMPLATE_STATUSES = new Set(['APPROVED'])
+const LEGACY_CONFIRMATION_TEMPLATE_BODY =
+  'Hola {{1}}, solo para confirmar tu cita mañana a las {{2}}. ¿Confirmamos?'
+const TEMPLATE_EXPECTED_BODY_PARAMETER_PATTERNS = [
+  /expected number of (?:localizable_)?params?\s*\(\s*(\d+)\s*\)/i,
+  /expected\s+(\d+)\s+(?:localizable_)?params?\b/i
+]
 const CHANNEL_LABELS = {
   booking_channel: 'Por el canal que agendó',
   available_channel: 'Por canal disponible',
@@ -1280,6 +1286,155 @@ function buildReminderTemplateComponents(template, context) {
   return components
 }
 
+function parseExpectedTemplateBodyParameterCount(errorMessage = '') {
+  const text = cleanString(errorMessage)
+  if (!/\b(?:BODY|CUERPO|LOCALIZABLE_PARAMS?)\b/i.test(text)) return null
+  for (const pattern of TEMPLATE_EXPECTED_BODY_PARAMETER_PATTERNS) {
+    const match = pattern.exec(text)
+    const count = Number(match?.[1])
+    if (Number.isInteger(count) && count >= 0) return count
+  }
+  return null
+}
+
+function isCurrentThreeFieldConfirmationContract(template = {}) {
+  const indexes = extractNumericVariableIndexes(template.bodyText)
+  if (indexes.length !== 3 || indexes.some((index, position) => index !== position + 1)) {
+    return false
+  }
+
+  const bindings = template.variableBindings?.bodyText || {}
+  return cleanString(bindings['1']?.variableKey) === 'contact.first_name' &&
+    cleanString(bindings['2']?.variableKey) === 'cita.fecha' &&
+    cleanString(bindings['3']?.variableKey) === 'cita.hora'
+}
+
+function adaptTemplateToLearnedBodyParameterCount({
+  template,
+  templateName,
+  expectedBodyParameterCount
+} = {}) {
+  const isLegacyConfirmationTemplate =
+    cleanString(templateName).toLowerCase() === DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+  if (
+    !isLegacyConfirmationTemplate ||
+    expectedBodyParameterCount !== 2 ||
+    !isCurrentThreeFieldConfirmationContract(template)
+  ) {
+    return { template, adapted: false }
+  }
+
+  const bindings = template.variableBindings || { headerText: {}, bodyText: {} }
+  return {
+    adapted: true,
+    template: {
+      ...template,
+      bodyText: LEGACY_CONFIRMATION_TEMPLATE_BODY,
+      variableBindings: {
+        ...bindings,
+        bodyText: {
+          1: bindings.bodyText?.['1'] || {},
+          2: bindings.bodyText?.['3'] || {}
+        }
+      }
+    }
+  }
+}
+
+async function getLearnedTemplateBodyParameterCount({
+  templateName,
+  language,
+  fromPhone
+} = {}) {
+  const cleanTemplateName = cleanString(templateName)
+  const cleanLanguage = cleanString(language)
+  const cleanFromPhone = cleanString(fromPhone)
+  if (!cleanTemplateName || !cleanLanguage) return null
+
+  const rows = await db.all(`
+    SELECT m.error_message, m.updated_at
+    FROM whatsapp_api_template_sends s
+    JOIN whatsapp_api_messages m
+      ON m.provider_message_id = s.provider_message_id
+      OR m.ycloud_message_id = s.ycloud_message_id
+      OR m.wamid = s.wamid
+    WHERE LOWER(COALESCE(s.template_name, '')) = LOWER(?)
+      AND LOWER(COALESCE(s.language, '')) = LOWER(?)
+      AND (? = '' OR COALESCE(s.from_phone, '') = ?)
+      AND LOWER(COALESCE(m.status, '')) = 'failed'
+    ORDER BY m.updated_at DESC
+    LIMIT 20
+  `, [
+    cleanTemplateName,
+    cleanLanguage,
+    cleanFromPhone,
+    cleanFromPhone
+  ])
+
+  for (const row of rows) {
+    const count = parseExpectedTemplateBodyParameterCount(row.error_message)
+    if (count !== null) return count
+  }
+  return null
+}
+
+async function reconcileFailedTemplateReminderSends(appointmentIds = []) {
+  const ids = [...new Set(appointmentIds.map(cleanString).filter(Boolean))]
+  if (!ids.length) return 0
+
+  const placeholders = ids.map(() => '?').join(', ')
+  const rows = await db.all(`
+    SELECT
+      ars.reminder_id,
+      ars.appointment_id,
+      ars.sent_message_id,
+      m.error_message,
+      m.updated_at
+    FROM appointment_reminder_sends ars
+    JOIN whatsapp_api_messages m
+      ON m.provider_message_id = ars.sent_message_id
+      OR m.ycloud_message_id = ars.sent_message_id
+      OR m.wamid = ars.sent_message_id
+    WHERE ars.status = 'sent'
+      AND ars.appointment_id IN (${placeholders})
+      AND LOWER(COALESCE(m.status, '')) = 'failed'
+    ORDER BY m.updated_at DESC
+  `, ids)
+
+  let reconciled = 0
+  const handled = new Set()
+  for (const row of rows) {
+    const key = `${row.reminder_id}|${row.appointment_id}`
+    if (handled.has(key)) continue
+
+    if (parseExpectedTemplateBodyParameterCount(row.error_message) === null) continue
+    handled.add(key)
+    const failedAt = parseStoredUtcDateTime(row.updated_at)?.toISO() || nowIso()
+    const result = await db.run(`
+      UPDATE appointment_reminder_sends
+      SET status = 'error',
+          error_message = ?,
+          sent_at = ?,
+          confirmation_deadline_at = NULL,
+          confirmation_timeout_status = NULL,
+          confirmation_timeout_processed_at = NULL
+      WHERE reminder_id = ?
+        AND appointment_id = ?
+        AND status = 'sent'
+        AND sent_message_id = ?
+    `, [
+      cleanString(row.error_message) || 'WhatsApp rechazó la estructura de la plantilla.',
+      failedAt,
+      row.reminder_id,
+      row.appointment_id,
+      row.sent_message_id
+    ])
+    reconciled += Number(result?.changes || 0)
+  }
+
+  return reconciled
+}
+
 function renderNumericTemplateText(text = '', bindings = {}, context) {
   return cleanString(text).replace(/\{\{\s*(\d+)\s*\}\}/g, (match, index) => (
     cleanString(renderBindingValue(bindings[String(index)], context)) || match
@@ -1559,7 +1714,27 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
 
   if (!sender.apiEnabled) throw new Error('Conecta un número de WhatsApp API o QR para enviar este recordatorio.')
 
-  const components = buildReminderTemplateComponents(template, { appointment, timezone })
+  const expectedBodyParameterCount = await getLearnedTemplateBodyParameterCount({
+    templateName: providerState.name,
+    language: template.language,
+    fromPhone: sender.fromPhone
+  })
+  const deliveryContract = adaptTemplateToLearnedBodyParameterCount({
+    template,
+    templateName: providerState.name,
+    expectedBodyParameterCount
+  })
+  if (deliveryContract.adapted) {
+    logger.warn(
+      `[Citas] Plantilla ${providerState.name}/${template.language} adaptada al contrato legacy ` +
+      `de ${expectedBodyParameterCount} variables aprendido del rechazo de WhatsApp.`
+    )
+  }
+  const deliveryContext = { appointment, timezone }
+  const components = buildReminderTemplateComponents(deliveryContract.template, deliveryContext)
+  const renderedTextOverride = deliveryContract.adapted
+    ? renderReminderTemplateText(deliveryContract.template, deliveryContext)
+    : ''
   return sendWhatsAppApiTemplateMessage({
     to: appointment.phone,
     from: sender.fromPhone || undefined,
@@ -1568,6 +1743,7 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     ...(components.length ? { components } : {}),
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
+    renderedTextOverride,
     allowQrFallback: true
   })
 }
@@ -2013,6 +2189,13 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   // lo que crece sin límite con el historial. Acotamos la consulta a solo las citas que estamos
   // procesando en este tick (las únicas cuyos sends nos interesan para deduplicar).
   const appointmentIds = appointments.map(appointment => appointment.id)
+  const reconciledTemplateFailures = await reconcileFailedTemplateReminderSends(appointmentIds)
+  if (reconciledTemplateFailures > 0) {
+    logger.warn(
+      `[Citas] ${reconciledTemplateFailures} envío(s) aceptado(s) por el proveedor pero rechazado(s) ` +
+      'por la estructura de la plantilla regresaron a la cola de reintento.'
+    )
+  }
   const sendPlaceholders = appointmentIds.map(() => '?').join(', ')
   const sendRows = appointmentIds.length
     ? await db.all(

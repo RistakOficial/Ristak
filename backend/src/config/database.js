@@ -5584,6 +5584,7 @@ async function initTablesUnlocked() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_created ON whatsapp_api_template_sends(created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_status ON whatsapp_api_template_sends(status)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_fallback ON whatsapp_api_template_sends(qr_fallback_authorized, provider, provider_message_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_template_sends_contract ON whatsapp_api_template_sends(template_name, language, from_phone, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_api_qr_fallback_status ON whatsapp_api_qr_fallback_attempts(status, updated_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_distributed_locks_until ON distributed_locks(locked_until)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_whatsapp_qr_sessions_phone ON whatsapp_qr_sessions(phone_number_id)')
