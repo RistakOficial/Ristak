@@ -4537,13 +4537,31 @@ request no puede omitir el componente `button` y dejar que Meta lo rechace con
 resolver, Ristak falla antes del proveedor con un motivo accionable y conserva
 el envío para el reintento controlado.
 
+Cuando Meta rechaza la creación o edición de una plantilla, Ristak conserva en
+el error local el detalle accionable de Graph (`error_user_msg` o
+`error_data.details`) además del mensaje genérico. Así el panel y el MCP pueden
+explicar qué componente o ejemplo debe corregirse en lugar de mostrar solamente
+`Invalid parameter`; nunca se incluyen tokens de autorización en ese detalle.
+
 Para que un botón de plantilla abra un destino y además funcione como clic de
-disparo, la URL aprobada por Meta debe apuntar a `/trigger-links/{public_id}` y
-llevar un sufijo dinámico como `?contactId={{1}}`; el binding de ese parámetro
-debe ser `contact.id`. Al enviar el recordatorio, Ristak entrega el ID del
-contacto como parámetro de botón. Al hacer clic, la ruta pública registra el
-evento, identifica al contacto, ejecuta las automatizaciones configuradas y
-redirige al destino final, por ejemplo Google Meet.
+disparo, la URL nueva aprobada por Meta usa el formato
+`https://<dominio>/{{1}}`. El binding del parámetro se elige desde el grupo
+**Enlaces de disparo** y guarda `trigger_link.<public_id>`. Al enviar, Ristak
+genera la URL opaca ligada al contacto y entrega a Meta únicamente el sufijo
+`pce1_*`, porque WhatsApp concatena el parámetro dinámico al prefijo aprobado.
+El resultado final no expone query string ni `contact_id`; al hacer clic,
+registra el evento con el contacto cifrado, ejecuta las automatizaciones y
+redirige al destino, por ejemplo Google Meet. El render de respaldo por QR usa
+la misma URL final segura.
+
+Las plantillas ya aprobadas que todavía usan
+`/trigger-links/<public_id>?contactId={{1}}` con binding `contact.id` conservan
+la entrega durante la migración: el backend sustituye el ID crudo por un token
+`pce1_*`. La ruta legacy sólo atribuye ese clic si el token es auténtico y
+pertenece al mismo `public_id`; un ID, teléfono, correo o token alterado recibido
+por query nunca se vuelve autoridad. Esta compatibilidad evita interrumpir
+recordatorios mientras la plantilla de URL raíz pasa revisión de Meta, pero las
+plantillas nuevas no deben copiar el formato legacy.
 
 Al reabrir una regla existente, el editor conserva esa plantilla personalizada.
 La selección automática de la plantilla default sólo corre al crear una regla

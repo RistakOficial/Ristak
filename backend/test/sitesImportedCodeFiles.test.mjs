@@ -26,6 +26,25 @@ test('imported HTML favicon contract adds one usable fallback without replacing 
   assert.equal(importedHtmlHasFavicon('<link rel="icon" href="#">'), false)
 })
 
+test('imported HTML viewport contract normalizes fixed or duplicate viewport tags', async () => {
+  const {
+    DEFAULT_IMPORTED_HTML_VIEWPORT_TAG,
+    ensureImportedHtmlViewport
+  } = await import('../../shared/sites/importedHtmlContract.js')
+
+  const fixedViewport = '<!doctype html><html><head><meta name="viewport" content="width=1024"><title>Viewport fijo</title></head><body></body></html>'
+  const normalizedFixedViewport = ensureImportedHtmlViewport(fixedViewport)
+  assert.match(normalizedFixedViewport, /<meta name="viewport" content="width=device-width, initial-scale=1">/)
+  assert.doesNotMatch(normalizedFixedViewport, /width=1024/)
+
+  const duplicateViewport = `<html><head>${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}<meta content="initial-scale=.5" name="viewport"></head><body></body></html>`
+  const normalizedDuplicateViewport = ensureImportedHtmlViewport(duplicateViewport)
+  assert.equal((normalizedDuplicateViewport.match(/name="viewport"/g) || []).length, 1)
+
+  const missingViewport = '<html><head><title>Sin viewport</title></head><body></body></html>'
+  assert.equal((ensureImportedHtmlViewport(missingViewport).match(/name="viewport"/g) || []).length, 1)
+})
+
 test('imported HTML video player manifest validates every supported control and tombstone', async () => {
   const {
     IMPORTED_HTML_VIDEO_PLAYER_SETTING_KEYS,
@@ -231,6 +250,9 @@ test('imported HTML code files are listed and saved through the code editor endp
 
     assert.match(rendered, /Edited from code/)
     assert.match(rendered, /data-rstk-device-visibility="responsive"/)
+    assert.match(rendered, /data-rstk-viewport-containment/)
+    assert.match(rendered, /overflow-x:hidden!important/)
+    assert.match(rendered, /overflow-x:clip!important/)
     assert.match(rendered, /@media \(min-width:641px\)\{\[data-rstk-device-only="mobile"\]\{display:none!important\}\}/)
     assert.match(rendered, /@media \(max-width:640px\)\{\[data-rstk-device-only="desktop"\]\{display:none!important\}\}/)
   } finally {
@@ -1210,6 +1232,7 @@ test('HTML mobile rules are shared by every creation path and the code preview u
     buildImportedHtmlAutomaticColorModeRulesText,
     buildImportedHtmlTrafficPlatformRulesText,
     buildImportedHtmlDeviceVisibilityStyle,
+    buildImportedHtmlViewportContainmentStyle,
     resolveVisibleImportedNativeElementSelection,
     buildImportedHtmlMobileRulesText
   } = await import('../../shared/sites/importedHtmlContract.js')
@@ -1225,6 +1248,12 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(mobileGuide, /@media \(max-width: 640px\)/)
   assert.match(mobileGuide, /viewport de 390px/)
   assert.match(mobileGuide, /scroll horizontal/)
+  assert.match(mobileGuide, /únicamente scroll vertical/)
+  assert.match(mobileGuide, /anclado al ancho real de la ventana/)
+  assert.match(mobileGuide, /overflow-x: hidden/)
+  assert.match(mobileGuide, /overflow-x: clip/)
+  assert.match(mobileGuide, /overscroll-behavior-x: none/)
+  assert.match(mobileGuide, /position:absolute\/fixed/)
   assert.match(mobileGuide, /al menos 44px/)
   assert.match(mobileGuide, /al menos 16px/)
   assert.match(mobileGuide, /No simules móvil con zoom, transform: scale/)
@@ -1255,6 +1284,13 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.doesNotMatch(mobilePreviewVisibility, /@media/)
   assert.match(publicVisibility, /@media \(min-width:641px\)/)
   assert.match(publicVisibility, /@media \(max-width:640px\)/)
+  const viewportContainment = buildImportedHtmlViewportContainmentStyle()
+  assert.match(viewportContainment, /data-rstk-viewport-containment/)
+  assert.match(viewportContainment, /@media \(max-width:640px\)/)
+  assert.match(viewportContainment, /max-width:100%!important/)
+  assert.match(viewportContainment, /overflow-x:hidden!important/)
+  assert.match(viewportContainment, /overflow-x:clip!important/)
+  assert.match(viewportContainment, /overscroll-behavior-x:none!important/)
   assert.equal(areImportedNativeResponsiveVariants('video-presentacion-escritorio', 'video-presentacion-movil'), true)
   assert.equal(areImportedNativeResponsiveVariants('video-testimonio-escritorio', 'video-presentacion-movil'), false)
   assert.equal(resolveVisibleImportedNativeElementSelection({
@@ -1294,6 +1330,8 @@ test('HTML mobile rules are shared by every creation path and the code preview u
   assert.match(source, /data-preview-device=\{device\}/)
   assert.match(source, /buildImportedHtmlDeviceVisibilityStyle\(device\)/)
   assert.match(source, /data-rstk-device-visibility/)
+  assert.match(source, /buildImportedHtmlViewportContainmentStyle\(\)/)
+  assert.match(source, /data-rstk-viewport-containment/)
   assert.match(source, /onLoad=\{\(event\) => syncImportedNativeElementSelectionForFrame\(event\.currentTarget\)\}/)
   assert.match(source, /findImportedNativeResponsiveFallbackBlock/)
   assert.match(source, /usa temporalmente el video de la otra versión como respaldo/)

@@ -170,11 +170,23 @@ noindex, nofollow, noarchive` para no cachear, indexar ni reenviar el token como
 referrer.
 
 La ruta compatible `/trigger-links/<public_id>` sigue aceptando clics anónimos,
-pero `contact_id`, teléfono, correo, nombre o `visitor_id` recibidos por query no
-son autoridad y se eliminan del evento. Alterar un token opaco falla cerrado sin
-registrar ni disparar nada. El token identifica la emisión, no autentica a la
-persona física: si el destinatario reenvía su URL, el clic permanece atribuido
-al contacto original.
+pero `contact_id`, teléfono, correo, nombre o `visitor_id` crudos recibidos por
+query no son autoridad y se eliminan del evento. Como transición para botones
+de WhatsApp ya aprobados, un parámetro legacy de contacto puede transportar un
+token `pce1_*`: el backend lo descifra, exige que pertenezca al mismo
+`public_id` de la ruta y sólo entonces atribuye el clic. Ristak genera ese token
+al enviar la plantilla antigua y nunca vuelve a colocar el ID real. Un token
+alterado o cruzado con otro enlace falla cerrado sin registrar ni disparar nada.
+El token identifica la emisión, no autentica a la persona física: si el
+destinatario reenvía su URL, el clic permanece atribuido al contacto original.
+
+Las plantillas nuevas de WhatsApp usan un botón dinámico aprobado como
+`https://<dominio>/{{1}}` y ligan `{{1}}` a la variable
+`{{trigger_link.<public_id>}}`. El constructor de envío materializa la URL opaca
+con el dominio del prefijo aprobado y manda a Meta sólo el sufijo `pce1_*`, de
+acuerdo con el contrato de botones URL dinámicos que concatenan el parámetro al
+prefijo. Los enlaces de disparo activos aparecen en el catálogo de variables de
+plantillas para no volver a usar `contact.id` por accidente.
 
 #### Campos variables en headers de tracking
 
@@ -987,6 +999,27 @@ para saber si un formulario representa lead, cita o pago. El contrato oficial es
 declarar la conversion en el `<form>` final o en el boton submit. Este ejemplo
 es para una cita externa autogestionada, no para un calendario custom conectado
 a Ristak:
+
+### Contrato de viewport móvil
+
+Cada documento HTML debe declarar un único viewport con
+`width=device-width, initial-scale=1` y construir una versión responsive real a
+390 px. En celular, la página completa queda limitada al ancho de la ventana y
+su navegación es vertical: `html`/`body` no pueden producir desplazamiento,
+rebote ni pérdida de centro hacia los lados. Las reglas compartidas de creación
+y edición exigen anchos fluidos, `min-width: 0`, `box-sizing: border-box`, medios
+con `max-width: 100%` y revisión de elementos absolutos, transforms, márgenes
+negativos y pseudo-elementos que puedan ampliar el documento.
+
+El renderer agrega además una protección `data-rstk-viewport-containment` en
+editor, preview y publicado. En viewports de hasta 640 px, esa protección
+limita `html`/`body` al viewport y combina `overflow-x: hidden` con
+`overflow-x: clip` cuando el navegador lo
+soporta y desactiva el overscroll horizontal. Es una red de seguridad para
+contenido existente o generado incorrectamente; no sustituye el responsive del
+HTML ni justifica dejar contenido cortado. Un carrusel o tabla que necesite
+desplazamiento lateral debe contenerlo dentro de su propio wrapper sin convertir
+todo el documento en un lienzo horizontal.
 
 ```html
 <form

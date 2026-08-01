@@ -10787,12 +10787,23 @@ async function metaDirectGraphRequest(path, {
   }
   if (!response.ok || data?.error) {
     const graphError = data?.error || {}
-    const error = new Error(graphError.message || `Meta Graph respondió ${response.status}`)
+    const baseMessage = cleanString(graphError.message) || `Meta Graph respondió ${response.status}`
+    const actionableDetail = cleanString(
+      graphError.error_user_msg ||
+      graphError.error_data?.details ||
+      graphError.error_data?.message
+    )
+    const error = new Error(
+      actionableDetail && actionableDetail.toLowerCase() !== baseMessage.toLowerCase()
+        ? `${baseMessage}: ${actionableDetail}`
+        : baseMessage
+    )
     error.name = 'MetaDirectGraphError'
     error.statusCode = response.status
     error.graphCode = Number(graphError.code || 0) || null
     error.graphSubcode = Number(graphError.error_subcode || 0) || null
-    error.graphMessage = cleanString(graphError.message)
+    error.graphMessage = baseMessage
+    error.graphDetails = actionableDetail || null
     if (isMetaDirectAuthorizationError(error, { authorizationPolicy })) {
       error.message = META_DIRECT_RECONNECT_MESSAGE
     }

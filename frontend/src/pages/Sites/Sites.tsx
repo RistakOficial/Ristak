@@ -280,9 +280,11 @@ import {
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlMobileRulesText,
+  buildImportedHtmlViewportContainmentStyle,
   buildImportedHtmlVideoGateRulesText,
   buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
+  ensureImportedHtmlViewport,
   ensureImportedHtmlVideoActionTargets,
   getImportedNativeResponsiveVariant,
   normalizeImportedHtmlVideoPlayerManifest,
@@ -18394,8 +18396,10 @@ const buildImportedEditorPreviewHtml = (
   device: DeviceMode
 ) => {
   if (!html) return ''
-  const source = html.replace(/<style\b[^>]*\bdata-rstk-device-visibility\b[^>]*>[\s\S]*?<\/style>/gi, '')
-  const guard = `${buildImportedHtmlDeviceVisibilityStyle(device)}${buildImportedEditorFrameGuardScript(mode)}`
+  const source = ensureImportedHtmlViewport(html)
+    .replace(/<style\b[^>]*\bdata-rstk-device-visibility\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<style\b[^>]*\bdata-rstk-viewport-containment\b[^>]*>[\s\S]*?<\/style>/gi, '')
+  const guard = `${buildImportedHtmlDeviceVisibilityStyle(device)}${buildImportedHtmlViewportContainmentStyle()}${buildImportedEditorFrameGuardScript(mode)}`
   if (/<head\b[^>]*>/i.test(source)) {
     return source.replace(/<head\b[^>]*>/i, match => `${match}${guard}`)
   }

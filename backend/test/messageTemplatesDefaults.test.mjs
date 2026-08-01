@@ -17,6 +17,7 @@ import {
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import { createVariableField } from '../src/services/variableFieldsService.js'
+import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import {
   deleteContactCustomFieldDefinition,
   upsertContactCustomFieldDefinition
@@ -160,6 +161,33 @@ test('el catálogo de plantillas incluye los campos variables reales de la cuent
     })
   } finally {
     await db.run('DELETE FROM variable_fields WHERE id = ?', [field.id]).catch(() => undefined)
+  }
+})
+
+test('el catálogo de plantillas ofrece los enlaces de disparo activos como dato dinámico', async () => {
+  const triggerLink = await createTriggerLink({
+    name: `Google Meet ${randomUUID()}`,
+    destinationUrl: 'https://meet.google.com/abc-defg-hij'
+  })
+
+  try {
+    const bundle = await getMessageTemplateBundle()
+    const catalogItem = bundle.variables.find(
+      item => item.key === `trigger_link.${triggerLink.publicId}`
+    )
+
+    assert.deepEqual(catalogItem, {
+      key: `trigger_link.${triggerLink.publicId}`,
+      label: triggerLink.name,
+      mergeField: `{{trigger_link.${triggerLink.publicId}}}`,
+      example: 'pce1_enlace_seguro_de_ejemplo',
+      group: 'Enlaces de disparo',
+      source: 'trigger_link',
+      fieldKey: triggerLink.publicId
+    })
+  } finally {
+    await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+    await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
   }
 })
 

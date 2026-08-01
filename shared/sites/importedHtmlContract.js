@@ -1,6 +1,7 @@
 export const IMPORTED_HTML_MOBILE_BREAKPOINT_PX = 640
 export const IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX = 390
 export const IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE = 'data-rstk-device-only'
+export const DEFAULT_IMPORTED_HTML_VIEWPORT_TAG = '<meta name="viewport" content="width=device-width, initial-scale=1">'
 export const DEFAULT_IMPORTED_HTML_FAVICON_TAG = '<link rel="icon" type="image/svg+xml" data-rstk-default-favicon="true" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20rx%3D%2216%22%20fill%3D%22%23111827%22%2F%3E%3Cpath%20d%3D%22M32%209l6.2%2016.8L55%2032l-16.8%206.2L32%2055l-6.2-16.8L9%2032l16.8-6.2L32%209z%22%20fill%3D%22%23fff%22%2F%3E%3C%2Fsvg%3E">'
 
 export const IMPORTED_HTML_FAVICON_RULES = Object.freeze([
@@ -42,6 +43,32 @@ export function ensureImportedHtmlFavicon(html = '') {
   return `${DEFAULT_IMPORTED_HTML_FAVICON_TAG}\n${source}`
 }
 
+export function ensureImportedHtmlViewport(html = '') {
+  const source = String(html || '')
+  const viewportPattern = /<meta\b[^>]*\bname\s*=\s*["']?viewport\b["']?[^>]*>/gi
+  let viewportFound = false
+  const normalized = source.replace(viewportPattern, () => {
+    if (viewportFound) return ''
+    viewportFound = true
+    return DEFAULT_IMPORTED_HTML_VIEWPORT_TAG
+  })
+
+  if (viewportFound) return normalized
+  if (/<\/head>/i.test(normalized)) {
+    return normalized.replace(/<\/head>/i, `${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}\n</head>`)
+  }
+  if (/<head\b[^>]*>/i.test(normalized)) {
+    return normalized.replace(/<head\b[^>]*>/i, match => `${match}\n${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}`)
+  }
+  if (/<body\b/i.test(normalized)) {
+    return normalized.replace(/<body\b/i, `<head>\n${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}\n</head>\n$&`)
+  }
+  if (/<html\b[^>]*>/i.test(normalized)) {
+    return normalized.replace(/<html\b[^>]*>/i, match => `${match}\n<head>\n${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}\n</head>`)
+  }
+  return `${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}\n${normalized}`
+}
+
 export function buildImportedHtmlDeviceVisibilityStyle(previewDevice = '') {
   const device = String(previewDevice || '').trim().toLowerCase()
   const selector = `[${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}`
@@ -54,14 +81,20 @@ export function buildImportedHtmlDeviceVisibilityStyle(previewDevice = '') {
   return `<style data-rstk-device-visibility="${device || 'responsive'}">${css}</style>`
 }
 
+export function buildImportedHtmlViewportContainmentStyle() {
+  return `<style data-rstk-viewport-containment>@media (max-width:${IMPORTED_HTML_MOBILE_BREAKPOINT_PX}px){html,body{box-sizing:border-box!important;min-width:0!important;max-width:100%!important;overflow-x:hidden!important;overflow-x:clip!important;overscroll-behavior-x:none!important}html{width:100%!important}}</style>`
+}
+
 export const IMPORTED_HTML_MOBILE_RULES = Object.freeze([
-  'Incluye <meta name="viewport" content="width=device-width, initial-scale=1"> en cada documento HTML.',
+  'Incluye exactamente un <meta name="viewport" content="width=device-width, initial-scale=1"> en cada documento HTML. No uses un ancho fijo de viewport.',
   `Diseña una versión móvil real y fluida. Incluye reglas @media (max-width: ${IMPORTED_HTML_MOBILE_BREAKPOINT_PX}px) con cambios concretos; no basta con reducir visualmente la versión de escritorio.`,
+  'El documento móvil debe quedar anclado al ancho real de la ventana y permitir únicamente scroll vertical. Usa una base equivalente a html { width: 100%; max-width: 100%; overflow-x: hidden; overscroll-behavior-x: none; } y body { min-width: 0; max-width: 100%; margin: 0; overflow-x: hidden; overscroll-behavior-x: none; }; puedes añadir overflow-x: clip después de hidden como mejora con fallback. La página completa no debe deslizarse, rebotar ni perder el centro hacia los lados.',
+  'Aplica box-sizing: border-box a todos los elementos y revisa también pseudo-elementos, elementos position:absolute/fixed, transforms, márgenes negativos y adornos decorativos: ninguno puede ampliar el ancho desplazable del documento.',
   `Visibilidad por dispositivo: si un elemento debe existir solo en computadora, marca su contenedor completo con ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="desktop". Si debe existir solo en celular, usa ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="mobile". Un elemento compartido por ambas vistas no lleva ese atributo.`,
   `Cuando computadora y celular necesiten composiciones distintas, crea dos contenedores hermanos —uno ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="desktop" y otro ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}="mobile"—. No uses JavaScript, clases inventadas ni hidden para alternarlos y no repitas el atributo en cada hijo: Ristak oculta la variante contraria en el selector del editor y en el sitio publicado.`,
   `Valida el resultado en un viewport de ${IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX}px: no debe existir scroll horizontal, contenido cortado ni texto, botones, formularios, imágenes, videos o iframes fuera del ancho visible.`,
   'En móvil convierte grids y filas de varias columnas a una sola columna cuando sea necesario, conserva el orden lógico del contenido y usa padding lateral seguro.',
-  'Usa anchos fluidos (width: 100% y max-width), min-width: 0 y box-sizing: border-box. Evita anchos fijos, min-width de escritorio y 100vw dentro de contenedores con padding.',
+  'Usa anchos fluidos (width: 100% y max-width), min-width: 0 y box-sizing: border-box. Evita anchos fijos, min-width de escritorio y 100vw dentro de contenedores con padding; para secciones de ancho completo prefiere width: 100% del contenedor.',
   'Imágenes, video, audio e iframes deben respetar max-width: 100%; las imágenes y videos conservan su proporción con height: auto o aspect-ratio.',
   `Decisión predeterminada para video nativo renderizado por Ristak: al crear un video, si la petición menciona un solo video o no pide explícitamente archivos distintos por dispositivo, declara exactamente UN slot compartido, sin ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE}, y usa data-rstk-video-settings='{"videoMobilePortraitCrop":true}'. El mismo archivo conserva su formato normal en computadora y, cuando es horizontal, recibe un recorte centrado 9:16 en celular; el silencio del usuario siempre elige esta opción y nunca autoriza duplicar el slot.`,
   `Crea dos slots de video —uno para computadora y otro para móvil— ÚNICAMENTE cuando el usuario pida de forma explícita dos videos, dos archivos, una versión diferente por dispositivo o material específico para celular. Usa la misma base semántica y sufijos claros, por ejemplo video-presentacion-desktop y video-presentacion-mobile, y envuelve cada slot en su contenedor ${IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE} correspondiente; Ristak enlaza el panel con la variante visible. Mientras la variante móvil siga pendiente usa temporalmente el archivo horizontal de computadora como respaldo y lo adapta con recorte centrado 9:16; en cuanto tenga un archivo propio, la coincidencia exacta siempre gana y ambas asociaciones permanecen independientes.`,

@@ -150,6 +150,52 @@ test('CRUD y sincronización de plantillas Meta directo usan Graph e identidad n
   })
 })
 
+test('errores de plantillas Meta directo conservan el detalle accionable de Graph', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = Date.now()
+
+  await snapshotConfig([
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaSystemUserToken
+  ], async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, `waba_meta_error_${suffix}`)
+    await setAppConfig(keys.metaPhoneNumberId, `phone_meta_error_${suffix}`)
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_error_test_token'))
+
+    setMetaDirectFetchForTest(async () => graphResponse({
+      error: {
+        message: 'Invalid parameter',
+        code: 100,
+        error_subcode: 2388293,
+        error_user_msg: 'El ejemplo del botón URL debe ser una URL válida.'
+      }
+    }, 400))
+
+    await assert.rejects(
+      () => createWhatsAppApiTemplate({
+        name: `plantilla_error_${suffix}`,
+        language: 'es_MX',
+        category: 'UTILITY',
+        components: [{ type: 'BODY', text: 'Mensaje de prueba' }]
+      }),
+      error => {
+        assert.equal(error.name, 'MetaDirectGraphError')
+        assert.equal(error.graphCode, 100)
+        assert.equal(error.graphSubcode, 2388293)
+        assert.equal(error.graphDetails, 'El ejemplo del botón URL debe ser una URL válida.')
+        assert.match(error.message, /Invalid parameter: El ejemplo del botón URL debe ser una URL válida\./)
+        return true
+      }
+    )
+  })
+})
+
 test('rechaza una plantilla de otro proveedor antes de intentar el envío', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()

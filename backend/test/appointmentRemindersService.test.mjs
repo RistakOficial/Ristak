@@ -14,6 +14,8 @@ import {
   updateAppointmentReminder
 } from '../src/services/appointmentRemindersService.js'
 import { createMessageTemplate } from '../src/services/messageTemplatesService.js'
+import { createTriggerLink } from '../src/services/triggerLinksService.js'
+import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
 import {
   getWhatsAppApiConfigKeys,
   setYCloudFetchForTest
@@ -427,81 +429,161 @@ test('recordatorios de citas incluyen parámetros de botones URL dinámicos', as
     await withReminderFixture(
       { ycloudStatus: 'APPROVED' },
       async ({ template, contactId }) => {
-        const buttons = [{
-          type: 'website',
-          label: 'Google Meet',
-          value: 'https://app.ristak.test/trigger-links/rstk_link_test?contactId={{1}}'
-        }]
-        const variableBindings = {
-          headerText: {},
-          bodyText: {
-            1: {
-              variableKey: 'contact.first_name',
-              mergeField: '{{contact.first_name}}',
-              label: 'Primer nombre',
-              example: 'Ana'
+        const triggerLink = await createTriggerLink({
+          name: `Google Meet ${randomUUID()}`,
+          destinationUrl: 'https://meet.google.com/abc-defg-hij'
+        })
+        try {
+          const buttons = [{
+            type: 'website',
+            label: 'Google Meet',
+            value: `https://app.ristak.test/trigger-links/${triggerLink.publicId}?contactId={{1}}`
+          }]
+          const variableBindings = {
+            headerText: {},
+            bodyText: {
+              1: {
+                variableKey: 'contact.first_name',
+                mergeField: '{{contact.first_name}}',
+                label: 'Primer nombre',
+                example: 'Ana'
+              },
+              2: {
+                variableKey: 'cita.hora',
+                mergeField: '{{cita.hora}}',
+                label: 'Hora de cita',
+                example: '12:00'
+              }
             },
-            2: {
-              variableKey: 'cita.hora',
-              mergeField: '{{cita.hora}}',
-              label: 'Hora de cita',
-              example: '12:00'
-            }
-          },
-          'buttons.0.value': {
-            1: {
-              variableKey: 'contact.id',
-              mergeField: '{{contact.id}}',
-              label: 'ID del contacto',
-              example: 'contact_example'
+            'buttons.0.value': {
+              1: {
+                variableKey: 'contact.id',
+                mergeField: '{{contact.id}}',
+                label: 'ID del contacto',
+                example: 'contact_example'
+              }
             }
           }
+
+          await db.run(`
+            UPDATE whatsapp_message_templates
+            SET buttons_json = ?,
+                variable_bindings_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `, [
+            JSON.stringify(buttons),
+            JSON.stringify(variableBindings),
+            template.id
+          ])
+          await db.run(`
+            UPDATE whatsapp_api_templates
+            SET components_json = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE name = ? AND language = 'es_MX'
+          `, [
+            JSON.stringify([
+              { type: 'BODY', text: 'Hola {{1}}, tu cita es {{2}}.' },
+              {
+                type: 'BUTTONS',
+                buttons: [{
+                  type: 'URL',
+                  text: 'Google Meet',
+                  url: `https://app.ristak.test/trigger-links/${triggerLink.publicId}?contactId={{1}}`
+                }]
+              }
+            ]),
+            template.name
+          ])
+
+          const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+          assert.deepEqual(result, { sent: 1, errors: 0, skipped: 0 })
+          assert.equal(captures.length, 1)
+          const buttonComponent = captures[0].template.components.find(
+            component => component.type === 'button'
+          )
+          assert.equal(buttonComponent.type, 'button')
+          assert.equal(buttonComponent.sub_type, 'url')
+          assert.equal(buttonComponent.index, '0')
+          assert.equal(buttonComponent.parameters[0].type, 'text')
+          assert.match(buttonComponent.parameters[0].text, /^pce1_[A-Za-z0-9_-]+$/)
+          assert.deepEqual(
+            await readTriggerLinkRecipientToken(buttonComponent.parameters[0].text),
+            { publicId: triggerLink.publicId, contactId }
+          )
+        } finally {
+          await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+          await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
         }
+      }
+    )
+  })
+})
 
-        await db.run(`
-          UPDATE whatsapp_message_templates
-          SET buttons_json = ?,
-              variable_bindings_json = ?,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `, [
-          JSON.stringify(buttons),
-          JSON.stringify(variableBindings),
-          template.id
-        ])
-        await db.run(`
-          UPDATE whatsapp_api_templates
-          SET components_json = ?,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE name = ? AND language = 'es_MX'
-        `, [
-          JSON.stringify([
-            { type: 'BODY', text: 'Hola {{1}}, tu cita es {{2}}.' },
-            {
-              type: 'BUTTONS',
-              buttons: [{
-                type: 'URL',
-                text: 'Google Meet',
-                url: 'https://app.ristak.test/trigger-links/rstk_link_test?contactId={{1}}'
-              }]
-            }
-          ]),
-          template.name
-        ])
-
-        const result = await processDueAppointmentReminders({ batchSize: 1 })
-
-        assert.deepEqual(result, { sent: 1, errors: 0, skipped: 0 })
-        assert.equal(captures.length, 1)
-        const buttonComponent = captures[0].template.components.find(
-          component => component.type === 'button'
-        )
-        assert.deepEqual(buttonComponent, {
-          type: 'button',
-          sub_type: 'url',
-          index: '0',
-          parameters: [{ type: 'text', text: contactId }]
+test('recordatorios de citas envían el token opaco como sufijo del botón raíz aprobado', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture(
+      { ycloudStatus: 'APPROVED' },
+      async ({ template, contactId }) => {
+        const triggerLink = await createTriggerLink({
+          name: `Google Meet opaco ${randomUUID()}`,
+          destinationUrl: 'https://meet.google.com/abc-defg-hij'
         })
+        try {
+          const buttons = [{
+            type: 'website',
+            label: 'Google Meet',
+            value: 'https://app.ristak.test/{{1}}'
+          }]
+          const variableBindings = {
+            headerText: {},
+            bodyText: {
+              1: {
+                variableKey: 'contact.first_name',
+                mergeField: '{{contact.first_name}}',
+                label: 'Primer nombre',
+                example: 'Ana'
+              },
+              2: {
+                variableKey: 'cita.hora',
+                mergeField: '{{cita.hora}}',
+                label: 'Hora de cita',
+                example: '12:00'
+              }
+            },
+            'buttons.0.value': {
+              1: {
+                variableKey: `trigger_link.${triggerLink.publicId}`,
+                mergeField: `{{trigger_link.${triggerLink.publicId}}}`,
+                label: 'Google Meet',
+                example: 'pce1_enlace_seguro_de_ejemplo'
+              }
+            }
+          }
+
+          await db.run(`
+            UPDATE whatsapp_message_templates
+            SET buttons_json = ?, variable_bindings_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `, [JSON.stringify(buttons), JSON.stringify(variableBindings), template.id])
+
+          const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+          assert.deepEqual(result, { sent: 1, errors: 0, skipped: 0 })
+          const buttonComponent = captures[0].template.components.find(
+            component => component.type === 'button'
+          )
+          const recipientToken = buttonComponent.parameters[0].text
+          assert.match(recipientToken, /^pce1_[A-Za-z0-9_-]+$/)
+          assert.deepEqual(
+            await readTriggerLinkRecipientToken(recipientToken),
+            { publicId: triggerLink.publicId, contactId }
+          )
+        } finally {
+          await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+          await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
+        }
       }
     )
   })

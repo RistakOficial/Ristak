@@ -91,11 +91,14 @@ import {
   buildImportedHtmlFaviconRulesText,
   buildImportedHtmlCustomSocialProfileRulesText,
   buildImportedHtmlDeviceVisibilityStyle,
+  buildImportedHtmlViewportContainmentStyle,
   buildImportedHtmlMobileRulesText,
   buildImportedHtmlVideoGateRulesText,
   buildImportedHtmlVideoPlayerRulesText,
   buildImportedHtmlVideoActionTargetRulesText,
+  DEFAULT_IMPORTED_HTML_VIEWPORT_TAG,
   ensureImportedHtmlFavicon,
+  ensureImportedHtmlViewport,
   getImportedNativeResponsiveVariant,
   importedHtmlHasFavicon,
   normalizeImportedHtmlVideoPlayerManifest,
@@ -2452,10 +2455,13 @@ function sanitizeImportedHtml(html = '') {
   ))
 
   if (!/<html[\s>]/i.test(sanitized)) {
-    sanitized = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>${sanitized}</body></html>`
-  } else if (!/<meta\b[^>]*\bname\s*=\s*["']?viewport["']?[^>]*>/i.test(sanitized)) {
-    sanitized = injectHtmlBeforeHeadClose(sanitized, '<meta name="viewport" content="width=device-width, initial-scale=1">')
-    report.push('Se agrego meta viewport para respetar la version movil')
+    sanitized = `<!doctype html><html lang="es"><head><meta charset="utf-8">${DEFAULT_IMPORTED_HTML_VIEWPORT_TAG}</head><body>${sanitized}</body></html>`
+  } else {
+    const viewportReadyHtml = ensureImportedHtmlViewport(sanitized)
+    if (viewportReadyHtml !== sanitized) {
+      report.push('Se normalizo meta viewport para respetar el ancho real del celular')
+    }
+    sanitized = viewportReadyHtml
   }
 
   if (!importedHtmlHasFavicon(sanitized)) {
@@ -34642,6 +34648,7 @@ async function renderImportedPublicSiteHtml(site, {
       }
     }
   }
+  html = ensureImportedHtmlViewport(html)
   html = ensureImportedHtmlVideoActionTargets(html)
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
   html = await resolveImportedContentAssets(html, site.id)
@@ -34684,6 +34691,7 @@ async function renderImportedPublicSiteHtml(site, {
     ? `<style data-rstk-responsive>${importedResponsiveCss}</style>`
     : ''
   const importedDeviceVisibilityStyle = buildImportedHtmlDeviceVisibilityStyle()
+  const importedViewportContainmentStyle = buildImportedHtmlViewportContainmentStyle()
   html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
   html = annotateImportedVideoGateState(html)
   const importedNativeRender = await replaceImportedNativeElementSlots(
@@ -34718,7 +34726,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled && !preview ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled && !preview ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -34754,9 +34762,10 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
     }
     site = await renderSiteTemplateVariables(site)
     const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
-    let html = rewriteImportedHtmlForRender(
+    let html = ensureImportedHtmlViewport(asset.content.toString('utf8'))
+    html = rewriteImportedHtmlForRender(
       site,
-      asset.content.toString('utf8'),
+      html,
       asset.assetPath,
       availablePaths
     )
@@ -34791,6 +34800,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
       ? `<style data-rstk-responsive>${importedResponsiveCss}</style>`
       : ''
     const importedDeviceVisibilityStyle = buildImportedHtmlDeviceVisibilityStyle()
+    const importedViewportContainmentStyle = buildImportedHtmlViewportContainmentStyle()
     html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
     html = annotateImportedVideoGateState(html)
     const importedNativeRender = await replaceImportedNativeElementSlots(
@@ -34829,7 +34839,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
-      `${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+      `${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
     )
 
     return {

@@ -1,6 +1,7 @@
 export const IMPORTED_HTML_MOBILE_BREAKPOINT_PX: number
 export const IMPORTED_HTML_MOBILE_PREVIEW_WIDTH_PX: number
 export const IMPORTED_HTML_DEVICE_ONLY_ATTRIBUTE: string
+export const DEFAULT_IMPORTED_HTML_VIEWPORT_TAG: string
 export const DEFAULT_IMPORTED_HTML_FAVICON_TAG: string
 export const IMPORTED_HTML_FAVICON_RULES: readonly string[]
 export const IMPORTED_HTML_MOBILE_RULES: readonly string[]
@@ -21,10 +22,12 @@ export const IMPORTED_HTML_VIDEO_ACTION_TARGET_RULES: readonly string[]
 export function buildImportedHtmlFaviconRulesText(heading?: string): string
 export function importedHtmlHasFavicon(html?: string): boolean
 export function ensureImportedHtmlFavicon(html?: string): string
+export function ensureImportedHtmlViewport(html?: string): string
 export function buildImportedHtmlMobileRulesText(heading?: string): string
 export function buildImportedHtmlAutomaticColorModeRulesText(heading?: string): string
 export function buildImportedHtmlTrafficPlatformRulesText(heading?: string): string
 export function buildImportedHtmlDeviceVisibilityStyle(previewDevice?: 'desktop' | 'mobile' | ''): string
+export function buildImportedHtmlViewportContainmentStyle(): string
 export function buildImportedHtmlCustomCalendarRulesText(heading?: string): string
 export function buildImportedHtmlCustomSocialProfileRulesText(heading?: string): string
 export function buildImportedHtmlVideoPlayerRulesText(heading?: string): string
