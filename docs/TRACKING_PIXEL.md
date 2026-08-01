@@ -204,6 +204,12 @@ Site. Esta ruta no instala el pixel externo de Ristak ni cambia
 `tracking_source`; únicamente permite administrar scripts de terceros dentro de
 la frontera de código confiable ya existente.
 
+La misma exclusión aplica antes de entregar el HTML cuando la URL pública activa
+el modo sin tracking, por ejemplo con `?notrack` o `?no_track=1`. En ese modo el
+renderer omite por completo tanto `headerTrackingCode` global como el de la
+página activa; no intenta deshabilitarlos después con JavaScript, porque para
+entonces un snippet como Microsoft Clarity ya podría haberse ejecutado.
+
 Como ese valor se convierte en JavaScript publicado, un usuario con permiso para
 administrar campos variables pero sin escritura en Sites no puede cambiarlo ni
 archivarlo mientras esté referenciado por un header. Esta comprobación evita que

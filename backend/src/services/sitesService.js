@@ -2323,7 +2323,16 @@ async function renderSiteTemplateVariables(site, options = {}) {
   return rendered
 }
 
-function buildHeaderTrackingCode(site, activePage = null) {
+function buildHeaderTrackingCode(site, activePage = null, {
+  trackingEnabled = true,
+  preview = false
+} = {}) {
+  // El header administrado puede contener scripts de terceros que se ejecutan
+  // en cuanto el navegador parsea el HTML. La compuerta debe vivir aqui, antes
+  // de construir la respuesta, para que no exista una ruta de render que olvide
+  // excluir Clarity, GTM u otro snippet cuando el request usa no_track/notrack.
+  if (!trackingEnabled || preview) return ''
+
   const globalCode = getRawTrackingCode(site?.theme?.headerTrackingCode ?? site?.theme?.header_tracking_code)
   const pageCode = getRawTrackingCode(activePage?.headerTrackingCode ?? activePage?.header_tracking_code)
 
@@ -34726,7 +34735,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled && !preview ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
+    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${buildHeaderTrackingCode(site, activePage, { trackingEnabled, preview })}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -34839,7 +34848,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
 
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
-      `${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, page) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
+      `${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${buildHeaderTrackingCode(site, page, { trackingEnabled })}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
     )
 
     return {
@@ -35173,7 +35182,7 @@ export async function renderPublicSiteHtml(site, {
   const paymentCheckoutScript = buildPaymentCheckoutRuntimeScript()
   const metaPixelSite = buildSiteWithEmbeddedSubmitMetaFallback(site, blocks, activePage?.id)
   const metaPixel = await buildMetaPixelSnippet(metaPixelSite, trackingEnabled, activePage, preview)
-  const headerTrackingCode = trackingEnabled && !preview ? buildHeaderTrackingCode(site, activePage) : ''
+  const headerTrackingCode = buildHeaderTrackingCode(site, activePage, { trackingEnabled, preview })
   const popupHtml = renderSitePopup(site, {
     popupBlocks,
     renderContext,
