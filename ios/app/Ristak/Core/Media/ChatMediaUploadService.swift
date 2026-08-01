@@ -140,6 +140,24 @@ struct ChatMediaUploadService: Sendable {
     ) async throws -> UploadedChatMedia {
         let span = RistakObservability.begin(.mediaUpload)
         do {
+            let preflight: MediaStorageQuotaPreflight = try await client.post(
+                "/media/upload-preflight",
+                body: MediaStorageQuotaPreflightRequest(requestedBytes: media.sizeBytes)
+            )
+            if !preflight.allowed || preflight.warningRequired {
+                let decision = await MediaStorageQuotaCoordinator.shared.requestDecision(for: preflight)
+                switch decision {
+                case .continueUpload:
+                    if !preflight.allowed {
+                        throw MediaStorageQuotaGateError.blocked
+                    }
+                case .connectBunny:
+                    throw MediaStorageQuotaGateError.connectionRequested
+                case .cancel:
+                    throw CancellationError()
+                }
+            }
+
             // Concatenar 20–25 MB de multipart en el MainActor produciría el
             // mismo tirón visual que estamos eliminando. Se arma fuera de UI.
             let multipart = try await Task.detached(priority: .userInitiated) {

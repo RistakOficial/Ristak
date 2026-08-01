@@ -46,7 +46,8 @@ Required for an explicit Bunny Storage configuration:
 
 - `MEDIA_STORAGE_PROVIDER=bunny`
 - `MEDIA_COMPRESSION_ENABLED=true`
-- `DEFAULT_STORAGE_QUOTA_GB=5`
+- `DEFAULT_STORAGE_QUOTA_GB=1` (compatibilidad de despliegue; el modo
+  administrado nunca entrega más de 1 GB)
 - `BUNNY_STORAGE_ZONE`
 - `BUNNY_STORAGE_API_KEY`
 - `BUNNY_CDN_BASE_URL`
@@ -86,6 +87,7 @@ Authenticated app endpoints:
 - `DELETE /api/integrations/bunny` (admin con `settings_integrations`)
 
 - `POST /api/media/upload`
+- `POST /api/media/upload-preflight`
 - `POST /api/media/video-upload/prepare?module=sites`
 - `POST /api/media/video-upload/:id/finalize?module=sites`
 - `DELETE /api/media/video-upload/:id?module=sites`
@@ -531,7 +533,29 @@ these events.
 
 ## Quotas
 
-Every business starts with 5 GB. Usage is recalculated from active `media_assets` rows and cached in `storage_quotas.used_bytes`.
+Cada negocio estándar recibe exactamente **1 GB** en el Bunny administrado por
+Installer. No existen ampliaciones silenciosas ni `extra_quota_gb`: al alcanzar
+el byte 1,073,741,824, una carga nueva se rechaza aunque lleguen varios archivos
+al mismo tiempo. `media_quota_reservations` aparta los bytes antes de transmitir
+una carga tradicional; los videos TUS reservan su tamaño en `media_assets`. Ambos
+caminos comparten un candado por negocio, cuentan reservas en curso y liberan las
+abandonadas por vencimiento, así que dos cargas concurrentes no pueden rebasar el
+techo.
+
+Antes de transmitir contenido, el frontend llama
+`POST /api/media/upload-preflight`. El guard está en `apiClient`, por lo que cubre
+data URLs y formularios usados por Chat, Automatizaciones, Sites y Configuración;
+`mediaService.uploadFile` lo llama además de forma explícita para el flujo TUS y
+el XHR con progreso. Si el uso actual más las reservas y el archivo solicitado
+entra al último 10% (90% o más), el modal canónico aparece **en cada intento**:
+no guarda una preferencia de “no volver a mostrar”. Mientras todavía quepa, el
+usuario puede continuar; si no cabe, la subida no empieza. Un administrador puede
+ir directo a `/settings/bunny`; otro usuario recibe la instrucción de pedirle al
+administrador que conecte la cuenta.
+
+Usage is recalculated from active `media_assets` rows and cached in
+`storage_quotas.used_bytes`. La respuesta de uso también declara
+`warning_threshold_percent=90`, `warning_required` y `connect_path`.
 
 Una cuenta Bunny.net conectada por el negocio también declara
 `quota_mode='unlimited'` y `quota_unlimited=true` dentro de Ristak. Esto significa
@@ -581,7 +605,8 @@ Quota fields:
 
 - `quota_bytes`
 - `used_bytes`
-- `extra_quota_gb`
+- `warning_threshold_percent`
+- `warning_required`
 - `storage_enabled`
 
 ## Existing media migration

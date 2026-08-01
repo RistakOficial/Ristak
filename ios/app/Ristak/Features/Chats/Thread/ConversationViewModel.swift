@@ -2263,14 +2263,19 @@ final class ConversationViewModel {
             // guardado (doc 05 §7.6). Cae al marcado de fallo de abajo.
         }
 
-        let message = (error as? RistakAPIError)?.message ?? "No se pudo enviar el mensaje."
+        let isQuotaDecision = error is MediaStorageQuotaGateError || error is CancellationError
+        let message = (error as? RistakAPIError)?.message
+            ?? (error as? MediaStorageQuotaGateError)?.localizedDescription
+            ?? (error is CancellationError ? "Subida cancelada." : "No se pudo enviar el mensaje.")
         mutateMessage(id: externalId) { bubble in
             bubble.pending = false
             bubble.failed = true
             bubble.status = "error"
             bubble.errorReason = message
         }
-        alert = ConversationAlert(title: "No se envió el mensaje", message: message)
+        if !isQuotaDecision {
+            alert = ConversationAlert(title: "No se envió el mensaje", message: message)
+        }
     }
 
     private func removeOptimistic(id: String) {

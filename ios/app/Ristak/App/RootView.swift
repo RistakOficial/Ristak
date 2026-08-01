@@ -9,6 +9,8 @@ struct RootView: View {
     @Environment(ShellState.self) private var shell
     @Environment(NotificationRouter.self) private var notificationRouter
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
+    @State private var mediaQuotaCoordinator = MediaStorageQuotaCoordinator.shared
 
     /// True solo si la app estuvo en background REAL (no una interrupción
     /// transitoria). Distingue "el usuario salió y volvió" de "bajó el Centro de
@@ -141,6 +143,39 @@ struct RootView: View {
         } message: {
             Text(session.licenseBlockedAlertMessage ?? "")
         }
+        .alert(
+            mediaQuotaCoordinator.activePrompt?.isBlocked == true
+                ? "Tu almacenamiento está lleno"
+                : "Tu almacenamiento ya casi se acaba",
+            isPresented: mediaQuotaAlertBinding,
+            presenting: mediaQuotaCoordinator.activePrompt
+        ) { prompt in
+            if prompt.preflight.allowed {
+                Button("Continuar subida") {
+                    mediaQuotaCoordinator.resolve(.continueUpload)
+                }
+            }
+            if session.user?.isAdmin == true {
+                Button("Conectar Bunny.net") {
+                    mediaQuotaCoordinator.resolve(.connectBunny)
+                    openBunnySettings(path: prompt.preflight.connectPath)
+                }
+            }
+            Button(prompt.isBlocked ? "Cerrar" : "Cancelar subida", role: .cancel) {
+                mediaQuotaCoordinator.resolve(.cancel)
+            }
+        } message: { prompt in
+            Text(
+                session.user?.isAdmin == true
+                    ? "\(prompt.displayPercent)% utilizado. \(prompt.message)"
+                    : "\(prompt.displayPercent)% utilizado. \(prompt.message) Pídele al administrador de la cuenta que conecte Bunny.net."
+            )
+        }
+        .onChange(of: session.phase) { _, newPhase in
+            if case .loggedOut = newPhase {
+                mediaQuotaCoordinator.cancelAll()
+            }
+        }
     }
 
     /// Alerta única de licencia bloqueada (doc research/13 §6.2).
@@ -153,6 +188,26 @@ struct RootView: View {
                 }
             }
         )
+    }
+
+    private var mediaQuotaAlertBinding: Binding<Bool> {
+        Binding(
+            get: { mediaQuotaCoordinator.activePrompt != nil },
+            // Las alertas sólo se cierran mediante sus botones. Resolver aquí
+            // también cancelaría por accidente el siguiente aviso de la cola.
+            set: { _ in }
+        )
+    }
+
+    private func openBunnySettings(path: String) {
+        Task {
+            guard let baseURL = await APIClient.shared.currentBaseURL else { return }
+            let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+            guard let url = URL(string: normalizedPath, relativeTo: baseURL)?.absoluteURL else { return }
+            await MainActor.run {
+                openURL(url)
+            }
+        }
     }
 }
 

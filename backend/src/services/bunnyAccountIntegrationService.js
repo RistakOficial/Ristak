@@ -613,15 +613,9 @@ export async function prepareBunnyAccountDisconnect(managedConfig = {}) {
     `SELECT COALESCE(SUM(quota_size), 0) AS used_bytes
      FROM media_assets WHERE deleted_at IS NULL AND status != 'deleted'`
   )
-  const quotaRow = await db.get(
-    `SELECT quota_bytes, extra_quota_gb FROM storage_quotas WHERE business_id = 'default'`
-  ).catch(() => null)
   const usedBytes = Number(usedRow?.used_bytes) || 0
   const managedUnlimited = Boolean(managedConfig.mediaAccountPolicy?.unlimitedQuota)
-  const managedBaseQuotaBytes = Number(quotaRow?.quota_bytes)
-    || Math.round((Number(managedConfig.defaultQuotaGb) || 5) * GB)
-  const managedQuotaBytes = managedBaseQuotaBytes
-    + Math.round((Number(quotaRow?.extra_quota_gb) || 0) * GB)
+  const managedQuotaBytes = GB
   if (!managedUnlimited && usedBytes > managedQuotaBytes) {
     throw integrationError(
       'Tus archivos ya superan la cuota administrada de Ristak. Libera espacio antes de desconectar Bunny.net.',

@@ -27,6 +27,12 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
 const GB = 1024 * 1024 * 1024
+export const MANAGED_MEDIA_STORAGE_QUOTA_BYTES = GB
+export const MANAGED_MEDIA_STORAGE_WARNING_PERCENT = 90
+const MEDIA_QUOTA_RESERVATION_TTL_MS = Math.max(
+  60 * 60 * 1000,
+  Number(process.env.MEDIA_QUOTA_RESERVATION_TTL_MS || 2 * 60 * 60 * 1000) || 2 * 60 * 60 * 1000
+)
 const LOCAL_MEDIA_ROOT = join(__dirname, '../../uploads/media-storage')
 const BUNNY_CORE_API_BASE_URL = 'https://api.bunny.net'
 const BUNNY_STREAM_API_BASE_URL = 'https://video.bunnycdn.com'
@@ -598,10 +604,11 @@ function maxBytesForMediaType(settings, mediaType) {
   return Math.max(1, Number(mb) || 50) * 1024 * 1024
 }
 
-function errorWithStatus(message, status = 400, code = '') {
+function errorWithStatus(message, status = 400, code = '', details = null) {
   const error = new Error(message)
   error.status = status
   if (code) error.code = code
+  if (details) error.details = details
   return error
 }
 
@@ -762,7 +769,9 @@ function buildStorageRuntimeConfig(row) {
   const storageEnabled = process.env.MEDIA_STORAGE_ENABLED !== undefined
     ? boolValue(process.env.MEDIA_STORAGE_ENABLED, true)
     : boolValue(row?.storage_enabled, true)
-  const defaultQuotaGb = numberValue(process.env.DEFAULT_STORAGE_QUOTA_GB || row?.default_storage_quota_gb, 5)
+  // El storage administrado es una cortesía fija de 1 GB. El campo histórico
+  // sigue viajando en el contrato del Installer sólo durante la transición.
+  const defaultQuotaGb = 1
 
   const config = {
     provider,
@@ -2632,10 +2641,25 @@ function buildObjectPath({ businessId, clientAccount, mediaType, module, id, fil
 async function ensureStorageQuota(businessId, config) {
   const normalizedBusinessId = normalizeBusinessId(businessId)
   const existing = await db.get('SELECT * FROM storage_quotas WHERE business_id = ?', [normalizedBusinessId])
-  if (existing) return existing
+  const quotaGb = 1
+  const quotaBytes = MANAGED_MEDIA_STORAGE_QUOTA_BYTES
+  if (existing) {
+    if (
+      numberValue(existing.quota_gb) !== quotaGb ||
+      numberValue(existing.quota_bytes) !== quotaBytes ||
+      numberValue(existing.extra_quota_gb) !== 0
+    ) {
+      await db.run(
+        `UPDATE storage_quotas
+         SET quota_gb = ?, quota_bytes = ?, extra_quota_gb = 0, updated_at = CURRENT_TIMESTAMP
+         WHERE business_id = ?`,
+        [quotaGb, quotaBytes, normalizedBusinessId]
+      )
+      return await db.get('SELECT * FROM storage_quotas WHERE business_id = ?', [normalizedBusinessId])
+    }
+    return existing
+  }
 
-  const quotaGb = numberValue(config?.defaultQuotaGb, 5)
-  const quotaBytes = Math.round(quotaGb * GB)
   await db.run(
     `INSERT INTO storage_quotas (business_id, quota_gb, quota_bytes, used_bytes, extra_quota_gb, storage_enabled, created_at, updated_at)
      VALUES (?, ?, ?, 0, 0, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -2703,6 +2727,196 @@ async function refreshQuotaUsage(businessId) {
   return usedBytes
 }
 
+export function evaluateManagedMediaQuota({
+  usedBytes = 0,
+  reservedBytes = 0,
+  requestedBytes = 0,
+  unlimited = false,
+  storageEnabled = true
+} = {}) {
+  const used = Math.max(0, Math.round(numberValue(usedBytes)))
+  const reserved = Math.max(0, Math.round(numberValue(reservedBytes)))
+  const requested = Math.max(0, Math.round(numberValue(requestedBytes)))
+
+  if (unlimited) {
+    return {
+      allowed: Boolean(storageEnabled),
+      warningRequired: false,
+      warningThresholdPercent: MANAGED_MEDIA_STORAGE_WARNING_PERCENT,
+      warningThresholdBytes: null,
+      quotaBytes: null,
+      usedBytes: used,
+      reservedBytes: reserved,
+      requestedBytes: requested,
+      projectedBytes: used + reserved + requested,
+      usagePercent: null,
+      projectedUsagePercent: null,
+      availableBytes: null
+    }
+  }
+
+  const quotaBytes = MANAGED_MEDIA_STORAGE_QUOTA_BYTES
+  const warningThresholdBytes = Math.ceil(
+    quotaBytes * (MANAGED_MEDIA_STORAGE_WARNING_PERCENT / 100)
+  )
+  const projectedBytes = used + reserved + requested
+  const percent = (bytes) => Math.round((bytes / quotaBytes) * 10000) / 100
+
+  return {
+    allowed: Boolean(storageEnabled) && projectedBytes <= quotaBytes,
+    warningRequired: Boolean(storageEnabled) && projectedBytes >= warningThresholdBytes,
+    warningThresholdPercent: MANAGED_MEDIA_STORAGE_WARNING_PERCENT,
+    warningThresholdBytes,
+    quotaBytes,
+    usedBytes: used,
+    reservedBytes: reserved,
+    requestedBytes: requested,
+    projectedBytes,
+    usagePercent: percent(used + reserved),
+    projectedUsagePercent: percent(projectedBytes),
+    availableBytes: Math.max(0, quotaBytes - used - reserved)
+  }
+}
+
+async function cleanupExpiredMediaQuotaReservations(database = db) {
+  await database.run(
+    'DELETE FROM media_quota_reservations WHERE expires_at_ms <= ?',
+    [Date.now()]
+  )
+}
+
+async function readActiveMediaQuotaReservationBytes(businessId, {
+  excludeReservationId = '',
+  database = db
+} = {}) {
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const params = [normalizedBusinessId, Date.now()]
+  let exclusion = ''
+  if (excludeReservationId) {
+    exclusion = 'AND id != ?'
+    params.push(cleanString(excludeReservationId))
+  }
+  const row = await database.get(
+    `SELECT COALESCE(SUM(quota_size), 0) AS reserved_bytes
+     FROM media_quota_reservations
+     WHERE business_id = ? AND expires_at_ms > ? ${exclusion}`,
+    params
+  )
+  return Math.max(0, Math.round(numberValue(row?.reserved_bytes)))
+}
+
+async function withMediaQuotaLock(businessId, operation) {
+  const lockName = `media:quota:${normalizeBusinessId(businessId)}`
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      return await db.withAdvisoryLock(lockName, operation)
+    } catch (error) {
+      if (error?.code !== 'DATABASE_ADVISORY_LOCK_BUSY') throw error
+      if (attempt === 39) {
+        throw errorWithStatus(
+          'Hay otra subida reservando espacio. Espera un momento e intenta otra vez.',
+          409,
+          'media_quota_reservation_busy'
+        )
+      }
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+  }
+  throw errorWithStatus('No se pudo reservar espacio para la subida.', 409, 'media_quota_reservation_busy')
+}
+
+function quotaExceededError(state) {
+  return errorWithStatus(
+    'Ya no hay espacio suficiente en el GB incluido. Conecta tu propia cuenta de Bunny.net para seguir subiendo archivos.',
+    413,
+    'storage_quota_exceeded',
+    {
+      quota_bytes: state.quotaBytes,
+      used_bytes: state.usedBytes,
+      reserved_bytes: state.reservedBytes,
+      requested_bytes: state.requestedBytes,
+      available_bytes: state.availableBytes,
+      usage_percent: state.usagePercent,
+      projected_usage_percent: state.projectedUsagePercent,
+      warning_threshold_percent: state.warningThresholdPercent,
+      connect_path: '/settings/bunny'
+    }
+  )
+}
+
+async function reserveMediaQuota({ businessId, quotaSize, config }) {
+  if (config?.mediaAccountPolicy?.unlimitedQuota || config?.customerOwnedStorage) return null
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const reservationId = createRistakId('media_quota')
+
+  return withMediaQuotaLock(normalizedBusinessId, async () => {
+    const quota = await ensureStorageQuota(normalizedBusinessId, config)
+    if (!boolValue(quota.storage_enabled, true)) {
+      throw errorWithStatus('El almacenamiento está deshabilitado para este negocio.', 403, 'storage_disabled')
+    }
+    await cleanupExpiredMediaQuotaReservations()
+    const [usedBytes, reservedBytes] = await Promise.all([
+      readActiveUsageBytes(normalizedBusinessId),
+      readActiveMediaQuotaReservationBytes(normalizedBusinessId)
+    ])
+    const state = evaluateManagedMediaQuota({
+      usedBytes,
+      reservedBytes,
+      requestedBytes: quotaSize,
+      storageEnabled: true
+    })
+    if (!state.allowed) throw quotaExceededError(state)
+
+    await db.run(
+      `INSERT INTO media_quota_reservations (
+         id, business_id, quota_size, expires_at_ms, created_at
+       ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [reservationId, normalizedBusinessId, state.requestedBytes, Date.now() + MEDIA_QUOTA_RESERVATION_TTL_MS]
+    )
+    return { id: reservationId, businessId: normalizedBusinessId, quotaSize: state.requestedBytes }
+  })
+}
+
+async function resizeMediaQuotaReservation(reservation, nextQuotaSize, config) {
+  if (!reservation || config?.mediaAccountPolicy?.unlimitedQuota || config?.customerOwnedStorage) return reservation
+  const nextSize = Math.max(0, Math.round(numberValue(nextQuotaSize)))
+  if (nextSize === reservation.quotaSize) return reservation
+
+  return withMediaQuotaLock(reservation.businessId, async () => {
+    await cleanupExpiredMediaQuotaReservations()
+    const [usedBytes, reservedBytes] = await Promise.all([
+      readActiveUsageBytes(reservation.businessId),
+      readActiveMediaQuotaReservationBytes(reservation.businessId, {
+        excludeReservationId: reservation.id
+      })
+    ])
+    const state = evaluateManagedMediaQuota({
+      usedBytes,
+      reservedBytes,
+      requestedBytes: nextSize,
+      storageEnabled: true
+    })
+    if (!state.allowed) throw quotaExceededError(state)
+    await db.run(
+      `UPDATE media_quota_reservations
+       SET quota_size = ?, expires_at_ms = ?
+       WHERE id = ? AND business_id = ?`,
+      [nextSize, Date.now() + MEDIA_QUOTA_RESERVATION_TTL_MS, reservation.id, reservation.businessId]
+    )
+    return { ...reservation, quotaSize: nextSize }
+  })
+}
+
+async function releaseMediaQuotaReservation(reservation) {
+  if (!reservation?.id) return
+  await db.run(
+    'DELETE FROM media_quota_reservations WHERE id = ? AND business_id = ?',
+    [reservation.id, reservation.businessId]
+  ).catch(error => {
+    logger.warn(`[MediaStorage] No se pudo liberar la reserva de cuota ${reservation.id}: ${error.message}`)
+  })
+}
+
 async function assertQuotaAvailable({ businessId, quotaSize, config }) {
   const quota = await ensureStorageQuota(businessId, config)
   if (!boolValue(quota.storage_enabled, true)) {
@@ -2710,14 +2924,58 @@ async function assertQuotaAvailable({ businessId, quotaSize, config }) {
   }
   if (config?.mediaAccountPolicy?.unlimitedQuota || config?.customerOwnedStorage) return
 
-  const usedBytes = await readActiveUsageBytes(businessId)
-  const quotaBytes = numberValue(quota.quota_bytes, Math.round(numberValue(quota.quota_gb, 5) * GB))
-  const extraBytes = Math.round(numberValue(quota.extra_quota_gb) * GB)
-  const totalBytes = quotaBytes + extraBytes
+  await cleanupExpiredMediaQuotaReservations()
+  const [usedBytes, reservedBytes] = await Promise.all([
+    readActiveUsageBytes(businessId),
+    readActiveMediaQuotaReservationBytes(businessId)
+  ])
+  const state = evaluateManagedMediaQuota({ usedBytes, reservedBytes, requestedBytes: quotaSize })
+  if (!state.allowed) throw quotaExceededError(state)
+}
 
-  if (usedBytes + quotaSize > totalBytes) {
-    throw errorWithStatus('No hay espacio suficiente para subir este archivo. Libera almacenamiento o aumenta la cuota.', 413, 'storage_quota_exceeded')
-  }
+export async function getMediaUploadPreflight({ businessId = 'default', requestedBytes = 0 } = {}) {
+  const config = await getStorageRuntimeConfig()
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  return withMediaQuotaLock(normalizedBusinessId, async () => {
+    const quota = await ensureStorageQuota(normalizedBusinessId, config)
+    const storageEnabled = boolValue(quota.storage_enabled, true) && config.storageEnabled
+    const unlimited = Boolean(config.mediaAccountPolicy?.unlimitedQuota || config.customerOwnedStorage)
+
+    if (!storageEnabled) {
+      throw errorWithStatus('El almacenamiento está deshabilitado para este negocio.', 403, 'storage_disabled')
+    }
+
+    await cleanupExpiredMediaQuotaReservations()
+    const [usedBytes, reservedBytes] = await Promise.all([
+      readActiveUsageBytes(normalizedBusinessId),
+      readActiveMediaQuotaReservationBytes(normalizedBusinessId)
+    ])
+    const state = evaluateManagedMediaQuota({
+      usedBytes,
+      reservedBytes,
+      requestedBytes,
+      unlimited,
+      storageEnabled
+    })
+
+    return {
+      allowed: state.allowed,
+      warning_required: state.warningRequired,
+      warning_threshold_percent: state.warningThresholdPercent,
+      quota_mode: unlimited ? 'unlimited' : 'metered',
+      quota_unlimited: unlimited,
+      media_profile: config.customerOwnedStorage ? 'customer_bunny' : config.mediaAccountPolicy?.id || 'standard',
+      quota_bytes: state.quotaBytes,
+      used_bytes: state.usedBytes,
+      reserved_bytes: state.reservedBytes,
+      requested_bytes: state.requestedBytes,
+      projected_bytes: state.projectedBytes,
+      available_bytes: state.availableBytes,
+      usage_percent: state.usagePercent,
+      projected_usage_percent: state.projectedUsagePercent,
+      connect_path: '/settings/bunny'
+    }
+  })
 }
 
 async function insertMediaAsset(row) {
@@ -3428,7 +3686,7 @@ export async function prepareBunnyStreamResumableUpload(input = {}) {
 
   // El candado es por negocio, no sólo por archivo: así la lectura de cuota y
   // su reserva quedan serializadas también entre videos distintos.
-  const lockName = `media:tus:${businessId}`
+  const lockName = `media:quota:${businessId}`
   for (let attempt = 0; attempt < 20; attempt += 1) {
     try {
       return await db.withAdvisoryLock(
@@ -4264,6 +4522,7 @@ export async function uploadMediaAsset(input = {}) {
   let tempFileHandedOff = false
   let mediaAssetPersisted = false
   let pendingArtifactCleanup = null
+  let quotaReservation = null
 
   try {
     let originalBuffer = null
@@ -4335,7 +4594,7 @@ export async function uploadMediaAsset(input = {}) {
     assertPremiumStreamReady(config, { mediaType, module })
     validateMediaType({ mimeType: detected.mimeType, mediaType, sizeBytes, settings: config })
 
-    await assertQuotaAvailable({ businessId, quotaSize: sizeBytes, config })
+    quotaReservation = await reserveMediaQuota({ businessId, quotaSize: sizeBytes, config })
 
     // Video (siempre) y archivos grandes se transmiten directo a Bunny desde disco,
     // sin cargarlos en RAM ni recomprimir con ffmpeg (Bunny Stream ya transcodifica
@@ -4388,7 +4647,7 @@ export async function uploadMediaAsset(input = {}) {
     const thumbnail = await createImageThumbnail(processed.buffer, finalMimeType)
     const quotaSize = processed.buffer.length
 
-    await assertQuotaAvailable({ businessId, quotaSize, config })
+    quotaReservation = await resizeMediaQuotaReservation(quotaReservation, quotaSize, config)
 
     const id = createRistakId('media')
     const storedFilename = `${id}-${filenameBase(originalFilename)}.${extension}`
@@ -4554,6 +4813,7 @@ export async function uploadMediaAsset(input = {}) {
     }
     throw error
   } finally {
+    await releaseMediaQuotaReservation(quotaReservation)
     if (hasTempFile && !tempFileHandedOff) {
       await fs.rm(tempFilePath, { force: true }).catch(() => undefined)
     }
@@ -5625,19 +5885,19 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
     'SELECT * FROM storage_quotas WHERE business_id = ?',
     [normalizedBusinessId]
   )
-  const defaultQuotaGb = numberValue(config?.defaultQuotaGb, 5)
+  const defaultQuotaGb = 1
   const quota = storedQuota || {
     quota_gb: defaultQuotaGb,
-    quota_bytes: Math.round(defaultQuotaGb * GB),
+    quota_bytes: MANAGED_MEDIA_STORAGE_QUOTA_BYTES,
     used_bytes: 0,
     extra_quota_gb: 0,
     storage_enabled: 1
   }
   const usageCounters = await readActiveUsageCounters(normalizedBusinessId)
   const usedBytes = usageCounters.reduce((total, row) => total + row.usedBytes, 0)
-  const quotaBytes = numberValue(quota.quota_bytes, Math.round(numberValue(quota.quota_gb, 5) * GB))
-  const extraQuotaGb = numberValue(quota.extra_quota_gb)
-  const totalQuotaBytes = quotaBytes + Math.round(extraQuotaGb * GB)
+  const quotaBytes = MANAGED_MEDIA_STORAGE_QUOTA_BYTES
+  const extraQuotaGb = 0
+  const totalQuotaBytes = quotaBytes
   const availableBytes = Math.max(0, totalQuotaBytes - usedBytes)
   const userRow = await db.get('SELECT business_name, full_name, email FROM users ORDER BY id ASC LIMIT 1').catch(() => null)
 
@@ -5668,7 +5928,7 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
     quota_unlimited: unlimitedQuota,
     media_profile: config.customerOwnedStorage ? 'customer_bunny' : config.mediaAccountPolicy?.id || 'standard',
     stream_profile: config.mediaAccountPolicy?.streamProfile || 'standard',
-    quota_gb: unlimitedQuota ? null : numberValue(quota.quota_gb, 5),
+    quota_gb: unlimitedQuota ? null : defaultQuotaGb,
     quota_bytes: unlimitedQuota ? null : totalQuotaBytes,
     included_quota_bytes: unlimitedQuota ? null : quotaBytes,
     extra_quota_gb: extraQuotaGb,
@@ -5679,6 +5939,11 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
       : totalQuotaBytes > 0
         ? Math.round((usedBytes / totalQuotaBytes) * 10000) / 100
         : 0,
+    warning_threshold_percent: MANAGED_MEDIA_STORAGE_WARNING_PERCENT,
+    warning_required: !unlimitedQuota && usedBytes >= Math.ceil(
+      totalQuotaBytes * (MANAGED_MEDIA_STORAGE_WARNING_PERCENT / 100)
+    ),
+    connect_path: '/settings/bunny',
     files_count: filesCount,
     by_media_type: byMediaType,
     by_module: byModule,

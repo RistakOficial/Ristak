@@ -1,4 +1,9 @@
 import { getApiBaseUrl } from './apiBaseUrl'
+import {
+  estimateMediaUploadBytes,
+  requestMediaStorageUploadPermission,
+  showMediaStorageQuotaExceeded
+} from './mediaStorageQuotaGuard'
 
 // IMPORTANTE: VITE_API_URL NO debe terminar con /api
 // Este cliente SIEMPRE agrega /api/ a las rutas
@@ -8,6 +13,7 @@ interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string>
   suppressFeatureNotAvailableToast?: boolean
   showFeatureNotAvailableToast?: boolean
+  skipMediaStoragePreflight?: boolean
 }
 
 export type ApiRequestError = Error & {
@@ -51,6 +57,7 @@ class ApiClient {
       params,
       suppressFeatureNotAvailableToast = false,
       showFeatureNotAvailableToast,
+      skipMediaStoragePreflight: _skipMediaStoragePreflight,
       ...fetchOptions
     } = options
     const method = String(fetchOptions.method || 'GET').toUpperCase()
@@ -98,11 +105,14 @@ class ApiClient {
     if (!response.ok) {
       let message = `API Error: ${response.status} ${response.statusText}`
       if (json && typeof json === 'object') {
-        const payload = json as { error?: unknown; message?: unknown }
+        const payload = json as { error?: unknown; message?: unknown; code?: unknown }
         if (payload.error) {
           message = String(payload.error)
         } else if (payload.message) {
           message = String(payload.message)
+        }
+        if (payload.code === 'storage_quota_exceeded' && typeof window !== 'undefined') {
+          await showMediaStorageQuotaExceeded(json)
         }
       }
       // (CNT-001) Conservar status y body en el error para que el caller pueda
@@ -154,6 +164,10 @@ class ApiClient {
   }
 
   async post<T>(endpoint: string, body?: any, options?: ApiRequestOptions): Promise<T> {
+    if (!options?.skipMediaStoragePreflight) {
+      const uploadBytes = estimateMediaUploadBytes(body)
+      if (uploadBytes > 0) await requestMediaStorageUploadPermission(uploadBytes)
+    }
     return this.request<T>(endpoint, {
       ...options,
       method: 'POST',
@@ -162,6 +176,10 @@ class ApiClient {
   }
 
   async postForm<T>(endpoint: string, body: FormData, options?: ApiRequestOptions): Promise<T> {
+    if (!options?.skipMediaStoragePreflight) {
+      const uploadBytes = estimateMediaUploadBytes(body)
+      if (uploadBytes > 0) await requestMediaStorageUploadPermission(uploadBytes)
+    }
     return this.request<T>(endpoint, {
       ...options,
       method: 'POST',
@@ -170,6 +188,10 @@ class ApiClient {
   }
 
   async put<T>(endpoint: string, body?: any, options?: ApiRequestOptions): Promise<T> {
+    if (!options?.skipMediaStoragePreflight) {
+      const uploadBytes = estimateMediaUploadBytes(body)
+      if (uploadBytes > 0) await requestMediaStorageUploadPermission(uploadBytes)
+    }
     return this.request<T>(endpoint, {
       ...options,
       method: 'PUT',
@@ -178,6 +200,10 @@ class ApiClient {
   }
 
   async patch<T>(endpoint: string, body?: any, options?: ApiRequestOptions): Promise<T> {
+    if (!options?.skipMediaStoragePreflight) {
+      const uploadBytes = estimateMediaUploadBytes(body)
+      if (uploadBytes > 0) await requestMediaStorageUploadPermission(uploadBytes)
+    }
     return this.request<T>(endpoint, {
       ...options,
       method: 'PATCH',
@@ -186,6 +212,10 @@ class ApiClient {
   }
 
   async delete<T>(endpoint: string, body?: any, options?: ApiRequestOptions): Promise<T> {
+    if (!options?.skipMediaStoragePreflight) {
+      const uploadBytes = estimateMediaUploadBytes(body)
+      if (uploadBytes > 0) await requestMediaStorageUploadPermission(uploadBytes)
+    }
     return this.request<T>(endpoint, {
       ...options,
       method: 'DELETE',

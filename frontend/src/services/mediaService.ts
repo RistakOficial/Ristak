@@ -1,5 +1,9 @@
 import apiClient from './apiClient'
 import { getApiBaseUrl } from './apiBaseUrl'
+import {
+  requestMediaStorageUploadPermission,
+  showMediaStorageQuotaExceeded
+} from './mediaStorageQuotaGuard'
 import * as tus from 'tus-js-client'
 
 export interface MediaAsset {
@@ -50,6 +54,9 @@ export interface StorageUsage {
   used_bytes?: number
   available_bytes?: number | null
   usage_percent?: number | null
+  warning_threshold_percent?: number
+  warning_required?: boolean
+  connect_path?: string
   files_count?: number
   by_media_type?: Record<string, number>
   by_module?: Record<string, number>
@@ -704,7 +711,7 @@ async function prepareResumableVideoUpload(input: UploadMediaFileInput, clientUp
       isPublic: input.isPublic ?? true,
       clientUploadId
     },
-    { signal: input.signal }
+    { signal: input.signal, skipMediaStoragePreflight: true }
   )
 }
 
@@ -767,7 +774,7 @@ function postFormWithProgress<T>(
   signal?: AbortSignal
 ): Promise<T> {
   if (!onProgress || typeof XMLHttpRequest === 'undefined') {
-    return apiClient.postForm<T>(endpoint, body, { signal })
+    return apiClient.postForm<T>(endpoint, body, { signal, skipMediaStoragePreflight: true })
   }
 
   return new Promise((resolve, reject) => {
@@ -819,7 +826,14 @@ function postFormWithProgress<T>(
         return
       }
 
-      reject(createMediaUploadHttpError(payload, xhr.status, xhr.statusText))
+      const uploadError = createMediaUploadHttpError(payload, xhr.status, xhr.statusText)
+      const quotaExceeded = xhr.status === 413 && payload && typeof payload === 'object' &&
+        (payload as { code?: unknown }).code === 'storage_quota_exceeded'
+      if (quotaExceeded) {
+        void showMediaStorageQuotaExceeded(payload).finally(() => reject(uploadError))
+        return
+      }
+      reject(uploadError)
     }
 
     xhr.onerror = () => {
@@ -842,6 +856,7 @@ function createMediaUploadCancelledError() {
 
 export const mediaService = {
   async uploadFile(input: UploadMediaFileInput): Promise<MediaAsset> {
+    await requestMediaStorageUploadPermission(input.file.size)
     const useResumableVideo = shouldUseResumableVideoUpload(input)
     const clientUploadId = input.clientUploadId || (
       useResumableVideo

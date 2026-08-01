@@ -29,7 +29,7 @@ services:
       - key: GRACEFUL_SHUTDOWN_TIMEOUT_MS
         value: "295000"
       - key: DEFAULT_STORAGE_QUOTA_GB
-        value: "5"
+        value: "1"
       - key: MEDIA_STORAGE_REQUIRE_BUNNY
         value: "true"
       - key: BUNNY_STREAM_COLLECTION_NAME

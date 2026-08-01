@@ -47,6 +47,7 @@ import {
 import { ToastContainer } from '@/components/common/Toast'
 import { Modal } from '@/components/common/Modal'
 import { StorageAlert } from '@/components/common/StorageAlert'
+import { MediaStorageQuotaPrompt } from '@/components/common/MediaStorageQuotaPrompt'
 import { AppStartupLoader } from '@/components/common/AppStartupLoader'
 import { MobileNotificationOnboarding } from '@/components/phone/MobileNotificationOnboarding'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
@@ -980,6 +981,7 @@ const AppWithNotifications: React.FC = () => {
           </Routes>
         </RouteModuleSuspense>
         <MobileNotificationOnboarding />
+        <MediaStorageQuotaPrompt />
       </BrowserRouter>
       <StorageAlert />
       <ToastContainer toasts={toasts} onClose={removeToast} />

@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Cloud,
+  ExternalLink,
   HardDrive,
   RefreshCw,
   Server,
@@ -191,6 +192,14 @@ export const BunnyIntegration: React.FC = () => {
               </div>
 
               <div className={styles.formActions}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  leftIcon={<ExternalLink size={17} />}
+                  onClick={() => window.open('https://bunny.net', '_blank', 'noopener,noreferrer')}
+                >
+                  Crear cuenta en Bunny.net
+                </Button>
                 <Button type="submit" loading={saving} leftIcon={<Cloud size={17} />}>
                   Conectar Bunny.net
                 </Button>

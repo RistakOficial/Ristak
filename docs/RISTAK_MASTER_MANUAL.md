@@ -7216,6 +7216,15 @@ Capacidades:
 - Explorador por cuenta con carpetas persistentes, incluidas carpetas vacías.
 - Renombrado seguro de archivos y carpetas, soft delete, move y replace.
 - Cuotas.
+- El Bunny administrado por Installer incluye exactamente 1 GB por negocio
+  estándar. Desde 90% —considerando también el archivo que se intenta subir y
+  las cargas ya reservadas— aparece un modal en cada intento. Mientras todavía
+  quepa, el usuario puede continuar; al llegar al giga, el backend bloquea la
+  carga y ofrece ir a `Configuración > Plataformas conectadas > Bunny.net`.
+  El aviso no se puede silenciar de forma permanente.
+- La app iOS usa el mismo preflight antes de transmitir adjuntos y presenta la
+  alerta global equivalente; en cargas simultáneas encola los avisos para que
+  ninguno quede oculto.
 - Compresion.
 - Bunny Storage para archivos.
 - Bunny Stream para video.
@@ -7278,6 +7287,10 @@ Capacidades:
   Bunny recibió y confirmar el original en Stream. Las cuentas estándar
   transmiten además ese original a Bunny Storage con el mismo número de bytes;
   el perfil premium no retransmite ni duplica el archivo.
+- Las cargas multipart/base64 usan además `media_quota_reservations`: apartan
+  bytes antes de hablar con Bunny, comparten el mismo candado de cuota que TUS y
+  liberan la reserva al terminar o por vencimiento. Así dos archivos simultáneos
+  no pueden colarse por encima de 1 GB.
 - Mientras sube, un TUS directo vive como `bunny_stream`. En estándar, al
   finalizar queda como `bunny`, con `bunny_path` y `public_url` de Storage. En
   premium permanece `bunny_stream` y preview/publicado reproducen el HLS

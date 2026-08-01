@@ -1,0 +1,1 @@
+export { MediaStorageQuotaPrompt } from './MediaStorageQuotaPrompt'

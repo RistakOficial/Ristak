@@ -40,8 +40,8 @@ CREATE INDEX IF NOT EXISTS idx_media_assets_provider_path ON media_assets(storag
 
 CREATE TABLE IF NOT EXISTS storage_quotas (
   business_id TEXT PRIMARY KEY,
-  quota_gb DOUBLE PRECISION DEFAULT 5,
-  quota_bytes BIGINT DEFAULT 5368709120,
+  quota_gb DOUBLE PRECISION DEFAULT 1,
+  quota_bytes BIGINT DEFAULT 1073741824,
   used_bytes BIGINT DEFAULT 0,
   extra_quota_gb DOUBLE PRECISION DEFAULT 0,
   storage_enabled INTEGER DEFAULT 1,
@@ -50,14 +50,14 @@ CREATE TABLE IF NOT EXISTS storage_quotas (
 );
 
 INSERT INTO storage_quotas (business_id, quota_gb, quota_bytes, used_bytes, extra_quota_gb, storage_enabled)
-VALUES ('default', 5, 5368709120, 0, 0, 1)
+VALUES ('default', 1, 1073741824, 0, 0, 1)
 ON CONFLICT (business_id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS storage_settings (
   id INTEGER PRIMARY KEY,
   storage_provider TEXT DEFAULT 'bunny',
   storage_enabled INTEGER DEFAULT 1,
-  default_storage_quota_gb DOUBLE PRECISION DEFAULT 5,
+  default_storage_quota_gb DOUBLE PRECISION DEFAULT 1,
   compression_enabled INTEGER DEFAULT 1,
   image_optimization_enabled INTEGER DEFAULT 1,
   video_compression_enabled INTEGER DEFAULT 1,
@@ -88,6 +88,5 @@ INSERT INTO storage_settings (
   max_audio_size_mb,
   max_document_size_mb
 )
-VALUES (1, 'bunny', 1, 5, 1, 1, 1, 1, 25, 512, 100, 50)
+VALUES (1, 'bunny', 1, 1, 1, 1, 1, 1, 25, 512, 100, 50)
 ON CONFLICT (id) DO NOTHING;
-

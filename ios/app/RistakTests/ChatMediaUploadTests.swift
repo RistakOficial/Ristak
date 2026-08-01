@@ -3,6 +3,29 @@ import XCTest
 @testable import Ristak
 
 final class ChatMediaUploadTests: XCTestCase {
+    func testManagedQuotaPromptUsesProjectedUsageAndAlwaysWarnsAboutEveryAttempt() {
+        let preflight = MediaStorageQuotaPreflight(
+            allowed: true,
+            warningRequired: true,
+            warningThresholdPercent: 90,
+            quotaBytes: 1_073_741_824,
+            usedBytes: 900_000_000,
+            reservedBytes: 0,
+            requestedBytes: 80_000_000,
+            projectedBytes: 980_000_000,
+            usagePercent: 83.82,
+            projectedUsagePercent: 91.27,
+            connectPath: "/settings/bunny"
+        )
+
+        let prompt = MediaStorageQuotaPromptState(preflight: preflight)
+
+        XCTAssertFalse(prompt.isBlocked)
+        XCTAssertEqual(prompt.displayPercent, 91)
+        XCTAssertTrue(prompt.message.contains("cada intento de subida"))
+        XCTAssertTrue(prompt.message.contains("continuar"))
+    }
+
     func testDocumentEncoderAcceptsXMLAndZIPButMarksThemUnsupportedForWhatsAppAPI() throws {
         let fixtures: [(name: String, bytes: Data, mimeType: String)] = [
             ("factura.xml", Data("<factura/>".utf8), "application/xml"),

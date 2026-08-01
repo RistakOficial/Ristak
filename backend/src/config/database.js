@@ -3075,14 +3075,29 @@ async function initTablesUnlocked() {
     await db.run(`
       CREATE TABLE IF NOT EXISTS storage_quotas (
         business_id TEXT PRIMARY KEY,
-        quota_gb REAL DEFAULT 5,
-        quota_bytes BIGINT DEFAULT 5368709120,
+        quota_gb REAL DEFAULT 1,
+        quota_bytes BIGINT DEFAULT 1073741824,
         used_bytes BIGINT DEFAULT 0,
         extra_quota_gb REAL DEFAULT 0,
         storage_enabled INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
+    `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS media_quota_reservations (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL DEFAULT 'default',
+        quota_size BIGINT NOT NULL DEFAULT 0,
+        expires_at_ms BIGINT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_media_quota_reservations_business_expiry
+      ON media_quota_reservations(business_id, expires_at_ms)
     `)
 
     // Carpetas creadas por el usuario en Configuración > Media. Los archivos
@@ -3111,7 +3126,7 @@ async function initTablesUnlocked() {
         id INTEGER PRIMARY KEY,
         storage_provider TEXT DEFAULT 'bunny',
         storage_enabled INTEGER DEFAULT 1,
-        default_storage_quota_gb REAL DEFAULT 5,
+        default_storage_quota_gb REAL DEFAULT 1,
         compression_enabled INTEGER DEFAULT 1,
         image_optimization_enabled INTEGER DEFAULT 1,
         video_compression_enabled INTEGER DEFAULT 1,
@@ -3199,8 +3214,8 @@ async function initTablesUnlocked() {
     }
 
     for (const [columnName, columnType] of [
-      ['quota_gb', 'REAL DEFAULT 5'],
-      ['quota_bytes', 'BIGINT DEFAULT 5368709120'],
+      ['quota_gb', 'REAL DEFAULT 1'],
+      ['quota_bytes', 'BIGINT DEFAULT 1073741824'],
       ['used_bytes', 'BIGINT DEFAULT 0'],
       ['extra_quota_gb', 'REAL DEFAULT 0'],
       ['storage_enabled', 'INTEGER DEFAULT 1']
@@ -3265,7 +3280,7 @@ async function initTablesUnlocked() {
       `, [
         1,
         process.env.MEDIA_STORAGE_PROVIDER || 'bunny',
-        Number(process.env.DEFAULT_STORAGE_QUOTA_GB || 5) || 5,
+        1,
         process.env.BUNNY_STORAGE_ZONE || null,
         process.env.BUNNY_STORAGE_REGION || null,
         process.env.BUNNY_CDN_BASE_URL || null,
@@ -3280,7 +3295,7 @@ async function initTablesUnlocked() {
     }
 
     try {
-      const quotaGb = Number(process.env.DEFAULT_STORAGE_QUOTA_GB || 5) || 5
+      const quotaGb = 1
       await db.run(`
         INSERT INTO storage_quotas (business_id, quota_gb, quota_bytes, used_bytes, extra_quota_gb, storage_enabled)
         VALUES ('default', ?, ?, 0, 0, 1)

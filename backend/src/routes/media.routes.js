@@ -17,6 +17,7 @@ import {
   downloadMediaAssetsArchiveHandler,
   getMediaAssetStreamAnalyticsHandler,
   getMediaAssetUrlHandler,
+  getMediaUploadPreflightHandler,
   getStorageUsageHandler,
   listMediaAssetsHandler,
   listMediaFoldersHandler,
@@ -201,6 +202,10 @@ router.post(
 
 router.use(requireAuth)
 
+// Todas las superficies autenticadas (Chat, Sites, Automatizaciones y Media)
+// consultan el mismo guard antes de transmitir contenido. El límite duro se
+// vuelve a validar dentro de mediaStorageService al reservar los bytes.
+router.post('/upload-preflight', getMediaUploadPreflightHandler)
 router.post('/video-upload/prepare', classifyMediaUpload, requireMediaUploadAccess, prepareResumableVideoUploadHandler)
 router.post('/video-upload/:assetId/finalize', classifyMediaUpload, requireMediaUploadAccess, finalizeResumableVideoUploadHandler)
 router.delete('/video-upload/:assetId', classifyMediaUpload, requireMediaUploadAccess, cancelResumableVideoUploadHandler)

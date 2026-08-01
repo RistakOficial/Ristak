@@ -113,6 +113,10 @@ final class CameraShareViewModel: Identifiable {
                 media,
                 clientUploadID: "ios-camera-\(id.uuidString.lowercased())"
             )
+        } catch is MediaStorageQuotaGateError {
+            return false
+        } catch is CancellationError {
+            return false
         } catch {
             alertMessage = error.localizedDescription
             return false

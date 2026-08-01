@@ -111,7 +111,9 @@ así que en la práctica el modo data URL tope ≈26 MB de binario.
   `"El archivo pesa demasiado. Límite para <tipo>: N MB."`
 - Cuota: **403** `storage_disabled` si `storage_enabled=false`; **413**
   `storage_quota_exceeded` `"No hay espacio suficiente para subir este archivo..."`
-  (`mediaStorageService.js:1746-1760`). Cuota default 5 GB por negocio.
+  (`mediaStorageService.js:1746-1760`). Cuota administrada fija de 1 GB por
+  negocio; al llegar al 90% cada intento de subida advierte que debe conectarse
+  una cuenta Bunny.net propia.
 - Storage global deshabilitado → **503** `storage_disabled`.
 - Bunny requerido pero mal configurado → **503** `bunny_not_configured`.
 
@@ -471,10 +473,17 @@ Texto del mensaje: si es igual al label genérico (`foto`, `video`, `audio`,
 | Regla | Detalle |
 |---|---|
 | Licencia/módulo biblioteca | `/api/media/*` exige feature + módulo `settings_media`. Los envíos de chat NO. |
-| Cuota | 5 GB default (`DEFAULT_STORAGE_QUOTA_GB`), recalculada de `media_assets` activos. |
+| Cuota | 1 GB administrado, aviso obligatorio desde 90% en cada intento y bloqueo duro al llenarse; una cuenta Bunny propia quita el techo interno. |
 | HTTPS obligatorio | Media por WhatsApp API oficial requiere URL pública HTTPS; instalaciones sin Bunny y sin URL pública solo pueden enviar media por QR (error accionable WA-006, `whatsappApiService.js:603-616`). |
 | Ventana 24 h | Media libre solo dentro de ventana o vía QR; fuera → plantillas. |
 | Dedup subida | `clientUploadId` (header `x-ristak-upload-id`) evita duplicados al reintentar. |
+
+La app iOS consulta `POST /api/media/upload-preflight` desde
+`ChatMediaUploadService` antes de crear o transmitir el multipart. El
+`MediaStorageQuotaCoordinator` presenta una alerta global en cada intento que
+entre o permanezca en el último 10%, permite continuar únicamente si todavía
+cabe y abre `/settings/bunny` para administradores. Las alertas simultáneas se
+encolan para que ninguna tape a otra.
 | Caption | Máx 1024 chars, admite variables de plantilla (`{{...}}` renderizadas server-side). |
 | Media entrante | El backend la rehospeda (módulo `chat`); la app solo pinta `media_url`. |
 | Seguridad de servido | nosniff + inline solo para raster/video/audio/PDF; SVG/HTML → descarga. |

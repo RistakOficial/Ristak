@@ -15,6 +15,7 @@ import {
   getMediaAssetBuffer,
   getMediaAssetFile,
   getMediaAssetReadStream,
+  getMediaUploadPreflight,
   getStorageRuntimeConfig,
   getStorageUsage,
   listMediaAssets,
@@ -1012,6 +1013,21 @@ export async function getStorageUsageHandler(req, res) {
     res.json({ success: true, data: usage })
   } catch (error) {
     sendError(res, error, 'Error calculando almacenamiento')
+  }
+}
+
+export async function getMediaUploadPreflightHandler(req, res) {
+  try {
+    const requestedBytes = Number(
+      req.body?.requestedBytes ?? req.body?.requested_bytes ?? req.body?.sizeBytes ?? req.body?.size ?? 0
+    )
+    const preflight = await getMediaUploadPreflight({
+      businessId: 'default',
+      requestedBytes: Number.isFinite(requestedBytes) ? Math.max(0, Math.round(requestedBytes)) : 0
+    })
+    res.json({ success: true, data: preflight })
+  } catch (error) {
+    sendError(res, error, 'Error revisando el espacio disponible')
   }
 }
 
