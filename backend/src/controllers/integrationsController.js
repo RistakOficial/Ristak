@@ -14,6 +14,7 @@ import {
   isMetaDirectWhatsAppConnected,
   isWhatsAppQrConnected
 } from '../services/integrationConnectionStateService.js';
+import { getBunnyAccountIntegrationStatus } from '../services/bunnyAccountIntegrationService.js';
 
 // La verificación del token contra la API de HighLevel es costosa y este
 // endpoint se consulta varias veces por carga de página. Se cachea el
@@ -131,7 +132,8 @@ export const getStatus = async (req, res) => {
       mercadoPagoStatus,
       conektaStatus,
       clipStatus,
-      rebillStatus
+      rebillStatus,
+      bunnyStatus
     ] = await Promise.all([
       Promise.all([
         getMetaConfig().catch(() => null),
@@ -218,6 +220,20 @@ export const getStatus = async (req, res) => {
           accountLabel: config?.accountLabel || null,
           webhookConfigured: Boolean(config?.webhookConfigured)
         };
+      }),
+      resolveLocalIntegrationStatus('Bunny.net', {
+        configured: false,
+        connected: false,
+        state: 'not_connected',
+        storageOwnedByCustomer: false
+      }, async () => {
+        const status = await getBunnyAccountIntegrationStatus()
+        return {
+          configured: status.configured,
+          connected: status.connected,
+          state: status.state,
+          storageOwnedByCustomer: status.storageOwnedByCustomer
+        }
       })
     ]);
 
@@ -249,7 +265,8 @@ export const getStatus = async (req, res) => {
       mercadopago: mercadoPagoStatus,
       conekta: conektaStatus,
       clip: clipStatus,
-      rebill: rebillStatus
+      rebill: rebillStatus,
+      bunny: bunnyStatus
     });
 
   } catch (error) {
@@ -273,6 +290,12 @@ export const getStatus = async (req, res) => {
       conekta: { configured: false, connected: false },
       clip: { configured: false, connected: false },
       rebill: { configured: false, connected: false },
+      bunny: {
+        configured: false,
+        connected: false,
+        state: 'not_connected',
+        storageOwnedByCustomer: false
+      },
       error: 'Error al obtener estado de integraciones'
     });
   }

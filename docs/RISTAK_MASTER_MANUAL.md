@@ -1722,8 +1722,10 @@ Configuracion se organiza en:
   reglas de ocultamiento.
 - Agenda: calendarios.
 - Cobros: pagos.
-- Plataformas conectadas: HighLevel, Meta, WhatsApp, correos, Inteligencia
-  Artificial.
+- Plataformas conectadas: HighLevel, Meta, WhatsApp, correos, Bunny.net e
+  Inteligencia Artificial. Bunny.net sólo aparece para administradores con
+  acceso a Integraciones y permite conectar el storage propio con una sola
+  Account API Key.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
 - Avanzado: Developers. La entrada principal es **Conectar con MCP**: muestra
@@ -7176,6 +7178,21 @@ Capacidades:
 - Compresion.
 - Bunny Storage para archivos.
 - Bunny Stream para video.
+- `Configuración > Plataformas conectadas > Bunny.net` permite que un
+  administrador conecte la cuenta propia del negocio con una sola Account API
+  Key. Ristak crea o reutiliza Storage Zone, CDN y biblioteca Stream, guarda las
+  credenciales cifradas y usa esa cuenta para toda carga nueva. La cuota interna
+  pasa a ilimitada porque deja de consumir el almacenamiento administrado; los
+  límites y costos reales siguen siendo responsabilidad de la cuenta Bunny.net.
+- Los archivos anteriores se migran por lotes sin un cron permanente. Cada copia
+  se verifica antes de borrar el origen; las limpiezas fallidas se reintentan sin
+  descartar la copia nueva, y un candado distribuido evita migraciones duplicadas
+  entre instancias. El avance queda persistido y puede reanudarse. Desconectar
+  migra en sentido inverso y se bloquea si la cuota
+  administrada no puede recibir todos los bytes. Si la Account API Key ve la
+  misma Storage Zone y biblioteca que Installer ya entregaba, Ristak las
+  reutiliza y evita una mudanza inútil; este es el caso esperado para la cuenta
+  principal de Ristak/Raulgomez.
 - En `Configuración > Media`, **Nueva carpeta** crea rutas relativas a la unidad
   privada del negocio y **Subir aquí** guarda directamente en la carpeta abierta,
   sin inventar niveles de tipo o fecha. El backend siempre antepone
@@ -9401,7 +9418,8 @@ Registro de ubicacion:
 | Pagos | config interna de pagos y metadata por provider | No | Modo `test/live` debe persistir por pago |
 | Correo SMTP/IMAP | `app_config.email_smtp_config` y `app_config.email_smtp_password` | No | App password cifrado; requerido para enviar y recibir correos cuando la integracion esta activa |
 | Moneda de cuenta | `app_config.account_currency` | No | Default obligatorio para importes nuevos; no crear env/secret de moneda |
-| Bunny/media | `storage_settings`, env fallback, licencia central | No | API keys nunca en docs |
+| Bunny/media administrado | `storage_settings`, env fallback, licencia central | No | API keys nunca en docs |
+| Bunny.net del negocio | `app_config.bunny_account_integration_encrypted` | No | Account key, Storage key, Stream key y migración dentro de un único payload cifrado; el frontend sólo recibe preview enmascarado |
 | Push web/movil | env VAPID/FCM/APNS o configuracion segura | No | Provider puede exigir secrets externos |
 | Licencia central | env `LICENSE_*`/`RISTAK_*` | En instalaciones managed | No exponer valores |
 | IA providers | configuracion segura/env segun provider | No | No hardcodear API keys |

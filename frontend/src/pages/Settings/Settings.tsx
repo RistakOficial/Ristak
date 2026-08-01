@@ -6,6 +6,7 @@ import {
   Building2,
   CalendarDays,
   CheckCheck,
+  Cloud,
   Code2,
   CreditCard,
   Database,
@@ -70,6 +71,7 @@ const paymentsConfigurationPage = createLazySettingsPage(() => import('./Payment
 const metaAdsIntegrationPage = createLazySettingsPage(() => import('./MetaAdsIntegration'), 'MetaAdsIntegration')
 const whatsAppSettingsPage = createLazySettingsPage(() => import('./WhatsAppSettings'), 'WhatsAppSettings')
 const emailSettingsPage = createLazySettingsPage(() => import('./EmailSettings'), 'EmailSettings')
+const bunnyIntegrationPage = createLazySettingsPage(() => import('./BunnyIntegration'), 'BunnyIntegration')
 const webTrackingPage = createLazySettingsPage(() => import('./WebTracking'), 'WebTracking')
 const calendarsConfigurationPage = createLazySettingsPage(() => import('./CalendarsConfiguration'), 'CalendarsConfiguration')
 const profileSettingsPage = createLazySettingsPage(() => import('./AccountSettings'), 'ProfileSettings')
@@ -93,6 +95,7 @@ const PaymentsConfiguration = paymentsConfigurationPage.Component
 const MetaAdsIntegration = metaAdsIntegrationPage.Component
 const WhatsAppSettings = whatsAppSettingsPage.Component
 const EmailSettings = emailSettingsPage.Component
+const BunnyIntegration = bunnyIntegrationPage.Component
 const WebTracking = webTrackingPage.Component
 const CalendarsConfiguration = calendarsConfigurationPage.Component
 const ProfileSettings = profileSettingsPage.Component
@@ -117,6 +120,7 @@ const settingsPageRegistry = [
   { path: '/settings/meta-ads', preload: metaAdsIntegrationPage.preload },
   { path: '/settings/whatsapp', preload: whatsAppSettingsPage.preload },
   { path: '/settings/email', preload: emailSettingsPage.preload },
+  { path: '/settings/bunny', preload: bunnyIntegrationPage.preload },
   { path: '/settings/tracking', preload: webTrackingPage.preload },
   { path: '/settings/calendars', preload: calendarsConfigurationPage.preload },
   { path: '/settings/profile', preload: profileSettingsPage.preload },
@@ -180,6 +184,7 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/meta-ads': MetaIcon,
   '/settings/whatsapp': WhatsAppIcon,
   '/settings/email': Mail,
+  '/settings/bunny': Cloud,
   '/settings/tracking': FileCode2,
   '/settings/domains': Globe2,
   '/settings/costs': BadgeDollarSign,
@@ -265,6 +270,7 @@ export const Settings: React.FC = () => {
                 <Route path="meta-ads/*" element={<SettingsAccessGate moduleKey="campaigns"><MetaAdsIntegration /></SettingsAccessGate>} />
                 <Route path="whatsapp/*" element={<SettingsAccessGate moduleKey="settings_whatsapp"><WhatsAppSettings /></SettingsAccessGate>} />
                 <Route path="email" element={<SettingsAccessGate moduleKey="settings_email"><EmailSettings /></SettingsAccessGate>} />
+                <Route path="bunny" element={<SettingsAccessGate moduleKey="settings_integrations" adminOnly><BunnyIntegration /></SettingsAccessGate>} />
                 <Route path="calendars/*" element={<SettingsAccessGate moduleKey="settings_calendars"><CalendarsConfiguration /></SettingsAccessGate>} />
                 <Route path="tracking/*" element={<SettingsAccessGate moduleKey="settings_tracking"><WebTracking /></SettingsAccessGate>} />
                 <Route path="domains/*" element={<SettingsAccessGate moduleKey="settings_domains"><Domains /></SettingsAccessGate>} />

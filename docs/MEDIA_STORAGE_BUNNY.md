@@ -2,6 +2,39 @@
 
 Ristak stores new user-uploaded media through `mediaStorageService`. The database stores metadata, URLs, ownership, processing state and quota usage. Heavy files go to Bunny Storage when configured; otherwise the service marks storage as `not_configured` and uses a temporary local fallback unless `MEDIA_STORAGE_REQUIRE_BUNNY=true`.
 
+## Cuenta Bunny.net propiedad del negocio
+
+Un administrador puede abrir `Configuración > Plataformas conectadas > Bunny.net`
+y pegar una sola **Account API Key**. El backend valida que la llave sea de cuenta,
+crea o reutiliza una Storage Zone, una Pull Zone/CDN y una biblioteca de Bunny
+Stream, y guarda la llave global junto con las llaves limitadas resultantes dentro
+de `app_config.bunny_account_integration_encrypted`. Todo el documento se cifra con
+el helper de cifrado de Ristak; las respuestas al frontend sólo incluyen el último
+fragmento enmascarado de la llave.
+
+Cuando esta conexión está activa, su configuración tiene prioridad sobre el storage
+administrado por Installer y las cargas nuevas van directamente a la cuenta del
+negocio. Ristak reporta cuota interna ilimitada porque deja de consumir la cuota
+administrada, pero esto no elimina los límites, costos, retención ni políticas de
+Bunny.net.
+
+Los assets existentes se migran en segundo plano y por lotes, sin un cron
+permanente. Cada archivo se transmite sin materializarlo completo en RAM, se
+verifica por tamaño en el destino, se actualiza la fila canónica y sólo entonces se
+intenta limpiar el origen. Si esa limpieza falla, la copia verificada permanece
+activa y el origen queda marcado para un reintento independiente. Un advisory lock
+distribuido impide que varias instancias del backend ejecuten la misma migración.
+El estado y los errores resumibles viven cifrados junto con la conexión; abrir el
+panel reanuda una migración `pending`/`running`, y el administrador puede reintentar
+sólo los pendientes. Desconectar ejecuta la misma garantía en sentido inverso y se
+bloquea si la cuota administrada ya no alcanza.
+
+Si la API key pertenece a la misma cuenta que ya usa Installer —por ejemplo la
+cuenta principal de Ristak— el backend reconoce la Storage Zone y la biblioteca
+actuales, las reutiliza y marca la migración como completada sin duplicar ni mover
+archivos. Una rotación de llave sólo se acepta si la nueva llave todavía puede ver
+la misma Storage Zone; cambiar a otro propietario exige desconectar primero.
+
 ## Render variables
 
 En una instalación gestionada o en un Blueprint standalone, la configuración central de Bunny
@@ -46,6 +79,11 @@ identidad del broker sólo se conservan cifradas en `app_config`; jamás se devu
 ## Endpoints
 
 Authenticated app endpoints:
+
+- `GET /api/integrations/bunny` (admin con `settings_integrations`)
+- `POST /api/integrations/bunny/connect` (admin con `settings_integrations`)
+- `POST /api/integrations/bunny/migration/retry` (admin con `settings_integrations`)
+- `DELETE /api/integrations/bunny` (admin con `settings_integrations`)
 
 - `POST /api/media/upload`
 - `POST /api/media/video-upload/prepare?module=sites`
@@ -495,6 +533,12 @@ these events.
 
 Every business starts with 5 GB. Usage is recalculated from active `media_assets` rows and cached in `storage_quotas.used_bytes`.
 
+Una cuenta Bunny.net conectada por el negocio también declara
+`quota_mode='unlimited'` y `quota_unlimited=true` dentro de Ristak. Esto significa
+que Ristak no aplica su techo administrado a las cargas que paga y conserva el
+propio negocio; nunca debe presentarse como almacenamiento gratuito o físicamente
+infinito porque Bunny.net conserva sus límites y facturación.
+
 An installation whose normalized owner email matches the internal premium media
 policy in `backend/src/services/mediaAccountPolicyService.js` has unlimited
 Ristak media quota. This policy belongs to the installation owner, not to the
@@ -508,11 +552,13 @@ per-video size ceiling because bytes travel browser-to-Bunny through TUS. The
 600 MB multipart/Render safety limit remains in place for traditional endpoints;
 “unlimited” must never route a giant video through Render memory or disk.
 
-The same policy consumes an isolated library named
+In managed premium mode, the same policy consumes an isolated library named
 `Ristak Sites Premium Adaptive`. Installer keeps the global Bunny account key
 ciphered in its own database, creates or updates that library, and gives the
 installed app only the scoped library ID/API key through `/api/license/storage-config`.
-Ristak never receives the global account key. The profile enforces premium
+In that managed mode Ristak never receives the global account key; the explicit
+customer-owned integration above is the exception requested by the account owner
+and stores it encrypted inside the installed app. The profile enforces premium
 encoding, Player v2, x264 plus AV1, 240p through 2160p renditions, official
 high-quality bitrate defaults, original-file retention, no early direct-original
 playback and pre-encoded adaptive HLS. The TUS upload and all playback bytes stay

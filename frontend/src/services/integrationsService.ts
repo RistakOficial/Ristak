@@ -81,6 +81,13 @@ export interface RebillStatus {
   webhookConfigured?: boolean
 }
 
+export interface BunnyStatus {
+  configured: boolean
+  connected: boolean
+  state?: string
+  storageOwnedByCustomer?: boolean
+}
+
 export interface IntegrationsStatus {
   highlevel: HighLevelStatus
   meta: MetaStatus
@@ -92,6 +99,7 @@ export interface IntegrationsStatus {
   conekta?: ConektaStatus
   clip?: ClipStatus
   rebill?: RebillStatus
+  bunny?: BunnyStatus
 }
 
 // El estado de integraciones se consulta desde muchos componentes al montar

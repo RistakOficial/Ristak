@@ -462,6 +462,7 @@ export const ROUTE_ACCESS: Array<{ prefix: string; moduleKey: PermissionKey }> =
   { prefix: '/settings/calendars', moduleKey: 'settings_calendars' },
   { prefix: '/settings/payments', moduleKey: 'settings_payments' },
   { prefix: '/settings/highlevel', moduleKey: 'settings_integrations' },
+  { prefix: '/settings/bunny', moduleKey: 'settings_integrations' },
   { prefix: '/settings/meta-ads', moduleKey: 'campaigns' },
   { prefix: '/settings/whatsapp', moduleKey: 'settings_whatsapp' },
   { prefix: '/settings/email', moduleKey: 'settings_email' },

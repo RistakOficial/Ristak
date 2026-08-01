@@ -18,6 +18,10 @@ import {
 } from './outboundMediaReferenceService.js'
 import { resolveCentralBrokerConfig } from './centralBrokerService.js'
 import { resolveMediaAccountPolicy } from './mediaAccountPolicyService.js'
+import {
+  bunnyIntegrationRuntimeConfig,
+  readBunnyAccountIntegration
+} from './bunnyAccountIntegrationService.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -1329,7 +1333,7 @@ export function resetCentralStorageConfigCache() {
   bunnyStreamCollectionCache.clear()
 }
 
-export async function getStorageRuntimeConfig() {
+export async function getManagedStorageRuntimeConfig() {
   const row = await getStorageSettingsRow()
   const mediaAccountPolicy = await resolveMediaAccountPolicy()
   let config = buildStorageRuntimeConfig(row)
@@ -1356,6 +1360,40 @@ export async function getStorageRuntimeConfig() {
     config = await autoProvisionBunnyStreamConfig(config)
   }
   return applyPremiumMediaStreamConfig(config, mediaAccountPolicy)
+}
+
+export async function getStorageRuntimeConfig() {
+  const managedConfig = await getManagedStorageRuntimeConfig()
+  const integration = await readBunnyAccountIntegration()
+  if (!integration) return managedConfig
+
+  const customerConfig = bunnyIntegrationRuntimeConfig(integration)
+  if (integration.active && customerConfig?.bunnyConfigured) {
+    return {
+      ...managedConfig,
+      ...customerConfig,
+      mediaAccountPolicy: managedConfig.mediaAccountPolicy,
+      premiumStreamReady: managedConfig.mediaAccountPolicy?.premiumStream
+        ? Boolean(customerConfig.bunnyStreamConfigured)
+        : managedConfig.premiumStreamReady,
+      premiumStreamError: '',
+      bunnyStorageLegacyConfig: managedConfig.bunnyConfigured ? managedConfig : null,
+      bunnyStreamLegacyConfig: managedConfig.bunnyStreamConfigured ? managedConfig : null
+    }
+  }
+
+  // Durante una desconexión, las cargas nuevas regresan al almacenamiento
+  // administrado y las filas que aún viven en la cuenta del cliente conservan
+  // acceso mediante el perfil legacy hasta terminar la migración inversa.
+  if (integration.disconnecting && customerConfig?.bunnyConfigured) {
+    return {
+      ...managedConfig,
+      bunnyStorageLegacyConfig: customerConfig,
+      bunnyStreamLegacyConfig: customerConfig
+    }
+  }
+
+  return managedConfig
 }
 
 export async function ensureBunnyStreamRuntimeConfigured() {
@@ -1684,6 +1722,20 @@ function bunnyStreamConfigForAsset(config, asset) {
   if (
     legacyConfig?.bunnyStreamConfigured &&
     assetLibraryId === cleanString(legacyConfig.bunnyStreamLibraryId)
+  ) {
+    return legacyConfig
+  }
+  return config
+}
+
+function bunnyStorageConfigForAsset(config, asset) {
+  const assetStorageZone = cleanString(asset?.storageZone)
+  if (!assetStorageZone || assetStorageZone === cleanString(config.bunnyStorageZone)) return config
+
+  const legacyConfig = config.bunnyStorageLegacyConfig
+  if (
+    legacyConfig?.bunnyConfigured &&
+    assetStorageZone === cleanString(legacyConfig.bunnyStorageZone)
   ) {
     return legacyConfig
   }
@@ -2390,7 +2442,11 @@ async function deleteFromBunny({ config, objectPath, deadlineAt = 0 }) {
 
   if (!response.ok && response.status !== 404) {
     const detail = await response.text().catch(() => '')
-    throw new Error(`Bunny rechazó la eliminación (${response.status}): ${detail.slice(0, 180) || response.statusText}`)
+    throw errorWithStatus(
+      `Bunny rechazó la eliminación (${response.status}): ${detail.slice(0, 180) || response.statusText}`,
+      502,
+      'bunny_delete_failed'
+    )
   }
 }
 
@@ -2652,7 +2708,7 @@ async function assertQuotaAvailable({ businessId, quotaSize, config }) {
   if (!boolValue(quota.storage_enabled, true)) {
     throw errorWithStatus('El almacenamiento está deshabilitado para este negocio.', 403, 'storage_disabled')
   }
-  if (config?.mediaAccountPolicy?.unlimitedQuota) return
+  if (config?.mediaAccountPolicy?.unlimitedQuota || config?.customerOwnedStorage) return
 
   const usedBytes = await readActiveUsageBytes(businessId)
   const quotaBytes = numberValue(quota.quota_bytes, Math.round(numberValue(quota.quota_gb, 5) * GB))
@@ -5561,7 +5617,7 @@ export async function listMediaAssets({
 
 export async function getStorageUsage({ businessId = 'default' } = {}) {
   const config = await getStorageRuntimeConfig()
-  const unlimitedQuota = Boolean(config.mediaAccountPolicy?.unlimitedQuota)
+  const unlimitedQuota = Boolean(config.mediaAccountPolicy?.unlimitedQuota || config.customerOwnedStorage)
   const normalizedBusinessId = normalizeBusinessId(businessId)
   // Esta ruta es de lectura. No crea cuotas, no recalcula toda media_assets y
   // no escribe updated_at cada vez que alguien abre Configuración > Media.
@@ -5610,7 +5666,7 @@ export async function getStorageUsage({ businessId = 'default' } = {}) {
     storage_status: config.storageStatus,
     quota_mode: unlimitedQuota ? 'unlimited' : 'metered',
     quota_unlimited: unlimitedQuota,
-    media_profile: config.mediaAccountPolicy?.id || 'standard',
+    media_profile: config.customerOwnedStorage ? 'customer_bunny' : config.mediaAccountPolicy?.id || 'standard',
     stream_profile: config.mediaAccountPolicy?.streamProfile || 'standard',
     quota_gb: unlimitedQuota ? null : numberValue(quota.quota_gb, 5),
     quota_bytes: unlimitedQuota ? null : totalQuotaBytes,
@@ -5658,12 +5714,16 @@ async function moveSingleMediaAsset({
   let nextPublicUrl = asset.publicUrl || buildAppPublicUrl(`/media/assets/${asset.id}/file`)
   let nextPrivateUrl = asset.privateUrl || null
   let bunnyCleanupPaths = []
+  let sourceStorageConfig = null
+  let destinationStorageConfig = null
 
   if (asset.storageProvider === 'bunny') {
     const config = await getStorageRuntimeConfig()
     if (!config.bunnyConfigured) {
       throw errorWithStatus('Bunny.net no está configurado para mover este archivo.', 503, 'bunny_not_configured')
     }
+    sourceStorageConfig = bunnyStorageConfigForAsset(config, asset)
+    destinationStorageConfig = config
 
     const source = await getMediaAssetReadStream(asset.id, { deadlineAt: operationDeadlineAt })
     await uploadReadableStreamToBunny({
@@ -5677,7 +5737,7 @@ async function moveSingleMediaAsset({
 
     if (thumbnail?.path && nextThumbnailObjectPath) {
       const thumbnailBuffer = await readBunnyObjectBuffer({
-        config,
+        config: sourceStorageConfig,
         objectPath: thumbnail.path,
         publicUrl: thumbnail.publicUrl,
         deadlineAt: operationDeadlineAt
@@ -5727,6 +5787,8 @@ async function moveSingleMediaAsset({
          folder_path = ?,
          public_url = ?,
          private_url = ?,
+         storage_zone = COALESCE(?, storage_zone),
+         cdn_base_url = COALESCE(?, cdn_base_url),
          metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
@@ -5735,13 +5797,15 @@ async function moveSingleMediaAsset({
       nextFolderPath,
       nextPublicUrl,
       nextPrivateUrl,
+      destinationStorageConfig?.bunnyStorageZone || null,
+      destinationStorageConfig?.bunnyCdnBaseUrl || null,
       JSON.stringify(metadata),
       asset.id
     ]
   )
 
   if (bunnyCleanupPaths.length) {
-    const config = await getStorageRuntimeConfig()
+    const config = sourceStorageConfig || await getStorageRuntimeConfig()
     for (const objectPath of bunnyCleanupPaths.filter(Boolean)) {
       await deleteFromBunny({ config, objectPath, deadlineAt: operationDeadlineAt }).catch((error) => {
         logger.warn(`[MediaStorage] No se pudo borrar ruta vieja al mover ${asset.id}: ${error.message}`)
@@ -6487,7 +6551,8 @@ export async function softDeleteMediaAsset(assetId, {
 } = {}) {
   const asset = await getMediaAsset(assetId)
   const runtimeConfig = await getStorageRuntimeConfig()
-  const config = bunnyStreamConfigForAsset(runtimeConfig, asset)
+  const streamConfig = bunnyStreamConfigForAsset(runtimeConfig, asset)
+  const storageConfig = bunnyStorageConfigForAsset(runtimeConfig, asset)
   const metadata = asset.metadata || {}
 
   await db.run(
@@ -6499,9 +6564,9 @@ export async function softDeleteMediaAsset(assetId, {
 
   try {
     if (asset.storageProvider === 'bunny' && asset.bunnyPath) {
-      await deleteFromBunny({ config, objectPath: asset.bunnyPath, deadlineAt: operationDeadlineAt })
+      await deleteFromBunny({ config: storageConfig, objectPath: asset.bunnyPath, deadlineAt: operationDeadlineAt })
       const thumbPath = metadata.variants?.thumbnail?.path
-      if (thumbPath) await deleteFromBunny({ config, objectPath: thumbPath, deadlineAt: operationDeadlineAt })
+      if (thumbPath) await deleteFromBunny({ config: storageConfig, objectPath: thumbPath, deadlineAt: operationDeadlineAt })
     } else if (metadata.localPath) {
       await fs.rm(metadata.localPath, { force: true }).catch(() => undefined)
       if (metadata.variants?.thumbnail?.localPath) {
@@ -6515,7 +6580,7 @@ export async function softDeleteMediaAsset(assetId, {
 
   const streamVideoId = cleanString(metadata.stream?.videoId)
   if (streamVideoId) {
-    await deleteBunnyStreamVideo(config, streamVideoId, { deadlineAt: operationDeadlineAt }).catch((error) => {
+    await deleteBunnyStreamVideo(streamConfig, streamVideoId, { deadlineAt: operationDeadlineAt }).catch((error) => {
       logger.warn(`[MediaStorage] No se pudo borrar video de Bunny Stream ${streamVideoId}: ${error.message}`)
     })
   }
@@ -6638,7 +6703,8 @@ export async function getMediaAssetReadStream(assetId, { deadlineAt = 0 } = {}) 
     }
   }
 
-  const config = await getStorageRuntimeConfig()
+  const runtimeConfig = await getStorageRuntimeConfig()
+  const config = bunnyStorageConfigForAsset(runtimeConfig, asset)
   const requests = [
     asset.publicUrl && /^https?:\/\//i.test(asset.publicUrl)
       ? { url: asset.publicUrl, headers: {} }
@@ -6664,6 +6730,428 @@ export async function getMediaAssetReadStream(assetId, { deadlineAt = 0 } = {}) 
   }
 
   throw errorWithStatus('El archivo no tiene contenido disponible para lectura.', 404, 'media_file_missing')
+}
+
+async function verifyBunnyObjectSize(config, objectPath, expectedSize) {
+  const response = await fetch(bunnyObjectUrl(config, objectPath), {
+    method: 'HEAD',
+    headers: { AccessKey: config.bunnyStorageApiKey },
+    signal: AbortSignal.timeout(BUNNY_FILE_DELETE_TIMEOUT_MS)
+  })
+  if (!response.ok) {
+    throw errorWithStatus(
+      `Bunny no permitió verificar la copia (${response.status}).`,
+      502,
+      'bunny_migration_verification_failed'
+    )
+  }
+  const storedSize = Math.floor(numberValue(response.headers.get('content-length')))
+  if (Number.isSafeInteger(expectedSize) && expectedSize > 0 && storedSize !== expectedSize) {
+    throw errorWithStatus(
+      'La copia en Bunny.net no coincide con el tamaño del archivo original.',
+      502,
+      'bunny_migration_size_mismatch'
+    )
+  }
+}
+
+export async function migrateMediaAssetToBunnyStorage(assetId, {
+  sourceConfig = null,
+  targetConfig,
+  deleteSource = true
+} = {}) {
+  let asset = await getMediaAsset(assetId)
+  if (!targetConfig?.bunnyConfigured) {
+    throw errorWithStatus('El destino Bunny.net no está configurado.', 503, 'bunny_migration_target_missing')
+  }
+  if (asset.storageProvider === 'bunny_stream') {
+    asset = await ensureBunnyStreamStorageMirror(asset.id, {
+      config: sourceConfig || await getStorageRuntimeConfig(),
+      module: asset.module,
+      moduleEntityId: asset.moduleEntityId
+    })
+  }
+  if (
+    asset.storageProvider === 'bunny' &&
+    cleanString(asset.storageZone) === cleanString(targetConfig.bunnyStorageZone)
+  ) {
+    return { asset, migrated: false, sourceDeleted: true }
+  }
+
+  const objectPath = cleanString(asset.bunnyPath)
+  if (!objectPath) {
+    throw errorWithStatus('El archivo no tiene una ruta de Storage migrable.', 409, 'bunny_migration_path_missing')
+  }
+  const runtimeConfig = await getStorageRuntimeConfig()
+  const resolvedSourceConfig = sourceConfig || bunnyStorageConfigForAsset(runtimeConfig, asset)
+  const source = await getMediaAssetReadStream(asset.id)
+  if (!Number.isSafeInteger(source.contentLength) || source.contentLength <= 0) {
+    source.stream?.destroy?.()
+    throw errorWithStatus(
+      'No se pudo verificar el tamaño del archivo antes de migrarlo.',
+      409,
+      'bunny_migration_source_size_missing'
+    )
+  }
+
+  const metadata = { ...(asset.metadata || {}) }
+  const thumbnail = metadata.variants?.thumbnail || null
+  const targetPublicUrl = bunnyPublicUrl(targetConfig, objectPath)
+  let thumbnailUploaded = false
+
+  try {
+    await uploadReadableStreamToBunny({
+      config: targetConfig,
+      objectPath,
+      stream: source.stream,
+      size: source.contentLength,
+      mimeType: source.contentType || asset.mimeType
+    })
+    await verifyBunnyObjectSize(targetConfig, objectPath, source.contentLength)
+
+    if (thumbnail?.path) {
+      let thumbnailBuffer = null
+      if (thumbnail.localPath) {
+        thumbnailBuffer = await fs.readFile(thumbnail.localPath)
+      } else {
+        thumbnailBuffer = await readBunnyObjectBuffer({
+          config: resolvedSourceConfig,
+          objectPath: thumbnail.path,
+          publicUrl: thumbnail.publicUrl
+        })
+      }
+      await uploadToBunny({
+        config: targetConfig,
+        objectPath: thumbnail.path,
+        buffer: thumbnailBuffer,
+        mimeType: thumbnail.mimeType || 'image/webp'
+      })
+      await verifyBunnyObjectSize(targetConfig, thumbnail.path, thumbnailBuffer.length)
+      thumbnailUploaded = true
+      metadata.variants = {
+        ...(metadata.variants || {}),
+        thumbnail: {
+          ...thumbnail,
+          publicUrl: bunnyPublicUrl(targetConfig, thumbnail.path),
+          localPath: undefined
+        }
+      }
+    }
+
+    const previousStream = metadata.stream && typeof metadata.stream === 'object'
+      ? metadata.stream
+      : null
+    metadata.storageMigration = {
+      ...(metadata.storageMigration || {}),
+      migratedAt: nowIso(),
+      source: {
+        provider: asset.storageProvider,
+        storageZone: asset.storageZone || null,
+        cdnBaseUrl: asset.cdnBaseUrl || null,
+        objectPath,
+        localPath: asset.metadata?.localPath || null,
+        thumbnailPath: thumbnail?.path || null,
+        thumbnailLocalPath: thumbnail?.localPath || null
+      },
+      target: {
+        provider: 'bunny',
+        storageZone: targetConfig.bunnyStorageZone,
+        cdnBaseUrl: targetConfig.bunnyCdnBaseUrl,
+        objectPath
+      },
+      sourceDeleted: false
+    }
+    if (previousStream) {
+      metadata.stream = {
+        ...previousStream,
+        source: {
+          ...(previousStream.source || {}),
+          storagePath: objectPath,
+          storagePublicUrl: targetPublicUrl
+        }
+      }
+    }
+    delete metadata.localPath
+    delete metadata.localFallback
+
+    await db.run(
+      `UPDATE media_assets
+       SET public_url = ?,
+           private_url = CASE WHEN is_public = 1 THEN NULL ELSE ? END,
+           storage_provider = 'bunny',
+           storage_zone = ?,
+           cdn_base_url = ?,
+           metadata_json = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND deleted_at IS NULL`,
+      [
+        targetPublicUrl,
+        targetPublicUrl,
+        targetConfig.bunnyStorageZone,
+        targetConfig.bunnyCdnBaseUrl,
+        JSON.stringify(metadata),
+        asset.id
+      ]
+    )
+  } catch (error) {
+    await deleteFromBunny({ config: targetConfig, objectPath }).catch(() => undefined)
+    if (thumbnailUploaded && thumbnail?.path) {
+      await deleteFromBunny({ config: targetConfig, objectPath: thumbnail.path }).catch(() => undefined)
+    }
+    throw error
+  }
+
+  let sourceDeleted = !deleteSource
+  let sourceDeleteError = ''
+  if (deleteSource) {
+    try {
+      if (asset.storageProvider === 'bunny' && resolvedSourceConfig?.bunnyConfigured) {
+        const sourceIsTarget = cleanString(resolvedSourceConfig.bunnyStorageZone)
+          === cleanString(targetConfig.bunnyStorageZone)
+        if (!sourceIsTarget) {
+          await deleteFromBunny({ config: resolvedSourceConfig, objectPath })
+          if (thumbnail?.path) {
+            await deleteFromBunny({ config: resolvedSourceConfig, objectPath: thumbnail.path })
+          }
+        }
+      } else if (asset.metadata?.localPath) {
+        await fs.rm(asset.metadata.localPath, { force: true })
+        if (thumbnail?.localPath) await fs.rm(thumbnail.localPath, { force: true })
+      }
+      sourceDeleted = true
+    } catch (error) {
+      sourceDeleteError = cleanString(error?.message)
+      logger.warn(`[MediaStorage] La copia ${asset.id} quedó lista, pero no se pudo limpiar el origen: ${sourceDeleteError}`)
+    }
+  }
+
+  const migratedAsset = await getMediaAsset(asset.id)
+  const nextMetadata = {
+    ...(migratedAsset.metadata || {}),
+    storageMigration: {
+      ...(migratedAsset.metadata?.storageMigration || {}),
+      sourceDeleted,
+      ...(sourceDeleteError ? { sourceDeleteError } : {})
+    }
+  }
+  await db.run(
+    'UPDATE media_assets SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(nextMetadata), asset.id]
+  )
+  return {
+    asset: await getMediaAsset(asset.id),
+    migrated: true,
+    sourceDeleted,
+    sourceDeleteError
+  }
+}
+
+export async function retryMediaAssetSourceCleanup(assetId, { sourceConfig = null } = {}) {
+  const asset = await getMediaAsset(assetId)
+  const migration = asset.metadata?.storageMigration || {}
+  const source = migration.source || {}
+  if (migration.sourceDeleted !== false) return { asset, cleaned: false }
+
+  if (source.provider === 'bunny') {
+    if (!sourceConfig?.bunnyConfigured) {
+      throw errorWithStatus(
+        'La configuración Bunny.net del origen ya no está disponible para completar la limpieza.',
+        503,
+        'bunny_migration_source_cleanup_config_missing'
+      )
+    }
+    if (
+      cleanString(source.storageZone)
+      && cleanString(source.storageZone) !== cleanString(sourceConfig.bunnyStorageZone)
+    ) {
+      throw errorWithStatus(
+        'La Storage Zone del origen no coincide con la migración pendiente.',
+        409,
+        'bunny_migration_source_cleanup_zone_mismatch'
+      )
+    }
+    await deleteFromBunny({ config: sourceConfig, objectPath: source.objectPath })
+    if (source.thumbnailPath) {
+      await deleteFromBunny({ config: sourceConfig, objectPath: source.thumbnailPath })
+    }
+  } else {
+    if (source.localPath) await fs.rm(source.localPath, { force: true })
+    if (source.thumbnailLocalPath) await fs.rm(source.thumbnailLocalPath, { force: true })
+  }
+
+  const nextMetadata = {
+    ...(asset.metadata || {}),
+    storageMigration: {
+      ...migration,
+      sourceDeleted: true,
+      sourceCleanupRetriedAt: nowIso()
+    }
+  }
+  delete nextMetadata.storageMigration.sourceDeleteError
+  await db.run(
+    'UPDATE media_assets SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(nextMetadata), asset.id]
+  )
+  return { asset: await getMediaAsset(asset.id), cleaned: true }
+}
+
+export async function retryMediaAssetStreamSourceCleanup(assetId, { sourceConfig = null } = {}) {
+  const asset = await getMediaAsset(assetId)
+  const currentStream = asset.metadata?.stream || {}
+  const source = currentStream.migrationSource || {}
+  if (source.sourceDeleted !== false) return { asset, cleaned: false }
+  if (!sourceConfig?.bunnyStreamConfigured) {
+    throw errorWithStatus(
+      'La configuración Bunny Stream del origen ya no está disponible para completar la limpieza.',
+      503,
+      'bunny_stream_migration_source_cleanup_config_missing'
+    )
+  }
+
+  const sourceVideoId = cleanString(source.videoId)
+  const sourceLibraryId = cleanString(source.libraryId)
+  if (!sourceVideoId || !sourceLibraryId) {
+    throw errorWithStatus(
+      'La identidad anterior del video está incompleta y no se puede limpiar con seguridad.',
+      409,
+      'bunny_stream_migration_source_identity_missing'
+    )
+  }
+
+  await deleteBunnyStreamVideo({
+    ...sourceConfig,
+    bunnyStreamLibraryId: sourceLibraryId
+  }, sourceVideoId)
+
+  const nextMetadata = {
+    ...(asset.metadata || {}),
+    stream: {
+      ...currentStream,
+      migrationSource: {
+        ...source,
+        sourceDeleted: true,
+        sourceCleanupRetriedAt: nowIso()
+      }
+    }
+  }
+  delete nextMetadata.stream.migrationSource.sourceDeleteError
+  await db.run(
+    'UPDATE media_assets SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(nextMetadata), asset.id]
+  )
+  return { asset: await getMediaAsset(asset.id), cleaned: true }
+}
+
+export async function migrateMediaAssetBunnyStream(assetId, {
+  sourceConfig = null,
+  targetConfig
+} = {}) {
+  let asset = await getMediaAsset(assetId)
+  const currentStream = asset.metadata?.stream || {}
+  const existingMigrationSource = currentStream.migrationSource || null
+  const targetLibraryId = cleanString(targetConfig?.bunnyStreamLibraryId)
+  const currentLibraryId = cleanString(currentStream.libraryId)
+  const alreadyTargetsLibrary = currentLibraryId === targetLibraryId
+  const resumingPendingMigration = alreadyTargetsLibrary && Boolean(existingMigrationSource)
+  const previousVideoId = cleanString(
+    resumingPendingMigration ? existingMigrationSource?.videoId : currentStream.videoId
+  )
+  const previousLibraryId = cleanString(
+    resumingPendingMigration ? existingMigrationSource?.libraryId : currentStream.libraryId
+  )
+  if (
+    (!previousVideoId && !existingMigrationSource)
+    || (alreadyTargetsLibrary && cleanString(currentStream.videoId) && !existingMigrationSource)
+  ) {
+    return { asset, migrated: false, sourceDeleted: true }
+  }
+  if (!targetConfig?.bunnyStreamConfigured || asset.storageProvider !== 'bunny' || !asset.bunnyPath) {
+    throw errorWithStatus(
+      'El video no tiene un destino Bunny Stream listo para migrarse.',
+      409,
+      'bunny_stream_migration_target_missing'
+    )
+  }
+
+  const usageContext = bunnyStreamUsageContext(asset)
+  const clientAccount = await resolveClientAccountContext({
+    businessId: asset.businessId,
+    metadata: asset.metadata
+  })
+  const title = buildBunnyStreamRemoteFetchTitle({
+    originalFilename: asset.originalFilename,
+    id: asset.id
+  })
+  const migrationRecord = resumingPendingMigration ? existingMigrationSource : {
+    videoId: previousVideoId,
+    libraryId: previousLibraryId,
+    delivery: currentStream.delivery || null,
+    queuedAt: nowIso()
+  }
+  if (!alreadyTargetsLibrary) {
+    await updateMediaAssetStream({
+      asset,
+      stream: {
+        ...currentStream,
+        videoId: null,
+        libraryId: targetConfig.bunnyStreamLibraryId,
+        delivery: null,
+        syncStatus: 'pending',
+        syncMode: 'remote_fetch',
+        migrationSource: migrationRecord,
+        error: null,
+        code: null
+      }
+    })
+  }
+  await runQueuedBunnyStreamRemoteFetch(asset.id, {
+    config: targetConfig,
+    usageContext,
+    clientAccount,
+    title
+  })
+  asset = await getMediaAsset(asset.id)
+  const migratedVideoId = cleanString(asset.metadata?.stream?.videoId)
+  if (!migratedVideoId) {
+    return { asset, migrated: false, pending: true, sourceDeleted: false }
+  }
+
+  let sourceDeleted = migrationRecord.sourceDeleted === true
+  let sourceDeleteError = ''
+  if (!sourceDeleted && sourceConfig?.bunnyStreamConfigured && previousVideoId) {
+    try {
+      await deleteBunnyStreamVideo({
+        ...sourceConfig,
+        bunnyStreamLibraryId: previousLibraryId || sourceConfig.bunnyStreamLibraryId
+      }, previousVideoId)
+      sourceDeleted = true
+    } catch (error) {
+      sourceDeleteError = cleanString(error?.message)
+      logger.warn(`[MediaStorage] El video ${asset.id} migró, pero no se pudo limpiar Stream anterior: ${sourceDeleteError}`)
+    }
+  }
+
+  const finalMetadata = {
+    ...(asset.metadata || {}),
+    stream: {
+      ...(asset.metadata?.stream || {}),
+      migrationSource: {
+        ...migrationRecord,
+        sourceDeleted,
+        ...(sourceDeleteError ? { sourceDeleteError } : {})
+      }
+    }
+  }
+  await db.run(
+    'UPDATE media_assets SET metadata_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [JSON.stringify(finalMetadata), asset.id]
+  )
+  return {
+    asset: await getMediaAsset(asset.id),
+    migrated: true,
+    sourceDeleted,
+    sourceDeleteError
+  }
 }
 
 function mediaDownloadRangeError(totalSize = null, message = 'El rango de descarga no es válido.') {
