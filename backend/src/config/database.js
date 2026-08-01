@@ -25,6 +25,7 @@ import {
   runCancelablePostgresQuery,
   waitForDatabaseRetry
 } from '../utils/postgresCancelableQuery.js'
+import { isTransientPostgresConnectionError } from '../utils/postgresConnectionErrors.js'
 import { ensureSqliteSitesAnalyticsTrackingSchema } from '../startup/sitesAnalyticsSchemaCompatibility.js'
 import { ensureSqliteConversationalHandoffSchema } from '../startup/conversationalHandoffSchemaCompatibility.js'
 import {
@@ -98,28 +99,6 @@ const CONTACT_REENGAGEMENT_REPAIR_VERSION = '2026-07-15-v2'
 const STARTUP_DATA_BATCH_SIZE = 250
 const STARTUP_SCHEMA_LOCK_NAME = 'startup-schema-bootstrap'
 const STARTUP_SCHEMA_LOCK_WAIT_MS = 120_000
-
-const POSTGRES_CONNECT_RETRY_CODES = new Set([
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'EAI_AGAIN',
-  'ENOTFOUND',
-  '08001',
-  '08006',
-  '53300',
-  '57P03'
-])
-
-const POSTGRES_TRANSIENT_CONNECTION_MESSAGES = [
-  'connection terminated unexpectedly',
-  'connection terminated',
-  'connection ended unexpectedly',
-  'connection closed unexpectedly',
-  'client has encountered a connection error',
-  'connection is not queryable',
-  'terminating connection'
-]
 
 const POSTGRES_CLIENT_ERROR_LISTENER = Symbol('ristakPostgresClientErrorListener')
 const POSTGRES_CLIENT_CONNECTION_ERROR = Symbol('ristakPostgresClientConnectionError')
@@ -202,13 +181,7 @@ function postgresAdvisoryLockKey(lockName) {
     .toString()
 }
 
-export function isTransientPostgresConnectionError(error) {
-  const code = String(error?.code || '').trim()
-  if (POSTGRES_CONNECT_RETRY_CODES.has(code)) return true
-
-  const message = String(error?.message || '').toLowerCase()
-  return POSTGRES_TRANSIENT_CONNECTION_MESSAGES.some(pattern => message.includes(pattern))
-}
+export { isTransientPostgresConnectionError }
 
 export function describePostgresConnectionError(error) {
   const code = String(error?.code || '').trim()

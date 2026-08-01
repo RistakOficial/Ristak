@@ -373,7 +373,10 @@ Reglas de datos para cualquier modulo nuevo o refactorizado:
   antes y despues de la operacion. Si el canal reservado no logra confirmar
   `pg_cancel_backend`, el cliente de trabajo se destruye y el pool lo reemplaza:
   la promesa original siempre termina y una falla del canal de cancelacion nunca
-  deja un loader esperando al query huerfano. Resolver la zona horaria usa esa misma señal;
+  deja un loader esperando al query huerfano. El timeout sin codigo que emite
+  `pg-pool` al adquirir una conexion tambien se clasifica como transitorio y usa
+  el backoff acotado existente; no convierte una pausa breve de PostgreSQL en un
+  error definitivo de Analiticas, dominios o jobs. Resolver la zona horaria usa esa misma señal;
   una falla transitoria de DB no cachea el timezone default como configuracion
   real de la cuenta.
 - Los rangos siguen `docs/DATE_TIME_GUIDELINES.md`: dias del negocio en su zona
