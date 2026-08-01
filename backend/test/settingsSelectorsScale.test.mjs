@@ -10,6 +10,7 @@ const domainsSourceUrl = new URL('../../frontend/src/pages/Settings/Domains.tsx'
 const calendarsSourceUrl = new URL('../../frontend/src/pages/Settings/CalendarsConfiguration.tsx', import.meta.url)
 const paymentsSourceUrl = new URL('../../frontend/src/pages/Settings/PaymentsConfiguration.tsx', import.meta.url)
 const automationCatalogsSourceUrl = new URL('../../frontend/src/services/automationCatalogsService.ts', import.meta.url)
+const automationCatalogSelectSourceUrl = new URL('../../frontend/src/pages/Automations/editor/config/configPrimitives.tsx', import.meta.url)
 const automationsBackendSourceUrl = new URL('../src/services/automationsService.js', import.meta.url)
 
 async function insertFormSites(marker, count) {
@@ -107,11 +108,12 @@ test('catálogo de formularios de Automatizaciones recorre más de cien opciones
 })
 
 test('Configuración difiere catálogos y pasarelas hasta abrir el panel que realmente los necesita', async () => {
-  const [domains, calendars, payments, automationCatalogs, automationsBackend] = await Promise.all([
+  const [domains, calendars, payments, automationCatalogs, automationCatalogSelect, automationsBackend] = await Promise.all([
     readFile(domainsSourceUrl, 'utf8'),
     readFile(calendarsSourceUrl, 'utf8'),
     readFile(paymentsSourceUrl, 'utf8'),
     readFile(automationCatalogsSourceUrl, 'utf8'),
+    readFile(automationCatalogSelectSourceUrl, 'utf8'),
     readFile(automationsBackendSourceUrl, 'utf8')
   ])
 
@@ -131,6 +133,10 @@ test('Configuración difiere catálogos y pasarelas hasta abrir el panel que rea
   assert.match(payments, /getTemplates\('APPROVED', \{ signal \}\)/)
   assert.doesNotMatch(payments, /whatsappApiService\.refresh\(\)/)
   assert.doesNotMatch(automationCatalogs, /whatsappApiService\.refresh\(\)/)
+
+  assert.match(automationCatalogSelect, /if \(catalog !== 'forms' && selectOptions\.length === 0\)/)
+  assert.match(automationCatalogSelect, /onOpenChange=\{catalog === 'forms' \? pagedFormsCatalog\.onOpenChange : undefined\}/)
+  assert.match(automationCatalogSelect, /emptyMessage=\{catalog === 'forms' \? 'No hay formularios para esta búsqueda' : undefined\}/)
 
   assert.match(automationsBackend, /MAX_AUTOMATION_FORMS_CATALOG_LIMIT = 50/)
   assert.match(automationsBackend, /Promise\.all\(buildAutomationFormsCatalogBranches\(\)/)

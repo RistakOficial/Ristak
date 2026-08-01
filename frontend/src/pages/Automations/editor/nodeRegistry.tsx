@@ -863,7 +863,15 @@ const TRIGGERS: NodeDefinition[] = [
     addButtonLabel: 'Seleccionar formulario',
     defaultConfig: () => ({ form: '', formName: '' }),
     fields: [
-      { key: 'form', label: 'Formulario', type: 'catalogSelect', catalog: 'forms', required: true }
+      {
+        key: 'form',
+        label: 'Formulario que dispara el evento',
+        type: 'catalogSelect',
+        catalog: 'forms',
+        required: true,
+        placeholder: 'Selecciona el formulario',
+        help: 'La automatización solo se iniciará cuando alguien envíe este formulario.'
+      }
     ],
     outputs: () => SINGLE_OUTPUT,
     variableOutput: (config) => ({

@@ -322,7 +322,10 @@ export const CatalogSelect: React.FC<CatalogSelectProps> = ({
     selectOptions.unshift({ value, label: `${value} · ya no existe`, disabled: true })
   }
 
-  if (selectOptions.length === 0) {
+  // Formularios carga su primera página al abrir el combo. El control debe
+  // seguir renderizado aunque aún no tenga opciones; si lo sustituimos por el
+  // estado vacío, el usuario nunca puede abrirlo para iniciar esa carga.
+  if (catalog !== 'forms' && selectOptions.length === 0) {
     return <span className={styles.configHelp}>No hay opciones disponibles todavía.</span>
   }
 

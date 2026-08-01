@@ -1331,7 +1331,13 @@ El selector de formularios del editor usa
 acotada, el backend mezcla solo esas paginas y nunca materializa el catalogo
 completo. Abrir, buscar y `Cargar mas` son las unicas acciones que piden paginas;
 `selectedIds` recupera una referencia guardada fuera de la pagina actual. Las
-plantillas de WhatsApp son snapshots locales: una lectura vacia no dispara
+automatizaciones con el disparador **Formulario enviado** exigen elegir un
+formulario concreto. El combo permanece disponible antes de cargar la primera
+pagina y, al abrirlo, permite buscar y guardar el ID estable seleccionado; el
+motor solo inscribe contactos cuando el evento contiene esa identidad de
+formulario.
+
+Las plantillas de WhatsApp son snapshots locales: una lectura vacia no dispara
 `refresh` al proveedor; sincronizar sigue siendo una accion explicita.
 
 La accion **Cambiar canal de respuesta predeterminado** guarda, para el contacto
