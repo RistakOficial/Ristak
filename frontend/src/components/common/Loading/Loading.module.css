@@ -21,6 +21,16 @@
   animation: fadeIn 0.18s ease-out;
 }
 
+.compactContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 1.125rem 0.625rem;
+  color: var(--text-dim);
+  animation: fadeIn 0.18s ease-out;
+}
+
 .loadingWrapper {
   display: flex;
   flex-direction: column;
@@ -29,6 +39,11 @@
   gap: 0.75rem;
   min-width: 0;
   color: var(--text-dim);
+}
+
+.compactWrapper {
+  flex-direction: row;
+  gap: 0.5rem;
 }
 
 .spinner {
@@ -61,6 +76,10 @@
   letter-spacing: 0;
 }
 
+.compactWrapper .message {
+  font-size: 0.8125rem;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -74,5 +93,14 @@
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fullScreenContainer,
+  .container,
+  .compactContainer,
+  .spinner {
+    animation: none;
   }
 }

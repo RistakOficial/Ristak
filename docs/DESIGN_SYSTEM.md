@@ -158,6 +158,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |
 | Tabla | `<Table>` (o la receta §6) | una `<table>` desde cero |
 | Header / contenedor de página | `<PageHeader>` / `<PageContainer>` | un header a mano |
+| Estado de carga | `<Loading>`; usa `compact` para listas o paneles angostos y el modo normal para el contenido principal | spinners sueltos dentro de párrafos o cards vacías |
 | Inputs nativos | ya están skineados globalmente; un `<input>` plano hereda el sistema | re-estilizarlos |
 
 En un `<CustomSelect iconOnly>` cuyo valor puede quedar temporalmente sin una
