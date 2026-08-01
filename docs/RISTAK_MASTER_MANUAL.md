@@ -1984,6 +1984,29 @@ backend nombra el campo faltante y no usa el ejemplo de aprobación como si fuer
 información del cliente. La respuesta exitosa incluye `renderedText`, que el
 chat usa como preview autoritativo para no mostrar `{{1}}`/`{{2}}` crudos.
 
+Los enlaces de disparo usan la misma referencia editable
+`{{trigger_link.<public_id>}}`, pero la URL entregada a una persona no es el
+enlace compartido de la definicion. Cuando existe contexto de contacto, cada
+render genera directamente `https://<dominio>/<token_opaco>`: el token cifra y
+autentica el `public_id` del enlace y el `contact_id` con AES-256-GCM usando una
+subllave derivada de `public_context_signing_secret_v1`. No incluye query string,
+telefono, correo, nombre ni `contact_id` visible, y una nueva emision produce un
+token distinto incluso para el mismo contacto. La emision es stateless: no crea
+una fila por URL; al hacer clic, el servidor descifra el contexto, confirma que
+el enlace siga activo y el contacto exista, guarda `trigger_link_events`, emite
+`trigger-link-clicked` y redirige al destino.
+
+La ruta generica legacy `/trigger-links/<public_id>` se conserva para enlaces
+anonimos ya copiados, pero ningun dato de identidad recibido por query puede
+atribuirle el clic a un contacto ni disparar efectos en su nombre. Esos parametros
+legacy se eliminan tambien del `query_json` del evento. La ruta opaca vive antes
+del router de Sites y solo consume slugs con el formato reservado `pce1_*`, de
+modo que una pagina publica con slug normal no colisiona. Sus respuestas usan
+`no-store`, `no-referrer` y `noindex`; archivar la definicion invalida todos sus
+tokens sin guardar o revocar emisiones individuales. Si una persona reenvia su
+URL, el clic sigue atribuido al contacto para quien fue emitida: distinguir al
+humano que realmente sostiene el dispositivo requeriria autenticacion adicional.
+
 Las paginas publicas anonimas solo resuelven datos globales de la cuenta. Cuando
 el Site contiene `{{contact.*}}`, `{{contact.custom.*}}` o `{{custom.*}}`, el
 backend puede personalizar la publicacion para un visitante ya identificado: lee
@@ -8954,9 +8977,12 @@ nunca un booleano escrito por el modelo.
   pueden cerrar una meta pendiente. Reutilizan el resumen factual, no levantan
   otra IA y no aplican asignaciones, etiquetas ni campos ajenos a las capacidades
   blindadas.
-- Enlaces y meta por URL: **Mandar enlace** por sí sola entrega la URL segura
-  configurada mediante `send_trigger_link`, sin agregar identidad, crear una meta
-  ni cambiar el chat a humano. **Objetivo propio** usa otra tool fisicamente
+- Enlaces y meta por URL: **Mandar enlace** por sí sola usa
+  `send_trigger_link`. Cuando la configuracion apunta a un enlace de disparo,
+  entrega la URL opaca ligada al contacto —no el destino directo ni identidad
+  visible— para que el clic quede registrado; no crea una meta ni cambia el chat
+  a humano. Un enlace general que no es trigger conserva su URL directa.
+  **Objetivo propio** usa otra tool fisicamente
   separada, `send_goal_url`, para preparar el enlace rastreable y crear la meta
   pendiente. Si ambas capacidades estan activas se exponen ambas tools con
   contratos distintos: una llamada a `send_trigger_link` nunca puede convertirse

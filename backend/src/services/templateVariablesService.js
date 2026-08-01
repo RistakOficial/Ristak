@@ -4,6 +4,7 @@ import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { getContactCustomFieldValues } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { getAccountBusinessProfile } from './accountBusinessProfileService.js'
+import { buildTriggerLinkRecipientUrl } from './triggerLinkRecipientTokenService.js'
 
 // Los field keys nuevos son simples, pero conservamos compatibilidad con aliases
 // legacy (acentos/espacios) y dejamos que la politica de unknown decida que hacer.
@@ -96,20 +97,6 @@ function buildTriggerLinkPublicUrl(publicId, baseUrl = '') {
   const path = `/trigger-links/${encodeURIComponent(cleanPublicId)}`
   const base = normalizeBaseUrl(baseUrl || process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL)
   return base ? `${base}${path}` : path
-}
-
-function appendQueryParams(rawUrl, params = {}) {
-  const url = cleanString(rawUrl, 2048)
-  if (!url) return ''
-
-  const entries = Object.entries(params).filter(([, value]) => cleanString(value))
-  if (entries.length === 0) return url
-
-  const isAbsolute = /^[a-z][a-z0-9+.-]*:/i.test(url)
-  const base = 'https://ristak.local'
-  const parsed = new URL(url, isAbsolute ? undefined : base)
-  entries.forEach(([key, value]) => parsed.searchParams.set(key, cleanString(value)))
-  return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`
 }
 
 function splitFullName(value = '') {
@@ -363,13 +350,14 @@ async function resolveTriggerLinkToken(rawToken, { contact, publicBaseUrl } = {}
 
   if (!row) return ''
 
-  const publicUrl = buildTriggerLinkPublicUrl(row.public_id, publicBaseUrl)
-  return appendQueryParams(publicUrl, {
-    contact_id: contact?.id,
-    phone: contact?.phone,
-    email: contact?.email,
-    contact_name: contact?.fullName || contact?.firstName
-  })
+  if (contact?.id) {
+    return buildTriggerLinkRecipientUrl({
+      publicId: row.public_id,
+      contactId: contact.id,
+      baseUrl: publicBaseUrl
+    })
+  }
+  return buildTriggerLinkPublicUrl(row.public_id, publicBaseUrl)
 }
 
 export async function buildTemplateVariableMap(options = {}) {

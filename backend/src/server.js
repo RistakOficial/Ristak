@@ -82,6 +82,7 @@ import settingsRoutes from './routes/settings.routes.js'
 import calendarsRoutes, { publicCalendarsRoutes } from './routes/calendars.routes.js'
 import trackingRoutes, { publicTrackingRoutes } from './routes/tracking.routes.js'
 import triggerLinksRoutes from './routes/triggerLinks.routes.js'
+import triggerLinkRecipientsRoutes from './routes/triggerLinkRecipients.routes.js'
 import configRoutes from './routes/config.routes.js'
 import userConfigRoutes from './routes/userConfig.routes.js' // (MOB-006)
 import costsRoutes from './routes/costs.routes.js'
@@ -464,6 +465,9 @@ app.use((req, res, next) => {
 app.use('/media', mediaRoutes)
 app.use('/internal', internalStorageRoutes)
 app.use('/trigger-links', triggerLinksRoutes)
+// URL corta y opaca por contacto. El router sólo consume tokens pce1_*; cualquier
+// slug normal continúa hacia Sites o hacia la app sin colisiones.
+app.use('/', triggerLinkRecipientsRoutes)
 
 // Host router para Sites públicos. Debe correr antes de APIs privadas/static.
 app.use(publicSiteHostMiddleware)

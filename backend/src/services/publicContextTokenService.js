@@ -7,6 +7,9 @@ const MIN_SIGNING_KEY_BYTES = 32
 const DEFAULT_TOKEN_TTL_SECONDS = 60 * 60
 const MAX_TOKEN_TTL_SECONDS = 24 * 60 * 60
 const MAX_TOKEN_LENGTH = 4096
+const SEALED_TOKEN_PREFIX = 'pce1'
+const SEALED_TOKEN_IV_BYTES = 12
+const SEALED_TOKEN_TAG_BYTES = 16
 const PURPOSE_PATTERN = /^[a-z][a-z0-9_.:-]{2,95}$/i
 
 let signingKeyPromise = null
@@ -109,6 +112,23 @@ function signaturesMatch(expected, received) {
   } catch {
     return false
   }
+}
+
+function decodeBase64UrlSegment(value) {
+  const segment = cleanString(value, MAX_TOKEN_LENGTH)
+  if (!segment || !/^[A-Za-z0-9_-]+$/.test(segment)) return null
+  try {
+    return Buffer.from(segment, 'base64url')
+  } catch {
+    return null
+  }
+}
+
+function deriveSealingKey(signingKey, purpose) {
+  return crypto
+    .createHmac('sha256', signingKey)
+    .update(`${SEALED_TOKEN_PREFIX}:${purpose}`)
+    .digest()
 }
 
 function stableCanonicalValue(value) {
@@ -218,6 +238,76 @@ export async function verifyPublicContextToken(token, {
     issuedAt: payload.iat,
     expiresAt: payload.exp,
     claims: payload.c
+  }
+}
+
+// Contextos públicos de larga vida (por ejemplo, enlaces destinados a un
+// contacto) no deben exponer sus claims en base64 ni exigir una fila por token.
+// AES-GCM cifra y autentica el payload; el purpose funciona como AAD y separa
+// criptográficamente cada consumidor aunque compartan la llave raíz interna.
+export async function sealPublicContextClaims({ purpose, claims = {} } = {}) {
+  const normalizedPurpose = normalizePurpose(purpose)
+  if (!claims || typeof claims !== 'object' || Array.isArray(claims)) {
+    throw new PublicContextTokenError('Claims de cifrado inválidos', {
+      code: 'invalid_public_context_claims'
+    })
+  }
+
+  const iv = crypto.randomBytes(SEALED_TOKEN_IV_BYTES)
+  const key = deriveSealingKey(await getSigningKey(), normalizedPurpose)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+  cipher.setAAD(Buffer.from(`${SEALED_TOKEN_PREFIX}:${normalizedPurpose}`, 'utf8'))
+  const plaintext = Buffer.from(JSON.stringify({
+    v: PUBLIC_CONTEXT_TOKEN_VERSION,
+    c: stableCanonicalValue(claims)
+  }), 'utf8')
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
+  const tag = cipher.getAuthTag()
+
+  return `${SEALED_TOKEN_PREFIX}_${Buffer.concat([iv, ciphertext, tag]).toString('base64url')}`
+}
+
+export async function openSealedPublicContextClaims(token, { purpose } = {}) {
+  const normalizedPurpose = normalizePurpose(purpose)
+  const rawToken = cleanString(token, MAX_TOKEN_LENGTH)
+  const tokenPrefix = `${SEALED_TOKEN_PREFIX}_`
+  if (!rawToken.startsWith(tokenPrefix)) {
+    throw new PublicContextTokenError('Token público cifrado inválido')
+  }
+
+  const packed = decodeBase64UrlSegment(rawToken.slice(tokenPrefix.length))
+  if (
+    !packed ||
+    packed.length <= SEALED_TOKEN_IV_BYTES + SEALED_TOKEN_TAG_BYTES
+  ) {
+    throw new PublicContextTokenError('Contrato de token público cifrado inválido')
+  }
+  const iv = packed.subarray(0, SEALED_TOKEN_IV_BYTES)
+  const ciphertext = packed.subarray(SEALED_TOKEN_IV_BYTES, -SEALED_TOKEN_TAG_BYTES)
+  const tag = packed.subarray(-SEALED_TOKEN_TAG_BYTES)
+
+  try {
+    const key = deriveSealingKey(await getSigningKey(), normalizedPurpose)
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
+    decipher.setAAD(Buffer.from(`${SEALED_TOKEN_PREFIX}:${normalizedPurpose}`, 'utf8'))
+    decipher.setAuthTag(tag)
+    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+    const payload = JSON.parse(plaintext.toString('utf8'))
+    if (
+      payload?.v !== PUBLIC_CONTEXT_TOKEN_VERSION ||
+      !payload.c ||
+      typeof payload.c !== 'object' ||
+      Array.isArray(payload.c)
+    ) {
+      throw new Error('invalid payload')
+    }
+    return {
+      version: payload.v,
+      purpose: normalizedPurpose,
+      claims: payload.c
+    }
+  } catch {
+    throw new PublicContextTokenError('Token público cifrado alterado o inválido')
   }
 }
 

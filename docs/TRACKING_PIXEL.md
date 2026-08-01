@@ -150,6 +150,32 @@ visitante se conviertan en JavaScript. El HTML crudo importado y
 `importedPopupHtml` conservan su frontera de sanitización y tampoco reciben esta
 sustitución.
 
+#### Enlaces de disparo opacos por contacto
+
+Una referencia `{{trigger_link.<public_id>}}` con contexto de contacto se
+materializa como `https://<dominio>/<token_opaco>`. El token cifra y autentica
+`public_id + contact_id` mediante AES-256-GCM y una subllave derivada de
+`public_context_signing_secret_v1`; no expone query string, teléfono, correo,
+nombre ni ID del contacto. Cada emisión usa un nonce criptográfico nuevo, por lo
+que dos contactos nunca comparten URL y dos envíos al mismo contacto tampoco
+necesitan repetirla. No se guarda una fila de emisión: el backend reconstruye el
+contexto al descifrar el token y sólo persiste el evento cuando ocurre el clic.
+
+La ruta raíz sólo consume slugs con prefijo reservado `pce1_*` y deja continuar
+cualquier slug normal hacia Sites. Un clic válido exige que la definición siga
+activa y que el contacto cifrado todavía exista; después guarda el evento,
+emite `trigger-link-clicked` y responde `302` al destino final. La respuesta usa
+`Cache-Control: no-store`, `Referrer-Policy: no-referrer` y `X-Robots-Tag:
+noindex, nofollow, noarchive` para no cachear, indexar ni reenviar el token como
+referrer.
+
+La ruta compatible `/trigger-links/<public_id>` sigue aceptando clics anónimos,
+pero `contact_id`, teléfono, correo, nombre o `visitor_id` recibidos por query no
+son autoridad y se eliminan del evento. Alterar un token opaco falla cerrado sin
+registrar ni disparar nada. El token identifica la emisión, no autentica a la
+persona física: si el destinatario reenvía su URL, el clic permanece atribuido
+al contacto original.
+
 #### Campos variables en headers de tracking
 
 Los headers globales y por página administrados por Sites pueden guardar una

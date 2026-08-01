@@ -2,9 +2,17 @@ import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { handleAutomationEvent } from './automationEngine.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { readTriggerLinkRecipientToken } from './triggerLinkRecipientTokenService.js'
 
 const PUBLIC_ID_LENGTH = 12
 const ALLOWED_DESTINATION_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
+const LEGACY_IDENTITY_QUERY_KEYS = new Set([
+  'contact_id', 'contactid', 'cid',
+  'phone', 'teléfono', 'tel',
+  'email', 'correo',
+  'contact_name', 'contactname', 'name', 'nombre',
+  'visitor_id', 'visitorid', 'vid', 'rstk_vid'
+])
 
 function cleanString(value, max = 500) {
   const cleaned = String(value ?? '').trim()
@@ -130,18 +138,38 @@ function getRequestIp(req) {
   return cleanString(forwarded || req?.ip || req?.socket?.remoteAddress || '', 120)
 }
 
-function getQueryValue(query = {}, ...keys) {
-  for (const key of keys) {
-    const value = query[key]
-    if (Array.isArray(value)) {
-      const first = cleanString(value[0], 500)
-      if (first) return first
-      continue
+function sanitizePublicQuery(query = {}) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) return {}
+  const sanitized = {}
+  for (const [rawKey, rawValue] of Object.entries(query)) {
+    const key = cleanString(rawKey, 120)
+    if (!key || LEGACY_IDENTITY_QUERY_KEYS.has(key.toLowerCase())) continue
+    sanitized[key] = rawValue
+  }
+  return sanitized
+}
+
+function getRequestCookie(req, name) {
+  const direct = cleanString(req?.cookies?.[name], 200)
+  if (direct) return direct
+  const rawCookie = String(req?.headers?.cookie || '')
+  for (const entry of rawCookie.split(';')) {
+    const separator = entry.indexOf('=')
+    if (separator < 0 || entry.slice(0, separator).trim() !== name) continue
+    try {
+      return cleanString(decodeURIComponent(entry.slice(separator + 1).trim()), 200)
+    } catch {
+      return ''
     }
-    const cleaned = cleanString(value, 500)
-    if (cleaned) return cleaned
   }
   return ''
+}
+
+function getRequestVisitorId(req) {
+  const visitorId = getRequestCookie(req, 'ristak_vid')
+  return /^[A-Za-z0-9_-]{8,120}$/.test(visitorId) && !/^\d{12,}$/.test(visitorId)
+    ? visitorId
+    : ''
 }
 
 export async function listTriggerLinks({ includeArchived = false, baseUrl = '' } = {}) {
@@ -253,42 +281,34 @@ export async function listTriggerLinkEvents(triggerLinkId, { limit = 50 } = {}) 
   return rows.map(mapTriggerLinkEvent).filter(Boolean)
 }
 
-export async function recordTriggerLinkClick(publicId, req = {}) {
+export async function recordTriggerLinkClick(publicId, req = {}, {
+  contactId: trustedContactId = '',
+  triggerLinkUrl = ''
+} = {}) {
   const normalizedPublicId = normalizePublicId(publicId)
   if (!normalizedPublicId) throw notFound('Enlace de disparo no encontrado.')
 
   const row = await db.get(
-    'SELECT * FROM trigger_links WHERE public_id = ? AND archived = 0',
+    'SELECT * FROM trigger_links WHERE public_id = ? AND active = 1 AND archived = 0',
     [normalizedPublicId]
   )
   if (!row) throw notFound('Enlace de disparo no encontrado.')
 
-  const query = req.query || {}
-  const rawContactId = getQueryValue(query, 'contact_id', 'contactId', 'cid')
-  const phone = getQueryValue(query, 'phone', 'teléfono', 'tel')
-  const email = getQueryValue(query, 'email', 'correo')
-  const contactName = getQueryValue(query, 'contact_name', 'contactName', 'name', 'nombre')
-  const visitorId = getQueryValue(query, 'visitor_id', 'visitorId', 'vid', 'rstk_vid')
-
-  // (TRK-007) El contact_id llega por query string en una URL pública y dispara efectos
-  // (registro del evento + enrollment/mensajería vía handleAutomationEvent). Sin validar,
-  // cualquiera con la URL podía forjar ?contact_id=X y crear eventos/automatizaciones para
-  // un contacto arbitrario o inexistente. Defensa contenida: solo aceptamos el contact_id
-  // si corresponde a un contacto real y no borrado; si no, se trata como click anónimo.
-  // (La firma HMAC del enlace para impedir targetear a un contacto real conocido queda
-  // como decisión del dueño — cambia cómo se generan los enlaces.)
-  let contactId = null
-  if (rawContactId) {
-    const contactExists = await db.get(
-      'SELECT id FROM contacts WHERE id = ? AND deleted_at IS NULL',
-      [rawContactId]
-    )
-    if (contactExists) {
-      contactId = rawContactId
-    } else {
-      logger.warn(`Trigger link ${normalizedPublicId}: contact_id "${rawContactId}" del query no existe; se ignora (click anónimo).`)
-    }
+  const contactId = cleanString(trustedContactId, 180)
+  const contact = contactId
+    ? await db.get(`
+      SELECT id, phone, email, full_name, first_name, last_name
+      FROM contacts
+      WHERE id = ? AND deleted_at IS NULL
+      LIMIT 1
+    `, [contactId])
+    : null
+  if (contactId && !contact) {
+    throw notFound('Enlace de disparo no disponible para este contacto.')
   }
+
+  const query = sanitizePublicQuery(req.query)
+  const visitorId = getRequestVisitorId(req)
   const eventId = createRistakId('trigger_link_event')
   const referrer = cleanString(req.headers?.referer || req.headers?.referrer || '', 2048)
   const userAgent = cleanString(req.headers?.['user-agent'] || '', 1000)
@@ -304,7 +324,7 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
     eventId,
     row.id,
     row.public_id,
-    contactId || null,
+    contact?.id || null,
     visitorId || null,
     ipAddress || null,
     userAgent || null,
@@ -321,15 +341,17 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
   `, [row.id])
 
   const event = await db.get('SELECT * FROM trigger_link_events WHERE id = ?', [eventId])
+  const contactName = cleanString(contact?.full_name, 300) ||
+    [contact?.first_name, contact?.last_name].map(value => cleanString(value, 160)).filter(Boolean).join(' ')
   const automationPayload = {
-    contactId: contactId || null,
-    phone: phone || null,
-    email: email || null,
+    contactId: contact?.id || null,
+    phone: cleanString(contact?.phone, 160) || null,
+    email: cleanString(contact?.email, 320) || null,
     contactName: contactName || null,
     triggerLinkId: row.id,
     triggerLinkPublicId: row.public_id,
     triggerLinkName: row.name,
-    triggerLinkUrl: `/trigger-links/${row.public_id}`,
+    triggerLinkUrl: cleanString(triggerLinkUrl, 4096) || `/trigger-links/${row.public_id}`,
     destinationUrl: row.destination_url,
     visitorId: visitorId || null,
     referrer,
@@ -348,4 +370,17 @@ export async function recordTriggerLinkClick(publicId, req = {}) {
     event: mapTriggerLinkEvent(event),
     destinationUrl: row.destination_url
   }
+}
+
+export async function recordTriggerLinkRecipientClick(recipientToken, req = {}) {
+  let recipient
+  try {
+    recipient = await readTriggerLinkRecipientToken(recipientToken)
+  } catch {
+    throw notFound('Enlace de disparo no encontrado.')
+  }
+  return recordTriggerLinkClick(recipient.publicId, req, {
+    contactId: recipient.contactId,
+    triggerLinkUrl: `/${cleanString(recipientToken, 4096)}`
+  })
 }

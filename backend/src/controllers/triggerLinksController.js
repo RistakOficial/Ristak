@@ -5,6 +5,7 @@ import {
   listTriggerLinkEvents,
   listTriggerLinks,
   recordTriggerLinkClick,
+  recordTriggerLinkRecipientClick,
   updateTriggerLink
 } from '../services/triggerLinksService.js'
 
@@ -34,6 +35,12 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
+}
+
+function setPublicTriggerLinkHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive')
 }
 
 export async function listTriggerLinksHandler(req, res) {
@@ -100,13 +107,41 @@ export async function listTriggerLinkEventsHandler(req, res) {
 }
 
 export async function redirectTriggerLinkHandler(req, res) {
+  setPublicTriggerLinkHeaders(res)
   try {
     const result = await recordTriggerLinkClick(req.params.publicId, req)
-    res.setHeader('Cache-Control', 'no-store')
     return res.redirect(302, result.destinationUrl)
   } catch (error) {
     const status = error.status || 500
     const message = error.message || 'Enlace de disparo no disponible'
+    if (String(req.headers?.accept || '').includes('application/json')) {
+      return res.status(status).json({ success: false, error: message })
+    }
+    return res.status(status).type('html').send(`<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Enlace no disponible</title>
+  </head>
+  <body style="font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 32px; color: #0f172a;">
+    <h1 style="font-size: 22px; margin: 0 0 8px;">Enlace no disponible</h1>
+    <p style="margin: 0; color: #475569;">${escapeHtml(message)}</p>
+  </body>
+</html>`)
+  }
+}
+
+export async function redirectTriggerLinkRecipientHandler(req, res) {
+  setPublicTriggerLinkHeaders(res)
+  try {
+    const result = await recordTriggerLinkRecipientClick(req.params.recipientToken, req)
+    return res.redirect(302, result.destinationUrl)
+  } catch (error) {
+    const status = error.status || 404
+    const message = status === 404
+      ? 'Enlace de disparo no disponible'
+      : (error.message || 'Enlace de disparo no disponible')
     if (String(req.headers?.accept || '').includes('application/json')) {
       return res.status(status).json({ success: false, error: message })
     }

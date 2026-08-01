@@ -5,6 +5,7 @@ import { db, setAppConfig } from '../src/config/database.js'
 import { ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY } from '../src/services/accountBusinessProfileService.js'
 import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import { createVariableField } from '../src/services/variableFieldsService.js'
+import { readTriggerLinkRecipientToken } from '../src/services/triggerLinkRecipientTokenService.js'
 import {
   renderTemplateVariables,
   renderTemplateVariablesInValue
@@ -125,8 +126,16 @@ test('renderTemplateVariables resuelve contacto, personalizados, variables y enl
     )
 
     assert.match(output, /Hola Ana, plan Premium, negocio Ristak Demo/)
-    assert.match(output, new RegExp(`https://app\\.ristak\\.test/trigger-links/${triggerLink.publicId}`))
-    assert.match(output, new RegExp(`contact_id=${encodeURIComponent(contactId)}`))
+    const renderedUrl = output.match(/https:\/\/app\.ristak\.test\/(pce1_[A-Za-z0-9_-]+)/)?.[0]
+    assert.ok(renderedUrl, output)
+    assert.equal(new URL(renderedUrl).search, '')
+    assert.ok(!renderedUrl.includes(contactId))
+    assert.ok(!renderedUrl.includes(phone))
+    assert.ok(!renderedUrl.includes(`ana-${suffix}@example.test`))
+    assert.deepEqual(
+      await readTriggerLinkRecipientToken(new URL(renderedUrl).pathname.slice(1)),
+      { publicId: triggerLink.publicId, contactId }
+    )
     assert.match(output, /nada ""/)
   } finally {
     if (triggerLink?.id) {

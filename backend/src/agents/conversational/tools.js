@@ -27,6 +27,7 @@ import {
 import { getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiRuntimeService.js'
 import { analyzePaymentReceiptImage } from './mediaContext.js'
 import { getTriggerLink } from '../../services/triggerLinksService.js'
+import { buildTriggerLinkRecipientUrl } from '../../services/triggerLinkRecipientTokenService.js'
 import {
   businessTodayDateOnly,
   getAccountTimezone,
@@ -12836,6 +12837,7 @@ export function createConversationalTools(ctx) {
 
       let triggerLink = null
       let targetUrl = String(linkCapability?.url || '').trim()
+      let sentUrl = targetUrl
       if (linkCapability?.linkKind === 'trigger' && linkCapability.triggerLinkId) {
         triggerLink = await getTriggerLink(linkCapability.triggerLinkId)
         if (!triggerLink || triggerLink.archived || !triggerLink.active) {
@@ -12846,13 +12848,23 @@ export function createConversationalTools(ctx) {
       if (!isSafeConversationalHttpUrl(targetUrl)) {
         return { ok: false, actionCompleted: false, transferRequired: true, error: 'El destino configurado no es un enlace web seguro. No se envió nada; pasa la conversación a una persona.' }
       }
+      if (triggerLink) {
+        sentUrl = await buildTriggerLinkRecipientUrl({
+          publicId: triggerLink.publicId,
+          contactId: ctx.contactId,
+          baseUrl: ctx.publicBaseUrl
+        })
+        if (!isSafeConversationalHttpUrl(sentUrl)) {
+          return { ok: false, actionCompleted: false, transferRequired: true, error: 'Ristak no tiene una URL pública válida para preparar el enlace de disparo. No se envió nada; pasa la conversación a una persona.' }
+        }
+      }
 
       const action = pushAction(ctx, 'send_trigger_link', {
         objective: 'send_link',
         intencionDetectada,
         targetUrl,
         triggerLinkId: triggerLink?.id || null,
-        effect: { liveEffect: 'ENVIARÍA el destino general configurado sin identidad en la URL y sin crear una meta', marksObjectiveCompleted: false }
+        effect: { liveEffect: 'ENVIARÍA un enlace opaco ligado al contacto sin exponer su identidad y sin crear una meta', marksObjectiveCompleted: false }
       })
       if (!ctx.dryRun) {
         await recordConversationalAgentEvent({
@@ -12870,7 +12882,7 @@ export function createConversationalTools(ctx) {
       settleAction(action, ctx.dryRun ? 'simulated' : 'ok', {
         actionCompleted: !ctx.dryRun,
         linkPrepared: true,
-        sentUrl: targetUrl,
+        sentUrl,
         deliveryConfirmed: false,
         objectiveCompleted: false,
         confirmationMode: 'none'
@@ -12879,7 +12891,7 @@ export function createConversationalTools(ctx) {
         ok: true,
         actionCompleted: !ctx.dryRun,
         simulated: Boolean(ctx.dryRun),
-        sentUrl: targetUrl,
+        sentUrl,
         confirmationMode: 'none',
         objectiveCompleted: false,
         note: 'Manda sentUrl visible en el chat. Esta herramienta sólo entrega el enlace general y nunca crea ni completa un Objetivo propio.'
