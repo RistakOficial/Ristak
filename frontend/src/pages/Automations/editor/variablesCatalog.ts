@@ -14,7 +14,7 @@ import {
   type VariableValueType
 } from './nodeRegistry'
 import { getStartTriggers, hasPath, isStartNode } from './flowUtils'
-import { eventContextsForTriggerTypes } from './crmFields'
+import { eventContextsForTriggerTypes, specificFormFromConfig } from './crmFields'
 
 /**
  * Catálogo de variables insertables en mensajes, prompts, webhooks y campos
@@ -355,9 +355,9 @@ function formQuestionVariableFields(
   config: Record<string, unknown>,
   options: FlowVariableCatalogOptions = {}
 ): VariableSchemaField[] {
-  const formId = String(config.form || '').trim()
-  if (!formId) return []
-  const fields = options.formFieldsByFormId?.[formId] || []
+  const form = specificFormFromConfig(config)
+  if (!form) return []
+  const fields = options.formFieldsByFormId?.[form.value] || []
   return fields.reduce<VariableSchemaField[]>((output, fieldOption) => {
     const fieldKey = tokenSegment(String(fieldOption.value || '').trim())
     const label = String(fieldOption.label || fieldOption.value || '').trim()

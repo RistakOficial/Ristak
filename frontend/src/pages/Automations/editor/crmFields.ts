@@ -716,6 +716,15 @@ export const TRIGGER_FILTER_FIELDS: TriggerFilterField[] = [
   { id: 'payment_updated_at', label: 'Fecha de actualización del pago', phrase: 'la fecha de actualización del pago', category: 'Fechas del pago', appliesTo: ['payment'] },
   { id: 'campaign', label: 'Campaña', phrase: 'la campaña', catalog: 'campaigns', category: 'Anuncio', appliesTo: ['ads'] },
   {
+    id: 'form-specific',
+    label: 'Formulario específico',
+    phrase: 'el formulario',
+    catalog: 'forms',
+    operators: ['is'],
+    category: 'Formulario',
+    appliesTo: ['form']
+  },
+  {
     id: 'form_disqualified',
     label: 'Resultado del formulario',
     phrase: 'el formulario',
@@ -800,6 +809,7 @@ const TRIGGER_FILTER_CONTEXT_EXCLUSIONS: Record<string, string[]> = {
   'trigger-click-to-whatsapp': ['channel'],
   'goal-tag': ['tag'],
   'goal-payment': ['payment_status', 'amount'],
+  'goal-form': ['form-specific'],
   'goal-conversation': ['channel']
 }
 
@@ -891,6 +901,37 @@ export function triggerOperatorsForField(field?: TriggerFilterField): typeof TRI
 
 export function asTriggerFilters(value: unknown): TriggerFilter[] {
   return Array.isArray(value) ? (value as TriggerFilter[]) : []
+}
+
+export function triggerFiltersWithLegacyForm(config: unknown): TriggerFilter[] {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return []
+  const record = config as Record<string, unknown>
+  const filters = asTriggerFilters(record.filters)
+  if (filters.some((filter) => filter.field === 'form-specific')) {
+    return filters
+  }
+
+  const value = String(record.form || '').trim()
+  if (!value) return filters
+  return [
+    {
+      field: 'form-specific',
+      match: 'is',
+      value,
+      valueLabel: String(record.formName || value).trim(),
+      connector: 'and'
+    },
+    ...filters
+  ]
+}
+
+export function specificFormFromConfig(config: unknown): { value: string; label: string } | null {
+  const filter = triggerFiltersWithLegacyForm(config).find(
+    (candidate) => candidate.field === 'form-specific' && String(candidate.value || '').trim()
+  )
+  if (!filter) return null
+  const value = String(filter.value || '').trim()
+  return value ? { value, label: String(filter.valueLabel || value).trim() } : null
 }
 
 export function validateTriggerFilters(value: unknown): string[] {

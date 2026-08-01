@@ -81,6 +81,7 @@ import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
 import { RichEmailEditorModal } from './config/RichEmailEditorModal'
 import type { EmailRichEditorRequest } from './config/EmailConfigEditor'
+import { specificFormFromConfig } from './crmFields'
 import styles from './AutomationEditor.module.css'
 
 // El AppShell escucha este evento (lo usa el editor de Sitios) para ocultar el
@@ -323,8 +324,8 @@ export const AutomationEditor: React.FC = () => {
     const ids = new Set<string>()
     getStartTriggers(startNode).forEach((trigger) => {
       if (trigger.type !== 'trigger-form-submitted') return
-      const formId = String(trigger.config?.form || '').trim()
-      if (formId) ids.add(formId)
+      const form = specificFormFromConfig(trigger.config)
+      if (form) ids.add(form.value)
     })
     return [...ids]
   }, [nodes])

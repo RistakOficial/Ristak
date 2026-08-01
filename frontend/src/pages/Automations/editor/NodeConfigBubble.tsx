@@ -32,7 +32,7 @@ import { MessageBlocksEditor } from './config/MessageBlocksEditor'
 import { EmailConfigEditor, type EmailRichEditorRequest } from './config/EmailConfigEditor'
 import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
 import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
-import type { TriggerFilter } from './crmFields'
+import { asTriggerFilters, triggerFiltersWithLegacyForm, type TriggerFilter } from './crmFields'
 import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
 import styles from './AutomationEditor.module.css'
 
@@ -142,6 +142,26 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
 
   const setValue = (key: string, value: unknown) => {
     onChange(withCommentReplySanitizer({ ...config, [key]: value }))
+  }
+
+  const visibleTriggerFilters = definition.type === 'trigger-form-submitted'
+    ? triggerFiltersWithLegacyForm(config)
+    : asTriggerFilters(config.filters)
+
+  const updateTriggerFilters = (filters: TriggerFilter[]) => {
+    if (definition.type !== 'trigger-form-submitted') {
+      setValue('filters', filters)
+      return
+    }
+    const specificForm = filters.find(
+      (filter) => filter.field === 'form-specific' && String(filter.value || '').trim()
+    )
+    onChange({
+      ...config,
+      filters,
+      form: specificForm?.value || '',
+      formName: specificForm?.valueLabel || ''
+    })
   }
 
   useEffect(() => {
@@ -893,10 +913,9 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
         {/* Filtros avanzados del disparador (coincide / NO coincide) */}
         {definition.kind === 'trigger' && (
           <TriggerFiltersEditor
-            value={config.filters}
-            onChange={(filters: TriggerFilter[]) => setValue('filters', filters)}
+            value={visibleTriggerFilters}
+            onChange={updateTriggerFilters}
             contextKey={definition.type}
-            selectedFormId={str(config.form)}
           />
         )}
 

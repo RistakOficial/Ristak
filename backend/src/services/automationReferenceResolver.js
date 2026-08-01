@@ -427,7 +427,12 @@ function collectValueList(value) {
 }
 
 function inspectTriggerFilters({ filters, catalogs, issues, seen, nodeId, triggerId, selectedFormId = '' }) {
-  asArray(filters).forEach((filter, index) => {
+  const filterList = asArray(filters)
+  const specificFormId = cleanString(
+    filterList.find((filter) => isRecord(filter) && cleanString(filter.field) === 'form-specific')?.value
+  ) || cleanString(selectedFormId)
+
+  filterList.forEach((filter, index) => {
     if (!isRecord(filter)) return
     const field = cleanString(filter.field)
     const fieldPath = `filters.${index}`
@@ -453,7 +458,7 @@ function inspectTriggerFilters({ filters, catalogs, issues, seen, nodeId, trigge
         seen,
         nodeId,
         triggerId,
-        formId: selectedFormId,
+        formId: specificFormId,
         fieldPath: `${fieldPath}.customKey`,
         value: filter.customKey,
         label: filter.customLabel

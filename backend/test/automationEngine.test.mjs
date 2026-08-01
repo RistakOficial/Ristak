@@ -841,6 +841,8 @@ test('formularios exponen respuestas no guardadas para variables, filtros y cond
   assert.equal(renderTemplate('{{form.responses.presupuesto.text}}', formCtx), '3,500 a 5,000 pesos')
   assert.equal(renderTemplate('{{form.answers_by_id.field_budget.value}}', formCtx), '3500')
   assert.equal(renderTemplate('{{form.answers_by_id.field_budget.text}}', formCtx), '3,500 a 5,000 pesos')
+  assert.equal(filtersMatch([{ field: 'form-specific', match: 'is', value: 'site_form_123' }], formCtx), true)
+  assert.equal(filtersMatch([{ field: 'form-specific', match: 'is', value: 'site_form_otro' }], formCtx), false)
   assert.equal(filtersMatch([{ field: 'form-field-value', customKey: 'presupuesto', match: 'is', value: '3500' }], formCtx), true)
   assert.equal(filtersMatch([{ field: 'form-field-value', match: 'contains', value: 'WhatsApp' }], formCtx), true)
 

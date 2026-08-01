@@ -1330,12 +1330,15 @@ El selector de formularios del editor usa
 (formularios nativos, campos en landings, embeds e imports) ejecuta una consulta
 acotada, el backend mezcla solo esas paginas y nunca materializa el catalogo
 completo. Abrir, buscar y `Cargar mas` son las unicas acciones que piden paginas;
-`selectedIds` recupera una referencia guardada fuera de la pagina actual. Las
-automatizaciones con el disparador **Formulario enviado** exigen elegir un
-formulario concreto. El combo permanece disponible antes de cargar la primera
-pagina y, al abrirlo, permite buscar y guardar el ID estable seleccionado; el
-motor solo inscribe contactos cuando el evento contiene esa identidad de
-formulario.
+`selectedIds` recupera una referencia guardada fuera de la pagina actual. El
+disparador **Formulario enviado** escucha cualquier formulario por defecto y
+no muestra un selector obligatorio separado. Para limitarlo, **Añadir filtro →
+Formulario** ofrece en este orden **Formulario específico**, **Resultado del
+formulario** y **Pregunta del formulario**. Al elegir **Formulario específico**
+aparece directamente el catálogo paginado para buscar y guardar el ID estable;
+el motor solo inscribe contactos de ese formulario. Las configuraciones antiguas
+que guardaban el formulario en el disparador se presentan y editan como este
+filtro, sin perder su restricción existente.
 
 Las plantillas de WhatsApp son snapshots locales: una lectura vacia no dispara
 `refresh` al proveedor; sincronizar sigue siendo una accion explicita.

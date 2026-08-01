@@ -43,8 +43,10 @@ import { formatDate } from '@/utils/format'
 import {
   emptyAdvancedCondition,
   summarizeAdvancedCondition,
+  specificFormFromConfig,
   validateAdvancedCondition,
   triggerFiltersSentence,
+  triggerFiltersWithLegacyForm,
   validateTriggerFilters
 } from './crmFields'
 
@@ -860,32 +862,21 @@ const TRIGGERS: NodeDefinition[] = [
     icon: ClipboardList,
     accent: 'green',
     requiredFeature: 'forms',
-    addButtonLabel: 'Seleccionar formulario',
-    defaultConfig: () => ({ form: '', formName: '' }),
-    fields: [
-      {
-        key: 'form',
-        label: 'Formulario que dispara el evento',
-        type: 'catalogSelect',
-        catalog: 'forms',
-        required: true,
-        placeholder: 'Selecciona el formulario',
-        help: 'La automatización solo se iniciará cuando alguien envíe este formulario.'
-      }
-    ],
+    addButtonLabel: 'Añadir filtro',
+    defaultConfig: () => ({ filters: [] }),
+    fields: [],
     outputs: () => SINGLE_OUTPUT,
-    variableOutput: (config) => ({
-      baseId: 'formulario',
-      baseLabel: str(config.formName) || str(config.form)
-        ? `Formulario - ${str(config.formName) || str(config.form)}`
-        : 'Formulario',
-      fields: FORM_FIELDS
-    }),
+    variableOutput: (config) => {
+      const form = specificFormFromConfig(config)
+      return {
+        baseId: 'formulario',
+        baseLabel: form ? `Formulario - ${form.label}` : 'Formulario',
+        fields: FORM_FIELDS
+      }
+    },
     summary: (config) => ({
-      text: str(config.formName) || str(config.form)
-        ? `Cuando alguien envíe el formulario "${str(config.formName) || str(config.form)}"${triggerFiltersSentence(config.filters)}`
-        : undefined,
-      empty: 'Selecciona el formulario'
+      text: `Cuando alguien envíe un formulario${triggerFiltersSentence(triggerFiltersWithLegacyForm(config))}`,
+      empty: 'Cuando alguien envíe un formulario'
     })
   },
   {

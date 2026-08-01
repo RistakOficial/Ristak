@@ -32,7 +32,7 @@ export const TriggerFiltersEditor: React.FC<{
 }> = ({ value, onChange, contextKey, excludedFieldIds = [], selectedFormId }) => {
   const filters = asTriggerFilters(value)
   const fields = filterFieldsFor(contextKey, excludedFieldIds)
-  const formIdForQuestions = selectedFormId || filters.find((filter) => filter.field === 'form-specific' && filter.value)?.value || ''
+  const formIdForQuestions = filters.find((filter) => filter.field === 'form-specific' && filter.value)?.value || selectedFormId || ''
 
   const groups: DrillGroup[] = []
   fields.forEach((field) => {
@@ -48,12 +48,24 @@ export const TriggerFiltersEditor: React.FC<{
     onChange(filters.map((filter, i) => (i === index ? { ...filter, ...patch } : filter)))
   }
 
+  const updateSpecificForm = (index: number, value: string, valueLabel: string) => {
+    const previousValue = filters[index]?.value || ''
+    onChange(filters.map((filter, i) => {
+      if (i === index) return { ...filter, match: 'is', value, valueLabel }
+      if (previousValue !== value && filter.field === 'form_field') {
+        return { ...filter, customKey: '', customLabel: '' }
+      }
+      return filter
+    }))
+  }
+
   return (
     <div>
       {filters.map((filter, index) => {
         const field = fields.find((candidate) => candidate.id === filter.field)
         const needsCustomKey = Boolean(field?.needsCustomKey)
         const fieldReady = Boolean(filter.field) && (!needsCustomKey || Boolean(filter.customKey))
+        const isSpecificForm = field?.id === 'form-specific'
         const operators = triggerOperatorsForField(field)
         const needsValue = Boolean(filter.match) && triggerOperatorNeedsValue(filter.match)
         return (
@@ -90,7 +102,14 @@ export const TriggerFiltersEditor: React.FC<{
                   groups={groups}
                   value={filter.field}
                   onValueChange={(next) =>
-                    update(index, { field: next, match: '', value: '', valueLabel: '', customKey: '', customLabel: '' })
+                    update(index, {
+                      field: next,
+                      match: next === 'form-specific' ? 'is' : '',
+                      value: '',
+                      valueLabel: '',
+                      customKey: '',
+                      customLabel: ''
+                    })
                   }
                   placeholder="Selecciona qué dato revisar"
                   aria-label="Campo del filtro"
@@ -121,7 +140,19 @@ export const TriggerFiltersEditor: React.FC<{
               </div>
             )}
 
-            {fieldReady && (
+            {isSpecificForm && (
+              <div className={styles.filterStep}>
+                <CatalogSelect
+                  catalog="forms"
+                  value={filter.value}
+                  onChange={(next, label) => updateSpecificForm(index, next, label)}
+                  placeholder="Selecciona el formulario"
+                  aria-label="Formulario específico"
+                />
+              </div>
+            )}
+
+            {fieldReady && !isSpecificForm && (
               <div className={styles.filterStep}>
                 <div className={styles.configRow}>
                   <CustomSelect
@@ -240,7 +271,7 @@ const FormFieldSelect: React.FC<{
   const hasSavedValue = Boolean(value) && !options.some((option) => option.value === value)
 
   if (!formId) {
-    return <span className={styles.configHelp}>Primero selecciona el formulario del disparador.</span>
+    return <span className={styles.configHelp}>Primero añade el filtro “Formulario específico”.</span>
   }
 
   if (loading) {
