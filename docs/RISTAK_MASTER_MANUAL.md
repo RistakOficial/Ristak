@@ -1925,6 +1925,57 @@ Capacidades:
 - Etiquetas, campos personalizados y campos variables son parte del CRM base,
   incluido el plan Basic. El plan no debe ocultarlos ni rechazar sus endpoints;
   los permisos de usuario siguen aplicando.
+
+### Contrato de campos variables en runtime
+
+Los textos configurables guardan la referencia con corcheas; no copian el valor
+al momento de editar. `{{variable.clave}}` apunta al campo variable de la cuenta,
+`{{contact.*}}` a datos nativos del contacto y
+`{{contact.custom.clave}}`/`{{custom.clave}}` a sus campos personalizados. El
+valor se materializa al renderizar una pagina publica o justo antes de entregar
+un mensaje, correo, plantilla, comentario, recordatorio, automatizacion o
+webhook. Por eso cambiar un campo variable actualiza los usos posteriores sin
+tener que editar cada pieza.
+
+El resolvedor canonico es `backend/src/services/templateVariablesService.js`.
+Las funciones nuevas no deben implementar reemplazos parciales con expresiones
+regulares locales. El contrato actual cubre Sites y sus headers administrados,
+formularios y calendarios publicos, WhatsApp API/QR (texto, captions, botones,
+URLs y componentes de plantilla), Messenger, Instagram, correo SMTP/HighLevel,
+mensajes programados, recordatorios de citas, avisos de pagos y payloads de
+automatizaciones/webhooks. Las firmas de correo usan el mismo contexto y se
+vuelven a sanear después de insertar valores. El catalogo de plantillas incluye tanto las
+definiciones canonicas de campos personalizados como los campos variables de la
+cuenta, pero nunca expone en ese catalogo el valor sensible de una variable.
+
+La expansion es atomica y ocurre una sola vez. Si el valor de un campo variable
+contiene otra secuencia `{{...}}`, esa secuencia forma parte literal del valor y
+no se interpreta de nuevo. Los placeholders numericos `{{1}}`, `{{2}}`, etc.
+siguen perteneciendo a las plantillas oficiales de WhatsApp y el resolvedor CRM
+no los consume. Un namespace CRM reconocido sin valor se convierte en vacio en
+la entrega; un envio productivo de plantilla nunca sustituye datos faltantes con
+el ejemplo de configuracion. Si falla la lectura de la fuente de variables, la
+operacion falla cerrada en vez de mandar contenido incompleto.
+
+Las paginas publicas anonimas solo resuelven datos globales de la cuenta. No se
+acepta un `contact_id` crudo del query string para personalizarlas: los campos de
+contacto requieren un contexto autenticado/controlado por backend o, si se
+implementa personalizacion publica en el futuro, un enlace firmado y limitado.
+Los valores insertados dentro de contenido HTML administrado se escapan segun su
+contexto. El header de tracking es la excepcion deliberada de codigo confiable:
+se inyecta sin escapar solo en la publicacion y nunca en editor/preview.
+
+El HTML crudo importado y `importedPopupHtml` quedan fuera del reemplazo posterior
+a la sanitizacion. Sustituir ahi una variable con markup volveria a abrir una
+frontera XSS ya cerrada; para soportarlo en el futuro se necesita un parser por
+contexto y una nueva sanitizacion, no un `replace` ciego. Los headers administrados
+de esos mismos sitios importados si resuelven campos variables. La llave interna
+de un campo variable es inmutable, incluso al archivarlo, y su valor admite hasta
+100,000 caracteres para snippets reales sin truncamiento silencioso. Si el campo
+esta referenciado por un header de Sites, cambiar su valor o archivarlo exige
+tambien permiso de escritura en Sites; administrar campos no concede por si solo
+la facultad de cambiar JavaScript publicado.
+
 - La sección de automatizaciones en la ficha de contacto, el modal del chat y
   las acciones masivas solo aparece con `automations`; el backend rechaza también
   las inscripciones o filtros avanzados de automatizaciones sin esa feature.
@@ -5262,6 +5313,11 @@ Tracking:
   El editor, las sesiones de preview y los modos `no_track` lo desactivan a
   propósito; una prueba real exige dominio conectado, Site publicado, navegador
   real y confirmación en DB.
+- Los códigos globales y por página de `headerTrackingCode` aceptan
+  `{{variable.clave}}`. La referencia permanece visible en el editor y el valor
+  exacto se inyecta antes de `</head>` únicamente al servir la URL pública. El
+  HTML público se responde con `Cache-Control: no-store` para que un cambio del
+  valor se refleje al refrescar sin republicar ni conservar código anterior.
 - El incidente de CORS del 15 de julio de 2026, la frontera de seguridad, las
   reglas para Cloudflare/CDN y el procedimiento end-to-end viven en
   `docs/TRACKING_PIXEL.md`. Cualquier agente que optimice o audite esta tubería
@@ -6794,7 +6850,8 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   pago unico como suscripcion o viceversa.
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
-  seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,
+  seguridad; en publicación resuelven campos variables antes de inyectarse), y
+  el chrome de edicion. NO se permite divergencia en CSS visual,
   defaults de tema, estructura del bloque, border, color, fuente, radius o
   spacing.
 - Compatibilidad legacy: no hay migracion de datos; la normalizacion maneja

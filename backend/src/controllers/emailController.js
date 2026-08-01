@@ -24,6 +24,20 @@ function sendError(res, error, fallback) {
   })
 }
 
+function getRequestUserId(req) {
+  return req.user?.userId || req.user?.id || null
+}
+
+function getRequestPublicBaseUrl(req) {
+  const forwardedHost = String(req.headers?.['x-forwarded-host'] || '').split(',')[0].trim()
+  const host = forwardedHost || req.headers?.host || req.get?.('host') || ''
+  const forwardedProto = String(req.headers?.['x-forwarded-proto'] || '').split(',')[0].trim()
+  const protocol = forwardedProto || req.protocol || 'https'
+  return String(process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || (host ? `${protocol}://${host}` : ''))
+    .trim()
+    .replace(/\/+$/, '')
+}
+
 export async function getEmailStatusView(req, res) {
   try {
     const data = await getEmailStatus()
@@ -99,7 +113,22 @@ export async function saveInboundEmailSettingsView(req, res) {
 
 export async function sendEmailView(req, res) {
   try {
-    const data = await sendEmailToContact(req.body || {})
+    const body = req.body || {}
+    // Nunca aceptar desde el navegador controles internos como
+    // variablesResolved, extraVariables o userId: permitiría saltarse el
+    // resolvedor o suplantar el contexto del remitente.
+    const data = await sendEmailToContact({
+      contactId: body.contactId,
+      to: body.to,
+      subject: body.subject,
+      text: body.text,
+      html: body.html,
+      replyTo: body.replyTo,
+      externalId: body.externalId,
+      includeSignature: body.includeSignature,
+      userId: getRequestUserId(req),
+      publicBaseUrl: getRequestPublicBaseUrl(req)
+    })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error enviando correo: ${error.message}`)

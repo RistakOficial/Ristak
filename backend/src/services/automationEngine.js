@@ -40,6 +40,7 @@ import {
   normalizeContactReplyChannel,
   setContactReplyChannelPreference
 } from './contactReplyChannelPreferenceService.js'
+import { renderTemplateVariablesInValue } from './templateVariablesService.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -92,6 +93,40 @@ const DEFAULT_REPLY_CHANNEL_LABELS = {
   messenger: 'Messenger',
   instagram: 'Instagram Direct',
   email: 'Correo electrónico'
+}
+const AUTOMATION_NODE_TEMPLATES_RESOLVED = Symbol('automationNodeTemplatesResolved')
+const AUTOMATION_OUTPUT_NODE_TYPES = new Set([
+  'action-webhook',
+  'channel-comment-dm-reply',
+  'channel-comment-public-reply',
+  'channel-email',
+  'channel-instagram',
+  'channel-messenger',
+  'channel-whatsapp'
+])
+
+async function resolveAutomationTemplateValue(value, ctx = {}) {
+  const eventVariables = buildVariableMap(ctx)
+  return renderTemplateVariablesInValue(
+    value,
+    {
+      contact: ctx.contact,
+      contactId: ctx.contact?.id || ctx.contactId || ctx.contact_id,
+      phone: ctx.contact?.phone || ctx.phone,
+      userId: ctx.userId || ctx.user_id,
+      publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url
+    },
+    {
+      preserveUnknown: false,
+      resolveUnknownToken: (token) => {
+        if (eventVariables[token] !== undefined) return eventVariables[token]
+        const dynamic = resolveDynamicToken(token, ctx)
+        return dynamic === undefined
+          ? undefined
+          : (typeof dynamic === 'object' ? JSON.stringify(dynamic) : String(dynamic ?? ''))
+      }
+    }
+  )
 }
 
 async function canRunAutomationFlow(flow = {}) {
@@ -1468,6 +1503,13 @@ function buildVariableMap(ctx) {
     map[`custom.${key}`] = String(value ?? '')
     if (map[key] === undefined) map[key] = String(value ?? '')
   })
+  const accountVariableFields = ctx.variableFields || ctx.variable || {}
+  if (accountVariableFields && typeof accountVariableFields === 'object' && !Array.isArray(accountVariableFields)) {
+    Object.entries(accountVariableFields).forEach(([key, value]) => {
+      const cleanKey = cleanString(key)
+      if (cleanKey) map[`variable.${cleanKey}`] = String(value ?? '')
+    })
+  }
   if (ctx.payload && typeof ctx.payload === 'object') {
     setDeepVariable(map, 'webhook', ctx.payload)
     setDeepVariable(map, 'webhook_1', ctx.payload)
@@ -1476,6 +1518,7 @@ function buildVariableMap(ctx) {
 }
 
 export function renderTemplate(text, ctx, { preserveUnknown = false } = {}) {
+  if (ctx && ctx[AUTOMATION_NODE_TEMPLATES_RESOLVED]) return String(text || '')
   const map = buildVariableMap(ctx)
   return String(text || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawToken) => {
     const token = cleanString(rawToken)
@@ -3404,13 +3447,13 @@ function webhookHeadersModeFromConfig(config = {}) {
   return str(config.headersJson).trim() ? 'json' : 'fields'
 }
 
-function addRenderedWebhookHeader(headers, key, value, ctx) {
+function addRenderedWebhookHeader(headers, key, value) {
   const cleanKey = str(key).trim()
   if (!cleanKey) return
-  headers[cleanKey] = renderTemplate(String(value ?? ''), ctx, { preserveUnknown: true })
+  headers[cleanKey] = String(value ?? '')
 }
 
-function webhookHeadersFromConfig(config = {}, ctx) {
+function webhookHeadersFromConfig(config = {}) {
   const headers = {}
   if (webhookHeadersModeFromConfig(config) === 'json') {
     const rawJson = str(config.headersJson).trim()
@@ -3419,7 +3462,7 @@ function webhookHeadersFromConfig(config = {}, ctx) {
     try {
       const parsed = JSON.parse(rawJson)
       if (isPlainObject(parsed)) {
-        Object.entries(parsed).forEach(([key, value]) => addRenderedWebhookHeader(headers, key, value, ctx))
+        Object.entries(parsed).forEach(([key, value]) => addRenderedWebhookHeader(headers, key, value))
       }
     } catch (error) {
       logger.warn(`[Automations] Headers JSON inválidos para webhook: ${error.message}`)
@@ -3430,13 +3473,13 @@ function webhookHeadersFromConfig(config = {}, ctx) {
   const rawHeaders = config.headers
   if (Array.isArray(rawHeaders)) {
     rawHeaders.forEach((row) => {
-      addRenderedWebhookHeader(headers, row?.key || row?.name, row?.value, ctx)
+      addRenderedWebhookHeader(headers, row?.key || row?.name, row?.value)
     })
     return headers
   }
   if (isPlainObject(rawHeaders)) {
     Object.entries(rawHeaders).forEach(([key, value]) => {
-      addRenderedWebhookHeader(headers, key, value, ctx)
+      addRenderedWebhookHeader(headers, key, value)
     })
   }
   return headers
@@ -3519,44 +3562,43 @@ function webhookBodyModeFromConfig(config = {}) {
   return str(config.body).trim() ? 'json' : 'fields'
 }
 
-function renderWebhookBodyValue(value, ctx) {
-  return typeof value === 'string'
-    ? renderTemplate(value, ctx, { preserveUnknown: true })
-    : value ?? ''
+function renderWebhookBodyValue(value) {
+  return value ?? ''
 }
 
-function webhookBodyFieldsFromConfig(rawFields, ctx) {
+function webhookBodyFieldsFromConfig(rawFields) {
   const body = {}
   if (Array.isArray(rawFields)) {
     rawFields.forEach((row) => {
       const key = cleanString(row?.key || row?.name)
       if (!key) return
-      body[key] = renderWebhookBodyValue(row?.value, ctx)
+      body[key] = renderWebhookBodyValue(row?.value)
     })
     return body
   }
   if (isPlainObject(rawFields)) {
     Object.entries(rawFields).forEach(([key, value]) => {
       if (!cleanString(key)) return
-      body[key] = renderWebhookBodyValue(value, ctx)
+      body[key] = renderWebhookBodyValue(value)
     })
   }
   return body
 }
 
-function webhookBodyFromConfig(config = {}, ctx = {}) {
+function webhookBodyFromConfig(config = {}) {
   if (webhookBodyModeFromConfig(config) === 'fields') {
-    const body = webhookBodyFieldsFromConfig(config.bodyFields, ctx)
+    const body = webhookBodyFieldsFromConfig(config.bodyFields)
     if (!Object.keys(body).length) return { text: '', json: false }
     return { text: JSON.stringify(body), json: true }
   }
-  const bodyText = renderTemplate(str(config.body), ctx, { preserveUnknown: true }).trim()
+  const bodyText = str(config.body).trim()
   return { text: bodyText, json: /^[\[{]/.test(bodyText) }
 }
 
 async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
+  config = await resolveAutomationTemplateValue(config, ctx)
   const method = (str(config.method) || 'POST').toUpperCase()
-  let url = renderTemplate(str(config.url), ctx, { preserveUnknown: true }).trim()
+  let url = str(config.url).trim()
   const onError = str(config.onError) || 'continue'
   const timeoutMs = Math.max(1, Number(config.timeout) || 15) * 1000
 
@@ -3578,9 +3620,9 @@ async function runWebhookRequestFromConfig(config = {}, ctx = {}) {
   }
 
   const testContext = webhookAppointmentTestContext(ctx)
-  const headers = webhookHeadersFromConfig(config, ctx)
+  const headers = webhookHeadersFromConfig(config)
   addAppointmentTestWebhookHeaders(headers, testContext)
-  let body = webhookBodyFromConfig(config, ctx)
+  let body = webhookBodyFromConfig(config)
   if (testContext && ['GET', 'HEAD'].includes(method)) {
     try {
       const parsedUrl = new URL(url)
@@ -4557,7 +4599,7 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
     sendWhatsAppApiDocumentMessage
   } = await import('./whatsappApiService.js')
 
-  const caption = renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim() || undefined
+  const caption = str(block.caption).trim() || undefined
   let dataUrl = null
   let externalUrl = null
   let filename = str(block.caption) || 'archivo'
@@ -4571,9 +4613,9 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
   filename = media.filename || filename
 
   if (block.type === 'image') {
-    return sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
+    return sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback, variablesResolved: true })
   } else if (block.type === 'video') {
-    return sendWhatsAppApiVideoMessage({ to, from: fromPhone, videoDataUrl: dataUrl || undefined, videoUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
+    return sendWhatsAppApiVideoMessage({ to, from: fromPhone, videoDataUrl: dataUrl || undefined, videoUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback, variablesResolved: true })
   } else if (block.type === 'audio' || block.type === 'voice') {
     const isVoiceNote = block.type === 'voice' || block.voiceNote !== false
     if (externalUrl && !dataUrl) {
@@ -4650,7 +4692,8 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
       contactId: ctx.contact?.id,
       phoneNumberId,
       transport,
-      allowQrFallback
+      allowQrFallback,
+      variablesResolved: true
     })
   }
 }
@@ -4682,7 +4725,7 @@ async function sendWhatsAppBlocks(node, ctx) {
     sendWhatsAppApiTextMessage,
     sendWhatsAppApiTemplateMessage
   } = await import('./whatsappApiService.js')
-  const config = node.config || {}
+  const config = await resolveAutomationTemplateValue(node.config || {}, ctx)
   const to = ctx.contact?.phone
   if (!to) throw new Error('El contacto no tiene teléfono')
 
@@ -4742,7 +4785,8 @@ async function sendWhatsAppBlocks(node, ctx) {
           publicBaseUrl: ctx.publicBaseUrl,
           extraVariables,
           phoneNumberId,
-          allowQrFallback: true
+          allowQrFallback: true,
+          variablesResolved: true
         })
         sentNames.push(str(block.templateName) || str(block.templateId))
       }
@@ -4761,7 +4805,7 @@ async function sendWhatsAppBlocks(node, ctx) {
   const transports = []
   for (const block of blocks) {
     if (block.type === 'text') {
-      const text = renderTemplate(str(block.compiledText), ctx, { preserveUnknown: true }).trim()
+      const text = str(block.compiledText).trim()
       if (!text) continue
       const buttons = normalizeMessageButtons(block.buttons)
       const branchButtons = buttons.filter(button => button.action !== 'url')
@@ -4785,7 +4829,8 @@ async function sendWhatsAppBlocks(node, ctx) {
             contactId: ctx.contact?.id,
             phoneNumberId: nextPhoneNumberId,
             transport,
-            allowQrFallback: nextAllowQrFallback
+            allowQrFallback: nextAllowQrFallback,
+            variablesResolved: true
           })
         })
         transports.push(whatsappTransportFromResult(response))
@@ -4808,7 +4853,8 @@ async function sendWhatsAppBlocks(node, ctx) {
             contactId: ctx.contact?.id,
             phoneNumberId: nextPhoneNumberId,
             transport,
-            allowQrFallback: nextAllowQrFallback
+            allowQrFallback: nextAllowQrFallback,
+            variablesResolved: true
           })
         })
         transports.push(whatsappTransportFromResult(response))
@@ -4823,7 +4869,8 @@ async function sendWhatsAppBlocks(node, ctx) {
             contactId: ctx.contact?.id,
             phoneNumberId: nextPhoneNumberId,
             transport,
-            allowQrFallback: nextAllowQrFallback
+            allowQrFallback: nextAllowQrFallback,
+            variablesResolved: true
           })
         })
         transports.push(whatsappTransportFromResult(response))
@@ -4852,7 +4899,7 @@ async function sendWhatsAppBlocks(node, ctx) {
       transports.push(whatsappTransportFromResult(response))
       sent += 1
       if (block.type === 'audio' || block.type === 'voice') {
-        const caption = renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
+        const caption = str(block.caption).trim()
         if (caption) {
           const captionResponse = await sendWhatsAppAutomationMessage({
             phoneNumberId,
@@ -4864,7 +4911,8 @@ async function sendWhatsAppBlocks(node, ctx) {
               contactId: ctx.contact?.id,
               phoneNumberId: nextPhoneNumberId,
               transport,
-              allowQrFallback: nextAllowQrFallback
+              allowQrFallback: nextAllowQrFallback,
+              variablesResolved: true
             })
           })
           transports.push(whatsappTransportFromResult(captionResponse))
@@ -4882,7 +4930,7 @@ async function sendWhatsAppBlocks(node, ctx) {
 }
 
 function publicAutomationMediaUrl(rawUrl, ctx = {}) {
-  const mediaUrl = renderTemplate(str(rawUrl), ctx, { preserveUnknown: true }).trim()
+  const mediaUrl = str(rawUrl).trim()
   if (/^https:\/\//i.test(mediaUrl)) return mediaUrl
 
   const baseUrl = [
@@ -4914,7 +4962,7 @@ async function sendMetaSocialBlocks(node, ctx, platform, enrollment = {}) {
     sendMetaSocialAudioMessage,
     sendMetaSocialTextMessage
   } = await import('./metaSocialMessagingService.js')
-  const config = node.config || {}
+  const config = await resolveAutomationTemplateValue(node.config || {}, ctx)
   const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
   const sentMessages = []
   const notes = []
@@ -4927,13 +4975,14 @@ async function sendMetaSocialBlocks(node, ctx, platform, enrollment = {}) {
 
   for (const block of blocks) {
     if (block.type === 'text') {
-      const text = renderTemplate(str(block.compiledText || block.text || block.message), ctx, { preserveUnknown: true }).trim()
+      const text = str(block.compiledText || block.text || block.message).trim()
       if (!text) continue
       await sendMetaSocialTextMessage({
         contactId: ctx.contact?.id,
         platform,
         message: text,
-        externalId: nextExternalId()
+        externalId: nextExternalId(),
+        variablesResolved: true
       })
       sentMessages.push(text)
     } else if (block.type === 'delay') {
@@ -4943,7 +4992,7 @@ async function sendMetaSocialBlocks(node, ctx, platform, enrollment = {}) {
       )
       if (seconds > 0) await sleep(seconds * 1000)
     } else if (['image', 'video', 'audio', 'voice', 'file'].includes(block.type) && str(block.url)) {
-      const renderedMediaUrl = renderTemplate(str(block.url), ctx, { preserveUnknown: true }).trim()
+      const renderedMediaUrl = str(block.url).trim()
       const attachmentUrl = publicAutomationMediaUrl(renderedMediaUrl, ctx)
       const externalId = nextExternalId()
       const media = await resolveAutomationMediaSource(renderedMediaUrl)
@@ -4981,13 +5030,14 @@ async function sendMetaSocialBlocks(node, ctx, platform, enrollment = {}) {
       // Meta no acepta captions dentro del payload de adjunto. Si el usuario
       // escribió uno, lo enviamos como un segundo mensaje deliberado; si no,
       // el adjunto queda perfectamente válido por sí solo.
-      const caption = renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
+      const caption = str(block.caption).trim()
       if (caption) {
         await sendMetaSocialTextMessage({
           contactId: ctx.contact?.id,
           platform,
           message: caption,
-          externalId: nextExternalId()
+          externalId: nextExternalId(),
+          variablesResolved: true
         })
         sentMessages.push(caption)
       }
@@ -5009,10 +5059,10 @@ async function sendMetaSocialBlocks(node, ctx, platform, enrollment = {}) {
 async function sendEmailAutomationMessage(node, ctx) {
   const { sendEmailToContact } = await import('./emailService.js')
   const config = node.config || {}
-  const subject = renderTemplate(str(config.subject), ctx, { preserveUnknown: true }).trim()
-  const body = renderTemplate(str(config.body || config.message), ctx, { preserveUnknown: true }).trim()
-  const html = renderTemplate(str(config.bodyHtml || config.html || config.messageHtml), ctx, { preserveUnknown: true }).trim()
-  const to = renderTemplate(str(config.toEmail || config.to), ctx, { preserveUnknown: true }).trim()
+  const subject = str(config.subject).trim()
+  const body = str(config.body || config.message).trim()
+  const html = str(config.bodyHtml || config.html || config.messageHtml).trim()
+  const to = await resolveAutomationTemplateValue(str(config.toEmail || config.to), ctx)
 
   if (!subject) throw new Error('El correo necesita asunto')
   if (!body && !html) throw new Error('El correo necesita contenido')
@@ -5023,6 +5073,9 @@ async function sendEmailAutomationMessage(node, ctx) {
     subject,
     text: body,
     html: html || undefined,
+    extraVariables: buildVariableMap(ctx),
+    userId: ctx.userId || ctx.user_id,
+    publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url,
     includeSignature: config.includeSignature !== false,
     externalId: makeId('automation_email')
   })
@@ -5034,7 +5087,7 @@ async function sendEmailAutomationMessage(node, ctx) {
       id_mensaje: result.localMessageId || result.messageId || '',
       estado: result.status || 'sent',
       correo_destino: result.to || ctx.contact?.email || '',
-      asunto: subject,
+      asunto: result.subject || subject,
       fecha_envio: result.sentAt || nowIso()
     }
   }
@@ -5266,7 +5319,7 @@ function commentReplyTargetFromConfig(config, eventPlatform, fallbackReplyType =
 
 function commentContentBlock(block, ctx) {
   if (block.type === 'text') {
-    const text = renderTemplate(str(block.compiledText || block.text || block.message), ctx, { preserveUnknown: true }).trim()
+    const text = str(block.compiledText || block.text || block.message).trim()
     return text ? { kind: 'text', text, block } : null
   }
   if (COMMENT_MEDIA_BLOCKS.includes(block.type)) {
@@ -5277,7 +5330,7 @@ function commentContentBlock(block, ctx) {
 }
 
 async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public', enrollment = {}) {
-  const config = node.config || {}
+  const config = await resolveAutomationTemplateValue(node.config || {}, ctx)
   const contactId = ctx.contact?.id
   if (!contactId) throw new Error('Falta el contacto para responder el comentario')
   if (!str(ctx.platform)) {
@@ -5314,7 +5367,8 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public',
       await sendMetaSocialCommentReply({
         contactId, platform, message: content.text, replyType,
         commentId: str(ctx.commentId), postId: str(ctx.postId),
-        externalId: `${baseExternal}:${index}`
+        externalId: `${baseExternal}:${index}`,
+        variablesResolved: true
       })
       sent += 1
     } else if (content.kind === 'media') {
@@ -5328,9 +5382,9 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public',
       // El pie de foto solo se combina con la imagen en respuestas públicas de FB;
       // en DM el texto va en su propio bloque.
       const caption = target.value === 'facebook_public_comment' && block.caption
-        ? renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
+        ? str(block.caption).trim()
         : ''
-      const renderedMediaUrl = renderTemplate(str(content.url), ctx, { preserveUnknown: true }).trim()
+      const renderedMediaUrl = str(content.url).trim()
       const attachmentUrl = publicAutomationMediaUrl(renderedMediaUrl, ctx)
       const media = await resolveAutomationMediaSource(renderedMediaUrl)
       await sendMetaSocialCommentReply({
@@ -5344,7 +5398,8 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public',
         },
         commentId: str(ctx.commentId), postId: str(ctx.postId),
         externalId: `${baseExternal}:${index}`,
-        publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url || ''
+        publicBaseUrl: ctx.publicBaseUrl || ctx.public_base_url || '',
+        variablesResolved: true
       })
       sent += 1
     }
@@ -5364,9 +5419,7 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public',
  *  { wait: {kind, resumeAt}, detail } → pausar la inscripción
  *  { skipped: true, handle }     → paso no soportado, se registra y continúa
  */
-async function executeNode(node, ctx, enrollment) {
-  await assertAutomationNodeFeatureAccess(node)
-
+async function executeResolvedNode(node, ctx, enrollment) {
   switch (node.type) {
     case 'channel-whatsapp': {
       const sendResult = await sendWhatsAppBlocks(node, ctx)
@@ -5720,6 +5773,29 @@ async function executeNode(node, ctx, enrollment) {
 
     default:
       return { skipped: true, handle: 'out', detail: 'Paso aún no soportado por el motor: se omitió' }
+  }
+}
+
+async function executeNode(node, ctx, enrollment) {
+  await assertAutomationNodeFeatureAccess(node)
+  if (AUTOMATION_OUTPUT_NODE_TYPES.has(node.type)) {
+    return executeResolvedNode(node, ctx, enrollment)
+  }
+
+  const renderedNode = await resolveAutomationTemplateValue(node, ctx)
+  const hadResolvedFlag = Object.prototype.hasOwnProperty.call(ctx, AUTOMATION_NODE_TEMPLATES_RESOLVED)
+  const previousResolvedFlag = ctx[AUTOMATION_NODE_TEMPLATES_RESOLVED]
+  Object.defineProperty(ctx, AUTOMATION_NODE_TEMPLATES_RESOLVED, {
+    value: true,
+    enumerable: false,
+    configurable: true,
+    writable: true
+  })
+  try {
+    return await executeResolvedNode(renderedNode, ctx, enrollment)
+  } finally {
+    if (hadResolvedFlag) ctx[AUTOMATION_NODE_TEMPLATES_RESOLVED] = previousResolvedFlag
+    else delete ctx[AUTOMATION_NODE_TEMPLATES_RESOLVED]
   }
 }
 

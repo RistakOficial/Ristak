@@ -1,6 +1,8 @@
 import { db } from '../config/database.js'
 import { createRistakId } from '../utils/idGenerator.js'
 
+export const VARIABLE_FIELD_VALUE_MAX_LENGTH = 100000
+
 function cleanString(value, max = 1000) {
   const cleaned = String(value ?? '').trim()
   return cleaned ? cleaned.slice(0, max) : ''
@@ -10,6 +12,14 @@ function badRequest(message) {
   const error = new Error(message)
   error.status = 400
   return error
+}
+
+function cleanVariableFieldValue(value) {
+  const cleaned = String(value ?? '').trim()
+  if (cleaned.length > VARIABLE_FIELD_VALUE_MAX_LENGTH) {
+    throw badRequest(`El valor del campo variable no puede superar ${VARIABLE_FIELD_VALUE_MAX_LENGTH.toLocaleString('es-MX')} caracteres.`)
+  }
+  return cleaned
 }
 
 function notFound(message) {
@@ -51,10 +61,48 @@ function mapVariableField(row) {
   }
 }
 
-async function getVariableFieldById(id) {
+export async function getVariableFieldById(id) {
   const cleanId = cleanString(id, 180)
   if (!cleanId) return null
   return mapVariableField(await db.get('SELECT * FROM variable_fields WHERE id = ?', [cleanId]))
+}
+
+function parseSiteTheme(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value
+  try {
+    const parsed = JSON.parse(String(value || '{}'))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function headerTrackingValues(theme = {}) {
+  const pages = Array.isArray(theme.pages) ? theme.pages : []
+  return [
+    theme.headerTrackingCode,
+    theme.header_tracking_code,
+    ...pages.flatMap(page => [page?.headerTrackingCode, page?.header_tracking_code])
+  ].filter(value => typeof value === 'string' && value.includes('{{'))
+}
+
+function headerValueReferencesField(value, fieldKey) {
+  const expectedKey = normalizeVariableFieldKey(fieldKey)
+  if (!expectedKey) return false
+  for (const match of String(value || '').matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
+    const token = String(match[1] || '').trim().toLowerCase()
+    if (token === expectedKey || token === `variable.${expectedKey}`) return true
+  }
+  return false
+}
+
+export async function isVariableFieldUsedInSiteHeader(variableFieldId) {
+  const field = await getVariableFieldById(variableFieldId)
+  if (!field) return false
+
+  const rows = await db.all('SELECT theme_json FROM public_sites')
+  return rows.some(row => headerTrackingValues(parseSiteTheme(row.theme_json))
+    .some(value => headerValueReferencesField(value, field.fieldKey)))
 }
 
 async function assertUniqueKey(fieldKey, { excludeId = '' } = {}) {
@@ -65,13 +113,12 @@ async function assertUniqueKey(fieldKey, { excludeId = '' } = {}) {
     SELECT id
     FROM variable_fields
     WHERE LOWER(field_key) = LOWER(?)
-      AND archived = 0
       ${excludeClause}
     LIMIT 1
   `, params)
 
   if (existing) {
-    throw badRequest('Ese parámetro ya existe. Usa otro nombre interno.')
+    throw badRequest('Ese parámetro ya existe o fue archivado. Usa otro nombre interno para no cambiar el significado de referencias anteriores.')
   }
 }
 
@@ -88,7 +135,7 @@ export async function listVariableFields({ includeArchived = false } = {}) {
 export async function createVariableField(input = {}, { userId = null } = {}) {
   const label = cleanString(input.label || input.name, 160)
   const fieldKey = normalizeVariableFieldKey(input.fieldKey || input.key || input.field_key || label)
-  const value = cleanString(input.value ?? input.valueText ?? input.value_text, 5000)
+  const value = cleanVariableFieldValue(input.value ?? input.valueText ?? input.value_text)
 
   if (!label) throw badRequest('Ponle nombre al campo variable.')
   if (!fieldKey) throw badRequest('Usa un parámetro válido.')
@@ -129,7 +176,7 @@ export async function updateVariableField(variableFieldId, input = {}) {
   if (!fieldKey) throw badRequest('Usa un parámetro válido.')
 
   if (fieldKey !== existing.fieldKey) {
-    await assertUniqueKey(fieldKey, { excludeId: existing.id })
+    throw badRequest('El parámetro interno no se puede cambiar porque rompería los lugares donde ya se usa. Crea otro campo si necesitas una llave distinta.')
   }
 
   await db.run(`
@@ -145,7 +192,7 @@ export async function updateVariableField(variableFieldId, input = {}) {
     label,
     input.value === undefined && input.valueText === undefined && input.value_text === undefined
       ? existing.value
-      : cleanString(input.value ?? input.valueText ?? input.value_text, 5000),
+      : cleanVariableFieldValue(input.value ?? input.valueText ?? input.value_text),
     input.description === undefined ? existing.description || null : cleanString(input.description, 800) || null,
     existing.id
   ])

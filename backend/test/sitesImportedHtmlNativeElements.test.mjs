@@ -13,6 +13,7 @@ import {
   updateBlock,
   updateImportedSiteCodeFiles
 } from '../src/services/sitesService.js'
+import { createVariableField } from '../src/services/variableFieldsService.js'
 
 async function createImportedNativeSite(html, name) {
   const created = await createImportedSiteFromHtml({
@@ -465,6 +466,81 @@ test('imported HTML page-asset draft preview uses the active file before native 
     assert.match(draftPreviewHtml, /\/api\/sites\/public\/calendar-preview\/agenda-asset-draft\?test=1/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported HTML native form srcdoc does not resolve tokens introduced by another variable', async () => {
+  let siteId = ''
+  let formSiteId = ''
+  const variableFieldIds = []
+
+  try {
+    const suffix = Date.now().toString(36)
+    const fieldB = await createVariableField({
+      label: `Variable B ${suffix}`,
+      fieldKey: `native_form_b_${suffix}`,
+      value: `NO_DEBE_EXPANDIRSE_${suffix}`
+    })
+    variableFieldIds.push(fieldB.id)
+    const fieldA = await createVariableField({
+      label: `Variable A ${suffix}`,
+      fieldKey: `native_form_a_${suffix}`,
+      value: fieldB.parameter
+    })
+    variableFieldIds.push(fieldA.id)
+
+    const sourceForm = await createNativeSourceForm(`Fuente variable atómica ${suffix}`)
+    formSiteId = sourceForm.id
+    const sourceWithBlocks = await getSite(sourceForm.id, { includeBlocks: true })
+    const emailBlock = sourceWithBlocks.blocks.find(block => block.blockType === 'email')
+    assert.ok(emailBlock)
+    await updateBlock(sourceForm.id, emailBlock.id, {
+      label: `Etiqueta ${fieldA.parameter}`
+    })
+
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <section data-rstk-native-element="form" data-rstk-native-id="lead-form" data-rstk-label="Formulario principal"></section>
+        </body>
+      </html>
+    `, `HTML native form variable atómica ${suffix}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'form_embed',
+      label: 'Formulario principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'lead-form',
+        importedHtmlNativeType: 'form',
+        importedHtmlNativeRenderMode: 'ristak',
+        formSiteId: sourceForm.id,
+        completionAction: 'form_default'
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true
+    })
+    const srcdocMatch = html.match(/<iframe class="rstk-imported-native-form-frame"[^>]*\bsrcdoc="([^"]*)"/)
+
+    assert.ok(srcdocMatch)
+    const srcdoc = srcdocMatch[1]
+    assert.ok(srcdoc.includes(`Etiqueta ${fieldB.parameter}`))
+    assert.ok(!srcdoc.includes(fieldA.parameter))
+    assert.ok(!srcdoc.includes(fieldB.value))
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    if (formSiteId) await deleteSite(formSiteId).catch(() => undefined)
+    for (const fieldId of variableFieldIds) {
+      await db.run('DELETE FROM variable_fields WHERE id = ?', [fieldId]).catch(() => undefined)
+    }
   }
 })
 

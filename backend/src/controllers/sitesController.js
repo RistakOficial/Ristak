@@ -85,6 +85,7 @@ import { getVideoPlaybackAggregate, getVideoPlaybackViewers } from '../services/
 import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
 import { attachmentDisposition } from '../utils/contentDisposition.js'
+import { renderTemplateVariablesInValue } from '../services/templateVariablesService.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
 const sitePreviewSessions = new Map()
@@ -868,11 +869,20 @@ export async function previewCalendarHandler(req, res) {
     const bookingForm = await getCalendarBookingFormDefinition(calendar)
     const canUseCalendarPayments = await hasCalendarPaymentsFeature()
 
-    return res.status(200).type('html').send(renderPublicCalendarHtml(calendarForPublicRender(calendar, canUseCalendarPayments), {
+    res.set('Cache-Control', 'no-store')
+    const renderedPublicData = await renderTemplateVariablesInValue(
+      {
+        calendar: calendarForPublicRender(calendar, canUseCalendarPayments),
+        bookingForm: bookingFormForPublicRender(bookingForm, canUseCalendarPayments)
+      },
+      {},
+      { preserveUnknown: true }
+    )
+    return res.status(200).type('html').send(renderPublicCalendarHtml(renderedPublicData.calendar, {
       host: getRequestHost(req) || '',
       embedded: req.query?.embed === '1' || req.query?.test === '1',
       style: req.query || {},
-      bookingForm: bookingFormForPublicRender(bookingForm, canUseCalendarPayments),
+      bookingForm: renderedPublicData.bookingForm,
       preview: req.query?.editor_preview === '1' || req.query?.preview === '1',
       metaPixelSnippet: ''
     }))
@@ -1348,11 +1358,19 @@ export async function publicSiteHostMiddleware(req, res, next) {
       // No cachear el HTML público: cambios de pixel/tracking deben reflejarse
       // siempre tras un refresh (los assets sí se cachean por separado).
       res.set('Cache-Control', 'no-store')
-      return res.status(200).type('html').send(renderPublicCalendarHtml(calendarForPublicRender(calendar, canUseCalendarPayments), {
+      const renderedPublicData = await renderTemplateVariablesInValue(
+        {
+          calendar: calendarForPublicRender(calendar, canUseCalendarPayments),
+          bookingForm: bookingFormForPublicRender(bookingForm, canUseCalendarPayments)
+        },
+        {},
+        { preserveUnknown: true }
+      )
+      return res.status(200).type('html').send(renderPublicCalendarHtml(renderedPublicData.calendar, {
         host,
         embedded: req.query?.embed === '1' || req.query?.test === '1',
         style: req.query || {},
-        bookingForm: bookingFormForPublicRender(bookingForm, canUseCalendarPayments),
+        bookingForm: renderedPublicData.bookingForm,
         preview: isPreview,
         metaPixelSnippet
       }))

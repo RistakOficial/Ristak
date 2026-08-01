@@ -33,6 +33,7 @@ import {
 } from '../src/services/emailService.js'
 import { captureQrChatMessage, getWhatsAppApiConfigKeys } from '../src/services/whatsappApiService.js'
 import { setAppNotificationPayloadSenderForTest } from '../src/services/pushNotificationsService.js'
+import { createVariableField } from '../src/services/variableFieldsService.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -334,6 +335,101 @@ test('testWebhookAction ejecuta el POST y devuelve salida mapeable', async () =>
     assert.equal(received.headers['x-test-token'], 'tok_test')
   } finally {
     await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('testWebhookAction resuelve campos variables y de contacto antes del contexto del webhook', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  const field = await createVariableField({
+    label: `Token webhook ${suffix}`,
+    fieldKey: `webhook_token_${suffix}`,
+    value: 'secreto-de-cuenta'
+  })
+  let received = { headers: {}, body: {} }
+  const server = http.createServer((req, res) => {
+    let rawBody = ''
+    req.on('data', chunk => { rawBody += chunk })
+    req.on('end', () => {
+      received = {
+        headers: req.headers,
+        body: rawBody ? JSON.parse(rawBody) : {}
+      }
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ accepted: true }))
+    })
+  })
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const result = await testWebhookAction({
+      url: `http://127.0.0.1:${port}/variables`,
+      method: 'POST',
+      headers: [{ key: 'X-Account-Token', value: field.parameter }],
+      bodyMode: 'fields',
+      bodyFields: [
+        { key: 'saludo', value: `Hola {{contact.first_name}}: ${field.parameter}` },
+        { key: 'plan', value: '{{webhook.plan}}' }
+      ],
+      timeout: 5
+    }, {
+      contact: {
+        firstName: 'Ana',
+        phone: `+52155${Date.now().toString().slice(-8)}`
+      },
+      payload: { plan: 'Premium' }
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(received.headers['x-account-token'], 'secreto-de-cuenta')
+    assert.deepEqual(received.body, {
+      saludo: 'Hola Ana: secreto-de-cuenta',
+      plan: 'Premium'
+    })
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+    await db.run('DELETE FROM variable_fields WHERE id = ?', [field.id]).catch(() => undefined)
+  }
+})
+
+test('testWebhookAction resuelve variables de cuenta de forma atómica sin reinterpretarlas como webhook', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  const field = await createVariableField({
+    label: `Valor literal webhook ${suffix}`,
+    fieldKey: `literal_webhook_${suffix}`,
+    value: '{{webhook.plan}}'
+  })
+  let receivedBody = {}
+  const server = http.createServer((req, res) => {
+    let rawBody = ''
+    req.on('data', chunk => { rawBody += chunk })
+    req.on('end', () => {
+      receivedBody = rawBody ? JSON.parse(rawBody) : {}
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify({ accepted: true }))
+    })
+  })
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const address = server.address()
+    const port = typeof address === 'object' && address ? address.port : 0
+    const result = await testWebhookAction({
+      url: `http://127.0.0.1:${port}/atomic-variables`,
+      method: 'POST',
+      bodyMode: 'fields',
+      bodyFields: [{ key: 'plan', value: field.parameter }],
+      timeout: 5
+    }, {
+      payload: { plan: 'Premium' }
+    })
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(receivedBody, { plan: '{{webhook.plan}}' })
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+    await db.run('DELETE FROM variable_fields WHERE id = ?', [field.id]).catch(() => undefined)
   }
 })
 

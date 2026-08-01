@@ -538,7 +538,9 @@ export async function sendMetaSocialTextMessageView(req, res) {
         message: req.body?.message || req.body?.text,
         externalId: req.body?.externalId,
         replyToMessageId: req.body?.replyToMessageId,
-        replyToProviderMessageId: req.body?.replyToProviderMessageId
+        replyToProviderMessageId: req.body?.replyToProviderMessageId,
+        userId: req.user?.userId || req.user?.id,
+        publicBaseUrl: getPublicBaseUrl(req)
       })
     })
     res.json({ success: true, data })
@@ -660,7 +662,9 @@ export async function sendMetaSocialCommentReplyView(req, res) {
         replyType: req.body?.replyType,
         commentId: req.body?.commentId,
         postId: req.body?.postId,
-        externalId: req.body?.externalId
+        externalId: req.body?.externalId,
+        userId: req.user?.userId || req.user?.id,
+        publicBaseUrl: getPublicBaseUrl(req)
       })
     })
     res.json({ success: true, data })

@@ -7844,6 +7844,7 @@ async function sendConversationalChannelTextMessage({
     to: phone || latest.phone,
     from: latest.business_phone || undefined,
     phoneNumberId: latest.business_phone_number_id || undefined,
+    contactId,
     text,
     externalId,
     agentId

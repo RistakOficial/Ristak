@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
@@ -15,6 +16,11 @@ import {
   setMetaDirectFetchForTest,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
+import { createVariableField } from '../src/services/variableFieldsService.js'
+import {
+  deleteContactCustomFieldDefinition,
+  upsertContactCustomFieldDefinition
+} from '../src/services/contactCustomFieldDefinitionsService.js'
 
 const DEFAULT_TEMPLATE_NAMES = [
   'cita_programada',
@@ -120,6 +126,61 @@ async function deleteAllDefaultTemplates() {
   await deleteDefaultTemplates()
   await deleteDefaultPaymentTemplates()
 }
+
+test('el catálogo de plantillas incluye los campos variables reales de la cuenta', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  const field = await createVariableField({
+    label: `Código de cuenta ${suffix}`,
+    fieldKey: `codigo_cuenta_${suffix}`,
+    value: 'valor-real'
+  })
+
+  try {
+    const bundle = await getMessageTemplateBundle()
+    const catalogItem = bundle.variables.find(item => item.key === `variable.${field.fieldKey}`)
+
+    assert.deepEqual(catalogItem, {
+      key: `variable.${field.fieldKey}`,
+      label: field.label,
+      mergeField: field.parameter,
+      example: field.label,
+      group: 'Campos variables',
+      source: 'variable',
+      fieldKey: field.fieldKey
+    })
+  } finally {
+    await db.run('DELETE FROM variable_fields WHERE id = ?', [field.id]).catch(() => undefined)
+  }
+})
+
+test('el catálogo de plantillas incluye definiciones canónicas de campos personalizados del contacto', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  const definition = await upsertContactCustomFieldDefinition({
+    fieldKey: `preferencia_contacto_${suffix}`,
+    label: `Preferencia del contacto ${suffix}`,
+    dataType: 'text',
+    fieldGroup: 'Perfil',
+    sourceType: 'manual',
+    createOnly: true
+  })
+
+  try {
+    const bundle = await getMessageTemplateBundle()
+    const catalogItem = bundle.variables.find(item => item.key === `contact.custom.${definition.fieldKey}`)
+
+    assert.deepEqual(catalogItem, {
+      key: `contact.custom.${definition.fieldKey}`,
+      label: definition.label,
+      mergeField: `{{contact.custom.${definition.fieldKey}}}`,
+      example: definition.label,
+      group: 'Campos personalizados',
+      source: 'custom',
+      fieldKey: definition.fieldKey
+    })
+  } finally {
+    await deleteContactCustomFieldDefinition(definition.definitionId).catch(() => undefined)
+  }
+})
 
 test('crea plantillas default de citas y las manda a revisión una sola vez', async () => {
   await initializeMasterKey()

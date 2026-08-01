@@ -2992,12 +2992,14 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       })
     : '';
   const renderedEmailHtml = channelConfig.key === 'email'
-    ? await renderTemplateVariables(emailHtml || textToHighLevelEmailHtml(renderedText), {
-        contactId: contact.id,
-        phone: cleanToNumber,
-        userId: req?.user?.userId,
-        publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
-      })
+    ? emailHtml
+      ? await renderTemplateVariables(emailHtml, {
+          contactId: contact.id,
+          phone: cleanToNumber,
+          userId: req?.user?.userId,
+          publicBaseUrl: req ? getPublicBaseUrl(req) : undefined
+        }, { transformResolvedValue: escapeEmailHtml })
+      : textToHighLevelEmailHtml(renderedText)
     : '';
   if (channelConfig.key === 'email' && !cleanString(renderedSubject)) {
     throw createHighLevelChatError('El correo necesita un asunto.');

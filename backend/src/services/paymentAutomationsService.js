@@ -388,20 +388,6 @@ function getAutomationDefinition(type, settings = {}) {
   }
 }
 
-function renderPaymentAutomationText(template = '', variables = {}) {
-  return cleanString(template, 3000).replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key) => {
-    const value = variables[key]
-    return value === undefined || value === null || value === '' ? match : cleanString(value, 1000)
-  })
-}
-
-function getPaymentAutomationSubject(type, payment = {}, variables = {}) {
-  const product = variables['payment.product'] || cleanString(payment.title || payment.description || 'Pago', 160)
-  if (type === 'receipt') return `Comprobante de pago - ${product}`
-  if (type === 'failed') return `No pudimos procesar tu pago - ${product}`
-  return `Recordatorio de pago - ${product}`
-}
-
 function paymentQrSenderPhone(row = {}) {
   return cleanString(row.phone_number) || cleanString(row.display_phone_number)
 }
@@ -700,7 +686,7 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
 
   try {
     if (definition.contentMode === 'direct') {
-      const text = renderPaymentAutomationText(definition.messageText, extraVariables)
+      const text = definition.messageText
       if (!text) throw new Error(`El mensaje directo para ${definition.label} está vacío.`)
 
       const qrPrimarySender = qrOnly ? await getPaymentQrSender() : await getPaymentQrPrimarySender()
@@ -769,7 +755,8 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
         externalId: `payment:${type}:${paymentId}:qr`,
         phoneNumberId: qrPrimarySender.id,
         transport: 'qr',
-        allowQrFallback: false
+        allowQrFallback: false,
+        variablesResolved: true
       })
 
       await markDispatchSent(claim.id, {
@@ -812,7 +799,8 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
       publicBaseUrl,
       extraVariables,
       externalId: `payment:${type}:${paymentId}`,
-      allowQrFallback: definition.allowQrFallback
+      allowQrFallback: definition.allowQrFallback,
+      variablesResolved: true
     })
 
     await markDispatchSent(claim.id, response)
@@ -847,7 +835,8 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
             publicBaseUrl,
             extraVariables,
             externalId: `payment:${type}:${paymentId}:text-fallback`,
-            allowQrFallback: definition.allowQrFallback
+            allowQrFallback: definition.allowQrFallback,
+            variablesResolved: true
           })
 
           await markDispatchSent(claim.id, {
@@ -900,14 +889,18 @@ async function sendPaymentEmailAutomationMessage(type, payment, definition, { se
 
   try {
     const directText = definition.contentMode === 'direct'
-      ? renderPaymentAutomationText(definition.messageText, extraVariables)
+      ? definition.messageText
       : ''
     if (definition.contentMode === 'direct' && !directText) {
       throw new Error(`El mensaje directo para ${definition.label} está vacío.`)
     }
     const message = definition.contentMode === 'direct'
       ? {
-          subject: getPaymentAutomationSubject(type, payment, extraVariables),
+          subject: type === 'receipt'
+            ? 'Comprobante de pago - {{payment.product}}'
+            : type === 'failed'
+              ? 'No pudimos procesar tu pago - {{payment.product}}'
+              : 'Recordatorio de pago - {{payment.product}}',
           text: directText,
           html: ''
         }
@@ -918,6 +911,8 @@ async function sendPaymentEmailAutomationMessage(type, payment, definition, { se
       subject: message.subject,
       text: message.text,
       html: message.html || undefined,
+      extraVariables,
+      variablesResolved: definition.contentMode !== 'direct',
       externalId: claim.id,
       includeSignature: true
     })

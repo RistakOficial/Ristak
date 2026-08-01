@@ -16,6 +16,8 @@ import {
   normalizeWhatsAppProvider
 } from './whatsapp/providers/providerRegistry.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import { listVariableFields } from './variableFieldsService.js'
+import { listContactCustomFieldDefinitions } from './contactCustomFieldDefinitionsService.js'
 import { logger } from '../utils/logger.js'
 import { createRistakId } from '../utils/idGenerator.js'
 
@@ -774,22 +776,38 @@ function getBuiltinDefaultMessageTemplateForSend({ templateName, language, publi
 function customFieldVariables(customFields = []) {
   return customFields.map((field) => ({
     key: `contact.custom.${field.fieldKey}`,
-    label: field.name,
-    mergeField: field.mergeField,
-    example: field.example || field.name,
+    label: field.name || field.label || field.fieldKey,
+    mergeField: field.mergeField || `{{contact.custom.${field.fieldKey}}}`,
+    example: field.example || field.name || field.label || 'Valor de ejemplo',
     group: 'Campos personalizados',
     source: 'custom',
     fieldKey: field.fieldKey
   }))
 }
 
-function buildCatalog(customFields = []) {
-  return [
+function accountVariableFields(variableFields = []) {
+  return variableFields.map((field) => ({
+    key: `variable.${field.fieldKey}`,
+    label: field.label,
+    mergeField: field.parameter || `{{variable.${field.fieldKey}}}`,
+    // El catálogo lo consume un permiso de WhatsApp distinto al permiso que
+    // administra variables. Nunca filtrar aquí el valor real (puede ser código).
+    example: field.label || 'Valor de ejemplo',
+    group: 'Campos variables',
+    source: 'variable',
+    fieldKey: field.fieldKey
+  }))
+}
+
+function buildCatalog(customFields = [], variableFields = []) {
+  const catalog = [
     ...BASE_CONTACT_VARIABLES,
     ...BASE_APPOINTMENT_VARIABLES,
     ...BASE_PAYMENT_VARIABLES,
-    ...customFieldVariables(customFields)
+    ...customFieldVariables(customFields),
+    ...accountVariableFields(variableFields)
   ]
+  return [...new Map(catalog.map(item => [item.key, item])).values()]
 }
 
 function getVariableLookup(catalog = []) {
@@ -814,23 +832,29 @@ async function assertFolderExists(folderId) {
 }
 
 export async function getMessageTemplateBundle() {
-  const [folderRows, templateRows, customFieldRows] = await Promise.all([
+  const [folderRows, templateRows, templateCustomFieldRows, contactCustomFields, variableFields] = await Promise.all([
     db.all('SELECT * FROM whatsapp_template_folders ORDER BY sort_order ASC, name ASC'),
     db.all('SELECT * FROM whatsapp_message_templates ORDER BY updated_at DESC, name ASC'),
-    db.all('SELECT * FROM whatsapp_template_custom_fields ORDER BY name ASC')
+    db.all('SELECT * FROM whatsapp_template_custom_fields ORDER BY name ASC'),
+    listContactCustomFieldDefinitions(),
+    listVariableFields()
   ])
 
   const folders = folderRows.map(mapFolder)
   const templates = templateRows.map(mapTemplate)
-  const customFields = customFieldRows.map(mapCustomField)
-  const variables = buildCatalog(customFields)
+  const customFields = templateCustomFieldRows.map(mapCustomField)
+  const variables = buildCatalog([...customFields, ...contactCustomFields], variableFields)
 
   return { folders, templates, customFields, variables }
 }
 
 export async function getVariableCatalog() {
-  const rows = await db.all('SELECT * FROM whatsapp_template_custom_fields ORDER BY name ASC')
-  return buildCatalog(rows.map(mapCustomField))
+  const [rows, contactCustomFields, variableFields] = await Promise.all([
+    db.all('SELECT * FROM whatsapp_template_custom_fields ORDER BY name ASC'),
+    listContactCustomFieldDefinitions(),
+    listVariableFields()
+  ])
+  return buildCatalog([...rows.map(mapCustomField), ...contactCustomFields], variableFields)
 }
 
 export async function previewMessageTemplate(payload = {}) {
@@ -2345,24 +2369,43 @@ function bindingFallback(template, index) {
     cleanString(template?.variableExamples?.[String(index)])
 }
 
-async function renderSendBindingValue(template, binding = {}, index, variableOptions = {}) {
+async function renderSendBindingValue(
+  template,
+  binding = {},
+  index,
+  variableOptions = {},
+  { allowExampleFallback = false } = {}
+) {
   const mergeField = cleanString(binding.mergeField) ||
     (cleanString(binding.variableKey) ? `{{${cleanString(binding.variableKey)}}}` : '')
   const fallback = cleanString(binding.example) || bindingFallback(template, index)
-  if (!mergeField) return fallback
+  if (!mergeField) return allowExampleFallback ? fallback : ''
 
   const rendered = cleanString(await renderTemplateVariables(mergeField, variableOptions))
-  return rendered || fallback
+  // Los ejemplos sirven para registro, preview y un envío de prueba explícito;
+  // un envío real nunca debe fingir datos del contacto con esos ejemplos.
+  return rendered || (allowExampleFallback ? fallback : '')
 }
 
-async function buildTextSendParametersFromTemplate(template, target, variableOptions = {}) {
+async function buildTextSendParametersFromTemplate(
+  template,
+  target,
+  variableOptions = {},
+  renderOptions = {}
+) {
   const indexes = extractNumericVariableIndexes(getTemplateTextForTarget(template, target))
   if (!indexes.length) return []
 
   const bindings = template.variableBindings?.[target] || {}
   const parameters = []
   for (const index of indexes) {
-    const value = await renderSendBindingValue(template, bindings[String(index)] || {}, index, variableOptions)
+    const value = await renderSendBindingValue(
+      template,
+      bindings[String(index)] || {},
+      index,
+      variableOptions,
+      renderOptions
+    )
     if (!value) {
       throw new Error(`Configura el dato dinámico y el ejemplo para {{${index}}} en la plantilla ${template.name}.`)
     }
@@ -2371,7 +2414,7 @@ async function buildTextSendParametersFromTemplate(template, target, variableOpt
   return parameters
 }
 
-async function buildUrlButtonSendComponentsFromTemplate(template, variableOptions = {}) {
+async function buildUrlButtonSendComponentsFromTemplate(template, variableOptions = {}, renderOptions = {}) {
   const buttons = Array.isArray(template?.buttons) ? template.buttons : []
   const components = []
 
@@ -2382,7 +2425,8 @@ async function buildUrlButtonSendComponentsFromTemplate(template, variableOption
     const parameters = await buildTextSendParametersFromTemplate(
       template,
       getButtonValueTarget(index),
-      variableOptions
+      variableOptions,
+      renderOptions
     )
     if (!parameters.length) continue
 
@@ -2523,24 +2567,38 @@ export async function buildDefaultMessageTemplateFallbackText({
   return parts.map(part => cleanString(part, 4000)).filter(Boolean).join('\n\n')
 }
 
-async function buildSendComponentsFromTemplate(template) {
+async function buildSendComponentsFromTemplate(template, { allowExampleFallback = false } = {}) {
   const components = []
   const mediaHeader = buildMediaHeaderSendComponent(template)
   if (mediaHeader) {
     components.push(mediaHeader)
   } else {
-    const headerParameters = await buildTextSendParametersFromTemplate(template, 'headerText')
+    const headerParameters = await buildTextSendParametersFromTemplate(
+      template,
+      'headerText',
+      {},
+      { allowExampleFallback }
+    )
     if (headerParameters.length) {
       components.push({ type: 'header', parameters: headerParameters })
     }
   }
 
-  const bodyParameters = await buildTextSendParametersFromTemplate(template, 'bodyText')
+  const bodyParameters = await buildTextSendParametersFromTemplate(
+    template,
+    'bodyText',
+    {},
+    { allowExampleFallback }
+  )
   if (bodyParameters.length) {
     components.push({ type: 'body', parameters: bodyParameters })
   }
 
-  components.push(...await buildUrlButtonSendComponentsFromTemplate(template))
+  components.push(...await buildUrlButtonSendComponentsFromTemplate(
+    template,
+    {},
+    { allowExampleFallback }
+  ))
 
   return components
 }
@@ -2561,8 +2619,9 @@ export async function sendMessageTemplateTest(id, payload = {}) {
       from: payload.from,
       templateName: providerState.name,
       language: template.language,
-      components: await buildSendComponentsFromTemplate(template),
-      externalId: payload.externalId
+      components: await buildSendComponentsFromTemplate(template, { allowExampleFallback: true }),
+      externalId: payload.externalId,
+      variablesResolved: true
     })
     return {
       sent: true,

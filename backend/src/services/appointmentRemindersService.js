@@ -13,10 +13,15 @@ import {
   sendMetaSocialTextMessage
 } from './metaSocialMessagingService.js'
 import {
+  buildDefaultMessageTemplateFallbackText,
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultAppointmentMessageTemplates,
   getMessageTemplateProviderState
 } from './messageTemplatesService.js'
+import {
+  renderTemplateVariables,
+  renderTemplateVariablesInValue
+} from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { createInternalNotification } from './notificationsService.js'
 import {
@@ -1590,9 +1595,7 @@ async function sendReminderViaQr({ reminder, appointment, sender, template, time
   if (!sender?.qrReady) {
     throw new Error('Conecta un número de WhatsApp QR para enviar este recordatorio.')
   }
-  const text = template
-    ? renderReminderTemplateText(template, { appointment, timezone })
-    : renderMessageText(reminder.messageText, { contact: appointment, appointment, timezone })
+  const text = await getReminderPlainText(reminder, appointment, timezone)
 
   const response = await sendWhatsAppApiTextMessage({
     to: appointment.phone,
@@ -1601,17 +1604,14 @@ async function sendReminderViaQr({ reminder, appointment, sender, template, time
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
     transport: 'qr',
-    allowQrFallback: false
+    allowQrFallback: false,
+    variablesResolved: true
   })
   return response
 }
 
 function reminderUsesWhatsAppTemplate(reminder = {}) {
   return isWhatsAppReminderChannel(reminder.channel) && reminder.contentMode !== 'direct'
-}
-
-function getReminderDirectText(reminder, appointment, timezone) {
-  return renderMessageText(reminder.messageText, { contact: appointment, appointment, timezone })
 }
 
 function getAppointmentReminderSubject(reminder = {}) {
@@ -1635,12 +1635,18 @@ function getReminderChannelLabel(reminder = {}) {
 }
 
 async function getReminderPlainText(reminder, appointment, timezone) {
+  const variableOptions = buildReminderTemplateVariableOptions(appointment, timezone)
   if (reminder.contentMode === 'template') {
     const template = await getPurposeCompatibleReminderTemplate(reminder)
     if (!template) throw new Error('Selecciona un mensaje para renderizar el texto de este recordatorio.')
-    return renderReminderTemplateText(template, { appointment, timezone })
+    return buildDefaultMessageTemplateFallbackText({
+      templateId: template.id,
+      templateName: getMessageTemplateProviderState(template).name || template.name,
+      language: template.language,
+      variableOptions
+    })
   }
-  return getReminderDirectText(reminder, appointment, timezone)
+  return renderTemplateVariables(reminder.messageText, variableOptions)
 }
 
 function getMissingReminderTarget(reminder = {}, appointment = {}) {
@@ -1759,7 +1765,7 @@ async function sendAppointmentReminderByAutomaticChannel({ reminder, appointment
 }
 
 async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone }) {
-  const text = getReminderDirectText(reminder, appointment, timezone)
+  const text = await getReminderPlainText(reminder, appointment, timezone)
   if (!text) throw new Error('Escribe el mensaje directo que se enviará en este recordatorio.')
 
   if (!sender.apiEnabled && sender.qrReady) {
@@ -1770,7 +1776,8 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
       contactId: appointment.contact_id,
       phoneNumberId: sender.phoneNumberId || undefined,
       transport: 'qr',
-      allowQrFallback: false
+      allowQrFallback: false,
+      variablesResolved: true
     })
   }
 
@@ -1784,7 +1791,8 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
     from: sender.fromPhone || undefined,
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
-    allowQrFallback: true
+    allowQrFallback: true,
+    variablesResolved: true
   })
 }
 
@@ -1798,7 +1806,8 @@ async function sendReminderViaEmail({ reminder, appointment, timezone }) {
     subject: getAppointmentReminderSubject(reminder),
     text,
     externalId: `appointment-reminder:${reminder.id}:${appointment.id}`,
-    includeSignature: true
+    includeSignature: true,
+    variablesResolved: true
   })
 }
 
@@ -1811,7 +1820,8 @@ async function sendReminderViaMetaSocial({ reminder, appointment, timezone }) {
     contactId: appointment.contact_id,
     platform: channel,
     message: text,
-    externalId: `appointment-reminder:${reminder.id}:${appointment.id}`
+    externalId: `appointment-reminder:${reminder.id}:${appointment.id}`,
+    variablesResolved: true
   })
 }
 
@@ -1863,7 +1873,7 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
   // mandar a Meta una plantilla incompleta (error 131008). La adaptación legacy
   // conserva su objeto temporal de dos parámetros y por eso sigue usando el
   // constructor local.
-  const components = deliveryContract.adapted
+  let components = deliveryContract.adapted
     ? buildReminderTemplateComponents(deliveryContract.template, deliveryContext)
     : await buildDefaultMessageTemplateSendComponents({
         templateId: template.id,
@@ -1871,9 +1881,16 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
         language: template.language,
         variableOptions: buildReminderTemplateVariableOptions(appointment, timezone)
       })
-  const renderedTextOverride = deliveryContract.adapted
+  let renderedTextOverride = deliveryContract.adapted
     ? renderReminderTemplateText(deliveryContract.template, deliveryContext)
     : ''
+  if (deliveryContract.adapted) {
+    const variableOptions = buildReminderTemplateVariableOptions(appointment, timezone)
+    ;[components, renderedTextOverride] = await Promise.all([
+      renderTemplateVariablesInValue(components, variableOptions),
+      renderTemplateVariables(renderedTextOverride, variableOptions)
+    ])
+  }
   return sendWhatsAppApiTemplateMessage({
     to: appointment.phone,
     from: sender.fromPhone || undefined,
@@ -1883,7 +1900,8 @@ async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone
     contactId: appointment.contact_id,
     phoneNumberId: sender.phoneNumberId || undefined,
     renderedTextOverride,
-    allowQrFallback: true
+    allowQrFallback: true,
+    variablesResolved: true
   })
 }
 

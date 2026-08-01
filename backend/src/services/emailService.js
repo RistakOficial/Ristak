@@ -13,6 +13,7 @@ import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
+import { createTemplateVariableRenderer } from './templateVariablesService.js'
 import {
   formatContactName,
   splitContactName as splitFormattedContactName
@@ -637,6 +638,37 @@ function applySignatureToMessage(message, signature) {
       ? (signature.includeBeforeQuotedText ? insertSignatureBeforeQuotedHtml(baseHtml, signatureHtml) : `${baseHtml}${signatureHtml}`)
       : undefined,
     text: baseText && signatureText ? `${baseText}\n\n-- \n${signatureText}` : (message.text || undefined)
+  }
+}
+
+async function renderEmailSignatureVariables(signature, {
+  renderer = null,
+  contactId,
+  userId,
+  publicBaseUrl,
+  extraVariables
+} = {}) {
+  const sourceHtml = String(signature?.html ?? '')
+  const sourceText = String(signature?.text ?? '')
+  if (!sourceHtml.includes('{{') && !sourceText.includes('{{')) return signature
+
+  const variableRenderer = renderer || await createTemplateVariableRenderer({
+    contactId,
+    userId,
+    publicBaseUrl,
+    extraVariables
+  })
+  const [signatureHtml, signatureText] = await Promise.all([
+    variableRenderer.render(sourceHtml, { transformResolvedValue: escapeHtml }),
+    variableRenderer.render(sourceText)
+  ])
+  return {
+    ...signature,
+    // La firma ya se saneó al guardarse, pero una variable dentro de un
+    // atributo podría cambiar el esquema de una URL. Saneamos otra vez después
+    // de materializar valores para mantener cerrada esa frontera.
+    html: sanitizeEmailSignatureHtml(signatureHtml),
+    text: limitString(signatureText, SIGNATURE_TEXT_LIMIT)
   }
 }
 
@@ -1653,7 +1685,15 @@ export async function connectEmail(payload = {}) {
  * Envía un correo usando la configuración de la cuenta.
  * Es el punto único de salida para que otras features lo reutilicen después.
  */
-export async function sendEmail({ to, subject, text, html, replyTo, includeSignature = true } = {}) {
+export async function sendEmail({
+  to,
+  subject,
+  text,
+  html,
+  replyTo,
+  includeSignature = true,
+  renderSignature
+} = {}) {
   const config = await readStoredConfig()
   const password = await readStoredPassword()
 
@@ -1667,7 +1707,12 @@ export async function sendEmail({ to, subject, text, html, replyTo, includeSigna
   if (!cleanString(text) && !cleanString(html)) throw httpError(400, 'El correo necesita contenido')
 
   const transporter = await getTransporter(config, password)
-  const signature = includeSignature === false ? null : await readStoredSignatureConfig()
+  let signature = includeSignature === false ? null : await readStoredSignatureConfig()
+  if (signature) {
+    signature = typeof renderSignature === 'function'
+      ? await renderSignature(signature)
+      : await renderEmailSignatureVariables(signature)
+  }
   const signedMessage = applySignatureToMessage({
     to: recipient,
     subject,
@@ -1696,6 +1741,10 @@ export async function sendEmailToContact({
   replyTo,
   externalId,
   agentId,
+  userId,
+  publicBaseUrl,
+  extraVariables,
+  variablesResolved = false,
   includeSignature = true
 } = {}) {
   const config = await readStoredConfig()
@@ -1707,9 +1756,26 @@ export async function sendEmailToContact({
   const { recipient } = await getContactEmailRecipient(contactId, to)
   if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El contacto no tiene un correo válido')
 
-  const cleanSubject = limitString(subject, EMAIL_SUBJECT_LIMIT)
-  const cleanText = limitString(text, EMAIL_TEXT_LIMIT)
-  const cleanHtml = limitString(html || textToEmailHtml(cleanText), EMAIL_HTML_LIMIT)
+  const variableRenderer = variablesResolved
+    ? null
+    : await createTemplateVariableRenderer({
+        contactId,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })
+  const [renderedSubject, renderedText, renderedHtml] = variablesResolved
+    ? [String(subject ?? ''), String(text ?? ''), String(html ?? '')]
+    : await Promise.all([
+        variableRenderer.render(subject),
+        variableRenderer.render(text),
+        html
+          ? variableRenderer.render(html, { transformResolvedValue: escapeHtml })
+          : Promise.resolve('')
+      ])
+  const cleanSubject = limitString(renderedSubject, EMAIL_SUBJECT_LIMIT)
+  const cleanText = limitString(renderedText, EMAIL_TEXT_LIMIT)
+  const cleanHtml = limitString(renderedHtml || textToEmailHtml(cleanText), EMAIL_HTML_LIMIT)
   const cleanReplyTo = cleanString(replyTo).toLowerCase()
   if (!cleanSubject) throw httpError(400, 'El correo necesita un asunto')
   if (!cleanText && !cleanHtml) throw httpError(400, 'El correo necesita contenido')
@@ -1742,13 +1808,23 @@ export async function sendEmailToContact({
   })
 
   try {
+    const renderStoredSignature = includeSignature === false
+      ? undefined
+      : (signature) => renderEmailSignatureVariables(signature, {
+          renderer: variableRenderer,
+          contactId,
+          userId,
+          publicBaseUrl,
+          extraVariables
+        })
     const result = await sendEmail({
       to: recipient,
       subject: cleanSubject,
       text: cleanText,
       html: cleanHtml,
       replyTo: cleanReplyTo || undefined,
-      includeSignature
+      includeSignature,
+      renderSignature: renderStoredSignature
     })
     await saveEmailMessageRow({
       id: localMessageId,

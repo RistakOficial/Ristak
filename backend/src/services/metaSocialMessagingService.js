@@ -19,6 +19,7 @@ import {
 import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 import { withConversationalInboundCommitLock } from './conversationalInboundCommitLockService.js'
+import { renderTemplateVariables } from './templateVariablesService.js'
 import { BACKFILL_JOB_PRIORITY, scheduleBackfillJob } from '../jobs/backfillJobCoordinator.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
@@ -3351,13 +3352,24 @@ function buildReusedMetaSocialSendResult(row, platform) {
   }
 }
 
-export async function sendMetaSocialTextMessage({ contactId, platform, message, externalId, agentId, replyToMessageId = '', replyToProviderMessageId = '' } = {}) {
+export async function sendMetaSocialTextMessage({
+  contactId,
+  platform,
+  message,
+  externalId,
+  agentId,
+  replyToMessageId = '',
+  replyToProviderMessageId = '',
+  userId,
+  publicBaseUrl,
+  variablesResolved = false
+} = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
-  const body = cleanString(message)
+  const sourceBody = cleanString(message)
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
-  if (!body) throw createMetaSocialMessageError('Falta el texto del mensaje', 400)
+  if (!sourceBody) throw createMetaSocialMessageError('Falta el texto del mensaje', 400)
 
   const existingSend = await findMetaSocialOutboundByExternalId({
     contactId: cleanContactId,
@@ -3365,6 +3377,15 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     externalId
   })
   if (existingSend) return buildReusedMetaSocialSendResult(existingSend, cleanPlatform)
+
+  const body = cleanString(variablesResolved
+    ? sourceBody
+    : await renderTemplateVariables(sourceBody, {
+        contactId: cleanContactId,
+        userId,
+        publicBaseUrl
+      }))
+  if (!body) throw createMetaSocialMessageError('El mensaje quedó vacío después de resolver parámetros.', 400)
 
   const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
   if (!enabled) {
@@ -4076,10 +4097,23 @@ export async function markLatestMetaSocialMessageReadForContact({ contactId, pla
 //  - 'private' => abre/continúa un DM con quien comentó (/{businessId}/messages recipient:{comment_id})
 // Se apoya en el token de PÁGINA y en el comment_id del último comentario entrante
 // del contacto (si no se pasa explícito). NO usa el senderId sintético (no es un PSID).
-export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId, agentId, attachment = null, publicBaseUrl = '' } = {}) {
+export async function sendMetaSocialCommentReply({
+  contactId,
+  platform,
+  message,
+  replyType = 'private',
+  commentId = '',
+  postId = '',
+  externalId,
+  agentId,
+  attachment = null,
+  publicBaseUrl = '',
+  userId,
+  variablesResolved = false
+} = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
-  const body = cleanString(message)
+  const sourceBody = cleanString(message)
   const mode = cleanString(replyType).toLowerCase() === 'public' ? 'public' : 'private'
   const rawAttachmentType = cleanString(attachment?.type).toLowerCase()
   const attachmentType = rawAttachmentType === 'voice'
@@ -4098,7 +4132,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     : null
 
   if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
-  if (!body && !att) throw createMetaSocialMessageError('Falta el contenido de la respuesta', 400)
+  if (!sourceBody && !att) throw createMetaSocialMessageError('Falta el contenido de la respuesta', 400)
   if (att && mode === 'private') {
     throw createMetaSocialMessageError(
       'La respuesta privada inicial a un comentario solo admite texto. Cuando la persona responda, envía imagen, video o audio desde su conversación normal.',
@@ -4128,6 +4162,19 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
       replyType: mode,
       commentId: cleanString(commentId) || null
     }
+  }
+
+  const body = sourceBody
+    ? cleanString(variablesResolved
+        ? sourceBody
+        : await renderTemplateVariables(sourceBody, {
+            contactId: cleanContactId,
+            userId,
+            publicBaseUrl
+          }))
+    : ''
+  if (!body && !att) {
+    throw createMetaSocialMessageError('La respuesta quedó vacía después de resolver parámetros.', 400)
   }
 
   const enabled = await isMetaSocialCommentsEnabled(cleanPlatform)

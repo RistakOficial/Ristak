@@ -78,6 +78,7 @@ import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
 import { createSubscription } from './subscriptionsService.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
+import { renderTemplateVariablesInValue } from './templateVariablesService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
 import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
@@ -2175,6 +2176,45 @@ function injectImportedStaticFallback(html = '', report = []) {
 
 function getRawTrackingCode(value) {
   return typeof value === 'string' ? value : ''
+}
+
+async function renderSiteTemplateVariables(site) {
+  if (!site || typeof site !== 'object') {
+    return renderTemplateVariablesInValue(site, {}, { preserveUnknown: true })
+  }
+
+  // El HTML importado se sanitiza al guardarse. Apartarlo de esta pasada evita
+  // que el valor de una variable vuelva a introducir markup ejecutable después
+  // de esa frontera. Headers, páginas, bloques y el resto del tema sí se resuelven.
+  const source = { ...site }
+  const preservedTopLevel = {}
+  for (const key of ['htmlOriginal', 'htmlSanitized', 'html_original', 'html_sanitized', 'import']) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue
+    preservedTopLevel[key] = source[key]
+    delete source[key]
+  }
+
+  const sourceTheme = source.theme && typeof source.theme === 'object' && !Array.isArray(source.theme)
+    ? { ...source.theme }
+    : source.theme
+  const preservedTheme = {}
+  if (sourceTheme && typeof sourceTheme === 'object') {
+    for (const key of ['importedPopupHtml', 'imported_popup_html']) {
+      if (!Object.prototype.hasOwnProperty.call(sourceTheme, key)) continue
+      preservedTheme[key] = sourceTheme[key]
+      delete sourceTheme[key]
+    }
+    source.theme = sourceTheme
+  }
+
+  const rendered = await renderTemplateVariablesInValue(source, {}, { preserveUnknown: true })
+  if (!rendered || typeof rendered !== 'object') return rendered
+
+  Object.assign(rendered, preservedTopLevel)
+  if (Object.keys(preservedTheme).length) {
+    rendered.theme = { ...(rendered.theme || {}), ...preservedTheme }
+  }
+  return rendered
 }
 
 function buildHeaderTrackingCode(site, activePage = null) {
@@ -32852,7 +32892,10 @@ async function renderImportedNativeFormSlot(block = {}, context = {}) {
     // El documento padre es el único dueño de PageView/Pixel/CAPI. El iframe
     // nativo solo captura y envía el formulario.
     trackingEnabled: false,
-    preview: context.preview
+    preview: context.preview,
+    // El Site padre ya hidrató y resolvió este bloque. Repetir la pasada aquí
+    // interpretaría tokens que formen parte literal del valor insertado.
+    runtimeContentPrepared: true
   })
   const bridgedFormHtml = injectImportedHtmlRuntime(formHtml, `<script>
   (() => {
@@ -34270,11 +34313,6 @@ async function renderImportedPublicSiteHtml(site, {
   html = ensureImportedHtmlVideoActionTargets(html)
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
   html = await resolveImportedContentAssets(html, site.id)
-  const importedSourceBlocks = Array.isArray(site.blocks) ? site.blocks : await listSiteBlocks(site.id)
-  site = {
-    ...site,
-    blocks: await hydrateEmbeddedForms(importedSourceBlocks)
-  }
   site.blocks = await attachEmbeddedFormProgressTokens({
     ownerSite: site,
     blocks: site.blocks,
@@ -34348,7 +34386,7 @@ async function renderImportedPublicSiteHtml(site, {
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
-    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
+    `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${trackingEnabled && !preview ? buildHeaderTrackingCode(site, activePage) : ''}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}`
   )
   return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
@@ -34357,7 +34395,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
   trackingEnabled = true,
   publicHost = ''
 } = {}) {
-  const site = await getImportedSiteForAsset(siteId)
+  let site = await getImportedSiteForAsset(siteId)
   if (!site || !isImportedHtmlSite(site)) return null
 
   const asset = await getImportedSiteAssetByPath(site.id, assetPath)
@@ -34377,8 +34415,13 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
     const imported = await getImportedSiteBySiteId(site.id)
     if (!imported) return null
 
-    const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
     const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
+    site = {
+      ...site,
+      blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+    }
+    site = await renderSiteTemplateVariables(site)
+    const page = getImportedRenderPageByAssetPath(site, asset.assetPath)
     let html = rewriteImportedHtmlForRender(
       site,
       asset.content.toString('utf8'),
@@ -34386,10 +34429,6 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
       availablePaths
     )
     html = await resolveImportedContentAssets(html, site.id)
-    site = {
-      ...site,
-      blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
-    }
     if (!trackingEnabled) {
       html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
     }
@@ -34466,7 +34505,9 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
       assetPath: asset.assetPath,
       contentType: 'text/html; charset=utf-8',
       body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`), 'utf8'),
-      cacheControl: trackingEnabled ? 'public, max-age=300' : 'no-store'
+      // El HTML puede contener valores de campos variables que cambian sin
+      // volver a publicar el ZIP. No cachearlo evita servir codigo anterior.
+      cacheControl: 'no-store'
     }
   }
 
@@ -34565,8 +34606,20 @@ export async function renderPublicSiteHtml(site, {
   preview = false,
   importedNativePreviewMock = false,
   draftImportedCodeFiles = [],
-  publicHost = ''
+  publicHost = '',
+  runtimeContentPrepared = false
 } = {}) {
+  if (!runtimeContentPrepared) {
+    if (site?.siteType === 'landing_page') {
+      const sourceBlocks = Array.isArray(site.blocks) ? site.blocks : await listSiteBlocks(site.id)
+      site = {
+        ...site,
+        blocks: await hydrateEmbeddedForms(sourceBlocks)
+      }
+    }
+    site = await renderSiteTemplateVariables(site)
+  }
+
   if (isImportedHtmlSite(site)) {
     return renderImportedPublicSiteHtml(site, {
       pageId,
@@ -34610,7 +34663,6 @@ export async function renderPublicSiteHtml(site, {
     blocks = getDefaultFormDisqualifiedBlocks(site.id)
   }
   if (isLandingType) {
-    blocks = await hydrateEmbeddedForms(blocks)
     blocks = await attachEmbeddedFormProgressTokens({
       ownerSite: site,
       blocks,
@@ -34774,7 +34826,7 @@ export async function renderPublicSiteHtml(site, {
   const paymentCheckoutScript = buildPaymentCheckoutRuntimeScript()
   const metaPixelSite = buildSiteWithEmbeddedSubmitMetaFallback(site, blocks, activePage?.id)
   const metaPixel = await buildMetaPixelSnippet(metaPixelSite, trackingEnabled, activePage, preview)
-  const headerTrackingCode = trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''
+  const headerTrackingCode = trackingEnabled && !preview ? buildHeaderTrackingCode(site, activePage) : ''
   const popupHtml = renderSitePopup(site, {
     popupBlocks,
     renderContext,

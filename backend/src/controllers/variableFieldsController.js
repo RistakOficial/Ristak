@@ -2,9 +2,12 @@ import { logger } from '../utils/logger.js'
 import {
   archiveVariableField,
   createVariableField,
+  getVariableFieldById,
+  isVariableFieldUsedInSiteHeader,
   listVariableFields,
   updateVariableField
 } from '../services/variableFieldsService.js'
+import { hasUserAccess } from '../utils/userAccess.js'
 
 const getRequestUserId = (req) => req.user?.userId || req.user?.id || null
 
@@ -13,6 +16,24 @@ function sendVariableFieldError(res, error, fallback = 'Error al guardar campo v
     success: false,
     error: error.message || fallback
   })
+}
+
+async function assertCanChangeSiteHeaderVariable(req, variableFieldId) {
+  if (!(await isVariableFieldUsedInSiteHeader(variableFieldId))) return
+  if (hasUserAccess(req.user, 'sites', 'write')) return
+
+  const error = new Error('Este campo controla código de tracking en Sites. Necesitas permiso para editar Sites antes de cambiar su valor o archivarlo.')
+  error.status = 403
+  throw error
+}
+
+async function assertCanUpdateVariableValue(req, variableFieldId, input = {}) {
+  const hasValue = input.value !== undefined || input.valueText !== undefined || input.value_text !== undefined
+  if (!hasValue) return
+  const existing = await getVariableFieldById(variableFieldId)
+  const nextValue = String(input.value ?? input.valueText ?? input.value_text ?? '').trim()
+  if (existing && nextValue === existing.value) return
+  await assertCanChangeSiteHeaderVariable(req, variableFieldId)
 }
 
 export const listVariableFieldsHandler = async (req, res) => {
@@ -38,6 +59,7 @@ export const createVariableFieldHandler = async (req, res) => {
 
 export const updateVariableFieldHandler = async (req, res) => {
   try {
+    await assertCanUpdateVariableValue(req, req.params.variableFieldId, req.body || {})
     const field = await updateVariableField(req.params.variableFieldId, req.body || {})
     res.json({ success: true, data: field })
   } catch (error) {
@@ -48,6 +70,7 @@ export const updateVariableFieldHandler = async (req, res) => {
 
 export const deleteVariableFieldHandler = async (req, res) => {
   try {
+    await assertCanChangeSiteHeaderVariable(req, req.params.variableFieldId)
     const field = await archiveVariableField(req.params.variableFieldId)
     res.json({ success: true, data: field })
   } catch (error) {

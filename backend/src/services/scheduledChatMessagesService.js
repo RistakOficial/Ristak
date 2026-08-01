@@ -5,7 +5,6 @@ import {
   sendWhatsAppApiTextMessage
 } from './whatsappApiService.js'
 import { buildDefaultMessageTemplateSendComponents } from './messageTemplatesService.js'
-import { renderTemplateVariables } from './templateVariablesService.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -382,6 +381,7 @@ async function sendScheduledChatMessage(row) {
     const explicitComponents = parseJsonValue(row.template_components_json, [])
     const explicitVariables = parseJsonValue(row.template_variables_json, null)
     const hasExplicitVariables = explicitVariables !== null && explicitVariables !== undefined
+    const componentsAlreadyResolved = (!Array.isArray(explicitComponents) || explicitComponents.length === 0) && !hasExplicitVariables
     const components = Array.isArray(explicitComponents) && explicitComponents.length
       ? explicitComponents
       : hasExplicitVariables
@@ -406,20 +406,16 @@ async function sendScheduledChatMessage(row) {
       ...(hasExplicitVariables ? { variables: explicitVariables } : {}),
       externalId: row.external_id || row.id,
       contactId: row.contact_id,
-      phoneNumberId: row.business_phone_number_id
+      phoneNumberId: row.business_phone_number_id,
+      variablesResolved: componentsAlreadyResolved
     })
   }
-
-  const renderedText = await renderTemplateVariables(row.message_text, {
-    contactId: row.contact_id,
-    phone: row.to_phone
-  })
 
   if (row.provider === 'highlevel') {
     return sendHighLevelConversationMessageCore({
       contactId: row.contact_id,
       channel: row.channel || 'whatsapp_api',
-      message: renderedText,
+      message: row.message_text,
       fromNumber: row.from_phone,
       toNumber: row.to_phone,
       externalId: row.external_id || row.id
@@ -429,7 +425,7 @@ async function sendScheduledChatMessage(row) {
   return sendWhatsAppApiTextMessage({
     to: row.to_phone,
     from: row.from_phone,
-    text: renderedText,
+    text: row.message_text,
     externalId: row.external_id || row.id,
     transport: normalizeWhatsappTransport(row.transport),
     contactId: row.contact_id,

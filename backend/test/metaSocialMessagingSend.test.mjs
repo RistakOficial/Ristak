@@ -12,6 +12,7 @@ import ffmpegPath from 'ffmpeg-static'
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey, isEncrypted } from '../src/utils/encryption.js'
+import { createVariableField } from '../src/services/variableFieldsService.js'
 import {
   enableMetaSocialChannelsForConnectedProfiles,
   getMetaConfig,
@@ -2504,6 +2505,111 @@ test('sendMetaSocialTextMessage mantiene Messenger con Page token y messaging_ty
           await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialTextMessage resuelve variables globales y del contacto antes de mandar el DM', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const suffix = crypto.randomUUID().replace(/-/g, '_')
+  const contactId = `meta_send_variables_contact_${suffix}`
+  const metaContactId = `meta_send_variables_profile_${suffix}`
+  const username = `meta_send_variables_user_${suffix}`
+  const userEmail = `meta-user-${suffix}@example.test`
+  let variableField
+  let userId = ''
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-test',
+            encrypt('user-token-send-test'),
+            null,
+            'page-send-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId })
+          await db.run(
+            'UPDATE contacts SET full_name = ?, first_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            ['María Meta', 'María', contactId]
+          )
+          const userInsert = await db.run(
+            `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+             VALUES (?, ?, 'test-hash', 'Asesor Meta', 'admin', 1)`,
+            [username, userEmail]
+          )
+          userId = String(userInsert.lastID || '')
+          if (!userId) {
+            const selectedUser = await db.get('SELECT id FROM users WHERE username = ?', [username])
+            userId = String(selectedUser?.id || '')
+          }
+          variableField = await createVariableField({
+            label: `Campaña Meta ${suffix}`,
+            fieldKey: `meta_campaign_${suffix}`,
+            value: 'Lanzamiento Premium'
+          })
+
+          const expectedText = `Hola María, tu campaña es Lanzamiento Premium. Te atiende ${userEmail}.`
+          const result = await sendMetaSocialTextMessage({
+            contactId,
+            platform: 'messenger',
+            message: `Hola {{contact.first_name}}, tu campaña es ${variableField.parameter}. Te atiende {{user.email}}.`,
+            userId
+          })
+
+          const sendCall = calls.find(call => call.method === 'POST' && call.url === '/page-send-test/messages')
+          assert.ok(sendCall)
+          assert.deepEqual(JSON.parse(sendCall.body), {
+            messaging_type: 'RESPONSE',
+            recipient: { id: 'psid-send-test' },
+            message: { text: expectedText }
+          })
+          assert.equal(JSON.stringify(JSON.parse(sendCall.body)).includes('{{'), false)
+
+          const stored = await db.get(
+            'SELECT message_text FROM meta_social_messages WHERE id = ?',
+            [result.localMessageId]
+          )
+          assert.equal(stored?.message_text, expectedText)
+        } finally {
+          if (variableField?.id) {
+            await db.run('DELETE FROM variable_fields WHERE id = ?', [variableField.id]).catch(() => undefined)
+          }
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM users WHERE username = ?', [username]).catch(() => undefined)
         }
       })
     })

@@ -1,11 +1,84 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { db } from '../src/config/database.js'
+import { db, setAppConfig } from '../src/config/database.js'
+import { ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY } from '../src/services/accountBusinessProfileService.js'
 import { createTriggerLink } from '../src/services/triggerLinksService.js'
 import { createVariableField } from '../src/services/variableFieldsService.js'
-import { renderTemplateVariables } from '../src/services/templateVariablesService.js'
+import {
+  renderTemplateVariables,
+  renderTemplateVariablesInValue
+} from '../src/services/templateVariablesService.js'
 import { renderCalendarAppointmentTemplates } from '../src/services/calendarAppointmentTemplateService.js'
+
+test('renderTemplateVariables solo resuelve usuario con contexto explicito y toma el negocio del perfil de cuenta', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  const usernames = [
+    `variable_user_first_${suffix}`,
+    `variable_user_selected_${suffix}`
+  ]
+  const emails = [
+    `first-${suffix}@example.test`,
+    `selected-${suffix}@example.test`
+  ]
+  const previousProfile = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY]
+  )
+  let selectedUserId = ''
+
+  try {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY])
+    await setAppConfig(ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY, {
+      name: `Negocio desde perfil ${suffix}`
+    })
+
+    await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, 'test-hash', 'Primer usuario', 'admin', 1)`,
+      [usernames[0], emails[0]]
+    )
+    const selectedInsert = await db.run(
+      `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+       VALUES (?, ?, 'test-hash', 'Usuario seleccionado', 'admin', 1)`,
+      [usernames[1], emails[1]]
+    )
+    selectedUserId = String(selectedInsert.lastID || '')
+    if (!selectedUserId) {
+      const selectedUser = await db.get('SELECT id FROM users WHERE username = ?', [usernames[1]])
+      selectedUserId = String(selectedUser?.id || '')
+    }
+
+    const withoutUserContext = await renderTemplateVariables(
+      '{{user.email}}|{{account.business_name}}'
+    )
+    assert.equal(withoutUserContext, `|Negocio desde perfil ${suffix}`)
+    assert.equal(withoutUserContext.includes(emails[0]), false)
+
+    const withExplicitUser = await renderTemplateVariables(
+      '{{user.email}}|{{account.business_name}}',
+      { userId: selectedUserId }
+    )
+    assert.equal(withExplicitUser, `${emails[1]}|Negocio desde perfil ${suffix}`)
+  } finally {
+    await db.run(
+      'DELETE FROM users WHERE username IN (?, ?)',
+      usernames
+    ).catch(() => undefined)
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY])
+      .catch(() => undefined)
+    if (previousProfile) {
+      await db.run(
+        `INSERT INTO app_config (config_key, config_value, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(config_key) DO UPDATE SET
+           config_value = excluded.config_value,
+           updated_at = CURRENT_TIMESTAMP`,
+        [ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY, previousProfile.config_value]
+      ).catch(() => undefined)
+    }
+  }
+})
 
 test('renderTemplateVariables resuelve contacto, personalizados, variables y enlaces de disparo', async () => {
   const suffix = randomUUID()
@@ -65,6 +138,123 @@ test('renderTemplateVariables resuelve contacto, personalizados, variables y enl
     }
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
+})
+
+test('renderTemplateVariables conserva placeholders numericos de plantillas oficiales', async () => {
+  const output = await renderTemplateVariables(
+    'Valores oficiales: {{1}}, {{ 2 }} y {{0003}}; CRM faltante: {{contact.no_existe}}'
+  )
+
+  assert.equal(
+    output,
+    'Valores oficiales: {{1}}, {{ 2 }} y {{0003}}; CRM faltante: '
+  )
+})
+
+test('renderTemplateVariables hace una sola expansion y no interpreta tokens dentro del valor resuelto', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  let outerField
+  let innerField
+
+  try {
+    innerField = await createVariableField({
+      label: `Valor interno ${suffix}`,
+      fieldKey: `atomic_inner_${suffix}`,
+      value: 'valor-final'
+    })
+    outerField = await createVariableField({
+      label: `Valor externo ${suffix}`,
+      fieldKey: `atomic_outer_${suffix}`,
+      value: `antes ${innerField.parameter} despues`
+    })
+
+    const output = await renderTemplateVariables(`Resultado: ${outerField.parameter}`)
+
+    assert.equal(output, `Resultado: antes ${innerField.parameter} despues`)
+    assert.doesNotMatch(output, /valor-final/)
+  } finally {
+    if (outerField?.id) {
+      await db.run('DELETE FROM variable_fields WHERE id = ?', [outerField.id]).catch(() => undefined)
+    }
+    if (innerField?.id) {
+      await db.run('DELETE FROM variable_fields WHERE id = ?', [innerField.id]).catch(() => undefined)
+    }
+  }
+})
+
+test('renderTemplateVariablesInValue clona y recorre estructuras sin perder 0, false ni arrays', async () => {
+  const source = {
+    zero: '{{zeroValue}}',
+    disabled: '{{falseValue}}',
+    arrayValue: '{{arrayValue}}',
+    nested: [
+      0,
+      false,
+      '{{external.keep_me}}',
+      {
+        missingContact: '{{contact.no_existe}}',
+        missingCustom: '{{custom.no_existe}}',
+        missingVariable: '{{variable.no_existe}}'
+      }
+    ]
+  }
+
+  const rendered = await renderTemplateVariablesInValue(
+    source,
+    {
+      extraVariables: {
+        zeroValue: 0,
+        falseValue: false,
+        arrayValue: ['uno', 0, false, 'dos']
+      }
+    },
+    { preserveUnknown: true }
+  )
+
+  assert.deepEqual(rendered, {
+    zero: '0',
+    disabled: 'false',
+    arrayValue: 'uno, 0, false, dos',
+    nested: [
+      0,
+      false,
+      '{{external.keep_me}}',
+      {
+        missingContact: '',
+        missingCustom: '',
+        missingVariable: ''
+      }
+    ]
+  })
+  assert.notStrictEqual(rendered, source)
+  assert.notStrictEqual(rendered.nested, source.nested)
+  assert.equal(source.zero, '{{zeroValue}}')
+  assert.equal(source.nested[2], '{{external.keep_me}}')
+})
+
+test('renderTemplateVariables acepta aliases camelCase de contacto', async () => {
+  const output = await renderTemplateVariables(
+    [
+      '{{contact.firstName}}',
+      '{{contact.lastName}}',
+      '{{contact.fullName}}',
+      '{{contact.companyName}}',
+      '{{contact.postalCode}}',
+      '{{contact.dateOfBirth}}'
+    ].join('|'),
+    {
+      contact: {
+        id: `rstk_contact_camel_${randomUUID()}`,
+        firstName: 'Ana',
+        lastName: 'Prueba',
+        companyName: 'Ristak Labs',
+        postalCode: '32500',
+        dateOfBirth: '1990-04-03'
+      }
+    }
+  )
+
+  assert.equal(output, 'Ana|Prueba|Ana Prueba|Ristak Labs|32500|1990-04-03')
 })
 
 test('renderCalendarAppointmentTemplates arma titulo y notas de cita con parametros', async () => {

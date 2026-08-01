@@ -51,7 +51,7 @@ import {
 import { getLegacyMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { verifyInstallerSignedRequest } from './installerSignatureService.js'
-import { renderTemplateVariables } from './templateVariablesService.js'
+import { createTemplateVariableRenderer, renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { claimInboundChatMessage } from './chatReadStateService.js'
 import {
@@ -12543,20 +12543,6 @@ async function saveTemplateSend({
   return id
 }
 
-async function renderOutgoingVariables(value, options = {}) {
-  if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => renderTemplateVariables(String(item ?? ''), options)))
-  }
-  if (value && typeof value === 'object') {
-    const entries = await Promise.all(Object.entries(value).map(async ([key, item]) => [
-      key,
-      await renderTemplateVariables(String(item ?? ''), options)
-    ]))
-    return Object.fromEntries(entries)
-  }
-  return value
-}
-
 export async function sendWhatsAppApiTemplateMessage({
   to,
   from,
@@ -12572,6 +12558,7 @@ export async function sendWhatsAppApiTemplateMessage({
   extraVariables,
   phoneNumberId,
   renderedTextOverride,
+  variablesResolved = false,
   allowQrFallback = true
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
@@ -12609,19 +12596,28 @@ export async function sendWhatsAppApiTemplateMessage({
     throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status || 'sin estado'}; solo se pueden enviar plantillas APPROVED`)
   }
 
-  const renderedVariables = await renderOutgoingVariables(variables, {
-    contactId,
-    phone: toPhone,
-    userId,
-    publicBaseUrl,
-    extraVariables
-  })
+  const variableRenderer = variablesResolved
+    ? null
+    : await createTemplateVariableRenderer({
+        contactId,
+        phone: toPhone,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })
+  const [renderedVariables, renderedInputComponents, renderedTextOverrideValue] = variablesResolved
+    ? [variables, components, String(renderedTextOverride ?? '')]
+    : await Promise.all([
+        variableRenderer.renderValue(variables),
+        variableRenderer.renderValue(components),
+        variableRenderer.render(renderedTextOverride)
+      ])
   const templateComponents = templateQuickReplyButtonComponents(
     finalTemplate,
-    buildTemplateComponents({ components, variables: renderedVariables })
+    buildTemplateComponents({ components: renderedInputComponents, variables: renderedVariables })
   )
   const normalizedVariables = normalizeTemplateVariables(renderedVariables)
-  const renderedTemplateText = cleanString(renderedTextOverride) || buildRenderedTemplateText({
+  const renderedTemplateText = cleanString(renderedTextOverrideValue) || buildRenderedTemplateText({
     template: finalTemplate,
     components: templateComponents,
     variables: normalizedVariables
@@ -12812,23 +12808,27 @@ export async function sendWhatsAppApiInteractiveMessage({
   replyToMessageId = '',
   replyToProviderMessageId = '',
   preferOfficialApiWhenReplyWindowOpen = false,
-  skipQrSendProtection = false
+  skipQrSendProtection = false,
+  variablesResolved = false
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const renderedBody = await renderTemplateVariables(body || text, {
-    contactId,
-    phone: toPhone || to,
-    userId,
-    publicBaseUrl,
-    extraVariables
-  })
+  const interactiveInput = { body: body || text, buttons, urlButton }
+  const renderedInteractiveInput = variablesResolved
+    ? interactiveInput
+    : await (await createTemplateVariableRenderer({
+        contactId,
+        phone: toPhone || to,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })).renderValue(interactiveInput)
   let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
   const interactivePayload = buildInteractiveMessagePayload({
-    body: renderedBody,
-    buttons,
-    urlButton
+    body: renderedInteractiveInput.body,
+    buttons: renderedInteractiveInput.buttons,
+    urlButton: renderedInteractiveInput.urlButton
   })
 
   if (!toPhone) throw new Error('Falta el número destino')
@@ -13453,18 +13453,21 @@ export async function sendWhatsAppApiTextMessage({
   replyToProviderMessageId = '',
   preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false,
-  agentId
+  agentId,
+  variablesResolved = false
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const renderedText = await renderTemplateVariables(text, {
-    contactId,
-    phone: toPhone || to,
-    userId,
-    publicBaseUrl,
-    extraVariables
-  })
+  const renderedText = variablesResolved
+    ? String(text ?? '')
+    : await renderTemplateVariables(text, {
+        contactId,
+        phone: toPhone || to,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })
   const body = cleanString(renderedText)
   const agentMetadata = buildConversationalAgentMessageMetadata(agentId)
 
@@ -14124,18 +14127,21 @@ export async function sendWhatsAppApiImageMessage({
   publicBaseUrl,
   phoneNumberId,
   preferOfficialApiWhenReplyWindowOpen = false,
-  skipQrSendProtection = false
+  skipQrSendProtection = false,
+  variablesResolved = false
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const renderedCaption = await renderTemplateVariables(caption, {
-    contactId,
-    phone: toPhone || to,
-    userId,
-    publicBaseUrl,
-    extraVariables
-  })
+  const renderedCaption = variablesResolved
+    ? String(caption ?? '')
+    : await renderTemplateVariables(caption, {
+        contactId,
+        phone: toPhone || to,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })
   const cleanCaption = cleanString(renderedCaption).slice(0, 1024)
   const cleanImageUrl = cleanString(imageUrl)
 
@@ -14395,18 +14401,21 @@ export async function sendWhatsAppApiDocumentMessage({
   publicBaseUrl,
   phoneNumberId,
   preferOfficialApiWhenReplyWindowOpen = false,
-  skipQrSendProtection = false
+  skipQrSendProtection = false,
+  variablesResolved = false
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const renderedCaption = await renderTemplateVariables(caption, {
-    contactId,
-    phone: toPhone || to,
-    userId,
-    publicBaseUrl,
-    extraVariables
-  })
+  const renderedCaption = variablesResolved
+    ? String(caption ?? '')
+    : await renderTemplateVariables(caption, {
+        contactId,
+        phone: toPhone || to,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })
   const cleanCaption = cleanString(renderedCaption).slice(0, 1024)
   const cleanDocumentUrl = cleanString(documentUrl)
 
@@ -14662,18 +14671,21 @@ export async function sendWhatsAppApiVideoMessage({
   publicBaseUrl,
   phoneNumberId,
   preferOfficialApiWhenReplyWindowOpen = false,
-  skipQrSendProtection = false
+  skipQrSendProtection = false,
+  variablesResolved = false
 } = {}) {
   const config = await loadWhatsAppOutboundConfig({ phoneNumberId, fromPhone: from })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
-  const renderedCaption = await renderTemplateVariables(caption, {
-    contactId,
-    phone: toPhone || to,
-    userId,
-    publicBaseUrl,
-    extraVariables
-  })
+  const renderedCaption = variablesResolved
+    ? String(caption ?? '')
+    : await renderTemplateVariables(caption, {
+        contactId,
+        phone: toPhone || to,
+        userId,
+        publicBaseUrl,
+        extraVariables
+      })
   const cleanCaption = cleanString(renderedCaption).slice(0, 1024)
   const cleanVideoUrl = cleanString(videoUrl)
 

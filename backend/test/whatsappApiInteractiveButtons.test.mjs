@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
+import { createVariableField } from '../src/services/variableFieldsService.js'
 import {
   getWhatsAppApiStatus,
   getWhatsAppApiConfigKeys,
@@ -693,6 +694,88 @@ test('envía botones interactivos de respuesta por YCloud', async () => {
         { id: 'despues', title: 'Luego' }
       ])
     } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ?', [to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
+test('resuelve variables en cuerpo, etiquetas y URL de botones interactivos antes de enviarlos', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const suffix = randomUUID().replace(/-/g, '_')
+    const to = `+52156${Date.now().toString().slice(-8)}`
+    const variableFields = []
+
+    try {
+      await captures.openReplyWindow(to)
+      const contact = await db.get(
+        'SELECT id, first_name FROM contacts WHERE phone = ? LIMIT 1',
+        [to]
+      )
+      assert.ok(contact?.id)
+      assert.equal(contact.first_name, 'Cliente')
+
+      const bodyField = await createVariableField({
+        label: `Cuerpo interactivo ${suffix}`,
+        fieldKey: `interactive_body_${suffix}`,
+        value: 'Oferta especial'
+      })
+      variableFields.push(bodyField)
+      const buttonField = await createVariableField({
+        label: `Boton interactivo ${suffix}`,
+        fieldKey: `interactive_button_${suffix}`,
+        value: 'Confirmar'
+      })
+      variableFields.push(buttonField)
+      const pathField = await createVariableField({
+        label: `Ruta interactiva ${suffix}`,
+        fieldKey: `interactive_path_${suffix}`,
+        value: 'oferta-premium'
+      })
+      variableFields.push(pathField)
+
+      await sendWhatsAppApiInteractiveMessage({
+        to,
+        contactId: contact.id,
+        body: `Hola {{contact.first_name}}: ${bodyField.parameter}`,
+        buttons: [
+          { id: 'confirmar', title: buttonField.parameter },
+          { id: 'despues', title: 'Luego {{contact.first_name}}' }
+        ]
+      })
+
+      await sendWhatsAppApiInteractiveMessage({
+        to,
+        contactId: contact.id,
+        body: `Continúa con ${bodyField.parameter}`,
+        urlButton: {
+          title: 'Ver {{contact.first_name}}',
+          url: `https://example.test/${pathField.parameter}?contact={{contact.id}}`
+        }
+      })
+
+      assert.equal(captures.length, 2)
+      assert.equal(captures[0].interactive.body.text, 'Hola Cliente: Oferta especial')
+      assert.deepEqual(captures[0].interactive.action.buttons.map(button => button.reply), [
+        { id: 'confirmar', title: 'Confirmar' },
+        { id: 'despues', title: 'Luego Cliente' }
+      ])
+
+      assert.equal(captures[1].interactive.type, 'cta_url')
+      assert.equal(captures[1].interactive.body.text, 'Continúa con Oferta especial')
+      assert.deepEqual(captures[1].interactive.action, {
+        name: 'cta_url',
+        parameters: {
+          display_text: 'Ver Cliente',
+          url: `https://example.test/oferta-premium?contact=${contact.id}`
+        }
+      })
+      assert.equal(JSON.stringify(captures).includes('{{'), false)
+    } finally {
+      for (const field of variableFields) {
+        await db.run('DELETE FROM variable_fields WHERE id = ?', [field.id]).catch(() => undefined)
+      }
       await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ?', [to, to])
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])

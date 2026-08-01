@@ -3,8 +3,39 @@ import { findContactByPhoneCandidates } from './contactIdentityService.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { getContactCustomFieldValues } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { getAccountBusinessProfile } from './accountBusinessProfileService.js'
 
-const TOKEN_PATTERN = /\{\{\s*([\w.-]+)\s*\}\}/g
+// Los field keys nuevos son simples, pero conservamos compatibilidad con aliases
+// legacy (acentos/espacios) y dejamos que la politica de unknown decida que hacer.
+// Los placeholders numericos {{1}} pertenecen al dialecto de plantillas oficiales
+// de WhatsApp y nunca deben consumirse como variables CRM.
+const TOKEN_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g
+const POSITIONAL_TOKEN_PATTERN = /^\d+$/
+const KNOWN_TOKEN_PREFIXES = [
+  'account.',
+  'business.',
+  'contact.',
+  'custom.',
+  'trigger_link.',
+  'user.',
+  'variable.'
+]
+const MAX_TEMPLATE_TREE_DEPTH = 60
+
+function containsTemplateToken(value, depth = 0, seen = new WeakSet()) {
+  if (typeof value === 'string') return value.includes('{{')
+  if (value === null || typeof value !== 'object') return false
+  if (depth > MAX_TEMPLATE_TREE_DEPTH || value instanceof Date || Buffer.isBuffer(value)) return false
+  if (seen.has(value)) return false
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value.some(item => containsTemplateToken(item, depth + 1, seen))
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return false
+  return Object.values(value).some(item => containsTemplateToken(item, depth + 1, seen))
+}
 
 function cleanString(value, max = 5000) {
   const cleaned = String(value ?? '').trim()
@@ -36,6 +67,23 @@ function parseJson(value, fallback = null) {
 
 function normalizeTokenKey(value) {
   return cleanString(value, 200).toLowerCase()
+}
+
+function isKnownTokenNamespace(value) {
+  const token = normalizeTokenKey(value)
+  return KNOWN_TOKEN_PREFIXES.some((prefix) => token.startsWith(prefix))
+}
+
+function addNormalizedAliases(values = {}) {
+  const map = {}
+  Object.entries(values || {}).forEach(([rawKey, value]) => {
+    const key = cleanString(rawKey, 200)
+    if (!key) return
+    map[key] = value
+    const normalizedKey = normalizeTokenKey(key)
+    if (normalizedKey && map[normalizedKey] === undefined) map[normalizedKey] = value
+  })
+  return map
 }
 
 function normalizeBaseUrl(value = '') {
@@ -84,6 +132,14 @@ function normalizeContactForVariables(contact = {}) {
     phone: normalizePhoneForStorage(contact.phone) || cleanString(contact.phone),
     email: cleanString(contact.email),
     source: cleanString(contact.source),
+    companyName: cleanString(contact.companyName || contact.company_name || contact.company),
+    address1: cleanString(contact.address1 || contact.address_1 || contact.address),
+    city: cleanString(contact.city),
+    state: cleanString(contact.state || contact.region),
+    postalCode: cleanString(contact.postalCode || contact.postal_code || contact.zip || contact.zip_code),
+    timezone: cleanString(contact.timezone || contact.time_zone),
+    dateOfBirth: cleanString(contact.dateOfBirth || contact.date_of_birth || contact.dob),
+    website: cleanString(contact.website || contact.web),
     customFields: {}
   }
 
@@ -102,71 +158,126 @@ function normalizeContactForVariables(contact = {}) {
     ].map((key) => cleanString(key)).filter(Boolean)
     keys.forEach((key) => {
       normalized.customFields[key] = valueToText(field.value)
+      const normalizedKey = normalizeTokenKey(key)
+      if (normalizedKey && normalized.customFields[normalizedKey] === undefined) {
+        normalized.customFields[normalizedKey] = valueToText(field.value)
+      }
     })
   })
 
   if (rawCustomFields && typeof rawCustomFields === 'object' && !Array.isArray(rawCustomFields)) {
     Object.entries(rawCustomFields).forEach(([key, value]) => {
       normalized.customFields[key] = valueToText(value)
+      const normalizedKey = normalizeTokenKey(key)
+      if (normalizedKey && normalized.customFields[normalizedKey] === undefined) {
+        normalized.customFields[normalizedKey] = valueToText(value)
+      }
     })
   }
+
+  const firstCustomValue = (...keys) => {
+    for (const key of keys) {
+      const value = normalized.customFields[key] ?? normalized.customFields[normalizeTokenKey(key)]
+      if (value !== undefined && value !== null && value !== '') return valueToText(value)
+    }
+    return ''
+  }
+  normalized.companyName ||= firstCustomValue('company_name', 'company', 'business_name')
+  normalized.address1 ||= firstCustomValue('address1', 'address_1', 'address')
+  normalized.city ||= firstCustomValue('city', 'ciudad')
+  normalized.state ||= firstCustomValue('state', 'region', 'estado')
+  normalized.postalCode ||= firstCustomValue('postal_code', 'zip_code', 'zip', 'codigo_postal')
+  normalized.timezone ||= firstCustomValue('timezone', 'time_zone', 'zona_horaria')
+  normalized.dateOfBirth ||= firstCustomValue('date_of_birth', 'dob', 'fecha_nacimiento')
+  normalized.website ||= firstCustomValue('website', 'web', 'sitio_web')
 
   return normalized
 }
 
 async function loadContact({ contactId = '', phone = '', contact = null } = {}) {
-  if (contact && typeof contact === 'object') {
-    const normalized = normalizeContactForVariables(contact)
-    if (normalized.id || normalized.phone || normalized.email) return normalized
-  }
-
-  const id = cleanString(contactId, 180)
+  const supplied = contact && typeof contact === 'object'
+    ? normalizeContactForVariables(contact)
+    : normalizeContactForVariables({})
+  const id = cleanString(contactId || supplied.id, 180)
   let row = id ? await db.get('SELECT * FROM contacts WHERE id = ? LIMIT 1', [id]) : null
-  if (!row && phone) {
-    const found = await findContactByPhoneCandidates(phone)
+  const candidatePhone = phone || supplied.phone
+  if (!row && candidatePhone) {
+    const found = await findContactByPhoneCandidates(candidatePhone)
     if (found?.id) row = await db.get('SELECT * FROM contacts WHERE id = ? LIMIT 1', [found.id])
   }
 
-  return normalizeContactForVariables(row || { phone })
+  if (!row) {
+    return supplied.id || supplied.phone || supplied.email
+      ? supplied
+      : normalizeContactForVariables({ phone: candidatePhone })
+  }
+
+  const stored = normalizeContactForVariables(row)
+  const merged = { ...stored }
+  for (const key of [
+    'id',
+    'firstName',
+    'lastName',
+    'fullName',
+    'phone',
+    'email',
+    'source',
+    'companyName',
+    'address1',
+    'city',
+    'state',
+    'postalCode',
+    'timezone',
+    'dateOfBirth',
+    'website'
+  ]) {
+    if (supplied[key] !== '') merged[key] = supplied[key]
+  }
+  merged.customFields = {
+    ...(stored.customFields || {}),
+    ...(supplied.customFields || {})
+  }
+  return merged
 }
 
 async function loadAccountVariables(userId = null) {
   const cleanUserId = cleanString(userId, 80)
-  const row = cleanUserId
-    ? await db.get(
+  const [profile, row] = await Promise.all([
+    getAccountBusinessProfile(),
+    cleanUserId
+      ? db.get(
       `SELECT id, username, email, first_name, last_name, full_name, phone, business_name
        FROM users
        WHERE id = ?
        LIMIT 1`,
       [cleanUserId]
-    ).catch(() => null)
-    : await db.get(
-      `SELECT id, username, email, first_name, last_name, full_name, phone, business_name
-       FROM users
-       WHERE is_active = 1
-       ORDER BY id ASC
-       LIMIT 1`
-    ).catch(() => null)
-
-  if (!row) return {}
+      ).catch(() => null)
+      : Promise.resolve(null)
+  ])
+  const businessName = profile?.name || row?.business_name || ''
 
   return {
-    'user.id': row.id,
-    'user.username': row.username,
-    'user.email': row.email,
-    'user.first_name': row.first_name,
-    'user.last_name': row.last_name,
-    'user.full_name': row.full_name,
-    'user.phone': row.phone,
-    'user.business_name': row.business_name,
-    'account.business_name': row.business_name,
-    'business.name': row.business_name,
-    business_name: row.business_name
+    ...(row
+      ? {
+          'user.id': row.id,
+          'user.username': row.username,
+          'user.email': row.email,
+          'user.first_name': row.first_name,
+          'user.last_name': row.last_name,
+          'user.full_name': row.full_name,
+          'user.phone': row.phone,
+          'user.business_name': row.business_name
+        }
+      : {}),
+    'account.business_name': businessName,
+    'business.name': businessName,
+    business_name: businessName
   }
 }
 
 function buildContactVariables(contact = {}) {
   const fullName = contact.fullName || [contact.firstName, contact.lastName].filter(Boolean).join(' ')
+  const fullAddress = [contact.address1, contact.city, contact.state, contact.postalCode].filter(Boolean).join(', ')
   const map = {
     contact_id: contact.id,
     id_contacto: contact.id,
@@ -186,12 +297,28 @@ function buildContactVariables(contact = {}) {
     fuente: contact.source,
     'contact.id': contact.id,
     'contact.first_name': contact.firstName,
+    'contact.firstName': contact.firstName,
     'contact.last_name': contact.lastName,
+    'contact.lastName': contact.lastName,
     'contact.full_name': fullName,
+    'contact.fullName': fullName,
     'contact.name': fullName || contact.firstName,
     'contact.phone': contact.phone,
+    'contact.phone_raw': contact.phone,
     'contact.email': contact.email,
-    'contact.source': contact.source
+    'contact.source': contact.source,
+    'contact.company_name': contact.companyName,
+    'contact.companyName': contact.companyName,
+    'contact.full_address': fullAddress,
+    'contact.address1': contact.address1,
+    'contact.city': contact.city,
+    'contact.state': contact.state,
+    'contact.postal_code': contact.postalCode,
+    'contact.postalCode': contact.postalCode,
+    'contact.timezone': contact.timezone,
+    'contact.date_of_birth': contact.dateOfBirth,
+    'contact.dateOfBirth': contact.dateOfBirth,
+    'contact.website': contact.website
   }
 
   Object.entries(contact.customFields || {}).forEach(([key, value]) => {
@@ -203,19 +330,21 @@ function buildContactVariables(contact = {}) {
     if (map[cleanKey] === undefined) map[cleanKey] = text
   })
 
-  return map
+  return addNormalizedAliases(map)
 }
 
 async function buildVariableFieldVariables() {
-  const values = await getVariableFieldValueMap().catch(() => ({}))
-  return Object.entries(values).reduce((map, [key, value]) => {
+  // Si la fuente de verdad no se puede leer, el envio/render debe fallar. Convertir
+  // ese error en {} mandaria mensajes incompletos y esconderia la causa real.
+  const values = await getVariableFieldValueMap()
+  return addNormalizedAliases(Object.entries(values).reduce((map, [key, value]) => {
     const cleanKey = cleanString(key, 200)
     if (!cleanKey) return map
     const text = valueToText(value)
     map[`variable.${cleanKey}`] = text
     if (map[cleanKey] === undefined) map[cleanKey] = text
     return map
-  }, {})
+  }, {}))
 }
 
 async function resolveTriggerLinkToken(rawToken, { contact, publicBaseUrl } = {}) {
@@ -250,47 +379,138 @@ export async function buildTemplateVariableMap(options = {}) {
     buildVariableFieldVariables()
   ])
 
-  return {
+  return addNormalizedAliases({
     ...accountVariables,
     ...variableFieldVariables,
     ...buildContactVariables(contact),
     ...(options.extraVariables || {})
-  }
+  })
 }
 
-export async function renderTemplateVariables(text, options = {}) {
-  const source = String(text ?? '')
-  if (!source.includes('{{')) return source
-
+export async function createTemplateVariableRenderer(options = {}) {
   const contact = await loadContact(options)
-  const map = await buildTemplateVariableMap({ ...options, contact })
+  const [accountVariables, variableFieldVariables] = await Promise.all([
+    loadAccountVariables(options.userId),
+    buildVariableFieldVariables()
+  ])
+  const map = addNormalizedAliases({
+    ...accountVariables,
+    ...variableFieldVariables,
+    ...buildContactVariables(contact),
+    ...(options.extraVariables || {})
+  })
   const triggerCache = new Map()
-  const replacements = []
 
-  for (const match of source.matchAll(TOKEN_PATTERN)) {
-    const rawToken = match[1]
+  const resolveToken = async (rawToken, fullMatch, {
+    preserveUnknown = false,
+    preserveMissingKnown = false,
+    resolveUnknownToken,
+    transformResolvedValue
+  } = {}) => {
     const token = cleanString(rawToken, 200)
+    if (!token) return preserveUnknown ? fullMatch : ''
+    if (POSITIONAL_TOKEN_PATTERN.test(token)) return fullMatch
+
+    const formatResolvedValue = (value) => {
+      const text = valueToText(value)
+      return typeof transformResolvedValue === 'function'
+        ? String(transformResolvedValue(text, { token }) ?? '')
+        : text
+    }
+
     const normalizedToken = normalizeTokenKey(token)
-    if (map[token] !== undefined) {
-      replacements.push([match[0], valueToText(map[token])])
-      continue
-    }
-    if (map[normalizedToken] !== undefined) {
-      replacements.push([match[0], valueToText(map[normalizedToken])])
-      continue
-    }
-    if (token.startsWith('trigger_link.')) {
-      if (!triggerCache.has(token)) {
-        triggerCache.set(token, await resolveTriggerLinkToken(token, {
+    if (map[token] !== undefined) return formatResolvedValue(map[token])
+    if (map[normalizedToken] !== undefined) return formatResolvedValue(map[normalizedToken])
+
+    if (normalizedToken.startsWith('trigger_link.')) {
+      if (!triggerCache.has(normalizedToken)) {
+        const linkToken = `trigger_link.${token.slice(token.indexOf('.') + 1)}`
+        triggerCache.set(normalizedToken, await resolveTriggerLinkToken(linkToken, {
           contact,
           publicBaseUrl: options.publicBaseUrl
         }))
       }
-      replacements.push([match[0], valueToText(triggerCache.get(token))])
-      continue
+      return formatResolvedValue(triggerCache.get(normalizedToken))
     }
-    replacements.push([match[0], ''])
+
+    if (typeof resolveUnknownToken === 'function') {
+      const dynamicallyResolved = await resolveUnknownToken(token, { normalizedToken, fullMatch })
+      if (dynamicallyResolved !== undefined) return formatResolvedValue(dynamicallyResolved)
+    }
+
+    // Un namespace CRM reconocido pero inexistente nunca debe llegar con
+    // corcheas a un contacto ni romper JavaScript publico.
+    if (isKnownTokenNamespace(normalizedToken)) return preserveMissingKnown ? fullMatch : ''
+    return preserveUnknown ? fullMatch : ''
   }
 
-  return replacements.reduce((next, [needle, replacement]) => next.replace(needle, replacement), source)
+  const render = async (text, renderOptions = {}) => {
+    const source = String(text ?? '')
+    if (!source.includes('{{')) return source
+
+    let result = ''
+    let cursor = 0
+    for (const match of source.matchAll(TOKEN_PATTERN)) {
+      const index = Number(match.index || 0)
+      result += source.slice(cursor, index)
+      result += await resolveToken(match[1], match[0], renderOptions)
+      cursor = index + match[0].length
+    }
+    return result + source.slice(cursor)
+  }
+
+  const renderValue = async (value, renderOptions = {}) => {
+    const seen = new WeakMap()
+
+    const visit = async (current, depth) => {
+      if (typeof current === 'string') return render(current, renderOptions)
+      if (current === null || typeof current !== 'object') return current
+      if (depth > MAX_TEMPLATE_TREE_DEPTH) {
+        throw new Error('La estructura con variables es demasiado profunda para procesarse de forma segura.')
+      }
+      if (current instanceof Date || Buffer.isBuffer(current)) return current
+      if (seen.has(current)) return seen.get(current)
+
+      if (Array.isArray(current)) {
+        const output = []
+        seen.set(current, output)
+        for (const item of current) output.push(await visit(item, depth + 1))
+        return output
+      }
+
+      const prototype = Object.getPrototypeOf(current)
+      if (prototype !== Object.prototype && prototype !== null) return current
+
+      const output = prototype === null ? Object.create(null) : {}
+      seen.set(current, output)
+      for (const [key, item] of Object.entries(current)) {
+        Object.defineProperty(output, key, {
+          value: await visit(item, depth + 1),
+          enumerable: true,
+          configurable: true,
+          writable: true
+        })
+      }
+      return output
+    }
+
+    return visit(value, 0)
+  }
+
+  return { contact, map, render, renderValue }
+}
+
+export async function renderTemplateVariables(text, options = {}, renderOptions = {}) {
+  const source = String(text ?? '')
+  if (!source.includes('{{')) return source
+  const renderer = await createTemplateVariableRenderer(options)
+  return renderer.render(source, renderOptions)
+}
+
+export async function renderTemplateVariablesInValue(value, options = {}, renderOptions = {}) {
+  // La enorme mayoría de páginas, nodos y payloads no tiene tokens. Evitar las
+  // lecturas de contacto/cuenta/variables en ese camino mantiene barato el render.
+  if (!containsTemplateToken(value)) return value
+  const renderer = await createTemplateVariableRenderer(options)
+  return renderer.renderValue(value, renderOptions)
 }

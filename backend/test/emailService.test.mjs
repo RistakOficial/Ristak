@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { db, getAppConfig } from '../src/config/database.js'
 import { decrypt, initializeMasterKey } from '../src/utils/encryption.js'
+import { createVariableField } from '../src/services/variableFieldsService.js'
 import {
   connectEmail,
   detectEmailProvider,
@@ -14,6 +15,7 @@ import {
   setEmailMxResolverForTest,
   setEmailTransportFactoryForTest
 } from '../src/services/emailService.js'
+import { sendEmailView } from '../src/controllers/emailController.js'
 
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
@@ -303,6 +305,109 @@ test('agrega la firma guardada al enviar correos', async () => {
   })
 })
 
+test('sendEmailToContact resuelve variables en la firma sin inyectar HTML ni reinterpretar tokens insertados', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+    const contactId = `rstk_contact_email_signature_variables_${suffix}`
+    const externalId = `email_signature_variables_${suffix}`
+    const customFieldKey = `puesto_${suffix}`
+    const sentMessages = []
+    const variableFields = []
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `smtp-signature-variables-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+    setHappyPathImapClientFactory()
+
+    try {
+      const fieldB = await createVariableField({
+        label: `Variable firma B ${suffix}`,
+        fieldKey: `email_signature_b_${suffix}`,
+        value: `VALOR_B_NO_DEBE_APARECER_${suffix}`
+      })
+      variableFields.push(fieldB)
+      const fieldA = await createVariableField({
+        label: `Variable firma A ${suffix}`,
+        fieldKey: `email_signature_a_${suffix}`,
+        value: `Cuenta <script>alert("cuenta")</script> & ${fieldB.parameter}`
+      })
+      variableFields.push(fieldA)
+      const customFieldValue = `Directora <img src=x onerror="contact()"> & ${fieldB.parameter}`
+
+      await db.run(
+        `INSERT INTO contacts (id, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `firma-${suffix}@example.com`,
+          'Contacto Firma',
+          'Contacto',
+          JSON.stringify({ [customFieldKey]: customFieldValue })
+        ]
+      )
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+      await saveEmailSignature({
+        enabled: true,
+        includeBeforeQuotedText: true,
+        html: `<p><strong>Cuenta:</strong> ${fieldA.parameter}</p>` +
+          `<p><strong>Contacto:</strong> {{contact.custom.${customFieldKey}}}</p>`,
+        text: `Cuenta: ${fieldA.parameter}\nContacto: {{contact.custom.${customFieldKey}}}`
+      })
+
+      await sendEmailToContact({
+        contactId,
+        subject: 'Firma con variables',
+        text: 'Mensaje principal',
+        html: '<p>Mensaje principal</p>',
+        externalId
+      })
+
+      assert.equal(sentMessages.length, 2)
+      const outgoing = sentMessages[1]
+      assert.match(outgoing.html, /data-ristak-email-signature/)
+      assert.ok(outgoing.html.includes(
+        `Cuenta &lt;script&gt;alert(&quot;cuenta&quot;)&lt;/script&gt; &amp; ${fieldB.parameter}`
+      ))
+      assert.ok(outgoing.html.includes(
+        `Directora &lt;img src=x &amp; ${fieldB.parameter}`
+      ))
+      assert.doesNotMatch(outgoing.html, /<script\b|<img\b|onerror="/i)
+      assert.ok(outgoing.text.includes(`Cuenta: Cuenta <script>alert("cuenta")</script> & ${fieldB.parameter}`))
+      assert.ok(outgoing.text.includes(`Contacto: ${customFieldValue}`))
+      assert.ok(!outgoing.html.includes(fieldA.parameter))
+      assert.ok(!outgoing.html.includes(fieldB.value))
+      assert.ok(!outgoing.text.includes(fieldA.parameter))
+      assert.ok(!outgoing.text.includes(fieldB.value))
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      for (const field of variableFields) {
+        await db.run('DELETE FROM variable_fields WHERE id = ?', [field.id]).catch(() => undefined)
+      }
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  })
+})
+
 test('sendEmailToContact envía correo y guarda el mensaje en el historial del contacto', async () => {
   await initializeMasterKey()
 
@@ -364,6 +469,206 @@ test('sendEmailToContact envía correo y guarda el mensaje en el historial del c
       setEmailImapClientFactoryForTest(null)
       await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId])
       await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  })
+})
+
+test('sendEmailToContact resuelve variables en asunto, texto y HTML sin permitir inyectar markup', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+    const contactId = `rstk_contact_email_variables_${suffix}`
+    const externalId = `email_variables_${suffix}`
+    const sentMessages = []
+    const unsafeContactName = 'Ana <img src=x onerror="alert(1)">'
+    const unsafeVariableValue = 'VIP <script>alert("variable")</script> & seguro'
+    let variableField
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `smtp-variables-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+    setHappyPathImapClientFactory()
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `variables-${suffix}@example.com`,
+          unsafeContactName,
+          unsafeContactName,
+          '{}'
+        ]
+      )
+      variableField = await createVariableField({
+        label: `Oferta correo ${suffix}`,
+        fieldKey: `email_offer_${suffix}`,
+        value: unsafeVariableValue
+      })
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+
+      await sendEmailToContact({
+        contactId,
+        subject: `Seguimiento para {{contact.first_name}} · ${variableField.parameter}`,
+        text: `Texto: {{contact.first_name}} / ${variableField.parameter}`,
+        html: `<h1>{{contact.first_name}}</h1><p>${variableField.parameter}</p>`,
+        externalId,
+        includeSignature: false
+      })
+
+      assert.equal(sentMessages.length, 2)
+      const outgoing = sentMessages[1]
+      assert.equal(outgoing.subject, `Seguimiento para ${unsafeContactName} · ${unsafeVariableValue}`)
+      assert.equal(outgoing.text, `Texto: ${unsafeContactName} / ${unsafeVariableValue}`)
+      assert.equal(
+        outgoing.html,
+        '<h1>Ana &lt;img src=x onerror=&quot;alert(1)&quot;&gt;</h1>' +
+          '<p>VIP &lt;script&gt;alert(&quot;variable&quot;)&lt;/script&gt; &amp; seguro</p>'
+      )
+      assert.doesNotMatch(outgoing.html, /<img\b|<script\b|onerror="/i)
+
+      const stored = await db.get('SELECT subject, message_text, html_body FROM email_messages WHERE id = ?', [externalId])
+      assert.equal(stored.subject, outgoing.subject)
+      assert.equal(stored.message_text, outgoing.text)
+      assert.equal(stored.html_body, outgoing.html)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+      if (variableField?.id) {
+        await db.run('DELETE FROM variable_fields WHERE id = ?', [variableField.id]).catch(() => undefined)
+      }
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    }
+  })
+})
+
+test('sendEmailView ignora controles internos del body y resuelve con el usuario autenticado', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY, EMAIL_SIGNATURE_CONFIG_KEY], async () => {
+    const suffix = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
+    const authenticatedUsername = `email_view_authenticated_${suffix}`
+    const attackerUsername = `email_view_attacker_${suffix}`
+    const authenticatedEmail = `authenticated-${suffix}@example.test`
+    const attackerEmail = `attacker-${suffix}@example.test`
+    const externalId = `email_view_security_${suffix}`
+    const sentMessages = []
+    let authenticatedUserId = ''
+    let attackerUserId = ''
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => {
+        sentMessages.push(message)
+        return {
+          messageId: `smtp-email-view-${sentMessages.length}`,
+          accepted: [message.to],
+          rejected: []
+        }
+      }
+    }))
+    setHappyPathImapClientFactory()
+
+    try {
+      const authenticatedInsert = await db.run(
+        `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+         VALUES (?, ?, 'test-hash', 'Usuario autenticado', 'admin', 1)`,
+        [authenticatedUsername, authenticatedEmail]
+      )
+      authenticatedUserId = String(authenticatedInsert.lastID || '')
+      const attackerInsert = await db.run(
+        `INSERT INTO users (username, email, password_hash, full_name, role, is_active)
+         VALUES (?, ?, 'test-hash', 'Usuario atacante', 'admin', 1)`,
+        [attackerUsername, attackerEmail]
+      )
+      attackerUserId = String(attackerInsert.lastID || '')
+      if (!authenticatedUserId || !attackerUserId) {
+        const users = await db.all(
+          'SELECT id, username FROM users WHERE username IN (?, ?)',
+          [authenticatedUsername, attackerUsername]
+        )
+        authenticatedUserId ||= String(users.find(user => user.username === authenticatedUsername)?.id || '')
+        attackerUserId ||= String(users.find(user => user.username === attackerUsername)?.id || '')
+      }
+
+      await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo'
+      })
+
+      let responseStatus = 200
+      let responsePayload = null
+      const response = {
+        status(code) {
+          responseStatus = code
+          return this
+        },
+        json(payload) {
+          responsePayload = payload
+          return this
+        }
+      }
+      await sendEmailView({
+        user: { userId: authenticatedUserId },
+        body: {
+          to: `recipient-${suffix}@example.test`,
+          subject: 'Asesor: {{user.email}}',
+          text: 'Tu asesor es {{user.email}}',
+          html: '<p>Tu asesor es {{user.email}}</p>',
+          externalId,
+          includeSignature: false,
+          userId: attackerUserId,
+          variablesResolved: true,
+          extraVariables: {
+            'user.email': 'spoofed-from-body@example.test'
+          }
+        },
+        headers: { host: 'app.ristak.test' },
+        protocol: 'https'
+      }, response)
+
+      assert.equal(responseStatus, 200)
+      assert.equal(responsePayload?.success, true)
+      assert.equal(sentMessages.length, 2)
+      const outgoing = sentMessages[1]
+      assert.equal(outgoing.subject, `Asesor: ${authenticatedEmail}`)
+      assert.equal(outgoing.text, `Tu asesor es ${authenticatedEmail}`)
+      assert.equal(outgoing.html, `<p>Tu asesor es ${authenticatedEmail}</p>`)
+      assert.equal(JSON.stringify(outgoing).includes(attackerEmail), false)
+      assert.equal(JSON.stringify(outgoing).includes('spoofed-from-body@example.test'), false)
+      assert.equal(JSON.stringify(outgoing).includes('{{'), false)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
+      await db.run('DELETE FROM email_messages WHERE id = ?', [externalId]).catch(() => undefined)
+      await db.run(
+        'DELETE FROM users WHERE username IN (?, ?)',
+        [authenticatedUsername, attackerUsername]
+      ).catch(() => undefined)
     }
   })
 })

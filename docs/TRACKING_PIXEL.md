@@ -125,6 +125,34 @@ declara `tracking_source = 'native_site'`. Una conversión válida puede generar
 `native_site_conversion`, pero sólo cuando el envío es final y no quedó
 descalificado.
 
+#### Campos variables en headers de tracking
+
+Los headers globales y por página administrados por Sites pueden guardar una
+referencia como `{{variable.clarity}}`. El editor conserva esa referencia para
+que siga siendo editable; al servir la URL pública, el backend obtiene el valor
+vigente del campo variable y lo inserta exactamente antes de `</head>`. La
+expansión es atómica: si el valor guardado contiene otra secuencia con corcheas,
+se conserva como parte literal del snippet y no se vuelve a interpretar.
+
+El código de header nunca se inyecta en editor o preview, aunque la referencia
+sea válida. El HTML público y los assets HTML importados se responden con
+`Cache-Control: no-store`, porque el valor puede cambiar sin volver a publicar el
+Site. Esta ruta no instala el pixel externo de Ristak ni cambia
+`tracking_source`; únicamente permite administrar scripts de terceros dentro de
+la frontera de código confiable ya existente.
+
+Como ese valor se convierte en JavaScript publicado, un usuario con permiso para
+administrar campos variables pero sin escritura en Sites no puede cambiarlo ni
+archivarlo mientras esté referenciado por un header. Esta comprobación evita que
+el permiso de campos personalizados se convierta indirectamente en permiso para
+modificar código de un Site.
+
+La sustitución no se ejecuta dentro del HTML crudo importado ni de
+`importedPopupHtml` después de sanitizarlos. Hacerlo permitiría que el valor de
+una variable reintrodujera markup ejecutable después de la frontera XSS. El
+header administrado del mismo Site sí se resuelve; cualquier soporte futuro
+dentro de HTML importado requiere parseo contextual y una nueva sanitización.
+
 El payload público marca `formFinalSubmit = true` para el envío final de una
 landing, formulario interactivo o última página de un formulario estándar, y
 declara `formFinalMarkerVersion = 2`. Las landings históricas con formulario
