@@ -97,6 +97,8 @@ test('crear e importar siempre fuerza un borrador y no propaga controles MCP al 
 test('el flujo HTML premium es la ruta principal y separa claramente los bloques nativos', () => {
   const validateTool = tool('sites_validate_html')
   const createHtmlTool = tool('sites_create_html_draft')
+  const livePreviewTool = tool('sites_open_html_live_preview')
+  const patchHtmlTool = tool('sites_patch_html_draft')
   const replaceHtmlTool = tool('sites_replace_html_draft')
   const nativeTool = tool('sites_create_draft')
 
@@ -106,7 +108,11 @@ test('el flujo HTML premium es la ruta principal y separa claramente los bloques
   )
   assert.equal(validateTool.scope, 'ristak.read')
   assert.equal(createHtmlTool.scope, 'ristak.write')
+  assert.equal(livePreviewTool.scope, 'ristak.read')
+  assert.equal(patchHtmlTool.scope, 'ristak.write')
   assert.equal(replaceHtmlTool.scope, 'ristak.write')
+  assert.equal(patchHtmlTool.confirmRequired, false)
+  assert.equal(patchHtmlTool.inputSchema.required.includes('expectedRevision'), false)
   assert.equal(replaceHtmlTool.confirmRequired, false)
   assert.equal(replaceHtmlTool.inputSchema.properties.confirm, undefined)
   assert.match(createHtmlTool.description, /bloques genéricos/i)
@@ -211,7 +217,9 @@ test('sites_create_html_draft exige HTML completo y devuelve un contrato compact
   assert.equal(result.data.editorMode, 'html')
   assert.equal(result.data.revision, codeRevision(storedFiles))
   assert.equal(result.data.files[0].content, undefined)
-  assert.equal(result.data.workflow.editDraft, 'sites_replace_html_draft')
+  assert.equal(result.data.workflow.editDraft, 'sites_patch_html_draft')
+  assert.equal(result.data.workflow.replaceDocument, 'sites_replace_html_draft')
+  assert.equal(result.data.workflow.livePreview, 'sites_open_html_live_preview')
   assert.equal('htmlOriginal' in result.data, false)
 })
 
@@ -244,9 +252,6 @@ test('sites_replace_html_draft guarda sin confirmación sólo con estado y revis
   }]
   const saveRecorder = recorder((_handler, _request, callNumber) => {
     if (callNumber === 1) {
-      return { success: true, data: { id: 'site_1', status: 'draft' } }
-    }
-    if (callNumber === 2) {
       return { success: true, data: { siteId: 'site_1', codeFiles: currentFiles } }
     }
     return {
@@ -278,18 +283,26 @@ test('sites_replace_html_draft guarda sin confirmación sólo con estado y revis
   })
 
   assert.deepEqual(saveRecorder.calls.map(entry => entry.handler), [
-    'getSiteHandler',
     'getImportedSiteMappingHandler',
     'updateImportedSiteCodeFilesHandler'
   ])
-  assert.deepEqual(saveRecorder.calls[2].request.body, {
+  assert.deepEqual(saveRecorder.calls[1].request.body, {
     expectedRevision: codeRevision(currentFiles),
     requireDraft: true,
+    responseMode: 'compact',
     files: [{ path: '', content: nextHtml }]
   })
   assert.equal(result.data.revision, codeRevision(nextFiles))
 
-  const publishedRecorder = recorder({ success: true, data: { id: 'site_live', status: 'published' } })
+  const publishedRecorder = recorder((_handler, _request, callNumber) => {
+    if (callNumber === 1) {
+      return { success: true, data: { siteId: 'site_live', codeFiles: currentFiles } }
+    }
+    const error = new Error('Este guardado seguro sólo modifica borradores.')
+    error.code = 'site_must_be_draft'
+    error.status = 409
+    throw error
+  })
   await assert.rejects(
     () => replaceTool.execute(publishedRecorder.context, {
       siteId: 'site_live',
@@ -299,7 +312,108 @@ test('sites_replace_html_draft guarda sin confirmación sólo con estado y revis
     }),
     error => error.code === 'site_must_be_draft'
   )
-  assert.equal(publishedRecorder.calls.length, 1)
+  assert.equal(publishedRecorder.calls.length, 2)
+})
+
+test('sites_patch_html_draft edita fragmentos exactos sin reenviar el documento completo', async () => {
+  const patchTool = tool('sites_patch_html_draft')
+  const currentHtml = `<!doctype html>
+    <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Original</title>
+    <style>main{display:grid;grid-template-columns:minmax(0,1fr)}</style></head>
+    <body><main><h1>Original</h1><p>Texto estable</p></main></body></html>`
+  const nextHtml = currentHtml
+    .replace('<title>Original</title>', '<title>Editada</title>')
+    .replace('<h1>Original</h1>', '<h1>Editada</h1>')
+  const currentFiles = [{ path: '', language: 'html', role: 'main_html', content: currentHtml }]
+  const nextFiles = [{ path: '', language: 'html', role: 'main_html', content: nextHtml }]
+  const patchRecorder = recorder((_handler, _request, callNumber) => {
+    if (callNumber === 1) {
+      return { success: true, data: { siteId: 'site_1', codeFiles: currentFiles } }
+    }
+    return {
+      success: true,
+      data: {
+        site: {
+          id: 'site_1',
+          name: 'Landing',
+          status: 'draft',
+          slug: 'landing',
+          siteType: 'landing_page',
+          title: 'Editada',
+          description: ''
+        },
+        import: { codeFiles: nextFiles, detectedForms: [], securityReport: [] }
+      }
+    }
+  })
+
+  const result = await patchTool.execute(patchRecorder.context, {
+    siteId: 'site_1',
+    edits: [
+      { search: '<title>Original</title>', replacement: '<title>Editada</title>' },
+      { search: '<h1>Original</h1>', replacement: '<h1>Editada</h1>' }
+    ],
+    idempotencyKey: 'html-text-patch-001'
+  })
+
+  assert.deepEqual(patchRecorder.calls.map(entry => entry.handler), [
+    'getImportedSiteMappingHandler',
+    'updateImportedSiteCodeFilesHandler'
+  ])
+  assert.deepEqual(patchRecorder.calls[1].request.body, {
+    expectedRevision: codeRevision(currentFiles),
+    requireDraft: true,
+    responseMode: 'compact',
+    files: [{ path: '', content: nextHtml }]
+  })
+  assert.equal(result.data.revision, codeRevision(nextFiles))
+  assert.equal(result.data.workflow.editDraft, 'sites_patch_html_draft')
+
+  const mismatchRecorder = recorder({
+    success: true,
+    data: { siteId: 'site_1', codeFiles: currentFiles }
+  })
+  await assert.rejects(
+    () => patchTool.execute(mismatchRecorder.context, {
+      siteId: 'site_1',
+      edits: [
+        { search: '<title>Original</title>', replacement: '<title>Cambio temporal</title>' },
+        { search: '<h1>No existe</h1>', replacement: '<h1>Nueva</h1>' }
+      ],
+      idempotencyKey: 'html-text-patch-002'
+    }),
+    error => error.code === 'site_html_text_patch_mismatch' &&
+      error.details?.editIndex === 1 &&
+      error.details?.foundOccurrences === 0 &&
+      error.details?.expectedOccurrences === 1
+  )
+  assert.equal(mismatchRecorder.calls.length, 1)
+})
+
+test('sites_open_html_live_preview delega una liga temporal sin pedir confirmación', async () => {
+  const previewRecorder = recorder({
+    success: true,
+    data: {
+      siteId: 'site_1',
+      status: 'draft',
+      revision: `sha256:${'a'.repeat(64)}`,
+      url: 'https://app.example.com/api/sites/public/mcp-html-live-preview/token',
+      expiresAt: '2026-08-01T21:00:00.000Z',
+      refreshIntervalMs: 750,
+      trackingEnabled: false,
+      mutationsEnabled: false
+    }
+  })
+
+  const result = await tool('sites_open_html_live_preview').execute(previewRecorder.context, {
+    siteId: 'site_1',
+    pageId: 'page-1'
+  })
+
+  assert.equal(previewRecorder.calls[0].handler, 'createMcpHtmlLivePreviewHandler')
+  assert.deepEqual(previewRecorder.calls[0].request.body, { pageId: 'page-1' })
+  assert.equal(result.data.trackingEnabled, false)
+  assert.equal(result.data.mutationsEnabled, false)
 })
 
 test('sites_get_code devuelve inventario compacto y contenido sólo cuando corresponde', async () => {
@@ -419,6 +533,7 @@ test('sites_update_code hace preflight y luego usa el controller canónico', asy
   ])
   assert.deepEqual(codeRecorder.calls[1].request.body, {
     expectedRevision: codeRevision(currentFiles),
+    responseMode: 'compact',
     files: [{ path: '', content: '<h1>Nuevo</h1>' }]
   })
   assert.equal(result.data.revision, codeRevision([{ path: '', content: '<h1>Nuevo</h1>', sizeBytes: 14 }]))

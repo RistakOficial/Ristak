@@ -6880,17 +6880,28 @@ El MCP separa de forma explícita los dos modos de edición de Sites:
 
 Un agente no debe intentar reproducir una landing HTML personalizada apilando
 bloques nativos ni adoptar por defecto una cuadrícula de cards/contenedores.
-Para código nuevo la ruta principal es:
+Para código nuevo la ruta principal optimizada es:
 
-1. `sites_validate_html`: preflight sin escritura; revisa documento completo,
-   responsive, estructura, formularios detectados y cambios del sanitizador.
-2. `sites_create_html_draft`: crea un borrador code-first con el HTML completo.
-3. `sites_get_code`: devuelve inventario y revisión; el contenido se pide por
-   `path` para no inflar la conversación.
-4. `sites_replace_html_draft`: guarda la siguiente versión sólo si el Site sigue
-   en borrador y `expectedRevision` coincide.
-5. `sites_preview_html`: render inerte, sin tracking ni cobros reales.
-6. `sites_publish`: publicación separada con `ristak.execute` y confirmación.
+1. `sites_create_html_draft`: crea un borrador code-first con el HTML completo y
+   ejecuta internamente la validación de autoría. `sites_validate_html` queda
+   como preflight opcional sin escritura, no como una llamada obligatoria antes
+   de crear.
+2. `sites_open_html_live_preview`: entrega una URL temporal firmada por una hora.
+   Se abre una sola vez y consulta cada 750 ms una revisión ligera; al cambiar,
+   recarga el Site guardado sin tracking, submissions, citas ni cobros reales.
+3. `sites_patch_html_draft`: ruta normal de iteración. Recibe sólo pares exactos
+   `search`/`replacement`, valida la cantidad esperada de coincidencias y guarda
+   contra la revisión que el servidor acaba de observar. `expectedRevision` es
+   opcional para el parche, pero si se envía también bloquea cualquier cambio
+   ajeno ya conocido por el agente.
+4. `sites_get_code`: se usa al entrar a un Site existente o cuando un parche ya
+   no coincide. El contenido se pide por `path`; no se vuelve a leer el documento
+   completo después de cada edición exitosa.
+5. `sites_replace_html_draft`: reemplazo completo reservado para reescrituras
+   grandes; exige `expectedRevision` para no pisar otra versión.
+6. `sites_preview_html`: render inerte devuelto como HTML cuando el cliente MCP
+   necesita inspeccionar source en vez de la URL autoactualizable.
+7. `sites_publish`: publicación separada con `ristak.execute` y confirmación.
 
 El contrato recomendado exige `doctype`, `html`, `head` y `body`. Los scripts,
 handlers `on*` y URLs `javascript:` se rechazan antes de crear o guardar por esta
@@ -6906,6 +6917,14 @@ detectados, reporte de calidad, reporte del sanitizador y siguientes tools. La
 revisión se vuelve a comprobar dentro del lock de mutación del Site; los cambios
 de estado publicar/retirar comparten el mismo lock, de modo que un guardado seguro
 no puede ganar una carrera y modificar accidentalmente una versión publicada.
+Las mutaciones originadas por MCP piden además el modo compacto del servicio: no
+cargan bloques ni submissions que el agente no utilizará.
+
+La URL de preview MCP es un bearer temporal firmado con la llave interna de
+contexto público que Ristak inicializa en la base. La respuesta usa `no-store`,
+`Referrer-Policy: no-referrer` y `noindex`; el token alterado, expirado o cuyo
+Site dejó de ser borrador falla cerrado. No se guarda como secret externo ni
+debe persistirse en logs o documentación.
 
 ### Paridad de render editor/preview/publicado (contrato compartido)
 
@@ -9103,7 +9122,7 @@ Incluye:
 - MCP para clientes compatibles.
 
 El MCP externo es un plano de control tipado sobre los servicios de negocio de
-Ristak. El registro actual contiene 238 tools antes del filtrado de autorizacion
+Ristak. El registro actual contiene 240 tools antes del filtrado de autorizacion
 y cubre CRM/contactos, tags, campos personalizados, trigger links, inbox y envio
 de mensajes, chatbot, citas, calendarios, automatizaciones, pagos, productos,
 precios, suscripciones, dashboard, reportes, analytics/tracking, campañas,
@@ -9121,7 +9140,8 @@ ejecutor auditable.
 Las instrucciones de `initialize` explican el flujo HTML code-first a todos los
 clientes compatibles. Cuando existe una skill web local, ésta es responsable de
 la calidad visual y del source completo; el MCP no la reemplaza con bloques
-genéricos. `sites_validate_html`, `sites_create_html_draft` y
+genéricos. `sites_validate_html`, `sites_create_html_draft`,
+`sites_patch_html_draft`, `sites_open_html_live_preview` y
 `sites_replace_html_draft` exponen schemas de salida cerrados para que el cliente
 pueda continuar de forma determinista con revisión, preview y publicación.
 

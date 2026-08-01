@@ -1,5 +1,6 @@
 import {
   createBlockHandler,
+  createMcpHtmlLivePreviewHandler,
   createSiteHandler,
   createSitesPublicDomainHandler,
   deleteBlockHandler,
@@ -31,13 +32,15 @@ const MAX_IMPORTED_HTML_CHARS = 2 * 1024 * 1024
 const MAX_CODE_FILE_CHARS = 2 * 1024 * 1024
 const MAX_CODE_UPDATE_BYTES = Math.floor(2.5 * 1024 * 1024)
 const MAX_STRUCTURED_BODY_BYTES = 1024 * 1024
+const MAX_HTML_TEXT_EDITS = 40
+const MAX_HTML_TEXT_EDIT_CHARS = 250000
 
 const HTML_AUTHORING_GUIDANCE = [
   'Genera un documento HTML completo y autocontenido con <!doctype html>, html, head y body; envía código puro, nunca fences de Markdown.',
   'Usa la skill o capacidad de construcción web del cliente para resolver tipografía, jerarquía, aire, secciones, responsive y accesibilidad antes de guardar.',
   'No simules una landing personalizada apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo por defecto.',
   'Incluye el CSS dentro del documento o en una hoja ya importada. Ristak elimina scripts, handlers on* y URLs javascript: por seguridad; no diseñes interacciones que dependan de JavaScript propio.',
-  'La creación y el guardado seguro permanecen en borrador. Previsualiza e itera antes de pedir confirmación para publicar.'
+  'La creación y el guardado seguro permanecen en borrador. Abre una sola vista previa en vivo y usa parches de texto exactos para iterar antes de pedir confirmación para publicar.'
 ].join(' ')
 
 const SITE_ID_SCHEMA = {
@@ -183,10 +186,12 @@ const HTML_DRAFT_OUTPUT_SCHEMA = {
           properties: {
             inspect: { type: 'string' },
             editDraft: { type: 'string' },
+            replaceDocument: { type: 'string' },
+            livePreview: { type: 'string' },
             preview: { type: 'string' },
             publish: { type: 'string' }
           },
-          required: ['inspect', 'editDraft', 'preview', 'publish'],
+          required: ['inspect', 'editDraft', 'replaceDocument', 'livePreview', 'preview', 'publish'],
           additionalProperties: false
         }
       },
@@ -248,6 +253,39 @@ const HTML_VALIDATION_OUTPUT_SCHEMA = {
         recommendedCreateTool: { type: 'string' }
       },
       required: ['ready', 'qualityReport', 'platformReport', 'recommendedCreateTool'],
+      additionalProperties: false
+    }
+  },
+  required: ['success', 'data'],
+  additionalProperties: false
+}
+
+const HTML_LIVE_PREVIEW_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    success: { type: 'boolean' },
+    data: {
+      type: 'object',
+      properties: {
+        siteId: { type: 'string' },
+        status: { type: 'string' },
+        revision: { type: 'string' },
+        url: { type: 'string' },
+        expiresAt: { type: 'string' },
+        refreshIntervalMs: { type: 'integer' },
+        trackingEnabled: { type: 'boolean' },
+        mutationsEnabled: { type: 'boolean' }
+      },
+      required: [
+        'siteId',
+        'status',
+        'revision',
+        'url',
+        'expiresAt',
+        'refreshIntervalMs',
+        'trackingEnabled',
+        'mutationsEnabled'
+      ],
       additionalProperties: false
     }
   },
@@ -344,6 +382,88 @@ function assertCodeUpdateSize(files = []) {
   error.status = 413
   error.code = 'payload_too_large'
   throw error
+}
+
+function assertCurrentCodeRevision(currentImport = {}, expectedRevision = '') {
+  const currentRevision = importedCodeRevision(currentImport)
+  const expected = String(expectedRevision || '')
+  if (!expected || currentRevision === expected) return currentRevision
+
+  const error = new Error('El código cambió desde la última lectura. Vuelve a ejecutar sites_get_code antes de guardar.')
+  error.status = 409
+  error.code = 'site_code_revision_conflict'
+  error.currentRevision = currentRevision
+  error.details = { currentRevision }
+  throw error
+}
+
+function resolveEditableHtmlFile(currentImport = {}, args = {}) {
+  const htmlFiles = (Array.isArray(currentImport.codeFiles) ? currentImport.codeFiles : [])
+    .filter((file) => file?.language === 'html' && file?.role !== 'popup')
+  const hasExplicitPath = Object.prototype.hasOwnProperty.call(args, 'path')
+
+  if (!hasExplicitPath && htmlFiles.length !== 1) {
+    const error = new Error('Este Site tiene varios archivos HTML. Indica el path exacto devuelto por sites_get_code.')
+    error.status = 400
+    error.code = 'site_code_path_required'
+    throw error
+  }
+
+  const targetPath = hasExplicitPath ? String(args.path || '') : String(htmlFiles[0]?.path || '')
+  const targetFile = htmlFiles.find((file) => String(file?.path || '') === targetPath)
+  if (!targetFile) {
+    const error = new Error(`El archivo "${targetPath || 'principal'}" no existe o no es HTML editable.`)
+    error.status = 404
+    error.code = 'site_code_file_not_found'
+    throw error
+  }
+
+  return { targetFile, targetPath }
+}
+
+function countExactOccurrences(source = '', search = '') {
+  if (!search) return 0
+  let count = 0
+  let offset = 0
+  while (offset <= source.length) {
+    const index = source.indexOf(search, offset)
+    if (index < 0) break
+    count += 1
+    offset = index + search.length
+  }
+  return count
+}
+
+function applyExactHtmlTextEdits(html = '', edits = [], { path = '' } = {}) {
+  let nextHtml = String(html || '')
+
+  for (const [index, edit] of edits.entries()) {
+    const search = String(edit?.search ?? '')
+    const replacement = String(edit?.replacement ?? '')
+    const expectedOccurrences = Number.isInteger(edit?.expectedOccurrences)
+      ? edit.expectedOccurrences
+      : 1
+    const foundOccurrences = countExactOccurrences(nextHtml, search)
+
+    if (!search || expectedOccurrences < 1 || foundOccurrences !== expectedOccurrences) {
+      const error = new Error(
+        `El parche ${index + 1} esperaba ${expectedOccurrences} coincidencia(s) exacta(s), pero encontró ${foundOccurrences}. Lee de nuevo sólo este archivo y usa un fragmento de búsqueda más específico.`
+      )
+      error.status = 409
+      error.code = 'site_html_text_patch_mismatch'
+      error.details = {
+        editIndex: index,
+        path,
+        expectedOccurrences,
+        foundOccurrences
+      }
+      throw error
+    }
+
+    nextHtml = nextHtml.split(search).join(replacement)
+  }
+
+  return nextHtml
 }
 
 function htmlIssue(code, message) {
@@ -487,7 +607,9 @@ function compactHtmlDraftMutationResponse(response, qualityReport) {
       qualityReport,
       workflow: {
         inspect: 'sites_get_code',
-        editDraft: 'sites_replace_html_draft',
+        editDraft: 'sites_patch_html_draft',
+        replaceDocument: 'sites_replace_html_draft',
+        livePreview: 'sites_open_html_live_preview',
         preview: 'sites_preview_html',
         publish: 'sites_publish'
       }
@@ -797,9 +919,110 @@ export const siteToolSpecs = Object.freeze([
     }
   }),
   spec({
+    name: 'sites_open_html_live_preview',
+    title: 'Abrir preview HTML en vivo',
+    description: 'Crea una liga temporal y firmada para un borrador HTML. Ábrela una sola vez: la página se recarga automáticamente, sin tracking ni acciones reales, después de cada guardado hecho con sites_patch_html_draft.',
+    inputSchema: makeInputSchema({
+      siteId: SITE_ID_SCHEMA,
+      pageId: PAGE_ID_SCHEMA
+    }, ['siteId']),
+    outputSchema: HTML_LIVE_PREVIEW_OUTPUT_SCHEMA,
+    access: 'read',
+    scope: 'ristak.read',
+    risk: 'low',
+    async execute(context, args) {
+      return call(context, createMcpHtmlLivePreviewHandler, {
+        method: 'POST',
+        params: { siteId: args.siteId },
+        body: { pageId: args.pageId }
+      })
+    }
+  }),
+  spec({
+    name: 'sites_patch_html_draft',
+    title: 'Editar texto de un borrador HTML',
+    description: 'Ruta rápida y preferida para iterar: aplica reemplazos de texto exactos sobre el HTML actual sin reenviar el documento completo. Cada parche exige el número esperado de coincidencias y el guardado sigue protegido contra carreras. expectedRevision es opcional; usa el valor devuelto por la llamada anterior cuando quieras bloquear también cambios ajenos ya observados.',
+    inputSchema: makeInputSchema({
+      siteId: SITE_ID_SCHEMA,
+      expectedRevision: {
+        type: 'string',
+        minLength: 71,
+        maxLength: 71,
+        pattern: '^sha256:[a-f0-9]{64}$'
+      },
+      path: {
+        type: 'string',
+        maxLength: 500,
+        description: 'Path exacto devuelto por sites_get_code. Puede omitirse si existe un solo HTML editable.'
+      },
+      edits: {
+        type: 'array',
+        minItems: 1,
+        maxItems: MAX_HTML_TEXT_EDITS,
+        description: 'Cambios secuenciales. search debe incluir suficiente contexto para coincidir exactamente el número declarado de veces.',
+        items: {
+          type: 'object',
+          properties: {
+            search: {
+              type: 'string',
+              minLength: 1,
+              maxLength: MAX_HTML_TEXT_EDIT_CHARS
+            },
+            replacement: {
+              type: 'string',
+              maxLength: MAX_HTML_TEXT_EDIT_CHARS
+            },
+            expectedOccurrences: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 10000,
+              description: 'Cantidad exacta esperada. Si se omite, debe existir una sola coincidencia.'
+            }
+          },
+          required: ['search', 'replacement'],
+          additionalProperties: false
+        }
+      },
+      ...writeControls()
+    }, writeRequirements(['siteId', 'edits'])),
+    outputSchema: HTML_DRAFT_OUTPUT_SCHEMA,
+    access: 'write',
+    scope: 'ristak.write',
+    risk: 'medium',
+    idempotencyRequired: true,
+    async execute(context, args) {
+      assertStructuredBodySize(args.edits, 'Los parches de texto')
+
+      const currentResponse = await call(context, getImportedSiteMappingHandler, {
+        method: 'GET',
+        params: { siteId: args.siteId }
+      })
+      const currentImport = dataFrom(currentResponse) || {}
+      const currentRevision = assertCurrentCodeRevision(currentImport, args.expectedRevision)
+      const { targetFile, targetPath } = resolveEditableHtmlFile(currentImport, args)
+      const nextHtml = applyExactHtmlTextEdits(targetFile.content, args.edits, { path: targetPath })
+      const qualityReport = assertHtmlReadyForAuthoring(nextHtml)
+
+      await assertConditionalPaymentFeature(context, nextHtml)
+      assertCodeUpdateSize([{ path: targetPath, content: nextHtml }])
+
+      const response = await call(context, updateImportedSiteCodeFilesHandler, {
+        method: 'PATCH',
+        params: { siteId: args.siteId },
+        body: {
+          expectedRevision: currentRevision,
+          requireDraft: true,
+          responseMode: 'compact',
+          files: [{ path: targetPath, content: nextHtml }]
+        }
+      })
+      return compactHtmlDraftMutationResponse(response, qualityReport)
+    }
+  }),
+  spec({
     name: 'sites_replace_html_draft',
     title: 'Guardar HTML de un borrador',
-    description: `Reemplaza un archivo HTML sólo cuando el Site continúa en borrador y la revisión coincide. Es la ruta normal para iterar sin confirmaciones innecesarias ni cambios en vivo. ${HTML_AUTHORING_GUIDANCE}`,
+    description: `Reemplaza el documento HTML completo sólo cuando el Site continúa en borrador y la revisión coincide. Úsala para reescrituras grandes; para cambios normales usa sites_patch_html_draft y evita reenviar todo el archivo. ${HTML_AUTHORING_GUIDANCE}`,
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       expectedRevision: {
@@ -831,50 +1054,13 @@ export const siteToolSpecs = Object.freeze([
       await assertConditionalPaymentFeature(context, args.html)
       assertCodeUpdateSize([{ path: args.path || '', content: args.html }])
 
-      const siteResponse = await call(context, getSiteHandler, {
-        method: 'GET',
-        params: { siteId: args.siteId },
-        query: { includeSubmissions: '0', includeTrackingStats: '0' }
-      })
-      const site = dataFrom(siteResponse) || {}
-      if (site.status !== 'draft') {
-        const error = new Error('Este guardado seguro sólo modifica borradores. Usa sites_unpublish con confirmación antes de editar un Site publicado.')
-        error.status = 409
-        error.code = 'site_must_be_draft'
-        throw error
-      }
-
       const currentResponse = await call(context, getImportedSiteMappingHandler, {
         method: 'GET',
         params: { siteId: args.siteId }
       })
       const currentImport = dataFrom(currentResponse) || {}
-      const currentRevision = importedCodeRevision(currentImport)
-      if (currentRevision !== String(args.expectedRevision || '')) {
-        const error = new Error('El código cambió desde la última lectura. Vuelve a ejecutar sites_get_code antes de guardar.')
-        error.status = 409
-        error.code = 'site_code_revision_conflict'
-        error.currentRevision = currentRevision
-        throw error
-      }
-
-      const htmlFiles = (Array.isArray(currentImport.codeFiles) ? currentImport.codeFiles : [])
-        .filter((file) => file?.language === 'html' && file?.role !== 'popup')
-      const hasExplicitPath = Object.prototype.hasOwnProperty.call(args, 'path')
-      if (!hasExplicitPath && htmlFiles.length !== 1) {
-        const error = new Error('Este Site tiene varios archivos HTML. Indica el path exacto devuelto por sites_get_code.')
-        error.status = 400
-        error.code = 'site_code_path_required'
-        throw error
-      }
-      const targetPath = hasExplicitPath ? String(args.path || '') : String(htmlFiles[0]?.path || '')
-      const targetFile = htmlFiles.find((file) => String(file?.path || '') === targetPath)
-      if (!targetFile) {
-        const error = new Error(`El archivo "${targetPath || 'principal'}" no existe o no es HTML editable.`)
-        error.status = 404
-        error.code = 'site_code_file_not_found'
-        throw error
-      }
+      assertCurrentCodeRevision(currentImport, args.expectedRevision)
+      const { targetPath } = resolveEditableHtmlFile(currentImport, args)
 
       const response = await call(context, updateImportedSiteCodeFilesHandler, {
         method: 'PATCH',
@@ -882,6 +1068,7 @@ export const siteToolSpecs = Object.freeze([
         body: {
           expectedRevision: args.expectedRevision,
           requireDraft: true,
+          responseMode: 'compact',
           files: [{ path: targetPath, content: args.html }]
         }
       })
@@ -973,7 +1160,7 @@ export const siteToolSpecs = Object.freeze([
   spec({
     name: 'sites_update_code',
     title: 'Editar código con impacto potencial en vivo',
-    description: 'Reemplaza uno o varios archivos de código y puede cambiar inmediatamente un Site ya publicado, por eso exige ristak.execute y confirmación. Para iterar sobre un borrador HTML usa sites_replace_html_draft. expectedRevision evita sobreescribir una versión ya observada.',
+    description: 'Reemplaza uno o varios archivos de código y puede cambiar inmediatamente un Site ya publicado, por eso exige ristak.execute y confirmación. Para iterar sobre un borrador HTML usa sites_patch_html_draft. expectedRevision evita sobreescribir una versión ya observada.',
     inputSchema: makeInputSchema({
       siteId: SITE_ID_SCHEMA,
       expectedRevision: {
@@ -1013,20 +1200,14 @@ export const siteToolSpecs = Object.freeze([
         params: { siteId: args.siteId }
       })
       const currentImport = dataFrom(currentResponse) || {}
-      const currentRevision = importedCodeRevision(currentImport)
-      if (currentRevision !== String(args.expectedRevision || '')) {
-        const error = new Error('El código cambió desde la última lectura. Vuelve a ejecutar sites_get_code antes de guardar.')
-        error.status = 409
-        error.code = 'site_code_revision_conflict'
-        error.currentRevision = currentRevision
-        throw error
-      }
+      assertCurrentCodeRevision(currentImport, args.expectedRevision)
 
       const response = await call(context, updateImportedSiteCodeFilesHandler, {
         method: 'PATCH',
         params: { siteId: args.siteId },
         body: {
           expectedRevision: args.expectedRevision,
+          responseMode: 'compact',
           files: args.files
         }
       })
@@ -1305,7 +1486,7 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_update_block',
-    description: 'Actualiza un componente del editor visual nativo. Para editar una página de código usa sites_replace_html_draft o sites_update_code. Si el Site está publicado, el cambio puede verse en vivo.',
+    description: 'Actualiza un componente del editor visual nativo. Para editar una página de código usa sites_patch_html_draft o sites_update_code. Si el Site está publicado, el cambio puede verse en vivo.',
     inputSchema: {
       ...makeInputSchema({
         siteId: SITE_ID_SCHEMA,

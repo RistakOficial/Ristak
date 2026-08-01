@@ -7,6 +7,7 @@ import {
   createSiteFolderHandler,
   createSitesPublicDomainHandler,
   importSiteHtmlHandler,
+  mcpHtmlLivePreviewHandler,
   createSiteHandler,
   createSiteWithAIHtmlHandler,
   createPreviewSessionHandler,
@@ -111,6 +112,7 @@ router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)
 router.get('/public/video-engine/hls-1.6.16.min.js', sitesVideoEngineHandler)
 router.get('/public/calendar-preview/:slug', requireFeature('appointments'), previewCalendarHandler)
+router.get('/public/mcp-html-live-preview/:token', mcpHtmlLivePreviewHandler)
 router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 router.get('/public/content-assets/:siteId/:assetKey', publicSiteContentAssetHandler)
 router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)

@@ -438,6 +438,31 @@ Por lo tanto:
   existe, aunque las pruebas automatizadas del renderer pasen;
 - publicar un borrador o cambiar DNS requiere autorización explícita del dueño.
 
+#### Preview HTML en vivo desde MCP
+
+`sites_open_html_live_preview` entrega una URL bearer firmada por una hora con
+`public_context_signing_secret_v1`, llave interna inicializada en la base. No
+requiere otro secret de entorno ni crea una URL pública permanente del Site. El
+token sólo contiene el Site y la página autorizados, y una firma alterada,
+expirada o cuyo Site dejó de estar en borrador falla cerrado.
+
+La ruta `/api/sites/public/mcp-html-live-preview/:token` renderiza exactamente
+como preview: `trackingEnabled: false`, `preview: true` y mocks de elementos
+nativos. No envía PageView, Pixel/CAPI, progreso, submissions, citas ni cobros
+reales. Tampoco es una prueba válida del tracking publicado.
+
+La página consulta cada 750 ms `?check=1`, que sólo lee las marcas ligeras de
+revisión del Site/importación. Cuando cambian, recarga el HTML ya guardado; no
+descarga ni vuelve a hashear el documento completo en cada poll. Las mutaciones
+de código conservan milisegundos en `updated_at` después de terminar sus syncs
+para que dos guardados cercanos no se pierdan por la precisión de SQLite.
+
+La respuesta usa `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+`X-Robots-Tag: noindex, nofollow, noarchive` y `nosniff`. Así el bearer no se
+reenvía como referrer a imágenes/fuentes externas ni se indexa. Sigue siendo una
+liga temporal de acceso: no debe persistirse en logs, documentación, mensajes o
+campos de la aplicación.
+
 ### Frontera De Seguridad
 
 Las rutas del pixel son públicas porque un navegador anónimo debe poder cargar

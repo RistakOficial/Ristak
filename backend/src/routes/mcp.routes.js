@@ -51,7 +51,9 @@ const MCP_SERVER_INSTRUCTIONS = [
   'Ristak MCP opera el CRM por acciones de negocio autorizadas.',
   'Lee con ristak.read; modifica borradores con ristak.write; enviar mensajes, registrar pagos, ejecutar automatizaciones o publicar requiere ristak.execute; borrados, cancelaciones y reembolsos requieren ristak.destructive.',
   'Respeta confirm=true e idempotencyKey cuando la herramienta los solicite. Nunca pidas ni reveles tokens o secretos.',
-  'Para una landing o sitio personalizado, usa la skill o capacidad web del cliente para generar un documento completo y después usa sites_validate_html, sites_create_html_draft y sites_replace_html_draft.',
+  'Para una landing o sitio personalizado, usa la skill o capacidad web del cliente para generar el documento y llama directamente sites_create_html_draft; esa herramienta ya valida el HTML. Reserva sites_validate_html para un preflight sin escritura.',
+  'Después de crear el borrador, abre sites_open_html_live_preview una sola vez y usa sites_patch_html_draft con fragmentos exactos. No vuelvas a leer ni reenviar el documento completo después de cada cambio; usa sites_get_code sólo al entrar a un Site existente o si un parche ya no coincide.',
+  'sites_replace_html_draft queda para reescrituras completas. Conserva la revisión devuelta por cada guardado y no cierres ni publiques el borrador mientras iteras.',
   'No construyas un diseño HTML personalizado apilando bloques nativos ni uses grids de cards o contenedores anidados como estilo genérico.',
   'Ristak elimina JavaScript propio por seguridad; resuelve el sitio con HTML, CSS y elementos declarativos compatibles.',
   'Mantén el Site en borrador, previsualiza e itera; usa sites_publish sólo cuando la persona haya pedido publicar y confirme la acción.'

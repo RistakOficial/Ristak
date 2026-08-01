@@ -14826,6 +14826,37 @@ export async function getImportedSiteBySiteId(siteId) {
   return imported
 }
 
+export async function getImportedSiteLivePreviewRevision(siteId) {
+  const row = await db.get(`
+    SELECT
+      s.id AS site_id,
+      s.status AS site_status,
+      s.updated_at AS site_updated_at,
+      i.updated_at AS import_updated_at
+    FROM public_sites s
+    INNER JOIN public_site_imports i ON i.site_id = s.id
+    WHERE s.id = ?
+    LIMIT 1
+  `, [siteId])
+  if (!row) return null
+
+  const instant = value => value instanceof Date ? value.toISOString() : String(value || '')
+  const siteUpdatedAt = instant(row.site_updated_at)
+  const importUpdatedAt = instant(row.import_updated_at)
+  const revision = crypto
+    .createHash('sha256')
+    .update(`${row.site_id}:${row.site_status}:${siteUpdatedAt}:${importUpdatedAt}`, 'utf8')
+    .digest('hex')
+
+  return {
+    siteId: row.site_id,
+    status: row.site_status,
+    revision: `sha256:${revision}`,
+    siteUpdatedAt,
+    importUpdatedAt
+  }
+}
+
 function cleanSiteContentAssetKey(value = '') {
   return cleanString(value)
     .normalize('NFD')
@@ -16053,6 +16084,18 @@ export async function updateImportedSiteEditableContent(siteId, input = {}) {
   )
 }
 
+async function buildImportedCodeMutationResponse(siteId, { compact = false } = {}) {
+  const [site, imported] = await Promise.all([
+    getSite(siteId, {
+      includeBlocks: !compact,
+      includeSubmissions: !compact,
+      includeTrackingStats: false
+    }),
+    getImportedSiteBySiteId(siteId)
+  ])
+  return { site, import: imported }
+}
+
 async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
   const currentImport = await getImportedSiteBySiteId(siteId)
   if (!currentImport) {
@@ -16110,10 +16153,9 @@ async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
   }
 
   if (!updateByPath.size) {
-    return {
-      site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
-      import: await getImportedSiteBySiteId(siteId)
-    }
+    return buildImportedCodeMutationResponse(siteId, {
+      compact: input.responseMode === 'compact'
+    })
   }
 
   const assetRows = await db.all(`
@@ -16296,10 +16338,22 @@ async function updateImportedSiteCodeFilesUnlocked(siteId, input = {}) {
   await syncAndPersistImportedFormSourceSites(siteId)
   await reconcileImportedHtmlVideoDeclarationsForSite(siteId)
 
-  return {
-    site: await getSite(siteId, { includeBlocks: true, includeSubmissions: true }),
-    import: await getImportedSiteBySiteId(siteId)
-  }
+  // SQLite recorta CURRENT_TIMESTAMP a segundos. El preview MCP consulta esta
+  // marca ligera para recargar sin releer megabytes de HTML cada segundo, así
+  // que el último toque conserva milisegundos y ocurre después de los syncs.
+  const completedAt = new Date().toISOString()
+  await db.run(
+    'UPDATE public_site_imports SET updated_at = ? WHERE site_id = ?',
+    [completedAt, siteId]
+  )
+  await db.run(
+    'UPDATE public_sites SET updated_at = ? WHERE id = ?',
+    [completedAt, siteId]
+  )
+
+  return buildImportedCodeMutationResponse(siteId, {
+    compact: input.responseMode === 'compact'
+  })
 }
 
 export async function updateImportedSiteCodeFiles(siteId, input = {}) {

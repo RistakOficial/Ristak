@@ -18,6 +18,7 @@ import {
   deleteSite,
   getRequestHost,
   getImportedSiteBySiteId,
+  getImportedSiteLivePreviewRevision,
   getImportedSiteAssetResponse,
   getPublicSiteContentAsset,
   getPublicSitePaymentStatus,
@@ -87,8 +88,16 @@ import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
 import { attachmentDisposition } from '../utils/contentDisposition.js'
 import { renderTemplateVariablesInValue } from '../services/templateVariablesService.js'
+import {
+  signPublicContextClaims,
+  verifyPublicContextToken
+} from '../services/publicContextTokenService.js'
+import { computeImportedSiteCodeRevision } from '../utils/importedSiteCodeRevision.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
+const MCP_HTML_LIVE_PREVIEW_TTL_SECONDS = 60 * 60
+const MCP_HTML_LIVE_PREVIEW_REFRESH_MS = 750
+const MCP_HTML_LIVE_PREVIEW_PURPOSE = 'sites.mcp_html_live_preview'
 const sitePreviewSessions = new Map()
 const HLS_RUNTIME_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -241,6 +250,52 @@ function getRequestOrigin(req) {
   const protocol = req.get('x-forwarded-proto') || req.protocol || 'http'
   const host = req.get('x-forwarded-host') || req.get('host')
   return host ? `${protocol}://${host}` : ''
+}
+
+function setMcpHtmlLivePreviewHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+}
+
+function injectMcpHtmlLiveReload(html = '', { revision = '', checkUrl = '' } = {}) {
+  const runtime = `<script data-rstk-mcp-live-preview="true">
+  (() => {
+    const checkUrl = ${JSON.stringify(checkUrl)};
+    let revision = ${JSON.stringify(revision)};
+    let inFlight = false;
+    const check = async () => {
+      if (inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const response = await fetch(checkUrl, {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const nextRevision = payload && payload.data && payload.data.revision;
+        if (nextRevision && nextRevision !== revision) {
+          revision = nextRevision;
+          window.location.reload();
+        }
+      } catch {}
+      finally { inFlight = false; }
+    };
+    window.setInterval(check, ${MCP_HTML_LIVE_PREVIEW_REFRESH_MS});
+    window.addEventListener('pageshow', check);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) check();
+    });
+  })();
+  </script>`
+
+  const source = String(html || '')
+  return /<\/body>/i.test(source)
+    ? source.replace(/<\/body>/i, `${runtime}</body>`)
+    : `${source}${runtime}`
 }
 
 function setPreviewCookie(req, res, token) {
@@ -607,6 +662,16 @@ export async function updateImportedSiteCodeFilesHandler(req, res) {
   } catch (error) {
     logger.error(`Error editando archivos HTML importados: ${error.message}`)
     error.status = error.status || 400
+    if (error.code) {
+      return res.status(error.status).json({
+        success: false,
+        error: error.message || 'Error editando archivos HTML',
+        code: String(error.code).slice(0, 120),
+        ...(error.currentRevision
+          ? { details: { currentRevision: String(error.currentRevision).slice(0, 120) } }
+          : {})
+      })
+    }
     sendError(res, error, 'Error editando archivos HTML')
   }
 }
@@ -794,6 +859,144 @@ export async function previewSiteHandler(req, res) {
   } catch (error) {
     logger.error(`Error previsualizando site: ${error.message}`)
     sendError(res, error, 'Error previsualizando site')
+  }
+}
+
+export async function createMcpHtmlLivePreviewHandler(req, res) {
+  try {
+    if (!req.mcpUser) {
+      return res.status(403).json({
+        success: false,
+        error: 'Esta vista previa sólo puede abrirse desde una conexión MCP autorizada.',
+        code: 'mcp_context_required'
+      })
+    }
+
+    const siteId = String(req.params.siteId || '').trim()
+    const [site, imported] = await Promise.all([
+      getSite(siteId, { includeBlocks: false, includeSubmissions: false, includeTrackingStats: false }),
+      getImportedSiteBySiteId(siteId)
+    ])
+    if (!site || !imported) {
+      return res.status(404).json({
+        success: false,
+        error: 'Site HTML no encontrado.',
+        code: 'site_html_not_found'
+      })
+    }
+    if (site.status !== 'draft') {
+      return res.status(409).json({
+        success: false,
+        error: 'El preview HTML en vivo sólo está disponible mientras el Site siga en borrador.',
+        code: 'site_must_be_draft'
+      })
+    }
+
+    const htmlFiles = (Array.isArray(imported.codeFiles) ? imported.codeFiles : [])
+      .filter(file => file?.language === 'html' && file?.role !== 'popup')
+    if (!htmlFiles.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Este Site no tiene un documento HTML editable.',
+        code: 'site_html_code_not_found'
+      })
+    }
+
+    const origin = getRequestOrigin(req)
+    if (!origin) {
+      return res.status(503).json({
+        success: false,
+        error: 'No se pudo resolver el origen público de esta instalación.',
+        code: 'site_preview_origin_unavailable'
+      })
+    }
+
+    const nowMs = Date.now()
+    const pageId = String(req.body?.pageId || '').trim()
+    const token = await signPublicContextClaims({
+      purpose: MCP_HTML_LIVE_PREVIEW_PURPOSE,
+      claims: { siteId, ...(pageId ? { pageId } : {}) },
+      ttlSeconds: MCP_HTML_LIVE_PREVIEW_TTL_SECONDS,
+      nowMs
+    })
+    const path = `/api/sites/public/mcp-html-live-preview/${encodeURIComponent(token)}`
+
+    res.setHeader('Cache-Control', 'no-store')
+    return res.json({
+      success: true,
+      data: {
+        siteId,
+        status: site.status,
+        revision: computeImportedSiteCodeRevision(imported.codeFiles),
+        url: `${origin}${path}`,
+        expiresAt: new Date(nowMs + (MCP_HTML_LIVE_PREVIEW_TTL_SECONDS * 1000)).toISOString(),
+        refreshIntervalMs: MCP_HTML_LIVE_PREVIEW_REFRESH_MS,
+        trackingEnabled: false,
+        mutationsEnabled: false
+      }
+    })
+  } catch (error) {
+    logger.error(`Error creando preview HTML en vivo desde MCP: ${error.message}`)
+    sendError(res, error, 'Error creando preview HTML en vivo')
+  }
+}
+
+export async function mcpHtmlLivePreviewHandler(req, res) {
+  setMcpHtmlLivePreviewHeaders(res)
+
+  try {
+    const token = String(req.params.token || '')
+    const verified = await verifyPublicContextToken(token, {
+      purpose: MCP_HTML_LIVE_PREVIEW_PURPOSE
+    })
+    const siteId = String(verified.claims?.siteId || '').trim()
+    const pageId = String(verified.claims?.pageId || '').trim()
+    if (!siteId) {
+      return res.status(403).type('text/plain').send('Preview inválido o expirado')
+    }
+
+    const liveRevision = await getImportedSiteLivePreviewRevision(siteId)
+    if (!liveRevision) {
+      return res.status(404).type('text/plain').send('Site HTML no encontrado')
+    }
+    if (liveRevision.status !== 'draft') {
+      return res.status(409).type('text/plain').send('Este preview terminó porque el Site ya no está en borrador')
+    }
+
+    if (req.query?.check === '1') {
+      return res.json({
+        success: true,
+        data: {
+          siteId,
+          status: liveRevision.status,
+          revision: liveRevision.revision
+        }
+      })
+    }
+
+    const site = await getSitePreview(siteId)
+    if (!site) {
+      return res.status(404).type('text/plain').send('Site HTML no encontrado')
+    }
+
+    await prepareSiteVideoStoragePreviews(site, { strict: true })
+    const rendered = await renderPublicSiteHtml(site, {
+      pageId,
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+    const checkUrl = `/api/sites/public/mcp-html-live-preview/${encodeURIComponent(token)}?check=1`
+    return res.status(200).type('html').send(injectMcpHtmlLiveReload(rendered, {
+      revision: liveRevision.revision,
+      checkUrl
+    }))
+  } catch (error) {
+    if (error?.code?.startsWith('public_context_') || error?.name === 'PublicContextTokenError') {
+      return res.status(403).type('text/plain').send('Preview inválido o expirado')
+    }
+    logger.error(`Error abriendo preview HTML en vivo desde MCP: ${error.message}`)
+    return res.status(500).type('text/plain').send('Error previsualizando Site HTML')
   }
 }
 

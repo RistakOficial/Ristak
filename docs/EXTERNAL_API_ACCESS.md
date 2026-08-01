@@ -82,7 +82,7 @@ the same server URL; `tools/list` returns the exact tools available to the user
 who authorized that connection.
 
 The MCP is a typed control plane over Ristak's business services, not a generic
-route proxy and not unrestricted SQL. The current registry contains 238 typed
+route proxy and not unrestricted SQL. The current registry contains 240 typed
 tools before authorization filtering. `GET /api/api-access/mcp/status` and
 `tools/list` report only the subset visible to the current user, plan, modules
 and granted scopes. The registry covers these operational domains:
@@ -142,26 +142,33 @@ authoring workflow, it should use that capability to create the complete source
 and use the Ristak MCP only for validation, persistence, preview and controlled
 publication.
 
-The preferred code-first lifecycle is:
+The preferred low-latency code-first lifecycle is:
 
-1. `sites_validate_html` checks a complete document without writing to the
-   database. It reports document structure, responsive/accessibility warnings,
-   detected forms and the transformations the canonical Sites sanitizer would
-   apply.
-2. `sites_create_html_draft` creates a code-first draft. It requires a complete
+1. `sites_create_html_draft` creates a code-first draft and runs the complete
+   validation itself. It requires a complete
    HTML document and rejects scripts, inline `on*` handlers and `javascript:`
    URLs because Ristak removes them for security. The page must solve its design
    with HTML, CSS and supported declarative Ristak elements.
-3. `sites_get_code` returns a compact file inventory and revision. Send a
-   specific `path` to read only the file being edited.
-4. `sites_replace_html_draft` is the normal iteration path. It uses
-   `ristak.write`, does not require a high-impact confirmation, and succeeds only
-   while the Site remains a draft and `expectedRevision` still matches. The
-   revision and draft checks run inside the same imported-Site mutation lock as
-   the write, while publish/unpublish transitions share that lock.
-5. `sites_preview_html` renders the inert, no-tracking preview. Repeat validation
-   and editing as needed.
-6. `sites_publish` remains a separate `ristak.execute` action with explicit
+2. `sites_open_html_live_preview` creates a signed one-hour preview URL. Open it
+   once; it polls a lightweight revision every 750 ms and reloads itself after a
+   saved edit. It has no tracking, real submissions, bookings or payments.
+3. `sites_patch_html_draft` is the normal iteration path. It sends only exact
+   `search`/`replacement` fragments, applies them sequentially to the latest
+   HTML and requires the declared occurrence count to match. `expectedRevision`
+   is optional for this patch tool; the server still reads a current revision
+   and rechecks it inside the imported-Site mutation lock before writing.
+4. `sites_get_code` is needed when entering an existing Site or when an exact
+   patch no longer matches. Send a specific `path` to read only that file; do not
+   fetch the full source after every successful patch.
+5. `sites_replace_html_draft` remains the whole-document route for large
+   rewrites. It requires `expectedRevision` because it can overwrite every part
+   of the selected file.
+6. `sites_validate_html` remains available as an optional no-write preflight;
+   calling it immediately before `sites_create_html_draft` is redundant because
+   create runs the same authoring checks.
+7. `sites_preview_html` still returns the inert HTML directly for MCP clients
+   that need source instead of the auto-refreshing browser view.
+8. `sites_publish` remains a separate `ristak.execute` action with explicit
    confirmation.
 
 `sites_create_draft` and the block tools are for the native Ristak visual editor,
@@ -173,8 +180,14 @@ immediately.
 HTML creation and mutation responses are compact and typed: they return the Site
 identity, editor mode, revision, file inventory without source duplication,
 detected-form summary, quality report, sanitizer report and the recommended next
-tools. The initial create response never echoes the full source back multiple
-times.
+tools. MCP mutations request the compact backend response and do not hydrate
+blocks or submissions that the authoring client will discard. The initial create
+response never echoes the full source back multiple times.
+
+The live-preview URL is a short-lived bearer link signed with Ristak's internal
+database-backed context key. Its public response uses `no-store`,
+`Referrer-Policy: no-referrer` and `noindex`; altering or expiring the token fails
+closed. The URL must not be logged or copied into durable documentation.
 
 ### Receiving messages
 

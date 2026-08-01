@@ -8,6 +8,7 @@ import express from 'express'
 import { databaseReady, db } from '../src/config/database.js'
 import { domainToolSpecs } from '../src/mcp/domainTools.js'
 import mcpRoutes from '../src/routes/mcp.routes.js'
+import sitesRoutes from '../src/routes/sites.routes.js'
 import { resetCentralStorageConfigCache } from '../src/services/mediaStorageService.js'
 import { deleteSite } from '../src/services/sitesService.js'
 import {
@@ -64,6 +65,17 @@ function requestMcp(token, payload) {
     request.write(body)
     request.end()
   })
+}
+
+async function requestUrl(url, { json = false } = {}) {
+  const response = await fetch(url, {
+    headers: { Accept: json ? 'application/json' : 'text/html' }
+  })
+  return {
+    status: response.status,
+    headers: response.headers,
+    payload: json ? await response.json() : await response.text()
+  }
 }
 
 function domainTool(name) {
@@ -133,6 +145,7 @@ before(async () => {
   const app = express()
   app.use(express.json({ limit: '1mb' }))
   app.use('/api/mcp', mcpRoutes)
+  app.use('/api/sites', sitesRoutes)
   fixture.server = http.createServer(app)
   await new Promise((resolve, reject) => {
     fixture.server.once('error', reject)
@@ -190,6 +203,8 @@ test('initialize anuncia instrucciones, protocolo y servidor MCP v2', async () =
   assert.equal(response.payload.result.serverInfo.version, '2.0.0')
   assert.match(response.payload.result.instructions, /confirm=true/)
   assert.match(response.payload.result.instructions, /sites_create_html_draft/)
+  assert.match(response.payload.result.instructions, /sites_patch_html_draft/)
+  assert.match(response.payload.result.instructions, /no vuelvas a leer ni reenviar/i)
   assert.match(response.payload.result.instructions, /no construyas.*bloques nativos/i)
   assert.deepEqual(response.payload.result.capabilities, { tools: { listChanged: false } })
 })
@@ -244,6 +259,7 @@ test('scope de lectura lista sólo lecturas y no expone SQL ni proxies arbitrari
   assert.equal(names.has('ghl_mcp_call_tool'), false)
   assert.equal(names.has('contacts_create'), false)
   assert.equal(names.has('sites_get_code'), true)
+  assert.equal(names.has('sites_open_html_live_preview'), true)
   assert.equal(names.has('chat_get_conversation'), true)
 })
 
@@ -280,6 +296,8 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
     'media_prepare_bunny_upload',
     'sites_validate_html',
     'sites_create_html_draft',
+    'sites_open_html_live_preview',
+    'sites_patch_html_draft',
     'sites_replace_html_draft',
     'sites_update_code',
     'sites_publish'
@@ -293,7 +311,7 @@ test('grant ampliado invalida el token viejo y publica el catálogo de control',
   assert.equal(createHtml.outputSchema.properties.data.additionalProperties, false)
 })
 
-test('flujo HTML MCP valida, crea, edita y previsualiza un borrador real', async () => {
+test('flujo HTML MCP crea, parchea y refresca un preview temporal real', async () => {
   const originalHtml = `<!doctype html>
     <html lang="es">
       <head>
@@ -339,17 +357,33 @@ test('flujo HTML MCP valida, crea, edita y previsualiza un borrador real', async
   assert.equal(createdData.files[0].content, undefined)
   assert.match(createdData.revision, /^sha256:[a-f0-9]{64}$/)
 
-  const editedHtml = originalHtml
-    .replace('Landing MCP original', 'Landing MCP editada')
-    .replace('Experiencia original', 'Experiencia editada')
-  const edited = await requestMcp(fixture.fullToken, {
+  const livePreview = await requestMcp(fixture.fullToken, {
     jsonrpc: '2.0', id: 47, method: 'tools/call',
     params: {
-      name: 'sites_replace_html_draft',
+      name: 'sites_open_html_live_preview',
+      arguments: { siteId: fixture.siteId }
+    }
+  })
+  assert.equal(livePreview.payload.result.isError, undefined)
+  const livePreviewData = livePreview.payload.result.structuredContent.data
+  assert.match(livePreviewData.url, /\/api\/sites\/public\/mcp-html-live-preview\//)
+  assert.equal(livePreviewData.trackingEnabled, false)
+  assert.equal(livePreviewData.mutationsEnabled, false)
+
+  const initialCheck = await requestUrl(`${livePreviewData.url}?check=1`, { json: true })
+  assert.equal(initialCheck.status, 200)
+  const initialLiveRevision = initialCheck.payload.data.revision
+
+  const edited = await requestMcp(fixture.fullToken, {
+    jsonrpc: '2.0', id: 48, method: 'tools/call',
+    params: {
+      name: 'sites_patch_html_draft',
       arguments: {
         siteId: fixture.siteId,
-        expectedRevision: createdData.revision,
-        html: editedHtml,
+        edits: [
+          { search: 'Landing MCP original', replacement: 'Landing MCP editada' },
+          { search: 'Experiencia original', replacement: 'Experiencia editada' }
+        ],
         idempotencyKey: `site-html-edit-${crypto.randomUUID()}`
       }
     }
@@ -359,8 +393,23 @@ test('flujo HTML MCP valida, crea, edita y previsualiza un borrador real', async
   assert.notEqual(editedData.revision, createdData.revision)
   assert.equal(editedData.status, 'draft')
 
+  const refreshedCheck = await requestUrl(`${livePreviewData.url}?check=1`, { json: true })
+  assert.equal(refreshedCheck.status, 200)
+  assert.notEqual(refreshedCheck.payload.data.revision, initialLiveRevision)
+
+  const livePage = await requestUrl(livePreviewData.url)
+  assert.equal(livePage.status, 200)
+  assert.equal(livePage.headers.get('cache-control'), 'no-store')
+  assert.equal(livePage.headers.get('referrer-policy'), 'no-referrer')
+  assert.equal(livePage.headers.get('x-robots-tag'), 'noindex, nofollow, noarchive')
+  assert.match(livePage.payload, /Experiencia editada/)
+  assert.match(livePage.payload, /data-rstk-mcp-live-preview="true"/)
+
+  const tamperedPreview = await requestUrl(`${livePreviewData.url}x`)
+  assert.equal(tamperedPreview.status, 403)
+
   const preview = await requestMcp(fixture.fullToken, {
-    jsonrpc: '2.0', id: 48, method: 'tools/call',
+    jsonrpc: '2.0', id: 49, method: 'tools/call',
     params: {
       name: 'sites_preview_html',
       arguments: { siteId: fixture.siteId }

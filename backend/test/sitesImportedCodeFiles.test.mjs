@@ -129,6 +129,7 @@ test('imported HTML editable video expands its containing slot for the default m
   const {
     createImportedSiteFromHtml,
     deleteSite,
+    getImportedSiteLivePreviewRevision,
     getSitePreview,
     renderPublicSiteHtml
   } = await import('../src/services/sitesService.js')
@@ -175,6 +176,7 @@ test('imported HTML code files are listed and saved through the code editor endp
   const {
     createImportedSiteFromHtml,
     deleteSite,
+    getImportedSiteLivePreviewRevision,
     getSitePreview,
     renderPublicSiteHtml,
     updateImportedSiteCodeFiles
@@ -203,12 +205,22 @@ test('imported HTML code files are listed and saved through the code editor endp
     assert.match(created.import.securityReport.join(' '), /meta viewport/)
     assert.match(created.import.securityReport.join(' '), /favicon de respaldo/)
 
+    const liveRevisionBefore = await getImportedSiteLivePreviewRevision(siteId)
+    assert.match(liveRevisionBefore.revision, /^sha256:[a-f0-9]{64}$/)
+
     const updatedContent = created.import.codeFiles[0].content.replace('>Original heading<', '>Edited from code<')
     const updated = await updateImportedSiteCodeFiles(siteId, {
+      responseMode: 'compact',
       files: [{ path: '', content: updatedContent }]
     })
 
     assert.match(updated.import.codeFiles[0].content, /Edited from code/)
+    assert.equal(updated.site.blocks, undefined)
+    assert.equal(updated.site.submissions, undefined)
+
+    const liveRevisionAfter = await getImportedSiteLivePreviewRevision(siteId)
+    assert.notEqual(liveRevisionAfter.revision, liveRevisionBefore.revision)
+    assert.match(String(liveRevisionAfter.importUpdatedAt), /\.\d{3}Z$/)
 
     const previewSite = await getSitePreview(siteId)
     const rendered = await renderPublicSiteHtml(previewSite, {
