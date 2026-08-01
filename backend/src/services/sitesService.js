@@ -4787,7 +4787,9 @@ function buildImportedSourceFormTheme({ sourceSite, existingSite, mapping, detec
       ...finalPages
     ],
     importedHtmlSource: true,
+    importedHtmlSourceActive: true,
     importedHtmlSourceSiteId: sourceSite?.id || '',
+    importedHtmlSourceSiteName: cleanString(sourceSite?.name || sourceSite?.title),
     importedHtmlSourceFormId: mapping?.formId || '',
     importedHtmlSourcePagePath: cleanString(detectedForm?.pagePath || detectedForm?.page_path),
     importedHtmlSourceTitle: cleanString(mapping?.formTitle || detectedForm?.title),
@@ -4795,6 +4797,24 @@ function buildImportedSourceFormTheme({ sourceSite, existingSite, mapping, detec
   }, {
     folderId: cleanString(existingTheme.libraryFolderId) || SITE_LIBRARY_HTML_FORMS_FOLDER_ID,
     source: cleanString(existingTheme.librarySource) || SITE_LIBRARY_SOURCE_HTML
+  })
+}
+
+async function markImportedSourceFormInactive(formSiteId, sourceSiteId) {
+  const sourceForm = cleanString(formSiteId)
+    ? await getSite(formSiteId, { includeBlocks: false, includeSubmissions: false }).catch(() => null)
+    : null
+  if (
+    !sourceForm?.theme?.importedHtmlSource ||
+    cleanString(sourceForm.theme.importedHtmlSourceSiteId) !== cleanString(sourceSiteId) ||
+    sourceForm.theme.importedHtmlSourceActive === false
+  ) return
+
+  await updateSite(sourceForm.id, {
+    theme: {
+      ...sourceForm.theme,
+      importedHtmlSourceActive: false
+    }
   })
 }
 
@@ -4830,6 +4850,10 @@ async function syncImportedFormSourceSites({ site, imported, detectedForms = [],
   const nextMappings = []
   for (const mapping of Array.isArray(mappings) ? mappings : []) {
     if (mapping?.present === false) {
+      await markImportedSourceFormInactive(
+        getImportedFormMappingSourceSiteId(mapping),
+        site.id
+      )
       nextMappings.push(mapping)
       continue
     }
@@ -5386,6 +5410,12 @@ function buildSiteSummaryTheme(theme = {}) {
     'librarySource',
     'importedHtml',
     'importedHtmlSource',
+    'importedHtmlSourceActive',
+    'importedHtmlSourceSiteId',
+    'importedHtmlSourceSiteName',
+    'importedHtmlSourceFormId',
+    'importedHtmlSourcePagePath',
+    'importedHtmlSourceTitle',
     'calendarSystemForm',
     'paymentGate'
   ]
@@ -5403,6 +5433,53 @@ function mapSiteSummary(row) {
   site.theme = buildSiteSummaryTheme(site.theme)
   site.summary = true
   return site
+}
+
+async function hydrateImportedHtmlSourceFormActivity(sites = []) {
+  const candidates = (Array.isArray(sites) ? sites : []).filter(site => (
+    normalizeBoolean(site?.theme?.importedHtmlSource) === 1 &&
+    cleanString(site.theme.importedHtmlSourceSiteId)
+  ))
+  if (!candidates.length) return sites
+
+  const sourceSiteIds = [...new Set(
+    candidates.map(site => cleanString(site.theme.importedHtmlSourceSiteId)).filter(Boolean)
+  )]
+  const placeholders = sourceSiteIds.map(() => '?').join(', ')
+  const rows = await db.all(`
+    SELECT
+      imported.site_id,
+      imported.form_mappings_json,
+      source.name AS source_name,
+      source.title AS source_title
+    FROM public_site_imports imported
+    INNER JOIN public_sites source ON source.id = imported.site_id
+    WHERE imported.site_id IN (${placeholders})
+  `, sourceSiteIds)
+  const sourcesById = new Map(rows.map(row => [cleanString(row.site_id), row]))
+
+  return sites.map(site => {
+    if (!candidates.includes(site)) return site
+    const sourceSiteId = cleanString(site.theme.importedHtmlSourceSiteId)
+    const source = sourcesById.get(sourceSiteId)
+    const activeMapping = parseJson(source?.form_mappings_json, []).find(mapping => (
+      mapping?.present !== false &&
+      getImportedFormMappingSourceSiteId(mapping) === cleanString(site.id)
+    ))
+    const sourceSiteName = cleanString(source?.source_name || source?.source_title)
+
+    return {
+      ...site,
+      theme: {
+        ...site.theme,
+        importedHtmlSourceActive: Boolean(activeMapping),
+        ...(sourceSiteName ? { importedHtmlSourceSiteName: sourceSiteName } : {}),
+        ...(cleanString(activeMapping?.pagePath || activeMapping?.page_path)
+          ? { importedHtmlSourcePagePath: cleanString(activeMapping?.pagePath || activeMapping?.page_path) }
+          : {})
+      }
+    }
+  })
 }
 
 function buildPublicDefaultRoute(site, pageIdValue = '') {
@@ -9462,6 +9539,12 @@ function getSiteSummaryThemeExpression(alias = 's') {
     'librarySource',
     'importedHtml',
     'importedHtmlSource',
+    'importedHtmlSourceActive',
+    'importedHtmlSourceSiteId',
+    'importedHtmlSourceSiteName',
+    'importedHtmlSourceFormId',
+    'importedHtmlSourcePagePath',
+    'importedHtmlSourceTitle',
     'calendarSystemForm',
     'paymentGate'
   ]
@@ -9994,7 +10077,9 @@ export async function listSites({
 
   const hasMore = rows.length > pageLimit
   const pageRows = hasMore ? rows.slice(0, pageLimit) : rows
-  const items = pageRows.map(mapSiteSummary).filter(Boolean)
+  const items = await hydrateImportedHtmlSourceFormActivity(
+    pageRows.map(mapSiteSummary).filter(Boolean)
+  )
   const page = {
     items,
     hasMore,
@@ -17089,6 +17174,71 @@ export async function updateSite(siteId, input = {}) {
   return updateSiteUnlocked(siteId, input)
 }
 
+async function getActiveImportedHtmlSourceFormDependency(site = {}) {
+  const theme = parseJson(site?.theme_json, {})
+  if (theme.importedHtmlSource !== true) return null
+
+  const sourceSiteId = cleanString(theme.importedHtmlSourceSiteId)
+  if (!sourceSiteId) return null
+  const source = await db.get(`
+    SELECT
+      imported.form_mappings_json,
+      owner.name AS source_name,
+      owner.title AS source_title
+    FROM public_site_imports imported
+    INNER JOIN public_sites owner ON owner.id = imported.site_id
+    WHERE imported.site_id = ?
+    LIMIT 1
+  `, [sourceSiteId])
+  if (!source) return null
+
+  const mapping = parseJson(source.form_mappings_json, []).find(candidate => (
+    candidate?.present !== false &&
+    getImportedFormMappingSourceSiteId(candidate) === cleanString(site.id)
+  ))
+  if (!mapping) return null
+
+  return {
+    sourceSiteId,
+    sourceSiteName: cleanString(source.source_name || source.source_title),
+    pagePath: cleanString(
+      mapping.pagePath || mapping.page_path || theme.importedHtmlSourcePagePath
+    )
+  }
+}
+
+async function listOwnedImportedHtmlSourceFormIds(sourceSiteId) {
+  const imported = await db.get(`
+    SELECT form_mappings_json
+    FROM public_site_imports
+    WHERE site_id = ?
+    LIMIT 1
+  `, [sourceSiteId])
+  if (!imported) return []
+
+  const candidateIds = [...new Set(
+    parseJson(imported.form_mappings_json, [])
+      .map(getImportedFormMappingSourceSiteId)
+      .filter(Boolean)
+  )]
+  if (!candidateIds.length) return []
+
+  const placeholders = candidateIds.map(() => '?').join(', ')
+  const rows = await db.all(`
+    SELECT id, theme_json
+    FROM public_sites
+    WHERE id IN (${placeholders})
+  `, candidateIds)
+  return rows
+    .filter(row => {
+      const theme = parseJson(row.theme_json, {})
+      return theme.importedHtmlSource === true &&
+        cleanString(theme.importedHtmlSourceSiteId) === cleanString(sourceSiteId)
+    })
+    .map(row => cleanString(row.id))
+    .filter(Boolean)
+}
+
 export async function deleteSite(siteId) {
   if (cleanString(siteId) === CALENDAR_DEFAULT_FORM_SITE_ID) {
     const error = new Error('El formulario base de calendario no se puede eliminar')
@@ -17096,24 +17246,49 @@ export async function deleteSite(siteId) {
     throw error
   }
 
-  const existing = await db.get('SELECT id FROM public_sites WHERE id = ?', [siteId])
+  const existing = await db.get(`
+    SELECT id, name, title, site_type, theme_json
+    FROM public_sites
+    WHERE id = ?
+  `, [siteId])
   if (!existing) return false
 
-  await deleteImportedSiteMediaAssets(siteId)
-  await db.run('DELETE FROM public_sites WHERE id = ?', [siteId])
-  if (cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY)) === cleanString(siteId)) {
+  const dependency = await getActiveImportedHtmlSourceFormDependency(existing)
+  if (dependency) {
+    const sourceLabel = dependency.sourceSiteName || 'la página HTML relacionada'
+    const pageLabel = dependency.pagePath ? ` (${dependency.pagePath})` : ''
+    const error = new Error(
+      `Este formulario está activo dentro de la página HTML “${sourceLabel}”${pageLabel}. Para eliminarlo, elimina primero la página HTML relacionada.`
+    )
+    error.status = 409
+    error.code = 'active_imported_html_source_form'
+    throw error
+  }
+
+  const ownedSourceFormIds = await listOwnedImportedHtmlSourceFormIds(siteId)
+  const deletionIds = [...new Set([cleanString(siteId), ...ownedSourceFormIds].filter(Boolean))]
+  for (const deletionId of deletionIds) {
+    await deleteImportedSiteMediaAssets(deletionId)
+  }
+
+  const placeholders = deletionIds.map(() => '?').join(', ')
+  await db.transaction(async tx => {
+    await tx.run(`DELETE FROM public_sites WHERE id IN (${placeholders})`, deletionIds)
+    await tx.run(`
+      UPDATE public_site_domains
+      SET default_route_site_id = NULL,
+          default_route_page_id = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE default_route_site_id IN (${placeholders})
+    `, deletionIds)
+  })
+
+  if (deletionIds.includes(cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY)))) {
     await Promise.all([
       setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
       setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
     ])
   }
-  await db.run(`
-    UPDATE public_site_domains
-    SET default_route_site_id = NULL,
-        default_route_page_id = NULL,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE default_route_site_id = ?
-  `, [siteId])
   return true
 }
 

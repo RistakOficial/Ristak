@@ -1926,6 +1926,19 @@ const normalizeSiteForEditor = (site: PublicSite): PublicSite => ({
 })
 const isImportedHtmlSite = (site?: PublicSite | null) =>
   Boolean(site?.theme?.importedHtml || site?.theme?.template === 'imported_html')
+const isActiveImportedHtmlSourceForm = (site?: PublicSite | null) => Boolean(
+  site?.siteType !== 'landing_page' &&
+  site?.theme?.importedHtmlSource &&
+  (site.theme.importedHtmlSourceActive ?? true)
+)
+const getImportedHtmlSourceFormProtectionMessage = (site?: PublicSite | null) => {
+  const sourceName = site?.theme?.importedHtmlSourceSiteName?.trim()
+  const pagePath = site?.theme?.importedHtmlSourcePagePath?.trim()
+  const sourceDescription = [sourceName, pagePath].filter(Boolean).join(' · ')
+  return sourceDescription
+    ? `Este formulario está activo dentro de la página HTML “${sourceDescription}”. Para eliminarlo, elimina primero esa página HTML relacionada desde Sites.`
+    : 'Este formulario está activo dentro de una página HTML. Para eliminarlo, elimina primero la página HTML relacionada desde Sites.'
+}
 
 type ImportedNativeElementType = 'form' | 'calendar' | 'payment' | 'video' | 'social_profile'
 type ImportedNativeElementRenderMode = 'ristak' | 'custom'
@@ -13896,16 +13909,28 @@ export const Sites: React.FC = () => {
 
   const handleDeleteSite = async (siteToDelete = selectedSite) => {
     if (!siteToDelete) return
+    if (isActiveImportedHtmlSourceForm(siteToDelete)) {
+      showToast(
+        'warning',
+        'Formulario administrado desde HTML',
+        getImportedHtmlSourceFormProtectionMessage(siteToDelete)
+      )
+      return
+    }
     const siteKindLabel = isLanding(siteToDelete) ? 'sitio' : 'formulario'
+    const deletesRelatedHtmlForms = isImportedHtmlSite(siteToDelete)
     showConfirm(
       `Eliminar ${siteKindLabel}`,
-      `Se eliminará "${siteToDelete.name}" y sus respuestas. Esta acción no se puede deshacer.`,
+      deletesRelatedHtmlForms
+        ? `Se eliminará "${siteToDelete.name}", sus formularios HTML relacionados y todas sus respuestas. Esta acción no se puede deshacer.`
+        : `Se eliminará "${siteToDelete.name}" y sus respuestas. Esta acción no se puede deshacer.`,
       () => {
         const deleteSite = async () => {
           try {
             await sitesService.deleteSite(siteToDelete.id)
             removeSitesFromCollections([siteToDelete.id])
             void loadLibraryPage(isLanding(siteToDelete) ? 'landings' : 'forms', { force: true })
+            if (deletesRelatedHtmlForms) void loadLibraryPage('forms', { force: true })
             if (selectedSite?.id === siteToDelete.id) {
               markEditorExitInProgress()
               setSelectedSite(null)
@@ -13913,7 +13938,7 @@ export const Sites: React.FC = () => {
               navigateSitesSection(getSiteSection(siteToDelete))
             }
             clearEditorDirtyState()
-            showToast('success', 'Eliminado', 'Sitio eliminado')
+            showToast('success', 'Eliminado', `${siteKindLabel === 'sitio' ? 'Sitio' : 'Formulario'} eliminado`)
           } catch (error) {
             showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo eliminar')
           }
@@ -13929,7 +13954,18 @@ export const Sites: React.FC = () => {
   }
 
   const handleBulkDeleteSites = async (sitesToDelete: PublicSite[]): Promise<string[]> => {
-    const uniqueSites = [...new Map(sitesToDelete.filter(Boolean).map(site => [site.id, site])).values()]
+    const requestedSites = [...new Map(sitesToDelete.filter(Boolean).map(site => [site.id, site])).values()]
+    const protectedHtmlForms = requestedSites.filter(isActiveImportedHtmlSourceForm)
+    const uniqueSites = requestedSites.filter(site => !isActiveImportedHtmlSourceForm(site))
+    if (protectedHtmlForms.length) {
+      showToast(
+        'warning',
+        protectedHtmlForms.length === 1 ? 'Formulario administrado desde HTML' : 'Formularios administrados desde HTML',
+        protectedHtmlForms.length === 1
+          ? getImportedHtmlSourceFormProtectionMessage(protectedHtmlForms[0])
+          : `${protectedHtmlForms.length} formularios activos pertenecen a páginas HTML. Para eliminarlos, elimina primero sus páginas HTML relacionadas desde Sites.`
+      )
+    }
     if (!uniqueSites.length) return []
 
     const landingCount = uniqueSites.filter(isLanding).length
@@ -13950,7 +13986,9 @@ export const Sites: React.FC = () => {
 
       showConfirm(
         'Eliminar seleccionados',
-        `Vas a eliminar ${itemLabel} y sus respuestas. Esta acción no se puede deshacer.`,
+        uniqueSites.some(isImportedHtmlSite)
+          ? `Vas a eliminar ${itemLabel}, los formularios HTML relacionados y sus respuestas. Esta acción no se puede deshacer.`
+          : `Vas a eliminar ${itemLabel} y sus respuestas. Esta acción no se puede deshacer.`,
         async () => {
           const results = await Promise.allSettled(
             uniqueSites.map(async (site) => {
@@ -13968,6 +14006,7 @@ export const Sites: React.FC = () => {
             removeSitesFromCollections(deletedIdSet)
             if (uniqueSites.some(isLanding)) void loadLibraryPage('landings', { force: true })
             if (uniqueSites.some(site => !isLanding(site))) void loadLibraryPage('forms', { force: true })
+            if (uniqueSites.some(isImportedHtmlSite)) void loadLibraryPage('forms', { force: true })
             const currentSelectedSite = selectedSiteRef.current || selectedSite
             if (currentSelectedSite && deletedIdSet.has(currentSelectedSite.id)) {
               markEditorExitInProgress()
@@ -13980,12 +14019,16 @@ export const Sites: React.FC = () => {
           }
 
           if (failedCount > 0) {
+            const firstFailure = results.find(result => result.status === 'rejected')
+            const failureMessage = firstFailure?.status === 'rejected' && firstFailure.reason instanceof Error
+              ? firstFailure.reason.message
+              : ''
             showToast(
               deletedIds.length > 0 ? 'warning' : 'error',
               deletedIds.length > 0 ? 'Eliminación parcial' : 'No se pudo eliminar',
               deletedIds.length > 0
                 ? `Se eliminaron ${deletedIds.length}, pero ${failedCount} fallaron. Intenta de nuevo con los pendientes.`
-                : 'No se pudo eliminar ningún elemento seleccionado.'
+                : failureMessage || 'No se pudo eliminar ningún elemento seleccionado.'
             )
           } else {
             showToast('success', 'Eliminados', `Se eliminaron ${deletedIds.length} elemento${deletedIds.length === 1 ? '' : 's'}.`)
@@ -27907,7 +27950,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   ), [activeFolderId, domainConfig, normalizedQuery, sites])
   const canShowFolders = activeFolderId === SITE_LIBRARY_ROOT_ID && !normalizedQuery
   const selectedSiteIdSet = useMemo(() => new Set(selectedSiteIds), [selectedSiteIds])
-  const visibleSiteIds = useMemo(() => visibleSites.map(site => site.id), [visibleSites])
+  const visibleSiteIds = useMemo(
+    () => visibleSites.filter(site => !isActiveImportedHtmlSourceForm(site)).map(site => site.id),
+    [visibleSites]
+  )
   const selectedVisibleCount = visibleSiteIds.filter(siteId => selectedSiteIdSet.has(siteId)).length
   const allVisibleSelected = visibleSiteIds.length > 0 && selectedVisibleCount === visibleSiteIds.length
   const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
@@ -27931,7 +27977,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   }, [activeFolderId, onActiveFolderChange, sectionFolders])
 
   useEffect(() => {
-    const existingIds = new Set(sites.map(site => site.id))
+    const existingIds = new Set(
+      sites.filter(site => !isActiveImportedHtmlSourceForm(site)).map(site => site.id)
+    )
     setSelectedSiteIds(current => {
       const next = current.filter(siteId => existingIds.has(siteId))
       return next.length === current.length ? current : next
@@ -27939,6 +27987,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   }, [sites])
 
   const toggleSiteSelection = (siteId: string, checked: boolean) => {
+    if (checked && isActiveImportedHtmlSourceForm(sites.find(site => site.id === siteId))) return
     setSelectedSiteIds(current => {
       if (checked) return current.includes(siteId) ? current : [...current, siteId]
       return current.filter(id => id !== siteId)
@@ -28098,10 +28147,17 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <FolderInput size={15} />
           Mover
         </DropdownMenuItem>
-        <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
-          <Trash2 size={15} />
-          Eliminar {siteKindLabel}
-        </DropdownMenuItem>
+        {isActiveImportedHtmlSourceForm(site) ? (
+          <DropdownMenuItem onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
+            <Lock size={15} />
+            No se puede eliminar aquí
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem className={styles.pageMenuDanger} onSelect={(event) => { event.stopPropagation(); onDelete(site) }}>
+            <Trash2 size={15} />
+            Eliminar {siteKindLabel}
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   ), [domainConfig, onDelete, onEdit, onOpenResponses, onOpenSettings, onSetDefaultRoute, startRouteEdit])
@@ -28116,6 +28172,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   ) : null, [domainConfig])
   const renderSiteSelectionControl = (site: PublicSite, variant: 'card' | 'row' | 'table' = 'row') => {
     const checked = selectedSiteIdSet.has(site.id)
+    const protectedHtmlForm = isActiveImportedHtmlSourceForm(site)
     const variantClass = variant === 'card'
       ? styles.librarySelectControlCard
       : variant === 'table'
@@ -28126,7 +28183,9 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       <label
         className={`${styles.librarySelectControl} ${variantClass}`}
         data-library-card-action="true"
-        title={`Seleccionar ${site.name}`}
+        title={protectedHtmlForm
+          ? 'Este formulario se elimina desde su página HTML relacionada'
+          : `Seleccionar ${site.name}`}
         onPointerDown={(event) => event.stopPropagation()}
         onMouseDown={(event) => event.stopPropagation()}
         onMouseUp={(event) => event.stopPropagation()}
@@ -28134,8 +28193,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       >
         <BulkSelectCheckbox
           checked={checked}
-          disabled={bulkDeleting}
-          aria-label={`Seleccionar ${site.name}`}
+          disabled={bulkDeleting || protectedHtmlForm}
+          aria-label={protectedHtmlForm
+            ? `${site.name} se elimina desde su página HTML relacionada`
+            : `Seleccionar ${site.name}`}
           onChange={(event) => toggleSiteSelection(site.id, event.currentTarget.checked)}
         />
       </label>
@@ -28229,7 +28290,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         <BulkSelectCheckbox
           checked={allVisibleSelected}
           indeterminate={someVisibleSelected}
-          disabled={bulkDeleting || visibleSites.length === 0}
+          disabled={bulkDeleting || visibleSiteIds.length === 0}
           aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
           onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
         />
@@ -28444,7 +28505,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             <BulkSelectCheckbox
               checked={allVisibleSelected}
               indeterminate={someVisibleSelected}
-              disabled={bulkDeleting}
+              disabled={bulkDeleting || visibleSiteIds.length === 0}
               aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
               onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
             />
@@ -28516,6 +28577,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           rowSelection={{
             selectedKeys: selectedSiteIds,
             onChange: setSelectedSiteIds,
+            isRowDisabled: isActiveImportedHtmlSourceForm,
             getRowLabel: (site) => site.name,
             selectAllLabel: isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'
           }}

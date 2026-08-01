@@ -176,6 +176,12 @@ export interface SiteTheme {
   template?: SiteTemplateId
   importedHtml?: boolean
   importedHtmlSource?: boolean
+  importedHtmlSourceActive?: boolean
+  importedHtmlSourceSiteId?: string
+  importedHtmlSourceSiteName?: string
+  importedHtmlSourceFormId?: string
+  importedHtmlSourcePagePath?: string
+  importedHtmlSourceTitle?: string
   importId?: string
   pages?: SitePage[]
   pageMode?: 'funnel' | 'website'

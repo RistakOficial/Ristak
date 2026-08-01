@@ -5400,6 +5400,17 @@ categoría. Los formularios genéricos de HTML importado y `videoFormGate` no
 tienen recorrido por pregunta en esta entrega, aunque sus envíos sigan en los
 totales correspondientes.
 
+Los formularios fuente que Ristak genera a partir de formularios activos dentro
+de una página HTML aparecen en la carpeta de sistema **Formularios de HTML**, pero
+no se pueden eliminar como piezas independientes mientras esa relación siga
+activa. La biblioteca deshabilita su selección para borrado masivo y sustituye la
+acción destructiva por un aviso que identifica la página HTML relacionada. La API
+aplica la misma protección con una respuesta `409`, de modo que ningún cliente o
+integración pueda saltársela. Al eliminar la página HTML dueña también se eliminan
+sus formularios fuente y respuestas relacionadas; si un formulario deja de
+existir en el código HTML, su fuente queda inactiva y vuelve a poder eliminarse de
+forma independiente.
+
 En el editor visual, los bloques de calendario embebido eligen el calendario y
 la accion posterior a la cita desde la barra superior del editor. El inspector
 derecho solo muestra el estado del calendario seleccionado y los controles de

@@ -38,6 +38,86 @@ async function deleteSites(siteIds = []) {
   }
 }
 
+test('an active HTML source form can only be removed by deleting its related HTML page', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  let siteId = ''
+  let sourceFormId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'formulario-protegido.html',
+      name: `Página HTML protegida ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-protegido" data-rstk-label="Lead protegido">
+          <label for="correo">Correo</label>
+          <input id="correo" name="email" type="email" data-rstk-field-id="correo">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+    assert.ok(sourceFormId)
+
+    await assert.rejects(
+      deleteSite(sourceFormId),
+      error => {
+        assert.equal(error?.status, 409)
+        assert.equal(error?.code, 'active_imported_html_source_form')
+        assert.match(error?.message || '', /Para eliminarlo, elimina primero la página HTML relacionada/)
+        return true
+      }
+    )
+    assert.ok(await getSite(sourceFormId, { includeBlocks: false }))
+
+    assert.equal(await deleteSite(siteId), true)
+    siteId = ''
+    assert.equal(await getSite(sourceFormId, { includeBlocks: false }), null)
+    sourceFormId = ''
+  } finally {
+    await deleteSites([siteId, sourceFormId])
+  }
+})
+
+test('a dormant HTML source form becomes deletable after its HTML form is removed', async () => {
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
+  let siteId = ''
+  let sourceFormId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      filename: 'formulario-desactivado.html',
+      name: `Página HTML editable ${suffix}`,
+      siteType: 'landing_page',
+      fileBase64: Buffer.from(`<!doctype html><html><body>
+        <form data-rstk-form-id="lead-removible">
+          <input name="email" type="email" data-rstk-field-id="correo">
+          <button type="submit">Enviar</button>
+        </form>
+      </body></html>`, 'utf8').toString('base64')
+    })
+    siteId = created.site.id
+    sourceFormId = created.import.formMappings[0]?.formSiteId || ''
+    assert.ok(sourceFormId)
+
+    await updateImportedSiteCodeFiles(siteId, {
+      files: [{
+        path: '',
+        content: '<!doctype html><html><body><main><h1>Sin formulario</h1></main></body></html>'
+      }]
+    })
+    const dormantForm = await getSite(sourceFormId, { includeBlocks: false })
+    assert.equal(dormantForm?.theme?.importedHtmlSourceActive, false)
+
+    assert.equal(await deleteSite(sourceFormId), true)
+    sourceFormId = ''
+    assert.ok(await getSite(siteId, { includeBlocks: false }))
+  } finally {
+    await deleteSites([siteId, sourceFormId])
+  }
+})
+
 test('stable form + field identities isolate repeated fields while pagePath guards atomic PATCH routes', async () => {
   const suffix = `${Date.now()}_${crypto.randomBytes(4).toString('hex')}`
   let siteId = ''
