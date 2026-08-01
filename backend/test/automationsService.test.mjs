@@ -15,6 +15,7 @@ import {
   listAttributionCampaigns,
   listAutomationFormFieldsCatalog,
   listAutomationFormsCatalog,
+  listAutomationFormsCatalogPage,
   listAutomationWhatsAppTemplatesCatalog,
   listAutomations,
   testAutomationRun,
@@ -860,6 +861,8 @@ test('catálogo de formularios para automatizaciones incluye normales, embebidos
   const importId = `import_catalog_${suffix}`
   const importedLeadFormId = `lead_form_${suffix}`
   const importedCheckoutFormId = `checkout_form_${suffix}`
+  const importedOrphanFormId = `orphan_form_${suffix}`
+  const missingFormSiteId = `missing_form_site_${suffix}`
 
   await db.run(
     `INSERT INTO public_sites (id, name, slug, site_type, status, theme_json, updated_at)
@@ -912,8 +915,9 @@ test('catálogo de formularios para automatizaciones incluye normales, embebidos
       'landing.html',
       '<form></form>',
       JSON.stringify([
-        { formId: importedLeadFormId, formTitle: 'Formulario de lead', fields: [] },
-        { formId: importedCheckoutFormId, formTitle: 'Formulario de pago', fields: [] }
+        { formId: importedLeadFormId, formTitle: 'Formulario de lead', formSiteId, fields: [] },
+        { formId: importedCheckoutFormId, formTitle: 'Formulario de pago', fields: [] },
+        { formId: importedOrphanFormId, formTitle: 'Formulario eliminado', formSiteId: missingFormSiteId, fields: [] }
       ])
     ]
   )
@@ -925,9 +929,17 @@ test('catálogo de formularios para automatizaciones incluye normales, embebidos
     assert.ok(ids.has(formSiteId))
     assert.ok(ids.has(`${landingSiteId}:form_embed:${blockId}`))
     assert.ok(forms.some((form) => form.id === linkedFormSiteId && form.name === 'Formulario guardado real'))
-    assert.ok(ids.has(`${importedSiteId}:imported:${importedLeadFormId}`))
+    assert.equal(forms.filter((form) => form.id === formSiteId).length, 1)
+    assert.ok(!ids.has(`${importedSiteId}:imported:${importedLeadFormId}`))
     assert.ok(ids.has(`${importedSiteId}:imported:${importedCheckoutFormId}`))
-    assert.ok(forms.some((form) => form.id === `${importedSiteId}:imported:${importedLeadFormId}` && form.name === 'Formulario de lead'))
+    assert.ok(!ids.has(`${importedSiteId}:imported:${importedOrphanFormId}`))
+
+    const legacyId = `${importedSiteId}:imported:${importedLeadFormId}`
+    const hydrated = await listAutomationFormsCatalogPage({ selectedIds: [legacyId] })
+    assert.deepEqual(
+      hydrated.items.map((form) => ({ id: form.id, canonicalId: form.canonicalId, name: form.name })),
+      [{ id: legacyId, canonicalId: formSiteId, name: 'Formulario directo' }]
+    )
   } finally {
     await db.run('DELETE FROM public_site_imports WHERE id = ?', [importId])
     await db.run('DELETE FROM public_site_blocks WHERE id IN (?, ?)', [blockId, linkedBlockId])

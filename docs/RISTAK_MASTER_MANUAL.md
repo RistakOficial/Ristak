@@ -1331,7 +1331,14 @@ El selector de formularios del editor usa
 acotada, el backend mezcla solo esas paginas y nunca materializa el catalogo
 completo. Abrir, buscar y `Cargar mas` son las unicas acciones que piden paginas;
 `selectedIds` recupera una referencia guardada fuera de la pagina actual. El
-disparador **Formulario enviado** escucha cualquier formulario por defecto y
+formulario fuente creado para un formulario de HTML importado es su identidad
+canonica: el catalogo une la identidad importada con ese formulario y presenta
+una sola opcion. Si el formulario fuente fue eliminado o archivado, la referencia
+importada huerfana no vuelve a aparecer como un formulario fantasma. Un flujo
+existente que conserve la identidad importada sigue hidratando el nombre del
+formulario canonico y el editor deduplica ambas referencias; el runtime mantiene
+la compatibilidad con ese ID historico.
+El disparador **Formulario enviado** escucha cualquier formulario por defecto y
 no muestra un selector obligatorio separado. Para limitarlo, **Añadir filtro →
 Formulario** ofrece en este orden **Formulario específico**, **Resultado del
 formulario** y **Pregunta del formulario**. Al elegir **Formulario específico**

@@ -89,7 +89,11 @@ test('PostgreSQL pagina selectores de Configuración con precisión y JSON impor
       [
         importId,
         importedSiteId,
-        JSON.stringify([{ formId: 'lead', formTitle: `${marker} lead`, fields: [] }])
+        JSON.stringify([
+          { formId: 'lead', formTitle: `${marker} lead`, fields: [] },
+          { formId: 'linked', formTitle: `${marker} linked`, formSiteId: siteIds[0], fields: [] },
+          { formId: 'orphan', formTitle: `${marker} orphan`, formSiteId: `${marker}_missing`, fields: [] }
+        ])
       ]
     )
 
@@ -111,6 +115,15 @@ test('PostgreSQL pagina selectores de Configuración con precisión y JSON impor
     }
     assert.equal(allIds.size, 65)
     assert.ok(allIds.has(`${importedSiteId}:imported:lead`))
+    assert.ok(!allIds.has(`${importedSiteId}:imported:linked`))
+    assert.ok(!allIds.has(`${importedSiteId}:imported:orphan`))
+
+    const linkedLegacyId = `${importedSiteId}:imported:linked`
+    const hydrated = await automations.listAutomationFormsCatalogPage({ selectedIds: [linkedLegacyId] })
+    assert.deepEqual(
+      hydrated.items.map(item => ({ id: item.id, canonicalId: item.canonicalId })),
+      [{ id: linkedLegacyId, canonicalId: siteIds[0] }]
+    )
 
     const sitePage = await sites.listSiteSelectors({ kind: 'forms', search: marker, limit: 20 })
     assert.equal(sitePage.items.length, 20)

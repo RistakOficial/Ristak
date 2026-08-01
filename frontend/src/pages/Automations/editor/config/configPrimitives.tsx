@@ -107,10 +107,34 @@ export function useCatalogOptions(kind: CatalogKind | undefined): {
   return { options, loading }
 }
 
-function mergeCatalogOptions(current: CatalogOption[], incoming: CatalogOption[]) {
-  const byValue = new Map(current.map(option => [option.value, option]))
-  incoming.forEach(option => byValue.set(option.value, option))
-  return [...byValue.values()]
+function mergeCatalogOptions(current: CatalogOption[], incoming: CatalogOption[], selectedId = '') {
+  const merged: CatalogOption[] = []
+  const indexByIdentity = new Map<string, number>()
+
+  const add = (option: CatalogOption) => {
+    const identity = option.canonicalValue || option.value
+    const existingIndex = indexByIdentity.get(identity)
+    if (existingIndex === undefined) {
+      indexByIdentity.set(identity, merged.length)
+      merged.push(option)
+      return
+    }
+
+    const existing = merged[existingIndex]
+    if (existing.value === selectedId && option.value !== selectedId) {
+      merged[existingIndex] = {
+        ...option,
+        value: existing.value,
+        canonicalValue: identity
+      }
+      return
+    }
+    merged[existingIndex] = option
+  }
+
+  current.forEach(add)
+  incoming.forEach(add)
+  return merged
 }
 
 function usePagedFormsCatalog(selectedId: string) {
@@ -141,7 +165,11 @@ function usePagedFormsCatalog(selectedId: string) {
         signal: controller.signal
       })
       if (controller.signal.aborted) return
-      setOptions(current => mergeCatalogOptions(reset ? current.filter(option => option.value === selectedId) : current, page.items))
+      setOptions(current => mergeCatalogOptions(
+        reset ? current.filter(option => option.value === selectedId) : current,
+        page.items,
+        selectedId
+      ))
       setHasMore(page.hasMore)
       setNextCursor(page.nextCursor)
       setLoaded(true)
@@ -165,7 +193,9 @@ function usePagedFormsCatalog(selectedId: string) {
     hydrationRef.current = controller
     void getFormsCatalogPage({ selectedIds: [cleanSelectedId], signal: controller.signal })
       .then(page => {
-        if (!controller.signal.aborted) setOptions(current => mergeCatalogOptions(current, page.items))
+        if (!controller.signal.aborted) {
+          setOptions(current => mergeCatalogOptions(current, page.items, cleanSelectedId))
+        }
       })
       .catch(() => {})
     return () => controller.abort()

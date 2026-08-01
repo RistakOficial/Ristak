@@ -1176,7 +1176,8 @@ function automationAnswerKey(value, fallback = 'campo') {
   return normalized || fallback
 }
 
-function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, updatedAt, meta }) {
+function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, updatedAt, meta, canonicalId }) {
+  const normalizedCanonicalId = cleanCatalogString(canonicalId)
   return {
     id: cleanCatalogString(id),
     name: cleanCatalogString(name) || 'Formulario sin nombre',
@@ -1185,7 +1186,8 @@ function mapAutomationFormOption({ id, name, siteId, siteName, kind, status, upd
     kind: cleanCatalogString(kind) || 'site',
     status: cleanCatalogString(status),
     updatedAt: updatedAt || null,
-    meta: cleanCatalogString(meta)
+    meta: cleanCatalogString(meta),
+    ...(normalizedCanonicalId ? { canonicalId: normalizedCanonicalId } : {})
   }
 }
 
@@ -1355,6 +1357,10 @@ function buildAutomationFormsCatalogBranches() {
   const embeddedFormName = automationCatalogJsonText('b.settings_json', ['formName', 'form_name', 'formTitle', 'form_title', 'name'])
   const importedFormId = automationFormsImportJsonText(['formId', 'form_id'])
   const importedFormTitle = automationFormsImportJsonText(['formTitle', 'form_title', 'title'])
+  const importedFormSiteId = automationFormsImportJsonText(['formSiteId', 'form_site_id'])
+  const importedFormPresent = automationFormsImportJsonText(['present'])
+  const importedFormAmbiguous = automationFormsImportJsonText(['mappingAmbiguous', 'mapping_ambiguous'])
+  const importedLegacyId = `(s.id || ':imported:' || ${importedFormId})`
   const siteSearchDocument = `LOWER(
     COALESCE(s.id, '') || ' ' || COALESCE(s.name, '') || ' ' || COALESCE(s.title, '') || ' ' ||
     COALESCE(s.description, '') || ' ' || COALESCE(s.slug, '') || ' ' || COALESCE(s.domain, '') || ' ' ||
@@ -1368,6 +1374,7 @@ function buildAutomationFormsCatalogBranches() {
        s.id AS site_id, s.name AS site_name, 'site_form' AS kind, s.status,
        ${siteUpdatedAt} AS sort_updated_at,
        CASE WHEN s.site_type = 'interactive_form' THEN 'Formulario interactivo' ELSE 'Formulario' END AS meta,
+       '' AS legacy_id,
        ${siteSearchDocument} AS search_document
      FROM public_sites s
      WHERE COALESCE(s.status, 'draft') != 'archived'
@@ -1376,6 +1383,7 @@ function buildAutomationFormsCatalogBranches() {
     `SELECT s.id, COALESCE(NULLIF(s.name, ''), 'Formulario sin nombre') AS name,
        s.id AS site_id, s.name AS site_name, 'native_fields' AS kind, s.status,
        ${siteUpdatedAt} AS sort_updated_at, 'Formulario en landing' AS meta,
+       '' AS legacy_id,
        ${siteSearchDocument} AS search_document
      FROM public_sites s
      WHERE COALESCE(s.status, 'draft') != 'archived'
@@ -1390,6 +1398,7 @@ function buildAutomationFormsCatalogBranches() {
        COALESCE(NULLIF(${embeddedSiteName}, ''), NULLIF(${embeddedFormName}, ''), 'Formulario de ' || COALESCE(NULLIF(s.name, ''), 'sitio')) AS name,
        s.id AS site_id, s.name AS site_name, 'landing_form' AS kind, s.status,
        ${blockUpdatedAt} AS sort_updated_at, 'Formulario en ' || COALESCE(NULLIF(s.name, ''), 'sitio') AS meta,
+       '' AS legacy_id,
        ${blockSearchDocument} AS search_document
      FROM public_site_blocks b
      INNER JOIN public_sites s ON s.id = b.site_id
@@ -1401,6 +1410,7 @@ function buildAutomationFormsCatalogBranches() {
        COALESCE(NULLIF(linked.name, ''), NULLIF(${embeddedSiteName}, ''), NULLIF(${embeddedFormName}, ''), 'Formulario guardado') AS name,
        s.id AS site_id, s.name AS site_name, 'embedded_site_form' AS kind, s.status,
        ${blockUpdatedAt} AS sort_updated_at, 'Embebido en ' || COALESCE(NULLIF(s.name, ''), 'sitio') AS meta,
+       '' AS legacy_id,
        ${blockSearchDocument} AS search_document
      FROM public_site_blocks b
      INNER JOIN public_sites s ON s.id = b.site_id
@@ -1409,20 +1419,45 @@ function buildAutomationFormsCatalogBranches() {
        AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
        AND b.block_type = 'form_embed'
        AND NULLIF(${embeddedSiteId}, '') IS NOT NULL`,
-    `SELECT CASE WHEN NULLIF(${importedFormId}, '') IS NULL
-         THEN s.id ELSE s.id || ':imported:' || ${importedFormId} END AS id,
-       COALESCE(NULLIF(${importedFormTitle}, ''), NULLIF(s.name, ''), 'Formulario importado') AS name,
-       s.id AS site_id, s.name AS site_name,
-       CASE WHEN NULLIF(${importedFormId}, '') IS NULL THEN 'imported_site' ELSE 'imported_form' END AS kind,
-       s.status, ${importUpdatedAt} AS sort_updated_at,
-       CASE WHEN NULLIF(${importedFormTitle}, '') IS NOT NULL AND ${importedFormTitle} != COALESCE(s.name, '')
-         THEN 'Importado de ' || COALESCE(NULLIF(s.name, ''), 'sitio') ELSE 'Formulario importado' END AS meta,
+    `SELECT CASE
+         WHEN linked_form.id IS NOT NULL THEN linked_form.id
+         WHEN NULLIF(${importedFormId}, '') IS NULL THEN s.id
+         ELSE ${importedLegacyId}
+       END AS id,
+       COALESCE(NULLIF(linked_form.name, ''), NULLIF(${importedFormTitle}, ''), NULLIF(s.name, ''), 'Formulario importado') AS name,
+       COALESCE(linked_form.id, s.id) AS site_id,
+       COALESCE(NULLIF(linked_form.name, ''), s.name) AS site_name,
+       CASE
+         WHEN linked_form.id IS NOT NULL THEN 'site_form'
+         WHEN NULLIF(${importedFormId}, '') IS NULL THEN 'imported_site'
+         ELSE 'imported_form'
+       END AS kind,
+       COALESCE(linked_form.status, s.status) AS status,
+       ${importUpdatedAt} AS sort_updated_at,
+       CASE
+         WHEN linked_form.id IS NOT NULL AND linked_form.site_type = 'interactive_form' THEN 'Formulario interactivo'
+         WHEN linked_form.id IS NOT NULL THEN 'Formulario'
+         WHEN NULLIF(${importedFormTitle}, '') IS NOT NULL AND ${importedFormTitle} != COALESCE(s.name, '')
+           THEN 'Importado de ' || COALESCE(NULLIF(s.name, ''), 'sitio')
+         ELSE 'Formulario importado'
+       END AS meta,
+       CASE
+         WHEN linked_form.id IS NOT NULL AND NULLIF(${importedFormId}, '') IS NOT NULL THEN ${importedLegacyId}
+         ELSE ''
+       END AS legacy_id,
        ${importSearchDocument} AS search_document
      FROM public_site_imports i
      INNER JOIN public_sites s ON s.id = i.site_id
      CROSS JOIN ${automationFormsImportMappingSource()}
+     LEFT JOIN public_sites linked_form
+       ON linked_form.id = NULLIF(${importedFormSiteId}, '')
+      AND COALESCE(linked_form.status, 'draft') != 'archived'
+      AND linked_form.site_type IN ('standard_form', 'interactive_form')
      WHERE COALESCE(s.status, 'draft') != 'archived'
        AND s.id != '${CALENDAR_DEFAULT_FORM_SITE_ID.replaceAll("'", "''")}'
+       AND LOWER(COALESCE(NULLIF(${importedFormPresent}, ''), 'true')) NOT IN ('false', '0')
+       AND LOWER(COALESCE(NULLIF(${importedFormAmbiguous}, ''), 'false')) NOT IN ('true', '1')
+       AND (NULLIF(${importedFormSiteId}, '') IS NULL OR linked_form.id IS NOT NULL)
        AND (NULLIF(${importedFormId}, '') IS NOT NULL OR NOT EXISTS (
          SELECT 1 FROM public_site_blocks native_block
          WHERE native_block.site_id = s.id
@@ -1435,8 +1470,9 @@ async function queryAutomationFormsCatalogBranch(baseSql, { limit, search, curso
   const predicates = []
   const params = []
   if (selectedIds.length) {
-    predicates.push(`candidate.id IN (${selectedIds.map(() => '?').join(', ')})`)
-    params.push(...selectedIds)
+    const placeholders = selectedIds.map(() => '?').join(', ')
+    predicates.push(`(candidate.id IN (${placeholders}) OR NULLIF(candidate.legacy_id, '') IN (${placeholders}))`)
+    params.push(...selectedIds, ...selectedIds)
   } else {
     if (search) {
       predicates.push(`candidate.search_document LIKE ? ESCAPE '!'`)
@@ -1471,6 +1507,25 @@ function mapAutomationFormCatalogRow(row) {
   })
 }
 
+function mergeAutomationFormCatalogRows(rows = []) {
+  const byId = new Map()
+  for (const row of rows) {
+    const id = cleanCatalogString(row?.id)
+    if (!id) continue
+    const legacyId = cleanCatalogString(row?.legacy_id)
+    const existing = byId.get(id)
+    if (!existing) {
+      byId.set(id, {
+        ...row,
+        legacy_ids: legacyId ? [legacyId] : []
+      })
+      continue
+    }
+    if (legacyId && !existing.legacy_ids.includes(legacyId)) existing.legacy_ids.push(legacyId)
+  }
+  return [...byId.values()]
+}
+
 export async function listAutomationFormsCatalogPage({
   limit = DEFAULT_AUTOMATION_FORMS_CATALOG_LIMIT,
   cursor = '',
@@ -1490,23 +1545,31 @@ export async function listAutomationFormsCatalogPage({
       selectedIds: normalizedSelectedIds
     })
   )))
-  const seen = new Set()
-  const rows = branchRows.flat()
+  const rows = mergeAutomationFormCatalogRows(branchRows.flat()
     .sort((left, right) => (
       String(right.cursor_updated_at || right.sort_updated_at).localeCompare(String(left.cursor_updated_at || left.sort_updated_at)) ||
       String(right.id).localeCompare(String(left.id))
-    ))
-    .filter(row => {
-      const id = cleanCatalogString(row.id)
-      if (!id || seen.has(id)) return false
-      seen.add(id)
-      return true
-    })
+    )))
 
   if (normalizedSelectedIds.length) {
     const byId = new Map(rows.map(row => [cleanCatalogString(row.id), mapAutomationFormCatalogRow(row)]))
+    const byLegacyId = new Map()
+    rows.forEach(row => {
+      const canonical = mapAutomationFormCatalogRow(row)
+      const legacyIds = Array.isArray(row.legacy_ids) ? row.legacy_ids : []
+      legacyIds.forEach(legacyId => {
+        byLegacyId.set(cleanCatalogString(legacyId), canonical)
+      })
+    })
     return {
-      items: normalizedSelectedIds.map(id => byId.get(id)).filter(Boolean),
+      items: normalizedSelectedIds.map(id => {
+        const direct = byId.get(id)
+        if (direct) return direct
+        const canonical = byLegacyId.get(id)
+        return canonical
+          ? mapAutomationFormOption({ ...canonical, id, canonicalId: canonical.id })
+          : null
+      }).filter(Boolean),
       hasMore: false,
       nextCursor: null,
       limit: pageLimit

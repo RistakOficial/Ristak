@@ -32,6 +32,8 @@ export interface CatalogOption {
   label: string
   /** Información secundaria (tipo de dato, idioma, número…) */
   meta?: string
+  /** Identidad canónica usada para unir referencias legacy sin duplicarlas. */
+  canonicalValue?: string
 }
 
 export interface CatalogPage {
@@ -172,6 +174,7 @@ interface AutomationFormCatalogItem {
   name: string
   siteName?: string
   meta?: string
+  canonicalId?: string
 }
 
 interface AutomationFormsCatalogPage {
@@ -192,7 +195,8 @@ const mapAutomationForms = (forms: AutomationFormCatalogItem[] = []): CatalogOpt
     .map((form) => ({
       value: String(form.id || '').trim(),
       label: form.name || 'Formulario sin nombre',
-      meta: form.meta || form.siteName
+      meta: form.meta || form.siteName,
+      canonicalValue: String(form.canonicalId || '').trim() || undefined
     }))
     .filter((option) => option.value)
 

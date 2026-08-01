@@ -134,7 +134,9 @@ test('Configuración difiere catálogos y pasarelas hasta abrir el panel que rea
   assert.doesNotMatch(payments, /whatsappApiService\.refresh\(\)/)
   assert.doesNotMatch(automationCatalogs, /whatsappApiService\.refresh\(\)/)
 
+  assert.match(automationCatalogs, /canonicalValue/)
   assert.match(automationCatalogSelect, /if \(catalog !== 'forms' && selectOptions\.length === 0\)/)
+  assert.match(automationCatalogSelect, /const identity = option\.canonicalValue \|\| option\.value/)
   assert.match(automationCatalogSelect, /onOpenChange=\{catalog === 'forms' \? pagedFormsCatalog\.onOpenChange : undefined\}/)
   assert.match(automationCatalogSelect, /emptyMessage=\{catalog === 'forms' \? 'No hay formularios para esta búsqueda' : undefined\}/)
 
