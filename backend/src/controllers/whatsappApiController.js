@@ -1190,6 +1190,7 @@ export async function sendWhatsAppApiTemplateMessageView(req, res) {
         language: req.body?.language,
         variableOptions: {
           contactId: req.body?.contactId,
+          appointmentId: req.body?.appointmentId,
           phone: req.body?.to,
           userId: req.user?.userId,
           publicBaseUrl

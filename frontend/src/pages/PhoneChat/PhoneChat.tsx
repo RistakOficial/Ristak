@@ -219,7 +219,7 @@ import {
 } from '@/services/mobileAppService'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
-import { filterApprovedWhatsAppApiTemplates, isWhatsAppPhoneApiAvailable, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
+import { filterApprovedWhatsAppApiTemplates, getWhatsAppApiProviderLabel, isWhatsAppPhoneApiAvailable, isWhatsAppTemplateCompatibleWithPhone, whatsappApiService, type ScheduledChatMessage, type WhatsAppApiPendingRestore, type WhatsAppApiPhoneNumber, type WhatsAppApiStatus, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { Contact, ContactCustomField } from '@/types'
 import {
   getHighLevelChatSendOutcome,
@@ -12475,13 +12475,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!whatsappConnected) {
-      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API para programar plantillas.')
+    if (!selectedBusinessPhoneValue) {
+      showToast('warning', 'Elige el canal de la plantilla', 'Selecciona el número de WhatsApp API desde el que quieres programarla.')
       return
     }
 
-    if (!selectedBusinessPhoneValue) {
-      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para programar plantillas.')
+    if (!whatsappConnected) {
+      showToast('warning', 'Este canal no puede programar plantillas', 'Cambia el remitente a un número con WhatsApp API disponible.')
       return
     }
 
@@ -12559,13 +12559,22 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!whatsappConnected) {
-      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para programar plantillas.')
+    if (!selectedBusinessPhoneValue) {
+      showToast('warning', 'Elige el canal de la plantilla', 'Selecciona el número de WhatsApp API desde el que quieres programarla.')
       return
     }
 
-    if (!selectedBusinessPhoneValue) {
-      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para programar plantillas.')
+    if (!isWhatsAppTemplateCompatibleWithPhone(template, selectedBusinessPhone)) {
+      showToast(
+        'warning',
+        'Canal incorrecto para esta plantilla',
+        `Esta plantilla pertenece a ${getWhatsAppApiProviderLabel(template.provider)}. Cambia el remitente a un número de ese canal.`
+      )
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('warning', 'Este canal no puede programar plantillas', 'Cambia el remitente a un número con WhatsApp API disponible.')
       return
     }
 
@@ -12600,13 +12609,22 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    if (!whatsappConnected) {
-      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar plantillas.')
+    if (!selectedBusinessPhoneValue) {
+      showToast('warning', 'Elige el canal de la plantilla', 'Selecciona el número de WhatsApp API desde el que quieres enviarla.')
       return
     }
 
-    if (!selectedBusinessPhoneValue) {
-      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para responder este chat.')
+    if (!isWhatsAppTemplateCompatibleWithPhone(template, selectedBusinessPhone)) {
+      showToast(
+        'warning',
+        'Canal incorrecto para esta plantilla',
+        `Esta plantilla pertenece a ${getWhatsAppApiProviderLabel(template.provider)}. Cambia el remitente a un número de ese canal.`
+      )
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('warning', 'Este canal no puede enviar plantillas', 'Cambia el remitente a un número con WhatsApp API disponible. Tu otra conexión puede seguir activa.')
       return
     }
 
@@ -12619,7 +12637,7 @@ export const PhoneChat: React.FC = () => {
 
     const optimisticId = `template-${Date.now()}`
     const sentAt = new Date().toISOString()
-    const preview = getTemplateBodyPreview(template)
+    const preview = `Preparando plantilla: ${template.name}`
     setTemplateSendingId(template.id)
     actionSheetDismiss.requestClose()
     setMessages((current) => [
@@ -12635,18 +12653,6 @@ export const PhoneChat: React.FC = () => {
         transport: 'api'
       }
     ])
-    setChats((current) => current.map((contact) => (
-      contact.id === activeContact.id
-        ? {
-            ...contact,
-            lastMessageText: preview || `Plantilla: ${template.name}`,
-            lastMessageDate: sentAt,
-            lastMessageDirection: 'outbound',
-            messageCount: Number(contact.messageCount || 0) + 1
-          }
-        : contact
-    )))
-
     try {
       const result = await whatsappApiService.sendTemplate({
         to: activeContact.phone,
@@ -12659,10 +12665,22 @@ export const PhoneChat: React.FC = () => {
         phoneNumberId: selectedBusinessPhone?.id || undefined
       })
       const responseIds = getChatSendResponseIds(result)
+      const renderedText = String(result.renderedText || '').trim() || `Plantilla: ${template.name}`
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
-          ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
+          ? { ...message, text: renderedText, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
           : message
+      )))
+      setChats((current) => current.map((contact) => (
+        contact.id === activeContact.id
+          ? {
+              ...contact,
+              lastMessageText: renderedText,
+              lastMessageDate: sentAt,
+              lastMessageDirection: 'outbound',
+              messageCount: Number(contact.messageCount || 0) + 1
+            }
+          : contact
       )))
       showToast(
         'success',
@@ -12678,9 +12696,7 @@ export const PhoneChat: React.FC = () => {
       await loadTemplates()
     } catch (error) {
       const errorMessage = getErrorMessage(error, 'Intenta enviar la plantilla otra vez.')
-      setMessages((current) => current.map((message) => (
-        message.id === optimisticId ? { ...message, status: 'error', errorReason: errorMessage } : message
-      )))
+      setMessages((current) => current.filter((message) => message.id !== optimisticId))
       showToast('error', 'No se envió la plantilla', errorMessage)
     } finally {
       setTemplateSendingId(null)

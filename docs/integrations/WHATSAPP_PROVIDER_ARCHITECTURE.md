@@ -289,6 +289,22 @@ Modelo local neutral:
 - Cambiar el proveedor activo no convierte una plantilla existente: si la copia
   remota pertenece a YCloud y se envía por Meta directo, se crea una identidad
   Meta nueva. Nunca se manda el ID YCloud al endpoint Graph.
+- El envío manual valida también el proveedor de la plantilla contra el
+  `provider` de la fila seleccionada. Una plantilla YCloud no se intenta por un
+  número Meta directo ni viceversa. La interfaz debe pedir elegir o cambiar el
+  canal correspondiente; no debe afirmar que "WhatsApp no está conectado"
+  cuando otra fila API sí está sana.
+- `{{1}}`, `{{2}}`, etc. se materializan con `variable_bindings_json` justo
+  antes de enviar. Los bindings de contacto leen el contacto actual y los de
+  `cita.*` usan la próxima cita activa del contacto, formateada en la zona del
+  negocio. Los ejemplos configurados pertenecen a revisión/preview y al envío
+  de prueba explícito: nunca sustituyen datos reales faltantes en un envío
+  productivo. Si falta el contacto, la cita o un campo requerido, el envío se
+  detiene con el nombre del dato faltante.
+- El POST de plantilla devuelve `renderedText`, que es el mismo texto persistido
+  y entregado. Desktop y móvil muestran un estado neutral mientras se resuelve
+  el request y reemplazan ese estado con `renderedText`; nunca presentan el
+  cuerpo crudo con placeholders numéricos como si hubiera sido enviado.
 
 En la interfaz los nombres también son deliberadamente distintos:
 **WhatsApp API con Meta** identifica la conexión directa y **YCloud** identifica

@@ -7,6 +7,7 @@ import {
   deleteWhatsAppApiTemplate,
   editWhatsAppApiTemplate,
   getWhatsAppApiConfigKeys,
+  sendWhatsAppApiTemplateMessage,
   setMetaDirectFetchForTest,
   syncMetaDirectTemplateWebhookChange,
   syncWhatsAppApiTemplatesFromMetaDirect
@@ -149,6 +150,57 @@ test('CRUD y sincronización de plantillas Meta directo usan Graph e identidad n
   })
 })
 
+test('rechaza una plantilla de otro proveedor antes de intentar el envío', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const suffix = Date.now()
+  const templateId = `ycloud_template_wrong_channel_${suffix}`
+  const templateName = `plantilla_canal_incorrecto_${suffix}`
+
+  await snapshotConfig([
+    keys.provider,
+    keys.metaStatus,
+    keys.metaWabaId,
+    keys.metaPhoneNumberId,
+    keys.metaDisplayPhoneNumber,
+    keys.metaSystemUserToken
+  ], async () => {
+    await setAppConfig(keys.provider, 'meta_direct')
+    await setAppConfig(keys.metaStatus, 'connected')
+    await setAppConfig(keys.metaWabaId, `waba_wrong_channel_${suffix}`)
+    await setAppConfig(keys.metaPhoneNumberId, `phone_wrong_channel_${suffix}`)
+    await setAppConfig(keys.metaDisplayPhoneNumber, '+526561112233')
+    await setAppConfig(keys.metaSystemUserToken, encrypt('meta_direct_wrong_channel_token'))
+    await db.run(
+      `INSERT INTO whatsapp_api_templates (
+        id, official_template_id, provider_template_id, provider, source_adapter,
+        waba_id, name, language, status, components_json, raw_payload_json
+      ) VALUES (?, ?, ?, 'ycloud', 'ycloud', ?, ?, 'es_MX', 'APPROVED', ?, '{}')`,
+      [
+        templateId,
+        templateId,
+        templateId,
+        `waba_ycloud_wrong_channel_${suffix}`,
+        templateName,
+        JSON.stringify([{ type: 'BODY', text: 'Hola' }])
+      ]
+    )
+
+    try {
+      await assert.rejects(
+        sendWhatsAppApiTemplateMessage({
+          to: '+526561234567',
+          templateId,
+          variablesResolved: true
+        }),
+        /pertenece a YCloud.*Elige un número conectado a ese canal en lugar de Meta directo/
+      )
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_templates WHERE id = ?', [templateId])
+    }
+  })
+})
+
 test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()
@@ -218,6 +270,7 @@ test('el flujo local envía a Meta directo sin escribir el ID en columnas YCloud
       )
       const testSend = await sendMessageTemplateTest(local.id, { to: '+526561234567' })
       assert.equal(testSend.sent, true)
+      assert.equal(testSend.response.renderedText, 'Hola desde Meta directo')
       assert.ok(requests.some(request => request.path.endsWith(`/phone_local_${suffix}/messages`)))
     } finally {
       await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [local.id])

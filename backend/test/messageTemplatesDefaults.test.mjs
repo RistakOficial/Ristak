@@ -515,6 +515,120 @@ test('arma parámetros de pago fallido aunque falte el snapshot local de la plan
   }
 })
 
+test('el envío manual resuelve los bindings guardados con el contacto y su próxima cita', async () => {
+  const suffix = randomUUID()
+  const templateId = `template_manual_bindings_${suffix}`
+  const templateName = `confirmacion_manual_${suffix.replace(/-/g, '_')}`
+  const contactId = `contact_manual_bindings_${suffix}`
+  const appointmentId = `appointment_manual_bindings_${suffix}`
+  const cancelledAppointmentId = `appointment_manual_cancelled_${suffix}`
+  const phone = `+52155${Date.now().toString().slice(-8)}`
+  const variableBindings = {
+    headerText: {},
+    bodyText: {
+      1: {
+        variableKey: 'contact.first_name',
+        mergeField: '{{contact.first_name}}',
+        label: 'Primer nombre',
+        example: 'María'
+      },
+      2: {
+        variableKey: 'cita.fecha',
+        mergeField: '{{cita.fecha}}',
+        label: 'Fecha de cita',
+        example: 'viernes 7 de agosto'
+      },
+      3: {
+        variableKey: 'cita.hora',
+        mergeField: '{{cita.hora}}',
+        label: 'Hora de cita',
+        example: '3:00 p. m.'
+      }
+    }
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, '{}')`,
+      [contactId, phone, 'Claudia Plantilla', 'Claudia']
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, contact_id, title, status, appointment_status, start_time, end_time
+      ) VALUES (?, ?, ?, 'confirmed', 'confirmed', ?, ?)`,
+      [appointmentId, contactId, 'Asesoría', '2099-08-07T15:00:00.000Z', '2099-08-07T16:00:00.000Z']
+    )
+    await db.run(
+      `INSERT INTO appointments (
+        id, contact_id, title, status, appointment_status, start_time, end_time
+      ) VALUES (?, ?, ?, 'cancelled', '', ?, ?)`,
+      [cancelledAppointmentId, contactId, 'Cita cancelada', '2099-08-06T15:00:00.000Z', '2099-08-06T16:00:00.000Z']
+    )
+    await db.run(
+      `INSERT INTO whatsapp_message_templates (
+        id, name, category, language, status, header_enabled, header_type,
+        body_text, buttons_json, variables_json, variable_examples_json,
+        variable_bindings_json, template_provider, provider_template_name,
+        provider_status, created_at, updated_at
+      ) VALUES (?, ?, 'utility', 'es_MX', 'active', 0, 'none', ?, '[]', ?, ?, ?,
+        'meta_direct', ?, 'APPROVED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [
+        templateId,
+        templateName,
+        'Hola {{1}}, tu cita es el {{2}} a las {{3}}.',
+        JSON.stringify(['{{1}}', '{{2}}', '{{3}}']),
+        JSON.stringify({
+          '{{contact.first_name}}': 'María',
+          '{{cita.fecha}}': 'viernes 7 de agosto',
+          '{{cita.hora}}': '3:00 p. m.'
+        }),
+        JSON.stringify(variableBindings),
+        templateName
+      ]
+    )
+
+    const components = await buildDefaultMessageTemplateSendComponents({
+      templateId,
+      variableOptions: {
+        contactId,
+        phone,
+        timezone: 'UTC'
+      }
+    })
+
+    const normalizedComponents = components.map(component => ({
+      ...component,
+      parameters: component.parameters?.map(parameter => ({
+        ...parameter,
+        text: parameter.text.replace(/\u00a0/g, ' ')
+      }))
+    }))
+    assert.deepEqual(normalizedComponents, [{
+      type: 'body',
+      parameters: [
+        { type: 'text', text: 'Claudia' },
+        { type: 'text', text: 'viernes 7 de agosto' },
+        { type: 'text', text: '3:00 p. m.' }
+      ]
+    }])
+
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await assert.rejects(
+      buildDefaultMessageTemplateSendComponents({
+        templateId,
+        variableOptions: { contactId, phone, timezone: 'UTC' }
+      }),
+      /No encontramos una cita próxima para completar Fecha de cita \(\{\{2\}\}\)/
+    )
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [cancelledAppointmentId])
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId])
+    await db.run('DELETE FROM whatsapp_message_templates WHERE id = ?', [templateId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
+})
+
 test('backfill actualiza pago fallido aprobado con binding dinamico del boton y sin doble renglon', async () => {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()

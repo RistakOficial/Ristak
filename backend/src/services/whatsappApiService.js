@@ -12411,7 +12411,7 @@ function templateQuickReplyButtonComponents(template = {}, components = []) {
 async function findTemplateForSend({ templateId, templateName, language }) {
   if (templateId) {
     return db.get(`
-      SELECT id, waba_id, name, language, status, quality_rating, components_json
+      SELECT id, provider, waba_id, name, language, status, quality_rating, components_json
       FROM whatsapp_api_templates
       WHERE id = ?
     `, [templateId])
@@ -12419,7 +12419,7 @@ async function findTemplateForSend({ templateId, templateName, language }) {
 
   if (!templateName || !language) return null
   return db.get(`
-    SELECT id, waba_id, name, language, status, quality_rating, components_json
+    SELECT id, provider, waba_id, name, language, status, quality_rating, components_json
     FROM whatsapp_api_templates
     WHERE name = ? AND language = ?
     ORDER BY updated_at DESC
@@ -12482,6 +12482,11 @@ function templateSendSnapshot(template = {}, renderedText = '') {
     components: parseJsonValue(template.components_json, []),
     renderedText: cleanString(renderedText)
   }
+}
+
+function getWhatsAppProviderLabel(provider = '') {
+  const normalizedProvider = cleanString(provider).toLowerCase()
+  return getWhatsAppProviderDefinitions().find(definition => definition.id === normalizedProvider)?.label || normalizedProvider || 'ese canal'
 }
 
 async function saveTemplateSend({
@@ -12595,6 +12600,14 @@ export async function sendWhatsAppApiTemplateMessage({
   if (finalTemplate.status !== 'APPROVED') {
     throw new Error(`La plantilla ${finalTemplate.name} está ${finalTemplate.status || 'sin estado'}; solo se pueden enviar plantillas APPROVED`)
   }
+  const templateProvider = cleanString(finalTemplate.provider).toLowerCase()
+  const outboundProvider = cleanString(config.provider).toLowerCase()
+  if (templateProvider && outboundProvider && templateProvider !== outboundProvider) {
+    throw new Error(
+      `La plantilla ${finalTemplate.name} pertenece a ${getWhatsAppProviderLabel(templateProvider)}. ` +
+      `Elige un número conectado a ese canal en lugar de ${getWhatsAppProviderLabel(outboundProvider)}.`
+    )
+  }
 
   const variableRenderer = variablesResolved
     ? null
@@ -12681,7 +12694,8 @@ export async function sendWhatsAppApiTemplateMessage({
     return {
       ...qrResponse,
       type: 'template',
-      template: requestBody.template
+      template: requestBody.template,
+      renderedText: text
     }
   }
 
@@ -12783,11 +12797,16 @@ export async function sendWhatsAppApiTemplateMessage({
       ...fallbackSendResponse,
       localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null,
       type: 'template',
-      template: requestBody.template
+      template: requestBody.template,
+      renderedText: renderedTemplateText
     }
   }
 
-  return { ...response, localMessageId: persistedMessage?.messageId || null }
+  return {
+    ...response,
+    localMessageId: persistedMessage?.messageId || null,
+    renderedText: renderedTemplateText
+  }
 }
 
 export async function sendWhatsAppApiInteractiveMessage({

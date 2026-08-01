@@ -1974,6 +1974,14 @@ la entrega; un envio productivo de plantilla nunca sustituye datos faltantes con
 el ejemplo de configuracion. Si falla la lectura de la fuente de variables, la
 operacion falla cerrada en vez de mandar contenido incompleto.
 
+En el envío manual de una plantilla oficial, `variable_bindings_json` traduce
+cada placeholder numérico a su campo configurado. Los campos `contact.*` usan el
+contacto abierto; los campos `cita.*` usan la próxima cita activa de ese contacto
+y la formatean con la zona horaria del negocio. Si no existe el dato real, el
+backend nombra el campo faltante y no usa el ejemplo de aprobación como si fuera
+información del cliente. La respuesta exitosa incluye `renderedText`, que el
+chat usa como preview autoritativo para no mostrar `{{1}}`/`{{2}}` crudos.
+
 Las paginas publicas anonimas solo resuelven datos globales de la cuenta. Cuando
 el Site contiene `{{contact.*}}`, `{{contact.custom.*}}` o `{{custom.*}}`, el
 backend puede personalizar la publicacion para un visitante ya identificado: lee
@@ -2493,6 +2501,12 @@ Las plantillas usan el proveedor API activo. Con Meta directo se administran en
 Graph bajo `/{WABA_ID}/message_templates`; con YCloud se usan sus endpoints
 propios. El modelo neutral y la UI se comparten, pero IDs remotos, estados,
 payloads y handles multimedia permanecen etiquetados por proveedor.
+
+Al enviar o programar desde Chat, el proveedor de la plantilla debe coincidir
+con el proveedor del número seleccionado. Si no hay número elegido o pertenece
+a otro canal, desktop y móvil piden escoger el canal correcto; no presentan una
+desconexión global ficticia. El backend repite la misma validación antes de tocar
+Graph o YCloud.
 
 El selector de canal del composer desktop muestra cada WhatsApp con su número
 exacto además de la etiqueta o nombre verificado. Dos filas del mismo negocio no

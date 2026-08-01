@@ -943,8 +943,9 @@ test('guarda en el chat el texto renderizado de plantillas enviadas por Meta Dir
     try {
       await db.run(
         `INSERT INTO whatsapp_api_templates (
-          id, official_template_id, waba_id, name, language, status, components_json, raw_payload_json
-        ) VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?)`,
+          id, official_template_id, provider, source_adapter, waba_id, name,
+          language, status, components_json, raw_payload_json
+        ) VALUES (?, ?, 'meta_direct', 'meta_direct', ?, ?, ?, 'APPROVED', ?, ?)`,
         [
           templateId,
           `official_${suffix}`,

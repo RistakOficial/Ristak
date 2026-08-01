@@ -16,8 +16,10 @@ import {
   normalizeWhatsAppProvider
 } from './whatsapp/providers/providerRegistry.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import { renderMessageText } from './appointmentReminderLogic.js'
 import { listVariableFields } from './variableFieldsService.js'
 import { listContactCustomFieldDefinitions } from './contactCustomFieldDefinitionsService.js'
+import { getAccountTimezone } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
 import { createRistakId } from '../utils/idGenerator.js'
 
@@ -29,6 +31,16 @@ const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_.-]+)\s*}}/g
 const NUMERIC_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 const TEXT_VARIABLE_TARGETS = new Set(['headerText', 'bodyText'])
 const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
+const APPOINTMENT_VARIABLE_PREFIX = 'cita.'
+const INACTIVE_APPOINTMENT_STATUSES = [
+  'cancelled',
+  'canceled',
+  'no_show',
+  'no-show',
+  'noshow',
+  'invalid',
+  'deleted'
+]
 
 const BASE_CONTACT_VARIABLES = [
   ['Full Name', 'contact.name', 'Jane Smith'],
@@ -2387,6 +2399,103 @@ async function renderSendBindingValue(
   return rendered || (allowExampleFallback ? fallback : '')
 }
 
+function getBindingVariableKey(binding = {}) {
+  const variableKey = cleanString(binding.variableKey)
+  if (variableKey) return variableKey
+  return cleanString(binding.mergeField).replace(/^{{\s*|\s*}}$/g, '')
+}
+
+function getTemplateAppointmentVariableKeys(template = {}) {
+  const keys = new Set()
+  for (const bindings of Object.values(template.variableBindings || {})) {
+    for (const binding of Object.values(bindings || {})) {
+      const key = getBindingVariableKey(binding)
+      if (key.startsWith(APPOINTMENT_VARIABLE_PREFIX)) keys.add(key)
+    }
+  }
+  return [...keys]
+}
+
+function hasResolvedVariableValue(extraVariables = {}, key = '') {
+  return cleanString(extraVariables?.[key]) !== ''
+}
+
+async function findAppointmentForTemplateVariables({ contactId, appointmentId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanAppointmentId = cleanString(appointmentId)
+  const inactivePlaceholders = INACTIVE_APPOINTMENT_STATUSES.map(() => '?').join(', ')
+
+  if (cleanAppointmentId) {
+    return db.get(`
+      SELECT id, contact_id, title, start_time, end_time, appointment_status, status
+      FROM appointments
+      WHERE id = ?
+        AND deleted_at IS NULL
+        AND COALESCE(is_test, 0) = 0
+        ${cleanContactId ? 'AND contact_id = ?' : ''}
+        AND LOWER(COALESCE(NULLIF(TRIM(appointment_status), ''), NULLIF(TRIM(status), ''), '')) NOT IN (${inactivePlaceholders})
+      LIMIT 1
+    `, [cleanAppointmentId, ...(cleanContactId ? [cleanContactId] : []), ...INACTIVE_APPOINTMENT_STATUSES])
+  }
+
+  if (!cleanContactId) return null
+  return db.get(`
+    SELECT id, contact_id, title, start_time, end_time, appointment_status, status
+    FROM appointments
+    WHERE contact_id = ?
+      AND deleted_at IS NULL
+      AND COALESCE(is_test, 0) = 0
+      AND start_time > CURRENT_TIMESTAMP
+      AND LOWER(COALESCE(NULLIF(TRIM(appointment_status), ''), NULLIF(TRIM(status), ''), '')) NOT IN (${inactivePlaceholders})
+    ORDER BY start_time ASC, id ASC
+    LIMIT 1
+  `, [cleanContactId, ...INACTIVE_APPOINTMENT_STATUSES])
+}
+
+async function enrichTemplateVariableOptions(template, variableOptions = {}) {
+  const appointmentVariableKeys = getTemplateAppointmentVariableKeys(template)
+  if (!appointmentVariableKeys.length) return variableOptions
+
+  const existingExtraVariables = variableOptions.extraVariables || {}
+  const missingAppointmentKeys = appointmentVariableKeys.filter(
+    key => !hasResolvedVariableValue(existingExtraVariables, key)
+  )
+  if (!missingAppointmentKeys.length) return variableOptions
+
+  const appointment = await findAppointmentForTemplateVariables({
+    contactId: variableOptions.contactId,
+    appointmentId: variableOptions.appointmentId
+  })
+  if (!appointment) return variableOptions
+
+  const timezone = cleanString(variableOptions.timezone) || await getAccountTimezone()
+  const appointmentVariables = Object.fromEntries(missingAppointmentKeys.map(key => [
+    key,
+    renderMessageText(`{{${key}}}`, { appointment, timezone })
+  ]))
+
+  return {
+    ...variableOptions,
+    extraVariables: {
+      ...existingExtraVariables,
+      ...appointmentVariables
+    }
+  }
+}
+
+function getMissingSendBindingError(template, binding = {}, index) {
+  const variableKey = getBindingVariableKey(binding)
+  const label = cleanString(binding.label) || variableKey || `{{${index}}}`
+
+  if (!variableKey) {
+    return `Configura el dato dinámico para {{${index}}} en la plantilla ${template.name}.`
+  }
+  if (variableKey.startsWith(APPOINTMENT_VARIABLE_PREFIX)) {
+    return `No encontramos una cita próxima para completar ${label} ({{${index}}}) en la plantilla ${template.name}. Agenda una cita para este contacto o usa Enviar prueba si quieres validar los ejemplos.`
+  }
+  return `El contacto no tiene un valor para ${label} ({{${index}}}) en la plantilla ${template.name}. Completa ese dato antes de enviar.`
+}
+
 async function buildTextSendParametersFromTemplate(
   template,
   target,
@@ -2399,15 +2508,16 @@ async function buildTextSendParametersFromTemplate(
   const bindings = template.variableBindings?.[target] || {}
   const parameters = []
   for (const index of indexes) {
+    const binding = bindings[String(index)] || {}
     const value = await renderSendBindingValue(
       template,
-      bindings[String(index)] || {},
+      binding,
       index,
       variableOptions,
       renderOptions
     )
     if (!value) {
-      throw new Error(`Configura el dato dinámico y el ejemplo para {{${index}}} en la plantilla ${template.name}.`)
+      throw new Error(getMissingSendBindingError(template, binding, index))
     }
     parameters.push({ type: 'text', text: value })
   }
@@ -2473,23 +2583,25 @@ export async function buildDefaultMessageTemplateSendComponents({
     })
   if (!template) return []
 
+  const resolvedVariableOptions = await enrichTemplateVariableOptions(template, variableOptions)
+
   const components = []
   const mediaHeader = buildMediaHeaderSendComponent(template)
   if (mediaHeader) {
     components.push(mediaHeader)
   } else {
-    const headerParameters = await buildTextSendParametersFromTemplate(template, 'headerText', variableOptions)
+    const headerParameters = await buildTextSendParametersFromTemplate(template, 'headerText', resolvedVariableOptions)
     if (headerParameters.length) {
       components.push({ type: 'header', parameters: headerParameters })
     }
   }
 
-  const bodyParameters = await buildTextSendParametersFromTemplate(template, 'bodyText', variableOptions)
+  const bodyParameters = await buildTextSendParametersFromTemplate(template, 'bodyText', resolvedVariableOptions)
   if (bodyParameters.length) {
     components.push({ type: 'body', parameters: bodyParameters })
   }
 
-  components.push(...await buildUrlButtonSendComponentsFromTemplate(template, variableOptions))
+  components.push(...await buildUrlButtonSendComponentsFromTemplate(template, resolvedVariableOptions))
 
   return components
 }

@@ -134,7 +134,9 @@ import {
   type MessageTemplatePayload
 } from '@/services/messageTemplatesService'
 import {
+  getWhatsAppApiProviderLabel,
   hasWhatsAppPhoneApiAvailable,
+  isWhatsAppTemplateCompatibleWithPhone,
   isWhatsAppPhoneApiAvailable,
   whatsappApiService,
   type ScheduledChatMessage,
@@ -5956,13 +5958,22 @@ export const DesktopChat: React.FC = () => {
       return
     }
 
-    if (!whatsappConnected) {
-      showToast('error', 'WhatsApp no está conectado', 'Conecta WhatsApp API en configuración para enviar plantillas.')
+    if (!selectedBusinessPhoneValue) {
+      showToast('warning', 'Elige el canal de la plantilla', 'Selecciona el número de WhatsApp API desde el que quieres enviarla.')
       return
     }
 
-    if (!selectedBusinessPhoneValue) {
-      showToast('error', 'Falta el WhatsApp del negocio', 'Configura el número conectado para responder este chat.')
+    if (!isWhatsAppTemplateCompatibleWithPhone(template, selectedBusinessPhone)) {
+      showToast(
+        'warning',
+        'Canal incorrecto para esta plantilla',
+        `Esta plantilla pertenece a ${getWhatsAppApiProviderLabel(template.provider)}. Cambia el remitente a un número de ese canal.`
+      )
+      return
+    }
+
+    if (!whatsappConnected) {
+      showToast('warning', 'Este canal no puede enviar plantillas', 'Cambia el remitente a un número con WhatsApp API disponible. Tu otra conexión puede seguir activa.')
       return
     }
 
@@ -5974,7 +5985,7 @@ export const DesktopChat: React.FC = () => {
 
     const optimisticId = `desktop-template-${Date.now()}`
     const sentAt = new Date().toISOString()
-    const preview = getTemplateBodyPreview(template)
+    const preview = `Preparando plantilla: ${template.name}`
     setTemplateSendingId(template.id)
     setTemplatePanelOpen(false)
     setComposerMenuOpen(false)
@@ -5992,18 +6003,6 @@ export const DesktopChat: React.FC = () => {
         transport: 'api'
       }
     ])
-    setChats((current) => current.map((contact) => (
-      contact.id === activeContact.id
-        ? {
-            ...contact,
-            lastMessageText: preview || `Plantilla: ${template.name}`,
-            lastMessageDate: sentAt,
-            lastMessageDirection: 'outbound',
-            messageCount: Number(contact.messageCount || 0) + 1
-          }
-        : contact
-    )))
-
     try {
       const result = await whatsappApiService.sendTemplate({
         to: activeContact.phone,
@@ -6016,10 +6015,12 @@ export const DesktopChat: React.FC = () => {
         phoneNumberId: selectedBusinessPhone?.id || undefined
       })
       const responseIds = getChatSendResponseIds(result)
+      const renderedText = String(result.renderedText || '').trim() || `Plantilla: ${template.name}`
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
           ? {
               ...message,
+              text: renderedText,
               serverMessageId: responseIds.serverMessageId || message.serverMessageId,
               providerMessageId: responseIds.providerMessageId || message.providerMessageId,
               status: 'sent',
@@ -6028,6 +6029,17 @@ export const DesktopChat: React.FC = () => {
               routingReason: result.routingReason || result.fallbackReason || message.routingReason
             }
           : message
+      )))
+      setChats((current) => current.map((contact) => (
+        contact.id === activeContact.id
+          ? {
+              ...contact,
+              lastMessageText: renderedText,
+              lastMessageDate: sentAt,
+              lastMessageDirection: 'outbound',
+              messageCount: Number(contact.messageCount || 0) + 1
+            }
+          : contact
       )))
       showToast(
         'success',
@@ -6043,9 +6055,7 @@ export const DesktopChat: React.FC = () => {
       await loadTemplates()
     } catch (error) {
       const message = getErrorMessage(error, 'Intenta enviar la plantilla otra vez.')
-      setMessages((current) => current.map((item) => (
-        item.id === optimisticId ? { ...item, status: 'error', errorReason: message } : item
-      )))
+      setMessages((current) => current.filter((item) => item.id !== optimisticId))
       showToast('error', 'No se envió la plantilla', message)
     } finally {
       setTemplateSendingId(null)

@@ -51,6 +51,8 @@ export interface WhatsAppApiTemplate {
   id: string
   official_template_id?: string | null
   waba_id?: string | null
+  provider?: 'ycloud' | 'meta_direct' | string
+  source_adapter?: 'ycloud' | 'meta_direct' | string
   name: string
   language: string
   category?: string | null
@@ -77,6 +79,23 @@ export function isApprovedWhatsAppApiTemplate(template?: Pick<WhatsAppApiTemplat
 
 export function filterApprovedWhatsAppApiTemplates(templates?: WhatsAppApiTemplate[] | null) {
   return Array.isArray(templates) ? templates.filter(isApprovedWhatsAppApiTemplate) : []
+}
+
+export function getWhatsAppApiProviderLabel(provider?: string | null) {
+  const normalized = String(provider || '').trim().toLowerCase()
+  if (normalized === 'meta_direct') return 'WhatsApp API con Meta'
+  if (normalized === 'ycloud') return 'YCloud'
+  if (normalized === 'qr') return 'WhatsApp QR'
+  return 'WhatsApp API'
+}
+
+export function isWhatsAppTemplateCompatibleWithPhone(
+  template?: Pick<WhatsAppApiTemplate, 'provider'> | null,
+  phone?: Pick<WhatsAppApiPhoneNumber, 'provider'> | null
+) {
+  const templateProvider = String(template?.provider || '').trim().toLowerCase()
+  const phoneProvider = String(phone?.provider || '').trim().toLowerCase()
+  return !templateProvider || !phoneProvider || templateProvider === phoneProvider
 }
 
 export interface WhatsAppApiAlert {
@@ -320,6 +339,7 @@ export interface WhatsAppApiTemplateSendPayload {
   to: string
   from?: string
   contactId?: string
+  appointmentId?: string
   templateId?: string
   templateName?: string
   language?: string
@@ -488,6 +508,7 @@ export interface WhatsAppApiSendResponse {
   id?: string
   wamid?: string
   localMessageId?: string
+  renderedText?: string
   status?: string
   transport?: 'api' | 'qr' | string
   channel?: string
