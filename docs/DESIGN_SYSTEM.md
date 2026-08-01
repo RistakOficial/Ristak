@@ -140,6 +140,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Botón | `<Button variant="primary\|secondary\|ghost\|danger">` | `<button>` con estilos propios |
 | Etiqueta de estado / badge | `<Badge variant=…>` (+ `utils/statusBadges`) | un `span` "pill" con colores a mano |
 | Buscador | `<SearchField>`; para casos especializados `<ContactSearchInput>` / `<GlobalSearch>` | un `Search` + `<input>` + botón `X` con CSS local; un input con fondo `transparent`/`--bg`/glass (¡desaparece en Onyx!) |
+| Catálogo filtrable por carpetas | `<FolderFilterMenu>` en `toolbarStart` de `<Table>` + `<FolderManagerModal>` para crear/administrar | una columna lateral permanente de filtros/carpetas o un menú local duplicado por página |
 | Filtros tipo chip en móvil | `<PhoneFilterChips>` desde `components/phone/ui` | repetir `.filterChips`, `.aiAgentHubFilterChip` o carriles scrollables a mano |
 | Tabs segmentados (en card) | `<TabList>` | rgba hardcodeados |
 | Tabs de sub-sección (underline) | `<SegmentTabs>` (recipe `[data-segdir]`) | un nav a mano |

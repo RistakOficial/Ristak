@@ -1860,7 +1860,8 @@ Familias de tablas relevantes:
   `meta_config`, `storage_settings`, `storage_quotas`.
 - Usuarios y acceso: `users`, OAuth clients/tokens, preferencias por usuario.
 - CRM: `contacts`, telefonos, etiquetas, campos personalizados, variables,
-  trigger links.
+  carpetas de campos (`contact_custom_field_folders` y
+  `variable_field_folders`) y trigger links.
 - Conversaciones: mensajes WhatsApp/API, Meta social, email, read states y
   eventos de chat.
 - Pagos: `payments`, `payment_flows`, `installment_payments`, `payment_plans`,
@@ -1910,13 +1911,18 @@ Capacidades:
   evidencia cruda aunque el usuario del CRM no la vea.
 - Detalle con historial y actividad.
 - Tags y carpetas.
-- Campos personalizados y variables. El catalogo de campos personalizados vive
-  en Configuracion > Campos personalizados y se muestra completo en la ficha de
-  contacto, el panel derecho del chat desktop y la info de contacto del chat
-  movil. Las carpetas del catalogo se respetan como secciones desplegables; los
-  campos sin carpeta quedan bajo "Campos personalizados". La edicion se guarda
-  como actualizacion manual del contacto y conserva el flujo normal de
-  automatizaciones. Los tipos de opcion tienen semantica distinta y persistente:
+- Campos personalizados y variables. Ambos catalogos se administran desde
+  Configuracion y usan una tabla de ancho completo: el buscador y el filtro por
+  carpeta viven en la barra de la tabla, mientras el boton `Carpetas` abre el
+  administrador para crear o eliminar agrupaciones. Crear o editar un campo
+  permite elegir carpeta y la seleccion multiple permite mover varios; eliminar
+  una carpeta conserva sus campos y los deja bajo `Sin carpeta`. El catalogo de
+  campos personalizados se muestra completo en la ficha de contacto, el panel
+  derecho del chat desktop y la info de contacto del chat movil. Sus carpetas se
+  respetan como secciones desplegables; los campos sin carpeta quedan bajo
+  "Campos personalizados". La edicion se guarda como actualizacion manual del
+  contacto y conserva el flujo normal de automatizaciones. Los tipos de opcion
+  tienen semantica distinta y persistente:
   `radio` muestra varias opciones y guarda una; `dropdown` muestra una lista y
   guarda una; `checkboxes` muestra varias casillas y guarda un arreglo; y
   `multiselect` muestra un dropdown con casillas y guarda todas las selecciones

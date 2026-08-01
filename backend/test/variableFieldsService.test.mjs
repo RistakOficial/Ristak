@@ -8,8 +8,11 @@ import {
   updateVariableFieldHandler
 } from '../src/controllers/variableFieldsController.js'
 import {
+  archiveVariableFieldFolder,
   archiveVariableField,
+  createVariableFieldFolder,
   createVariableField,
+  listVariableFieldFolders,
   listVariableFields,
   updateVariableField,
   VARIABLE_FIELD_VALUE_MAX_LENGTH
@@ -29,6 +32,62 @@ function createResponseStub() {
     }
   }
 }
+
+async function deleteVariableFieldFolder(folder) {
+  if (!folder?.id) return
+  await db.run('DELETE FROM variable_field_folders WHERE id = ?', [folder.id]).catch(() => undefined)
+}
+
+test('variable fields can be organized in folders without coupling their runtime key', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  let folder
+  let field
+
+  try {
+    folder = await createVariableFieldFolder({
+      name: `Ventas ${suffix}`,
+      description: 'Variables comerciales'
+    })
+    assert.equal(folder.name, `Ventas ${suffix}`)
+    assert.equal(folder.archived, false)
+
+    field = await createVariableField({
+      label: `Sucursal ${suffix}`,
+      fieldKey: `branch_${suffix}`,
+      value: 'Norte',
+      folderId: folder.id
+    })
+    assert.equal(field.folderId, folder.id)
+    assert.equal(field.folderName, folder.name)
+
+    const listedFolder = (await listVariableFieldFolders()).find(item => item.id === folder.id)
+    assert.equal(listedFolder?.description, 'Variables comerciales')
+
+    const movedOut = await updateVariableField(field.id, { folderId: '' })
+    assert.equal(movedOut.folderId, '')
+    assert.equal(movedOut.fieldKey, field.fieldKey, 'mover de carpeta no cambia el parámetro')
+
+    await assert.rejects(
+      () => updateVariableField(field.id, { folderId: `missing_${suffix}` }),
+      (error) => {
+        assert.equal(error.status, 400)
+        assert.match(error.message, /carpeta seleccionada no existe/i)
+        return true
+      }
+    )
+
+    await updateVariableField(field.id, { folderId: folder.id })
+    const archivedFolder = await archiveVariableFieldFolder(folder.id)
+    assert.equal(archivedFolder.archived, true)
+
+    const preservedField = (await listVariableFields()).find(item => item.id === field.id)
+    assert.equal(preservedField?.folderId, '')
+    assert.equal(preservedField?.value, 'Norte')
+  } finally {
+    await deleteVariableField(field)
+    await deleteVariableFieldFolder(folder)
+  }
+})
 
 async function deleteVariableField(field) {
   if (!field?.id) return

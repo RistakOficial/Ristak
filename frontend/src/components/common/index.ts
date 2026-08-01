@@ -41,6 +41,8 @@ export type {
 
 // Componentes de filtros
 export { TreeFilter } from './TreeFilter'
+export { FolderFilterMenu } from './FolderFilterMenu'
+export type { FolderFilterMenuProps, FolderFilterOption } from './FolderFilterMenu'
 
 // Componentes de contacto
 export { ContactDetailsModal } from './ContactDetailsModal'
@@ -65,6 +67,8 @@ export { BlockedSlotModal } from './BlockedSlotModal'
 
 // Componentes de UI
 export { ViewSelector } from './ViewSelector'
+export { FolderManagerModal } from './FolderManagerModal'
+export type { FolderManagerModalProps, ManagedFolder } from './FolderManagerModal'
 export { HelpTooltip } from './HelpTooltip'
 export { Icon } from './Icon'
 export { InlineEditableText } from './InlineEditableText'

@@ -580,6 +580,7 @@ export async function archiveContactCustomFieldFolder(folderId) {
   await db.run(`
     UPDATE contact_custom_field_definitions SET
       folder_id = NULL,
+      field_group = 'general',
       updated_at = CURRENT_TIMESTAMP
     WHERE folder_id = ?
   `, [id])
@@ -790,11 +791,13 @@ export async function updateContactCustomFieldDefinition(definitionId, input = {
     throw error
   }
 
-  const nextFolderId = input.folderId !== undefined || input.folder_id !== undefined
+  const hasFolderInput = input.folderId !== undefined || input.folder_id !== undefined
+  const nextFolderId = hasFolderInput
     ? normalizeFolderId(input.folderId || input.folder_id)
     : current.folderId || null
   const folder = await assertFolderExists(nextFolderId)
-  const nextFieldGroup = folder?.name || limitString(input.fieldGroup || input.field_group || current.fieldGroup || 'general', 120)
+  const explicitFieldGroup = limitString(input.fieldGroup || input.field_group, 120)
+  const nextFieldGroup = folder?.name || explicitFieldGroup || (hasFolderInput ? 'general' : current.fieldGroup || 'general')
   const hasOptionsInput = input.options !== undefined
   const nextOptions = hasOptionsInput ? normalizeOptions(input.options) : current.options
 

@@ -1,0 +1,105 @@
+.content {
+  display: grid;
+  gap: 20px;
+}
+
+.createForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+}
+
+.field > span,
+.sectionHeading {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.folderSection {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sectionHeading > span:last-child {
+  color: var(--text-mute);
+  font: var(--num-font);
+}
+
+.folderList {
+  display: grid;
+}
+
+.folderRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  border-top: 1px solid var(--border);
+}
+
+.folderRow:first-child {
+  border-top: 0;
+}
+
+.folderRow > svg {
+  color: var(--text-mute);
+}
+
+.folderCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.folderCopy > span,
+.folderCopy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folderCopy small,
+.empty {
+  color: var(--text-mute);
+  font-size: 12px;
+}
+
+.empty {
+  margin: 0;
+  padding: 16px 0 4px;
+}
+
+@media (max-width: 720px) {
+  .createForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .createForm [data-btn] {
+    width: 100%;
+  }
+}

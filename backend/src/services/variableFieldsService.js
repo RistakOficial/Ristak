@@ -53,6 +53,8 @@ function mapVariableField(row) {
     name: row.label || fieldKey || 'Campo variable',
     value: row.value_text || '',
     description: row.description || '',
+    folderId: row.folder_id || '',
+    folderName: row.folder_name || '',
     parameter: buildVariableFieldParameter(fieldKey),
     archived: Boolean(Number(row.archived ?? 0)),
     createdByUserId: row.created_by_user_id || null,
@@ -61,10 +63,49 @@ function mapVariableField(row) {
   }
 }
 
+function mapVariableFieldFolder(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    name: row.name || 'Carpeta',
+    description: row.description || '',
+    sortOrder: Number(row.sort_order || 0),
+    archived: Boolean(Number(row.archived ?? 0)),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+function normalizeFolderId(value) {
+  return cleanString(value, 180)
+}
+
+export async function getVariableFieldFolderById(folderId) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+  return mapVariableFieldFolder(await db.get('SELECT * FROM variable_field_folders WHERE id = ?', [id]))
+}
+
+async function assertVariableFieldFolderExists(folderId) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  const folder = await getVariableFieldFolderById(id)
+  if (!folder || folder.archived) {
+    throw badRequest('La carpeta seleccionada no existe o está archivada.')
+  }
+  return folder
+}
+
 export async function getVariableFieldById(id) {
   const cleanId = cleanString(id, 180)
   if (!cleanId) return null
-  return mapVariableField(await db.get('SELECT * FROM variable_fields WHERE id = ?', [cleanId]))
+  return mapVariableField(await db.get(`
+    SELECT v.*, f.name AS folder_name
+    FROM variable_fields v
+    LEFT JOIN variable_field_folders f ON f.id = v.folder_id
+    WHERE v.id = ?
+  `, [cleanId]))
 }
 
 function parseSiteTheme(value) {
@@ -124,36 +165,121 @@ async function assertUniqueKey(fieldKey, { excludeId = '' } = {}) {
 
 export async function listVariableFields({ includeArchived = false } = {}) {
   const rows = await db.all(`
-    SELECT *
-    FROM variable_fields
-    ${includeArchived ? '' : 'WHERE archived = 0'}
-    ORDER BY archived ASC, updated_at DESC, created_at DESC
+    SELECT v.*, f.name AS folder_name
+    FROM variable_fields v
+    LEFT JOIN variable_field_folders f ON f.id = v.folder_id
+    ${includeArchived ? '' : 'WHERE v.archived = 0'}
+    ORDER BY v.archived ASC, COALESCE(f.sort_order, 999999) ASC, COALESCE(f.name, '') ASC, v.updated_at DESC, v.created_at DESC
   `)
   return rows.map(mapVariableField).filter(Boolean)
+}
+
+export async function listVariableFieldFolders({ includeArchived = false } = {}) {
+  const rows = await db.all(`
+    SELECT *
+    FROM variable_field_folders
+    ${includeArchived ? '' : 'WHERE archived = 0'}
+    ORDER BY sort_order ASC, name ASC
+  `)
+  return rows.map(mapVariableFieldFolder).filter(Boolean)
+}
+
+export async function createVariableFieldFolder(input = {}) {
+  const name = cleanString(input.name, 120)
+  if (!name) throw badRequest('Ponle nombre a la carpeta.')
+
+  const maxSort = await db.get(`
+    SELECT COALESCE(MAX(sort_order), 0) AS max_sort
+    FROM variable_field_folders
+    WHERE archived = 0
+  `)
+  const id = createRistakId('variable_field_folder')
+
+  await db.run(`
+    INSERT INTO variable_field_folders (
+      id, name, description, sort_order, archived, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    id,
+    name,
+    cleanString(input.description, 400) || null,
+    Number(maxSort?.max_sort || 0) + 1
+  ])
+
+  return getVariableFieldFolderById(id)
+}
+
+export async function updateVariableFieldFolder(folderId, input = {}) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  const existing = await getVariableFieldFolderById(id)
+  if (!existing) return null
+
+  const name = input.name === undefined ? existing.name : cleanString(input.name, 120)
+  if (!name) throw badRequest('Ponle nombre a la carpeta.')
+
+  await db.run(`
+    UPDATE variable_field_folders SET
+      name = ?,
+      description = ?,
+      sort_order = ?,
+      archived = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [
+    name,
+    input.description === undefined ? existing.description || null : cleanString(input.description, 400) || null,
+    Number.isFinite(Number(input.sortOrder ?? input.sort_order)) ? Number(input.sortOrder ?? input.sort_order) : existing.sortOrder,
+    input.archived === undefined ? (existing.archived ? 1 : 0) : (input.archived ? 1 : 0),
+    id
+  ])
+
+  return getVariableFieldFolderById(id)
+}
+
+export async function archiveVariableFieldFolder(folderId) {
+  const id = normalizeFolderId(folderId)
+  if (!id) return null
+
+  const folder = await updateVariableFieldFolder(id, { archived: true })
+  if (!folder) return null
+
+  await db.run(`
+    UPDATE variable_fields SET
+      folder_id = NULL,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE folder_id = ?
+  `, [id])
+
+  return folder
 }
 
 export async function createVariableField(input = {}, { userId = null } = {}) {
   const label = cleanString(input.label || input.name, 160)
   const fieldKey = normalizeVariableFieldKey(input.fieldKey || input.key || input.field_key || label)
   const value = cleanVariableFieldValue(input.value ?? input.valueText ?? input.value_text)
+  const folderId = normalizeFolderId(input.folderId ?? input.folder_id)
 
   if (!label) throw badRequest('Ponle nombre al campo variable.')
   if (!fieldKey) throw badRequest('Usa un parámetro válido.')
 
   await assertUniqueKey(fieldKey)
+  await assertVariableFieldFolderExists(folderId)
 
   const id = createRistakId('variable_field')
   await db.run(`
     INSERT INTO variable_fields (
-      id, field_key, label, value_text, description, archived,
+      id, field_key, label, value_text, description, folder_id, archived,
       created_by_user_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
   `, [
     id,
     fieldKey,
     label,
     value,
     cleanString(input.description, 800) || null,
+    folderId || null,
     userId ? String(userId) : null
   ])
 
@@ -179,12 +305,19 @@ export async function updateVariableField(variableFieldId, input = {}) {
     throw badRequest('El parámetro interno no se puede cambiar porque rompería los lugares donde ya se usa. Crea otro campo si necesitas una llave distinta.')
   }
 
+  const hasFolderInput = input.folderId !== undefined || input.folder_id !== undefined
+  const folderId = hasFolderInput
+    ? normalizeFolderId(input.folderId ?? input.folder_id)
+    : existing.folderId
+  await assertVariableFieldFolderExists(folderId)
+
   await db.run(`
     UPDATE variable_fields SET
       field_key = ?,
       label = ?,
       value_text = ?,
       description = ?,
+      folder_id = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
@@ -194,6 +327,7 @@ export async function updateVariableField(variableFieldId, input = {}) {
       ? existing.value
       : cleanVariableFieldValue(input.value ?? input.valueText ?? input.value_text),
     input.description === undefined ? existing.description || null : cleanString(input.description, 800) || null,
+    folderId || null,
     existing.id
   ])
 

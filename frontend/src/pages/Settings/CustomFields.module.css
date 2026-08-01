@@ -291,6 +291,21 @@
   min-width: 0;
 }
 
+.catalogToolbar {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.catalogResultCount {
+  color: var(--text-mute);
+  font: var(--num-font);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

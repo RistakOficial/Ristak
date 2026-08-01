@@ -3526,20 +3526,44 @@ async function initTablesUnlocked() {
 
     // Campos variables: parámetros de cuenta/negocio que no dependen de un contacto.
     await db.run(`
+      CREATE TABLE IF NOT EXISTS variable_field_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        sort_order INTEGER DEFAULT 0,
+        archived INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS variable_fields (
         id TEXT PRIMARY KEY,
         field_key TEXT NOT NULL,
         label TEXT NOT NULL,
         value_text TEXT,
         description TEXT,
+        folder_id TEXT,
         archived INTEGER DEFAULT 0,
         created_by_user_id TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (folder_id) REFERENCES variable_field_folders(id) ON DELETE SET NULL
       )
     `)
+
+    try {
+      await db.run('ALTER TABLE variable_fields ADD COLUMN folder_id TEXT')
+    } catch (err) {
+      // Columna ya existe, ignorar.
+    }
+
+    await db.run('CREATE INDEX IF NOT EXISTS idx_variable_field_folders_archived ON variable_field_folders(archived)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_variable_field_folders_sort ON variable_field_folders(sort_order, name)')
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_variable_fields_key ON variable_fields(LOWER(field_key)) WHERE archived = 0')
     await db.run('CREATE INDEX IF NOT EXISTS idx_variable_fields_archived ON variable_fields(archived, updated_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_variable_fields_folder ON variable_fields(folder_id)')
 
     // Tabla de contactos
     await db.run(`

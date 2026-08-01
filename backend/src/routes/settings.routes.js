@@ -24,9 +24,13 @@ import {
   updateTriggerLinkHandler
 } from '../controllers/triggerLinksController.js';
 import {
+  createVariableFieldFolderHandler,
   createVariableFieldHandler,
+  deleteVariableFieldFolderHandler,
   deleteVariableFieldHandler,
+  listVariableFieldFoldersHandler,
   listVariableFieldsHandler,
+  updateVariableFieldFolderHandler,
   updateVariableFieldHandler
 } from '../controllers/variableFieldsController.js';
 import {
@@ -88,6 +92,10 @@ router.put('/custom-field-folders/:folderId', requireCustomFieldsAccess, updateC
 router.delete('/custom-field-folders/:folderId', requireCustomFieldsAccess, archiveCustomFieldFolder);
 
 // Variable fields / campos variables
+router.get('/variable-field-folders', requireCustomFieldsAccess, listVariableFieldFoldersHandler);
+router.post('/variable-field-folders', requireCustomFieldsAccess, createVariableFieldFolderHandler);
+router.put('/variable-field-folders/:folderId', requireCustomFieldsAccess, updateVariableFieldFolderHandler);
+router.delete('/variable-field-folders/:folderId', requireCustomFieldsAccess, deleteVariableFieldFolderHandler);
 router.get('/variable-fields', requireCustomFieldsAccess, listVariableFieldsHandler);
 router.post('/variable-fields', requireCustomFieldsAccess, createVariableFieldHandler);
 router.put('/variable-fields/:variableFieldId', requireCustomFieldsAccess, updateVariableFieldHandler);
