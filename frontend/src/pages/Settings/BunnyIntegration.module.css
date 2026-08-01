@@ -104,6 +104,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0;
+  margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
 }
