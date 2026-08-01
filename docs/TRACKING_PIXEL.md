@@ -170,11 +170,23 @@ noindex, nofollow, noarchive` para no cachear, indexar ni reenviar el token como
 referrer.
 
 La ruta compatible `/trigger-links/<public_id>` sigue aceptando clics anónimos,
-pero `contact_id`, teléfono, correo, nombre o `visitor_id` recibidos por query no
-son autoridad y se eliminan del evento. Alterar un token opaco falla cerrado sin
-registrar ni disparar nada. El token identifica la emisión, no autentica a la
-persona física: si el destinatario reenvía su URL, el clic permanece atribuido
-al contacto original.
+pero `contact_id`, teléfono, correo, nombre o `visitor_id` crudos recibidos por
+query no son autoridad y se eliminan del evento. Como transición para botones
+de WhatsApp ya aprobados, un parámetro legacy de contacto puede transportar un
+token `pce1_*`: el backend lo descifra, exige que pertenezca al mismo
+`public_id` de la ruta y sólo entonces atribuye el clic. Ristak genera ese token
+al enviar la plantilla antigua y nunca vuelve a colocar el ID real. Un token
+alterado o cruzado con otro enlace falla cerrado sin registrar ni disparar nada.
+El token identifica la emisión, no autentica a la persona física: si el
+destinatario reenvía su URL, el clic permanece atribuido al contacto original.
+
+Las plantillas nuevas de WhatsApp usan un botón dinámico aprobado como
+`https://<dominio>/{{1}}` y ligan `{{1}}` a la variable
+`{{trigger_link.<public_id>}}`. El constructor de envío materializa la URL opaca
+con el dominio del prefijo aprobado y manda a Meta sólo el sufijo `pce1_*`, de
+acuerdo con el contrato de botones URL dinámicos que concatenan el parámetro al
+prefijo. Los enlaces de disparo activos aparecen en el catálogo de variables de
+plantillas para no volver a usar `contact.id` por accidente.
 
 #### Campos variables en headers de tracking
 

@@ -16,6 +16,7 @@ import {
   normalizeWhatsAppProvider
 } from './whatsapp/providers/providerRegistry.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
+import { createTriggerLinkRecipientToken } from './triggerLinkRecipientTokenService.js'
 import { renderMessageText } from './appointmentReminderLogic.js'
 import { listVariableFields } from './variableFieldsService.js'
 import { listContactCustomFieldDefinitions } from './contactCustomFieldDefinitionsService.js'
@@ -37,6 +38,8 @@ const NUMERIC_VARIABLE_PATTERN = /{{\s*(\d+)\s*}}/g
 const TEXT_VARIABLE_TARGETS = new Set(['headerText', 'bodyText'])
 const BUTTON_VALUE_TARGET_PATTERN = /^buttons\.(\d+)\.value$/
 const APPOINTMENT_VARIABLE_PREFIX = 'cita.'
+const TRIGGER_LINK_VARIABLE_PREFIX = 'trigger_link.'
+const LEGACY_TRIGGER_LINK_IDENTITY_QUERY_KEYS = new Set(['contactid', 'contact_id', 'cid'])
 const INACTIVE_APPOINTMENT_STATUSES = [
   'cancelled',
   'canceled',
@@ -810,11 +813,24 @@ function accountVariableFields(variableFields = []) {
   }))
 }
 
-function buildCatalog(customFields = [], variableFields = []) {
+function triggerLinkVariables(triggerLinks = []) {
+  return triggerLinks.map((link) => ({
+    key: `${TRIGGER_LINK_VARIABLE_PREFIX}${link.public_id}`,
+    label: cleanString(link.name) || 'Enlace de disparo',
+    mergeField: `{{${TRIGGER_LINK_VARIABLE_PREFIX}${link.public_id}}}`,
+    example: 'pce1_enlace_seguro_de_ejemplo',
+    group: 'Enlaces de disparo',
+    source: 'trigger_link',
+    fieldKey: link.public_id
+  }))
+}
+
+function buildCatalog(customFields = [], variableFields = [], triggerLinks = []) {
   const catalog = [
     ...BASE_CONTACT_VARIABLES,
     ...BASE_APPOINTMENT_VARIABLES,
     ...BASE_PAYMENT_VARIABLES,
+    ...triggerLinkVariables(triggerLinks),
     ...customFieldVariables(customFields),
     ...accountVariableFields(variableFields)
   ]
@@ -843,29 +859,41 @@ async function assertFolderExists(folderId) {
 }
 
 export async function getMessageTemplateBundle() {
-  const [folderRows, templateRows, templateCustomFieldRows, contactCustomFields, variableFields] = await Promise.all([
+  const [folderRows, templateRows, templateCustomFieldRows, contactCustomFields, variableFields, triggerLinks] = await Promise.all([
     db.all('SELECT * FROM whatsapp_template_folders ORDER BY sort_order ASC, name ASC'),
     db.all('SELECT * FROM whatsapp_message_templates ORDER BY updated_at DESC, name ASC'),
     db.all('SELECT * FROM whatsapp_template_custom_fields ORDER BY name ASC'),
     listContactCustomFieldDefinitions(),
-    listVariableFields()
+    listVariableFields(),
+    db.all(`
+      SELECT public_id, name
+      FROM trigger_links
+      WHERE active = 1 AND archived = 0
+      ORDER BY name ASC, public_id ASC
+    `)
   ])
 
   const folders = folderRows.map(mapFolder)
   const templates = templateRows.map(mapTemplate)
   const customFields = templateCustomFieldRows.map(mapCustomField)
-  const variables = buildCatalog([...customFields, ...contactCustomFields], variableFields)
+  const variables = buildCatalog([...customFields, ...contactCustomFields], variableFields, triggerLinks)
 
   return { folders, templates, customFields, variables }
 }
 
 export async function getVariableCatalog() {
-  const [rows, contactCustomFields, variableFields] = await Promise.all([
+  const [rows, contactCustomFields, variableFields, triggerLinks] = await Promise.all([
     db.all('SELECT * FROM whatsapp_template_custom_fields ORDER BY name ASC'),
     listContactCustomFieldDefinitions(),
-    listVariableFields()
+    listVariableFields(),
+    db.all(`
+      SELECT public_id, name
+      FROM trigger_links
+      WHERE active = 1 AND archived = 0
+      ORDER BY name ASC, public_id ASC
+    `)
   ])
-  return buildCatalog([...rows.map(mapCustomField), ...contactCustomFields], variableFields)
+  return buildCatalog([...rows.map(mapCustomField), ...contactCustomFields], variableFields, triggerLinks)
 }
 
 export async function previewMessageTemplate(payload = {}) {
@@ -2441,6 +2469,128 @@ function getBindingVariableKey(binding = {}) {
   return cleanString(binding.mergeField).replace(/^{{\s*|\s*}}$/g, '')
 }
 
+function getTemplateButtonIndexFromTarget(target = '') {
+  const match = BUTTON_VALUE_TARGET_PATTERN.exec(cleanString(target))
+  return match ? Number(match[1]) : null
+}
+
+function getVariableOptionsContactId(variableOptions = {}) {
+  return cleanString(
+    variableOptions.contactId ||
+    variableOptions.contact_id ||
+    variableOptions.contact?.id ||
+    variableOptions.contact?.contactId ||
+    variableOptions.contact?.contact_id
+  )
+}
+
+function parseLegacyTriggerLinkButton(value = '', variableIndex = 1) {
+  const source = cleanString(value, 2048)
+  const placeholder = `{{${variableIndex}}}`
+  if (!source.includes(placeholder)) return null
+
+  const marker = 'RSTK_DYNAMIC_RECIPIENT'
+  let parsed
+  try {
+    parsed = new URL(source.replace(placeholder, marker))
+  } catch {
+    return null
+  }
+
+  const pathMatch = /^\/trigger-links\/([A-Za-z0-9_-]{8,80})\/?$/.exec(parsed.pathname)
+  if (!pathMatch) return null
+
+  const identityEntry = [...parsed.searchParams.entries()].find(([key, value]) => (
+    LEGACY_TRIGGER_LINK_IDENTITY_QUERY_KEYS.has(cleanString(key).toLowerCase()) &&
+    value === marker
+  ))
+  if (!identityEntry) return null
+
+  return { publicId: pathMatch[1] }
+}
+
+function getOpaqueTriggerLinkButtonContract(value = '', variableIndex = 1) {
+  const source = cleanString(value, 2048)
+  const placeholder = `{{${variableIndex}}}`
+  if (!source.endsWith(placeholder) || source.indexOf(placeholder) !== source.lastIndexOf(placeholder)) {
+    throw new Error('El botón de enlace de disparo debe terminar con una sola variable dinámica.')
+  }
+
+  const prefix = source.slice(0, -placeholder.length)
+  let parsed
+  try {
+    parsed = new URL(prefix)
+  } catch {
+    throw new Error('El botón de enlace de disparo necesita una URL HTTPS absoluta antes de {{1}}.')
+  }
+  if (parsed.protocol !== 'https:' || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('El botón de enlace de disparo debe usar el formato https://tu-dominio/{{1}}.')
+  }
+
+  return { publicBaseUrl: parsed.origin }
+}
+
+async function renderUrlButtonSendParameter(
+  template,
+  buttonIndex,
+  variableIndex,
+  variableOptions = {},
+  renderOptions = {}
+) {
+  const target = getButtonValueTarget(buttonIndex)
+  const binding = template.variableBindings?.[target]?.[String(variableIndex)] || {}
+  const variableKey = getBindingVariableKey(binding)
+  const buttonValue = template.buttons?.[buttonIndex]?.value || ''
+  const contactId = getVariableOptionsContactId(variableOptions)
+
+  const legacyTriggerLink = parseLegacyTriggerLinkButton(buttonValue, variableIndex)
+  if (legacyTriggerLink && variableKey === 'contact.id' && contactId) {
+    return createTriggerLinkRecipientToken({
+      publicId: legacyTriggerLink.publicId,
+      contactId
+    })
+  }
+
+  if (variableKey.startsWith(TRIGGER_LINK_VARIABLE_PREFIX)) {
+    if (!contactId && renderOptions.allowExampleFallback) {
+      return cleanString(binding.example) || bindingFallback(template, variableIndex)
+    }
+    const contract = getOpaqueTriggerLinkButtonContract(buttonValue, variableIndex)
+    const renderedUrl = await renderSendBindingValue(
+      template,
+      binding,
+      variableIndex,
+      { ...variableOptions, publicBaseUrl: contract.publicBaseUrl },
+      renderOptions
+    )
+    if (!renderedUrl) return ''
+
+    let parsed
+    try {
+      parsed = new URL(renderedUrl)
+    } catch {
+      throw new Error(`No se pudo generar el enlace de disparo para {{${variableIndex}}}.`)
+    }
+    if (
+      parsed.origin !== contract.publicBaseUrl ||
+      !/^\/pce1_[A-Za-z0-9_-]+$/.test(parsed.pathname) ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new Error('El enlace de disparo generado no coincide con el dominio aprobado del botón.')
+    }
+    return parsed.pathname.slice(1)
+  }
+
+  return renderSendBindingValue(
+    template,
+    binding,
+    variableIndex,
+    variableOptions,
+    renderOptions
+  )
+}
+
 function getTemplateAppointmentVariableKeys(template = {}) {
   const keys = new Set()
   for (const bindings of Object.values(template.variableBindings || {})) {
@@ -2568,12 +2718,23 @@ async function buildUrlButtonSendComponentsFromTemplate(template, variableOption
     const button = buttons[index]
     if (cleanString(button?.type) !== 'website') continue
 
-    const parameters = await buildTextSendParametersFromTemplate(
-      template,
-      getButtonValueTarget(index),
-      variableOptions,
-      renderOptions
-    )
+    const target = getButtonValueTarget(index)
+    const indexes = extractNumericVariableIndexes(getTemplateTextForTarget(template, target))
+    const parameters = []
+    for (const variableIndex of indexes) {
+      const value = await renderUrlButtonSendParameter(
+        template,
+        index,
+        variableIndex,
+        variableOptions,
+        renderOptions
+      )
+      if (!value) {
+        const binding = template.variableBindings?.[target]?.[String(variableIndex)] || {}
+        throw new Error(getMissingSendBindingError(template, binding, variableIndex))
+      }
+      parameters.push({ type: 'text', text: value })
+    }
     if (!parameters.length) continue
 
     components.push({
@@ -2648,6 +2809,22 @@ async function renderDefaultTemplateTargetText(template, target, variableOptions
 
   const indexes = extractNumericVariableIndexes(sourceText)
   if (!indexes.length) return sourceText
+
+  const buttonIndex = getTemplateButtonIndexFromTarget(target)
+  if (buttonIndex !== null) {
+    const valuesByIndex = new Map()
+    for (const index of indexes) {
+      valuesByIndex.set(index, await renderUrlButtonSendParameter(
+        template,
+        buttonIndex,
+        index,
+        variableOptions
+      ))
+    }
+    return sourceText.replace(NUMERIC_VARIABLE_PATTERN, (match, index) => (
+      valuesByIndex.get(Number(index)) || match
+    ))
+  }
 
   const bindings = template.variableBindings?.[target] || {}
   const valuesByIndex = new Map()

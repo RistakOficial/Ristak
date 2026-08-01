@@ -13,6 +13,7 @@ const LEGACY_IDENTITY_QUERY_KEYS = new Set([
   'contact_name', 'contactname', 'name', 'nombre',
   'visitor_id', 'visitorid', 'vid', 'rstk_vid'
 ])
+const LEGACY_CONTACT_QUERY_KEYS = new Set(['contact_id', 'contactid', 'cid'])
 
 function cleanString(value, max = 500) {
   const cleaned = String(value ?? '').trim()
@@ -147,6 +148,17 @@ function sanitizePublicQuery(query = {}) {
     sanitized[key] = rawValue
   }
   return sanitized
+}
+
+function getLegacyRecipientToken(query = {}) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) return ''
+  for (const [rawKey, rawValue] of Object.entries(query)) {
+    if (!LEGACY_CONTACT_QUERY_KEYS.has(cleanString(rawKey, 120).toLowerCase())) continue
+    const value = Array.isArray(rawValue) ? rawValue[0] : rawValue
+    const token = cleanString(value, 4096)
+    if (token.startsWith('pce1_')) return token
+  }
+  return ''
 }
 
 function getRequestCookie(req, name) {
@@ -288,13 +300,32 @@ export async function recordTriggerLinkClick(publicId, req = {}, {
   const normalizedPublicId = normalizePublicId(publicId)
   if (!normalizedPublicId) throw notFound('Enlace de disparo no encontrado.')
 
+  let resolvedContactId = cleanString(trustedContactId, 180)
+  let resolvedTriggerLinkUrl = cleanString(triggerLinkUrl, 4096)
+  if (!resolvedContactId) {
+    const legacyRecipientToken = getLegacyRecipientToken(req.query)
+    if (legacyRecipientToken) {
+      let recipient
+      try {
+        recipient = await readTriggerLinkRecipientToken(legacyRecipientToken)
+      } catch {
+        throw notFound('Enlace de disparo no encontrado.')
+      }
+      if (recipient.publicId !== normalizedPublicId) {
+        throw notFound('Enlace de disparo no encontrado.')
+      }
+      resolvedContactId = recipient.contactId
+      resolvedTriggerLinkUrl = `/trigger-links/${normalizedPublicId}`
+    }
+  }
+
   const row = await db.get(
     'SELECT * FROM trigger_links WHERE public_id = ? AND active = 1 AND archived = 0',
     [normalizedPublicId]
   )
   if (!row) throw notFound('Enlace de disparo no encontrado.')
 
-  const contactId = cleanString(trustedContactId, 180)
+  const contactId = resolvedContactId
   const contact = contactId
     ? await db.get(`
       SELECT id, phone, email, full_name, first_name, last_name
@@ -351,7 +382,7 @@ export async function recordTriggerLinkClick(publicId, req = {}, {
     triggerLinkId: row.id,
     triggerLinkPublicId: row.public_id,
     triggerLinkName: row.name,
-    triggerLinkUrl: cleanString(triggerLinkUrl, 4096) || `/trigger-links/${row.public_id}`,
+    triggerLinkUrl: resolvedTriggerLinkUrl || `/trigger-links/${row.public_id}`,
     destinationUrl: row.destination_url,
     visitorId: visitorId || null,
     referrer,

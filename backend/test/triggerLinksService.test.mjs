@@ -187,6 +187,63 @@ test('el enlace público legacy ignora identidad manipulable en query y registra
   }
 })
 
+test('el botón legacy acepta un token opaco, valida el enlace y atribuye el clic', async () => {
+  const suffix = randomUUID().replace(/-/g, '')
+  const contactId = `rstk_contact_trigger_legacy_token_${suffix}`
+  let triggerLink = null
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, full_name) VALUES (?, ?)',
+      [contactId, 'Contacto con botón legacy seguro']
+    )
+    triggerLink = await createTriggerLink({
+      name: `Enlace legacy opaco ${suffix}`,
+      destinationUrl: 'https://example.test/legacy-seguro'
+    })
+    const recipientUrl = await buildTriggerLinkRecipientUrl({
+      publicId: triggerLink.publicId,
+      contactId,
+      baseUrl: 'https://links.ristak.test'
+    })
+    const recipientToken = new URL(recipientUrl).pathname.slice(1)
+
+    const result = await recordTriggerLinkClick(triggerLink.publicId, {
+      query: {
+        contactId: recipientToken,
+        utm_campaign: 'compatibilidad_segura'
+      },
+      headers: {}
+    })
+    assert.equal(result.destinationUrl, 'https://example.test/legacy-seguro')
+    assert.equal(result.event.contactId, contactId)
+    assert.deepEqual(result.event.query, { utm_campaign: 'compatibilidad_segura' })
+
+    const otherLink = await createTriggerLink({
+      name: `Otro enlace legacy ${suffix}`,
+      destinationUrl: 'https://example.test/otro'
+    })
+    try {
+      await assert.rejects(
+        () => recordTriggerLinkClick(otherLink.publicId, {
+          query: { contactId: recipientToken },
+          headers: {}
+        }),
+        /Enlace de disparo no encontrado/
+      )
+    } finally {
+      await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [otherLink.id]).catch(() => undefined)
+      await db.run('DELETE FROM trigger_links WHERE id = ?', [otherLink.id]).catch(() => undefined)
+    }
+  } finally {
+    if (triggerLink?.id) {
+      await db.run('DELETE FROM trigger_link_events WHERE trigger_link_id = ?', [triggerLink.id]).catch(() => undefined)
+      await db.run('DELETE FROM trigger_links WHERE id = ?', [triggerLink.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('un enlace desactivado invalida tanto la ruta opaca como la pública legacy', async () => {
   const suffix = randomUUID().replace(/-/g, '')
   const contactId = `rstk_contact_trigger_inactive_${suffix}`
