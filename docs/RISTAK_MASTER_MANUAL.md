@@ -5477,6 +5477,19 @@ Sites es el constructor/publicador de paginas. Incluye:
 - Eventos Meta y tracking.
 - AI create/edit para contenido.
 
+El modal **SEO y optimización de búsqueda** guarda como una sola operación el
+título público, descripción, palabras clave, autor, imagen social,
+metaetiquetas personalizadas, enlace canónico e idioma. En el editor visual,
+`Guardar SEO` fuerza la persistencia aunque el autoguardado general esté
+desactivado y el modal sólo se cierra cuando el backend confirma la operación.
+El renderer aplica estos valores al `<head>` y al atributo `lang` tanto en Sites
+nativos como en HTML importado: reemplaza el título y la descripción anteriores,
+genera etiquetas Open Graph/Twitter para compartir y normaliza URLs relativas
+contra el dominio público. Las metaetiquetas personalizadas aceptan únicamente
+tags `<meta>` con `name` o `property` y `content`; no ejecutan scripts ni permiten
+`http-equiv`, y de varios valores canónicos se usa el primer URL válido para no
+publicar señales SEO contradictorias.
+
 En Sitios > Analíticas, un formulario específico muestra un único bloque de
 **recorrido por etapas**. Usa eventos first-party de la publicación para indicar
 cuántos intentos alcanzaron, contestaron, avanzaron, siguen en curso, abandonaron

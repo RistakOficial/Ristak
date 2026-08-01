@@ -12425,7 +12425,7 @@ export const Sites: React.FC = () => {
 
   const saveLibrarySettingsSite = async () => {
     const siteToSave = librarySettingsSiteRef.current
-    if (!siteToSave) return
+    if (!siteToSave) return false
 
     setLibrarySettingsSaving(true)
     try {
@@ -12443,8 +12443,10 @@ export const Sites: React.FC = () => {
         metaEventName: siteToSave.metaEventName
       })
       syncLibrarySettingsSite(site)
+      return true
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudieron guardar los ajustes')
+      return false
     } finally {
       setLibrarySettingsSaving(false)
     }
@@ -15588,6 +15590,7 @@ export const Sites: React.FC = () => {
   const patchEditorToolbarSettingsSite = updateSelectedSite
   const patchEditorToolbarSettingsTheme = patchSiteTheme
   const saveEditorToolbarSettingsSite = () => handleSaveSite(undefined, { silent: true })
+  const saveEditorToolbarSeoSite = () => flushPendingEditorSaves({ silent: true, forceSite: true })
   const editorHistoryControls = (
     <div className={styles.editorHistoryControls} role="group" aria-label="Historial del editor">
       <button
@@ -15859,7 +15862,8 @@ export const Sites: React.FC = () => {
             onClose={() => setSeoModalOpen(false)}
             onPatchSite={patchEditorToolbarSettingsSite}
             onPatchTheme={patchEditorToolbarSettingsTheme}
-            onSave={saveEditorToolbarSettingsSite}
+            onAutoSave={saveEditorToolbarSettingsSite}
+            onSave={saveEditorToolbarSeoSite}
           />
         )}
 
@@ -15914,7 +15918,7 @@ export const Sites: React.FC = () => {
                   })}
                   onPatchSite={patchLibrarySettingsSite}
                   onPatchTheme={patchLibrarySettingsTheme}
-                  onSaveSite={saveLibrarySettingsSite}
+                  onSaveSite={() => { void saveLibrarySettingsSite() }}
                   onOpenSeo={() => setLibrarySettingsSeoOpen(true)}
                   onOpenHeader={() => setLibrarySettingsHeaderOpen(true)}
                   onMakeActivePageOfficial={librarySettingsActivePage
@@ -15933,7 +15937,8 @@ export const Sites: React.FC = () => {
             onClose={() => setLibrarySettingsSeoOpen(false)}
             onPatchSite={patchLibrarySettingsSite}
             onPatchTheme={patchLibrarySettingsTheme}
-            onSave={() => { void saveLibrarySettingsSite() }}
+            onAutoSave={saveLibrarySettingsSite}
+            onSave={saveLibrarySettingsSite}
           />
         )}
 
@@ -15944,7 +15949,7 @@ export const Sites: React.FC = () => {
             activePage={librarySettingsActivePage}
             onClose={() => setLibrarySettingsHeaderOpen(false)}
             onPatchTheme={patchLibrarySettingsTheme}
-            onSaveSite={saveLibrarySettingsSite}
+            onSaveSite={() => { void saveLibrarySettingsSite() }}
           />
         )}
 
@@ -32650,8 +32655,9 @@ const SeoOptimizationModal: React.FC<{
   onClose: () => void
   onPatchSite: (patch: Partial<PublicSite>) => void
   onPatchTheme: (patch: Partial<SiteTheme>) => void
-  onSave: () => void
-}> = ({ site, onClose, onPatchSite, onPatchTheme, onSave }) => {
+  onAutoSave?: () => void | Promise<unknown>
+  onSave: () => boolean | void | Promise<boolean | void>
+}> = ({ site, onClose, onPatchSite, onPatchTheme, onAutoSave, onSave }) => {
   const theme = site.theme || {}
   const publicTitle = getPublicTitleEditorValue(site)
   const description = site.description || ''
@@ -32682,9 +32688,9 @@ const SeoOptimizationModal: React.FC<{
     patchThemeText(key, next)
   }
 
-  const saveAndClose = () => {
-    onSave()
-    onClose()
+  const saveAndClose = async () => {
+    const saved = await onSave()
+    if (saved !== false) onClose()
   }
 
   return (
@@ -32715,7 +32721,7 @@ const SeoOptimizationModal: React.FC<{
                 value={publicTitle}
                 placeholder="Nombre que verá la gente"
                 onChange={(event) => onPatchSite({ title: event.target.value })}
-                onBlur={onSave}
+                onBlur={onAutoSave}
               />
             </label>
             <SeoCheckLine ok={checks.titlePresent}>La página tiene un título.</SeoCheckLine>
@@ -32727,7 +32733,7 @@ const SeoOptimizationModal: React.FC<{
                 placeholder="Explica en una frase clara que ofrece esta página."
                 rows={4}
                 onChange={(event) => onPatchSite({ description: event.target.value })}
-                onBlur={onSave}
+                onBlur={onAutoSave}
               />
             </label>
             <SeoCheckLine ok={checks.descriptionPresent}>La página tiene una descripción para buscadores.</SeoCheckLine>
@@ -32743,7 +32749,7 @@ const SeoOptimizationModal: React.FC<{
                 placeholder="servicio, ciudad, problema que resuelves"
                 rows={3}
                 onChange={(event) => patchThemeText('seoKeywords', event.target.value)}
-                onBlur={onSave}
+                onBlur={onAutoSave}
               />
             </label>
             <SeoCheckLine ok={checks.keywordsPresent}>La página tiene palabras clave.</SeoCheckLine>
@@ -32757,7 +32763,7 @@ const SeoOptimizationModal: React.FC<{
                 value={author}
                 placeholder="Nombre de la persona o negocio"
                 onChange={(event) => patchThemeText('seoAuthor', event.target.value)}
-                onBlur={onSave}
+                onBlur={onAutoSave}
               />
             </label>
             <SeoCheckLine ok={checks.authorPresent}>La página tiene nombre de autor.</SeoCheckLine>
@@ -32772,7 +32778,7 @@ const SeoOptimizationModal: React.FC<{
                   value={seoImage}
                   placeholder="https://..."
                   onChange={(event) => patchThemeText('seoImage', event.target.value)}
-                  onBlur={onSave}
+                  onBlur={onAutoSave}
                 />
                 <Image size={17} />
               </div>
@@ -32798,7 +32804,7 @@ const SeoOptimizationModal: React.FC<{
               placeholder='<meta name="robots" content="index, follow">'
               rows={3}
               onChange={(event) => patchThemeText('seoMetaTags', event.target.value)}
-              onBlur={onSave}
+              onBlur={onAutoSave}
             />
             <SeoCheckLine ok={checks.metaTagsPresent}>La página tiene metaetiquetas personalizadas.</SeoCheckLine>
             <div className={styles.seoFieldHeader}>
@@ -32817,7 +32823,7 @@ const SeoOptimizationModal: React.FC<{
               placeholder="/sitio-01"
               rows={3}
               onChange={(event) => patchThemeText('seoCanonicalLinks', event.target.value)}
-              onBlur={onSave}
+              onBlur={onAutoSave}
             />
             <SeoCheckLine ok={checks.outgoingLinksLimit}>
               La página tiene menos de 300 enlaces salientes.
@@ -32831,7 +32837,7 @@ const SeoOptimizationModal: React.FC<{
               <CustomSelect
                 value={language}
                 onChange={(event) => patchThemeText('seoLanguage', event.target.value)}
-                onBlur={onSave}
+                onBlur={onAutoSave}
               >
                 {seoLanguageOptions.map(option => (
                   <option key={option} value={option}>{option}</option>

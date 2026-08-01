@@ -2356,6 +2356,178 @@ function injectHtmlBeforeHeadClose(html = '', injection = '') {
   return `${injection}\n${safeHtml}`
 }
 
+const SITE_SEO_RESERVED_CUSTOM_META_KEYS = new Set([
+  'name:description',
+  'name:keywords',
+  'name:author',
+  'name:twitter:card',
+  'name:twitter:title',
+  'name:twitter:description',
+  'name:twitter:image',
+  'property:og:title',
+  'property:og:description',
+  'property:og:image'
+])
+
+function normalizeSiteSeoLanguage(value = '') {
+  const language = cleanString(value).split(/\s+-\s+|\s+/)[0] || 'es'
+  return /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(language) ? language : 'es'
+}
+
+function normalizeSiteSeoUrl(value = '', site = {}, publicHost = '') {
+  let raw = cleanString(value)
+  if (/^<link\b/i.test(raw)) {
+    const attrs = parseHtmlAttributes(raw.replace(/^<link\b/i, '').replace(/\/?\s*>\s*$/i, ''))
+    raw = cleanString(attrs.href)
+  }
+  if (!raw) return ''
+  if (/^\/\//.test(raw)) raw = `https:${raw}`
+
+  const host = normalizeDomain(publicHost || site?.domain)
+  if (raw.startsWith('/') && !host) return raw
+
+  try {
+    const url = host ? new URL(raw, `https://${host}/`) : new URL(raw)
+    return ['http:', 'https:'].includes(url.protocol) ? url.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
+function buildSafeCustomSeoMetaTags(value = '') {
+  const tags = []
+  const keys = new Set()
+  const pattern = /<meta\b([^>]*)\/?\s*>/gi
+  let match
+
+  while ((match = pattern.exec(String(value || '')))) {
+    const attrs = parseHtmlAttributes(match[1] || '')
+    const attribute = cleanString(attrs.name) ? 'name' : cleanString(attrs.property) ? 'property' : ''
+    const keyValue = cleanString(attrs[attribute]).toLowerCase()
+    const key = attribute && keyValue ? `${attribute}:${keyValue}` : ''
+    if (
+      !key ||
+      SITE_SEO_RESERVED_CUSTOM_META_KEYS.has(key) ||
+      !/^[a-z0-9][a-z0-9:._-]{0,100}$/i.test(keyValue) ||
+      !Object.prototype.hasOwnProperty.call(attrs, 'content')
+    ) {
+      continue
+    }
+
+    keys.add(key)
+    tags.push(`<meta ${attribute}="${escapeHtml(keyValue)}" content="${escapeHtml(attrs.content)}">`)
+  }
+
+  return { tags: [...new Set(tags)], keys }
+}
+
+function buildSiteSeoHead(site = {}, { publicHost = '' } = {}) {
+  const theme = site?.theme && typeof site.theme === 'object' ? site.theme : {}
+  const title = cleanString(site?.title)
+  const description = cleanString(site?.description)
+  const keywords = cleanString(theme.seoKeywords)
+  const author = cleanString(theme.seoAuthor)
+  const rawImage = cleanString(theme.seoImage)
+  const image = normalizeSiteSeoUrl(rawImage, site, publicHost)
+  const rawCanonical = cleanString(theme.seoCanonicalLinks)
+  const canonical = rawCanonical
+    .split('\n')
+    .map(line => normalizeSiteSeoUrl(line, site, publicHost))
+    .find(Boolean) || ''
+  const custom = buildSafeCustomSeoMetaTags(theme.seoMetaTags)
+  const managedMetaKeys = new Set([
+    'name:description',
+    'name:twitter:title',
+    'name:twitter:description',
+    'property:og:title',
+    'property:og:description',
+    ...custom.keys
+  ])
+  const tags = []
+
+  if (title) {
+    tags.push(`<title>${escapeHtml(title)}</title>`)
+    tags.push(`<meta property="og:title" content="${escapeHtml(title)}">`)
+    tags.push(`<meta name="twitter:title" content="${escapeHtml(title)}">`)
+  }
+  if (description) {
+    tags.push(`<meta name="description" content="${escapeHtml(description)}">`)
+    tags.push(`<meta property="og:description" content="${escapeHtml(description)}">`)
+    tags.push(`<meta name="twitter:description" content="${escapeHtml(description)}">`)
+  }
+  if (keywords) {
+    managedMetaKeys.add('name:keywords')
+    tags.push(`<meta name="keywords" content="${escapeHtml(keywords)}">`)
+  }
+  if (author) {
+    managedMetaKeys.add('name:author')
+    tags.push(`<meta name="author" content="${escapeHtml(author)}">`)
+  }
+  if (rawImage) {
+    managedMetaKeys.add('property:og:image')
+    managedMetaKeys.add('name:twitter:card')
+    managedMetaKeys.add('name:twitter:image')
+  }
+  if (image) {
+    tags.push(`<meta property="og:image" content="${escapeHtml(image)}">`)
+    tags.push('<meta name="twitter:card" content="summary_large_image">')
+    tags.push(`<meta name="twitter:image" content="${escapeHtml(image)}">`)
+  }
+  if (canonical) {
+    tags.push(`<link rel="canonical" href="${escapeHtml(canonical)}">`)
+  }
+  tags.push(...custom.tags)
+
+  return {
+    tags,
+    managedMetaKeys,
+    replaceCanonical: Boolean(rawCanonical),
+    language: normalizeSiteSeoLanguage(theme.seoLanguage)
+  }
+}
+
+export function applySiteSeoToHtml(site = {}, html = '', options = {}) {
+  const seo = buildSiteSeoHead(site, options)
+  let output = String(html || '<!doctype html><html><head></head><body></body></html>')
+
+  if (/<html\b/i.test(output)) {
+    output = output.replace(/<html\b([^>]*)>/i, (_match, attrsText = '') => {
+      const attrsWithoutLanguage = String(attrsText)
+        .replace(/\s+lang(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/gi, '')
+      return `<html${attrsWithoutLanguage} lang="${escapeHtml(seo.language)}">`
+    })
+  } else {
+    output = `<!doctype html><html lang="${escapeHtml(seo.language)}"><head></head><body>${output}</body></html>`
+  }
+
+  if (!/<head\b/i.test(output)) {
+    output = /<body\b/i.test(output)
+      ? output.replace(/<body\b/i, '<head></head>\n$&')
+      : output.replace(/<html\b[^>]*>/i, '$&<head></head>')
+  }
+
+  return output.replace(/(<head\b[^>]*>)([\s\S]*?)(<\/head>)/i, (_match, open, head, close) => {
+    const withoutTitle = String(head).replace(/<title\b[^>]*>[\s\S]*?<\/title\s*>/gi, '')
+    const withoutManagedMeta = withoutTitle.replace(/<meta\b([^>]*)\/?\s*>/gi, (tag, attrsText = '') => {
+      const attrs = parseHtmlAttributes(attrsText)
+      const key = cleanString(attrs.name)
+        ? `name:${cleanString(attrs.name).toLowerCase()}`
+        : cleanString(attrs.property)
+          ? `property:${cleanString(attrs.property).toLowerCase()}`
+          : ''
+      return key && seo.managedMetaKeys.has(key) ? '' : tag
+    })
+    const cleanHead = seo.replaceCanonical
+      ? withoutManagedMeta.replace(/<link\b([^>]*)\/?\s*>/gi, (tag, attrsText = '') => {
+          const rel = cleanString(parseHtmlAttributes(attrsText).rel).toLowerCase().split(/\s+/)
+          return rel.includes('canonical') ? '' : tag
+        })
+      : withoutManagedMeta
+    const seoMarkup = seo.tags.join('\n')
+    return `${open}${cleanHead}${seoMarkup ? `\n${seoMarkup}\n` : ''}${close}`
+  })
+}
+
 function sanitizeImportedIframeTag(attrsText = '', report = []) {
   const attrs = parseHtmlAttributes(attrsText)
   const src = safeEmbedUrl(attrs.src || '')
@@ -34890,6 +35062,7 @@ async function renderImportedPublicSiteHtml(site, {
     linkStyle,
     pageTrackingContext
   })
+  html = applySiteSeoToHtml(site, html, { publicHost })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     html,
     `${importedVideoEnginePreload}${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${buildHeaderTrackingCode(site, activePage, { trackingEnabled, preview })}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
@@ -35003,6 +35176,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, {
       pageTrackingContext
     })
 
+    html = applySiteSeoToHtml(site, html, { publicHost })
     const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
       html,
       `${importedTimeColorModeRuntime}${importedTrafficPlatformRuntime}${buildHeaderTrackingCode(site, page, { trackingEnabled })}${importedDeviceVisibilityStyle}${importedResponsiveStyle}${injection.head}${importedViewportContainmentStyle}`
@@ -35354,7 +35528,7 @@ export async function renderPublicSiteHtml(site, {
     ? renderSiteNav(site, { activePageId: activePage?.id, linkStyle })
     : ''
 
-  return `<!doctype html>
+  return applySiteSeoToHtml(site, `<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
@@ -36905,7 +37079,7 @@ export async function renderPublicSiteHtml(site, {
   ${metaPixel.body}
   ${videoTrackingScript}
 </body>
-</html>`
+</html>`, { publicHost })
 }
 
 export function renderDomainErrorHtml({ host, message }) {
