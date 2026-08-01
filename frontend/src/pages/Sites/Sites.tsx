@@ -3145,15 +3145,6 @@ const formatSitesPercent = (value?: number | null) => {
   return `${new Intl.NumberFormat('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(parsed)}%`
 }
 
-const getSitesCompletionTone = (value?: number | null): BadgeVariant => {
-  if (value === null || value === undefined) return 'neutral'
-  const rate = Number(value)
-  if (!Number.isFinite(rate)) return 'neutral'
-  if (rate >= 80) return 'success'
-  if (rate >= 50) return 'warning'
-  return 'error'
-}
-
 const formatSitesSeconds = (value?: number | null) => {
   if (value === null || value === undefined) return 'Sin dato'
   const parsed = Number(value)
@@ -46743,9 +46734,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const selectedSiteStats = selectedSiteId
     ? analyticsSummary?.bySiteId?.[selectedSiteId] || null
     : null
-  const selectedFormFunnel = selectedSiteId
-    ? analyticsSummary?.formFunnels?.[selectedSiteId] || null
-    : null
   const selectedPageFunnel = selectedSiteId
     ? analyticsSummary?.pageFunnels?.[selectedSiteId] || null
     : null
@@ -47015,89 +47003,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     return null
   }
 
-  const renderSelectedFormFunnelPanel = () => {
-    if (!selectedSiteStats || !isFormsView || !selectedSiteId) return null
-
-    const stats = selectedSiteStats
-    const funnel = selectedFormFunnel
-    const fields = funnel?.fields || []
-    const finalSubmissions = funnel?.submissions ?? stats.submissions
-    const completedSubmissions = funnel?.completedSubmissions ?? stats.completedSubmissions
-    const terminalExitSubmissions = funnel?.terminalExitSubmissions ?? stats.terminalExitSubmissions
-    const legacyUnknownSubmissions = funnel?.legacyUnknownSubmissions ?? stats.legacyUnknownSubmissions
-
-    return (
-      <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
-        <div className={styles.sitesAnalyticsChartTitle}>
-          <span>Cobertura histórica de respuestas guardadas</span>
-          <strong>{formatSitesCompactNumber(finalSubmissions)} envíos finales evaluados</strong>
-        </div>
-
-        <div className={styles.sitesAnalyticsScope} role="note">
-          <strong>Lectura histórica</strong>
-          <span>Este bloque sólo usa envíos finales guardados; no demuestra quién llegó o abandonó una etapa.</span>
-        </div>
-
-        <div className={styles.formFunnelSummary}>
-          {[
-            { key: 'views', icon: <Eye size={15} />, label: 'Vistas', value: formatSitesCompactNumber(funnel?.views ?? stats.views) },
-            { key: 'submissions', icon: <ListChecks size={15} />, label: 'Envíos finales', value: formatSitesCompactNumber(finalSubmissions) },
-            { key: 'completed', icon: <CheckCircle2 size={15} />, label: 'Completados', value: formatSitesCompactNumber(completedSubmissions) },
-            { key: 'terminal', icon: <ArrowDown size={15} />, label: 'Salidas terminales', value: formatSitesCompactNumber(terminalExitSubmissions) }
-          ].map(metric => (
-            <div key={metric.key}>
-              {metric.icon}
-              <span>{metric.label}</span>
-              <strong>{metric.value}</strong>
-            </div>
-          ))}
-        </div>
-
-        {legacyUnknownSubmissions > 0 && (
-          <div className={styles.sitesAnalyticsScope} role="status">
-            <strong>Cobertura parcial</strong>
-            <span>{formatSitesCompactNumber(legacyUnknownSubmissions)} envíos antiguos no permiten comprobar si fueron finales.</span>
-          </div>
-        )}
-
-        {fields.length ? (
-          <div className={styles.formFunnelSteps}>
-            {fields.map(field => {
-              const answerRate = field.finalSubmissions > 0 ? field.answerRate : null
-              const tone = getSitesCompletionTone(answerRate)
-              const progressStyle = {
-                '--form-funnel-progress': `${clampSitesPercent(answerRate)}%`
-              } as React.CSSProperties
-              return (
-                <div key={field.blockId} className={styles.formFunnelStep}>
-                  <div className={styles.formFunnelStepMain}>
-                    <span className={styles.formFunnelStepNumber}>{field.stepIndex}</span>
-                    <div>
-                      <strong>{field.label}</strong>
-                      <span>{field.required ? 'Obligatoria' : 'Opcional'} · {formatSitesCompactNumber(field.finalSubmissions)} envíos finales evaluados</span>
-                    </div>
-                  </div>
-                  <div className={styles.formFunnelStepStats}>
-                    <Badge variant={tone} className={styles.formFunnelStatus}>
-                      {formatSitesPercent(answerRate)}
-                    </Badge>
-                    <span>{formatSitesCompactNumber(field.answeredCount)} respondieron</span>
-                    <span>{formatSitesCompactNumber(field.unansweredCount)} sin respuesta</span>
-                  </div>
-                  <div className={styles.formFunnelTrack} data-tone={tone} style={progressStyle}>
-                    <span />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <div className={styles.sitesAnalyticsChartEmpty}>No hay campos registrables con cobertura de respuestas para este formulario.</div>
-        )}
-      </div>
-    )
-  }
-
   const renderEntityAnalytics = () => {
     if (aggregateEntityCount === 0) {
       return (
@@ -47112,7 +47017,6 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     return (
       <>
         {renderSelectedStageJourneyPanel()}
-        {renderSelectedFormFunnelPanel()}
         {renderSelectedConversionPanel()}
         <div className={styles.sitesAnalyticsGrid}>
           <div className={styles.sitesAnalyticsChartBlock}>

@@ -5345,15 +5345,15 @@ Sites es el constructor/publicador de paginas. Incluye:
 - Eventos Meta y tracking.
 - AI create/edit para contenido.
 
-En Sitios > Analíticas, un formulario específico muestra dos bloques separados.
-**Recorrido por etapas** usa eventos first-party de la publicación para indicar
+En Sitios > Analíticas, un formulario específico muestra un único bloque de
+**recorrido por etapas**. Usa eventos first-party de la publicación para indicar
 cuántos intentos alcanzaron, contestaron, avanzaron, siguen en curso, abandonaron
-o terminaron en cada pantalla/pregunta, junto con su tasa. **Cobertura de
-respuestas** conserva la lectura histórica de envíos guardados y dice qué campos
-tienen respuesta; no se usa para inventar navegación anterior a la telemetría.
-La pantalla siempre declara si la cobertura del recorrido es completa, parcial
-o no disponible. “Visitante” representa una identidad first-party del navegador,
-no una persona humana verificada.
+o terminaron en cada pantalla/pregunta, junto con su tasa. La lectura histórica
+basada únicamente en respuestas finales guardadas no se presenta como un segundo
+embudo porque duplica preguntas sin demostrar navegación. La pantalla siempre
+declara si la cobertura del recorrido es completa, parcial o no disponible.
+“Visitante” representa una identidad first-party del navegador, no una persona
+humana verificada.
 
 Al elegir una landing publicada en modo embudo, la vista reconstruye la
 conversión página a página para la topología vigente: alcance, avance, siguiente
