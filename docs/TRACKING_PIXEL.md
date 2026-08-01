@@ -125,6 +125,31 @@ declara `tracking_source = 'native_site'`. Una conversión válida puede generar
 `native_site_conversion`, pero sólo cuando el envío es final y no quedó
 descalificado.
 
+#### Personalización first-party por contacto
+
+Un Site publicado puede materializar `{{contact.*}}`,
+`{{contact.custom.*}}` y `{{custom.*}}` para la persona correcta cuando el
+request HTML trae `ristak_vid` o `ristak_sid` y esa identidad ya está vinculada a
+un contacto en la base. El renderer reutiliza la misma verificación de
+`resolvePublicPrefillContact`; no confía directamente en el `contact_id` de
+localStorage ni en uno recibido por query string. El query sólo puede acotar la
+búsqueda: si no coincide con el visitor/session first-party, el resultado es
+anónimo.
+
+La primera carga de un navegador nuevo sigue siendo anónima porque las cookies
+nacen después de entregar ese HTML. Tras un formulario u otra identificación
+que vincule visitante y contacto, la siguiente navegación o recarga ya puede
+personalizarse. Preview/editor nunca usa contexto de contacto. Las respuestas
+HTML permanecen en `Cache-Control: no-store` y el backend omite por completo la
+consulta de identidad si el Site no contiene variables de contacto.
+
+Los headers administrados no participan en esta personalización. Pueden ejecutar
+campos variables globales de la cuenta, pero `{{contact.*}}`/`{{custom.*}}` se
+resuelven sin contexto y quedan vacíos para impedir que datos capturados del
+visitante se conviertan en JavaScript. El HTML crudo importado y
+`importedPopupHtml` conservan su frontera de sanitización y tampoco reciben esta
+sustitución.
+
 #### Campos variables en headers de tracking
 
 Los headers globales y por página administrados por Sites pueden guardar una

@@ -10,6 +10,8 @@ import {
   deleteSite,
   getImportedSiteAssetResponse,
   renderPublicSiteHtml,
+  resolvePublicSitePersonalizationContactId,
+  siteUsesContactTemplateVariables,
   updateSite
 } from '../src/services/sitesService.js'
 
@@ -242,6 +244,142 @@ test('public Site render resolves variable fields in global/page headers and esc
     )
   } finally {
     await deleteVariableFields(fields)
+  }
+})
+
+test('public Site personalizes contact fields only for the matching first-party visitor or session', async () => {
+  const suffix = randomUUID().replace(/-/g, '_')
+  const contactAId = `rstk_contact_site_a_${suffix}`
+  const contactBId = `rstk_contact_site_b_${suffix}`
+  const visitorA = `visitor_site_a_${suffix}`
+  const visitorB = `visitor_site_b_${suffix}`
+  const sessionB = `session_site_b_${suffix}`
+  const sessionRowId = randomUUID()
+  const globalFields = []
+  const maliciousValue = '</script><script>window.__rstkContactXss = true</script>'
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, full_name, first_name, last_name, visitor_id, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactAId,
+        'Ana Privada',
+        'Ana',
+        'Privada',
+        visitorA,
+        JSON.stringify([
+          { fieldKey: 'plan', label: 'Plan', value: 'Premium Ana' },
+          { fieldKey: 'script_payload', label: 'Payload', value: maliciousValue }
+        ])
+      ]
+    )
+    await db.run(
+      `INSERT INTO contacts (id, full_name, first_name, last_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        contactBId,
+        'Bruno Privado',
+        'Bruno',
+        'Privado',
+        JSON.stringify([{ fieldKey: 'plan', label: 'Plan', value: 'Plan Bruno' }])
+      ]
+    )
+    await db.run(
+      `INSERT INTO sessions (
+        id, session_id, visitor_id, contact_id, event_id, tracking_source,
+        event_name, started_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, 'native_site', 'native_site_view', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [sessionRowId, sessionB, visitorB, contactBId, `event_site_b_${suffix}`]
+    )
+
+    const globalField = await createVariableField({
+      label: `Header seguro ${suffix}`,
+      fieldKey: `site_safe_header_${suffix}`,
+      value: 'valor-global-seguro'
+    })
+    globalFields.push(globalField)
+
+    const site = makeStandardFormSite()
+    site.theme.headerTrackingCode = `<script>window.__rstkSafeGlobal = "${globalField.parameter}";window.__rstkContactHeader = "{{custom.script_payload}}";</script>`
+    site.blocks.unshift({
+      id: 'headline-contact-variable',
+      siteId: site.id,
+      blockType: 'title',
+      label: 'Titular personalizado',
+      content: 'Hola {{contact.first_name}} · {{custom.plan}} · {{custom.script_payload}}',
+      placeholder: '',
+      required: false,
+      options: [],
+      sortOrder: -1,
+      settings: { pageId: 'page-1' },
+      createdAt: '',
+      updatedAt: ''
+    })
+
+    assert.equal(siteUsesContactTemplateVariables(site), true)
+    assert.equal(
+      await resolvePublicSitePersonalizationContactId({ site, visitorId: visitorA }),
+      contactAId
+    )
+    assert.equal(
+      await resolvePublicSitePersonalizationContactId({ site, sessionId: sessionB }),
+      contactBId
+    )
+    assert.equal(
+      await resolvePublicSitePersonalizationContactId({
+        site,
+        contactId: contactBId,
+        visitorId: visitorA
+      }),
+      '',
+      'un contact_id de otra persona no debe ganar sobre la identidad first-party'
+    )
+    assert.equal(
+      await resolvePublicSitePersonalizationContactId({ site, contactId: contactAId }),
+      '',
+      'contact_id sin visitor/session vinculados nunca debe autorizar datos'
+    )
+
+    const anaHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      contactId: contactAId,
+      trackingEnabled: true,
+      preview: false
+    })
+    assert.match(anaHtml, /Hola Ana · Premium Ana/)
+    assert.match(anaHtml, /&lt;\/script&gt;&lt;script&gt;window\.__rstkContactXss = true&lt;\/script&gt;/)
+    assert.doesNotMatch(anaHtml, /<script>window\.__rstkContactXss = true<\/script>/)
+    assert.match(anaHtml, /window\.__rstkSafeGlobal = "valor-global-seguro"/)
+    assert.match(anaHtml, /window\.__rstkContactHeader = ""/)
+
+    const brunoHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      contactId: contactBId,
+      trackingEnabled: true,
+      preview: false
+    })
+    assert.match(brunoHtml, /Hola Bruno · Plan Bruno/)
+    assert.doesNotMatch(brunoHtml, /Premium Ana|Ana Privada/)
+
+    const anonymousHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled: true,
+      preview: false
+    })
+    assert.doesNotMatch(anonymousHtml, /Premium Ana|Plan Bruno|Ana Privada|Bruno Privado/)
+
+    const previewHtml = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      contactId: contactAId,
+      trackingEnabled: true,
+      preview: true
+    })
+    assert.doesNotMatch(previewHtml, /Premium Ana|Ana Privada/)
+  } finally {
+    await db.run('DELETE FROM sessions WHERE id = ?', [sessionRowId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id IN (?, ?)', [contactAId, contactBId]).catch(() => undefined)
+    await deleteVariableFields(globalFields)
   }
 })
 

@@ -2178,9 +2178,101 @@ function getRawTrackingCode(value) {
   return typeof value === 'string' ? value : ''
 }
 
-async function renderSiteTemplateVariables(site) {
+const SITE_CONTACT_TEMPLATE_PATTERN = /\{\{\s*(?:contact\.|custom\.)/i
+const SITE_CONTACT_TEMPLATE_SKIPPED_KEYS = new Set([
+  'headerTrackingCode',
+  'header_tracking_code',
+  'htmlOriginal',
+  'htmlSanitized',
+  'html_original',
+  'html_sanitized',
+  'import',
+  'importedPopupHtml',
+  'imported_popup_html'
+])
+const SITE_HEADER_TRACKING_KEYS = ['headerTrackingCode', 'header_tracking_code']
+
+export function siteUsesContactTemplateVariables(site) {
+  const seen = new WeakSet()
+
+  const visit = (value, key = '', depth = 0) => {
+    if (SITE_CONTACT_TEMPLATE_SKIPPED_KEYS.has(key)) return false
+    if (typeof value === 'string') return SITE_CONTACT_TEMPLATE_PATTERN.test(value)
+    if (value === null || typeof value !== 'object' || depth > 60) return false
+    if (value instanceof Date || Buffer.isBuffer(value) || seen.has(value)) return false
+    seen.add(value)
+
+    if (Array.isArray(value)) return value.some(item => visit(item, '', depth + 1))
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return false
+    return Object.entries(value).some(([childKey, childValue]) => visit(childValue, childKey, depth + 1))
+  }
+
+  return visit(site)
+}
+
+function detachManagedHeaderTrackingTemplates(theme) {
+  if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
+    return { theme, entries: [] }
+  }
+
+  const nextTheme = { ...theme }
+  const entries = []
+  for (const key of SITE_HEADER_TRACKING_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(nextTheme, key)) continue
+    entries.push({ scope: 'theme', key, value: nextTheme[key] })
+    delete nextTheme[key]
+  }
+
+  if (Array.isArray(nextTheme.pages)) {
+    nextTheme.pages = nextTheme.pages.map((page, index) => {
+      if (!page || typeof page !== 'object' || Array.isArray(page)) return page
+      const nextPage = { ...page }
+      for (const key of SITE_HEADER_TRACKING_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(nextPage, key)) continue
+        entries.push({ scope: 'page', index, key, value: nextPage[key] })
+        delete nextPage[key]
+      }
+      return nextPage
+    })
+  }
+
+  return { theme: nextTheme, entries }
+}
+
+async function restoreManagedHeaderTrackingTemplates(rendered, entries = []) {
+  if (!rendered || typeof rendered !== 'object' || entries.length === 0) return rendered
+
+  const sourceValues = Object.fromEntries(entries.map((entry, index) => [String(index), entry.value]))
+  // Los headers son codigo administrado por la cuenta. Resuelven campos variables
+  // globales, pero nunca reciben contexto de contacto: un dato capturado por un
+  // formulario no puede convertirse en JavaScript ejecutable de una pagina publica.
+  const renderedValues = await renderTemplateVariablesInValue(sourceValues, {}, { preserveUnknown: true })
+  rendered.theme = rendered.theme && typeof rendered.theme === 'object' && !Array.isArray(rendered.theme)
+    ? { ...rendered.theme }
+    : {}
+
+  for (const [index, entry] of entries.entries()) {
+    const value = renderedValues?.[String(index)] ?? ''
+    if (entry.scope === 'theme') {
+      rendered.theme[entry.key] = value
+      continue
+    }
+
+    if (!Array.isArray(rendered.theme.pages) || !rendered.theme.pages[entry.index]) continue
+    rendered.theme.pages = [...rendered.theme.pages]
+    rendered.theme.pages[entry.index] = {
+      ...rendered.theme.pages[entry.index],
+      [entry.key]: value
+    }
+  }
+
+  return rendered
+}
+
+async function renderSiteTemplateVariables(site, options = {}) {
   if (!site || typeof site !== 'object') {
-    return renderTemplateVariablesInValue(site, {}, { preserveUnknown: true })
+    return renderTemplateVariablesInValue(site, options, { preserveUnknown: true })
   }
 
   // El HTML importado se sanitiza al guardarse. Apartarlo de esta pasada evita
@@ -2194,7 +2286,7 @@ async function renderSiteTemplateVariables(site) {
     delete source[key]
   }
 
-  const sourceTheme = source.theme && typeof source.theme === 'object' && !Array.isArray(source.theme)
+  let sourceTheme = source.theme && typeof source.theme === 'object' && !Array.isArray(source.theme)
     ? { ...source.theme }
     : source.theme
   const preservedTheme = {}
@@ -2204,10 +2296,21 @@ async function renderSiteTemplateVariables(site) {
       preservedTheme[key] = sourceTheme[key]
       delete sourceTheme[key]
     }
+    const detachedHeaders = detachManagedHeaderTrackingTemplates(sourceTheme)
+    sourceTheme = detachedHeaders.theme
     source.theme = sourceTheme
+
+    const rendered = await renderTemplateVariablesInValue(source, options, { preserveUnknown: true })
+    if (!rendered || typeof rendered !== 'object') return rendered
+
+    Object.assign(rendered, preservedTopLevel)
+    if (Object.keys(preservedTheme).length) {
+      rendered.theme = { ...(rendered.theme || {}), ...preservedTheme }
+    }
+    return restoreManagedHeaderTrackingTemplates(rendered, detachedHeaders.entries)
   }
 
-  const rendered = await renderTemplateVariablesInValue(source, {}, { preserveUnknown: true })
+  const rendered = await renderTemplateVariablesInValue(source, options, { preserveUnknown: true })
   if (!rendered || typeof rendered !== 'object') return rendered
 
   Object.assign(rendered, preservedTopLevel)
@@ -34602,6 +34705,7 @@ function renderSiteNav(site, { activePageId, linkStyle } = {}) {
 export async function renderPublicSiteHtml(site, {
   pageId,
   pagePath,
+  contactId = '',
   trackingEnabled = true,
   preview = false,
   importedNativePreviewMock = false,
@@ -34617,7 +34721,11 @@ export async function renderPublicSiteHtml(site, {
         blocks: await hydrateEmbeddedForms(sourceBlocks)
       }
     }
-    site = await renderSiteTemplateVariables(site)
+    site = await renderSiteTemplateVariables(site, {
+      // Preview/editor permanece anonimo. Solo una visita publica cuya identidad
+      // fue validada por el controller puede materializar datos del contacto.
+      contactId: preview ? '' : cleanString(contactId)
+    })
   }
 
   if (isImportedHtmlSite(site)) {
@@ -36648,6 +36756,28 @@ export async function resolvePublicPrefillContact({ contactId, visitorId, sessio
   }) : null
 
   return mapPublicPrefillContact(byVisitorSession)
+}
+
+export async function resolvePublicSitePersonalizationContactId({
+  site,
+  contactId,
+  visitorId,
+  sessionId
+} = {}) {
+  if (!siteUsesContactTemplateVariables(site)) return ''
+
+  const visitor = cleanString(visitorId).slice(0, 200)
+  const session = cleanString(sessionId).slice(0, 200)
+  // contact_id solo es una pista. Sin una identidad first-party ya vinculada en
+  // servidor, nunca autoriza por si mismo a materializar datos de un contacto.
+  if (!visitor && !session) return ''
+
+  const contact = await resolvePublicPrefillContact({
+    contactId: cleanString(contactId).slice(0, 200),
+    visitorId: visitor,
+    sessionId: session
+  })
+  return cleanString(contact?.contactId).slice(0, 200)
 }
 
 function getNativeSystemFieldKey(block) {

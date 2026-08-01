@@ -1974,13 +1974,30 @@ la entrega; un envio productivo de plantilla nunca sustituye datos faltantes con
 el ejemplo de configuracion. Si falla la lectura de la fuente de variables, la
 operacion falla cerrada en vez de mandar contenido incompleto.
 
-Las paginas publicas anonimas solo resuelven datos globales de la cuenta. No se
-acepta un `contact_id` crudo del query string para personalizarlas: los campos de
-contacto requieren un contexto autenticado/controlado por backend o, si se
-implementa personalizacion publica en el futuro, un enlace firmado y limitado.
+Las paginas publicas anonimas solo resuelven datos globales de la cuenta. Cuando
+el Site contiene `{{contact.*}}`, `{{contact.custom.*}}` o `{{custom.*}}`, el
+backend puede personalizar la publicacion para un visitante ya identificado: lee
+las cookies first-party `ristak_vid`/`ristak_sid` y exige que `visitor_id` o
+`session_id` esten vinculados al contacto en la base. Un `contact_id` del query
+string es solamente una pista y nunca autoriza datos por si mismo; si contradice
+la identidad first-party, el render queda anonimo. El servidor ni siquiera hace
+esta busqueda cuando el Site no usa variables de contacto.
+
+El `contact_id` que el runtime conserva en `localStorage` no se toma como prueba
+directa porque el navegador puede modificarlo y el servidor no puede leer
+localStorage durante la peticion HTML. El mismo runtime conserva la identidad de
+visitante/sesion en cookies first-party y los formularios/tracking vinculan esa
+identidad con el contacto. Por eso la personalizacion aparece en la siguiente
+navegacion o recarga una vez que existe el vinculo. Preview/editor permanece
+anonimo y el HTML publico usa `Cache-Control: no-store`, de modo que dos
+contactos no comparten una respuesta personalizada.
+
 Los valores insertados dentro de contenido HTML administrado se escapan segun su
-contexto. El header de tracking es la excepcion deliberada de codigo confiable:
-se inyecta sin escapar solo en la publicacion y nunca en editor/preview.
+contexto. Los headers de tracking son la excepcion deliberada de codigo
+confiable: resuelven campos variables globales sin escapar solo en publicacion,
+pero nunca reciben contexto de contacto. Asi un valor capturado por formulario
+no puede convertirse en JavaScript ejecutable; los headers tampoco se inyectan
+en editor/preview.
 
 El HTML crudo importado y `importedPopupHtml` quedan fuera del reemplazo posterior
 a la sanitizacion. Sustituir ahi una variable con markup volveria a abrir una

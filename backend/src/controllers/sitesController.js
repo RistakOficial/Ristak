@@ -54,6 +54,7 @@ import {
   resolveConnectedPublicDomainForHost,
   resolvePublicCalendarHostForHost,
   resolvePublicPrefillContact,
+  resolvePublicSitePersonalizationContactId,
   resolvePublicSiteForHost,
   restoreBlocks,
   setSitesPublicDomainDefaultRoute,
@@ -185,6 +186,18 @@ function parseCookies(req) {
       acc[key] = decodeURIComponent(value || '')
       return acc
     }, {})
+}
+
+async function getPublicSitePersonalizationContactId(req, site) {
+  const cookies = parseCookies(req)
+  return resolvePublicSitePersonalizationContactId({
+    site,
+    // La URL solo aporta una pista. El servicio exige que coincida con el
+    // visitor/session first-party ya vinculados en la base.
+    contactId: req.query?.contactId || req.query?.contact_id || req.query?.rstk_contact_id,
+    visitorId: cookies.ristak_vid,
+    sessionId: cookies.ristak_sid
+  })
 }
 
 function getPreviewSessionFromRequest(req, siteId = '') {
@@ -1394,12 +1407,15 @@ export async function publicSiteHostMiddleware(req, res, next) {
       const pagePath = Array.isArray(resolution.pagePath) ? [...resolution.pagePath] : pathSegments.slice(1)
       if (pagePath.length && pagePath[pagePath.length - 1].toLowerCase() === 'test') pagePath.pop()
 
+      const personalizationContactId = await getPublicSitePersonalizationContactId(req, resolution.site)
+
       // No cachear el HTML público: cambios de pixel/tracking deben reflejarse
       // siempre tras un refresh (los assets sí se cachean por separado).
       res.set('Cache-Control', 'no-store')
       return res.status(200).type('html').send(await renderPublicSiteHtml(resolution.site, {
         pageId: req.query?.page || resolution.pageId,
         pagePath,
+        contactId: personalizationContactId,
         trackingEnabled: !isTrackingBypassRequest(req),
         publicHost: host
       }))
