@@ -5388,12 +5388,21 @@ contenido toma nombre, email, telefono, direccion y sitio web desde
 solo como respaldo para nombre/email; no depende de secrets externos.
 Configuracion > Dominios separa la lista de dominios publicos de la configuracion
 de cada dominio: el usuario agrega dominios con "Agregar dominio", el modal
-valida que el dominio responda a esta instalacion de Ristak en Render antes de
-guardarlo, y luego permite elegir de forma opcional la pagina o formulario que
-abrira en la raiz de ese dominio. La base usa `public_site_domains` para permitir
-multiples dominios publicos con root independiente; el dominio legacy en
+registra como una sola pareja el host raiz y su variante `www`, valida cada host
+por separado contra la identidad de esta instalacion de Ristak en Render y deja
+elegir cual de los dos es el dominio oficial o canonico. El host no oficial
+redirige con `308` al oficial y conserva path, query string y atribucion. Si solo
+uno responde, la pareja queda guardada con el faltante visible, pero Ristak no
+declara falsamente que ambos estan conectados ni intenta redirigir hacia un host
+oficial que todavia no fue verificado. Los dominios anteriores a este contrato
+siguen sirviendo sin interrupcion y aparecen como pendientes de revalidar `www`.
+El mismo modal permite elegir de forma opcional la pagina o formulario que
+abrira en la raiz de esa pareja. La base usa `public_site_domains` —incluidas las
+columnas `canonical_domain`, `apex_domain_verified`, `www_domain_verified` y sus
+errores individuales— para permitir multiples dominios publicos con root
+independiente; el dominio legacy en
 `app_config.sites_public_domain` se mantiene como compatibilidad/primario para
-links existentes y se migra a la tabla al leer settings. Se puede configurar
+links existentes, apunta al host canonico elegido y se migra a la tabla al leer settings. Se puede configurar
 desde Dominios con el selector de pagina oficial, desde el enlace "Hacer pagina
 oficial" junto a Ruta publica en Ajustes del editor o con la estrella del menu
 de tres puntos de la pagina; las acciones del editor deben confirmar escribiendo
@@ -5408,7 +5417,9 @@ ultima actualiza el root del dominio elegido, no necesariamente el dominio
 primario. Un borrador puede apuntar a un dominio pendiente, pero para publicar el
 dominio seleccionado debe seguir conectado y verificado. Los registros legacy sin
 dominio propio conservan el dominio primario como fallback y lo fijan al volver a
-publicarse.
+publicarse. `public_domain` guarda siempre el host canonico vigente de la pareja;
+si el usuario cambia el oficial entre raiz y `www`, Ristak actualiza tambien los
+Sites que ya usaban esa pareja para que sus URLs compartidas no queden obsoletas.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser

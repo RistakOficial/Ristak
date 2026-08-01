@@ -36,6 +36,43 @@ const getDomainStatus = (domain: string, verified: boolean) => {
   return { label: 'Pendiente', variant: 'warning' as const }
 }
 
+const normalizeDomainDraft = (value: string) => {
+  const withoutProtocol = String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '')
+  return withoutProtocol.split('/')[0]?.split(':')[0]?.replace(/\.$/, '') || ''
+}
+
+const getDomainPair = (value: string) => {
+  const domain = normalizeDomainDraft(value)
+  const apexDomain = domain.startsWith('www.') ? domain.slice(4) : domain
+  return {
+    apexDomain,
+    wwwDomain: apexDomain ? `www.${apexDomain}` : '',
+    preferredDomain: domain
+  }
+}
+
+const getDomainPairStatus = (domain: PublicSiteDomain) => {
+  if (!domain.pairVerificationReady) {
+    return domain.renderDomainVerified
+      ? { label: 'Revisar www', variant: 'warning' as const }
+      : { label: 'Pendiente', variant: 'warning' as const }
+  }
+
+  const connected = Number(Boolean(domain.apexDomainVerified)) + Number(Boolean(domain.wwwDomainVerified))
+  return connected === 2
+    ? { label: '2/2 conectados', variant: 'success' as const }
+    : { label: `${connected}/2 conectados`, variant: 'warning' as const }
+}
+
+const getDomainHostStatus = (domain: PublicSiteDomain, host: string, verified: boolean | null) => {
+  if (verified === true) return { label: 'Conectado', variant: 'success' as const }
+  if (verified === false) return { label: 'Pendiente', variant: 'warning' as const }
+  if (host === domain.domain && domain.renderDomainVerified) {
+    return { label: 'Conectado', variant: 'success' as const }
+  }
+  return { label: 'Revalidar', variant: 'neutral' as const }
+}
+
 const getSiteTypeLabel = (site: PublicSite) => {
   if (site.siteType === 'landing_page') return 'Página'
   if (site.siteType === 'interactive_form') return 'Formulario interactivo'
@@ -76,6 +113,7 @@ export const Domains: React.FC = () => {
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptyDomainConfig)
   const [sites, setSites] = useState<PublicSite[]>([])
   const [domainDraft, setDomainDraft] = useState('')
+  const [canonicalDomainDraft, setCanonicalDomainDraft] = useState('')
   const [routeDraft, setRouteDraft] = useState('')
   const [appDomain, setAppDomain] = useState('')
   const [savedAppDomain, setSavedAppDomain] = useState('')
@@ -100,11 +138,12 @@ export const Domains: React.FC = () => {
   const landingSites = useMemo(() => sortedSites.filter(site => site.siteType === 'landing_page'), [sortedSites])
   const formSites = useMemo(() => sortedSites.filter(site => site.siteType !== 'landing_page'), [sortedSites])
   const publicDomains = domainConfig.publicDomains || []
-  const verifiedPublicDomains = publicDomains.filter(domain => domain.renderDomainVerified)
+  const verifiedPublicDomains = publicDomains.filter(domain => domain.domainPairVerified)
   const publicStatus = publicDomains.length > 0
-    ? { label: `${verifiedPublicDomains.length}/${publicDomains.length} verificados`, variant: verifiedPublicDomains.length > 0 ? 'success' as const : 'warning' as const }
+    ? { label: `${verifiedPublicDomains.length}/${publicDomains.length} parejas listas`, variant: verifiedPublicDomains.length > 0 ? 'success' as const : 'warning' as const }
     : getDomainStatus('', false)
   const appStatus = getDomainStatus(domainConfig.appDomain, domainConfig.appDomainVerified)
+  const domainDraftPair = getDomainPair(domainDraft)
 
   useEffect(() => {
     void loadDomain()
@@ -189,6 +228,7 @@ export const Domains: React.FC = () => {
   const openAddDomainDialog = () => {
     setEditingDomain(null)
     setDomainDraft('')
+    setCanonicalDomainDraft('')
     setRouteDraft('')
     setDomainDialogOpen(true)
     void loadDomainSites({ reset: true })
@@ -197,6 +237,7 @@ export const Domains: React.FC = () => {
   const openEditDomainDialog = (domain: PublicSiteDomain) => {
     setEditingDomain(domain)
     setDomainDraft(domain.domain)
+    setCanonicalDomainDraft(domain.canonicalDomain || domain.domain)
     setRouteDraft(encodeDomainRouteValue(domain.defaultRoute?.siteId, domain.defaultRoute?.pageId))
     setDomainDialogOpen(true)
     void loadDomainSites({
@@ -210,7 +251,19 @@ export const Domains: React.FC = () => {
     setDomainDialogOpen(false)
     setEditingDomain(null)
     setDomainDraft('')
+    setCanonicalDomainDraft('')
     setRouteDraft('')
+  }
+
+  const handleDomainDraftChange = (value: string) => {
+    const previousPair = getDomainPair(domainDraft)
+    const nextPair = getDomainPair(value)
+    setDomainDraft(value)
+    setCanonicalDomainDraft(current => {
+      const followsPreviousDefault = !current || current === previousPair.preferredDomain
+      const stillBelongsToPair = current === nextPair.apexDomain || current === nextPair.wwwDomain
+      return followsPreviousDefault || !stillBelongsToPair ? nextPair.preferredDomain : current
+    })
   }
 
   const saveDomainDialog = async () => {
@@ -218,19 +271,30 @@ export const Domains: React.FC = () => {
     setSavingDomain(true)
     try {
       const result = editingDomain
-        ? await sitesService.setPublicDomainDefaultRoute(editingDomain.id, route.siteId, route.pageId)
-        : await sitesService.createPublicDomain({ domain: domainDraft, siteId: route.siteId, pageId: route.pageId })
+        ? await sitesService.setPublicDomainDefaultRoute(editingDomain.id, route.siteId, route.pageId, canonicalDomainDraft)
+        : await sitesService.createPublicDomain({
+            domain: domainDraft,
+            canonicalDomain: canonicalDomainDraft,
+            siteId: route.siteId,
+            pageId: route.pageId
+          })
 
       applyConfig(result)
-      if (editingDomain || result.verification?.verified) {
+      if (editingDomain || result.verification?.verified || result.verification?.anyVerified) {
+        const pairConnected = result.verification?.verified !== false
         showToast(
-          'success',
-          editingDomain ? 'Dominio actualizado' : 'Dominio conectado',
-          editingDomain ? 'La ruta principal quedó guardada.' : 'El dominio ya responde con esta app.'
+          pairConnected ? 'success' : 'warning',
+          editingDomain ? 'Dominio actualizado' : pairConnected ? 'Dominio conectado' : 'Dominio agregado con pendiente',
+          editingDomain
+            ? 'La ruta principal y el dominio oficial quedaron guardados.'
+            : pairConnected
+              ? 'El dominio raíz y www ya responden con esta app.'
+              : result.verification?.error || 'Guardamos la pareja; todavía falta conectar uno de los dos dominios.'
         )
         setDomainDialogOpen(false)
         setEditingDomain(null)
         setDomainDraft('')
+        setCanonicalDomainDraft('')
         setRouteDraft('')
         return
       }
@@ -249,9 +313,9 @@ export const Domains: React.FC = () => {
       const result = await sitesService.verifyPublicDomain(domain.id)
       applyConfig(result)
       if (result.verification?.verified) {
-        showToast('success', 'Dominio verificado', `${domain.domain} ya responde con esta app.`)
+        showToast('success', 'Pareja verificada', `${domain.apexDomain || domain.domain} y ${domain.wwwDomain || `www.${domain.domain}`} ya responden con esta app.`)
       } else {
-        showToast('warning', 'Dominio pendiente', result.verification?.error || 'El dominio todavía no responde con esta app.')
+        showToast('warning', 'Pareja incompleta', result.verification?.error || 'Todavía falta conectar uno de los dos dominios.')
       }
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo verificar el dominio')
@@ -389,7 +453,7 @@ export const Domains: React.FC = () => {
       isOpen={domainDialogOpen}
       onClose={closeDomainDialog}
       title={editingDomain ? 'Configurar dominio' : 'Agregar dominio'}
-      subtitle={editingDomain ? editingDomain.domain : 'Valida que Render ya lo esté apuntando a esta app.'}
+      subtitle={editingDomain ? editingDomain.domain : 'Ristak comprobará automáticamente la versión raíz y la versión www.'}
       size="lg"
       closeOnBackdropClick={!savingDomain}
       closeOnEscape={!savingDomain}
@@ -401,9 +465,27 @@ export const Domains: React.FC = () => {
             value={domainDraft}
             placeholder="www.tuclinica.com"
             disabled={Boolean(editingDomain) || savingDomain}
-            onChange={(event) => setDomainDraft(event.target.value)}
+            onChange={(event) => handleDomainDraftChange(event.target.value)}
           />
-          <small>Primero agrega este dominio como Custom Domain del web service en Render; Ristak lo guarda sólo cuando detecta esta instalación.</small>
+          <small>Ristak agregará automáticamente la pareja. Para activarla, asegúrate de que raíz y www apunten a este servicio en Render.</small>
+        </label>
+
+        <label className={styles.field}>
+          <span>Dominio oficial</span>
+          <CustomSelect
+            value={canonicalDomainDraft}
+            disabled={savingDomain || !domainDraftPair.apexDomain}
+            size="large"
+            onChange={(event) => setCanonicalDomainDraft(event.target.value)}
+          >
+            <option value={domainDraftPair.apexDomain}>
+              {domainDraftPair.apexDomain ? `${domainDraftPair.apexDomain} · sin www` : 'Escribe un dominio primero'}
+            </option>
+            {domainDraftPair.wwwDomain && (
+              <option value={domainDraftPair.wwwDomain}>{domainDraftPair.wwwDomain} · con www</option>
+            )}
+          </CustomSelect>
+          <small>Esta será la URL que Ristak comparta. La otra versión redirigirá aquí conservando la ruta y los parámetros.</small>
         </label>
 
         <label className={styles.field}>
@@ -439,7 +521,7 @@ export const Domains: React.FC = () => {
         <Button type="button" variant="secondary" onClick={closeDomainDialog} disabled={savingDomain}>
           Cancelar
         </Button>
-        <Button type="button" onClick={saveDomainDialog} loading={savingDomain} disabled={!editingDomain && !domainDraft.trim()}>
+        <Button type="button" onClick={saveDomainDialog} loading={savingDomain} disabled={!domainDraft.trim() || !canonicalDomainDraft}>
           <CheckCircle2 size={16} />
           {editingDomain ? 'Guardar cambios' : 'Validar y guardar'}
         </Button>
@@ -457,7 +539,7 @@ export const Domains: React.FC = () => {
         </div>
         <div>
           <h2>Dominios para páginas y formularios</h2>
-          <p>Agrega dominios públicos verificados y define qué abre cada uno en la raíz.</p>
+          <p>Conecta raíz + www, elige la URL oficial y define qué abre en la raíz.</p>
         </div>
         <Button onClick={openAddDomainDialog}>
           <Plus size={16} />
@@ -472,7 +554,7 @@ export const Domains: React.FC = () => {
           </div>
           <div>
             <h3>No hay dominios conectados</h3>
-            <p>Agrega un dominio que ya esté dado de alta en Render para publicar tus páginas con URL propia.</p>
+            <p>Agrega un dominio y Ristak registrará también su versión www para publicar con una URL oficial.</p>
           </div>
           <Button onClick={openAddDomainDialog}>
             <Plus size={16} />
@@ -482,7 +564,12 @@ export const Domains: React.FC = () => {
       ) : (
         <div className={styles.domainList}>
           {publicDomains.map(domain => {
-            const status = getDomainStatus(domain.domain, domain.renderDomainVerified)
+            const status = getDomainPairStatus(domain)
+            const apexDomain = domain.apexDomain || getDomainPair(domain.domain).apexDomain
+            const wwwDomain = domain.wwwDomain || getDomainPair(domain.domain).wwwDomain
+            const canonicalDomain = domain.canonicalDomain || domain.domain
+            const apexStatus = getDomainHostStatus(domain, apexDomain, domain.apexDomainVerified)
+            const wwwStatus = getDomainHostStatus(domain, wwwDomain, domain.wwwDomainVerified)
             return (
               <div className={styles.domainRow} key={domain.id}>
                 <div className={styles.choiceIcon}>
@@ -490,14 +577,30 @@ export const Domains: React.FC = () => {
                 </div>
                 <div className={styles.domainInfo}>
                   <div className={styles.choiceTitleRow}>
-                    <strong>{domain.domain}</strong>
+                    <strong>{canonicalDomain}</strong>
                     <Badge variant={status.variant}>{status.label}</Badge>
                   </div>
                   <span>
                     <Star size={14} fill="currentColor" />
-                    {getDefaultRouteLabel(domain.defaultRoute)}
+                    Oficial · https://{canonicalDomain}
                   </span>
-                  {domain.renderDomainError && <p className={styles.errorText}>{domain.renderDomainError}</p>}
+                  <div className={styles.domainHosts}>
+                    <span>
+                      {apexDomain}
+                      <Badge variant={apexStatus.variant}>{apexStatus.label}</Badge>
+                    </span>
+                    <span>
+                      {wwwDomain}
+                      <Badge variant={wwwStatus.variant}>{wwwStatus.label}</Badge>
+                    </span>
+                  </div>
+                  <span>
+                    <LayoutTemplate size={14} />
+                    Root · {getDefaultRouteLabel(domain.defaultRoute)}
+                  </span>
+                  {domain.apexDomainError && <p className={styles.errorText}>{apexDomain}: {domain.apexDomainError}</p>}
+                  {domain.wwwDomainError && <p className={styles.errorText}>{wwwDomain}: {domain.wwwDomainError}</p>}
+                  {!domain.pairVerificationReady && domain.renderDomainError && <p className={styles.errorText}>{domain.renderDomainError}</p>}
                 </div>
                 <div className={styles.rowActions}>
                   <Button variant="secondary" size="sm" onClick={() => openEditDomainDialog(domain)}>
@@ -612,11 +715,11 @@ export const Domains: React.FC = () => {
             <p>Sitios web, formularios, campañas y links que comparten tus {customersLowerLabel}.</p>
             <span>
               <LayoutTemplate size={14} />
-              {publicDomains.length > 0 ? `${publicDomains.length} dominio${publicDomains.length === 1 ? '' : 's'} configurado${publicDomains.length === 1 ? '' : 's'}` : 'www.tunegocio.com'}
+              {publicDomains.length > 0 ? `${publicDomains.length} pareja${publicDomains.length === 1 ? '' : 's'} raíz + www` : 'tunegocio.com + www'}
             </span>
             <span>
               <Star size={14} fill="currentColor" />
-              Root independiente por dominio
+              URL oficial y root independiente
             </span>
           </div>
           <ArrowRight size={18} className={styles.choiceArrow} />

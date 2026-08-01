@@ -3342,9 +3342,19 @@ const publicDomainsMatch = (left?: string | null, right?: string | null) => {
 const getPublicDomainOptions = (domainConfig: SitesDomainConfig): PublicSiteDomain[] => {
   const domains = [...(domainConfig.publicDomains || [])]
   if (domainConfig.domain && !domains.some(item => publicDomainsMatch(item.domain, domainConfig.domain))) {
+    const apexDomain = stripPublicDomainWww(domainConfig.domain)
     domains.unshift({
       id: '',
       domain: domainConfig.domain,
+      apexDomain,
+      wwwDomain: `www.${apexDomain}`,
+      canonicalDomain: domainConfig.domain,
+      apexDomainVerified: null,
+      wwwDomainVerified: null,
+      apexDomainError: null,
+      wwwDomainError: null,
+      domainPairVerified: false,
+      pairVerificationReady: false,
       renderDomainVerified: domainConfig.renderDomainVerified,
       renderDomainCheckedAt: domainConfig.renderDomainCheckedAt,
       renderDomainError: domainConfig.renderDomainError,
@@ -3367,7 +3377,7 @@ const getSiteDomainConfig = (site: PublicSite | null | undefined, domainConfig: 
   if (selectedDomain) {
     return {
       ...domainConfig,
-      domain: selectedDomain.domain,
+      domain: selectedDomain.canonicalDomain || selectedDomain.domain,
       renderDomainVerified: selectedDomain.renderDomainVerified,
       renderDomainCheckedAt: selectedDomain.renderDomainCheckedAt,
       renderDomainError: selectedDomain.renderDomainError,
@@ -33610,8 +33620,8 @@ const SiteSettingsPanelContent: React.FC<{
               </option>
             )}
             {domainOptions.map(option => (
-              <option key={option.id || option.domain} value={normalizePublicDomainName(option.domain)}>
-                {option.domain}{option.renderDomainVerified ? '' : ' · pendiente de verificación'}
+              <option key={option.id || option.domain} value={normalizePublicDomainName(option.canonicalDomain || option.domain)}>
+                {option.canonicalDomain || option.domain}{option.renderDomainVerified ? '' : ' · pendiente de verificación'}
               </option>
             ))}
           </CustomSelect>

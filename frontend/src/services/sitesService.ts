@@ -1074,7 +1074,10 @@ export interface SitesDomainConfig {
   renderDomainError: string | null
   verification?: {
     verified: boolean
+    anyVerified?: boolean
     error: string | null
+    apex?: { domain: string; verified: boolean; error: string | null }
+    www?: { domain: string; verified: boolean; error: string | null }
   }
   appDomain: string
   appDomainVerified: boolean
@@ -1101,6 +1104,15 @@ export interface SitesDomainConfig {
 export interface PublicSiteDomain {
   id: string
   domain: string
+  apexDomain: string
+  wwwDomain: string
+  canonicalDomain: string
+  apexDomainVerified: boolean | null
+  wwwDomainVerified: boolean | null
+  apexDomainError: string | null
+  wwwDomainError: string | null
+  domainPairVerified: boolean
+  pairVerificationReady: boolean
   renderDomainVerified: boolean
   renderDomainCheckedAt: string | null
   renderDomainError: string | null
@@ -1816,9 +1828,10 @@ export const sitesService = {
     return apiClient.post<SitesDomainConfig>('/sites/domain/verify', { domain })
   },
 
-  createPublicDomain(input: { domain: string; siteId?: string | null; pageId?: string | null }) {
+  createPublicDomain(input: { domain: string; canonicalDomain?: string | null; siteId?: string | null; pageId?: string | null }) {
     return apiClient.post<SitesDomainConfig>('/sites/domains/public', {
       domain: input.domain,
+      canonicalDomain: input.canonicalDomain || '',
       siteId: input.siteId || '',
       pageId: input.pageId || ''
     })
@@ -1828,10 +1841,11 @@ export const sitesService = {
     return apiClient.post<SitesDomainConfig>(`/sites/domains/public/${encodeURIComponent(domainId)}/verify`)
   },
 
-  setPublicDomainDefaultRoute(domainId: string, siteId?: string | null, pageId?: string | null) {
+  setPublicDomainDefaultRoute(domainId: string, siteId?: string | null, pageId?: string | null, canonicalDomain?: string | null) {
     return apiClient.post<SitesDomainConfig>(`/sites/domains/public/${encodeURIComponent(domainId)}/default-route`, {
       siteId: siteId || '',
-      pageId: pageId || ''
+      pageId: pageId || '',
+      ...(canonicalDomain ? { canonicalDomain } : {})
     })
   },
 

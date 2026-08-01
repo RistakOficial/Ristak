@@ -51,6 +51,7 @@ import {
   renderPublicSiteHtml,
   reorderBlocks,
   resolveConnectedAppDomainForHost,
+  resolveConnectedPublicDomainForHost,
   resolvePublicCalendarHostForHost,
   resolvePublicPrefillContact,
   resolvePublicSiteForHost,
@@ -1034,7 +1035,8 @@ export async function setSitesPublicDomainDefaultRouteHandler(req, res) {
     const result = await setSitesPublicDomainDefaultRoute(
       req.params.domainId,
       req.body?.siteId || req.body?.site_id || '',
-      req.body?.pageId || req.body?.page_id || ''
+      req.body?.pageId || req.body?.page_id || '',
+      req.body?.canonicalDomain ?? req.body?.canonical_domain
     )
     res.json({ success: true, data: result })
   } catch (error) {
@@ -1214,6 +1216,19 @@ function getRequestProtocol(req) {
   return forwardedProtocol === 'http' ? 'http' : 'https'
 }
 
+function redirectToCanonicalPublicDomain(req, res, resolution) {
+  if (!resolution?.shouldRedirectToCanonical) return false
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false
+
+  const canonicalDomain = String(resolution.canonicalDomain || '').trim()
+  if (!canonicalDomain) return false
+
+  const requestTarget = String(req.originalUrl || req.url || req.path || '/')
+  res.set('Cache-Control', 'public, max-age=300')
+  res.redirect(308, `https://${canonicalDomain}${requestTarget.startsWith('/') ? requestTarget : `/${requestTarget}`}`)
+  return true
+}
+
 function decodePathSegment(segment) {
   try {
     return decodeURIComponent(segment)
@@ -1278,6 +1293,9 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible')
       }
 
+      const publicDomainResolution = await resolveConnectedPublicDomainForHost(host)
+      if (publicDomainResolution.ok && redirectToCanonicalPublicDomain(req, res, publicDomainResolution)) return
+
       res.set('Cache-Control', 'no-store')
       return res.status(200).type('html').send(await renderMetaPrivacyPolicyHtml({
         host,
@@ -1302,6 +1320,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       if (!domainResolution.ok) {
         return sendDomainError(req, res, domainResolution.status || 404, domainResolution.message)
       }
+      if (redirectToCanonicalPublicDomain(req, res, domainResolution)) return
 
       const calendar = await getPublicCalendarBySlug(calendarMatch[1])
       if (!calendar) {
@@ -1341,6 +1360,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
 
     const resolution = await resolvePublicSiteForHost(host, { path: req.path })
     if (resolution.ok) {
+      if (redirectToCanonicalPublicDomain(req, res, resolution)) return
       if (req.path.startsWith('/api') || req.path.startsWith('/webhook')) {
         return sendDomainError(req, res, 404, 'La API privada no esta disponible en dominios públicos de Sites')
       }

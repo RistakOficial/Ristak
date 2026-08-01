@@ -327,6 +327,31 @@
   flex: 0 0 auto;
 }
 
+.domainHosts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.domainHosts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface-2);
+  padding: 3px 7px 3px 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.domainHosts :global([data-badge]) {
+  font-family: var(--font-body);
+}
+
 .rowActions {
   display: flex;
   align-items: center;

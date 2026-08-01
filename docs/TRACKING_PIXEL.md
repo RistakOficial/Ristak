@@ -107,6 +107,15 @@ El tracking nativo de Sites sólo debe considerarse probado en vivo cuando:
 3. la URL pública resuelve a la página correcta;
 4. la navegación no usa un modo de preview o bypass de tracking.
 
+Cada dominio público administrado representa una pareja: host raíz y `www`.
+Ambos se verifican por separado y `canonical_domain` decide cuál es el oficial.
+Una navegación HTML por el host secundario recibe `308` hacia el oficial,
+conservando ruta y parámetros antes de ejecutar el runtime nativo; por eso no se
+deben contar ambos hosts como dos superficies ni instalar otro pixel para
+"unificar" sus visitas. Las rutas públicas de ingesta permanecen disponibles
+para completar requests ya iniciados y no usan el redirect HTML como mecanismo
+de autenticación.
+
 El renderer público inyecta el runtime nativo con
 `tracking_source = 'native_site'`, contexto del Site y de la página, cookies first-party
 `ristak_vid`/`ristak_sid`, UTMs, click IDs y datos del navegador. La vista genera

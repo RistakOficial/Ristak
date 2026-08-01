@@ -1433,9 +1433,15 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_add_public_domain',
-    description: 'Verifica y agrega un dominio público de Sites. No modifica DNS ni crea secrets.',
+    description: 'Verifica y agrega como pareja un dominio público de Sites con su variante www, y permite elegir el host oficial. No modifica DNS ni crea secrets.',
     inputSchema: makeInputSchema({
       domain: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 253,
+        pattern: '^[A-Za-z0-9.-]+$'
+      },
+      canonicalDomain: {
         type: 'string',
         minLength: 1,
         maxLength: 253,
@@ -1454,7 +1460,12 @@ export const siteToolSpecs = Object.freeze([
       assertBooleanConfirmation(args)
       return call(context, createSitesPublicDomainHandler, {
         method: 'POST',
-        body: { domain: args.domain, siteId: args.siteId, pageId: args.pageId }
+        body: {
+          domain: args.domain,
+          ...(args.canonicalDomain ? { canonicalDomain: args.canonicalDomain } : {}),
+          siteId: args.siteId,
+          pageId: args.pageId
+        }
       })
     }
   }),
@@ -1480,11 +1491,17 @@ export const siteToolSpecs = Object.freeze([
   }),
   spec({
     name: 'sites_set_domain_default_route',
-    description: 'Cambia qué Site o página abre en la raíz de un dominio público.',
+    description: 'Cambia qué Site o página abre en la raíz de un dominio público y, opcionalmente, cuál host raíz/www es el oficial.',
     inputSchema: makeInputSchema({
       domainId: DOMAIN_ID_SCHEMA,
       siteId: SITE_ID_SCHEMA,
       pageId: PAGE_ID_SCHEMA,
+      canonicalDomain: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 253,
+        pattern: '^[A-Za-z0-9.-]+$'
+      },
       ...dangerousControlProperties
     }, writeRequirements(['domainId', 'siteId'], { confirmRequired: true })),
     access: 'write',
@@ -1497,7 +1514,11 @@ export const siteToolSpecs = Object.freeze([
       return call(context, setSitesPublicDomainDefaultRouteHandler, {
         method: 'POST',
         params: { domainId: args.domainId },
-        body: { siteId: args.siteId, pageId: args.pageId }
+        body: {
+          siteId: args.siteId,
+          pageId: args.pageId,
+          ...(args.canonicalDomain ? { canonicalDomain: args.canonicalDomain } : {})
+        }
       })
     }
   }),

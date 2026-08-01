@@ -16839,7 +16839,7 @@ async function updateSiteUnlocked(siteId, input = {}) {
     }
   }
 
-  const nextDomain = selectedDomain?.domain || ''
+  const nextDomain = selectedDomain?.canonicalDomain || selectedDomain?.domain || ''
   const nextSiteType = input.siteType === undefined && input.site_type === undefined
     ? current.siteType
     : validateSiteType(input.siteType || input.site_type)
@@ -17273,7 +17273,10 @@ function shouldRefreshDomainCheck(site, force = false) {
   const checkedAt = Date.parse(site.renderDomainCheckedAt)
   if (!Number.isFinite(checkedAt)) return true
 
-  const ttl = site.renderDomainVerified ? PUBLIC_DOMAIN_CACHE_TTL_MS : PUBLIC_DOMAIN_FAILED_CACHE_TTL_MS
+  const fullyVerified = site.pairVerificationReady
+    ? site.domainPairVerified
+    : site.renderDomainVerified
+  const ttl = fullyVerified ? PUBLIC_DOMAIN_CACHE_TTL_MS : PUBLIC_DOMAIN_FAILED_CACHE_TTL_MS
   return Date.now() - checkedAt > ttl
 }
 
@@ -17306,12 +17309,87 @@ async function getSitesPublicDomainConfig() {
   }
 }
 
+function nullableDatabaseBoolean(value) {
+  if (value === null || value === undefined || value === '') return null
+  return Boolean(Number(value))
+}
+
+function getPublicDomainPair(domainValue) {
+  const domain = normalizeDomain(domainValue)
+  if (!domain) return { apexDomain: '', wwwDomain: '' }
+
+  const apexDomain = domain.startsWith('www.') ? domain.slice(4) : domain
+  return {
+    apexDomain,
+    wwwDomain: `www.${apexDomain}`
+  }
+}
+
+function normalizeCanonicalPublicDomain(canonicalValue, domainValue) {
+  const { apexDomain, wwwDomain } = getPublicDomainPair(domainValue)
+  const canonicalDomain = normalizeDomain(canonicalValue)
+  if (canonicalDomain === apexDomain || canonicalDomain === wwwDomain) {
+    return canonicalDomain
+  }
+
+  const normalizedDomain = normalizeDomain(domainValue)
+  return normalizedDomain === wwwDomain ? wwwDomain : apexDomain
+}
+
+function publicDomainHostVerification(domainRecord, hostValue) {
+  const host = normalizeDomain(hostValue)
+  if (!domainRecord || !host) return { verified: false, error: 'Dominio inválido' }
+
+  if (!domainRecord.pairVerificationReady) {
+    return {
+      verified: domainRecord.renderDomainVerified,
+      error: domainRecord.renderDomainError || null,
+      legacy: true
+    }
+  }
+
+  if (host === domainRecord.apexDomain) {
+    return {
+      verified: Boolean(domainRecord.apexDomainVerified),
+      error: domainRecord.apexDomainError || null
+    }
+  }
+
+  if (host === domainRecord.wwwDomain) {
+    return {
+      verified: Boolean(domainRecord.wwwDomainVerified),
+      error: domainRecord.wwwDomainError || null
+    }
+  }
+
+  return { verified: false, error: 'Dominio no configurado' }
+}
+
 function mapPublicDomainRow(row) {
   if (!row) return null
 
+  const domain = normalizeDomain(row.domain)
+  const { apexDomain, wwwDomain } = getPublicDomainPair(domain)
+  const canonicalDomain = normalizeCanonicalPublicDomain(
+    row.canonical_domain,
+    domain
+  )
+  const apexVerified = nullableDatabaseBoolean(row.apex_domain_verified)
+  const wwwVerified = nullableDatabaseBoolean(row.www_domain_verified)
+  const pairVerificationReady = apexVerified !== null && wwwVerified !== null
+
   return {
     id: row.id,
-    domain: normalizeDomain(row.domain),
+    domain,
+    apexDomain,
+    wwwDomain,
+    canonicalDomain,
+    apexDomainVerified: apexVerified,
+    wwwDomainVerified: wwwVerified,
+    apexDomainError: cleanString(row.apex_domain_error) || null,
+    wwwDomainError: cleanString(row.www_domain_error) || null,
+    domainPairVerified: pairVerificationReady && apexVerified && wwwVerified,
+    pairVerificationReady,
     renderDomainVerified: Boolean(Number(row.render_domain_verified || 0)),
     renderDomainCheckedAt: row.render_domain_checked_at || null,
     renderDomainError: row.render_domain_error || null,
@@ -17327,6 +17405,15 @@ function domainConfigFromPublicDomain(domainRecord) {
 
   return {
     domain: domainRecord.domain,
+    apexDomain: domainRecord.apexDomain,
+    wwwDomain: domainRecord.wwwDomain,
+    canonicalDomain: domainRecord.canonicalDomain,
+    apexDomainVerified: domainRecord.apexDomainVerified,
+    wwwDomainVerified: domainRecord.wwwDomainVerified,
+    apexDomainError: domainRecord.apexDomainError,
+    wwwDomainError: domainRecord.wwwDomainError,
+    domainPairVerified: domainRecord.domainPairVerified,
+    pairVerificationReady: domainRecord.pairVerificationReady,
     renderDomainVerified: domainRecord.renderDomainVerified,
     renderDomainCheckedAt: domainRecord.renderDomainCheckedAt,
     renderDomainError: domainRecord.renderDomainError,
@@ -17411,11 +17498,17 @@ async function syncLegacyPublicDomainConfigFromRecord(domainRecord) {
     return
   }
 
+  const publicDomain = normalizeCanonicalPublicDomain(
+    domainRecord.canonicalDomain,
+    domainRecord.domain
+  )
+  const canonicalVerification = publicDomainHostVerification(domainRecord, publicDomain)
+
   await Promise.all([
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, domainRecord.domain),
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, domainRecord.renderDomainVerified ? '1' : '0'),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, publicDomain),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, canonicalVerification.verified ? '1' : '0'),
     setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, domainRecord.renderDomainCheckedAt || null),
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, domainRecord.renderDomainError || null),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, canonicalVerification.error || null),
     setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, domainRecord.defaultRouteSiteId || null),
     setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, domainRecord.defaultRoutePageId || null)
   ])
@@ -17464,11 +17557,46 @@ async function saveSitesPublicDomainVerification(domain, result) {
   return config
 }
 
+async function syncPublicSitesToCanonicalDomain(domainRecord, canonicalDomainValue) {
+  const canonicalDomain = normalizeDomain(canonicalDomainValue)
+  const { apexDomain, wwwDomain } = getPublicDomainPair(domainRecord?.domain)
+  if (!canonicalDomain || !apexDomain || !wwwDomain) return
+
+  await db.run(`
+    UPDATE public_sites
+    SET public_domain = ?,
+        render_domain_verified = 0,
+        render_domain_checked_at = NULL,
+        render_domain_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE LOWER(COALESCE(public_domain, '')) IN (LOWER(?), LOWER(?))
+  `, [canonicalDomain, apexDomain, wwwDomain])
+}
+
 async function saveManagedPublicDomainVerification(domainRecord, result, input = {}) {
-  const domain = normalizeDomain(input.domain || domainRecord?.domain)
+  const requestedDomain = normalizeDomain(input.domain || domainRecord?.domain)
+  const { apexDomain, wwwDomain } = getPublicDomainPair(requestedDomain)
   const checkedAt = new Date().toISOString()
-  const existing = domainRecord || await findPublicDomainByDomain(domain)
+  const existing = domainRecord || await findPublicDomainByDomain(requestedDomain)
   const id = existing?.id || createRistakId('site_domain')
+  const domain = existing?.domain || apexDomain
+  const canonicalDomain = normalizeCanonicalPublicDomain(
+    input.canonicalDomain ?? input.canonical_domain ?? existing?.canonicalDomain ?? requestedDomain,
+    apexDomain
+  )
+  const apexVerification = result?.apex || {
+    domain: apexDomain,
+    verified: false,
+    error: 'Revalida este dominio para comprobarlo'
+  }
+  const wwwVerification = result?.www || {
+    domain: wwwDomain,
+    verified: false,
+    error: 'Revalida este dominio para comprobarlo'
+  }
+  const canonicalVerification = canonicalDomain === wwwDomain
+    ? wwwVerification
+    : apexVerification
   const defaultRouteSiteId = Object.prototype.hasOwnProperty.call(input, 'siteId')
     ? cleanString(input.siteId)
     : cleanString(existing?.defaultRouteSiteId)
@@ -17483,28 +17611,47 @@ async function saveManagedPublicDomainVerification(domainRecord, result, input =
       render_domain_verified,
       render_domain_checked_at,
       render_domain_error,
+      canonical_domain,
+      apex_domain_verified,
+      www_domain_verified,
+      apex_domain_error,
+      www_domain_error,
       default_route_site_id,
       default_route_page_id,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(id) DO UPDATE SET
       domain = excluded.domain,
       render_domain_verified = excluded.render_domain_verified,
       render_domain_checked_at = excluded.render_domain_checked_at,
       render_domain_error = excluded.render_domain_error,
+      canonical_domain = excluded.canonical_domain,
+      apex_domain_verified = excluded.apex_domain_verified,
+      www_domain_verified = excluded.www_domain_verified,
+      apex_domain_error = excluded.apex_domain_error,
+      www_domain_error = excluded.www_domain_error,
       default_route_site_id = excluded.default_route_site_id,
       default_route_page_id = excluded.default_route_page_id,
       updated_at = CURRENT_TIMESTAMP
   `, [
     id,
     domain,
-    result.verified ? 1 : 0,
+    canonicalVerification.verified ? 1 : 0,
     checkedAt,
-    result.verified ? null : result.error || 'Dominio no conectado a esta app',
+    canonicalVerification.verified ? null : canonicalVerification.error || 'Dominio oficial no conectado a esta app',
+    canonicalDomain,
+    apexVerification.verified ? 1 : 0,
+    wwwVerification.verified ? 1 : 0,
+    apexVerification.verified ? null : apexVerification.error || 'Dominio raíz no conectado a esta app',
+    wwwVerification.verified ? null : wwwVerification.error || 'Dominio www no conectado a esta app',
     defaultRouteSiteId || null,
     defaultRoutePageId || null
   ])
+
+  if (existing && existing.canonicalDomain !== canonicalDomain) {
+    await syncPublicSitesToCanonicalDomain(existing, canonicalDomain)
+  }
 
   return getPublicDomainById(id)
 }
@@ -17612,6 +17759,15 @@ async function hydratePublicDomainRecord(domainRecord, { clearMissing = false } 
   return {
     id: record.id,
     domain: record.domain,
+    apexDomain: record.apexDomain,
+    wwwDomain: record.wwwDomain,
+    canonicalDomain: record.canonicalDomain,
+    apexDomainVerified: record.apexDomainVerified,
+    wwwDomainVerified: record.wwwDomainVerified,
+    apexDomainError: record.apexDomainError,
+    wwwDomainError: record.wwwDomainError,
+    domainPairVerified: record.domainPairVerified,
+    pairVerificationReady: record.pairVerificationReady,
     renderDomainVerified: record.renderDomainVerified,
     renderDomainCheckedAt: record.renderDomainCheckedAt,
     renderDomainError: record.renderDomainError,
@@ -17682,13 +17838,21 @@ export async function getSitesDomainSettings({
     await syncLegacyPublicDomainConfigFromRecord({
       id: publicDomains[0].id,
       domain: publicDomains[0].domain,
+      canonicalDomain: publicDomains[0].canonicalDomain,
+      apexDomain: publicDomains[0].apexDomain,
+      wwwDomain: publicDomains[0].wwwDomain,
+      apexDomainVerified: publicDomains[0].apexDomainVerified,
+      wwwDomainVerified: publicDomains[0].wwwDomainVerified,
+      apexDomainError: publicDomains[0].apexDomainError,
+      wwwDomainError: publicDomains[0].wwwDomainError,
+      pairVerificationReady: publicDomains[0].pairVerificationReady,
       renderDomainVerified: publicDomains[0].renderDomainVerified,
       renderDomainCheckedAt: publicDomains[0].renderDomainCheckedAt,
       renderDomainError: publicDomains[0].renderDomainError,
       defaultRouteSiteId: publicDomains[0].defaultRoute?.siteId || '',
       defaultRoutePageId: publicDomains[0].defaultRoute?.pageId || ''
     })
-    publicDomainConfig.domain = publicDomains[0].domain
+    publicDomainConfig.domain = publicDomains[0].canonicalDomain || publicDomains[0].domain
     publicDomainConfig.renderDomainVerified = publicDomains[0].renderDomainVerified
     publicDomainConfig.renderDomainCheckedAt = publicDomains[0].renderDomainCheckedAt
     publicDomainConfig.renderDomainError = publicDomains[0].renderDomainError
@@ -17793,7 +17957,12 @@ export async function setSitesPublicDefaultRoute(siteIdValue, pageIdValue = '') 
   return getSitesDomainSettings({ defaultRouteSite: site, defaultRoutePageId: pageId })
 }
 
-export async function setSitesPublicDomainDefaultRoute(domainIdValue, siteIdValue, pageIdValue = '') {
+export async function setSitesPublicDomainDefaultRoute(
+  domainIdValue,
+  siteIdValue,
+  pageIdValue = '',
+  canonicalDomainValue = undefined
+) {
   const domainRecord = await getPublicDomainById(domainIdValue)
   if (!domainRecord) {
     const error = new Error('Dominio no encontrado')
@@ -17802,20 +17971,42 @@ export async function setSitesPublicDomainDefaultRoute(domainIdValue, siteIdValu
   }
 
   const { site, pageId } = await resolvePublicDefaultRouteTarget(siteIdValue, pageIdValue)
+  const requestedCanonicalDomain = canonicalDomainValue === undefined
+    ? domainRecord.canonicalDomain
+    : normalizeDomain(canonicalDomainValue)
+  const { apexDomain, wwwDomain } = getPublicDomainPair(domainRecord.domain)
+  if (requestedCanonicalDomain !== apexDomain && requestedCanonicalDomain !== wwwDomain) {
+    const error = new Error('El dominio oficial debe ser la versión raíz o su variante www')
+    error.status = 400
+    throw error
+  }
+  const canonicalVerification = publicDomainHostVerification(domainRecord, requestedCanonicalDomain)
   await db.run(`
     UPDATE public_site_domains
     SET default_route_site_id = ?,
         default_route_page_id = ?,
+        canonical_domain = ?,
+        render_domain_verified = ?,
+        render_domain_error = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [site?.id || null, pageId || null, domainRecord.id])
+  `, [
+    site?.id || null,
+    pageId || null,
+    requestedCanonicalDomain,
+    canonicalVerification.verified ? 1 : 0,
+    canonicalVerification.verified ? null : canonicalVerification.error || 'Dominio oficial no conectado a esta app',
+    domainRecord.id
+  ])
+
+  if (domainRecord.canonicalDomain !== requestedCanonicalDomain) {
+    await syncPublicSitesToCanonicalDomain(domainRecord, requestedCanonicalDomain)
+  }
 
   const currentConfig = await getSitesPublicDomainConfig()
   if (matchesPublicDomain(currentConfig.domain, domainRecord.domain)) {
-    await Promise.all([
-      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site?.id || null),
-      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, pageId || null)
-    ])
+    const updatedDomainRecord = await getPublicDomainById(domainRecord.id)
+    await syncLegacyPublicDomainConfigFromRecord(updatedDomainRecord)
   }
 
   return getSitesDomainSettings()
@@ -17861,20 +18052,29 @@ export async function refreshSitesPublicDomain(input = {}) {
     }
   }
 
-  const result = await verifyPublicDomainConnection(domain)
-  const shouldPersist = result.verified || domain === current.domain || !hasDomainCandidate
+  let managedRecord = await findPublicDomainByDomain(domain)
+  if (!managedRecord && matchesPublicDomain(current.domain, domain)) {
+    managedRecord = await ensureLegacyPublicDomainAsManaged()
+  }
+  const canonicalDomain = normalizeCanonicalPublicDomain(
+    input.canonicalDomain || input.canonical_domain || managedRecord?.canonicalDomain || domain,
+    domain
+  )
+  const result = await verifyPublicDomainPairConnection(domain, canonicalDomain)
+  const shouldPersist = result.anyVerified || Boolean(managedRecord) || domain === current.domain || !hasDomainCandidate
   let nextConfig
   if (shouldPersist) {
-    nextConfig = await saveSitesPublicDomainVerification(domain, result)
-    const managedRecord = await findPublicDomainByDomain(domain)
-    if (managedRecord || result.verified) {
-      const defaultRoute = await getConfiguredDefaultPublicRoute({ clearMissing: true, domainRecord: managedRecord })
-      await saveManagedPublicDomainVerification(managedRecord, result, {
-        domain,
-        siteId: defaultRoute?.site?.id || '',
-        pageId: defaultRoute?.pageId || ''
-      })
+    const defaultRoute = await getConfiguredDefaultPublicRoute({ clearMissing: true, domainRecord: managedRecord })
+    const saved = await saveManagedPublicDomainVerification(managedRecord, result, {
+      domain,
+      canonicalDomain,
+      siteId: defaultRoute?.site?.id || '',
+      pageId: defaultRoute?.pageId || ''
+    })
+    if (matchesPublicDomain(current.domain, domain) || (hasDomainCandidate && result.anyVerified)) {
+      await syncLegacyPublicDomainConfigFromRecord(saved)
     }
+    nextConfig = await getSitesPublicDomainConfig()
   } else {
     nextConfig = {
       ...current,
@@ -17893,6 +18093,10 @@ export async function refreshSitesPublicDomain(input = {}) {
 
 export async function createSitesPublicDomain(input = {}) {
   const domain = normalizeDomain(input.domain)
+  const canonicalDomain = normalizeCanonicalPublicDomain(
+    input.canonicalDomain || input.canonical_domain || domain,
+    domain
+  )
   const checkedAt = new Date().toISOString()
   const currentConfig = await getSitesPublicDomainConfig()
 
@@ -17923,14 +18127,17 @@ export async function createSitesPublicDomain(input = {}) {
   }
 
   const existing = await findPublicDomainByDomain(domain)
-  const verification = await verifyPublicDomainConnection(domain)
-  if (!verification.verified) {
+  const verification = await verifyPublicDomainPairConnection(domain, canonicalDomain)
+  if (!verification.anyVerified && !existing) {
     return {
       settings: await getSitesDomainSettings({ verification }),
       verification,
       candidate: {
         id: existing?.id || '',
         domain,
+        ...getPublicDomainPair(domain),
+        canonicalDomain,
+        domainPairVerified: false,
         renderDomainVerified: false,
         renderDomainCheckedAt: checkedAt,
         renderDomainError: verification.error || 'Dominio no conectado a esta app'
@@ -17944,6 +18151,7 @@ export async function createSitesPublicDomain(input = {}) {
   )
   const saved = await saveManagedPublicDomainVerification(existing, verification, {
     domain,
+    canonicalDomain,
     siteId: site?.id || '',
     pageId
   })
@@ -17966,8 +18174,13 @@ export async function refreshSitesPublicDomainById(domainIdValue) {
     throw error
   }
 
-  const verification = await verifyPublicDomainConnection(domainRecord.domain)
-  const saved = await saveManagedPublicDomainVerification(domainRecord, verification)
+  const verification = await verifyPublicDomainPairConnection(
+    domainRecord.domain,
+    domainRecord.canonicalDomain
+  )
+  const saved = await saveManagedPublicDomainVerification(domainRecord, verification, {
+    canonicalDomain: domainRecord.canonicalDomain
+  })
   const currentConfig = await getSitesPublicDomainConfig()
   if (matchesPublicDomain(currentConfig.domain, saved.domain)) {
     await syncLegacyPublicDomainConfigFromRecord(saved)
@@ -18286,6 +18499,96 @@ export async function verifyPublicDomainConnection(domainValue) {
   }
 }
 
+async function verifyExactPublicDomainConnection(domainValue, identity) {
+  const domain = normalizeDomain(domainValue)
+  if (!domain) {
+    return { domain: '', verified: false, error: 'Dominio inválido' }
+  }
+
+  const failures = []
+  for (const protocol of ['https', 'http']) {
+    const check = await checkDomainHealth(domain, protocol, identity)
+    if (check.ok) {
+      return {
+        domain,
+        verified: true,
+        error: null,
+        method: `${protocol}_installation_health`,
+        url: check.url,
+        identityField: check.identityField || null
+      }
+    }
+    failures.push(check)
+  }
+
+  const identityFailure = failures.find(failure => (
+    failure?.code === 'identity_mismatch' ||
+    failure?.code === 'missing_target_identity'
+  ))
+  if (identityFailure) {
+    return {
+      domain,
+      verified: false,
+      error: identityFailure.error,
+      details: {
+        code: identityFailure.code,
+        checks: failures.map(failure => failure?.error).filter(Boolean)
+      }
+    }
+  }
+
+  const dnsInfo = await readDomainDns(domain)
+  return {
+    domain,
+    verified: false,
+    error: describeDnsSignal(dnsInfo),
+    details: {
+      dns: dnsInfo,
+      checks: failures.map(failure => failure?.error).filter(Boolean)
+    }
+  }
+}
+
+export async function verifyPublicDomainPairConnection(domainValue, canonicalValue = '') {
+  const domain = normalizeDomain(domainValue)
+  if (!domain) {
+    return { verified: false, anyVerified: false, error: 'Dominio inválido' }
+  }
+
+  const identity = await getDomainVerificationIdentity()
+  if (!identity) {
+    return {
+      verified: false,
+      anyVerified: false,
+      error: 'Esta instalacion no tiene INSTALLATION_ID ni CLIENT_ID para validar dominios sin falsos positivos',
+      details: { code: 'missing_current_identity' }
+    }
+  }
+
+  const { apexDomain, wwwDomain } = getPublicDomainPair(domain)
+  const canonicalDomain = normalizeCanonicalPublicDomain(canonicalValue || domain, domain)
+  const [apex, www] = await Promise.all([
+    verifyExactPublicDomainConnection(apexDomain, identity),
+    verifyExactPublicDomainConnection(wwwDomain, identity)
+  ])
+  const verified = apex.verified && www.verified
+  const anyVerified = apex.verified || www.verified
+  const missing = [apex, www].filter(item => !item.verified).map(item => item.domain)
+
+  return {
+    verified,
+    anyVerified,
+    error: verified
+      ? null
+      : `Falta conectar ${missing.join(' y ')} a esta app`,
+    apexDomain,
+    wwwDomain,
+    canonicalDomain,
+    apex,
+    www
+  }
+}
+
 export async function verifyAppDomainConnection(domainValue) {
   const domain = normalizeDomain(domainValue)
   if (!domain) {
@@ -18428,11 +18731,14 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
   const managedDomain = await findPublicDomainByHost(host)
   if (managedDomain) {
     if (shouldRefreshDomainCheck(domainConfigFromPublicDomain(managedDomain), forceRefresh)) {
-      const verification = await verifyPublicDomainConnection(managedDomain.domain)
-      const nextRecord = await saveManagedPublicDomainVerification(managedDomain, verification)
-      managedDomain.renderDomainVerified = nextRecord.renderDomainVerified
-      managedDomain.renderDomainCheckedAt = nextRecord.renderDomainCheckedAt
-      managedDomain.renderDomainError = nextRecord.renderDomainError
+      const verification = await verifyPublicDomainPairConnection(
+        managedDomain.domain,
+        managedDomain.canonicalDomain
+      )
+      const nextRecord = await saveManagedPublicDomainVerification(managedDomain, verification, {
+        canonicalDomain: managedDomain.canonicalDomain
+      })
+      Object.assign(managedDomain, nextRecord)
 
       const currentConfig = await getSitesPublicDomainConfig()
       if (matchesPublicDomain(currentConfig.domain, managedDomain.domain)) {
@@ -18440,19 +18746,28 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
       }
     }
 
-    if (!managedDomain.renderDomainVerified) {
+    const hostVerification = publicDomainHostVerification(managedDomain, host)
+    if (!hostVerification.verified) {
       return {
         ok: false,
         status: 404,
         reason: 'domain_unverified',
-        message: managedDomain.renderDomainError || 'Dominio no conectado a esta app',
+        message: hostVerification.error || 'Dominio no conectado a esta app',
         domainConfig: domainConfigFromPublicDomain(managedDomain)
       }
     }
 
+    const canonicalDomain = normalizeCanonicalPublicDomain(
+      managedDomain.canonicalDomain,
+      managedDomain.domain
+    )
+    const canonicalVerification = publicDomainHostVerification(managedDomain, canonicalDomain)
+
     return {
       ok: true,
       domain: managedDomain.domain,
+      canonicalDomain,
+      shouldRedirectToCanonical: canonicalVerification.verified && host !== canonicalDomain,
       domainConfig: domainConfigFromPublicDomain(managedDomain),
       host
     }
@@ -18481,7 +18796,14 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
     }
   }
 
-  return { ok: true, domain: config.domain, domainConfig: config, host }
+  return {
+    ok: true,
+    domain: config.domain,
+    canonicalDomain: config.domain,
+    shouldRedirectToCanonical: host !== config.domain,
+    domainConfig: config,
+    host
+  }
 }
 
 export async function resolveConnectedAppDomainForHost(hostValue, { forceRefresh = false } = {}) {
@@ -18673,7 +18995,17 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
 
   site.blocks = await hydrateEmbeddedForms(await ensureSocialProfileBlock(site, await listSiteBlocks(site.id)))
   site.domain = domainResolution.domain || host
-  return { ok: true, site, pageId, pagePath, host, domain: domainResolution.domain || host, path }
+  return {
+    ok: true,
+    site,
+    pageId,
+    pagePath,
+    host,
+    domain: domainResolution.domain || host,
+    canonicalDomain: domainResolution.canonicalDomain || domainResolution.domain || host,
+    shouldRedirectToCanonical: Boolean(domainResolution.shouldRedirectToCanonical),
+    path
+  }
 }
 
 function normalizePublicPreviewContext(context = {}) {
