@@ -975,6 +975,27 @@ declarar la conversion en el `<form>` final o en el boton submit. Este ejemplo
 es para una cita externa autogestionada, no para un calendario custom conectado
 a Ristak:
 
+### Contrato de viewport móvil
+
+Cada documento HTML debe declarar un único viewport con
+`width=device-width, initial-scale=1` y construir una versión responsive real a
+390 px. En celular, la página completa queda limitada al ancho de la ventana y
+su navegación es vertical: `html`/`body` no pueden producir desplazamiento,
+rebote ni pérdida de centro hacia los lados. Las reglas compartidas de creación
+y edición exigen anchos fluidos, `min-width: 0`, `box-sizing: border-box`, medios
+con `max-width: 100%` y revisión de elementos absolutos, transforms, márgenes
+negativos y pseudo-elementos que puedan ampliar el documento.
+
+El renderer agrega además una protección `data-rstk-viewport-containment` en
+editor, preview y publicado. En viewports de hasta 640 px, esa protección
+limita `html`/`body` al viewport y combina `overflow-x: hidden` con
+`overflow-x: clip` cuando el navegador lo
+soporta y desactiva el overscroll horizontal. Es una red de seguridad para
+contenido existente o generado incorrectamente; no sustituye el responsive del
+HTML ni justifica dejar contenido cortado. Un carrusel o tabla que necesite
+desplazamiento lateral debe contenerlo dentro de su propio wrapper sin convertir
+todo el documento en un lienzo horizontal.
+
 ```html
 <form
   data-rstk-form-id="agenda"
