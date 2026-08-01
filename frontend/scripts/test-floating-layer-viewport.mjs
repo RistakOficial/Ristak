@@ -110,8 +110,18 @@ assert.match(
 )
 assert.match(
   anchoredPortalSource,
-  /panelRef\?\.current\?\.offsetWidth[\s\S]*align === 'end'[\s\S]*right: 'auto'[\s\S]*bottom: 'auto'/,
+  /panelRef\?\.current\?\.offsetWidth[\s\S]*align === 'end'[\s\S]*right: 'auto'/,
   'el portal anclado debe medir paneles variables, alinearlos y neutralizar coordenadas legacy'
+)
+assert.match(
+  anchoredPortalSource,
+  /top: openAbove \? 'auto'[\s\S]*bottom: openAbove[\s\S]*viewportHeight - rect\.top \+ gap/,
+  'los paneles que abren arriba deben anclar su borde inferior al disparador sin reservar altura vacía'
+)
+assert.doesNotMatch(
+  anchoredPortalSource,
+  /rect\.top - height - gap/,
+  'la altura máxima disponible no debe alejar un panel corto de su disparador'
 )
 
 const siteMenuBlocks = [...sitesStyles.matchAll(/\.pageMenu\s*\{([^}]*)\}/g)]

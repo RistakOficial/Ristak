@@ -190,7 +190,10 @@ lista flotante especializada. Ambos deben preferir el lado solicitado, cambiar
 arriba/abajo cuando no haya espacio, respetar el margen del viewport y limitar
 la altura disponible con scroll interno si no cabe completa. El CSS consumidor
 puede definir apariencia y ancho, pero no `position`, `top`, `right`, `bottom` ni
-`left` sobre `DropdownMenuContent`: la capa global es dueña de la posición.
+`left` sobre `DropdownMenuContent`: la capa global es dueña de la posición. Cuando
+`useAnchoredPortal` abre arriba, el borde inferior del panel queda anclado al
+borde superior del disparador; `maxHeight` limita el contenido, pero nunca se usa
+como una altura ficticia que separe un panel corto de su ancla.
 
 **Selector de código telefónico.** En cualquier formulario que separa la región
 del número, el control visible usa únicamente `bandera + código internacional`

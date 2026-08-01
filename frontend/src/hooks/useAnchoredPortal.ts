@@ -21,8 +21,9 @@ interface AnchoredPortalOptions {
  * renderizarlo en un portal en <body> y que SIEMPRE quede por delante — sin que
  * lo recorte ningún contenedor con overflow. Reutilizable en cualquier dropdown.
  *
- * Devuelve el `style` (position: fixed + top/left/width/zIndex) que debe recibir
- * el panel dentro del portal, y el `placement` resuelto ('top' | 'bottom').
+ * Devuelve el `style` (position: fixed + top/bottom/left/width/zIndex) que debe
+ * recibir el panel dentro del portal, y el `placement` resuelto
+ * ('top' | 'bottom').
  */
 export function useAnchoredPortal(
   anchorRef: RefObject<HTMLElement | null>,
@@ -74,12 +75,15 @@ export function useAnchoredPortal(
     setAvailableHeight(height)
     setStyle({
       position: 'fixed',
-      top: openAbove
-        ? Math.max(viewportPadding, rect.top - height - gap)
-        : Math.min(rect.bottom + gap, maxTop),
+      // Al abrir arriba, anclamos el borde inferior del panel al borde superior
+      // del disparador. Usar `top` con la altura maxima disponible separaba los
+      // paneles cortos de su ancla por todo el espacio que no ocupaban.
+      top: openAbove ? 'auto' : Math.min(rect.bottom + gap, maxTop),
       left: Math.min(Math.max(viewportPadding, preferredLeft), maxLeft),
       right: 'auto',
-      bottom: 'auto',
+      bottom: openAbove
+        ? Math.max(viewportPadding, viewportHeight - rect.top + gap)
+        : 'auto',
       width,
       maxHeight: height,
       zIndex: getFloatingLayerZIndex(anchor, 'popover')

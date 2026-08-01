@@ -205,6 +205,9 @@ posicionamiento dentro del viewport. `DropdownMenu` es el patrón para menús de
 acciones y `useAnchoredPortal` para selectores o resultados especializados. La
 capa intenta abrir en el lado solicitado, cambia arriba/abajo cuando falta
 espacio y limita su alto con scroll interno cuando ninguna dirección alcanza.
+Al abrir arriba, el borde inferior del panel se ancla al borde superior del
+disparador; la altura maxima disponible solo limita el contenido y no reserva
+espacio vacio entre ambos.
 Las páginas consumidoras pueden ajustar apariencia y ancho, pero no deben fijar
 coordenadas CSS que anulen el cálculo global. Esto incluye los menús de tres
 puntos y carpetas, la búsqueda global, los resultados de contactos, los
