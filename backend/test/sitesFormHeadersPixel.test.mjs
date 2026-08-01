@@ -5,6 +5,7 @@ import JSZip from 'jszip'
 
 import { db } from '../src/config/database.js'
 import { createVariableField } from '../src/services/variableFieldsService.js'
+import { requestHasNoTrack } from '../src/utils/noTracking.js'
 import {
   createImportedSiteFromHtml,
   deleteSite,
@@ -166,6 +167,47 @@ test('standard form public pages render global/page headers and page Meta Pixel 
       process.env.META_PIXEL_ID = previousPixelId
     }
   }
+})
+
+test('public notrack URLs omit global and page managed headers before delivery', async () => {
+  const site = makeStandardFormSite()
+  const noTrackUrls = [
+    '/form-headers-pixel?notrack',
+    '/form-headers-pixel?no_track=1'
+  ]
+
+  for (const originalUrl of noTrackUrls) {
+    const trackingEnabled = !requestHasNoTrack({
+      originalUrl,
+      url: originalUrl,
+      query: {},
+      headers: {}
+    })
+    const html = await renderPublicSiteHtml(site, {
+      pageId: 'page-1',
+      trackingEnabled,
+      preview: false
+    })
+
+    assert.equal(trackingEnabled, false)
+    assert.doesNotMatch(html, /__rstkGlobalHeader/)
+    assert.doesNotMatch(html, /__rstkFormHeader/)
+  }
+
+  const trackedUrl = '/form-headers-pixel?notrack=0'
+  const trackedHtml = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: !requestHasNoTrack({
+      originalUrl: trackedUrl,
+      url: trackedUrl,
+      query: {},
+      headers: {}
+    }),
+    preview: false
+  })
+
+  assert.match(trackedHtml, /__rstkGlobalHeader/)
+  assert.match(trackedHtml, /__rstkFormHeader/)
 })
 
 test('public Site render resolves variable fields in global/page headers and escapes headline values', async () => {

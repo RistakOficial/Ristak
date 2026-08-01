@@ -34006,7 +34006,7 @@ const HeaderToolbarModal: React.FC<{
                 onChange={(event) => onPatchTheme({ headerTrackingCode: event.target.value })}
                 onBlur={() => { void onSaveSite() }}
               />
-              <small>Se insertará antes de cerrar el &lt;/head&gt; en todas las páginas públicas.</small>
+              <small>Se insertará antes de cerrar el &lt;/head&gt; en las páginas públicas, excepto en preview o al abrir con notrack.</small>
             </label>
           </section>
 
@@ -34027,7 +34027,7 @@ const HeaderToolbarModal: React.FC<{
                 onChange={(event) => patchActivePage({ headerTrackingCode: event.target.value })}
                 onBlur={() => { void onSaveSite() }}
               />
-              <small>Se agregará después del código global y solo se cargará en esta página.</small>
+              <small>Se agregará después del código global solo en esta página; preview y notrack también lo omiten.</small>
             </label>
           </section>
         </div>

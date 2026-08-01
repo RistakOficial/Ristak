@@ -5447,6 +5447,9 @@ Tracking:
   exacto se inyecta antes de `</head>` únicamente al servir la URL pública. El
   HTML público se responde con `Cache-Control: no-store` para que un cambio del
   valor se refleje al refrescar sin republicar ni conservar código anterior.
+  Las URLs en modo sin tracking, incluidos `?notrack` y `?no_track=1`, omiten
+  completamente ambos códigos administrados antes de entregar el HTML, por lo
+  que scripts de terceros como Microsoft Clarity tampoco se ejecutan.
 - El incidente de CORS del 15 de julio de 2026, la frontera de seguridad, las
   reglas para Cloudflare/CDN y el procedimiento end-to-end viven en
   `docs/TRACKING_PIXEL.md`. Cualquier agente que optimice o audite esta tubería
