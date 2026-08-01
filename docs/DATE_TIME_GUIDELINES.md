@@ -176,6 +176,12 @@ Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
   instante contra la zona y las reglas actuales del calendario antes de guardar.
   Si el horario ya pasó o dejó de existir, la oferta se cierra y se consultan
   alternativas; no se recalcula otro instante a partir del texto histórico.
+- El horizonte `allowBookingFor` de calendarios, cuando usa la unidad `days`,
+  cuenta fechas habilitadas por `openHours` en la zona del negocio. Empieza en la
+  fecha actual si ese weekday está habilitado y omite por completo los weekdays
+  desactivados; por ejemplo, seis días con disponibilidad de lunes a viernes
+  terminan al cierre del lunes siguiente. Las unidades `weeks` y `months`
+  conservan su duración de calendario normal.
 - Stripe, Conekta, Rebill y Mercado Pago: las fechas internas del plan se calculan con la
   zona del negocio; los cargos reales se ejecutan como instantes UTC.
 - En planes Stripe, Conekta y Rebill, una fecha programada sin hora usa las 10:00

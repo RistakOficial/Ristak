@@ -3367,9 +3367,9 @@ export const CalendarsConfiguration: React.FC = () => {
                     value={selectedCalendar.allowBookingForUnit || 'days'}
                     onValueChange={(value) => updateSelectedCalendar({ allowBookingForUnit: value })}
                     options={[
-                      { value: 'days', label: 'Días' },
-                      { value: 'weeks', label: 'Semanas' },
-                      { value: 'months', label: 'Meses' }
+                      { value: 'days', label: 'Días futuros' },
+                      { value: 'weeks', label: 'Semanas futuras' },
+                      { value: 'months', label: 'Meses futuros' }
                     ]}
                   />
                 </div>

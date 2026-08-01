@@ -478,6 +478,73 @@ function addCalendarRuleDuration(dateTime, value, unit) {
   return dateTime.plus({ hours: amount })
 }
 
+function getCalendarAvailableWeekdays(calendar = {}) {
+  const openHours = normalizeOpenHours(calendar.openHours || calendar.open_hours)
+  const availabilityScheduleConfigured = (
+    calendar.availabilityScheduleConfigured === true
+    || Number(calendar.availability_schedule_configured) === 1
+    || openHours.length > 0
+  )
+
+  // Compatibilidad con calendarios legacy que todavía no declaran openHours.
+  if (!openHours.length) {
+    return availabilityScheduleConfigured ? new Set() : new Set([1, 2, 3, 4, 5])
+  }
+
+  const weekdays = new Set()
+  for (const schedule of openHours) {
+    if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule)) continue
+
+    const rawDays = Array.isArray(schedule.daysOfTheWeek)
+      ? schedule.daysOfTheWeek
+      : schedule.day !== undefined
+        ? [schedule.day]
+        : schedule.dayOfWeek !== undefined
+          ? [schedule.dayOfWeek]
+          : []
+    const days = rawDays.map(normalizeWeekDay).filter(day => day !== null)
+    if (!days.length) continue
+
+    const rawHours = Array.isArray(schedule.hours) && schedule.hours.length
+      ? schedule.hours
+      : [schedule]
+    const hasValidInterval = rawHours.some(interval => (
+      normalizeCalendarOpenInterval(interval, { allowFallback: false }) !== null
+    ))
+    if (!hasValidInterval) continue
+
+    days.forEach(day => weekdays.add(day))
+  }
+
+  return weekdays
+}
+
+function getCalendarAvailableDayHorizon(calendar, now, amount) {
+  const availableWeekdays = getCalendarAvailableWeekdays(calendar)
+  if (!availableWeekdays.size) return null
+
+  let remaining = Math.max(1, Math.trunc(Number(amount)))
+  let cursor = now.startOf('day')
+
+  // Saltar semanas completas evita recorrer miles de fechas si el valor guardado
+  // es grande. Cualquier bloque de siete días contiene cada weekday una vez.
+  const wholeWeeks = Math.floor((remaining - 1) / availableWeekdays.size)
+  if (wholeWeeks > 0) {
+    cursor = cursor.plus({ weeks: wholeWeeks })
+    remaining -= wholeWeeks * availableWeekdays.size
+  }
+
+  while (remaining > 0) {
+    if (availableWeekdays.has(cursor.weekday % 7)) {
+      remaining -= 1
+      if (remaining === 0) return cursor.endOf('day')
+    }
+    cursor = cursor.plus({ days: 1 })
+  }
+
+  return null
+}
+
 function getCalendarBookingWindow(calendar, zone, currentTimeMs = Date.now()) {
   const now = DateTime.fromMillis(Number(currentTimeMs), { zone })
   if (!now.isValid) return { nowMs: Date.now(), earliestStartMs: Date.now(), latestStartMs: null }
@@ -488,8 +555,12 @@ function getCalendarBookingWindow(calendar, zone, currentTimeMs = Date.now()) {
     calendar.allowBookingAfterUnit || 'hours'
   )
   const horizonAmount = Number(calendar.allowBookingFor)
+  const horizonUnit = cleanString(calendar.allowBookingForUnit || 'days').toLowerCase()
+  const usesAvailableDays = ['day', 'days', 'día', 'días', 'dia', 'dias'].includes(horizonUnit)
   const latest = Number.isFinite(horizonAmount) && horizonAmount > 0
-    ? addCalendarRuleDuration(now, horizonAmount, calendar.allowBookingForUnit || 'days')
+    ? usesAvailableDays
+      ? getCalendarAvailableDayHorizon(calendar, now, horizonAmount)
+      : addCalendarRuleDuration(now, horizonAmount, horizonUnit)
     : null
 
   return {

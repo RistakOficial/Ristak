@@ -3572,7 +3572,12 @@ Reglas base:
   debe volver a pintar el horario anterior ni convertir el listado en vacío.
 - El mismo horario semanal gobierna `free-slots`, URL pública, calendarios
   embebidos/Sites, agente conversacional y los modales web, Android e iOS cuando
-  usan el modo `Por defecto`. En el paso `Disponibilidad`, el switch
+  usan el modo `Por defecto`. En `Hasta cuándo se puede agendar`, las opciones se
+  muestran como `Días futuros`, `Semanas futuras` y `Meses futuros`. El límite en
+  días cuenta por defecto sólo las fechas habilitadas en el horario semanal,
+  empezando por la fecha actual del negocio si está habilitada: seis días con
+  lunes a viernes activos abarcan lunes a viernes y el lunes siguiente. Semanas y
+  meses mantienen su duración natural. En el paso `Disponibilidad`, el switch
   `Permitir empalme de citas` persiste `allow_overlaps`: apagado exige un espacio
   sin otra cita y encendido permite varias citas en la misma hora. Esa decisión
   gobierna por igual URL pública, Sites, pagos, selectores normales y agente

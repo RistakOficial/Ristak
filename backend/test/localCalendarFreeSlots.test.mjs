@@ -710,6 +710,69 @@ test('la lista y el candado final respetan anticipación mínima y horizonte má
   }
 })
 
+test('el horizonte en días cuenta solo fechas habilitadas en la disponibilidad semanal', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_available_day_horizon_${suffix}`
+  const timezone = 'America/Mexico_City'
+  const monday = DateTime.fromISO('2030-01-07T07:00:00', { zone: timezone })
+  const nextMonday = monday.plus({ days: 7 })
+  const nextTuesday = monday.plus({ days: 8 })
+
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      name: 'Agenda con seis días disponibles',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      allowBookingFor: 6,
+      allowBookingForUnit: 'days',
+      openHours: [{
+        daysOfTheWeek: [1, 2, 3, 4, 5],
+        hours: [{ openHour: 9, openMinute: 0, closeHour: 12, closeMinute: 0 }]
+      }]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const slots = await getLocalFreeSlots(
+      calendarId,
+      monday.toISODate(),
+      nextTuesday.toISODate(),
+      timezone,
+      { currentTimeMs: monday.toMillis(), allowDefaultOpenHours: false }
+    )
+    const datesWithSlots = slots.filter(day => day.slots.length > 0).map(day => day.date)
+
+    assert.deepEqual(datesWithSlots, [
+      monday.toISODate(),
+      monday.plus({ days: 1 }).toISODate(),
+      monday.plus({ days: 2 }).toISODate(),
+      monday.plus({ days: 3 }).toISODate(),
+      monday.plus({ days: 4 }).toISODate(),
+      nextMonday.toISODate()
+    ])
+
+    const lastAllowed = await checkSlotAvailability(
+      calendarId,
+      nextMonday.set({ hour: 9 }).toUTC().toISO(),
+      nextMonday.set({ hour: 10 }).toUTC().toISO(),
+      { timezone, currentTimeMs: monday.toMillis(), enforceCalendarRules: true }
+    )
+    assert.equal(lastAllowed.available, true)
+
+    const firstExcluded = await checkSlotAvailability(
+      calendarId,
+      nextTuesday.set({ hour: 9 }).toUTC().toISO(),
+      nextTuesday.set({ hour: 10 }).toUTC().toISO(),
+      { timezone, currentTimeMs: monday.toMillis(), enforceCalendarRules: true }
+    )
+    assert.equal(firstExcluded.available, false)
+    assert.equal(firstExcluded.reason, 'outside_booking_window')
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
 test('la lista y el candado final respetan máximo diario y buffers antes/después', async () => {
   const suffix = randomUUID()
   const calendarId = `rstk_cal_daily_buffers_${suffix}`
