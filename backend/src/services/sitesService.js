@@ -17960,6 +17960,25 @@ async function syncPublicSitesToCanonicalDomain(domainRecord, canonicalDomainVal
   `, [canonicalDomain, apexDomain, wwwDomain])
 }
 
+async function syncManagedPublicDomainProvisioning(domainValue, canonicalDomainValue) {
+  const { requestPortalSitesDomainSync } = await import('./licenseService.js')
+  return requestPortalSitesDomainSync({
+    domain: normalizeDomain(domainValue),
+    canonicalDomain: normalizeDomain(canonicalDomainValue)
+  })
+}
+
+function provisioningConfirmsCanonicalDomain(provisioning, canonicalDomainValue) {
+  const canonicalDomain = normalizeDomain(canonicalDomainValue)
+  if (!provisioning?.managed || normalizeDomain(provisioning.canonicalDomain) !== canonicalDomain) {
+    return false
+  }
+
+  return Array.isArray(provisioning.domains) && provisioning.domains.some(domain => (
+    normalizeDomain(domain?.name) === canonicalDomain && !normalizeDomain(domain?.redirectForName)
+  ))
+}
+
 async function saveManagedPublicDomainVerification(domainRecord, result, input = {}) {
   const requestedDomain = normalizeDomain(input.domain || domainRecord?.domain)
   const { apexDomain, wwwDomain } = getPublicDomainPair(requestedDomain)
@@ -18367,32 +18386,40 @@ export async function setSitesPublicDomainDefaultRoute(
     error.status = 400
     throw error
   }
-  const canonicalVerification = publicDomainHostVerification(domainRecord, requestedCanonicalDomain)
-  await db.run(`
-    UPDATE public_site_domains
-    SET default_route_site_id = ?,
-        default_route_page_id = ?,
-        canonical_domain = ?,
-        render_domain_verified = ?,
-        render_domain_error = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `, [
-    site?.id || null,
-    pageId || null,
-    requestedCanonicalDomain,
-    canonicalVerification.verified ? 1 : 0,
-    canonicalVerification.verified ? null : canonicalVerification.error || 'Dominio oficial no conectado a esta app',
-    domainRecord.id
-  ])
 
-  if (domainRecord.canonicalDomain !== requestedCanonicalDomain) {
-    await syncPublicSitesToCanonicalDomain(domainRecord, requestedCanonicalDomain)
+  const provisioning = await syncManagedPublicDomainProvisioning(
+    domainRecord.domain,
+    requestedCanonicalDomain
+  )
+  const verification = await verifyPublicDomainPairConnection(
+    domainRecord.domain,
+    requestedCanonicalDomain
+  )
+  const canonicalVerification = requestedCanonicalDomain === wwwDomain
+    ? verification.www
+    : verification.apex
+  if (
+    !canonicalVerification?.verified &&
+    !provisioningConfirmsCanonicalDomain(provisioning, requestedCanonicalDomain)
+  ) {
+    const error = new Error(
+      canonicalVerification?.error ||
+      'Render todavía no confirmó que el dominio oficial abre esta instalación sin redirigir en sentido contrario'
+    )
+    error.status = 409
+    error.code = canonicalVerification?.details?.code || 'sites_canonical_domain_not_ready'
+    throw error
   }
+
+  const updatedDomainRecord = await saveManagedPublicDomainVerification(domainRecord, verification, {
+    domain: domainRecord.domain,
+    canonicalDomain: requestedCanonicalDomain,
+    siteId: site?.id || '',
+    pageId
+  })
 
   const currentConfig = await getSitesPublicDomainConfig()
   if (matchesPublicDomain(currentConfig.domain, domainRecord.domain)) {
-    const updatedDomainRecord = await getPublicDomainById(domainRecord.id)
     await syncLegacyPublicDomainConfigFromRecord(updatedDomainRecord)
   }
 
@@ -18447,8 +18474,15 @@ export async function refreshSitesPublicDomain(input = {}) {
     input.canonicalDomain || input.canonical_domain || managedRecord?.canonicalDomain || domain,
     domain
   )
+  const provisioning = await syncManagedPublicDomainProvisioning(domain, canonicalDomain)
   const result = await verifyPublicDomainPairConnection(domain, canonicalDomain)
-  const shouldPersist = result.anyVerified || Boolean(managedRecord) || domain === current.domain || !hasDomainCandidate
+  const shouldPersist = (
+    result.anyVerified ||
+    provisioningConfirmsCanonicalDomain(provisioning, canonicalDomain) ||
+    Boolean(managedRecord) ||
+    domain === current.domain ||
+    !hasDomainCandidate
+  )
   let nextConfig
   if (shouldPersist) {
     const defaultRoute = await getConfiguredDefaultPublicRoute({ clearMissing: true, domainRecord: managedRecord })
@@ -18514,8 +18548,13 @@ export async function createSitesPublicDomain(input = {}) {
   }
 
   const existing = await findPublicDomainByDomain(domain)
+  const provisioning = await syncManagedPublicDomainProvisioning(domain, canonicalDomain)
   const verification = await verifyPublicDomainPairConnection(domain, canonicalDomain)
-  if (!verification.anyVerified && !existing) {
+  if (
+    !verification.anyVerified &&
+    !existing &&
+    !provisioningConfirmsCanonicalDomain(provisioning, canonicalDomain)
+  ) {
     return {
       settings: await getSitesDomainSettings({ verification }),
       verification,
@@ -18561,6 +18600,10 @@ export async function refreshSitesPublicDomainById(domainIdValue) {
     throw error
   }
 
+  await syncManagedPublicDomainProvisioning(
+    domainRecord.domain,
+    domainRecord.canonicalDomain
+  )
   const verification = await verifyPublicDomainPairConnection(
     domainRecord.domain,
     domainRecord.canonicalDomain
@@ -18791,9 +18834,22 @@ async function checkDomainHealth(domain, protocol, identity) {
         accept: 'application/json',
         'user-agent': 'RistakDomainVerifier/1.0'
       },
-      redirect: 'follow',
+      redirect: 'manual',
       signal: controller.signal
     })
+
+    const redirectLocation = response.headers?.get?.('location') || ''
+    if (response.status >= 300 && response.status < 400 && redirectLocation) {
+      return {
+        ok: false,
+        code: 'redirect',
+        url,
+        status: response.status,
+        location: redirectLocation,
+        error: `${url} redirige a ${redirectLocation}`
+      }
+    }
+
     const payload = await response.json().catch(() => null)
     const payloadVerification = verifyDomainHealthPayload(payload, identity)
 
@@ -18886,7 +18942,7 @@ export async function verifyPublicDomainConnection(domainValue) {
   }
 }
 
-async function verifyExactPublicDomainConnection(domainValue, identity) {
+async function verifyExactPublicDomainConnection(domainValue, identity, canonicalDomainValue = '') {
   const domain = normalizeDomain(domainValue)
   if (!domain) {
     return { domain: '', verified: false, error: 'Dominio inválido' }
@@ -18903,6 +18959,50 @@ async function verifyExactPublicDomainConnection(domainValue, identity) {
         method: `${protocol}_installation_health`,
         url: check.url,
         identityField: check.identityField || null
+      }
+    }
+
+    if (check.code === 'redirect') {
+      let target = null
+      try {
+        target = new URL(check.location, check.url)
+      } catch {
+        target = null
+      }
+
+      const targetDomain = normalizeDomain(target?.hostname)
+      const canonicalDomain = normalizeDomain(canonicalDomainValue)
+      if (canonicalDomain && domain !== canonicalDomain && targetDomain === canonicalDomain) {
+        const targetProtocol = target?.protocol === 'http:' ? 'http' : 'https'
+        const canonicalCheck = await checkDomainHealth(canonicalDomain, targetProtocol, identity)
+        if (canonicalCheck.ok) {
+          return {
+            domain,
+            verified: true,
+            error: null,
+            method: `${protocol}_redirect_to_canonical_installation_health`,
+            url: check.url,
+            redirectUrl: target.toString(),
+            redirectedToCanonical: true,
+            identityField: canonicalCheck.identityField || null
+          }
+        }
+        failures.push(canonicalCheck)
+        continue
+      }
+
+      if (canonicalDomain && domain === canonicalDomain && targetDomain && targetDomain !== canonicalDomain) {
+        return {
+          domain,
+          verified: false,
+          error: `${domain} redirige a ${targetDomain} antes de llegar a Ristak. Configura ${canonicalDomain} como dominio principal en Render para evitar un ciclo de redirecciones.`,
+          details: {
+            code: 'canonical_redirected_by_platform',
+            status: check.status,
+            redirectDomain: targetDomain,
+            redirectUrl: target.toString()
+          }
+        }
       }
     }
     failures.push(check)
@@ -18955,8 +19055,8 @@ export async function verifyPublicDomainPairConnection(domainValue, canonicalVal
   const { apexDomain, wwwDomain } = getPublicDomainPair(domain)
   const canonicalDomain = normalizeCanonicalPublicDomain(canonicalValue || domain, domain)
   const [apex, www] = await Promise.all([
-    verifyExactPublicDomainConnection(apexDomain, identity),
-    verifyExactPublicDomainConnection(wwwDomain, identity)
+    verifyExactPublicDomainConnection(apexDomain, identity, canonicalDomain),
+    verifyExactPublicDomainConnection(wwwDomain, identity, canonicalDomain)
   ])
   const verified = apex.verified && www.verified
   const anyVerified = apex.verified || www.verified
@@ -18974,6 +19074,40 @@ export async function verifyPublicDomainPairConnection(domainValue, canonicalVal
     apex,
     www
   }
+}
+
+export async function reconcileManagedPublicDomainProvisioning() {
+  const records = (await listPublicDomainRows()).map(mapPublicDomainRow).filter(Boolean)
+  const summary = { checked: 0, changed: 0, failed: 0 }
+
+  for (const record of records) {
+    summary.checked += 1
+    try {
+      const provisioning = await syncManagedPublicDomainProvisioning(
+        record.domain,
+        record.canonicalDomain
+      )
+      if (provisioning?.changed) summary.changed += 1
+
+      const verification = await verifyPublicDomainPairConnection(
+        record.domain,
+        record.canonicalDomain
+      )
+      const saved = await saveManagedPublicDomainVerification(record, verification, {
+        domain: record.domain,
+        canonicalDomain: record.canonicalDomain
+      })
+      const currentConfig = await getSitesPublicDomainConfig()
+      if (matchesPublicDomain(currentConfig.domain, saved.domain)) {
+        await syncLegacyPublicDomainConfigFromRecord(saved)
+      }
+    } catch (error) {
+      summary.failed += 1
+      logger.warn(`No se pudo reconciliar el dominio público ${record.domain}: ${error.message}`)
+    }
+  }
+
+  return summary
 }
 
 export async function verifyAppDomainConnection(domainValue) {
@@ -19117,7 +19251,18 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
 
   const managedDomain = await findPublicDomainByHost(host)
   if (managedDomain) {
-    if (shouldRefreshDomainCheck(domainConfigFromPublicDomain(managedDomain), forceRefresh)) {
+    const canonicalDomain = normalizeCanonicalPublicDomain(
+      managedDomain.canonicalDomain,
+      managedDomain.domain
+    )
+    // El host secundario sólo se redirige después de revalidar la dirección real
+    // en la plataforma. Así una preferencia cacheada nunca puede rebotar contra
+    // un 301 contrario de Render y formar un loop root <-> www.
+    const requiresCanonicalSafetyRefresh = host !== canonicalDomain
+    if (shouldRefreshDomainCheck(
+      domainConfigFromPublicDomain(managedDomain),
+      forceRefresh || requiresCanonicalSafetyRefresh
+    )) {
       const verification = await verifyPublicDomainPairConnection(
         managedDomain.domain,
         managedDomain.canonicalDomain
@@ -19144,17 +19289,17 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
       }
     }
 
-    const canonicalDomain = normalizeCanonicalPublicDomain(
+    const refreshedCanonicalDomain = normalizeCanonicalPublicDomain(
       managedDomain.canonicalDomain,
       managedDomain.domain
     )
-    const canonicalVerification = publicDomainHostVerification(managedDomain, canonicalDomain)
+    const canonicalVerification = publicDomainHostVerification(managedDomain, refreshedCanonicalDomain)
 
     return {
       ok: true,
       domain: managedDomain.domain,
-      canonicalDomain,
-      shouldRedirectToCanonical: canonicalVerification.verified && host !== canonicalDomain,
+      canonicalDomain: refreshedCanonicalDomain,
+      shouldRedirectToCanonical: canonicalVerification.verified && host !== refreshedCanonicalDomain,
       domainConfig: domainConfigFromPublicDomain(managedDomain),
       host
     }

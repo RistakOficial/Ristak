@@ -116,6 +116,24 @@ deben contar ambos hosts como dos superficies ni instalar otro pixel para
 para completar requests ya iniciados y no usan el redirect HTML como mecanismo
 de autenticación.
 
+La verificación de la pareja no sigue redirecciones a ciegas. El host oficial
+debe llegar directamente al health de esta instalación; el secundario sí puede
+recibir el redirect de plataforma hacia el oficial. Si Render manda el oficial
+de vuelta al secundario, Ristak lo marca pendiente y no emite su propio `308`,
+porque combinar ambos saltos produciría un ciclo raíz ↔ `www`. Antes de cada
+redirect desde un host secundario se repite esta comprobación aunque el estado
+esté en caché.
+
+En instalaciones administradas, guardar o revalidar el dominio llama al
+Installer con las credenciales normales de licencia. El Installer usa en memoria
+la Render API Key cifrada de esa instalación para registrar como principal el
+host canónico elegido; preserva otros subdominios, confirma el resultado y
+restaura la dirección anterior si Render rechaza el cambio. El backend también
+reconcilia las parejas existentes una vez al arrancar. La llave de Render nunca
+viaja al CRM ni se crea un secret nuevo. Una instalación standalone conserva la
+verificación estricta y requiere que la dirección root/`www` ya esté configurada
+correctamente en su proveedor.
+
 El renderer público inyecta el runtime nativo con
 `tracking_source = 'native_site'`, contexto del Site y de la página, cookies first-party
 `ristak_vid`/`ristak_sid`, UTMs, click IDs y datos del navegador. La vista genera

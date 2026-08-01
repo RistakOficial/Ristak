@@ -55,6 +55,17 @@ negocio en los tableros de Installer. Si una instalación ya tiene `LICENSE_KEY`
 `INSTALLATION_ID`, esas credenciales administradas conservan prioridad y no se crea otra
 identidad.
 
+Administrar la dirección canónica raíz/`www` de Sites sí es una operación de
+infraestructura y requiere una instalación comercial gestionada. El backend usa
+sus credenciales de licencia para llamar
+`POST {LICENSE_SERVER_URL}/api/license/sites-domain/sync`; Installer comprueba
+que cliente, licencia e instalación coincidan y que la feature `sites` esté
+activa. Sólo entonces descifra en memoria `installations.render_api_key_enc` y
+actualiza la pareja exacta en el web service asociado. La respuesta no incluye la
+API Key y cada resultado queda auditado en `installation_events` sin secretos.
+Standalone puede usar Sites y validar dominios, pero debe alinear manualmente la
+dirección en su proveedor de hosting.
+
 No hay un secret manual de enrolamiento ni una dependencia de arranque con Installer. Si el
 broker central está temporalmente caído, el CRM, sus datos locales y las integraciones ya
 materializadas continúan funcionando; una conexión OAuth nueva, una renovación que necesite al

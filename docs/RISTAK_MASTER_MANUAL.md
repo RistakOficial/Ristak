@@ -5610,6 +5610,18 @@ uno responde, la pareja queda guardada con el faltante visible, pero Ristak no
 declara falsamente que ambos estan conectados ni intenta redirigir hacia un host
 oficial que todavia no fue verificado. Los dominios anteriores a este contrato
 siguen sirviendo sin interrupcion y aparecen como pendientes de revalidar `www`.
+La verificacion no sigue redirects de plataforma como si fueran una respuesta
+directa: permite que el secundario apunte al oficial, pero rechaza que Render
+mande el oficial hacia el secundario. Antes de emitir un redirect desde el host
+secundario vuelve a comprobar esa direccion aunque exista cache, de modo que una
+configuracion externa cambiada no puede formar un loop raiz ↔ `www`.
+En instalaciones gestionadas, al agregar, guardar o revalidar una pareja Ristak
+llama `POST /api/license/sites-domain/sync` en Installer. Installer usa la Render
+API Key que ya conserva cifrada por instalacion, cambia exclusivamente esa pareja
+para que el host elegido sea el principal, preserva los demas custom domains y
+aplica rollback si Render rechaza el cambio. Al arrancar, el backend reconcilia
+una vez los dominios ya guardados para reparar instalaciones anteriores. El CRM
+nunca recibe la llave de Render y el flujo no agrega variables de entorno.
 El mismo modal permite elegir de forma opcional la pagina o formulario que
 abrira en la raiz de esa pareja. La base usa `public_site_domains` —incluidas las
 columnas `canonical_domain`, `apex_domain_verified`, `www_domain_verified` y sus

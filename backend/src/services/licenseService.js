@@ -609,6 +609,28 @@ export async function requestPortalUserRefresh({ autoRegister = true } = {}) {
   }
 }
 
+/**
+ * Pide al Installer que alinee en Render la dirección canónica de la pareja
+ * root/www. La credencial de Render permanece cifrada en el Installer: la app
+ * instalada sólo envía el dominio solicitado usando sus credenciales normales
+ * de licencia.
+ */
+export async function requestPortalSitesDomainSync({ domain, canonicalDomain } = {}) {
+  if (!isLicenseEnforced()) {
+    return { managed: false, skipped: true, reason: 'license_not_enforced' }
+  }
+
+  const data = await callLicenseServer('/api/license/sites-domain/sync', {
+    domain,
+    canonical_domain: canonicalDomain
+  }, {
+    timeoutMs: 45_000,
+    connectionMode: 'license'
+  })
+
+  return { managed: true, ...(data?.sync || {}) }
+}
+
 export function getHealthInfo() {
   const config = getConfig()
   return {

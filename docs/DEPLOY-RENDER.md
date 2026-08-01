@@ -74,6 +74,27 @@ ofrece botones que prometan un cambio que no puede ejecutar.
 Los jobs automáticos viven dentro del backend. No hay cron services separados en
 Render.
 
+### Dirección canónica root / www de Sites
+
+Render crea una pareja automática: si se agrega la raíz, `www` redirige a la
+raíz; si se agrega `www`, la raíz redirige a `www`. Esa decisión ocurre antes de
+que el request llegue a Express, por lo que no puede contradecir el
+`canonical_domain` guardado en Ristak.
+
+En una instalación administrada, Ristak solicita el cambio a
+`POST /api/license/sites-domain/sync`. Installer lista los custom domains del web
+service, modifica sólo la pareja exacta raíz/`www`, confirma cuál quedó sin
+`redirectForName` y conserva los demás subdominios. Si el alta falla después de
+retirar la pareja anterior, intenta restaurar el principal previo antes de
+responder error. La API Key permanece cifrada en Installer y sólo se descifra en
+memoria; no se copia a la app ni a un nuevo secret.
+
+El backend también valida `/health` con redirects manuales: el secundario puede
+redirigir al canónico, pero el canónico no puede redirigir hacia afuera. Esa
+compuerta impide ciclos incluso durante una desalineación o un fallo parcial de
+la sincronización. Standalone no tiene autoridad sobre la cuenta Render y debe
+configurar la pareja externamente con la misma dirección elegida en Ristak.
+
 Los crons de sistema arrancan con el backend. Los crons de integraciones se
 registran en `backend/src/jobs/integrationCronRegistry.js` y sólo se activan si
 la integración está conectada localmente. Esa regla está documentada en

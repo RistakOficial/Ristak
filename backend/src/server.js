@@ -769,6 +769,15 @@ async function startRuntimeServices() {
     'No se pudieron recuperar efectos pendientes de metas conversacionales'
   )
 
+  runStartupDrainTask(
+    'startup:sites-canonical-domain-reconciliation',
+    async () => {
+      const { reconcileManagedPublicDomainProvisioning } = await import('./services/sitesService.js')
+      return reconcileManagedPublicDomainProvisioning()
+    },
+    'No se pudo reconciliar el dominio oficial de Sites'
+  )
+
   // Iniciar cron jobs (desactivables en entornos de dev/prueba con RISTAK_DISABLE_CRONS=true
   // para no disparar mensajes/automatizaciones reales al levantar la app localmente).
   if (process.env.RISTAK_DISABLE_CRONS === 'true') {

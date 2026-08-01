@@ -12,7 +12,8 @@ import {
   resolveConnectedPublicDomainForHost,
   setSitesDomainHealthFetchForTests,
   setSitesPublicDomainDefaultRoute,
-  updateSite
+  updateSite,
+  verifyPublicDomainPairConnection
 } from '../src/services/sitesService.js'
 
 const DOMAIN_KEYS = {
@@ -35,7 +36,20 @@ await databaseReady
 await runVersionedMigrations()
 
 function jsonResponse(payload, { status = 200, ok = status >= 200 && status < 300 } = {}) {
-  return { ok, status, json: async () => payload }
+  return { ok, status, headers: { get: () => null }, json: async () => payload }
+}
+
+function redirectResponse(location, status = 301) {
+  return {
+    ok: false,
+    status,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === 'location' ? location : null
+      }
+    },
+    json: async () => null
+  }
 }
 
 function snapshotManagedEnv() {
@@ -177,6 +191,103 @@ test('a reachable root is kept while www remains visibly pending', async () => {
     const wwwResolution = await resolveConnectedPublicDomainForHost(wwwDomain)
     assert.equal(wwwResolution.ok, false)
     assert.equal(wwwResolution.reason, 'domain_unverified')
+  } finally {
+    setSitesDomainHealthFetchForTests(null)
+    restoreManagedEnv(previousEnv)
+    await db.run('DELETE FROM public_site_domains WHERE domain = ?', [apexDomain]).catch(() => undefined)
+    await restoreDomainConfig(previousConfig)
+  }
+})
+
+test('accepts the platform redirect only when it points from the secondary host to the canonical host', async () => {
+  const previousEnv = snapshotManagedEnv()
+  const suffix = Date.now() + 10
+  const apexDomain = `platform-ok-${suffix}.example.test`
+  const wwwDomain = `www.${apexDomain}`
+
+  try {
+    configureManagedIdentity()
+    setSitesDomainHealthFetchForTests(async (url) => {
+      const parsed = new URL(url)
+      if (parsed.hostname === apexDomain) {
+        return redirectResponse(`https://${wwwDomain}${parsed.pathname}`, 301)
+      }
+      return currentInstallationHealth()
+    })
+
+    const verification = await verifyPublicDomainPairConnection(apexDomain, wwwDomain)
+    assert.equal(verification.verified, true)
+    assert.equal(verification.apex.verified, true)
+    assert.equal(verification.apex.redirectedToCanonical, true)
+    assert.equal(verification.www.verified, true)
+  } finally {
+    setSitesDomainHealthFetchForTests(null)
+    restoreManagedEnv(previousEnv)
+  }
+})
+
+test('rejects a canonical host redirected away by the platform and never builds a loop', async () => {
+  const previousConfig = await snapshotDomainConfig()
+  const previousEnv = snapshotManagedEnv()
+  const suffix = Date.now() + 11
+  const apexDomain = `platform-loop-${suffix}.example.test`
+  const wwwDomain = `www.${apexDomain}`
+
+  try {
+    configureManagedIdentity()
+    setSitesDomainHealthFetchForTests(async (url) => {
+      const parsed = new URL(url)
+      if (parsed.hostname === wwwDomain) {
+        return redirectResponse(`https://${apexDomain}${parsed.pathname}`, 301)
+      }
+      return currentInstallationHealth()
+    })
+
+    const created = await createSitesPublicDomain({
+      domain: apexDomain,
+      canonicalDomain: wwwDomain
+    })
+    const domain = created.settings.publicDomains.find(item => item.apexDomain === apexDomain)
+    assert.ok(domain)
+    assert.equal(domain.apexDomainVerified, true)
+    assert.equal(domain.wwwDomainVerified, false)
+    assert.match(domain.wwwDomainError, /redirige a .* antes de llegar a Ristak/)
+
+    const apexResolution = await resolveConnectedPublicDomainForHost(apexDomain)
+    assert.equal(apexResolution.ok, true)
+    assert.equal(apexResolution.shouldRedirectToCanonical, false)
+  } finally {
+    setSitesDomainHealthFetchForTests(null)
+    restoreManagedEnv(previousEnv)
+    await db.run('DELETE FROM public_site_domains WHERE domain = ?', [apexDomain]).catch(() => undefined)
+    await restoreDomainConfig(previousConfig)
+  }
+})
+
+test('rechecks a cached secondary host before redirecting and suppresses a newly introduced loop', async () => {
+  const previousConfig = await snapshotDomainConfig()
+  const previousEnv = snapshotManagedEnv()
+  const suffix = Date.now() + 12
+  const apexDomain = `platform-stale-${suffix}.example.test`
+  const wwwDomain = `www.${apexDomain}`
+
+  try {
+    configureManagedIdentity()
+    setSitesDomainHealthFetchForTests(async () => currentInstallationHealth())
+    await createSitesPublicDomain({ domain: apexDomain, canonicalDomain: wwwDomain })
+
+    setSitesDomainHealthFetchForTests(async (url) => {
+      const parsed = new URL(url)
+      if (parsed.hostname === wwwDomain) {
+        return redirectResponse(`https://${apexDomain}${parsed.pathname}`, 301)
+      }
+      return currentInstallationHealth()
+    })
+
+    const resolution = await resolveConnectedPublicDomainForHost(apexDomain)
+    assert.equal(resolution.ok, true)
+    assert.equal(resolution.shouldRedirectToCanonical, false)
+    assert.equal(resolution.domainConfig.wwwDomainVerified, false)
   } finally {
     setSitesDomainHealthFetchForTests(null)
     restoreManagedEnv(previousEnv)
