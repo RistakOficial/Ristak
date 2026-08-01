@@ -1,4 +1,4 @@
-import { getAppConfig, setAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { normalizeDomain, verifyPublicDomainConnection } from './sitesService.js'
 
 export const TRACKING_DOMAIN_CONFIG_KEYS = Object.freeze({
@@ -7,6 +7,8 @@ export const TRACKING_DOMAIN_CONFIG_KEYS = Object.freeze({
   checkedAt: 'tracking_domain_checked_at',
   error: 'tracking_domain_error'
 })
+
+export const TRACKING_GHL_SYNC_STATE_CONFIG_KEY = 'tracking_ghl_sync_state'
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -87,5 +89,29 @@ export async function verifyAndSaveTrackingDomain(domainValue) {
     ...next,
     candidate,
     verification
+  }
+}
+
+/**
+ * Desconecta por completo el dominio del pixel en esta instalación. Se borran
+ * las filas (no se dejan valores vacíos) y también la evidencia local de la
+ * última sincronización con HighLevel. Los eventos históricos permanecen.
+ */
+export async function disconnectTrackingDomain() {
+  const current = await getTrackingDomainConfig()
+  const keys = [
+    ...Object.values(TRACKING_DOMAIN_CONFIG_KEYS),
+    TRACKING_GHL_SYNC_STATE_CONFIG_KEY
+  ]
+  const placeholders = keys.map(() => '?').join(', ')
+
+  await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, keys)
+
+  return {
+    disconnectedDomain: current.trackingDomain || null,
+    trackingDomain: null,
+    trackingDomainVerified: false,
+    trackingDomainCheckedAt: null,
+    trackingDomainError: null
   }
 }

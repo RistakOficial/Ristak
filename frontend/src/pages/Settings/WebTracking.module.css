@@ -106,7 +106,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  min-width: 0;
+  margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
 }
@@ -119,6 +120,19 @@
   color: var(--text);
   font-size: 12px;
   font-weight: 550;
+}
+
+.activeDomainRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.activeDomainRow .domainRow code {
+  overflow-wrap: anywhere;
 }
 
 .titleRow {
@@ -191,6 +205,15 @@
   }
 
   .domainFieldRow > button {
+    width: 100%;
+  }
+
+  .activeDomainRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .activeDomainRow > button {
     width: 100%;
   }
 }

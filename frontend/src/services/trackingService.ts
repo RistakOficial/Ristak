@@ -140,6 +140,16 @@ export interface TrackingDomainVerificationResponse extends TrackingDomainCandid
   verification: TrackingDomainVerification
 }
 
+export interface TrackingDomainDisconnectResponse {
+  success: boolean
+  message: string
+  disconnectedDomain: string | null
+  trackingDomain: null
+  trackingDomainVerified: false
+  trackingDomainCheckedAt: null
+  trackingDomainError: null
+}
+
 /**
  * Respuesta de sesiones con paginación
  */
@@ -421,6 +431,15 @@ async function verifyTrackingDomain(domain: string): Promise<TrackingDomainVerif
 }
 
 /**
+ * Elimina de Ristak el dominio guardado y su estado local de sincronización.
+ */
+async function disconnectTrackingDomain(): Promise<TrackingDomainDisconnectResponse> {
+  const response = await apiClient.delete<TrackingDomainDisconnectResponse>('/api/tracking/domain')
+  trackingConfigCache = null
+  return response
+}
+
+/**
  * Configura automáticamente el tracking en HighLevel
  */
 async function configureTracking(): Promise<{ success: boolean; message: string; snippet?: string; instructions?: string; error?: string }> {
@@ -458,5 +477,6 @@ export const trackingService = {
   deleteSessions,
   getTrackingConfig,
   verifyTrackingDomain,
+  disconnectTrackingDomain,
   configureTracking
 }

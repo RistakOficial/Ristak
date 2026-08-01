@@ -40,6 +40,19 @@ Si el sitio o funnel vive en HighLevel, puedes sincronizar el snippet como custo
 
 HighLevel no es requisito para que el pixel funcione; sólo es una forma cómoda de instalarlo en sitios de esa plataforma.
 
+## Desconectar Un Dominio
+
+En **Configuración -> Rastreo Web**, el dominio guardado muestra el botón
+**Desconectar**. La confirmación exige escribir `DESCONECTAR`; al aceptarla,
+Ristak borra la URL, su verificación y el estado local de sincronización con
+HighLevel. Las visitas y analíticas históricas permanecen disponibles.
+
+La desconexión dentro de Ristak no administra recursos externos. Para apagar por
+completo una instalación anterior, retira también el snippet de las páginas que
+lo usan, el CNAME en tu proveedor DNS, el Custom Domain de Render y, si aplica,
+el custom value `rstktrack` de HighLevel. Volver a usar el dominio requiere
+validarlo otra vez.
+
 ## Opción Manual
 
 Inserta antes de `</body>` o en el bloque global de tracking del sitio:
