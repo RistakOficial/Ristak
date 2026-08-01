@@ -31,7 +31,9 @@ import {
   resolvePublicServiceBaseUrl
 } from '../utils/publicUrl.js'
 import {
+  disconnectTrackingDomain,
   getTrackingDomainConfig,
+  TRACKING_GHL_SYNC_STATE_CONFIG_KEY,
   verifyAndSaveTrackingDomain
 } from '../services/trackingDomainService.js'
 import {
@@ -85,7 +87,6 @@ function trackingRequestDeadlineError() {
   return error
 }
 const TRACKING_SNIPPET_VERSION = '13' // Incrementar cuando cambies el código del snippet
-const TRACKING_GHL_SYNC_STATE_CONFIG_KEY = 'tracking_ghl_sync_state'
 const SUCCESS_PAYMENT_STATUS_SQL = SUCCESS_PAYMENT_STATUSES
   .map(status => `'${String(status).replace(/'/g, "''")}'`)
   .join(', ')
@@ -2101,6 +2102,24 @@ export async function verifyTrackingDomainHandler(req, res) {
   } catch (error) {
     logger.error('Error verificando dominio de tracking:', error)
     res.status(500).json({ error: 'No se pudo verificar el dominio de tracking' })
+  }
+}
+
+/**
+ * Elimina de la base la configuración local del dominio del pixel.
+ * DELETE /api/tracking/domain
+ */
+export async function disconnectTrackingDomainHandler(req, res) {
+  try {
+    const result = await disconnectTrackingDomain()
+    res.json({
+      success: true,
+      message: 'Dominio de rastreo desconectado',
+      ...result
+    })
+  } catch (error) {
+    logger.error('Error desconectando dominio de tracking:', error)
+    res.status(500).json({ error: 'No se pudo desconectar el dominio de rastreo' })
   }
 }
 

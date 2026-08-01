@@ -16,6 +16,7 @@ import {
   deleteSessionsHandler,
   getTrackingConfig,
   verifyTrackingDomainHandler,
+  disconnectTrackingDomainHandler,
   configureTracking,
   setAnalyticsPreference,
   setVisitorSourcePreference,
@@ -79,6 +80,7 @@ router.delete('/sessions', requireWebAnalyticsFeature, deleteSessionsHandler)
 // Configuración automática
 router.get('/config', requireWebAnalyticsFeature, getTrackingConfig)
 router.post('/domain/verify', requireWebAnalyticsFeature, verifyTrackingDomainHandler)
+router.delete('/domain', requireWebAnalyticsFeature, disconnectTrackingDomainHandler)
 router.post('/configure', requireWebAnalyticsFeature, configureTracking)
 
 // Preferencia de Analytics

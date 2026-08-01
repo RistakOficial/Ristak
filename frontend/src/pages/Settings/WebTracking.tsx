@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Activity, CheckCircle2, Copy, Loader2, RefreshCw } from 'lucide-react'
+import { Activity, CheckCircle2, Copy, Loader2, RefreshCw, Unplug } from 'lucide-react'
 import { Badge, Button, Card } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
@@ -8,7 +8,7 @@ import styles from './HighLevelIntegration.module.css'
 import trackStyles from './WebTracking.module.css'
 
 export const WebTracking: React.FC = () => {
-  const { showToast } = useNotification()
+  const { showConfirm, showToast } = useNotification()
   const [showAnalytics, setShowAnalytics] = useAppConfig('show_analytics', false)
   const [visitorSource, setVisitorSource] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
 
@@ -19,6 +19,7 @@ export const WebTracking: React.FC = () => {
   const [serviceDomain, setServiceDomain] = useState('')
   const [loadingConfig, setLoadingConfig] = useState(true)
   const [verifyingDomain, setVerifyingDomain] = useState(false)
+  const [disconnectingDomain, setDisconnectingDomain] = useState(false)
   const [configuringTracking, setConfiguringTracking] = useState(false)
   const [isConfigured, setIsConfigured] = useState(false)
   const [hasHighLevel, setHasHighLevel] = useState(false)
@@ -121,6 +122,37 @@ export const WebTracking: React.FC = () => {
     }
   }
 
+  const handleDisconnectDomain = async () => {
+    setDisconnectingDomain(true)
+    try {
+      await trackingService.disconnectTrackingDomain()
+      setDomainInput('')
+      setTrackingDomain('')
+      setTrackingDomainVerified(false)
+      setTrackingDomainError('')
+      setTrackingSnippet('')
+      setIsConfigured(false)
+      showToast('success', 'Dominio desconectado', 'La URL ya no está guardada en Ristak')
+    } catch {
+      showToast('error', 'No se pudo desconectar', 'La URL sigue guardada. Intenta de nuevo.')
+      return false
+    } finally {
+      setDisconnectingDomain(false)
+    }
+  }
+
+  const confirmDisconnectDomain = () => {
+    showConfirm(
+      'Desconectar dominio de rastreo',
+      `Ristak eliminará ${trackingDomain} de su configuración y dejará de generar su código del pixel. Tus visitas históricas se conservan; el CNAME, el dominio en Render y cualquier código ya instalado se retiran por separado. Esta acción no se puede deshacer; para volver a usarlo tendrás que validarlo otra vez.`,
+      handleDisconnectDomain,
+      'Desconectar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'DESCONECTAR' }
+    )
+  }
+
   const handleCopyTrackingSnippet = async () => {
     if (!trackingSnippet) return
 
@@ -133,6 +165,7 @@ export const WebTracking: React.FC = () => {
   }
 
   const hasVerifiedTrackingDomain = Boolean(trackingDomainVerified && trackingDomain)
+  const hasStoredTrackingDomain = Boolean(trackingDomain)
   const cnameTargetLabel = serviceDomain.trim() || window.location.hostname || 'el dominio .onrender.com de esta instalación'
   const isRevalidatingCurrentDomain = hasVerifiedTrackingDomain && domainInput.trim().toLowerCase() === trackingDomain
 
@@ -213,10 +246,22 @@ export const WebTracking: React.FC = () => {
             {trackingDomainError && (
               <p className={trackStyles.domainError}>{trackingDomainError}</p>
             )}
-            {hasVerifiedTrackingDomain && (
-              <p className={trackStyles.domainRow}>
-                Dominio activo: <code>{trackingDomain}</code>
-              </p>
+            {hasStoredTrackingDomain && (
+              <div className={trackStyles.activeDomainRow}>
+                <p className={trackStyles.domainRow}>
+                  {hasVerifiedTrackingDomain ? 'Dominio activo:' : 'Dominio guardado:'} <code>{trackingDomain}</code>
+                </p>
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  onClick={confirmDisconnectDomain}
+                  loading={disconnectingDomain}
+                >
+                  <Unplug size={16} />
+                  Desconectar
+                </Button>
+              </div>
             )}
           </form>
 

@@ -962,6 +962,7 @@ Body:
 
 - `GET /api/tracking/config`
 - `POST /api/tracking/domain/verify`
+- `DELETE /api/tracking/domain`
 - `POST /api/tracking/configure`
 - `POST /api/tracking/analytics-preference`
 - `POST /api/tracking/visitor-source-preference`
@@ -994,6 +995,13 @@ exclusivamente el dominio verificado. El estado `isConfigured` sólo es verdader
 si el custom value apunta al dominio activo, no por encontrar cualquier script
 viejo. Si hay Meta Pixel y la preferencia `include_meta_pixel` está activa, el
 snippet también incluye Meta Pixel.
+
+`DELETE /api/tracking/domain` desconecta el dominio de esta instalación y borra
+de `app_config` las cuatro filas `tracking_domain*` junto con
+`tracking_ghl_sync_state`; no deja la URL como string vacío ni conserva una
+sincronización local obsoleta. Las filas históricas de `sessions` no se eliminan.
+Tampoco modifica DNS, Custom Domains de Render ni copias del snippet ya instaladas
+en páginas externas: esos recursos se retiran en sus respectivos proveedores.
 
 ## Flujo Del Pixel
 

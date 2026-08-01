@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { getAppConfig, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { setSitesDomainHealthFetchForTests } from '../src/services/sitesService.js'
 import {
+  disconnectTrackingDomain,
   getTrackingDomainConfig,
+  TRACKING_GHL_SYNC_STATE_CONFIG_KEY,
   TRACKING_DOMAIN_CONFIG_KEYS,
   verifyAndSaveTrackingDomain
 } from '../src/services/trackingDomainService.js'
@@ -156,5 +158,50 @@ test('a failed revalidation disables the current tracking domain', async () => {
     setSitesDomainHealthFetchForTests(null)
     restoreManagedEnv(previousEnv)
     await restoreTrackingDomainConfig(previousConfig)
+  }
+})
+
+test('disconnecting tracking removes the domain rows and local HighLevel sync state', async () => {
+  const keys = [
+    ...Object.values(TRACKING_DOMAIN_CONFIG_KEYS),
+    TRACKING_GHL_SYNC_STATE_CONFIG_KEY
+  ]
+  const placeholders = keys.map(() => '?').join(', ')
+  const previousRows = await db.all(
+    `SELECT config_key, config_value FROM app_config WHERE config_key IN (${placeholders})`,
+    keys
+  )
+
+  try {
+    await setStoredTrackingDomain({ domain: 'track.current.test' })
+    await setAppConfig(TRACKING_GHL_SYNC_STATE_CONFIG_KEY, JSON.stringify({
+      domain: 'track.current.test',
+      locationId: 'loc_test',
+      snippetHash: 'hash_test'
+    }))
+
+    const result = await disconnectTrackingDomain()
+    const remainingRows = await db.all(
+      `SELECT config_key FROM app_config WHERE config_key IN (${placeholders})`,
+      keys
+    )
+
+    assert.deepEqual(result, {
+      disconnectedDomain: 'track.current.test',
+      trackingDomain: null,
+      trackingDomainVerified: false,
+      trackingDomainCheckedAt: null,
+      trackingDomainError: null
+    })
+    assert.deepEqual(remainingRows, [])
+    assert.deepEqual(await getTrackingDomainConfig(), {
+      trackingDomain: '',
+      trackingDomainVerified: false,
+      trackingDomainCheckedAt: null,
+      trackingDomainError: null
+    })
+  } finally {
+    await db.run(`DELETE FROM app_config WHERE config_key IN (${placeholders})`, keys)
+    await Promise.all(previousRows.map(row => setAppConfig(row.config_key, row.config_value)))
   }
 })
