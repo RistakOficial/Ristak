@@ -4616,6 +4616,24 @@ tres horas. La confirmacion inmediata de una reserva, cuando el usuario la
 configura, debe usar `after_booking` y la plantilla `cita_programada`, que muestra
 la fecha y hora reales de la cita.
 
+El contenido canonico de `cita_programada` replica la presentacion nativa de
+WhatsApp. El `HEADER` es `🗓️ Cita programada para el {{1}}`, ligado a
+`cita.fecha_hora`; por ser encabezado, WhatsApp lo muestra en negritas. El
+`BODY` empieza con `🔔 *Importante:*`, resalta `*NO*` y `*respondas*`, pide
+atender los recordatorios y termina con `¡Gracias!`. `Este es un mensaje
+AUTOMÁTICO` vive en el componente `FOOTER`, no dentro del cuerpo. Los avisos que
+siguen seleccionando esta plantilla predeterminada reciben esa definicion; una
+plantilla distinta elegida por el negocio no se reemplaza. Para texto directo,
+Ristak migra solamente el copy legacy exacto del aviso al agendar y conserva
+cualquier texto que el negocio ya haya personalizado.
+
+La revision 2 de esta plantilla se sincroniza una sola vez con cada proveedor
+WhatsApp activo. El numero de revision confirmado se guarda por proveedor en
+`app_config`; asi, una inicializacion local previa no pierde la actualizacion
+pendiente y los siguientes arranques no vuelven a enviarla innecesariamente a
+revision. Si el proveedor ya tiene la plantilla bajo revision, Ristak espera a
+que termine ese bloqueo y conserva la revision como pendiente.
+
 Una cuenta nueva recibe exactamente dos filas iniciales, ambas pausadas. `Aviso
 al agendar` usa `after_booking`, offset cero, horario inteligente apagado y la
 plantilla `cita_programada`, por lo que queda listo para salir exactamente cuando

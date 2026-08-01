@@ -40,7 +40,10 @@ import { runVersionedMigrations } from './startup/runMigrations.js'
 import { repairPendingPaymentFlows } from './services/paymentFlowService.js'
 import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageService.js'
 import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
-import { ensureDefaultWhatsAppApiMessageTemplates } from './services/messageTemplatesService.js'
+import {
+  ensureDefaultWhatsAppApiMessageTemplates,
+  repairDefaultAppointmentMessageTemplatesForCurrentConnection
+} from './services/messageTemplatesService.js'
 import { ensureDefaultLocalCalendar } from './services/localCalendarService.js'
 import { ensureCalendarBookingSystemFormOnce } from './services/sitesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
@@ -747,8 +750,11 @@ async function startRuntimeServices() {
 
   runStartupDrainTask(
     'startup:message-template-initialization',
-    ensureDefaultWhatsAppApiMessageTemplates,
-    'No se pudieron inicializar localmente las plantillas default de WhatsApp'
+    async () => {
+      await ensureDefaultWhatsAppApiMessageTemplates()
+      return repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+    },
+    'No se pudieron inicializar o actualizar las plantillas default de WhatsApp'
   )
 
   runStartupDrainTask(

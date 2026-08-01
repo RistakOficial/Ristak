@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { db, getAppConfig } from '../config/database.js'
+import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import {
   createWhatsAppApiTemplate,
   deleteWhatsAppApiTemplate,
@@ -22,6 +22,11 @@ import { listContactCustomFieldDefinitions } from './contactCustomFieldDefinitio
 import { getAccountTimezone } from '../utils/dateUtils.js'
 import { logger } from '../utils/logger.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import {
+  DEFAULT_APPOINTMENT_NOTICE_BODY_TEXT,
+  DEFAULT_APPOINTMENT_NOTICE_FOOTER_TEXT,
+  DEFAULT_APPOINTMENT_NOTICE_HEADER_TEXT
+} from './appointmentMessageDefaults.js'
 
 const TEMPLATE_CATEGORIES = new Set(['utility', 'marketing', 'authentication', 'service'])
 const TEMPLATE_STATUSES = new Set(['draft', 'active', 'archived'])
@@ -41,6 +46,7 @@ const INACTIVE_APPOINTMENT_STATUSES = [
   'invalid',
   'deleted'
 ]
+const DEFAULT_TEMPLATE_PROVIDER_REVISION_PREFIX = 'whatsapp_default_template_provider_revision'
 
 const BASE_CONTACT_VARIABLES = [
   ['Full Name', 'contact.name', 'Jane Smith'],
@@ -127,19 +133,19 @@ const DEFAULT_PAYMENT_TEMPLATE_NAME_LIST = [
 const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
   {
     name: 'cita_programada',
+    providerRevision: 2,
     description: 'Plantilla automática de Ristak para avisar cuando una cita queda agendada.',
     category: 'utility',
     language: DEFAULT_APPOINTMENT_TEMPLATE_LANGUAGE,
     status: 'active',
     headerEnabled: true,
     headerType: 'text',
-    headerText: 'Cita programada para {{1}}',
-    bodyText: 'Hola {{1}}.\n\nTu cita quedó agendada correctamente para la fecha y hora indicadas. Te esperamos. Si necesitas hacer algún cambio, avísanos con anticipación.\n\n¡Gracias!',
-    footerText: '',
+    headerText: DEFAULT_APPOINTMENT_NOTICE_HEADER_TEXT,
+    bodyText: DEFAULT_APPOINTMENT_NOTICE_BODY_TEXT,
+    footerText: DEFAULT_APPOINTMENT_NOTICE_FOOTER_TEXT,
     buttons: [],
     variableExamples: {
-      '{{cita.fecha_hora}}': 'viernes, 19 de junio de 2026 9:00',
-      '{{contact.first_name}}': 'María'
+      '{{cita.fecha_hora}}': 'viernes, 19 de junio de 2026 9:00'
     },
     variableBindings: {
       headerText: {
@@ -150,14 +156,7 @@ const DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES = [
           example: 'viernes, 19 de junio de 2026 9:00'
         }
       },
-      bodyText: {
-        1: {
-          variableKey: 'contact.first_name',
-          mergeField: '{{contact.first_name}}',
-          label: 'Primer nombre',
-          example: 'María'
-        }
-      }
+      bodyText: {}
     }
   },
   {
@@ -1772,6 +1771,28 @@ function getDefaultAppointmentDefinition(name) {
   return DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES.find((definition) => definition.name === cleanName) || null
 }
 
+function getDefaultTemplateProviderRevisionKey(definition = {}, provider = '') {
+  const revision = Number(definition.providerRevision || 0)
+  const name = cleanString(definition.name)
+  const language = normalizeLanguage(definition.language)
+  const cleanProvider = normalizeWhatsAppProvider(provider, WHATSAPP_PROVIDER_YCLOUD)
+  if (!revision || !name || !language) return null
+  return `${DEFAULT_TEMPLATE_PROVIDER_REVISION_PREFIX}_${cleanProvider}_${name}_${language}`
+}
+
+async function getDefaultTemplateProviderRevision(definition, provider) {
+  const key = getDefaultTemplateProviderRevisionKey(definition, provider)
+  if (!key) return { key: null, desired: 0, stored: 0 }
+
+  const desired = Number(definition.providerRevision || 0)
+  const stored = Number(await getAppConfig(key) || 0)
+  return {
+    key,
+    desired,
+    stored: Number.isFinite(stored) ? stored : 0
+  }
+}
+
 function buildDefaultAppointmentRetryName(baseName, retryNumber) {
   return normalizeTemplateName(`${baseName}_r${retryNumber}`)
 }
@@ -1993,13 +2014,22 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
   for (let index = 0; index < templates.length; index += 1) {
     let template = templates[index]
     const ensured = ensuredTemplates[index]
+    const definition = DEFAULT_APPOINTMENT_MESSAGE_TEMPLATES[index]
+    const providerRevision = submitToActiveProvider
+      ? await getDefaultTemplateProviderRevision(definition, provider)
+      : { key: null, desired: 0, stored: 0 }
+    const providerRevisionPending = providerRevision.desired > providerRevision.stored
     let providerState = getMessageTemplateProviderState(template, provider)
     let submitted = false
     let retried = false
     let retryAlerted = false
     let error = null
 
-    if (submitToActiveProvider && ensured.refreshed && !isTemplateLockedForEditing(providerState.status)) {
+    if (
+      submitToActiveProvider &&
+      (ensured.refreshed || providerRevisionPending) &&
+      !isTemplateLockedForEditing(providerState.status)
+    ) {
       try {
         const result = await submitMessageTemplateToActiveProvider(template.id)
         template = result.template
@@ -2067,12 +2097,18 @@ export async function ensureDefaultAppointmentMessageTemplates({ submitToActiveP
       }
     }
 
+    if (submitted && providerRevision.key && providerRevisionPending) {
+      await setAppConfig(providerRevision.key, String(providerRevision.desired))
+    }
+
     results.push({
       id: template.id,
       name: template.name,
       language: template.language,
       provider,
       providerStatus: providerState.status,
+      providerRevision: providerRevision.desired || null,
+      providerRevisionPending: providerRevisionPending && !submitted,
       reviewRetryCount: provider === WHATSAPP_PROVIDER_YCLOUD ? template.ycloudReviewRetryCount || 0 : 0,
       refreshed: ensured.refreshed,
       refreshSkippedLocked: ensured.refreshSkippedLocked,

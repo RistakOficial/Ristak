@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { db } from '../src/config/database.js'
 import {
   createAppointmentReminder,
+  DEFAULT_APPOINTMENT_NOTICE_TEXT,
   ensureDefaultAppointmentReminder,
   updateAppointmentReminder
 } from '../src/services/appointmentRemindersService.js'
@@ -15,7 +16,7 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
 
   const seededRows = await db.all(`
     SELECT id, name, system_key, enabled, message_type, ai_enabled, timing_anchor,
-      offset_value, offset_unit, template_name, smart_enabled,
+      offset_value, offset_unit, template_name, message_text, smart_enabled,
       confirmation_success_action
     FROM appointment_reminders
     WHERE system_key IN ('default_on_booking', 'default_one_day_before')
@@ -32,6 +33,7 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
   assert.equal(bookingNotice.offset_value, 0)
   assert.equal(bookingNotice.offset_unit, 'minutes')
   assert.equal(bookingNotice.template_name, 'cita_programada')
+  assert.equal(bookingNotice.message_text, DEFAULT_APPOINTMENT_NOTICE_TEXT)
   assert.equal(bookingNotice.smart_enabled, 0)
 
   const confirmation = seededRows.find(row => row.system_key === 'default_one_day_before')
@@ -51,6 +53,46 @@ test('el arranque concurrente crea una sola vez los dos mensajes predeterminados
 
   const total = await db.get('SELECT COUNT(*) AS total FROM appointment_reminders')
   assert.equal(Number(total.total), 2)
+})
+
+test('actualiza solo el texto directo legacy del aviso al agendar', async () => {
+  const legacyText =
+    'Hola {{contact.first_name}}, tu cita quedó agendada para el {{cita.fecha}} a las {{cita.hora}}. Te esperamos.\n\nEsto es un mensaje automático'
+  const customText = 'Texto personalizado por el negocio para {{contact.first_name}}.'
+
+  await db.run("DELETE FROM app_config WHERE config_key = 'appointment_reminders_seeded'")
+  await db.run('DELETE FROM appointment_reminders')
+  await ensureDefaultAppointmentReminder()
+
+  await db.run(`
+    UPDATE appointment_reminders
+    SET message_text = ?
+    WHERE system_key = 'default_on_booking'
+  `, [legacyText])
+
+  const customReminder = await createAppointmentReminder({
+    name: 'Aviso directo personalizado',
+    contentMode: 'direct',
+    timingAnchor: 'after_booking',
+    offsetValue: 5,
+    offsetUnit: 'minutes',
+    messageText: customText
+  })
+
+  await ensureDefaultAppointmentReminder()
+
+  const bookingNotice = await db.get(`
+    SELECT message_text
+    FROM appointment_reminders
+    WHERE system_key = 'default_on_booking'
+  `)
+  const custom = await db.get(
+    'SELECT message_text FROM appointment_reminders WHERE id = ?',
+    [customReminder.id]
+  )
+
+  assert.equal(bookingNotice.message_text, DEFAULT_APPOINTMENT_NOTICE_TEXT)
+  assert.equal(custom.message_text, customText)
 })
 
 test('una cuenta con mensajes existentes no recibe el paquete de una cuenta nueva', async () => {

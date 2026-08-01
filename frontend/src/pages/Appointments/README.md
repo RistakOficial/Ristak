@@ -253,6 +253,12 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
   `system_key` única para que dos arranques simultáneos no la dupliquen. Las
   cuentas existentes no reciben este paquete y nada se envía hasta que el
   usuario active cada mensaje.
+- `cita_programada` usa el encabezado "🗓️ Cita programada para el {{1}}", el
+  aviso `🔔 *Importante:*` con `*NO*` y `*respondas*` resaltados,
+  y `Este es un mensaje AUTOMÁTICO` como `FOOTER` real de WhatsApp. Una regla que
+  selecciona otra plantilla o tiene texto directo personalizado conserva ese
+  contenido. Ristak registra por proveedor la revisión ya enviada para actualizar
+  instalaciones existentes una sola vez, sin repetir la solicitud en cada arranque.
 - Si una cita se agenda después de la hora calculada para un recordatorio
   `before_appointment`, ese recordatorio se omite: no se aprovecha la tolerancia
   de reintento para mandarlo como si fuera la confirmación de la reserva. Un aviso

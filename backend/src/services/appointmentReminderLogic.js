@@ -1,11 +1,11 @@
 import { DateTime } from 'luxon'
+import { DEFAULT_APPOINTMENT_NOTICE_TEXT } from './appointmentMessageDefaults.js'
 
 // Lógica pura de los mensajes automáticos de citas (sin base de datos) para
 // poder probarla de forma aislada: cálculo de horario inteligente, render de
 // variables y detección de respuestas afirmativas.
 
-export const DEFAULT_APPOINTMENT_NOTICE_TEXT =
-  'Hola {{contact.first_name}}, tu cita quedó agendada para el {{cita.fecha}} a las {{cita.hora}}. Te esperamos.\n\nEsto es un mensaje automático'
+export { DEFAULT_APPOINTMENT_NOTICE_TEXT }
 
 export const DEFAULT_REMINDER_TEXT =
   'Hola {{contact.first_name}}, te recordamos que tienes una cita el {{cita.fecha}} a las {{cita.hora}}. Recuerda estar al pendiente. 😄\n\nEsto es un mensaje automático'

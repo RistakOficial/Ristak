@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { db, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   buildDefaultMessageTemplateSendComponents,
@@ -28,7 +28,13 @@ const DEFAULT_TEMPLATE_NAMES = [
   'confirmacion_cita_dia_anterior'
 ]
 const DEFAULT_FOLDER_ID = 'Reminders'
-const SCHEDULED_APPOINTMENT_BODY = 'Hola {{1}}.\n\nTu cita quedó agendada correctamente para la fecha y hora indicadas. Te esperamos. Si necesitas hacer algún cambio, avísanos con anticipación.\n\n¡Gracias!'
+const SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS = [
+  'whatsapp_default_template_provider_revision_ycloud_cita_programada_es_MX',
+  'whatsapp_default_template_provider_revision_meta_direct_cita_programada_es_MX'
+]
+const SCHEDULED_APPOINTMENT_HEADER = '🗓️ Cita programada para el {{1}}'
+const SCHEDULED_APPOINTMENT_BODY = '🔔 *Importante:* Te llegarán varios recordatorios para *NO* olvidar que tienes una cita programada.\n\nTe pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n¡Gracias!'
+const SCHEDULED_APPOINTMENT_FOOTER = 'Este es un mensaje AUTOMÁTICO'
 const ONE_DAY_REMINDER_BODY = '*Recordatorio de cita* ⏰\nHola {{1}}, te recordamos que tienes una cita el {{2}} a las {{3}}. Recuerda estar al pendiente. 😄'
 const APPOINTMENT_CONFIRMATION_BODY = 'Hola {{1}}, queremos confirmar tu asistencia a la cita del {{2}} a las {{3}}. ¿Nos confirmas, por favor?'
 const DEFAULT_PAYMENT_TEMPLATE_NAMES = [
@@ -105,6 +111,10 @@ async function deleteDefaultTemplates() {
       ${retryLikeClauses ? `OR ${retryLikeClauses}` : ''}
   `, [...DEFAULT_TEMPLATE_NAMES, ...retryLikeParams])
   await db.run('DELETE FROM whatsapp_template_folders WHERE id = ?', [DEFAULT_FOLDER_ID])
+  await db.run(
+    `DELETE FROM app_config WHERE config_key IN (${SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS.map(() => '?').join(', ')})`,
+    SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS
+  )
 }
 
 async function deleteDefaultPaymentTemplates() {
@@ -224,10 +234,11 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
       assert.ok(scheduledTemplate)
       assert.equal(scheduledTemplate.components[0].type, 'HEADER')
-      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
+      assert.equal(scheduledTemplate.components[0].text, SCHEDULED_APPOINTMENT_HEADER)
       assert.equal(scheduledTemplate.components[0].example.header_text[0], 'viernes, 19 de junio de 2026 9:00')
       assert.equal(scheduledTemplate.components[1].text, SCHEDULED_APPOINTMENT_BODY)
-      assert.deepEqual(scheduledTemplate.components.map((component) => component.type), ['HEADER', 'BODY'])
+      assert.equal(scheduledTemplate.components[2].text, SCHEDULED_APPOINTMENT_FOOTER)
+      assert.deepEqual(scheduledTemplate.components.map((component) => component.type), ['HEADER', 'BODY', 'FOOTER'])
 
       const reminderTemplate = captures.find((capture) => capture.name === 'recordatorio_cita_un_dia_antes')
       assert.equal(reminderTemplate.components[0].text, ONE_DAY_REMINDER_BODY)
@@ -247,6 +258,9 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       assert.equal(localTemplate.variableBindings.bodyText['1'].variableKey, 'contact.first_name')
       assert.equal(localTemplate.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localTemplate.variableBindings.bodyText['3'].variableKey, 'cita.hora')
+      const localScheduled = bundle.templates.find((template) => template.name === 'cita_programada')
+      assert.equal(localScheduled.footerText, SCHEDULED_APPOINTMENT_FOOTER)
+      assert.deepEqual(localScheduled.variableBindings.bodyText, {})
       const localConfirmation = bundle.templates.find((template) => template.name === 'confirmacion_cita_dia_anterior')
       assert.equal(localConfirmation.variableBindings.bodyText['2'].variableKey, 'cita.fecha')
       assert.equal(localConfirmation.variableBindings.bodyText['3'].variableKey, 'cita.hora')
@@ -265,6 +279,77 @@ test('crea plantillas default de citas y las manda a revisión una sola vez', as
       const secondRun = await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: true })
       assert.equal(secondRun.submitted, 0)
       assert.equal(captures.length, 3)
+    } finally {
+      setYCloudFetchForTest(null)
+      await deleteDefaultTemplates()
+    }
+  })
+})
+
+test('una inicialización local no pierde la actualización pendiente del proveedor', async () => {
+  await initializeMasterKey()
+  const keys = getWhatsAppApiConfigKeys()
+  const captures = []
+
+  await snapshotAppConfig([keys.enabled, keys.apiKey, keys.wabaId], async () => {
+    await deleteDefaultTemplates()
+    await setAppConfig(keys.enabled, '1')
+    await setAppConfig(keys.apiKey, encrypt('ycloud_default_revision_secret'))
+    await setAppConfig(keys.wabaId, 'waba_default_revision_test')
+
+    setYCloudFetchForTest(async (url, options = {}) => {
+      const parsed = new URL(String(url))
+      const path = parsed.pathname.replace(/^\/v2/, '')
+      const method = String(options.method || 'GET').toUpperCase()
+
+      if (path === '/whatsapp/templates' && method === 'POST') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push(body)
+        return ycloudJsonResponse({
+          id: `official_${body.name}`,
+          wabaId: body.wabaId,
+          name: body.name,
+          language: body.language,
+          category: body.category,
+          status: 'APPROVED',
+          components: body.components
+        })
+      }
+
+      if (path.startsWith('/whatsapp/templates/') && method === 'PATCH') {
+        const body = JSON.parse(options.body || '{}')
+        captures.push({ path, body })
+        return ycloudJsonResponse({
+          id: 'official_cita_programada',
+          wabaId: 'waba_default_revision_test',
+          name: body.name,
+          language: body.language,
+          category: body.category,
+          status: 'PENDING',
+          components: body.components
+        })
+      }
+
+      return ycloudJsonResponse({ ok: true })
+    })
+
+    try {
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: true })
+      captures.length = 0
+      await db.run('DELETE FROM app_config WHERE config_key = ?', [SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0]])
+
+      await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+      const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
+
+      assert.equal(result.submitted, 1)
+      assert.equal(captures.length, 1)
+      assert.match(captures[0].path, /\/cita_programada\/es_MX$/)
+      assert.equal(captures[0].body.components[0].text, SCHEDULED_APPOINTMENT_HEADER)
+      assert.equal(captures[0].body.components[1].text, SCHEDULED_APPOINTMENT_BODY)
+      assert.equal(captures[0].body.components[2].text, SCHEDULED_APPOINTMENT_FOOTER)
+
+      const revision = await getAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0])
+      assert.equal(revision, '2')
     } finally {
       setYCloudFetchForTest(null)
       await deleteDefaultTemplates()
@@ -791,7 +876,9 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
       `)
       await db.run(`
         UPDATE whatsapp_message_templates
-        SET header_text = '🗓️ Cita programada para {{1}}'
+        SET header_text = 'Cita programada para {{1}}',
+            body_text = 'Hola {{1}}, tu cita quedó agendada.',
+            footer_text = ''
         WHERE name = 'cita_programada'
       `)
       await db.run(`
@@ -808,8 +895,9 @@ test('repara defaults existentes sin enviar y manda solo los pendientes', async 
       )
 
       const scheduledTemplate = captures.find((capture) => capture.name === 'cita_programada')
-      assert.equal(scheduledTemplate.components[0].text, 'Cita programada para {{1}}')
+      assert.equal(scheduledTemplate.components[0].text, SCHEDULED_APPOINTMENT_HEADER)
       assert.equal(scheduledTemplate.components[1].text, SCHEDULED_APPOINTMENT_BODY)
+      assert.equal(scheduledTemplate.components[2].text, SCHEDULED_APPOINTMENT_FOOTER)
       const confirmationTemplate = captures.find((capture) => capture.name === 'confirmacion_cita_dia_anterior')
       assert.equal(confirmationTemplate.components[0].text, APPOINTMENT_CONFIRMATION_BODY)
 
@@ -889,6 +977,7 @@ test('recrea una plantilla default atorada en revisión después de seis horas',
         JSON.stringify({ wabaId, name: targetName, language: 'es_MX' }),
         targetName
       ])
+      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '2')
 
       const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       const targetResult = result.templates.find((template) => template.name === targetName)
@@ -989,6 +1078,7 @@ test('reintenta una plantilla default rechazada con nombre técnico nuevo sin du
         JSON.stringify({ wabaId, name: targetName, language: 'es_MX', status: 'REJECTED' }),
         targetName
       ])
+      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '2')
 
       const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       const targetResult = result.templates.find((template) => template.name === targetName)
@@ -1072,6 +1162,7 @@ test('crea alerta y no reintenta cuando la plantilla default ya agotó dos reint
         JSON.stringify({ wabaId, name: targetName, language: 'es_MX' }),
         targetName
       ])
+      await setAppConfig(SCHEDULED_APPOINTMENT_PROVIDER_REVISION_KEYS[0], '2')
 
       const result = await repairDefaultAppointmentMessageTemplatesForCurrentConnection()
       const targetResult = result.templates.find((template) => template.name === targetName)

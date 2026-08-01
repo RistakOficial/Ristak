@@ -4,6 +4,7 @@ import { DateTime } from 'luxon'
 import {
   computeConfirmationDeadline,
   computeReminderSendAt,
+  DEFAULT_APPOINTMENT_NOTICE_TEXT,
   renderMessageText,
   parseStoredUtcDateTime,
   isAffirmativeReply,
@@ -189,6 +190,26 @@ test('renderMessageText sustituye variables de contacto y cita en la zona horari
   // El locale usa espacios no separables en "p. m."; normalizamos para comparar.
   const normalized = text.replace(/\s+/gu, ' ')
   assert.equal(normalized, 'Hola Ana, tu cita "Valoración" es el lunes 15 de junio a las 12:00 p. m. (lunes, 15 de junio de 2026 12:00).')
+})
+
+test('el aviso directo al agendar conserva el copy y formato canónicos', () => {
+  const text = renderMessageText(DEFAULT_APPOINTMENT_NOTICE_TEXT, {
+    contact: { first_name: 'Ana' },
+    appointment: {
+      title: 'Consulta',
+      start_time: '2026-07-31T19:00:00.000Z'
+    },
+    timezone: DST_TZ
+  })
+
+  assert.equal(
+    text,
+    '*🗓️ Cita programada para el viernes, 31 de julio de 2026 13:00*\n\n' +
+      '🔔 *Importante:* Te llegarán varios recordatorios para *NO* olvidar que tienes una cita programada.\n\n' +
+      'Te pedimos de la manera más atenta que *respondas* los mensajes cuando se te solicite, para mantener una comunicación clara y evitar cualquier confusión con las citas.\n\n' +
+      '¡Gracias!\n\n' +
+      'Este es un mensaje AUTOMÁTICO'
+  )
 })
 
 test('timestamps Date de PostgreSQL conservan el instante UTC en recordatorios', () => {

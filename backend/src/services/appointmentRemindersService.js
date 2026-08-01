@@ -48,6 +48,7 @@ import {
   normalizeConfirmationSuccessActions,
   serializeConfirmationSuccessActions
 } from './appointmentConfirmationActions.js'
+import { LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT } from './appointmentMessageDefaults.js'
 
 export {
   DEFAULT_APPOINTMENT_NOTICE_TEXT,
@@ -637,6 +638,13 @@ async function resolveReminderTemplateSelection(data = {}) {
 
 async function backfillMissingReminderTemplates() {
   await ensureDefaultAppointmentMessageTemplates({ submitToActiveProvider: false })
+  await db.run(`
+    UPDATE appointment_reminders
+    SET message_text = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE COALESCE(timing_anchor, 'before_appointment') = 'after_booking'
+      AND TRIM(COALESCE(message_text, '')) = ?
+  `, [DEFAULT_APPOINTMENT_NOTICE_TEXT, LEGACY_DEFAULT_APPOINTMENT_NOTICE_TEXT])
+
   const rows = await db.all(`
     SELECT id, message_type, timing_anchor, template_id, template_name, template_language
     FROM appointment_reminders
