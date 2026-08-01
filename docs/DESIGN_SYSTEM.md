@@ -153,6 +153,7 @@ legacy identificada; no es permiso para copiar ese estilo en pantallas nuevas.
 | Ruta / slug con prefijo fijo | `<PathInput prefix="…">` | un wrapper con prefijo + `<input className={styles.input}>` que crea doble contenedor |
 | Menú | `<DropdownMenu>`; se portalea, evita colisiones y cambia arriba/abajo según el espacio real | posicionar `DropdownMenuContent` con `top`/`right`/`bottom`/`left` desde CSS local |
 | Modal / overlay | `<Modal>` (recipe `[data-overlay]`/`[data-modal]`) | un `position:fixed` a mano |
+| Programar mensaje de chat | `<ChatScheduleModal>`; recibe la zona de la cuenta y usa `<DatePicker>` | copiar el modal de programación dentro de cada chat o usar fechas del navegador |
 | Confirmar borrar/desconectar/revocar | `showConfirm(...)` del `NotificationContext` (o `<Modal type="confirm" typeToConfirm="…">`) — ver §4.1 | `window.confirm`, un modal de confirmación a mano, copiar el JSX de otro borrado |
 | Card / KPI | `<Card>` / `<KpiCard>` (llevan `data-ristak-card`) | — |
 | Tabla | `<Table>` (o la receta §6) | una `<table>` desde cero |

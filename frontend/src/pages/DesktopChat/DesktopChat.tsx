@@ -44,12 +44,12 @@ import {
   AppointmentModal,
   Button,
   ChatMessageSurface,
+  ChatScheduleModal,
   ContactAvatar,
   ContentFocusModal,
   ContactCustomFieldsPanel,
   CustomSelect,
   ContactPhoneSelector,
-  DatePicker,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -83,10 +83,7 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import {
   formatInTimezone,
-  getStoredBusinessTimezone,
-  localDateTimeInputToUTCISOString,
-  toDateTimeLocalInputValue,
-  todayDateOnlyInTimezone
+  getStoredBusinessTimezone
 } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
@@ -181,7 +178,6 @@ type InfoPanelView = 'summary' | 'journey'
 type BulkChatConfirmAction = 'archive' | 'remove'
 type BulkAgentSelectionAction = Extract<ConversationStateAction, 'activate' | 'pause' | 'take_over' | 'skip'>
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta' | 'facebook_comment' | 'instagram_comment'
-type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
 type CommentComposerChannel = 'facebook_comment' | 'instagram_comment'
 type ComposerChannel = 'whatsapp' | 'sms' | 'messenger' | 'instagram' | 'email' | CommentComposerChannel
@@ -399,13 +395,6 @@ interface MediaDeliveryPromptState {
   kind: 'video' | 'audio'
   name: string
   size: number
-}
-
-interface ScheduleDraft {
-  date: string
-  hour: string
-  minute: string
-  period: SchedulePeriod
 }
 
 interface VoiceDraftAttachment {
@@ -1934,65 +1923,6 @@ function formatMessageDate(value?: string | null) {
   return formatChatDayLabel(value)
 }
 
-function padTwoDigits(value: number) {
-  return String(value).padStart(2, '0')
-}
-
-function formatDateInputValue(date: Date) {
-  return `${date.getFullYear()}-${padTwoDigits(date.getMonth() + 1)}-${padTwoDigits(date.getDate())}`
-}
-
-function createDefaultScheduleDraft(timezone?: string): ScheduleDraft {
-  const date = timezone
-    ? new Date(toDateTimeLocalInputValue(new Date(Date.now() + 15 * 60 * 1000), timezone))
-    : new Date(Date.now() + 15 * 60 * 1000)
-  const minutes = date.getMinutes()
-  date.setMinutes(minutes + ((5 - (minutes % 5)) % 5), 0, 0)
-
-  const hour24 = date.getHours()
-  const hour12 = hour24 % 12 || 12
-  return {
-    date: formatDateInputValue(date),
-    hour: String(hour12),
-    minute: padTwoDigits(date.getMinutes()),
-    period: hour24 >= 12 ? 'PM' : 'AM'
-  }
-}
-
-function createScheduleDraftFromDate(value?: string | null, timezone?: string): ScheduleDraft {
-  const date = value
-    ? new Date(timezone ? toDateTimeLocalInputValue(value, timezone) : value)
-    : null
-  if (!date || Number.isNaN(date.getTime())) return createDefaultScheduleDraft(timezone)
-
-  const hour24 = date.getHours()
-  const hour12 = hour24 % 12 || 12
-  return {
-    date: formatDateInputValue(date),
-    hour: String(hour12),
-    minute: padTwoDigits(date.getMinutes()),
-    period: hour24 >= 12 ? 'PM' : 'AM'
-  }
-}
-
-function getScheduleDateFromDraft(draft: ScheduleDraft, timezone?: string) {
-  const [year, month, day] = draft.date.split('-').map(Number)
-  const hour = Number(draft.hour)
-  const minute = Number(draft.minute)
-
-  if (!year || !month || !day || !Number.isFinite(hour) || !Number.isFinite(minute)) return null
-  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null
-
-  const hour24 = draft.period === 'PM'
-    ? (hour === 12 ? 12 : hour + 12)
-    : (hour === 12 ? 0 : hour)
-  const localInput = `${draft.date}T${padTwoDigits(hour24)}:${padTwoDigits(minute)}`
-  const date = timezone
-    ? new Date(localDateTimeInputToUTCISOString(localInput, timezone) || '')
-    : new Date(year, month - 1, day, hour24, minute, 0, 0)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
 function formatScheduledMessageLabel(value?: string | null) {
   if (!value) return 'Programado'
   const date = new Date(value)
@@ -2002,17 +1932,6 @@ function formatScheduledMessageLabel(value?: string | null) {
   if (isChatTimestampToday(value)) return `Programado ${time}`
 
   return `Programado ${formatMessageDate(value)} ${time}`.trim()
-}
-
-function formatSchedulePreviewLabel(value?: string | null) {
-  if (!value) return 'Elige fecha y hora'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'Elige fecha y hora'
-
-  const time = formatMessageTime(value)
-  if (isChatTimestampToday(value)) return `Se enviará a las ${time}`
-
-  return `Se enviará el ${formatMessageDate(value)} a las ${time}`.trim()
 }
 
 function getConversationDayKey(value?: string | null, timeZone?: string) {
@@ -3435,7 +3354,7 @@ export const DesktopChat: React.FC = () => {
   const [newTemplateCategory, setNewTemplateCategory] = useState<MessageTemplateCategory>('utility')
   const [newTemplateLanguage, setNewTemplateLanguage] = useState('es_MX')
   const [scheduleOpen, setScheduleOpen] = useState(false)
-  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft(timezone))
+  const [scheduleInitialAt, setScheduleInitialAt] = useState<string | null>(null)
   const [scheduleEditingMessageId, setScheduleEditingMessageId] = useState<string | null>(null)
   const [scheduleError, setScheduleError] = useState('')
   const [schedulingMessage, setSchedulingMessage] = useState(false)
@@ -6350,6 +6269,7 @@ export const DesktopChat: React.FC = () => {
   const closeScheduleModal = useCallback(() => {
     if (schedulingMessage) return
     setScheduleOpen(false)
+    setScheduleInitialAt(null)
     setScheduleEditingMessageId(null)
     setScheduleError('')
   }, [schedulingMessage])
@@ -6375,18 +6295,13 @@ export const DesktopChat: React.FC = () => {
       return
     }
 
-    setScheduleDraft(createDefaultScheduleDraft(timezone))
+    setScheduleInitialAt(null)
     setScheduleError('')
     setScheduleEditingMessageId(null)
     setScheduleOpen(true)
 	  }, [activeContact, closeComposerAgentMenu, closeTemplatePanel, composerChannel, composerText, draftAttachments.length, showToast, voiceDraft])
 
-  const handleScheduleDraftChange = useCallback((patch: Partial<ScheduleDraft>) => {
-    setScheduleDraft((current) => ({ ...current, ...patch }))
-    setScheduleError('')
-  }, [])
-
-  const handleScheduleMessage = useCallback(async () => {
+  const handleScheduleMessage = useCallback(async (scheduledAt: string) => {
     if (!activeContact || schedulingMessage) return
 
     const text = composerText.trim()
@@ -6397,17 +6312,6 @@ export const DesktopChat: React.FC = () => {
 
     if (draftAttachments.length > 0 || voiceDraft) {
       setScheduleError('Por ahora sólo se pueden programar mensajes escritos.')
-      return
-    }
-
-    const scheduledDate = getScheduleDateFromDraft(scheduleDraft, timezone)
-    if (!scheduledDate) {
-      setScheduleError('Revisa la fecha y la hora.')
-      return
-    }
-
-    if (scheduledDate.getTime() < Date.now() + 10 * 1000) {
-      setScheduleError('Elige una hora que todavía no haya pasado.')
       return
     }
 
@@ -6479,7 +6383,7 @@ export const DesktopChat: React.FC = () => {
             }) || undefined
           : selectedBusinessPhoneValue || undefined,
         businessPhoneNumberId: provider === 'whatsapp_api' ? selectedBusinessPhone?.id || undefined : undefined,
-        scheduledAt: scheduledDate.toISOString(),
+        scheduledAt,
         externalId: editingScheduledMessageId || undefined
       })
       const scheduledBubble = getScheduledChatMessageBubble(scheduledMessage)
@@ -6513,11 +6417,12 @@ export const DesktopChat: React.FC = () => {
       }
 
       setScheduleOpen(false)
+      setScheduleInitialAt(null)
       setScheduleEditingMessageId(null)
       showToast(
         'success',
         editingScheduledMessageId ? 'Programación actualizada' : 'Mensaje programado',
-        formatScheduledMessageLabel(scheduledDate.toISOString())
+        formatScheduledMessageLabel(scheduledAt)
       )
     } catch (error: any) {
       const errorMessage = error?.message || 'No se pudo programar el mensaje.'
@@ -6533,7 +6438,6 @@ export const DesktopChat: React.FC = () => {
     draftAttachments.length,
     highLevelConnected,
     composerChannel,
-    scheduleDraft,
     scheduleEditingMessageId,
     schedulingMessage,
     selectedBusinessPhone?.id,
@@ -6555,7 +6459,7 @@ export const DesktopChat: React.FC = () => {
     setComposerText(message.text)
     setDraftAttachments([])
     cancelVoiceDraft()
-    setScheduleDraft(createScheduleDraftFromDate(message.scheduledAt || message.date, timezone))
+    setScheduleInitialAt(message.scheduledAt || message.date)
     setScheduleError('')
     setScheduleOpen(true)
     setComposerMenuOpen(false)
@@ -9130,9 +9034,6 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
-  const schedulePreviewDate = getScheduleDateFromDraft(scheduleDraft, timezone)
-  const canSubmitSchedule = Boolean(schedulePreviewDate && composerText.trim() && !schedulingMessage)
-
   return (
     <div
       className={`${styles.page} ${agentAssignedViewOpen ? styles.pageAgentInbox : ''}`}
@@ -10632,104 +10533,19 @@ export const DesktopChat: React.FC = () => {
         onCancel={() => setManualAgentSendPrompt(null)}
       />
 
-      <Modal
+      <ChatScheduleModal
         isOpen={scheduleOpen}
         onClose={closeScheduleModal}
-        title={scheduleEditingMessageId ? 'Editar programación' : 'Programar mensaje'}
-        size="sm"
-      >
-        <form
-          className={styles.scheduleModalBody}
-          onSubmit={(event) => {
-            event.preventDefault()
-            void handleScheduleMessage()
-          }}
-        >
-          <p className={styles.scheduleModalDescription}>
-            {scheduleEditingMessageId ? 'Ajusta cuándo saldrá este mensaje.' : 'El mensaje se guardará y saldrá automáticamente a la hora elegida.'}
-          </p>
-          <label className={`${styles.scheduleField} ${styles.scheduleMessageField}`}>
-            <span>Mensaje</span>
-            <textarea
-              value={composerText}
-              onChange={(event) => {
-                setComposerText(event.target.value)
-                setScheduleError('')
-              }}
-              placeholder="Escribe el mensaje que quieres programar"
-              rows={3}
-              disabled={schedulingMessage}
-            />
-          </label>
-          <div className={styles.scheduleField}>
-            <span>Fecha</span>
-            <DatePicker
-              value={scheduleDraft.date}
-              min={todayDateOnlyInTimezone(timezone)}
-              today={todayDateOnlyInTimezone(timezone)}
-              ariaLabel="Fecha"
-              disabled={schedulingMessage}
-              onChange={(date) => handleScheduleDraftChange({ date })}
-            />
-          </div>
-          <div className={styles.scheduleTimeRow}>
-            <label className={styles.scheduleField}>
-              <span>Hora</span>
-              <input
-                type="text"
-                min="1"
-                max="12"
-                inputMode="numeric"
-                value={scheduleDraft.hour}
-                onChange={(event) => handleScheduleDraftChange({ hour: event.target.value.replace(/\D/g, '').slice(0, 2) })}
-              />
-            </label>
-            <label className={styles.scheduleField}>
-              <span>Min</span>
-              <input
-                type="text"
-                min="0"
-                max="59"
-                inputMode="numeric"
-                value={scheduleDraft.minute}
-                onChange={(event) => handleScheduleDraftChange({ minute: event.target.value.replace(/\D/g, '').slice(0, 2) })}
-                onBlur={() => {
-                  const minute = Math.min(59, Math.max(0, Number(scheduleDraft.minute) || 0))
-                  handleScheduleDraftChange({ minute: padTwoDigits(minute) })
-                }}
-              />
-            </label>
-            <div className={styles.schedulePeriodToggle} role="group" aria-label="AM o PM">
-              {(['AM', 'PM'] as SchedulePeriod[]).map((period) => (
-                <button
-                  key={period}
-                  type="button"
-                  className={scheduleDraft.period === period ? styles.schedulePeriodActive : ''}
-                  onClick={() => handleScheduleDraftChange({ period })}
-                >
-                  {period}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className={styles.schedulePreview} aria-live="polite">
-            <Clock size={15} />
-            <span>{formatSchedulePreviewLabel(schedulePreviewDate?.toISOString())}</span>
-          </div>
-
-          {scheduleError ? <p className={styles.scheduleError}>{scheduleError}</p> : null}
-
-          <div className={styles.scheduleModalActions}>
-            <Button type="button" variant="secondary" onClick={closeScheduleModal} disabled={schedulingMessage}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={!canSubmitSchedule}>
-              {schedulingMessage ? 'Guardando...' : scheduleEditingMessageId ? 'Guardar cambios' : 'Programar'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        message={composerText}
+        onMessageChange={setComposerText}
+        onSubmit={handleScheduleMessage}
+        timezone={timezone}
+        editing={Boolean(scheduleEditingMessageId)}
+        initialScheduledAt={scheduleInitialAt}
+        submitting={schedulingMessage}
+        error={scheduleError}
+        onClearError={() => setScheduleError('')}
+      />
 
       <Modal
         isOpen={bulkChatConfirmAction === 'archive'}

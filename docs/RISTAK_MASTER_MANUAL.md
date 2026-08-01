@@ -1912,6 +1912,12 @@ Capacidades:
 - La sección de automatizaciones en la ficha de contacto, el modal del chat y
   las acciones masivas solo aparece con `automations`; el backend rechaza también
   las inscripciones o filtros avanzados de automatizaciones sin esa feature.
+- La ficha de contacto incluye en su compositor el reloj para programar mensajes
+  de texto desde el canal seleccionado. Abre el mismo `ChatScheduleModal` que
+  `/chat`, conserva el remitente de WhatsApp elegido, convierte la fecha y hora
+  desde la zona de la cuenta a UTC y refresca el historial canónico después de
+  guardar. Correo sigue enviándose al momento; Messenger e Instagram sólo se
+  programan cuando la conversación sale por HighLevel.
 - Los nombres configurables de la cuenta para contacto convertido y oportunidad
   (`labels.customer`, `labels.customers`, `labels.lead`, `labels.leads`) son la
   fuente visible para CRM, chat desktop, chat movil web, app nativa,
@@ -3170,14 +3176,15 @@ todo cambio final `sent`/`error` publica la invalidacion realtime
 `scheduled_messages` despues de escribir la base, para que las demas sesiones
 retiren o actualicen el globo programado usando la lectura canonica.
 
-En `/chat` desktop, el campo `Fecha` del modal para programar o editar un mensaje
-usa el `<DatePicker>` común y abre un calendario propio de Ristak al hacer clic en
-cualquier parte del control. El panel se portalea con la capa de popover del
-modal para no quedar recortado o detrás del overlay y no depende de
-`input.showPicker()` ni del selector nativo del navegador. Las fechas anteriores
-al día de negocio actual quedan deshabilitadas. La fecha seleccionada sigue
-siendo una fecha de negocio `YYYY-MM-DD` y la hora se convierte a UTC con la zona
-horaria de la cuenta antes de guardarse.
+En `/chat` desktop y en la ficha de contacto, programar un mensaje usa el mismo
+`ChatScheduleModal`. El campo `Fecha` usa el `<DatePicker>` común y abre un
+calendario propio de Ristak al hacer clic en cualquier parte del control. El
+panel se portalea con la capa de popover del modal para no quedar recortado o
+detrás del overlay y no depende de `input.showPicker()` ni del selector nativo
+del navegador. Las fechas anteriores al día de negocio actual quedan
+deshabilitadas. La fecha seleccionada sigue siendo una fecha de negocio
+`YYYY-MM-DD` y la hora se convierte a UTC con la zona horaria de la cuenta antes
+de guardarse.
 
 La sincronizacion historica de mensajeria es exhaustiva dentro de lo que cada
 proveedor realmente expone y siempre es idempotente. Al vincular WhatsApp QR,

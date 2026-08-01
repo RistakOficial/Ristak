@@ -4,6 +4,7 @@ import { FaFacebookMessenger, FaInstagram, FaWhatsapp } from 'react-icons/fa'
 import { Badge, type BadgeVariant } from '../Badge/Badge'
 import { Button } from '../Button/Button'
 import { ChatMessageSurface } from '../ChatMessageSurface/ChatMessageSurface'
+import { ChatScheduleModal } from '../ChatScheduleModal/ChatScheduleModal'
 import { ContactAvatar } from '../ContactAvatar/ContactAvatar'
 import { ContactCustomFieldsPanel } from '../ContactCustomFieldsPanel/ContactCustomFieldsPanel'
 import { ContactJourney } from '../ContactJourney/ContactJourney'
@@ -44,6 +45,7 @@ import { emailService } from '@/services/emailService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
+  isWhatsAppPhoneApiAvailable,
   whatsappApiService,
   type ScheduledChatMessage,
   type WhatsAppApiPhoneNumber,
@@ -62,6 +64,7 @@ import { AgentRobot } from '@/components/ai'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { useNotification } from '@/contexts/NotificationContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import type { ContactCustomField, ContactMetaAttribution, ContactPhoneNumber } from '@/types'
 import styles from './ContactDetailsModal.module.css'
@@ -773,6 +776,9 @@ export function ContactDetailsModal({
   const [chatChannelValue, setChatChannelValue] = useState('whatsapp')
   const [chatReplyPreference, setChatReplyPreference] = useState<ContactConversationalChannelPreference | null>(null)
   const [chatSending, setChatSending] = useState(false)
+  const [chatScheduleOpen, setChatScheduleOpen] = useState(false)
+  const [chatScheduleSubmitting, setChatScheduleSubmitting] = useState(false)
+  const [chatScheduleError, setChatScheduleError] = useState('')
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [whatsappStatusLoading, setWhatsappStatusLoading] = useState(false)
   const [emailConnected, setEmailConnected] = useState(false)
@@ -815,6 +821,7 @@ export function ContactDetailsModal({
   const [tagsError, setTagsError] = useState<string | null>(null)
   const [savingPrimaryPhone, setSavingPrimaryPhone] = useState<string | null>(null)
   const { labels } = useLabels()
+  const { showToast } = useNotification()
   const { formatLocalDateShort, formatLocalDateTime, timezone } = useTimezone()
 
   // Seleccionar automáticamente el primer contacto cuando se abre el modal
@@ -837,6 +844,9 @@ export function ContactDetailsModal({
       setChatChannelValue('whatsapp')
       setChatReplyPreference(null)
       setChatSending(false)
+      setChatScheduleOpen(false)
+      setChatScheduleSubmitting(false)
+      setChatScheduleError('')
       setWhatsappStatus(null)
       setWhatsappStatusLoading(false)
       setEmailConnected(false)
@@ -951,6 +961,9 @@ export function ContactDetailsModal({
     setChatChannelValue('whatsapp')
     setChatReplyPreference(null)
     setChatSending(false)
+    setChatScheduleOpen(false)
+    setChatScheduleSubmitting(false)
+    setChatScheduleError('')
     setAutomationActivity(null)
     setAutomationActivityLoading(false)
     setAutomationCatalogLoading(false)
@@ -2035,6 +2048,115 @@ export function ContactDetailsModal({
     }
   }
 
+  const openContactChatSchedule = () => {
+    if (!selectedContact) return
+    if (selectedChatChannel === 'email') {
+      showToast('warning', 'Correo al momento', 'Por ahora los correos se envían al momento desde el chat.')
+      return
+    }
+    if (!chatDraft.trim()) {
+      showToast('warning', 'Escribe el mensaje', 'Primero escribe el texto que quieres programar.')
+      return
+    }
+
+    setChatScheduleError('')
+    setChatScheduleOpen(true)
+  }
+
+  const closeContactChatSchedule = () => {
+    if (chatScheduleSubmitting) return
+    setChatScheduleOpen(false)
+    setChatScheduleError('')
+  }
+
+  const scheduleContactChatMessage = async (scheduledAt: string) => {
+    if (!selectedContact || chatScheduleSubmitting) return
+
+    const text = chatDraft.trim()
+    if (!text) {
+      setChatScheduleError('Escribe el mensaje que quieres programar.')
+      return
+    }
+
+    let provider: 'highlevel' | 'whatsapp_api'
+    let channel: HighLevelChatChannel | undefined
+    let transport: 'api' | 'qr' | undefined
+
+    if (selectedChatChannel === 'whatsapp') {
+      if (!selectedContact.phone) {
+        setChatScheduleError('Este contacto necesita teléfono para programar por WhatsApp.')
+        return
+      }
+
+      const whatsappPhone = selectedBusinessPhone as WhatsAppApiPhoneNumber | null
+      const apiAvailable = isWhatsAppPhoneApiAvailable(whatsappPhone, whatsappStatus)
+      const qrReady = Boolean(
+        whatsappPhone?.qr_send_enabled && String(whatsappPhone.qr_status || '').trim().toLowerCase() === 'connected'
+      )
+
+      if (apiAvailable || qrReady) {
+        if (!selectedBusinessPhoneValue) {
+          setChatScheduleError('Elige el WhatsApp del negocio que mandará el mensaje.')
+          return
+        }
+        provider = 'whatsapp_api'
+        transport = qrReady && !apiAvailable ? 'qr' : 'api'
+      } else if (highLevelConnected) {
+        provider = 'highlevel'
+        channel = getHighLevelChannelForContactChat(selectedChatChannel)
+      } else {
+        setChatScheduleError(
+          whatsappPhone?.availability?.apiReason || 'El WhatsApp seleccionado no tiene una conexión disponible para programar.'
+        )
+        return
+      }
+    } else if (selectedChatChannel === 'messenger' || selectedChatChannel === 'instagram') {
+      if (!highLevelConnected) {
+        setChatScheduleError('La programación para Messenger e Instagram todavía no está disponible en Meta nativo. Puedes enviarlo al momento desde Ristak.')
+        return
+      }
+      provider = 'highlevel'
+      channel = getHighLevelChannelForContactChat(selectedChatChannel)
+    } else {
+      setChatScheduleError('Elige un canal compatible para programar el mensaje.')
+      return
+    }
+
+    setChatScheduleSubmitting(true)
+    setChatScheduleError('')
+    try {
+      const scheduledMessage = await whatsappApiService.scheduleMessage({
+        contactId: selectedContact.id,
+        provider,
+        channel,
+        transport,
+        text,
+        toPhone: selectedContact.phone || undefined,
+        fromPhone: selectedBusinessPhoneValue || undefined,
+        businessPhoneNumberId: provider === 'whatsapp_api' ? selectedBusinessPhone?.id || undefined : undefined,
+        scheduledAt
+      })
+      const scheduledBubble = getScheduledChatBubble(scheduledMessage)
+      if (scheduledBubble) {
+        setChatMessages((current) => (
+          [...current.filter((message) => message.id !== scheduledBubble.id), scheduledBubble]
+            .sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date))
+        ))
+      }
+
+      setChatDraft('')
+      setChatScheduleOpen(false)
+      await loadContactChat(selectedContact.id, { silent: true })
+      showToast('success', 'Mensaje programado', `Se enviará ${formatLocalDateTime(scheduledAt)}.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo programar el mensaje.'
+      setChatScheduleError(message)
+      showToast('error', 'No se programó', message)
+    } finally {
+      setChatScheduleSubmitting(false)
+    }
+  }
+
   const describeAutomationActivityItem = (item: ContactAutomationActivityItem) => {
     if (item.kind === 'scheduled') {
       if (item.status === 'scheduled' && item.scheduledAt) {
@@ -2316,6 +2438,18 @@ export function ContactDetailsModal({
                 rows={1}
                 disabled={chatSending}
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={styles.contactChatScheduleButton}
+                onClick={openContactChatSchedule}
+                disabled={!selectedContact || chatSending || chatScheduleSubmitting}
+                aria-label="Programar mensaje"
+                title="Programar mensaje"
+              >
+                <Clock size={16} />
+              </Button>
               <Button
                 type="submit"
                 variant="primary"
@@ -3165,6 +3299,18 @@ export function ContactDetailsModal({
             </>
           )}
         </div>
+
+        <ChatScheduleModal
+          isOpen={chatScheduleOpen}
+          onClose={closeContactChatSchedule}
+          message={chatDraft}
+          onMessageChange={setChatDraft}
+          onSubmit={scheduleContactChatMessage}
+          timezone={timezone}
+          submitting={chatScheduleSubmitting}
+          error={chatScheduleError}
+          onClearError={() => setChatScheduleError('')}
+        />
 
         {hasAutomationsAccess && selectedAutomationForEnrollment && (
           <Modal
