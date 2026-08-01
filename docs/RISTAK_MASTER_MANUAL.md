@@ -4223,6 +4223,14 @@ inicio de la cita. Los avisos `after_booking` se anclan a la fecha de reserva
 local en Ristak; citas sincronizadas desde Google/GHL no reciben avisos de
 reserva como si el cliente hubiera agendado por Ristak.
 
+Las listas de mensajes automaticos en Citas y en la configuracion del calendario
+se muestran por su momento dentro del ciclo de la reserva, no por el orden en que
+se crearon. Los avisos `after_booking` aparecen primero desde `Al agendar` hacia
+adelante. Despues, los recordatorios `before_appointment` van del mas lejano al
+mas cercano al inicio de la cita; por ejemplo: `3 dias antes`, `1 dia antes`,
+`3 horas antes`, `10 min antes`. El orden visual no modifica el instante de
+envio, la posicion persistida ni el procesamiento de los recordatorios.
+
 Cada recordatorio/aviso guarda canal y contenido por separado. En la UI, el canal
 visible `WhatsApp API` guarda `channel='whatsapp'`; `WhatsApp QR solo` guarda
 `channel='whatsapp_qr'`. Tambien puede ser `email`, `messenger` o `instagram`.

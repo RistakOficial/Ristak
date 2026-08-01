@@ -62,6 +62,7 @@ import {
   type ReminderChannelOption,
   type ReminderSenderOption
 } from '@/services/appointmentRemindersService';
+import { sortAppointmentRemindersByTimeline } from '@/services/appointmentReminderOrdering';
 import {
   messageTemplatesService,
   type MessageTemplate
@@ -533,6 +534,11 @@ export const Appointments: React.FC = () => {
       throw error;
     }
   }, [showToast]);
+
+  const timelineOrderedReminders = useMemo(
+    () => sortAppointmentRemindersByTimeline(reminders),
+    [reminders]
+  );
 
   const persistLastSelectedCalendar = useCallback((calendarId: string | null) => {
     if (typeof window === 'undefined') return;
@@ -3000,7 +3006,7 @@ export const Appointments: React.FC = () => {
             {reminders.length === 0 ? (
               <p className={styles.emptyText}>Agrega un mensaje automático con el botón +</p>
             ) : (
-              reminders.map((reminder) => {
+              timelineOrderedReminders.map((reminder) => {
                 const isAppointmentNotice = reminder.timingAnchor === 'after_booking';
                 const isConfirmationMessage = reminder.messageType === 'confirmation';
                 const ReminderIcon = isConfirmationMessage ? Sparkles : isAppointmentNotice ? CalendarCheck : Bell;

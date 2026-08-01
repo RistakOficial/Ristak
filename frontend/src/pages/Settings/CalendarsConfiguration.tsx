@@ -94,6 +94,7 @@ import {
   type ReminderChannelOption,
   type ReminderSenderOption
 } from '@/services/appointmentRemindersService'
+import { sortAppointmentRemindersByTimeline } from '@/services/appointmentReminderOrdering'
 import {
   messageTemplatesService,
   type MessageTemplate
@@ -941,6 +942,10 @@ export const CalendarsConfiguration: React.FC = () => {
   const formSitesSearchRef = useRef('')
   const googleIntegrationRequestRef = useRef<Promise<GoogleCalendarIntegrationStatus | null> | null>(null)
   const [appointmentReminders, setAppointmentReminders] = useState<AppointmentReminder[]>([])
+  const timelineOrderedAppointmentReminders = useMemo(
+    () => sortAppointmentRemindersByTimeline(appointmentReminders),
+    [appointmentReminders]
+  )
   const [reminderSenders, setReminderSenders] = useState<ReminderSenderOption[]>([])
   const [reminderChannels, setReminderChannels] = useState<ReminderChannelOption[]>([])
   const [reminderTemplates, setReminderTemplates] = useState<MessageTemplate[]>([])
@@ -3663,7 +3668,7 @@ export const CalendarsConfiguration: React.FC = () => {
                         </div>
                       ) : appointmentReminders.length ? (
                         <div className={pageStyles.remindersList}>
-                          {appointmentReminders.map((reminder) => {
+                          {timelineOrderedAppointmentReminders.map((reminder) => {
                             const isAppointmentNotice = reminder.timingAnchor === 'after_booking'
                             const isConfirmationMessage = reminder.messageType === 'confirmation'
                             const ReminderIcon = isConfirmationMessage ? Sparkles : isAppointmentNotice ? CalendarCheck : Bell
