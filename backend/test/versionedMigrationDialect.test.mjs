@@ -14,6 +14,9 @@ import { ensureSqliteConversationalHandoffSchema } from '../src/startup/conversa
 import {
   ensureSqliteAppointmentConfirmationTimeoutSchema
 } from '../src/startup/appointmentConfirmationTimeoutSchemaCompatibility.js'
+import {
+  ensureSqliteSitesPublicationDomainSchema
+} from '../src/startup/sitesPublicationDomainSchemaCompatibility.js'
 
 const sqlite3 = sqlite3Module.verbose()
 
@@ -105,8 +108,60 @@ test('las migraciones con sufijo de dialecto sólo apuntan a su motor', () => {
   assert.equal(migrationRunsForDialect('128_media_folders.sqlite.sql', 'postgres'), false)
   assert.equal(migrationRunsForDialect('128a_media_folders.postgres.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('128a_media_folders.postgres.sql', 'sqlite'), false)
+  assert.equal(migrationRunsForDialect('146_sites_publication_domain.postgres.sql', 'postgres'), true)
+  assert.equal(migrationRunsForDialect('146_sites_publication_domain.postgres.sql', 'sqlite'), false)
   assert.equal(migrationRunsForDialect('040_common.sql', 'postgres'), true)
   assert.equal(migrationRunsForDialect('040_common.sql', 'sqlite'), true)
+})
+
+test('la migración PostgreSQL instala public_sites.public_domain en bases existentes', async () => {
+  const sql = await readFile(
+    new URL('../migrations/versioned/146_sites_publication_domain.postgres.sql', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(
+    sql,
+    /ALTER TABLE public_sites\s+ADD COLUMN IF NOT EXISTS public_domain TEXT;/i
+  )
+  assert.match(
+    sql,
+    /CREATE INDEX IF NOT EXISTS idx_public_sites_public_domain_lower\s+ON public_sites\(LOWER\(public_domain\)\)/i
+  )
+})
+
+test('SQLite repara public_sites.public_domain aunque el bootstrap legacy ya se haya omitido', async () => {
+  const database = openMemoryDatabase()
+
+  try {
+    await database.exec(`
+      CREATE TABLE public_sites (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        domain TEXT
+      );
+    `)
+
+    assert.deepEqual(
+      await ensureSqliteSitesPublicationDomainSchema({ database, dialect: 'sqlite' }),
+      {
+        addedColumns: ['public_sites.public_domain'],
+        createdIndexes: ['idx_public_sites_public_domain_lower']
+      }
+    )
+    const columns = await database.all('PRAGMA table_info(public_sites)')
+    assert.equal(columns.find(column => column.name === 'public_domain')?.type, 'TEXT')
+    const indexes = await database.all("SELECT name FROM sqlite_master WHERE type = 'index'")
+    assert.ok(indexes.some(row => row.name === 'idx_public_sites_public_domain_lower'))
+
+    assert.deepEqual(
+      await ensureSqliteSitesPublicationDomainSchema({ database, dialect: 'sqlite' }),
+      { addedColumns: [], createdIndexes: [] }
+    )
+  } finally {
+    await database.close()
+  }
 })
 
 test('el bootstrap común nunca manda julianday de SQLite a PostgreSQL', async () => {

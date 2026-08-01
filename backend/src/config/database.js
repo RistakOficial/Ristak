@@ -30,6 +30,9 @@ import { ensureSqliteConversationalHandoffSchema } from '../startup/conversation
 import {
   ensureSqliteAppointmentConfirmationTimeoutSchema
 } from '../startup/appointmentConfirmationTimeoutSchemaCompatibility.js'
+import {
+  ensureSqliteSitesPublicationDomainSchema
+} from '../startup/sitesPublicationDomainSchemaCompatibility.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -2584,6 +2587,21 @@ async function initTablesUnlocked() {
       logger.info(
         '[Esquema] Compatibilidad de plazos de confirmación reparada: ' +
         `${appointmentConfirmationTimeoutSchemaRepair.addedColumns.length} columna(s).`
+      )
+    }
+
+    const sitesPublicationDomainSchemaRepair = await ensureSqliteSitesPublicationDomainSchema({
+      database: db,
+      dialect: databaseDialect
+    })
+    if (
+      sitesPublicationDomainSchemaRepair.addedColumns.length > 0 ||
+      sitesPublicationDomainSchemaRepair.createdIndexes.length > 0
+    ) {
+      logger.info(
+        '[Esquema] Compatibilidad del dominio de publicación de Sites reparada: ' +
+        `${sitesPublicationDomainSchemaRepair.addedColumns.length} columna(s), ` +
+        `${sitesPublicationDomainSchemaRepair.createdIndexes.length} índice(s).`
       )
     }
 

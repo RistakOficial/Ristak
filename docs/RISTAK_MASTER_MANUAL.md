@@ -5428,6 +5428,10 @@ dominio propio conservan el dominio primario como fallback y lo fijan al volver 
 publicarse. `public_domain` guarda siempre el host canonico vigente de la pareja;
 si el usuario cambia el oficial entre raiz y `www`, Ristak actualiza tambien los
 Sites que ya usaban esa pareja para que sus URLs compartidas no queden obsoletas.
+La migracion versionada `146_sites_publication_domain.postgres.sql` agrega columna
+e indice a instalaciones PostgreSQL existentes antes de aceptar trafico; SQLite
+aplica una reparacion idempotente previa al fast-path del bootstrap, porque ese
+motor no admite `ADD COLUMN IF NOT EXISTS`.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser
