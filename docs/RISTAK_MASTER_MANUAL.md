@@ -4537,6 +4537,12 @@ request no puede omitir el componente `button` y dejar que Meta lo rechace con
 resolver, Ristak falla antes del proveedor con un motivo accionable y conserva
 el envío para el reintento controlado.
 
+Cuando Meta rechaza la creación o edición de una plantilla, Ristak conserva en
+el error local el detalle accionable de Graph (`error_user_msg` o
+`error_data.details`) además del mensaje genérico. Así el panel y el MCP pueden
+explicar qué componente o ejemplo debe corregirse en lugar de mostrar solamente
+`Invalid parameter`; nunca se incluyen tokens de autorización en ese detalle.
+
 Para que un botón de plantilla abra un destino y además funcione como clic de
 disparo, la URL nueva aprobada por Meta usa el formato
 `https://<dominio>/{{1}}`. El binding del parámetro se elige desde el grupo
