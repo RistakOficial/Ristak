@@ -339,10 +339,22 @@ test('imported HTML code writes enforce revision and draft state inside the muta
     updateSite
   } = await import('../src/services/sitesService.js')
   const { computeImportedSiteCodeRevision } = await import('../src/utils/importedSiteCodeRevision.js')
+  const { db } = await import('../src/config/database.js')
 
   let siteId = ''
+  const domainId = `domain-revision-${Date.now()}`
+  const domain = `${domainId}.example.test`
 
   try {
+    await db.run(`
+      INSERT INTO public_site_domains (
+        id,
+        domain,
+        render_domain_verified,
+        render_domain_checked_at
+      ) VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+    `, [domainId, domain])
+
     const originalHtml = '<!doctype html><html><head><title>Revision</title></head><body><main><h1>Original</h1></main></body></html>'
     const created = await createImportedSiteFromHtml({
       filename: 'revision-segura.html',
@@ -373,7 +385,7 @@ test('imported HTML code writes enforce revision and draft state inside the muta
     assert.match(afterConflict.codeFiles[0].content, />Actualizado</)
     assert.doesNotMatch(afterConflict.codeFiles[0].content, />Obsoleto</)
 
-    await updateSite(siteId, { status: 'published' })
+    await updateSite(siteId, { status: 'published', domain })
     await assert.rejects(
       () => updateImportedSiteCodeFiles(siteId, {
         expectedRevision: computeImportedSiteCodeRevision(afterConflict.codeFiles),
@@ -384,6 +396,7 @@ test('imported HTML code writes enforce revision and draft state inside the muta
     )
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
+    await db.run('DELETE FROM public_site_domains WHERE id = ?', [domainId]).catch(() => undefined)
   }
 })
 

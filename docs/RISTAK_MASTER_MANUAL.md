@@ -5398,6 +5398,17 @@ desde Dominios con el selector de pagina oficial, desde el enlace "Hacer pagina
 oficial" junto a Ruta publica en Ajustes del editor o con la estrella del menu
 de tres puntos de la pagina; las acciones del editor deben confirmar escribiendo
 la URL raiz del dominio.
+En Ajustes > Ruta publica, todos los editores —sitios web, HTML importado,
+formularios estandar e interactivos— muestran un selector con los dominios
+publicos conectados a la cuenta. La eleccion se guarda como dominio canonico del
+Site en `public_sites.public_domain` —campo compartible entre varias rutas; el
+`domain` legacy conserva su restriccion historica— y gobierna la URL mostrada,
+`Ver en vivo`, el estado de publicacion y la accion `Hacer pagina oficial`; esta
+ultima actualiza el root del dominio elegido, no necesariamente el dominio
+primario. Un borrador puede apuntar a un dominio pendiente, pero para publicar el
+dominio seleccionado debe seguir conectado y verificado. Los registros legacy sin
+dominio propio conservan el dominio primario como fallback y lo fijan al volver a
+publicarse.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser

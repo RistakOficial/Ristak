@@ -5199,7 +5199,7 @@ function mapSite(row) {
     slug: row.slug,
     siteType: row.site_type || 'standard_form',
     status: row.status || 'draft',
-    domain: row.domain || '',
+    domain: row.public_domain || row.domain || '',
     title: row.title || '',
     description: row.description || '',
     theme: parseJson(row.theme_json, DEFAULT_THEME),
@@ -9238,7 +9238,7 @@ function getSiteLibrarySearchDocumentSqlExpression(alias = 's') {
     COALESCE(${alias}.title, '') || ' ' ||
     COALESCE(${alias}.description, '') || ' ' ||
     COALESCE(${alias}.slug, '') || ' ' ||
-    COALESCE(${alias}.domain, '') || ' ' ||
+    COALESCE(${alias}.public_domain, ${alias}.domain, '') || ' ' ||
     COALESCE(${alias}.site_type, '') || ' ' ||
     COALESCE(${alias}.status, '')
   )`
@@ -9463,6 +9463,7 @@ async function listSiteSelectorPage({
       s.site_type,
       s.status,
       s.domain,
+      s.public_domain,
       s.title,
       s.description,
       ${themeExpression} AS theme_json,
@@ -9516,6 +9517,7 @@ async function hydrateSiteSelectorIds(ids, view) {
       s.site_type,
       s.status,
       s.domain,
+      s.public_domain,
       s.title,
       s.description,
       ${themeExpression} AS theme_json,
@@ -9645,6 +9647,7 @@ export async function listSites({
         s.site_type,
         s.status,
         s.domain,
+        s.public_domain,
         s.title,
         s.description,
         ${summaryThemeExpression} AS theme_json,
@@ -16780,21 +16783,70 @@ export async function updateImportedSiteHtmlWithAI(siteId, input = {}) {
   }
 }
 
+async function getConfiguredSiteDomain(domainValue, { fallbackToPrimary = false } = {}) {
+  const requestedDomain = normalizeDomain(domainValue)
+  if (requestedDomain) {
+    const managedDomain = await findPublicDomainByDomain(requestedDomain)
+    if (managedDomain) return managedDomain
+
+    const legacyDomain = await getCurrentLegacyPublicDomainRecord()
+    if (legacyDomain?.domain && matchesPublicDomain(requestedDomain, legacyDomain.domain)) {
+      return legacyDomain
+    }
+
+    return null
+  }
+
+  return fallbackToPrimary ? getCurrentLegacyPublicDomainRecord() : null
+}
+
 async function updateSiteUnlocked(siteId, input = {}) {
   const current = await getSite(siteId, { includeBlocks: false })
   if (!current) return null
 
-  const nextDomain = current.domain
+  const hasDomainInput = Object.prototype.hasOwnProperty.call(input, 'domain')
+  const rawDomain = hasDomainInput ? input.domain : current.domain
+  const normalizedRequestedDomain = normalizeDomain(rawDomain)
+  if (hasDomainInput && cleanString(rawDomain) && !normalizedRequestedDomain) {
+    const error = new Error('El dominio seleccionado no es válido')
+    error.status = 400
+    throw error
+  }
+
+  let selectedDomain = normalizedRequestedDomain
+    ? await getConfiguredSiteDomain(normalizedRequestedDomain)
+    : null
+  if (normalizedRequestedDomain && !selectedDomain) {
+    const error = new Error('El dominio seleccionado no está conectado a esta cuenta')
+    error.status = 400
+    throw error
+  }
+
   const nextStatus = input.status === undefined
     ? current.status
     : validateSiteStatus(input.status)
+  if (nextStatus === 'published') {
+    selectedDomain ||= await getConfiguredSiteDomain('', { fallbackToPrimary: true })
+    if (!selectedDomain?.domain) {
+      const error = new Error('Conecta un dominio antes de publicar esta página')
+      error.status = 400
+      throw error
+    }
+    if (!selectedDomain.renderDomainVerified) {
+      const error = new Error('Verifica el dominio seleccionado antes de publicar esta página')
+      error.status = 400
+      throw error
+    }
+  }
+
+  const nextDomain = selectedDomain?.domain || ''
   const nextSiteType = input.siteType === undefined && input.site_type === undefined
     ? current.siteType
     : validateSiteType(input.siteType || input.site_type)
   const nextSlug = input.slug === undefined
     ? current.slug
     : await ensureUniqueSlug(slugify(input.slug), siteId)
-  const domainChanged = false
+  const domainChanged = normalizeDomain(current.domain) !== nextDomain
   let nextTheme = { ...DEFAULT_THEME, ...(input.theme || current.theme || {}) }
   const nextMetaCapiEnabled = input.metaCapiEnabled === undefined
     ? normalizeBoolean(current.metaCapiEnabled)
@@ -16842,7 +16894,7 @@ async function updateSiteUnlocked(siteId, input = {}) {
       slug = ?,
       site_type = ?,
       status = ?,
-      domain = ?,
+      public_domain = ?,
       title = ?,
       description = ?,
       theme_json = ?,

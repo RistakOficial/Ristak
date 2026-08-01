@@ -388,3 +388,90 @@ test('different verified domains can use different root routes', async () => {
     await restoreDomainConfig(previousConfig)
   }
 })
+
+test('sites and forms persist the domain selected in the editor', async () => {
+  const previousConfig = await snapshotDomainConfig()
+  const suffix = Date.now()
+  const createdSites = []
+
+  try {
+    await db.run("DELETE FROM public_site_domains WHERE domain IN ('alpha.example.test', 'beta.example.test')")
+    await db.run(`
+      INSERT INTO public_site_domains (
+        id,
+        domain,
+        render_domain_verified,
+        render_domain_checked_at,
+        render_domain_error
+      ) VALUES
+        (?, 'alpha.example.test', 1, ?, NULL),
+        (?, 'beta.example.test', 0, ?, 'Pendiente de verificación')
+    `, [
+      `domain-editor-alpha-${suffix}`,
+      new Date().toISOString(),
+      `domain-editor-beta-${suffix}`,
+      new Date().toISOString()
+    ])
+
+    createdSites.push(await createSite({
+      name: `Landing con dominio ${suffix}`,
+      slug: `landing-domain-${suffix}`,
+      siteType: 'landing_page',
+      blankCanvas: true
+    }))
+    createdSites.push(await createSite({
+      name: `Formulario con dominio ${suffix}`,
+      slug: `form-domain-${suffix}`,
+      siteType: 'standard_form',
+      blankCanvas: true
+    }))
+    createdSites.push(await createSite({
+      name: `Formulario interactivo con dominio ${suffix}`,
+      slug: `interactive-domain-${suffix}`,
+      siteType: 'interactive_form',
+      blankCanvas: true
+    }))
+    const imported = await createImportedSiteFromHtml({
+      name: `Importado con dominio ${suffix}`,
+      filename: `imported-domain-${suffix}.html`,
+      siteType: 'landing_page',
+      html: '<!doctype html><html><body><main><h1>Dominio elegido</h1></main></body></html>'
+    })
+    createdSites.push(imported.site)
+
+    for (const createdSite of createdSites) {
+      const savedDraft = await updateSite(createdSite.id, { domain: 'alpha.example.test' })
+      assert.equal(savedDraft.domain, 'alpha.example.test')
+
+      const published = await updateSite(createdSite.id, { status: 'published' })
+      assert.equal(published.domain, 'alpha.example.test')
+      assert.equal(published.status, 'published')
+    }
+
+    const directResolution = await resolvePublicSiteForHost('alpha.example.test', {
+      path: `/${createdSites[0].slug}`
+    })
+    assert.equal(directResolution.ok, true)
+    assert.equal(directResolution.site.id, createdSites[0].id)
+    assert.equal(directResolution.site.domain, 'alpha.example.test')
+
+    const pendingDraft = await updateSite(createdSites[0].id, {
+      status: 'draft',
+      domain: 'beta.example.test'
+    })
+    assert.equal(pendingDraft.domain, 'beta.example.test')
+    await assert.rejects(
+      updateSite(createdSites[0].id, { status: 'published' }),
+      /Verifica el dominio seleccionado/
+    )
+    await assert.rejects(
+      updateSite(createdSites[0].id, { domain: 'desconectado.example.test' }),
+      /no está conectado/
+    )
+  } finally {
+    for (const site of createdSites.reverse()) {
+      await deleteSite(site.id).catch(() => undefined)
+    }
+    await restoreDomainConfig(previousConfig)
+  }
+})

@@ -2696,6 +2696,7 @@ async function initTablesUnlocked() {
         site_type TEXT DEFAULT 'standard_form',
         status TEXT DEFAULT 'draft',
         domain TEXT UNIQUE,
+        public_domain TEXT,
         title TEXT,
         description TEXT,
         theme_json TEXT,
@@ -2828,6 +2829,7 @@ async function initTablesUnlocked() {
 
     for (const [columnName, columnType] of [
       ['domain', 'TEXT UNIQUE'],
+      ['public_domain', 'TEXT'],
       ['title', 'TEXT'],
       ['description', 'TEXT'],
       ['theme_json', 'TEXT'],
@@ -2890,6 +2892,7 @@ async function initTablesUnlocked() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_content_assets_media ON public_site_content_assets(media_asset_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_folders_section_order ON public_site_folders(section, archived, sort_order, name)')
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_sites_domain_lower ON public_sites(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")
+      await db.run("CREATE INDEX IF NOT EXISTS idx_public_sites_public_domain_lower ON public_sites(LOWER(public_domain)) WHERE public_domain IS NOT NULL AND public_domain != ''")
       await db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_public_site_domains_domain_lower ON public_site_domains(LOWER(domain)) WHERE domain IS NOT NULL AND domain != ''")
       await db.run('CREATE INDEX IF NOT EXISTS idx_public_site_domains_created ON public_site_domains(created_at)')
     } catch (err) {

@@ -170,6 +170,7 @@ import {
   type SitesVideoAnalyticsDetail,
   type SitesVideoTimelineReachSegment,
   type PublicSite,
+  type PublicSiteDomain,
   type SitesAICreationKind,
   type SitesAICreationMessage,
   type SitesAIEditDebug,
@@ -3320,10 +3321,80 @@ const slugifyName = (value: string) => value
   .replace(/[^a-z0-9]+/g, '_')
   .replace(/^_+|_+$/g, '') || 'field'
 
+const normalizePublicDomainName = (value?: string | null) => String(value || '')
+  .trim()
+  .replace(/^https?:\/\//i, '')
+  .replace(/\/+$/, '')
+  .toLowerCase()
+
+const stripPublicDomainWww = (value?: string | null) => normalizePublicDomainName(value).replace(/^www\./, '')
+
+const publicDomainsMatch = (left?: string | null, right?: string | null) => {
+  const normalizedLeft = normalizePublicDomainName(left)
+  const normalizedRight = normalizePublicDomainName(right)
+  return Boolean(
+    normalizedLeft &&
+    normalizedRight &&
+    (normalizedLeft === normalizedRight || stripPublicDomainWww(normalizedLeft) === stripPublicDomainWww(normalizedRight))
+  )
+}
+
+const getPublicDomainOptions = (domainConfig: SitesDomainConfig): PublicSiteDomain[] => {
+  const domains = [...(domainConfig.publicDomains || [])]
+  if (domainConfig.domain && !domains.some(item => publicDomainsMatch(item.domain, domainConfig.domain))) {
+    domains.unshift({
+      id: '',
+      domain: domainConfig.domain,
+      renderDomainVerified: domainConfig.renderDomainVerified,
+      renderDomainCheckedAt: domainConfig.renderDomainCheckedAt,
+      renderDomainError: domainConfig.renderDomainError,
+      defaultRoute: domainConfig.defaultRoute,
+      createdAt: null,
+      updatedAt: null
+    })
+  }
+  return domains
+}
+
+const getSitePublicDomain = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig): PublicSiteDomain | null => {
+  const options = getPublicDomainOptions(domainConfig)
+  const selectedDomain = normalizePublicDomainName(site?.domain || domainConfig.domain)
+  return options.find(item => publicDomainsMatch(item.domain, selectedDomain)) || null
+}
+
+const getSiteDomainConfig = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig): SitesDomainConfig => {
+  const selectedDomain = getSitePublicDomain(site, domainConfig)
+  if (selectedDomain) {
+    return {
+      ...domainConfig,
+      domain: selectedDomain.domain,
+      renderDomainVerified: selectedDomain.renderDomainVerified,
+      renderDomainCheckedAt: selectedDomain.renderDomainCheckedAt,
+      renderDomainError: selectedDomain.renderDomainError,
+      defaultRoute: selectedDomain.defaultRoute
+    }
+  }
+
+  const staleDomain = normalizePublicDomainName(site?.domain)
+  if (staleDomain) {
+    return {
+      ...domainConfig,
+      domain: staleDomain,
+      renderDomainVerified: false,
+      renderDomainCheckedAt: null,
+      renderDomainError: 'Este dominio ya no está conectado a la cuenta.',
+      defaultRoute: null
+    }
+  }
+
+  return domainConfig
+}
+
 const getStatusLabel = (site: PublicSite, domainConfig: SitesDomainConfig) => {
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
   if (site.status !== 'published') return site.status === 'draft' ? 'Borrador' : 'Archivado'
-  if (!domainConfig.domain) return 'Sin dominio'
-  return domainConfig.renderDomainVerified ? 'Publicado' : 'Dominio pendiente'
+  if (!selectedDomain.domain) return 'Sin dominio'
+  return selectedDomain.renderDomainVerified ? 'Publicado' : 'Dominio pendiente'
 }
 
 // Fecha de edición relativa, compacta (estilo "hace 2 días" del ZIP)
@@ -3341,13 +3412,16 @@ const formatSiteEdited = (value?: string | null): string | null => {
 }
 
 const getStatusVariant = (site: PublicSite, domainConfig: SitesDomainConfig): BadgeVariant => {
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
   if (site.status !== 'published') return 'neutral'
-  if (!domainConfig.domain || !domainConfig.renderDomainVerified) return 'warning'
+  if (!selectedDomain.domain || !selectedDomain.renderDomainVerified) return 'warning'
   return 'success'
 }
 
-const isPublicSiteLive = (site: PublicSite, domainConfig: SitesDomainConfig) =>
-  site.status === 'published' && Boolean(domainConfig.domain && domainConfig.renderDomainVerified)
+const isPublicSiteLive = (site: PublicSite, domainConfig: SitesDomainConfig) => {
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
+  return site.status === 'published' && Boolean(selectedDomain.domain && selectedDomain.renderDomainVerified)
+}
 
 const normalizeRouteInput = (value: string) => value
   .normalize('NFD')
@@ -3375,23 +3449,30 @@ const appendNoTrackToUrl = (url: string) => {
 const shouldOpenSiteWithoutTracking = (site: PublicSite) => site.antiTrackingEnabled !== false
 
 const buildLivePublicUrl = (site: PublicSite, domainConfig: SitesDomainConfig, options: { noTrack?: boolean } = {}) => {
-  const url = domainConfig.domain ? `https://${domainConfig.domain}${getRoutePath(site)}` : ''
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
+  const url = selectedDomain.domain ? `https://${selectedDomain.domain}${getRoutePath(site)}` : ''
   return options.noTrack ? appendNoTrackToUrl(url) : url
 }
 
-const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) =>
-  domainConfig.domain ? `${domainConfig.domain}${getRoutePath(site)}` : getRoutePath(site)
+const getPublicRouteLabel = (site: PublicSite, domainConfig: SitesDomainConfig) => {
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
+  return selectedDomain.domain ? `${selectedDomain.domain}${getRoutePath(site)}` : getRoutePath(site)
+}
 
 const getDefaultPublicRouteSiteId = (domainConfig: SitesDomainConfig) =>
   domainConfig.defaultRoute?.siteId || ''
 
-const isDefaultPublicRoute = (site: PublicSite, domainConfig: SitesDomainConfig) =>
-  Boolean(site.id && site.id === getDefaultPublicRouteSiteId(domainConfig))
+const isDefaultPublicRoute = (site: PublicSite, domainConfig: SitesDomainConfig) => {
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
+  return Boolean(site.id && site.id === getDefaultPublicRouteSiteId(selectedDomain))
+}
 
-const getDefaultPublicRoutePageId = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig) =>
-  site?.id && site.id === getDefaultPublicRouteSiteId(domainConfig)
-    ? domainConfig.defaultRoute?.pageId || ''
+const getDefaultPublicRoutePageId = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig) => {
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
+  return site?.id && site.id === getDefaultPublicRouteSiteId(selectedDomain)
+    ? selectedDomain.defaultRoute?.pageId || ''
     : ''
+}
 
 const isDefaultPublicRoutePage = (site: PublicSite | null | undefined, domainConfig: SitesDomainConfig, pageId: string) =>
   Boolean(pageId && getDefaultPublicRoutePageId(site, domainConfig) === pageId)
@@ -5933,7 +6014,8 @@ const buildLivePublicPageUrl = (
   page: SitePage,
   options: { noTrack?: boolean } = {}
 ) => {
-  const url = domainConfig.domain ? `https://${domainConfig.domain}${getOfficialPageRoutePath(site, domainConfig, pages, page)}` : ''
+  const selectedDomain = getSiteDomainConfig(site, domainConfig)
+  const url = selectedDomain.domain ? `https://${selectedDomain.domain}${getOfficialPageRoutePath(site, selectedDomain, pages, page)}` : ''
   return options.noTrack ? appendNoTrackToUrl(url) : url
 }
 
@@ -10760,9 +10842,12 @@ export const Sites: React.FC = () => {
         siteToSave = currentSite
       }
 
-      if (options.statusOverride === 'published' && (!domainConfig.domain || !domainConfig.renderDomainVerified)) {
-        showToast('error', 'Dominio requerido', 'Configura y verifica un dominio antes de publicar este sitio.')
-        return false
+      if (options.statusOverride === 'published') {
+        const selectedDomain = getSiteDomainConfig(siteToSave, domainConfig)
+        if (!selectedDomain.domain || !selectedDomain.renderDomainVerified) {
+          showToast('error', 'Dominio requerido', 'Elige y verifica el dominio de esta página antes de publicarla.')
+          return false
+        }
       }
 
       const importedCodeSaved = await persistPendingImportedCodeDrafts(siteToSave.id, '', {
@@ -10827,6 +10912,7 @@ export const Sites: React.FC = () => {
           slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
           siteType: siteToSave.siteType,
           status: options.statusOverride || siteToSave.status,
+          domain: siteToSave.domain,
           title: getPublicTitleForSave(siteToSave),
           description: siteToSave.description,
           theme: siteToSave.theme,
@@ -12344,6 +12430,7 @@ export const Sites: React.FC = () => {
         slug: normalizeRouteInput(siteToSave.slug) || normalizeRouteInput(siteToSave.name) || getDefaultRoutePrefix(siteToSave.siteType),
         siteType: siteToSave.siteType,
         status: siteToSave.status,
+        domain: siteToSave.domain,
         title: getPublicTitleForSave(siteToSave),
         description: siteToSave.description,
         theme: siteToSave.theme,
@@ -13675,9 +13762,16 @@ export const Sites: React.FC = () => {
 
   const handleSetDefaultDomainRoute = async (siteToUpdate: PublicSite) => {
     try {
-      const result = await sitesService.setDefaultDomainRoute(siteToUpdate.id)
+      const selectedDomain = getSitePublicDomain(siteToUpdate, domainConfig)
+      const result = selectedDomain?.id
+        ? await sitesService.setPublicDomainDefaultRoute(selectedDomain.id, siteToUpdate.id)
+        : await sitesService.setDefaultDomainRoute(siteToUpdate.id)
       setDomainConfig(result)
-      showToast('success', 'Ruta predeterminada actualizada', `${siteToUpdate.name} abrirá al entrar al dominio principal.`)
+      showToast(
+        'success',
+        'Ruta predeterminada actualizada',
+        `${siteToUpdate.name} abrirá al entrar a ${selectedDomain?.domain || 'el dominio principal'}.`
+      )
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo establecer como predeterminado')
       throw error
@@ -13686,12 +13780,16 @@ export const Sites: React.FC = () => {
 
   const applyDefaultDomainPageRoute = async (siteToUpdate: PublicSite, page: SitePage) => {
     try {
-      const result = await sitesService.setDefaultDomainRoute(siteToUpdate.id, page.id)
+      const selectedDomain = getSitePublicDomain(siteToUpdate, domainConfig)
+      const result = selectedDomain?.id
+        ? await sitesService.setPublicDomainDefaultRoute(selectedDomain.id, siteToUpdate.id, page.id)
+        : await sitesService.setDefaultDomainRoute(siteToUpdate.id, page.id)
       setDomainConfig(result)
+      const selectedResultConfig = getSiteDomainConfig(siteToUpdate, result)
       showToast(
         'success',
         'Página oficial actualizada',
-        `${page.title || siteToUpdate.name} abrirá directo en ${getPublicDomainRootUrl(result) || 'la raíz del dominio'}.`
+        `${page.title || siteToUpdate.name} abrirá directo en ${getPublicDomainRootUrl(selectedResultConfig) || 'la raíz del dominio'}.`
       )
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo establecer la página como oficial')
@@ -13717,7 +13815,7 @@ export const Sites: React.FC = () => {
     }
 
     if (options.confirm) {
-      const rootUrl = getPublicDomainRootUrl(domainConfig)
+      const rootUrl = getPublicDomainRootUrl(getSiteDomainConfig(siteToUpdate, domainConfig))
       if (!rootUrl) {
         showToast('warning', 'Dominio requerido', 'Configura el dominio público antes de elegir la página oficial.')
         return
@@ -15634,7 +15732,9 @@ export const Sites: React.FC = () => {
                         canEditHeader={hasEditablePages(editorToolbarSettingsSite)}
                         routeValue={getRouteEditorValue(editorToolbarSettingsSite)}
                         routePlaceholder={editorToolbarSettingsSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
-                        onRouteChange={(value) => patchEditorToolbarSettingsSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
+                        onRouteChange={(value) => patchEditorToolbarSettingsSite({
+                          slug: normalizeRouteEditorInput(value, getSiteDomainConfig(editorToolbarSettingsSite, domainConfig))
+                        })}
                         onPatchSite={patchEditorToolbarSettingsSite}
                         onPatchTheme={patchEditorToolbarSettingsTheme}
                         onSaveSite={saveEditorToolbarSettingsSite}
@@ -15775,7 +15875,9 @@ export const Sites: React.FC = () => {
                   canEditHeader={hasEditablePages(librarySettingsSite)}
                   routeValue={getRouteEditorValue(librarySettingsSite)}
                   routePlaceholder={librarySettingsSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
-                  onRouteChange={(value) => patchLibrarySettingsSite({ slug: normalizeRouteEditorInput(value, domainConfig) })}
+                  onRouteChange={(value) => patchLibrarySettingsSite({
+                    slug: normalizeRouteEditorInput(value, getSiteDomainConfig(librarySettingsSite, domainConfig))
+                  })}
                   onPatchSite={patchLibrarySettingsSite}
                   onPatchTheme={patchLibrarySettingsTheme}
                   onSaveSite={saveLibrarySettingsSite}
@@ -27878,7 +27980,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     setRouteDraft('')
   }
   const saveRouteEdit = async (site: PublicSite) => {
-    const nextSlug = normalizeRouteEditorInput(routeDraft, domainConfig) || getDefaultRoutePrefix(site.siteType)
+    const nextSlug = normalizeRouteEditorInput(routeDraft, getSiteDomainConfig(site, domainConfig)) || getDefaultRoutePrefix(site.siteType)
     if (nextSlug === getRouteEditorValue(site)) {
       cancelRouteEdit()
       return
@@ -27895,6 +27997,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     }
   }
   const routeEditingSite = routeEditingId ? sites.find(site => site.id === routeEditingId) || null : null
+  const routeEditingDomainConfig = routeEditingSite ? getSiteDomainConfig(routeEditingSite, domainConfig) : domainConfig
   const submitFolderCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const name = folderDraft.trim()
@@ -28463,8 +28566,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             </div>
             <PathInput
               size="lg"
-              prefix={`${getPublicDomainPreview(domainConfig)}/`}
-              prefixTitle={getPublicDomainPreview(domainConfig)}
+              prefix={`${getPublicDomainPreview(routeEditingDomainConfig)}/`}
+              prefixTitle={getPublicDomainPreview(routeEditingDomainConfig)}
               value={routeDraft}
               aria-label={`Ruta de ${routeEditingSite.name}`}
               autoFocus
@@ -28472,7 +28575,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               placeholder={routeEditingSite.siteType === 'landing_page' ? 'sitio-01' : 'formulario-01'}
               suffix={<Pencil size={16} />}
               onFocus={(event) => event.currentTarget.select()}
-              onChange={(value) => setRouteDraft(normalizeRouteEditorInput(value, domainConfig))}
+              onChange={(value) => setRouteDraft(normalizeRouteEditorInput(value, routeEditingDomainConfig))}
               onKeyDown={(event) => {
                 if (event.key === 'Escape') {
                   event.preventDefault()
@@ -33447,10 +33550,17 @@ const SiteSettingsPanelContent: React.FC<{
   onMakeActivePageOfficial,
   onBeforeOpenNested
 }) => {
-  const publicDomain = getPublicDomainPreview(domainConfig)
+  const domainOptions = getPublicDomainOptions(domainConfig)
+  const siteDomainConfig = getSiteDomainConfig(site, domainConfig)
+  const selectedDomainValue = normalizePublicDomainName(siteDomainConfig.domain)
+  const selectedDomainIsStale = Boolean(
+    site.domain &&
+    !domainOptions.some(option => publicDomainsMatch(option.domain, site.domain))
+  )
+  const publicDomain = getPublicDomainPreview(siteDomainConfig)
   const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
-  const rootUrl = getPublicDomainRootUrl(domainConfig)
-  const activePageIsOfficial = activePage ? isDefaultPublicRoutePage(site, domainConfig, activePage.id) : false
+  const rootUrl = getPublicDomainRootUrl(siteDomainConfig)
+  const activePageIsOfficial = activePage ? isDefaultPublicRoutePage(site, siteDomainConfig, activePage.id) : false
   const canUseOfficialRootPage = hasRoutableSitePages(site) && hasEditablePages(site) && Boolean(activePage)
   const antiTrackingEnabled = site.antiTrackingEnabled !== false
   const showFormSubmitMetaSettings = hasFormSubmitMetaSettings ?? (metaDetectedForms.length > 0 || isFormSite(site))
@@ -33481,6 +33591,31 @@ const SiteSettingsPanelContent: React.FC<{
             <small>Edita la dirección de esta página</small>
           </div>
         </div>
+        <label className={styles.editorSettingsField}>
+          <span>Dominio</span>
+          <CustomSelect
+            value={selectedDomainValue}
+            disabled={disabled || domainOptions.length === 0}
+            portal
+            aria-label="Dominio de publicación"
+            onChange={(event) => {
+              onPatchSite({ domain: normalizePublicDomainName(event.target.value) })
+              void onSaveSite()
+            }}
+          >
+            {domainOptions.length === 0 && <option value="">Conecta un dominio en Configuración</option>}
+            {selectedDomainIsStale && (
+              <option value={normalizePublicDomainName(site.domain)} disabled>
+                {normalizePublicDomainName(site.domain)} · ya no conectado
+              </option>
+            )}
+            {domainOptions.map(option => (
+              <option key={option.id || option.domain} value={normalizePublicDomainName(option.domain)}>
+                {option.domain}{option.renderDomainVerified ? '' : ' · pendiente de verificación'}
+              </option>
+            ))}
+          </CustomSelect>
+        </label>
         <PathInput
           prefix={`${publicDomain}/`}
           prefixTitle={publicDomain}
