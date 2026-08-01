@@ -11,6 +11,7 @@ import fetch from 'node-fetch'
 import { getHighLevelConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { formatInvoiceMultilineText, formatInvoicePayloadText } from '../utils/invoiceTextFormatter.js'
+import { translateRistakTaxToHighLevelItems } from '../utils/highLevelInvoiceTax.js'
 import { normalizePhoneForStorage, sanitizeContactName } from '../utils/phoneUtils.js'
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com'
@@ -269,12 +270,12 @@ function normalizeInvoiceBusinessDetails(businessDetails = {}) {
 function normalizeInvoicePayload(data = {}) {
   const formatted = formatInvoicePayloadText(data)
 
-  return {
+  return translateRistakTaxToHighLevelItems({
     ...formatted,
     ...(formatted.businessDetails && {
       businessDetails: normalizeInvoiceBusinessDetails(formatted.businessDetails)
     })
-  }
+  })
 }
 
 class GHLClient {

@@ -3857,6 +3857,14 @@ proveedor reporta un medio inequívoco (por ejemplo, crédito, débito o SPEI). 
 el dato es ambiguo, se usa el fallback configurado —por defecto `99`— en vez de
 inferir una forma fiscal desde el nombre de la pasarela.
 
+Cuando el pago manual se apoya en un invoice de HighLevel, el impuesto fiscal de
+Ristak se traduce a una línea adicional del invoice remoto antes de crearlo.
+HighLevel calcula el saldo únicamente desde `items` y no reconoce el objeto
+interno `tax` en la raíz: enviarlo sin traducir dejaría el invoice por el
+subtotal y haría que el registro del total con impuesto fuera rechazado. El
+desglose fiscal canónico permanece en `payments.metadata_json`; la línea técnica
+de HighLevel no se agrega a los conceptos enviados a Gigstack.
+
 `pue_invoice` crea la factura PUE automáticamente; `none` registra el pago sin
 timbrarlo. En ambos casos, cada pago conserva una llave idempotente estable
 `ristak-payment-<payment_id>`. La respuesta remota `succeeded` se guarda
