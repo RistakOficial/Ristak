@@ -14,6 +14,7 @@ import { serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.
 import {
   AUTOMATION_REVIEW_OK,
   getAutomationReviewStatus,
+  getProjectedAutomationReviewStatuses,
   loadAutomationReferenceCatalogs
 } from './automationReferenceResolver.js'
 import { CALENDAR_DEFAULT_FORM_SITE_ID } from './localCalendarService.js'
@@ -165,6 +166,13 @@ function mapAutomationRow(row, { includeFlow = false, reviewStatus = AUTOMATION_
   const canComparePublication = row.flow !== undefined && row.published_flow !== undefined
   const draftFlow = canComparePublication ? parseFlow(row.flow) : null
   const publishedFlow = canComparePublication && row.published_flow ? parseFlow(row.published_flow) : null
+  const hasUnpublishedChanges = canComparePublication
+    ? Boolean(
+        publishedFlow &&
+          ['published', 'paused'].includes(row.status || 'draft') &&
+          !sameFlow(draftFlow, publishedFlow)
+      )
+    : Boolean(row.has_unpublished_changes)
   const automation = {
     id: row.id,
     folderId: row.folder_id || null,
@@ -174,11 +182,7 @@ function mapAutomationRow(row, { includeFlow = false, reviewStatus = AUTOMATION_
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     publishedAt: row.published_at || null,
-    hasUnpublishedChanges: Boolean(
-      publishedFlow &&
-        ['published', 'paused'].includes(row.status || 'draft') &&
-        !sameFlow(draftFlow, publishedFlow)
-    ),
+    hasUnpublishedChanges,
     reviewStatus
   }
 
@@ -475,9 +479,9 @@ export async function listAutomations() {
  * Listado acotado para la librería y los selectores de automatizaciones.
  *
  * El cursor usa (updated_at, id) para que insertar o borrar registros mientras
- * el usuario navega no desplace las páginas. Los grafos sólo se leen cuando la
- * librería pide explícitamente las insignias de revisión; los catálogos y
- * selectores reciben summaries puros.
+ * el usuario navega no desplace las páginas. La librería nunca carga grafos ni
+ * catálogos: las insignias se leen de la proyección durable y la diferencia
+ * draft/publicado se calcula dentro del SELECT.
  */
 export async function listAutomationsPage(options = {}) {
   const limit = normalizeAutomationPageLimit(options.limit)
@@ -538,6 +542,12 @@ export async function listAutomationsPage(options = {}) {
        created_at,
        updated_at,
        published_at,
+       CASE
+         WHEN status IN ('published', 'paused')
+          AND published_flow IS NOT NULL
+          AND flow <> published_flow
+         THEN 1 ELSE 0
+       END AS has_unpublished_changes,
        ${sortTimestamp} AS sort_updated_at,
        ${cursorTimestamp} AS cursor_updated_at
      FROM automations
@@ -554,25 +564,10 @@ export async function listAutomationsPage(options = {}) {
         .filter((row) => ['published', 'paused'].includes(row.status || 'draft'))
         .map((row) => row.id)
     : []
-  const [catalogs, reviewRows] = reviewIds.length > 0
-    ? await Promise.all([
-        loadAutomationReferenceCatalogs(),
-        db.all(
-          `SELECT id, flow, published_flow
-           FROM automations
-           WHERE id IN (${reviewIds.map(() => '?').join(', ')})`,
-          reviewIds
-        )
-      ])
-    : [null, []]
-  const reviewRowsById = new Map(reviewRows.map((row) => [row.id, row]))
-  const items = pageRows.map((row) => {
-    const reviewRow = reviewRowsById.get(row.id)
-    const hydratedRow = reviewRow ? { ...row, ...reviewRow } : row
-    return mapAutomationRow(hydratedRow, {
-      reviewStatus: catalogs ? getReviewStatusForAutomationRow(hydratedRow, catalogs) : AUTOMATION_REVIEW_OK
-    })
-  })
+  const reviewStatuses = await getProjectedAutomationReviewStatuses(reviewIds)
+  const items = pageRows.map((row) => mapAutomationRow(row, {
+    reviewStatus: reviewStatuses.get(row.id) || AUTOMATION_REVIEW_OK
+  }))
 
   return {
     items,

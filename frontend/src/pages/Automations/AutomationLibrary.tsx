@@ -98,8 +98,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
   const prefetchTimerRef = useRef<number | null>(null)
   const listRequestRef = useRef(0)
   const listAbortRef = useRef<AbortController | null>(null)
-  const reviewGenerationRef = useRef(0)
-  const reviewAbortControllersRef = useRef(new Set<AbortController>())
 
   const openAutomation = (automationId: string) => {
     if (automationId !== currentAutomationId) {
@@ -140,12 +138,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
     force?: boolean
   } = {}) => {
     const append = options.append === true
-    if (!append) {
-      reviewGenerationRef.current += 1
-      reviewAbortControllersRef.current.forEach((controller) => controller.abort())
-      reviewAbortControllersRef.current.clear()
-    }
-    const reviewGeneration = reviewGenerationRef.current
     const requestId = ++listRequestRef.current
     listAbortRef.current?.abort()
     const controller = new AbortController()
@@ -159,7 +151,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         cursor: append ? options.cursor : null,
         search: debouncedQuery || undefined,
         folderId: debouncedQuery ? undefined : (folderId || 'root'),
-        includeReview: false,
+        includeReview: true,
         force: options.force,
         // El store compartido fusiona únicamente páginas de esta misma
         // consulta. Así una mutación conserva todo lo que ya se cargó.
@@ -177,41 +169,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       })
       setPageInfo(overview.pageInfo)
 
-      // Las alertas de referencias rotas requieren revisar el grafo. Se
-      // revalidan después del primer paint para que esa auditoría no vuelva a
-      // bloquear la apertura de la librería.
-      const reviewController = new AbortController()
-      reviewAbortControllersRef.current.add(reviewController)
-      void automationsService.getOverview({
-        limit: AUTOMATIONS_LIBRARY_PAGE_SIZE,
-        cursor: append ? options.cursor : null,
-        search: debouncedQuery || undefined,
-        folderId: debouncedQuery ? undefined : (folderId || 'root'),
-        includeReview: true,
-        force: options.force,
-        signal: reviewController.signal
-      }).then((reviewedOverview) => {
-        if (
-          reviewController.signal.aborted ||
-          reviewGeneration !== reviewGenerationRef.current
-        ) return
-        const reviewedById = new Map(reviewedOverview.automations.map((automation) => [automation.id, automation]))
-        setAutomations((current) => current.map((automation) => {
-          const reviewed = reviewedById.get(automation.id)
-          return reviewed
-            ? {
-                ...automation,
-                reviewStatus: reviewed.reviewStatus,
-                hasUnpublishedChanges: reviewed.hasUnpublishedChanges
-              }
-            : automation
-        }))
-      }).catch(() => {
-        // El summary ligero ya es utilizable; una auditoría tardía no debe
-        // tumbar ni vaciar la librería.
-      }).finally(() => {
-        reviewAbortControllersRef.current.delete(reviewController)
-      })
       return overview
     } catch {
       if (controller.signal.aborted) return null
@@ -276,9 +233,6 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
       listRequestRef.current += 1
       listAbortRef.current?.abort()
       listAbortRef.current = null
-      reviewGenerationRef.current += 1
-      reviewAbortControllersRef.current.forEach((controller) => controller.abort())
-      reviewAbortControllersRef.current.clear()
       clearQueuedPrefetch()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

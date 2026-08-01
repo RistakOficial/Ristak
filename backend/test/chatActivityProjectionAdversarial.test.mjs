@@ -26,6 +26,19 @@ const sqliteColumnMigrationUrls = [
   '095zc_chat_activity_email_version.sqlite.sql'
 ].map(name => new URL(`../migrations/versioned/${name}`, import.meta.url))
 
+test('la reproyección por perfil limita el trabajo a mensajes todavía no resueltos', async () => {
+  const source = await readFile(
+    new URL('../src/services/chatActivityProjectionService.js', import.meta.url),
+    'utf8'
+  )
+  const profileBranch = source
+    .split("if (kind === 'profile')")[1]
+    .split("if (kind === 'business_alias')")[0]
+
+  assert.match(profileBranch, /NULLIF\(TRIM\(COALESCE\(contact_id, ''\)\), ''\) IS NULL/)
+  assert.match(profileBranch, /whatsapp_api_contact_id = \?[\s\S]*AND id > \?/)
+})
+
 let migrationPromise = null
 
 async function ensureProjectionMigration() {

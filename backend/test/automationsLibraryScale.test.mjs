@@ -62,11 +62,23 @@ test('la librería pagina por cursor, busca en servidor y no devuelve grafos en 
       )
     }
 
+    const changedAutomationId = `${marker}_144`
+    await db.run(
+      `UPDATE automations
+       SET flow = ${flowPlaceholder}
+       WHERE id = ?`,
+      [JSON.stringify({ ...JSON.parse(graph), settings: { changed: true } }), changedAutomationId]
+    )
+
     const firstPage = await listAutomationsPage({ search: marker, limit: 50 })
     assert.equal(firstPage.items.length, 50)
     assert.equal(firstPage.pageInfo.hasMore, true)
     assert.ok(firstPage.pageInfo.nextCursor)
     assert.ok(firstPage.items.every((item) => !('flow' in item)))
+    assert.equal(
+      firstPage.items.find((item) => item.id === changedAutomationId)?.hasUnpublishedChanges,
+      true
+    )
     assert.ok(
       Buffer.byteLength(JSON.stringify(firstPage), 'utf8') < 100_000,
       'cincuenta summaries no deben cargar 600 KB de grafos'
@@ -133,8 +145,11 @@ test('el contrato HTTP y la librería mantienen filtros y carga incremental serv
   )
   assert.match(pagedList, /LIMIT \?/)
   assert.match(pagedList, /limit \+ 1/)
-  assert.match(pagedList, /SELECT id, flow, published_flow[\s\S]*WHERE id IN/)
+  assert.match(pagedList, /AS has_unpublished_changes/)
   assert.match(pagedList, /reviewIds = includeReview/)
+  assert.match(pagedList, /getProjectedAutomationReviewStatuses\(reviewIds\)/)
+  assert.doesNotMatch(pagedList, /SELECT id, flow, published_flow[\s\S]*WHERE id IN/)
+  assert.doesNotMatch(pagedList, /loadAutomationReferenceCatalogs\(\)/)
   assert.match(pagedList, /cursorTimestamp = databaseDialect === 'postgres'/)
   assert.match(pagedList, /\(\$\{sortTimestamp\}\)::text/)
   assert.match(pagedList, /AS cursor_updated_at/)
@@ -144,11 +159,10 @@ test('el contrato HTTP y la librería mantienen filtros y carga incremental serv
   assert.match(library, /AUTOMATIONS_LIBRARY_PAGE_SIZE = 50/)
   assert.match(library, /search: debouncedQuery \|\| undefined/)
   assert.match(library, /cursor: append \? options\.cursor : null/)
-  assert.match(library, /includeReview: false/)
   assert.match(library, /includeReview: true/)
-  assert.match(library, /reviewAbortControllersRef/)
-  assert.match(library, /reviewGeneration !== reviewGenerationRef\.current/)
-  assert.match(library, /if \(!append\) \{[\s\S]{0,260}reviewAbortControllersRef\.current\.clear\(\)/)
+  assert.doesNotMatch(library, /includeReview: false/)
+  assert.doesNotMatch(library, /reviewAbortControllersRef|reviewGenerationRef/)
+  assert.equal(library.match(/automationsService\.getOverview\(\{/g)?.length, 1)
   assert.doesNotMatch(library, /reviewAbortRef/)
   assert.match(library, /getAutomation\(currentAutomationId, \{ signal: controller\.signal \}\)/)
   assert.match(library, /Cargar más/)

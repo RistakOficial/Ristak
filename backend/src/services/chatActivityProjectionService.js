@@ -130,7 +130,9 @@ async function idsForIdentityQueue(database, row) {
   if (kind === 'profile') {
     return (await database.all(`
       SELECT id FROM whatsapp_api_messages
-      WHERE whatsapp_api_contact_id = ? AND id > ?
+      WHERE NULLIF(TRIM(COALESCE(contact_id, '')), '') IS NULL
+        AND whatsapp_api_contact_id = ?
+        AND id > ?
       ORDER BY id
       LIMIT ?
     `, [value, cursor, BATCH_SIZE])).map(item => item.id)

@@ -6,6 +6,7 @@ import { db } from '../src/config/database.js'
 import { runVersionedMigrations } from '../src/startup/runMigrations.js'
 import {
   cleanupAbandonedAutomationReviewRuns,
+  getProjectedAutomationReviewStatuses,
   listAutomationReviewProblems,
   rebuildAutomationReviewProjection
 } from '../src/services/automationReferenceResolver.js'
@@ -67,6 +68,11 @@ test('la proyección detecta referencias borradas sin escanear grafos desde Head
     assert.equal(problems[0].automation.id, automationId)
     assert.equal(problems[0].reviewStatus.state, 'requires_review')
     assert.match(problems[0].reviewStatus.summary, /Etiqueta temporal/)
+
+    const statuses = await getProjectedAutomationReviewStatuses([automationId, 'missing'])
+    assert.equal(statuses.size, 1)
+    assert.equal(statuses.get(automationId)?.state, 'requires_review')
+    assert.equal(statuses.has('missing'), false)
   } finally {
     await db.run('DELETE FROM automations WHERE id = ?', [automationId]).catch(() => undefined)
     await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
@@ -89,6 +95,21 @@ test('la lectura de notificaciones consulta sólo la proyección indexada y apli
   assert.doesNotMatch(reader, /published_flow|JSON\.parse|loadAutomationReferenceCatalogs/)
   assert.doesNotMatch(reader, /readAutomationReviewProjectionState|scheduleAutomationReviewProjectionBackfill/)
   assert.doesNotMatch(reader, /automation_review_projection_state/)
+})
+
+test('la lectura proyectada por IDs no carga grafos, catálogos ni estado', async () => {
+  const source = await readFile(
+    new URL('../src/services/automationReferenceResolver.js', import.meta.url),
+    'utf8'
+  )
+  const reader = source
+    .split('export async function getProjectedAutomationReviewStatuses')[1]
+    .split('export async function listAutomationReviewProblems')[0]
+
+  assert.match(reader, /FROM automation_review_projection/)
+  assert.match(reader, /WHERE automation_id IN/)
+  assert.doesNotMatch(reader, /FROM automations|published_flow|loadAutomationReferenceCatalogs/)
+  assert.doesNotMatch(reader, /readAutomationReviewProjectionState|scheduleAutomationReviewProjectionBackfill/)
 })
 
 test('listAutomationReviewProblems es una lectura pura también en runtime', async () => {

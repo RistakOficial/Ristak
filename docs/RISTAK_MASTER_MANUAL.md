@@ -1431,6 +1431,13 @@ parsea flows dentro de un GET. Un scheduler de sistema revisa cada segundo la
 fila singleton de `automation_review_projection_state`; si detecta `pending` o
 revisiones distintas, encola el worker en el coordinador global de backfills.
 
+La biblioteca de Automatizaciones consume ese mismo snapshot por los IDs de la
+página. Su primera carga hace una sola petición y no vuelve a leer grafos ni
+catálogos para calcular alertas. El indicador de cambios sin publicar se obtiene
+en el `SELECT` paginado mediante la comparación de `flow` y `published_flow`, sin
+transferir ambos documentos al servicio. Así, abrir la biblioteca conserva un
+costo acotado aunque existan flujos grandes o referencias en reconstrucción.
+
 El worker recorre `automations` por keyset de `id`, con lotes de 100 como máximo,
 y escribe los problemas en staging bajo un `run_token` de la migración `106*`.
 La tabla publicada no se borra al comenzar ni cambia entre lotes. Una transacción
@@ -1449,6 +1456,12 @@ de etiquetas, usuarios, calendarios, links, números, plantillas y formularios.
 Esta carga queda fuera de requests y no se repite por página; si esos catálogos de
 configuración alcanzan volumen masivo, deberán convertirse en otra proyección
 incremental, no volver a consultas por nodo.
+
+La reproyección de actividad de chats por perfiles de WhatsApp sólo recorre
+mensajes cuyo `contact_id` aún no está resuelto. Ese predicado coincide con el
+índice parcial `(whatsapp_api_contact_id, id)` y es obligatorio: quitarlo haría
+que conectar o actualizar perfiles por QR escaneara el histórico completo y
+podría saturar instalaciones con memoria limitada.
 
 La biblioteca de Media pagina 50 assets por `created_at + id`, busca en servidor
 y usa `folder_path` indexado (`065*`). La primera pagina no calcula facets ni

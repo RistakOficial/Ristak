@@ -1190,6 +1190,37 @@ export function scheduleAutomationReviewProjectionBackfill() {
   })
 }
 
+export async function getProjectedAutomationReviewStatuses(automationIds = []) {
+  const ids = [...new Set(
+    asArray(automationIds)
+      .map(cleanString)
+      .filter(Boolean)
+  )].slice(0, AUTOMATION_REVIEW_MAX_BATCH_SIZE)
+  if (!ids.length) return new Map()
+
+  try {
+    const rows = await db.all(
+      `SELECT automation_id, issue_count, summary, issues_json
+       FROM automation_review_projection
+       WHERE automation_id IN (${ids.map(() => '?').join(', ')})`,
+      ids
+    )
+    return new Map(rows.map((row) => [
+      row.automation_id,
+      {
+        state: 'requires_review',
+        issueCount: Number(row.issue_count || 0),
+        summary: row.summary || '',
+        issues: parseProjectedIssues(row.issues_json)
+      }
+    ]))
+  } catch {
+    // La librería puede abrir durante el primer deploy antes de que termine la
+    // migración. En ese intervalo responde sin alertas en vez de volver al scan.
+    return new Map()
+  }
+}
+
 export async function listAutomationReviewProblems({ limit = 20 } = {}) {
   const max = Math.max(1, Math.min(Number(limit) || 20, 100))
 
