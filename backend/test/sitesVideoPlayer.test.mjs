@@ -6,6 +6,7 @@ import { access, readFile } from 'node:fs/promises'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import { API_URLS } from '../src/config/constants.js'
+import { publicSiteHostMiddleware } from '../src/controllers/sitesController.js'
 import { createBlock, createMetaPageEventFromRequest, createSite, deleteSite, renderPublicSiteHtml } from '../src/services/sitesService.js'
 
 const baseSite = (settings) => ({
@@ -55,6 +56,27 @@ test('Sites self-hosts the pinned HLS runtime from the backend dependency', asyn
   await access(runtimeUrl)
   const routesSource = await readFile(routesUrl, 'utf8')
   assert.match(routesSource, /router\.get\('\/public\/video-engine\/hls-1\.6\.16\.min\.js', sitesVideoEngineHandler\)/)
+})
+
+test('connected Sites domains let the pinned HLS runtime reach its public route', async () => {
+  const req = {
+    path: '/api/sites/public/video-engine/hls-1.6.16.min.js',
+    method: 'GET',
+    query: {},
+    protocol: 'https',
+    headers: {
+      host: 'site.example.test',
+      'x-forwarded-host': 'site.example.test',
+      'x-forwarded-proto': 'https'
+    }
+  }
+  let nextCalled = false
+
+  await publicSiteHostMiddleware(req, {}, () => {
+    nextCalled = true
+  })
+
+  assert.equal(nextCalled, true)
 })
 
 const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

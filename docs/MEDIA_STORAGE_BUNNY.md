@@ -352,7 +352,11 @@ another account.
   video events while preserving the Media asset and Stream ids. Published Sites
   self-host the pinned `hls.js` runtime at
   `/api/sites/public/video-engine/hls-1.6.16.min.js` with an immutable cache,
-  instead of depending on a third-party JavaScript CDN. A published HLS failure
+  instead of depending on a third-party JavaScript CDN. Esa ruta publica debe
+  pasar directamente al router de Sites tanto en el dominio Render como en cada
+  dominio personalizado conectado; el resolver de paginas publicas no debe
+  interceptarla, porque sin ese motor el navegador deja el teaser HLS detenido
+  sobre el poster. A published HLS failure
   recovers on the associated Storage MP4 without replacing the custom player or
   creating another tracking session.
 - During a direct TUS upload the temporary asset has

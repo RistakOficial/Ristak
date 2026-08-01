@@ -1250,6 +1250,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
       req.path.startsWith('/api/sites/public/payments/') ||
       req.path === '/api/sites/public/fonts.css' ||
       req.path === '/api/sites/public/font-file' ||
+      req.path === '/api/sites/public/video-engine/hls-1.6.16.min.js' ||
       req.path.startsWith('/api/sites/public/calendar-preview/') ||
       req.path.startsWith('/api/sites/public/imported-assets/') ||
       req.path.startsWith('/api/sites/public/content-assets/') ||
