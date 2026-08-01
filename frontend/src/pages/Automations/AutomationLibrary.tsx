@@ -8,7 +8,6 @@ import {
   Folder,
   FolderInput,
   FolderPlus,
-  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -20,12 +19,13 @@ import {
 import { cn } from '@/utils/cn'
 import {
   Button,
-Modal,
-DropdownMenu,
-DropdownMenuContent,
-DropdownMenuItem,
-DropdownMenuSeparator,
-DropdownMenuTrigger
+  Loading,
+  Modal,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
 } from '@/components/common'
 import { CustomSelect as BaseCustomSelect } from '@/components/common'
 
@@ -697,10 +697,7 @@ export const AutomationLibrary: React.FC<AutomationLibraryProps> = ({
         })}
 
         {loading && visibleFolders.length === 0 && visibleAutomations.length === 0 && (
-          <p className={styles.leftNavEmpty} role="status" aria-live="polite">
-            <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-            Cargando automatizaciones…
-          </p>
+          <Loading compact size="sm" message="Cargando automatizaciones…" />
         )}
 
         {!loading && pageInfo.hasMore && pageInfo.nextCursor && (

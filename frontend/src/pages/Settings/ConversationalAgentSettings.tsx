@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CalendarCheck, CheckCircle2, ChevronDown, CircleSlash, CreditCard, FileText, Image as ImageIcon, KeyRound, Link2, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldAlert, Target, Trash2, UserCheck, Users, Video, Wand2 } from 'lucide-react'
-import { Badge, Button, Card, CheckboxMultiSelect, CustomSelect, ExpandableTextareaField, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
+import { Badge, Button, Card, CheckboxMultiSelect, CustomSelect, ExpandableTextareaField, Loading, Modal, NumberInput, PageHeader, Switch } from '@/components/common'
 import { KpiCard } from '@/components/common/KpiCard/KpiCard'
 import {
   PhoneChatPreview,
@@ -4894,6 +4894,18 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
+  if (loading) {
+    return (
+      <div className={directoryClassName}>
+        <PageHeader
+          title="Chatbot"
+          subtitle="Supervisa los chatbots que atienden conversaciones, cumplen metas y escalan chats cuando necesitan ayuda humana."
+        />
+        <Loading message="Cargando Chatbot…" page="ai-agent" />
+      </div>
+    )
+  }
+
   if (selectedAgent) {
     return (
       <div className={rootClassName}>
@@ -5057,14 +5069,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           icon={<PauseCircle className="w-5 h-5" />}
         />
       </div>
-
-      {loading && (
-        <Card>
-          <p className={styles.helper} role="status" aria-live="polite" aria-label="Cargando agentes">
-            <RotateCcw size={16} className="animate-spin" aria-hidden="true" />
-          </p>
-        </Card>
-      )}
 
       {!loading && agents.length === 0 && (
         <Card padding="md" className={styles.emptyAgentDirectory}>

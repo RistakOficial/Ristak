@@ -24,6 +24,7 @@ type LoadingPage =
 interface LoadingProps {
   message?: string
   fullScreen?: boolean
+  compact?: boolean
   size?: 'sm' | 'md' | 'lg'
   variant?: 'spinner'
   page?: LoadingPage
@@ -42,14 +43,26 @@ const sizeClasses = {
 export const Loading: React.FC<LoadingProps> = ({
   message = 'Cargando',
   fullScreen = false,
+  compact = false,
   size = 'md'
 }) => {
   const ariaMessage = message.trim() || 'Cargando'
-  const containerClass = fullScreen ? styles.fullScreenContainer : styles.container
+  const isCompact = compact && !fullScreen
+  const containerClass = fullScreen
+    ? styles.fullScreenContainer
+    : isCompact
+      ? styles.compactContainer
+      : styles.container
 
   return (
-    <div className={containerClass} role="status" aria-live="polite" aria-label={ariaMessage}>
-      <div className={cx(styles.loadingWrapper, sizeClasses[size])}>
+    <div
+      className={containerClass}
+      role="status"
+      aria-live="polite"
+      aria-label={ariaMessage}
+      aria-busy="true"
+    >
+      <div className={cx(styles.loadingWrapper, isCompact && styles.compactWrapper, sizeClasses[size])}>
         <Loader2 className={styles.spinner} aria-hidden="true" />
         <p className={styles.message}>{ariaMessage}</p>
       </div>
