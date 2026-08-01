@@ -23,6 +23,8 @@ import {
   moveMediaSelection,
   prepareBunnyStreamResumableUpload,
   queueMediaAssetBunnyStreamSync,
+  renameMediaAsset,
+  renameMediaFolder,
   replaceMediaAsset,
   retryMediaAsset,
   resolveMediaAssetSelection,
@@ -956,6 +958,20 @@ export async function createMediaFolderHandler(req, res) {
   }
 }
 
+export async function renameMediaFolderHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const result = await renameMediaFolder({
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      folderPath: body.folderPath || body.folder_path || body.path || '',
+      name: body.name || body.folderName || body.folder_name || ''
+    })
+    res.json({ success: true, data: result })
+  } catch (error) {
+    sendError(res, error, 'Error renombrando carpeta multimedia')
+  }
+}
+
 export async function syncBunnyStorageFolderHandler(req, res) {
   try {
     const body = req.body || {}
@@ -1005,6 +1021,20 @@ export async function deleteMediaAssetHandler(req, res) {
     res.json({ success: true, data: result })
   } catch (error) {
     sendError(res, error, 'Error eliminando archivo multimedia')
+  }
+}
+
+export async function renameMediaAssetHandler(req, res) {
+  try {
+    const body = req.body || {}
+    const asset = await renameMediaAsset({
+      assetId: req.params.assetId,
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      name: body.name || body.filename || body.fileName || ''
+    })
+    res.json({ success: true, data: asset })
+  } catch (error) {
+    sendError(res, error, 'Error renombrando archivo multimedia')
   }
 }
 

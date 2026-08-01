@@ -53,10 +53,12 @@ Authenticated app endpoints:
 - `DELETE /api/media/video-upload/:id?module=sites`
 - `GET /api/media/assets`
 - `POST /api/media/folders`
+- `PATCH /api/media/folders/rename`
 - `GET /api/media/folders`
 - `POST /api/media/folders/sync`
 - `GET /api/media/storage/usage`
 - `GET /api/media/assets/:id/url`
+- `PATCH /api/media/assets/:id/rename`
 - `DELETE /api/media/assets/:id`
 - `PUT /api/media/assets/:id/replace`
 - `POST /api/media/assets/:id/retry`
@@ -476,9 +478,17 @@ these events.
   `accounts/<slug>` que el selector **Subir aquí**. El MIME interno de Media sigue
   reservado para mover assets ya existentes y no se confunde con archivos del
   sistema operativo.
-- Crear, mover o eliminar una carpeta actualiza tanto sus assets como su registro
+- Crear, renombrar, mover o eliminar una carpeta actualiza tanto sus assets como su registro
   persistente. Borrar el último archivo no borra por accidente una carpeta creada
   por el usuario; una carpeta vacía puede moverse o eliminarse expresamente.
+- **Cambiar nombre** está disponible en el menú de cada archivo y carpeta. En un
+  archivo sólo modifica `original_filename`, que es el nombre visible y de
+  descarga: no reescribe el binario, `bunny_path`, `public_url` ni bindings por
+  asset ID. La extensión real se conserva y el backend rechaza otro nombre igual
+  dentro de la misma carpeta. En una carpeta cambia la ruta completa, mueve sus
+  assets y subcarpetas con el mismo aislamiento y límites síncronos del flujo de
+  mover, conserva carpetas vacías en `media_folders` y rechaza colisiones con una
+  carpeta hermana existente.
 - Quick filters such as Fotos, Videos, Audio, Docs and Otros are global views from the root of Media. Selecting one resets the current folder and shows matching files directly, while normal folder browsing remains available when the user opens a folder.
 
 ## Quotas

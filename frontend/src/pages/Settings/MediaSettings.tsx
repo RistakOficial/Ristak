@@ -25,6 +25,7 @@ import {
   List,
   Loader2,
   MoreHorizontal,
+  Pencil,
   PlayCircle,
   RefreshCw,
   Trash2,
@@ -102,6 +103,13 @@ interface MoveDialogState {
   sourceFolderPath?: string
   mediaType?: string
   status?: string
+}
+
+interface RenameDialogState {
+  kind: 'file' | 'folder'
+  currentName: string
+  assetId?: string
+  folderPath?: string
 }
 
 interface MarqueeSelectionState {
@@ -433,6 +441,14 @@ function joinFolderPath(...parts: string[]) {
   return parts.flatMap(pathSegments).filter(Boolean).join('/')
 }
 
+function replaceFolderPathPrefix(path: string, sourcePath: string, targetPath: string) {
+  if (path === sourcePath) return targetPath
+  if (path.startsWith(`${sourcePath}/`)) {
+    return joinFolderPath(targetPath, path.slice(sourcePath.length + 1))
+  }
+  return path
+}
+
 function rectsOverlap(a: DOMRect | { left: number; right: number; top: number; bottom: number }, b: DOMRect | { left: number; right: number; top: number; bottom: number }) {
   return a.left <= b.right && a.right >= b.left && a.top <= b.bottom && a.bottom >= b.top
 }
@@ -588,6 +604,9 @@ export const MediaSettings: React.FC = () => {
   const [createFolderOpen, setCreateFolderOpen] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [renaming, setRenaming] = useState(false)
   const [draggingFileIds, setDraggingFileIds] = useState<string[]>([])
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
   const [externalDragActive, setExternalDragActive] = useState(false)
@@ -836,7 +855,7 @@ export const MediaSettings: React.FC = () => {
   const selectedElementCount = selectedItemKeys.size
   const allVisibleSelected = visibleSelectionKeys.length > 0 && visibleSelectionKeys.every((key) => selectedItemKeys.has(key))
   const partiallySelected = !allVisibleSelected && visibleSelectionKeys.some((key) => selectedItemKeys.has(key))
-  const actionBusy = Boolean(bulkAction) || moving
+  const actionBusy = Boolean(bulkAction) || moving || renaming
   const marqueeBox = marqueeSelection && marqueeSelection.moved
     ? {
         left: Math.min(marqueeSelection.startX, marqueeSelection.currentX),
@@ -915,6 +934,80 @@ export const MediaSettings: React.FC = () => {
       showToast('error', 'No se pudo crear la carpeta', folderError instanceof Error ? folderError.message : 'Intenta otra vez.')
     } finally {
       setCreatingFolder(false)
+    }
+  }
+
+  const openRenameFileDialog = (file: ExplorerFile) => {
+    setRenameDialog({
+      kind: 'file',
+      currentName: file.fileName,
+      assetId: file.asset.id
+    })
+    setRenameName(file.fileName)
+  }
+
+  const openRenameFolderDialog = (folder: FolderSummary) => {
+    const currentName = pathSegments(folder.path).slice(-1)[0] || folder.name
+    setRenameDialog({
+      kind: 'folder',
+      currentName,
+      folderPath: folder.path
+    })
+    setRenameName(currentName)
+  }
+
+  const closeRenameDialog = () => {
+    if (renaming) return
+    setRenameDialog(null)
+    setRenameName('')
+  }
+
+  const handleRename = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!renameDialog) return
+    const name = renameName.trim()
+    if (!name) {
+      showToast('warning', 'Falta el nombre', 'Escribe el nuevo nombre.')
+      return
+    }
+
+    setRenaming(true)
+    try {
+      if (renameDialog.kind === 'file' && renameDialog.assetId) {
+        const renamedAsset = await mediaService.renameAsset(renameDialog.assetId, name)
+        setAssets((current) => current.map((asset) => (
+          asset.id === renamedAsset.id ? renamedAsset : asset
+        )))
+        await refreshLibrary()
+        showToast('success', 'Archivo renombrado', `${renamedAsset.originalFilename || name} ya aparece con su nuevo nombre.`)
+      } else if (renameDialog.kind === 'folder' && renameDialog.folderPath) {
+        const result = await mediaService.renameFolder({
+          folderPath: renameDialog.folderPath,
+          name
+        })
+        const nextCurrentPath = replaceFolderPathPrefix(
+          currentPath,
+          result.folder.previousPath,
+          result.folder.path
+        )
+        setSelectedItemKeys(new Set())
+        if (nextCurrentPath !== currentPath) {
+          updateExplorerUrl({ path: nextCurrentPath, asset: null })
+        } else {
+          await refreshLibrary()
+        }
+        showToast('success', 'Carpeta renombrada', `${result.folder.name} ya aparece con su nuevo nombre.`)
+      }
+      setRenameDialog(null)
+      setRenameName('')
+    } catch (renameError) {
+      showToast(
+        'error',
+        'No se pudo renombrar',
+        renameError instanceof Error ? renameError.message : 'Intenta otra vez.'
+      )
+    } finally {
+      setRenaming(false)
     }
   }
 
@@ -1688,6 +1781,10 @@ export const MediaSettings: React.FC = () => {
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => openRenameFolderDialog(folder)}>
+            <Pencil size={15} className={styles.menuItemIcon} />
+            Cambiar nombre
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => handleDownloadFolder(folder)}>
             <Download size={15} className={styles.menuItemIcon} />
             Descargar carpeta
@@ -1722,6 +1819,10 @@ export const MediaSettings: React.FC = () => {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => openRenameFileDialog(file)}>
+              <Pencil size={15} className={styles.menuItemIcon} />
+              Cambiar nombre
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void handleCopyLink(asset)}>
               <Copy size={15} className={styles.menuItemIcon} />
               Copiar enlace
@@ -2250,6 +2351,9 @@ export const MediaSettings: React.FC = () => {
                     <p>{selectedFile.folderPath ? selectedFile.folderPath.split('/').map(formatFolderSegment).join(' / ') : 'Mi unidad'}</p>
                   </div>
                   <div className={styles.previewActions}>
+                    <Button variant="secondary" size="sm" leftIcon={<Pencil size={15} />} onClick={() => openRenameFileDialog(selectedFile)}>
+                      Renombrar
+                    </Button>
                     <Button variant="secondary" size="sm" leftIcon={<ExternalLink size={15} />} onClick={() => handleOpenAsset(selectedFile.asset)}>
                       Abrir
                     </Button>
@@ -2340,6 +2444,44 @@ export const MediaSettings: React.FC = () => {
             </Button>
             <Button variant="primary" size="sm" type="submit" loading={creatingFolder} disabled={!folderName.trim()}>
               Crear carpeta
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(renameDialog)}
+        onClose={closeRenameDialog}
+        title={renameDialog?.kind === 'folder' ? 'Cambiar nombre de carpeta' : 'Cambiar nombre de archivo'}
+        subtitle={renameDialog ? `Nombre actual: ${renameDialog.currentName}` : undefined}
+        size="sm"
+      >
+        <form className={styles.createFolderForm} onSubmit={handleRename}>
+          <label className={styles.createFolderField} htmlFor="media-rename-name">
+            <span>Nuevo nombre</span>
+            <input
+              id="media-rename-name"
+              type="text"
+              value={renameName}
+              onChange={(event) => setRenameName(event.target.value)}
+              placeholder={renameDialog?.kind === 'folder' ? 'Ej. Material de campaña' : 'Ej. Presentación final.pdf'}
+              maxLength={renameDialog?.kind === 'folder' ? 120 : 255}
+              autoFocus
+              autoComplete="off"
+              disabled={renaming}
+            />
+          </label>
+          <p>
+            {renameDialog?.kind === 'file'
+              ? 'La extensión real del archivo se conservará para que siga abriendo correctamente.'
+              : 'Las subcarpetas y los archivos conservarán su contenido dentro de la nueva ruta.'}
+          </p>
+          <div className={styles.createFolderActions}>
+            <Button variant="secondary" size="sm" type="button" onClick={closeRenameDialog} disabled={renaming}>
+              Cancelar
+            </Button>
+            <Button variant="primary" size="sm" type="submit" loading={renaming} disabled={!renameName.trim()}>
+              Guardar nombre
             </Button>
           </div>
         </form>

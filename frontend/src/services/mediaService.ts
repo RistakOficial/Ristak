@@ -232,6 +232,14 @@ export interface MediaSelectionOperationResult {
   foldersAffected?: number
 }
 
+export interface MediaFolderRenameResult extends MediaSelectionOperationResult {
+  folder: {
+    previousPath: string
+    path: string
+    name: string
+  }
+}
+
 export interface StreamChartPoint {
   label: string
   value: number
@@ -947,6 +955,14 @@ export const mediaService = {
 
   createFolder(input: { parentPath?: string; name: string }) {
     return apiClient.post<MediaFolderSummary>('/media/folders', input)
+  },
+
+  renameFolder(input: { folderPath: string; name: string }) {
+    return apiClient.patch<MediaFolderRenameResult>('/media/folders/rename', input)
+  },
+
+  renameAsset(assetId: string, name: string) {
+    return apiClient.patch<MediaAsset>(`/media/assets/${encodeURIComponent(assetId)}/rename`, { name })
   },
 
   deleteAsset(assetId: string) {

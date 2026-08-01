@@ -25,6 +25,8 @@ import {
   finalizeResumableVideoUploadHandler,
   prepareResumableVideoUploadHandler,
   queueMediaAssetStreamHandler,
+  renameMediaAssetHandler,
+  renameMediaFolderHandler,
   replaceMediaAssetHandler,
   retryMediaAssetHandler,
   serveMediaAssetFileHandler,
@@ -207,6 +209,7 @@ router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHa
 router.get('/folders', requireMediaLicense, requireMediaAccess, listMediaFoldersHandler)
 router.post('/folders/sync', requireMediaLicense, requireMediaAccess, syncBunnyStorageFolderHandler)
 router.post('/folders', requireMediaLicense, requireMediaAccess, createMediaFolderHandler)
+router.patch('/folders/rename', requireMediaLicense, requireMediaAccess, renameMediaFolderHandler)
 router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)
 router.get('/diagnostics', requireMediaLicense, requireMediaAccess, storageDiagnosticsHandler)
 router.get('/assets/:assetId/url', requireMediaLicense, requireMediaAccess, getMediaAssetUrlHandler)
@@ -216,6 +219,7 @@ router.post('/assets/download', requireMediaLicense, requireMediaAccess, downloa
 router.post('/assets/move', requireMediaLicense, requireMediaAccess, moveMediaAssetsHandler)
 router.post('/assets/move-selection', requireMediaLicense, requireMediaAccess, moveMediaSelectionHandler)
 router.delete('/assets/selection', requireMediaLicense, requireMediaAccess, deleteMediaSelectionHandler)
+router.patch('/assets/:assetId/rename', requireMediaLicense, requireMediaAccess, renameMediaAssetHandler)
 router.delete('/assets/:assetId', requireMediaLicense, requireMediaAccess, deleteMediaAssetHandler)
 router.put('/assets/:assetId/replace', requireMediaLicense, requireMediaAccess, classifyMediaUpload, uploadSingleFile, replaceMediaAssetHandler)
 router.post('/assets/:assetId/retry', requireMediaLicense, requireMediaAccess, retryMediaAssetHandler)

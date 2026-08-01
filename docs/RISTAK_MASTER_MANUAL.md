@@ -1520,6 +1520,14 @@ carpetas corre por lotes de 2,000 con commits intermedios, y el indice global po
 tipo permite el orden keyset aun sin filtro de status. No existe un
 `listAllAssets` en el camino de render.
 
+Renombrar un archivo cambia únicamente su `original_filename`: el nombre visible
+y de descarga se actualiza sin mover el binario ni modificar su URL o bindings.
+La extensión real no puede cambiar y no se admiten nombres duplicados dentro de
+la misma carpeta. Renombrar una carpeta actualiza la ruta de todos sus assets,
+subcarpetas y registros persistentes, incluida una carpeta vacía; conserva el
+aislamiento por `businessId`, rechaza colisiones y usa los mismos límites remotos
+seguros que mover.
+
 Las mutaciones que requieren mover o borrar objetos remotos se rechazan antes de
 tocar datos si exceden 25 archivos, 64 MB por archivo, 256 MB totales o el
 presupuesto sincrono de 60 segundos. El lookup de Bunny Stream usa la columna
@@ -7098,7 +7106,7 @@ Capacidades:
 - Upload desde archivo, buffer o data URL.
 - Libreria de media.
 - Explorador por cuenta con carpetas persistentes, incluidas carpetas vacías.
-- Soft delete, move, replace.
+- Renombrado seguro de archivos y carpetas, soft delete, move y replace.
 - Cuotas.
 - Compresion.
 - Bunny Storage para archivos.
@@ -7127,10 +7135,14 @@ Capacidades:
   resto del explorador sube a la ubicación abierta. Una carpeta arrastrada
   conserva su jerarquía interna y la operación siempre copia: no altera el
   archivo original de la computadora.
-- Mover o eliminar carpetas mantiene sincronizados los assets y la carpeta
+- Renombrar, mover o eliminar carpetas mantiene sincronizados los assets y la carpeta
   persistente. Las taxonomías automáticas de Chat, Sites, formularios, avatares y
   otros módulos internos no cambian: el control manual aplica sólo a la biblioteca
   administrativa de Media.
+- En archivos, **Cambiar nombre** actualiza sólo el nombre visible/de descarga y
+  conserva el binario, la URL y la extensión real. En carpetas, la misma acción
+  renombra toda la ruta y sus descendientes; ambos flujos bloquean nombres
+  duplicados dentro de la ubicación actual.
 - Subida TUS directa y resumible para videos de Sites/Forms, en chunks, sin que
   el upload inicial atraviese el proceso Render ni exponga la API key.
 - Selección inmediata de videos existentes en Bunny Storage. Sites conserva su

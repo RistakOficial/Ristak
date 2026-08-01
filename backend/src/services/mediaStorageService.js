@@ -3531,6 +3531,41 @@ function sanitizeFolderSegment(value = '') {
   return clean
 }
 
+function validateMediaAssetDisplayName(value = '', currentFilename = '', assetExtension = '') {
+  let filename = cleanString(value).trim()
+  if (!filename || filename === '.' || filename === '..') {
+    throw errorWithStatus('Escribe un nombre válido para el archivo.', 400, 'invalid_media_asset_name')
+  }
+  if (/[\\/?%*:|"<>\u0000-\u001f]/.test(filename)) {
+    throw errorWithStatus(
+      'El nombre del archivo incluye caracteres no permitidos.',
+      400,
+      'invalid_media_asset_name'
+    )
+  }
+  if (filename.length > 255) {
+    throw errorWithStatus('El nombre del archivo es demasiado largo.', 400, 'media_asset_name_too_long')
+  }
+
+  const normalizedAssetExtension = cleanString(assetExtension).replace(/^\.+/, '')
+  const currentExtension = extname(currentFilename) || (normalizedAssetExtension ? `.${normalizedAssetExtension}` : '')
+  const requestedExtension = extname(filename)
+  if (currentExtension && !requestedExtension) {
+    filename = `${filename}${currentExtension}`
+  } else if (
+    currentExtension &&
+    requestedExtension.toLocaleLowerCase() !== currentExtension.toLocaleLowerCase()
+  ) {
+    throw errorWithStatus(
+      `La extensión ${currentExtension} pertenece al tipo real del archivo y no se puede cambiar desde Media.`,
+      400,
+      'media_asset_extension_mismatch'
+    )
+  }
+
+  return filename
+}
+
 function normalizeMediaFolderPath(value = '') {
   return cleanString(value)
     .split('/')
@@ -3648,6 +3683,57 @@ export async function createMediaFolder({
     filesCount: 0,
     sizeBytes: 0
   }
+}
+
+export async function renameMediaAsset({
+  assetId = '',
+  businessId = 'default',
+  name = ''
+} = {}) {
+  const asset = await getMediaAsset(cleanString(assetId))
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  if (asset.businessId !== normalizedBusinessId) {
+    throw errorWithStatus('Archivo multimedia no encontrado.', 404, 'media_not_found')
+  }
+
+  const currentFilename = asset.originalFilename || asset.storedFilename || cleanString(asset.bunnyPath).split('/').pop() || asset.id
+  const nextFilename = validateMediaAssetDisplayName(name, currentFilename, asset.extension)
+  if (nextFilename === asset.originalFilename) return asset
+
+  const duplicate = await db.get(
+    `SELECT id
+     FROM media_assets
+     WHERE business_id = ?
+       AND id != ?
+       AND deleted_at IS NULL
+       AND status != 'deleted'
+       AND LOWER(COALESCE(folder_path, '')) = LOWER(?)
+       AND LOWER(COALESCE(NULLIF(original_filename, ''), stored_filename, '')) = LOWER(?)
+     LIMIT 1`,
+    [normalizedBusinessId, asset.id, asset.folderPath || '', nextFilename]
+  )
+  if (duplicate) {
+    throw errorWithStatus(
+      'Ya existe un archivo con ese nombre en esta carpeta.',
+      409,
+      'media_asset_name_exists'
+    )
+  }
+
+  const metadata = {
+    ...(asset.metadata || {}),
+    renamedAt: nowIso(),
+    previousFilename: currentFilename
+  }
+  await db.run(
+    `UPDATE media_assets
+     SET original_filename = ?, metadata_json = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND business_id = ? AND deleted_at IS NULL AND status != 'deleted'`,
+    [nextFilename, JSON.stringify(metadata), asset.id, normalizedBusinessId]
+  )
+
+  logger.info(`[MediaStorage] Archivo renombrado: ${asset.id} -> ${nextFilename}`)
+  return await getMediaAsset(asset.id)
 }
 
 async function persistUploadedMediaFolder({ businessId, folderPath, userId = null } = {}) {
@@ -5897,6 +5983,41 @@ async function moveMediaFolderRecords({
   return selection.folderPaths.length
 }
 
+async function renameMediaFolderRecords({
+  businessId = 'default',
+  sourceFolderPath = '',
+  targetFolderPath = '',
+  existingRows = []
+} = {}) {
+  const selection = mediaFolderRecordSelection([sourceFolderPath])
+  const normalizedSource = selection.folderPaths[0]
+  const normalizedTarget = validateMediaFolderPath(targetFolderPath, { allowRoot: false })
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const rows = existingRows.length
+    ? existingRows
+    : [{ path: normalizedSource, created_by: null }]
+
+  await db.transaction(async (transaction) => {
+    await transaction.run(
+      `DELETE FROM media_folders
+       WHERE business_id = ? AND (${selection.clauses.join(' OR ')})`,
+      [normalizedBusinessId, ...selection.params]
+    )
+    for (const row of rows) {
+      const relativePath = row.path === normalizedSource
+        ? ''
+        : row.path.slice(normalizedSource.length + 1)
+      await upsertMediaFolderHierarchy(transaction, {
+        businessId: normalizedBusinessId,
+        folderPath: [normalizedTarget, relativePath].filter(Boolean).join('/'),
+        createdBy: row.created_by || null
+      })
+    }
+  })
+
+  return rows.length
+}
+
 async function deleteMediaFolderRecords({ businessId = 'default', folderPaths = [] } = {}) {
   const selection = mediaFolderRecordSelection(folderPaths)
   const rows = await listMediaFolderRecords({ businessId, folderPaths: selection.folderPaths })
@@ -6129,6 +6250,121 @@ export async function moveMediaSelection({
     : 0
 
   return { ...result, foldersAffected }
+}
+
+export async function renameMediaFolder({
+  businessId = 'default',
+  folderPath = '',
+  name = ''
+} = {}) {
+  const normalizedBusinessId = normalizeBusinessId(businessId)
+  const normalizedSource = validateMediaFolderPath(folderPath, { allowRoot: false })
+  const normalizedName = sanitizeFolderSegment(name)
+  if (!normalizedName) {
+    throw errorWithStatus('Escribe un nombre válido para la carpeta.', 400, 'invalid_media_folder_name')
+  }
+  const sourceParts = normalizedSource.split('/')
+  const sourceParentPath = sourceParts.slice(0, -1).join('/')
+  const normalizedTarget = validateMediaFolderPath(
+    [sourceParentPath, normalizedName].filter(Boolean).join('/'),
+    { allowRoot: false }
+  )
+
+  const [existingFolderRows, sourceUsage] = await Promise.all([
+    listMediaFolderRecords({ businessId: normalizedBusinessId, folderPaths: [normalizedSource] }),
+    db.get(
+      `SELECT folder_path
+       FROM media_folder_usage_counters
+       WHERE business_id = ?
+         AND (LOWER(folder_path) = LOWER(?) OR LOWER(folder_path) LIKE LOWER(?) ESCAPE '\\')
+       LIMIT 1`,
+      [normalizedBusinessId, normalizedSource, `${escapeMediaLibraryLike(normalizedSource)}/%`]
+    )
+  ])
+  if (!existingFolderRows.length && !sourceUsage) {
+    throw errorWithStatus('La carpeta ya no existe en esta cuenta.', 404, 'media_folder_not_found')
+  }
+  if (normalizedTarget === normalizedSource) {
+    return {
+      operation: 'La operación de renombrar',
+      attempted: 0,
+      affected: 0,
+      failed: 0,
+      foldersAffected: 0,
+      folder: { previousPath: normalizedSource, path: normalizedTarget, name: normalizedName }
+    }
+  }
+
+  const isCaseOnlyRename = normalizedTarget.toLocaleLowerCase() === normalizedSource.toLocaleLowerCase()
+  if (!isCaseOnlyRename) {
+    const [declaredDuplicate, assetDuplicate] = await Promise.all([
+      db.get(
+        `SELECT path
+         FROM media_folders
+         WHERE business_id = ? AND LOWER(path) = LOWER(?)
+         LIMIT 1`,
+        [normalizedBusinessId, normalizedTarget]
+      ),
+      db.get(
+        `SELECT folder_path
+         FROM media_folder_usage_counters
+         WHERE business_id = ?
+           AND (LOWER(folder_path) = LOWER(?) OR LOWER(folder_path) LIKE LOWER(?) ESCAPE '\\')
+         LIMIT 1`,
+        [normalizedBusinessId, normalizedTarget, `${escapeMediaLibraryLike(normalizedTarget)}/%`]
+      )
+    ])
+    if (declaredDuplicate || assetDuplicate) {
+      throw errorWithStatus(
+        'Ya existe una carpeta con ese nombre en esta ubicación.',
+        409,
+        'media_folder_exists'
+      )
+    }
+  }
+
+  let result
+  try {
+    result = await runMediaSelectionOperation({
+      businessId: normalizedBusinessId,
+      folderPaths: [normalizedSource],
+      operation: 'La operación de renombrar',
+      action: async (row, _selection, { remoteDeadlineAt }) => {
+        const currentFolderPath = normalizeMediaFolderPath(row.folder_path)
+        const relativePath = currentFolderPath === normalizedSource
+          ? ''
+          : currentFolderPath.slice(normalizedSource.length + 1)
+        await moveSingleMediaAsset({
+          assetId: row.id,
+          targetFolderPath: [normalizedTarget, relativePath].filter(Boolean).join('/'),
+          businessId: normalizedBusinessId,
+          skipQuotaRefresh: true,
+          operationDeadlineAt: remoteDeadlineAt
+        })
+      }
+    })
+  } catch (error) {
+    if (error?.code !== 'media_selection_empty' || !existingFolderRows.length) throw error
+    result = { operation: 'La operación de renombrar', attempted: 0, affected: 0, failed: 0 }
+  }
+
+  const foldersAffected = await renameMediaFolderRecords({
+    businessId: normalizedBusinessId,
+    sourceFolderPath: normalizedSource,
+    targetFolderPath: normalizedTarget,
+    existingRows: existingFolderRows
+  })
+
+  logger.info(`[MediaStorage] Carpeta renombrada: ${normalizedSource} -> ${normalizedTarget}`)
+  return {
+    ...result,
+    foldersAffected,
+    folder: {
+      previousPath: normalizedSource,
+      path: normalizedTarget,
+      name: normalizedName
+    }
+  }
 }
 
 export async function deleteMediaSelection({
